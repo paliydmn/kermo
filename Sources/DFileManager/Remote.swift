@@ -1,0 +1,387 @@
+import AppKit
+import CryptoKit
+import DFMCore
+import LocalAuthentication
+import NetFS
+import Network
+import Security
+
+/// A server in ~/.config/dfilemanager/servers.json: the sidebar's Saved section.
+struct SavedServer: Codable, Equatable {
+    var id = UUID()
+    var name = ""          // "" = the address
+    var host = ""          // address or ~/.ssh/config alias
+    var user: String?      // nil = ssh's (or ~/.ssh/config's) default
+    var port: Int?
+    var identityFile: String?  // private key; nil = ssh's own choice
+    var startDir: String?      // SFTP; nil = the login folder
+    var locked = false         // Touch ID / the Mac password to connect, edit or delete (ServerLock)
+    var prod = false           // production: red in the sidebar and panel header; delete, overwrite and move there ask first
+
+    init() {}
+
+    /// Prefilled from what was typed in Connect ("me@nas:/share", "sftp://h:2222/x") or a ~/.ssh/config alias.
+    init?(address: String) {
+        guard case let .sftp(t, path)? = ServerAddress.parse(address) else { return nil }
+        let at = t.host.lastIndex(of: "@")   // ssh splits at the last one too
+        host = at.map { String(t.host[t.host.index(after: $0)...]) } ?? t.host
+        user = at.map { String(t.host[..<$0]) }
+        port = t.port
+        startDir = path
+    }
+
+    /// Hand-edited files may leave out anything but the host.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        host = try c.decode(String.self, forKey: .host)
+        user = try c.decodeIfPresent(String.self, forKey: .user)
+        port = try c.decodeIfPresent(Int.self, forKey: .port)
+        identityFile = try c.decodeIfPresent(String.self, forKey: .identityFile)
+        startDir = try c.decodeIfPresent(String.self, forKey: .startDir)
+        locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
+        prod = try c.decodeIfPresent(Bool.self, forKey: .prod) ?? false
+    }
+
+    /// A saved server at this address (user@host:port) is tagged production.
+    @MainActor static func isProd(_ t: SFTPTarget) -> Bool { ServerLock.servers().contains { $0.prod && SSHPasswords.sameKey($0.target, t) } }
+
+    /// A server file's editor title: "web:/etc/nginx/nginx.conf", "🔴 PROD web:/…" on a production server.
+    @MainActor static func title(_ t: SFTPTarget, _ path: String) -> String { (isProd(t) ? "🔴 PROD " : "") + "\(t.host):\(path)" }
+
+    /// Said before what a change on production servers asks: "“h” is a production server. ", or "".
+    @MainActor static func prodNote(_ targets: [SFTPTarget]) -> String {
+        let hosts = targets.filter(isProd).map(\.host).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        return hosts.isEmpty ? "" : hosts.map { "“\($0)”" }.joined(separator: " and ") + (hosts.count == 1 ? " is a production server. " : " are production servers. ")
+    }
+
+    // ponytail: a locked server's connection lingers 60 s after its last session, not 0: SFTP panels are a session
+    // per listing, and each would log in again. `ssh -O exit` on closing its last tab if 60 s is too long.
+    var target: SFTPTarget {
+        SFTPTarget(host: user.map { "\($0)@\(host)" } ?? host, port: port, identity: identityFile, persist: locked ? 60 : nil)
+    }
+    var title: String { name.isEmpty ? target.host : name }
+
+    /// Why ssh can't take it, or nil. A leading "-" would make ssh read it as an option (-oProxyCommand=…).
+    var problem: String? {
+        if host.isEmpty { return "Enter a host." }
+        if host.hasPrefix("-") || host.contains(where: { $0.isWhitespace || $0 == "@" }) { return "“\(host)” isn't a host name." }
+        if let u = user, u.isEmpty || u.hasPrefix("-") || u.contains(where: \.isWhitespace) { return "“\(u)” isn't a user name." }
+        if let p = port, !(1...65535).contains(p) { return "The port must be 1–65535." }
+        if let k = identityFile, !FileManager.default.isReadableFile(atPath: (k as NSString).expandingTildeInPath) {
+            return "Can't read the key file “\(k)”."
+        }
+        return nil
+    }
+
+    static func load() -> [SavedServer] {
+        do { return try Config.load("servers.json", as: [SavedServer].self) ?? [] } catch {
+            // Saving would overwrite a hand edit gone wrong: keep it aside.
+            let path = Config.path("servers.json")
+            try? FileManager.default.removeItem(atPath: path + ".broken")
+            try? FileManager.default.moveItem(atPath: path, toPath: path + ".broken")
+            return []
+        }
+    }
+}
+
+/// SSH passwords in the login keychain: one per user@host:port, readable by this app without asking (others ask).
+enum SSHPasswords {
+    private static func query(_ t: SFTPTarget) -> [CFString: Any] {
+        let at = t.host.lastIndex(of: "@")
+        return [kSecClass: kSecClassInternetPassword, kSecAttrProtocol: kSecAttrProtocolSSH,
+                kSecAttrServer: at.map { String(t.host[t.host.index(after: $0)...]) } ?? t.host,
+                kSecAttrAccount: at.map { String(t.host[..<$0]) } ?? "",
+                kSecAttrPort: t.port ?? 22]
+    }
+
+    static func sameKey(_ a: SFTPTarget, _ b: SFTPTarget) -> Bool { a.host == b.host && (a.port ?? 22) == (b.port ?? 22) }
+
+    /// Without reading it.
+    static func has(_ t: SFTPTarget) -> Bool { SecItemCopyMatching(query(t) as CFDictionary, nil) == errSecSuccess }
+
+    static func get(_ t: SFTPTarget) -> String? {
+        var q = query(t)
+        q[kSecReturnData] = true
+        q[kSecMatchLimit] = kSecMatchLimitOne
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// "" or nil forgets it.
+    @discardableResult
+    static func set(_ password: String?, for t: SFTPTarget) -> OSStatus {
+        SecItemDelete(query(t) as CFDictionary)
+        guard let password, !password.isEmpty else { return errSecSuccess }
+        var q = query(t)
+        q[kSecValueData] = Data(password.utf8)
+        q[kSecAttrLabel] = "Kermo: \(t.host)" + (t.port.map { ":\($0)" } ?? "")
+        return SecItemAdd(q as CFDictionary, nil)
+    }
+}
+
+/// Locked saved servers ask for Touch ID or the Mac password before a new connection (by any route to the same
+/// user@host:port: sidebar, picker, typed address, reconnect), an edit or a delete. One success unlocks the server
+/// for 5 minutes, or until the screen locks or the Mac sleeps. Open sessions stay open.
+@MainActor
+enum ServerLock {
+    static var servers: () -> [SavedServer] = { [] }
+    /// Replaced in tests.
+    static var authenticate: (String) async -> Bool = { reason in
+        (try? await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)) ?? false
+    }
+    static var grace: TimeInterval = 300
+    private static var unlockedUntil: [UUID: Date] = [:]
+
+    static func server(for t: SFTPTarget) -> SavedServer? {
+        servers().first { $0.locked && SSHPasswords.sameKey($0.target, t) }
+    }
+
+    static func needsUnlock(_ t: SFTPTarget) -> Bool {
+        server(for: t).map { (unlockedUntil[$0.id] ?? .distantPast) < Date() } ?? false
+    }
+
+    /// `action` completes "… to <action>" in the system's prompt.
+    static func authorize(_ s: SavedServer, _ action: String) async -> Bool {
+        let s = server(for: s.target) ?? s   // an unlocked twin at a locked address shares its password: asks too
+        guard s.locked, (unlockedUntil[s.id] ?? .distantPast) < Date() else { return true }
+        guard await authenticate("\(action) “\(s.title)”") else { return false }
+        unlockedUntil[s.id] = Date().addingTimeInterval(grace)
+        return true
+    }
+
+    static func authorize(_ t: SFTPTarget) async -> Bool {
+        guard let s = server(for: t) else { return true }
+        return await authorize(s, "connect to")
+    }
+
+    static func relock() { unlockedUntil = [:] }
+
+    static func relockOnScreenLockAndSleep() {
+        let ws = NSWorkspace.shared.notificationCenter
+        for n in [NSWorkspace.screensDidSleepNotification, NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
+            ws.addObserver(forName: n, object: nil, queue: .main) { _ in MainActor.assumeIsolated { relock() } }
+        }
+        DistributedNotificationCenter.default().addObserver(forName: .init("com.apple.screenIsLocked"), object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { relock() }
+        }
+    }
+}
+
+/// Shared ssh connections (ControlMaster) ended on purpose: Disconnect; and after sleep or a network change, when they're
+/// likely dead while `-O check` still says yes, so the first remote operation waited for ssh to give up (~90 s).
+enum Masters {
+    /// `SFTP.stopMaster`; replaced in tests (no ssh runs).
+    nonisolated(unsafe) static var stopper: @Sendable (SFTPTarget, _ now: Bool) -> Void = { SFTP.stopMaster($0, now: $1) }
+
+    /// Those of the servers `match` picks (all by default), off the main thread: each stop blocks briefly.
+    static func stop(now: Bool, where match: @escaping @Sendable (SFTPTarget) -> Bool = { _ in true }) async {
+        let stopper = stopper
+        await Blocking.run { for t in SFTP.masterTargets where match(t) { stopper(t, now) } }
+    }
+
+    /// `-O stop`, not exit: the socket goes, so the next operation logs in fresh, while an SSH tab on a connection
+    /// that did survive (a short sleep, a second network joining) goes on; on a dead one it ends as ssh notices.
+    static func stopOnWake(_ center: NotificationCenter = NSWorkspace.shared.notificationCenter) {
+        center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: nil) { _ in Task { await stop(now: false) } }
+    }
+
+    private static let network = NWPathMonitor()
+    static func stopOnNetworkChange() {
+        network.pathUpdateHandler = changes { (_: NWPath) in Task { await stop(now: false) } }
+        network.start(queue: DispatchQueue(label: "dfm.network"))
+    }
+
+    /// Calls `fire` with each value unlike the one before; the first (the monitor's state at start) only sets it.
+    static func changes<T: Equatable & Sendable>(_ fire: @escaping @Sendable (T) -> Void) -> @Sendable (T) -> Void {
+        nonisolated(unsafe) var last: T?   // one serial queue
+        return { v in
+            if let l = last, l != v { fire(v) }
+            last = v
+        }
+    }
+}
+
+/// ssh can't prompt on a terminal we don't have; SSH_ASKPASS makes it ask through a macOS dialog instead
+/// (passwords, key passphrases, "continue connecting (yes/no)?").
+enum SSHAskpass {
+    static let env: [String: String] = {
+        let path = SFTP.controlDir + "/askpass"
+        let script = """
+            #!/bin/sh
+            # Called by ssh with the prompt as $1; prints the answer.
+            # A saved password waits in a FIFO, once (SFTP.withPassword); a second ask means it was wrong.
+            \(SFTP.askpassSavedPassword)
+            exec /usr/bin/osascript - "$1" <<'APPLESCRIPT'
+            on run argv
+                set p to item 1 of argv
+                activate
+                if p contains "(yes/no" then
+                    display dialog p buttons {"Cancel", "Yes"} default button "Yes" with title "Kermo — SSH" with icon caution
+                    return "yes"
+                else
+                    return text returned of (display dialog p default answer "" with hidden answer with title "Kermo — SSH")
+                end if
+            end run
+            APPLESCRIPT
+
+            """
+        try? script.write(toFile: path, atomically: true, encoding: .utf8)
+        chmod(path, 0o700)
+        return ["SSH_ASKPASS": path, "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": ":0"]
+    }()
+}
+
+/// Mounts smb/nfs/afp shares the way Finder does (Keychain, standard sign-in dialog), without opening a Finder window.
+enum NetworkMount {
+    @MainActor
+    static func mount(_ url: URL, completion: @escaping @MainActor (Result<String, Error>) -> Void) {
+        let openOptions = NSMutableDictionary()
+        openOptions[kNAUIOptionKey] = kNAUIOptionAllowUI
+        var request: AsyncRequestID?
+        let status = NetFSMountURLAsync(url as CFURL, nil, nil, nil, openOptions, nil, &request, .main) { err, _, mountpoints in
+            let points = (mountpoints as? [String]) ?? []
+            MainActor.assumeIsolated {
+                switch err {
+                case 0 where !points.isEmpty: completion(.success(points[0]))
+                case EEXIST:   // already mounted: find it by share name (the kernel's list: no volume is asked)
+                    let share = url.lastPathComponent.removingPercentEncoding ?? url.lastPathComponent
+                    if let m = SidebarModel.mounts().first(where: { ($0.path as NSString).lastPathComponent == share }) { completion(.success(m.path)) }
+                    else { completion(.failure(JobErrorMessage("“\(url.absoluteString)” is already mounted."))) }
+                case -128, Int32(ECANCELED): break   // user cancelled the sign-in
+                default:
+                    completion(.failure(JobErrorMessage("Couldn't mount \(url.absoluteString): \(String(cString: strerror(err))) (\(err))")))
+                }
+            }
+        }
+        if status != 0 {
+            completion(.failure(JobErrorMessage("Couldn't mount \(url.absoluteString) (\(status))")))
+        }
+    }
+}
+
+/// Local copies of server files (↩ F3 F4 on a server panel) and of files taken out of archives. Each goes when its
+/// viewer or editor closes; at launch, any older than a day (opened in another app: nothing says when that's done)
+/// — except one marked kept: the only copy of text that didn't reach its server.
+enum TempCopies {
+    static let prefixes = ["dfm-sftp-", "dfm-archive-", "dfm-git-", "dfm-command-"]   // dfm-git-: Git Log / Blame text; dfm-command-: ⌘↩ scripts
+    static let keptMarker = ".dfm-kept"
+
+    /// The file lives in one of these copies (so Save As doesn't offer that folder: it goes with the copy).
+    static func holds(_ url: URL) -> Bool { prefixes.contains(where: url.deletingLastPathComponent().lastPathComponent.hasPrefix) }
+
+    static func keep(_ dir: String) { FileManager.default.createFile(atPath: (dir as NSString).appendingPathComponent(keptMarker), contents: nil) }
+    static func unkeep(_ dir: String) { try? FileManager.default.removeItem(atPath: (dir as NSString).appendingPathComponent(keptMarker)) }
+
+    static func remove(_ dir: String) {
+        let fm = FileManager.default
+        // Archives bring read-only folders, whose contents removeItem can't delete. Never through a link.
+        if (try? fm.attributesOfItem(atPath: dir))?[.type] as? FileAttributeType == .typeDirectory, let e = fm.enumerator(atPath: dir) {
+            for case let sub as String in e where e.fileAttributes?[.type] as? FileAttributeType == .typeDirectory {
+                chmod((dir as NSString).appendingPathComponent(sub), 0o700)
+            }
+        }
+        try? fm.removeItem(atPath: dir)
+    }
+
+    static func sweep(in root: String = NSTemporaryDirectory(), now: Date = Date()) {
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: root)) ?? [] where prefixes.contains(where: name.hasPrefix) {
+            let path = (root as NSString).appendingPathComponent(name)
+            // lstat: a link's own date; removeItem then takes the link, not what it points to.
+            guard let a = try? fm.attributesOfItem(atPath: path), let m = a[.modificationDate] as? Date, now.timeIntervalSince(m) > 86_400,
+                  !(a[.type] as? FileAttributeType == .typeDirectory && fm.fileExists(atPath: (path as NSString).appendingPathComponent(keptMarker)))
+            else { continue }
+            remove(path)
+        }
+    }
+}
+
+/// Local copies of server files that left the panel: ⌃Q / ⌘Y previews (Quick Look's Open with hands one to another
+/// app) and ↩'s. A save there goes up to the server as F4's do: the conflict check, a production server asking first.
+/// They stay until quit (an app may still have one open); then the ones on the server go, the others are kept.
+@MainActor enum ServerCopies {
+    @MainActor final class Copy {
+        let url: URL, target: SFTPTarget, path: String
+        let listed: (size: Int64, mtime: Double)   // the server's file as the panel listed it: what a preview asks for
+        let state: AppDelegate.RemoteEdit          // the server's file as downloaded or last uploaded
+        let preview: Bool                          // not opened anywhere on purpose: the budget may take it
+        var seen: Editor.Stamp?, settling = false  // the copy as last looked at; changed since the look before
+        var synced = true                          // what's in it is on the server
+        var uploaded = false                       // an app saved it at least once: it's being edited
+        var sends = 0, pending = 0                 // saves sent up so far (only the latest one's syncs it); on their way
+        init(_ url: URL, _ target: SFTPTarget, _ path: String, listed: (Int64, Double), baseline: SFTPClient.Attrs, preview: Bool) {
+            (self.url, self.target, self.path, self.listed, self.preview) = (url, target, path, listed, preview)
+            state = AppDelegate.RemoteEdit(baseline: baseline)
+            seen = Editor.Stamp(url.path)
+        }
+        var dir: String { url.deletingLastPathComponent().path }
+    }
+
+    static private(set) var copies: [Copy] = []
+    /// Sends a changed copy up (`AppDelegate.upload`); true once it's there.
+    static var upload: (Copy) async -> Bool = { _ in false }
+    // ponytail: fixed; a setting if someone previews bigger files over a fast link.
+    static let budget: Int64 = 256 << 20   // what previews nobody edits take together, the oldest going first
+
+    static func preview(of target: SFTPTarget, _ path: String, size: Int64, mtime: Double) -> URL? {
+        copies.first { $0.target == target && $0.path == path && $0.listed == (size, mtime) && $0.synced }?.url
+    }
+
+    static func add(_ c: Copy) {
+        copies.append(c)
+        var left = copies.filter { $0.preview && $0.synced && !$0.uploaded }.reduce(0) { $0 + $1.state.baseline.size }
+        // ponytail: an untouched preview may still be open in an app (Open with) when the budget takes it.
+        for old in copies where left > budget && old !== c && old.preview && old.synced && !old.uploaded {
+            left -= old.state.baseline.size
+            TempCopies.remove(old.dir)
+            copies.removeAll { $0 === old }
+        }
+        if watching == nil { watching = Task { while !Task.isCancelled { try? await Task.sleep(for: .seconds(1)); tick() } } }
+    }
+    private static var watching: Task<Void, Never>?
+
+    /// Looks at every copy (stat only, a handful of files): one an app saved goes up once it stays the same for a
+    /// tick — not halfway through being written.
+    // ponytail: polls once a second; FSEvents if many copies are ever watched at once.
+    static func tick() {
+        for c in copies {
+            let now = Editor.Stamp(c.url.path)
+            guard now != nil else { continue }   // being replaced (an atomic save), or removed: next tick tells
+            if now != c.seen { (c.seen, c.settling) = (now, true); continue }
+            guard c.settling else { continue }
+            c.settling = false
+            send(c)
+        }
+    }
+
+    /// Only if the bytes changed: an app touching or re-saving the same text sends nothing (nor asks on production).
+    private static func send(_ c: Copy) {
+        c.sends += 1
+        if c.pending == 0, let sum = c.state.baseline.sha256, c.seen?.size ?? .max <= SFTPClient.hashLimit,
+           let data = try? Data(contentsOf: c.url), Data(SHA256.hash(data: data)) == sum { return c.synced = true }
+        c.synced = false
+        c.pending += 1
+        let n = c.sends
+        c.state.save(in: c.dir) {
+            let ok = await upload(c)
+            c.pending -= 1
+            if ok { c.uploaded = true }
+            if ok && n == c.sends { c.synced = true }
+            return ok
+        }
+    }
+
+    /// What quitting leaves behind: copies whose last save isn't on the server, and ones still being edited.
+    static var unsynced: [Copy] { copies.filter { !$0.synced } }
+    static var editing: [Copy] { copies.filter { $0.uploaded && $0.synced } }
+
+    /// Quitting: the copies on the server go; the others stay, marked kept (the only copy of that text).
+    static func quit() {
+        watching?.cancel()
+        for c in copies { if c.synced { TempCopies.remove(c.dir) } else { TempCopies.keep(c.dir) } }
+        copies.removeAll()
+    }
+}

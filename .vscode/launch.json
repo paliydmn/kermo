@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:dfilemanager}",
+            "name": "Debug bench",
+            "target": "bench",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug bench"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:dfilemanager}",
+            "name": "Release bench",
+            "target": "bench",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release bench"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:dfilemanager}",
+            "name": "Debug DFileManager",
+            "target": "DFileManager",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug DFileManager"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:dfilemanager}",
+            "name": "Release DFileManager",
+            "target": "DFileManager",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release DFileManager"
+        }
+    ]
+}
