@@ -633,6 +633,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             r.sessions.isEmpty && !SFTP.masterTargets.contains { ServerRow.key($0) == r.key } ? nil
                 : MenuAction.item("Disconnect") { [unowned self] in disconnect(r.target) },
             r.saved.map { unlocked("Copy SSH Command", $0, "copy the command of", copy) } ?? MenuAction.item("Copy SSH Command", copy),
+            MenuAction.item("Show File History") { [unowned self] in showFileHistory(r.target) },
             .separator(),
             MenuAction.item(r.pinned ? "Unpin" : "Pin") { [unowned self] in
                 unpin(r.key)

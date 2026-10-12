@@ -5,9 +5,12 @@ import Testing
 
 // Task 13: server file history and diff with a server.
 
+/// `AppDelegate.historyRoot` and the `serverHistory` default are the app's: these tests take turns.
+@Suite(.serialized) @MainActor struct HistoryAppTests {
+
 /// Saves keep versions in ~/.config/dfilemanager/history.noindex (Spotlight stays out by the name) unless
 /// `defaults write com.dmn.dfilemanager serverHistory -bool false`.
-@MainActor @Test func serverHistoryCanBeTurnedOff() {
+@Test func serverHistoryCanBeTurnedOff() {
     let app = AppDelegate()
     let was = UserDefaults.standard.object(forKey: "serverHistory")
     defer { UserDefaults.standard.set(was, forKey: "serverHistory") }
@@ -15,6 +18,26 @@ import Testing
     #expect(app.serverHistory?.root == AppDelegate.historyRoot && AppDelegate.historyRoot == Config.path("history.noindex"))
     UserDefaults.standard.set(false, forKey: "serverHistory")
     #expect(app.serverHistory == nil)
+}
+
+/// Deleting a saved server offers to delete its file history too — only when it has one, and no other saved server
+/// at that address keeps using it (as with its password).
+@Test func deletingAServerOffersItsHistory() throws {
+    let root = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-hdel-" + UUID().uuidString
+    let was = AppDelegate.historyRoot
+    AppDelegate.historyRoot = root
+    defer { AppDelegate.historyRoot = was; try? FileManager.default.removeItem(atPath: root) }
+    let app = AppDelegate()
+    let web = SavedServer(address: "me@web.invalid")!, db = SavedServer(address: "me@db.invalid")!
+    app.savedServers = [web, db]
+    #expect(app.historyToDelete(with: web) == nil, "none yet")
+    ServerHistory(root: root).keep(Data("v".utf8), SFTPClient.Attrs(kind: .file, size: 1, mtime: 0, mode: nil), of: web.target, "/etc/a")
+    #expect(app.historyToDelete(with: web) == root + "/me@web.invalid" && app.historyToDelete(with: db) == nil)
+    var twin = SavedServer(address: "me@web.invalid")!
+    twin.name = "web again"
+    app.savedServers.append(twin)
+    #expect(app.historyToDelete(with: web) == nil, "the twin keeps using it")
+}
 }
 
 /// Compare Files' pair, three rules in order: two marked files; the cursor's and the same name in the other panel's

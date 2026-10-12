@@ -926,13 +926,36 @@ extension AppDelegate {
 
     func deleteServer(_ s: SavedServer) {
         Task {
-            guard await ServerLock.authorize(s, "delete"),
-                  await confirm("Delete “\(s.title)”?", info: "Its saved password too. Open sessions stay open.", ok: "Delete") else { return }
+            guard await ServerLock.authorize(s, "delete") else { return }
+            let info = "Its saved password too. Open sessions stay open.", history = historyToDelete(with: s)
+            let answer = history == nil ? await confirm("Delete “\(s.title)”?", info: info, ok: "Delete") ? 0 : 2
+                : await choose("Delete “\(s.title)”?", info: info + " Its file history — the versions its saves kept on this Mac — can go too.",
+                               ["Delete", "Delete with File History", "Cancel"])
+            guard answer < 2 else { return }
             savedServers.removeAll { $0.id == s.id }
             Config.save("servers.json", savedServers)
             forgetPassword(s)
             unpin(ServerRow.key(s.target))   // else it'd stay as a pinned bare address
             refreshSidebar()
+            if answer == 1, let history { do { try FileManager.default.removeItem(atPath: history) } catch { showError(error) } }
+        }
+    }
+
+    /// The server's file history folder, if it has one that no other saved server at its address keeps using.
+    func historyToDelete(with s: SavedServer) -> String? {
+        let h = ServerHistory(root: Self.historyRoot), dir = h.folder(s.target)
+        guard !savedServers.contains(where: { $0.id != s.id && h.folder($0.target) == dir }) else { return nil }
+        return FileManager.default.fileExists(atPath: dir) ? dir : nil
+    }
+
+    /// Show File History (a server's sidebar menu): its folder of versions (`ServerHistory`) in the active panel, to
+    /// browse, view, compare or delete (F8) like any other.
+    func showFileHistory(_ t: SFTPTarget) {
+        Task {
+            if let s = ServerLock.server(for: t), await !ServerLock.authorize(s, "see the file history on") { return }
+            let dir = ServerHistory(root: Self.historyRoot).folder(t)
+            guard FileManager.default.fileExists(atPath: dir) else { return active.flash("No file history for \(t.host) yet: each save of one of its files keeps the version it replaces") }
+            active.navigate(to: dir)
         }
     }
 
