@@ -771,7 +771,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Commands that would act on the local folder hidden behind a server panel (its `path`). Until they learn
     /// servers, they refuse there instead of quietly working on this Mac.
     static let localOnly: Set<String> = ["file.info", "go.tree", "panel.swap", "file.reveal", "file.symlink",
-                                         "file.hardlink", "file.split", "file.combine", "file.diff", "git.diff", "file.eject",
+                                         "file.hardlink", "file.split", "file.combine", "git.diff", "file.eject",
                                          "git.log", "git.blame", "git.stage", "git.unstage", "admin.copy", "admin.move", "admin.mkdir", "admin.delete", "admin.shell"]
 
     private func perform(_ c: Command) {

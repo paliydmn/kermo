@@ -1766,20 +1766,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             try? await Task.sleep(for: .milliseconds(300))   // passing by, it's not wanted
             guard !flag.isCancelled else { return }
             guard want.size <= limit else { self?.flash("“\(name)” is too big to preview (over \(limit >> 20) MB)"); return }
-            let tmp = NSTemporaryDirectory() + "dfm-sftp-" + UUID().uuidString   // a leftover goes with the launch sweep
-            mkdir(tmp, 0o700)
-            let local = URL(fileURLWithPath: tmp).appendingPathComponent(name)   // named as there: Quick Look goes by the extension
             let result = await Blocking.run(.userInitiated) {
-                Result {
-                    try SFTPClient.session(r.target, env: env, cancel: flag) { c -> SFTPClient.Attrs? in
-                        // A link's own size says nothing of what it points to: a big file, a folder.
-                        if want.link, case let a = try c.stat(want.path), a.kind != .file || a.size > limit { return nil }
-                        return try c.download(want.path, to: local.path)
-                    }
-                }
+                Result { try ServerCopies.download(r.target, want.path, look: want.link, limit: limit, env: env, cancel: flag) }
             }
-            guard let self, !flag.isCancelled, case .success(let attrs?) = result else {
-                TempCopies.remove(tmp)
+            guard let self, !flag.isCancelled, case .success(let (local, attrs)?) = result else {
+                if case .success(let got?) = result { TempCopies.remove(got.url.deletingLastPathComponent().path) }   // ⎋ just now
                 if case .failure(let e) = result, !flag.isCancelled { self?.flash("Can't preview “\(name)”: \(e.localizedDescription)", error: true) }
                 return
             }

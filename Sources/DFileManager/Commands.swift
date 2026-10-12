@@ -1482,35 +1482,106 @@ extension AppDelegate {
         }
     }
 
-    /// Two marked files, or the cursor file vs. the same name (or the cursor) in the other panel.
-    /// Uses `defaults write com.dmn.dfilemanager diffCommand 'code --diff %1 %2'` if set, else `diff -u`.
+    /// A file Compare Files diffs: this Mac's, or a server's as its panel listed it (the size and date pick a preview's copy).
+    struct DiffSide: Sendable {
+        var path: String
+        var server: SFTPTarget? = nil
+        var size: Int64 = 0, mtime: Double = 0
+        var look = false   // a link (its own size says nothing), or a size not known: the server is asked first
+        var label: String { server.map { "\($0.host):\(path)" } ?? path }
+    }
+
+    /// A panel's marked files (or the cursor's), and its cursor's: on a server, as its listing has them.
+    private func diffSides(_ p: PanelViewController) -> (marked: [DiffSide], cursor: DiffSide?) {
+        guard let r = p.remote else {
+            let file = { (u: URL) in u.hasDirectoryPath ? nil : DiffSide(path: u.path) }
+            return (p.targetURLs.compactMap(file), p.cursorURL.flatMap(file))
+        }
+        let side = { (it: FileItem) in
+            it.kind == .file || it.kind == .link && !it.linkDir
+                ? DiffSide(path: (r.dir as NSString).appendingPathComponent(it.name), server: r.target, size: it.size, mtime: it.mtime, look: it.kind == .link)
+                : nil
+        }
+        return (p.remoteSelection?.items.compactMap(side) ?? [], p.remoteCursor.flatMap { side($0.item) })
+    }
+
+    /// Two marked files, or the cursor file vs. the same name (or the cursor) in the other panel — on this Mac or a
+    /// server, whose files are fetched as a preview's (⌃Q) are. Shown as `diff -u`, with "host:/path" for a server's
+    /// file; `defaults write com.dmn.dfilemanager diffCommand 'code --diff %1 %2'` gets the copies instead.
     func diffFiles() {
-        let file = { (u: URL?) in u.flatMap { $0.hasDirectoryPath ? nil : $0 } }
-        let (panel, cursor, otherCursor) = (active, file(active.cursorURL), file(other.cursorURL))
+        let (panel, mine, theirs) = (active, diffSides(active), diffSides(other))
         // The other panel's folder only when that's what it shows: not the local one behind a server tab.
-        let same = other.plainFolder.flatMap { f in cursor.map { URL(fileURLWithPath: f).appendingPathComponent($0.lastPathComponent) } }
-        let marked = active.targetURLs.filter { !$0.hasDirectoryPath }
+        let same = mine.cursor.flatMap { c -> DiffSide? in
+            let name = (c.path as NSString).lastPathComponent
+            if let r = other.remote { return DiffSide(path: (r.dir as NSString).appendingPathComponent(name), server: r.target, look: true) }
+            return other.plainFolder.map { DiffSide(path: ($0 as NSString).appendingPathComponent(name)) }
+        }
+        let env = SSHAskpass.env
         Task {
-            let pair = await Self.diffPair(marked: marked, cursor: cursor, sameName: same, otherCursor: otherCursor) { same in
-                await Blocking.run(.userInitiated) { FileManager.default.fileExists(atPath: same.path) }   // a share that doesn't answer
+            var stopped = false
+            let pair = await Self.diffPair(marked: mine.marked, cursor: mine.cursor, sameName: same, otherCursor: theirs.cursor) { s in
+                guard let t = s.server else {
+                    return await Blocking.run(.userInitiated) { FileManager.default.fileExists(atPath: s.path) } ? s : nil   // a share that doesn't answer
+                }
+                guard await unlock([.sftp(t)]) else { stopped = true; return nil }
+                let r = await panel.busy("Looking for “\((s.path as NSString).lastPathComponent)” on \(t.host)…") { flag in
+                    try SFTPClient.session(t, env: env, cancel: flag) { try $0.stat(s.path) }
+                }
+                if case .failure(let e) = r, e is CancellationError { stopped = true }
+                guard case .success(let a) = r, a.kind == .file else { return nil }
+                return DiffSide(path: s.path, server: t, size: a.size, mtime: a.mtime)
             }
+            guard !stopped else { return }
             guard let (a, b) = pair else { return panel.flash("Mark two files, or put the cursor on a file in each panel") }
-            let qa = ShellContext.quote(a.path), qb = ShellContext.quote(b.path)
-            if let tool = defaults.string(forKey: "diffCommand") {
-                Shell.spawn(Self.fillDiff(tool, qa, qb), in: panel.path)
-            } else {
-                Shell.run("diff -u \(qa) \(qb)", in: panel.path, diff: true)
-            }
+            await diff(a, b, in: panel)
         }
     }
 
+    /// `a` against `b`: a server's file through its local copy (`localCopy`).
+    func diff(_ a: DiffSide, _ b: DiffSide, in panel: PanelViewController) async {
+        guard await unlock([a, b].compactMap { $0.server.map(Endpoint.sftp) }) else { return }
+        guard let la = await localCopy(a, in: panel), let lb = await localCopy(b, in: panel) else { return }
+        let (qa, qb) = (ShellContext.quote(la), ShellContext.quote(lb))
+        if let tool = defaults.string(forKey: "diffCommand") {
+            Shell.spawn(Self.fillDiff(tool, qa, qb), in: panel.path)
+        } else {
+            Shell.run(Self.diffCommand(la, lb, labels: a.server == nil && b.server == nil ? nil : (a.label, b.label)), in: panel.path, diff: true)
+        }
+    }
+
+    /// `diff -u`; `labels` in place of the paths (a server file's "host:/path", not its copy's temp path).
+    nonisolated static func diffCommand(_ a: String, _ b: String, labels: (String, String)?) -> String {
+        let q = ShellContext.quote
+        return "diff -u " + (labels.map { "--label \(q($0.0)) --label \(q($0.1)) " } ?? "") + "\(q(a)) \(q(b))"
+    }
+
+    /// This Mac's file as it is; a server's, its preview copy for that size and date, else downloaded as a preview's
+    /// is (`ServerCopies.download`, up to `previewLimit`). nil, once said why: too big, not a file, failed, ⎋.
+    func localCopy(_ s: DiffSide, in panel: PanelViewController) async -> String? {
+        guard let t = s.server else { return s.path }
+        if !s.look, let url = ServerCopies.preview(of: t, s.path, size: s.size, mtime: s.mtime) { return url.path }
+        let name = (s.path as NSString).lastPathComponent, limit = PanelViewController.previewLimit, env = SSHAskpass.env
+        let tooBig = "“\(name)” is too big to compare (over \(limit >> 20) MB)"
+        guard s.look || s.size <= limit else { panel.flash(tooBig); return nil }
+        let r = await panel.busy("Downloading “\(name)”…") { flag in try ServerCopies.download(t, s.path, look: s.look, limit: limit, env: env, cancel: flag) }
+        switch r {
+        case .success(let got?):
+            ServerCopies.add(.init(got.url, t, s.path, listed: s.look ? (got.attrs.size, got.attrs.mtime) : (s.size, s.mtime), baseline: got.attrs, preview: true))
+            return got.url.path
+        case .success(nil): panel.flash(tooBig + " or not a file")
+        case .failure(let e) where !(e is CancellationError): panel.flash("Can't download “\(name)”: \(e.localizedDescription)", error: true)
+        case .failure: break
+        }
+        return nil
+    }
+
     /// Which two files Compare Files diffs: two marked; else the cursor's and the same name in the other panel's
-    /// folder, if it's there; else the cursor's and the other panel's cursor's. Files only (no folders, no ".."); nil:
-    /// nothing to diff. `exists` is asked about the same name only when it comes to that.
-    static func diffPair<S: Sendable>(marked: [S], cursor: S?, sameName: S?, otherCursor: S?, exists: (S) async -> Bool) async -> (S, S)? {
+    /// folder, if it's there (`find`: as it is there, or nil); else the cursor's and the other panel's cursor's. Files
+    /// only (no folders, no ".."); nil: nothing to diff. `find` is asked about the same name only when it comes to that.
+    static func diffPair<S: Sendable>(marked: [S], cursor: S?, sameName: S?, otherCursor: S?, find: (S) async -> S?) async -> (S, S)? {
         if marked.count == 2 { return (marked[0], marked[1]) }
         guard let a = cursor else { return nil }
-        if let same = sameName, await exists(same) { return (a, same) }
+        if let same = sameName, let found = await find(same) { return (a, found) }
         return otherCursor.map { (a, $0) }
     }
 

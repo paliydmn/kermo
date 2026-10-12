@@ -16,6 +16,7 @@ Release:
 ### Added
 
 - **Server file history:** every save of a server file (F4's ⌘S, a save in another app) keeps the version it replaces on this Mac, in `~/.config/dfilemanager/history.noindex/<server>/<path there>/<name>@<date>`: 20 versions a file and 200 MB in all, the oldest going first. "Overwrite" after someone else's change keeps their version. A file over 5 MB gets none, and the status line says so; so it does when a version can't be written, and the save goes on. Saving a small file you opened with F4 costs no extra wait: the check before writing already reads it. The folder is owner-only and out of Spotlight and Time Machine; `defaults write com.dmn.dfilemanager serverHistory -bool false` turns it off.
+- **Compare Files (⌘⇧D) with a server:** a server's file against this Mac's or another server's, by the same rules as before: two marked files; the cursor's and the same name in the other panel (now looked for on its server too); or the two cursors. A server's file is fetched as the ⌃Q preview fetches it (the copy already here if it's unchanged, up to 64 MB), and `diff -u` names it "host:/path" instead of its temporary copy; a `diffCommand` tool gets the copies.
 
 ### Changed
 
