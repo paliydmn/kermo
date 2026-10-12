@@ -146,12 +146,36 @@ private func makeLevels(_ root: String) throws {
     let job = FileJob(.delete, sources: [d + "/t"], from: .sftp(.local()), to: .sftp(.local()), destDir: nil)
     let a = try #require(try fs.lstat(d + "/t"))
     let c = try fs.session(), before = c.roundTrips
-    job.removeAcross(fs, d + "/t", a)
+    job.removeAcross(fs, [(d + "/t", a)])
     #expect(job.progress.errors.isEmpty, "\(job.progress.errors)")
     #expect(!FileManager.default.fileExists(atPath: d + "/t"))
     // The top: open, read, end, close; each level of 70: 2 batches of those 4 and 1 for the files; the folders: 2 + 2 + 2 + 1.
     // One at a time: 1265.
     #expect(c.roundTrips - before == 4 + 3 * 10 + 7, "\(c.roundTrips - before)")
+}
+
+/// F8 of many items (or a Mirror's deletions) on a server looked at and deleted each on its own: a file 2 round
+/// trips, a folder 7. All together now: one look at every one, the files 64 at a time, the folders walked together.
+@Test func deleteOnAServerTakesAllItemsTogether() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    for i in 0..<70 {
+        try Data([1]).write(to: URL(fileURLWithPath: d + "/f\(i)"))
+        try FileManager.default.createDirectory(atPath: d + "/d\(i)", withIntermediateDirectories: true)
+        try Data([1]).write(to: URL(fileURLWithPath: d + "/d\(i)/x"))
+    }
+    // And one inside a folder also picked (search results): it goes with the folder, no error.
+    let sources = (0..<70).map { d + "/f\($0)" } + (0..<70).map { d + "/d\($0)" } + [d + "/d5/x"]
+    let fs = RemoteFS(.local(), env: [:])
+    let c = try fs.session(), before = c.roundTrips
+    let job = FileJob(.delete, sources: sources, from: .sftp(.local()), to: .sftp(.local()), destDir: nil)
+    job.deleteAcross(fs)
+    let p = job.progress
+    #expect(p.state == .done && p.errors.isEmpty && p.doneFiles == 141 && p.totalFiles == 141, "\(p.errors)")
+    #expect(try FileManager.default.contentsOfDirectory(atPath: d).isEmpty)
+    // 141 looks: 3; the files: 64 + 6; the folders: 2 batches of open, read, end, close and their files; their RMDIRs: 2.
+    // One at a time: 631.
+    #expect(c.roundTrips - before == 3 + 2 + 10 + 2, "\(c.roundTrips - before)")
 }
 
 /// A file that can't go is asked about alone (Retry / Skip), and the folders above it stay without a "not empty"

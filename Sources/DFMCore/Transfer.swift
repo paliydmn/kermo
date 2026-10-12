@@ -305,46 +305,71 @@ extension FileJob {
     }
 
     /// ⇧F8 / F8 on a server (no Trash there): bottom-up over one connection, past what can't go, each failure
-    /// under its own path (Retry / Skip / Abort), like the local `remove`. Never follows a symlink.
-    func deleteAcross() {
-        let fs = makeFS(from)
+    /// under its own path (Retry / Skip / Abort), like the local `remove`. Never follows a symlink. All the sources
+    /// together: one look at every one (a Synchronize's check against Compare too), then `removeAcross` — a far
+    /// server's round trips add up per batch of `SFTPClient.window`, not per item. `given`: a connection of the
+    /// caller's (tests count its round trips).
+    func deleteAcross(_ given: TransferFS? = nil) {
+        let fs = given ?? makeFS(from)
         cancelFlag.onCancel { fs.close() }
         defer {
             cancelFlag.onCancel(nil)
             fs.close()
         }
         update { $0.totalFiles = sources.count; $0.state = .running }
-        // Synchronize's (it knows what Compare saw): every source looked at together, for the check and for what it
-        // is. Its sources are rows of one Compare, none inside another; others are looked at each just before it goes.
-        let looked = expected.isEmpty ? nil : fs.lstat(sources)
-        for (i, s) in sources.enumerated() {
-            guard !isCancelled else { break }
-            update { $0.current = (s as NSString).lastPathComponent }
-            var a = looked?[i].value   // none: not looked at, or that failed — asked the usual way
-            if !changed(s, expected, a ?? nil), a != nil || attempt(s, { a = try fs.lstat(s) }), let a = a ?? nil {
-                removeAcross(fs, s, a)   // nil: already gone
-            }
-            update { $0.doneFiles += 1 }
+        var tops: [(path: String, attrs: SFTPClient.Attrs)] = []
+        for (s, looked) in zip(sources, fs.lstat(sources)) {
+            guard !isCancelled else { return finish() }
+            var a = looked.value   // none: that look failed — asked again the usual way
+            if !changed(s, expected, a ?? nil), a != nil || attempt(s, { a = try fs.lstat(s) }), let a = a ?? nil { tops.append((s, a)) }
+            else { update { $0.doneFiles += 1 } }   // changed since Compare, already gone, or skipped
         }
+        // A folder and something in it (search results can hold both): the folder takes it along.
+        let folders = Set(tops.filter { $0.attrs.kind == .dir }.map(\.path))
+        func inFolder(_ p: String) -> Bool {
+            let up = (p as NSString).deletingLastPathComponent
+            return up != p && (folders.contains(up) || inFolder(up))
+        }
+        let along = tops.filter { inFolder($0.path) }.count
+        tops.removeAll { inFolder($0.path) }
+        update { $0.doneFiles += along }
+        removeAcross(fs, tops)
         finish()
     }
 
-    /// `top` and all in it, never following a symlink. A folder's tree goes level by level: `SFTPClient.window`
-    /// folders listed together and their files removed together as each batch is listed (a far server: a few round
-    /// trips a batch, not a few a folder); then the folders, deepest level first, each batch together. What a
-    /// batch couldn't do goes the usual way after — Retry / Skip / Abort under its own path. What stays keeps the
-    /// folders above it, unasked: one real error, not a "not empty" for each of them up to the top.
-    func removeAcross(_ fs: TransferFS, _ top: String, _ a: SFTPClient.Attrs) {
-        waitWhilePaused()
-        guard a.kind == .dir else { attempt(top) { try fs.remove(top) }; return }
-        var dirs = [(path: top, parent: -1, kept: false)], levels = [0..<1]
+    /// `tops` and all in them, never following a symlink. The files among them go first, `SFTPClient.window` together.
+    /// The folders' trees go level by level, all at once: `window` folders listed together and their files removed
+    /// together as each batch is listed (a far server: a few round trips a batch, not a few a folder); then the
+    /// folders, deepest level first, each batch together. What a batch couldn't do goes the usual way after — Retry /
+    /// Skip / Abort under its own path. What stays keeps the folders above it, unasked: one real error, not a "not
+    /// empty" for each of them up to the top. The progress counts each top once it's done.
+    func removeAcross(_ fs: TransferFS, _ tops: [(path: String, attrs: SFTPClient.Attrs)]) {
+        var dirs = tops.filter { $0.attrs.kind == .dir }.map { (path: $0.path, parent: -1, kept: false) }, levels = [0..<dirs.count]
         func keep(_ i: Int) {   // it and each folder above it
             var i = i
             while i >= 0 && !dirs[i].kept { dirs[i].kept = true; i = dirs[i].parent }
         }
-        func batches(_ level: Range<Int>) -> [Range<Int>] {
-            stride(from: level.lowerBound, to: level.upperBound, by: SFTPClient.window).map { $0..<min($0 + SFTPClient.window, level.upperBound) }
+        func batches(_ r: Range<Int>) -> [Range<Int>] {
+            stride(from: r.lowerBound, to: r.upperBound, by: SFTPClient.window).map { $0..<min($0 + SFTPClient.window, r.upperBound) }
         }
+        /// Together, then what didn't go one by one; a file that stays keeps its folder (`dir`; -1: a top). False: cancelled.
+        func remove(_ files: [(path: String, dir: Int)]) -> Bool {
+            let failed = Set(fs.remove(files.map(\.path)).map(\.path))
+            for f in files where failed.contains(f.path) {
+                guard !isCancelled else { return false }
+                if !attempt(f.path, { try fs.remove(f.path) }) { keep(f.dir) }
+            }
+            return true
+        }
+        let files = tops.filter { $0.attrs.kind != .dir }.map(\.path)
+        for batch in batches(files.indices) {
+            waitWhilePaused()
+            guard !isCancelled else { return }
+            update { $0.current = (files[batch.lowerBound] as NSString).lastPathComponent }
+            guard remove(batch.map { (files[$0], -1) }) else { return }
+            update { $0.doneFiles += batch.count }
+        }
+        if let first = dirs.first { update { $0.current = (first.path as NSString).lastPathComponent } }
         while let level = levels.last, !level.isEmpty {
             for batch in batches(level) {
                 waitWhilePaused()
@@ -358,11 +383,7 @@ extension FileJob {
                         if c.attrs.kind == .dir { dirs.append((p, i, false)) } else { files.append((p, i)) }
                     }
                 }
-                let failed = Set(fs.remove(files.map(\.path)).map(\.path))
-                for f in files where failed.contains(f.path) {
-                    guard !isCancelled else { return }
-                    if !attempt(f.path, { try fs.remove(f.path) }) { keep(f.dir) }
-                }
+                guard remove(files) else { return }
             }
             levels.append(level.upperBound..<dirs.count)
         }
@@ -376,6 +397,7 @@ extension FileJob {
                 if !attempt(dirs[i].path, { try fs.rmdir(dirs[i].path) }) { keep(dirs[i].parent) }
             }
         }
+        update { $0.doneFiles += levels[0].count }
     }
 
     /// Files and bytes below `path` (what the progress bar counts), and how deep its folders go (-1: not a folder).
