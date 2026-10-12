@@ -158,7 +158,7 @@ private let spotlightIndexesHome = {
     let w = try c.openWrite(d + "/.part", exclusive: true)
     try w.write(Data("hello".utf8))
     #expect(try w.finish(mtime: 1_000_000_000, mode: 0o640) == nil)
-    #expect(c.roundTrips - trips <= 2, "open, then close + mode and date together: \(c.roundTrips - trips)")
+    #expect(c.roundTrips - trips == 3, "open, the write's answer, then close + mode and date together: \(c.roundTrips - trips)")
     var st = stat()
     stat(d + "/.part", &st)
     #expect(st.st_mode & 0o7777 == 0o640 && st.st_mtimespec.tv_sec == 1_000_000_000)
@@ -174,7 +174,7 @@ private let spotlightIndexesHome = {
     trips = c.roundTrips
     let failed = c.remove((0..<50).map { d + "/f\($0)" } + [d + "/missing"])
     #expect(failed.map(\.path) == [d + "/missing"])
-    #expect(c.roundTrips - trips <= 2, "\(c.roundTrips - trips)")
+    #expect(c.roundTrips - trips == 1, "all 51 in flight together: \(c.roundTrips - trips)")
     #expect(!FileManager.default.fileExists(atPath: d + "/f49"))
 }
 

@@ -37,9 +37,12 @@ public final class SFTPClient: @unchecked Sendable {
     private var lostReason: String?
     private var answers = 0   // packets heard so far: whether the server is still at work (`closeWhenQuiet`)
     private var nextID: UInt32 = 1
-    /// Waits for the server one after another, a batch in flight counting once: what a far server makes a job wait
-    /// for (tests count them). One worker thread at a time, as every call.
+    /// Waits for the server one after another: what a far server makes a job wait for (time ≈ this × RTT; tests count
+    /// them). Each wait for a request sent after the last counted wait began counts once — the rest of a batch or
+    /// pipeline was in flight with it. One worker thread at a time, as every call. (After 2³² requests the ids wrap
+    /// and it stops counting; no test gets there.)
     private(set) var roundTrips = 0
+    private var lastSent: UInt32 = 0, waveEnd: UInt32 = 0
     private let errors = ErrorTail()
 
     public init(_ t: SFTPTarget, env: [String: String] = [:], cancel: CancelFlag? = nil) throws {
@@ -174,7 +177,6 @@ public final class SFTPClient: @unchecked Sendable {
     func list(_ dirs: [String]) -> [(dir: String, items: [(name: String, attrs: Attrs)])] {
         var out: [(dir: String, items: [(name: String, attrs: Attrs)])] = []
         for start in stride(from: 0, to: dirs.count, by: Self.window) {
-            roundTrips += 1
             let opening = dirs[start..<min(start + Self.window, dirs.count)].map { d -> (String, UInt32?) in
                 var p = Packet(Self.OPENDIR)
                 p.string(d)
@@ -186,7 +188,6 @@ public final class SFTPClient: @unchecked Sendable {
             }
             var reading = Array(open.indices)   // until each says EOF, some after more answers than others
             while !reading.isEmpty {
-                roundTrips += 1
                 let sent = reading.map { i -> (Int, UInt32?) in
                     var p = Packet(Self.READDIR)
                     p.string(open[i].handle)
@@ -267,7 +268,6 @@ public final class SFTPClient: @unchecked Sendable {
     /// Removes these files (not folders) with their requests in flight together (`window` at a time): a folder of
     /// thousands goes in a few round trips, not one each. The ones that didn't go, with why.
     public func remove(_ paths: [String]) -> [(path: String, error: Error)] {
-        roundTrips += 1
         var failed: [(path: String, error: Error)] = [], inflight: [(id: UInt32, path: String)] = []
         func settle(_ r: (id: UInt32, path: String)) {
             do {
@@ -334,7 +334,6 @@ public final class SFTPClient: @unchecked Sendable {
     /// Where each symlink points, the errno following it gives (0: it resolves; ENOENT: dangling) and whether it lands
     /// on a folder, with all the requests in flight together. One that can't even be read is left out.
     public func targets(_ links: [String]) -> [String: (target: String, error: Int32, dir: Bool)] {
-        roundTrips += 1
         let sent = links.compactMap { path -> (String, UInt32, UInt32)? in
             var r = Packet(Self.READLINK), s = Packet(Self.STAT)
             r.string(path)
@@ -506,7 +505,6 @@ public final class SFTPClient: @unchecked Sendable {
                 c.forget([closeID])
                 throw c.lostError()
             }
-            c.roundTrips += 1
             do {
                 let (type, body) = try c.wait(closeID)
                 guard type == SFTPClient.STATUS else { throw c.protocolError("CLOSE answered \(type)") }
@@ -640,7 +638,6 @@ public final class SFTPClient: @unchecked Sendable {
     }
 
     private func call(_ p: Packet) throws -> (UInt8, Data) {
-        roundTrips += 1
         return try wait(try send(p))
     }
 
@@ -654,6 +651,7 @@ public final class SFTPClient: @unchecked Sendable {
             return nextID
         }
         if p.type != Self.INIT { p.setID(id) }
+        lastSent = id
         guard isConnected else { throw lostError() }
         var out = Data()
         withUnsafeBytes(of: UInt32(p.body.count).bigEndian) { out.append(contentsOf: $0) }
@@ -675,6 +673,7 @@ public final class SFTPClient: @unchecked Sendable {
     }
 
     func wait(_ id: UInt32) throws -> (type: UInt8, body: Data) {
+        if id > waveEnd { roundTrips += 1; waveEnd = lastSent }
         let r = cond.withLock { () -> (type: UInt8, body: Data)? in
             while true {
                 if let r = responses.removeValue(forKey: id) { return r }
