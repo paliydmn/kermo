@@ -422,7 +422,8 @@ public final class SFTPClient: @unchecked Sendable {
     // MARK: - Streams
 
     /// Reads a file in order from `offset`, keeping `window` requests in flight. `sizeHint` (from a stat) stops
-    /// the pipeline from overshooting small files; a file that grew past it is still read to its end.
+    /// the pipeline from overshooting small files: the last read ends at it, and the one asking for the end of the
+    /// file goes in the same wave. A file that grew past it is still read to its end.
     public final class ReadStream {
         let c: SFTPClient, handle: Data, path: String, hint: UInt64
         var next: UInt64
@@ -437,8 +438,10 @@ public final class SFTPClient: @unchecked Sendable {
         public func read() throws -> Data? {
             while true {
                 while !eof && inflight.count < (next > hint ? 1 : SFTPClient.window) {
-                    inflight.append((try c.sendRead(handle, next, SFTPClient.chunk), next, SFTPClient.chunk))
-                    next += UInt64(SFTPClient.chunk)
+                    // Overshooting the hint, a read came back short and its rest was one more wait before the end.
+                    let len = next < hint ? Int(min(UInt64(SFTPClient.chunk), hint - next)) : SFTPClient.chunk
+                    inflight.append((try c.sendRead(handle, next, len), next, len))
+                    next += UInt64(len)
                 }
                 guard !inflight.isEmpty else { return nil }
                 let r = inflight.removeFirst()

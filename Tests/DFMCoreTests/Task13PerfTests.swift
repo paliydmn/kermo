@@ -31,7 +31,7 @@ private func tempDir() -> String {
         while try r.read() != nil {}
         r.close()
     }
-    #expect(try trips { try readAll(d + "/small", 2048) } == 4, "open, read, end of file, close")
+    #expect(try trips { try readAll(d + "/small", 2048) } == 3, "open, read with the end of file, close")
     #expect(try trips { try readAll(d + "/big", Int64(128 * SFTPClient.chunk)) } == 5, "open, 2 waves of 64 reads, end of file, close")
     #expect(try trips {
         let w = try c.openWrite(d + "/out")
@@ -41,6 +41,36 @@ private func tempDir() -> String {
     var listed = 0
     #expect(trips { listed = c.list((0..<3).map { d + "/dirs/\($0)" }).count } == 4, "open, read, end of file, close: each for all 3 at once")
     #expect(listed == 3)
+}
+
+/// A small file's read asked for a whole chunk: it came back short, and asking for the rest was one more wait
+/// before the end of file. The last read ends at the size now, and the end is asked for in the same wave — still
+/// read to the end whatever the size turned out to be.
+@Test func readStopsAtTheSizeAndAsksForTheEndAlong() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let data = Data((0..<100_000).map { UInt8($0 % 251) })
+    try data.write(to: URL(fileURLWithPath: d + "/f"))
+    FileManager.default.createFile(atPath: d + "/empty", contents: nil)
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    func read(_ path: String, from offset: Int64 = 0, hint: Int64) throws -> Data {
+        let r = try c.openRead(path, offset: offset, sizeHint: hint)
+        defer { r.close() }
+        var out = Data()
+        while let piece = try r.read() { out += piece }
+        return out
+    }
+    #expect(try read(d + "/f", hint: 100_000) == data)
+    #expect(try read(d + "/f", hint: 2048) == data, "grew since the stat")
+    #expect(try read(d + "/f", hint: 300_000) == data, "shrank since the stat")
+    #expect(try read(d + "/f", hint: 0) == data, "no stat")
+    #expect(try read(d + "/f", from: 40_000, hint: 100_000) == data[40_000...])
+    #expect(try read(d + "/f", from: 100_000, hint: 100_000).isEmpty)
+    #expect(try read(d + "/empty", hint: 0).isEmpty)
+    let tail = d + "/tail"
+    #expect(try c.download(d + "/f", to: tail, last: 100).size == 100_000)
+    #expect(FileManager.default.contents(atPath: tail) == data.suffix(100))
 }
 
 /// Stop during "Scanning…" before a copy waited for the walk of the whole tree to end.
