@@ -125,3 +125,98 @@ private let when = Calendar.current.date(from: DateComponents(year: 2026, month:
     #expect((a[.modificationDate] as? Date)?.timeIntervalSince1970 == 1_600_000_000)
     #expect(try URL(fileURLWithPath: h.root).resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
 }
+
+/// Each save to a server keeps the version it replaces. The check before writing already reads a small file whose
+/// baseline has its SHA-256 (F4's ⌘S): those bytes are the version, no wait more — 8 as before. Otherwise the file
+/// is read first, before it's overwritten: `force` (then the version is someone else's change), a baseline without a
+/// hash (Revert's), a file over 1 MB. Over 5 MB: no version, no read. Nothing there yet, or a write that fails: none.
+/// Round trips before history, measured on the code before: 8, 6, 6, 6, 8, 9, 6.
+@Test func saveKeepsTheVersionItReplaces() throws {
+    let d = tempDir()
+    defer { chmod(d + "/ro", 0o700); try? FileManager.default.removeItem(atPath: d) }
+    let h = ServerHistory(root: d + "/history")
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    func put(_ p: String, _ n: Int, _ b: UInt8) throws { try Data(repeating: b, count: n).write(to: URL(fileURLWithPath: d + p)) }
+    func file(_ p: String) -> Data? { FileManager.default.contents(atPath: d + p) }
+    var notes: [String?] = [], calls = 0
+    /// Uploads /l<name> over /<name> the way the app does; the round trips it took.
+    func save(_ name: String, _ baseline: SFTPClient.Attrs?, force: Bool = false) throws -> Int {
+        let before = c.roundTrips
+        try c.upload(d + "/l" + name, to: d + "/" + name, baseline: baseline, force: force) { attrs, data in
+            calls += 1
+            notes.append(h.keep(data, attrs, of: .local(), d + "/" + name))
+        }
+        return c.roundTrips - before
+    }
+    func kept(_ name: String) -> [Data?] { h.versions(of: .local(), d + "/" + name).map { FileManager.default.contents(atPath: $0.path) } }
+
+    try put("/a", 2048, 1)
+    let a = try c.download(d + "/a", to: d + "/la")
+    try put("/la", 2048, 2)
+    #expect(try save("a", a) == 8, "a look; the check: open, its read with the end — the version's bytes; the write as before")
+    #expect(kept("a") == [Data(repeating: 1, count: 2048)] && file("/a") == Data(repeating: 2, count: 2048))
+
+    try put("/b", 2048, 1)
+    let b = try c.download(d + "/b", to: d + "/lb")
+    try put("/lb", 2048, 2)
+    try put("/b", 100, 9)   // someone else's change
+    #expect(throws: SFTPClient.ChangedOnServer.self) { try save("b", b) }
+    #expect(try save("b", b, force: true) == 6 + 2, "Overwrite: theirs is read first (open, read with the end)")
+    #expect(kept("b") == [Data(repeating: 9, count: 100)], "the version is their change, not the text opened")
+
+    try put("/c", 2048, 1)
+    let cAttrs = try c.stat(d + "/c")
+    try put("/lc", 2048, 2)
+    #expect(try save("c", cAttrs) == 6 + 2, "no hash to check against: read first")
+    #expect(kept("c") == [Data(repeating: 1, count: 2048)])
+
+    try put("/m", 48 * SFTPClient.chunk, 1)
+    let m = try c.download(d + "/m", to: d + "/lm")
+    try put("/lm", 48 * SFTPClient.chunk, 2)
+    #expect(m.sha256 == nil)
+    #expect(try save("m", m) == 6 + 2, "1.5 MB: open, one wave of 48 reads with the end")
+    try put("/m4", 128 * SFTPClient.chunk, 1)
+    let m4 = try c.download(d + "/m4", to: d + "/lm4")
+    try put("/lm4", 128 * SFTPClient.chunk, 2)
+    #expect(try save("m4", m4) == 8 + 4, "4 MB: open, 2 waves of 64 reads, the end")
+    #expect(kept("m") == [Data(repeating: 1, count: 48 * SFTPClient.chunk)] && kept("m4") == [Data(repeating: 1, count: 128 * SFTPClient.chunk)])
+
+    try put("/big", 6 << 20, 1)
+    let big = try c.download(d + "/big", to: d + "/lbig")
+    try put("/lbig", 6 << 20, 2)
+    notes = []
+    #expect(try save("big", big) == 9, "over 5 MB: not read")
+    #expect(kept("big").isEmpty && notes == ["file over 5 MB"])
+
+    try put("/lnew", 10, 2)
+    calls = 0
+    #expect(try save("new", nil) == 6)
+    #expect(calls == 0 && h.versions(of: .local(), d + "/new").isEmpty, "nothing was there: no version")
+
+    try FileManager.default.createDirectory(atPath: d + "/ro", withIntermediateDirectories: true)
+    try put("/ro/x", 10, 1)
+    try put("/lro", 10, 2)
+    chmod(d + "/ro", 0o500)
+    let ro = try c.download(d + "/ro/x", to: d + "/lrox")
+    #expect(throws: (any Error).self) { try c.upload(d + "/lro", to: d + "/ro/x", baseline: ro) { _, _ in calls += 1 } }
+    #expect(calls == 0 && file("/ro/x") == Data(repeating: 1, count: 10), "the write failed: no version")
+}
+
+/// A history that can't be written (here: no permission) never stops the save: the file goes up, the note says why.
+@Test func historyFailureDoesntStopTheSave() throws {
+    let d = tempDir()
+    defer { chmod(d + "/locked", 0o700); try? FileManager.default.removeItem(atPath: d) }
+    try FileManager.default.createDirectory(atPath: d + "/locked", withIntermediateDirectories: true)
+    chmod(d + "/locked", 0o500)
+    let h = ServerHistory(root: d + "/locked/history")
+    try Data("old".utf8).write(to: URL(fileURLWithPath: d + "/f"))
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    let base = try c.download(d + "/f", to: d + "/lf")
+    try Data("new".utf8).write(to: URL(fileURLWithPath: d + "/lf"))
+    var note: String?
+    try c.upload(d + "/lf", to: d + "/f", baseline: base) { note = h.keep($1, $0, of: .local(), d + "/f") }
+    #expect(FileManager.default.contents(atPath: d + "/f") == Data("new".utf8))
+    #expect(note?.lowercased().contains("permission") == true, "\(note ?? "")")
+}

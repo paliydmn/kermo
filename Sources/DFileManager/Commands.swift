@@ -1043,6 +1043,13 @@ extension AppDelegate {
         }
     }
 
+    /// Where saves to a server keep the versions they replace (tests: a folder of their own).
+    static var historyRoot = Config.path("history.noindex")
+    /// nil once `defaults write com.dmn.dfilemanager serverHistory -bool false`.
+    var serverHistory: ServerHistory? { defaults.object(forKey: "serverHistory") as? Bool ?? true ? ServerHistory(root: Self.historyRoot) : nil }
+
+    /// Every save of a server file (F4's ⌘S, another app's, Revert) goes here. The version it replaces goes into the
+    /// file history; if it can't, the save goes on and the status line says why.
     func upload(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool = false) async -> Bool {
         let note = state.prodNote(target)
         if !note.isEmpty {
@@ -1052,18 +1059,22 @@ extension AppDelegate {
             }
             state.prodConfirmed = true
         }
-        let env = SSHAskpass.env, baseline = state.baseline
+        let env = SSHAskpass.env, baseline = state.baseline, history = serverHistory
         // No panel of its own: the one showing that server (else the active one) says it's saving; ⎋ there cancels.
         let panel = panels.first { $0.remote?.target == target } ?? active
         let r = await panel.busy("Saving “\(saved.lastPathComponent)” to \(target.host)…") { flag in
             let c = try SFTPClient(target, env: env, cancel: flag)
             defer { c.close() }
-            return try c.upload(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag)
+            var note: String?
+            let keep: ((SFTPClient.Attrs, Data?) -> Void)? = history.map { h in { note = h.keep($1, $0, of: target, remotePath) } }
+            let attrs = try c.upload(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, replaced: keep)
+            return (attrs, note)
         }
         switch r {
-        case .success(let attrs):
+        case .success(let (attrs, note)):
             state.baseline = attrs
             for p in panels where p.remote?.target == target { p.reload() }
+            if let note { panel.flash("Saved “\(saved.lastPathComponent)” to \(target.host) · no history: \(note)") }
             return true
         case .failure(let e as SFTPClient.ChangedOnServer):
             Editor.markUnsaved(saved)

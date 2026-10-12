@@ -967,13 +967,13 @@ extension SFTPClient {
         return a
     }
 
-    /// SHA-256 of the server's file as it is now (it follows a symlink).
-    private func sha256(_ remote: String, size: Int64) throws -> Data {
+    /// The server's file as it is now, whole (it follows a symlink): small ones only.
+    private func contents(_ remote: String, size: Int64) throws -> Data {
         let r = try openRead(remote, sizeHint: size)
         defer { r.close() }
-        var hash = SHA256()
-        while let d = try r.read() { hash.update(data: d) }
-        return Data(hash.finalize())
+        var out = Data()
+        while let d = try r.read() { out.append(d) }
+        return out
     }
 
     /// Puts the local file in place of `remote`. First all of it into a partial file next to it, so a dropped
@@ -982,19 +982,29 @@ extension SFTPClient {
     /// links. Throws `ChangedOnServer` if the server's copy isn't `baseline` any more, unless `force`.
     /// Returns the new attributes (the next baseline).
     /// `cancel` stops it (CancellationError) and removes the partial file, over a slow link too (`closeWhenQuiet`).
+    /// `replaced` gets the file it replaced, once it's in place: its attributes, and its bytes up to
+    /// `ServerHistory.fileLimit` (nil over that) — from the check's own read when there is one, else read first.
     @discardableResult
-    public func upload(_ local: String, to remote: String, baseline: Attrs?, force: Bool = false, cancel: CancelFlag? = nil) throws -> Attrs {
+    public func upload(_ local: String, to remote: String, baseline: Attrs?, force: Bool = false, cancel: CancelFlag? = nil,
+                       replaced: ((Attrs, Data?) -> Void)? = nil) throws -> Attrs {
         let previous = cancel?.onCancel { [self] in closeWhenQuiet() } ?? nil
         defer { cancel?.onCancel(previous) }
         let entry = try lstat(remote)
         let cur = entry?.kind == .link ? try stat(remote) : entry
+        let keep = replaced != nil && cur?.kind == .file && cur!.size <= ServerHistory.fileLimit
+        var old: Data?
         // Size + whole-second mtime is all SFTP v3 tells; a same-size change within that second shows in the content.
         // ponytail: over `hashLimit` it still slips by; a server-side hash (`sha256sum` over ssh) if that ever matters.
         if !force, let baseline, let cur {
             var changed = cur.size != baseline.size || cur.mtime != baseline.mtime
-            if !changed, let sum = baseline.sha256 { changed = try sha256(remote, size: cur.size) != sum }
+            if !changed, let sum = baseline.sha256 {
+                let now = try contents(remote, size: cur.size)
+                changed = Data(SHA256.hash(data: now)) != sum
+                old = now
+            }
             if changed { throw ChangedOnServer(attrs: cur) }
         }
+        if keep, old == nil { old = try contents(remote, size: cur!.size) }   // `force` keeps exactly what it overwrites
         let fd = Darwin.open(local, O_RDONLY)
         guard fd >= 0 else { throw LocalFS.posixError() }
         defer { Darwin.close(fd) }
@@ -1038,6 +1048,7 @@ extension SFTPClient {
             try? remove(partial)
             throw error
         }
+        if let cur, cur.kind == .file { replaced?(cur, keep ? old : nil) }
         var a = try stat(remote)
         if a.size <= Self.hashLimit { a.sha256 = Data(hash.finalize()) }   // what was sent: the next save's baseline
         return a
