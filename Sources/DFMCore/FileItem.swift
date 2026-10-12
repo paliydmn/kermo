@@ -107,6 +107,12 @@ public enum Perms {
 public enum SortKey: String, Sendable { case name, size, mtime }
 
 extension Array where Element == FileItem {
+    /// A re-list with what's known of its links to folders (`names`, resolved again after it), so the sort puts them
+    /// with the folders: rows don't jump to the files and back on every reload.
+    public func keepingLinkDirs(_ names: Set<String>) -> [FileItem] {
+        names.isEmpty ? self : map { var it = $0; it.linkDir = it.kind == .link && names.contains(it.name); return it }
+    }
+
     /// Dirs first, then by key; ties broken by natural name order (file2 < file10).
     /// Name keys are precomputed once: ASCII names compare as bytes (fast path),
     /// anything else falls back to localizedStandardCompare (Finder order, ~10x slower).

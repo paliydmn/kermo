@@ -78,3 +78,14 @@ private func tempDir() -> String {
     #expect(looks == 2)
     #expect(!DirSync.filesEqual(d + "/a", d + "/b", isCancelled: { true }))
 }
+
+/// After an auto-reload, links to folders showed and sorted as files (`etc`, `tmp`, `var` in `/` with hidden
+/// files shown): what was known of them went onto the re-list after it had been sorted.
+@Test func reListKeepsLinksToFoldersWithTheFolders() {
+    func item(_ name: String, _ kind: FileItem.Kind) -> FileItem { FileItem(name: name, kind: kind, size: 1, mtime: 0, mode: 0o755, flags: 0) }
+    let listed = [item("b.txt", .file), item("etc", .link), item("a", .dir), item("zlink", .link)]
+    let rows = listed.keepingLinkDirs(["etc", "a"]).sortedForPanel(by: .name, ascending: true)
+    #expect(rows.map(\.name) == ["a", "etc", "b.txt", "zlink"])
+    #expect(rows.filter(\.linkDir).map(\.name) == ["etc"], "only a link is a link to a folder")
+    #expect(listed.keepingLinkDirs([]).filter(\.linkDir).isEmpty)
+}

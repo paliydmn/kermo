@@ -31,3 +31,23 @@ private func tempDir() -> String {
     await waitUntil { panel.dirSizes.count == 2 }
     #expect(panel.dirSizes == ["one": 3, "two": 5])
 }
+
+/// After an auto-reload, links to folders showed and sorted as files, and the resolve after it left them there.
+@MainActor @Test func reloadKeepsLinksToFoldersWithTheFolders() async throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    for name in ["docs", "target"] { try FileManager.default.createDirectory(atPath: d + "/" + name, withIntermediateDirectories: true) }
+    FileManager.default.createFile(atPath: d + "/a.txt", contents: nil)
+    try FileManager.default.createSymbolicLink(atPath: d + "/linkdir", withDestinationPath: d + "/target")
+    let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    func names() -> [String] { (0..<panel.table.numberOfRows).compactMap { panel.item(at: $0)?.name }.filter { $0 != ".." } }
+    let folders = ["docs", "linkdir", "target"]
+    await waitUntil { names() == folders + ["a.txt"] }   // once resolved
+    #expect(names() == folders + ["a.txt"])
+    FileManager.default.createFile(atPath: d + "/b.txt", contents: nil)
+    panel.reload()
+    await waitUntil { names().contains("b.txt") }
+    #expect(names() == folders + ["a.txt", "b.txt"])
+}

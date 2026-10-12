@@ -420,6 +420,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         connecting = nil   // a pending server listing is dropped too
         let gen = loadGen
         let started = Date()
+        // Set before the sort: the rows come from it (`sortedAll`), and the resolve after finds nothing to change.
+        let linkDirs = newPath == path && watcher != nil ? Set(all.filter(\.linkDir).map(\.name)) : []
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, gen == self.loadGen, self.loadedGen < gen else { return }
@@ -430,7 +432,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             // Disk work and sorting off the main thread: a hung network volume or a 1M-file folder must never freeze the UI.
             let result = await Self.listings.run(newPath, .userInitiated) {
                 Result {
-                    let items = try DirLister.list(newPath)
+                    let items = try DirLister.list(newPath).keepingLinkDirs(linkDirs)
                     let order = Self.savedSort(for: newPath)
                     return (items, Self.freeSpace(newPath), items.sortedForPanel(by: order.key, ascending: order.ascending), order,
                             DirSync.mtimeTolerance([newPath]), FolderID(path: newPath))
@@ -453,10 +455,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                     (backStack, forwardStack, old, history) = ([], [], newPath, .none)
                 }
                 path = newPath
-                // A re-list keeps what's known of its links to folders (resolved again below): rows don't jump to the
-                // files and back on every reload.
-                let linkDirs = changed ? [] : Set(all.filter(\.linkDir).map(\.name))
-                all = linkDirs.isEmpty ? items : items.map { var it = $0; it.linkDir = it.kind == .link && linkDirs.contains(it.name); return it }
+                all = items   // a re-list's links to folders: as known before (`keepingLinkDirs`), resolved again below
                 (sortedAll, sortedBy) = (sorted, order)
                 freeSpace = free
                 mtimeTolerance = tolerance

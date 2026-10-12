@@ -19,6 +19,7 @@ Release:
 
 ### Fixed
 
+- **Panels:** symlinks to folders no longer turn into files (shown with their own size and sorted with the files) after a folder reloads by itself.
 - **Stop and ⎋:** ⎋ stops counting folder sizes on this Mac, as on a server, and so does leaving the folder; closing Info stops its folder count; Stop during "Scanning…" before a copy stops at once instead of after the whole tree. Search by content and compare by content stop within a big file instead of after it; closing Info stops its checksums.
 - **Info:** a checksum of a file that fails to read part-way shows the read error instead of a hash of the part that was read.
 
