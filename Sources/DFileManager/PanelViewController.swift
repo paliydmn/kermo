@@ -748,10 +748,16 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         busyOps.forEach { $0.flag.cancel() }
     }
 
-    func busy<T: Sendable>(_ message: String, flag: CancelFlag = CancelFlag(), _ work: @escaping @Sendable (CancelFlag) throws -> T) async -> Result<T, Error> {
+    /// `after`: the message waits that long (⎋ doesn't), so quick work doesn't flash it.
+    func busy<T: Sendable>(_ message: String, after: Double = 0, flag: CancelFlag = CancelFlag(),
+                           _ work: @escaping @Sendable (CancelFlag) throws -> T) async -> Result<T, Error> {
         let mine = message + " ⎋ cancels"
         busyOps.append((flag, mine))
-        busyMessage = mine
+        if after == 0 { busyMessage = mine } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + after) { [weak self] in
+                MainActor.assumeIsolated { if let self, self.busyOps.contains(where: { $0.flag === flag }) { self.busyMessage = mine } }
+            }
+        }
         // Back on ⎋ at once, even while `work` sits in a call that can't be stopped (a share that stopped
         // answering): it's left to finish on its own. `work` hooking ⎋ itself (killing its process) keeps this
         // hook until it returns.
@@ -1519,7 +1525,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 let names = sizeQueue.filter { dirSizes[$0] == nil }
                 sizeQueue.removeAll()
                 guard !names.isEmpty else { sizeWalk = nil; return }
-                let result = await busy("Counting folder sizes…", flag: flag) { flag in
+                // On this Mac most walks take a moment: Space down a list would flash the message on every folder.
+                let result = await busy("Counting folder sizes…", after: r == nil ? 0.4 : 0, flag: flag) { flag in
                     func each(_ measure: (String) throws -> Int64) rethrows { for name in names { found(name, try measure(name)) } }
                     guard let r else {
                         return try each {

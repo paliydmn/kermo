@@ -51,3 +51,23 @@ private func tempDir() -> String {
     await waitUntil { names().contains("b.txt") }
     #expect(names() == folders + ["a.txt", "b.txt"])
 }
+
+/// A walk on this Mac that takes a moment doesn't flash "Counting folder sizes…": the message waits 0.4 s (⎋ doesn't).
+@MainActor @Test func busyMessageCanWait() async {
+    let d = tempDir()   // its own: the shared temp folder changes all the time, and each reload says "Loading…"
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    FileManager.default.createFile(atPath: d + "/f", contents: nil)
+    let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    await waitUntil { (0..<panel.table.numberOfRows).contains { panel.item(at: $0)?.name == "f" } }   // listed: no "Loading…" to come
+    let started = Date(), gate = DispatchSemaphore(value: 0), running = CancelFlag()
+    let walk = Task { await panel.busy("Slow", after: 0.4) { _ in running.cancel(); gate.wait() } }
+    await waitUntil { running.isCancelled }
+    if Date().timeIntervalSince(started) < 0.3 { #expect(panel.busyMessage == nil, "not yet") }
+    await waitUntil { panel.busyMessage != nil }
+    #expect(panel.busyMessage == "Slow ⎋ cancels")
+    gate.signal()
+    _ = await walk.value
+    #expect(panel.busyMessage == nil)
+}
