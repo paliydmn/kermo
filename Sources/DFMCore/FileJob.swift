@@ -223,16 +223,17 @@ public final class FileJob: @unchecked Sendable {
     /// Size (files only: a folder's is 0 in a listing) and mtime against `expected` (`dst`: `expectedTarget`), each
     /// on its own side; a mismatch goes in `errors`.
     func changedSinceCompare(_ fs: TransferFS, _ src: String, _ dfs: TransferFS? = nil, _ dst: String? = nil) -> Bool {
-        for (fs, path, saw) in [(fs, src, expected)] + (dst.map { [(dfs ?? fs, $0, expectedTarget)] } ?? []) {
-            guard let want = saw[path] else { continue }
-            let a = (try? fs.lstat(path)) ?? nil
-            if a?.mtime != want?.mtime || a.map({ $0.kind == .dir }) != want.map({ $0.kind == .dir })
-                || want?.kind == .file && a?.size != want?.size {
-                update { $0.errors.append("\(path): changed since Compare, skipped") }
-                return true
-            }
-        }
-        return false
+        changed(src, expected, (try? fs.lstat(src)) ?? nil) || dst.map { changed($0, expectedTarget, (try? (dfs ?? fs).lstat($0)) ?? nil) } == true
+    }
+
+    /// `path` as it is now (`a`, nil: nothing there; looked at only if Compare saw it) against what Compare saw there.
+    func changed(_ path: String, _ saw: [String: FileItem?], _ a: @autoclosure () -> SFTPClient.Attrs?) -> Bool {
+        guard let want = saw[path] else { return false }
+        let a = a()
+        guard a?.mtime != want?.mtime || a.map({ $0.kind == .dir }) != want.map({ $0.kind == .dir })
+            || want?.kind == .file && a?.size != want?.size else { return false }
+        update { $0.errors.append("\(path): changed since Compare, skipped") }
+        return true
     }
 
     // MARK: - Copy / move

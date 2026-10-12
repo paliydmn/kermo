@@ -18,6 +18,8 @@ public enum Endpoint: Hashable, Sendable, Codable {
 /// What a cross-endpoint transfer needs from either side. Paths are absolute; nothing follows a symlink.
 protocol TransferFS: AnyObject, Sendable {
     func lstat(_ path: String) throws -> SFTPClient.Attrs?
+    /// Each path's `lstat`, in order; with the requests in flight together on a server.
+    func lstat(_ paths: [String]) -> [Result<SFTPClient.Attrs?, Error>]
     func list(_ dir: String) throws -> [(name: String, attrs: SFTPClient.Attrs)]
     /// Each folder's items, in order; nil for one that couldn't be listed. A server lists them with the requests in
     /// flight together (`SFTPClient.list(_ dirs:)`).
@@ -42,9 +44,15 @@ protocol TransferFS: AnyObject, Sendable {
 }
 
 extension TransferFS {
+    func lstat(_ paths: [String]) -> [Result<SFTPClient.Attrs?, Error>] { paths.map { p in Result { try lstat(p) } } }
     func list(_ dirs: [String]) -> [[(name: String, attrs: SFTPClient.Attrs)]?] { dirs.map { try? list($0) } }
     func remove(_ paths: [String]) -> [(path: String, error: Error)] { paths.compactMap { p in do { try remove(p); return nil } catch { return (p, error) } } }
     func rmdir(_ paths: [String]) -> [(path: String, error: Error)] { paths.compactMap { p in do { try rmdir(p); return nil } catch { return (p, error) } } }
+}
+
+extension Result {
+    /// The value, or nil for an error. (`try? get()` would flatten an optional value: "nothing there" and "failed" alike.)
+    var value: Success? { if case .success(let v) = self { v } else { nil } }
 }
 
 protocol PieceReader {
@@ -93,6 +101,10 @@ final class RemoteFS: TransferFS, @unchecked Sendable {
     func closeWhenQuiet() { lock.withLock { client }?.closeWhenQuiet() }
 
     func lstat(_ path: String) throws -> SFTPClient.Attrs? { try session().lstat(path) }
+    func lstat(_ paths: [String]) -> [Result<SFTPClient.Attrs?, Error>] {
+        guard !paths.isEmpty else { return [] }
+        do { return try session().lstat(paths) } catch { return paths.map { _ in .failure(error) } }
+    }
     func list(_ dir: String) throws -> [(name: String, attrs: SFTPClient.Attrs)] { try session().list(dir) }
     func list(_ dirs: [String]) -> [[(name: String, attrs: SFTPClient.Attrs)]?] {
         guard let c = try? session() else { return dirs.map { _ in nil } }
@@ -261,23 +273,32 @@ extension FileJob {
         }
         update { $0.state = .scanning }
         if let destDir { sweepPartials(dst, destDir) }
-        // Synchronize: each to exactly its pair, and not one that changed since Compare.
-        let work = pairs.isEmpty ? sources.map { ($0, (destDir! as NSString).appendingPathComponent(targetName ?? ($0 as NSString).lastPathComponent)) }
-            : pairs.filter { !isCancelled && !changedSinceCompare(src, $0.src, dst, $0.dst) }
+        var work = pairs.isEmpty ? sources.map { ($0, (destDir! as NSString).appendingPathComponent(targetName ?? ($0 as NSString).lastPathComponent)) } : pairs
+        var seen = work.map { _ in (src: SFTPClient.Attrs?.none, dst: SFTPClient.Attrs??.none) }   // none: not looked at
+        if !pairs.isEmpty {
+            // Synchronize: each to exactly its pair, and not one that changed since Compare. Both sides of every pair
+            // looked at together (a far server: a few round trips for thousands of pairs, not two each), and what's
+            // seen goes on to the scan and the copy. (Pairs are rows of one Compare: none is inside another.)
+            seen = zip(src.lstat(pairs.map(\.src)), dst.lstat(pairs.map(\.dst))).map { ($0.value ?? nil, $1.value) }
+            let ok = pairs.indices.filter { i in
+                !isCancelled && !changed(pairs[i].src, expected, seen[i].src) && !changed(pairs[i].dst, expectedTarget, seen[i].dst ?? nil)
+            }
+            (work, seen) = (ok.map { pairs[$0] }, ok.map { seen[$0] })
+        }
         // A move on one server is a rename: no walk of each tree first (thousands of folders on a far server took
         // minutes before the first rename) or after it; the progress counts items, as a local move does.
         countsItems = kind == .move && sameSide
         var files = 0, bytes: Int64 = 0, depths: [Int] = []
-        for (s, _) in work where !isCancelled {
-            let m = countsItems ? (files: 1, bytes: Int64(0), depth: Int.max) : measure(src, s)
+        for ((s, _), seen) in zip(work, seen) where !isCancelled {
+            let m = countsItems ? (files: 1, bytes: Int64(0), depth: Int.max) : measure(src, s, seen.src)
             files += m.files
             bytes += m.bytes
             depths.append(max(m.depth, 0))
         }
         update { $0.totalFiles = files; $0.totalBytes = bytes; $0.state = .running }
-        for ((s, d), depth) in zip(work, depths) {
+        for (((s, d), seen), depth) in zip(zip(work, seen), depths) {
             guard !isCancelled else { break }
-            transferAcross(src, s, dst, d, move: kind == .move, maxDepth: depth)
+            transferAcross(src, s, dst, d, move: kind == .move, maxDepth: depth, seen: seen)
             if countsItems { update { $0.doneFiles += 1 } }
         }
         finish()
@@ -293,11 +314,16 @@ extension FileJob {
             fs.close()
         }
         update { $0.totalFiles = sources.count; $0.state = .running }
-        for s in sources {
+        // Synchronize's (it knows what Compare saw): every source looked at together, for the check and for what it
+        // is. Its sources are rows of one Compare, none inside another; others are looked at each just before it goes.
+        let looked = expected.isEmpty ? nil : fs.lstat(sources)
+        for (i, s) in sources.enumerated() {
             guard !isCancelled else { break }
             update { $0.current = (s as NSString).lastPathComponent }
-            var a: SFTPClient.Attrs?
-            if !changedSinceCompare(fs, s), attempt(s, { a = try fs.lstat(s) }), let a { removeAcross(fs, s, a) }   // nil: already gone
+            var a = looked?[i].value   // none: not looked at, or that failed — asked the usual way
+            if !changed(s, expected, a ?? nil), a != nil || attempt(s, { a = try fs.lstat(s) }), let a = a ?? nil {
+                removeAcross(fs, s, a)   // nil: already gone
+            }
             update { $0.doneFiles += 1 }
         }
         finish()
@@ -427,14 +453,16 @@ extension FileJob {
 
     /// `root`: the top folder this job copies into (nil: this is the top). `maxDepth`: how deep the source's folders
     /// went before the job wrote anything; `depth`: how deep `src` is in it.
+    /// `seen`: `src` and `dstIn` as just looked at (`dst`'s none: not looked at; some nil: nothing there).
     private func transferAcross(_ sfs: TransferFS, _ src: String, _ dfs: TransferFS, _ dstIn: String, move: Bool,
-                                root: String? = nil, depth: Int = 0, maxDepth: Int) {
+                                root: String? = nil, depth: Int = 0, maxDepth: Int,
+                                seen: (src: SFTPClient.Attrs?, dst: SFTPClient.Attrs??) = (nil, nil)) {
         let top = root == nil
         waitWhilePaused()
         guard !isCancelled else { return }
         var dst = dstIn
-        var found: SFTPClient.Attrs?
-        guard attempt(src, {
+        var found = seen.src
+        guard found != nil || attempt(src, {
             found = try sfs.lstat(src)
             if found == nil { throw JobError(message: "No such file or directory") }
         }), let s = found else { return }
@@ -463,7 +491,8 @@ extension FileJob {
         }
 
         var existing: SFTPClient.Attrs?
-        guard attempt(dst, { existing = try dfs.lstat(dst) }) else { return skip(sfs, src, s) }
+        if dst == dstIn, let d = seen.dst { existing = d }
+        else { guard attempt(dst, { existing = try dfs.lstat(dst) }) else { return skip(sfs, src, s) } }
         // Two connections no comparison tells apart (another alias of the server, this Mac and localhost) can still
         // name one file: replacing it with its own copy and then deleting the source would lose it. Same for a
         // link copied over itself (the old one is cleared first). A same-server move is a rename: safe. And a folder

@@ -193,3 +193,39 @@ private func makeLevels(_ root: String) throws {
     // The server's side: the top: open, read, end, close; each level of 70: 2 batches of those 4. One at a time: 844.
     #expect(c.roundTrips - before == 4 + 3 * 8, "\(c.roundTrips - before)")
 }
+
+/// Synchronize looked at each side of each pair on its own (then the scan and the copy looked again): ~5 round
+/// trips a pair before its first byte. Every pair's two sides together now, what's seen used on.
+@Test func syncLooksAtEveryPairTogether() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let fm = FileManager.default, (l, r) = (d + "/L", d + "/R")
+    func write(_ p: String, _ s: String, _ t: Double) throws {
+        try fm.createDirectory(atPath: (p as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        try Data(s.utf8).write(to: URL(fileURLWithPath: p))
+        try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: t)], ofItemAtPath: p)
+    }
+    for i in 0..<70 { try write(l + "/f\(i)", "new", 2_000_000); try write(r + "/f\(i)", "old", 1_000_000) }
+
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    let before = c.roundTrips
+    let looked = c.lstat((0..<70).map { r + "/f\($0)" } + [r + "/missing"])
+    #expect(c.roundTrips - before == 2, "64, then 7 more")
+    #expect(looked.count == 71 && looked[0].value??.size == 3 && looked[70].value! == nil)
+
+    let server = Endpoint.sftp(.local())
+    let (a, b) = (DirSync.lister(.local), DirSync.lister(server))
+    let plan = DirSync.compare(left: l, right: r, list: a.list, listRight: b.list, tolerance: 1)
+    a.close(); b.close()
+    // After Compare: a source edited, a target edited, a target gone. Those three stay as they are.
+    try write(l + "/f1", "edited", 3_000_000); try write(r + "/f2", "edited", 3_000_000); try fm.removeItem(atPath: r + "/f3")
+    let jobs = DirSync.jobs(plan, left: l, right: r, sides: (.local, server))
+    try #require(jobs.count == 1)
+    let job = jobs[0].job
+    job.run()
+    #expect(Set(job.progress.errors) == Set([l + "/f1", r + "/f2", r + "/f3"].map { $0 + ": changed since Compare, skipped" }))
+    #expect(job.progress.state == .done && job.progress.totalFiles == 67 && job.progress.doneFiles == 67)
+    func read(_ p: String) -> String? { fm.contents(atPath: p).map { String(decoding: $0, as: UTF8.self) } }
+    #expect(read(r + "/f0") == "new" && read(r + "/f69") == "new" && read(r + "/f1") == "old" && read(r + "/f2") == "edited" && read(r + "/f3") == nil)
+}

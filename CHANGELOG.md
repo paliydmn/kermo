@@ -19,6 +19,7 @@ Release:
 - **Speed:** "Scanning…" before a copy or move from a server reads the tree a level at a time, up to 64 folders together, instead of one folder after another: thousands of folders on a distant server take seconds, not minutes. A folder skipped in a conflict isn't read a second time.
 - **Speed:** deleting a folder on a server (F8) goes a level at a time: up to 64 folders listed together, their files deleted together, then the empty folders, deepest first. A file that can't be deleted is still asked about on its own (Retry, Skip, Abort), and the folders above it stay without an error each.
 - **Speed:** comparing folders with a server (Compare, Synchronize Folders) reads both sides at once, a level at a time with up to 64 folders together, instead of one folder after another, one side after the other.
+- **Speed:** synchronizing with a server checks every item against what Compare saw in one go, up to 64 requests together, and reuses what it saw for the scan and the copy, instead of several requests per item before the first byte.
 
 ### Fixed
 

@@ -138,6 +138,18 @@ public final class SFTPClient: @unchecked Sendable {
         do { return try attrs(Self.LSTAT, path) } catch let e as SFTPError where e.code == Self.NO_SUCH_FILE { return nil }
     }
 
+    /// `lstat` of each path, with the requests in flight together (`window` at a time), in the paths' order.
+    public func lstat(_ paths: [String]) -> [Result<Attrs?, Error>] {
+        each(Self.LSTAT, paths) { t, body, path in
+            if t == Self.STATUS {
+                do { try status(body, path: path, okOnly: true) } catch let e as SFTPError where e.code == Self.NO_SUCH_FILE { return nil }
+            }
+            guard t == Self.ATTRS else { throw protocolError("STAT answered \(t)") }
+            var r = Reader(body)
+            return try r.attrs()
+        }
+    }
+
     /// Names with their attributes ("." and ".." left out). Names are as the server sent them: untrusted.
     /// `owners` hears each name's owner and group as the server's `ls -l` line names them (else their numbers).
     public func list(_ dir: String, owners: ((_ name: String, _ owner: String, _ group: String) -> Void)? = nil) throws -> [(name: String, attrs: Attrs)] {
