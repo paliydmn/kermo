@@ -81,6 +81,8 @@ public final class FileJob: @unchecked Sendable {
     /// The same across a server (SFTP has no inodes): each path this job wrote, compared as a case- and
     /// normalization-insensitive volume would. On a case-sensitive server that may ask once too often, never too little.
     var createdAcross = Set<String>()
+    /// Each folder's files and bytes as `measure` counted them: what Skip adds to the progress, without a second walk.
+    var measured: [String: (files: Int, bytes: Int64)] = [:]
     static func foldedPath(_ p: String) -> String { p.precomposedStringWithCanonicalMapping.lowercased() }
     /// Fired by `cancel()`: a transfer over SFTP drops its connections, so a stalled server can't hold it up.
     let cancelFlag = CancelFlag()

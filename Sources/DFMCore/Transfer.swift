@@ -345,6 +345,7 @@ extension FileJob {
             dirs[dirs[i].parent].files += dirs[i].files
             dirs[dirs[i].parent].bytes += dirs[i].bytes
         }
+        for d in dirs { measured[d.path] = (d.files, d.bytes) }
         return (dirs[0].files, dirs[0].bytes, depth)
     }
 
@@ -380,7 +381,7 @@ extension FileJob {
 
     private func skip(_ fs: TransferFS, _ path: String, _ a: SFTPClient.Attrs) {
         guard !countsItems else { return }
-        let (f, b, _) = measure(fs, path, a)
+        let (f, b) = measured[path] ?? { let m = measure(fs, path, a); return (m.files, m.bytes) }()   // a file: no walk
         update { $0.doneFiles += f; $0.doneBytes += b }
     }
 

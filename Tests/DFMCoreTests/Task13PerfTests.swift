@@ -109,8 +109,27 @@ private func makeLevels(_ root: String) throws {
     let fs = RemoteFS(.local(), env: [:])
     defer { fs.close() }
     let c = try fs.session(), before = c.roundTrips
-    let m = FileJob(.copy, sources: []).measure(fs, d + "/t")
+    let job = FileJob(.copy, sources: [])
+    let m = job.measure(fs, d + "/t")
     #expect(m.files == 210 && m.bytes == 210 && m.depth == 3)
     // lstat; the top: open, read, end, close; each level of 70: 2 batches of the same 4. One at a time: 845.
     #expect(c.roundTrips - before == 1 + 4 + 3 * 8, "\(c.roundTrips - before)")
+    // Each folder's totals, for Skip.
+    #expect(job.measured[d + "/t"]! == (210, 210) && job.measured[d + "/t/5"]! == (3, 3) && job.measured[d + "/t/5/a/b"]! == (1, 1))
+}
+
+/// Skip on a folder (a conflict) walked it again to count it done; now it adds what "Scanning…" counted.
+@Test func skippedFolderCountsWhatScanningCounted() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    try makeLevels(d + "/src/t")
+    try FileManager.default.createDirectory(atPath: d + "/dst/t", withIntermediateDirectories: true)
+    try Data("in the way".utf8).write(to: URL(fileURLWithPath: d + "/dst/t/5"))   // a file where folder 5 goes
+    let job = FileJob(.copy, sources: [d + "/src/t"], from: .sftp(.local()), to: .local, destDir: d + "/dst")
+    job.resolveConflict = { c in (c.bothDirs ? .overwrite : .skip, false) }
+    job.run()
+    let p = job.progress
+    #expect(p.state == .done && p.errors.isEmpty, "\(p.errors)")
+    #expect(p.totalFiles == 210 && p.doneFiles == 210 && p.doneBytes == 210)
+    #expect(FileManager.default.fileExists(atPath: d + "/dst/t/6/a/b/f") && !FileManager.default.fileExists(atPath: d + "/dst/t/5/f"))
 }
