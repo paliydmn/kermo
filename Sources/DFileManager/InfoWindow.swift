@@ -298,7 +298,9 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
                 guard let h = FileHandle(forReadingAtPath: path) else { return "can't read (\(String(cString: strerror(errno))))" }
                 defer { try? h.close() }
                 let (update, finish) = make()
-                while let chunk = try? h.read(upToCount: 1 << 20), !chunk.isEmpty { update(chunk) }
+                do {   // a read that fails (a disk error, a share gone) says so: a hash of what came before would pass for the file's
+                    while let chunk = try h.read(upToCount: 1 << 20), !chunk.isEmpty { update(chunk) }
+                } catch { return "can't read (\(error.localizedDescription))" }
                 return finish()
             }
             guard let self else { return }

@@ -13,6 +13,10 @@ Release:
 
 ## [Unreleased]
 
+### Fixed
+
+- **Info:** a checksum of a file that fails to read part-way shows the read error instead of a hash of the part that was read.
+
 ## [1.0] - 2026-10-10
 
 The first public release. Kermo was previously called DFileManager; settings and permissions carry over.
