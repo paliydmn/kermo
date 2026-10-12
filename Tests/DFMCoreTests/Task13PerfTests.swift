@@ -89,3 +89,28 @@ private func tempDir() -> String {
     #expect(rows.filter(\.linkDir).map(\.name) == ["etc"], "only a link is a link to a folder")
     #expect(listed.keepingLinkDirs([]).filter(\.linkDir).isEmpty)
 }
+
+/// 70 folders (more than `window`) on each of 3 levels below `root`, a 1-byte file in each.
+private func makeLevels(_ root: String) throws {
+    for i in 0..<70 {
+        for sub in ["", "/a", "/a/b"] {
+            try FileManager.default.createDirectory(atPath: root + "/\(i)" + sub, withIntermediateDirectories: true)
+            try Data([1]).write(to: URL(fileURLWithPath: root + "/\(i)" + sub + "/f"))
+        }
+    }
+}
+
+/// "Scanning…" before a copy from a server (and F8, Skip) walked the tree one folder at a time: 4 round trips a
+/// folder. Level by level now, `window` folders together: the round trips grow with the depth, not the folders.
+@Test func measureWalksAServerLevelByLevel() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    try makeLevels(d + "/t")
+    let fs = RemoteFS(.local(), env: [:])
+    defer { fs.close() }
+    let c = try fs.session(), before = c.roundTrips
+    let m = FileJob(.copy, sources: []).measure(fs, d + "/t")
+    #expect(m.files == 210 && m.bytes == 210 && m.depth == 3)
+    // lstat; the top: open, read, end, close; each level of 70: 2 batches of the same 4. One at a time: 845.
+    #expect(c.roundTrips - before == 1 + 4 + 3 * 8, "\(c.roundTrips - before)")
+}

@@ -19,6 +19,9 @@ public enum Endpoint: Hashable, Sendable, Codable {
 protocol TransferFS: AnyObject, Sendable {
     func lstat(_ path: String) throws -> SFTPClient.Attrs?
     func list(_ dir: String) throws -> [(name: String, attrs: SFTPClient.Attrs)]
+    /// Each folder's items, in order; nil for one that couldn't be listed. A server lists them with the requests in
+    /// flight together (`SFTPClient.list(_ dirs:)`).
+    func list(_ dirs: [String]) -> [[(name: String, attrs: SFTPClient.Attrs)]?]
     func mkdir(_ path: String) throws
     func remove(_ path: String) throws
     func rmdir(_ path: String) throws
@@ -32,6 +35,10 @@ protocol TransferFS: AnyObject, Sendable {
     func writer(_ path: String, offset: Int64) throws -> PieceWriter
     /// Drops the connection (cancel); the next call connects again, unless the job was cancelled.
     func close()
+}
+
+extension TransferFS {
+    func list(_ dirs: [String]) -> [[(name: String, attrs: SFTPClient.Attrs)]?] { dirs.map { try? list($0) } }
 }
 
 protocol PieceReader {
@@ -81,6 +88,11 @@ final class RemoteFS: TransferFS, @unchecked Sendable {
 
     func lstat(_ path: String) throws -> SFTPClient.Attrs? { try session().lstat(path) }
     func list(_ dir: String) throws -> [(name: String, attrs: SFTPClient.Attrs)] { try session().list(dir) }
+    func list(_ dirs: [String]) -> [[(name: String, attrs: SFTPClient.Attrs)]?] {
+        guard let c = try? session() else { return dirs.map { _ in nil } }
+        var listed = c.list(dirs)[...]   // in order, without the ones that failed
+        return dirs.map { d in listed.first?.dir == d ? listed.popFirst()!.items : nil }
+    }
     // Owner-only while it fills (a read-only source folder mustn't block its own copy); real mode set afterwards.
     func mkdir(_ path: String) throws { try session().mkdir(path, mode: 0o700) }
     func remove(_ path: String) throws { try session().remove(path) }
@@ -301,23 +313,39 @@ extension FileJob {
     }
 
     /// Files and bytes below `path` (what the progress bar counts), and how deep its folders go (-1: not a folder).
-    /// Unreadable parts count as nothing.
-    // ponytail: on a server this walks the tree one folder at a time before the first byte moves — thousands of
-    // folders on a far server mean a long "Scanning…". Count as we go (or pipeline the OPENDIRs) if that bites.
+    /// Unreadable parts count as nothing. Level by level, `SFTPClient.window` folders listed together: a far server's
+    /// round trips add up per level, not per folder (thousands of folders were minutes of "Scanning…").
     func measure(_ fs: TransferFS, _ path: String, _ known: SFTPClient.Attrs? = nil) -> (files: Int, bytes: Int64, depth: Int) {
         // A listing without a mode (SFTP v3 allows it) or an entry the lister couldn't type: ask lstat, like the copy
         // will, so the depth below matches what transferAcross sees.
-        let listed = known?.mode == nil || known?.kind == .other ? nil : known
-        guard let a = listed ?? (try? fs.lstat(path)) ?? nil else { return (0, 0, -1) }
-        guard a.kind == .dir else { return (1, a.size, -1) }
-        var files = 0, bytes: Int64 = 0, depth = 0
-        for child in (try? fs.list(path)) ?? [] where !isCancelled && Self.isSafeName(child.name) {
-            let m = measure(fs, (path as NSString).appendingPathComponent(child.name), child.attrs)
-            files += m.files
-            bytes += m.bytes
-            depth = max(depth, m.depth + 1)   // -1 for anything but a folder
+        func attrs(_ path: String, _ known: SFTPClient.Attrs?) -> SFTPClient.Attrs? {
+            known?.mode == nil || known?.kind == .other ? (try? fs.lstat(path)) ?? nil : known
         }
-        return (files, bytes, depth)
+        guard let a = attrs(path, known) else { return (0, 0, -1) }
+        guard a.kind == .dir else { return (1, a.size, -1) }
+        // Each folder with its parent: its own files first, what's below it added once all is listed.
+        var dirs = [(path: path, parent: -1, files: 0, bytes: Int64(0))], level = 0..<1, depth = -1
+        walk: while !level.isEmpty {
+            depth += 1
+            let next = dirs.count
+            for start in stride(from: level.lowerBound, to: level.upperBound, by: SFTPClient.window) {
+                guard !isCancelled else { break walk }
+                let batch = start..<min(start + SFTPClient.window, level.upperBound)
+                for (i, items) in zip(batch, fs.list(batch.map { dirs[$0].path })) {
+                    for child in items ?? [] where Self.isSafeName(child.name) {
+                        let p = (dirs[i].path as NSString).appendingPathComponent(child.name)
+                        guard let a = attrs(p, child.attrs) else { continue }
+                        if a.kind == .dir { dirs.append((p, i, 0, 0)) } else { dirs[i].files += 1; dirs[i].bytes += a.size }
+                    }
+                }
+            }
+            level = next..<dirs.count
+        }
+        for i in dirs.indices.dropFirst().reversed() {   // deepest first: a folder's own totals are whole by then
+            dirs[dirs[i].parent].files += dirs[i].files
+            dirs[dirs[i].parent].bytes += dirs[i].bytes
+        }
+        return (dirs[0].files, dirs[0].bytes, depth)
     }
 
     /// Partial copies another job left in `dir` (a disk pulled out mid-copy, the app quit): gone once over a day old —
