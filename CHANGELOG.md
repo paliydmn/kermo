@@ -15,7 +15,7 @@ Release:
 
 ### Changed
 
-- **Speed:** undo and redo of a move, undo of a copy and batch rename do their disk work in the background: thousands of items on a network share no longer freeze the window.
+- **Speed:** undo and redo of a move, undo of a copy and batch rename do their disk work in the background: thousands of items on a network share no longer freeze the window. So do rename, Go to Link Target, diff, compress, `fm` and Info's chmod, chown and flags: a share that stopped answering doesn't hang the app.
 
 ### Fixed
 

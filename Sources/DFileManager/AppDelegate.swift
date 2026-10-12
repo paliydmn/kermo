@@ -142,14 +142,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// First path in the active panel, second in the other one; a file opens its folder with the cursor on it.
     /// The main window comes forward with them, also when a viewer kept the app alive after it was closed.
     private func show(_ urls: [URL]) {
-        for (url, panel) in zip(urls.filter(\.isFileURL).map(\.standardizedFileURL), [active, other]) {
-            var isDir: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
-            if isDir.boolValue { panel.navigate(to: url.path) }
-            else { panel.navigate(to: url.deletingLastPathComponent().path, select: url.lastPathComponent) }
-        }
+        let places = Array(zip(urls.filter(\.isFileURL).map(\.standardizedFileURL), [active, other]))
         pendingOpen = []
         showMainWindow(nil)
+        Task {
+            // Off the main thread: a path on a share that doesn't answer.
+            let kinds = await Blocking.run(.userInitiated) { () -> [Bool?] in   // folder or not; nil: nothing there
+                places.map { url, _ in
+                    var isDir: ObjCBool = false
+                    return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) ? isDir.boolValue : nil
+                }
+            }
+            for ((url, panel), isDir) in zip(places, kinds) {
+                guard let isDir else { continue }
+                if isDir { panel.navigate(to: url.path) }
+                else { panel.navigate(to: url.deletingLastPathComponent().path, select: url.lastPathComponent) }
+            }
+        }
     }
 
     /// Window ▸ Main Window (⌘0) and `fm`: back to the panels from a viewer or editor, or after closing them.

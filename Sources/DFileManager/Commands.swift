@@ -1315,7 +1315,8 @@ extension AppDelegate {
                                            info: "Format from the extension: .zip .tar.gz .tgz .tar.bz2 .tar.xz .7z")
             else { return }
             let archive = resolve(input)
-            guard !FileManager.default.fileExists(atPath: archive) else { return showError(JobErrorMessage("“\(input)” already exists.")) }
+            let taken = await Blocking.run(.userInitiated) { FileManager.default.fileExists(atPath: archive) }   // a share that doesn't answer
+            guard !taken else { return showError(JobErrorMessage("“\(input)” already exists.")) }
             let args = ArchiveIndex.createArguments(archive, names: srcs.map(\.lastPathComponent), in: active.path)
             Shell.run("COPYFILE_DISABLE=1 /usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: active.path) { _ in self.panels.forEach { $0.reload() } }
             active.unmarkAll()
@@ -1386,11 +1387,16 @@ extension AppDelegate {
     }
 
     func goToLinkTarget() {
-        guard let url = active.cursorURL, let dest = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)
-        else { return NSSound.beep() }
-        let abs = dest.hasPrefix("/") ? dest : (url.deletingLastPathComponent().path as NSString).appendingPathComponent(dest)
-        let target = (abs as NSString).standardizingPath
-        active.navigate(to: (target as NSString).deletingLastPathComponent, select: (target as NSString).lastPathComponent)
+        guard let url = active.cursorURL else { return NSSound.beep() }
+        let panel = active
+        Task {
+            // Off the main thread: a link on a share that doesn't answer.
+            guard let dest = await Blocking.run(.userInitiated, { try? FileManager.default.destinationOfSymbolicLink(atPath: url.path) })
+            else { return NSSound.beep() }
+            let abs = dest.hasPrefix("/") ? dest : (url.deletingLastPathComponent().path as NSString).appendingPathComponent(dest)
+            let target = (abs as NSString).standardizingPath
+            panel.navigate(to: (target as NSString).deletingLastPathComponent, select: (target as NSString).lastPathComponent)
+        }
     }
 
     func showVolumes() {
@@ -1469,21 +1475,24 @@ extension AppDelegate {
     /// Uses `defaults write com.dmn.dfilemanager diffCommand 'code --diff %1 %2'` if set, else `diff -u`.
     func diffFiles() {
         let files = active.targetURLs.filter { !$0.hasDirectoryPath }
-        var pair: (URL, URL)?
-        if files.count == 2 {
-            pair = (files[0], files[1])
-        } else if let a = active.cursorURL, !a.hasDirectoryPath {
-            // The other panel's folder only when that's what it shows: not the local one behind a server tab.
-            let same = other.plainFolder.map { URL(fileURLWithPath: $0).appendingPathComponent(a.lastPathComponent) }
-            if let same, FileManager.default.fileExists(atPath: same.path) { pair = (a, same) }
-            else if let b = other.cursorURL, !b.hasDirectoryPath { pair = (a, b) }
-        }
-        guard let (a, b) = pair else { return active.flash("Mark two files, or put the cursor on a file in each panel") }
-        let qa = ShellContext.quote(a.path), qb = ShellContext.quote(b.path)
-        if let tool = defaults.string(forKey: "diffCommand") {
-            Shell.spawn(Self.fillDiff(tool, qa, qb), in: active.path)
-        } else {
-            Shell.run("diff -u \(qa) \(qb)", in: active.path, diff: true)
+        let (panel, cursor, otherCursor, otherFolder) = (active, active.cursorURL, other.cursorURL, other.plainFolder)
+        Task {
+            var pair: (URL, URL)?
+            if files.count == 2 {
+                pair = (files[0], files[1])
+            } else if let a = cursor, !a.hasDirectoryPath {
+                // The other panel's folder only when that's what it shows: not the local one behind a server tab.
+                let same = otherFolder.map { URL(fileURLWithPath: $0).appendingPathComponent(a.lastPathComponent) }
+                if let same, await Blocking.run(.userInitiated, { FileManager.default.fileExists(atPath: same.path) }) { pair = (a, same) }   // a share that doesn't answer
+                else if let b = otherCursor, !b.hasDirectoryPath { pair = (a, b) }
+            }
+            guard let (a, b) = pair else { return panel.flash("Mark two files, or put the cursor on a file in each panel") }
+            let qa = ShellContext.quote(a.path), qb = ShellContext.quote(b.path)
+            if let tool = defaults.string(forKey: "diffCommand") {
+                Shell.spawn(Self.fillDiff(tool, qa, qb), in: panel.path)
+            } else {
+                Shell.run("diff -u \(qa) \(qb)", in: panel.path, diff: true)
+            }
         }
     }
 
@@ -1774,14 +1783,13 @@ extension AppDelegate {
                   name != old else { return }
             guard !name.contains("/") else { return showError(JobErrorMessage("A name can't contain “/”")) }
             let dst = url.deletingLastPathComponent().appendingPathComponent(name).path
-            // Allow case-only renames (same inode on a case-insensitive volume).
-            var a = stat(), b = stat()
-            if lstat(dst, &b) == 0, lstat(url.path, &a) == 0, a.st_ino != b.st_ino {
-                return showError(JobErrorMessage("“\(name)” already exists."))
+            let failure = await Blocking.run(.userInitiated) { () -> Error? in   // off the main thread: a share that doesn't answer
+                // Allow case-only renames (same inode on a case-insensitive volume).
+                var a = stat(), b = stat()
+                if lstat(dst, &b) == 0, lstat(url.path, &a) == 0, a.st_ino != b.st_ino { return JobErrorMessage("“\(name)” already exists.") }
+                return rename(url.path, dst) == 0 ? nil : POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
             }
-            if rename(url.path, dst) != 0 {
-                return showError(POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
-            }
+            if let failure { return showError(failure) }
             registerMoves("Rename", [(from: url.path, to: dst)])
             forgetGone([url.path])   // not after a case-only rename
             active.reload(select: name)
