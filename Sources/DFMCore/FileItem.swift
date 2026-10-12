@@ -71,7 +71,7 @@ public enum Perms {
         return trio(0o700, 0o4000, "s") + trio(0o070, 0o2000, "s") + trio(0o007, 0o1000, "t")
     }
 
-    /// "644 dmn:staff" → the mode (3–4 octal digits first) and the rest as the owner spec — `user`, `user:group` or
+    /// "644 me:staff" → the mode (3–4 octal digits first) and the rest as the owner spec — `user`, `user:group` or
     /// `:group`, spaces and all ("domain users"); either one left out.
     public static func parse(_ text: String) -> (mode: UInt32?, owner: String) {
         let t = text.trimmingCharacters(in: .whitespaces), first = t.prefix { !$0.isWhitespace }

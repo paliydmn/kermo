@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import DFMCore
 
-// Task 9 §6 (tasks/task9_qa_followup/README.md), misc: R2b, R25b.
+// Task 9 §6, misc: R2b, R25b.
 
 /// R2b: hex offsets past 4 GB (the tail of a big server log starts there) aren't cut to 32 bits.
 @Test func hexDumpOffsetsAreNotCutAt32Bits() {

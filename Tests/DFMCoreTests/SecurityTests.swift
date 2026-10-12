@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import DFMCore
 
-// Task 3 security findings (tasks/task_3_qa_and_security/README.md). Each `withKnownIssue` pins an open
+// Task 3 security findings. Each `withKnownIssue` pins an open
 // finding: the test states the secure behaviour, and starts failing loudly once the fix lands.
 
 private func sandbox() -> String {

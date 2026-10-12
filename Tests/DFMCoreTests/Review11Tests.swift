@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import DFMCore
 
-// Task 11 review (tasks/task_11_review_v3/README.md).
+// Task 11 review.
 
 private func tempDir() -> String {
     let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-r11-" + UUID().uuidString

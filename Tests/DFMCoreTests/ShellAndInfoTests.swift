@@ -134,7 +134,7 @@ import Testing
     p.waitUntilExit()
     #expect(p.terminationStatus == 0)
     let acl = try #require(FileInfo.acl(path))
-    // acl_to_text form: "user:<GUID>:dmn:501:allow:read,delete"
+    // acl_to_text form: "user:<GUID>:me:501:allow:read,delete"
     #expect(acl.hasPrefix("user:") && acl.contains(":\(NSUserName()):\(getuid()):allow:") && acl.hasSuffix("read,delete"))
     #expect(!acl.contains("!#acl"))
 }
