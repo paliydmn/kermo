@@ -149,9 +149,9 @@ private func randomData(_ n: Int) -> Data {
     for i in 0..<250 { try Data([1, 2]).write(to: URL(fileURLWithPath: d + "/many/0/g\(i)")) }
     let before = c.roundTrips
     #expect(try c.measure(d + "/many") == 70 + 500)
-    // lstat; the top folder: open, read, end, close; the 70 in 2 batches of 4 waves, + 2 for the one with 250 files
+    // lstat; the top folder: open, read, end (closes aren't waited for); the 70 in 2 batches of 3 waves, + 2 for the one with 250 files
     // (sftp-server sends 100 names an answer). One by one: over 200.
-    #expect(c.roundTrips - before == 15, "\(c.roundTrips - before)")
+    #expect(c.roundTrips - before == 12, "\(c.roundTrips - before)")
     #expect(try c.measure(d) == 3 + 4 + 4 + 70 + 500)
 
     let flag = CancelFlag()

@@ -31,15 +31,15 @@ private func tempDir() -> String {
         while try r.read() != nil {}
         r.close()
     }
-    #expect(try trips { try readAll(d + "/small", 2048) } == 3, "open, read with the end of file, close")
-    #expect(try trips { try readAll(d + "/big", Int64(128 * SFTPClient.chunk)) } == 5, "open, 2 waves of 64 reads, end of file, close")
+    #expect(try trips { try readAll(d + "/small", 2048) } == 2, "open, read with the end of file (the close isn't waited for)")
+    #expect(try trips { try readAll(d + "/big", Int64(128 * SFTPClient.chunk)) } == 4, "open, 2 waves of 64 reads, end of file")
     #expect(try trips {
         let w = try c.openWrite(d + "/out")
         try w.write(Data(repeating: 3, count: 128 * SFTPClient.chunk))
         try w.finish()
     } == 4, "open, 2 waves of 64 writes, close")
     var listed = 0
-    #expect(trips { listed = c.list((0..<3).map { d + "/dirs/\($0)" }).count } == 4, "open, read, end of file, close: each for all 3 at once")
+    #expect(trips { listed = c.list((0..<3).map { d + "/dirs/\($0)" }).count } == 3, "open, read, end of file: each for all 3 at once")
     #expect(listed == 3)
 }
 
@@ -142,8 +142,8 @@ private func makeLevels(_ root: String) throws {
     let job = FileJob(.copy, sources: [])
     let m = job.measure(fs, d + "/t")
     #expect(m.files == 210 && m.bytes == 210 && m.depth == 3)
-    // lstat; the top: open, read, end, close; each level of 70: 2 batches of the same 4. One at a time: 845.
-    #expect(c.roundTrips - before == 1 + 4 + 3 * 8, "\(c.roundTrips - before)")
+    // lstat; the top: open, read, end (closes aren't waited for); each level of 70: 2 batches of the same 3. One at a time: 845.
+    #expect(c.roundTrips - before == 1 + 3 + 3 * 6, "\(c.roundTrips - before)")
     // Each folder's totals, for Skip.
     #expect(job.measured[d + "/t"]! == (210, 210) && job.measured[d + "/t/5"]! == (3, 3) && job.measured[d + "/t/5/a/b"]! == (1, 1))
 }
@@ -179,9 +179,10 @@ private func makeLevels(_ root: String) throws {
     job.removeAcross(fs, [(d + "/t", a)])
     #expect(job.progress.errors.isEmpty, "\(job.progress.errors)")
     #expect(!FileManager.default.fileExists(atPath: d + "/t"))
-    // The top: open, read, end, close; each level of 70: 2 batches of those 4 and 1 for the files; the folders: 2 + 2 + 2 + 1.
+    // The top: open, read, end (closes aren't waited for); each level of 70: 2 batches of those 3 and 1 for the files; the
+    // folders: 2 + 2 + 2 + 1.
     // One at a time: 1265.
-    #expect(c.roundTrips - before == 4 + 3 * 10 + 7, "\(c.roundTrips - before)")
+    #expect(c.roundTrips - before == 3 + 3 * 8 + 7, "\(c.roundTrips - before)")
 }
 
 /// F8 of many items (or a Mirror's deletions) on a server looked at and deleted each on its own: a file 2 round
@@ -203,9 +204,9 @@ private func makeLevels(_ root: String) throws {
     let p = job.progress
     #expect(p.state == .done && p.errors.isEmpty && p.doneFiles == 141 && p.totalFiles == 141, "\(p.errors)")
     #expect(try FileManager.default.contentsOfDirectory(atPath: d).isEmpty)
-    // 141 looks: 3; the files: 64 + 6; the folders: 2 batches of open, read, end, close and their files; their RMDIRs: 2.
+    // 141 looks: 3; the files: 64 + 6; the folders: 2 batches of open, read, end and their files; their RMDIRs: 2.
     // One at a time: 631.
-    #expect(c.roundTrips - before == 3 + 2 + 10 + 2, "\(c.roundTrips - before)")
+    #expect(c.roundTrips - before == 3 + 2 + 8 + 2, "\(c.roundTrips - before)")
 }
 
 /// A file that can't go is asked about alone (Retry / Skip), and the folders above it stay without a "not empty"
@@ -244,8 +245,9 @@ private func makeLevels(_ root: String) throws {
     let plan = DirSync.compare(left: d + "/L", right: d + "/R", listRight: DirSync.lister(fs), tolerance: 1)
     #expect(plan.count == 211 && plan.filter { $0.action != .equal }.map(\.path) == ["33/a/b/new"])
     #expect(plan.prefix(4).map(\.path) == ["0/a/b/f", "0/a/f", "0/f", "1/a/b/f"], "as a walk into each folder in turn")
-    // The server's side: the top: open, read, end, close; each level of 70: 2 batches of those 4. One at a time: 844.
-    #expect(c.roundTrips - before == 4 + 3 * 8, "\(c.roundTrips - before)")
+    // The server's side: the top: open, read, end (closes aren't waited for); each level of 70: 2 batches of those 3.
+    // One at a time: 844.
+    #expect(c.roundTrips - before == 3 + 3 * 6, "\(c.roundTrips - before)")
 }
 
 /// Synchronize looked at each side of each pair on its own (then the scan and the copy looked again): ~5 round

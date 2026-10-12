@@ -154,7 +154,7 @@ public final class SFTPClient: @unchecked Sendable {
     /// `owners` hears each name's owner and group as the server's `ls -l` line names them (else their numbers).
     public func list(_ dir: String, owners: ((_ name: String, _ owner: String, _ group: String) -> Void)? = nil) throws -> [(name: String, attrs: Attrs)] {
         let handle = try open(dir: dir)
-        defer { try? closeHandle(handle) }
+        defer { closeUnheard(handle) }
         var out: [(name: String, attrs: Attrs)] = []
         while true {
             var p = Packet(Self.READDIR)
@@ -216,12 +216,7 @@ public final class SFTPClient: @unchecked Sendable {
                     return i
                 }
             }
-            let closing = open.compactMap { o -> UInt32? in
-                var p = Packet(Self.CLOSE)
-                p.string(o.handle)
-                return try? send(p)
-            }
-            closing.forEach { _ = try? wait($0) }
+            open.forEach { closeUnheard($0.handle) }
             out += open.filter(\.ok).map { ($0.dir, $0.items) }
         }
         return out
@@ -472,7 +467,7 @@ public final class SFTPClient: @unchecked Sendable {
 
         public func close() {
             abandon()
-            try? c.closeHandle(handle)
+            c.closeUnheard(handle)
         }
 
         private func abandon() {
@@ -575,7 +570,7 @@ public final class SFTPClient: @unchecked Sendable {
     /// Copies `length` bytes (0 = to the end) of `from` at `offset` into `to` at the same offset.
     public func copyData(_ from: String, to: String, offset: Int64, length: Int64) throws {
         let rh = try open(from, Self.FXF_READ)
-        defer { try? closeHandle(rh) }
+        defer { closeUnheard(rh) }
         let wh = try open(to, Self.FXF_WRITE | Self.FXF_CREAT | (offset > 0 ? 0 : Self.FXF_TRUNC), mode: 0o600)   // new: owner-only, as openWrite
         defer { try? closeHandle(wh) }
         var p = Packet(Self.EXTENDED)
@@ -609,6 +604,14 @@ public final class SFTPClient: @unchecked Sendable {
         var p = Packet(Self.CLOSE)
         p.string(h)
         try expectOK(p, "")
+    }
+
+    /// A read handle's or a folder's close, its answer not waited for: it can't lose data, and the server takes it
+    /// before anything sent after it. One wait less per file read and per folder listed.
+    func closeUnheard(_ h: Data) {
+        var p = Packet(Self.CLOSE)
+        p.string(h)
+        if let id = try? send(p) { forget([id]) }
     }
 
     private func handle(_ p: Packet, _ path: String) throws -> Data {
