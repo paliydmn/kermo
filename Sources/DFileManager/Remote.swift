@@ -56,8 +56,9 @@ struct SavedServer: Codable, Equatable {
         return hosts.isEmpty ? "" : hosts.map { "“\($0)”" }.joined(separator: " and ") + (hosts.count == 1 ? " is a production server. " : " are production servers. ")
     }
 
-    // ponytail: a locked server's connection lingers 60 s after its last session, not 0: SFTP panels are a session
-    // per listing, and each would log in again. `ssh -O exit` on closing its last tab if 60 s is too long.
+    // ponytail: a locked server's connection lives while a panel shows it (the panel's kept SFTP session rides on it)
+    // and lingers 60 s after its last session, not 0: a copy, a preview or a size count right after would log in
+    // again. The lock itself is time-based (`ServerLock`). `ssh -O exit` on closing its last tab if 60 s is too long.
     var target: SFTPTarget {
         SFTPTarget(host: user.map { "\($0)@\(host)" } ?? host, port: port, identity: identityFile, persist: locked ? 60 : nil)
     }
@@ -176,10 +177,16 @@ enum Masters {
     /// `SFTP.stopMaster`; replaced in tests (no ssh runs).
     nonisolated(unsafe) static var stopper: @Sendable (SFTPTarget, _ now: Bool) -> Void = { SFTP.stopMaster($0, now: $1) }
 
-    /// Those of the servers `match` picks (all by default), off the main thread: each stop blocks briefly.
+    /// Those of the servers `match` picks (all by default), off the main thread: each stop blocks briefly. The server
+    /// panels' kept sessions on them go too: the next listing connects afresh instead of riding a dead connection.
     static func stop(now: Bool, where match: @escaping @Sendable (SFTPTarget) -> Bool = { _ in true }) async {
         let stopper = stopper
-        await Blocking.run { for t in SFTP.masterTargets where match(t) { stopper(t, now) } }
+        await Blocking.run {
+            for t in SFTP.masterTargets where match(t) {
+                KeptSession.closeAll(on: t)
+                stopper(t, now)
+            }
+        }
     }
 
     /// `-O stop`, not exit: the socket goes, so the next operation logs in fresh, while an SSH tab on a connection

@@ -117,6 +117,7 @@ Clashes with macOS: ⌘⇧/ (computer root) is also the system's Help-menu searc
 
 - Uses the system OpenSSH client, so keys, agents, and ProxyJump settings from `~/.ssh/config` work exactly as they do in Terminal.
 - Requests passwords through a macOS dialog.
+- A panel keeps one connection to its server while it shows it, so opening a folder doesn't start ssh again; after sleep or a network change the next folder connects afresh.
 - F5 / F6, ⌘C / ⌘V and drag and drop copy and move files in every direction: server ↔ local, server ↔ another server, and within one server (a move there is a rename, a copy happens on the server). They run in the operations queue like local copies: progress with speed and ETA, pause, cancel, the overwrite / skip / keep both dialog, and Retry, which continues a large file where a dropped connection left it.
 - Operations on different servers and on this Mac run side by side; ones on the same server wait their turn (▶︎▶︎ Start Now runs a queued one at once).
 - F3 / F4 open a file; the editor uploads it after every ⌘S, and closing with changes asks first.
