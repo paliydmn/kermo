@@ -796,6 +796,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             item.title = closes ? "Close Window" : commands.first { $0.id == id }?.title ?? item.title
             if closes { return true }
         }
+        if id == "server.history", Editor.server(of: NSApp.keyWindow) != nil { return true }   // its editor's file
         return NSApp.keyWindow === window && canRun(id)
     }
 

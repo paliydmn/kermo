@@ -83,3 +83,46 @@ extension ServerCopiesTests {
     #expect(await app.localCopy(huge, in: panel) == nil && panel.statusText.contains("too big to compare"))
 }
 }
+
+/// A picker row can take keys of its own (Server File History: F3 views, ⌘⇧D diffs, ⌘R reverts): the highlighted
+/// row's run, the picker closed first. F3 needn't come as a key equivalent: plain key-downs are looked at too.
+@MainActor @Test func pickerRowsTakeKeysOfTheirOwn() async {
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+    var ran: [String] = [], dismissed = 0
+    func show() -> KeyPanel {
+        Picker.show(over: window, placeholder: "", items: ["a", "b"].map { n in
+            Picker.Item(title: n, keys: [Shortcut("f3")!: { ran.append("view \(n)") }, Shortcut("cmd+shift+d")!: { ran.append("diff \(n)") },
+                                         Shortcut("cmd+r")!: { ran.append("revert \(n)") }]) { ran.append("run \(n)") }
+        }, onDismiss: { dismissed += 1 })
+        let panel = Picker.current!.panel
+        (panel.contentView?.subviews.compactMap { $0 as? NSScrollView }.first?.documentView as? NSTableView)?.selectRowIndexes([1], byExtendingSelection: false)
+        return panel
+    }
+    func key(_ code: UInt16, _ mods: NSEvent.ModifierFlags = [], _ chars: String) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: mods, timestamp: 0, windowNumber: 0, context: nil,
+                         characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!
+    }
+    func settle() async { for _ in 0..<50 where ran.count < 3 { try? await Task.sleep(for: .milliseconds(10)) } }
+
+    show().sendEvent(key(99, [.function], "\u{F706}"))   // F3, as a plain key-down
+    #expect(Picker.current == nil)
+    #expect(show().performKeyEquivalent(with: key(2, [.command, .shift], "d")) && Picker.current == nil)
+    #expect(show().performKeyEquivalent(with: key(15, .command, "r")) && Picker.current == nil)
+    await settle()
+    #expect(ran == ["view b", "diff b", "revert b"] && dismissed == 0, "\(ran)")
+
+    let p = show()
+    #expect(!p.performKeyEquivalent(with: key(14, .command, "e")), "no ⌘E here: left to the rest")
+    p.sendEvent(key(0, [], "a"))
+    #expect(Picker.current != nil, "typing still filters")
+    Picker.current?.panel.sendEvent(key(53, [], "\u{1b}"))
+}
+
+/// Server File History… is a command: ⌘⇧P finds it, keymap.json can bind it, the File menu lists it.
+@MainActor @Test func serverFileHistoryIsACommand() {
+    let commands = AppDelegate().makeCommands()
+    let c = commands.first { $0.id == "server.history" }
+    #expect(c?.title == "Server File History…" && c?.menu == "File")
+    let found = HeaderSearchModel.results("file history", commands: commands, folders: [], files: [], recent: [])
+    #expect(found.flatMap(\.hits).contains { if case .command(let id) = $0.target { id == "server.history" } else { false } }, "\(found)")
+}

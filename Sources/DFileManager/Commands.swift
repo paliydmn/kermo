@@ -183,6 +183,7 @@ extension AppDelegate {
         cmd("file.split", "Split File…", [], menu: "File", aliases: "chunks parts") { $0.splitDialog() },
         cmd("file.combine", "Combine Parts…", [], menu: "File", aliases: "join merge chunks") { $0.combineDialog() },
         cmd("file.diff", "Compare Files (diff)", ["cmd+shift+d"], menu: "File", short: "Diff", aliases: "compare files") { $0.diffFiles() },   // not ⌘⌥D: macOS takes it (Dock hiding)
+        cmd("server.history", "Server File History…", [], menu: "File", aliases: "versions revert previous backup undo save sftp") { $0.serverFileHistory() },
         cmd("git.diff", "Git Diff", ["ctrl+d"], menu: "File", short: "Git diff", aliases: "git difference changes against head") { $0.gitDiff() },
         cmd("git.log", "Git Log of File", ["ctrl+l"], menu: "File", short: "Git log", aliases: "git history commits follow patch") { $0.gitHistory(blame: false) },
         cmd("git.blame", "Git Blame", ["ctrl+shift+l"], menu: "File", short: "Git blame", aliases: "git annotate who changed lines") { $0.gitHistory(blame: true) },
@@ -999,7 +1000,7 @@ extension AppDelegate {
             case .view: Viewer.show(local, remote: (target, remotePath, max(0, opened.size - (last ?? opened.size)))) { TempCopies.remove(tmp) }
             case .edit:
                 let state = RemoteEdit(baseline: opened)
-                Editor.open(local, remote: SavedServer.title(target, remotePath), onSaved: { [self] saved in
+                Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath), onSaved: { [self] saved in
                     state.save(in: tmp) { await self.upload(saved, to: remotePath, on: target, state) }
                 }, onClose: { state.closed(removing: tmp) })
             }
@@ -1091,6 +1092,47 @@ extension AppDelegate {
             return false
         case .failure(let e):
             return notSaved(saved, to: target, e)
+        }
+    }
+
+    /// Server File History…: the versions saves replaced (`ServerHistory`) of the server file in the key editor, or under
+    /// a server panel's cursor, newest first. ↩ / F3 views one; ⌘⇧D diffs it with the server's file now; ⌘R puts it
+    /// back there through the same save as ⌘S — production asks, a change made there since the list opened asks too,
+    /// and the version it replaces goes into the history.
+    func serverFileHistory() {
+        let editor = Editor.server(of: NSApp.keyWindow)
+        let file = editor ?? active.remoteCursor.flatMap { c in
+            c.item.kind == .file || c.item.kind == .link && !c.item.linkDir ? (c.target, (c.dir as NSString).appendingPathComponent(c.item.name)) : nil
+        }
+        guard let (target, path) = file else { return active.flash("Server File History is for a server's file: put the cursor on one, or ask in its editor") }
+        let over: NSWindow = editor != nil ? NSApp.keyWindow! : window
+        let name = (path as NSString).lastPathComponent, env = SSHAskpass.env
+        let panel = panels.first { $0.remote?.target == target } ?? active
+        Task {
+            if let s = ServerLock.server(for: target), await !ServerLock.authorize(s, "see the file history on") { return }
+            let versions = ServerHistory(root: Self.historyRoot).versions(of: target, path)
+            guard !versions.isEmpty else { return panel.flash("No versions of “\(name)” from \(target.host) yet: each save keeps the one it replaces") }
+            // What Revert checks against: a change made there after this asks first.
+            let r = await panel.busy("Looking at “\(name)” on \(target.host)…") { flag in try SFTPClient.session(target, env: env, cancel: flag) { try $0.stat(path) } }
+            if case .failure(let e) = r, e is CancellationError { return }
+            let now = try? r.get()   // not there (any more): Revert puts it back, diff says why it can't
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            let items = versions.map { v in
+                let url = URL(fileURLWithPath: v.path), when = fmt.string(from: v.date) + (v.n > 1 ? " (\(v.n))" : "")
+                let view: @MainActor () -> Void = { Viewer.show(url) }
+                let diff: @MainActor () -> Void = { [unowned self] in
+                    let there = DiffSide(path: path, server: target, size: now?.size ?? 0, mtime: now?.mtime ?? 0, look: now == nil)
+                    Task { await self.diff(DiffSide(path: v.path), there, in: panel) }
+                }
+                let revert: @MainActor () -> Void = { [unowned self] in
+                    let state = RemoteEdit(baseline: now ?? .nothing)
+                    Task { if await upload(url, to: path, on: target, state) { panel.flash("“\(name)” on \(target.host) is back to its version of \(when)") } }
+                }
+                return Picker.Item(title: when, subtitle: ByteCountFormatter.string(fromByteCount: v.size, countStyle: .file),
+                                   keys: [Shortcut("f3")!: view, Shortcut("cmd+shift+d")!: diff, Shortcut("cmd+r")!: revert], run: view)
+            }
+            Picker.show(over: over, placeholder: "“\(name)” on \(target.host): ↩ F3 view · ⌘⇧D diff with the server's · ⌘R revert to it", items: items)
         }
     }
 

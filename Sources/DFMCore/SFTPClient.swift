@@ -22,6 +22,9 @@ public final class SFTPClient: @unchecked Sendable {
         /// These, if they say what the item is — a listing's may not (SFTP v3 lets a server leave the mode out, and a
         /// lister may not type an entry); nil: ask `lstat`.
         var typed: Attrs? { mode == nil || kind == .other ? nil : self }
+
+        /// A baseline for a file that wasn't there: none matches it, so `upload` asks about one there now.
+        public static let nothing = Attrs(kind: .file, size: -1, mtime: 0, mode: nil)
     }
 
     public let target: SFTPTarget

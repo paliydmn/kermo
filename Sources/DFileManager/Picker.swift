@@ -10,6 +10,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         var subtitle = ""
         var detail = ""
         var edit: (@MainActor () -> Void)? = nil   // ⌘E on the highlighted row
+        var keys: [Shortcut: @MainActor () -> Void] = [:]   // more keys on the highlighted row (F3, ⌘⇧D…); the picker closes first
         var preview: (@MainActor () -> Void)? = nil   // the row got highlighted
         var run: @MainActor () -> Void
     }
@@ -57,10 +58,12 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         [.closeButton, .miniaturizeButton, .zoomButton].forEach { panel.standardWindowButton($0)?.isHidden = true }
         panel.delegate = self
         panel.onKey = { [unowned self] e in
-            guard Shortcut(event: e) == Shortcut("cmd+e"),   // the physical key: "у" on a Ukrainian layout
-                  shown.indices.contains(table.selectedRow), let edit = shown[table.selectedRow].edit else { return false }
+            let key = Shortcut(event: e)   // the physical key: ⌘E is "у" on a Ukrainian layout
+            guard shown.indices.contains(table.selectedRow), case let row = shown[table.selectedRow],
+                  let run = row.keys[key] ?? (key == Shortcut("cmd+e") ? row.edit : nil) else { return false }
+            self.onDismiss = nil
             close()
-            DispatchQueue.main.async { edit() }
+            DispatchQueue.main.async { run() }
             return true
         }
 
@@ -188,9 +191,13 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
 
 /// Borderless-looking panels must opt in to becoming key to receive typing.
 final class KeyPanel: NSPanel {
-    var onKey: ((NSEvent) -> Bool)?   // key equivalents (⌘E), before the main menu sees them
+    var onKey: ((NSEvent) -> Bool)?   // a row's keys (⌘E, F3), before the main menu and the text field see them
     override var canBecomeKey: Bool { true }
     override func performKeyEquivalent(with event: NSEvent) -> Bool { onKey?(event) == true || super.performKeyEquivalent(with: event) }
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, onKey?(event) == true { return }   // F3 and the like: not always a key equivalent
+        super.sendEvent(event)
+    }
 }
 
 /// Title, dimmed subtitle, right-aligned detail (keys). Also the toolbar search's rows.

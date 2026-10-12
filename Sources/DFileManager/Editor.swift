@@ -15,12 +15,15 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// The save didn't reach where the file really lives (a server): still unsaved, so closing asks.
     static func markUnsaved(_ url: URL) { open.first { $0.url == url }.map { $0.dirty = true; $0.unsent = true } }
     static func window(for url: URL) -> NSWindow? { open.first { $0.url == url }?.window }
+    /// The server's file an editor window edits through its local copy (Server File History… there).
+    static func server(of window: NSWindow?) -> (target: SFTPTarget, path: String)? { open.first { $0.window === window && window != nil }?.server }
     /// The root write behind Save as Administrator (tests swap it: the real one shows the password dialog).
     static var runAsAdmin: (String) async -> Admin.Outcome = Admin.run
     /// Changes only on Save As.
     private(set) var url: URL
     /// "host:/path" of a server's file edited through its local copy: the title, not the copy's temp folder.
     private var remote: String?
+    private var server: (target: SFTPTarget, path: String)?
     let textView = EditorTextView(usingTextLayoutManager: false)   // TextKit 1: the line-number ruler needs it
     private var ruler: LineNumberRuler!
     private var language: Syntax.Language?
@@ -54,7 +57,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     var onClose: (@MainActor () -> Void)?
 
     /// Reads the file off the main thread (up to 32 MB, or a share that doesn't answer), then opens the window.
-    static func open(_ url: URL, remote: String? = nil, onSaved: (@MainActor (URL) -> Void)? = nil, onClose: (@MainActor () -> Void)? = nil) {
+    static func open(_ url: URL, remote: String? = nil, server: (target: SFTPTarget, path: String)? = nil,
+                     onSaved: (@MainActor (URL) -> Void)? = nil, onClose: (@MainActor () -> Void)? = nil) {
         if let existing = open.first(where: { $0.url == url }) { return existing.window!.makeKeyAndOrderFront(nil) }
         Task {
             let loaded = await Blocking.run(.userInitiated) { Result { try load(url) } }
@@ -64,6 +68,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
                 let e = try Editor(url, remote: remote, loaded: loaded.get())
                 e.onSaved = onSaved
                 e.onClose = onClose
+                e.server = server
                 open.append(e)
                 e.showWindow(nil)
             } catch {
