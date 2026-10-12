@@ -175,3 +175,21 @@ private func makeLevels(_ root: String) throws {
     retry.run()
     #expect(retry.progress.errors.isEmpty && !FileManager.default.fileExists(atPath: d + "/t"), "\(retry.progress.errors)")
 }
+
+/// Compare with a server listed one folder at a time, one side after the other. Level by level now, 64 folders
+/// together, both sides at once; the rows come out as before.
+@Test func compareWithAServerGoesLevelByLevel() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    try makeLevels(d + "/L")
+    try FileManager.default.copyItem(atPath: d + "/L", toPath: d + "/R")   // dates too
+    try Data([2]).write(to: URL(fileURLWithPath: d + "/R/33/a/b/new"))
+    let fs = RemoteFS(.local(), env: [:])
+    defer { fs.close() }
+    let c = try fs.session(), before = c.roundTrips
+    let plan = DirSync.compare(left: d + "/L", right: d + "/R", listRight: DirSync.lister(fs), tolerance: 1)
+    #expect(plan.count == 211 && plan.filter { $0.action != .equal }.map(\.path) == ["33/a/b/new"])
+    #expect(plan.prefix(4).map(\.path) == ["0/a/b/f", "0/a/f", "0/f", "1/a/b/f"], "as a walk into each folder in turn")
+    // The server's side: the top: open, read, end, close; each level of 70: 2 batches of those 4. One at a time: 844.
+    #expect(c.roundTrips - before == 4 + 3 * 8, "\(c.roundTrips - before)")
+}

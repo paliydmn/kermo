@@ -20,59 +20,84 @@ public enum DirSync {
         public var unreadable: String? = nil
     }
 
+    /// Lists folders for `compare`, in order: each one's items, or why it couldn't be listed.
+    public typealias Lister = @Sendable (_ dirs: [String]) -> [Result<[FileItem], Error>]
+
+    /// This Mac's folders, as the panel lists them.
+    public static let localList: Lister = { $0.map { d in Result { try DirLister.list(d) } } }
+
     /// `listRight`: the right side's lister when it isn't `list` (a server: see `lister`); `tolerance` then comes
     /// from the side on this Mac. `byContent` reads both sides as local files.
+    /// Level by level, `SFTPClient.window` folders at a time, both sides at once: a server's round trips add up per
+    /// level, not per folder. The rows come out as a walk into each folder in turn would give them.
     public static func compare(left: String, right: String, byContent: Bool = false, includeHidden: Bool = false,
-                               isCancelled: () -> Bool = { false }, list: (String) throws -> [FileItem] = DirLister.list,
-                               listRight: ((String) throws -> [FileItem])? = nil, tolerance: Double? = nil) -> [Item] {
+                               isCancelled: () -> Bool = { false }, list: @escaping Lister = localList,
+                               listRight: Lister? = nil, tolerance: Double? = nil) -> [Item] {
         var out: [Item] = []
-        let tolerance = tolerance ?? mtimeTolerance([left, right])
+        let tolerance = tolerance ?? mtimeTolerance([left, right]), listRight = listRight ?? list
         func key(_ s: String) -> String { s.precomposedStringWithCanonicalMapping.lowercased() }
-        func walk(_ rel: String, _ rightRel: String) {
-            func children(_ root: String, _ rel: String, _ list: (String) throws -> [FileItem]) throws -> [String: [FileItem]] {
-                let dir = rel.isEmpty ? root : (root as NSString).appendingPathComponent(rel)
-                return Dictionary(grouping: try list(dir).filter { includeHidden || !$0.isHidden }) { key($0.name) }
-            }
-            let l: [String: [FileItem]], r: [String: [FileItem]]
-            do {
-                l = try children(left, rel, list)
-                r = try listRight.map { try children(right, rightRel, $0) } ?? children(right, rightRel, list)
-            } catch {
-                // Not "empty": mirror would trash everything on the other side.
-                let why = (error as? POSIXError).map { String(cString: strerror($0.code.rawValue)) } ?? error.localizedDescription
-                out.append(Item(path: rel.isEmpty ? "." : rel, left: nil, right: nil, action: .skip, isConflict: true, unreadable: why))
-                return
-            }
-            for k in Set(l.keys).union(r.keys).sorted() {
-                if isCancelled() { return }
-                let a = l[k]?.first, b = r[k]?.first
-                func under(_ rel: String, _ name: String) -> String { rel.isEmpty ? name : rel + "/" + name }
-                let path = under(rel, (a ?? b)!.name), rightPath = under(rightRel, (b ?? a)!.name)
-                // `Makefile` and `makefile` on a case-sensitive side are one name on the other: neither is copied
-                // (nor anything below), and the row says why, rather than one of them silently left out.
-                if (l[k]?.count ?? 0) > 1 || (r[k]?.count ?? 0) > 1 {
-                    let names = Set(((l[k] ?? []) + (r[k] ?? [])).map(\.name)).sorted().joined(separator: ", ")
-                    out.append(Item(path: path, rightPath: rightPath, left: a, right: b, action: .skip, isConflict: true,
-                                    unreadable: "names differ only in case: \(names)"))
-                    continue
-                }
-                switch (a, b) {
-                case let (a?, nil): out.append(Item(path: path, rightPath: rightPath, left: a, right: nil, action: .toRight, isConflict: false))
-                case let (nil, b?): out.append(Item(path: path, rightPath: rightPath, left: nil, right: b, action: .toLeft, isConflict: false))
-                case let (a?, b?):
-                    if a.kind == .dir && b.kind == .dir { walk(path, rightPath); continue }
-                    if (a.kind == .dir) != (b.kind == .dir) {
-                        out.append(Item(path: path, rightPath: rightPath, left: a, right: b, action: .skip, isConflict: true))
+        func full(_ root: String, _ rel: String) -> String { rel.isEmpty ? root : (root as NSString).appendingPathComponent(rel) }
+        func walkOrder() -> [Item] {
+            out.map { ($0, $0.path.split(separator: "/").map { key(String($0)) }) }.sorted { $0.1.lexicographicallyPrecedes($1.1) }.map(\.0)
+        }
+        // Folders on both sides, to walk into: (left path, right path), relative.
+        var level = [(rel: "", rightRel: "")]
+        while !level.isEmpty {
+            var next: [(rel: String, rightRel: String)] = []
+            for start in stride(from: 0, to: level.count, by: SFTPClient.window) {
+                let batch = level[start..<min(start + SFTPClient.window, level.count)]
+                // The right side in the background meanwhile; `rs` is read only after `done`.
+                nonisolated(unsafe) var rs: [Result<[FileItem], Error>] = []
+                let done = DispatchSemaphore(value: 0), rightDirs = batch.map { full(right, $0.rightRel) }
+                DispatchQueue.global(qos: .userInitiated).async { rs = listRight(rightDirs); done.signal() }
+                let ls = list(batch.map { full(left, $0.rel) })
+                done.wait()
+                for ((rel, rightRel), lr, rr) in zip(zip(batch, ls), rs).map({ ($0.0, $0.1, $1) }) {
+                    func children(_ r: Result<[FileItem], Error>) throws -> [String: [FileItem]] {
+                        Dictionary(grouping: try r.get().filter { includeHidden || !$0.isHidden }) { key($0.name) }
+                    }
+                    let l: [String: [FileItem]], r: [String: [FileItem]]
+                    do {
+                        l = try children(lr)
+                        r = try children(rr)
+                    } catch {
+                        // Not "empty": mirror would trash everything on the other side.
+                        let why = (error as? POSIXError).map { String(cString: strerror($0.code.rawValue)) } ?? error.localizedDescription
+                        out.append(Item(path: rel.isEmpty ? "." : rel, left: nil, right: nil, action: .skip, isConflict: true, unreadable: why))
                         continue
                     }
-                    out.append(row(path, a, b, left: left, right: right, byContent: byContent, tolerance: tolerance, rightPath: rightPath,
-                                   isCancelled: isCancelled))
-                case (nil, nil): break
+                    for k in Set(l.keys).union(r.keys).sorted() {
+                        if isCancelled() { return walkOrder() }
+                        let a = l[k]?.first, b = r[k]?.first
+                        func under(_ rel: String, _ name: String) -> String { rel.isEmpty ? name : rel + "/" + name }
+                        let path = under(rel, (a ?? b)!.name), rightPath = under(rightRel, (b ?? a)!.name)
+                        // `Makefile` and `makefile` on a case-sensitive side are one name on the other: neither is copied
+                        // (nor anything below), and the row says why, rather than one of them silently left out.
+                        if (l[k]?.count ?? 0) > 1 || (r[k]?.count ?? 0) > 1 {
+                            let names = Set(((l[k] ?? []) + (r[k] ?? [])).map(\.name)).sorted().joined(separator: ", ")
+                            out.append(Item(path: path, rightPath: rightPath, left: a, right: b, action: .skip, isConflict: true,
+                                            unreadable: "names differ only in case: \(names)"))
+                            continue
+                        }
+                        switch (a, b) {
+                        case let (a?, nil): out.append(Item(path: path, rightPath: rightPath, left: a, right: nil, action: .toRight, isConflict: false))
+                        case let (nil, b?): out.append(Item(path: path, rightPath: rightPath, left: nil, right: b, action: .toLeft, isConflict: false))
+                        case let (a?, b?):
+                            if a.kind == .dir && b.kind == .dir { next.append((path, rightPath)); continue }
+                            if (a.kind == .dir) != (b.kind == .dir) {
+                                out.append(Item(path: path, rightPath: rightPath, left: a, right: b, action: .skip, isConflict: true))
+                                continue
+                            }
+                            out.append(row(path, a, b, left: left, right: right, byContent: byContent, tolerance: tolerance, rightPath: rightPath,
+                                           isCancelled: isCancelled))
+                        case (nil, nil): break
+                        }
+                    }
                 }
             }
+            level = next
         }
-        walk("", "")
-        return out
+        return walkOrder()
     }
 
     /// The row for something that is a file (or link, …) on both sides.
@@ -98,17 +123,26 @@ public enum DirSync {
     /// Lists `side`'s folders for `compare`: this Mac's as the panel does, a server's over one SFTP connection
     /// (whole seconds — the panel's `ls` has minutes) that `close` drops, and so does `cancel`: ⎋ doesn't wait for a
     /// server that stopped answering.
-    public static func lister(_ side: Endpoint, env: [String: String] = [:], cancel: CancelFlag? = nil)
-        -> (list: @Sendable (String) throws -> [FileItem], close: @Sendable () -> Void) {
-        guard case .sftp(let t) = side else { return ({ try DirLister.list($0) }, {}) }
+    public static func lister(_ side: Endpoint, env: [String: String] = [:], cancel: CancelFlag? = nil) -> (list: Lister, close: @Sendable () -> Void) {
+        guard case .sftp(let t) = side else { return (localList, {}) }
         let fs = RemoteFS(t, env: env, cancel: cancel)
         let previous = cancel?.onCancel(nil)   // the other side's, server to server
         cancel?.onCancel { previous?(); fs.close() }
-        return ({ dir in
-            try fs.list(dir).filter { FileJob.isSafeName($0.name) }.map {
-                FileItem(name: $0.name, kind: $0.attrs.kind, size: $0.attrs.size, mtime: $0.attrs.mtime, mode: $0.attrs.mode ?? 0, flags: 0)
+        return (lister(fs), { fs.close() })
+    }
+
+    /// A server's folders, each batch with the requests in flight together (`SFTPClient.list(_ dirs:)`).
+    static func lister(_ fs: TransferFS) -> Lister {
+        { dirs in
+            zip(dirs, fs.list(dirs)).map { dir, listed in
+                // One the batch couldn't list: once more on its own, for why (or it lists now).
+                Result {
+                    try (listed ?? fs.list(dir)).filter { FileJob.isSafeName($0.name) }.map {
+                        FileItem(name: $0.name, kind: $0.attrs.kind, size: $0.attrs.size, mtime: $0.attrs.mtime, mode: $0.attrs.mode ?? 0, flags: 0)
+                    }
+                }
             }
-        }, { fs.close() })
+        }
     }
 
     /// Seconds two mtimes may differ by and still be one moment: SMB rounds to 1 s, FAT and exFAT keep 2 s.

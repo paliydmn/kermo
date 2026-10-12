@@ -165,13 +165,15 @@ private func caseInsensitive(_ d: String) -> Bool {
     write(l + "/b.txt", "b")
     try! FileManager.default.createDirectory(atPath: r, withIntermediateDirectories: true)
     // The left side as a case-sensitive volume lists it: a twin of each, in another case.
-    let list: (String) throws -> [FileItem] = { p in
-        let xs = try DirLister.list(p)
-        guard p == l else { return xs }
-        return xs + xs.filter { $0.name != "b.txt" }.map {
-            FileItem(name: $0.name.lowercased(), kind: $0.kind, size: $0.size, mtime: $0.mtime, mode: $0.mode, flags: $0.flags)
+    let list: DirSync.Lister = { $0.map { p in
+        Result {
+            let xs = try DirLister.list(p)
+            guard p == l else { return xs }
+            return xs + xs.filter { $0.name != "b.txt" }.map {
+                FileItem(name: $0.name.lowercased(), kind: $0.kind, size: $0.size, mtime: $0.mtime, mode: $0.mode, flags: $0.flags)
+            }
         }
-    }
+    } }
     let plan = DirSync.compare(left: l, right: r, list: list)
     #expect(plan.map(\.path).sorted() == ["Docs", "Makefile", "b.txt"])
     #expect(plan.first { $0.path == "Makefile" }?.unreadable == "names differ only in case: Makefile, makefile")
