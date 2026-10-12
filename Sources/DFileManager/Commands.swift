@@ -1075,9 +1075,10 @@ extension AppDelegate {
     /// Every save of a server file (F4's ⌘S, another app's, Revert) goes here. The version it replaces goes into the
     /// file history; if it can't, the save goes on and the status line says why.
     func upload(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool = false) async -> Bool {
+        let name = (remotePath as NSString).lastPathComponent   // the copy's own, but not a version's (Revert)
         let note = state.prodNote(target)
         if !note.isEmpty {
-            guard await choose("Save “\(saved.lastPathComponent)” to \(target.host)?", info: note + "This overwrites the file there.",
+            guard await choose("Save “\(name)” to \(target.host)?", info: note + "This overwrites the file there.",
                                ["Save", "Cancel"], on: Editor.window(for: saved)) == 0 else {
                 return notSaved(saved, to: target, CancellationError())   // the editor may be gone: says where the text is
             }
@@ -1086,7 +1087,7 @@ extension AppDelegate {
         let env = SSHAskpass.env, baseline = state.baseline, history = serverHistory
         // No panel of its own: the one showing that server (else the active one) says it's saving; ⎋ there cancels.
         let panel = panels.first { $0.remote?.target == target } ?? active
-        let r = await panel.busy("Saving “\(saved.lastPathComponent)” to \(target.host)…") { flag in
+        let r = await panel.busy("Saving “\(name)” to \(target.host)…") { flag in
             let c = try SFTPClient(target, env: env, cancel: flag)
             defer { c.close() }
             var note: String?
@@ -1098,7 +1099,7 @@ extension AppDelegate {
         case .success(let (attrs, note)):
             state.baseline = attrs
             for p in panels where p.remote?.target == target { p.reload() }
-            if let note { panel.flash("Saved “\(saved.lastPathComponent)” to \(target.host) · no history: \(note)") }
+            if let note { panel.flash("Saved “\(name)” to \(target.host) · no history: \(note)") }
             return true
         case .failure(let e as SFTPClient.ChangedOnServer):
             Editor.markUnsaved(saved)
@@ -1106,7 +1107,7 @@ extension AppDelegate {
             let fmt = DateFormatter()
             fmt.dateFormat = "HH:mm:ss"
             let when = fmt.string(from: Date(timeIntervalSince1970: e.attrs.mtime))
-            if await choose("“\(saved.lastPathComponent)” changed on \(target.host) since you opened it",
+            if await choose("“\(name)” changed on \(target.host) since you opened it",
                             info: "Someone or something wrote it at \(when) (\(ByteCountFormatter.string(fromByteCount: e.attrs.size, countStyle: .file))). "
                                 + "Overwriting replaces their changes with yours. Cancel keeps your text \(keeps), so you can compare first (F3 on the server file).",
                             ["Overwrite", "Cancel"], default: 1, on: Editor.window(for: saved)) == 0 {   // ⌘S ↩ never writes over theirs
