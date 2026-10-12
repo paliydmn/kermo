@@ -420,6 +420,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         connecting = nil   // a pending server listing is dropped too
         let gen = loadGen
         let started = Date()
+        // Set before the sort: the rows come from it (`sortedAll`), and the resolve after finds nothing to change.
+        let linkDirs = newPath == path && watcher != nil ? Set(all.filter(\.linkDir).map(\.name)) : []
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, gen == self.loadGen, self.loadedGen < gen else { return }
@@ -430,7 +432,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             // Disk work and sorting off the main thread: a hung network volume or a 1M-file folder must never freeze the UI.
             let result = await Self.listings.run(newPath, .userInitiated) {
                 Result {
-                    let items = try DirLister.list(newPath)
+                    let items = try DirLister.list(newPath).keepingLinkDirs(linkDirs)
                     let order = Self.savedSort(for: newPath)
                     return (items, Self.freeSpace(newPath), items.sortedForPanel(by: order.key, ascending: order.ascending), order,
                             DirSync.mtimeTolerance([newPath]), FolderID(path: newPath))
@@ -453,10 +455,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                     (backStack, forwardStack, old, history) = ([], [], newPath, .none)
                 }
                 path = newPath
-                // A re-list keeps what's known of its links to folders (resolved again below): rows don't jump to the
-                // files and back on every reload.
-                let linkDirs = changed ? [] : Set(all.filter(\.linkDir).map(\.name))
-                all = linkDirs.isEmpty ? items : items.map { var it = $0; it.linkDir = it.kind == .link && linkDirs.contains(it.name); return it }
+                all = items   // a re-list's links to folders: as known before (`keepingLinkDirs`), resolved again below
                 (sortedAll, sortedBy) = (sorted, order)
                 freeSpace = free
                 mtimeTolerance = tolerance
@@ -749,10 +748,16 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         busyOps.forEach { $0.flag.cancel() }
     }
 
-    func busy<T: Sendable>(_ message: String, flag: CancelFlag = CancelFlag(), _ work: @escaping @Sendable (CancelFlag) throws -> T) async -> Result<T, Error> {
+    /// `after`: the message waits that long (⎋ doesn't), so quick work doesn't flash it.
+    func busy<T: Sendable>(_ message: String, after: Double = 0, flag: CancelFlag = CancelFlag(),
+                           _ work: @escaping @Sendable (CancelFlag) throws -> T) async -> Result<T, Error> {
         let mine = message + " ⎋ cancels"
         busyOps.append((flag, mine))
-        busyMessage = mine
+        if after == 0 { busyMessage = mine } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + after) { [weak self] in
+                MainActor.assumeIsolated { if let self, self.busyOps.contains(where: { $0.flag === flag }) { self.busyMessage = mine } }
+            }
+        }
         // Back on ⎋ at once, even while `work` sits in a call that can't be stopped (a share that stopped
         // answering): it's left to finish on its own. `work` hooking ⎋ itself (killing its process) keeps this
         // hook until it returns.
@@ -1504,40 +1509,34 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         sizeWalk = nil
     }
 
+    /// One walk at a time (on a server, over one connection), folders asked for meanwhile (Space down a list) next;
+    /// the status line says so and ⎋ stops it, as does leaving the folder (`clearSizes`).
     private func computeSizes(_ names: [String]) {
         guard archive == nil else { return }
-        if remote != nil { return measureRemote(names) }
-        let gen = sizeGen
-        let base = path
-        Task { [weak self] in
-            for name in names {
-                let full = (base as NSString).appendingPathComponent(name)
-                // ponytail: an abandoned walk keeps running in the background until done; add cancellation if huge trees make it matter.
-                let bytes = await Blocking.run(.utility) { DirLister.measure(full).bytes }
-                guard let self, gen == sizeGen else { return }
-                setSize(name, bytes)
-            }
-        }
-    }
-
-    /// On a server: one walk at a time over one connection, folders asked for meanwhile (Space down a list) next;
-    /// the status line says so and ⎋ stops it, as does leaving the folder (`clearSizes`).
-    private func measureRemote(_ names: [String]) {
         sizeQueue += names.filter { !sizeQueue.contains($0) }
-        guard sizeWalk == nil, let r = remote else { return }   // the walk running takes them next
-        let flag = CancelFlag(), gen = sizeGen, env = SSHAskpass.env
+        guard sizeWalk == nil else { return }   // the walk running takes them next
+        let flag = CancelFlag(), gen = sizeGen, env = SSHAskpass.env, r = remote, base = path
         sizeWalk = flag
+        let found: @Sendable (String, Int64) -> Void = { [weak self] name, bytes in
+            DispatchQueue.main.async { MainActor.assumeIsolated { if self?.sizeGen == gen { self?.setSize(name, bytes) } } }
+        }
         Task { [weak self] in
             while let self, sizeWalk === flag {
                 let names = sizeQueue.filter { dirSizes[$0] == nil }
                 sizeQueue.removeAll()
                 guard !names.isEmpty else { sizeWalk = nil; return }
-                let result = await busy("Counting folder sizes…", flag: flag) { [weak self] flag in
-                    try SFTPClient.session(r.target, env: env, cancel: flag) { c in
-                        for name in names {
-                            let bytes = try c.measure((r.dir as NSString).appendingPathComponent(name), cancel: flag)
-                            DispatchQueue.main.async { MainActor.assumeIsolated { if self?.sizeGen == gen { self?.setSize(name, bytes) } } }
+                // On this Mac most walks take a moment: Space down a list would flash the message on every folder.
+                let result = await busy("Counting folder sizes…", after: r == nil ? 0.4 : 0, flag: flag) { flag in
+                    func each(_ measure: (String) throws -> Int64) rethrows { for name in names { found(name, try measure(name)) } }
+                    guard let r else {
+                        return try each {
+                            let bytes = DirLister.measure((base as NSString).appendingPathComponent($0), isCancelled: { flag.isCancelled }).bytes
+                            if flag.isCancelled { throw CancellationError() }   // a part of it: no size
+                            return bytes
                         }
+                    }
+                    try SFTPClient.session(r.target, env: env, cancel: flag) { c in
+                        try each { try c.measure((r.dir as NSString).appendingPathComponent($0), cancel: flag) }
                     }
                 }
                 if case .failure(let error) = result {

@@ -13,6 +13,16 @@ Release:
 
 ## [Unreleased]
 
+### Changed
+
+- **Speed:** undo and redo of a move, undo of a copy and batch rename do their disk work in the background: thousands of items on a network share no longer freeze the window. So do rename, Go to Link Target, diff, compress, `fm` and Info's chmod, chown and flags: a share that stopped answering doesn't hang the app.
+
+### Fixed
+
+- **Panels:** symlinks to folders no longer turn into files (shown with their own size and sorted with the files) after a folder reloads by itself.
+- **Stop and ⎋:** ⎋ stops counting folder sizes on this Mac, as on a server, and so does leaving the folder; closing Info stops its folder count; Stop during "Scanning…" before a copy stops at once instead of after the whole tree. Search by content and compare by content stop within a big file instead of after it; closing Info stops its checksums.
+- **Info:** a checksum of a file that fails to read part-way shows the read error instead of a hash of the part that was read.
+
 ## [1.0] - 2026-10-10
 
 The first public release. Kermo was previously called DFileManager; settings and permissions carry over.

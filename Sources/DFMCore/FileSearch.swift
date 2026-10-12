@@ -28,7 +28,7 @@ public enum FileSearch {
             if !q.tag.isEmpty, !FinderTags.read(full).contains(where: { $0.name.caseInsensitiveCompare(q.tag) == .orderedSame }) { return false }
             if !needle.isEmpty {
                 guard item.kind == .file else { return false }
-                guard let found = contentMatch(item, full, needle, caseSensitive: q.caseSensitive) else { skipped += 1; return false }
+                guard let found = contentMatch(item, full, needle, caseSensitive: q.caseSensitive, isCancelled: isCancelled) else { skipped += 1; return false }
                 return found
             }
             return true
@@ -64,18 +64,19 @@ public enum FileSearch {
 
     /// Whether file `item` at `path` holds `needle`; nil for a placeholder (iCloud / Dropbox), which reading would
     /// download whole, so it isn't searched.
-    static func contentMatch(_ item: FileItem, _ path: String, _ needle: [UInt8], caseSensitive: Bool) -> Bool? {
-        item.isDataless ? nil : fileContains(path, needle, caseSensitive: caseSensitive)
+    static func contentMatch(_ item: FileItem, _ path: String, _ needle: [UInt8], caseSensitive: Bool, isCancelled: () -> Bool = { false }) -> Bool? {
+        item.isDataless ? nil : fileContains(path, needle, caseSensitive: caseSensitive, isCancelled: isCancelled)
     }
 
     /// Streams the file in 1 MB chunks (overlapping by needle length − 1, so matches across chunk edges count).
-    public static func fileContains(_ path: String, _ needle: [UInt8], caseSensitive: Bool) -> Bool {
+    /// Cancelled, it stops at the next chunk: false.
+    public static func fileContains(_ path: String, _ needle: [UInt8], caseSensitive: Bool, isCancelled: () -> Bool = { false }) -> Bool {
         guard !needle.isEmpty, let h = FileHandle(forReadingAtPath: path) else { return false }
         defer { try? h.close() }
         var n = needle
         if !caseSensitive { n.withUnsafeMutableBytes(BigFile.foldCase) }
         var carry: [UInt8] = []
-        while let chunk = try? h.read(upToCount: 1 << 20), !chunk.isEmpty {
+        while !isCancelled(), let chunk = try? h.read(upToCount: 1 << 20), !chunk.isEmpty {
             var buf = carry + chunk
             if !caseSensitive { buf.withUnsafeMutableBytes(BigFile.foldCase) }
             let found = buf.withUnsafeBytes { b in n.withUnsafeBytes { m in memmem(b.baseAddress, b.count, m.baseAddress, m.count) != nil } }

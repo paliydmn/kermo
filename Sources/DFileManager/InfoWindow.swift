@@ -89,8 +89,9 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
             guard let self, s.isDir else { return }
             contents = "Contents:   calculating…"
             render()
+            let cancel = cancel   // closing the window stops the walk
             Task { [weak self] in
-                let (files, bytes) = await Blocking.run(.utility) { DirLister.measure(path) }
+                let (files, bytes) = await Blocking.run(.utility) { DirLister.measure(path, isCancelled: { cancel.isCancelled }) }
                 guard let self else { return }
                 contents = "Contents:   \(files) files, \(Self.bytes(bytes))"
                 render()
@@ -185,9 +186,8 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
         "\(n.formatted()) bytes (\(ByteCountFormatter.string(fromByteCount: n, countStyle: .file)))"
     }
 
-    /// Reports a failed change; for permission errors offers to run `adminCommand` as root instead.
-    private func fail(_ what: String, adminCommand: String) {
-        let code = errno
+    /// Reports a failed change (`code`: its errno); for permission errors offers to run `adminCommand` as root instead.
+    private func fail(_ what: String, _ code: Int32, adminCommand: String) {
         let alert = NSAlert()
         alert.messageText = "\(what) failed"
         alert.informativeText = String(cString: strerror(code))
@@ -210,10 +210,15 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
 
     // MARK: - Actions
 
+    // The changes go off the main thread, as the reads do: a share that stopped answering.
     @objc private func applyMode() {
         guard let mode = mode_t(modeField.stringValue, radix: 8), mode <= 0o7777 else { return NSSound.beep() }
-        if !FileInfo.setMode(path, mode) { fail("chmod", adminCommand: AdminCommand.chmod(String(mode, radix: 8), path)) }
-        reload()
+        let path = path
+        Task {
+            let code = await Blocking.run(.userInitiated) { FileInfo.setMode(path, mode) ? 0 : errno }
+            if code != 0 { fail("chmod", code, adminCommand: AdminCommand.chmod(String(mode, radix: 8), path)) }
+            reload()
+        }
     }
 
     @objc private func applyOwner() {
@@ -224,22 +229,33 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
             guard let gr = getgrnam(parts[1]) else { return NSSound.beep() }
             gid = gr.pointee.gr_gid
         }
-        if lchown(path, pw.pointee.pw_uid, gid) != 0 { fail("chown", adminCommand: AdminCommand.chown(ownerField.stringValue, path)) }
-        reload()
+        let path = path, uid = pw.pointee.pw_uid, group = gid, owner = ownerField.stringValue
+        Task {
+            let code = await Blocking.run(.userInitiated) { lchown(path, uid, group) == 0 ? 0 : errno }
+            if code != 0 { fail("chown", code, adminCommand: AdminCommand.chown(owner, path)) }
+            reload()
+        }
     }
 
     @objc private func toggleFlags() {
-        var s = stat()
-        guard lstat(path, &s) == 0 else { return }
-        var flags = s.st_flags
-        for (box, bit) in [(hiddenBox, UInt32(UF_HIDDEN)), (lockedBox, UInt32(UF_IMMUTABLE))] {
-            if box.state == .on { flags |= bit } else { flags &= ~bit }
+        let path = path, hidden = hiddenBox.state == .on, locked = lockedBox.state == .on
+        Task {
+            let code = await Blocking.run(.userInitiated) { () -> Int32? in
+                var s = stat()
+                guard lstat(path, &s) == 0 else { return nil }
+                var flags = s.st_flags
+                for (on, bit) in [(hidden, UInt32(UF_HIDDEN)), (locked, UInt32(UF_IMMUTABLE))] {
+                    if on { flags |= bit } else { flags &= ~bit }
+                }
+                return lchflags(path, flags) == 0 ? 0 : errno
+            }
+            guard let code else { return }
+            if code != 0 {
+                let names = [(hidden, "hidden", "nohidden"), (locked, "uchg", "nouchg")].map { $0.0 ? $0.1 : $0.2 }
+                fail("chflags", code, adminCommand: AdminCommand.chflags(names.joined(separator: ","), path))
+            }
+            reload()
         }
-        if lchflags(path, flags) != 0 {
-            let names = [(hiddenBox, "hidden", "nohidden"), (lockedBox, "uchg", "nouchg")].map { $0.0.state == .on ? $0.1 : $0.2 }
-            fail("chflags", adminCommand: AdminCommand.chflags(names.joined(separator: ","), path))
-        }
-        reload()
     }
 
     /// Off the main thread: a big tree (an Xcode download) takes a while. Closing the window stops it.
@@ -289,7 +305,7 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
     private func checksum(_ name: String, _ make: @escaping @Sendable () -> ((Data) -> Void, () -> String)) {
         extra.append("\(name): computing…")
         let i = extra.count - 1
-        let path = path
+        let path = path, cancel = cancel   // closing the window stops it
         Task { [weak self] in
             let result = await Blocking.run(.userInitiated) { () -> String in
                 var st = stat()   // a placeholder would be downloaded whole just to hash it
@@ -298,8 +314,10 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
                 guard let h = FileHandle(forReadingAtPath: path) else { return "can't read (\(String(cString: strerror(errno))))" }
                 defer { try? h.close() }
                 let (update, finish) = make()
-                while let chunk = try? h.read(upToCount: 1 << 20), !chunk.isEmpty { update(chunk) }
-                return finish()
+                do {   // a read that fails (a disk error, a share gone) says so: a hash of what came before would pass for the file's
+                    while !cancel.isCancelled, let chunk = try h.read(upToCount: 1 << 20), !chunk.isEmpty { update(chunk) }
+                } catch { return "can't read (\(error.localizedDescription))" }
+                return cancel.isCancelled ? "stopped" : finish()
             }
             guard let self else { return }
             extra[i] = "\(name):".padding(toLength: 12, withPad: " ", startingAt: 0) + result

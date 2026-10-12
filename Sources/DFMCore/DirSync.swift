@@ -65,7 +65,8 @@ public enum DirSync {
                         out.append(Item(path: path, rightPath: rightPath, left: a, right: b, action: .skip, isConflict: true))
                         continue
                     }
-                    out.append(row(path, a, b, left: left, right: right, byContent: byContent, tolerance: tolerance, rightPath: rightPath))
+                    out.append(row(path, a, b, left: left, right: right, byContent: byContent, tolerance: tolerance, rightPath: rightPath,
+                                   isCancelled: isCancelled))
                 case (nil, nil): break
                 }
             }
@@ -76,7 +77,7 @@ public enum DirSync {
 
     /// The row for something that is a file (or link, …) on both sides.
     static func row(_ path: String, _ a: FileItem, _ b: FileItem, left: String, right: String, byContent: Bool, tolerance: Double,
-                    rightPath: String? = nil) -> Item {
+                    rightPath: String? = nil, isCancelled: () -> Bool = { false }) -> Item {
         let sameTime = sameMoment(a, b, tolerance: tolerance)
         var same = sameTime && a.size == b.size
         func item(_ action: Action, conflict: Bool, unreadable: String? = nil) -> Item {
@@ -86,7 +87,8 @@ public enum DirSync {
             if a.isDataless || b.isDataless {   // reading would download it: contents unknown, neither equal nor different
                 return item(.skip, conflict: true, unreadable: "not downloaded (iCloud / Dropbox)")
             }
-            same = filesEqual((left as NSString).appendingPathComponent(path), (right as NSString).appendingPathComponent(rightPath ?? path))
+            same = filesEqual((left as NSString).appendingPathComponent(path), (right as NSString).appendingPathComponent(rightPath ?? path),
+                              isCancelled: isCancelled)
         }
         if same { return item(.equal, conflict: false) }
         if sameTime { return item(.skip, conflict: true) }
@@ -196,14 +198,16 @@ public enum DirSync {
             + (it.right == nil ? [.trashLeft] : []) + (it.left == nil ? [.trashRight] : []) + [.skip]
     }
 
-    public static func filesEqual(_ a: String, _ b: String) -> Bool {
+    /// Cancelled, it stops at the next 1 MB: false, never "equal" unread.
+    public static func filesEqual(_ a: String, _ b: String, isCancelled: () -> Bool = { false }) -> Bool {
         guard let ha = FileHandle(forReadingAtPath: a), let hb = FileHandle(forReadingAtPath: b) else { return false }
         defer { try? ha.close(); try? hb.close() }
-        while true {
+        while !isCancelled() {
             // A read that fails isn't the end: two files that can't be read aren't the same.
             guard let x = try? ha.read(upToCount: 1 << 20) ?? Data(), let y = try? hb.read(upToCount: 1 << 20) ?? Data() else { return false }
             if x != y { return false }
             if x.isEmpty { return true }
         }
+        return false
     }
 }

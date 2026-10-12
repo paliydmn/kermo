@@ -79,7 +79,7 @@ Clashes with macOS: ⌘⇧/ (computer root) is also the system's Help-menu searc
 | Quick View in the other panel / Quick Look | ⌃Q / ⌘Y |
 | Mark files (MC style) | Space, ⇧↑/⇧↓, ⌘-click, ⇧-click |
 | Mark all / unmark / invert / mark by mask / unmark by mask | ⌘A / ⌘⇧A / `*` / `+` / `-` |
-| Calculate directory sizes (all) | ⌥Space (Space calculates one) |
+| Calculate directory sizes (all) | ⌥Space (Space calculates one; ⎋ stops) |
 | View / Edit | F3, ⌥3 / F4, ⌥4 |
 | Copy / Move | F5, ⌥5 / F6, ⌥6 |
 | Rename / batch rename | ⇧F6, ⇧⌥6 / ⌘⇧M |
