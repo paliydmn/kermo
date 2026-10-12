@@ -37,7 +37,7 @@ private let b = SFTPTarget(host: "nas")
     func op(_ from: Endpoint, _ paths: [String], _ to: Endpoint, _ target: String, _ mask: NSDragOperation = none) -> NSDragOperation {
         PanelViewController.dragOperation(mask: mask, items: TransferItems(from: from, paths: paths), to: to, target: target)
     }
-    let home = NSTemporaryDirectory()
+    let home = Foundation.NSTemporaryDirectory()   // the Mac's own: on the home folder's volume, unlike $DFM_TEST_TMP
     #expect(op(.local, [home], .local, NSHomeDirectory()) == .move)                // same volume (both exist)
     #expect(op(.local, ["/tmp/f"], .sftp(a), "/srv") == .copy)
     #expect(op(.sftp(a), ["/srv/f"], .local, home) == .copy)

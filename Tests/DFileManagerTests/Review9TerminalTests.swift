@@ -7,7 +7,7 @@ import Testing
 /// a tab itself (sidebar session, ⌘K) keeps it.
 @MainActor @Test func ctrlOOnALocalPanelPicksALocalShell() throws {
     _ = NSApplication.shared
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dfm-t2-\(UUID().uuidString)").path
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dfm-t2-\(UUID().uuidString)").path
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(atPath: dir) }
     let parent = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))

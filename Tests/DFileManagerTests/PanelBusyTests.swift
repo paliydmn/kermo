@@ -6,7 +6,7 @@ import Testing
 /// R13: two server calls waiting on one panel (New folder still going when F4 starts): the status line keeps the one
 /// still running when the other ends, and ⎋ cancels both.
 @MainActor @Test func overlappingBusyCallsStayShownAndBothCancel() async throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dfm-busy-\(UUID().uuidString)").path
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dfm-busy-\(UUID().uuidString)").path
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(atPath: dir) }
     FileManager.default.createFile(atPath: dir + "/f", contents: nil)

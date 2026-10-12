@@ -158,7 +158,7 @@ import Testing
     ServerLock.servers = { [local] }
     ServerLock.authenticate = { _ in asked += 1; return answer }
     defer { ServerLock.servers = { [] }; ServerLock.relock() }
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dfm-lock-\(UUID().uuidString)").path
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dfm-lock-\(UUID().uuidString)").path
     try FileManager.default.createDirectory(atPath: dir + "/sub", withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(atPath: dir) }
 

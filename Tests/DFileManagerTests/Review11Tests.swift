@@ -143,7 +143,7 @@ private func tempDir() -> String {
 /// A3: validating a drop asked each path's volume on the main thread at every mouse move — over a share that stopped
 /// answering, the drag hung. Asked once per drag off the main thread now; a copy until the answer is in.
 @MainActor @Test func dragAsksVolumesOncePerDragOffTheMainThread() async {
-    let a = NSTemporaryDirectory(), b = NSHomeDirectory()
+    let a = Foundation.NSTemporaryDirectory(), b = NSHomeDirectory()   // one volume, wherever $DFM_TEST_TMP is
     #expect(!DragVolumes.same(a, b, drag: 7001), "not known yet: copy")
     await waitUntil { DragVolumes.same(a, b, drag: 7001) }
     #expect(DragVolumes.same(a, b, drag: 7001))

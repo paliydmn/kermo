@@ -6,7 +6,7 @@ import Testing
 /// P9: calls stuck in the kernel — a hung server's ssh, a dead NFS/SMB mount — one per core, through the panel's own
 /// off-main path: a local folder still lists. They used to hold every thread of the Swift concurrency pool.
 @MainActor @Test func hungCallsDontStallLocalListings() async throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dfm-io-\(UUID().uuidString)").path
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dfm-io-\(UUID().uuidString)").path
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(atPath: dir) }
     FileManager.default.createFile(atPath: dir + "/f", contents: nil)
@@ -47,7 +47,7 @@ private final class Counter: @unchecked Sendable {
 /// each taking a thread; once it returns, that one listing shows what changed meanwhile. Another folder lists at once.
 @MainActor @Test func panelReloadsOfAHungFolderShareOneListing() async throws {
     let fm = FileManager.default
-    let dir = fm.temporaryDirectory.appendingPathComponent("dfm-io-\(UUID().uuidString)").path, other = dir + "-other"
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dfm-io-\(UUID().uuidString)").path, other = dir + "-other"
     for d in [dir, other] { try fm.createDirectory(atPath: d, withIntermediateDirectories: true) }
     defer { for d in [dir, other] { try? fm.removeItem(atPath: d) } }
     fm.createFile(atPath: dir + "/a", contents: nil)

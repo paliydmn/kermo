@@ -5,7 +5,7 @@ import Testing
 
 @MainActor
 private func tempDir(_ files: [String]) throws -> String {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dfm-panels-\(UUID().uuidString)").path
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dfm-panels-\(UUID().uuidString)").path
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     for f in files { FileManager.default.createFile(atPath: dir + "/" + f, contents: Data()) }
     return dir
