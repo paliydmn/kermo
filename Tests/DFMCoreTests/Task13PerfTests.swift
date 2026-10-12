@@ -42,3 +42,19 @@ private func tempDir() -> String {
     #expect(trips { listed = c.list((0..<3).map { d + "/dirs/\($0)" }).count } == 4, "open, read, end of file, close: each for all 3 at once")
     #expect(listed == 3)
 }
+
+/// Stop during "Scanning…" before a copy waited for the walk of the whole tree to end.
+@Test func stoppedCopyStopsScanning() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    for i in 0..<20 {
+        try FileManager.default.createDirectory(atPath: d + "/tree/\(i)", withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: d + "/tree/\(i)/f", contents: Data([1]))
+    }
+    try FileManager.default.createDirectory(atPath: d + "/to", withIntermediateDirectories: true)
+    let job = FileJob(.copy, sources: [d + "/tree"], destDir: d + "/to")
+    job.cancel()
+    job.run()
+    #expect(job.progress.totalFiles == 0, "not walked: \(job.progress.totalFiles)")
+    #expect(!FileManager.default.fileExists(atPath: d + "/to/tree"))
+}

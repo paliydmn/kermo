@@ -160,7 +160,7 @@ public final class FileJob: @unchecked Sendable {
             if let destDir { sweepPartials(LocalFS(), destDir) }
             countsItems = kind == .move && destDir.map { d in sources.allSatisfy { Self.sameVolume($0, d) } } == true
             let (files, bytes) = countsItems ? (sources.count, Int64(0)) : sources.reduce((0, Int64(0))) { acc, s in
-                let t = DirLister.measure(s)
+                let t = DirLister.measure(s, isCancelled: { isCancelled })
                 return (acc.0 + t.0, acc.1 + t.1)
             }
             update { $0.totalFiles = files; $0.totalBytes = bytes; $0.state = .running }
@@ -298,7 +298,7 @@ public final class FileJob: @unchecked Sendable {
             guard attempt(src, { try Self.check(Darwin.rename(src, dst)) }) else { return nil }
             noteCreated(dst)
             if !countsItems {
-                let (f, b) = DirLister.measure(dst)
+                let (f, b) = DirLister.measure(dst, isCancelled: { isCancelled })
                 update { $0.doneFiles += f; $0.doneBytes += b }
             }
             return createsNew ? dst : nil
@@ -416,7 +416,7 @@ public final class FileJob: @unchecked Sendable {
 
     private func skipCount(_ src: String) {
         guard !countsItems else { return }
-        let (f, b) = DirLister.measure(src)
+        let (f, b) = DirLister.measure(src, isCancelled: { isCancelled })
         update { $0.doneFiles += f; $0.doneBytes += b }
     }
 

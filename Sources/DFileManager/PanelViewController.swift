@@ -1504,40 +1504,33 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         sizeWalk = nil
     }
 
+    /// One walk at a time (on a server, over one connection), folders asked for meanwhile (Space down a list) next;
+    /// the status line says so and ⎋ stops it, as does leaving the folder (`clearSizes`).
     private func computeSizes(_ names: [String]) {
         guard archive == nil else { return }
-        if remote != nil { return measureRemote(names) }
-        let gen = sizeGen
-        let base = path
-        Task { [weak self] in
-            for name in names {
-                let full = (base as NSString).appendingPathComponent(name)
-                // ponytail: an abandoned walk keeps running in the background until done; add cancellation if huge trees make it matter.
-                let bytes = await Blocking.run(.utility) { DirLister.measure(full).bytes }
-                guard let self, gen == sizeGen else { return }
-                setSize(name, bytes)
-            }
-        }
-    }
-
-    /// On a server: one walk at a time over one connection, folders asked for meanwhile (Space down a list) next;
-    /// the status line says so and ⎋ stops it, as does leaving the folder (`clearSizes`).
-    private func measureRemote(_ names: [String]) {
         sizeQueue += names.filter { !sizeQueue.contains($0) }
-        guard sizeWalk == nil, let r = remote else { return }   // the walk running takes them next
-        let flag = CancelFlag(), gen = sizeGen, env = SSHAskpass.env
+        guard sizeWalk == nil else { return }   // the walk running takes them next
+        let flag = CancelFlag(), gen = sizeGen, env = SSHAskpass.env, r = remote, base = path
         sizeWalk = flag
+        let found: @Sendable (String, Int64) -> Void = { [weak self] name, bytes in
+            DispatchQueue.main.async { MainActor.assumeIsolated { if self?.sizeGen == gen { self?.setSize(name, bytes) } } }
+        }
         Task { [weak self] in
             while let self, sizeWalk === flag {
                 let names = sizeQueue.filter { dirSizes[$0] == nil }
                 sizeQueue.removeAll()
                 guard !names.isEmpty else { sizeWalk = nil; return }
-                let result = await busy("Counting folder sizes…", flag: flag) { [weak self] flag in
-                    try SFTPClient.session(r.target, env: env, cancel: flag) { c in
-                        for name in names {
-                            let bytes = try c.measure((r.dir as NSString).appendingPathComponent(name), cancel: flag)
-                            DispatchQueue.main.async { MainActor.assumeIsolated { if self?.sizeGen == gen { self?.setSize(name, bytes) } } }
+                let result = await busy("Counting folder sizes…", flag: flag) { flag in
+                    func each(_ measure: (String) throws -> Int64) rethrows { for name in names { found(name, try measure(name)) } }
+                    guard let r else {
+                        return try each {
+                            let bytes = DirLister.measure((base as NSString).appendingPathComponent($0), isCancelled: { flag.isCancelled }).bytes
+                            if flag.isCancelled { throw CancellationError() }   // a part of it: no size
+                            return bytes
                         }
+                    }
+                    try SFTPClient.session(r.target, env: env, cancel: flag) { c in
+                        try each { try c.measure((r.dir as NSString).appendingPathComponent($0), cancel: flag) }
                     }
                 }
                 if case .failure(let error) = result {

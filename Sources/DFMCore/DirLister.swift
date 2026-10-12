@@ -117,6 +117,7 @@ public enum DirLister {
 
     private static func measureDir(_ path: String, device: dev_t, isCancelled: () -> Bool) -> (files: Int, bytes: Int64) {
         var files = 0, bytes: Int64 = 0
+        guard !isCancelled() else { return (0, 0) }   // a big folder's listing alone takes a while
         for item in (try? list(path)) ?? [] {
             if isCancelled() { break }
             if item.kind == .dir {

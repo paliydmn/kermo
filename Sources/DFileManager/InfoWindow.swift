@@ -89,8 +89,9 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
             guard let self, s.isDir else { return }
             contents = "Contents:   calculating…"
             render()
+            let cancel = cancel   // closing the window stops the walk
             Task { [weak self] in
-                let (files, bytes) = await Blocking.run(.utility) { DirLister.measure(path) }
+                let (files, bytes) = await Blocking.run(.utility) { DirLister.measure(path, isCancelled: { cancel.isCancelled }) }
                 guard let self else { return }
                 contents = "Contents:   \(files) files, \(Self.bytes(bytes))"
                 render()

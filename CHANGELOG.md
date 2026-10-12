@@ -15,6 +15,7 @@ Release:
 
 ### Fixed
 
+- **Stop and ⎋:** ⎋ stops counting folder sizes on this Mac, as on a server, and so does leaving the folder; closing Info stops its folder count; Stop during "Scanning…" before a copy stops at once instead of after the whole tree.
 - **Info:** a checksum of a file that fails to read part-way shows the read error instead of a hash of the part that was read.
 
 ## [1.0] - 2026-10-10
