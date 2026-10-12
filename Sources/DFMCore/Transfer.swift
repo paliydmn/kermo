@@ -18,10 +18,19 @@ public enum Endpoint: Hashable, Sendable, Codable {
 /// What a cross-endpoint transfer needs from either side. Paths are absolute; nothing follows a symlink.
 protocol TransferFS: AnyObject, Sendable {
     func lstat(_ path: String) throws -> SFTPClient.Attrs?
+    /// Each path's `lstat`, in order; with the requests in flight together on a server.
+    func lstat(_ paths: [String]) -> [Result<SFTPClient.Attrs?, Error>]
     func list(_ dir: String) throws -> [(name: String, attrs: SFTPClient.Attrs)]
+    /// Each folder's items, in order; nil for one that couldn't be listed. A server lists them with the requests in
+    /// flight together (`SFTPClient.list(_ dirs:)`).
+    func list(_ dirs: [String]) -> [[(name: String, attrs: SFTPClient.Attrs)]?]
     func mkdir(_ path: String) throws
     func remove(_ path: String) throws
     func rmdir(_ path: String) throws
+    /// These files, then these empty folders, with the requests in flight together on a server. The ones that
+    /// didn't go, with why.
+    func remove(_ paths: [String]) -> [(path: String, error: Error)]
+    func rmdir(_ paths: [String]) -> [(path: String, error: Error)]
     func rename(_ from: String, _ to: String, replace: Bool) throws
     func readlink(_ path: String) throws -> String
     /// The one exception: symlinks followed, to tell where a path really is.
@@ -32,6 +41,18 @@ protocol TransferFS: AnyObject, Sendable {
     func writer(_ path: String, offset: Int64) throws -> PieceWriter
     /// Drops the connection (cancel); the next call connects again, unless the job was cancelled.
     func close()
+}
+
+extension TransferFS {
+    func lstat(_ paths: [String]) -> [Result<SFTPClient.Attrs?, Error>] { paths.map { p in Result { try lstat(p) } } }
+    func list(_ dirs: [String]) -> [[(name: String, attrs: SFTPClient.Attrs)]?] { dirs.map { try? list($0) } }
+    func remove(_ paths: [String]) -> [(path: String, error: Error)] { paths.compactMap { p in do { try remove(p); return nil } catch { return (p, error) } } }
+    func rmdir(_ paths: [String]) -> [(path: String, error: Error)] { paths.compactMap { p in do { try rmdir(p); return nil } catch { return (p, error) } } }
+}
+
+extension Result {
+    /// The value, or nil for an error. (`try? get()` would flatten an optional value: "nothing there" and "failed" alike.)
+    var value: Success? { if case .success(let v) = self { v } else { nil } }
 }
 
 protocol PieceReader {
@@ -80,11 +101,26 @@ final class RemoteFS: TransferFS, @unchecked Sendable {
     func closeWhenQuiet() { lock.withLock { client }?.closeWhenQuiet() }
 
     func lstat(_ path: String) throws -> SFTPClient.Attrs? { try session().lstat(path) }
+    func lstat(_ paths: [String]) -> [Result<SFTPClient.Attrs?, Error>] {
+        guard !paths.isEmpty else { return [] }
+        do { return try session().lstat(paths) } catch { return paths.map { _ in .failure(error) } }
+    }
     func list(_ dir: String) throws -> [(name: String, attrs: SFTPClient.Attrs)] { try session().list(dir) }
+    func list(_ dirs: [String]) -> [[(name: String, attrs: SFTPClient.Attrs)]?] {
+        guard let c = try? session() else { return dirs.map { _ in nil } }
+        var listed = c.list(dirs)[...]   // in order, without the ones that failed
+        return dirs.map { d in listed.first?.dir == d ? listed.popFirst()!.items : nil }
+    }
     // Owner-only while it fills (a read-only source folder mustn't block its own copy); real mode set afterwards.
     func mkdir(_ path: String) throws { try session().mkdir(path, mode: 0o700) }
     func remove(_ path: String) throws { try session().remove(path) }
     func rmdir(_ path: String) throws { try session().rmdir(path) }
+    func remove(_ paths: [String]) -> [(path: String, error: Error)] { batch(paths) { $0.remove($1) } }
+    func rmdir(_ paths: [String]) -> [(path: String, error: Error)] { batch(paths) { $0.rmdir($1) } }
+    private func batch(_ paths: [String], _ body: (SFTPClient, [String]) -> [(path: String, error: Error)]) -> [(path: String, error: Error)] {
+        guard !paths.isEmpty else { return [] }
+        do { return body(try session(), paths) } catch { return paths.map { ($0, error) } }
+    }
     func rename(_ from: String, _ to: String, replace: Bool) throws { try session().rename(from, to, replace: replace) }
     func readlink(_ path: String) throws -> String { try session().readlink(path) }
     func realpath(_ path: String) throws -> String { try session().realpath(path) }
@@ -237,87 +273,168 @@ extension FileJob {
         }
         update { $0.state = .scanning }
         if let destDir { sweepPartials(dst, destDir) }
-        // Synchronize: each to exactly its pair, and not one that changed since Compare.
-        let work = pairs.isEmpty ? sources.map { ($0, (destDir! as NSString).appendingPathComponent(targetName ?? ($0 as NSString).lastPathComponent)) }
-            : pairs.filter { !isCancelled && !changedSinceCompare(src, $0.src, dst, $0.dst) }
+        var work = pairs.isEmpty ? sources.map { ($0, (destDir! as NSString).appendingPathComponent(targetName ?? ($0 as NSString).lastPathComponent)) } : pairs
+        var seen = work.map { _ in (src: SFTPClient.Attrs?.none, dst: SFTPClient.Attrs??.none) }   // none: not looked at
+        if !pairs.isEmpty {
+            // Synchronize: each to exactly its pair, and not one that changed since Compare. Both sides of every pair
+            // looked at together (a far server: a few round trips for thousands of pairs, not two each), and what's
+            // seen goes on to the scan and the copy. (Pairs are rows of one Compare: none is inside another.)
+            seen = zip(src.lstat(pairs.map(\.src)), dst.lstat(pairs.map(\.dst))).map { ($0.value ?? nil, $1.value) }
+            let ok = pairs.indices.filter { i in
+                !isCancelled && !changed(pairs[i].src, expected, seen[i].src) && !changed(pairs[i].dst, expectedTarget, seen[i].dst ?? nil)
+            }
+            (work, seen) = (ok.map { pairs[$0] }, ok.map { seen[$0] })
+        }
         // A move on one server is a rename: no walk of each tree first (thousands of folders on a far server took
         // minutes before the first rename) or after it; the progress counts items, as a local move does.
         countsItems = kind == .move && sameSide
         var files = 0, bytes: Int64 = 0, depths: [Int] = []
-        for (s, _) in work where !isCancelled {
-            let m = countsItems ? (files: 1, bytes: Int64(0), depth: Int.max) : measure(src, s)
+        for ((s, _), seen) in zip(work, seen) where !isCancelled {
+            let m = countsItems ? (files: 1, bytes: Int64(0), depth: Int.max) : measure(src, s, seen.src)
             files += m.files
             bytes += m.bytes
             depths.append(max(m.depth, 0))
         }
         update { $0.totalFiles = files; $0.totalBytes = bytes; $0.state = .running }
-        for ((s, d), depth) in zip(work, depths) {
+        for (((s, d), seen), depth) in zip(zip(work, seen), depths) {
             guard !isCancelled else { break }
-            transferAcross(src, s, dst, d, move: kind == .move, maxDepth: depth)
+            transferAcross(src, s, dst, d, move: kind == .move, maxDepth: depth, seen: seen)
             if countsItems { update { $0.doneFiles += 1 } }
         }
         finish()
     }
 
     /// ⇧F8 / F8 on a server (no Trash there): bottom-up over one connection, past what can't go, each failure
-    /// under its own path (Retry / Skip / Abort), like the local `remove`. Never follows a symlink.
-    func deleteAcross() {
-        let fs = makeFS(from)
+    /// under its own path (Retry / Skip / Abort), like the local `remove`. Never follows a symlink. All the sources
+    /// together: one look at every one (a Synchronize's check against Compare too), then `removeAcross` — a far
+    /// server's round trips add up per batch of `SFTPClient.window`, not per item. `given`: a connection of the
+    /// caller's (tests count its round trips).
+    func deleteAcross(_ given: TransferFS? = nil) {
+        let fs = given ?? makeFS(from)
         cancelFlag.onCancel { fs.close() }
         defer {
             cancelFlag.onCancel(nil)
             fs.close()
         }
         update { $0.totalFiles = sources.count; $0.state = .running }
-        for s in sources {
-            guard !isCancelled else { break }
-            update { $0.current = (s as NSString).lastPathComponent }
-            var a: SFTPClient.Attrs?
-            if !changedSinceCompare(fs, s), attempt(s, { a = try fs.lstat(s) }), let a { removeAcross(fs, s, a) }   // nil: already gone
-            update { $0.doneFiles += 1 }
+        var tops: [(path: String, attrs: SFTPClient.Attrs)] = []
+        for (s, looked) in zip(sources, fs.lstat(sources)) {
+            guard !isCancelled else { return finish() }
+            var a = looked.value   // none: that look failed — asked again the usual way
+            if !changed(s, expected, a ?? nil), a != nil || attempt(s, { a = try fs.lstat(s) }), let a = a ?? nil { tops.append((s, a)) }
+            else { update { $0.doneFiles += 1 } }   // changed since Compare, already gone, or skipped
         }
+        // A folder and something in it (search results can hold both): the folder takes it along.
+        let folders = Set(tops.filter { $0.attrs.kind == .dir }.map(\.path))
+        func inFolder(_ p: String) -> Bool {
+            let up = (p as NSString).deletingLastPathComponent
+            return up != p && (folders.contains(up) || inFolder(up))
+        }
+        let along = tops.filter { inFolder($0.path) }.count
+        tops.removeAll { inFolder($0.path) }
+        update { $0.doneFiles += along }
+        removeAcross(fs, tops)
         finish()
     }
 
-    @discardableResult
-    private func removeAcross(_ fs: TransferFS, _ path: String, _ a: SFTPClient.Attrs) -> Bool {
-        waitWhilePaused()
-        guard a.kind == .dir else { return attempt(path) { try fs.remove(path) } }
-        var children: [(name: String, attrs: SFTPClient.Attrs)] = []
-        guard attempt(path, { children = try fs.list(path) }) else { return false }
-        var ok = true
-        // A server's files go with their requests in flight together (a folder of thousands on a far server: a few
-        // round trips, not one each); one that didn't goes the usual way after — Retry / Skip / Abort.
-        if let remote = fs as? RemoteFS, let client = try? remote.session() {
-            let files = children.filter { $0.attrs.kind != .dir && Self.isSafeName($0.name) }.map { (path as NSString).appendingPathComponent($0.name) }
-            for f in client.remove(files) where !isCancelled { ok = attempt(f.path) { try fs.remove(f.path) } && ok }
-            children.removeAll { $0.attrs.kind != .dir }
+    /// `tops` and all in them, never following a symlink. The files among them go first, `SFTPClient.window` together.
+    /// The folders' trees go level by level, all at once: `window` folders listed together and their files removed
+    /// together as each batch is listed (a far server: a few round trips a batch, not a few a folder); then the
+    /// folders, deepest level first, each batch together. What a batch couldn't do goes the usual way after — Retry /
+    /// Skip / Abort under its own path. What stays keeps the folders above it, unasked: one real error, not a "not
+    /// empty" for each of them up to the top. The progress counts each top once it's done.
+    func removeAcross(_ fs: TransferFS, _ tops: [(path: String, attrs: SFTPClient.Attrs)]) {
+        var dirs = tops.filter { $0.attrs.kind == .dir }.map { (path: $0.path, parent: -1, kept: false) }, levels = [0..<dirs.count]
+        func keep(_ i: Int) {   // it and each folder above it
+            var i = i
+            while i >= 0 && !dirs[i].kept { dirs[i].kept = true; i = dirs[i].parent }
         }
-        for c in children where Self.isSafeName(c.name) {
-            guard !isCancelled else { return false }
-            ok = removeAcross(fs, (path as NSString).appendingPathComponent(c.name), c.attrs) && ok
+        func batches(_ r: Range<Int>) -> [Range<Int>] {
+            stride(from: r.lowerBound, to: r.upperBound, by: SFTPClient.window).map { $0..<min($0 + SFTPClient.window, r.upperBound) }
         }
-        return ok && attempt(path) { try fs.rmdir(path) }   // a folder with leftovers stays, already reported
+        /// Together, then what didn't go one by one; a file that stays keeps its folder (`dir`; -1: a top). False: cancelled.
+        func remove(_ files: [(path: String, dir: Int)]) -> Bool {
+            let failed = Set(fs.remove(files.map(\.path)).map(\.path))
+            for f in files where failed.contains(f.path) {
+                guard !isCancelled else { return false }
+                if !attempt(f.path, { try fs.remove(f.path) }) { keep(f.dir) }
+            }
+            return true
+        }
+        let files = tops.filter { $0.attrs.kind != .dir }.map(\.path)
+        for batch in batches(files.indices) {
+            waitWhilePaused()
+            guard !isCancelled else { return }
+            update { $0.current = (files[batch.lowerBound] as NSString).lastPathComponent }
+            guard remove(batch.map { (files[$0], -1) }) else { return }
+            update { $0.doneFiles += batch.count }
+        }
+        if let first = dirs.first { update { $0.current = (first.path as NSString).lastPathComponent } }
+        while let level = levels.last, !level.isEmpty {
+            for batch in batches(level) {
+                waitWhilePaused()
+                guard !isCancelled else { return }
+                var files: [(path: String, dir: Int)] = []
+                for (i, listed) in zip(batch, fs.list(batch.map { dirs[$0].path })) {
+                    var items = listed ?? []
+                    guard listed != nil || attempt(dirs[i].path, { items = try fs.list(dirs[i].path) }) else { keep(i); continue }
+                    for c in items where Self.isSafeName(c.name) {
+                        let p = (dirs[i].path as NSString).appendingPathComponent(c.name)
+                        if c.attrs.kind == .dir { dirs.append((p, i, false)) } else { files.append((p, i)) }
+                    }
+                }
+                guard remove(files) else { return }
+            }
+            levels.append(level.upperBound..<dirs.count)
+        }
+        for batch in levels.reversed().flatMap(batches) {
+            waitWhilePaused()
+            guard !isCancelled else { return }
+            let empty = batch.filter { !dirs[$0].kept }
+            let failed = Set(fs.rmdir(empty.map { dirs[$0].path }).map(\.path))
+            for i in empty where failed.contains(dirs[i].path) {
+                guard !isCancelled else { return }
+                if !attempt(dirs[i].path, { try fs.rmdir(dirs[i].path) }) { keep(dirs[i].parent) }
+            }
+        }
+        update { $0.doneFiles += levels[0].count }
     }
 
     /// Files and bytes below `path` (what the progress bar counts), and how deep its folders go (-1: not a folder).
-    /// Unreadable parts count as nothing.
-    // ponytail: on a server this walks the tree one folder at a time before the first byte moves — thousands of
-    // folders on a far server mean a long "Scanning…". Count as we go (or pipeline the OPENDIRs) if that bites.
+    /// Unreadable parts count as nothing. Level by level, `SFTPClient.window` folders listed together: a far server's
+    /// round trips add up per level, not per folder (thousands of folders were minutes of "Scanning…").
     func measure(_ fs: TransferFS, _ path: String, _ known: SFTPClient.Attrs? = nil) -> (files: Int, bytes: Int64, depth: Int) {
         // A listing without a mode (SFTP v3 allows it) or an entry the lister couldn't type: ask lstat, like the copy
         // will, so the depth below matches what transferAcross sees.
-        let listed = known?.mode == nil || known?.kind == .other ? nil : known
-        guard let a = listed ?? (try? fs.lstat(path)) ?? nil else { return (0, 0, -1) }
-        guard a.kind == .dir else { return (1, a.size, -1) }
-        var files = 0, bytes: Int64 = 0, depth = 0
-        for child in (try? fs.list(path)) ?? [] where !isCancelled && Self.isSafeName(child.name) {
-            let m = measure(fs, (path as NSString).appendingPathComponent(child.name), child.attrs)
-            files += m.files
-            bytes += m.bytes
-            depth = max(depth, m.depth + 1)   // -1 for anything but a folder
+        func attrs(_ path: String, _ known: SFTPClient.Attrs?) -> SFTPClient.Attrs? {
+            known?.mode == nil || known?.kind == .other ? (try? fs.lstat(path)) ?? nil : known
         }
-        return (files, bytes, depth)
+        guard let a = attrs(path, known) else { return (0, 0, -1) }
+        guard a.kind == .dir else { return (1, a.size, -1) }
+        // Each folder with its parent: its own files first, what's below it added once all is listed.
+        var dirs = [(path: path, parent: -1, files: 0, bytes: Int64(0))], level = 0..<1, depth = -1
+        walk: while !level.isEmpty {
+            depth += 1
+            let next = dirs.count
+            for start in stride(from: level.lowerBound, to: level.upperBound, by: SFTPClient.window) {
+                guard !isCancelled else { break walk }
+                let batch = start..<min(start + SFTPClient.window, level.upperBound)
+                for (i, items) in zip(batch, fs.list(batch.map { dirs[$0].path })) {
+                    for child in items ?? [] where Self.isSafeName(child.name) {
+                        let p = (dirs[i].path as NSString).appendingPathComponent(child.name)
+                        guard let a = attrs(p, child.attrs) else { continue }
+                        if a.kind == .dir { dirs.append((p, i, 0, 0)) } else { dirs[i].files += 1; dirs[i].bytes += a.size }
+                    }
+                }
+            }
+            level = next..<dirs.count
+        }
+        for i in dirs.indices.dropFirst().reversed() {   // deepest first: a folder's own totals are whole by then
+            dirs[dirs[i].parent].files += dirs[i].files
+            dirs[dirs[i].parent].bytes += dirs[i].bytes
+        }
+        for d in dirs { measured[d.path] = (d.files, d.bytes) }
+        return (dirs[0].files, dirs[0].bytes, depth)
     }
 
     /// Partial copies another job left in `dir` (a disk pulled out mid-copy, the app quit): gone once over a day old —
@@ -352,20 +469,22 @@ extension FileJob {
 
     private func skip(_ fs: TransferFS, _ path: String, _ a: SFTPClient.Attrs) {
         guard !countsItems else { return }
-        let (f, b, _) = measure(fs, path, a)
+        let (f, b) = measured[path] ?? { let m = measure(fs, path, a); return (m.files, m.bytes) }()   // a file: no walk
         update { $0.doneFiles += f; $0.doneBytes += b }
     }
 
     /// `root`: the top folder this job copies into (nil: this is the top). `maxDepth`: how deep the source's folders
     /// went before the job wrote anything; `depth`: how deep `src` is in it.
+    /// `seen`: `src` and `dstIn` as just looked at (`dst`'s none: not looked at; some nil: nothing there).
     private func transferAcross(_ sfs: TransferFS, _ src: String, _ dfs: TransferFS, _ dstIn: String, move: Bool,
-                                root: String? = nil, depth: Int = 0, maxDepth: Int) {
+                                root: String? = nil, depth: Int = 0, maxDepth: Int,
+                                seen: (src: SFTPClient.Attrs?, dst: SFTPClient.Attrs??) = (nil, nil)) {
         let top = root == nil
         waitWhilePaused()
         guard !isCancelled else { return }
         var dst = dstIn
-        var found: SFTPClient.Attrs?
-        guard attempt(src, {
+        var found = seen.src
+        guard found != nil || attempt(src, {
             found = try sfs.lstat(src)
             if found == nil { throw JobError(message: "No such file or directory") }
         }), let s = found else { return }
@@ -394,7 +513,8 @@ extension FileJob {
         }
 
         var existing: SFTPClient.Attrs?
-        guard attempt(dst, { existing = try dfs.lstat(dst) }) else { return skip(sfs, src, s) }
+        if dst == dstIn, let d = seen.dst { existing = d }
+        else { guard attempt(dst, { existing = try dfs.lstat(dst) }) else { return skip(sfs, src, s) } }
         // Two connections no comparison tells apart (another alias of the server, this Mac and localhost) can still
         // name one file: replacing it with its own copy and then deleting the source would lose it. Same for a
         // link copied over itself (the old one is cleared first). A same-server move is a rename: safe. And a folder

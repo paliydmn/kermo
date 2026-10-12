@@ -138,6 +138,18 @@ public final class SFTPClient: @unchecked Sendable {
         do { return try attrs(Self.LSTAT, path) } catch let e as SFTPError where e.code == Self.NO_SUCH_FILE { return nil }
     }
 
+    /// `lstat` of each path, with the requests in flight together (`window` at a time), in the paths' order.
+    public func lstat(_ paths: [String]) -> [Result<Attrs?, Error>] {
+        each(Self.LSTAT, paths) { t, body, path in
+            if t == Self.STATUS {
+                do { try status(body, path: path, okOnly: true) } catch let e as SFTPError where e.code == Self.NO_SUCH_FILE { return nil }
+            }
+            guard t == Self.ATTRS else { throw protocolError("STAT answered \(t)") }
+            var r = Reader(body)
+            return try r.attrs()
+        }
+    }
+
     /// Names with their attributes ("." and ".." left out). Names are as the server sent them: untrusted.
     /// `owners` hears each name's owner and group as the server's `ls -l` line names them (else their numbers).
     public func list(_ dir: String, owners: ((_ name: String, _ owner: String, _ group: String) -> Void)? = nil) throws -> [(name: String, attrs: Attrs)] {
@@ -267,23 +279,34 @@ public final class SFTPClient: @unchecked Sendable {
 
     /// Removes these files (not folders) with their requests in flight together (`window` at a time): a folder of
     /// thousands goes in a few round trips, not one each. The ones that didn't go, with why.
-    public func remove(_ paths: [String]) -> [(path: String, error: Error)] {
-        var failed: [(path: String, error: Error)] = [], inflight: [(id: UInt32, path: String)] = []
-        func settle(_ r: (id: UInt32, path: String)) {
-            do {
-                let (type, body) = try wait(r.id)
-                guard type == Self.STATUS else { throw protocolError("REMOVE answered \(type)") }
-                try status(body, path: r.path, okOnly: true)
-            } catch { failed.append((r.path, error)) }
+    public func remove(_ paths: [String]) -> [(path: String, error: Error)] { failures(Self.REMOVE, paths) }
+    /// These empty folders, as `remove(_ paths:)` does files.
+    public func rmdir(_ paths: [String]) -> [(path: String, error: Error)] { failures(Self.RMDIR, paths) }
+
+    private func failures(_ type: UInt8, _ paths: [String]) -> [(path: String, error: Error)] {
+        zip(paths, each(type, paths) { t, body, path in
+            guard t == Self.STATUS else { throw protocolError("\(type == Self.REMOVE ? "REMOVE" : "RMDIR") answered \(t)") }
+            try status(body, path: path, okOnly: true)
+        }).compactMap { path, r in
+            guard case .failure(let e) = r else { return nil }
+            return (path, e)
+        }
+    }
+
+    /// A `type` request for each path, `window` in flight; each answer through `answer`, in the paths' order.
+    private func each<T>(_ type: UInt8, _ paths: [String], _ answer: (_ type: UInt8, _ body: Data, _ path: String) throws -> T) -> [Result<T, Error>] {
+        var out: [Result<T, Error>] = [], inflight: [(id: Result<UInt32, Error>, path: String)] = []
+        func settle(_ r: (id: Result<UInt32, Error>, path: String)) {
+            out.append(Result { let (t, body) = try wait(try r.id.get()); return try answer(t, body, r.path) })
         }
         for path in paths {
-            var p = Packet(Self.REMOVE)
+            var p = Packet(type)
             p.string(path)
-            do { inflight.append((try send(p), path)) } catch { failed.append((path, error)) }
+            inflight.append((Result { try send(p) }, path))
             if inflight.count >= Self.window { settle(inflight.removeFirst()) }
         }
         inflight.forEach(settle)
-        return failed
+        return out
     }
 
     /// `replace`: atomically over an existing file when the server can (posix-rename). Without it, never over an

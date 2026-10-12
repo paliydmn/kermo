@@ -81,6 +81,8 @@ public final class FileJob: @unchecked Sendable {
     /// The same across a server (SFTP has no inodes): each path this job wrote, compared as a case- and
     /// normalization-insensitive volume would. On a case-sensitive server that may ask once too often, never too little.
     var createdAcross = Set<String>()
+    /// Each folder's files and bytes as `measure` counted them: what Skip adds to the progress, without a second walk.
+    var measured: [String: (files: Int, bytes: Int64)] = [:]
     static func foldedPath(_ p: String) -> String { p.precomposedStringWithCanonicalMapping.lowercased() }
     /// Fired by `cancel()`: a transfer over SFTP drops its connections, so a stalled server can't hold it up.
     let cancelFlag = CancelFlag()
@@ -221,16 +223,17 @@ public final class FileJob: @unchecked Sendable {
     /// Size (files only: a folder's is 0 in a listing) and mtime against `expected` (`dst`: `expectedTarget`), each
     /// on its own side; a mismatch goes in `errors`.
     func changedSinceCompare(_ fs: TransferFS, _ src: String, _ dfs: TransferFS? = nil, _ dst: String? = nil) -> Bool {
-        for (fs, path, saw) in [(fs, src, expected)] + (dst.map { [(dfs ?? fs, $0, expectedTarget)] } ?? []) {
-            guard let want = saw[path] else { continue }
-            let a = (try? fs.lstat(path)) ?? nil
-            if a?.mtime != want?.mtime || a.map({ $0.kind == .dir }) != want.map({ $0.kind == .dir })
-                || want?.kind == .file && a?.size != want?.size {
-                update { $0.errors.append("\(path): changed since Compare, skipped") }
-                return true
-            }
-        }
-        return false
+        changed(src, expected, (try? fs.lstat(src)) ?? nil) || dst.map { changed($0, expectedTarget, (try? (dfs ?? fs).lstat($0)) ?? nil) } == true
+    }
+
+    /// `path` as it is now (`a`, nil: nothing there; looked at only if Compare saw it) against what Compare saw there.
+    func changed(_ path: String, _ saw: [String: FileItem?], _ a: @autoclosure () -> SFTPClient.Attrs?) -> Bool {
+        guard let want = saw[path] else { return false }
+        let a = a()
+        guard a?.mtime != want?.mtime || a.map({ $0.kind == .dir }) != want.map({ $0.kind == .dir })
+            || want?.kind == .file && a?.size != want?.size else { return false }
+        update { $0.errors.append("\(path): changed since Compare, skipped") }
+        return true
     }
 
     // MARK: - Copy / move
