@@ -58,6 +58,7 @@ import Testing
     panel.cancelBusy()
     _ = await running.value
 
+    panel.flashTime = 600   // a loaded Mac's re-list may take longer than the usual 2.5 s
     panel.flash("Saved · no history: file over 5 MB")
     try await reList(adding: "h")
     #expect(panel.statusText == "Saved · no history: file over 5 MB")

@@ -89,6 +89,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// The server calls `busy` shows, the latest last; ⎋ cancels them all.
     private var busyOps: [(flag: CancelFlag, message: String)] = []
     private var flashed: (text: String, error: Bool, until: Date)?   // until the user marks or goes elsewhere
+    var flashTime: TimeInterval = 2.5   // tests on a busy Mac: longer than a re-list can take
     private var watcher: DispatchSourceFileSystemObject?
     /// The folder the watcher's fd is on: a folder replaced under the same path (`rm -rf build && mkdir build`, a
     /// swapped symlink, a branch switch) is another one, and the watcher must move to it.
@@ -783,10 +784,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// Briefly shows a message in the status line; `error`: one saying what failed.
     func flash(_ message: String, error: Bool = false) {
-        flashed = (message, error, Date() + 2.5)
+        flashed = (message, error, Date() + flashTime)
         statusLabel.stringValue = message
         statusError = error
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + flashTime) { [weak self] in
             MainActor.assumeIsolated { self?.updateStatus() }
         }
     }
