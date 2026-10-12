@@ -24,6 +24,7 @@ Release:
 - **Speed:** a big server folder opens several times faster: up to 8 requests for its names are in flight together instead of one at a time (10 000 names: 13 waits instead of 100). Scans, Compare and deletes keep up to 4 a folder in flight, so a level of small folders is read in one wave.
 - **Speed:** downloading a server folder takes each item's kind, size, date and mode from the folder's listing instead of asking the server again: with the two changes above, a small file costs 2 waits instead of 5.
 - **Speed:** a file copied to a server gets its close, mode and date sent right behind its data instead of after the server confirmed the data: one wait less per file. A file whose owner can't write it still waits, so one that fails half-way stays writable for Retry.
+- **Speed:** copying a folder to a server doesn't ask whether each name is taken in the folder it has just made there (nothing can be yet; a name that differs only in case from one copied before is still asked about): one wait less per file. With the change above, a small file uploads in 4 waits instead of 6.
 
 ### Fixed
 

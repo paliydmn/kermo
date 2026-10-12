@@ -601,9 +601,13 @@ extension FileJob {
                     fail(src + "/" + child.name, "Unsafe name from the server — not copied")
                     continue
                 }
-                // What the listing said of it goes along: a far server's lstat per file was one wait more each.
-                transferAcross(sfs, from, dfs, (dst as NSString).appendingPathComponent(child.name), move: move, root: root,
-                               depth: depth + 1, maxDepth: maxDepth, seen: (child.attrs.typed, nil))
+                // What the listing said of it goes along: a far server's lstat per file was one wait more each. And in
+                // a folder just made on a server nothing is there yet — but for a name an item copied in before has
+                // except for case or composition, taken on a disk that ignores those: looked at, the conflict asks.
+                let to = (dst as NSString).appendingPathComponent(child.name)
+                let fresh = !merge && !(dfs is LocalFS) && !createdAcross.contains(Self.foldedPath(to))
+                transferAcross(sfs, from, dfs, to, move: move, root: root, depth: depth + 1, maxDepth: maxDepth,
+                               seen: (child.attrs.typed, fresh ? .some(nil) : nil))
             }
             // Mode and date last: a read-only folder mustn't block its own copy, and filling it bumps its date.
             // Not on a folder merged into: that one keeps its own (as L2 locally: ~/.ssh stays 0700).

@@ -247,13 +247,11 @@ private func pauseMidFile(_ job: FileJob) throws {
     for good in ["..a", "a..", ".hidden", "it's", "line\nbreak", "кирилиця"] { #expect(FileJob.isSafeName(good), "\(good)") }
 }
 
-/// A hostile "server" (a small SFTP v3 responder in Python) lists `../escape.txt` and `a/b` next to `ok.txt`.
-/// Downloading its folder copies ok.txt only; the other two are errors, and nothing lands outside the target.
-@Test func hostileNamesFromAServerAreRefused() throws {
-    let dir = tempDir()
-    defer { try? fm.removeItem(atPath: dir) }
+/// A small SFTP v3 responder in Python, in `dir`: any path ending in /evil is a folder that lists `entries`, each a
+/// file of 2 bytes ("hi"), whatever its name says.
+private func fakeServer(in dir: String, entries: [String]) throws -> SFTPTarget {
     let server = dir + "/evil-server"
-    try #"""
+    try (#"""
     #!/usr/bin/python3 -I
     import sys, struct
     inp, out = sys.stdin.buffer, sys.stdout.buffer
@@ -267,7 +265,7 @@ private func pauseMidFile(_ job: FileJob) throws {
     def attrs(mode, size): return struct.pack(">IQI", 1 | 4, size, mode)
     def status(rid, code): send(101, rid + struct.pack(">I", code) + s(b"") + s(b""))
     DIR, FILE = 0o40755, 0o100644
-    entries = [b"../escape.txt", b"ok.txt", b"a/b"]
+    entries = ENTRIES
     listed = False
     while True:
         n = struct.unpack(">I", rd(4))[0]; pkt = rd(n); t = pkt[0]
@@ -276,7 +274,7 @@ private func pauseMidFile(_ job: FileJob) throws {
         p = rest[4:4 + struct.unpack(">I", rest[:4])[0]]
         if t in (7, 17):
             if p.endswith(b"/evil"): send(105, rid + attrs(DIR, 0))
-            elif p.endswith(b"/evil/ok.txt"): send(105, rid + attrs(FILE, 2))
+            elif any(p.endswith(b"/evil/" + e) for e in entries): send(105, rid + attrs(FILE, 2))
             else: status(rid, 2)
         elif t == 11: listed = False; send(102, rid + s(b"D"))
         elif t == 12:
@@ -291,11 +289,21 @@ private func pauseMidFile(_ job: FileJob) throws {
             else: status(rid, 1)
         elif t == 4: status(rid, 0)
         else: status(rid, 8)
-    """#.write(toFile: server, atomically: true, encoding: .utf8)
+    """#).replacingOccurrences(of: "ENTRIES", with: "[" + entries.map { "b\"\($0)\"" }.joined(separator: ", ") + "]")
+        .write(toFile: server, atomically: true, encoding: .utf8)
     chmod(server, 0o755)
+    return .local(server: server)
+}
+
+/// A hostile "server" lists `../escape.txt` and `a/b` next to `ok.txt`. Downloading its folder copies ok.txt only;
+/// the other two are errors, and nothing lands outside the target.
+@Test func hostileNamesFromAServerAreRefused() throws {
+    let dir = tempDir()
+    defer { try? fm.removeItem(atPath: dir) }
+    let server = try fakeServer(in: dir, entries: ["../escape.txt", "ok.txt", "a/b"])
     let to = tempDir()
     defer { try? fm.removeItem(atPath: to) }
-    let job = FileJob(.copy, sources: ["/srv/evil"], from: .sftp(.local(server: server)), to: .local, destDir: to)
+    let job = FileJob(.copy, sources: ["/srv/evil"], from: .sftp(server), to: .local, destDir: to)
     nonisolated(unsafe) var refused: [String] = []
     job.resolveError = { path, _ in refused.append((path as NSString).lastPathComponent); return (.skip, false) }
     let p = run(job)
@@ -303,4 +311,22 @@ private func pauseMidFile(_ job: FileJob) throws {
     #expect(fm.contents(atPath: to + "/evil/ok.txt") == Data("hi".utf8))
     #expect(try fm.contentsOfDirectory(atPath: to) == ["evil"])
     #expect(try fm.contentsOfDirectory(atPath: to + "/evil") == ["ok.txt"])
+}
+
+/// A copy into a folder it has just made on a server no longer looks at each name first (nothing can be there yet).
+/// Except a name an item copied before has but for case or composition: on a disk that ignores those it's taken,
+/// and the conflict dialog asks, as before — not a failed rename.
+@Test func caseOnlyTwinsInANewServerFolderStillConflict() throws {
+    let dir = tempDir(), to = tempDir()
+    defer { try? fm.removeItem(atPath: dir); try? fm.removeItem(atPath: to) }
+    fm.createFile(atPath: to + "/Case", contents: nil)
+    guard fm.fileExists(atPath: to + "/case") else { return }   // a disk that tells case apart: nothing to show
+    try fm.removeItem(atPath: to + "/Case")
+    let job = FileJob(.copy, sources: ["/srv/evil"], from: .sftp(try fakeServer(in: dir, entries: ["Makefile", "makefile"])),
+                      to: .sftp(.local()), destDir: to)
+    nonisolated(unsafe) var asked: [String] = []
+    job.resolveConflict = { c in asked.append((c.dst as NSString).lastPathComponent); return (.skip, false) }
+    let p = run(job)
+    #expect(asked == ["makefile"] && p.errors.isEmpty, "\(asked) \(p.errors)")
+    #expect(try fm.contentsOfDirectory(atPath: to + "/evil") == ["Makefile"])
 }

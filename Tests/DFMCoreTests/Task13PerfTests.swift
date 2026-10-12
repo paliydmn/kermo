@@ -141,6 +141,26 @@ private func tempDir() -> String {
     #expect(try c.list(d).map(\.name) == ["f"])
 }
 
+/// Uploading into a folder the copy had just made looked at each name there first (lstat): nothing can be there
+/// yet, so that was one wait for nothing a file.
+@Test func uploadIntoANewFolderDoesntLookFirst() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let fm = FileManager.default
+    try fm.createDirectory(atPath: d + "/src", withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: d + "/to", withIntermediateDirectories: true)
+    for i in 0..<20 { try Data(repeating: UInt8(i), count: 2048).write(to: URL(fileURLWithPath: d + "/src/f\(i)")) }
+    let fs = RemoteFS(.local(), env: [:])
+    let c = try fs.session(), before = c.roundTrips
+    let job = FileJob(.copy, sources: [d + "/src"], from: .local, to: .sftp(.local()), destDir: d + "/to")
+    job.runAcross(fs)
+    #expect(job.progress.state == .done && job.progress.errors.isEmpty, "\(job.progress.errors)")
+    #expect((0..<20).allSatisfy { fm.contents(atPath: d + "/to/src/f\($0)") == Data(repeating: UInt8($0), count: 2048) })
+    // Old partials swept: the target folder (open, its reads with the end); the folder: a look, mkdir; each file: open,
+    // its write with the close, mode and date behind it, the rename's look and the rename; the folder's mode and date.
+    #expect(c.roundTrips - before == 2 + 2 + 20 * 4 + 1, "\(c.roundTrips - before)")
+}
+
 /// Stop during "Scanning…" before a copy waited for the walk of the whole tree to end.
 @Test func stoppedCopyStopsScanning() throws {
     let d = tempDir()
