@@ -1485,17 +1485,14 @@ extension AppDelegate {
     /// Two marked files, or the cursor file vs. the same name (or the cursor) in the other panel.
     /// Uses `defaults write com.dmn.dfilemanager diffCommand 'code --diff %1 %2'` if set, else `diff -u`.
     func diffFiles() {
-        let files = active.targetURLs.filter { !$0.hasDirectoryPath }
-        let (panel, cursor, otherCursor, otherFolder) = (active, active.cursorURL, other.cursorURL, other.plainFolder)
+        let file = { (u: URL?) in u.flatMap { $0.hasDirectoryPath ? nil : $0 } }
+        let (panel, cursor, otherCursor) = (active, file(active.cursorURL), file(other.cursorURL))
+        // The other panel's folder only when that's what it shows: not the local one behind a server tab.
+        let same = other.plainFolder.flatMap { f in cursor.map { URL(fileURLWithPath: f).appendingPathComponent($0.lastPathComponent) } }
+        let marked = active.targetURLs.filter { !$0.hasDirectoryPath }
         Task {
-            var pair: (URL, URL)?
-            if files.count == 2 {
-                pair = (files[0], files[1])
-            } else if let a = cursor, !a.hasDirectoryPath {
-                // The other panel's folder only when that's what it shows: not the local one behind a server tab.
-                let same = otherFolder.map { URL(fileURLWithPath: $0).appendingPathComponent(a.lastPathComponent) }
-                if let same, await Blocking.run(.userInitiated, { FileManager.default.fileExists(atPath: same.path) }) { pair = (a, same) }   // a share that doesn't answer
-                else if let b = otherCursor, !b.hasDirectoryPath { pair = (a, b) }
+            let pair = await Self.diffPair(marked: marked, cursor: cursor, sameName: same, otherCursor: otherCursor) { same in
+                await Blocking.run(.userInitiated) { FileManager.default.fileExists(atPath: same.path) }   // a share that doesn't answer
             }
             guard let (a, b) = pair else { return panel.flash("Mark two files, or put the cursor on a file in each panel") }
             let qa = ShellContext.quote(a.path), qb = ShellContext.quote(b.path)
@@ -1505,6 +1502,16 @@ extension AppDelegate {
                 Shell.run("diff -u \(qa) \(qb)", in: panel.path, diff: true)
             }
         }
+    }
+
+    /// Which two files Compare Files diffs: two marked; else the cursor's and the same name in the other panel's
+    /// folder, if it's there; else the cursor's and the other panel's cursor's. Files only (no folders, no ".."); nil:
+    /// nothing to diff. `exists` is asked about the same name only when it comes to that.
+    static func diffPair<S: Sendable>(marked: [S], cursor: S?, sameName: S?, otherCursor: S?, exists: (S) async -> Bool) async -> (S, S)? {
+        if marked.count == 2 { return (marked[0], marked[1]) }
+        guard let a = cursor else { return nil }
+        if let same = sameName, await exists(same) { return (a, same) }
+        return otherCursor.map { (a, $0) }
     }
 
     /// `%1` and `%2` filled in one pass: a first path holding "%2" mustn't get the second pasted into its quotes.
