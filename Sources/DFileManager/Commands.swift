@@ -1915,19 +1915,45 @@ extension AppDelegate {
 
     // MARK: - Undo / redo (Edit menu, ⌘Z / ⌘⇧Z) through the window's NSUndoManager
 
-    /// Registers an undo that moves every `to` back to `from`; running it registers the reverse (redo). `jobs`: an
-    /// undo/redo's move jobs across volumes — what they actually moved (and where: Keep Both) is read when it runs.
-    func registerMoves(_ title: String, _ pairs: [(from: String, to: String)], jobs: [FileJob] = []) {
-        guard !pairs.isEmpty || !jobs.isEmpty, let um = window.undoManager else { return }
-        um.registerUndo(withTarget: self) { app in
+    /// Registers an undo that moves every `to` back to `from`; running it registers the reverse (redo).
+    func registerMoves(_ title: String, _ pairs: [(from: String, to: String)]) {
+        guard !pairs.isEmpty else { return }
+        registerMoves(title, MoveRecord(done: (pairs, [])))
+    }
+
+    /// The same for what `record` says was moved: an undo/redo's renames and its move jobs across volumes — what
+    /// those actually moved (and where: Keep Both) is read when it runs. The record is the target: filled in, or
+    /// taken back, once the undo/redo that registered it has done its disk work (`fill`).
+    private func registerMoves(_ title: String, _ record: MoveRecord) {
+        guard let um = window.undoManager else { return }
+        um.registerUndo(withTarget: record) { [self, record] _ in   // kept by the handler: the undo manager doesn't keep its target
             MainActor.assumeIsolated {
-                guard let done = Self.moved(pairs, jobs) else {
-                    return app.showError(JobErrorMessage("Can't undo or redo \(title.lowercased()) while its move between volumes is still running"))
+                performMoves(title) {   // run after the undo/redo work before it: the record is filled in by then
+                    record.done.flatMap { Self.moved($0.renames, $0.jobs) }?.map { (from: $0.to, to: $0.from) }
                 }
-                app.performMoves(title, done.map { (from: $0.to, to: $0.from) })
             }
         }
         um.setActionName(title)
+    }
+
+    /// An undo's or redo's own undo/redo, registered at once — after an await it would land on the undo stack, not
+    /// the redo one — and filled in by `fill` once its disk work is done.
+    private func registerPendingMoves(_ title: String) -> MoveRecord {
+        let record = MoveRecord(done: nil)
+        registerMoves(title, record)
+        return record
+    }
+
+    /// What the undo/redo moved; nothing: its own undo/redo is taken back.
+    private func fill(_ record: MoveRecord, _ renames: [(from: String, to: String)], _ jobs: [FileJob]) {
+        if renames.isEmpty && jobs.isEmpty { window.undoManager?.removeAllActions(withTarget: record) } else { record.done = (renames, jobs) }
+    }
+
+    /// Undo/redo disk work off the main thread (thousands of items on a share), one after another as asked: an undo
+    /// of a rename, then of the move before it, must find the item where the first put it.
+    private func afterUndoWork(_ work: @escaping @MainActor () async -> Void) {
+        let previous = undoWork
+        undoWork = Task { await previous?.value; await work() }
     }
 
     /// What a move undo/redo did: its renames plus what its jobs moved (a skipped item: nothing, Keep Both: under
@@ -1945,12 +1971,16 @@ extension AppDelegate {
         guard !paths.isEmpty, let um = window.undoManager else { return }
         um.registerUndo(withTarget: self) { app in
             MainActor.assumeIsolated {
-                let (trashed, errors) = Self.trash(paths)
-                app.registerMoves(title, trashed)
-                app.recordTrash(trashed)
-                app.panels.forEach { $0.reload() }
-                // A volume without a Trash (SMB, some sticks) refuses: say so, the copy is still there.
-                if !errors.isEmpty { app.showError(JobErrorMessage("Can't undo \(title.lowercased()):\n" + errors.joined(separator: "\n"))) }
+                let record = app.registerPendingMoves(title)
+                app.afterUndoWork {
+                    let r = await Blocking.run(.userInitiated) { Self.trash(paths) }
+                    let (trashed, errors) = (r.trashed, r.errors)
+                    app.fill(record, trashed, [])
+                    app.recordTrash(trashed)
+                    app.panels.forEach { $0.reload() }
+                    // A volume without a Trash (SMB, some sticks) refuses: say so, the copy is still there.
+                    if !errors.isEmpty { app.showError(JobErrorMessage("Can't undo \(title.lowercased()):\n" + errors.joined(separator: "\n"))) }
+                }
             }
         }
         um.setActionName(title)
@@ -1995,20 +2025,32 @@ extension AppDelegate {
 
     /// Never overwrites: BatchRename refuses if a target exists now (e.g. a new file took the old name); a move
     /// job across volumes asks first. Its redo is registered right away; what the jobs move is read when it runs.
-    private func performMoves(_ title: String, _ pairs: [(from: String, to: String)]) {
-        let (renames, jobs) = Self.splitMoves(pairs)
-        do {
-            try BatchRename.run(renames)
-            for job in jobs {
-                replayJobs.append(job)
-                ops.enqueue(job, title: "\(title) \(Self.describe(job.sources.map { URL(fileURLWithPath: $0) }))")
+    /// `pairs` is asked once the undo/redo work before it is done; nil: a move job of it is still running.
+    private func performMoves(_ title: String, _ pairs: @escaping @MainActor () -> [(from: String, to: String)]?) {
+        let record = registerPendingMoves(title)
+        afterUndoWork { [self] in
+            guard let pairs = pairs() else {
+                fill(record, [], [])
+                return showError(JobErrorMessage("Can't undo or redo \(title.lowercased()) while its move between volumes is still running"))
             }
-            registerMoves(title, renames, jobs: jobs)
-            updateTrashLog(after: renames)   // the jobs': once they've run (jobFinished)
-        } catch {
-            showError(JobErrorMessage("Can't undo \(title.lowercased()): \(error.localizedDescription)"))
+            do {
+                let (renames, jobs) = try await Blocking.run(.userInitiated) {
+                    let (renames, jobs) = Self.splitMoves(pairs)
+                    try BatchRename.run(renames)
+                    return (renames, jobs)
+                }
+                for job in jobs {
+                    replayJobs.append(job)
+                    ops.enqueue(job, title: "\(title) \(Self.describe(job.sources.map { URL(fileURLWithPath: $0) }))")
+                }
+                fill(record, renames, jobs)
+                updateTrashLog(after: renames)   // the jobs': once they've run (jobFinished)
+            } catch {
+                fill(record, [], [])
+                showError(JobErrorMessage("Can't undo \(title.lowercased()): \(error.localizedDescription)"))
+            }
+            panels.forEach { $0.reload() }
         }
-        panels.forEach { $0.reload() }
     }
 
     func jobFinished(_ job: FileJob) {
@@ -2038,6 +2080,12 @@ extension AppDelegate {
         let abs = p.hasPrefix("/") ? p : (active.path as NSString).appendingPathComponent(p)
         return (abs as NSString).standardizingPath
     }
+}
+
+/// What an undo/redo moved (`registerMoves`): nil until its disk work is done.
+@MainActor final class MoveRecord {
+    var done: (renames: [(from: String, to: String)], jobs: [FileJob])?
+    init(done: (renames: [(from: String, to: String)], jobs: [FileJob])?) { self.done = done }
 }
 
 struct JobErrorMessage: LocalizedError {

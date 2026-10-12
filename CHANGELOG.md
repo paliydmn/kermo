@@ -13,6 +13,10 @@ Release:
 
 ## [Unreleased]
 
+### Changed
+
+- **Speed:** undo and redo of a move, undo of a copy and batch rename do their disk work in the background: thousands of items on a network share no longer freeze the window.
+
 ### Fixed
 
 - **Stop and ⎋:** ⎋ stops counting folder sizes on this Mac, as on a server, and so does leaving the folder; closing Info stops its folder count; Stop during "Scanning…" before a copy stops at once instead of after the whole tree. Search by content and compare by content stop within a big file instead of after it; closing Info stops its checksums.

@@ -23,6 +23,7 @@ final class MultiRename: NSWindowController, NSTextFieldDelegate, NSTableViewDat
     private let table = NSTableView()
     private let message = NSTextField(labelWithString: "")
     private let renameButton = NSButton(title: "Rename", target: nil, action: nil)
+    private var renaming = false
 
     private static var current: MultiRename?
 
@@ -163,17 +164,26 @@ final class MultiRename: NSWindowController, NSTextFieldDelegate, NSTableViewDat
     func controlTextDidChange(_ obj: Notification) { recompute() }
     @objc private func controlChanged() { recompute() }
 
+    /// Off the main thread: thousands of items on a share take a while. Meanwhile neither button acts.
     @objc private func renameAll() {
+        guard !renaming else { return }
         let todo = pairs.filter { $0.from != $0.to }
-        do {
-            try BatchRename.run(todo)
-            close(with: todo)
-        } catch {
-            message.stringValue = error.localizedDescription
+        renaming = true
+        message.stringValue = "Renaming…"
+        message.textColor = .secondaryLabelColor
+        Task {
+            defer { renaming = false }
+            do {
+                try await Blocking.run(.userInitiated) { try BatchRename.run(todo) }
+                close(with: todo)
+            } catch {
+                message.stringValue = error.localizedDescription
+                message.textColor = .systemRed
+            }
         }
     }
 
-    @objc private func cancelSheet() { close(with: []) }
+    @objc private func cancelSheet() { if !renaming { close(with: []) } }
 
     private func close(with done: [(from: String, to: String)]) {
         window!.sheetParent?.endSheet(window!)
