@@ -290,7 +290,7 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
     private func checksum(_ name: String, _ make: @escaping @Sendable () -> ((Data) -> Void, () -> String)) {
         extra.append("\(name): computing…")
         let i = extra.count - 1
-        let path = path
+        let path = path, cancel = cancel   // closing the window stops it
         Task { [weak self] in
             let result = await Blocking.run(.userInitiated) { () -> String in
                 var st = stat()   // a placeholder would be downloaded whole just to hash it
@@ -300,9 +300,9 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
                 defer { try? h.close() }
                 let (update, finish) = make()
                 do {   // a read that fails (a disk error, a share gone) says so: a hash of what came before would pass for the file's
-                    while let chunk = try h.read(upToCount: 1 << 20), !chunk.isEmpty { update(chunk) }
+                    while !cancel.isCancelled, let chunk = try h.read(upToCount: 1 << 20), !chunk.isEmpty { update(chunk) }
                 } catch { return "can't read (\(error.localizedDescription))" }
-                return finish()
+                return cancel.isCancelled ? "stopped" : finish()
             }
             guard let self else { return }
             extra[i] = "\(name):".padding(toLength: 12, withPad: " ", startingAt: 0) + result

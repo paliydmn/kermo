@@ -58,3 +58,23 @@ private func tempDir() -> String {
     #expect(job.progress.totalFiles == 0, "not walked: \(job.progress.totalFiles)")
     #expect(!FileManager.default.fileExists(atPath: d + "/to/tree"))
 }
+
+/// Comparing by content, and searching by it, looked at Stop only between files: a pair of 4 GB images, or one
+/// big log, was read to its end first. Both stop at the next 1 MB now — and a stopped comparison is never "equal".
+@Test func contentReadsStopAtTheNextChunk() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let data = Data(repeating: 7, count: 3 << 20) + Data("needle".utf8)
+    try data.write(to: URL(fileURLWithPath: d + "/a"))
+    try data.write(to: URL(fileURLWithPath: d + "/b"))
+    #expect(DirSync.filesEqual(d + "/a", d + "/b"))
+    #expect(FileSearch.fileContains(d + "/a", Array("needle".utf8), caseSensitive: true))
+    var looks = 0
+    let afterOne = { looks += 1; return looks > 1 }   // stopped after the first chunk
+    #expect(!DirSync.filesEqual(d + "/a", d + "/b", isCancelled: afterOne))
+    #expect(looks == 2)
+    looks = 0
+    #expect(!FileSearch.fileContains(d + "/a", Array("needle".utf8), caseSensitive: true, isCancelled: afterOne))
+    #expect(looks == 2)
+    #expect(!DirSync.filesEqual(d + "/a", d + "/b", isCancelled: { true }))
+}
