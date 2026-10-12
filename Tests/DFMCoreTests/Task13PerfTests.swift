@@ -187,6 +187,52 @@ private func tempDir() -> String {
     #expect(try FileManager.default.contentsOfDirectory(atPath: d).sorted() == ["app.conf", "edited"], "no partial left")
 }
 
+/// Each listing of a server panel opened an SFTP session of its own: `ssh -O check`, a new ssh, the handshake. A panel
+/// keeps one now: the same while it's connected, a new one once it was closed, cancelled, its ssh gone, or its master
+/// stopped.
+@Test func panelListingsKeepOneSession() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let name = "sftp-server-kept-" + UUID().uuidString.prefix(8)
+    try FileManager.default.createSymbolicLink(atPath: d + "/" + name, withDestinationPath: "/usr/libexec/sftp-server")
+    FileManager.default.createFile(atPath: d + "/a", contents: nil)
+    let t = SFTPTarget.local(server: d + "/" + name)
+    let kept = KeptSession(t)
+    defer { kept.close() }
+    func listed() throws -> Bool { try SFTP.list(t, d, on: kept).contains { $0.name == "a" } }
+
+    _ = try SFTP.home(t, on: kept)
+    let first = try #require(kept.client)
+    #expect(try listed() && kept.client === first, "the login folder and two listings: one session")
+    #expect(try listed() && kept.client === first)
+
+    kept.close()
+    #expect(try listed())
+    let second = try #require(kept.client)
+    #expect(second !== first && second.isConnected, "closed: the next listing connects again")
+
+    let kill = Process()
+    kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+    kill.arguments = ["-f", String(name)]
+    try kill.run()
+    kill.waitUntilExit()
+    for _ in 0..<200 where second.isConnected { usleep(10_000) }
+    #expect(try listed() && kept.client !== second, "its server gone: the next listing connects again")
+
+    let flag = CancelFlag()
+    flag.cancel()
+    let third = try #require(kept.client)
+    #expect(throws: CancellationError.self) { try SFTP.list(t, d, cancel: flag, on: kept) }
+    #expect(!third.isConnected, "a cancelled listing ends at once, its session with it")
+    #expect(try listed())
+
+    let fourth = try #require(kept.client)
+    KeptSession.closeAll(on: SFTPTarget.local(server: "/usr/libexec/sftp-server"))
+    #expect(fourth.isConnected, "another server's master stopped")
+    KeptSession.closeAll(on: t)
+    #expect(!fourth.isConnected, "its server's master stopped")
+}
+
 /// Stop during "Scanning…" before a copy waited for the walk of the whole tree to end.
 @Test func stoppedCopyStopsScanning() throws {
     let d = tempDir()

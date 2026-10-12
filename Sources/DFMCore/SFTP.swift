@@ -251,18 +251,19 @@ public enum SFTP {
         return "\(user)@\(host)"
     }
 
-    /// The login folder.
-    public static func home(_ t: SFTPTarget, env: [String: String] = [:], cancel: CancelFlag? = nil) throws -> String {
-        try session(t, env: env, cancel: cancel) { try $0.realpath(".") }
+    /// The login folder. `kept`: on that session (a server panel's), not a new one.
+    public static func home(_ t: SFTPTarget, env: [String: String] = [:], cancel: CancelFlag? = nil, on kept: KeptSession? = nil) throws -> String {
+        try session(t, env: env, cancel: cancel, on: kept) { try $0.realpath(".") }
     }
 
     /// Over SFTP itself (READDIR): names come as the server's bytes, never through `ls` text or sftp's globbing.
     /// `owners` hears each item's owner and group: the server's names where its `ls -l` line has them, else numbers.
-    /// `links` hears where each symlink points and the errno following it gives (0: there).
+    /// `links` hears where each symlink points and the errno following it gives (0: there). `kept`: as in `home`.
     public static func list(_ t: SFTPTarget, _ dir: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
                             owners: ((_ name: String, _ owner: String, _ group: String) -> Void)? = nil,
-                            links: ((_ name: String, _ target: String, _ error: Int32) -> Void)? = nil) throws -> [FileItem] {
-        try session(t, env: env, cancel: cancel) { c in
+                            links: ((_ name: String, _ target: String, _ error: Int32) -> Void)? = nil,
+                            on kept: KeptSession? = nil) throws -> [FileItem] {
+        try session(t, env: env, cancel: cancel, on: kept) { c in
             var items = try c.list(dir, owners: owners).filter { FileJob.isSafeName($0.name) }.map { name, a in
                 FileItem(name: name, kind: a.kind, size: a.size, mtime: a.mtime, mode: a.type | (a.mode ?? 0), flags: 0,
                          uid: a.uid ?? FileItem.unknown, gid: a.gid ?? FileItem.unknown)
@@ -279,15 +280,62 @@ public enum SFTP {
         }
     }
 
-    /// One SFTP session for `body`. Cancelled, it throws CancellationError, not the "connection closed" of the session
-    /// the cancel closed (the panel tells those apart).
-    private static func session<T>(_ t: SFTPTarget, env: [String: String], cancel: CancelFlag?, _ body: (SFTPClient) throws -> T) throws -> T {
+    /// One SFTP session for `body` (or the `kept` one). Cancelled, it throws CancellationError, not the "connection
+    /// closed" of the session the cancel closed (the panel tells those apart).
+    private static func session<T>(_ t: SFTPTarget, env: [String: String], cancel: CancelFlag?, on kept: KeptSession?,
+                                   _ body: (SFTPClient) throws -> T) throws -> T {
         let flag = cancel ?? CancelFlag()
-        do { return try SFTPClient.session(t, env: env, cancel: flag, body) } catch where flag.isCancelled { throw CancellationError() }
+        do {
+            if let kept { return try kept.run(env: env, cancel: flag, body) }
+            return try SFTPClient.session(t, env: env, cancel: flag, body)
+        } catch where flag.isCancelled { throw CancellationError() }
     }
 
     /// The type letter of a special file → its S_IFMT type (kept in `mode`; see FileItem).
     static let special: [String: mode_t] = ["c": S_IFCHR, "b": S_IFBLK, "p": S_IFIFO, "s": S_IFSOCK]
+}
+
+/// A server panel's SFTP session, kept from one listing to the next: a session each was an `ssh -O check`, an ssh
+/// process and a handshake (some 0.1 s on a LAN, 4 round trips far away). The same one while it's connected, a new one
+/// once it isn't: closed, its ssh gone, or stopped with its master after sleep or a network change (`closeAll`) —
+/// riding a dead connection, a listing would wait ~90 s for ssh to notice. One call at a time. A cancelled call closes
+/// it at once (a listing leaves nothing to tidy up on the server); the next call connects again.
+public final class KeptSession: @unchecked Sendable {
+    public let target: SFTPTarget
+    private let calls = NSLock()   // held through a call: a client is one thread's at a time
+    private let lock = NSLock()    // `client`: closing never waits for a call
+    private(set) var client: SFTPClient?
+    nonisolated(unsafe) private static let all = NSHashTable<KeptSession>.weakObjects()
+    private static let allLock = NSLock()
+
+    public init(_ target: SFTPTarget) {
+        self.target = target
+        Self.allLock.withLock { Self.all.add(self) }
+    }
+
+    deinit { client?.close() }   // else its reader thread keeps the client, and the ssh, alive
+
+    func run<T>(env: [String: String], cancel: CancelFlag, _ body: (SFTPClient) throws -> T) throws -> T {
+        try calls.withLock {
+            let c: SFTPClient
+            if let live = lock.withLock({ client }), live.isConnected {
+                c = live
+            } else {
+                c = try SFTPClient(target, env: env, cancel: cancel)
+                lock.withLock { client = c }
+            }
+            let previous = cancel.onCancel { c.close() }
+            defer { cancel.onCancel(previous) }
+            return try body(c)
+        }
+    }
+
+    public func close() { lock.withLock { client }?.close() }
+
+    /// Every kept session to `t`'s server (`isSameServer`): its connection is being stopped.
+    public static func closeAll(on t: SFTPTarget) {
+        for k in allLock.withLock({ all.allObjects }) where k.target.isSameServer(as: t) { k.close() }
+    }
 }
 
 /// An interactive session through the system `ssh` (it reads ~/.ssh/config, the agent, known_hosts itself).
