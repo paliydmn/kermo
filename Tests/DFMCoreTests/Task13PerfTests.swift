@@ -31,16 +31,206 @@ private func tempDir() -> String {
         while try r.read() != nil {}
         r.close()
     }
-    #expect(try trips { try readAll(d + "/small", 2048) } == 4, "open, read, end of file, close")
-    #expect(try trips { try readAll(d + "/big", Int64(128 * SFTPClient.chunk)) } == 5, "open, 2 waves of 64 reads, end of file, close")
+    #expect(try trips { try readAll(d + "/small", 2048) } == 2, "open, read with the end of file (the close isn't waited for)")
+    #expect(try trips { try readAll(d + "/big", Int64(128 * SFTPClient.chunk)) } == 4, "open, 2 waves of 64 reads, end of file")
     #expect(try trips {
         let w = try c.openWrite(d + "/out")
         try w.write(Data(repeating: 3, count: 128 * SFTPClient.chunk))
         try w.finish()
     } == 4, "open, 2 waves of 64 writes, close")
     var listed = 0
-    #expect(trips { listed = c.list((0..<3).map { d + "/dirs/\($0)" }).count } == 4, "open, read, end of file, close: each for all 3 at once")
+    #expect(trips { listed = c.list((0..<3).map { d + "/dirs/\($0)" }).count } == 2, "open, then the reads with the end of file: each for all 3 at once")
     #expect(listed == 3)
+}
+
+/// A small file's read asked for a whole chunk: it came back short, and asking for the rest was one more wait
+/// before the end of file. The last read ends at the size now, and the end is asked for in the same wave — still
+/// read to the end whatever the size turned out to be.
+@Test func readStopsAtTheSizeAndAsksForTheEndAlong() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let data = Data((0..<100_000).map { UInt8($0 % 251) })
+    try data.write(to: URL(fileURLWithPath: d + "/f"))
+    FileManager.default.createFile(atPath: d + "/empty", contents: nil)
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    func read(_ path: String, from offset: Int64 = 0, hint: Int64) throws -> Data {
+        let r = try c.openRead(path, offset: offset, sizeHint: hint)
+        defer { r.close() }
+        var out = Data()
+        while let piece = try r.read() { out += piece }
+        return out
+    }
+    #expect(try read(d + "/f", hint: 100_000) == data)
+    #expect(try read(d + "/f", hint: 2048) == data, "grew since the stat")
+    #expect(try read(d + "/f", hint: 300_000) == data, "shrank since the stat")
+    #expect(try read(d + "/f", hint: 0) == data, "no stat")
+    #expect(try read(d + "/f", from: 40_000, hint: 100_000) == data[40_000...])
+    #expect(try read(d + "/f", from: 100_000, hint: 100_000).isEmpty)
+    #expect(try read(d + "/empty", hint: 0).isEmpty)
+    let tail = d + "/tail"
+    #expect(try c.download(d + "/f", to: tail, last: 100).size == 100_000)
+    #expect(FileManager.default.contents(atPath: tail) == data.suffix(100))
+}
+
+/// A listing sent one READDIR at a time and waited: a server sends some 100 names an answer, so 10 000 names were
+/// 100 waits one after another. 8 in flight now (4 a folder when many are listed together), the ones past the end
+/// dropped: every name once, a wave per 800 names.
+@Test func listingKeepsReadsInFlight() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let sizes = [0, 100, 800, 1000]
+    for n in sizes {
+        try FileManager.default.createDirectory(atPath: d + "/\(n)", withIntermediateDirectories: true)
+        for i in 0..<n { FileManager.default.createFile(atPath: d + "/\(n)/f\(i)", contents: nil) }
+    }
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    var trips: [Int] = []
+    for n in sizes {
+        let before = c.roundTrips
+        let names = try c.list(d + "/\(n)").map(\.name)
+        trips.append(c.roundTrips - before)
+        #expect(names.count == n && Set(names).count == n)
+    }
+    // Open, then a wave per 8 answers ("." and ".." come too): 0–100 names, 2 answers at most with the end.
+    #expect(trips == [2, 2, 3, 3], "\(trips)")
+    let before = c.roundTrips
+    let listed = c.list(sizes.map { d + "/\($0)" })
+    #expect(listed.map(\.items.count) == sizes)
+    #expect(c.roundTrips - before == 1 + 3, "open; 4 reads a folder a wave: 1000 names are 11 answers and the end")
+}
+
+/// Downloading a server folder looked at each file again (lstat) though its listing had just said what it was: one
+/// wait more a file. What the listing said goes on now.
+@Test func downloadTakesWhatTheListingSaw() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let fm = FileManager.default
+    try fm.createDirectory(atPath: d + "/src", withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: d + "/to", withIntermediateDirectories: true)
+    for i in 0..<20 { try Data(repeating: UInt8(i), count: 2048).write(to: URL(fileURLWithPath: d + "/src/f\(i)")) }
+    let fs = RemoteFS(.local(), env: [:])
+    let c = try fs.session(), before = c.roundTrips
+    let job = FileJob(.copy, sources: [d + "/src"], from: .sftp(.local()), to: .local, destDir: d + "/to")
+    job.runAcross(fs)
+    #expect(job.progress.state == .done && job.progress.errors.isEmpty, "\(job.progress.errors)")
+    #expect((0..<20).allSatisfy { fm.contents(atPath: d + "/to/src/f\($0)") == Data(repeating: UInt8($0), count: 2048) })
+    // Scanning: lstat, the folder (open, its reads with the end); the copy: the same 3; each file: open, its read
+    // with the end (the close isn't waited for).
+    #expect(c.roundTrips - before == 3 + 3 + 20 * 2, "\(c.roundTrips - before)")
+}
+
+/// A copy's close, mode and date go right behind its writes now when the mode lets the owner write (they waited for
+/// every write's answer). A write that fails is still the error, the file stays writable for Retry, and nothing of
+/// that pipeline is left to answer anything later.
+@Test func failedWriteBeforeAnEarlyCloseIsTheError() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let path = d + "/f"
+    try Data("old".utf8).write(to: URL(fileURLWithPath: path))
+    chmod(path, 0o600)
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    let w = SFTPClient.WriteStream(c, try c.openRead(path).handle, path, offset: 0)   // a read handle: writes fail
+    try w.write(Data(repeating: 1, count: 3 * SFTPClient.chunk))
+    #expect(throws: SFTPError.self) { _ = try w.finish(mtime: 1_000_000_000, mode: 0o640) }
+    #expect(w.confirmed == 0)
+    let a = try #require(try c.lstat(path))
+    #expect(a.mode == 0o640 && a.mtime == 1_000_000_000 && a.size == 3, "closed, then the mode and date: \(a)")
+    #expect(try c.list(d).map(\.name) == ["f"])
+}
+
+/// Uploading into a folder the copy had just made looked at each name there first (lstat): nothing can be there
+/// yet, so that was one wait for nothing a file.
+@Test func uploadIntoANewFolderDoesntLookFirst() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let fm = FileManager.default
+    try fm.createDirectory(atPath: d + "/src", withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: d + "/to", withIntermediateDirectories: true)
+    for i in 0..<20 { try Data(repeating: UInt8(i), count: 2048).write(to: URL(fileURLWithPath: d + "/src/f\(i)")) }
+    let fs = RemoteFS(.local(), env: [:])
+    let c = try fs.session(), before = c.roundTrips
+    let job = FileJob(.copy, sources: [d + "/src"], from: .local, to: .sftp(.local()), destDir: d + "/to")
+    job.runAcross(fs)
+    #expect(job.progress.state == .done && job.progress.errors.isEmpty, "\(job.progress.errors)")
+    #expect((0..<20).allSatisfy { fm.contents(atPath: d + "/to/src/f\($0)") == Data(repeating: UInt8($0), count: 2048) })
+    // Old partials swept: the target folder (open, its reads with the end); the folder: a look, mkdir; each file: open,
+    // its write with the close, mode and date behind it, the rename's look and the rename; the folder's mode and date.
+    #expect(c.roundTrips - before == 2 + 2 + 20 * 4 + 1, "\(c.roundTrips - before)")
+}
+
+/// ⌘S waited for the write's answer, then the close, then the mode, one after another; and the check that the
+/// server's copy is still what was opened read it with a wait for its end and one for its close. The mode goes with
+/// the close, right behind the write, and the check's read takes one wave.
+@Test func saveToAServerTakesFewerRoundTrips() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let conf = d + "/app.conf", local = d + "/edited"
+    try Data(repeating: 1, count: 2048).write(to: URL(fileURLWithPath: conf))
+    chmod(conf, 0o640)
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    let base = try c.download(conf, to: local)
+    #expect(base.sha256 != nil)
+    try Data(repeating: 2, count: 2048).write(to: URL(fileURLWithPath: local))
+    let before = c.roundTrips
+    let saved = try c.upload(local, to: conf, baseline: base)
+    // A look; the check: open, its read with the end; the partial: open, its write with the close and mode behind it,
+    // a look (whose file it is), the rename; then the new baseline.
+    #expect(c.roundTrips - before == 1 + 2 + 2 + 2 + 1, "\(c.roundTrips - before)")
+    #expect(FileManager.default.contents(atPath: conf) == Data(repeating: 2, count: 2048))
+    var st = stat()
+    stat(conf, &st)
+    #expect(st.st_mode & 0o7777 == 0o640 && saved.sha256 != nil && saved.size == 2048)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: d).sorted() == ["app.conf", "edited"], "no partial left")
+}
+
+/// Each listing of a server panel opened an SFTP session of its own: `ssh -O check`, a new ssh, the handshake. A panel
+/// keeps one now: the same while it's connected, a new one once it was closed, cancelled, its ssh gone, or its master
+/// stopped.
+@Test func panelListingsKeepOneSession() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let name = "sftp-server-kept-" + UUID().uuidString.prefix(8)
+    try FileManager.default.createSymbolicLink(atPath: d + "/" + name, withDestinationPath: "/usr/libexec/sftp-server")
+    FileManager.default.createFile(atPath: d + "/a", contents: nil)
+    let t = SFTPTarget.local(server: d + "/" + name)
+    let kept = KeptSession(t)
+    defer { kept.close() }
+    func listed() throws -> Bool { try SFTP.list(t, d, on: kept).contains { $0.name == "a" } }
+
+    _ = try SFTP.home(t, on: kept)
+    let first = try #require(kept.client)
+    #expect(try listed() && kept.client === first, "the login folder and two listings: one session")
+    #expect(try listed() && kept.client === first)
+
+    kept.close()
+    #expect(try listed())
+    let second = try #require(kept.client)
+    #expect(second !== first && second.isConnected, "closed: the next listing connects again")
+
+    let kill = Process()
+    kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+    kill.arguments = ["-f", String(name)]
+    try kill.run()
+    kill.waitUntilExit()
+    for _ in 0..<200 where second.isConnected { usleep(10_000) }
+    #expect(try listed() && kept.client !== second, "its server gone: the next listing connects again")
+
+    let flag = CancelFlag()
+    flag.cancel()
+    let third = try #require(kept.client)
+    #expect(throws: CancellationError.self) { try SFTP.list(t, d, cancel: flag, on: kept) }
+    #expect(!third.isConnected, "a cancelled listing ends at once, its session with it")
+    #expect(try listed())
+
+    let fourth = try #require(kept.client)
+    KeptSession.closeAll(on: SFTPTarget.local(server: "/usr/libexec/sftp-server"))
+    #expect(fourth.isConnected, "another server's master stopped")
+    KeptSession.closeAll(on: t)
+    #expect(!fourth.isConnected, "its server's master stopped")
 }
 
 /// Stop during "Scanning…" before a copy waited for the walk of the whole tree to end.
@@ -112,8 +302,9 @@ private func makeLevels(_ root: String) throws {
     let job = FileJob(.copy, sources: [])
     let m = job.measure(fs, d + "/t")
     #expect(m.files == 210 && m.bytes == 210 && m.depth == 3)
-    // lstat; the top: open, read, end, close; each level of 70: 2 batches of the same 4. One at a time: 845.
-    #expect(c.roundTrips - before == 1 + 4 + 3 * 8, "\(c.roundTrips - before)")
+    // lstat; the top: open, then its reads with the end (closes aren't waited for); each level of 70: 2 batches of the same
+    // 2. One at a time: 845.
+    #expect(c.roundTrips - before == 1 + 2 + 3 * 4, "\(c.roundTrips - before)")
     // Each folder's totals, for Skip.
     #expect(job.measured[d + "/t"]! == (210, 210) && job.measured[d + "/t/5"]! == (3, 3) && job.measured[d + "/t/5/a/b"]! == (1, 1))
 }
@@ -149,9 +340,10 @@ private func makeLevels(_ root: String) throws {
     job.removeAcross(fs, [(d + "/t", a)])
     #expect(job.progress.errors.isEmpty, "\(job.progress.errors)")
     #expect(!FileManager.default.fileExists(atPath: d + "/t"))
-    // The top: open, read, end, close; each level of 70: 2 batches of those 4 and 1 for the files; the folders: 2 + 2 + 2 + 1.
+    // The top: open, then its reads with the end (closes aren't waited for); each level of 70: 2 batches of those 2 and 1
+    // for the files; the folders: 2 + 2 + 2 + 1.
     // One at a time: 1265.
-    #expect(c.roundTrips - before == 4 + 3 * 10 + 7, "\(c.roundTrips - before)")
+    #expect(c.roundTrips - before == 2 + 3 * 6 + 7, "\(c.roundTrips - before)")
 }
 
 /// F8 of many items (or a Mirror's deletions) on a server looked at and deleted each on its own: a file 2 round
@@ -173,9 +365,10 @@ private func makeLevels(_ root: String) throws {
     let p = job.progress
     #expect(p.state == .done && p.errors.isEmpty && p.doneFiles == 141 && p.totalFiles == 141, "\(p.errors)")
     #expect(try FileManager.default.contentsOfDirectory(atPath: d).isEmpty)
-    // 141 looks: 3; the files: 64 + 6; the folders: 2 batches of open, read, end, close and their files; their RMDIRs: 2.
+    // 141 looks: 3; the files: 64 + 6; the folders: 2 batches of open, the reads with the end, and their files; their
+    // RMDIRs: 2.
     // One at a time: 631.
-    #expect(c.roundTrips - before == 3 + 2 + 10 + 2, "\(c.roundTrips - before)")
+    #expect(c.roundTrips - before == 3 + 2 + 6 + 2, "\(c.roundTrips - before)")
 }
 
 /// A file that can't go is asked about alone (Retry / Skip), and the folders above it stay without a "not empty"
@@ -214,8 +407,9 @@ private func makeLevels(_ root: String) throws {
     let plan = DirSync.compare(left: d + "/L", right: d + "/R", listRight: DirSync.lister(fs), tolerance: 1)
     #expect(plan.count == 211 && plan.filter { $0.action != .equal }.map(\.path) == ["33/a/b/new"])
     #expect(plan.prefix(4).map(\.path) == ["0/a/b/f", "0/a/f", "0/f", "1/a/b/f"], "as a walk into each folder in turn")
-    // The server's side: the top: open, read, end, close; each level of 70: 2 batches of those 4. One at a time: 844.
-    #expect(c.roundTrips - before == 4 + 3 * 8, "\(c.roundTrips - before)")
+    // The server's side: the top: open, then its reads with the end (closes aren't waited for); each level of 70: 2
+    // batches of those 2. One at a time: 844.
+    #expect(c.roundTrips - before == 2 + 3 * 4, "\(c.roundTrips - before)")
 }
 
 /// Synchronize looked at each side of each pair on its own (then the scan and the copy looked again): ~5 round

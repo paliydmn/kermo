@@ -128,6 +128,25 @@ extension ServerLockTests {
     #expect(panel.remoteTabs.isEmpty && changes > before)
 }
 
+/// Each listing of a server panel was an SFTP session of its own (`ssh -O check`, a new ssh, the handshake). The panel
+/// keeps one while it shows the server; leaving the server closes it.
+@MainActor @Test func serverPanelKeepsOneSessionWhileOnTheServer() async throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-kept-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: dir + "/sub", withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    panel.loadRemote(.local(), dir: dir, select: nil)
+    for _ in 0..<500 where panel.remote?.dir != dir { try await Task.sleep(for: .milliseconds(10)) }
+    let first = try #require(panel.kept?.client)
+    panel.loadRemote(.local(), dir: dir + "/sub", select: nil)
+    for _ in 0..<500 where panel.remote?.dir != dir + "/sub" { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(panel.remote?.dir == dir + "/sub" && panel.kept?.client === first && first.isConnected, "one session for both")
+    panel.navigate(to: dir, history: .none)   // leaves the server
+    for _ in 0..<500 where panel.remote != nil { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(panel.remote == nil && panel.kept == nil && !first.isConnected)
+}
+
 /// Swaps `Masters.stopper` for a recorder: no ssh runs.
 @Suite(.serialized) @MainActor struct MastersTests {
     final class Stops: @unchecked Sendable {
@@ -199,6 +218,27 @@ extension ServerLockTests {
             center.post(name: NSWorkspace.didWakeNotification, object: nil)
             for _ in 0..<300 where !stops.all.contains(where: { $0.0 == t }) { try await Task.sleep(for: .milliseconds(10)) }
             #expect(stops.all.contains { $0.0 == t && !$0.1 })
+        }
+    }
+
+    /// Server panels keep their SFTP session between listings. A stopped connection (wake, network change, Disconnect)
+    /// takes the panels' sessions on it along: the next listing connects afresh instead of waiting ~90 s on a dead one.
+    @Test func stoppedConnectionTakesItsPanelSessionsAlong() async throws {
+        let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-kept-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        for name in ["a", "b"] { try FileManager.default.createSymbolicLink(atPath: dir + "/" + name, withDestinationPath: "/usr/libexec/sftp-server") }
+        let (t, u) = (SFTPTarget.local(server: dir + "/a"), SFTPTarget.local(server: dir + "/b"))
+        let (kt, ku) = (KeptSession(t), KeptSession(u))
+        defer { kt.close(); ku.close() }
+        _ = try SFTP.list(t, dir, on: kt)
+        _ = try SFTP.list(u, dir, on: ku)
+        SFTP.noteMaster(t)
+        SFTP.noteMaster(u)
+        try await recording { stops in
+            await Masters.stop(now: false) { $0 == t }
+            #expect(stops.all.map(\.0) == [t])
+            #expect(kt.client?.isConnected == false && ku.client?.isConnected == true, "another server's stays")
         }
     }
 

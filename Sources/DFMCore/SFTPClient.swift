@@ -18,6 +18,10 @@ public final class SFTPClient: @unchecked Sendable {
         /// SHA-256 of the content (`download`/`upload` of a file up to `hashLimit`): size and whole-second mtime miss
         /// a same-size change within the second. Never from the server itself.
         public var sha256: Data? = nil
+
+        /// These, if they say what the item is — a listing's may not (SFTP v3 lets a server leave the mode out, and a
+        /// lister may not type an entry); nil: ask `lstat`.
+        var typed: Attrs? { mode == nil || kind == .other ? nil : self }
     }
 
     public let target: SFTPTarget
@@ -26,6 +30,9 @@ public final class SFTPClient: @unchecked Sendable {
 
     static let chunk = 32_768
     static let window = 64
+    /// READDIRs in flight for one folder: a server sends some 100 names an answer (OpenSSH), so 10 000 names were
+    /// 100 waits one after another. Each one sent past the end answers an EOF of its own, dropped.
+    static let readdirs = 8
 
     private let process = Process()
     private let toServer: FileHandle
@@ -154,12 +161,18 @@ public final class SFTPClient: @unchecked Sendable {
     /// `owners` hears each name's owner and group as the server's `ls -l` line names them (else their numbers).
     public func list(_ dir: String, owners: ((_ name: String, _ owner: String, _ group: String) -> Void)? = nil) throws -> [(name: String, attrs: Attrs)] {
         let handle = try open(dir: dir)
-        defer { try? closeHandle(handle) }
+        var inflight: [UInt32] = []
+        defer { forget(inflight); closeUnheard(handle) }
         var out: [(name: String, attrs: Attrs)] = []
         while true {
-            var p = Packet(Self.READDIR)
-            p.string(handle)
-            let (type, body) = try call(p)
+            if inflight.isEmpty {
+                for _ in 0..<Self.readdirs {
+                    var p = Packet(Self.READDIR)
+                    p.string(handle)
+                    inflight.append(try send(p))
+                }
+            }
+            let (type, body) = try wait(inflight.removeFirst())
             if type == Self.STATUS, try status(body, path: dir) == Self.EOF { return out }
             out += try names(type, body, owners: owners)
         }
@@ -198,30 +211,33 @@ public final class SFTPClient: @unchecked Sendable {
                 guard let id, let a = try? wait(id), a.type == Self.HANDLE, case var r = Reader(a.body), let h = try? r.bytes() else { return nil }
                 return (d, h, [], true)
             }
-            var reading = Array(open.indices)   // until each says EOF, some after more answers than others
+            // Until each says EOF, some after more answers than others. 4 READDIRs each, not `readdirs`: a batch's small
+            // folders still end in one wave (a few hundred names, then EOF) without 7 spare EOFs a folder.
+            var reading = Array(open.indices)
             while !reading.isEmpty {
-                let sent = reading.map { i -> (Int, UInt32?) in
-                    var p = Packet(Self.READDIR)
-                    p.string(open[i].handle)
-                    return (i, try? send(p))
+                let sent = reading.map { i in
+                    (i, (0..<4).map { _ -> UInt32? in
+                        var p = Packet(Self.READDIR)
+                        p.string(open[i].handle)
+                        return try? send(p)
+                    })
                 }
-                reading = sent.compactMap { i, id in
-                    guard let id, let a = try? wait(id) else { open[i].ok = false; return nil }
-                    if a.type == Self.STATUS {
-                        if (try? status(a.body, path: open[i].dir)) != Self.EOF { open[i].ok = false }
-                        return nil
+                reading = sent.compactMap { i, ids in
+                    var rest = ids[...]
+                    defer { forget(rest.compactMap { $0 }) }   // past the end: EOFs; after a failure: whatever
+                    while let next = rest.popFirst() {
+                        guard let id = next, let a = try? wait(id) else { open[i].ok = false; return nil }
+                        if a.type == Self.STATUS {
+                            if (try? status(a.body, path: open[i].dir)) != Self.EOF { open[i].ok = false }
+                            return nil
+                        }
+                        guard let more = try? names(a.type, a.body) else { open[i].ok = false; return nil }
+                        open[i].items += more
                     }
-                    guard let more = try? names(a.type, a.body) else { open[i].ok = false; return nil }
-                    open[i].items += more
                     return i
                 }
             }
-            let closing = open.compactMap { o -> UInt32? in
-                var p = Packet(Self.CLOSE)
-                p.string(o.handle)
-                return try? send(p)
-            }
-            closing.forEach { _ = try? wait($0) }
+            open.forEach { closeUnheard($0.handle) }
             out += open.filter(\.ok).map { ($0.dir, $0.items) }
         }
         return out
@@ -233,8 +249,7 @@ public final class SFTPClient: @unchecked Sendable {
     public func measure(_ path: String, cancel: CancelFlag? = nil) throws -> Int64 {
         var bytes: Int64 = 0, level: [String] = []
         func add(_ path: String, _ known: Attrs?) {
-            let listed = known?.mode == nil || known?.kind == .other ? nil : known
-            guard let a = listed ?? (try? lstat(path)) ?? nil else { return }
+            guard let a = known?.typed ?? (try? lstat(path)) ?? nil else { return }
             if a.kind == .dir { level.append(path) } else { bytes += a.size }
         }
         add(path, nil)
@@ -422,7 +437,8 @@ public final class SFTPClient: @unchecked Sendable {
     // MARK: - Streams
 
     /// Reads a file in order from `offset`, keeping `window` requests in flight. `sizeHint` (from a stat) stops
-    /// the pipeline from overshooting small files; a file that grew past it is still read to its end.
+    /// the pipeline from overshooting small files: the last read ends at it, and the one asking for the end of the
+    /// file goes in the same wave. A file that grew past it is still read to its end.
     public final class ReadStream {
         let c: SFTPClient, handle: Data, path: String, hint: UInt64
         var next: UInt64
@@ -437,8 +453,10 @@ public final class SFTPClient: @unchecked Sendable {
         public func read() throws -> Data? {
             while true {
                 while !eof && inflight.count < (next > hint ? 1 : SFTPClient.window) {
-                    inflight.append((try c.sendRead(handle, next, SFTPClient.chunk), next, SFTPClient.chunk))
-                    next += UInt64(SFTPClient.chunk)
+                    // Overshooting the hint, a read came back short and its rest was one more wait before the end.
+                    let len = next < hint ? Int(min(UInt64(SFTPClient.chunk), hint - next)) : SFTPClient.chunk
+                    inflight.append((try c.sendRead(handle, next, len), next, len))
+                    next += UInt64(len)
                 }
                 guard !inflight.isEmpty else { return nil }
                 let r = inflight.removeFirst()
@@ -469,7 +487,7 @@ public final class SFTPClient: @unchecked Sendable {
 
         public func close() {
             abandon()
-            try? c.closeHandle(handle)
+            c.closeUnheard(handle)
         }
 
         private func abandon() {
@@ -487,6 +505,7 @@ public final class SFTPClient: @unchecked Sendable {
         let c: SFTPClient, handle: Data, path: String
         var offset: UInt64
         var inflight: [(id: UInt32, end: UInt64)] = []
+        var closed = false   // its CLOSE went out: never a second one (the server may hand the handle to another file)
         /// Where the file surely holds all that was written, in one piece: each write before it answered OK. (After an
         /// error the ones sent later may have landed past a hole.)
         public private(set) var confirmed: Int64
@@ -512,32 +531,38 @@ public final class SFTPClient: @unchecked Sendable {
 
         public func finish() throws {
             while !inflight.isEmpty { try check(inflight.removeFirst()) }
+            closed = true
             try c.closeHandle(handle)
         }
 
         /// `finish`, with the file's mode and date sent right behind the close instead of after its answer (the
-        /// server takes requests in order): one round trip for both. Only once every write landed — a partial
-        /// that failed half-way mustn't turn read-only (the source's mode) under the Retry that reopens it. The
-        /// mode's and date's failure is returned, not thrown: the data is there.
+        /// server takes requests in order): one round trip for both. A mode the owner can write (or none) goes right
+        /// behind the writes, before their answers: one more round trip saved, and a partial that failed half-way
+        /// stays writable for the Retry that reopens it. Any other mode only once every write landed — such a
+        /// partial mustn't turn read-only under that Retry. The mode's and date's failure is returned, not thrown:
+        /// the data is there.
         public func finish(mtime: Double?, mode: UInt32?) throws -> Error? {
-            while !inflight.isEmpty { try check(inflight.removeFirst()) }
-            var close = Packet(SFTPClient.CLOSE)
-            close.string(handle)
-            let closeID = try c.send(close)
-            guard let setID = try? c.send(SFTPClient.setstat(path, mtime: mtime, mode: mode)) else {
-                c.forget([closeID])
-                throw c.lostError()
+            if let mode, mode & 0o200 == 0 {
+                do { while !inflight.isEmpty { try check(inflight.removeFirst()) } } catch { close(); throw error }
             }
+            var closing = Packet(SFTPClient.CLOSE)
+            closing.string(handle)
+            var sent: [UInt32] = []   // the close, then the mode and date
+            closed = true
             do {
-                let (type, body) = try c.wait(closeID)
+                sent.append(try c.send(closing))
+                sent.append(try c.send(SFTPClient.setstat(path, mtime: mtime, mode: mode)))
+                while !inflight.isEmpty { try check(inflight.removeFirst()) }
+                let (type, body) = try c.wait(sent[0])
                 guard type == SFTPClient.STATUS else { throw c.protocolError("CLOSE answered \(type)") }
                 try c.status(body, path: path, okOnly: true)
             } catch {
-                c.forget([closeID, setID])
+                c.forget(inflight.map(\.id) + sent)   // the handle is closed (or the connection gone): no close() after
+                inflight = []
                 throw error
             }
             do {
-                let (type, body) = try c.wait(setID)
+                let (type, body) = try c.wait(sent[1])
                 guard type == SFTPClient.STATUS else { throw c.protocolError("SETSTAT answered \(type)") }
                 try c.status(body, path: path, okOnly: true)
                 return nil
@@ -548,6 +573,8 @@ public final class SFTPClient: @unchecked Sendable {
         public func close() {
             c.forget(inflight.map(\.id))
             inflight = []
+            guard !closed else { return }
+            closed = true
             try? c.closeHandle(handle)
         }
 
@@ -572,7 +599,7 @@ public final class SFTPClient: @unchecked Sendable {
     /// Copies `length` bytes (0 = to the end) of `from` at `offset` into `to` at the same offset.
     public func copyData(_ from: String, to: String, offset: Int64, length: Int64) throws {
         let rh = try open(from, Self.FXF_READ)
-        defer { try? closeHandle(rh) }
+        defer { closeUnheard(rh) }
         let wh = try open(to, Self.FXF_WRITE | Self.FXF_CREAT | (offset > 0 ? 0 : Self.FXF_TRUNC), mode: 0o600)   // new: owner-only, as openWrite
         defer { try? closeHandle(wh) }
         var p = Packet(Self.EXTENDED)
@@ -606,6 +633,14 @@ public final class SFTPClient: @unchecked Sendable {
         var p = Packet(Self.CLOSE)
         p.string(h)
         try expectOK(p, "")
+    }
+
+    /// A read handle's or a folder's close, its answer not waited for: it can't lose data, and the server takes it
+    /// before anything sent after it. One wait less per file read and per folder listed.
+    func closeUnheard(_ h: Data) {
+        var p = Packet(Self.CLOSE)
+        p.string(h)
+        if let id = try? send(p) { forget([id]) }
     }
 
     private func handle(_ p: Packet, _ path: String) throws -> Data {
@@ -966,6 +1001,7 @@ extension SFTPClient {
         let partial = ((remote as NSString).deletingLastPathComponent as NSString).appendingPathComponent(FileJob.partialName())
         let w = try openWrite(partial, exclusive: true)
         var hash = SHA256()
+        var modeError: Error?   // the mode didn't take: no rename then (a copy into `remote` keeps its own)
         do {
             var buf = [UInt8](repeating: 0, count: 1 << 16)
             while true {
@@ -976,7 +1012,7 @@ extension SFTPClient {
                 hash.update(data: buf[0..<n])
                 try w.write(Data(buf[0..<n]))
             }
-            try w.finish()
+            modeError = try w.finish(mtime: nil, mode: cur?.mode ?? 0o644)   // with the close: one wait, not two
         } catch {
             w.close()
             try? remove(partial)
@@ -995,7 +1031,7 @@ extension SFTPClient {
                 }
                 try? remove(partial)
             } else {
-                try setAttrs(partial, mtime: nil, mode: cur?.mode ?? 0o644)
+                if let modeError { throw modeError }
                 try rename(partial, remote, replace: true)
             }
         } catch {

@@ -84,6 +84,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var moves = 0
     /// The server listing in flight; ⎋ cancels it.
     private var remoteFlag: CancelFlag?
+    /// The SFTP session this panel's listings of its server share, while it shows that server.
+    private(set) var kept: KeptSession?
     /// The server calls `busy` shows, the latest last; ⎋ cancels them all.
     private var busyOps: [(flag: CancelFlag, message: String)] = []
     private var watcher: DispatchSourceFileSystemObject?
@@ -112,6 +114,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// Browsing an SFTP server. `path` stays the local folder the panel returns to.
     private(set) var remote: (target: SFTPTarget, dir: String)? {
         didSet {
+            if let k = kept, k.target != remote?.target { k.close(); kept = nil }   // left that server (another tab too)
             guard oldValue?.target != remote?.target || oldValue?.dir != remote?.dir else { return }
             stopPreview()
             onSessionsChange?()
@@ -1010,6 +1013,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let flag = CancelFlag()
         remoteFlag = flag
         let opening = remote?.target != target   // not a folder of the server already open here
+        if kept?.target != target { kept?.close(); kept = KeptSession(target) }
+        let session = kept
         if opening {
             busyMessage = "Connecting to \(target.host)… ⎋ cancels"
             connecting = target
@@ -1025,10 +1030,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             }
             let result = await Blocking.run(.userInitiated) { () -> Result<(String, [FileItem], [String: (String, String)], [String: (target: String, error: Int32)]), Error> in
                 Result {
-                    let d = try dir ?? SFTP.home(target, env: SSHAskpass.env, cancel: flag)
+                    let d = try dir ?? SFTP.home(target, env: SSHAskpass.env, cancel: flag, on: session)
                     var owners: [String: (String, String)] = [:], links: [String: (target: String, error: Int32)] = [:]
                     let items = try SFTP.list(target, d, env: SSHAskpass.env, cancel: flag, owners: { owners[$0] = ($1, $2) },
-                                              links: { links[$0] = ($1, $2) })
+                                              links: { links[$0] = ($1, $2) }, on: session)
                     return (d, items, owners, links)
                 }
             }
