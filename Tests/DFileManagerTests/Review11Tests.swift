@@ -3,7 +3,7 @@ import AppKit
 import Testing
 @testable import DFileManager
 
-// Task 11 review (tasks/task_11_review_v3/README.md).
+// Task 11 review.
 
 @MainActor private func names(_ p: PanelViewController) -> [String] { (0..<p.table.numberOfRows).compactMap { p.item(at: $0)?.name } }
 private func file(_ name: String) -> FileItem { FileItem(name: name, kind: .file, size: 1, mtime: 0, mode: 0o644, flags: 0) }
@@ -367,7 +367,7 @@ private func tempDir() -> String {
     #expect(panel.statusText.contains("3 items"))
 }
 
-/// N13 (decided): "… changed on dd.main since you opened it" had Overwrite on ↩, so the habitual ⌘S ↩ wrote over
+/// N13 (decided): "… changed on web1 since you opened it" had Overwrite on ↩, so the habitual ⌘S ↩ wrote over
 /// someone's changes. ↩ is Cancel there now (and on this Mac's "changed on disk"); Overwrite takes a click.
 @MainActor @Test func overwriteIsNotTheDefaultAnswer() {
     let a = AppDelegate.alert("x changed", info: "", ["Overwrite", "Reload", "Cancel"], default: 2)

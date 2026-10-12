@@ -5,8 +5,8 @@ import Testing
 // Task 3 QA: edge-case trees on the local disk, a USB volume and a real SSH server.
 // Off by default; enable with
 //   DFM_QA=1 ./test.sh --filter QA                       local only
-//   DFM_QA_USB=/Volumes/ALTA-X86 …                        + a scratch folder on that volume
-//   DFM_QA_SSH=dd-hetzner …                               + a scratch folder in the server's /tmp
+//   DFM_QA_USB=/Volumes/USB …                             + a scratch folder on that volume
+//   DFM_QA_SSH=myserver …                                 + a scratch folder in the server's /tmp
 // Everything is created under fresh dfm-qa-* folders and removed at the end. Remote data stays tiny.
 
 private let env = ProcessInfo.processInfo.environment

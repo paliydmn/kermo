@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import DFMCore
 
-// Task 10, I9 (tasks/task10_review_v2/README.md §6): git log / blame, stage / unstage, status on a server.
+// Task 10, I9: git log / blame, stage / unstage, status on a server.
 
 private func git(_ args: [String], in dir: String) {
     let p = Process()

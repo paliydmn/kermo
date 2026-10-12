@@ -1719,7 +1719,7 @@ extension AppDelegate {
         active.flash(active.remote != nil ? "Not available on SFTP" : "Archives are read-only here — F5 extracts")
     }
 
-    /// chmod / chown of the marked items (or the cursor's) as "644 dmn:staff": a part left as shown stays as each
+    /// chmod / chown of the marked items (or the cursor's) as "644 me:staff": a part left as shown stays as each
     /// item has it (blank where they differ). Never through a symlink locally; on a server, ids are its own numbers.
     func attributesDialog() {
         if active.archive != nil { return readOnly() }

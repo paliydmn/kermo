@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import DFMCore
 
-// Task 9 QA follow-up, git group (tasks/task9_qa_followup/README.md §6.4).
+// Task 9 QA follow-up, git group.
 
 /// L13: git counts as installed only if the folder `xcode-select -p` names has it; otherwise /usr/bin/git is the
 /// shim that asks to install developer tools.

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import DFMCore
 
-// Task 9 QA follow-up, viewer group (tasks/task9_qa_followup/README.md): follow mode.
+// Task 9 QA follow-up, viewer group: follow mode.
 
 private func append(_ path: String, _ bytes: [UInt8]) throws {
     let h = try #require(FileHandle(forWritingAtPath: path))

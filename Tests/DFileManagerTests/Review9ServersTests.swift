@@ -50,13 +50,13 @@ import Testing
         return (try #require(view.arrangedSubviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == title }), view)
     }
     for width: CGFloat in [140, 180, 220] {
-        let (name, row) = try layout("dd-hetzner", width: width)
+        let (name, row) = try layout("nas-backup", width: width)
         #expect(name.frame.width >= name.intrinsicContentSize.width, "\(width)")
         #expect(row.frame.width == width && row.arrangedSubviews.allSatisfy { $0.frame.maxX <= width }, "\(width)")
         let (long, longRow) = try layout("production-db-primary-eu", width: width)
         #expect(long.frame.width < long.intrinsicContentSize.width && longRow.arrangedSubviews.allSatisfy { $0.frame.maxX <= width }, "\(width)")
     }
-    let ssh = try #require(layout("dd-hetzner", width: 180).row.arrangedSubviews.compactMap { $0 as? NSButton }.first { $0.title == "SSH" })
+    let ssh = try #require(layout("nas-backup", width: 180).row.arrangedSubviews.compactMap { $0 as? NSButton }.first { $0.title == "SSH" })
     #expect(ssh.frame.width >= 18, "room for the name and \"S…\"")
 }
 

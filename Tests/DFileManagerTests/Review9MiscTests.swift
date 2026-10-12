@@ -4,7 +4,7 @@ import Quartz
 import Testing
 @testable import DFileManager
 
-// Task 9 §6 (tasks/task9_qa_followup/README.md), misc: P17, P18, P19, R2b.
+// Task 9 §6, misc: P17, P18, P19, R2b.
 
 @MainActor
 private func tempDir(_ files: [String]) throws -> String {

@@ -27,9 +27,9 @@ private func lstatMode(_ p: String) -> (mode: UInt32, uid: UInt32, gid: UInt32) 
 
 @Test func attributesTextParses() {
     func parsed(_ s: String) -> String { let p = Perms.parse(s); return (p.mode.map { String($0, radix: 8) } ?? "-") + "|" + p.owner }
-    #expect(parsed("644 dmn:staff") == "644|dmn:staff" && parsed(" 0755 ") == "755|" && parsed(":wheel") == "-|:wheel")
-    #expect(parsed("644 dmn:domain users") == "644|dmn:domain users", "an AD group's name has spaces")
-    #expect(parsed("") == "-|" && parsed("dmn") == "-|dmn" && parsed("999") == "-|999", "not octal: an owner")
+    #expect(parsed("644 me:staff") == "644|me:staff" && parsed(" 0755 ") == "755|" && parsed(":wheel") == "-|:wheel")
+    #expect(parsed("644 me:domain users") == "644|me:domain users", "an AD group's name has spaces")
+    #expect(parsed("") == "-|" && parsed("me") == "-|me" && parsed("999") == "-|999", "not octal: an owner")
 
     #expect(Perms.ids("501:20", names: false).map { [$0.uid, $0.gid] } == [501, 20])
     #expect(Perms.ids("root", names: true).map { [$0.uid, $0.gid] } == [0, nil])

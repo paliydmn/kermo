@@ -3,7 +3,7 @@ import Testing
 @testable import DFMCore
 @testable import DFileManager
 
-// Task 9 §6 (tasks/task9_qa_followup/README.md), servers: R2.
+// Task 9 §6, servers: R2.
 
 /// R2: a server log's tail says what it is — "last 4 MB of 1.2 GB" — where the size goes.
 @MainActor @Test func viewerOfARemoteTailSaysSo() async throws {

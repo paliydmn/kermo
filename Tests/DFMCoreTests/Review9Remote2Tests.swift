@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import DFMCore
 
-// Task 9 §6 (tasks/task9_qa_followup/README.md), servers: R2, R3, R25.
+// Task 9 §6, servers: R2, R3, R25.
 
 /// R25: a port after the host (`host:port`, `host:port:/path`) and IPv6 hosts, bracketed or bare; the scp-style
 /// forms keep working.

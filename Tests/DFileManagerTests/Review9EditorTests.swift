@@ -109,7 +109,7 @@ private func disk(_ path: String) -> [UInt8] { [UInt8](FileManager.default.conte
     defer { try? FileManager.default.removeItem(atPath: dir) }
     for p in ["/etc/hosts", "/private/etc/ssh/sshd_config", "/Users/u/.zshrc", "/tmp/crontab.ab12Cd",
               // the per-user spool files cron reads, named after the user (Debian, RHEL, macOS)
-              "/var/spool/cron/crontabs/root", "/var/spool/cron/root", "/var/at/tabs/dmn", "/private/var/at/tabs/dmn",
+              "/var/spool/cron/crontabs/root", "/var/spool/cron/root", "/var/at/tabs/me", "/private/var/at/tabs/me",
               "/usr/lib/cron/tabs/root",
               "a.conf", "a.cfg", "a.ini", "a.yml", "a.yaml", "a.toml"] {
         #expect(Editor.isConfig(p), "\(p)")

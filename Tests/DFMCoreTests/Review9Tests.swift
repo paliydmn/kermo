@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import DFMCore
 
-// Task 9 QA follow-up (tasks/task9_qa_followup/README.md): one test per fixed finding, named by its ID.
+// Task 9 QA follow-up: one test per fixed finding, named by its ID.
 
 /// A4: Multi-Rename runs every keystroke through the live preview, so half-typed masks and counters must
 /// come back as an error the sheet can show — never trap the process.

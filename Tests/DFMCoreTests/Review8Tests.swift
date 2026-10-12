@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import DFMCore
 
-// Task 8 admin review (tasks/task8_review_v1/README.md): one test per fixed finding, named by its ID.
+// Task 8 admin review: one test per fixed finding, named by its ID.
 
 /// S1: a pasteboard item (any app can write one) must not name a local program for the transfer to run.
 @Test func pastedServerItemCannotPickALocalProgram() throws {
