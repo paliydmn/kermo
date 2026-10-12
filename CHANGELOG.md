@@ -17,6 +17,7 @@ Release:
 
 - **Speed:** undo and redo of a move, undo of a copy and batch rename do their disk work in the background: thousands of items on a network share no longer freeze the window. So do rename, Go to Link Target, diff, compress, `fm` and Info's chmod, chown and flags: a share that stopped answering doesn't hang the app.
 - **Speed:** "Scanning…" before a copy or move from a server reads the tree a level at a time, up to 64 folders together, instead of one folder after another: thousands of folders on a distant server take seconds, not minutes. A folder skipped in a conflict isn't read a second time.
+- **Speed:** deleting a folder on a server (F8) goes a level at a time: up to 64 folders listed together, their files deleted together, then the empty folders, deepest first. A file that can't be deleted is still asked about on its own (Retry, Skip, Abort), and the folders above it stay without an error each.
 
 ### Fixed
 

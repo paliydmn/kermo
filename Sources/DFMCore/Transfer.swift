@@ -25,6 +25,10 @@ protocol TransferFS: AnyObject, Sendable {
     func mkdir(_ path: String) throws
     func remove(_ path: String) throws
     func rmdir(_ path: String) throws
+    /// These files, then these empty folders, with the requests in flight together on a server. The ones that
+    /// didn't go, with why.
+    func remove(_ paths: [String]) -> [(path: String, error: Error)]
+    func rmdir(_ paths: [String]) -> [(path: String, error: Error)]
     func rename(_ from: String, _ to: String, replace: Bool) throws
     func readlink(_ path: String) throws -> String
     /// The one exception: symlinks followed, to tell where a path really is.
@@ -39,6 +43,8 @@ protocol TransferFS: AnyObject, Sendable {
 
 extension TransferFS {
     func list(_ dirs: [String]) -> [[(name: String, attrs: SFTPClient.Attrs)]?] { dirs.map { try? list($0) } }
+    func remove(_ paths: [String]) -> [(path: String, error: Error)] { paths.compactMap { p in do { try remove(p); return nil } catch { return (p, error) } } }
+    func rmdir(_ paths: [String]) -> [(path: String, error: Error)] { paths.compactMap { p in do { try rmdir(p); return nil } catch { return (p, error) } } }
 }
 
 protocol PieceReader {
@@ -97,6 +103,12 @@ final class RemoteFS: TransferFS, @unchecked Sendable {
     func mkdir(_ path: String) throws { try session().mkdir(path, mode: 0o700) }
     func remove(_ path: String) throws { try session().remove(path) }
     func rmdir(_ path: String) throws { try session().rmdir(path) }
+    func remove(_ paths: [String]) -> [(path: String, error: Error)] { batch(paths) { $0.remove($1) } }
+    func rmdir(_ paths: [String]) -> [(path: String, error: Error)] { batch(paths) { $0.rmdir($1) } }
+    private func batch(_ paths: [String], _ body: (SFTPClient, [String]) -> [(path: String, error: Error)]) -> [(path: String, error: Error)] {
+        guard !paths.isEmpty else { return [] }
+        do { return body(try session(), paths) } catch { return paths.map { ($0, error) } }
+    }
     func rename(_ from: String, _ to: String, replace: Bool) throws { try session().rename(from, to, replace: replace) }
     func readlink(_ path: String) throws -> String { try session().readlink(path) }
     func realpath(_ path: String) throws -> String { try session().realpath(path) }
@@ -291,25 +303,53 @@ extension FileJob {
         finish()
     }
 
-    @discardableResult
-    private func removeAcross(_ fs: TransferFS, _ path: String, _ a: SFTPClient.Attrs) -> Bool {
+    /// `top` and all in it, never following a symlink. A folder's tree goes level by level: `SFTPClient.window`
+    /// folders listed together and their files removed together as each batch is listed (a far server: a few round
+    /// trips a batch, not a few a folder); then the folders, deepest level first, each batch together. What a
+    /// batch couldn't do goes the usual way after — Retry / Skip / Abort under its own path. What stays keeps the
+    /// folders above it, unasked: one real error, not a "not empty" for each of them up to the top.
+    func removeAcross(_ fs: TransferFS, _ top: String, _ a: SFTPClient.Attrs) {
         waitWhilePaused()
-        guard a.kind == .dir else { return attempt(path) { try fs.remove(path) } }
-        var children: [(name: String, attrs: SFTPClient.Attrs)] = []
-        guard attempt(path, { children = try fs.list(path) }) else { return false }
-        var ok = true
-        // A server's files go with their requests in flight together (a folder of thousands on a far server: a few
-        // round trips, not one each); one that didn't goes the usual way after — Retry / Skip / Abort.
-        if let remote = fs as? RemoteFS, let client = try? remote.session() {
-            let files = children.filter { $0.attrs.kind != .dir && Self.isSafeName($0.name) }.map { (path as NSString).appendingPathComponent($0.name) }
-            for f in client.remove(files) where !isCancelled { ok = attempt(f.path) { try fs.remove(f.path) } && ok }
-            children.removeAll { $0.attrs.kind != .dir }
+        guard a.kind == .dir else { attempt(top) { try fs.remove(top) }; return }
+        var dirs = [(path: top, parent: -1, kept: false)], levels = [0..<1]
+        func keep(_ i: Int) {   // it and each folder above it
+            var i = i
+            while i >= 0 && !dirs[i].kept { dirs[i].kept = true; i = dirs[i].parent }
         }
-        for c in children where Self.isSafeName(c.name) {
-            guard !isCancelled else { return false }
-            ok = removeAcross(fs, (path as NSString).appendingPathComponent(c.name), c.attrs) && ok
+        func batches(_ level: Range<Int>) -> [Range<Int>] {
+            stride(from: level.lowerBound, to: level.upperBound, by: SFTPClient.window).map { $0..<min($0 + SFTPClient.window, level.upperBound) }
         }
-        return ok && attempt(path) { try fs.rmdir(path) }   // a folder with leftovers stays, already reported
+        while let level = levels.last, !level.isEmpty {
+            for batch in batches(level) {
+                waitWhilePaused()
+                guard !isCancelled else { return }
+                var files: [(path: String, dir: Int)] = []
+                for (i, listed) in zip(batch, fs.list(batch.map { dirs[$0].path })) {
+                    var items = listed ?? []
+                    guard listed != nil || attempt(dirs[i].path, { items = try fs.list(dirs[i].path) }) else { keep(i); continue }
+                    for c in items where Self.isSafeName(c.name) {
+                        let p = (dirs[i].path as NSString).appendingPathComponent(c.name)
+                        if c.attrs.kind == .dir { dirs.append((p, i, false)) } else { files.append((p, i)) }
+                    }
+                }
+                let failed = Set(fs.remove(files.map(\.path)).map(\.path))
+                for f in files where failed.contains(f.path) {
+                    guard !isCancelled else { return }
+                    if !attempt(f.path, { try fs.remove(f.path) }) { keep(f.dir) }
+                }
+            }
+            levels.append(level.upperBound..<dirs.count)
+        }
+        for batch in levels.reversed().flatMap(batches) {
+            waitWhilePaused()
+            guard !isCancelled else { return }
+            let empty = batch.filter { !dirs[$0].kept }
+            let failed = Set(fs.rmdir(empty.map { dirs[$0].path }).map(\.path))
+            for i in empty where failed.contains(dirs[i].path) {
+                guard !isCancelled else { return }
+                if !attempt(dirs[i].path, { try fs.rmdir(dirs[i].path) }) { keep(dirs[i].parent) }
+            }
+        }
     }
 
     /// Files and bytes below `path` (what the progress bar counts), and how deep its folders go (-1: not a folder).

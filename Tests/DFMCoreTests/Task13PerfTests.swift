@@ -133,3 +133,45 @@ private func makeLevels(_ root: String) throws {
     #expect(p.totalFiles == 210 && p.doneFiles == 210 && p.doneBytes == 210)
     #expect(FileManager.default.fileExists(atPath: d + "/dst/t/6/a/b/f") && !FileManager.default.fileExists(atPath: d + "/dst/t/5/f"))
 }
+
+/// F8 on a server listed and deleted one folder at a time (only a folder's files together): ~6 round trips a
+/// folder. Level by level now: 64 folders listed together, their files removed together; the folders last,
+/// deepest level first, 64 together.
+@Test func deleteOnAServerGoesLevelByLevel() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    try makeLevels(d + "/t")
+    let fs = RemoteFS(.local(), env: [:])
+    defer { fs.close() }
+    let job = FileJob(.delete, sources: [d + "/t"], from: .sftp(.local()), to: .sftp(.local()), destDir: nil)
+    let a = try #require(try fs.lstat(d + "/t"))
+    let c = try fs.session(), before = c.roundTrips
+    job.removeAcross(fs, d + "/t", a)
+    #expect(job.progress.errors.isEmpty, "\(job.progress.errors)")
+    #expect(!FileManager.default.fileExists(atPath: d + "/t"))
+    // The top: open, read, end, close; each level of 70: 2 batches of those 4 and 1 for the files; the folders: 2 + 2 + 2 + 1.
+    // One at a time: 1265.
+    #expect(c.roundTrips - before == 4 + 3 * 10 + 7, "\(c.roundTrips - before)")
+}
+
+/// A file that can't go is asked about alone (Retry / Skip), and the folders above it stay without a "not empty"
+/// each.
+@Test func deleteOnAServerReportsOnlyWhatStays() throws {
+    let d = tempDir()
+    defer { chmod(d + "/t/7/a/b", 0o755); try? FileManager.default.removeItem(atPath: d) }
+    try makeLevels(d + "/t")
+    chmod(d + "/t/7/a/b", 0o555)   // its file can't go
+    let skip = FileJob(.delete, sources: [d + "/t"], from: .sftp(.local()), to: .sftp(.local()), destDir: nil)
+    skip.run()
+    #expect(skip.progress.errors.count == 1 && skip.progress.errors.first?.hasPrefix(d + "/t/7/a/b/f: ") == true, "\(skip.progress.errors)")
+    #expect(try FileManager.default.contentsOfDirectory(atPath: d + "/t") == ["7"])
+    #expect(try FileManager.default.contentsOfDirectory(atPath: d + "/t/7/a") == ["b"], "its own file went")
+
+    let retry = FileJob(.delete, sources: [d + "/t"], from: .sftp(.local()), to: .sftp(.local()), destDir: nil)
+    retry.resolveError = { path, _ in
+        chmod((path as NSString).deletingLastPathComponent, 0o755)   // it can go now
+        return (.retry, false)
+    }
+    retry.run()
+    #expect(retry.progress.errors.isEmpty && !FileManager.default.fileExists(atPath: d + "/t"), "\(retry.progress.errors)")
+}
