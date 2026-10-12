@@ -58,7 +58,10 @@ private func sh(_ args: [String]) -> Int32 {
 
     let t = SFTPTarget(host: NSUserName() + "@127.0.0.1", port: port, identity: d + "/user_key")
     // The test's own known_hosts; same ControlPath (%C) as the app computes, so SFTPClient finds the master.
-    let master = ["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=\(d)/known_hosts"]
+    // AddKeysToAgent=no: a `yes` in ~/.ssh/config would leave each run's throwaway key in the agent, and a few hundred
+    // of them make password logins elsewhere fail with "Too many authentication failures".
+    let master = ["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=\(d)/known_hosts",
+                  "-o", "AddKeysToAgent=no"]
         + SFTP.connectionOptions(t)
     defer { _ = sh(master + ["-O", "exit"] + t.arguments()) }
     var up = false
