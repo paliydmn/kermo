@@ -101,6 +101,26 @@ private func tempDir() -> String {
     #expect(c.roundTrips - before == 1 + 3, "open; 4 reads a folder a wave: 1000 names are 11 answers and the end")
 }
 
+/// Downloading a server folder looked at each file again (lstat) though its listing had just said what it was: one
+/// wait more a file. What the listing said goes on now.
+@Test func downloadTakesWhatTheListingSaw() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let fm = FileManager.default
+    try fm.createDirectory(atPath: d + "/src", withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: d + "/to", withIntermediateDirectories: true)
+    for i in 0..<20 { try Data(repeating: UInt8(i), count: 2048).write(to: URL(fileURLWithPath: d + "/src/f\(i)")) }
+    let fs = RemoteFS(.local(), env: [:])
+    let c = try fs.session(), before = c.roundTrips
+    let job = FileJob(.copy, sources: [d + "/src"], from: .sftp(.local()), to: .local, destDir: d + "/to")
+    job.runAcross(fs)
+    #expect(job.progress.state == .done && job.progress.errors.isEmpty, "\(job.progress.errors)")
+    #expect((0..<20).allSatisfy { fm.contents(atPath: d + "/to/src/f\($0)") == Data(repeating: UInt8($0), count: 2048) })
+    // Scanning: lstat, the folder (open, its reads with the end); the copy: the same 3; each file: open, its read
+    // with the end (the close isn't waited for).
+    #expect(c.roundTrips - before == 3 + 3 + 20 * 2, "\(c.roundTrips - before)")
+}
+
 /// Stop during "Scanning…" before a copy waited for the walk of the whole tree to end.
 @Test func stoppedCopyStopsScanning() throws {
     let d = tempDir()

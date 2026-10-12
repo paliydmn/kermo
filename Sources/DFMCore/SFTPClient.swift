@@ -18,6 +18,10 @@ public final class SFTPClient: @unchecked Sendable {
         /// SHA-256 of the content (`download`/`upload` of a file up to `hashLimit`): size and whole-second mtime miss
         /// a same-size change within the second. Never from the server itself.
         public var sha256: Data? = nil
+
+        /// These, if they say what the item is — a listing's may not (SFTP v3 lets a server leave the mode out, and a
+        /// lister may not type an entry); nil: ask `lstat`.
+        var typed: Attrs? { mode == nil || kind == .other ? nil : self }
     }
 
     public let target: SFTPTarget
@@ -245,8 +249,7 @@ public final class SFTPClient: @unchecked Sendable {
     public func measure(_ path: String, cancel: CancelFlag? = nil) throws -> Int64 {
         var bytes: Int64 = 0, level: [String] = []
         func add(_ path: String, _ known: Attrs?) {
-            let listed = known?.mode == nil || known?.kind == .other ? nil : known
-            guard let a = listed ?? (try? lstat(path)) ?? nil else { return }
+            guard let a = known?.typed ?? (try? lstat(path)) ?? nil else { return }
             if a.kind == .dir { level.append(path) } else { bytes += a.size }
         }
         add(path, nil)

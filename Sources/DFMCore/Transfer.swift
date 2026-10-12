@@ -254,15 +254,17 @@ extension FileJob {
     }
 
     /// Copy / move where at least one side is a server. Same shape as `transfer` (conflicts, errors, pause,
-    /// progress), over two `TransferFS`: one connection per side, or one for both on the same server.
-    func runAcross() {
-        if kind == .delete { return deleteAcross() }
+    /// progress), over two `TransferFS`: one connection per side, or one for both on the same server. `given`: the
+    /// server side's connection, the caller's (tests count its round trips).
+    func runAcross(_ given: TransferFS? = nil) {
+        if kind == .delete { return deleteAcross(given) }
         guard kind == .copy || kind == .move, destDir != nil || !pairs.isEmpty else {
             update { $0.errors.append("Only copy and move work on a server"); $0.state = .failed }
             return finish()
         }
-        let src = makeFS(from)
-        let dst = sameSide ? src : makeFS(to)
+        func fs(_ e: Endpoint) -> TransferFS { e == .local ? LocalFS() : given ?? makeFS(e) }
+        let src = fs(from)
+        let dst = sameSide ? src : fs(to)
         // It stops by itself and removes its partial file over the live connection, however long a slow link takes
         // to get there; a server that stops answering is cut off (and not connected to again).
         cancelFlag.onCancel { [src, dst].forEach { ($0 as? RemoteFS)?.closeWhenQuiet() } }
@@ -406,9 +408,7 @@ extension FileJob {
     func measure(_ fs: TransferFS, _ path: String, _ known: SFTPClient.Attrs? = nil) -> (files: Int, bytes: Int64, depth: Int) {
         // A listing without a mode (SFTP v3 allows it) or an entry the lister couldn't type: ask lstat, like the copy
         // will, so the depth below matches what transferAcross sees.
-        func attrs(_ path: String, _ known: SFTPClient.Attrs?) -> SFTPClient.Attrs? {
-            known?.mode == nil || known?.kind == .other ? (try? fs.lstat(path)) ?? nil : known
-        }
+        func attrs(_ path: String, _ known: SFTPClient.Attrs?) -> SFTPClient.Attrs? { known?.typed ?? (try? fs.lstat(path)) ?? nil }
         guard let a = attrs(path, known) else { return (0, 0, -1) }
         guard a.kind == .dir else { return (1, a.size, -1) }
         // Each folder with its parent: its own files first, what's below it added once all is listed.
@@ -601,8 +601,9 @@ extension FileJob {
                     fail(src + "/" + child.name, "Unsafe name from the server — not copied")
                     continue
                 }
+                // What the listing said of it goes along: a far server's lstat per file was one wait more each.
                 transferAcross(sfs, from, dfs, (dst as NSString).appendingPathComponent(child.name), move: move, root: root,
-                               depth: depth + 1, maxDepth: maxDepth)
+                               depth: depth + 1, maxDepth: maxDepth, seen: (child.attrs.typed, nil))
             }
             // Mode and date last: a read-only folder mustn't block its own copy, and filling it bumps its date.
             // Not on a folder merged into: that one keeps its own (as L2 locally: ~/.ssh stays 0700).

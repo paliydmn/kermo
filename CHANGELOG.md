@@ -22,6 +22,7 @@ Release:
 - **Speed:** synchronizing with a server checks every item against what Compare saw in one go, up to 64 requests together, and reuses what it saw for the scan and the copy, instead of several requests per item before the first byte.
 - **Speed:** reading a file from a server (a download, F3, F4, the check before saving with ⌘S) asks for the end of the file together with its last piece, and doesn't wait for the server to confirm it was closed: two waits less per file. Reading a server folder (opening it, a scan, Compare, a delete) doesn't wait for its close either.
 - **Speed:** a big server folder opens several times faster: up to 8 requests for its names are in flight together instead of one at a time (10 000 names: 13 waits instead of 100). Scans, Compare and deletes keep up to 4 a folder in flight, so a level of small folders is read in one wave.
+- **Speed:** downloading a server folder takes each item's kind, size, date and mode from the folder's listing instead of asking the server again: with the two changes above, a small file costs 2 waits instead of 5.
 
 ### Fixed
 
