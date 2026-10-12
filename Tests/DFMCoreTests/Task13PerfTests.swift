@@ -161,6 +161,32 @@ private func tempDir() -> String {
     #expect(c.roundTrips - before == 2 + 2 + 20 * 4 + 1, "\(c.roundTrips - before)")
 }
 
+/// ⌘S waited for the write's answer, then the close, then the mode, one after another; and the check that the
+/// server's copy is still what was opened read it with a wait for its end and one for its close. The mode goes with
+/// the close, right behind the write, and the check's read takes one wave.
+@Test func saveToAServerTakesFewerRoundTrips() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let conf = d + "/app.conf", local = d + "/edited"
+    try Data(repeating: 1, count: 2048).write(to: URL(fileURLWithPath: conf))
+    chmod(conf, 0o640)
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    let base = try c.download(conf, to: local)
+    #expect(base.sha256 != nil)
+    try Data(repeating: 2, count: 2048).write(to: URL(fileURLWithPath: local))
+    let before = c.roundTrips
+    let saved = try c.upload(local, to: conf, baseline: base)
+    // A look; the check: open, its read with the end; the partial: open, its write with the close and mode behind it,
+    // a look (whose file it is), the rename; then the new baseline.
+    #expect(c.roundTrips - before == 1 + 2 + 2 + 2 + 1, "\(c.roundTrips - before)")
+    #expect(FileManager.default.contents(atPath: conf) == Data(repeating: 2, count: 2048))
+    var st = stat()
+    stat(conf, &st)
+    #expect(st.st_mode & 0o7777 == 0o640 && saved.sha256 != nil && saved.size == 2048)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: d).sorted() == ["app.conf", "edited"], "no partial left")
+}
+
 /// Stop during "Scanning…" before a copy waited for the walk of the whole tree to end.
 @Test func stoppedCopyStopsScanning() throws {
     let d = tempDir()

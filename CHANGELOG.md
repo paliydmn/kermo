@@ -25,6 +25,7 @@ Release:
 - **Speed:** downloading a server folder takes each item's kind, size, date and mode from the folder's listing instead of asking the server again: with the two changes above, a small file costs 2 waits instead of 5.
 - **Speed:** a file copied to a server gets its close, mode and date sent right behind its data instead of after the server confirmed the data: one wait less per file. A file whose owner can't write it still waits, so one that fails half-way stays writable for Retry.
 - **Speed:** copying a folder to a server doesn't ask whether each name is taken in the folder it has just made there (nothing can be yet; a name that differs only in case from one copied before is still asked about): one wait less per file. With the change above, a small file uploads in 4 waits instead of 6.
+- **Speed:** saving a server file you edit (F4, ⌘S) sends its mode along with the close, right behind the data, and checks that the server's copy hasn't changed with a single read: 8 waits instead of 12.
 
 ### Fixed
 

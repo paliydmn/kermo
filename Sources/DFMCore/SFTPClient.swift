@@ -505,6 +505,7 @@ public final class SFTPClient: @unchecked Sendable {
         let c: SFTPClient, handle: Data, path: String
         var offset: UInt64
         var inflight: [(id: UInt32, end: UInt64)] = []
+        var closed = false   // its CLOSE went out: never a second one (the server may hand the handle to another file)
         /// Where the file surely holds all that was written, in one piece: each write before it answered OK. (After an
         /// error the ones sent later may have landed past a hole.)
         public private(set) var confirmed: Int64
@@ -530,6 +531,7 @@ public final class SFTPClient: @unchecked Sendable {
 
         public func finish() throws {
             while !inflight.isEmpty { try check(inflight.removeFirst()) }
+            closed = true
             try c.closeHandle(handle)
         }
 
@@ -546,6 +548,7 @@ public final class SFTPClient: @unchecked Sendable {
             var closing = Packet(SFTPClient.CLOSE)
             closing.string(handle)
             var sent: [UInt32] = []   // the close, then the mode and date
+            closed = true
             do {
                 sent.append(try c.send(closing))
                 sent.append(try c.send(SFTPClient.setstat(path, mtime: mtime, mode: mode)))
@@ -570,6 +573,8 @@ public final class SFTPClient: @unchecked Sendable {
         public func close() {
             c.forget(inflight.map(\.id))
             inflight = []
+            guard !closed else { return }
+            closed = true
             try? c.closeHandle(handle)
         }
 
@@ -996,6 +1001,7 @@ extension SFTPClient {
         let partial = ((remote as NSString).deletingLastPathComponent as NSString).appendingPathComponent(FileJob.partialName())
         let w = try openWrite(partial, exclusive: true)
         var hash = SHA256()
+        var modeError: Error?   // the mode didn't take: no rename then (a copy into `remote` keeps its own)
         do {
             var buf = [UInt8](repeating: 0, count: 1 << 16)
             while true {
@@ -1006,7 +1012,7 @@ extension SFTPClient {
                 hash.update(data: buf[0..<n])
                 try w.write(Data(buf[0..<n]))
             }
-            try w.finish()
+            modeError = try w.finish(mtime: nil, mode: cur?.mode ?? 0o644)   // with the close: one wait, not two
         } catch {
             w.close()
             try? remove(partial)
@@ -1025,7 +1031,7 @@ extension SFTPClient {
                 }
                 try? remove(partial)
             } else {
-                try setAttrs(partial, mtime: nil, mode: cur?.mode ?? 0o644)
+                if let modeError { throw modeError }
                 try rename(partial, remote, replace: true)
             }
         } catch {
