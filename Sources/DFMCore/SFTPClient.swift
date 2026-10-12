@@ -26,6 +26,9 @@ public final class SFTPClient: @unchecked Sendable {
 
     static let chunk = 32_768
     static let window = 64
+    /// READDIRs in flight for one folder: a server sends some 100 names an answer (OpenSSH), so 10 000 names were
+    /// 100 waits one after another. Each one sent past the end answers an EOF of its own, dropped.
+    static let readdirs = 8
 
     private let process = Process()
     private let toServer: FileHandle
@@ -154,12 +157,18 @@ public final class SFTPClient: @unchecked Sendable {
     /// `owners` hears each name's owner and group as the server's `ls -l` line names them (else their numbers).
     public func list(_ dir: String, owners: ((_ name: String, _ owner: String, _ group: String) -> Void)? = nil) throws -> [(name: String, attrs: Attrs)] {
         let handle = try open(dir: dir)
-        defer { closeUnheard(handle) }
+        var inflight: [UInt32] = []
+        defer { forget(inflight); closeUnheard(handle) }
         var out: [(name: String, attrs: Attrs)] = []
         while true {
-            var p = Packet(Self.READDIR)
-            p.string(handle)
-            let (type, body) = try call(p)
+            if inflight.isEmpty {
+                for _ in 0..<Self.readdirs {
+                    var p = Packet(Self.READDIR)
+                    p.string(handle)
+                    inflight.append(try send(p))
+                }
+            }
+            let (type, body) = try wait(inflight.removeFirst())
             if type == Self.STATUS, try status(body, path: dir) == Self.EOF { return out }
             out += try names(type, body, owners: owners)
         }
@@ -198,21 +207,29 @@ public final class SFTPClient: @unchecked Sendable {
                 guard let id, let a = try? wait(id), a.type == Self.HANDLE, case var r = Reader(a.body), let h = try? r.bytes() else { return nil }
                 return (d, h, [], true)
             }
-            var reading = Array(open.indices)   // until each says EOF, some after more answers than others
+            // Until each says EOF, some after more answers than others. 4 READDIRs each, not `readdirs`: a batch's small
+            // folders still end in one wave (a few hundred names, then EOF) without 7 spare EOFs a folder.
+            var reading = Array(open.indices)
             while !reading.isEmpty {
-                let sent = reading.map { i -> (Int, UInt32?) in
-                    var p = Packet(Self.READDIR)
-                    p.string(open[i].handle)
-                    return (i, try? send(p))
+                let sent = reading.map { i in
+                    (i, (0..<4).map { _ -> UInt32? in
+                        var p = Packet(Self.READDIR)
+                        p.string(open[i].handle)
+                        return try? send(p)
+                    })
                 }
-                reading = sent.compactMap { i, id in
-                    guard let id, let a = try? wait(id) else { open[i].ok = false; return nil }
-                    if a.type == Self.STATUS {
-                        if (try? status(a.body, path: open[i].dir)) != Self.EOF { open[i].ok = false }
-                        return nil
+                reading = sent.compactMap { i, ids in
+                    var rest = ids[...]
+                    defer { forget(rest.compactMap { $0 }) }   // past the end: EOFs; after a failure: whatever
+                    while let next = rest.popFirst() {
+                        guard let id = next, let a = try? wait(id) else { open[i].ok = false; return nil }
+                        if a.type == Self.STATUS {
+                            if (try? status(a.body, path: open[i].dir)) != Self.EOF { open[i].ok = false }
+                            return nil
+                        }
+                        guard let more = try? names(a.type, a.body) else { open[i].ok = false; return nil }
+                        open[i].items += more
                     }
-                    guard let more = try? names(a.type, a.body) else { open[i].ok = false; return nil }
-                    open[i].items += more
                     return i
                 }
             }

@@ -39,7 +39,7 @@ private func tempDir() -> String {
         try w.finish()
     } == 4, "open, 2 waves of 64 writes, close")
     var listed = 0
-    #expect(trips { listed = c.list((0..<3).map { d + "/dirs/\($0)" }).count } == 3, "open, read, end of file: each for all 3 at once")
+    #expect(trips { listed = c.list((0..<3).map { d + "/dirs/\($0)" }).count } == 2, "open, then the reads with the end of file: each for all 3 at once")
     #expect(listed == 3)
 }
 
@@ -71,6 +71,34 @@ private func tempDir() -> String {
     let tail = d + "/tail"
     #expect(try c.download(d + "/f", to: tail, last: 100).size == 100_000)
     #expect(FileManager.default.contents(atPath: tail) == data.suffix(100))
+}
+
+/// A listing sent one READDIR at a time and waited: a server sends some 100 names an answer, so 10 000 names were
+/// 100 waits one after another. 8 in flight now (4 a folder when many are listed together), the ones past the end
+/// dropped: every name once, a wave per 800 names.
+@Test func listingKeepsReadsInFlight() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let sizes = [0, 100, 800, 1000]
+    for n in sizes {
+        try FileManager.default.createDirectory(atPath: d + "/\(n)", withIntermediateDirectories: true)
+        for i in 0..<n { FileManager.default.createFile(atPath: d + "/\(n)/f\(i)", contents: nil) }
+    }
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    var trips: [Int] = []
+    for n in sizes {
+        let before = c.roundTrips
+        let names = try c.list(d + "/\(n)").map(\.name)
+        trips.append(c.roundTrips - before)
+        #expect(names.count == n && Set(names).count == n)
+    }
+    // Open, then a wave per 8 answers ("." and ".." come too): 0–100 names, 2 answers at most with the end.
+    #expect(trips == [2, 2, 3, 3], "\(trips)")
+    let before = c.roundTrips
+    let listed = c.list(sizes.map { d + "/\($0)" })
+    #expect(listed.map(\.items.count) == sizes)
+    #expect(c.roundTrips - before == 1 + 3, "open; 4 reads a folder a wave: 1000 names are 11 answers and the end")
 }
 
 /// Stop during "Scanning…" before a copy waited for the walk of the whole tree to end.
@@ -142,8 +170,9 @@ private func makeLevels(_ root: String) throws {
     let job = FileJob(.copy, sources: [])
     let m = job.measure(fs, d + "/t")
     #expect(m.files == 210 && m.bytes == 210 && m.depth == 3)
-    // lstat; the top: open, read, end (closes aren't waited for); each level of 70: 2 batches of the same 3. One at a time: 845.
-    #expect(c.roundTrips - before == 1 + 3 + 3 * 6, "\(c.roundTrips - before)")
+    // lstat; the top: open, then its reads with the end (closes aren't waited for); each level of 70: 2 batches of the same
+    // 2. One at a time: 845.
+    #expect(c.roundTrips - before == 1 + 2 + 3 * 4, "\(c.roundTrips - before)")
     // Each folder's totals, for Skip.
     #expect(job.measured[d + "/t"]! == (210, 210) && job.measured[d + "/t/5"]! == (3, 3) && job.measured[d + "/t/5/a/b"]! == (1, 1))
 }
@@ -179,10 +208,10 @@ private func makeLevels(_ root: String) throws {
     job.removeAcross(fs, [(d + "/t", a)])
     #expect(job.progress.errors.isEmpty, "\(job.progress.errors)")
     #expect(!FileManager.default.fileExists(atPath: d + "/t"))
-    // The top: open, read, end (closes aren't waited for); each level of 70: 2 batches of those 3 and 1 for the files; the
-    // folders: 2 + 2 + 2 + 1.
+    // The top: open, then its reads with the end (closes aren't waited for); each level of 70: 2 batches of those 2 and 1
+    // for the files; the folders: 2 + 2 + 2 + 1.
     // One at a time: 1265.
-    #expect(c.roundTrips - before == 3 + 3 * 8 + 7, "\(c.roundTrips - before)")
+    #expect(c.roundTrips - before == 2 + 3 * 6 + 7, "\(c.roundTrips - before)")
 }
 
 /// F8 of many items (or a Mirror's deletions) on a server looked at and deleted each on its own: a file 2 round
@@ -204,9 +233,10 @@ private func makeLevels(_ root: String) throws {
     let p = job.progress
     #expect(p.state == .done && p.errors.isEmpty && p.doneFiles == 141 && p.totalFiles == 141, "\(p.errors)")
     #expect(try FileManager.default.contentsOfDirectory(atPath: d).isEmpty)
-    // 141 looks: 3; the files: 64 + 6; the folders: 2 batches of open, read, end and their files; their RMDIRs: 2.
+    // 141 looks: 3; the files: 64 + 6; the folders: 2 batches of open, the reads with the end, and their files; their
+    // RMDIRs: 2.
     // One at a time: 631.
-    #expect(c.roundTrips - before == 3 + 2 + 8 + 2, "\(c.roundTrips - before)")
+    #expect(c.roundTrips - before == 3 + 2 + 6 + 2, "\(c.roundTrips - before)")
 }
 
 /// A file that can't go is asked about alone (Retry / Skip), and the folders above it stay without a "not empty"
@@ -245,9 +275,9 @@ private func makeLevels(_ root: String) throws {
     let plan = DirSync.compare(left: d + "/L", right: d + "/R", listRight: DirSync.lister(fs), tolerance: 1)
     #expect(plan.count == 211 && plan.filter { $0.action != .equal }.map(\.path) == ["33/a/b/new"])
     #expect(plan.prefix(4).map(\.path) == ["0/a/b/f", "0/a/f", "0/f", "1/a/b/f"], "as a walk into each folder in turn")
-    // The server's side: the top: open, read, end (closes aren't waited for); each level of 70: 2 batches of those 3.
-    // One at a time: 844.
-    #expect(c.roundTrips - before == 3 + 3 * 6, "\(c.roundTrips - before)")
+    // The server's side: the top: open, then its reads with the end (closes aren't waited for); each level of 70: 2
+    // batches of those 2. One at a time: 844.
+    #expect(c.roundTrips - before == 2 + 3 * 4, "\(c.roundTrips - before)")
 }
 
 /// Synchronize looked at each side of each pair on its own (then the scan and the copy looked again): ~5 round
