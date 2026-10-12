@@ -158,10 +158,19 @@ private let spotlightIndexesHome = {
     let w = try c.openWrite(d + "/.part", exclusive: true)
     try w.write(Data("hello".utf8))
     #expect(try w.finish(mtime: 1_000_000_000, mode: 0o640) == nil)
-    #expect(c.roundTrips - trips == 3, "open, the write's answer, then close + mode and date together: \(c.roundTrips - trips)")
+    #expect(c.roundTrips - trips == 2, "open, then the write's answer with close + mode and date: \(c.roundTrips - trips)")
     var st = stat()
     stat(d + "/.part", &st)
     #expect(st.st_mode & 0o7777 == 0o640 && st.st_mtimespec.tv_sec == 1_000_000_000)
+    // A mode the owner can't write waits for the writes first: a partial that failed half-way stays writable for Retry.
+    trips = c.roundTrips
+    let ro = try c.openWrite(d + "/.ro", exclusive: true)
+    try ro.write(Data("hello".utf8))
+    #expect(try ro.finish(mtime: nil, mode: 0o444) == nil)
+    #expect(c.roundTrips - trips == 3, "open, the write's answer, then close + mode: \(c.roundTrips - trips)")
+    stat(d + "/.ro", &st)
+    #expect(st.st_mode & 0o7777 == 0o444)
+    try FileManager.default.removeItem(atPath: d + "/.ro")
 
     trips = c.roundTrips
     try c.rename(d + "/.part", d + "/a.txt")

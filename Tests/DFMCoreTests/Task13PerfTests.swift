@@ -121,6 +121,26 @@ private func tempDir() -> String {
     #expect(c.roundTrips - before == 3 + 3 + 20 * 2, "\(c.roundTrips - before)")
 }
 
+/// A copy's close, mode and date go right behind its writes now when the mode lets the owner write (they waited for
+/// every write's answer). A write that fails is still the error, the file stays writable for Retry, and nothing of
+/// that pipeline is left to answer anything later.
+@Test func failedWriteBeforeAnEarlyCloseIsTheError() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let path = d + "/f"
+    try Data("old".utf8).write(to: URL(fileURLWithPath: path))
+    chmod(path, 0o600)
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    let w = SFTPClient.WriteStream(c, try c.openRead(path).handle, path, offset: 0)   // a read handle: writes fail
+    try w.write(Data(repeating: 1, count: 3 * SFTPClient.chunk))
+    #expect(throws: SFTPError.self) { _ = try w.finish(mtime: 1_000_000_000, mode: 0o640) }
+    #expect(w.confirmed == 0)
+    let a = try #require(try c.lstat(path))
+    #expect(a.mode == 0o640 && a.mtime == 1_000_000_000 && a.size == 3, "closed, then the mode and date: \(a)")
+    #expect(try c.list(d).map(\.name) == ["f"])
+}
+
 /// Stop during "Scanning…" before a copy waited for the walk of the whole tree to end.
 @Test func stoppedCopyStopsScanning() throws {
     let d = tempDir()

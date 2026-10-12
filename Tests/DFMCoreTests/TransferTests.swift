@@ -213,14 +213,15 @@ private func pauseMidFile(_ job: FileJob) throws {
     #expect(try fm.contentsOfDirectory(atPath: to) == [])
 }
 
-@Test func retryAfterALostConnectionResumes() throws {
+@Test(arguments: ["up", "down"]) func retryAfterALostConnectionResumes(direction: String) throws {
     let name = "sftp-server-resume-" + UUID().uuidString.prefix(8)
     let from = tempDir(), to = tempDir()
     defer { try? fm.removeItem(atPath: from); try? fm.removeItem(atPath: to) }
     let b = otherServer(in: from, String(name))
     let data = randomData(50_000_000)
     try data.write(to: URL(fileURLWithPath: from + "/huge"))
-    let job = FileJob(.copy, sources: [from + "/huge"], from: .sftp(b), to: .local, destDir: to)
+    let job = FileJob(.copy, sources: [from + "/huge"], from: direction == "up" ? .local : .sftp(b),
+                      to: direction == "up" ? .sftp(b) : .local, destDir: to)
     nonisolated(unsafe) var errors: [String] = []
     job.resolveError = { _, message in errors.append(message); return (.retry, false) }
     let finished = DispatchSemaphore(value: 0)

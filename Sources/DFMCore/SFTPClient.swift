@@ -534,28 +534,32 @@ public final class SFTPClient: @unchecked Sendable {
         }
 
         /// `finish`, with the file's mode and date sent right behind the close instead of after its answer (the
-        /// server takes requests in order): one round trip for both. Only once every write landed — a partial
-        /// that failed half-way mustn't turn read-only (the source's mode) under the Retry that reopens it. The
-        /// mode's and date's failure is returned, not thrown: the data is there.
+        /// server takes requests in order): one round trip for both. A mode the owner can write (or none) goes right
+        /// behind the writes, before their answers: one more round trip saved, and a partial that failed half-way
+        /// stays writable for the Retry that reopens it. Any other mode only once every write landed — such a
+        /// partial mustn't turn read-only under that Retry. The mode's and date's failure is returned, not thrown:
+        /// the data is there.
         public func finish(mtime: Double?, mode: UInt32?) throws -> Error? {
-            while !inflight.isEmpty { try check(inflight.removeFirst()) }
-            var close = Packet(SFTPClient.CLOSE)
-            close.string(handle)
-            let closeID = try c.send(close)
-            guard let setID = try? c.send(SFTPClient.setstat(path, mtime: mtime, mode: mode)) else {
-                c.forget([closeID])
-                throw c.lostError()
+            if let mode, mode & 0o200 == 0 {
+                do { while !inflight.isEmpty { try check(inflight.removeFirst()) } } catch { close(); throw error }
             }
+            var closing = Packet(SFTPClient.CLOSE)
+            closing.string(handle)
+            var sent: [UInt32] = []   // the close, then the mode and date
             do {
-                let (type, body) = try c.wait(closeID)
+                sent.append(try c.send(closing))
+                sent.append(try c.send(SFTPClient.setstat(path, mtime: mtime, mode: mode)))
+                while !inflight.isEmpty { try check(inflight.removeFirst()) }
+                let (type, body) = try c.wait(sent[0])
                 guard type == SFTPClient.STATUS else { throw c.protocolError("CLOSE answered \(type)") }
                 try c.status(body, path: path, okOnly: true)
             } catch {
-                c.forget([closeID, setID])
+                c.forget(inflight.map(\.id) + sent)   // the handle is closed (or the connection gone): no close() after
+                inflight = []
                 throw error
             }
             do {
-                let (type, body) = try c.wait(setID)
+                let (type, body) = try c.wait(sent[1])
                 guard type == SFTPClient.STATUS else { throw c.protocolError("SETSTAT answered \(type)") }
                 try c.status(body, path: path, okOnly: true)
                 return nil
