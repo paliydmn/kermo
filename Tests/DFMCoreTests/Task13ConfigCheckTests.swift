@@ -166,4 +166,68 @@ extension SudoPasswordTests {
     let e = #expect(throws: ConfigCheck.NotRun.self) { try ConfigCheck.run("visudo -cf /x", on: .local(sudo: pw), root: true) }
     #expect(e?.message == "“visudo” couldn't run on localhost as root: sudo on localhost needs a password")
 }
+
+/// "Before": the check runs on the partial file next to it — a failure leaves the server's file as it was (renamed over
+/// it or copied into it: a symlink's target, another owner's file, SELinux), the partial file gone, no version kept;
+/// the check's words come back. Then a good text goes in. Exact round trips of ⌘S (2 KB, opened with F4): 8 checked or
+/// not — the check is an ssh command, no SFTP packet (8 on the code before, `rootSaveWritesInPlaceUnderSELinux`); a
+/// failed one 6 (a symlink 7: one more to follow it).
+@Test func badTextNeverReplacesTheFile() throws {
+    let d = checkDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let rule = ConfigCheck(match: "*.conf", check: badCheck)
+    func put(_ p: String, _ text: String) throws { try Data((text + String(repeating: "#", count: 2048 - text.count)).utf8).write(to: URL(fileURLWithPath: p)) }
+    func partials() -> [String] { (try? FileManager.default.contentsOfDirectory(atPath: d))?.filter { $0.hasPrefix(".dfm-partial-") } ?? [] }
+    for link in [false, true] {
+        let file = d + "/site\(link ? "-link" : "").conf", real = link ? d + "/real.conf" : file
+        try put(real, "good\n")
+        if link { try FileManager.default.createSymbolicLink(atPath: file, withDestinationPath: real) }
+        let c = try SFTPClient(.local())
+        defer { c.close() }
+        let a = try c.download(file, to: d + "/l")
+        try put(d + "/l", "BAD\n")
+        var kept = 0, before = c.roundTrips
+        let e = #expect(throws: SFTPClient.CheckFailed.self) {
+            try c.save(d + "/l", to: file, baseline: a, rule: rule) { _, _ in kept += 1 }
+        }
+        let failTrips = c.roundTrips - before
+        #expect(e?.status == 1 && e?.output == "checking \(d)/\(partials().first ?? ".dfm-partial-…")\nline 1: BAD here\n" || e?.output.hasSuffix("line 1: BAD here\n") == true)
+        #expect(e?.output.contains("/.dfm-partial-") == true, "checked the partial file, not the file")
+        #expect(String(decoding: FileManager.default.contents(atPath: real)!, as: UTF8.self).hasPrefix("good\n") && partials().isEmpty && kept == 0, "link: \(link)")
+        #expect(failTrips == (link ? 7 : 6), "a failed check: \(failTrips) round trips (link: \(link)) — the write, the check, the partial removed")
+        try put(d + "/l", "fine\n")
+        before = c.roundTrips
+        let (attrs, outcome) = try c.save(d + "/l", to: file, baseline: a, rule: rule) { _, _ in kept += 1 }
+        #expect(c.roundTrips - before == (link ? 13 : 8), "checked and saved: as unchecked (link: \(link))")
+        #expect(outcome == .passed("checking \(d)/\(partials().first ?? "")\nok\n") || outcome.map { if case .passed = $0 { true } else { false } } == true)
+        #expect(String(decoding: FileManager.default.contents(atPath: real)!, as: UTF8.self).hasPrefix("fine\n") && attrs.size == 2048 && partials().isEmpty && kept == 1)
+        if link { #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: file)) == real, "still a link") }
+    }
+    // No rule, a rule without a check, an "after" rule (not yet): `upload` as it was.
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    try put(d + "/plain.conf", "x\n"); try put(d + "/l", "BAD\n")
+    for r in [nil, ConfigCheck(match: "*", check: nil, reload: "true")] {
+        #expect(try c.save(d + "/l", to: d + "/plain.conf", baseline: nil, rule: r).outcome == nil)
+    }
+}
+
+/// A check that couldn't run — sudo refused it — isn't a pass: before, nothing goes in (sudoers, sshd_config are never
+/// put in unchecked). A root-only check on a user's panel isn't run: the save goes in and says so.
+@Test func uncheckedBeforeRules() throws {
+    let d = checkDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    try Data("old".utf8).write(to: URL(fileURLWithPath: d + "/sudoers"))
+    try Data("new".utf8).write(to: URL(fileURLWithPath: d + "/l"))
+    let rule = ConfigCheck(match: "*/sudoers", check: "visudo -cf %f", root: true)
+    let refusing = try fakeSudo(d, #"[ "$3" = sh ] && { echo "Sorry, user me is not allowed to execute '/bin/sh' as root on web." >&2; exit 1; }; shift 2; exec "$@""#)
+    let root = try SFTPClient(.local(sudo: refusing))
+    defer { root.close() }
+    #expect(throws: ConfigCheck.NotRun.self) { try root.save(d + "/l", to: d + "/sudoers", baseline: nil, rule: rule) }
+    #expect(FileManager.default.contents(atPath: d + "/sudoers") == Data("old".utf8))
+    let user = try SFTPClient(.local())
+    defer { user.close() }
+    #expect(try user.save(d + "/l", to: d + "/sudoers", baseline: nil, rule: rule).outcome == .needsRoot)
+    #expect(FileManager.default.contents(atPath: d + "/sudoers") == Data("new".utf8))
+}
 }

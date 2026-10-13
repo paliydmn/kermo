@@ -94,7 +94,7 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
     }
 
     /// The program a command runs: its first word.
-    static func program(_ command: String) -> String { command.split(whereSeparator: { $0 == " " || $0 == "\t" }).first.map(String.init) ?? "" }
+    public static func program(_ command: String) -> String { command.split(whereSeparator: { $0 == " " || $0 == "\t" }).first.map(String.init) ?? "" }
 
     static let ran = "kermo-ran", missing = "kermo-no-program"
 
@@ -130,5 +130,33 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
         let after = String(text[text.range(of: ran + "\n")!.upperBound...])   // a login script may print before it
         if after.hasPrefix(missing + "\n") { return .noProgram(program(command)) }
         return status == 0 ? .passed(after) : .failed(status: status, output: after)
+    }
+}
+
+extension SFTPClient {
+    /// A save's check failed: the server's file is as it was (before) — or was put back (after).
+    public struct CheckFailed: LocalizedError {
+        public let rule: ConfigCheck
+        public let status: Int32
+        public let output: String
+        public var program: String { ConfigCheck.program(rule.check ?? "") }
+        public var errorDescription: String? { "“\(program)” found a problem (exit \(status)): \(output)" }
+    }
+
+    /// `upload` with the file's check (`rule`, nil: none): before it takes the file's place — a failure leaves the file as
+    /// it was (`CheckFailed`), a check that couldn't run too (`ConfigCheck.NotRun`: sudoers and sshd_config never go in
+    /// unchecked). Returns the new attributes and how the check went (nil: none for this file).
+    public func save(_ local: String, to remote: String, baseline: Attrs?, force: Bool = false, cancel: CancelFlag? = nil, rule: ConfigCheck?,
+                     env: [String: String] = [:], replaced: ((Attrs, Data?) -> Void)? = nil) throws -> (attrs: Attrs, outcome: ConfigCheck.Outcome?) {
+        guard let rule, let command = rule.check, !rule.after else {
+            return (try upload(local, to: remote, baseline: baseline, force: force, cancel: cancel, replaced: replaced), nil)
+        }
+        var outcome: ConfigCheck.Outcome?
+        let attrs = try upload(local, to: remote, baseline: baseline, force: force, cancel: cancel, replaced: replaced) { [target] partial in
+            let o = try ConfigCheck.run(ConfigCheck.expand(command, path: partial), on: target, root: rule.needsRoot, env: env, cancel: cancel)
+            if case .failed(let status, let output) = o { throw CheckFailed(rule: rule, status: status, output: output) }
+            outcome = o
+        }
+        return (attrs, outcome)
     }
 }

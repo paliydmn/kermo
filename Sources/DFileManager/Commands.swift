@@ -225,6 +225,7 @@ extension AppDelegate {
             try? FileManager.default.createDirectory(atPath: Config.dir, withIntermediateDirectories: true)
             $0.active.navigate(to: Config.dir)
         },
+        cmd("validators.edit", "Edit Validators…", [], menu: "Kermo", aliases: "check config server reload") { $0.editValidators() },
         cmd("usermenu.edit", "Edit User Menu…", [], menu: "Kermo") {
             _ = $0.userCommands()   // writes the example file on first use
             $0.openInEditor(URL(fileURLWithPath: Config.path("usermenu.json")))
@@ -366,6 +367,33 @@ extension AppDelegate {
         Config.save("usermenu.json", examples)
         return examples
     }
+
+    /// ~/.config/dfilemanager/validators.json: the user's own checks for server files, looked at before the built-in ones.
+    /// The first time, an example — not the built-in rules (copied there, they'd never get Kermo's changes to them).
+    func editValidators() {
+        let path = Config.path("validators.json")
+        if !FileManager.default.fileExists(atPath: path) {
+            try? FileManager.default.createDirectory(atPath: Config.dir, withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: path, contents: Data(Self.validatorsExample.utf8), attributes: [.posixPermissions: 0o600])
+        }
+        openInEditor(URL(fileURLWithPath: path))
+    }
+
+    static let validatorsExample = """
+        [
+          {
+            "match": "/etc/caddy/Caddyfile",
+            "check": "caddy validate --adapter caddyfile --config %f",
+            "reload": "systemctl reload caddy"
+          },
+          {
+            "match": "/etc/prometheus/prometheus.yml",
+            "check": "promtool check config %f",
+            "reload": "systemctl reload prometheus"
+          }
+        ]
+
+        """
 
     func showUserMenu() {
         let mine = userCommands()
@@ -1110,6 +1138,8 @@ extension AppDelegate {
             state.prodConfirmed = true
         }
         let env = SSHAskpass.env, baseline = state.baseline, history = serverHistory
+        let (rules, problem) = ConfigCheck.rules(FileManager.default.contents(atPath: Config.path("validators.json")))
+        let rule = ConfigCheck.rule(for: remotePath, in: rules)
         // No panel of its own: the one showing that server (else the active one) says it's saving; ⎋ there cancels.
         let panel = panels.first { $0.remote?.target == target } ?? active
         let kept = Self.keptSession(of: target, in: panels)
@@ -1117,20 +1147,26 @@ extension AppDelegate {
             try SFTP.session(target, env: env, cancel: flag, on: kept) { c in
                 var note: String?
                 let keep: ((SFTPClient.Attrs, Data?) -> Void)? = history.map { h in { note = h.keep($1, $0, of: target, remotePath) } }
-                let attrs = try c.upload(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, replaced: keep)
-                return (attrs, note)
+                let (attrs, outcome) = try c.save(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, rule: rule, env: env, replaced: keep)
+                return (attrs, note, outcome)
             }
         }
         switch r {
-        case .success(let (attrs, note)):
+        case .success(let (attrs, note, outcome)):
             state.baseline = attrs
             for p in panels where p.remote?.target.asUser == target.asUser { p.reload() }   // root's or user's: one server
-            if let note {
-                let said = "Saved “\(name)” to \(target.host) · no history: \(note)"
+            let notes = [note.map { "no history: \($0)" }, outcome.map { Self.checkNote($0, of: rule) }, problem].compactMap { $0 }
+            if !notes.isEmpty {
+                let said = "Saved “\(name)” to \(target.host) · " + notes.joined(separator: " · ")
                 panel.flash(said)
                 Editor.flash(saved, said)
             }
             return true
+        case .failure(let e as SFTPClient.CheckFailed):
+            Editor.markUnsaved(saved)
+            let (message, info) = Self.checkFailed(e, name: name, host: target.host, kept: Editor.window(for: saved) == nil ? saved.path : nil)
+            _ = await choose(message, info: info, ["OK"], on: Editor.window(for: saved))
+            return false
         case .failure(let e as SFTPClient.ChangedOnServer):
             Editor.markUnsaved(saved)
             let keeps = Editor.window(for: saved) == nil ? "in \(saved.path)" : "unsaved here"   // the editor may be gone
@@ -1218,6 +1254,25 @@ extension AppDelegate {
         }
     }
 
+    /// What the status line says of a save's check: passed, no program there, or root only on a user's panel.
+    static func checkNote(_ outcome: ConfigCheck.Outcome, of rule: ConfigCheck?) -> String {
+        switch outcome {
+        case .passed, .failed: "checked: \(ConfigCheck.program(rule?.check ?? ""))"   // a failed one never gets here
+        case .noProgram(let p): "no check for this file (no \(p) there)"
+        case .needsRoot: "check needs root — ⌃⌘R opens the panel as root"
+        }
+    }
+
+    /// The dialog for a save whose check failed: what the check said (its last lines), and where things are.
+    /// `kept`: the editor is gone, the text is only in that file.
+    static func checkFailed(_ e: SFTPClient.CheckFailed, name: String, host: String, kept: String?) -> (message: String, info: String) {
+        let lines = e.output.split(separator: "\n", omittingEmptySubsequences: false)
+        let shown = (lines.count > 30 ? ["…"] + lines.suffix(30) : lines).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = kept.map { "Your text is kept in \($0)." } ?? "Your text stays unsaved here."
+        return ("“\(name)” didn't pass “\(e.program)” on \(host)",
+                (shown.isEmpty ? "It exited with \(e.status)." : shown) + "\n\nNot saved there: the file on \(host) is as it was. " + text)
+    }
+
     private func notSaved(_ saved: URL, to target: SFTPTarget, _ e: Error) -> Bool {
         Editor.markUnsaved(saved)
         if let m = Self.notUploaded(saved, host: target.host, e, editorOpen: Editor.window(for: saved) != nil) { showError(JobErrorMessage(m)) }
@@ -1230,6 +1285,9 @@ extension AppDelegate {
         let kept = editorOpen ? "" : " Your text is kept in \(saved.path)."
         if error is CancellationError {
             return editorOpen ? nil : "“\(saved.lastPathComponent)” wasn't saved to \(host).\(kept)"
+        }
+        if let e = error as? ConfigCheck.NotRun {   // checked before it takes the file's place: nothing changed there
+            return "“\(saved.lastPathComponent)” wasn't saved to \(host): its check didn't run. \(e.message)\(kept)"
         }
         return "Saved locally, but uploading to \(host) failed: \(error.localizedDescription)\(kept)"
     }
