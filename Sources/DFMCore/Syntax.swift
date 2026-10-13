@@ -9,6 +9,7 @@ public enum Syntax {
     public enum Language: String, Sendable { case shell, python, json, yaml, ini, conf, xml, dockerfile, makefile, clike }
 
     public static func language(forFileName name: String, firstLine: String = "") -> Language? {
+        let name = ServerHistory.parse(name)?.name ?? name   // a server file's version: "nginx.conf@2026-10-12_03-00-00"
         let lower = name.lowercased()
         let ext = (lower as NSString).pathExtension
         if lower == "dockerfile" || lower.hasPrefix("dockerfile.") { return .dockerfile }

@@ -13,6 +13,15 @@ Release:
 
 ## [Unreleased]
 
+### Added
+
+- **Server file history:** every save of a server file (F4's ⌘S, a save in another app) keeps the version it replaces on this Mac, in `~/.config/dfilemanager/history.noindex/<server>/<path there>/<name>@<date>`: 20 versions a file and 200 MB in all, the oldest going first. "Overwrite" after someone else's change keeps their version. A file over 5 MB gets none, and the status line says so (and, for a few seconds, the editor that saved); so they do when a version can't be written, and the save goes on. Saving a small file you opened with F4 costs no extra wait: the check before writing already reads it. The folder is owner-only and out of Spotlight and Time Machine; `defaults write com.dmn.dfilemanager serverHistory -bool false` turns it off.
+- **Compare Files (⌘⇧D) with a server:** a server's file against this Mac's or another server's, by the same rules as before: two marked files; the cursor's and the same name in the other panel (now looked for on its server too); or the two cursors. A server's file is fetched as the ⌃Q preview fetches it (the copy already here if it's unchanged, up to 64 MB), and `diff -u` and its window's title name it "host:/path" instead of its temporary copy; a `diffCommand` tool gets the copies.
+- **Server File History…** (⌘⇧P or the File menu, on a server panel's file or in a server file's editor): the versions its saves kept, newest first. ↩ or F3 views one; ⌘⇧D diffs it with the file on the server now, ⌘D with the version before it; ⌘R reverts the server's file to it through the same save as ⌘S, so a production server asks first, a change made there since the list opened is asked about, and the version it replaces is kept too; the file's open editor shows the version afterwards, unless it has changes of its own. A locked server asks for Touch ID first.
+- Versions in the history keep their file's syntax highlighting in the viewer and editor (the date at the end of their name hid the extension).
+- **Sidebar:** a server's menu has **Show File History**, which opens its folder of versions in the panel (view, compare or delete them there as any files). Deleting a saved server offers to delete its file history too, unless another saved server at that address still uses it.
+- **Saving a server file someone changed meanwhile:** the "changed on the server since you opened it" question has a **Compare** button: it opens the diff of your text with the server's file, then asks again.
+
 ### Changed
 
 - **Speed:** undo and redo of a move, undo of a copy and batch rename do their disk work in the background: thousands of items on a network share no longer freeze the window. So do rename, Go to Link Target, diff, compress, `fm` and Info's chmod, chown and flags: a share that stopped answering doesn't hang the app.
@@ -30,6 +39,7 @@ Release:
 
 ### Fixed
 
+- **Panels:** a folder reloading by itself (or after a save to its server) no longer wipes the status line's "… ⎋ cancels" of an operation still running there, or a message shown a moment before.
 - **Panels:** symlinks to folders no longer turn into files (shown with their own size and sorted with the files) after a folder reloads by itself.
 - **Stop and ⎋:** ⎋ stops counting folder sizes on this Mac, as on a server, and so does leaving the folder; closing Info stops its folder count; Stop during "Scanning…" before a copy stops at once instead of after the whole tree. Search by content and compare by content stop within a big file instead of after it; closing Info stops its checksums.
 - **Info:** a checksum of a file that fails to read part-way shows the read error instead of a hash of the part that was read.

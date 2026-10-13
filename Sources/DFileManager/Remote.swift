@@ -337,6 +337,27 @@ enum TempCopies {
         copies.first { $0.target == target && $0.path == path && $0.listed == (size, mtime) && $0.synced }?.url
     }
 
+    /// A preview's download (⌃Q, ⌘Y, Compare Files), over a session of its own, into a `dfm-sftp-` folder of its own
+    /// (a leftover goes with the launch sweep), named as there: Quick Look goes by the extension. nil: `look` (a link,
+    /// whose own size says nothing; a size not known) asked the server first, and it isn't a file or is over `limit`.
+    nonisolated static func download(_ t: SFTPTarget, _ path: String, look: Bool, limit: Int64, env: [String: String],
+                                     cancel: CancelFlag) throws -> (url: URL, attrs: SFTPClient.Attrs)? {
+        let tmp = NSTemporaryDirectory() + "dfm-sftp-" + UUID().uuidString
+        mkdir(tmp, 0o700)
+        let local = URL(fileURLWithPath: tmp).appendingPathComponent((path as NSString).lastPathComponent)   // a search hit's is a path
+        do {
+            let attrs = try SFTPClient.session(t, env: env, cancel: cancel) { c -> SFTPClient.Attrs? in
+                if look, case let a = try c.stat(path), a.kind != .file || a.size > limit { return nil }
+                return try c.download(path, to: local.path)
+            }
+            guard let attrs, !cancel.isCancelled else { TempCopies.remove(tmp); return nil }
+            return (local, attrs)
+        } catch {
+            TempCopies.remove(tmp)
+            throw error
+        }
+    }
+
     static func add(_ c: Copy) {
         copies.append(c)
         var left = copies.filter { $0.preview && $0.synced && !$0.uploaded }.reduce(0) { $0 + $1.state.baseline.size }

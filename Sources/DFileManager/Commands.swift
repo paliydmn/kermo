@@ -183,6 +183,7 @@ extension AppDelegate {
         cmd("file.split", "Split File…", [], menu: "File", aliases: "chunks parts") { $0.splitDialog() },
         cmd("file.combine", "Combine Parts…", [], menu: "File", aliases: "join merge chunks") { $0.combineDialog() },
         cmd("file.diff", "Compare Files (diff)", ["cmd+shift+d"], menu: "File", short: "Diff", aliases: "compare files") { $0.diffFiles() },   // not ⌘⌥D: macOS takes it (Dock hiding)
+        cmd("server.history", "Server File History…", [], menu: "File", aliases: "versions revert previous backup undo save sftp") { $0.serverFileHistory() },
         cmd("git.diff", "Git Diff", ["ctrl+d"], menu: "File", short: "Git diff", aliases: "git difference changes against head") { $0.gitDiff() },
         cmd("git.log", "Git Log of File", ["ctrl+l"], menu: "File", short: "Git log", aliases: "git history commits follow patch") { $0.gitHistory(blame: false) },
         cmd("git.blame", "Git Blame", ["ctrl+shift+l"], menu: "File", short: "Git blame", aliases: "git annotate who changed lines") { $0.gitHistory(blame: true) },
@@ -925,13 +926,36 @@ extension AppDelegate {
 
     func deleteServer(_ s: SavedServer) {
         Task {
-            guard await ServerLock.authorize(s, "delete"),
-                  await confirm("Delete “\(s.title)”?", info: "Its saved password too. Open sessions stay open.", ok: "Delete") else { return }
+            guard await ServerLock.authorize(s, "delete") else { return }
+            let info = "Its saved password too. Open sessions stay open.", history = historyToDelete(with: s)
+            let answer = history == nil ? await confirm("Delete “\(s.title)”?", info: info, ok: "Delete") ? 0 : 2
+                : await choose("Delete “\(s.title)”?", info: info + " Its file history — the versions its saves kept on this Mac — can go too.",
+                               ["Delete", "Delete with File History", "Cancel"])
+            guard answer < 2 else { return }
             savedServers.removeAll { $0.id == s.id }
             Config.save("servers.json", savedServers)
             forgetPassword(s)
             unpin(ServerRow.key(s.target))   // else it'd stay as a pinned bare address
             refreshSidebar()
+            if answer == 1, let history { do { try FileManager.default.removeItem(atPath: history) } catch { showError(error) } }
+        }
+    }
+
+    /// The server's file history folder, if it has one that no other saved server at its address keeps using.
+    func historyToDelete(with s: SavedServer) -> String? {
+        let h = ServerHistory(root: Self.historyRoot), dir = h.folder(s.target)
+        guard !savedServers.contains(where: { $0.id != s.id && h.folder($0.target) == dir }) else { return nil }
+        return FileManager.default.fileExists(atPath: dir) ? dir : nil
+    }
+
+    /// Show File History (a server's sidebar menu): its folder of versions (`ServerHistory`) in the active panel, to
+    /// browse, view, compare or delete (F8) like any other.
+    func showFileHistory(_ t: SFTPTarget) {
+        Task {
+            if let s = ServerLock.server(for: t), await !ServerLock.authorize(s, "see the file history on") { return }
+            let dir = ServerHistory(root: Self.historyRoot).folder(t)
+            guard FileManager.default.fileExists(atPath: dir) else { return active.flash("No file history for \(t.host) yet: each save of one of its files keeps the version it replaces") }
+            active.navigate(to: dir)
         }
     }
 
@@ -999,7 +1023,7 @@ extension AppDelegate {
             case .view: Viewer.show(local, remote: (target, remotePath, max(0, opened.size - (last ?? opened.size)))) { TempCopies.remove(tmp) }
             case .edit:
                 let state = RemoteEdit(baseline: opened)
-                Editor.open(local, remote: SavedServer.title(target, remotePath), onSaved: { [self] saved in
+                Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath, state), onSaved: { [self] saved in
                     state.save(in: tmp) { await self.upload(saved, to: remotePath, on: target, state) }
                 }, onClose: { state.closed(removing: tmp) })
             }
@@ -1043,27 +1067,43 @@ extension AppDelegate {
         }
     }
 
+    /// Where saves to a server keep the versions they replace (tests: a folder of their own).
+    static var historyRoot = Config.path("history.noindex")
+    /// nil once `defaults write com.dmn.dfilemanager serverHistory -bool false`.
+    var serverHistory: ServerHistory? { defaults.object(forKey: "serverHistory") as? Bool ?? true ? ServerHistory(root: Self.historyRoot) : nil }
+
+    /// Every save of a server file (F4's ⌘S, another app's, Revert) goes here. The version it replaces goes into the
+    /// file history; if it can't, the save goes on and the status line says why.
     func upload(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool = false) async -> Bool {
+        let name = (remotePath as NSString).lastPathComponent   // the copy's own, but not a version's (Revert)
         let note = state.prodNote(target)
         if !note.isEmpty {
-            guard await choose("Save “\(saved.lastPathComponent)” to \(target.host)?", info: note + "This overwrites the file there.",
+            guard await choose("Save “\(name)” to \(target.host)?", info: note + "This overwrites the file there.",
                                ["Save", "Cancel"], on: Editor.window(for: saved)) == 0 else {
                 return notSaved(saved, to: target, CancellationError())   // the editor may be gone: says where the text is
             }
             state.prodConfirmed = true
         }
-        let env = SSHAskpass.env, baseline = state.baseline
+        let env = SSHAskpass.env, baseline = state.baseline, history = serverHistory
         // No panel of its own: the one showing that server (else the active one) says it's saving; ⎋ there cancels.
         let panel = panels.first { $0.remote?.target == target } ?? active
-        let r = await panel.busy("Saving “\(saved.lastPathComponent)” to \(target.host)…") { flag in
+        let r = await panel.busy("Saving “\(name)” to \(target.host)…") { flag in
             let c = try SFTPClient(target, env: env, cancel: flag)
             defer { c.close() }
-            return try c.upload(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag)
+            var note: String?
+            let keep: ((SFTPClient.Attrs, Data?) -> Void)? = history.map { h in { note = h.keep($1, $0, of: target, remotePath) } }
+            let attrs = try c.upload(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, replaced: keep)
+            return (attrs, note)
         }
         switch r {
-        case .success(let attrs):
+        case .success(let (attrs, note)):
             state.baseline = attrs
             for p in panels where p.remote?.target == target { p.reload() }
+            if let note {
+                let said = "Saved “\(name)” to \(target.host) · no history: \(note)"
+                panel.flash(said)
+                Editor.flash(saved, said)
+            }
             return true
         case .failure(let e as SFTPClient.ChangedOnServer):
             Editor.markUnsaved(saved)
@@ -1071,15 +1111,76 @@ extension AppDelegate {
             let fmt = DateFormatter()
             fmt.dateFormat = "HH:mm:ss"
             let when = fmt.string(from: Date(timeIntervalSince1970: e.attrs.mtime))
-            if await choose("“\(saved.lastPathComponent)” changed on \(target.host) since you opened it",
-                            info: "Someone or something wrote it at \(when) (\(ByteCountFormatter.string(fromByteCount: e.attrs.size, countStyle: .file))). "
-                                + "Overwriting replaces their changes with yours. Cancel keeps your text \(keeps), so you can compare first (F3 on the server file).",
-                            ["Overwrite", "Cancel"], default: 1, on: Editor.window(for: saved)) == 0 {   // ⌘S ↩ never writes over theirs
-                return await upload(saved, to: remotePath, on: target, state, force: true)
+            let info = "Someone or something wrote it at \(when) (\(ByteCountFormatter.string(fromByteCount: e.attrs.size, countStyle: .file))). "
+                + "Overwriting replaces their changes with yours. Compare shows the differences first; Cancel keeps your text \(keeps)."
+            while true {   // Compare asks again once the diff is up
+                switch await choose("“\(name)” changed on \(target.host) since you opened it", info: info, ["Overwrite", "Compare", "Cancel"],
+                                    default: 2, on: Editor.window(for: saved)) {   // ⌘S ↩ never writes over theirs
+                case 0: return await upload(saved, to: remotePath, on: target, state, force: true)
+                case 1: await diff(DiffSide(path: saved.path, name: "\(name) (yours)"),
+                                   DiffSide(path: remotePath, server: target, size: e.attrs.size, mtime: e.attrs.mtime), in: panel)
+                default: return false
+                }
             }
-            return false
         case .failure(let e):
             return notSaved(saved, to: target, e)
+        }
+    }
+
+    /// Server File History…: the versions saves replaced (`ServerHistory`) of the server file in the key editor, or under
+    /// a server panel's cursor, newest first. ↩ / F3 views one; ⌘⇧D diffs it with the server's file now, ⌘D with the
+    /// version before it; ⌘R puts it
+    /// back there through the same save as ⌘S — production asks, a change made there since the list opened asks too,
+    /// and the version it replaces goes into the history.
+    func serverFileHistory() {
+        let editor = Editor.server(of: NSApp.keyWindow)
+        let file = editor ?? active.remoteCursor.flatMap { c in
+            c.item.kind == .file || c.item.kind == .link && !c.item.linkDir ? (c.target, (c.dir as NSString).appendingPathComponent(c.item.name)) : nil
+        }
+        guard let (target, path) = file else { return active.flash("Server File History is for a server's file: put the cursor on one, or ask in its editor") }
+        let over: NSWindow = editor != nil ? NSApp.keyWindow! : window
+        let name = (path as NSString).lastPathComponent, env = SSHAskpass.env
+        let panel = panels.first { $0.remote?.target == target } ?? active
+        Task {
+            if let s = ServerLock.server(for: target), await !ServerLock.authorize(s, "see the file history on") { return }
+            let versions = ServerHistory(root: Self.historyRoot).versions(of: target, path)
+            guard !versions.isEmpty else { return panel.flash("No versions of “\(name)” from \(target.host) yet: each save keeps the one it replaces") }
+            // What Revert checks against: a change made there after this asks first.
+            let r = await panel.busy("Looking at “\(name)” on \(target.host)…") { flag in try SFTPClient.session(target, env: env, cancel: flag) { try $0.stat(path) } }
+            if case .failure(let e) = r, e is CancellationError { return }
+            let now = try? r.get()   // not there (any more): Revert puts it back, diff says why it can't
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            let when = { (v: ServerHistory.Version) in fmt.string(from: v.date) + (v.n > 1 ? " (\(v.n))" : "") }
+            let side = { (v: ServerHistory.Version) in DiffSide(path: v.path, name: "\(target.host):\(path) @ \(when(v))") }
+            let items = versions.enumerated().map { i, v in
+                let url = URL(fileURLWithPath: v.path), when = when(v)
+                let view: @MainActor () -> Void = { Viewer.show(url) }
+                let diff: @MainActor () -> Void = { [unowned self] in
+                    let there = DiffSide(path: path, server: target, size: now?.size ?? 0, mtime: now?.mtime ?? 0, look: now == nil)
+                    Task { await self.diff(side(v), there, in: panel) }
+                }
+                let diffBefore: @MainActor () -> Void = { [unowned self] in   // newest first: the one before is next
+                    guard versions.indices.contains(i + 1) else { return panel.flash("That's the oldest version kept: nothing before it to compare") }
+                    Task { await self.diff(side(versions[i + 1]), side(v), in: panel) }
+                }
+                let revert: @MainActor () -> Void = { [unowned self] in
+                    let state = RemoteEdit(baseline: now ?? .nothing)
+                    Task {
+                        guard await upload(url, to: path, on: target, state) else { return }
+                        panel.flash("“\(name)” on \(target.host) is back to its version of \(when)")
+                        // Its editor shows that now, unless it has changes of its own.
+                        if let e = Editor.editing(target, path), let data = await Blocking.run(.userInitiated, { try? Data(contentsOf: url) }) {
+                            _ = await e.reverted(to: data, attrs: state.baseline)
+                        }
+                    }
+                }
+                return Picker.Item(title: when, subtitle: ByteCountFormatter.string(fromByteCount: v.size, countStyle: .file),
+                                   keys: [Shortcut("f3")!: view, Shortcut("cmd+shift+d")!: diff, Shortcut("cmd+d")!: diffBefore, Shortcut("cmd+r")!: revert],
+                                   run: view)
+            }
+            Picker.show(over: over, placeholder: "“\(name)” on \(target.host): ↩ F3 view · ⌘⇧D diff with the server's · ⌘D with the one before · ⌘R revert to it",
+                        items: items)
         }
     }
 
@@ -1471,29 +1572,110 @@ extension AppDelegate {
         }
     }
 
-    /// Two marked files, or the cursor file vs. the same name (or the cursor) in the other panel.
-    /// Uses `defaults write com.dmn.dfilemanager diffCommand 'code --diff %1 %2'` if set, else `diff -u`.
-    func diffFiles() {
-        let files = active.targetURLs.filter { !$0.hasDirectoryPath }
-        let (panel, cursor, otherCursor, otherFolder) = (active, active.cursorURL, other.cursorURL, other.plainFolder)
-        Task {
-            var pair: (URL, URL)?
-            if files.count == 2 {
-                pair = (files[0], files[1])
-            } else if let a = cursor, !a.hasDirectoryPath {
-                // The other panel's folder only when that's what it shows: not the local one behind a server tab.
-                let same = otherFolder.map { URL(fileURLWithPath: $0).appendingPathComponent(a.lastPathComponent) }
-                if let same, await Blocking.run(.userInitiated, { FileManager.default.fileExists(atPath: same.path) }) { pair = (a, same) }   // a share that doesn't answer
-                else if let b = otherCursor, !b.hasDirectoryPath { pair = (a, b) }
-            }
-            guard let (a, b) = pair else { return panel.flash("Mark two files, or put the cursor on a file in each panel") }
-            let qa = ShellContext.quote(a.path), qb = ShellContext.quote(b.path)
-            if let tool = defaults.string(forKey: "diffCommand") {
-                Shell.spawn(Self.fillDiff(tool, qa, qb), in: panel.path)
-            } else {
-                Shell.run("diff -u \(qa) \(qb)", in: panel.path, diff: true)
-            }
+    /// A file Compare Files diffs: this Mac's, or a server's as its panel listed it (the size and date pick a preview's copy).
+    struct DiffSide: Sendable {
+        var path: String
+        var server: SFTPTarget? = nil
+        var size: Int64 = 0, mtime: Double = 0
+        var look = false   // a link (its own size says nothing), or a size not known: the server is asked first
+        var name: String? = nil   // what the diff calls it, if not its path ("host:/path" on a server)
+        var label: String { name ?? server.map { "\($0.host):\(path)" } ?? path }
+    }
+
+    /// A panel's marked files (or the cursor's), and its cursor's: on a server, as its listing has them.
+    private func diffSides(_ p: PanelViewController) -> (marked: [DiffSide], cursor: DiffSide?) {
+        guard let r = p.remote else {
+            let file = { (u: URL) in u.hasDirectoryPath ? nil : DiffSide(path: u.path) }
+            return (p.targetURLs.compactMap(file), p.cursorURL.flatMap(file))
         }
+        let side = { (it: FileItem) in
+            it.kind == .file || it.kind == .link && !it.linkDir
+                ? DiffSide(path: (r.dir as NSString).appendingPathComponent(it.name), server: r.target, size: it.size, mtime: it.mtime, look: it.kind == .link)
+                : nil
+        }
+        return (p.remoteSelection?.items.compactMap(side) ?? [], p.remoteCursor.flatMap { side($0.item) })
+    }
+
+    /// Two marked files, or the cursor file vs. the same name (or the cursor) in the other panel — on this Mac or a
+    /// server, whose files are fetched as a preview's (⌃Q) are. Shown as `diff -u`, with "host:/path" for a server's
+    /// file; `defaults write com.dmn.dfilemanager diffCommand 'code --diff %1 %2'` gets the copies instead.
+    func diffFiles() {
+        let (panel, mine, theirs) = (active, diffSides(active), diffSides(other))
+        // The other panel's folder only when that's what it shows: not the local one behind a server tab.
+        let same = mine.cursor.flatMap { c -> DiffSide? in
+            let name = (c.path as NSString).lastPathComponent
+            if let r = other.remote { return DiffSide(path: (r.dir as NSString).appendingPathComponent(name), server: r.target, look: true) }
+            return other.plainFolder.map { DiffSide(path: ($0 as NSString).appendingPathComponent(name)) }
+        }
+        let env = SSHAskpass.env
+        Task {
+            var stopped = false
+            let pair = await Self.diffPair(marked: mine.marked, cursor: mine.cursor, sameName: same, otherCursor: theirs.cursor) { s in
+                guard let t = s.server else {
+                    return await Blocking.run(.userInitiated) { FileManager.default.fileExists(atPath: s.path) } ? s : nil   // a share that doesn't answer
+                }
+                guard await unlock([.sftp(t)]) else { stopped = true; return nil }
+                let r = await panel.busy("Looking for “\((s.path as NSString).lastPathComponent)” on \(t.host)…") { flag in
+                    try SFTPClient.session(t, env: env, cancel: flag) { try $0.stat(s.path) }
+                }
+                if case .failure(let e) = r, e is CancellationError { stopped = true }
+                guard case .success(let a) = r, a.kind == .file else { return nil }
+                return DiffSide(path: s.path, server: t, size: a.size, mtime: a.mtime)
+            }
+            guard !stopped else { return }
+            guard let (a, b) = pair else { return panel.flash("Mark two files, or put the cursor on a file in each panel") }
+            await diff(a, b, in: panel)
+        }
+    }
+
+    /// `a` against `b`: a server's file through its local copy (`localCopy`).
+    func diff(_ a: DiffSide, _ b: DiffSide, in panel: PanelViewController) async {
+        guard await unlock([a, b].compactMap { $0.server.map(Endpoint.sftp) }) else { return }
+        guard let la = await localCopy(a, in: panel), let lb = await localCopy(b, in: panel) else { return }
+        let (qa, qb) = (ShellContext.quote(la), ShellContext.quote(lb))
+        if let tool = defaults.string(forKey: "diffCommand") {
+            Shell.spawn(Self.fillDiff(tool, qa, qb), in: panel.path)
+        } else {
+            let named = a.server != nil || b.server != nil || a.name != nil || b.name != nil
+            Shell.run(Self.diffCommand(la, lb, labels: named ? (a.label, b.label) : nil), in: panel.path, diff: true,
+                      title: named ? "diff \(a.label) ↔ \(b.label)" : nil)   // not the copies' temp paths
+        }
+    }
+
+    /// `diff -u`; `labels` in place of the paths (a server file's "host:/path", not its copy's temp path).
+    nonisolated static func diffCommand(_ a: String, _ b: String, labels: (String, String)?) -> String {
+        let q = ShellContext.quote
+        return "diff -u " + (labels.map { "--label \(q($0.0)) --label \(q($0.1)) " } ?? "") + "\(q(a)) \(q(b))"
+    }
+
+    /// This Mac's file as it is; a server's, its preview copy for that size and date, else downloaded as a preview's
+    /// is (`ServerCopies.download`, up to `previewLimit`). nil, once said why: too big, not a file, failed, ⎋.
+    func localCopy(_ s: DiffSide, in panel: PanelViewController) async -> String? {
+        guard let t = s.server else { return s.path }
+        if !s.look, let url = ServerCopies.preview(of: t, s.path, size: s.size, mtime: s.mtime) { return url.path }
+        let name = (s.path as NSString).lastPathComponent, limit = PanelViewController.previewLimit, env = SSHAskpass.env
+        let tooBig = "“\(name)” is too big to compare (over \(limit >> 20) MB)"
+        guard s.look || s.size <= limit else { panel.flash(tooBig); return nil }
+        let r = await panel.busy("Downloading “\(name)”…") { flag in try ServerCopies.download(t, s.path, look: s.look, limit: limit, env: env, cancel: flag) }
+        switch r {
+        case .success(let got?):
+            ServerCopies.add(.init(got.url, t, s.path, listed: s.look ? (got.attrs.size, got.attrs.mtime) : (s.size, s.mtime), baseline: got.attrs, preview: true))
+            return got.url.path
+        case .success(nil): panel.flash(tooBig + " or not a file")
+        case .failure(let e) where !(e is CancellationError): panel.flash("Can't download “\(name)”: \(e.localizedDescription)", error: true)
+        case .failure: break
+        }
+        return nil
+    }
+
+    /// Which two files Compare Files diffs: two marked; else the cursor's and the same name in the other panel's
+    /// folder, if it's there (`find`: as it is there, or nil); else the cursor's and the other panel's cursor's. Files
+    /// only (no folders, no ".."); nil: nothing to diff. `find` is asked about the same name only when it comes to that.
+    static func diffPair<S: Sendable>(marked: [S], cursor: S?, sameName: S?, otherCursor: S?, find: (S) async -> S?) async -> (S, S)? {
+        if marked.count == 2 { return (marked[0], marked[1]) }
+        guard let a = cursor else { return nil }
+        if let same = sameName, let found = await find(same) { return (a, found) }
+        return otherCursor.map { (a, $0) }
     }
 
     /// `%1` and `%2` filled in one pass: a first path holding "%2" mustn't get the second pasted into its quotes.

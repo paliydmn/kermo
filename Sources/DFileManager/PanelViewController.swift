@@ -88,6 +88,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private(set) var kept: KeptSession?
     /// The server calls `busy` shows, the latest last; ⎋ cancels them all.
     private var busyOps: [(flag: CancelFlag, message: String)] = []
+    private var flashed: (text: String, error: Bool, until: Date)?   // until the user marks or goes elsewhere
+    var flashTime: TimeInterval = 2.5   // tests on a busy Mac: longer than a re-list can take
     private var watcher: DispatchSourceFileSystemObject?
     /// The folder the watcher's fd is on: a folder replaced under the same path (`rm -rf build && mkdir build`, a
     /// swapped symlink, a branch switch) is another one, and the watcher must move to it.
@@ -443,7 +445,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             }
             guard let self, gen == loadGen else { return }
             loadedGen = gen
-            busyMessage = nil
+            busyMessage = busyOps.last?.message
             lastLoadSeconds = Date().timeIntervalSince(started)
             switch result {
             case .success(let (items, free, sorted, order, tolerance, folder)):
@@ -569,6 +571,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// `newFolder`: without `name` the cursor starts on the first row instead of keeping its row number.
     private func applyView(select name: String?, newFolder: Bool = false) {
+        if newFolder { flashed = nil }
         let oldRow = table.selectedRow, oldName = currentName
         let cursorShown = NSLocationInRange(oldRow, table.rows(in: table.visibleRect))
         if sortedAll == nil || sortedBy?.key != sortKey || sortedBy?.ascending != ascending {
@@ -646,6 +649,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         busy ? spinner.startAnimation(nil) : spinner.stopAnimation(nil)
         statusError = false
         if let busyMessage { return statusLabel.stringValue = busyMessage }
+        // A message just flashed stays its time through a re-list, a git status or a folder size coming in.
+        if let f = flashed, f.until > Date() { statusError = f.error; return statusLabel.stringValue = f.text }
         var s = Self.countText(rows.count, "items", totalSize) + " · \(freeSpace) free"
         if let r = remote { s = "🌐 sftp · \(r.target.host) · " + Self.countText(rows.count, "items", 0) }   // marks: below, as anywhere
         if let g = git {
@@ -779,9 +784,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// Briefly shows a message in the status line; `error`: one saying what failed.
     func flash(_ message: String, error: Bool = false) {
+        flashed = (message, error, Date() + flashTime)
         statusLabel.stringValue = message
         statusError = error
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + flashTime) { [weak self] in
             MainActor.assumeIsolated { self?.updateStatus() }
         }
     }
@@ -1024,7 +1030,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 guard let self, gen == loadGen else { return }
                 remoteFlag = nil
                 connecting = nil
-                busyMessage = nil
+                busyMessage = busyOps.last?.message
                 flash("🔒 \(target.host) stays locked")
                 return
             }
@@ -1040,7 +1046,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             guard let self, gen == loadGen else { return }
             remoteFlag = nil
             connecting = nil
-            busyMessage = nil
+            busyMessage = busyOps.last?.message
             switch result {
             case .success(let (d, items, owners, found)):
                 onRemoteResult?(target, nil)
@@ -1120,7 +1126,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         Task { [weak self] in
             let result = await Blocking.run(.userInitiated) { Result { try ArchiveIndex.read(file) } }
             guard let self, gen == moves else { return }
-            busyMessage = nil
+            busyMessage = busyOps.last?.message
             switch result {
             case .success(let index):
                 loadGen += 1   // that re-list, still on its way, mustn't land over the archive
@@ -1164,7 +1170,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let flag = CancelFlag()
         searchFlag = flag
         loadGen += 1   // drop any listing still in flight
-        busyMessage = nil
+        flashed = nil
+        busyMessage = busyOps.last?.message
         watcher?.cancel()
         watcher = nil
         searchTitle = place.map { "\(what) in \($0)" } ?? what
@@ -1454,6 +1461,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             reloadQuickLook()
         }
         moveCursor(to: r + move)
+        flashed = nil
         updateStatus()
     }
 
@@ -1480,6 +1488,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     private func refreshMarks() {
+        flashed = nil
         table.reloadData(forRowIndexes: IndexSet(0..<table.numberOfRows), columnIndexes: IndexSet(0..<table.numberOfColumns))
         reloadQuickLook()
         updateStatus()
@@ -1758,20 +1767,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             try? await Task.sleep(for: .milliseconds(300))   // passing by, it's not wanted
             guard !flag.isCancelled else { return }
             guard want.size <= limit else { self?.flash("“\(name)” is too big to preview (over \(limit >> 20) MB)"); return }
-            let tmp = NSTemporaryDirectory() + "dfm-sftp-" + UUID().uuidString   // a leftover goes with the launch sweep
-            mkdir(tmp, 0o700)
-            let local = URL(fileURLWithPath: tmp).appendingPathComponent(name)   // named as there: Quick Look goes by the extension
             let result = await Blocking.run(.userInitiated) {
-                Result {
-                    try SFTPClient.session(r.target, env: env, cancel: flag) { c -> SFTPClient.Attrs? in
-                        // A link's own size says nothing of what it points to: a big file, a folder.
-                        if want.link, case let a = try c.stat(want.path), a.kind != .file || a.size > limit { return nil }
-                        return try c.download(want.path, to: local.path)
-                    }
-                }
+                Result { try ServerCopies.download(r.target, want.path, look: want.link, limit: limit, env: env, cancel: flag) }
             }
-            guard let self, !flag.isCancelled, case .success(let attrs?) = result else {
-                TempCopies.remove(tmp)
+            guard let self, !flag.isCancelled, case .success(let (local, attrs)?) = result else {
+                if case .success(let got?) = result { TempCopies.remove(got.url.deletingLastPathComponent().path) }   // ⎋ just now
                 if case .failure(let e) = result, !flag.isCancelled { self?.flash("Can't preview “\(name)”: \(e.localizedDescription)", error: true) }
                 return
             }

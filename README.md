@@ -100,7 +100,7 @@ Clashes with macOS: ⌘⇧/ (computer root) is also the system's Help-menu searc
 | Terminal text bigger / smaller | ⌘+ / ⌘− |
 | Open archive as directory / extract / create archive | ↩ / F5, ⌥F9 / ⌥F5 |
 | Compare directories, recursively (mark differences) / synchronize (two-way or mirror → / ←) — also with a server | ⇧F2 / ⌘⇧S |
-| Diff two files | ⌘⇧D |
+| Diff two files — also a server's (two marked, the cursor and the same name in the other panel, or both cursors) | ⌘⇧D |
 | Git: only changes / all changes as a list / diff against HEAD | ⌃G / ⌃⇧G / ⌃D |
 | Git: log of the file (with patches) / blame — in the viewer; stage / unstage marked files | ⌃L / ⌃⇧L; ⌃⇧A / ⌃⇧U |
 | Finder tags: Finder color / remove all / edit | ⌃1…⌃7 / ⌃0 / ⌃T |
@@ -121,10 +121,12 @@ Clashes with macOS: ⌘⇧/ (computer root) is also the system's Help-menu searc
 - F5 / F6, ⌘C / ⌘V and drag and drop copy and move files in every direction: server ↔ local, server ↔ another server, and within one server (a move there is a rename, a copy happens on the server). They run in the operations queue like local copies: progress with speed and ETA, pause, cancel, the overwrite / skip / keep both dialog, and Retry, which continues a large file where a dropped connection left it.
 - Operations on different servers and on this Mac run side by side; ones on the same server wait their turn (▶︎▶︎ Start Now runs a queued one at once).
 - F3 / F4 open a file; the editor uploads it after every ⌘S, and closing with changes asks first.
-- ↩ opens a file in its app (as does Quick Look's Open with); every save there goes up to the server the same way: if someone changed the file there meanwhile, you're asked first, and so are you on a production server (once). An app that autosaves (TextEdit) sends its autosaves too — F4 is the safer choice on production. Quitting names what didn't reach the server; its copy is kept.
+- ↩ opens a file in its app (as does Quick Look's Open with); every save there goes up to the server the same way: if someone changed the file there meanwhile, you're asked first (Compare shows the differences), and so are you on a production server (once). An app that autosaves (TextEdit) sends its autosaves too — F4 is the safer choice on production. Quitting names what didn't reach the server; its copy is kept.
 - F7 / ⇧F6 / F8 operate on the server.
 - ⌃Q / ⌘Y preview the file under the cursor: it's fetched once the cursor rests on it (up to 64 MB; the copies stay until you quit, 256 MB of them at most). ⌘Y there shows the cursor's file, not the marked ones.
 - ⌥Space (and Space on a folder) count folder sizes on the server, one folder after another; ⎋ stops it.
+- ⌘⇧D compares a server's file with this Mac's or another server's: fetched as ⌃Q fetches it, and named `host:/path` in the diff.
+- **File history:** every save of a server file (F4's ⌘S, a save in another app, a revert) first keeps the version it replaces on this Mac, in `~/.config/dfilemanager/history.noindex/<server>/<path there>/<name>@<date>` — 20 versions a file, 200 MB in all, the oldest going first; a file over 5 MB gets none (the status line says so). **Server File History…** (⌘⇧P or the File menu, on a server file or in its editor) lists them: ↩ / F3 view one, ⌘⇧D diffs it with the server's file now, ⌘D with the version before it, ⌘R reverts to it (a production server asks; a change made there since the list opened is asked about). The server's sidebar menu has **Show File History**, which opens that folder in the panel; F8 there deletes. The folder is owner-only and kept out of Spotlight and Time Machine; it holds whatever the files did (`.env`, keys) — turn it off with `defaults write com.dmn.dfilemanager serverHistory -bool false`.
 
 Git repositories show a status column, and the status bar displays the branch and ↑↓ indicators — also on an SFTP panel, when the server has git 2.26 or newer. The editor includes line numbers and syntax highlighting for shell, YAML, JSON, configuration files, XML/plist, Python, and more.
 
@@ -164,7 +166,8 @@ Set advanced options with `defaults write com.dmn.dfilemanager <key> <value>`:
 - `terminalFontSize`: its size — the same ⌘+ / ⌘− change, saved automatically
 - `terminalOptionIsMeta`: `false` if you need ⌥ to type your layout's characters (`@`, `|`, `[`, `]`); `true` by default — ⌥ is Meta (⌥B / ⌥F in zsh)
 - `editorBundleID`: external editor to use instead of the built-in editor
-- `diffCommand`: file comparison tool, for example `'code --diff %1 %2'`
+- `diffCommand`: file comparison tool, for example `'code --diff %1 %2'` (a server's file comes as its local copy)
+- `serverHistory`: `false` keeps no versions of the server files you save (see SFTP panel)
 
 ## Shell integration
 

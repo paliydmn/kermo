@@ -633,6 +633,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             r.sessions.isEmpty && !SFTP.masterTargets.contains { ServerRow.key($0) == r.key } ? nil
                 : MenuAction.item("Disconnect") { [unowned self] in disconnect(r.target) },
             r.saved.map { unlocked("Copy SSH Command", $0, "copy the command of", copy) } ?? MenuAction.item("Copy SSH Command", copy),
+            MenuAction.item("Show File History") { [unowned self] in showFileHistory(r.target) },
             .separator(),
             MenuAction.item(r.pinned ? "Unpin" : "Pin") { [unowned self] in
                 unpin(r.key)
@@ -771,7 +772,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Commands that would act on the local folder hidden behind a server panel (its `path`). Until they learn
     /// servers, they refuse there instead of quietly working on this Mac.
     static let localOnly: Set<String> = ["file.info", "go.tree", "panel.swap", "file.reveal", "file.symlink",
-                                         "file.hardlink", "file.split", "file.combine", "file.diff", "git.diff", "file.eject",
+                                         "file.hardlink", "file.split", "file.combine", "git.diff", "file.eject",
                                          "git.log", "git.blame", "git.stage", "git.unstage", "admin.copy", "admin.move", "admin.mkdir", "admin.delete", "admin.shell"]
 
     private func perform(_ c: Command) {
@@ -796,6 +797,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             item.title = closes ? "Close Window" : commands.first { $0.id == id }?.title ?? item.title
             if closes { return true }
         }
+        if id == "server.history", Editor.server(of: NSApp.keyWindow) != nil { return true }   // its editor's file
         return NSApp.keyWindow === window && canRun(id)
     }
 
