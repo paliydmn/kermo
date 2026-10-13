@@ -139,6 +139,29 @@ private func waitUntil(_ seconds: TimeInterval = 10, _ done: () -> Bool) -> Bool
     return true
 }
 
+/// A client on [::1]:`port`, or -1.
+private func dialV6(_ port: Int) -> Int32 {
+    let s = socket(AF_INET6, SOCK_STREAM, 0)
+    var wait = timeval(tv_sec: 10, tv_usec: 0)
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+    var a = sockaddr_in6()
+    a.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+    a.sin6_family = sa_family_t(AF_INET6)
+    a.sin6_port = UInt16(port).bigEndian
+    a.sin6_addr = in6addr_loopback
+    let r = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(s, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) } }
+    if r != 0 { close(s); return -1 }
+    return s
+}
+
+private final class Locked<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var v: T
+    init(_ value: T) { v = value }
+    var value: T { lock.withLock { v } }
+    func update<R>(_ change: (inout T) -> R) -> R { lock.withLock { change(&v) } }
+}
+
 private let cat: @Sendable (CancelFlag) throws -> TunnelListener.Child = { _ in .init(executable: "/bin/cat") }
 
 // These run processes: in the one serialized suite with the rest (`SudoPasswordTests`).
@@ -151,7 +174,7 @@ extension SudoPasswordTests {
     let t = SFTPTarget(host: "dfm-no-such-host.invalid", port: 2222)
     let log = SFTP.masterLog(t)
     #expect(log == SFTP.controlDir + "/log-dfm-no-such-host.invalid_2222")
-    #expect(SFTP.masterArguments(t) == ["-E", log, "-f", "-N"])
+    #expect(SFTP.masterArguments(t) == ["-E", log, "-o", "LogLevel=INFO", "-f", "-N"], "a refusal is logged at INFO, whatever ~/.ssh/config says")
     #expect(SFTP.masterLog(SFTPTarget(host: "me@fe80::1%en0")) == SFTP.controlDir + "/log-me@fe80__1_en0_22")
     #expect(SFTP.masterLog(SFTPTarget(host: "a/../b c")) == SFTP.controlDir + "/log-a_.._b_c_22", "never outside the folder")
     try Data("stale\n".utf8).write(to: URL(fileURLWithPath: log))
@@ -159,6 +182,15 @@ extension SudoPasswordTests {
     #expect(e.connection)
     #expect(e.message.hasPrefix("ssh: Could not resolve hostname dfm-no-such-host.invalid") && !e.message.contains("stale"), "got: \(e.message)")
     #expect(!FileManager.default.fileExists(atPath: log))
+
+    try Data("left from before\n".utf8).write(to: URL(fileURLWithPath: log))   // a new master's: afresh and owner-only
+    chmod(log, 0o644)
+    let h = SFTP.freshLog(t)
+    try h.write(contentsOf: Data("new\n".utf8))
+    try h.close()
+    var st = stat()
+    #expect(lstat(log, &st) == 0 && st.st_mode & 0o777 == 0o600 && st.st_size == 4)
+    unlink(log)
 }
 
 /// Each connection gets a child of its own with the socket as its stdin and stdout (`cat` here: an echo): the bytes go
@@ -169,7 +201,7 @@ extension SudoPasswordTests {
     defer { l.stop() }
     let a = dial(l.port), b = dial(l.port)
     defer { close(a); close(b) }
-    #expect(waitUntil { l.connections == 2 })
+    #expect(waitUntil { l.connections == 2 && events.list.count == 2 })
     send(a, "one")
     shutdown(a, SHUT_WR)
     #expect(receive(a) == "one")
@@ -178,7 +210,7 @@ extension SudoPasswordTests {
     shutdown(b, SHUT_WR)
     #expect(receive(b) == "two")
     #expect(waitUntil { l.connections == 0 })
-    #expect(events.list == [.opened, .opened, .closed(failure: nil), .closed(failure: nil)])
+    #expect(events.list == [.opened, .opened, .closed(failure: nil), .closed(failure: nil)], "told before counted")
 }
 
 /// `stop`: the port closes and the children go, so clients see their connections end; the port can be listened on
@@ -324,6 +356,80 @@ extension SudoPasswordTests {
         #expect(waitUntil { v6Events.list.count == 2 })
         #expect(v6Events.list.last == .closed(failure: "test forbids port forwarding (AllowTcpForwarding / PermitOpen)"))
     }
+}
+
+/// The port is localhost's both ways, as `ssh -L` listens: ::1 too (most clients try it first), so a program there
+/// can't take the tunnel's clients — and one already there makes the port taken. A child that inherits every open file
+/// (a terminal's shell, forked) still never keeps the port: the sockets are close-on-exec.
+@Test func aTunnelListensOnBothLoopbacks() throws {
+    let l = try TunnelListener(port: 0, child: cat, onEvent: { _ in })
+    let c = dialV6(l.port)
+    #expect(c >= 0)
+    send(c, "v6")
+    #expect(receive(c, count: 2) == "v6")
+    close(c)
+
+    var pid: pid_t = 0
+    let words: [String] = ["/bin/sleep", "30"]
+    let args: [UnsafeMutablePointer<CChar>?] = words.map { strdup($0) } + [nil]
+    defer { args.forEach { free($0) } }
+    #expect(posix_spawn(&pid, "/bin/sleep", nil, nil, args, environ) == 0, "no POSIX_SPAWN_CLOEXEC_DEFAULT: inherits all but close-on-exec")
+    defer { kill(pid, SIGKILL); waitpid(pid, nil, 0) }
+    l.stop()
+    #expect(TunnelListener.isFree(l.port), "the child holds no socket of the port")
+
+    let s = socket(AF_INET6, SOCK_STREAM, 0)   // someone on [::1]:port alone
+    defer { close(s) }
+    var on: Int32 = 1
+    setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, &on, socklen_t(MemoryLayout<Int32>.size))
+    var a = sockaddr_in6()
+    a.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+    a.sin6_family = sa_family_t(AF_INET6)
+    a.sin6_addr = in6addr_loopback
+    var len = socklen_t(MemoryLayout<sockaddr_in6>.size)
+    _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(s, $0, len) } }
+    #expect(listen(s, 1) == 0)
+    _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(s, $0, &len) } }
+    let p = Int(UInt16(bigEndian: a.sin6_port))
+    #expect(!TunnelListener.isFree(p))
+    #expect(throws: Tunnel.Problem(message: "Port \(p) is in use on this Mac")) { try TunnelListener(port: p, child: cat, onEvent: { _ in }) }
+}
+
+/// One login at a time for a tunnel's connections; when it fails, those that waited for it fail with it — a client
+/// opening several at once doesn't get the password dialog again for each — and a connection after that tries anew.
+@Test func connectionsWaitingForAFailedLoginFailWithIt() throws {
+    let gate = LoginGate(), logins = Locked(0), errors = Locked([String]())
+    struct Refused: Error { let n: Int }
+    func connection(_ delay: TimeInterval) -> Thread {
+        let came = Date()
+        let t = Thread {
+            do {
+                try gate.pass(since: came) {
+                    let n = logins.update { $0 += 1; return $0 }
+                    Thread.sleep(forTimeInterval: delay)
+                    throw Refused(n: n)
+                }
+            } catch let e as Refused { errors.update { $0.append("login \(e.n)") } } catch {}
+        }
+        t.start()
+        return t
+    }
+    let first = connection(0.3)
+    usleep(50_000)
+    let queued = [connection(0), connection(0)]
+    for t in [first] + queued { while !t.isFinished { usleep(10_000) } }
+    #expect(logins.value == 1 && errors.value == ["login 1", "login 1", "login 1"])
+    let later = connection(0)
+    while !later.isFinished { usleep(10_000) }
+    #expect(logins.value == 2, "a connection after the failure tries again")
+}
+
+/// A refused connection that left nothing to read (LogLevel QUIET in ~/.ssh/config) still isn't a clean end.
+@Test func aSilentRefusalStillSaysSo() throws {
+    let spec = try Tunnel(localPort: 1, port: 5432).child(on: .local(), env: [:], server: "web1")(CancelFlag())
+    #expect(spec.executable == "/usr/bin/ssh")
+    #expect(spec.failure(255, "") == "web1 refused the connection to localhost:5432")
+    #expect(spec.failure(0, "") == nil)
 }
 
 }

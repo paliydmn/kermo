@@ -106,8 +106,19 @@ public enum SFTP {
         return controlDir + "/log-" + String(name.prefix(200))
     }
 
-    /// What starts the master, between the connection options and the target.
-    static func masterArguments(_ t: SFTPTarget) -> [String] { ["-E", masterLog(t), "-f", "-N"] }
+    /// What starts the master, between the connection options and the target. LogLevel=INFO, whatever ~/.ssh/config
+    /// says: a channel's refusal is logged at that level (ERROR or QUIET there would leave a tunnel nothing to say).
+    static func masterArguments(_ t: SFTPTarget) -> [String] { ["-E", masterLog(t), "-o", "LogLevel=INFO", "-f", "-N"] }
+
+    /// The master's log started afresh and owner-only, whatever a file left there was: ssh's stderr until it goes to the
+    /// background (a server's banner), then its -E log. A file, not a pipe: the backgrounded master would hold a pipe
+    /// open forever.
+    static func freshLog(_ t: SFTPTarget) -> FileHandle {
+        let fd = open(masterLog(t), O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { return .nullDevice }
+        fchmod(fd, 0o600)
+        return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+    }
 
     /// A session's own ssh never stays behind as the ControlMaster, so without an SSH tab every listing would be a
     /// fresh login. Start a background master once; it lives ControlPersist seconds past the last use. If it can't
@@ -131,12 +142,7 @@ public enum SFTP {
         guard let login = beginLogin(t, cancel: cancel) else { throw CancellationError() }
         defer { login.end() }
         if ssh(["-O", "check"]) == 0 { return }   // the login waited for brought it up
-        // Its log afresh; what ssh says on stderr before it goes to the background (a server's banner) lands there too.
-        // A file, not a pipe: the backgrounded master would hold a pipe open forever.
-        let log = masterLog(t)
-        let fd = open(log, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        if fd >= 0 { fchmod(fd, 0o600) }
-        let errors = fd >= 0 ? FileHandle(fileDescriptor: fd, closeOnDealloc: true) : .nullDevice
+        let log = masterLog(t), errors = freshLog(t)
         let status = withPassword(t) { ssh(masterArguments(t), stderr: errors, extra: $0) }   // ControlMaster=auto makes it the master
         try? errors.close()
         // Another listing may have become the master meanwhile; then this one only lost the race.

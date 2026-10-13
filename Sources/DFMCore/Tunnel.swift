@@ -138,11 +138,15 @@ extension Tunnel {
     /// What each connection to the tunnel runs: a login first when the server's master is down (`startMaster`: the
     /// saved password, askpass — `env`), then `ssh -W` riding it. A refusal is read from the master's log, from where it
     /// ended when the child started. `server`: as the sidebar names it, for the reasons.
+    /// The tunnel's logins go one at a time: when one fails (a wrong password, the dialog cancelled), the connections that
+    /// came while it was under way fail with it — a client opening several at once doesn't get the dialog again for each.
     public func child(on t: SFTPTarget, env: [String: String], server: String) -> @Sendable (CancelFlag) throws -> TunnelListener.Child {
-        let tunnel = self
+        let tunnel = self, gate = LoginGate()
         return { cancel in
-            do { try SFTP.startMaster(t, env: env, cancel: cancel) } catch let e as SFTPError {
-                throw Problem(message: tunnel.failure(e.message, server: server) ?? e.message)
+            try gate.pass(since: Date()) {
+                do { try SFTP.startMaster(t, env: env, cancel: cancel) } catch let e as SFTPError {
+                    throw Problem(message: tunnel.failure(e.message, server: server) ?? e.message)
+                }
             }
             let log = SFTP.masterLog(t)
             let from = (try? FileManager.default.attributesOfItem(atPath: log)[.size] as? UInt64) ?? 0
@@ -153,17 +157,37 @@ extension Tunnel {
                     try? h.seek(toOffset: from)   // a new master emptied it meanwhile: nothing past the end
                     return h.readDataToEndOfFile()
                 } ?? Data()
+                // Nothing said (LogLevel QUIET in ~/.ssh/config hides it from the child): still not a clean end.
                 return tunnel.failure(String(decoding: since, as: UTF8.self) + "\n" + stderr, server: server)
+                    ?? "\(server) refused the connection to \(tunnel.remote)"
             }
         }
     }
 }
 
-/// Listens on 127.0.0.1:`port` and gives each connection a child process of its own with the socket as its stdin and
-/// stdout, as inetd does: the bytes never pass through Kermo. Accepts on a queue of its own, never the main thread.
-/// `stop` closes the port and ends the children, so their connections close.
+/// A tunnel's logins, one at a time (`Tunnel.child`).
+final class LoginGate: @unchecked Sendable {
+    private let lock = NSLock()   // held through a login
+    private var failed: (at: Date, error: Error)?
+
+    /// `login`, unless one that failed ended after `came` (this connection waited for it): its error then.
+    func pass(since came: Date, _ login: () throws -> Void) throws {
+        try lock.withLock {
+            if let f = failed, f.at > came { throw f.error }
+            do { try login() } catch {
+                failed = (Date(), error)
+                throw error
+            }
+        }
+    }
+}
+
+/// Listens on this Mac's loopback — 127.0.0.1 and ::1, as `ssh -L` does: most clients try localhost's ::1 first, where
+/// another program could otherwise take the port — and gives each connection a child process of its own with the socket
+/// as its stdin and stdout, as inetd does: the bytes never pass through Kermo. Accepts on a queue of its own, never the
+/// main thread. `stop` closes the port and ends the children, so their connections close.
 public final class TunnelListener: @unchecked Sendable {
-    /// One connection's child, and how its end reads: nil, a clean end (or nothing to say).
+    /// One connection's child, and how its end reads: nil, a clean end.
     public struct Child: Sendable {
         public var executable: String
         public var arguments: [String]
@@ -174,72 +198,83 @@ public final class TunnelListener: @unchecked Sendable {
             (self.executable, self.arguments, self.environment, self.failure) = (executable, arguments, environment, failure)
         }
     }
-    /// A connection came, or went (with why it failed, if it did). Not after `stop`. On the listener's threads.
+    /// A connection came, or went (with why it failed, if it did). Not after `stop`. On the listener's threads, before
+    /// `connections` counts it.
     public enum Event: Sendable, Equatable { case opened, closed(failure: String?) }
 
     public let port: Int
-    private let fd: Int32
-    private var source: DispatchSourceRead?   // under `lock`; nil once stopped
-    private let closed = DispatchSemaphore(value: 0)
     private let child: @Sendable (CancelFlag) throws -> Child
     private let onEvent: @Sendable (Event) -> Void
-    private let lock = NSLock()
+    private let closed = DispatchSemaphore(value: 0)
+    private let lock = NSLock()   // guards the rest
+    private var sources: [DispatchSourceRead] = []   // empty once stopped
+    private var stopped = false
+    private var logins: [CancelFlag] = []   // connections still logging in, each with a flag of its own (a flag holds one handler)
     private var live: [Process] = []
     private var count = 0
-    private let stopped = CancelFlag()   // also stops a login under way for a connection
 
     /// Connections open now, those still logging in too.
     public var connections: Int { lock.withLock { count } }
 
-    /// Fails at once when the port is taken: someone listens on 127.0.0.1:`port`, or on every address — with
-    /// SO_REUSEADDR (without it a port stays taken ~30 s after its connections close) a bind to 127.0.0.1 alone would
+    /// Fails at once when the port is taken: someone listens on it on the loopback, or on every address — with
+    /// SO_REUSEADDR (without it a port stays taken ~30 s after its connections close) a bind to the loopback alone would
     /// quietly take localhost:`port` over from them. Port 0: any free one (tests).
     public init(port: Int, child: @escaping @Sendable (CancelFlag) throws -> Child, onEvent: @escaping @Sendable (Event) -> Void) throws {
         func taken(_ e: Int32) -> Tunnel.Problem {
             Tunnel.Problem(message: e == EADDRINUSE ? "Port \(port) is in use on this Mac" : "Can't listen on port \(port): \(String(cString: strerror(e)))")
         }
-        let any = Self.bound("0.0.0.0", port)
-        guard any.fd >= 0 else { throw taken(any.error) }
-        close(any.fd)
-        let b = Self.bound("127.0.0.1", port)
-        guard b.fd >= 0 else { throw taken(b.error) }
-        guard listen(b.fd, 64) == 0 else {
-            let e = errno
-            close(b.fd)
+        for (family, host) in [(AF_INET, "0.0.0.0"), (AF_INET6, "::")] {   // IPv4's wildcard: a dual-stack [::] too
+            let probe = Self.bound(family, host, port)
+            guard probe.fd >= 0 else { throw taken(probe.error) }
+            close(probe.fd)
+        }
+        let v4 = Self.bound(AF_INET, "127.0.0.1", port)
+        guard v4.fd >= 0 else { throw taken(v4.error) }
+        var a = sockaddr_in(), len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(v4.fd, $0, &len) } }
+        let actual = Int(UInt16(bigEndian: a.sin_port))
+        let v6 = Self.bound(AF_INET6, "::1", actual)
+        let fds = [v4.fd] + (v6.fd >= 0 ? [v6.fd] : [])
+        if v6.fd < 0 || fds.contains(where: { listen($0, 64) != 0 }) {
+            let e = v6.fd < 0 ? v6.error : errno
+            fds.forEach { close($0) }
             throw taken(e)
         }
-        _ = fcntl(b.fd, F_SETFL, fcntl(b.fd, F_GETFL) | O_NONBLOCK)
-        var a = sockaddr_in(), len = socklen_t(MemoryLayout<sockaddr_in>.size)
-        _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(b.fd, $0, &len) } }
-        (fd, self.port, self.child, self.onEvent) = (b.fd, Int(UInt16(bigEndian: a.sin_port)), child, onEvent)
-        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: DispatchQueue(label: "kermo.tunnel"))
-        source.setEventHandler { [weak self] in self?.acceptAll() }
-        source.setCancelHandler { [fd, closed] in   // a source's fd closes once it no longer watches it
-            close(fd)
-            closed.signal()
+        (self.port, self.child, self.onEvent) = (actual, child, onEvent)
+        let queue = DispatchQueue(label: "kermo.tunnel")
+        for fd in fds {
+            _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+            let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
+            source.setEventHandler { [weak self] in self?.acceptAll(fd) }
+            source.setCancelHandler { [closed] in   // a source's fd closes once it no longer watches it
+                close(fd)
+                closed.signal()
+            }
+            source.resume()
+            sources.append(source)
         }
-        source.resume()
-        self.source = source
     }
 
-    deinit { source?.cancel() }
+    deinit { sources.forEach { $0.cancel() } }
 
-    /// Closes the port — it's free when this returns, to listen on again — and with `keepConnections` (the screen
-    /// locked: like open sessions, they live on) that's all; else the children get SIGTERM and their clients see the end.
+    /// Closes the port — it's free when this returns, to listen on again — and stops logins under way. With
+    /// `keepConnections` (the screen locked: like open sessions, they live on) that's all; else the children get SIGTERM
+    /// and their clients see the end. Again later: ends those kept.
     public func stop(keepConnections: Bool = false) {
-        stopped.cancel()
-        if let source = lock.withLock({ () -> DispatchSourceRead? in defer { source = nil }; return source }) {
-            source.cancel()
-            _ = closed.wait(timeout: .now() + 2)   // an accept under way finishes first: a moment
+        let (sources, logins, live) = lock.withLock { () -> ([DispatchSourceRead], [CancelFlag], [Process]) in
+            defer { (self.sources, stopped) = ([], true) }
+            return (self.sources, self.logins, self.live)
         }
-        guard !keepConnections else { return }
-        lock.withLock { live }.forEach { $0.terminate() }
+        logins.forEach { $0.cancel() }
+        sources.forEach { $0.cancel() }
+        for _ in sources { _ = closed.wait(timeout: .now() + 2) }   // an accept under way finishes first: a moment
+        if !keepConnections { live.forEach { $0.terminate() } }
     }
 
     /// Nobody listens on `port` here (as `init` sees it), without listening on it.
     public static func isFree(_ port: Int) -> Bool {
-        for host in ["0.0.0.0", "127.0.0.1"] {
-            let b = bound(host, port)
+        for (family, host) in [(AF_INET, "0.0.0.0"), (AF_INET6, "::"), (AF_INET, "127.0.0.1"), (AF_INET6, "::1")] {
+            let b = bound(family, host, port)
             guard b.fd >= 0 else { return false }
             close(b.fd)
         }
@@ -252,16 +287,28 @@ public final class TunnelListener: @unchecked Sendable {
     }
 
     /// A TCP socket bound to host:port, SO_REUSEADDR (else a port stays taken while its old connections sit in
-    /// TIME_WAIT), close-on-exec: a child — an ssh master that outlives the tunnel — must never keep the port.
-    private static func bound(_ host: String, _ port: Int) -> (fd: Int32, error: Int32) {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+    /// TIME_WAIT), close-on-exec (a child — an ssh master that outlives the tunnel, a terminal's shell — must never keep
+    /// the port); IPv6 for itself alone.
+    private static func bound(_ family: Int32, _ host: String, _ port: Int) -> (fd: Int32, error: Int32) {
+        let fd = socket(family, SOCK_STREAM, 0)
         guard fd >= 0 else { return (-1, errno) }
         _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
         var on: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
-        var a = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: UInt16(port).bigEndian,
-                            sin_addr: in_addr(s_addr: inet_addr(host)), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
-        let r = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        let r: Int32
+        if family == AF_INET6 {
+            setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &on, socklen_t(MemoryLayout<Int32>.size))
+            var a = sockaddr_in6()
+            a.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+            a.sin6_family = sa_family_t(AF_INET6)
+            a.sin6_port = UInt16(port).bigEndian
+            _ = inet_pton(AF_INET6, host, &a.sin6_addr)
+            r = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) } }
+        } else {
+            var a = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: UInt16(port).bigEndian,
+                                sin_addr: in_addr(s_addr: inet_addr(host)), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+            r = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        }
         guard r == 0 else {
             let e = errno
             close(fd)
@@ -270,7 +317,7 @@ public final class TunnelListener: @unchecked Sendable {
         return (fd, 0)
     }
 
-    private func acceptAll() {
+    private func acceptAll(_ fd: Int32) {
         while true {
             let c = accept(fd, nil, nil)
             if c < 0 {
@@ -280,24 +327,31 @@ public final class TunnelListener: @unchecked Sendable {
             }
             _ = fcntl(c, F_SETFD, FD_CLOEXEC)   // another connection's child mustn't hold this one open
             _ = fcntl(c, F_SETFL, fcntl(c, F_GETFL) & ~O_NONBLOCK)   // BSD hands the listener's O_NONBLOCK on: not for the child
-            lock.withLock { count += 1 }
             onEvent(.opened)
+            lock.withLock { count += 1 }
             Thread { [self] in serve(c) }.start()
         }
     }
 
     /// One connection: its child (a login may come first), then waiting for it to end.
     private func serve(_ c: Int32) {
-        let sock = FileHandle(fileDescriptor: c, closeOnDealloc: true)
+        let sock = FileHandle(fileDescriptor: c, closeOnDealloc: true), flag = CancelFlag()
         var failure: String?
         defer {
             try? sock.close()
-            lock.withLock { count -= 1 }
-            if !stopped.isCancelled { onEvent(.closed(failure: failure)) }
+            if !lock.withLock({ stopped }) { onEvent(.closed(failure: failure)) }
+            lock.withLock {
+                count -= 1
+                logins.removeAll { $0 === flag }
+            }
         }
+        guard lock.withLock({ () -> Bool in
+            if !stopped { logins.append(flag) }
+            return !stopped
+        }) else { return }
         let spec: Child
-        do { spec = try child(stopped) } catch {
-            if !(error is CancellationError) { failure = error.localizedDescription }
+        do { spec = try child(flag) } catch {
+            if !(error is CancellationError) && !flag.isCancelled { failure = error.localizedDescription }
             return
         }
         let p = Process()
@@ -309,7 +363,7 @@ public final class TunnelListener: @unchecked Sendable {
         let err = Pipe()
         p.standardError = err
         let started = lock.withLock { () -> Result<Void, Error>? in   // under the lock: `stop` ends whatever has started
-            guard !stopped.isCancelled else { return nil }
+            guard !stopped else { return nil }
             do { try p.run() } catch { return .failure(error) }
             live.append(p)
             return .success(())
