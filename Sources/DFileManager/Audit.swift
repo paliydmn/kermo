@@ -33,13 +33,17 @@ import Foundation
         _ = line.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
     }
 
-    /// A finished copy, move or delete (F5, F6, F8, Synchronize): a line for each production server it changed files on.
+    /// A finished copy, move or delete (F5, F6, F8, Synchronize): a line for each production server it changed files on
+    /// (one for a move within a server). Synchronize's copies name each file's two places, the server's among them.
     static func write(_ job: FileJob, sync: Bool) {
         let kind = switch job.kind { case .copy: "copy"; case .move: "move"; case .delete: "delete"; case .trash: "trash" }
         let p = job.progress, ok = p.state == .done && p.errors.isEmpty
         let error = p.state == .cancelled ? "cancelled" : p.errors.isEmpty ? nil : p.errors.prefix(5).joined(separator: "\n")
-        for t in AppDelegate.changed(from: job.from, to: job.to, move: job.kind == .move) {
-            write(t, (sync ? "sync " : "") + kind, paths: job.sources, to: job.kind == .delete ? nil : job.destDir, exit: ok ? 0 : 1, error: ok ? nil : error)
+        let paths = job.pairs.isEmpty ? job.sources : job.pairs.map { "\($0.src) → \($0.dst)" }
+        var done: [SFTPTarget] = []
+        for t in AppDelegate.changed(from: job.from, to: job.to, move: job.kind == .move) where !done.contains(t) {
+            done.append(t)
+            write(t, (sync ? "sync " : "") + kind, paths: paths, to: job.kind == .delete ? nil : job.destDir, exit: ok ? 0 : 1, error: ok ? nil : error)
         }
     }
 }

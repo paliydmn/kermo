@@ -8,8 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private(set) var ops: OpsController!
     /// Move jobs an undo/redo started (across volumes): their own undo is registered already.
     var replayJobs: [FileJob] = []
-    /// Synchronize's jobs not finished yet: the production log calls them "sync".
-    var syncJobs = Set<ObjectIdentifier>()
+    /// Synchronize's jobs not finished yet: the production log calls them "sync". Weak: one cancelled while queued never
+    /// finishes, and its address may be another job's later.
+    let syncJobs = NSHashTable<FileJob>.weakObjects()
     /// The last undo/redo's disk work: each waits for the one before (`afterUndoWork`).
     var undoWork: Task<Void, Never>?
     var terminal: EmbeddedTerminal!   // set in tests

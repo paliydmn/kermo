@@ -372,13 +372,16 @@ extension AppDelegate {
     /// ~/.config/dfilemanager/validators.json: the user's own checks for server files, looked at before the built-in ones.
     /// The first time, an example — not the built-in rules (copied there, they'd never get Kermo's changes to them).
     func editValidators() {
-        let path = Config.path("validators.json")
+        let path = Self.validatorsPath
         if !FileManager.default.fileExists(atPath: path) {
             try? FileManager.default.createDirectory(atPath: Config.dir, withIntermediateDirectories: true)
             FileManager.default.createFile(atPath: path, contents: Data(Self.validatorsExample.utf8), attributes: [.posixPermissions: 0o600])
         }
         openInEditor(URL(fileURLWithPath: path))
     }
+
+    /// Tests: a file of their own.
+    static var validatorsPath = Config.path("validators.json")
 
     static let validatorsExample = """
         [
@@ -441,13 +444,13 @@ extension AppDelegate {
                 if SavedServer.isProd(r.target), Shell.isDangerous(expanded),
                    await !confirm("Run “\(expanded)” on \(r.target.host) (production)?", info: "In \(r.dir).", ok: "Run") { return }
                 if dest == .terminalApp {
-                    AuditLog.write(r.target, "command", paths: [r.dir], command: expanded, exit: nil)   // its end is the terminal's
+                    AuditLog.write(r.target.asUser, "command", paths: [r.dir], command: expanded, exit: nil)   // its end is the terminal's; as the user, root panel or not
                     return openSSH(r.target, command: SSHCommand.shell(in: r.dir, after: expanded))
                 }
                 let login = await Blocking.run { Result { try SFTP.startMaster(r.target, env: env) } }
                 if case .failure(let e) = login { return showError(e) }
                 Shell.run(expanded, on: r.target, in: r.dir) { [weak self] status in
-                    AuditLog.write(r.target, "command", paths: [r.dir], command: expanded, exit: status)
+                    AuditLog.write(r.target.asUser, "command", paths: [r.dir], command: expanded, exit: status)   // ran as the user (ssh)
                     for p in self?.panels ?? [] where p.remote?.target.asUser == r.target.asUser { p.reload() }
                 }
             }
@@ -1151,7 +1154,7 @@ extension AppDelegate {
             state.prodConfirmed = true
         }
         let env = SSHAskpass.env, baseline = state.baseline, history = serverHistory
-        let (rules, problem) = ConfigCheck.rules(FileManager.default.contents(atPath: Config.path("validators.json")))
+        let (rules, problem) = ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath))
         let rule = ConfigCheck.rule(for: remotePath, in: rules)
         // No panel of its own: the one showing that server (else the active one) says it's saving; ⎋ there cancels.
         let panel = panels.first { $0.remote?.target == target } ?? active
@@ -1325,13 +1328,14 @@ extension AppDelegate {
         }
     }
 
-    /// The reload question: on a production server it says so, and ↩ is Cancel; sshd moving to another port says what that does.
-    static func reloadQuestion(_ command: String, name: String, on target: SFTPTarget) -> (message: String, info: String, default: Int) {
+    /// The reload question: on a production server it says so, and ↩ is Cancel (elsewhere ↩ is Reload and ⎋ Cancel, as
+    /// any alert has them); sshd moving to another port says what that does.
+    static func reloadQuestion(_ command: String, name: String, on target: SFTPTarget) -> (message: String, info: String, default: Int?) {
         let socket = command == ConfigCheck.sshdSocketReload ? "\n\nPort or ListenAddress changed. Where systemd listens for sshd (ssh.socket, "
             + "Ubuntu 22.10 and later) this reloads systemd and restarts ssh.socket: this connection stays, new ones go to the new port." : ""
         return ("Reload after saving “\(name)”?",
                 SavedServer.prodNote([target]) + "Runs “\(command)” on \(target.host)\(target.sudo ? " as root" : "")." + socket,
-                SavedServer.isProd(target) ? 2 : 0)
+                SavedServer.isProd(target) ? 2 : nil)
     }
 
     /// The text a save replaced, in a temp copy of its own (owner-only; swept with the server copies), for Compare.
@@ -1587,7 +1591,7 @@ extension AppDelegate {
             let command = RemoteArchive.extractCommand(file, to: dest, keep: keep)
             Shell.run(command, on: target, in: dir,
                       title: "Extract “\((item.name as NSString).lastPathComponent)” → \(dest) on \(target.host)") { [weak self] status in
-                AuditLog.write(target, "extract", paths: [file], to: dest, command: command, exit: status)
+                AuditLog.write(target.asUser, "extract", paths: [file], to: dest, command: command, exit: status)   // ran as the user (ssh)
                 for p in self?.panels ?? [] where p.remote?.target.asUser == target.asUser { p.reload() }
             }
         }
@@ -2088,7 +2092,7 @@ extension AppDelegate {
                 : "Files there may be overwritten."), ok: "Synchronize") else { return false }
         }
         for (job, label) in jobs {
-            syncJobs.insert(ObjectIdentifier(job))   // the production log says "sync"
+            syncJobs.add(job)   // the production log says "sync"
             ops.enqueue(job, title: label)
         }
         return true
@@ -2437,7 +2441,8 @@ extension AppDelegate {
     }
 
     func jobFinished(_ job: FileJob) {
-        AuditLog.write(job, sync: syncJobs.remove(ObjectIdentifier(job)) != nil)
+        AuditLog.write(job, sync: syncJobs.contains(job))
+        syncJobs.remove(job)
         // Local panels follow the disk (FSEvents); a server panel has to ask again.
         for p in panels {
             if let r = p.remote, [job.from, job.to].contains(where: { if case .sftp(let t) = $0 { t.asUser == r.target.asUser } else { false } }) { p.reload() }

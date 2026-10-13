@@ -57,7 +57,8 @@ extension ServerLockTests {
 @Test func reloadAsksFirstOnProduction() {
     let root = SFTPTarget(host: "me@web").asRoot()
     let plain = AppDelegate.reloadQuestion("systemctl reload nginx", name: "site.conf", on: root)
-    #expect(plain.message == "Reload after saving “site.conf”?" && plain.info == "Runs “systemctl reload nginx” on me@web as root." && plain.default == 0)
+    #expect(plain.message == "Reload after saving “site.conf”?" && plain.info == "Runs “systemctl reload nginx” on me@web as root.")
+    #expect(plain.default == nil, "↩ Reload, ⎋ Cancel: an alert's own keys")
     #expect(AppDelegate.reloadQuestion("app reload", name: "a.yaml", on: root.asRoot(false)).info == "Runs “app reload” on me@web.")
     var prod = SavedServer(address: "me@web")!
     prod.prod = true
@@ -130,10 +131,12 @@ extension ServerLockTests {
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     let was = AuditLog.path
     AuditLog.path = dir + "/audit.jsonl"
+    let validators = AppDelegate.validatorsPath
+    AppDelegate.validatorsPath = dir + "/validators.json"   // none: this Mac's own doesn't count
     var prod = SavedServer(address: "localhost")!
     prod.prod = true
     ServerLock.servers = { [prod] }
-    defer { AuditLog.path = was; ServerLock.servers = { [] }; try? FileManager.default.removeItem(atPath: dir) }
+    defer { AuditLog.path = was; AppDelegate.validatorsPath = validators; ServerLock.servers = { [] }; try? FileManager.default.removeItem(atPath: dir) }
     func log() -> [[String: Any]] {
         ((try? String(contentsOfFile: AuditLog.path, encoding: .utf8)) ?? "").split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
     }
@@ -159,24 +162,28 @@ extension ServerLockTests {
     for sync in [false, true] {
         let job = FileJob(.delete, sources: [dir + (sync ? "/reverted.conf" : "/renamed.conf")], from: .sftp(.local()), to: .sftp(.local()), destDir: nil)
         job.run()
-        if sync { app.syncJobs.insert(ObjectIdentifier(job)) }
+        if sync { app.syncJobs.add(job) }
         app.jobFinished(job)
     }
-    #expect(app.syncJobs.isEmpty, "forgotten once finished")
+    #expect(app.syncJobs.allObjects.isEmpty, "forgotten once finished")
     // F6 from one production server to another: a line for each end.
     var other = SavedServer(address: "me@db")!
     other.prod = true
     ServerLock.servers = { [prod, other] }
     AuditLog.write(FileJob(.move, sources: ["/a"], from: .sftp(.local()), to: .sftp(SFTPTarget(host: "me@db")), destDir: "/b"), sync: false)
+    // F6 within one server: one line. Synchronize's copies: each file's two places.
+    AuditLog.write(FileJob(.move, sources: ["/a"], from: .sftp(.local()), to: .sftp(.local()), destDir: "/b"), sync: false)
+    AuditLog.write(FileJob(copyPairs: [("/here/a", "/srv/a")], from: .local, to: .sftp(.local())), sync: true)
     // A reload that ran, and one whose program isn't there.
     await app.reload("true", after: URL(fileURLWithPath: dir + "/l"), to: dir + "/x.conf", on: .local(), in: panel)
     await app.reload("kermo-no-such-reload", after: URL(fileURLWithPath: dir + "/l"), to: dir + "/x.conf", on: .local(), in: panel)
 
     let got = log().map { ($0["action"] as? String ?? "?", $0["server"] as? String ?? "?", $0["exit"] as? Int ?? -1) }
-    #expect(got.map(\.0) == ["save", "revert", "rename", "delete", "sync delete", "move", "move", "reload", "reload"], "\(got)")
-    #expect(got.map(\.2) == [0, 0, 0, 0, 0, 1, 1, 0, 127], "\(got)")
+    #expect(got.map(\.0) == ["save", "revert", "rename", "delete", "sync delete", "move", "move", "move", "sync copy", "reload", "reload"], "\(got)")
+    #expect(got.map(\.2) == [0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 127], "\(got)")
+    #expect(log()[8]["paths"] as? [String] == ["/here/a → /srv/a"])
     #expect(log()[2]["paths"] as? [String] == [dir + "/saved.conf", dir + "/renamed.conf"])
     #expect(log()[5]["server"] as? String == "localhost" && log()[6]["server"] as? String == "me@db" && log()[6]["to"] as? String == "/b")
-    #expect(log()[7]["command"] as? String == "true" && log()[7]["paths"] as? [String] == [dir + "/x.conf"])
+    #expect(log()[9]["command"] as? String == "true" && log()[9]["paths"] as? [String] == [dir + "/x.conf"])
 }
 }
