@@ -58,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         SFTP.sudoPasswordTaken = { SudoPasswords.taken($0, $1) }
         ServerLock.servers = { [unowned self] in savedServers }
         ServerCopies.upload = { [unowned self] c in await upload(c.url, to: c.path, on: c.target, c.state) }
+        AuditLog.failed = { [unowned self] in active.flash($0, error: true) }
         ServerLock.relockOnScreenLockAndSleep()
         Masters.stopOnWake()
         Masters.stopOnNetworkChange()

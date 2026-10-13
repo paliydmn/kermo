@@ -1307,7 +1307,7 @@ extension AppDelegate {
     func reload(_ command: String, after saved: URL, to path: String, on target: SFTPTarget, in panel: PanelViewController) async {
         let env = SSHAskpass.env
         let r = await panel.busy("Reloading on \(target.host)…") { flag in try ConfigCheck.run(command, on: target, env: env, cancel: flag) }
-        let log = { (exit: Int32, error: String?) in AuditLog.write(target, "reload", paths: [path], command: command, exit: exit, error: error) }
+        let log = { (exit: Int32?, error: String?) in AuditLog.write(target, "reload", paths: [path], command: command, exit: exit, error: error) }
         switch r {
         case .success(.passed):
             log(0, nil)
@@ -1322,7 +1322,7 @@ extension AppDelegate {
             log(127, why)
             panel.flash("Not reloaded on \(target.host): \(why)", error: true)
         case .success: break   // needs root, not run: only checks
-        case .failure(is CancellationError): break
+        case .failure(is CancellationError): log(nil, "cancelled, may have run")   // ⎋ stops the wait, not what was sent
         case .failure(let e):
             log(1, e.localizedDescription)
             showError(e)

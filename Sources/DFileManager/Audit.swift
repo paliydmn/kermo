@@ -8,6 +8,9 @@ import Foundation
 @MainActor enum AuditLog {
     /// Tests: a file of their own.
     static var path = Config.path("audit.jsonl")
+    /// Hears why a line couldn't be written: once, until one is again (the app's status line).
+    static var failed: (@MainActor (String) -> Void)?
+    private static var failing = false
 
     struct Entry: Encodable {
         var time: String, server: String, root: Bool?, action: String, paths: [String], to: String?, command: String?, exit: Int32?, error: String?
@@ -27,10 +30,14 @@ import Foundation
         line.append(0x0a)
         try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         let fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { return }
-        defer { close(fd) }
-        fchmod(fd, 0o600)   // made looser by hand: owner-only again
-        _ = line.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+        var error = fd < 0 ? String(cString: strerror(errno)) : nil
+        if fd >= 0 {
+            fchmod(fd, 0o600)   // made looser by hand: owner-only again
+            if line.withUnsafeBytes({ Darwin.write(fd, $0.baseAddress, $0.count) }) != line.count { error = String(cString: strerror(errno)) }
+            close(fd)
+        }
+        if let error, !failing { failed?("Production log not written (\((path as NSString).abbreviatingWithTildeInPath)): \(error)") }
+        failing = error != nil
     }
 
     /// A finished copy, move or delete (F5, F6, F8, Synchronize): a line for each production server it changed files on

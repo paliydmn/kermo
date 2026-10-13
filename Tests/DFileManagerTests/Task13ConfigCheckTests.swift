@@ -127,6 +127,19 @@ extension ServerLockTests {
     UserDefaults.standard.removeObject(forKey: "auditLog")
     AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
     #expect((try String(contentsOfFile: AuditLog.path, encoding: .utf8)).split(separator: "\n").count == 3 && mode() == 0o600)
+    // A line that can't be written is said once, until one is again.
+    var said: [String] = []
+    AuditLog.failed = { said.append($0) }
+    defer { AuditLog.failed = nil }
+    AuditLog.path = "/dev/null/kermo/audit.jsonl"
+    AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
+    AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
+    #expect(said.count == 1 && said[0].hasPrefix("Production log not written (/dev/null/kermo/audit.jsonl): "), "\(said)")
+    AuditLog.path = dir + "/audit.jsonl"
+    AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
+    AuditLog.path = "/dev/null/kermo/audit.jsonl"
+    AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
+    #expect(said.count == 2, "written once in between: said again")
     // Show Production Log is in ⌘⇧P and the Admin menu.
     let c = AppDelegate().makeCommands().first { $0.id == "admin.auditLog" }
     #expect(c?.title == "Show Production Log" && c?.menu == "Admin")
@@ -186,10 +199,14 @@ extension ServerLockTests {
     // A reload that ran, and one whose program isn't there.
     await app.reload("true", after: URL(fileURLWithPath: dir + "/l"), to: dir + "/x.conf", on: .local(), in: panel)
     await app.reload("kermo-no-such-reload", after: URL(fileURLWithPath: dir + "/l"), to: dir + "/x.conf", on: .local(), in: panel)
+    // ⎋ while a reload runs: it may have run there — said so.
+    Task { try? await Task.sleep(for: .milliseconds(300)); panel.cancelBusy() }
+    await app.reload("sleep 3", after: URL(fileURLWithPath: dir + "/l"), to: dir + "/x.conf", on: .local(), in: panel)
 
     let got = log().map { ($0["action"] as? String ?? "?", $0["server"] as? String ?? "?", $0["exit"] as? Int ?? -1) }
-    #expect(got.map(\.0) == ["save", "revert", "rename", "delete", "sync delete", "move", "move", "move", "sync copy", "reload", "reload"], "\(got)")
-    #expect(got.map(\.2) == [0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 127], "\(got)")
+    #expect(got.map(\.0) == ["save", "revert", "rename", "delete", "sync delete", "move", "move", "move", "sync copy", "reload", "reload", "reload"], "\(got)")
+    #expect(got.map(\.2) == [0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 127, -1], "\(got)")
+    #expect(log()[11]["error"] as? String == "cancelled, may have run" && log()[11]["exit"] == nil)
     #expect(log()[8]["paths"] as? [String] == ["/here/a → /srv/a"])
     #expect(log()[2]["paths"] as? [String] == [dir + "/saved.conf", dir + "/renamed.conf"])
     #expect(log()[5]["server"] as? String == "localhost" && log()[6]["server"] as? String == "me@db" && log()[6]["to"] as? String == "/b")
