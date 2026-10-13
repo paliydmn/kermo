@@ -36,6 +36,7 @@ Release:
 - **Speed:** a file copied to a server gets its close, mode and date sent right behind its data instead of after the server confirmed the data: one wait less per file. A file whose owner can't write it still waits, so one that fails half-way stays writable for Retry.
 - **Speed:** copying a folder to a server doesn't ask whether each name is taken in the folder it has just made there (nothing can be yet; a name that differs only in case from one copied before is still asked about): one wait less per file. With the change above, a small file uploads in 4 waits instead of 6.
 - **Speed:** saving a server file you edit (F4, ⌘S) sends its mode along with the close, right behind the data, and checks that the server's copy hasn't changed with a single read: 8 waits instead of 12.
+- **Speed:** saving a server file (⌘S, another app's save, Revert) goes over the session of the panel showing that server, when one does: no ssh start and handshake of its own, and from a root panel no second sudo run. The panel's folder listings wait for the save meanwhile.
 - **Speed:** a server panel keeps one connection to its server while it shows it, instead of opening a new one for every folder: going into a folder skips the ssh start and handshake (about 0.1 s on a local network, several round trips to a distant server). After sleep or a network change the next folder connects afresh. A locked server's connection therefore stays open while a panel shows it; the lock itself still lasts 5 minutes.
 
 ### Fixed

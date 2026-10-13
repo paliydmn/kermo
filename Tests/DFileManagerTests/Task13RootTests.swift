@@ -222,3 +222,31 @@ extension ServerLockTests {
     #expect(AppDelegate.commandHint(root: SFTPTarget(host: "deploy@web").asRoot()).hasPrefix("⌘E: shell command in this folder as deploy, not root · "))
     #expect(AppDelegate.commandHint(root: SFTPTarget(host: "web").asRoot()).contains(" as your user, not root · "))
 }
+
+/// A save goes over the session of the panel showing that server: from a root panel, no new sudo (where sudo wants a
+/// password: no look, no check, no second session). Another server, or no panel on it: a session of its own.
+@Test @MainActor func savesRideThePanelsSession() async throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-rsave-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let fake = dir + "/sudo"
+    try Data("#!/bin/sh\necho \"$*\" >> \"$0.log\"\n[ \"$1\" = -n ] || exit 2\nexec \"$3\"\n".utf8).write(to: URL(fileURLWithPath: fake))
+    chmod(fake, 0o755)
+    let root = SFTPTarget.local(sudo: fake)
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    panel.loadRemote(root, dir: dir, select: nil)
+    for _ in 0..<250 where panel.remote?.target != root || panel.connecting != nil { try? await Task.sleep(for: .milliseconds(20)) }
+    let kept = try #require(AppDelegate.keptSession(of: root, in: [panel]))
+    #expect(AppDelegate.keptSession(of: root.asRoot(false), in: [panel]) == nil && AppDelegate.keptSession(of: root, in: []) == nil)
+    let sessions = { (try? String(contentsOfFile: fake + ".log", encoding: .utf8))?.split(separator: "\n").count ?? 0 }
+    let before = sessions()
+    try Data("old".utf8).write(to: URL(fileURLWithPath: dir + "/f.conf"))
+    try Data("new".utf8).write(to: URL(fileURLWithPath: dir + "/l"))
+    let attrs = try await Blocking.run {
+        try SFTP.session(root, env: [:], cancel: CancelFlag(), on: kept) { c in try c.upload(dir + "/l", to: dir + "/f.conf", baseline: nil) }
+    }
+    #expect(attrs.size == 3 && FileManager.default.contents(atPath: dir + "/f.conf") == Data("new".utf8))
+    #expect(sessions() == before, "no new sudo run for the save")
+}

@@ -1112,13 +1112,14 @@ extension AppDelegate {
         let env = SSHAskpass.env, baseline = state.baseline, history = serverHistory
         // No panel of its own: the one showing that server (else the active one) says it's saving; ⎋ there cancels.
         let panel = panels.first { $0.remote?.target == target } ?? active
+        let kept = Self.keptSession(of: target, in: panels)
         let r = await panel.busy("Saving “\(name)” to \(target.host)…") { flag in
-            let c = try SFTPClient(target, env: env, cancel: flag)
-            defer { c.close() }
-            var note: String?
-            let keep: ((SFTPClient.Attrs, Data?) -> Void)? = history.map { h in { note = h.keep($1, $0, of: target, remotePath) } }
-            let attrs = try c.upload(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, replaced: keep)
-            return (attrs, note)
+            try SFTP.session(target, env: env, cancel: flag, on: kept) { c in
+                var note: String?
+                let keep: ((SFTPClient.Attrs, Data?) -> Void)? = history.map { h in { note = h.keep($1, $0, of: target, remotePath) } }
+                let attrs = try c.upload(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, replaced: keep)
+                return (attrs, note)
+            }
         }
         switch r {
         case .success(let (attrs, note)):
@@ -1150,6 +1151,14 @@ extension AppDelegate {
         case .failure(let e):
             return notSaved(saved, to: target, e)
         }
+    }
+
+    /// The session a save to `target` goes over: that of a panel showing it, if one does — no ssh start and handshake
+    /// of its own, and from a root panel no second sudo (where sudo wants a password, the look and the check before
+    /// each new session). The panel's listings wait for it meanwhile; its status line says it's saving. Else nil: a
+    /// session of its own.
+    static func keptSession(of target: SFTPTarget, in panels: [PanelViewController]) -> KeptSession? {
+        panels.first { $0.remote?.target == target && $0.kept?.target == target }?.kept
     }
 
     /// Server File History…: the versions saves replaced (`ServerHistory`) of the server file in the key editor, or under

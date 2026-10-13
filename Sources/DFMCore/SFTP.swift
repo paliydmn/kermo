@@ -301,8 +301,8 @@ public enum SFTP {
 
     /// One SFTP session for `body` (or the `kept` one). Cancelled, it throws CancellationError, not the "connection
     /// closed" of the session the cancel closed (the panel tells those apart).
-    private static func session<T>(_ t: SFTPTarget, env: [String: String], cancel: CancelFlag?, on kept: KeptSession?,
-                                   _ body: (SFTPClient) throws -> T) throws -> T {
+    public static func session<T>(_ t: SFTPTarget, env: [String: String], cancel: CancelFlag?, on kept: KeptSession?,
+                                  _ body: (SFTPClient) throws -> T) throws -> T {
         let flag = cancel ?? CancelFlag()
         do {
             if let kept { return try kept.run(env: env, cancel: flag, body) }
