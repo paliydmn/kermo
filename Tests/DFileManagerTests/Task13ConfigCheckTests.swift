@@ -33,6 +33,15 @@ import Testing
     #expect(AppDelegate.checkNote(.noProgram("no nginx there"), of: rule) == "no check for this file (no nginx there)")
     #expect(AppDelegate.checkNote(.needsRoot, of: rule) == "check needs root — ⌃⌘R opens the panel as root")
     #expect(AppDelegate.checkNote(.notRun("cancelled"), of: rule) == "unchecked: cancelled", "an \"after\" check that didn't run: the save is in")
+    // A built-in reload on a user's panel isn't offered (it needs root): the status line says so. Not on a root panel,
+    // not for the user's own rule (offered), not when the check didn't pass, not for a rule without a reload.
+    let user = SFTPTarget(host: "me@web"), units = ConfigCheck.rule(for: "/etc/systemd/system/app.service", in: ConfigCheck.builtIn)
+    #expect(AppDelegate.reloadNote(units, .passed(""), on: user) == "reload needs root — ⌃⌘R opens the panel as root")
+    #expect(AppDelegate.reloadNote(units, .passed(""), on: user.asRoot()) == nil)
+    #expect(AppDelegate.reloadNote(units, .failed(status: 1, output: ""), on: user) == nil)
+    #expect(AppDelegate.reloadNote(ConfigCheck(match: "/opt/a", check: nil, reload: "app reload"), nil, on: user) == nil)
+    #expect(AppDelegate.reloadNote(ConfigCheck.rule(for: "/etc/nftables.conf", in: ConfigCheck.builtIn), .needsRoot, on: user) == nil)
+    #expect(AppDelegate.reloadNote(nil, nil, on: user) == nil)
     let saved = URL(fileURLWithPath: "/tmp/dfm-sftp-x/sudoers")
     let notRun = ConfigCheck.NotRun(message: "“visudo” couldn't run on web as root: sudo on web refused: Sorry.")
     #expect(AppDelegate.notUploaded(saved, host: "web", notRun, editorOpen: true)

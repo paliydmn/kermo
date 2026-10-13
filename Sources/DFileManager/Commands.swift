@@ -1177,7 +1177,8 @@ extension AppDelegate {
             AuditLog.write(target, action, paths: [remotePath], exit: 0)
             state.baseline = attrs
             for p in panels where p.remote?.target.asUser == target.asUser { p.reload() }   // root's or user's: one server
-            let notes = [note.map { "no history: \($0)" }, outcome.map { Self.checkNote($0, of: rule) }, problem].compactMap { $0 }
+            let notes = [note.map { "no history: \($0)" }, outcome.map { Self.checkNote($0, of: rule) }, Self.reloadNote(rule, outcome, on: target), problem]
+                .compactMap { $0 }
             if !notes.isEmpty {
                 let said = "Saved “\(name)” to \(target.host) · " + notes.joined(separator: " · ")
                 panel.flash(said)
@@ -1344,6 +1345,13 @@ extension AppDelegate {
         guard (try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil else { return nil }
         let file = (dir as NSString).appendingPathComponent(name)
         return FileManager.default.createFile(atPath: file, contents: data, attributes: [.posixPermissions: 0o600]) ? file : nil
+    }
+
+    /// A reload this save would have offered as root, on a user's panel (the built-in ones reload services): said instead.
+    static func reloadNote(_ rule: ConfigCheck?, _ outcome: ConfigCheck.Outcome?, on target: SFTPTarget) -> String? {
+        guard let rule, rule.reload(after: outcome, on: target, old: nil, new: { nil }) == nil,
+              rule.reload(after: outcome, on: target.asRoot(), old: nil, new: { nil }) != nil else { return nil }
+        return "reload needs root — ⌃⌘R opens the panel as root"
     }
 
     /// What the status line says of a save's check: passed, no program there, or root only on a user's panel.
