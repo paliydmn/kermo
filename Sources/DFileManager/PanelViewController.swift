@@ -16,10 +16,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// With 3+ panels: this is where F5/F6 from the active panel go.
     var isTarget = false { didSet { styleHeader() } }
 
-    /// The active panel: framed, its path bar filled, both in the theme's accent. A root panel's in orange instead (red on
-    /// a production server), its path in that color while inactive too.
+    /// The active panel: framed, its path bar filled, both in the theme's accent. A root panel's in orange instead (production's
+    /// color on a production server), its path in that color while inactive too.
     private func styleHeader() {
-        let root = remote.map { $0.target.sudo ? SavedServer.isProd($0.target) ? NSColor.systemRed : .systemOrange : nil } ?? nil
+        let root = remote.map { $0.target.sudo ? SavedServer.isProd($0.target) ? SavedServer.color : .systemOrange : nil } ?? nil
         let tint = root ?? theme.accent
         pathField.backgroundColor = isActive ? tint : .clear
         pathField.textColor = isActive ? theme.onAccent : isTarget || root != nil ? tint : theme.hidden
@@ -1586,12 +1586,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     // MARK: - Path field (⌘L) and quick filter (/)
 
-    /// The header: "🔍 title" on search results, "📦 archive/inner", "🌐 host:/dir" on a server ("🔴 PROD host:/dir" on
+    /// The header: "🔍 title" on search results, "📦 archive/inner", "🌐 host:/dir" on a server ("🟣 PROD host:/dir" on
     /// a production one), "root@host:/dir #" on a root panel, else the local folder. Also what ⎋ in the path field brings back.
     func showPath() {
         pathField.stringValue = if let t = searchTitle { "🔍 " + t }
             else if let a = archive { "📦 " + (a.index.file as NSString).abbreviatingWithTildeInPath + (a.inner.isEmpty ? "" : "/" + a.inner) }
-            else if let r = remote { (SavedServer.isProd(r.target) ? "🔴 PROD " : r.target.sudo ? "" : "🌐 ") + "\(r.target.shown):\(r.dir)" + (r.target.sudo ? " #" : "") }
+            else if let r = remote { (SavedServer.isProd(r.target) ? SavedServer.mark : r.target.sudo ? "" : "🌐 ") + "\(r.target.shown):\(r.dir)" + (r.target.sudo ? " #" : "") }
             else { (path as NSString).abbreviatingWithTildeInPath }
         styleHeader()
     }

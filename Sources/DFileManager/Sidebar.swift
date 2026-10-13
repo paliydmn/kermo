@@ -604,7 +604,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         return d
     }
 
-    /// Icon, name (red for production), 📌, ✎ (servers you made), then [SSH] [SFTP]: buttons that also say what's open
+    /// Icon, name (production's color), 📌, ✎ (servers you made), then [SSH] [SFTP]: buttons that also say what's open
     /// (green, with a count; shown on hover when nothing is), and × (on hover) closing all of it. A narrow column cuts
     /// the buttons' titles before the name.
     private func serverRow(_ server: ServerRow) -> NSStackView {
@@ -617,8 +617,8 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         // Narrow: the buttons' titles go first ("S…"), then the buttons, then the name: never past the row's end.
         name?.setContentCompressionResistancePriority(.defaultLow + 2, for: .horizontal)
         if prod {
-            (r.arrangedSubviews[0] as? NSImageView)?.contentTintColor = .systemRed
-            name?.textColor = .systemRed
+            (r.arrangedSubviews[0] as? NSImageView)?.contentTintColor = SavedServer.color
+            name?.textColor = SavedServer.color
         }
         if r.arrangedSubviews.count == 2 { r.addArrangedSubview(spacer()) }   // withStatus adds one before its spinner / dot
         func symbol(_ name: String, _ tip: String) -> NSImageView {

@@ -249,7 +249,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         let pg = app.tunnelItem(db.tunnels[0], of: db)
         #expect(pg.title == "Postgres → \(p[0]) · 1" && pg.image?.accessibilityDescription == "listening")
         #expect(pg.toolTip == "localhost:\(p[0]) → db1 → localhost:5432")
-        #expect(pg.attributedTitle?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .systemRed, "production")
+        #expect(pg.attributedTitle?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == SavedServer.color, "production")
         #expect(pg.submenu?.items.map(\.title) == ["Turn Off", "Copy Address", "", "Edit…", "Delete…"], "no URL for a database")
         let grafana = app.tunnelItem(db.tunnels[1], of: db)
         #expect(grafana.title == "Grafana → \(p[1])" && grafana.image?.accessibilityDescription == "off")

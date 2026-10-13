@@ -128,7 +128,7 @@ private func disk(_ path: String) -> [UInt8] { [UInt8](FileManager.default.conte
     #expect(try await saved("app.conf", "a=1\n") == "a=1\nx\n")
     #expect(try await saved("app.ini", "a=1\r\n") == "a=1\r\nx\r\n")
     #expect(try await saved("notes.txt", "a\n") == "a\nx")
-    #expect(try await saved("motd", "hi\n", remote: "🔴 PROD host:/etc/motd") == "hi\nx\n")
+    #expect(try await saved("motd", "hi\n", remote: "🟣 PROD host:/etc/motd") == "hi\nx\n")
     #expect(try await saved("root", "0 3 * * * /backup.sh", remote: "host:/var/spool/cron/crontabs/root") == "0 3 * * * /backup.shx\n")
 
     // File ▸ Ensure Final Newline shows and toggles it for this window.

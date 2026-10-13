@@ -16,7 +16,7 @@ struct SavedServer: Codable, Equatable {
     var identityFile: String?  // private key; nil = ssh's own choice
     var startDir: String?      // SFTP; nil = the login folder
     var locked = false         // Touch ID / the Mac password to connect, edit or delete (ServerLock)
-    var prod = false           // production: red in the sidebar and panel header; delete, overwrite and move there ask first
+    var prod = false           // production: `color` in the sidebar and headers; delete, overwrite and move there ask first
     var tunnels: [Tunnel] = [] // ports on this Mac that lead to it, or past it (`Tunnels`)
 
     init() {}
@@ -46,12 +46,17 @@ struct SavedServer: Codable, Equatable {
         tunnels = try c.decodeIfPresent([Tunnel].self, forKey: .tunnels) ?? []
     }
 
+    /// Production's mark wherever it shows (sidebar, menus, a root panel's header, titles): purple, as red says something
+    /// failed and orange is root's.
+    static var color: NSColor { .systemPurple }
+    static let mark = "🟣 PROD "
+
     /// A saved server at this address (user@host:port) is tagged production.
     @MainActor static func isProd(_ t: SFTPTarget) -> Bool { ServerLock.servers().contains { $0.prod && SSHPasswords.sameKey($0.target, t) } }
 
-    /// A server file's editor title: "web:/etc/nginx/nginx.conf", "🔴 PROD web:/…" on a production server, "root@web:/… #"
+    /// A server file's editor title: "web:/etc/nginx/nginx.conf", "🟣 PROD web:/…" on a production server, "root@web:/… #"
     /// from a root panel.
-    @MainActor static func title(_ t: SFTPTarget, _ path: String) -> String { (isProd(t) ? "🔴 PROD " : "") + "\(t.shown):\(path)" + (t.sudo ? " #" : "") }
+    @MainActor static func title(_ t: SFTPTarget, _ path: String) -> String { (isProd(t) ? mark : "") + "\(t.shown):\(path)" + (t.sudo ? " #" : "") }
 
     /// Said before what a change on production servers asks: "“h” is a production server. ", or "".
     @MainActor static func prodNote(_ targets: [SFTPTarget]) -> String {

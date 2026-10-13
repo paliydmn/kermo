@@ -711,7 +711,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return [.separator()] + items.compactMap { $0 }
     }
 
-    /// Production: red in the sidebar and the panel headers; delete, overwrite and move there ask first.
+    /// Production: its color in the sidebar and the panel headers; delete, overwrite and move there ask first.
     private func setProd(_ s: SavedServer, _ on: Bool) {
         guard let i = savedServers.firstIndex(where: { $0.id == s.id }) else { return }
         savedServers[i].prod = on

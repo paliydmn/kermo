@@ -78,7 +78,7 @@ extension ServerLockTests {
     prod.prod = true
     ServerLock.servers = { [prod] }
     defer { ServerLock.servers = { [] } }
-    #expect(SavedServer.title(SFTPTarget(host: "root@db"), "/etc/my.cnf") == "🔴 PROD root@db:/etc/my.cnf")
+    #expect(SavedServer.title(SFTPTarget(host: "root@db"), "/etc/my.cnf") == "🟣 PROD root@db:/etc/my.cnf")
     #expect(SavedServer.title(SFTPTarget(host: "web"), "/etc/nginx/nginx.conf") == "web:/etc/nginx/nginx.conf")
 }
 

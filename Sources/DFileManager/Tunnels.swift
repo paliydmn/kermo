@@ -44,7 +44,7 @@ extension AppDelegate {
 extension AppDelegate {
     /// A tunnel's item (U3): "Postgres → 15432 · 3" with a ● — green listening, grey off, red when its last connection
     /// failed (the tooltip says why) — and what to do with it in a submenu, so a stray click never cuts a client off.
-    /// Red on a production server, as the server is.
+    /// In production's color on a production server, as the server is.
     func tunnelItem(_ t: Tunnel, of s: SavedServer) -> NSMenuItem {
         let st = tunnels.state(t, of: s), on = st?.listener != nil, n = tunnels.connections(t, of: s)
         let it = NSMenuItem(title: "\(t.title) → \(t.localPort)" + (n > 0 ? " · \(n)" : ""), action: nil, keyEquivalent: "")
@@ -53,7 +53,7 @@ extension AppDelegate {
         it.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: failed ? "failed" : on ? "listening" : "off")?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .regular).applying(.init(paletteColors: [color])))
         it.toolTip = st?.error ?? t.route(via: s.title)
-        if s.prod { it.attributedTitle = NSAttributedString(string: it.title, attributes: [.foregroundColor: NSColor.systemRed, .font: NSFont.menuFont(ofSize: 0)]) }
+        if s.prod { it.attributedTitle = NSAttributedString(string: it.title, attributes: [.foregroundColor: SavedServer.color, .font: NSFont.menuFont(ofSize: 0)]) }
         let menu = NSMenu()
         [on ? MenuAction.item("Turn Off") { [unowned self] in turnOff(t, of: s) } : MenuAction.item("Turn On") { [unowned self] in turnOn(t, of: s) },
          !on && failed && t.on ? MenuAction.item("Turn Off") { [unowned self] in turnOffNow(t, of: s) } : nil,   // couldn't listen: not at launch either
@@ -84,7 +84,7 @@ extension AppDelegate {
             var items: [NSMenuItem] = []
             for s in savedServers where !s.tunnels.isEmpty {
                 let header = NSMenuItem.sectionHeader(title: s.title)
-                if s.prod { header.attributedTitle = NSAttributedString(string: s.title, attributes: [.foregroundColor: NSColor.systemRed, .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize)]) }
+                if s.prod { header.attributedTitle = NSAttributedString(string: s.title, attributes: [.foregroundColor: SavedServer.color, .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize)]) }
                 items += [header] + s.tunnels.map { tunnelItem($0, of: s) }
             }
             if !items.isEmpty { items.append(.separator()) }
@@ -115,7 +115,7 @@ extension AppDelegate {
                 var keys: [Shortcut: @MainActor () -> Void] = [Shortcut("cmd+c")!: { [unowned self] in copyAddress(t) },
                                                                Shortcut("cmd+backspace")!: { [unowned self] in deleteTunnel(t, of: s) }]
                 if let url = t.link { keys[Shortcut("cmd+o")!] = { [unowned self] in openTunnel(t, of: s, url) } }
-                items.append(Picker.Item(title: "\(t.title) → \(t.localPort)", subtitle: (s.prod ? "🔴 PROD · " : "") + (st?.error ?? t.route(via: s.title)),
+                items.append(Picker.Item(title: "\(t.title) → \(t.localPort)", subtitle: (s.prod ? "🟣 PROD · " : "") + (st?.error ?? t.route(via: s.title)),
                                          detail: st?.error != nil ? "failed" : st?.listener == nil ? "off" : n > 0 ? "listening · \(n) open" : "listening",
                                          edit: { [unowned self] in editTunnel(t, of: s) }, keys: keys) { [unowned self] in
                     if tunnels.isListening(t, of: s) { turnOff(t, of: s) } else { turnOn(t, of: s) }

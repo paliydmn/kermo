@@ -54,7 +54,7 @@ func fakeSudo(in dir: String) throws -> String {
 }
 
 extension ServerLockTests {
-/// The header says root: "root@host:/dir #"; on a production server "🔴 PROD" in front, as for its user. Reopened as
+/// The header says root: "root@host:/dir #"; on a production server "🟣 PROD" in front, as for its user. Reopened as
 /// the user: as before. The status line says root@host too. (Its colors: by eye.)
 @Test func rootPanelHeaderSaysRoot() async throws {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-rhead-" + UUID().uuidString
@@ -77,9 +77,9 @@ extension ServerLockTests {
     ServerLock.servers = { [prod] }
     defer { ServerLock.servers = { [] } }
     panel.showPath()
-    #expect(panel.headerText == "🔴 PROD root@localhost:\(dir) #")
+    #expect(panel.headerText == "🟣 PROD root@localhost:\(dir) #")
     await open(root.asRoot(false))
-    #expect(panel.headerText == "🔴 PROD localhost:\(dir)")
+    #expect(panel.headerText == "🟣 PROD localhost:\(dir)")
     ServerLock.servers = { [] }
     panel.showPath()
     #expect(panel.headerText == "🌐 localhost:\(dir)")
