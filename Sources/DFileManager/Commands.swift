@@ -1145,14 +1145,19 @@ extension AppDelegate {
         let kept = Self.keptSession(of: target, in: panels)
         let r = await panel.busy("Saving “\(name)” to \(target.host)…") { flag in
             try SFTP.session(target, env: env, cancel: flag, on: kept) { c in
-                var note: String?
-                let keep: ((SFTPClient.Attrs, Data?) -> Void)? = history.map { h in { note = h.keep($1, $0, of: target, remotePath) } }
+                var note: String?, old: Data?
+                // The text it replaces: for the history, and for Compare before a reload.
+                let keep: ((SFTPClient.Attrs, Data?) -> Void)? = history == nil && rule?.reload == nil ? nil : { a, data in
+                    old = data
+                    note = history?.keep(data, a, of: target, remotePath)
+                }
                 let (attrs, outcome) = try c.save(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, rule: rule, env: env, replaced: keep)
-                return (attrs, note, outcome)
+                let reload = rule?.reload(after: outcome, on: target, old: old) { try? Data(contentsOf: saved) }
+                return (attrs, note, outcome, reload.map { ($0, old) })
             }
         }
         switch r {
-        case .success(let (attrs, note, outcome)):
+        case .success(let (attrs, note, outcome, reload)):
             state.baseline = attrs
             for p in panels where p.remote?.target.asUser == target.asUser { p.reload() }   // root's or user's: one server
             let notes = [note.map { "no history: \($0)" }, outcome.map { Self.checkNote($0, of: rule) }, problem].compactMap { $0 }
@@ -1160,6 +1165,9 @@ extension AppDelegate {
                 let said = "Saved “\(name)” to \(target.host) · " + notes.joined(separator: " · ")
                 panel.flash(said)
                 Editor.flash(saved, said)
+            }
+            if let (command, old) = reload {   // not waited for: the next save needn't wait for the answer
+                Task { await offerReload(command, after: saved, to: remotePath, on: target, old: old, in: panel) }
             }
             return true
         case .failure(let e as SFTPClient.CheckFailed):
@@ -1253,6 +1261,56 @@ extension AppDelegate {
             Picker.show(over: over, placeholder: "“\(name)” on \(target.host): ↩ F3 view · ⌘⇧D diff with the server's · ⌘D with the one before · ⌘R revert to it",
                         items: items)
         }
+    }
+
+    /// "Reload …?" once a save passed its check (`ConfigCheck.reload`): Compare shows the save's change first (the text
+    /// it replaced against the one saved); on a production server the question says so and ↩ answers Cancel. The reload
+    /// runs as the check did: as root through sudo on a root panel. Its output shows only if it fails.
+    func offerReload(_ command: String, after saved: URL, to path: String, on target: SFTPTarget, old: Data?, in panel: PanelViewController) async {
+        let name = (path as NSString).lastPathComponent, q = Self.reloadQuestion(command, name: name, on: target)
+        var before: String?
+        ask: while true {
+            switch await choose(q.message, info: q.info, ["Reload", "Compare", "Cancel"], default: q.default, on: Editor.window(for: saved)) {
+            case 0: break ask
+            case 1:
+                guard let old else { panel.flash("Nothing to compare: the text before this save wasn't kept (over 5 MB, or a new file)"); continue }
+                if before == nil { before = Self.textBefore(old, name: name) }
+                guard let before else { continue }
+                await diff(DiffSide(path: before, name: "\(target.host):\(path) (before this save)"), DiffSide(path: saved.path, name: "\(target.host):\(path)"), in: panel)
+            default: return
+            }
+        }
+        let env = SSHAskpass.env
+        let r = await panel.busy("Reloading on \(target.host)…") { flag in try ConfigCheck.run(command, on: target, env: env, cancel: flag) }
+        switch r {
+        case .success(.passed):
+            panel.flash("Reloaded on \(target.host): \(command)")
+            Editor.flash(saved, "Reloaded on \(target.host)")
+        case .success(.failed(let status, let output)):
+            let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            _ = await choose("“\(command)” failed on \(target.host)", info: text.isEmpty ? "It exited with \(status)." : String(text.suffix(4000)), ["OK"],
+                             on: Editor.window(for: saved))
+        case .success(.noProgram(let p)): panel.flash("Not reloaded: no \(p) on \(target.host)", error: true)
+        case .success: break   // needs root, not run: only checks
+        case .failure(let e): if !(e is CancellationError) { showError(e) }
+        }
+    }
+
+    /// The reload question: on a production server it says so, and ↩ is Cancel; sshd moving to another port says what that does.
+    static func reloadQuestion(_ command: String, name: String, on target: SFTPTarget) -> (message: String, info: String, default: Int) {
+        let socket = command == ConfigCheck.sshdSocketReload ? "\n\nPort or ListenAddress changed. Where systemd listens for sshd (ssh.socket, "
+            + "Ubuntu 22.10 and later) this reloads systemd and restarts ssh.socket: this connection stays, new ones go to the new port." : ""
+        return ("Reload after saving “\(name)”?",
+                SavedServer.prodNote([target]) + "Runs “\(command)” on \(target.host)\(target.sudo ? " as root" : "")." + socket,
+                SavedServer.isProd(target) ? 2 : 0)
+    }
+
+    /// The text a save replaced, in a temp copy of its own (owner-only; swept with the server copies), for Compare.
+    static func textBefore(_ data: Data, name: String) -> String? {
+        let dir = NSTemporaryDirectory() + "dfm-sftp-" + UUID().uuidString
+        guard (try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil else { return nil }
+        let file = (dir as NSString).appendingPathComponent(name)
+        return FileManager.default.createFile(atPath: file, contents: data, attributes: [.posixPermissions: 0o600]) ? file : nil
     }
 
     /// What the status line says of a save's check: passed, no program there, or root only on a user's panel.

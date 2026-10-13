@@ -50,3 +50,36 @@ import Testing
     #expect(problem == nil && mine.count == 2 && mine.allSatisfy { r in !ConfigCheck.builtIn.contains { $0.match == r.match } })
     #expect(ConfigCheck.rule(for: "/etc/caddy/Caddyfile", in: rules)?.check == "caddy validate --adapter caddyfile --config %f")
 }
+
+extension ServerLockTests {
+/// "Reload …?" names the command and who runs it; on a production server it says so first and ↩ answers Cancel (no
+/// second R1 question: this one is it). sshd moving to a new port says what that does to connections.
+@Test func reloadAsksFirstOnProduction() {
+    let root = SFTPTarget(host: "me@web").asRoot()
+    let plain = AppDelegate.reloadQuestion("systemctl reload nginx", name: "site.conf", on: root)
+    #expect(plain.message == "Reload after saving “site.conf”?" && plain.info == "Runs “systemctl reload nginx” on me@web as root." && plain.default == 0)
+    #expect(AppDelegate.reloadQuestion("app reload", name: "a.yaml", on: root.asRoot(false)).info == "Runs “app reload” on me@web.")
+    var prod = SavedServer(address: "me@web")!
+    prod.prod = true
+    ServerLock.servers = { [prod] }
+    defer { ServerLock.servers = { [] } }
+    let asked = AppDelegate.reloadQuestion("systemctl reload nginx", name: "site.conf", on: root)
+    #expect(asked.info == "“me@web” is a production server. Runs “systemctl reload nginx” on me@web as root." && asked.default == 2, "↩ is Cancel")
+    let socket = AppDelegate.reloadQuestion(ConfigCheck.sshdSocketReload, name: "sshd_config", on: root).info
+    #expect(socket.hasSuffix("this connection stays, new ones go to the new port."))
+}
+}
+
+/// Compare before a reload: the text the save replaced, in an owner-only copy of its own named as the file, against
+/// the text saved; the diff names them "host:/path (before this save)" and "host:/path", not their temp paths.
+@MainActor @Test func compareBeforeReloadShowsTheSavesChange() throws {
+    let before = try #require(AppDelegate.textBefore(Data("listen 80;\n".utf8), name: "site.conf"))
+    defer { TempCopies.remove((before as NSString).deletingLastPathComponent) }
+    #expect((before as NSString).lastPathComponent == "site.conf" && FileManager.default.contents(atPath: before) == Data("listen 80;\n".utf8))
+    let mode = { (p: String) in ((try? FileManager.default.attributesOfItem(atPath: p))?[.posixPermissions] as? NSNumber)?.intValue }
+    #expect(mode(before) == 0o600 && mode((before as NSString).deletingLastPathComponent) == 0o700)
+    #expect(TempCopies.holds(URL(fileURLWithPath: before)), "swept with the server copies")
+    let a = AppDelegate.DiffSide(path: before, name: "me@web:/etc/nginx/site.conf (before this save)")
+    #expect(AppDelegate.diffCommand(before, "/tmp/x/site.conf", labels: (a.label, "me@web:/etc/nginx/site.conf"))
+            == "diff -u --label 'me@web:/etc/nginx/site.conf (before this save)' --label me@web:/etc/nginx/site.conf \(ShellContext.quote(before)) /tmp/x/site.conf")
+}

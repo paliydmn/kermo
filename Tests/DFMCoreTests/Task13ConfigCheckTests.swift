@@ -95,6 +95,35 @@ private func ran(_ command: String, on t: SFTPTarget, root: Bool = false) -> Con
     do { return try ConfigCheck.run(command, on: t, root: root) } catch { return .failed(status: -1, output: "\(error)") }
 }
 
+/// What a save offers to reload: the rule's reload once its check passed (or it has none) — never after a check that
+/// didn't run; on a user's panel only the user's own rule's (the built-in ones reload services, root's work). sshd: the
+/// ssh.socket way when Port or ListenAddress changed (any case, `=` too; not a comment), else its reload.
+@Test func reloadOffersAfterAPassedCheck() {
+    let root = SFTPTarget(host: "me@web").asRoot(), user = SFTPTarget(host: "me@web")
+    func builtIn(_ path: String) -> ConfigCheck { ConfigCheck.rule(for: path, in: ConfigCheck.builtIn)! }
+    let nginx = builtIn("/etc/nginx/nginx.conf")
+    #expect(nginx.reload(after: .passed(""), on: root, old: nil) { nil } == "systemctl reload nginx")
+    for o: ConfigCheck.Outcome? in [nil, .needsRoot, .noProgram("nginx"), .notRun("cancelled")] {
+        #expect(nginx.reload(after: o, on: root, old: nil) { nil } == nil, "\(String(describing: o))")
+    }
+    #expect(builtIn("/etc/haproxy/haproxy.cfg").reload(after: .passed(""), on: user, old: nil) { nil } == nil, "a service's reload is root's")
+    #expect(builtIn("/etc/nftables.conf").reload(after: .passed(""), on: root, old: nil) { nil } == nil, "nft -f: by hand")
+    let mine = ConfigCheck(match: "/opt/app/*.yaml", check: "app check %f", reload: "app reload")
+    #expect(mine.reload(after: .passed(""), on: user, old: nil) { nil } == "app reload", "the user's own rule runs as the user")
+    #expect(ConfigCheck(match: "/opt/app/x", check: nil, reload: "app reload").reload(after: nil, on: user, old: nil) { nil } == "app reload", "no check: offered")
+
+    let sshd = builtIn("/etc/ssh/sshd_config")
+    func sshdReload(_ old: String?, _ new: String) -> String? { sshd.reload(after: .passed(""), on: root, old: old.map { Data($0.utf8) }) { Data(new.utf8) } }
+    #expect(sshdReload("Port 22\nPermitRootLogin no\n", "Port 22\nPermitRootLogin yes\n") == ConfigCheck.sshdReload)
+    #expect(sshdReload("Port 22\n", "Port 2222\n") == ConfigCheck.sshdSocketReload)
+    #expect(sshdReload("#Port 22\n", "#Port 2222\n") == ConfigCheck.sshdReload, "comments aren't settings")
+    #expect(sshdReload("", "  port=2222\n") == ConfigCheck.sshdSocketReload)
+    #expect(sshdReload("ListenAddress 0.0.0.0\n", "ListenAddress 127.0.0.1\n") == ConfigCheck.sshdSocketReload)
+    #expect(sshdReload(nil, "Port 2222\n") == ConfigCheck.sshdSocketReload, "no old text: as changed")
+    #expect(builtIn("/etc/ssh/sshd_config.d/port.conf").reload(after: .passed(""), on: root, old: Data("Port 22".utf8)) { Data("Port 2200".utf8) } == ConfigCheck.sshdSocketReload)
+    #expect(ConfigCheck.sshdSocketReload == "if systemctl is-active -q ssh.socket; then systemctl daemon-reload && systemctl restart ssh.socket; else systemctl reload ssh || systemctl reload sshd; fi")
+}
+
 private func checkDir() -> String {
     let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-check-" + UUID().uuidString
     try! FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)

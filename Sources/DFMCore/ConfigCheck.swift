@@ -30,6 +30,28 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
 
     /// sshd's reload: Debian names the unit ssh, Red Hat sshd.
     public static let sshdReload = "systemctl reload ssh || systemctl reload sshd"
+    /// Where systemd listens for sshd (ssh.socket, Ubuntu 22.10 on) a reload doesn't move the port: its generator reads
+    /// Port and ListenAddress on daemon-reload, and the socket listens anew on restart.
+    public static let sshdSocketReload = "if systemctl is-active -q ssh.socket; then systemctl daemon-reload && systemctl restart ssh.socket; else \(sshdReload); fi"
+
+    /// What to offer reloading once a save went in under this rule: its reload, when its check passed or it has none;
+    /// on a user's panel only the user's own rule's (the built-in ones reload services: root's). sshd's, when Port or
+    /// ListenAddress changed between `old` and `new`: the ssh.socket way where that's active.
+    public func reload(after outcome: Outcome?, on t: SFTPTarget, old: Data?, new: () -> Data?) -> String? {
+        guard let reload, t.sudo || !Self.builtIn.contains(self) else { return nil }
+        if check != nil { guard case .passed = outcome else { return nil } }
+        return reload == Self.sshdReload && Self.listenChanged(old, new()) ? Self.sshdSocketReload : reload
+    }
+
+    /// sshd_config's Port and ListenAddress lines differ (keywords in any case, "Port=22" too; comments aren't).
+    static func listenChanged(_ old: Data?, _ new: Data?) -> Bool {
+        func lines(_ d: Data?) -> [String] {
+            String(decoding: d ?? Data(), as: UTF8.self).split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter {
+                ["port", "listenaddress"].contains($0.split(whereSeparator: { " \t=".contains($0) }).first?.lowercased())
+            }
+        }
+        return lines(old) != lines(new)
+    }
 
     /// Checked on a test server (task notes): each catches a broken config, the `before` ones on a partial file; those
     /// marked root fail as a user even on a good config (no host keys, pid file, netlink, postfix's own refusal, 0440).
