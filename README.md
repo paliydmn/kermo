@@ -170,6 +170,20 @@ Clashes with macOS: ⌘⇧/ (computer root) is also the system's Help-menu searc
 
 Git repositories show a status column, and the status bar displays the branch and ↑↓ indicators — also on an SFTP panel, when the server has git 2.26 or newer. The editor includes line numbers and syntax highlighting for shell, YAML, JSON, configuration files, XML/plist, Python, and more.
 
+## SSH tunnels
+
+Ports on this Mac that lead to a saved server, or past it: a database that listens only on the server's localhost, a web admin (Grafana, RabbitMQ, Proxmox), a host behind the server.
+
+- **Where:** a saved server's sidebar menu ▸ **Tunnels**, **Go ▸ Tunnels** (every server's), and ⌘⇧P: **Tunnels…** (↩ turns one on or off, ⌘E edits it, ⌘C copies its address, ⌘O opens it in the browser, ⌘⌫ deletes it) and **New Tunnel…** (on the server the panel is on, or pick one).
+- **Forward** is written as `ssh -L` takes it: `5432` (this Mac's 5432 to the server's own), `15432:5432`, `15432:db.internal:5432` (a host as the server sees it), `15432:[::1]:5432`. It's checked as you type, and the way it goes shows under it. The name defaults to the port's usual one (Postgres, MySQL, Redis, MongoDB, Grafana …); a web port gets a URL, so **Open in Browser** (which turns the tunnel on first if it's off).
+- **How it works:** Kermo listens on `127.0.0.1:<port>` itself, and each connection there goes over the server's shared ssh connection (`ssh -W host:port`): one login with its panels and terminals, `ProxyJump` included. After sleep or a network change nothing needs restarting — the next connection logs in again, unnoticed with a key or a saved password; a password dialog for a connection in the background says which tunnel it's for. Tunnels that were on listen again at launch, without connecting until a client comes.
+- **State:** each tunnel shows a ● — green listening, with its open connections ("Postgres → 15432 · 3"), grey off, red when its last connection failed. Why is in its tooltip and, once per new reason, in the status line: "Nothing listens on localhost:5432 (as seen from db1)", "db1 forbids port forwarding (AllowTcpForwarding / PermitOpen)", "db1 can't resolve db.internal". The reason comes from ssh's own log of that connection (`/tmp/dfm-ssh-<uid>/log-<host>_<port>`, owner-only, gone with the connection). The sidebar shows `⇄ 2` on a server while its tunnels listen.
+- A local port that's taken is said at once with the next free one ("Use 15433"). Kermo never changes a tunnel's port by itself: a stable port is what your database client keeps.
+- **Turning a tunnel off closes its open connections**; it asks first while there are some. Disconnect turns the server's tunnels off too, and quitting closes them (it asks only about open connections). A server with a tunnel on keeps its connection when its last panel closes.
+- **Locked servers:** turning a tunnel on asks for Touch ID; its connections don't ask again. Locking the screen or sleep turns these tunnels off (connections already open live on), and they don't start at launch. A production server's tunnels are red, like the server; turning one on doesn't ask — a tunnel changes nothing there by itself.
+- **Security:** Kermo listens on `127.0.0.1` only, never on other addresses. But **any program or user on this Mac can connect to that port**, as with `ssh -L`, and reach what the tunnel leads to as you. Keep a tunnel to a production database off when you don't need it.
+- They're kept with their server in `~/.config/dfilemanager/servers.json` (read at launch): `"tunnels": [{ "name": "Postgres", "localPort": 15432, "host": "localhost", "port": 5432, "on": true }]` — `port` alone is enough (the same port here, to the server itself); `url` sets the page Open in Browser opens.
+
 ## Command-line launcher
 
 Choose **Kermo ▸ Install “fm” Command** to create a link in `/usr/local/bin`. After installation, `fm` opens the current directory, `fm ~/a ~/b` opens both directories in two panels, and `fm /etc/hosts` reveals the file in its directory. Kermo also appears in Finder's **Open With** menu for folders.
@@ -195,7 +209,7 @@ On a server tagged production, `systemctl stop` / `restart` asks first.
 
 ## Configuration
 
-Configuration files are stored in `~/.config/dfilemanager/`: `keymap.json`, `usermenu.json`, `validators.json` (checks of server configs on save, see SFTP panel), `filters.json`, `bookmarks.json` (sidebar Favorites), and `frecency.json` (sidebar Frequent, ⌘P). `audit.jsonl` is the production log.
+Configuration files are stored in `~/.config/dfilemanager/`: `servers.json` (saved servers and their tunnels), `keymap.json`, `usermenu.json`, `validators.json` (checks of server configs on save, see SFTP panel), `filters.json`, `bookmarks.json` (sidebar Favorites), and `frecency.json` (sidebar Frequent, ⌘P). `audit.jsonl` is the production log.
 
 Drag and drop works like Finder: files are moved on the same disk (or the same server) and copied to another disk or server. Hold ⌥ to force a copy or ⌘ to force a move. Files dropped on the ⌃O terminal are typed into its shell as quoted paths (a local shell only: a server can't see this Mac's files).
 
