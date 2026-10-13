@@ -130,11 +130,11 @@ private func onServer(_ dir: String, at remoteDir: String) async throws -> Panel
     let t = SFTPTarget(host: "root@web")
     let row = ServerRow(target: t, title: "web", sessions: [ServerSession(id: UUID(), kind: .sftp, target: t, dir: "/")])
     let view = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(row))) as? NSStackView)
-    let buttons = view.arrangedSubviews.compactMap { $0 as? PillButton }
-    #expect(buttons.map(\.title) == ["SSH", "SFTP"])
-    let plain = NSButton(title: "SFTP", target: nil, action: nil)
+    let toolbar = try #require(view.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView)
+    let buttons = toolbar.arrangedSubviews.compactMap { $0 as? PillButton }
+    #expect(buttons.map { $0.accessibilityLabel() } == ["SSH", "SFTP"])
+    let plain = NSButton(image: try #require(buttons[1].image), target: nil, action: nil)
     plain.isBordered = false
-    plain.font = buttons[1].font
     #expect(buttons[1].intrinsicContentSize.width == plain.intrinsicContentSize.width + 8, "a few pt wider, no bezel")
 }
 

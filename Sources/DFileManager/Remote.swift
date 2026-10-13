@@ -398,12 +398,14 @@ final class Tunnels {
 
     private func heard(_ e: TunnelListener.Event, _ key: Key, _ token: UUID) {
         guard case .closed(let failure) = e, var st = states[key], st.token == token else { return }
+        let flipped = (st.error == nil) != (failure == nil)   // the sidebar shows failed or fine, not each retry
         st.error = failure   // a clean end clears the last failure
         if let failure, failure != st.said {
             st.said = failure
             say("\(st.tunnel.title): \(failure)", true)
         }
         states[key] = st
+        if flipped { changed() }
     }
 
     /// Locked: itself, or another saved server at its address is (`ServerLock`).

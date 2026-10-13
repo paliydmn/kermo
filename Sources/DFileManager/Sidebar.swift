@@ -81,6 +81,7 @@ struct ServerList: Equatable {
     var connecting: Set<String> = []    // SFTP hosts
     var errors: [String: String] = [:]  // SFTP host → last error
     var tunnels: [String: [String]] = [:]   // ServerRow.key → its tunnels listening
+    var failedTunnels: [String: [String]] = [:]   // ServerRow.key → "Postgres: why" for each whose last connection failed
 }
 
 /// One server in the Servers list — saved, a ~/.ssh/config host, or an address as typed — with its open sessions.
@@ -92,6 +93,7 @@ struct ServerRow: Equatable {
     var sessions: [ServerSession] = []   // SSH tabs and SFTP panel tabs
     var status: HostStatus = .idle       // SFTP's last attempt
     var tunnels: [String] = []           // listening now
+    var failedTunnels: [String] = []     // "Postgres: why": the last connection failed, or it can't listen
 
     /// user@host:port: pins, recents, sessions and saved servers all go by it (no port = 22, like the Keychain).
     static func key(_ t: SFTPTarget) -> String { "\(t.host):\(t.port ?? 22)" }
@@ -167,7 +169,8 @@ enum SidebarModel {
             return ServerRow(target: target, saved: saved, title: saved?.title ?? target.host,
                              pinned: list.pins.contains { parse($0).map(ServerRow.key) == key },
                              sessions: list.sessions.filter { ServerRow.key($0.target) == key },
-                             status: hostStatus(target.host, list), tunnels: list.tunnels[key] ?? [])
+                             status: hostStatus(target.host, list), tunnels: list.tunnels[key] ?? [],
+                             failedTunnels: list.failedTunnels[key] ?? [])
         }
         var rows: [ServerRow] = [], seen = Set<String>()
         func add(_ t: SFTPTarget, if keep: (ServerRow) -> Bool = { _ in true }) {
@@ -229,10 +232,8 @@ private final class SidebarOutline: NSOutlineView {
     }
 }
 
-final class SessionCloseButton: NSButton {}
-
-/// SSH / SFTP on a server row: a rounded fill says "button" without a bezel's width (the narrow sidebar needs it for
-/// the name); the one under the mouse fills more.
+/// SSH / SFTP / tunnels on a server row: a rounded fill says "button" without a bezel's width (the narrow sidebar needs
+/// it for the name); the one under the mouse fills more.
 class PillButton: NSButton {
     private var over = false { didSet { if over != oldValue { needsDisplay = true } } }
     override var intrinsicContentSize: NSSize {   // 4 pt of fill each side of the title
@@ -254,17 +255,24 @@ class PillButton: NSButton {
     }
 }
 
-/// Shown only while the mouse is over the row (or it's selected): the name gets the narrow sidebar's width otherwise.
-final class HoverButton: PillButton {}
+/// A server row's state at rest: what's open there (green, a count from 2) and its tunnels listening (red when one
+/// failed). `ServerToolbar` stands in its place while the mouse is over the row.
+final class ServerChips: NSStackView {}
+
+/// A server row's actions, under the mouse: SSH, SFTP, Tunnels ▸ and ⋯ (the row's whole menu).
+final class ServerToolbar: NSStackView {}
+
+/// A server row's name: cut in the middle at rest; under the mouse, where the actions leave it little room, its start
+/// stays ("k13…" rather than "…").
+final class ServerName: NSTextField {}
 
 /// What a server row's click or button asks for.
-enum ServerAction: String { case row, ssh, sftp, edit, close }
+enum ServerAction: String { case row, ssh, sftp }
 
-/// Fades a session row's × in while the mouse is over the row or the row is selected (the current session).
-/// Faded, not hidden: the stack view would reflow, and a click always comes with a hover anyway.
+/// Swaps a server row's state for its actions while the mouse is over the row. Not for being selected: that's the
+/// current server, whose name and state matter most, and a click always comes with a hover.
 final class HoverRowView: NSTableRowView {
     private var hovering = false { didSet { update() } }
-    override var isSelected: Bool { didSet { update() } }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -280,8 +288,9 @@ final class HoverRowView: NSTableRowView {
 
     private func update() {
         func walk(_ v: NSView) {
-            if let b = v as? SessionCloseButton { b.alphaValue = hovering || isSelected ? 1 : 0 }
-            else if let b = v as? HoverButton { b.isHidden = !(hovering || isSelected) }
+            if v is ServerToolbar { v.isHidden = !hovering }
+            else if v is ServerChips { v.isHidden = hovering }
+            else if let name = v as? ServerName { name.lineBreakMode = hovering ? .byTruncatingTail : .byTruncatingMiddle }
             else { v.subviews.forEach(walk) }
         }
         walk(self)
@@ -578,116 +587,147 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         return r
     }
 
-    private func withStatus(_ r: NSStackView, _ status: HostStatus) -> NSStackView {
-        switch status {
-        case .idle: break
-        case .connecting:
+    /// Icon (production's color; a lock and a red dot — its last connection failed — cut into its corners; a spinner
+    /// while connecting) and name, then what's open: SSH and SFTP (green, a count from 2), tunnels listening (red when
+    /// one failed). Under the mouse that gives way to SSH, SFTP, Tunnels ▸ and ⋯ (the row's whole menu); the tooltip
+    /// says all of it. A narrow column cuts the name, never the icons.
+    private func serverRow(_ server: ServerRow) -> NSStackView {
+        let prod = server.saved?.prod == true, locked = server.saved?.locked == true
+        let failed: String? = if case .failed(let m) = server.status { m } else { nil }
+        let icon: NSView
+        if server.status == .connecting {
             let spin = NSProgressIndicator()
             spin.style = .spinning
             spin.controlSize = .small
             spin.startAnimation(nil)
-            r.addArrangedSubview(spacer())
-            r.addArrangedSubview(spin)
-            r.toolTip = "Connecting…"
-        case .failed(let message):
-            r.addArrangedSubview(spacer())
-            r.addArrangedSubview(dot(.systemRed))
-            r.toolTip = message
+            icon = spin
+        } else {
+            let tint = prod ? SavedServer.color : theme.background == nil ? .controlAccentColor : theme.dir
+            icon = NSImageView(image: Self.serverIcon(tint, locked: locked, failed: failed != nil))
         }
-        return r
-    }
+        let name = ServerName(labelWithString: server.title)
+        name.textColor = prod ? SavedServer.color : theme.text
+        name.lineBreakMode = .byTruncatingMiddle
+        name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        name.setContentHuggingPriority(.init(1), for: .horizontal)   // it takes the room, not a spacer and its gap
 
-    private func dot(_ color: NSColor) -> NSView {
-        let d = NSImageView(image: NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)!
-            .withSymbolConfiguration(.init(pointSize: 7, weight: .regular))!)
-        d.contentTintColor = color
-        return d
-    }
-
-    /// Icon, name (production's color), 📌, ✎ (servers you made), then [SSH] [SFTP]: buttons that also say what's open
-    /// (green, with a count; shown on hover when nothing is), and × (on hover) closing all of it. A narrow column cuts
-    /// the buttons' titles before the name.
-    private func serverRow(_ server: ServerRow) -> NSStackView {
-        let locked = server.saved?.locked == true, prod = server.saved?.prod == true
-        let port = server.target.port.map { ":\($0)" } ?? ""
-        let r = withStatus(placeRow(locked ? "lock" : "server.rack", server.title,
-                                    "\(server.target.host)\(port)\(locked ? " · locked" : "")\(prod ? " · production" : "")  ·  click: its session · double-click: SSH"),
-                           server.status)
-        let name = r.arrangedSubviews[1] as? NSTextField
-        // Narrow: the buttons' titles go first ("S…"), then the buttons, then the name: never past the row's end.
-        name?.setContentCompressionResistancePriority(.defaultLow + 2, for: .horizontal)
-        if prod {
-            (r.arrangedSubviews[0] as? NSImageView)?.contentTintColor = SavedServer.color
-            name?.textColor = SavedServer.color
-        }
-        if r.arrangedSubviews.count == 2 { r.addArrangedSubview(spacer()) }   // withStatus adds one before its spinner / dot
-        func symbol(_ name: String, _ tip: String) -> NSImageView {
-            let v = NSImageView(image: NSImage(systemSymbolName: name, accessibilityDescription: tip)!
-                .withSymbolConfiguration(.init(pointSize: 9, weight: .regular))!)
-            v.contentTintColor = .tertiaryLabelColor
-            v.toolTip = tip
-            return v
-        }
-        if server.pinned { r.insertArrangedSubview(symbol("pin.fill", "Pinned"), at: 2) }
-        func button(_ view: NSButton, _ action: ServerAction, _ tip: String) -> NSButton {
-            view.target = self
-            view.action = #selector(serverButton(_:))
-            view.identifier = .init("\(action.rawValue) \(server.key)")
-            view.toolTip = tip
-            return view
-        }
-        if !server.tunnels.isEmpty {   // ports open on this Mac: always in sight
-            let t = NSTextField(labelWithString: "⇄ \(server.tunnels.count)")
-            t.font = .systemFont(ofSize: 10, weight: .semibold)
-            t.textColor = .secondaryLabelColor
-            t.toolTip = "Tunnels listening on this Mac: " + server.tunnels.joined(separator: ", ") + "  ·  its menu ▸ Tunnels"
-            t.setAccessibilityLabel("\(server.tunnels.count) tunnel\(server.tunnels.count == 1 ? "" : "s") listening")
-            r.addArrangedSubview(t)
-        }
-        if server.saved != nil {
-            let b = NSButton(image: NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: "Edit")!
-                .withSymbolConfiguration(.init(pointSize: 10, weight: .regular))!, target: nil, action: nil)
+        let ssh = server.ssh.filter(\.running).count, sftp = server.sftp.count   // an SSH tab whose ssh ended (`exit`, Disconnect) isn't open
+        let open = [ssh > 0 ? "SSH \(ssh)" : nil, sftp > 0 ? "SFTP \(sftp)" : nil].compactMap { $0 }.joined(separator: ", ")
+        let tunnels = (server.tunnels.isEmpty ? [] : ["Tunnels listening: " + server.tunnels.joined(separator: ", ")]) + server.failedTunnels
+        let tunnelColor: NSColor = server.failedTunnels.isEmpty ? .secondaryLabelColor : .systemRed
+        /// An action is a pill; a state just its icon and count, so it takes less of the name's width.
+        func pill(_ symbol: String, _ count: Int, _ color: NSColor, _ action: String, _ label: String, _ tip: String, state: Bool = false) -> NSButton {
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))!
+            let b = state ? NSButton(title: count > 1 ? "\(count)" : "", image: image, target: self, action: #selector(serverButton(_:)))
+                : PillButton(title: count > 1 ? "\(count)" : "", image: image, target: self, action: #selector(serverButton(_:)))
+            b.imagePosition = count > 1 ? .imageLeading : .imageOnly
+            b.imageHugsTitle = true
             b.isBordered = false
-            b.contentTintColor = .secondaryLabelColor
-            r.addArrangedSubview(button(b, .edit, "Edit “\(server.title)”"))
-        }
-        for (kind, all) in [(ServerAction.ssh, server.ssh), (.sftp, server.sftp)] {
-            let sessions = all.filter(\.running)   // an SSH tab whose ssh ended (`exit`, Disconnect) isn't open
-            let name = kind == .ssh ? "SSH" : "SFTP"
-            let open = sessions.count > 1 ? "\(name) \(sessions.count)" : name
-            // Open: always there, green. Otherwise on hover only.
-            let b = sessions.isEmpty ? HoverButton(title: open, target: nil, action: nil) : PillButton(title: open, target: nil, action: nil)
-            b.isBordered = false   // the name needs the width more than a bezel does: PillButton draws a fill instead
             b.font = .systemFont(ofSize: 10, weight: .semibold)
-            b.contentTintColor = sessions.isEmpty ? .secondaryLabelColor : .systemGreen
-            b.lineBreakMode = .byTruncatingTail
-            b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            let least = b.widthAnchor.constraint(greaterThanOrEqualToConstant: min(18, b.intrinsicContentSize.width))
-            least.priority = .defaultLow + 1
-            least.isActive = true
-            r.addArrangedSubview(button(b, kind, sessions.isEmpty
-                ? (kind == .ssh ? "Open an SSH session  ·  ⌘-click: another one" : "Open over SFTP  ·  ⌘-click: in a new tab, ⌥-click: in the other panel")
-                : "\(sessions.count) open — click to go there  ·  ⌘-click: another one"))
+            b.contentTintColor = color
+            b.identifier = .init("\(action) \(server.key)")
+            b.toolTip = tip
+            b.setAccessibilityLabel(label)
+            return b
         }
-        if !server.sessions.isEmpty {
-            let x = SessionCloseButton(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Sessions")!
-                .withSymbolConfiguration(.init(pointSize: 9, weight: .bold))!, target: nil, action: nil)
-            x.isBordered = false
-            x.contentTintColor = .secondaryLabelColor
-            r.addArrangedSubview(button(x, .close, "Close all \(server.title)'s sessions"))
-        }
+        let chips = ServerChips(views: [
+            ssh == 0 ? nil : pill("terminal", ssh, .systemGreen, "ssh", "\(ssh) SSH session\(ssh == 1 ? "" : "s") open", "\(ssh) SSH session\(ssh == 1 ? "" : "s") open", state: true),
+            sftp == 0 ? nil : pill("folder", sftp, .systemGreen, "sftp", "\(sftp) SFTP panel\(sftp == 1 ? "" : "s") open", "\(sftp) SFTP panel\(sftp == 1 ? "" : "s") open", state: true),
+            tunnels.isEmpty ? nil : pill("arrow.left.arrow.right", server.tunnels.count, tunnelColor, "tunnels",
+                                         "\(server.tunnels.count) tunnel\(server.tunnels.count == 1 ? "" : "s") listening" + (server.failedTunnels.isEmpty ? "" : ", one failed"),
+                                         tunnels.joined(separator: "\n"), state: true),
+        ].compactMap { $0 })
+        let more = NSButton(image: NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Server menu")!
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))!, target: self, action: #selector(serverButton(_:)))
+        more.isBordered = false
+        more.contentTintColor = .secondaryLabelColor
+        more.identifier = .init("menu \(server.key)")
+        more.toolTip = "Everything for “\(server.title)”: Edit, Pin, Tunnels, Disconnect…"
+        let toolbar = ServerToolbar(views: [
+            pill("terminal", ssh, ssh > 0 ? .systemGreen : .secondaryLabelColor, "ssh", "SSH",
+                 ssh > 0 ? "\(ssh) open — click to go there  ·  ⌘-click: another one" : "Open an SSH session  ·  ⌘-click: another one"),
+            pill("folder", sftp, sftp > 0 ? .systemGreen : .secondaryLabelColor, "sftp", "SFTP",
+                 sftp > 0 ? "\(sftp) open — click to go there  ·  ⌘-click: another one" : "Open over SFTP  ·  ⌘-click: in a new tab, ⌥-click: in the other panel"),
+        ] + (server.saved?.tunnels.isEmpty == false
+             ? [pill("arrow.left.arrow.right", server.tunnels.count, tunnelColor, "tunnels", "Tunnels", (tunnels + ["Click: its tunnels"]).joined(separator: "\n"))] : [])
+          + [more])
+        chips.spacing = 4
+        toolbar.spacing = 2
+        toolbar.isHidden = true
+
+        let r = row([icon, name, chips, toolbar])
         r.spacing = 4
+        let port = server.target.port.map { ":\($0)" } ?? ""
+        let about = ["\(server.target.host)\(port)", locked ? "locked" : nil, prod ? "production" : nil, open.isEmpty ? nil : open + " open"]
+        r.toolTip = ([about.compactMap { $0 }.joined(separator: " · ")] + (server.status == .connecting ? ["Connecting…"] : [])
+                     + (failed.map { [$0] } ?? []) + tunnels + ["Click: its session · double-click: SSH · ⋯ or right-click: everything else"])
+            .joined(separator: "\n")
         return r
+    }
+
+    /// The server's rack in `tint`, with a lock (locked) and a red dot (its last connection failed) in its corners — cut
+    /// out of it, so they read over any background, the selection's included — within its size: no width taken from
+    /// the name.
+    static func serverIcon(_ tint: NSColor, locked: Bool, failed: Bool) -> NSImage {
+        let rack = NSImage(systemSymbolName: "server.rack", accessibilityDescription: nil)!.withSymbolConfiguration(.init(paletteColors: [tint]))!
+        let lock = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: nil)!
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 7, weight: .bold).applying(.init(paletteColors: [.labelColor])))!
+        let size = rack.size
+        let image = NSImage(size: size, flipped: false) { _ in
+            guard let cg = NSGraphicsContext.current?.cgContext else { return false }
+            cg.beginTransparencyLayer(auxiliaryInfo: nil)   // the cut-outs clear the icon only, not what's under it
+            rack.draw(in: NSRect(origin: .zero, size: size))
+            func badge(_ r: NSRect, _ draw: () -> Void) {
+                cg.setBlendMode(.clear)
+                cg.fillEllipse(in: r.insetBy(dx: -1.5, dy: -1.5))
+                cg.setBlendMode(.normal)
+                draw()
+            }
+            if locked {
+                badge(NSRect(x: size.width - lock.size.width, y: 0, width: lock.size.width, height: lock.size.height)) {
+                    lock.draw(in: NSRect(x: size.width - lock.size.width, y: 0, width: lock.size.width, height: lock.size.height))
+                }
+            }
+            if failed {
+                let dot = NSRect(x: size.width - 5.5, y: size.height - 5.5, width: 5.5, height: 5.5)
+                badge(dot) {
+                    NSColor.systemRed.setFill()
+                    NSBezierPath(ovalIn: dot).fill()
+                }
+            }
+            cg.endTransparencyLayer()
+            return true
+        }
+        image.accessibilityDescription = "Server" + (locked ? ", locked" : "") + (failed ? ", its last connection failed" : "")
+        return image
     }
 
     @objc private func serverButton(_ sender: NSButton) {
-        guard let parts = sender.identifier?.rawValue.split(separator: " ", maxSplits: 1), parts.count == 2,
-              let action = ServerAction(rawValue: String(parts[0])) else { return }
+        guard let parts = sender.identifier?.rawValue.split(separator: " ", maxSplits: 1), parts.count == 2 else { return }
+        if parts[0] == "menu" || parts[0] == "tunnels" {
+            for case let .server(r)? in roots.flatMap(\.children).map(\.place) where r.key == parts[1] { popMenu(r, tunnels: parts[0] == "tunnels", from: sender) }
+            return
+        }
+        guard let action = ServerAction(rawValue: String(parts[0])) else { return }
         let mods = NSApp.currentEvent?.modifierFlags ?? []
         for case let .server(r)? in roots.flatMap(\.children).map(\.place) where r.key == parts[1] {
             // Next turn: what it runs rebuilds the sidebar, this button's row included.
             DispatchQueue.main.async { [weak self] in self?.onServer?(r, action, mods) }
         }
+    }
+
+    /// ⋯: the row's whole menu, as a right-click shows it; ⇄: its Tunnels submenu — the same items either way.
+    private func popMenu(_ r: ServerRow, tunnels: Bool, from button: NSButton) {
+        let items = Array((serverMenu?(.server(r)) ?? []).drop { $0.isSeparatorItem })
+        let menu: NSMenu
+        if tunnels, let it = items.first(where: { $0.title == "Tunnels" }), let sub = it.submenu {
+            it.submenu = nil   // a menu pops up on its own, not as another item's submenu
+            menu = sub
+        } else {
+            menu = NSMenu()
+            items.forEach(menu.addItem)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.isFlipped ? button.bounds.maxY + 4 : -4), in: button)
     }
 
     @objc private func eject(_ sender: NSButton) { sender.identifier.map { onEject?($0.rawValue) } }

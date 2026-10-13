@@ -121,6 +121,8 @@ private func freePorts(_ n: Int) throws -> [Int] {
         let db = server("db1", [Tunnel(localPort: try freePorts(1)[0], port: 5432)])
         defer { tunnels.stopAll() }
         #expect(tunnels.start(db.tunnels[0], of: db) == nil)
+        var changes = 0
+        tunnels.changed = { changes += 1 }
         func connect(_ line: String) async {
             let c = dial(db.tunnels[0].localPort)
             _ = line.withCString { write(c, $0, strlen($0)) }
@@ -141,6 +143,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         await waitUntil { tunnels.state(db.tunnels[0], of: db)?.error == nil }
         #expect(tunnels.state(db.tunnels[0], of: db)?.error == nil && tunnels.isListening(db.tunnels[0], of: db))
         #expect(said.lines.count == 2)
+        #expect(changes == 2, "the sidebar hears failed, then fine — not each retry")
     }
 
     /// The screen locks: a locked server's tunnels stop listening, their connections live on; the unlocked server's go
@@ -269,7 +272,9 @@ private func freePorts(_ n: Int) throws -> [Int] {
     @Test func listeningTunnelsShowInTheSidebarAndSearch() {
         var list = ServerList(saved: [server("db1", [])])
         list.tunnels = [ServerRow.key(list.saved[0].target): ["Postgres", "Redis"]]
+        list.failedTunnels = [ServerRow.key(list.saved[0].target): ["Redis: db1 can't resolve cache"]]
         #expect(SidebarModel.serverRows(list).first?.tunnels == ["Postgres", "Redis"])
+        #expect(SidebarModel.serverRows(list).first?.failedTunnels == ["Redis: db1 can't resolve cache"])
         let hits = HeaderSearchModel.results("tunnel", commands: AppDelegate().makeCommands(), folders: [], files: [], recent: [])
         #expect(hits.first?.hits.prefix(2).map(\.title).sorted() == ["New Tunnel…", "Tunnels…"])
     }
