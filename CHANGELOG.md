@@ -40,6 +40,7 @@ Release:
 
 ### Fixed
 
+- A server's shared connection was stopped right after its first folder listing in a panel, so the next save, preview, copy or root panel logged in again (asking for the password again where ssh needs one).
 - **Panels:** a folder reloading by itself (or after a save to its server) no longer wipes the status line's "… ⎋ cancels" of an operation still running there, or a message shown a moment before.
 - **Panels:** symlinks to folders no longer turn into files (shown with their own size and sorted with the files) after a folder reloads by itself.
 - **Stop and ⎋:** ⎋ stops counting folder sizes on this Mac, as on a server, and so does leaving the folder; closing Info stops its folder count; Stop during "Scanning…" before a copy stops at once instead of after the whole tree. Search by content and compare by content stop within a big file instead of after it; closing Info stops its checksums.

@@ -1049,7 +1049,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             }
             guard let self, gen == loadGen else { return }
             remoteFlag = nil
-            connecting = nil
+            // Connected: not until the panel shows it — a moment with neither made it look unused, and its connection
+            // was stopped right after the first listing (the next session logged in again).
+            if case .failure = result { connecting = nil }
             busyMessage = busyOps.last?.message
             switch result {
             case .success(let (d, items, owners, found)):
@@ -1057,6 +1059,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 remoteOwners = owners
                 links = found
                 enterRemote(target, d, items, select: select, keep: keep)
+                connecting = nil
             case .failure(let error as SFTPError) where error.connection:
                 onRemoteResult?(target, error.message)
                 if let window = view.window {

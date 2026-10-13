@@ -171,3 +171,23 @@ extension ServerLockTests {
     #expect(asked == 2 && panel.remote?.target == root)
 }
 }
+
+/// Connecting, the panel says a server is in use all along — connecting, then showing it — never neither: the app ends
+/// the connections nobody uses (`releaseIdleServers`), and stopped this one right after its first listing, so the next
+/// session (a save, a preview, Reopen as Root) logged in again.
+@Test @MainActor func aServerConnectedIsNeverUnusedOnTheWay() async throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-inuse-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    var unused = 0, calls = 0
+    panel.onSessionsChange = { [unowned panel] in
+        calls += 1
+        if panel.connecting == nil && panel.remoteTabs.isEmpty { unused += 1 }
+    }
+    panel.loadRemote(.local(), dir: dir, select: nil)
+    for _ in 0..<250 where panel.remote == nil || panel.connecting != nil { try? await Task.sleep(for: .milliseconds(20)) }
+    #expect(panel.remote?.target == .local() && calls >= 2 && unused == 0, "\(calls) changes, \(unused) with nothing in use")
+}
