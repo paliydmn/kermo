@@ -548,6 +548,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         } + panels.flatMap(\.remoteTabs).map { ServerSession(id: $0.id, kind: .sftp, target: $0.target, dir: $0.dir) }
         servers.connecting = Set(panels.compactMap(\.connecting?.host))
         servers.errors = sftpErrors
+        for s in savedServers {
+            let on = tunnels.listening(s).map(\.title)
+            if !on.isEmpty { servers.tunnels[ServerRow.key(s.target), default: []] += on }
+        }
         sidebar.show(SidebarModel.sections(bookmarks: bookmarks, frecent: frecency.ranked(), volumes: volumes, servers: servers,
                                            tags: defaults.stringArray(forKey: "recentTags") ?? []))
         sidebar.highlight(sidebarKey)
@@ -669,6 +673,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 : MenuAction.item("Disconnect") { [unowned self] in disconnect(r.target) },
             r.saved.map { unlocked("Copy SSH Command", $0, "copy the command of", copy) } ?? MenuAction.item("Copy SSH Command", copy),
             MenuAction.item("Show File History") { [unowned self] in showFileHistory(r.target) },
+            r.saved.map { tunnelsItem(for: $0) },
             .separator(),
             MenuAction.item(r.pinned ? "Unpin" : "Pin") { [unowned self] in
                 unpin(r.key)
@@ -992,7 +997,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         submenu("Mark", [])
         submenu("Admin", [])
         submenu("View", [])
-        submenu("Go", [])
+        submenu("Go", [], trailing: [.separator(), goTunnelsItem()])
         // AppKit lists the open windows below.
         NSApp.windowsMenu = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),

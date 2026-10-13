@@ -175,6 +175,53 @@ private func freePorts(_ n: Int) throws -> [Int] {
         tunnels.sync([])
         #expect(tunnels.states.isEmpty && dial(p[0]) == -1 && tunnels.inUse.isEmpty)
     }
+
+    /// A tunnel's item says its name, port and open connections, its state by a ● (and to VoiceOver), why it failed in
+    /// its tooltip; its actions sit in a submenu — Open in Browser only with a URL. A production server's are red. The
+    /// server's menu ends with New Tunnel…; Go ▸ Tunnels lists every server's under its name, built as it opens.
+    @Test func tunnelMenusSayTheirState() async throws {
+        let app = AppDelegate()
+        app.tunnels.child = tunnels.child
+        let p = try freePorts(2)
+        var db = server("db1", [Tunnel(localPort: p[0], port: 5432), Tunnel(name: "Grafana", localPort: p[1], port: 3000)])
+        db.prod = true
+        let web = server("web", [Tunnel(localPort: 1, host: "-x", port: 80)])
+        app.savedServers = [db, web, server("none", [])]
+        defer { app.tunnels.stopAll() }
+        app.tunnels.start(db.tunnels[0], of: db)
+        app.tunnels.start(web.tunnels[0], of: web)
+        let c = dial(p[0])
+        defer { close(c) }
+        await waitUntil { app.tunnels.connections(db.tunnels[0], of: db) == 1 }
+
+        let pg = app.tunnelItem(db.tunnels[0], of: db)
+        #expect(pg.title == "Postgres → \(p[0]) · 1" && pg.image?.accessibilityDescription == "listening")
+        #expect(pg.toolTip == "localhost:\(p[0]) → db1 → localhost:5432")
+        #expect(pg.attributedTitle?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .systemRed, "production")
+        #expect(pg.submenu?.items.map(\.title) == ["Turn Off", "Copy Address", "", "Edit…", "Delete…"], "no URL for a database")
+        let grafana = app.tunnelItem(db.tunnels[1], of: db)
+        #expect(grafana.title == "Grafana → \(p[1])" && grafana.image?.accessibilityDescription == "off")
+        #expect(grafana.submenu?.items.map(\.title) == ["Turn On", "Open in Browser", "Copy Address", "", "Edit…", "Delete…"])
+        let bad = app.tunnelItem(web.tunnels[0], of: web)
+        #expect(bad.image?.accessibilityDescription == "failed" && bad.toolTip == "“-x” isn't a host name." && bad.attributedTitle == nil)
+
+        #expect(app.tunnelsItem(for: db).submenu?.items.map(\.title) == ["Postgres → \(p[0]) · 1", "Grafana → \(p[1])", "", "New Tunnel…"])
+        #expect(app.tunnelsItem(for: server("none", [])).submenu?.items.map(\.title) == ["New Tunnel…"])
+        let go = try #require(app.goTunnelsItem().submenu)
+        go.delegate?.menuNeedsUpdate?(go)
+        #expect(go.items.map(\.title) == ["db1", "Postgres → \(p[0]) · 1", "Grafana → \(p[1])", "web", "-x:80 → 1", "", "New Tunnel…"])
+        #expect(go.items[0].isSectionHeader && go.items[3].isSectionHeader)
+    }
+
+    /// The sidebar shows "⇄ 2" on a server's row while its tunnels listen; ⌘⇧P finds Tunnels… and New Tunnel….
+    @Test func listeningTunnelsShowInTheSidebarAndSearch() {
+        var list = ServerList(saved: [server("db1", [])])
+        list.tunnels = [ServerRow.key(list.saved[0].target): ["Postgres", "Redis"]]
+        #expect(SidebarModel.serverRows(list).first?.tunnels == ["Postgres", "Redis"])
+        let hits = HeaderSearchModel.results("tunnel", commands: AppDelegate().makeCommands(), folders: [], files: [], recent: [])
+        #expect(hits.first?.hits.prefix(2).map(\.title).sorted() == ["New Tunnel…", "Tunnels…"])
+    }
+
 }
 
 /// A value the tests' child closures read off the main thread.

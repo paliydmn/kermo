@@ -80,6 +80,7 @@ struct ServerList: Equatable {
     var sessions: [ServerSession] = []
     var connecting: Set<String> = []    // SFTP hosts
     var errors: [String: String] = [:]  // SFTP host → last error
+    var tunnels: [String: [String]] = [:]   // ServerRow.key → its tunnels listening
 }
 
 /// One server in the Servers list — saved, a ~/.ssh/config host, or an address as typed — with its open sessions.
@@ -90,6 +91,7 @@ struct ServerRow: Equatable {
     var pinned = false
     var sessions: [ServerSession] = []   // SSH tabs and SFTP panel tabs
     var status: HostStatus = .idle       // SFTP's last attempt
+    var tunnels: [String] = []           // listening now
 
     /// user@host:port: pins, recents, sessions and saved servers all go by it (no port = 22, like the Keychain).
     static func key(_ t: SFTPTarget) -> String { "\(t.host):\(t.port ?? 22)" }
@@ -165,7 +167,7 @@ enum SidebarModel {
             return ServerRow(target: target, saved: saved, title: saved?.title ?? target.host,
                              pinned: list.pins.contains { parse($0).map(ServerRow.key) == key },
                              sessions: list.sessions.filter { ServerRow.key($0.target) == key },
-                             status: hostStatus(target.host, list))
+                             status: hostStatus(target.host, list), tunnels: list.tunnels[key] ?? [])
         }
         var rows: [ServerRow] = [], seen = Set<String>()
         func add(_ t: SFTPTarget, if keep: (ServerRow) -> Bool = { _ in true }) {
@@ -633,6 +635,14 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
             view.identifier = .init("\(action.rawValue) \(server.key)")
             view.toolTip = tip
             return view
+        }
+        if !server.tunnels.isEmpty {   // ports open on this Mac: always in sight
+            let t = NSTextField(labelWithString: "⇄ \(server.tunnels.count)")
+            t.font = .systemFont(ofSize: 10, weight: .semibold)
+            t.textColor = .secondaryLabelColor
+            t.toolTip = "Tunnels listening on this Mac: " + server.tunnels.joined(separator: ", ") + "  ·  its menu ▸ Tunnels"
+            t.setAccessibilityLabel("\(server.tunnels.count) tunnel\(server.tunnels.count == 1 ? "" : "s") listening")
+            r.addArrangedSubview(t)
         }
         if server.saved != nil {
             let b = NSButton(image: NSImage(systemSymbolName: "square.and.pencil", accessibilityDescription: "Edit")!
