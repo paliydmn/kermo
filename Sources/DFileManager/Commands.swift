@@ -1167,7 +1167,9 @@ extension AppDelegate {
                     old = data
                     note = history?.keep(data, a, of: target, remotePath)
                 }
-                let (attrs, outcome) = try c.save(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, rule: rule, env: env, replaced: keep)
+                let checking = "Checking “\(name)” on \(target.host) (\(ConfigCheck.program(rule?.check ?? "")))…"   // ⎋ stops nothing then
+                let (attrs, outcome) = try c.save(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, rule: rule, env: env,
+                                                  replaced: keep, checking: { Task { @MainActor in panel.busy(flag, says: checking) } })
                 let reload = rule?.reload(after: outcome, on: target, old: old) { try? Data(contentsOf: saved) }
                 return (attrs, note, outcome, reload.map { ($0, old) })
             }

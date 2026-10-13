@@ -66,3 +66,25 @@ import Testing
     panel.toggleMark(move: 0)
     #expect(panel.statusText.hasPrefix("1 marked · "), "\(panel.statusText)")
 }
+
+/// A running wait can say something else midway (a save's check after the file is replaced: "Checking …", no "⎋
+/// cancels"); when it ends, the status line is cleared as before, or shows a wait still running. Ended already: nothing.
+@MainActor @Test func aBusyWaitCanSaySomethingElse() async throws {
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("dfm-busy-\(UUID().uuidString)").path
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    FileManager.default.createFile(atPath: dir + "/f", contents: nil)
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    for _ in 0..<500 where panel.table.numberOfRows < 2 { try await Task.sleep(for: .milliseconds(10)) }   // "..", "f": its own load done
+    let flag = CancelFlag(), go = CancelFlag()
+    let save = Task { await panel.busy("Saving “a.conf” to web…", flag: flag) { _ in while !go.isCancelled { usleep(5_000) }; return 1 } }
+    while panel.busyMessage != "Saving “a.conf” to web… ⎋ cancels" { await Task.yield() }
+    panel.busy(flag, says: "Checking “a.conf” on web (nginx -t)…")
+    #expect(panel.busyMessage == "Checking “a.conf” on web (nginx -t)…")
+    go.cancel()
+    _ = await save.value
+    #expect(panel.busyMessage == nil)
+    panel.busy(flag, says: "late")
+    #expect(panel.busyMessage == nil, "ended: nothing")
+}

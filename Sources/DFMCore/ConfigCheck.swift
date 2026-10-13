@@ -187,8 +187,10 @@ extension SFTPClient {
     /// a new file is removed (unless it changed meanwhile). Once the file is replaced, ⎋ stops nothing (`hold`): what it
     /// comes to is said, never lost to a cancel. The new text isn't kept as a version. A check that couldn't run
     /// leaves the save in (`.notRun`). Returns the new attributes and how the check went (nil: none for this file).
+    /// `checking`: an "after" check starts (⎋ stops nothing from here on).
     public func save(_ local: String, to remote: String, baseline: Attrs?, force: Bool = false, cancel: CancelFlag? = nil, rule: ConfigCheck?,
-                     env: [String: String] = [:], replaced: ((Attrs, Data?) -> Void)? = nil) throws -> (attrs: Attrs, outcome: ConfigCheck.Outcome?) {
+                     env: [String: String] = [:], replaced: ((Attrs, Data?) -> Void)? = nil,
+                     checking: (() -> Void)? = nil) throws -> (attrs: Attrs, outcome: ConfigCheck.Outcome?) {
         guard let rule, let command = rule.check else {
             return (try upload(local, to: remote, baseline: baseline, force: force, cancel: cancel, replaced: replaced), nil)
         }
@@ -208,6 +210,7 @@ extension SFTPClient {
         }
         // ponytail: ⎋ in the moment between the rename and this still loses what happened, as for any save.
         cancel?.hold()
+        checking?()
         do {
             outcome = try ConfigCheck.run(ConfigCheck.expand(command, path: remote), on: target, root: rule.needsRoot, env: env, cancel: cancel)
         } catch let e as ConfigCheck.NotRun {

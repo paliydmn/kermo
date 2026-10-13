@@ -380,8 +380,13 @@ extension SudoPasswordTests {
     defer { c.close() }
     let flag = CancelFlag()
     DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { flag.cancel() }   // ⎋ while the check runs
-    let r = try c.save(d + "/l", to: d + "/a.conf", baseline: nil, cancel: flag, rule: ConfigCheck(match: "*", check: "sh -c 'sleep 1; echo done'", when: .after))
-    #expect(r.outcome == .passed("done\n") && !flag.isCancelled)
+    let said = CancelFlag()   // `checking` heard: the app says "Checking …" then
+    let r = try c.save(d + "/l", to: d + "/a.conf", baseline: nil, cancel: flag, rule: ConfigCheck(match: "*", check: "sh -c 'sleep 1; echo done'", when: .after),
+                       checking: { said.cancel() })
+    #expect(r.outcome == .passed("done\n") && !flag.isCancelled && said.isCancelled)
+    let before = CancelFlag()
+    _ = try c.save(d + "/l", to: d + "/a.conf", baseline: nil, rule: ConfigCheck(match: "*", check: "true"), checking: { before.cancel() })
+    #expect(!before.isCancelled, "a \"before\" check: ⎋ still stops the save, nothing to say")
 
     // sftp-server needs no password there, a shell does.
     let fake = try fakeSudo(d, #"""
