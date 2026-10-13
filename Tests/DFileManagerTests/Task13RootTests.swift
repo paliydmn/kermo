@@ -29,13 +29,15 @@ func fakeSudo(in dir: String) throws -> String {
     #expect(PanelViewController.dropped(items, from: root.asRoot(false)) == items)
 }
 
-/// Reopen Panel as Root / as User: in the Admin menu and ⌘⇧P (so keymap.json can bind them); "Open SFTP as Root" is in
-/// a server's sidebar menu.
+/// Reopen Panel as Root / as User: ⌃⌘R / ⌃⇧⌘R, in the Admin menu and ⌘⇧P (keymap.json can rebind them); "Open SFTP
+/// as Root" is in a server's sidebar menu.
 @MainActor @Test func rootPanelCommandsAreThere() {
     let commands = AppDelegate().makeCommands()
-    for (id, title) in [("admin.rootPanel", "Reopen Panel as Root"), ("admin.userPanel", "Reopen Panel as User")] {
+    for (id, title, key) in [("admin.rootPanel", "Reopen Panel as Root", "⌃⌘R"), ("admin.userPanel", "Reopen Panel as User", "⌃⇧⌘R")] {
         let c = commands.first { $0.id == id }
-        #expect(c?.title == title && c?.menu == "Admin" && c?.keys.isEmpty == true)
+        #expect(c?.title == title && c?.menu == "Admin" && c?.keys.map(\.display) == [key])
+        #expect(commands.filter { $0.keys.contains { $0.display == key } }.count == 1, "\(key) is theirs alone")
+        #expect(c?.keys.first?.takenByMacOS == nil)
     }
     let found = HeaderSearchModel.results("as root", commands: commands, folders: [], files: [], recent: [])
     #expect(found.flatMap(\.hits).contains { if case .command(let id) = $0.target { id == "admin.rootPanel" } else { false } }, "\(found)")
