@@ -196,3 +196,14 @@ extension ServerLockTests {
     #expect(log()[9]["command"] as? String == "true" && log()[9]["paths"] as? [String] == [dir + "/x.conf"])
 }
 }
+
+/// F5 / F6 onto a production server, into a path a save checks first (sudoers, sshd_config): the question says the copy
+/// isn't checked. Nothing for "after" paths, other paths, or none at all.
+@Test func copiesIntoCheckedPathsSaySo() {
+    let rules = ConfigCheck.rules(Data(#"[{"match": "/opt/app/*.yaml", "check": "app check %f"}]"#.utf8)).rules
+    #expect(AppDelegate.uncheckedNote(["/etc/sudoers.d/90-admins"], rules: rules)
+            == "\n\n“90-admins” isn't checked: a copy goes in as it is. Open it with F4 and save it to have it checked.")
+    #expect(AppDelegate.uncheckedNote(["/etc/ssh/sshd_config", "/etc/hosts", "/opt/app/a.yaml"], rules: rules).hasPrefix("\n\n2 of them aren't checked"))
+    #expect(AppDelegate.uncheckedNote(["/etc/nginx/nginx.conf", "/etc/hosts"], rules: rules) == "", "after rules, unchecked paths: nothing")
+    #expect(AppDelegate.uncheckedNote([], rules: rules) == "")
+}

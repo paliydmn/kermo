@@ -2066,7 +2066,9 @@ extension AppDelegate {
         if !locked.isEmpty || !prod.isEmpty {
             Task {
                 for t in locked where await !ServerLock.authorize(t) { return active.flash("🔒 \(t.host) stays locked") }
-                if !prod.isEmpty, await !confirm(title + "?", info: prod + "Files there may be overwritten" + (move ? " or removed." : "."),
+                let landing = side == .local ? [] : sources.map { (dir as NSString).appendingPathComponent(name ?? ($0 as NSString).lastPathComponent) }
+                let unchecked = Self.uncheckedNote(landing, rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules)
+                if !prod.isEmpty, await !confirm(title + "?", info: prod + "Files there may be overwritten" + (move ? " or removed." : ".") + unchecked,
                                                   ok: move ? "Move" : "Copy") { return }
                 enqueueTransfer(sources, from: from, to: dir, on: side, name: name, move: move, prodAsked: true)
             }
@@ -2104,6 +2106,15 @@ extension AppDelegate {
             ops.enqueue(job, title: label)
         }
         return true
+    }
+
+    /// Files a copy or move puts where a save is checked before it takes the file's place (sudoers, sshd_config …): they
+    /// go in as they are — said in the production question. ponytail: the items it names, not what's inside a folder.
+    nonisolated static func uncheckedNote(_ paths: [String], rules: [ConfigCheck]) -> String {
+        let hit = paths.filter { ConfigCheck.rule(for: $0, in: rules).map { $0.check != nil && !$0.after } == true }
+        guard let first = hit.first else { return "" }
+        let what = hit.count == 1 ? "“\((first as NSString).lastPathComponent)” isn't" : "\(hit.count) of them aren't"
+        return "\n\n\(what) checked: a copy goes in as it is. Open it with F4 and save it to have it checked."
     }
 
     /// The servers where a copy or move changes files: where it goes, and for a move where it comes from too.
