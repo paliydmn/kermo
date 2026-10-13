@@ -60,23 +60,27 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
         .init(match: "/etc/sudoers.d/*", check: "visudo -cf %f", root: true),
         .init(match: "/etc/ssh/sshd_config", check: "sshd -t -f %f", reload: sshdReload, root: true),
         .init(match: "/etc/ssh/sshd_config.d/*", check: "sshd -t", when: .after, reload: sshdReload, root: true),
-        .init(match: "/etc/haproxy/haproxy.cfg", check: "haproxy -c -f %f", reload: "systemctl reload haproxy"),
+        // haproxy and apache may load a key only root reads (`ssl crt`, SSLCertificateKeyFile): a user's false failure.
+        .init(match: "/etc/haproxy/haproxy.cfg", check: "haproxy -c -f %f", reload: "systemctl reload haproxy", root: true),
         .init(match: "/etc/nftables.conf", check: "nft -c -f %f", root: true),   // applied by hand: nft -f
         .init(match: "/etc/nginx/*", check: "nginx -t", when: .after, reload: "systemctl reload nginx", root: true),
-        .init(match: "/etc/apache2/*", check: "apachectl configtest", when: .after, reload: "systemctl reload apache2"),
-        .init(match: "/etc/httpd/*", check: "apachectl configtest", when: .after, reload: "systemctl reload httpd"),
+        .init(match: "/etc/apache2/*", check: "apachectl configtest", when: .after, reload: "systemctl reload apache2", root: true),
+        .init(match: "/etc/httpd/*", check: "apachectl configtest", when: .after, reload: "systemctl reload httpd", root: true),
         // A unit's partial file has no unit suffix: systemd-analyze refuses it.
         .init(match: "/etc/systemd/system/*.service", check: "systemd-analyze verify %f", when: .after, reload: "systemctl daemon-reload"),
         .init(match: "/etc/systemd/system/*.timer", check: "systemd-analyze verify %f", when: .after, reload: "systemctl daemon-reload"),
         .init(match: "/etc/postfix/*", check: "postfix check", when: .after, reload: "postfix reload", root: true),
         .init(match: "/etc/bind/named.conf*", check: "named-checkconf", when: .after, reload: "rndc reload"),   // Debian
         .init(match: "/etc/named.conf", check: "named-checkconf", when: .after, reload: "rndc reload"),          // Red Hat
-        // The partial file is in the same folder: relative paths and .env are the same. No daemon needed.
-        .init(match: "compose.yaml", check: "docker compose -f %f config -q"),
-        .init(match: "compose.yml", check: "docker compose -f %f config -q"),
-        .init(match: "docker-compose.yaml", check: "docker compose -f %f config -q"),
-        .init(match: "docker-compose.yml", check: "docker compose -f %f config -q"),
+        .init(match: "compose.yaml", check: compose),
+        .init(match: "compose.yml", check: compose),
+        .init(match: "docker-compose.yaml", check: compose),
+        .init(match: "docker-compose.yml", check: compose),
     ]
+
+    /// The partial file is in the same folder: relative paths and .env are the same. No daemon needed. docker without
+    /// its compose plugin is no check, not a failure (exit 127).
+    static let compose = #"docker compose version >/dev/null 2>&1 || { echo "no docker compose there"; exit 127; }; docker compose -f %f config -q"#
 
     /// The rules for a save: the user's (`validators.json`'s bytes, nil: no file) first, then the built-in ones. A file
     /// that isn't a list of rules: the built-in ones, and what's wrong with it.
@@ -103,7 +107,7 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
     public enum Outcome: Equatable, Sendable {
         case passed(String)
         case failed(status: Int32, output: String)
-        /// Its program isn't on that server: "no check for this file".
+        /// Its program isn't on that server — or it said "command not found" (exit 127): "no check for this file". Why, in words.
         case noProgram(String)
         /// Root only, and this is a user's panel: not run.
         case needsRoot
@@ -154,7 +158,8 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
         }
         let text = String(decoding: out, as: UTF8.self).replacingOccurrences(of: "\r\n", with: "\n")   // sshd's messages end in CRLF
         let after = String(text[text.range(of: ran + "\n")!.upperBound...])   // a login script may print before it
-        if after.hasPrefix(missing + "\n") { return .noProgram(program(command)) }
+        if after.hasPrefix(missing + "\n") { return .noProgram("no \(program(command)) there") }
+        if status == 127 { return .noProgram(after.split(whereSeparator: \.isNewline).last.map(String.init) ?? "no \(program(command)) there") }
         return status == 0 ? .passed(after) : .failed(status: status, output: after)
     }
 }

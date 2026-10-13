@@ -30,7 +30,7 @@ import Testing
 @MainActor @Test func checkNotesInTheStatusLine() {
     let rule = ConfigCheck(match: "/etc/nginx/*", check: "nginx -t", root: true)
     #expect(AppDelegate.checkNote(.passed("ok"), of: rule) == "checked: nginx")
-    #expect(AppDelegate.checkNote(.noProgram("nginx"), of: rule) == "no check for this file (no nginx there)")
+    #expect(AppDelegate.checkNote(.noProgram("no nginx there"), of: rule) == "no check for this file (no nginx there)")
     #expect(AppDelegate.checkNote(.needsRoot, of: rule) == "check needs root — ⌃⌘R opens the panel as root")
     #expect(AppDelegate.checkNote(.notRun("cancelled"), of: rule) == "unchecked: cancelled", "an \"after\" check that didn't run: the save is in")
     let saved = URL(fileURLWithPath: "/tmp/dfm-sftp-x/sudoers")

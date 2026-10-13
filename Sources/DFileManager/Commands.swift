@@ -1317,9 +1317,9 @@ extension AppDelegate {
             let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
             _ = await choose("“\(command)” failed on \(target.host)", info: text.isEmpty ? "It exited with \(status)." : String(text.suffix(4000)), ["OK"],
                              on: Editor.window(for: saved))
-        case .success(.noProgram(let p)):
-            log(127, "no \(p) there")
-            panel.flash("Not reloaded: no \(p) on \(target.host)", error: true)
+        case .success(.noProgram(let why)):
+            log(127, why)
+            panel.flash("Not reloaded on \(target.host): \(why)", error: true)
         case .success: break   // needs root, not run: only checks
         case .failure(is CancellationError): break
         case .failure(let e):
@@ -1350,7 +1350,7 @@ extension AppDelegate {
     static func checkNote(_ outcome: ConfigCheck.Outcome, of rule: ConfigCheck?) -> String {
         switch outcome {
         case .passed, .failed: "checked: \(ConfigCheck.program(rule?.check ?? ""))"   // a failed one never gets here
-        case .noProgram(let p): "no check for this file (no \(p) there)"
+        case .noProgram(let why): "no check for this file (\(why))"
         case .needsRoot: "check needs root — ⌃⌘R opens the panel as root"
         case .notRun(let why): "unchecked: \(why)"
         }

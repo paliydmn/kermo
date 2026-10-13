@@ -12,19 +12,19 @@ import Testing
         ("/etc/sudoers.d/90-admins", "visudo -cf %f", nil, nil, true),
         ("/etc/ssh/sshd_config", "sshd -t -f %f", nil, ConfigCheck.sshdReload, true),
         ("/etc/ssh/sshd_config.d/50-port.conf", "sshd -t", .after, ConfigCheck.sshdReload, true),
-        ("/etc/haproxy/haproxy.cfg", "haproxy -c -f %f", nil, "systemctl reload haproxy", nil),
+        ("/etc/haproxy/haproxy.cfg", "haproxy -c -f %f", nil, "systemctl reload haproxy", true),
         ("/etc/nftables.conf", "nft -c -f %f", nil, nil, true),
         ("/etc/nginx/nginx.conf", "nginx -t", .after, "systemctl reload nginx", true),
         ("/etc/nginx/sites-available/default", "nginx -t", .after, "systemctl reload nginx", true),
-        ("/etc/apache2/sites-enabled/000-default.conf", "apachectl configtest", .after, "systemctl reload apache2", nil),
-        ("/etc/httpd/conf/httpd.conf", "apachectl configtest", .after, "systemctl reload httpd", nil),
+        ("/etc/apache2/sites-enabled/000-default.conf", "apachectl configtest", .after, "systemctl reload apache2", true),
+        ("/etc/httpd/conf/httpd.conf", "apachectl configtest", .after, "systemctl reload httpd", true),
         ("/etc/systemd/system/app.service", "systemd-analyze verify %f", .after, "systemctl daemon-reload", nil),
         ("/etc/systemd/system/backup.timer", "systemd-analyze verify %f", .after, "systemctl daemon-reload", nil),
         ("/etc/postfix/main.cf", "postfix check", .after, "postfix reload", true),
         ("/etc/bind/named.conf.local", "named-checkconf", .after, "rndc reload", nil),
         ("/etc/named.conf", "named-checkconf", .after, "rndc reload", nil),
-        ("/srv/app/compose.yaml", "docker compose -f %f config -q", nil, nil, nil),
-        ("/opt/web/docker-compose.yml", "docker compose -f %f config -q", nil, nil, nil),
+        ("/srv/app/compose.yaml", ConfigCheck.compose, nil, nil, nil),
+        ("/opt/web/docker-compose.yml", ConfigCheck.compose, nil, nil, nil),
     ]
     for (path, check, when, reload, root) in rows {
         let r = rule(path)
@@ -161,8 +161,30 @@ extension SudoPasswordTests {
     try Data("listen 80;\n".utf8).write(to: URL(fileURLWithPath: file))
     #expect(ran(ConfigCheck.expand(badCheck, path: file), on: .local()) == .passed("checking \(file)\nok\n"))
     #expect(ran("sh -c 'echo no >&2; exit 255'", on: .local()) == .failed(status: 255, output: "no\n"))
-    #expect(ran("kermo-no-such-validator -t %f", on: .local()) == .noProgram("kermo-no-such-validator"))
+    #expect(ran("kermo-no-such-validator -t %f", on: .local()) == .noProgram("no kermo-no-such-validator there"))
     #expect(ran("sshd -t", on: .local(), root: true) == .needsRoot)
+    // "command not found" from inside (exit 127, the shell's): no check either, in the words it said.
+    guard case .noProgram(let why) = ran("sh -c 'kermo-no-such-tool --check'", on: .local()) else { Issue.record("not a missing program"); return }
+    #expect(why.contains("kermo-no-such-tool") && why.contains("not found"), "\(why)")
+}
+
+/// The built-in compose check: docker without its compose plugin is no check (exit 127), not a failure that stops the save.
+@Test func composeWithoutItsPluginIsNoCheck() throws {
+    let d = checkDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let docker = d + "/docker"
+    func fake(_ body: String) throws {
+        try Data("#!/bin/sh\n\(body)\n".utf8).write(to: URL(fileURLWithPath: docker))
+        chmod(docker, 0o755)
+    }
+    let env = ["PATH": d + ":" + (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin")]
+    let command = ConfigCheck.expand(ConfigCheck.compose, path: d + "/compose.yaml")
+    try fake(#"[ "$1" = compose ] && echo "docker: 'compose' is not a docker command." >&2; exit 1"#)
+    let missing = try ConfigCheck.run(command, on: .local(), env: env)
+    #expect(missing == .noProgram("no docker compose there"))
+    try fake(#"[ "$2" = version ] && exit 0; echo "services.web additional properties 'imagee' not allowed" >&2; exit 15"#)
+    let broken = try ConfigCheck.run(command, on: .local(), env: env)
+    #expect(broken == .failed(status: 15, output: "services.web additional properties 'imagee' not allowed\n"))
 }
 
 /// On a root panel the check runs through the server's sudo (`sudo -n -- sh -c …`); its own exit status counts, not sudo's.
@@ -173,7 +195,7 @@ extension SudoPasswordTests {
     #expect(ran("sh -c 'echo as root'", on: t, root: true) == .passed("as root\n"))
     #expect(sudoLog(fake).count == 1 && sudoLog(fake)[0].hasPrefix("-n -- sh -c PATH="))
     #expect(ran("sh -c 'echo broken >&2; exit 1'", on: t) == .failed(status: 1, output: "broken\n"))
-    #expect(ran("kermo-no-such-validator", on: t) == .noProgram("kermo-no-such-validator"))
+    #expect(ran("kermo-no-such-validator", on: t) == .noProgram("no kermo-no-such-validator there"))
 }
 
 /// Where sudo wants a password: `-n` first, then the password (the panel's, kept — or asked) as a line on stdin,
