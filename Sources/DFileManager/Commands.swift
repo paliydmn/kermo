@@ -1107,13 +1107,17 @@ extension AppDelegate {
             let fmt = DateFormatter()
             fmt.dateFormat = "HH:mm:ss"
             let when = fmt.string(from: Date(timeIntervalSince1970: e.attrs.mtime))
-            if await choose("“\(name)” changed on \(target.host) since you opened it",
-                            info: "Someone or something wrote it at \(when) (\(ByteCountFormatter.string(fromByteCount: e.attrs.size, countStyle: .file))). "
-                                + "Overwriting replaces their changes with yours. Cancel keeps your text \(keeps), so you can compare first (F3 on the server file).",
-                            ["Overwrite", "Cancel"], default: 1, on: Editor.window(for: saved)) == 0 {   // ⌘S ↩ never writes over theirs
-                return await upload(saved, to: remotePath, on: target, state, force: true)
+            let info = "Someone or something wrote it at \(when) (\(ByteCountFormatter.string(fromByteCount: e.attrs.size, countStyle: .file))). "
+                + "Overwriting replaces their changes with yours. Compare shows the differences first; Cancel keeps your text \(keeps)."
+            while true {   // Compare asks again once the diff is up
+                switch await choose("“\(name)” changed on \(target.host) since you opened it", info: info, ["Overwrite", "Compare", "Cancel"],
+                                    default: 2, on: Editor.window(for: saved)) {   // ⌘S ↩ never writes over theirs
+                case 0: return await upload(saved, to: remotePath, on: target, state, force: true)
+                case 1: await diff(DiffSide(path: saved.path, name: "\(name) (yours)"),
+                                   DiffSide(path: remotePath, server: target, size: e.attrs.size, mtime: e.attrs.mtime), in: panel)
+                default: return false
+                }
             }
-            return false
         case .failure(let e):
             return notSaved(saved, to: target, e)
         }

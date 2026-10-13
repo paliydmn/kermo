@@ -20,6 +20,7 @@ Release:
 - **Server File History…** (⌘⇧P or the File menu, on a server panel's file or in a server file's editor): the versions its saves kept, newest first. ↩ or F3 views one; ⌘⇧D diffs it with the file on the server now, ⌘D with the version before it; ⌘R reverts the server's file to it through the same save as ⌘S, so a production server asks first, a change made there since the list opened is asked about, and the version it replaces is kept too. A locked server asks for Touch ID first.
 - Versions in the history keep their file's syntax highlighting in the viewer and editor (the date at the end of their name hid the extension).
 - **Sidebar:** a server's menu has **Show File History**, which opens its folder of versions in the panel (view, compare or delete them there as any files). Deleting a saved server offers to delete its file history too, unless another saved server at that address still uses it.
+- **Saving a server file someone changed meanwhile:** the "changed on the server since you opened it" question has a **Compare** button: it opens the diff of your text with the server's file, then asks again.
 
 ### Changed
 
