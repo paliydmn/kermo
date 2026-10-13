@@ -1023,7 +1023,7 @@ extension AppDelegate {
             case .view: Viewer.show(local, remote: (target, remotePath, max(0, opened.size - (last ?? opened.size)))) { TempCopies.remove(tmp) }
             case .edit:
                 let state = RemoteEdit(baseline: opened)
-                Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath), onSaved: { [self] saved in
+                Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath, state), onSaved: { [self] saved in
                     state.save(in: tmp) { await self.upload(saved, to: remotePath, on: target, state) }
                 }, onClose: { state.closed(removing: tmp) })
             }
@@ -1166,7 +1166,14 @@ extension AppDelegate {
                 }
                 let revert: @MainActor () -> Void = { [unowned self] in
                     let state = RemoteEdit(baseline: now ?? .nothing)
-                    Task { if await upload(url, to: path, on: target, state) { panel.flash("“\(name)” on \(target.host) is back to its version of \(when)") } }
+                    Task {
+                        guard await upload(url, to: path, on: target, state) else { return }
+                        panel.flash("“\(name)” on \(target.host) is back to its version of \(when)")
+                        // Its editor shows that now, unless it has changes of its own.
+                        if let e = Editor.editing(target, path), let data = await Blocking.run(.userInitiated, { try? Data(contentsOf: url) }) {
+                            _ = await e.reverted(to: data, attrs: state.baseline)
+                        }
+                    }
                 }
                 return Picker.Item(title: when, subtitle: ByteCountFormatter.string(fromByteCount: v.size, countStyle: .file),
                                    keys: [Shortcut("f3")!: view, Shortcut("cmd+shift+d")!: diff, Shortcut("cmd+d")!: diffBefore, Shortcut("cmd+r")!: revert],

@@ -169,3 +169,28 @@ extension ServerCopiesTests {
     e.flash("Saved “app.conf” to web · no history: file over 5 MB")
     #expect(e.window?.subtitle == "Saved “app.conf” to web · no history: file over 5 MB")
 }
+
+/// Revert put a version on the server, but its open editor still showed the old text, and its next ⌘S asked "changed
+/// on the server". An editor without changes of its own shows the version now and saves against what's there; one
+/// with changes keeps them (its ⌘S then asks, with Compare).
+@MainActor @Test func revertShowsInTheFilesEditor() async throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-erev-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let copy = URL(fileURLWithPath: dir + "/app.conf")
+    try Data("now\n".utf8).write(to: copy)
+    let t = SFTPTarget(host: "me@web.invalid")
+    let before = SFTPClient.Attrs(kind: .file, size: 4, mtime: 100, mode: 0o644), after = SFTPClient.Attrs(kind: .file, size: 4, mtime: 200, mode: 0o644)
+    let e = try Editor(copy, remote: "web:/etc/app.conf")
+    defer { e.close() }
+    e.server = (t, "/etc/app.conf", AppDelegate.RemoteEdit(baseline: before))
+
+    #expect(await e.reverted(to: Data("old\n".utf8), attrs: after))
+    #expect(e.textView.string == "old\n" && !e.changed && e.server?.state.baseline == after)
+    #expect(FileManager.default.contents(atPath: copy.path) == Data("old\n".utf8))
+
+    e.textView.string = "mine\n"
+    e.textDidChange(Notification(name: NSText.didChangeNotification))
+    #expect(await !e.reverted(to: Data("older\n".utf8), attrs: before))
+    #expect(e.textView.string == "mine\n" && e.server?.state.baseline == after, "its own changes stay")
+}
