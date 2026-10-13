@@ -35,7 +35,7 @@ enum SudoServer {
     static func prepare(_ t: SFTPTarget, env: [String: String], cancel: CancelFlag?) throws -> (path: String, password: String?, selinux: Bool) {
         if let k = lock.withLock({ known[key(t)] }) { return (k.path, nil, k.selinux) }
         var out = Data()
-        let (status, errors) = try SSHCommand.run(t, probe(t), env: env, cancel: cancel) { out += $0 }
+        let (status, errors) = try SSHCommand.run(t, probe(t), env: env, cancel: cancel, options: ["-x", "-a"]) { out += $0 }   // as the session: no agent
         let path = try check(t, out, status, errors, asking: SFTP.sudoPassword != nil)
         let selinux = String(decoding: out, as: UTF8.self).split(whereSeparator: \.isNewline).contains("kermo-selinux")
         guard status != 0 else {
@@ -61,6 +61,9 @@ enum SudoServer {
     /// What sudo says when it wants a password and may not ask (`-n`): sudo 1.8 / 1.9, sudo-rs 0.2.13, sudo-rs 0.2.2.
     static let passwordTexts = ["a password is required", "interactive authentication is required", "authentication failed: interaction required"]
 
+    /// What sudo says when the user may not run the command at all: sudo 1.8 / 1.9 (a rule, no rule), sudo-rs.
+    static let notAllowedTexts = ["is not allowed to execute", "is not in the sudoers file", "I'm afraid I can't do that"]
+
     /// sudo's refusal in plain words; nil for anything else.
     static func explain(_ t: SFTPTarget, path: String, _ errors: String) -> String? {
         let user = t.host.contains("@") ? String(t.host[..<t.host.lastIndex(of: "@")!]) : "<user>"
@@ -79,26 +82,34 @@ enum SudoServer {
     /// How long the session waits for sftp-server's first answer after the password (tests: less).
     nonisolated(unsafe) static var versionWait: TimeInterval = 10
 
-    /// A password sudo takes (`SFTP.sudoPassword`), tried alone first with `sudo -S -k -v` and end of file: a wrong one
-    /// costs one attempt there. Sent with the first packet instead, that packet would count as a second attempt and
-    /// the session hang. Three tries, as sudo's own. One at a time: sessions behind a dialog take the answer it got.
+    /// A password sudo takes (`SFTP.sudoPassword`), tried alone first: the session's own command with the password line
+    /// and end of file — sftp-server ends at once — so a wrong one costs one attempt there. Sent with the first packet
+    /// instead, that packet would count as a second attempt and the session hang. Not `sudo -v`: where every rule the
+    /// user has is NOPASSWD it passes without reading anything, whatever was typed. Three tries, as sudo's own; Cancel
+    /// cancels what asked (a job doesn't ask again for its next item). One at a time: sessions behind a dialog take the
+    /// answer it got.
     static func password(_ t: SFTPTarget, path: String, env: [String: String], cancel: CancelFlag?) throws -> String {
         try asking.withLock {
-            var wrong = false
+            var wrong = false, said = ""
             for _ in 0..<3 {
                 if cancel?.isCancelled == true { throw CancellationError() }
-                guard let password = SFTP.sudoPassword?(t, wrong) else { throw CancellationError() }
+                guard let password = SFTP.sudoPassword?(t, wrong) else {
+                    cancel?.cancel()
+                    throw CancellationError()
+                }
                 guard !password.contains(where: \.isNewline) else { wrong = true; continue }   // sudo reads one line
-                let (status, errors) = try SSHCommand.run(t, "\(ShellContext.quote(program(t))) -S -p '' -k -v", env: env, cancel: cancel,
-                                                          stdin: Data((password + "\n").utf8)) { _ in }
+                let (status, errors) = try SSHCommand.run(t, command(t, path: path, password: true), env: env, cancel: cancel,
+                                                          options: ["-x", "-a"], stdin: Data((password + "\n").utf8)) { _ in }
                 if status == 0 {
                     SFTP.sudoPasswordTaken?(t, password)
                     return password
                 }
                 if errors.contains("invalid option") { throw noStdinPassword(t, path: path) }   // sudo-rs 0.2.2: no -p
-                wrong = true
+                // It took the password but won't run sftp-server for this user: asking again won't help.
+                if notAllowedTexts.contains(where: errors.contains) { throw SFTPError(message: "sudo on \(t.host) refused: " + errors, connection: true) }
+                (wrong, said) = (true, errors)
             }
-            throw SFTPError(message: "sudo on \(t.host) refused the password 3 times.", connection: true)
+            throw SFTPError(message: "sudo on \(t.host) refused the password 3 times" + (said.isEmpty ? "." : ": " + said), connection: true)
         }
     }
 
@@ -121,9 +132,14 @@ enum SudoServer {
     /// subsystem), or a test target's stand-in sudo itself.
     /// `password`: sudo reads it from stdin, a line before the first packet (`-S`, no prompt, no ticket: `-k`).
     static func launch(_ t: SFTPTarget, path: String, password: Bool = false) -> (program: String, arguments: [String]) {
-        let words = (password ? ["-S", "-p", "", "-k"] : ["-n"]) + ["--", path]
-        if t.localServer != nil { return (program(t), words) }
-        let command = (["sudo"] + words).map { $0.isEmpty ? "''" : $0 }.joined(separator: " ")
-        return ("/usr/bin/ssh", SFTP.connectionOptions(t) + ["-x", "-a", "-T"] + t.arguments() + [command])
+        if t.localServer != nil { return (program(t), words(password) + ["--", path]) }
+        return ("/usr/bin/ssh", SFTP.connectionOptions(t) + ["-x", "-a", "-T"] + t.arguments() + [command(t, path: path, password: password)])
+    }
+
+    private static func words(_ password: Bool) -> [String] { password ? ["-S", "-p", "", "-k"] : ["-n"] }
+
+    /// The session's command line there (the login shell parses it); the stand-in's path for a test target.
+    static func command(_ t: SFTPTarget, path: String, password: Bool) -> String {
+        ([ShellContext.quote(program(t))] + words(password).map { $0.isEmpty ? "''" : $0 } + ["--", ShellContext.quote(path)]).joined(separator: " ")
     }
 }

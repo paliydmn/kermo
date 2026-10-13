@@ -41,6 +41,9 @@ private func rootTempDir() -> String {
     #expect(program == "/usr/bin/ssh")
     #expect(!args.contains("-s") && args.contains("-T") && args.contains("-x") && args.contains("-a"))
     #expect(args.suffix(4) == ["2222", "--", "me@web", "sudo -n -- /usr/lib/openssh/sftp-server"])
+    #expect(SudoServer.launch(t, path: "/usr/lib/openssh/sftp-server", password: true).arguments.last == "sudo -S -p '' -k -- /usr/lib/openssh/sftp-server",
+            "`-p ''`: an empty prompt, not `-p -k`")
+    #expect(SudoServer.probe(t).contains("[ -d /sys/fs/selinux ] && echo kermo-selinux"))
     #expect(Array(args.prefix(SFTP.connectionOptions(t).count)) == SFTP.connectionOptions(SFTPTarget(host: "me@web", port: 2222)), "one connection with the user's")
     #expect(SudoServer.probe(t).hasPrefix("sh -c ") && SudoServer.paths.allSatisfy(SudoServer.probe(t).contains))
     #expect(SudoServer.program(t) == "sudo" && SudoServer.program(.local().asRoot()) == "/usr/bin/false", "a test target never runs this Mac's sudo")
@@ -119,14 +122,14 @@ private func rootTempDir() -> String {
     #expect(sudoLog(flip).count == 3, "the look, the session that failed, the look again (it fails there now)")
 }
 
-/// sudo that wants a password: `-n` refuses as sudo 1.9 does; `-S -p '' -k` reads exactly one line, then validates
-/// (`-v`) or runs what follows `--`. Its log has its arguments, never what it read.
+/// sudo that wants a password: `-n` refuses as sudo 1.9 does; `-S -p '' -k` reads exactly one line, then runs what
+/// follows `--`. Its log has its arguments, never what it read.
 static let passwordSudo = #"""
     case "$1" in
     -n) echo "sudo: a password is required" >&2; exit 1;;
-    -S) [ "$2" = -p ] && [ "$3" = "" ] && [ "$4" = -k ] || exit 2
+    -S) [ "$2" = -p ] && [ "$3" = "" ] && [ "$4" = -k ] && [ "$5" = -- ] || exit 2
         IFS= read -r pw; [ "$pw" = "kermo-test-pw" ] || { echo "Sorry, try again." >&2; echo "sudo: 1 incorrect password attempt" >&2; exit 1; }
-        shift 4; [ "$1" = -v ] && exit 0; shift; exec "$1";;
+        exec "$6";;
     esac
     exit 2
     """#
@@ -143,8 +146,9 @@ static func answering(_ a: Answers, _ body: () throws -> Void) rethrows {
     try body()
 }
 
-/// Only when `-n` refused for want of one: the password is asked for, tried alone (`-k -v`, one line, end of file),
-/// then the session reads it as a line before INIT. Never in an argument. Not remembered as a server that needs none.
+/// Only when `-n` refused for want of one: the password is asked for, tried alone with the session's own command (one
+/// line, end of file: sftp-server ends at once), then the session reads it as a line before INIT. Never in an
+/// argument. Not remembered as a server that needs none.
 @Test func sudoWithAPassword() throws {
     let d = rootTempDir()
     defer { try? FileManager.default.removeItem(atPath: d) }
@@ -153,7 +157,7 @@ static func answering(_ a: Answers, _ body: () throws -> Void) rethrows {
     try Self.answering(a) {
         #expect(try SFTP.list(.local(sudo: fake), d).map(\.name).contains((fake as NSString).lastPathComponent))
         #expect(a.wrong == [false] && a.taken == ["kermo-test-pw"])
-        #expect(sudoLog(fake) == ["-n -- /usr/libexec/sftp-server", "-S -p  -k -v", "-S -p  -k -- /usr/libexec/sftp-server"])
+        #expect(sudoLog(fake) == ["-n -- /usr/libexec/sftp-server", "-S -p  -k -- /usr/libexec/sftp-server", "-S -p  -k -- /usr/libexec/sftp-server"])
         a.left = ["kermo-test-pw"]
         _ = try SFTP.list(.local(sudo: fake), d)
         #expect(sudoLog(fake).count == 6 && a.wrong == [false, false], "`-n` again first: a password needed once isn't assumed")
@@ -161,7 +165,8 @@ static func answering(_ a: Answers, _ body: () throws -> Void) rethrows {
     #expect(!(try String(contentsOfFile: fake + ".log", encoding: .utf8)).contains("kermo-test-pw"))
 }
 
-/// A wrong one costs one sudo attempt and asks again (told it was wrong); three, as sudo's own; Cancel stops at once.
+/// A wrong one costs one sudo attempt and asks again (told it was wrong); three, as sudo's own, then sudo's own words;
+/// Cancel stops at once and cancels what asked (a job's next item doesn't ask again).
 @Test func wrongSudoPasswordAsksAgain() throws {
     let d = rootTempDir()
     defer { try? FileManager.default.removeItem(atPath: d) }
@@ -169,19 +174,46 @@ static func answering(_ a: Answers, _ body: () throws -> Void) rethrows {
     let a = Answers(["nope", "kermo-test-pw"])
     try Self.answering(a) {
         _ = try SFTP.list(.local(sudo: fake), d)
-        #expect(a.wrong == [false, true] && a.taken == ["kermo-test-pw"] && sudoLog(fake).filter { $0.hasSuffix("-v") }.count == 2)
+        #expect(a.wrong == [false, true] && a.taken == ["kermo-test-pw"] && sudoLog(fake).filter { $0.hasPrefix("-S") }.count == 3, "2 checks, the session")
 
         let three = try fakeSudo(d, Self.passwordSudo)
         a.left = ["a", "b", "c", "kermo-test-pw"]
         a.wrong = []
         let e = #expect(throws: SFTPError.self) { try SFTPClient(.local(sudo: three)) }
-        #expect(e?.message == "sudo on localhost refused the password 3 times." && a.wrong == [false, true, true])
-        #expect(sudoLog(three).filter { $0.hasSuffix("-v") }.count == 3 && !sudoLog(three).contains { $0.hasSuffix("-- /usr/libexec/sftp-server") && $0.hasPrefix("-S") })
+        #expect(e?.message == "sudo on localhost refused the password 3 times: Sorry, try again.\nsudo: 1 incorrect password attempt" && a.wrong == [false, true, true])
+        #expect(sudoLog(three).filter { $0.hasPrefix("-S") }.count == 3, "3 checks, no session")
 
         let cancel = try fakeSudo(d, Self.passwordSudo)
         a.left = [nil]
-        #expect(throws: CancellationError.self) { try SFTPClient(.local(sudo: cancel)) }
-        #expect(sudoLog(cancel) == ["-n -- /usr/libexec/sftp-server"], "nothing sent")
+        let flag = CancelFlag()
+        #expect(throws: CancellationError.self) { try SFTPClient(.local(sudo: cancel), cancel: flag) }
+        #expect(sudoLog(cancel) == ["-n -- /usr/libexec/sftp-server"] && flag.isCancelled, "nothing sent; what asked is cancelled")
+
+        // A copy from a root panel: Cancel on the sheet ends the job, no Retry / Skip / Abort, not asked per item.
+        let job = FileJob(.copy, sources: [d + "/a", d + "/b"], from: .sftp(.local(sudo: try fakeSudo(d, Self.passwordSudo))), to: .local, destDir: d + "/down")
+        let prompts = Answers([])
+        job.resolveError = { _, _ in prompts.wrong.append(true); return (.skip, false) }
+        a.left = [nil, nil, nil]
+        a.wrong = []
+        job.run()
+        #expect(job.isCancelled && prompts.wrong.isEmpty && a.wrong.count == 1, "asked \(a.wrong.count) times")
+    }
+}
+
+/// The password sudo took, but sftp-server isn't allowed to the user (e.g. all their rules are NOPASSWD for other
+/// commands, where `sudo -v` would pass without reading a thing): sudo's own words at once, not asked 3 times.
+@Test func sudoThatRefusesTheCommandSaysWhy() throws {
+    let d = rootTempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let fake = try fakeSudo(d, #"""
+        [ "$1" = -n ] && { echo "sudo: a password is required" >&2; exit 1; }
+        IFS= read -r pw; echo "Sorry, user me is not allowed to execute '$6' as root on web." >&2; exit 1
+        """#)
+    let a = Answers(["kermo-test-pw", "kermo-test-pw", "kermo-test-pw"])
+    try Self.answering(a) {
+        let e = #expect(throws: SFTPError.self) { try SFTPClient(.local(sudo: fake)) }
+        #expect(e?.message == "sudo on localhost refused: Sorry, user me is not allowed to execute '/usr/libexec/sftp-server' as root on web.")
+        #expect(a.wrong == [false] && a.taken.isEmpty)
     }
 }
 
@@ -212,8 +244,8 @@ static func answering(_ a: Answers, _ body: () throws -> Void) rethrows {
 
         let swallow = try fakeSudo(d, #"""
             [ "$1" = -n ] && { echo "sudo: a password is required" >&2; exit 1; }
-            IFS= read -r pw; [ "$5" = -v ] && exit 0; exec cat >/dev/null
-            """#)
+            IFS= read -r pw; [ $(wc -l < "$0.log") -le 2 ] && exec "$6"; exec cat >/dev/null
+            """#)   // the check (2nd call) runs sftp-server; the session's stdin is swallowed
         let was = SudoServer.versionWait
         SudoServer.versionWait = 1
         defer { SudoServer.versionWait = was }

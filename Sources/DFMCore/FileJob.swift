@@ -393,6 +393,7 @@ public final class FileJob: @unchecked Sendable {
                 try body()
                 return true
             } catch {
+                if error is CancellationError { cancel() }   // a sudo password sheet's Cancel: no Retry / Skip / Abort after it
                 if isCancelled { return false }   // the failure is the cancel itself (a dropped connection, COPYFILE_QUIT)
                 let message = (error as? POSIXError).map { String(cString: strerror($0.code.rawValue)) } ?? error.localizedDescription
                 let policy = lock.withLock { errorPolicy }

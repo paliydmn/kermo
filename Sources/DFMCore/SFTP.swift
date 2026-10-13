@@ -373,13 +373,13 @@ public enum SSHCommand {
     /// Runs `command` on the server without a terminal (its login shell parses it), handing stdout over as it
     /// arrives; the test target (`.local()`) runs it here with /bin/sh. Returns the exit status and stderr.
     /// `stdin`: what the command reads, then end of file (a secret goes this way: never in its command line); none
-    /// by default.
+    /// by default. `options`: ssh's, before the host.
     public static func run(_ t: SFTPTarget, _ command: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
-                           stdin: Data? = nil, onOutput: (Data) -> Void) throws -> (status: Int32, errors: String) {
+                           options: [String] = [], stdin: Data? = nil, onOutput: (Data) -> Void) throws -> (status: Int32, errors: String) {
         try SFTP.startMaster(t, env: env, cancel: cancel)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: t.localServer == nil ? "/usr/bin/ssh" : "/bin/sh")
-        p.arguments = t.localServer == nil ? arguments(t, command: command, tty: false) : ["-c", command]
+        p.arguments = t.localServer == nil ? SFTP.connectionOptions(t) + options + ["-T"] + t.arguments() + [command] : ["-c", command]
         p.environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
         let out = Pipe(), err = Pipe(), input = stdin.map { _ in Pipe() }
         p.standardInput = input ?? FileHandle.nullDevice
