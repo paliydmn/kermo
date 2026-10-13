@@ -16,12 +16,15 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// With 3+ panels: this is where F5/F6 from the active panel go.
     var isTarget = false { didSet { styleHeader() } }
 
-    /// The active panel: framed, its path bar filled, both in the theme's accent.
+    /// The active panel: framed, its path bar filled, both in the theme's accent. A root panel's in orange instead (red on
+    /// a production server), its path in that color while inactive too.
     private func styleHeader() {
-        pathField.backgroundColor = isActive ? theme.accent : .clear
-        pathField.textColor = isActive ? theme.onAccent : isTarget ? theme.accent : theme.hidden
+        let root = remote.map { $0.target.sudo ? SavedServer.isProd($0.target) ? NSColor.systemRed : .systemOrange : nil } ?? nil
+        let tint = root ?? theme.accent
+        pathField.backgroundColor = isActive ? tint : .clear
+        pathField.textColor = isActive ? theme.onAccent : isTarget || root != nil ? tint : theme.hidden
         viewIfLoaded?.layer?.borderWidth = isActive ? Self.frameWidth : 0
-        viewIfLoaded?.layer?.borderColor = theme.accent.cgColor
+        viewIfLoaded?.layer?.borderColor = tint.cgColor
     }
     private static let frameWidth: CGFloat = 2
     var onFocus: (() -> Void)?
@@ -174,7 +177,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private func url(of item: FileItem) -> URL {
         URL(fileURLWithPath: (path as NSString).appendingPathComponent(item.name), isDirectory: item.kind == .dir)
     }
-    private var currentName: String? {
+    var currentName: String? {
         let r = table.selectedRow
         return r >= 0 && r < table.numberOfRows ? item(at: r)?.name : nil
     }
@@ -652,7 +655,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         // A message just flashed stays its time through a re-list, a git status or a folder size coming in.
         if let f = flashed, f.until > Date() { statusError = f.error; return statusLabel.stringValue = f.text }
         var s = Self.countText(rows.count, "items", totalSize) + " · \(freeSpace) free"
-        if let r = remote { s = "🌐 sftp · \(r.target.host) · " + Self.countText(rows.count, "items", 0) }   // marks: below, as anywhere
+        if let r = remote { s = "\(r.target.sudo ? "#" : "🌐") sftp · \(r.target.shown) · " + Self.countText(rows.count, "items", 0) }   // marks: below, as anywhere
         if let g = git {
             s += " · ⎇ \(g.branch)" + (g.ahead > 0 ? " ↑\(g.ahead)" : "") + (g.behind > 0 ? " ↓\(g.behind)" : "")
         }
@@ -1407,7 +1410,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         for (i, t) in tabs.enumerated() {
             if let r = i == tabIndex ? remote : t.remote {
                 let name = r.dir == "/" ? "/" : (r.dir as NSString).lastPathComponent.bidiVisible
-                tabBar.addArrangedSubview(Self.tabButton("SFTP · \(r.target.host) · \(name)", tip: "\(r.target.host):\(r.dir)", index: i, current: i == tabIndex,
+                tabBar.addArrangedSubview(Self.tabButton("SFTP · \(r.target.shown) · \(name)", tip: "\(r.target.shown):\(r.dir)", index: i, current: i == tabIndex,
                                                          target: self, action: #selector(tabClicked(_:)), close: #selector(closeTabClicked(_:))))
                 continue
             }
@@ -1572,12 +1575,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     // MARK: - Path field (⌘L) and quick filter (/)
 
     /// The header: "🔍 title" on search results, "📦 archive/inner", "🌐 host:/dir" on a server ("🔴 PROD host:/dir" on
-    /// a production one), else the local folder. Also what ⎋ in the path field brings back.
+    /// a production one), "root@host:/dir #" on a root panel, else the local folder. Also what ⎋ in the path field brings back.
     func showPath() {
         pathField.stringValue = if let t = searchTitle { "🔍 " + t }
             else if let a = archive { "📦 " + (a.index.file as NSString).abbreviatingWithTildeInPath + (a.inner.isEmpty ? "" : "/" + a.inner) }
-            else if let r = remote { (SavedServer.isProd(r.target) ? "🔴 PROD " : "🌐 ") + "\(r.target.host):\(r.dir)" }
+            else if let r = remote { (SavedServer.isProd(r.target) ? "🔴 PROD " : r.target.sudo ? "" : "🌐 ") + "\(r.target.shown):\(r.dir)" + (r.target.sudo ? " #" : "") }
             else { (path as NSString).abbreviatingWithTildeInPath }
+        styleHeader()
     }
 
     func beginPathEditing() {

@@ -209,6 +209,8 @@ extension AppDelegate {
         cmd("admin.mkdir", "New Folder as Administrator…", [], menu: "Admin", aliases: "root sudo") { $0.adminMkdir() },
         cmd("admin.delete", "Delete as Administrator…", [], menu: "Admin", aliases: "root sudo rm") { $0.adminDelete() },
         cmd("admin.shell", "Root Shell Here (Terminal)", [], menu: "Admin", aliases: "root sudo") { $0.runShell("sudo -s", in: .terminalApp) },
+        cmd("admin.rootPanel", "Reopen Panel as Root", [], menu: "Admin", aliases: "root sudo server sftp etc") { $0.reopenPanel(asRoot: true) },
+        cmd("admin.userPanel", "Reopen Panel as User", [], menu: "Admin", aliases: "root sudo server sftp") { $0.reopenPanel(asRoot: false) },
 
         // Clipboard
         cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", short: "Copy path", aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetURLs.map(\.path)) },
@@ -281,6 +283,15 @@ extension AppDelegate {
             do { try FinderTags.write(u.path, change(FinderTags.read(u.path), first)); return nil }
             catch { return "“\(u.lastPathComponent)”: \(error.localizedDescription)" }
         }
+    }
+
+    /// The server panel's folder again as root (its sudo there: `SFTPTarget.sudo`), or as its user. Only ever on purpose:
+    /// nothing pasted, dropped or restored opens one as root. A locked server asks as for any connection.
+    func reopenPanel(asRoot: Bool) {
+        let panel = active
+        guard let r = panel.remote else { return panel.flash("Reopen Panel as \(asRoot ? "Root" : "User") is for a server's panel: connect first (⌃⌘K)") }
+        guard r.target.sudo != asRoot else { return panel.flash(asRoot ? "This panel is root already" : "This panel is its user's already") }
+        panel.loadRemote(r.target.asRoot(asRoot), dir: r.dir, select: panel.currentName)
     }
 
     /// Symlinks the bundled `fm` script into /usr/local/bin (asks for a password if that folder is root's).

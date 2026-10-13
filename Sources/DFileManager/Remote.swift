@@ -47,8 +47,9 @@ struct SavedServer: Codable, Equatable {
     /// A saved server at this address (user@host:port) is tagged production.
     @MainActor static func isProd(_ t: SFTPTarget) -> Bool { ServerLock.servers().contains { $0.prod && SSHPasswords.sameKey($0.target, t) } }
 
-    /// A server file's editor title: "web:/etc/nginx/nginx.conf", "🔴 PROD web:/…" on a production server.
-    @MainActor static func title(_ t: SFTPTarget, _ path: String) -> String { (isProd(t) ? "🔴 PROD " : "") + "\(t.host):\(path)" }
+    /// A server file's editor title: "web:/etc/nginx/nginx.conf", "🔴 PROD web:/…" on a production server, "root@web:/… #"
+    /// from a root panel.
+    @MainActor static func title(_ t: SFTPTarget, _ path: String) -> String { (isProd(t) ? "🔴 PROD " : "") + "\(t.shown):\(path)" + (t.sudo ? " #" : "") }
 
     /// Said before what a change on production servers asks: "“h” is a production server. ", or "".
     @MainActor static func prodNote(_ targets: [SFTPTarget]) -> String {
@@ -85,6 +86,11 @@ struct SavedServer: Codable, Equatable {
             return []
         }
     }
+}
+
+extension SFTPTarget {
+    /// Who and where, as headers say it: the host as given, "root@host" for a root panel.
+    var shown: String { sudo ? "root@" + (host.lastIndex(of: "@").map { String(host[host.index(after: $0)...]) } ?? host) : host }
 }
 
 /// SSH passwords in the login keychain: one per user@host:port, readable by this app without asking (others ask).

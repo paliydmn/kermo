@@ -23,7 +23,59 @@ func fakeSudo(in dir: String) throws -> String {
     #expect(TransferItems(pb) == TransferItems(from: .sftp(root.asRoot(false)), paths: ["/etc/hosts"]))
 }
 
+/// Reopen Panel as Root / as User: in the Admin menu and ⌘⇧P (so keymap.json can bind them); "Open SFTP as Root" is in
+/// a server's sidebar menu.
+@MainActor @Test func rootPanelCommandsAreThere() {
+    let commands = AppDelegate().makeCommands()
+    for (id, title) in [("admin.rootPanel", "Reopen Panel as Root"), ("admin.userPanel", "Reopen Panel as User")] {
+        let c = commands.first { $0.id == id }
+        #expect(c?.title == title && c?.menu == "Admin" && c?.keys.isEmpty == true)
+    }
+    let found = HeaderSearchModel.results("as root", commands: commands, folders: [], files: [], recent: [])
+    #expect(found.flatMap(\.hits).contains { if case .command(let id) = $0.target { id == "admin.rootPanel" } else { false } }, "\(found)")
+}
+
+/// A root panel's file history is its server's: the same folder as the user's panel, root's saves next to theirs.
+@Test func rootSavesKeepVersionsInTheServersFolder() throws {
+    let root = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-rhist-" + UUID().uuidString
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    let h = ServerHistory(root: root), user = SFTPTarget(host: "me@web", port: 2222)
+    #expect(h.folder(user.asRoot()) == h.folder(user))
+    #expect(h.keep(Data("v".utf8), SFTPClient.Attrs(kind: .file, size: 1, mtime: 0, mode: nil), of: user.asRoot(), "/etc/hosts") == nil)
+    #expect(h.versions(of: user, "/etc/hosts").count == 1)
+}
+
 extension ServerLockTests {
+/// The header says root: "root@host:/dir #" (in orange); on a production server "🔴 PROD" in front, as for its user.
+/// Reopened as the user: as before. The tab and the status line say root@host too.
+@Test func rootPanelHeaderSaysRoot() async throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-rhead-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let root = SFTPTarget.local(sudo: try fakeSudo(in: dir))
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    func open(_ t: SFTPTarget) async {
+        panel.loadRemote(t, dir: dir, select: nil)
+        for _ in 0..<250 where panel.remote?.target != t || panel.busyMessage != nil { try? await Task.sleep(for: .milliseconds(20)) }
+    }
+    await open(root)
+    #expect(panel.headerText == "root@localhost:\(dir) #")
+    #expect(SavedServer.title(root, "/etc/hosts") == "root@localhost:/etc/hosts #", "its editor's title")
+    var prod = SavedServer(address: "localhost")!
+    prod.prod = true
+    ServerLock.servers = { [prod] }
+    defer { ServerLock.servers = { [] } }
+    panel.showPath()
+    #expect(panel.headerText == "🔴 PROD root@localhost:\(dir) #")
+    await open(root.asRoot(false))
+    #expect(panel.headerText == "🔴 PROD localhost:\(dir)")
+    ServerLock.servers = { [] }
+    panel.showPath()
+    #expect(panel.headerText == "🌐 localhost:\(dir)")
+}
+
 /// A sudo password sudo took is kept for the server's next sessions (root or not: one user@host:port), not asked again;
 /// a refused one goes before the next ask; the screen locking (relock) or Disconnect forgets it.
 @Test func sudoPasswordsAreKeptWhileInUse() async {

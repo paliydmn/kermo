@@ -610,12 +610,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// Connects, and keeps the server among the latest (a locked one isn't remembered; see `remember`).
-    /// `dir`: SFTP in that folder instead of the saved server's start folder.
-    func openServer(_ r: ServerRow, _ kind: ServerSession.Kind, newTab: Bool = false, panel: PanelViewController? = nil, dir: String? = nil) {
+    /// `dir`: SFTP in that folder instead of the saved server's start folder. `root`: SFTP through its sudo.
+    func openServer(_ r: ServerRow, _ kind: ServerSession.Kind, newTab: Bool = false, panel: PanelViewController? = nil, dir: String? = nil,
+                    root: Bool = false) {
         remember(r.address)
         refreshSidebar()
         if kind == .ssh { return openSSH(r.target) }
-        openSFTP(r.target, dir: dir ?? r.saved?.startDir, title: r.title, newTab: newTab, panel: panel)
+        openSFTP(r.target.asRoot(root), dir: dir ?? r.saved?.startDir, title: r.title, newTab: newTab, panel: panel)
     }
 
     private func serverMenu(_ place: Place) -> [NSMenuItem] {
@@ -632,6 +633,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             MenuAction.item("Open SFTP") { [unowned self] in openServer(r, .sftp) },
             MenuAction.item("Open SFTP in New Tab") { [unowned self] in openServer(r, .sftp, newTab: true) },
             MenuAction.item("Open SFTP in Other Panel") { [unowned self] in openServer(r, .sftp, panel: other) },
+            MenuAction.item("Open SFTP as Root") { [unowned self] in openServer(r, .sftp, root: true) },
             r.sessions.isEmpty ? nil : MenuAction.item("Close All Sessions") { [unowned self] in r.sessions.forEach(closeSession) },
             r.sessions.isEmpty && !SFTP.masterTargets.contains { ServerRow.key($0) == r.key } ? nil
                 : MenuAction.item("Disconnect") { [unowned self] in disconnect(r.target) },
