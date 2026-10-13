@@ -1120,7 +1120,8 @@ extension AppDelegate {
     }
 
     /// Server File History…: the versions saves replaced (`ServerHistory`) of the server file in the key editor, or under
-    /// a server panel's cursor, newest first. ↩ / F3 views one; ⌘⇧D diffs it with the server's file now; ⌘R puts it
+    /// a server panel's cursor, newest first. ↩ / F3 views one; ⌘⇧D diffs it with the server's file now, ⌘D with the
+    /// version before it; ⌘R puts it
     /// back there through the same save as ⌘S — production asks, a change made there since the list opened asks too,
     /// and the version it replaces goes into the history.
     func serverFileHistory() {
@@ -1142,21 +1143,29 @@ extension AppDelegate {
             let now = try? r.get()   // not there (any more): Revert puts it back, diff says why it can't
             let fmt = DateFormatter()
             fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
-            let items = versions.map { v in
-                let url = URL(fileURLWithPath: v.path), when = fmt.string(from: v.date) + (v.n > 1 ? " (\(v.n))" : "")
+            let when = { (v: ServerHistory.Version) in fmt.string(from: v.date) + (v.n > 1 ? " (\(v.n))" : "") }
+            let side = { (v: ServerHistory.Version) in DiffSide(path: v.path, name: "\(target.host):\(path) @ \(when(v))") }
+            let items = versions.enumerated().map { i, v in
+                let url = URL(fileURLWithPath: v.path), when = when(v)
                 let view: @MainActor () -> Void = { Viewer.show(url) }
                 let diff: @MainActor () -> Void = { [unowned self] in
                     let there = DiffSide(path: path, server: target, size: now?.size ?? 0, mtime: now?.mtime ?? 0, look: now == nil)
-                    Task { await self.diff(DiffSide(path: v.path, name: "\(target.host):\(path) @ \(when)"), there, in: panel) }
+                    Task { await self.diff(side(v), there, in: panel) }
+                }
+                let diffBefore: @MainActor () -> Void = { [unowned self] in   // newest first: the one before is next
+                    guard versions.indices.contains(i + 1) else { return panel.flash("That's the oldest version kept: nothing before it to compare") }
+                    Task { await self.diff(side(versions[i + 1]), side(v), in: panel) }
                 }
                 let revert: @MainActor () -> Void = { [unowned self] in
                     let state = RemoteEdit(baseline: now ?? .nothing)
                     Task { if await upload(url, to: path, on: target, state) { panel.flash("“\(name)” on \(target.host) is back to its version of \(when)") } }
                 }
                 return Picker.Item(title: when, subtitle: ByteCountFormatter.string(fromByteCount: v.size, countStyle: .file),
-                                   keys: [Shortcut("f3")!: view, Shortcut("cmd+shift+d")!: diff, Shortcut("cmd+r")!: revert], run: view)
+                                   keys: [Shortcut("f3")!: view, Shortcut("cmd+shift+d")!: diff, Shortcut("cmd+d")!: diffBefore, Shortcut("cmd+r")!: revert],
+                                   run: view)
             }
-            Picker.show(over: over, placeholder: "“\(name)” on \(target.host): ↩ F3 view · ⌘⇧D diff with the server's · ⌘R revert to it", items: items)
+            Picker.show(over: over, placeholder: "“\(name)” on \(target.host): ↩ F3 view · ⌘⇧D diff with the server's · ⌘D with the one before · ⌘R revert to it",
+                        items: items)
         }
     }
 
