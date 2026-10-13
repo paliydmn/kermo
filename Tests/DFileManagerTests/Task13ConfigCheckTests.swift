@@ -83,3 +83,100 @@ extension ServerLockTests {
     #expect(AppDelegate.diffCommand(before, "/tmp/x/site.conf", labels: (a.label, "me@web:/etc/nginx/site.conf"))
             == "diff -u --label 'me@web:/etc/nginx/site.conf (before this save)' --label me@web:/etc/nginx/site.conf \(ShellContext.quote(before)) /tmp/x/site.conf")
 }
+
+extension ServerLockTests {
+/// The production log: a JSON line per action on a production server (none for any other, none once `auditLog` is
+/// off), appended; the file is owner-only, put back to that if loosened by hand. Root says so.
+@Test func productionLogLines() throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-audit-" + UUID().uuidString
+    let was = AuditLog.path
+    AuditLog.path = dir + "/audit.jsonl"
+    var prod = SavedServer(address: "me@web:2222")!
+    prod.prod = true
+    ServerLock.servers = { [prod] }
+    let off = UserDefaults.standard.object(forKey: "auditLog")
+    defer { AuditLog.path = was; ServerLock.servers = { [] }; UserDefaults.standard.set(off, forKey: "auditLog"); try? FileManager.default.removeItem(atPath: dir) }
+    UserDefaults.standard.removeObject(forKey: "auditLog")
+    let web = SFTPTarget(host: "me@web", port: 2222)
+    AuditLog.write(web, "command", paths: ["/srv/app"], command: "systemctl restart app", exit: 0)
+    AuditLog.write(SFTPTarget(host: "me@test"), "save", paths: ["/etc/hosts"], exit: 0)
+    AuditLog.write(web.asRoot(), "save", paths: ["/etc/nginx/nginx.conf"], exit: 1, error: "“nginx” failed. Put back.")
+    let lines = try String(contentsOfFile: AuditLog.path, encoding: .utf8).split(separator: "\n").map(String.init)
+    #expect(lines.count == 2, "not a production server: no line")
+    let first = try #require(try JSONSerialization.jsonObject(with: Data(lines[0].utf8)) as? [String: Any])
+    #expect(first["server"] as? String == "me@web:2222" && first["action"] as? String == "command" && first["paths"] as? [String] == ["/srv/app"])
+    #expect(first["command"] as? String == "systemctl restart app" && first["exit"] as? Int == 0 && first["root"] == nil && first["error"] == nil)
+    #expect((first["time"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) } != nil, "an ISO 8601 time")
+    #expect(lines[1].hasPrefix(#"{"action":"save","error":"“nginx” failed. Put back.","exit":1,"paths":["/etc/nginx/nginx.conf"],"root":true,"server":"me@web:2222","time":""#))
+    let mode = { ((try? FileManager.default.attributesOfItem(atPath: AuditLog.path))?[.posixPermissions] as? NSNumber)?.intValue }
+    #expect(mode() == 0o600)
+    chmod(AuditLog.path, 0o644)
+    UserDefaults.standard.set(false, forKey: "auditLog")
+    AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
+    #expect((try String(contentsOfFile: AuditLog.path, encoding: .utf8)).split(separator: "\n").count == 2, "off: nothing")
+    UserDefaults.standard.removeObject(forKey: "auditLog")
+    AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
+    #expect((try String(contentsOfFile: AuditLog.path, encoding: .utf8)).split(separator: "\n").count == 3 && mode() == 0o600)
+    // Show Production Log is in ⌘⇧P and the Admin menu.
+    let c = AppDelegate().makeCommands().first { $0.id == "admin.auditLog" }
+    #expect(c?.title == "Show Production Log" && c?.menu == "Admin")
+}
+
+/// Every place that asks before changing a production server writes its line once done: ⌘S and Revert, ⇧F6 /
+/// permissions / new folder, F5 / F6 / F8 and Synchronize's jobs, a reload. (A command — ⌘E, F2 — runs in an output
+/// window over ssh, which the test target doesn't have; extract goes through dialogs: checked in the app.)
+@Test func productionLogHooks() async throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-audith-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    let was = AuditLog.path
+    AuditLog.path = dir + "/audit.jsonl"
+    var prod = SavedServer(address: "localhost")!
+    prod.prod = true
+    ServerLock.servers = { [prod] }
+    defer { AuditLog.path = was; ServerLock.servers = { [] }; try? FileManager.default.removeItem(atPath: dir) }
+    func log() -> [[String: Any]] {
+        ((try? String(contentsOfFile: AuditLog.path, encoding: .utf8)) ?? "").split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+    }
+    func wait(_ n: Int) async { for _ in 0..<250 where log().count < n { try? await Task.sleep(for: .milliseconds(20)) } }
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    panel.loadRemote(.local(), dir: dir, select: nil)
+    for _ in 0..<250 where panel.remote == nil || panel.connecting != nil { try? await Task.sleep(for: .milliseconds(20)) }
+    let app = AppDelegate()
+    app.panels = [panel]
+
+    // ⌘S and Revert (new files: no version to keep, so the history folder isn't touched).
+    try Data("x".utf8).write(to: URL(fileURLWithPath: dir + "/l"))
+    let state = AppDelegate.RemoteEdit(baseline: .nothing)
+    state.prodConfirmed = true
+    #expect(await app.upload(URL(fileURLWithPath: dir + "/l"), to: dir + "/saved.conf", on: .local(), state))
+    #expect(await app.upload(URL(fileURLWithPath: dir + "/l"), to: dir + "/reverted.conf", on: .local(), state, force: true, action: "revert"))
+    // ⇧F6.
+    app.remoteOp("Rename", .local(), paths: [dir + "/saved.conf", dir + "/renamed.conf"]) { try $0.rename(dir + "/saved.conf", dir + "/renamed.conf", replace: false) }
+    await wait(3)
+    // F8, and Synchronize's delete.
+    for sync in [false, true] {
+        let job = FileJob(.delete, sources: [dir + (sync ? "/reverted.conf" : "/renamed.conf")], from: .sftp(.local()), to: .sftp(.local()), destDir: nil)
+        job.run()
+        if sync { app.syncJobs.insert(ObjectIdentifier(job)) }
+        app.jobFinished(job)
+    }
+    #expect(app.syncJobs.isEmpty, "forgotten once finished")
+    // F6 from one production server to another: a line for each end.
+    var other = SavedServer(address: "me@db")!
+    other.prod = true
+    ServerLock.servers = { [prod, other] }
+    AuditLog.write(FileJob(.move, sources: ["/a"], from: .sftp(.local()), to: .sftp(SFTPTarget(host: "me@db")), destDir: "/b"), sync: false)
+    // A reload that ran, and one whose program isn't there.
+    await app.reload("true", after: URL(fileURLWithPath: dir + "/l"), to: dir + "/x.conf", on: .local(), in: panel)
+    await app.reload("kermo-no-such-reload", after: URL(fileURLWithPath: dir + "/l"), to: dir + "/x.conf", on: .local(), in: panel)
+
+    let got = log().map { ($0["action"] as? String ?? "?", $0["server"] as? String ?? "?", $0["exit"] as? Int ?? -1) }
+    #expect(got.map(\.0) == ["save", "revert", "rename", "delete", "sync delete", "move", "move", "reload", "reload"], "\(got)")
+    #expect(got.map(\.2) == [0, 0, 0, 0, 0, 1, 1, 0, 127], "\(got)")
+    #expect(log()[2]["paths"] as? [String] == [dir + "/saved.conf", dir + "/renamed.conf"])
+    #expect(log()[5]["server"] as? String == "localhost" && log()[6]["server"] as? String == "me@db" && log()[6]["to"] as? String == "/b")
+    #expect(log()[7]["command"] as? String == "true" && log()[7]["paths"] as? [String] == [dir + "/x.conf"])
+}
+}
