@@ -9,8 +9,14 @@ public struct SFTPTarget: Sendable, Hashable, Codable {
     /// Seconds the shared connection outlives its last session (nil = 600). Anyone running as this user can ride
     /// on it without logging in, so a locked server keeps it short.
     public let persist: Int?
+    /// A root panel's: the server's sftp-server run through its `sudo` (`SudoServer`), on the same connection.
+    /// Never decoded either: whatever is pasted, dropped or restored opens a server as its user, never as root.
+    public private(set) var sudo = false
     /// Tests only. Never decoded: a pasteboard item or saved state naming a local program to run must not work.
     private(set) var localServer: String? = nil
+    /// Tests only, never decoded: the stand-in `sudo` a root `.local()` target runs, and whether it says SELinux is on.
+    private(set) var localSudo: String? = nil
+    private(set) var localSELinux = false
     private enum CodingKeys: String, CodingKey { case host, port, identity, persist }
 
     public init(host: String, port: Int? = nil, identity: String? = nil, persist: Int? = nil) {
@@ -20,23 +26,30 @@ public struct SFTPTarget: Sendable, Hashable, Codable {
         self.persist = persist
     }
 
-    public static func local(server: String = "/usr/libexec/sftp-server", persist: Int? = nil) -> SFTPTarget {
-        SFTPTarget(host: "localhost", port: nil, identity: nil, persist: persist, localServer: server)
+    /// `sudo`: a stand-in for the server's sudo (a script), which makes it a root target.
+    public static func local(server: String = "/usr/libexec/sftp-server", persist: Int? = nil, sudo: String? = nil,
+                             selinux: Bool = false) -> SFTPTarget {
+        var t = SFTPTarget(host: "localhost", persist: persist)
+        t.localServer = server
+        t.localSudo = sudo
+        t.sudo = sudo != nil
+        t.localSELinux = selinux
+        return t
+    }
+
+    /// The same server as root (a root panel), or as its user.
+    public func asRoot(_ root: Bool = true) -> SFTPTarget {
+        var t = self
+        t.sudo = root
+        return t
     }
 
     /// Same server, same account: what the two connect to, not how (key, how long the login lingers). Another alias
     /// of one machine still looks like another server — a move between them must not rely on this alone. No port
-    /// is whatever ~/.ssh/config says, not 22.
+    /// is whatever ~/.ssh/config says, not 22. Root and its user are two accounts: a copy between them goes through
+    /// this Mac, with each side's own rights.
     public func isSameServer(as o: SFTPTarget) -> Bool {
-        host == o.host && port == o.port && localServer == o.localServer
-    }
-
-    private init(host: String, port: Int?, identity: String?, persist: Int?, localServer: String?) {
-        self.host = host
-        self.port = port
-        self.identity = identity
-        self.persist = persist
-        self.localServer = localServer
+        host == o.host && port == o.port && localServer == o.localServer && sudo == o.sudo
     }
 
     /// Port and key, then the host. The key alone: not every other one the agent holds.
@@ -151,7 +164,7 @@ public enum SFTP {
     /// Waits for a login to `t` under way here (up to two minutes: a password prompt left open), then starts one.
     /// nil once `cancel` is set.
     public static func beginLogin(_ t: SFTPTarget, cancel: CancelFlag?) -> Login? {
-        let key = "\(t.host):\(t.port ?? 0):\(t.localServer ?? "")"   // isSameServer
+        let key = "\(t.host):\(t.port ?? 0):\(t.localServer ?? "")"   // isSameServer, root or not: one connection
         let deadline = Date().addingTimeInterval(120)
         loginCond.lock()
         defer { loginCond.unlock() }

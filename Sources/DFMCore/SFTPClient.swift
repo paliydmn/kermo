@@ -1,8 +1,8 @@
 import CryptoKit
 import Foundation
 
-/// SFTP v3 spoken directly over the system `ssh … -s sftp` (or, for `.local()` targets, `/usr/libexec/sftp-server`
-/// on pipes), for transfers that need what the `sftp` CLI can't give: per-file errors, conflicts, byte progress,
+/// SFTP v3 spoken directly over the system `ssh … -s sftp` (a root panel's: `ssh … sudo -n -- <sftp-server>`, see
+/// `SudoServer`; for `.local()` targets, `/usr/libexec/sftp-server` on pipes), for transfers that need what the `sftp` CLI can't give: per-file errors, conflicts, byte progress,
 /// pause and cancel. Login and connection sharing stay OpenSSH's (`SFTP.startMaster`, ControlMaster).
 ///
 /// Blocking calls, made by one worker thread at a time; a reader thread hands each response to its request.
@@ -58,7 +58,12 @@ public final class SFTPClient: @unchecked Sendable {
     public init(_ t: SFTPTarget, env: [String: String] = [:], cancel: CancelFlag? = nil) throws {
         target = t
         try SFTP.startMaster(t, env: env, cancel: cancel)
-        if let server = t.localServer {
+        if t.sudo {
+            let path = try SudoServer.prepare(t, env: env, cancel: cancel)
+            let (program, arguments) = SudoServer.launch(t, path: path)
+            process.executableURL = URL(fileURLWithPath: program)
+            process.arguments = arguments
+        } else if let server = t.localServer {
             process.executableURL = URL(fileURLWithPath: server)
         } else {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
@@ -105,6 +110,7 @@ public final class SFTPClient: @unchecked Sendable {
             while !r.atEnd { extensions[try r.text()] = try r.text() }
         } catch {
             close()   // else ssh and the reader thread stay forever
+            if t.sudo { SudoServer.forget(t) }
             throw error
         }
     }
