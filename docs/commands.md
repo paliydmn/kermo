@@ -31,7 +31,7 @@ Every substituted value is escaped for the shell. A command with `%D` doesn't ru
 
 ## User menu
 
-**F2** (⌥2) opens your menu of commands for the files under the cursor. **Kermo ▸ Edit User Menu…** opens `usermenu.json`, writing fourteen examples on first use (ten for this Mac, four for servers):
+**F2** (⌥2) opens your menu of commands for the files under the cursor. An entry runs as the command line does (table above): ↩, ⇧↩ and ⌘↩ choose where. **Kermo ▸ Edit User Menu…** opens `usermenu.json`, writing fourteen examples on first use (ten for this Mac, four for servers):
 
 ```json
 [

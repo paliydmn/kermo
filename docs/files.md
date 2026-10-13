@@ -66,7 +66,7 @@ A dialog asks. For files it shows size and date of both (**← newer** marks the
 
 ## Drag and drop
 
-Drag items to the other panel, onto a folder row or onto a sidebar place; files can also come in from Finder or go out to it or another app. Dragging a marked item takes all marks. A drop moves within one volume and copies to another; hold ⌥ to force a copy, ⌘ to force a move. Dropping into the folder the items are already in does nothing. On the ⌃O terminal a drop types paths instead ([Terminal](terminal.md)).
+Drag items to the other panel, onto a folder row or onto a sidebar place; files can also come in from Finder or go out to it or another app. Dragging a marked item takes all marks. A drop moves within one volume (or within one server) and copies to another volume or to another server; hold ⌥ to force a copy, ⌘ to force a move. Dropping into the folder the items are already in does nothing. On the ⌃O terminal a drop types paths instead ([Terminal](terminal.md)).
 
 ## Archives
 

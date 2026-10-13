@@ -10,6 +10,7 @@ You need macOS 14 or later and the Command Line Tools with Swift 6 or newer (`sw
 ./cert.sh                    # once: a local signing certificate
 ./build.sh                   # builds build/Kermo.app
 open build/Kermo.app
+cp -R build/Kermo.app /Applications/   # optional: install your build
 ```
 
 `./cert.sh` creates a self-signed certificate in your login keychain, so Full Disk Access and other permissions aren't reset after every rebuild. Without it `build.sh` signs ad hoc.
@@ -26,7 +27,7 @@ Use `./test.sh`, not `swift test`: it works around a Command Line Tools bug with
 
 ## Package
 
-`./package.sh` writes a universal `.pkg` and `.dmg` for Apple Silicon and Intel to `dist/`.
+`./package.sh` writes a universal `.pkg` and `.dmg` for Apple Silicon and Intel to `dist/`. To hand Kermo to someone, send the `.pkg`: opening it runs the standard macOS installer. It isn't notarized, so the recipient allows it on the first open, as in [Install Kermo](docs/install.md).
 
 ## Before you open a pull request
 
