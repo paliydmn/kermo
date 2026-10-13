@@ -1,8 +1,8 @@
 import CryptoKit
 import Foundation
 
-/// SFTP v3 spoken directly over the system `ssh … -s sftp` (or, for `.local()` targets, `/usr/libexec/sftp-server`
-/// on pipes), for transfers that need what the `sftp` CLI can't give: per-file errors, conflicts, byte progress,
+/// SFTP v3 spoken directly over the system `ssh … -s sftp` (a root panel's: `ssh … sudo -n -- <sftp-server>`, see
+/// `SudoServer`; for `.local()` targets, `/usr/libexec/sftp-server` on pipes), for transfers that need what the `sftp` CLI can't give: per-file errors, conflicts, byte progress,
 /// pause and cancel. Login and connection sharing stay OpenSSH's (`SFTP.startMaster`, ControlMaster).
 ///
 /// Blocking calls, made by one worker thread at a time; a reader thread hands each response to its request.
@@ -28,6 +28,9 @@ public final class SFTPClient: @unchecked Sendable {
     }
 
     public let target: SFTPTarget
+    /// A root session on a server with SELinux: `upload` writes into the file itself, never renames a new one over it —
+    /// the new one would have its folder's label, not the file's (`/etc/shadow` losing `shadow_t`).
+    public private(set) var writesInPlace = false
     /// Extensions the server announced (name → version).
     public private(set) var extensions: [String: String] = [:]
 
@@ -58,7 +61,13 @@ public final class SFTPClient: @unchecked Sendable {
     public init(_ t: SFTPTarget, env: [String: String] = [:], cancel: CancelFlag? = nil) throws {
         target = t
         try SFTP.startMaster(t, env: env, cancel: cancel)
-        if let server = t.localServer {
+        var sudoPath = "", sudoPassword: String?
+        if t.sudo {
+            (sudoPath, sudoPassword, writesInPlace) = try SudoServer.prepare(t, env: env, cancel: cancel)
+            let (program, arguments) = SudoServer.launch(t, path: sudoPath, password: sudoPassword != nil)
+            process.executableURL = URL(fileURLWithPath: program)
+            process.arguments = arguments
+        } else if let server = t.localServer {
             process.executableURL = URL(fileURLWithPath: server)
         } else {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
@@ -95,16 +104,31 @@ public final class SFTPClient: @unchecked Sendable {
         let previous = cancel?.onCancel { [self] in close() } ?? nil
         defer { cancel?.onCancel(previous) }
 
+        let late = CancelFlag()   // no answer to a password session: its sudo took the packet as well
         do {
             var hello = Packet(Self.INIT)
             hello.u32(3)
-            try send(hello)
+            // sudo reads the password line, then sftp-server the packet: one write, nothing between them.
+            try send(hello, after: sudoPassword.map { Data(($0 + "\n").utf8) } ?? Data())
+            if sudoPassword != nil {
+                DispatchQueue.global().asyncAfter(deadline: .now() + SudoServer.versionWait) { [weak self] in
+                    guard let self, isConnected, cond.withLock({ answers }) == 0 else { return }
+                    late.cancel()
+                    close()
+                }
+            }
             let (type, body) = try wait(0)
             var r = Reader(body)
             guard type == Self.VERSION, try r.u32() >= 3 else { throw protocolError("unexpected greeting") }
             while !r.atEnd { extensions[try r.text()] = try r.text() }
         } catch {
             close()   // else ssh and the reader thread stay forever
+            guard t.sudo else { throw error }
+            SudoServer.forget(t)   // sudoers changed since it was looked at, say: looked at again next time
+            if late.isCancelled { throw SudoServer.noStdinPassword(t, path: sudoPath) }
+            if !(error is CancellationError), cancel?.isCancelled != true, let why = SudoServer.explain(t, path: sudoPath, errors.text) {
+                throw SFTPError(message: why, connection: true)
+            }
             throw error
         }
     }
@@ -704,8 +728,9 @@ public final class SFTPClient: @unchecked Sendable {
 
     // MARK: - Wire
 
+    /// `after`: bytes that go first, in the same write (a password line for sudo, before INIT).
     @discardableResult
-    func send(_ p: Packet) throws -> UInt32 {
+    func send(_ p: Packet, after prefix: Data = Data()) throws -> UInt32 {
         var p = p
         let id: UInt32 = cond.withLock {
             defer { nextID &+= 1; if nextID == 0 { nextID = 1 } }
@@ -714,7 +739,7 @@ public final class SFTPClient: @unchecked Sendable {
         if p.type != Self.INIT { p.setID(id) }
         lastSent = id
         guard isConnected else { throw lostError() }
-        var out = Data()
+        var out = prefix
         withUnsafeBytes(of: UInt32(p.body.count).bigEndian) { out.append(contentsOf: $0) }
         out.append(p.body)
         let ok = out.withUnsafeBytes { buf -> Bool in
@@ -981,8 +1006,8 @@ extension SFTPClient {
 
     /// Puts the local file in place of `remote`. First all of it into a partial file next to it, so a dropped
     /// connection never leaves a cut-off config; then renamed over it — or, if that would change the owner
-    /// (someone else's file) or `remote` is a symlink, copied into it on the server, which keeps owner, mode and
-    /// links. Throws `ChangedOnServer` if the server's copy isn't `baseline` any more, unless `force`.
+    /// (someone else's file), `remote` is a symlink or the session `writesInPlace`, copied into it on the server, which
+    /// keeps owner, mode, links and SELinux label. Throws `ChangedOnServer` if the server's copy isn't `baseline` any more, unless `force`.
     /// Returns the new attributes (the next baseline).
     /// `cancel` stops it (CancellationError) and removes the partial file, over a slow link too (`closeWhenQuiet`).
     /// `replaced` gets the file it replaced, once it's in place: its attributes, and its bytes up to
@@ -1033,7 +1058,7 @@ extension SFTPClient {
         }
         do {
             let mine = try lstat(partial)
-            if let cur, entry?.kind == .link || cur.uid == nil || cur.uid != mine?.uid || cur.gid != mine?.gid {
+            if let cur, writesInPlace || entry?.kind == .link || cur.uid == nil || cur.uid != mine?.uid || cur.gid != mine?.gid {
                 if canCopyData {
                     try copyData(partial, to: remote, offset: 0, length: 0)
                 } else {

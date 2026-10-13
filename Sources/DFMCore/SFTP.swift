@@ -9,8 +9,14 @@ public struct SFTPTarget: Sendable, Hashable, Codable {
     /// Seconds the shared connection outlives its last session (nil = 600). Anyone running as this user can ride
     /// on it without logging in, so a locked server keeps it short.
     public let persist: Int?
+    /// A root panel's: the server's sftp-server run through its `sudo` (`SudoServer`), on the same connection.
+    /// Never decoded either: whatever is pasted, dropped or restored opens a server as its user, never as root.
+    public private(set) var sudo = false
     /// Tests only. Never decoded: a pasteboard item or saved state naming a local program to run must not work.
     private(set) var localServer: String? = nil
+    /// Tests only, never decoded: the stand-in `sudo` a root `.local()` target runs, and whether it says SELinux is on.
+    private(set) var localSudo: String? = nil
+    private(set) var localSELinux = false
     private enum CodingKeys: String, CodingKey { case host, port, identity, persist }
 
     public init(host: String, port: Int? = nil, identity: String? = nil, persist: Int? = nil) {
@@ -20,23 +26,30 @@ public struct SFTPTarget: Sendable, Hashable, Codable {
         self.persist = persist
     }
 
-    public static func local(server: String = "/usr/libexec/sftp-server", persist: Int? = nil) -> SFTPTarget {
-        SFTPTarget(host: "localhost", port: nil, identity: nil, persist: persist, localServer: server)
+    /// `sudo`: a stand-in for the server's sudo (a script), which makes it a root target.
+    public static func local(server: String = "/usr/libexec/sftp-server", persist: Int? = nil, sudo: String? = nil,
+                             selinux: Bool = false) -> SFTPTarget {
+        var t = SFTPTarget(host: "localhost", persist: persist)
+        t.localServer = server
+        t.localSudo = sudo
+        t.sudo = sudo != nil
+        t.localSELinux = selinux
+        return t
+    }
+
+    /// The same server as root (a root panel), or as its user.
+    public func asRoot(_ root: Bool = true) -> SFTPTarget {
+        var t = self
+        t.sudo = root
+        return t
     }
 
     /// Same server, same account: what the two connect to, not how (key, how long the login lingers). Another alias
     /// of one machine still looks like another server — a move between them must not rely on this alone. No port
-    /// is whatever ~/.ssh/config says, not 22.
+    /// is whatever ~/.ssh/config says, not 22. Root and its user are two accounts: a copy between them goes through
+    /// this Mac, with each side's own rights.
     public func isSameServer(as o: SFTPTarget) -> Bool {
-        host == o.host && port == o.port && localServer == o.localServer
-    }
-
-    private init(host: String, port: Int?, identity: String?, persist: Int?, localServer: String?) {
-        self.host = host
-        self.port = port
-        self.identity = identity
-        self.persist = persist
-        self.localServer = localServer
+        host == o.host && port == o.port && localServer == o.localServer && sudo == o.sudo
     }
 
     /// Port and key, then the host. The key alone: not every other one the agent holds.
@@ -151,7 +164,7 @@ public enum SFTP {
     /// Waits for a login to `t` under way here (up to two minutes: a password prompt left open), then starts one.
     /// nil once `cancel` is set.
     public static func beginLogin(_ t: SFTPTarget, cancel: CancelFlag?) -> Login? {
-        let key = "\(t.host):\(t.port ?? 0):\(t.localServer ?? "")"   // isSameServer
+        let key = "\(t.host):\(t.port ?? 0):\(t.localServer ?? "")"   // isSameServer, root or not: one connection
         let deadline = Date().addingTimeInterval(120)
         loginCond.lock()
         defer { loginCond.unlock() }
@@ -187,6 +200,12 @@ public enum SFTP {
     /// A saved password for the target, if any (the app's Keychain). Set once at launch; called off the main thread,
     /// only when a login is due.
     nonisolated(unsafe) public static var password: (@Sendable (SFTPTarget) -> String?)?
+
+    /// A root panel's sudo password, when its server's sudo wants one (`SudoServer`): saved or asked for; `wrong`: the
+    /// one given before was refused. nil: none given. Set once at launch; called off the main thread, one at a time.
+    nonisolated(unsafe) public static var sudoPassword: (@Sendable (SFTPTarget, _ wrong: Bool) -> String?)?
+    /// That sudo took it (worth keeping).
+    nonisolated(unsafe) public static var sudoPasswordTaken: (@Sendable (SFTPTarget, String) -> Void)?
 
     /// Runs `login` with the target's saved password waiting for the askpass script in a FIFO ($DFM_ASKPASS_FIFO):
     /// not an environment variable (those show in `ps eww`), not a file. Read once, then gone, so a wrong password's
@@ -282,8 +301,8 @@ public enum SFTP {
 
     /// One SFTP session for `body` (or the `kept` one). Cancelled, it throws CancellationError, not the "connection
     /// closed" of the session the cancel closed (the panel tells those apart).
-    private static func session<T>(_ t: SFTPTarget, env: [String: String], cancel: CancelFlag?, on kept: KeptSession?,
-                                   _ body: (SFTPClient) throws -> T) throws -> T {
+    public static func session<T>(_ t: SFTPTarget, env: [String: String], cancel: CancelFlag?, on kept: KeptSession?,
+                                  _ body: (SFTPClient) throws -> T) throws -> T {
         let flag = cancel ?? CancelFlag()
         do {
             if let kept { return try kept.run(env: env, cancel: flag, body) }
@@ -353,20 +372,40 @@ public enum SSHCommand {
 
     /// Runs `command` on the server without a terminal (its login shell parses it), handing stdout over as it
     /// arrives; the test target (`.local()`) runs it here with /bin/sh. Returns the exit status and stderr.
+    /// `stdin`: what the command reads, then end of file (a secret goes this way: never in its command line); none
+    /// by default. `options`: ssh's, before the host.
     public static func run(_ t: SFTPTarget, _ command: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
-                           onOutput: (Data) -> Void) throws -> (status: Int32, errors: String) {
+                           options: [String] = [], stdin: Data? = nil, onOutput: (Data) -> Void) throws -> (status: Int32, errors: String) {
         try SFTP.startMaster(t, env: env, cancel: cancel)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: t.localServer == nil ? "/usr/bin/ssh" : "/bin/sh")
-        p.arguments = t.localServer == nil ? arguments(t, command: command, tty: false) : ["-c", command]
+        p.arguments = t.localServer == nil ? SFTP.connectionOptions(t) + options + ["-T"] + t.arguments() + [command] : ["-c", command]
         p.environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
-        let out = Pipe(), err = Pipe()
-        p.standardInput = FileHandle.nullDevice
+        let out = Pipe(), err = Pipe(), input = stdin.map { _ in Pipe() }
+        p.standardInput = input ?? FileHandle.nullDevice
         p.standardOutput = out
         p.standardError = err
         try p.run()
         try? out.fileHandleForWriting.close()   // our copies: else EOF never comes
         try? err.fileHandleForWriting.close()
+        if let input, let stdin {
+            try? input.fileHandleForReading.close()
+            let fd = input.fileHandleForWriting.fileDescriptor
+            _ = fcntl(fd, F_SETNOSIGPIPE, 1)   // a command that doesn't read it all: EPIPE, not a killed app
+            // On a thread of its own: more than a pipe holds waits for the command, which may wait for us to read.
+            Thread {
+                stdin.withUnsafeBytes { b in
+                    var off = 0
+                    while off < b.count {
+                        let n = Darwin.write(fd, b.baseAddress! + off, b.count - off)
+                        if n < 0 && errno == EINTR { continue }
+                        if n <= 0 { break }
+                        off += n
+                    }
+                }
+                try? input.fileHandleForWriting.close()
+            }.start()
+        }
         let previous = cancel?.onCancel { p.terminate() } ?? nil
         defer { cancel?.onCancel(previous) }
         nonisolated(unsafe) var errData = Data()
@@ -387,9 +426,10 @@ public enum SSHCommand {
     }
 
     /// `run`'s whole output; a failure throws what it said.
-    public static func capture(_ t: SFTPTarget, _ command: String, env: [String: String] = [:], cancel: CancelFlag? = nil) throws -> String {
+    public static func capture(_ t: SFTPTarget, _ command: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
+                               stdin: Data? = nil) throws -> String {
         var out = Data()
-        let (status, errors) = try run(t, command, env: env, cancel: cancel) { out += $0 }
+        let (status, errors) = try run(t, command, env: env, cancel: cancel, stdin: stdin) { out += $0 }
         guard status == 0 else { throw SFTPError(message: errors.isEmpty ? "“\(command)” failed (exit \(status))" : errors) }
         return String(decoding: out, as: UTF8.self)
     }

@@ -209,6 +209,8 @@ extension AppDelegate {
         cmd("admin.mkdir", "New Folder as Administrator…", [], menu: "Admin", aliases: "root sudo") { $0.adminMkdir() },
         cmd("admin.delete", "Delete as Administrator…", [], menu: "Admin", aliases: "root sudo rm") { $0.adminDelete() },
         cmd("admin.shell", "Root Shell Here (Terminal)", [], menu: "Admin", aliases: "root sudo") { $0.runShell("sudo -s", in: .terminalApp) },
+        cmd("admin.rootPanel", "Reopen Panel as Root", ["ctrl+cmd+r"], menu: "Admin", short: "As root", aliases: "root sudo server etc") { $0.reopenPanel(asRoot: true) },
+        cmd("admin.userPanel", "Reopen Panel as User", ["ctrl+shift+cmd+r"], menu: "Admin", short: "As user", aliases: "root sudo server user") { $0.reopenPanel(asRoot: false) },
 
         // Clipboard
         cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", short: "Copy path", aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetURLs.map(\.path)) },
@@ -281,6 +283,15 @@ extension AppDelegate {
             do { try FinderTags.write(u.path, change(FinderTags.read(u.path), first)); return nil }
             catch { return "“\(u.lastPathComponent)”: \(error.localizedDescription)" }
         }
+    }
+
+    /// The server panel's folder again as root (its sudo there: `SFTPTarget.sudo`), or as its user. Only ever on purpose:
+    /// nothing pasted, dropped or restored opens one as root. A locked server asks as for any connection.
+    func reopenPanel(asRoot: Bool) {
+        let panel = active
+        guard let r = panel.remote else { return panel.flash("Reopen Panel as \(asRoot ? "Root" : "User") is for a server's panel: connect first (⌃⌘K)") }
+        guard r.target.sudo != asRoot else { return panel.flash(asRoot ? "This panel is root already — ⌃⇧⌘R reopens it as the user" : "This panel is its user's already — ⌃⌘R reopens it as root") }
+        panel.loadRemote(r.target.asRoot(asRoot), dir: r.dir, select: panel.currentName)
     }
 
     /// Symlinks the bundled `fm` script into /usr/local/bin (asks for a password if that folder is root's).
@@ -371,7 +382,7 @@ extension AppDelegate {
     /// The active panel's folder and names — a server's, on a server panel (never the local folder hidden behind it).
     var shellContext: ShellContext {
         if let r = active.remote {
-            return ShellContext(dir: r.dir, otherDir: other.remote?.target == r.target ? other.remote?.dir : nil,
+            return ShellContext(dir: r.dir, otherDir: other.remote?.target.asUser == r.target.asUser ? other.remote?.dir : nil,
                                 cursor: active.remoteCursor?.item.name, targets: active.remoteSelection?.items.map(\.name) ?? [])
         }
         return ShellContext(dir: active.path, otherDir: other.remote == nil ? other.path : nil, cursor: active.cursorURL?.lastPathComponent,
@@ -396,7 +407,7 @@ extension AppDelegate {
                 let login = await Blocking.run { Result { try SFTP.startMaster(r.target, env: env) } }
                 if case .failure(let e) = login { return showError(e) }
                 Shell.run(expanded, on: r.target, in: r.dir) { [weak self] _ in
-                    for p in self?.panels ?? [] where p.remote?.target == r.target { p.reload() }
+                    for p in self?.panels ?? [] where p.remote?.target.asUser == r.target.asUser { p.reload() }
                 }
             }
             return
@@ -826,11 +837,13 @@ extension AppDelegate {
         }
     }
 
-    /// The saved password is never shown, only replaced or forgotten (see `storePassword`).
+    /// The saved password is never shown, only replaced or forgotten (see `storePassword`); so is a root panel's sudo
+    /// password saved there ("Save in Keychain" in its sheet), which can only be forgotten here.
     private func showServerSheet(_ server: SavedServer, title: String, connect: ServerSession.Kind,
-                                 problem: String = "", password: String = "", forget: Bool = false) {
+                                 problem: String = "", password: String = "", forget: Bool = false, forgetSudo: Bool = false) {
         let saved = savedServers.contains { $0.id == server.id }
         let hasPassword = !server.host.isEmpty && SSHPasswords.has(server.target)
+        let hasSudo = !server.host.isEmpty && SSHPasswords.has(server.target, sudo: true)
         let fields: [(String, String, String)] = [
             ("Name", server.name, "shown in the sidebar; empty = the address"),
             ("Host", server.host, "address or ~/.ssh/config host"),
@@ -863,7 +876,11 @@ extension AppDelegate {
         lock.state = server.locked ? .on : .off
         let forgetBox = NSButton(checkboxWithTitle: "Forget the saved password", target: nil, action: nil)
         forgetBox.state = forget ? .on : .off
-        let extra: [[NSView]] = (hasPassword ? [[NSGridCell.emptyContentView, forgetBox]] : []) + [[NSGridCell.emptyContentView, lock]]
+        let forgetSudoBox = NSButton(checkboxWithTitle: "Forget the saved sudo password", target: nil, action: nil)
+        forgetSudoBox.toolTip = "The one a root panel saved in the Keychain (“Kermo sudo”); the next root panel asks again"
+        forgetSudoBox.state = forgetSudo ? .on : .off
+        let extra: [[NSView]] = (hasPassword ? [[NSGridCell.emptyContentView, forgetBox]] : [])
+            + (hasSudo ? [[NSGridCell.emptyContentView, forgetSudoBox]] : []) + [[NSGridCell.emptyContentView, lock]]
         let grid = NSGridView(views: zip(fields, inputs).map { [NSTextField(labelWithString: $0.0 + ":"), $1 === keyField ? keyRow : $1] } + extra)
         grid.column(at: 0).xPlacement = .trailing
         grid.rowAlignment = .firstBaseline
@@ -895,16 +912,16 @@ extension AppDelegate {
             let password = inputs[5].stringValue   // as typed: spaces count
             s.startDir = v[6].isEmpty ? nil : v[6]
             s.locked = lock.state == .on
-            let forget = hasPassword && forgetBox.state == .on
+            let forget = hasPassword && forgetBox.state == .on, forgetSudo = hasSudo && forgetSudoBox.state == .on
             if let p = s.problem {   // after this sheet is gone
                 return DispatchQueue.main.async {
-                    self.showServerSheet(s, title: title, connect: connect, problem: p, password: password, forget: forget)
+                    self.showServerSheet(s, title: title, connect: connect, problem: p, password: password, forget: forget, forgetSudo: forgetSudo)
                 }
             }
             let old = savedServers.first { $0.id == s.id }
             if let i = savedServers.firstIndex(where: { $0.id == s.id }) { savedServers[i] = s } else { savedServers.append(s) }
             Config.save("servers.json", savedServers)
-            let status = storePassword(old: old, new: s, typed: password, forget: forget)
+            let status = storePassword(old: old, new: s, typed: password, forget: forget, forgetSudo: forgetSudo)
             if status != errSecSuccess {
                 showError(JobErrorMessage("Couldn't save the password in the Keychain: \(SecCopyErrorMessageString(status, nil) as String? ?? "error \(status)")"))
             }
@@ -915,10 +932,16 @@ extension AppDelegate {
 
     /// A password never follows an address change: Edit could otherwise hand it to whatever server was typed in.
     /// Typed: saved for the (new) address. Forget: removed — only where it was (a moved server's new address may hold
-    /// another one's). Nothing typed: whatever that address has stays.
+    /// another one's). Nothing typed: whatever that address has stays. `forgetSudo`: the sudo password saved where it was
+    /// goes, from memory too.
     @discardableResult
-    func storePassword(old: SavedServer?, new s: SavedServer, typed: String, forget: Bool) -> OSStatus {
+    func storePassword(old: SavedServer?, new s: SavedServer, typed: String, forget: Bool, forgetSudo: Bool = false) -> OSStatus {
         let moved = old.map { !SSHPasswords.sameKey($0.target, s.target) } ?? false
+        if forgetSudo {
+            let at = (old ?? s).target
+            SSHPasswords.set(nil, for: at, sudo: true)
+            SudoPasswords.forget(SudoPasswords.key(at))
+        }
         if let old, moved { forgetPassword(old) }
         if !typed.isEmpty { return SSHPasswords.set(typed, for: s.target) }
         return forget && !moved ? SSHPasswords.set(nil, for: s.target) : errSecSuccess
@@ -927,7 +950,7 @@ extension AppDelegate {
     func deleteServer(_ s: SavedServer) {
         Task {
             guard await ServerLock.authorize(s, "delete") else { return }
-            let info = "Its saved password too. Open sessions stay open.", history = historyToDelete(with: s)
+            let info = "Its saved passwords too. Open sessions stay open.", history = historyToDelete(with: s)
             let answer = history == nil ? await confirm("Delete “\(s.title)”?", info: info, ok: "Delete") ? 0 : 2
                 : await choose("Delete “\(s.title)”?", info: info + " Its file history — the versions its saves kept on this Mac — can go too.",
                                ["Delete", "Delete with File History", "Cancel"])
@@ -966,9 +989,11 @@ extension AppDelegate {
         Config.save("server-pins.json", serverPins)
     }
 
-    /// Keeps a password another saved server still logs in with.
+    /// Keeps a password another saved server still logs in with. Its sudo password (root panels) goes with it.
     private func forgetPassword(_ s: SavedServer) {
-        if !savedServers.contains(where: { SSHPasswords.sameKey($0.target, s.target) }) { SSHPasswords.set(nil, for: s.target) }
+        guard !savedServers.contains(where: { SSHPasswords.sameKey($0.target, s.target) }) else { return }
+        SSHPasswords.set(nil, for: s.target)
+        SSHPasswords.set(nil, for: s.target, sudo: true)
     }
 
     func connect(_ input: String, newTab: Bool = false, panel: PanelViewController? = nil) {
@@ -1087,18 +1112,19 @@ extension AppDelegate {
         let env = SSHAskpass.env, baseline = state.baseline, history = serverHistory
         // No panel of its own: the one showing that server (else the active one) says it's saving; ⎋ there cancels.
         let panel = panels.first { $0.remote?.target == target } ?? active
+        let kept = Self.keptSession(of: target, in: panels)
         let r = await panel.busy("Saving “\(name)” to \(target.host)…") { flag in
-            let c = try SFTPClient(target, env: env, cancel: flag)
-            defer { c.close() }
-            var note: String?
-            let keep: ((SFTPClient.Attrs, Data?) -> Void)? = history.map { h in { note = h.keep($1, $0, of: target, remotePath) } }
-            let attrs = try c.upload(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, replaced: keep)
-            return (attrs, note)
+            try SFTP.session(target, env: env, cancel: flag, on: kept) { c in
+                var note: String?
+                let keep: ((SFTPClient.Attrs, Data?) -> Void)? = history.map { h in { note = h.keep($1, $0, of: target, remotePath) } }
+                let attrs = try c.upload(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, replaced: keep)
+                return (attrs, note)
+            }
         }
         switch r {
         case .success(let (attrs, note)):
             state.baseline = attrs
-            for p in panels where p.remote?.target == target { p.reload() }
+            for p in panels where p.remote?.target.asUser == target.asUser { p.reload() }   // root's or user's: one server
             if let note {
                 let said = "Saved “\(name)” to \(target.host) · no history: \(note)"
                 panel.flash(said)
@@ -1125,6 +1151,14 @@ extension AppDelegate {
         case .failure(let e):
             return notSaved(saved, to: target, e)
         }
+    }
+
+    /// The session a save to `target` goes over: that of a panel showing it, if one does — no ssh start and handshake
+    /// of its own, and from a root panel no second sudo (where sudo wants a password, the look and the check before
+    /// each new session). The panel's listings wait for it meanwhile; its status line says it's saving. Else nil: a
+    /// session of its own.
+    static func keptSession(of target: SFTPTarget, in panels: [PanelViewController]) -> KeptSession? {
+        panels.first { $0.remote?.target == target && $0.kept?.target == target }?.kept
     }
 
     /// Server File History…: the versions saves replaced (`ServerHistory`) of the server file in the key editor, or under
@@ -1206,7 +1240,7 @@ extension AppDelegate {
         Task {
             let r = await active.busy("\(title) on \(target.host)…") { flag in try SFTPClient.session(target, env: env, cancel: flag, op) }
             if case .failure(let e) = r, !(e is CancellationError) { showError(JobErrorMessage("\(title): \(e.localizedDescription)")) }
-            for p in panels where p.remote?.target == target { p.reload(select: select) }
+            for p in panels where p.remote?.target.asUser == target.asUser { p.reload(select: select) }
         }
     }
 
@@ -1398,7 +1432,7 @@ extension AppDelegate {
             guard let keep = await keepExisting(clashes, in: DirSync.place(.sftp(target), dest)) else { return }
             Shell.run(RemoteArchive.extractCommand(file, to: dest, keep: keep), on: target, in: dir,
                       title: "Extract “\((item.name as NSString).lastPathComponent)” → \(dest) on \(target.host)") { [weak self] _ in
-                for p in self?.panels ?? [] where p.remote?.target == target { p.reload() }
+                for p in self?.panels ?? [] where p.remote?.target.asUser == target.asUser { p.reload() }
             }
         }
     }
@@ -2245,7 +2279,9 @@ extension AppDelegate {
 
     func jobFinished(_ job: FileJob) {
         // Local panels follow the disk (FSEvents); a server panel has to ask again.
-        for p in panels { if let r = p.remote, [job.from, job.to].contains(.sftp(r.target)) { p.reload() } }
+        for p in panels {
+            if let r = p.remote, [job.from, job.to].contains(where: { if case .sftp(let t) = $0 { t.asUser == r.target.asUser } else { false } }) { p.reload() }
+        }
         if job.from == .local, job.kind != .copy { forgetGone(job.sources) }   // F6, F8, Trash
         let pairs = job.results.map { (from: $0.src, to: $0.dst) }   // empty for a server: no undo there
         // An undo/redo's own job: performMoves registered what comes next already.

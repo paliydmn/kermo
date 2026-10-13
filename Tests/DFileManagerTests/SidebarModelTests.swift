@@ -17,8 +17,8 @@ import Testing
 
 @Test @MainActor func sidebarKeyHasItsOwnLayer() {
     let l = KeyBarModel.layers(AppDelegate().makeCommands()).first { $0.mods == [.control, .command] }
-    #expect(l?.slots.map(\.key) == ["⌃⌘K", "⌃⌘S"])
-    #expect(l?.slots.map(\.id) == ["go.connect", "view.sidebar"])   // SFTP sits next to the sidebar; ⌘K is SSH
+    #expect(l?.slots.map(\.key) == ["⌃⌘K", "⌃⌘S", "⌃⌘R"])
+    #expect(l?.slots.map(\.id) == ["go.connect", "view.sidebar", "admin.rootPanel"])   // SFTP sits next to the sidebar; ⌘K is SSH; then the root panel
 }
 
 @Test func sidebarSectionsFromAppData() {

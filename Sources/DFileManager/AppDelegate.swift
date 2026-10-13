@@ -51,6 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationDidFinishLaunching(_ notification: Notification) {
         applyConfig(reportProblems: false)
         SFTP.password = { SSHPasswords.get($0) }
+        SFTP.sudoPassword = { SudoPasswords.password($0, wrong: $1) }
+        SFTP.sudoPasswordTaken = { SudoPasswords.taken($0, $1) }
         ServerLock.servers = { [unowned self] in savedServers }
         ServerCopies.upload = { [unowned self] c in await upload(c.url, to: c.path, on: c.target, c.state) }
         ServerLock.relockOnScreenLockAndSleep()
@@ -583,6 +585,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func disconnectNow(_ key: String) async {
+        SudoPasswords.forget(key)
         // First: an SSH tab ending or the last file tab closing lets releaseIdleServers end it only gently (`-O stop`).
         await Masters.stop(now: true) { ServerRow.key($0) == key }
         // Its SSH tabs' ssh too: a master stopped after a wake or a network change is no longer known, nor reachable by
@@ -607,12 +610,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// Connects, and keeps the server among the latest (a locked one isn't remembered; see `remember`).
-    /// `dir`: SFTP in that folder instead of the saved server's start folder.
-    func openServer(_ r: ServerRow, _ kind: ServerSession.Kind, newTab: Bool = false, panel: PanelViewController? = nil, dir: String? = nil) {
+    /// `dir`: SFTP in that folder instead of the saved server's start folder. `root`: SFTP through its sudo.
+    func openServer(_ r: ServerRow, _ kind: ServerSession.Kind, newTab: Bool = false, panel: PanelViewController? = nil, dir: String? = nil,
+                    root: Bool = false) {
         remember(r.address)
         refreshSidebar()
         if kind == .ssh { return openSSH(r.target) }
-        openSFTP(r.target, dir: dir ?? r.saved?.startDir, title: r.title, newTab: newTab, panel: panel)
+        openSFTP(r.target.asRoot(root), dir: dir ?? r.saved?.startDir, title: r.title, newTab: newTab, panel: panel)
     }
 
     private func serverMenu(_ place: Place) -> [NSMenuItem] {
@@ -629,6 +633,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             MenuAction.item("Open SFTP") { [unowned self] in openServer(r, .sftp) },
             MenuAction.item("Open SFTP in New Tab") { [unowned self] in openServer(r, .sftp, newTab: true) },
             MenuAction.item("Open SFTP in Other Panel") { [unowned self] in openServer(r, .sftp, panel: other) },
+            MenuAction.item("Open SFTP as Root") { [unowned self] in openServer(r, .sftp, root: true) },
             r.sessions.isEmpty ? nil : MenuAction.item("Close All Sessions") { [unowned self] in r.sessions.forEach(closeSession) },
             r.sessions.isEmpty && !SFTP.masterTargets.contains { ServerRow.key($0) == r.key } ? nil
                 : MenuAction.item("Disconnect") { [unowned self] in disconnect(r.target) },
@@ -736,7 +741,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if let v = terminal.showPassingCtrlO(NSApp.currentEvent) { window.makeFirstResponder(v); return }
             // A server panel: its SSH session (or a new one in this folder), never a local shell.
             guard let r = active.remote else { window.makeFirstResponder(terminal.show(cwd: active.path)); return }
-            if let t = terminal.tabs.first(where: { $0.kind == .ssh(r.target) && $0.isRunning }) { terminal.select(t.id) }
+            if let t = terminal.tabs.first(where: { $0.kind == .ssh(r.target.asUser) && $0.isRunning }) { terminal.select(t.id) }
             else { terminal.newSSH(r.target, command: SSHCommand.shell(in: r.dir)) }
             window.makeFirstResponder(terminal.show())
         }
@@ -867,7 +872,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         promptLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         promptLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 360).isActive = true
         cmdField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        cmdField.placeholderString = "⌘E: shell command in this folder · %f %s %d %D · ↩ run in the shell · ⇧↩ output window · ⌘↩ in Terminal · ↑↓ history"
+        cmdField.placeholderString = Self.commandHint(root: nil)
         cmdField.isBordered = false
         cmdField.drawsBackground = false
         cmdField.focusRingType = .none
@@ -974,6 +979,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// One check per folder at a time: on a share that stopped answering, each Tab or tab switch would hold one more thread.
     private static let folderChecks = Coalesced<Bool>()
 
+    /// The command line's placeholder. On a root panel it says whose shell ⌘E runs in: the user's, not root's.
+    static func commandHint(root: SFTPTarget?) -> String {
+        let user = root.map { t in t.host.lastIndex(of: "@").map { String(t.host[..<$0]) } ?? "your user" }
+        return "⌘E: shell command in this folder" + (user.map { " as \($0), not root" } ?? "")
+            + " · %f %s %d %D · ↩ run in the shell · ⇧↩ output window · ⌘↩ in Terminal · ↑↓ history"
+    }
+
     private func updatePrompt() {
         guard panels.indices.contains(activeIndex) else { return }
         cmdField.isHidden = terminal?.isShown == true   // ⌘E doesn't work under the terminal; the prompt label stays (host:cwd of an SSH tab)
@@ -983,9 +995,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if terminal?.isShown == true, let t = terminal.current { remote = t.host.map { ($0, t.cwd) }; local = t.folder ?? local }
         else { remote = active.remote.map { ($0.target.host, $0.dir) } }
         let path = remote.map { r in r.dir.map { "\(r.host):\($0)" } ?? r.host } ?? (local as NSString).abbreviatingWithTildeInPath
-        promptLabel.stringValue = (remote != nil ? "🌐 " : "") + path + " $"
+        promptLabel.stringValue = (remote != nil ? "🌐 " : "") + path + " $"   // ⌘E runs as the user, on a root panel too
+        let root = terminal?.isShown == true ? nil : active.remote.flatMap { $0.target.sudo ? $0 : nil }
+        cmdField.placeholderString = Self.commandHint(root: root?.target)
         sidebar.highlight(sidebarKey)
-        window?.title = path.bidiVisible
+        window?.title = root.map { "\($0.target.shown):\($0.dir) #" }?.bidiVisible ?? path.bidiVisible   // what the panel's header says
         guard remote == nil else { window?.representedURL = nil; return }
         let dir = active.path   // proxy icon, once the folder is known to be there (asked off the main thread)
         Task {
@@ -1074,6 +1088,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         window.makeFirstResponder(active.table)
         return response == .alertFirstButtonReturn ? field.stringValue : nil
+    }
+
+    /// A root panel's sudo password for `t`'s server: a sheet on the window in front (an editor saving, say), never shown
+    /// again or kept anywhere but `SudoPasswords` (and the Keychain, if ticked). `wrong`: sudo refused the one before.
+    func askSudoPassword(_ t: SFTPTarget, wrong: Bool) async -> (password: String, save: Bool)? {
+        let alert = NSAlert()
+        alert.messageText = (wrong ? "Sorry, try again: " : "") + "sudo password on \(t.host)"
+        alert.informativeText = "To open its files as root. It goes to sudo there, through ssh, and nowhere else."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSSecureTextField(string: "")
+        field.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        let save = NSButton(checkboxWithTitle: "Save in Keychain", target: nil, action: nil)
+        save.toolTip = "Kept as “Kermo sudo” in the login keychain, apart from the ssh password; gone once sudo refuses it, or with the saved server"
+        let stack = NSStackView(views: [field, save])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.frame = NSRect(x: 0, y: 0, width: 300, height: 52)
+        alert.accessoryView = stack
+        alert.window.initialFirstResponder = field
+        if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }
+        let over: NSWindow = NSApp.keyWindow.flatMap { $0 is NSPanel ? nil : $0 } ?? window
+        let response: NSApplication.ModalResponse = await withCheckedContinuation { cont in
+            alert.beginSheetModal(for: over) { cont.resume(returning: $0) }
+        }
+        return response == .alertFirstButtonReturn ? (field.stringValue, save.state == .on) : nil
     }
 
     /// A sheet with `buttons` (the last one is Cancel / ⎋) on `sheetWindow` (default: the main one); returns the index pressed.

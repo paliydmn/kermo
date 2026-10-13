@@ -16,12 +16,15 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// With 3+ panels: this is where F5/F6 from the active panel go.
     var isTarget = false { didSet { styleHeader() } }
 
-    /// The active panel: framed, its path bar filled, both in the theme's accent.
+    /// The active panel: framed, its path bar filled, both in the theme's accent. A root panel's in orange instead (red on
+    /// a production server), its path in that color while inactive too.
     private func styleHeader() {
-        pathField.backgroundColor = isActive ? theme.accent : .clear
-        pathField.textColor = isActive ? theme.onAccent : isTarget ? theme.accent : theme.hidden
+        let root = remote.map { $0.target.sudo ? SavedServer.isProd($0.target) ? NSColor.systemRed : .systemOrange : nil } ?? nil
+        let tint = root ?? theme.accent
+        pathField.backgroundColor = isActive ? tint : .clear
+        pathField.textColor = isActive ? theme.onAccent : isTarget || root != nil ? tint : theme.hidden
         viewIfLoaded?.layer?.borderWidth = isActive ? Self.frameWidth : 0
-        viewIfLoaded?.layer?.borderColor = theme.accent.cgColor
+        viewIfLoaded?.layer?.borderColor = tint.cgColor
     }
     private static let frameWidth: CGFloat = 2
     var onFocus: (() -> Void)?
@@ -116,6 +119,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// Browsing an SFTP server. `path` stays the local folder the panel returns to.
     private(set) var remote: (target: SFTPTarget, dir: String)? {
         didSet {
+            if oldValue?.target.sudo == true || remote?.target.sudo == true { styleHeader() }   // a root panel's colors come and go
             if let k = kept, k.target != remote?.target { k.close(); kept = nil }   // left that server (another tab too)
             guard oldValue?.target != remote?.target || oldValue?.dir != remote?.dir else { return }
             stopPreview()
@@ -174,7 +178,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private func url(of item: FileItem) -> URL {
         URL(fileURLWithPath: (path as NSString).appendingPathComponent(item.name), isDirectory: item.kind == .dir)
     }
-    private var currentName: String? {
+    var currentName: String? {
         let r = table.selectedRow
         return r >= 0 && r < table.numberOfRows ? item(at: r)?.name : nil
     }
@@ -652,7 +656,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         // A message just flashed stays its time through a re-list, a git status or a folder size coming in.
         if let f = flashed, f.until > Date() { statusError = f.error; return statusLabel.stringValue = f.text }
         var s = Self.countText(rows.count, "items", totalSize) + " · \(freeSpace) free"
-        if let r = remote { s = "🌐 sftp · \(r.target.host) · " + Self.countText(rows.count, "items", 0) }   // marks: below, as anywhere
+        if let r = remote { s = "\(r.target.sudo ? "#" : "🌐") sftp · \(r.target.shown) · " + Self.countText(rows.count, "items", 0) }   // marks: below, as anywhere
         if let g = git {
             s += " · ⎇ \(g.branch)" + (g.ahead > 0 ? " ↑\(g.ahead)" : "") + (g.behind > 0 ? " ↓\(g.behind)" : "")
         }
@@ -1045,7 +1049,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             }
             guard let self, gen == loadGen else { return }
             remoteFlag = nil
-            connecting = nil
+            // Connected: not until the panel shows it — a moment with neither made it look unused, and its connection
+            // was stopped right after the first listing (the next session logged in again).
+            if case .failure = result { connecting = nil }
             busyMessage = busyOps.last?.message
             switch result {
             case .success(let (d, items, owners, found)):
@@ -1053,6 +1059,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 remoteOwners = owners
                 links = found
                 enterRemote(target, d, items, select: select, keep: keep)
+                connecting = nil
             case .failure(let error as SFTPError) where error.connection:
                 onRemoteResult?(target, error.message)
                 if let window = view.window {
@@ -1407,7 +1414,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         for (i, t) in tabs.enumerated() {
             if let r = i == tabIndex ? remote : t.remote {
                 let name = r.dir == "/" ? "/" : (r.dir as NSString).lastPathComponent.bidiVisible
-                tabBar.addArrangedSubview(Self.tabButton("SFTP · \(r.target.host) · \(name)", tip: "\(r.target.host):\(r.dir)", index: i, current: i == tabIndex,
+                tabBar.addArrangedSubview(Self.tabButton("SFTP · \(r.target.shown) · \(name)", tip: "\(r.target.shown):\(r.dir)", index: i, current: i == tabIndex,
                                                          target: self, action: #selector(tabClicked(_:)), close: #selector(closeTabClicked(_:))))
                 continue
             }
@@ -1572,12 +1579,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     // MARK: - Path field (⌘L) and quick filter (/)
 
     /// The header: "🔍 title" on search results, "📦 archive/inner", "🌐 host:/dir" on a server ("🔴 PROD host:/dir" on
-    /// a production one), else the local folder. Also what ⎋ in the path field brings back.
+    /// a production one), "root@host:/dir #" on a root panel, else the local folder. Also what ⎋ in the path field brings back.
     func showPath() {
         pathField.stringValue = if let t = searchTitle { "🔍 " + t }
             else if let a = archive { "📦 " + (a.index.file as NSString).abbreviatingWithTildeInPath + (a.inner.isEmpty ? "" : "/" + a.inner) }
-            else if let r = remote { (SavedServer.isProd(r.target) ? "🔴 PROD " : "🌐 ") + "\(r.target.host):\(r.dir)" }
+            else if let r = remote { (SavedServer.isProd(r.target) ? "🔴 PROD " : r.target.sudo ? "" : "🌐 ") + "\(r.target.shown):\(r.dir)" + (r.target.sudo ? " #" : "") }
             else { (path as NSString).abbreviatingWithTildeInPath }
+        styleHeader()
     }
 
     func beginPathEditing() {
@@ -2013,7 +2021,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
                    proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
-        guard archive == nil, let items = TransferItems(info.draggingPasteboard) else { return [] }
+        guard archive == nil, let items = Self.dropped(info) else { return [] }
         let target = dropTarget(row: row, op: op)
         if target == currentDir { tableView.setDropRow(-1, dropOperation: .on) }
         return Self.dragOperation(info, items: items, to: endpoint, target: target)
@@ -2021,11 +2029,25 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation op: NSTableView.DropOperation) -> Bool {
         let target = dropTarget(row: row, op: op)
-        guard let items = TransferItems(info.draggingPasteboard) else { return false }
+        guard let items = Self.dropped(info) else { return false }
         let operation = Self.dragOperation(info, items: items, to: endpoint, target: target)
         guard !operation.isEmpty else { return false }
         onTransfer?(items, endpoint, target, operation == .move)
         return true
+    }
+
+    /// What a drop carries: the pasteboard's items, which name a server's user, never root. Dragged from a root panel of
+    /// this app, they're that panel's again — known from the drag's source in this process, not from the pasteboard —
+    /// so a move inside it stays a move, and a drag out of it reads as root.
+    private static func dropped(_ info: NSDraggingInfo) -> TransferItems? {
+        TransferItems(info.draggingPasteboard).map { dropped($0, from: ((info.draggingSource as? NSTableView)?.delegate as? PanelViewController)?.remote?.target) }
+    }
+
+    static func dropped(_ items: TransferItems, from source: SFTPTarget?) -> TransferItems {
+        guard let source, source.sudo, case .sftp(let t) = items.from, t == source.asRoot(false) else { return items }
+        var items = items
+        items.from = .sftp(source)
+        return items
     }
 
     private func dropTarget(row: Int, op: NSTableView.DropOperation) -> String {
