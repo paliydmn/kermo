@@ -186,7 +186,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     /// shell), and only text the line editor passes on whole (`isTypeable`). What runs in the tab isn't checked: a
     /// name into vim's `:e ` is wanted too.
     func insert(_ text: String, on target: SFTPTarget?) -> Bool {
-        guard let t = current, t.isRunning, t.target == target, ShellContext.isTypeable(text) else { return false }
+        guard let t = current, t.isRunning, t.target == target?.asUser, ShellContext.isTypeable(text) else { return false }
         t.view.send(txt: text)
         return true
     }
@@ -199,7 +199,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     /// `command`: run on the server instead of a plain login shell, the first time only (a reconnect gets a shell).
     @discardableResult
     func newSSH(_ target: SFTPTarget, command: String? = nil) -> NSView {
-        let tab = Tab(kind: .ssh(target), view: makeView())
+        let tab = Tab(kind: .ssh(target.asUser), view: makeView())   // from a root panel too: a shell there is the user's
         tab.command = command
         return add(tab, cwd: nil)
     }

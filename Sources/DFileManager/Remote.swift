@@ -89,6 +89,10 @@ struct SavedServer: Codable, Equatable {
 }
 
 extension SFTPTarget {
+    /// The same target as its user: a root panel's server, for what doesn't care which account looks (reloading the
+    /// panels on it, the other panel's folder there, SSH tabs — a shell there is always the user's).
+    var asUser: SFTPTarget { asRoot(false) }
+
     /// Who and where, as headers say it: the host as given, "root@host" for a root panel.
     var shown: String { sudo ? "root@" + (host.lastIndex(of: "@").map { String(host[host.index(after: $0)...]) } ?? host) : host }
 }
@@ -166,7 +170,7 @@ enum SudoPasswords {
             answered.signal()
         }
         answered.wait()
-        if let answer { lock.withLock { toSave[key] = answer.save ? answer.password : nil } }
+        lock.withLock { toSave[key] = answer?.save == true ? answer?.password : nil }
         return answer?.password
     }
 
@@ -179,8 +183,12 @@ enum SudoPasswords {
         if save { SSHPasswords.set(password, for: t, sudo: true) }
     }
 
-    /// That server's (`key`), or all.
-    static func forget(_ key: String? = nil) { lock.withLock { if let key { kept[key] = nil } else { kept = [:] } } }
+    /// That server's (`key`), or all — one typed to be saved but not taken yet too.
+    static func forget(_ key: String? = nil) {
+        lock.withLock {
+            if let key { (kept[key], toSave[key]) = (nil, nil) } else { (kept, toSave) = ([:], [:]) }
+        }
+    }
 }
 
 /// Locked saved servers ask for Touch ID or the Mac password before a new connection (by any route to the same

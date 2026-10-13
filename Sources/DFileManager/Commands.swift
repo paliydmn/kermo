@@ -209,8 +209,8 @@ extension AppDelegate {
         cmd("admin.mkdir", "New Folder as Administrator…", [], menu: "Admin", aliases: "root sudo") { $0.adminMkdir() },
         cmd("admin.delete", "Delete as Administrator…", [], menu: "Admin", aliases: "root sudo rm") { $0.adminDelete() },
         cmd("admin.shell", "Root Shell Here (Terminal)", [], menu: "Admin", aliases: "root sudo") { $0.runShell("sudo -s", in: .terminalApp) },
-        cmd("admin.rootPanel", "Reopen Panel as Root", [], menu: "Admin", aliases: "root sudo server sftp etc") { $0.reopenPanel(asRoot: true) },
-        cmd("admin.userPanel", "Reopen Panel as User", [], menu: "Admin", aliases: "root sudo server sftp") { $0.reopenPanel(asRoot: false) },
+        cmd("admin.rootPanel", "Reopen Panel as Root", [], menu: "Admin", aliases: "root sudo server etc") { $0.reopenPanel(asRoot: true) },
+        cmd("admin.userPanel", "Reopen Panel as User", [], menu: "Admin", aliases: "root sudo server user") { $0.reopenPanel(asRoot: false) },
 
         // Clipboard
         cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", short: "Copy path", aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetURLs.map(\.path)) },
@@ -382,7 +382,7 @@ extension AppDelegate {
     /// The active panel's folder and names — a server's, on a server panel (never the local folder hidden behind it).
     var shellContext: ShellContext {
         if let r = active.remote {
-            return ShellContext(dir: r.dir, otherDir: other.remote?.target == r.target ? other.remote?.dir : nil,
+            return ShellContext(dir: r.dir, otherDir: other.remote?.target.asUser == r.target.asUser ? other.remote?.dir : nil,
                                 cursor: active.remoteCursor?.item.name, targets: active.remoteSelection?.items.map(\.name) ?? [])
         }
         return ShellContext(dir: active.path, otherDir: other.remote == nil ? other.path : nil, cursor: active.cursorURL?.lastPathComponent,
@@ -407,7 +407,7 @@ extension AppDelegate {
                 let login = await Blocking.run { Result { try SFTP.startMaster(r.target, env: env) } }
                 if case .failure(let e) = login { return showError(e) }
                 Shell.run(expanded, on: r.target, in: r.dir) { [weak self] _ in
-                    for p in self?.panels ?? [] where p.remote?.target == r.target { p.reload() }
+                    for p in self?.panels ?? [] where p.remote?.target.asUser == r.target.asUser { p.reload() }
                 }
             }
             return
@@ -1111,7 +1111,7 @@ extension AppDelegate {
         switch r {
         case .success(let (attrs, note)):
             state.baseline = attrs
-            for p in panels where p.remote?.target == target { p.reload() }
+            for p in panels where p.remote?.target.asUser == target.asUser { p.reload() }   // root's or user's: one server
             if let note {
                 let said = "Saved “\(name)” to \(target.host) · no history: \(note)"
                 panel.flash(said)
@@ -1219,7 +1219,7 @@ extension AppDelegate {
         Task {
             let r = await active.busy("\(title) on \(target.host)…") { flag in try SFTPClient.session(target, env: env, cancel: flag, op) }
             if case .failure(let e) = r, !(e is CancellationError) { showError(JobErrorMessage("\(title): \(e.localizedDescription)")) }
-            for p in panels where p.remote?.target == target { p.reload(select: select) }
+            for p in panels where p.remote?.target.asUser == target.asUser { p.reload(select: select) }
         }
     }
 
@@ -1411,7 +1411,7 @@ extension AppDelegate {
             guard let keep = await keepExisting(clashes, in: DirSync.place(.sftp(target), dest)) else { return }
             Shell.run(RemoteArchive.extractCommand(file, to: dest, keep: keep), on: target, in: dir,
                       title: "Extract “\((item.name as NSString).lastPathComponent)” → \(dest) on \(target.host)") { [weak self] _ in
-                for p in self?.panels ?? [] where p.remote?.target == target { p.reload() }
+                for p in self?.panels ?? [] where p.remote?.target.asUser == target.asUser { p.reload() }
             }
         }
     }
@@ -2258,7 +2258,9 @@ extension AppDelegate {
 
     func jobFinished(_ job: FileJob) {
         // Local panels follow the disk (FSEvents); a server panel has to ask again.
-        for p in panels { if let r = p.remote, [job.from, job.to].contains(.sftp(r.target)) { p.reload() } }
+        for p in panels {
+            if let r = p.remote, [job.from, job.to].contains(where: { if case .sftp(let t) = $0 { t.asUser == r.target.asUser } else { false } }) { p.reload() }
+        }
         if job.from == .local, job.kind != .copy { forgetGone(job.sources) }   // F6, F8, Trash
         let pairs = job.results.map { (from: $0.src, to: $0.dst) }   // empty for a server: no undo there
         // An undo/redo's own job: performMoves registered what comes next already.

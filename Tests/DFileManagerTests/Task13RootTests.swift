@@ -13,14 +13,20 @@ func fakeSudo(in dir: String) throws -> String {
     return path
 }
 
-/// Dragged or copied out of a root panel, items are its user's: the pasteboard never carries root.
+/// Dragged or copied out of a root panel, items are its user's: the pasteboard never carries root. A drag from a root
+/// panel of this app is that panel's again at the drop — known from the drag's source, not from the pasteboard.
 @Test @MainActor func rootItemsOnAPasteboardAreTheUsers() {
     let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString))
     defer { pb.releaseGlobally() }
     let root = SFTPTarget(host: "deploy@web").asRoot()
     pb.clearContents()
     pb.writeObjects(TransferItems(from: .sftp(root), paths: ["/etc/hosts"]).pasteboardWriters)
-    #expect(TransferItems(pb) == TransferItems(from: .sftp(root.asRoot(false)), paths: ["/etc/hosts"]))
+    let items = TransferItems(pb)!
+    #expect(items == TransferItems(from: .sftp(root.asRoot(false)), paths: ["/etc/hosts"]))
+    #expect(PanelViewController.dropped(items, from: root) == TransferItems(from: .sftp(root), paths: ["/etc/hosts"]))
+    #expect(PanelViewController.dropped(items, from: nil) == items, "from another app, or ⌘V: the user's")
+    #expect(PanelViewController.dropped(items, from: SFTPTarget(host: "deploy@db").asRoot()) == items, "another server's root panel")
+    #expect(PanelViewController.dropped(items, from: root.asRoot(false)) == items)
 }
 
 /// Reopen Panel as Root / as User: in the Admin menu and ⌘⇧P (so keymap.json can bind them); "Open SFTP as Root" is in
@@ -46,8 +52,8 @@ func fakeSudo(in dir: String) throws -> String {
 }
 
 extension ServerLockTests {
-/// The header says root: "root@host:/dir #" (in orange); on a production server "🔴 PROD" in front, as for its user.
-/// Reopened as the user: as before. The tab and the status line say root@host too.
+/// The header says root: "root@host:/dir #"; on a production server "🔴 PROD" in front, as for its user. Reopened as
+/// the user: as before. The status line says root@host too. (Its colors: by eye.)
 @Test func rootPanelHeaderSaysRoot() async throws {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-rhead-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -62,6 +68,7 @@ extension ServerLockTests {
     }
     await open(root)
     #expect(panel.headerText == "root@localhost:\(dir) #")
+    #expect(panel.statusText.hasPrefix("# sftp · root@localhost · "), "\(panel.statusText)")
     #expect(SavedServer.title(root, "/etc/hosts") == "root@localhost:/etc/hosts #", "its editor's title")
     var prod = SavedServer(address: "localhost")!
     prod.prod = true
@@ -90,15 +97,17 @@ extension ServerLockTests {
     #expect(await Blocking.run { SudoPasswords.password(t, wrong: false) } == "typed" && asked.count == 2)
     #expect(await Blocking.run { SudoPasswords.password(SFTPTarget(host: "me@web", port: 22).asRoot(), wrong: false) } == "typed" && asked.count == 2)
     _ = await Blocking.run { SudoPasswords.password(t, wrong: true) }
-    #expect(asked == [false, false, true], "refused: forgotten, asked")
+    #expect(asked == [false, false, true], "refused: asked")
+    _ = await Blocking.run { SudoPasswords.password(t, wrong: false) }
+    #expect(asked.count == 4, "the refused one was forgotten, not given again")
     SudoPasswords.taken(t, "typed")
     ServerLock.relock()
     _ = await Blocking.run { SudoPasswords.password(t, wrong: false) }
-    #expect(asked.count == 4, "screen locked: forgotten")
+    #expect(asked.count == 5, "screen locked: forgotten")
     SudoPasswords.taken(t, "typed")
     await AppDelegate().disconnectNow(SudoPasswords.key(t))
     _ = await Blocking.run { SudoPasswords.password(t, wrong: false) }
-    #expect(asked.count == 5, "disconnected: forgotten")
+    #expect(asked.count == 6, "disconnected: forgotten")
 }
 
 /// "Save in Keychain": there once sudo took it, an item apart from the ssh password (neither reads the other); used when
@@ -109,7 +118,7 @@ extension ServerLockTests {
     defer { SSHPasswords.set(nil, for: t, sudo: true); SSHPasswords.set(nil, for: t); SudoPasswords.forget() }
     var answers: [(password: String, save: Bool)?] = [("pw1", true)]
     let was = SudoPasswords.ask
-    SudoPasswords.ask = { _, _ in answers.removeFirst() }
+    SudoPasswords.ask = { _, _ in answers.isEmpty ? nil : answers.removeFirst() }
     defer { SudoPasswords.ask = was }
     #expect(await Blocking.run { SudoPasswords.password(t, wrong: false) } == "pw1")
     #expect(SSHPasswords.get(t, sudo: true) == nil, "not before sudo took it")

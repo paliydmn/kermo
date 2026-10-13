@@ -741,7 +741,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if let v = terminal.showPassingCtrlO(NSApp.currentEvent) { window.makeFirstResponder(v); return }
             // A server panel: its SSH session (or a new one in this folder), never a local shell.
             guard let r = active.remote else { window.makeFirstResponder(terminal.show(cwd: active.path)); return }
-            if let t = terminal.tabs.first(where: { $0.kind == .ssh(r.target) && $0.isRunning }) { terminal.select(t.id) }
+            if let t = terminal.tabs.first(where: { $0.kind == .ssh(r.target.asUser) && $0.isRunning }) { terminal.select(t.id) }
             else { terminal.newSSH(r.target, command: SSHCommand.shell(in: r.dir)) }
             window.makeFirstResponder(terminal.show())
         }

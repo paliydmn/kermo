@@ -119,6 +119,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// Browsing an SFTP server. `path` stays the local folder the panel returns to.
     private(set) var remote: (target: SFTPTarget, dir: String)? {
         didSet {
+            if oldValue?.target.sudo == true || remote?.target.sudo == true { styleHeader() }   // a root panel's colors come and go
             if let k = kept, k.target != remote?.target { k.close(); kept = nil }   // left that server (another tab too)
             guard oldValue?.target != remote?.target || oldValue?.dir != remote?.dir else { return }
             stopPreview()
@@ -2017,7 +2018,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
                    proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
-        guard archive == nil, let items = TransferItems(info.draggingPasteboard) else { return [] }
+        guard archive == nil, let items = Self.dropped(info) else { return [] }
         let target = dropTarget(row: row, op: op)
         if target == currentDir { tableView.setDropRow(-1, dropOperation: .on) }
         return Self.dragOperation(info, items: items, to: endpoint, target: target)
@@ -2025,11 +2026,25 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation op: NSTableView.DropOperation) -> Bool {
         let target = dropTarget(row: row, op: op)
-        guard let items = TransferItems(info.draggingPasteboard) else { return false }
+        guard let items = Self.dropped(info) else { return false }
         let operation = Self.dragOperation(info, items: items, to: endpoint, target: target)
         guard !operation.isEmpty else { return false }
         onTransfer?(items, endpoint, target, operation == .move)
         return true
+    }
+
+    /// What a drop carries: the pasteboard's items, which name a server's user, never root. Dragged from a root panel of
+    /// this app, they're that panel's again — known from the drag's source in this process, not from the pasteboard —
+    /// so a move inside it stays a move, and a drag out of it reads as root.
+    private static func dropped(_ info: NSDraggingInfo) -> TransferItems? {
+        TransferItems(info.draggingPasteboard).map { dropped($0, from: ((info.draggingSource as? NSTableView)?.delegate as? PanelViewController)?.remote?.target) }
+    }
+
+    static func dropped(_ items: TransferItems, from source: SFTPTarget?) -> TransferItems {
+        guard let source, source.sudo, case .sftp(let t) = items.from, t == source.asRoot(false) else { return items }
+        var items = items
+        items.from = .sftp(source)
+        return items
     }
 
     private func dropTarget(row: Int, op: NSTableView.DropOperation) -> String {
