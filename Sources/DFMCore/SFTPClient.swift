@@ -28,6 +28,9 @@ public final class SFTPClient: @unchecked Sendable {
     }
 
     public let target: SFTPTarget
+    /// A root session on a server with SELinux: `upload` writes into the file itself, never renames a new one over it —
+    /// the new one would have its folder's label, not the file's (`/etc/shadow` losing `shadow_t`).
+    public private(set) var writesInPlace = false
     /// Extensions the server announced (name → version).
     public private(set) var extensions: [String: String] = [:]
 
@@ -60,7 +63,7 @@ public final class SFTPClient: @unchecked Sendable {
         try SFTP.startMaster(t, env: env, cancel: cancel)
         var sudoPath = "", sudoPassword: String?
         if t.sudo {
-            (sudoPath, sudoPassword) = try SudoServer.prepare(t, env: env, cancel: cancel)
+            (sudoPath, sudoPassword, writesInPlace) = try SudoServer.prepare(t, env: env, cancel: cancel)
             let (program, arguments) = SudoServer.launch(t, path: sudoPath, password: sudoPassword != nil)
             process.executableURL = URL(fileURLWithPath: program)
             process.arguments = arguments
@@ -1003,8 +1006,8 @@ extension SFTPClient {
 
     /// Puts the local file in place of `remote`. First all of it into a partial file next to it, so a dropped
     /// connection never leaves a cut-off config; then renamed over it — or, if that would change the owner
-    /// (someone else's file) or `remote` is a symlink, copied into it on the server, which keeps owner, mode and
-    /// links. Throws `ChangedOnServer` if the server's copy isn't `baseline` any more, unless `force`.
+    /// (someone else's file), `remote` is a symlink or the session `writesInPlace`, copied into it on the server, which
+    /// keeps owner, mode, links and SELinux label. Throws `ChangedOnServer` if the server's copy isn't `baseline` any more, unless `force`.
     /// Returns the new attributes (the next baseline).
     /// `cancel` stops it (CancellationError) and removes the partial file, over a slow link too (`closeWhenQuiet`).
     /// `replaced` gets the file it replaced, once it's in place: its attributes, and its bytes up to
@@ -1055,7 +1058,7 @@ extension SFTPClient {
         }
         do {
             let mine = try lstat(partial)
-            if let cur, entry?.kind == .link || cur.uid == nil || cur.uid != mine?.uid || cur.gid != mine?.gid {
+            if let cur, writesInPlace || entry?.kind == .link || cur.uid == nil || cur.uid != mine?.uid || cur.gid != mine?.gid {
                 if canCopyData {
                     try copyData(partial, to: remote, offset: 0, length: 0)
                 } else {

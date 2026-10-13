@@ -13,33 +13,36 @@ enum SudoServer {
 
     /// Servers whose sudo runs sftp-server without a password, by `key`: no need to look again on every session.
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var known: [String: String] = [:]
+    nonisolated(unsafe) private static var known: [String: (path: String, selinux: Bool)] = [:]
 
     private static func key(_ t: SFTPTarget) -> String { "\(t.host):\(t.port ?? 22):\(t.localSudo ?? "")" }
 
     /// The server's sudo: a test target's stand-in. A local target made root without one runs nothing.
     static func program(_ t: SFTPTarget) -> String { t.localServer == nil ? "sudo" : t.localSudo ?? "/usr/bin/false" }
 
-    /// One command: the first sftp-server of `paths` there, then `sudo -n` on it with nothing to read — it ends at once,
-    /// exit 0 if sudo let it run. In `sh`: the login shell may be any.
+    /// One command: the first sftp-server of `paths` there, whether SELinux is on, then `sudo -n` on it with nothing to
+    /// read — it ends at once, exit 0 if sudo let it run. In `sh`: the login shell may be any.
     static func probe(_ t: SFTPTarget) -> String {
-        let script = "for p in \(paths.joined(separator: " ")); do if [ -x \"$p\" ]; then echo \"$p\"; "
+        let selinux = t.localSELinux ? "/" : "/sys/fs/selinux"   // a test target says it has it
+        let script = "for p in \(paths.joined(separator: " ")); do if [ -x \"$p\" ]; then echo \"$p\"; [ -d \(selinux) ] && echo kermo-selinux; "
             + "exec \(ShellContext.quote(program(t))) -n -- \"$p\" </dev/null; fi; done; exit 127"
         return "sh -c " + ShellContext.quote(script)
     }
 
-    /// The sftp-server to run on `t`'s server, and the password its sudo took if it wants one. A server where it runs
-    /// without one is looked at once; a password is never sent unless `sudo -n` refused for want of one just now.
-    static func prepare(_ t: SFTPTarget, env: [String: String], cancel: CancelFlag?) throws -> (path: String, password: String?) {
-        if let path = lock.withLock({ known[key(t)] }) { return (path, nil) }
+    /// The sftp-server to run on `t`'s server, the password its sudo took if it wants one, and whether SELinux is on there.
+    /// A server where it runs without a password is looked at once; a password is never sent unless `sudo -n` refused
+    /// for want of one just now.
+    static func prepare(_ t: SFTPTarget, env: [String: String], cancel: CancelFlag?) throws -> (path: String, password: String?, selinux: Bool) {
+        if let k = lock.withLock({ known[key(t)] }) { return (k.path, nil, k.selinux) }
         var out = Data()
         let (status, errors) = try SSHCommand.run(t, probe(t), env: env, cancel: cancel) { out += $0 }
         let path = try check(t, out, status, errors, asking: SFTP.sudoPassword != nil)
+        let selinux = String(decoding: out, as: UTF8.self).split(whereSeparator: \.isNewline).contains("kermo-selinux")
         guard status != 0 else {
-            lock.withLock { known[key(t)] = path }
-            return (path, nil)
+            lock.withLock { known[key(t)] = (path, selinux) }
+            return (path, nil, selinux)
         }
-        return (path, try password(t, path: path, env: env, cancel: cancel))
+        return (path, try password(t, path: path, env: env, cancel: cancel), selinux)
     }
 
     /// `probe`'s answer: the path when sudo ran it (exit 0, whatever it said on stderr — a lecture, a warning), else why

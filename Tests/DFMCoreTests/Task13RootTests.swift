@@ -234,3 +234,35 @@ static func answering(_ a: Answers, _ body: () throws -> Void) rethrows {
     #expect(SudoServer.explain(t, path: "/usr/lib/ssh/sftp-server", "sudo: a password is required")?.hasSuffix("me ALL=(root) NOPASSWD: /usr/lib/ssh/sftp-server") == true)
     #expect(try SudoServer.check(t, Data("/usr/lib/ssh/sftp-server\n".utf8), 0, "unknown setting: 'requiretty'") == "/usr/lib/ssh/sftp-server", "sudo-rs warns and runs")
 }
+
+/// ⌘S from a root panel: the same `upload` as the user's panel — 8 round trips for a 2 KB file opened with F4, the
+/// new text renamed over it. With SELinux on the server (`/sys/fs/selinux`, looked at with sftp-server's path) it
+/// writes into the file itself (the same inode keeps its label): 12 round trips — copied into on the server, as a
+/// symlink's (13: one more to follow it) or another owner's file always was. Measured on the code before: 8 and 13.
+@Test func rootSaveWritesInPlaceUnderSELinux() throws {
+    let d = rootTempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    func put(_ p: String, _ b: UInt8) throws { try Data(repeating: b, count: 2048).write(to: URL(fileURLWithPath: p)) }
+    func inode(_ p: String) -> ino_t { var st = stat(); lstat(p, &st); return st.st_ino }
+    func save(_ t: SFTPTarget, _ name: String, link: Bool = false) throws -> (trips: Int, inPlace: Bool, flag: Bool) {
+        let file = d + "/" + name
+        try put(link ? file + ".real" : file, 1)
+        if link { try FileManager.default.createSymbolicLink(atPath: file, withDestinationPath: file + ".real") }
+        let c = try SFTPClient(t)
+        defer { c.close() }
+        let a = try c.download(file, to: d + "/l" + name)   // F4: the baseline has its SHA-256
+        try put(d + "/l" + name, 2)
+        let ino = inode(link ? file + ".real" : file), before = c.roundTrips
+        try c.upload(d + "/l" + name, to: file, baseline: a) { _, _ in }   // the app keeps the version it replaces
+        #expect(FileManager.default.contents(atPath: file) == Data(repeating: 2, count: 2048))
+        return (c.roundTrips - before, inode(link ? file + ".real" : file) == ino, c.writesInPlace)
+    }
+    let user = try save(.local(), "user")
+    let root = try save(.local(sudo: try fakeSudo(d)), "root")
+    let selinux = try save(.local(sudo: try fakeSudo(d), selinux: true), "selinux")
+    let link = try save(.local(), "link", link: true)
+    #expect(user.trips == 8 && !user.inPlace && !user.flag)
+    #expect(root.trips == 8 && !root.inPlace && !root.flag, "root without SELinux: renamed, as the user's")
+    #expect(selinux.trips == 12 && selinux.inPlace && selinux.flag, "the partial file, copied into the file, removed; no rename")
+    #expect(link.trips == 13 && link.inPlace, "as before")
+}
