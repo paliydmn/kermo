@@ -93,16 +93,28 @@ public enum SFTP {
          "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=30"]
     }
 
+    /// The shared connection's own log (`ssh -E`): its login errors, and once it runs in the background (stderr is
+    /// /dev/null there) why it refused to open a channel — a tunnel's `channel 2: open failed: …`, which no client
+    /// riding it is told. One per server in `controlDir` (0700; the file 0600), started afresh with each master; ssh
+    /// doesn't expand %C in -E, so the name is made here from the host and port.
+    // ponytail: two names of one connection (an alias and its user@host: one %C) keep two files, and a reason written
+    // to the other is missed (the generic text instead); `ssh -G` per name would tell them apart.
+    public static func masterLog(_ t: SFTPTarget) -> String {
+        let name = "\(t.host)_\(t.port ?? 22)".unicodeScalars.map { c -> Character in
+            c.isASCII && (CharacterSet.alphanumerics.contains(c) || "@._-".unicodeScalars.contains(c)) ? Character(c) : "_"
+        }
+        return controlDir + "/log-" + String(name.prefix(200))
+    }
+
+    /// What starts the master, between the connection options and the target.
+    static func masterArguments(_ t: SFTPTarget) -> [String] { ["-E", masterLog(t), "-f", "-N"] }
+
     /// A session's own ssh never stays behind as the ControlMaster, so without an SSH tab every listing would be a
     /// fresh login. Start a background master once; it lives ControlPersist seconds past the last use. If it can't
     /// connect or log in, throws ssh's reason (trying again with the session's ssh would only double the wait).
     public static func startMaster(_ t: SFTPTarget, env: [String: String], cancel: CancelFlag? = nil) throws {
         guard t.localServer == nil else { return }
         noteMaster(t)
-        // A file, not a pipe: the backgrounded master would hold a pipe open forever.
-        let log = NSTemporaryDirectory() + "dfm-ssh-" + UUID().uuidString
-        FileManager.default.createFile(atPath: log, contents: nil)
-        defer { unlink(log) }
         func ssh(_ args: [String], stderr: FileHandle = .nullDevice, extra: [String: String] = [:]) -> Int32 {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
@@ -119,14 +131,21 @@ public enum SFTP {
         guard let login = beginLogin(t, cancel: cancel) else { throw CancellationError() }
         defer { login.end() }
         if ssh(["-O", "check"]) == 0 { return }   // the login waited for brought it up
-        let errors = FileHandle(forWritingAtPath: log) ?? .nullDevice
-        let status = withPassword(t) { ssh(["-f", "-N"], stderr: errors, extra: $0) }   // ControlMaster=auto makes it the master
+        // Its log afresh; what ssh says on stderr before it goes to the background (a server's banner) lands there too.
+        // A file, not a pipe: the backgrounded master would hold a pipe open forever.
+        let log = masterLog(t)
+        let fd = open(log, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        if fd >= 0 { fchmod(fd, 0o600) }
+        let errors = fd >= 0 ? FileHandle(fileDescriptor: fd, closeOnDealloc: true) : .nullDevice
+        let status = withPassword(t) { ssh(masterArguments(t), stderr: errors, extra: $0) }   // ControlMaster=auto makes it the master
         try? errors.close()
-        if cancel?.isCancelled == true { throw CancellationError() }
         // Another listing may have become the master meanwhile; then this one only lost the race.
-        guard status != 0, ssh(["-O", "check"]) != 0 else { return }
-        let why = String(decoding: FileManager.default.contents(atPath: log) ?? Data(), as: UTF8.self)
+        let up = status == 0 || ssh(["-O", "check"]) == 0
+        let why = up ? "" : String(decoding: FileManager.default.contents(atPath: log) ?? Data(), as: UTF8.self)
             .split(whereSeparator: \.isNewline).filter { !$0.contains("Warning: Permanently added") }.joined(separator: "\n")
+        if !up { unlink(log) }   // no master: nothing more will come
+        if cancel?.isCancelled == true { throw CancellationError() }
+        guard !up else { return }
         // ponytail: no fallback once the master failed with a message; add one if a server ever refuses `-N` but serves sftp.
         if !why.isEmpty { throw SFTPError(message: why, connection: true) }   // else the session's ssh tries and says why
     }
@@ -189,6 +208,7 @@ public enum SFTP {
     /// no new sessions and goes when the last one (a transfer, a follow) ends. Blocks briefly.
     public static func stopMaster(_ t: SFTPTarget, now: Bool) {
         guard t.localServer == nil, mastersLock.withLock({ masters.remove(t) }) != nil else { return }
+        unlink(masterLog(t))   // first: a master started right after this one goes begins a file of its own
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         p.arguments = connectionOptions(t) + ["-O", now ? "exit" : "stop"] + t.arguments()
