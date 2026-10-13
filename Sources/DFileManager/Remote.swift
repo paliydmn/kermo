@@ -228,9 +228,13 @@ enum ServerLock {
         return await authorize(s, "connect to")
     }
 
+    /// Also when the screen locks or the Mac sleeps (the app's tunnels: `Tunnels.relock`).
+    static var onRelock: () -> Void = {}
+
     static func relock() {
         unlockedUntil = [:]
         SudoPasswords.forget()
+        onRelock()
     }
 
     static func relockOnScreenLockAndSleep() {
@@ -284,6 +288,156 @@ enum Masters {
     }
 }
 
+/// Saved servers' tunnels while they listen (README "Tunnels"): a `TunnelListener` each, by server and local port.
+/// Each connection logs in when the server's master is down — after sleep or a network change too (`Masters` stops it
+/// then), so nothing restarts — and rides it otherwise. The listeners' word comes in on the main thread.
+@MainActor
+final class Tunnels {
+    struct Key: Hashable { let server: UUID, port: Int }
+    struct State {
+        var tunnel: Tunnel
+        var server: SavedServer
+        var listener: TunnelListener?   // nil: not listening, and `error` says why
+        var error: String?              // why the last connection failed, or why it can't listen
+        var said: String?               // the last failure the status line told: a new one once, not each retry of a pool
+        let token = UUID()              // a listener started again: the old one's word no longer counts
+    }
+    private(set) var states: [Key: State] = [:]
+    /// One started or stopped listening (the sidebar shows it).
+    var changed: () -> Void = {}
+    /// A status line.
+    var say: (String, _ error: Bool) -> Void = { _, _ in }
+    /// What each connection runs; replaced in tests. A password asked for a client connecting in the background says
+    /// what it's for (askpass), or it would come out of nowhere.
+    var child: (Tunnel, SavedServer) -> @Sendable (CancelFlag) throws -> TunnelListener.Child = { t, s in
+        t.child(on: s.target, env: SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For the tunnel “\(t.title)” → \(s.title)"]) { $1 },
+                server: s.title)
+    }
+    private var heldNote: String?
+
+    static func key(_ t: Tunnel, _ s: SavedServer) -> Key { Key(server: s.id, port: t.localPort) }
+    func state(_ t: Tunnel, of s: SavedServer) -> State? { states[Self.key(t, s)] }
+    func isListening(_ t: Tunnel, of s: SavedServer) -> Bool { state(t, of: s)?.listener != nil }
+    func connections(_ t: Tunnel, of s: SavedServer) -> Int { state(t, of: s)?.listener?.connections ?? 0 }
+    func listening(_ s: SavedServer) -> [Tunnel] { s.tunnels.filter { isListening($0, of: s) } }
+    /// Servers (`ServerRow.key`) a tunnel listens for: in use, so their connection stays up (`releaseIdleServers`).
+    var inUse: Set<String> { Set(states.values.filter { $0.listener != nil }.map { ServerRow.key($0.server.target) }) }
+
+    /// Listens on its port (again, if it did); nil, or why it can't — a taken port, with the next free one.
+    @discardableResult
+    func start(_ t: Tunnel, of s: SavedServer) -> String? {
+        let key = Self.key(t, s)
+        states.removeValue(forKey: key)?.listener?.stop()   // not `stop`: told once, when it listens anew (its server stays in use)
+        var st = State(tunnel: t, server: s)
+        defer {
+            states[key] = st
+            changed()
+        }
+        if let p = t.problem {
+            st.error = p
+            return p
+        }
+        let token = st.token
+        do {
+            st.listener = try TunnelListener(port: t.localPort, child: child(t, s)) { [weak self] e in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.heard(e, key, token) } }
+            }
+            return nil
+        } catch {
+            st.error = error.localizedDescription + (TunnelListener.freePort(after: t.localPort).map { " — \($0) is free" } ?? "")
+            return st.error
+        }
+    }
+
+    /// Closes its port; its connections close too, unless `keepConnections`.
+    func stop(_ t: Tunnel, of s: SavedServer, keepConnections: Bool = false) { stop(Self.key(t, s), keepConnections: keepConnections) }
+
+    private func stop(_ key: Key, keepConnections: Bool = false) {
+        guard let st = states.removeValue(forKey: key) else { return }
+        st.listener?.stop(keepConnections: keepConnections)
+        changed()
+    }
+
+    /// Quitting: every port closes, every connection with it.
+    func stopAll() {
+        states.values.forEach { $0.listener?.stop() }
+        states = [:]
+    }
+
+    private func heard(_ e: TunnelListener.Event, _ key: Key, _ token: UUID) {
+        guard case .closed(let failure) = e, var st = states[key], st.token == token else { return }
+        st.error = failure   // a clean end clears the last failure
+        if let failure, failure != st.said {
+            st.said = failure
+            say("\(st.tunnel.title): \(failure)", true)
+        }
+        states[key] = st
+    }
+
+    /// Locked: itself, or another saved server at its address is (`ServerLock`).
+    private static func locked(_ s: SavedServer, among servers: [SavedServer]) -> Bool {
+        servers.contains { $0.locked && SSHPasswords.sameKey($0.target, s.target) }
+    }
+
+    /// At launch: the tunnels that were on listen, without connecting — a login waits for the first client. A locked
+    /// server's don't (Touch ID turns them on). Those that can't listen are named in one status line.
+    func startSaved(_ servers: [SavedServer]) {
+        let failed = servers.filter { !Self.locked($0, among: servers) }.flatMap { s in
+            s.tunnels.filter(\.on).compactMap { t in start(t, of: s).map { "“\(t.title)” (\(s.title)): \($0)" } }
+        }
+        if !failed.isEmpty { say("Tunnels not listening: " + failed.joined(separator: "; "), true) }
+    }
+
+    /// The saved servers changed: a tunnel gone (or its server) stops; one whose way or server's address changed
+    /// listens again that way; a new name or URL just shows.
+    func sync(_ servers: [SavedServer]) {
+        for (key, st) in states {
+            guard let s = servers.first(where: { $0.id == key.server }), let t = s.tunnels.first(where: { $0.localPort == key.port }) else {
+                stop(key)
+                continue
+            }
+            if t.host == st.tunnel.host && t.port == st.tunnel.port && s.target == st.server.target {
+                states[key]?.tunnel = t
+                states[key]?.server = s
+            } else if st.listener == nil {
+                stop(key)
+            } else if let why = start(t, of: s) {
+                say("“\(t.title)”: \(why)", true)
+            }
+        }
+    }
+
+    /// The screen locked or the Mac slept: locked servers' tunnels stop listening — their connections live on, as
+    /// sessions do — and the status line names them once the Mac is back (`sayHeldNote`).
+    func relock(_ servers: [SavedServer]) {
+        let off = states.filter { $0.value.listener != nil && Self.locked($0.value.server, among: servers) }
+        guard !off.isEmpty else { return }
+        off.keys.forEach { stop($0, keepConnections: true) }
+        let names = off.values.map { "\($0.tunnel.title) (\($0.server.title))" }.sorted()
+        heldNote = "Locked servers' tunnels turned off: " + names.joined(separator: ", ")
+    }
+
+    func sayHeldNote() {
+        guard let n = heldNote else { return }
+        heldNote = nil
+        say(n, false)
+    }
+
+    /// "Postgres (3 connections), Grafana": `tunnels` listening, with their connections.
+    func described(_ tunnels: [(Tunnel, SavedServer)]) -> String {
+        tunnels.map { t, s in
+            let n = connections(t, of: s)
+            return t.title + (n == 0 ? "" : " (\(n) connection\(n == 1 ? "" : "s"))")
+        }.joined(separator: ", ")
+    }
+
+    /// Quitting closes these: only tunnels with connections open are worth a question.
+    func quitNote() -> String? {
+        let busy = states.values.filter { ($0.listener?.connections ?? 0) > 0 }.map { ($0.tunnel, $0.server) }.sorted { $0.0.title < $1.0.title }
+        return busy.isEmpty ? nil : "Tunnels: \(described(busy)) — they close"
+    }
+}
+
 /// ssh can't prompt on a terminal we don't have; SSH_ASKPASS makes it ask through a macOS dialog instead
 /// (passwords, key passphrases, "continue connecting (yes/no)?").
 enum SSHAskpass {
@@ -294,9 +448,11 @@ enum SSHAskpass {
             # Called by ssh with the prompt as $1; prints the answer.
             # A saved password waits in a FIFO, once (SFTP.withPassword); a second ask means it was wrong.
             \(SFTP.askpassSavedPassword)
-            exec /usr/bin/osascript - "$1" <<'APPLESCRIPT'
+            # $DFM_ASKPASS_WHY: what the login is for, when nothing on screen says so (a tunnel's client connecting).
+            exec /usr/bin/osascript - "$1" "$DFM_ASKPASS_WHY" <<'APPLESCRIPT'
             on run argv
                 set p to item 1 of argv
+                if item 2 of argv is not "" then set p to p & return & return & item 2 of argv
                 activate
                 if p contains "(yes/no" then
                     display dialog p buttons {"Cancel", "Yes"} default button "Yes" with title "Kermo — SSH" with icon caution

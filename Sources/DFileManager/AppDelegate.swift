@@ -40,7 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var responderObservation: NSKeyValueObservation?
     let defaults = UserDefaults.standard
     var bookmarks: [String] = (try? Config.load("bookmarks.json", as: [String].self)) ?? []
-    var savedServers = SavedServer.load()
+    let tunnels = Tunnels()
+    var savedServers = SavedServer.load() {
+        didSet { tunnels.sync(savedServers) }   // a tunnel gone or changed: its port follows
+    }
     var serverPins: [String] = (try? Config.load("server-pins.json", as: [String].self)) ?? []   // addresses, in pin order
     var frecency: Frecency = (try? Config.load("frecency.json", as: Frecency.self)) ?? Frecency()
     private var visitsSinceSave = 0
@@ -60,6 +63,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ServerCopies.upload = { [unowned self] c in await upload(c.url, to: c.path, on: c.target, c.state) }
         AuditLog.failed = { [unowned self] in active.flash($0, error: true) }
         ServerLock.relockOnScreenLockAndSleep()
+        ServerLock.onRelock = { [unowned self] in tunnels.relock(savedServers) }
+        tunnels.changed = { [unowned self] in
+            refreshSidebar()
+            releaseIdleServers()   // the last tunnel of a server that nothing else shows: its connection goes too
+        }
+        tunnels.say = { [unowned self] in active.flash($0, error: $1) }
+        // Back from a locked screen or sleep: the tunnels that went off with it are named once (`relock`).
+        let back: @Sendable (Notification) -> Void = { _ in
+            MainActor.assumeIsolated { if NSApp.isActive { (NSApp.delegate as? AppDelegate)?.tunnels.sayHeldNote() } }
+        }
+        DistributedNotificationCenter.default().addObserver(forName: .init("com.apple.screenIsUnlocked"), object: nil, queue: .main, using: back)
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: back)
         Masters.stopOnWake()
         Masters.stopOnNetworkChange()
         Task { _ = await Blocking.run { GitStatus.available } }   // runs xcode-select: not on the main thread at first use
@@ -102,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         window.makeFirstResponder(panels[0].table)
         updatePanelStates()
         updatePrompt()
+        tunnels.startSaved(savedServers)
         NSApp.activate()
         // The terminal eats control keys, so its commands (⌃O, ⌘T, ⌘W, ⌃⇥ …) are picked off here first.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [unowned self] e in
@@ -171,9 +187,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     @objc func showMainWindow(_ sender: Any?) { window.makeKeyAndOrderFront(nil) }
 
     func applicationDidResignActive(_ notification: Notification) { keyBar.reset() }
+    func applicationDidBecomeActive(_ notification: Notification) { tunnels.sayHeldNote() }
 
     func applicationWillTerminate(_ notification: Notification) {
         Config.save("frecency.json", frecency)
+        tunnels.stopAll()   // first: a client connecting now would start a login
         for t in SFTP.masterTargets { SFTP.stopMaster(t, now: true) }   // no logged-in connection outlives the app
         Shell.terminateAll()   // nor does a `tail -f` in an output window
         ServerCopies.quit()   // the server files' copies on the server go; the others are kept
@@ -207,6 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             lost.append("Edited in another app: " + editing.map { "“\($0.url.lastPathComponent)”" }.joined(separator: ", ") + " — saves after quitting don't reach the server")
         }
         if let busy = Shell.busy { lost.append(busy) }
+        if let note = tunnels.quitNote() { lost.append(note) }
         lost += terminal.tabs.compactMap(\.busyWith)
         guard !lost.isEmpty else { return true }
         let a = NSAlert()
@@ -224,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func releaseIdleServers() {
         let inUse = Set(panels.flatMap { $0.remoteTabs.map(\.target) + [$0.connecting].compactMap { $0 } }.map(ServerRow.key)
                         + terminal.tabs.filter { $0.exitStatus == nil }.compactMap(\.target).map(ServerRow.key))   // starting or running
+            .union(tunnels.inUse)   // else the next client would log in again
         let idle = SFTP.masterTargets.filter { !inUse.contains(ServerRow.key($0)) }
         guard !idle.isEmpty else { return }
         DispatchQueue.global().async { for t in idle { SFTP.stopMaster(t, now: false) } }
@@ -577,19 +597,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// Disconnect: the server's shared connection ends now (`ssh -O exit`), its SSH sessions with it (their tabs stay,
-    /// to reconnect), and its file tabs go back to their folders. Asks first while an SSH session runs there.
+    /// to reconnect), its file tabs go back to their folders, and its tunnels turn off (else the next client would
+    /// connect again). Asks first while an SSH session runs there or a tunnel listens.
     func disconnect(_ t: SFTPTarget) {
         let key = ServerRow.key(t)
         let live = (terminal?.tabs ?? []).filter { $0.isRunning && $0.target.map(ServerRow.key) == key }
+        let listening = savedServers.filter { ServerRow.key($0.target) == key }.flatMap { s in tunnels.listening(s).map { ($0, s) } }
+        let info = [live.isEmpty ? nil : live.count == 1 ? "Its SSH session ends." : "Its \(live.count) SSH sessions end.",
+                    listening.isEmpty ? nil : "Its tunnels turn off: \(tunnels.described(listening))."].compactMap { $0 }
         Task {
-            if !live.isEmpty, await !confirm("Disconnect from \(t.host)?", info: live.count == 1 ? "Its SSH session ends." : "Its \(live.count) SSH sessions end.",
-                                              ok: "Disconnect") { return }
+            if !info.isEmpty, await !confirm("Disconnect from \(t.host)?", info: info.joined(separator: " "), ok: "Disconnect") { return }
             await disconnectNow(key)
         }
     }
 
     func disconnectNow(_ key: String) async {
         SudoPasswords.forget(key)
+        for s in savedServers where ServerRow.key(s.target) == key {
+            for t in tunnels.listening(s) { turnOffNow(t, of: s) }
+        }
         // First: an SSH tab ending or the last file tab closing lets releaseIdleServers end it only gently (`-O stop`).
         await Masters.stop(now: true) { ServerRow.key($0) == key }
         // Its SSH tabs' ssh too: a master stopped after a wake or a network change is no longer known, nor reachable by
