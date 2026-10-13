@@ -353,20 +353,40 @@ public enum SSHCommand {
 
     /// Runs `command` on the server without a terminal (its login shell parses it), handing stdout over as it
     /// arrives; the test target (`.local()`) runs it here with /bin/sh. Returns the exit status and stderr.
+    /// `stdin`: what the command reads, then end of file (a secret goes this way: never in its command line); none
+    /// by default.
     public static func run(_ t: SFTPTarget, _ command: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
-                           onOutput: (Data) -> Void) throws -> (status: Int32, errors: String) {
+                           stdin: Data? = nil, onOutput: (Data) -> Void) throws -> (status: Int32, errors: String) {
         try SFTP.startMaster(t, env: env, cancel: cancel)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: t.localServer == nil ? "/usr/bin/ssh" : "/bin/sh")
         p.arguments = t.localServer == nil ? arguments(t, command: command, tty: false) : ["-c", command]
         p.environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
-        let out = Pipe(), err = Pipe()
-        p.standardInput = FileHandle.nullDevice
+        let out = Pipe(), err = Pipe(), input = stdin.map { _ in Pipe() }
+        p.standardInput = input ?? FileHandle.nullDevice
         p.standardOutput = out
         p.standardError = err
         try p.run()
         try? out.fileHandleForWriting.close()   // our copies: else EOF never comes
         try? err.fileHandleForWriting.close()
+        if let input, let stdin {
+            try? input.fileHandleForReading.close()
+            let fd = input.fileHandleForWriting.fileDescriptor
+            _ = fcntl(fd, F_SETNOSIGPIPE, 1)   // a command that doesn't read it all: EPIPE, not a killed app
+            // On a thread of its own: more than a pipe holds waits for the command, which may wait for us to read.
+            Thread {
+                stdin.withUnsafeBytes { b in
+                    var off = 0
+                    while off < b.count {
+                        let n = Darwin.write(fd, b.baseAddress! + off, b.count - off)
+                        if n < 0 && errno == EINTR { continue }
+                        if n <= 0 { break }
+                        off += n
+                    }
+                }
+                try? input.fileHandleForWriting.close()
+            }.start()
+        }
         let previous = cancel?.onCancel { p.terminate() } ?? nil
         defer { cancel?.onCancel(previous) }
         nonisolated(unsafe) var errData = Data()
@@ -387,9 +407,10 @@ public enum SSHCommand {
     }
 
     /// `run`'s whole output; a failure throws what it said.
-    public static func capture(_ t: SFTPTarget, _ command: String, env: [String: String] = [:], cancel: CancelFlag? = nil) throws -> String {
+    public static func capture(_ t: SFTPTarget, _ command: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
+                               stdin: Data? = nil) throws -> String {
         var out = Data()
-        let (status, errors) = try run(t, command, env: env, cancel: cancel) { out += $0 }
+        let (status, errors) = try run(t, command, env: env, cancel: cancel, stdin: stdin) { out += $0 }
         guard status == 0 else { throw SFTPError(message: errors.isEmpty ? "“\(command)” failed (exit \(status))" : errors) }
         return String(decoding: out, as: UTF8.self)
     }
