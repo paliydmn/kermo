@@ -194,6 +194,15 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(tunnels.isListening(db.tunnels[0], of: db) && tunnels.state(db.tunnels[0], of: db)?.tunnel.host == "db.internal")
         #expect(echoes(c, "kept"), "listening anew keeps the old way's connection")
         #expect(tunnels.quitNote() == "Tunnels: Main DB (1 connection) — they close")
+        let c2 = dial(p[0])   // on the port listening anew
+        defer { close(c2) }
+        await waitUntil { tunnels.connections(db.tunnels[0], of: db) == 1 }
+        tunnels.moving(db.tunnels[0], of: db)   // the sheet, saving another local port
+        db.tunnels[0].localPort = p[2]
+        tunnels.sync([db])
+        tunnels.start(db.tunnels[0], of: db)
+        #expect(dial(p[0]) == -1 && tunnels.isListening(db.tunnels[0], of: db) && echoes(c2, "moved") && echoes(c, "kept"),
+                "another local port: the old one closes, its connection lives on")
         db.locked = true   // the server's connection lingers 60 s now: listens anew for the next ones
         let token = tunnels.state(db.tunnels[0], of: db)?.token
         tunnels.sync([db])
@@ -206,7 +215,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         var moved = db
         moved.host = vault.host   // to a locked server's address, by an edit of this unlocked one
         tunnels.sync([moved, vault])
-        #expect(!tunnels.isListening(moved.tunnels[0], of: moved) && dial(p[0]) == -1 && echoes(c, "held"))
+        #expect(!tunnels.isListening(moved.tunnels[0], of: moved) && dial(p[2]) == -1 && echoes(c, "held"))
         #expect(said.lines.suffix(2).sorted() == ["“Main DB” turned off: “db1” is locked — Turn On asks for Touch ID",
                                                   "“Redis” turned off: “db1” is locked — Turn On asks for Touch ID"])
         tunnels.sync([db])

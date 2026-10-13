@@ -370,6 +370,14 @@ final class Tunnels {
         if l.connections > 0 { held.append((ServerRow.key(st.server.target), st.tunnel.title, l)) }
     }
 
+    /// An edit gave it another local port: this one closes, the connections open on it live on (held) — `sync` would
+    /// take it for a tunnel deleted and close them.
+    func moving(_ t: Tunnel, of s: SavedServer) {
+        guard let st = states.removeValue(forKey: Self.key(t, s)) else { return }
+        hold(st)
+        changed()
+    }
+
     /// Disconnect: what the server's held listeners still keep ends.
     func endHeld(_ server: String) {
         held.filter { $0.server == server }.forEach { $0.listener.stop() }

@@ -223,6 +223,7 @@ extension AppDelegate {
     private func saveTunnelSheet(_ t: Tunnel, replacing old: Tunnel?, in s: SavedServer, turnOn now: Bool) {
         let st = old.flatMap { tunnels.state($0, of: s) }, listening = st?.listener != nil, failed = st != nil && !listening && t.on
         guard let i = savedServers.firstIndex(where: { $0.id == s.id }) else { return }
+        if let old, old.localPort != t.localPort { tunnels.moving(old, of: s) }
         savedServers[i] = s
         Config.save("servers.json", savedServers)
         if now || failed || (listening && old?.localPort != t.localPort) { turnOn(t, of: s) } else { releaseIdleServers() }
