@@ -203,6 +203,8 @@ private func freePorts(_ n: Int) throws -> [Int] {
         tunnels.start(db.tunnels[0], of: db)
         #expect(dial(p[0]) == -1 && tunnels.isListening(db.tunnels[0], of: db) && echoes(c2, "moved") && echoes(c, "kept"),
                 "another local port: the old one closes, its connection lives on")
+        #expect(tunnels.described(server: ServerRow.key(db.target)) == "Main DB (2 connections), Redis", "one entry each, held ones counted in")
+        #expect(tunnels.quitNote() == "Tunnels: Main DB (2 connections) — they close")
         db.locked = true   // the server's connection lingers 60 s now: listens anew for the next ones
         let token = tunnels.state(db.tunnels[0], of: db)?.token
         tunnels.sync([db])

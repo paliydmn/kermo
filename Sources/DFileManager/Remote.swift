@@ -460,17 +460,31 @@ final class Tunnels {
     /// connections still open; all of them with `server` nil.
     func described(server: String? = nil) -> String {
         let live = states.values.filter { st in st.listener != nil && (server == nil || ServerRow.key(st.server.target) == server) }
-            .map { ($0.tunnel.title, $0.listener!.connections) }
-        let kept = held.filter { server == nil || $0.server == server }.map { ($0.title, $0.listener.connections) }.filter { $0.1 > 0 }
-        return (live.sorted { $0.0 < $1.0 } + kept).map { t, n in t + (n == 0 ? "" : " (\(n) connection\(n == 1 ? "" : "s"))") }
-            .joined(separator: ", ")
+            .map { (ServerRow.key($0.server.target), $0.tunnel.title, $0.listener!.connections) }
+        let kept = held.filter { server == nil || $0.server == server }.map { ($0.server, $0.title, $0.listener.connections) }.filter { $0.2 > 0 }
+        return Self.listed(live.sorted { $0.1 < $1.1 } + kept)
     }
 
     /// Quitting closes these: only tunnels with connections open are worth a question (held ones too).
     func quitNote() -> String? {
-        let busy = states.values.compactMap { st in st.listener.map { (st.tunnel.title, $0.connections) } }.filter { $0.1 > 0 }.sorted { $0.0 < $1.0 }
-            + held.map { ($0.title, $0.listener.connections) }.filter { $0.1 > 0 }
-        return busy.isEmpty ? nil : "Tunnels: " + busy.map { "\($0) (\($1) connection\($1 == 1 ? "" : "s"))" }.joined(separator: ", ") + " — they close"
+        let busy = states.values.compactMap { st in st.listener.map { (ServerRow.key(st.server.target), st.tunnel.title, $0.connections) } }
+            .filter { $0.2 > 0 }.sorted { $0.1 < $1.1 } + held.map { ($0.server, $0.title, $0.listener.connections) }.filter { $0.2 > 0 }
+        return busy.isEmpty ? nil : "Tunnels: " + Self.listed(busy) + " — they close"
+    }
+
+    /// Each tunnel once, with what it holds from before an edit or the lock counted in ("Echo (1 connection)", not
+    /// "Echo, Echo (1 connection)"); one name on two servers is two tunnels.
+    private static func listed(_ tunnels: [(server: String, title: String, connections: Int)]) -> String {
+        var order: [(String, String)] = [], count: [String: Int] = [:]
+        for t in tunnels {
+            let key = t.server + "\n" + t.title
+            if count[key] == nil { order.append((key, t.title)) }
+            count[key, default: 0] += t.connections
+        }
+        return order.map { key, title in
+            let n = count[key]!
+            return title + (n == 0 ? "" : " (\(n) connection\(n == 1 ? "" : "s"))")
+        }.joined(separator: ", ")
     }
 }
 
