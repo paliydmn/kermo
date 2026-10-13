@@ -24,17 +24,20 @@ extension AppDelegate {
         }
     }
 
-    /// Its port closes, its connections too, and it stays off at launch (Turn Off, Disconnect).
+    /// Its port closes, its connections too, and it stays off at launch; the server's connection goes too if nothing
+    /// else uses it now.
     func turnOffNow(_ t: Tunnel, of s: SavedServer) {
         tunnels.stop(t, of: s)
         saveTunnel(t, of: s, on: false)
+        releaseIdleServers()
     }
 
-    private func saveTunnel(_ t: Tunnel, of s: SavedServer, on: Bool) {
+    func saveTunnel(_ t: Tunnel, of s: SavedServer, on: Bool) {
         guard let i = savedServers.firstIndex(where: { $0.id == s.id }),
               let j = savedServers[i].tunnels.firstIndex(where: { $0.localPort == t.localPort }), savedServers[i].tunnels[j].on != on else { return }
         savedServers[i].tunnels[j].on = on
         Config.save("servers.json", savedServers)
+        refreshSidebar()   // its rows keep a copy of the server: their menus would edit the old `on`
     }
 }
 
@@ -53,6 +56,7 @@ extension AppDelegate {
         if s.prod { it.attributedTitle = NSAttributedString(string: it.title, attributes: [.foregroundColor: NSColor.systemRed, .font: NSFont.menuFont(ofSize: 0)]) }
         let menu = NSMenu()
         [on ? MenuAction.item("Turn Off") { [unowned self] in turnOff(t, of: s) } : MenuAction.item("Turn On") { [unowned self] in turnOn(t, of: s) },
+         !on && failed && t.on ? MenuAction.item("Turn Off") { [unowned self] in turnOffNow(t, of: s) } : nil,   // couldn't listen: not at launch either
          t.link.map { url in MenuAction.item("Open in Browser") { [unowned self] in openTunnel(t, of: s, url) } },
          MenuAction.item("Copy Address") { [unowned self] in copyAddress(t) },
          .separator(),
@@ -143,7 +147,7 @@ extension AppDelegate {
     /// left empty takes the port's usual name; URL left empty, a web port's own. A local port someone else listens on is
     /// said at Save with the next free one to take ("Use 15433"): a tunnel's port never moves by itself.
     private func showTunnelSheet(_ old: Tunnel?, of server: SavedServer, name: String, forward: String, url: String,
-                                 problem: String? = nil, free: Int? = nil) {
+                                 problem: String? = nil, free: Int? = nil, turnOn wanted: Bool = false) {
         let nameField = NSTextField(string: name), forwardField = NSTextField(string: forward), urlField = NSTextField(string: url)
         [nameField, forwardField, urlField].forEach { $0.widthAnchor.constraint(equalToConstant: 300).isActive = true }
         forwardField.placeholderString = "5432 · 15432:5432 · 15432:db.internal:5432"
@@ -161,7 +165,7 @@ extension AppDelegate {
 
         let alert = NSAlert()
         alert.messageText = (old.map { "Edit “\($0.title)”" } ?? "New Tunnel on “\(server.title)”").bidiVisible
-        alert.informativeText = "Kermo listens on this Mac (127.0.0.1 only) and goes on from “\(server.title)”, as ssh -L does.".bidiVisible
+        alert.informativeText = "Kermo listens on this Mac's localhost only and goes on from “\(server.title)”, as ssh -L does.".bidiVisible
         let save = old == nil ? ["Save & Turn On", "Save"] : ["Save"]
         (save + (free.map { ["Use \($0)"] } ?? []) + ["Cancel"]).forEach { alert.addButton(withTitle: $0) }
         if old != nil { alert.addButton(withTitle: "Delete…").hasDestructiveAction = true }
@@ -193,14 +197,16 @@ extension AppDelegate {
             if let old, i == save.count + (free == nil ? 1 : 2) { return deleteTunnel(old, of: server) }
             guard i < save.count + (free == nil ? 0 : 1), var t = try? draft.reading(typed.forward).get(),
                   var s = savedServers.first(where: { $0.id == server.id }) else { return }
-            let turnOnNow = old == nil && i != 1
-            if let free, i == save.count { t.localPort = free }
+            let use = free != nil && i == save.count   // "Use N": as the button chosen before it was taken
+            let turnOnNow = old == nil && (use ? wanted : i == 0)
+            if let free, use { t.localPort = free }
             t.name = typed.name.isEmpty ? Tunnel.knownNames[t.port] ?? "" : typed.name
             t.url = typed.url.isEmpty ? nil : typed.url
-            t.on = old?.on ?? false
+            t.on = s.tunnels.first { $0.localPort == old?.localPort }?.on ?? false   // as saved now: the menu's copy may be older
             let again = { (problem: String, free: Int?) in
                 DispatchQueue.main.async {
-                    self.showTunnelSheet(old, of: server, name: typed.name, forward: t.forward, url: typed.url, problem: problem, free: free)
+                    self.showTunnelSheet(old, of: server, name: typed.name, forward: t.forward, url: typed.url, problem: problem, free: free,
+                                         turnOn: turnOnNow)
                 }
             }
             if let j = s.tunnels.firstIndex(where: { $0.localPort == old?.localPort }) { s.tunnels[j] = t } else { s.tunnels.append(t) }
@@ -208,21 +214,18 @@ extension AppDelegate {
             if t.localPort != old?.localPort, !TunnelListener.isFree(t.localPort) {
                 return again("Port \(t.localPort) is in use on this Mac", TunnelListener.freePort(after: t.localPort))
             }
-            Task { await saveTunnelSheet(t, replacing: old, in: s, turnOn: turnOnNow) }
+            saveTunnelSheet(t, replacing: old, in: s, turnOn: turnOnNow)
         }
     }
 
-    /// A tunnel listening that now goes another way listens anew: its open connections close, so that's asked first.
-    private func saveTunnelSheet(_ t: Tunnel, replacing old: Tunnel?, in s: SavedServer, turnOn now: Bool) async {
-        let listening = old.map { tunnels.isListening($0, of: s) } ?? false, n = old.map { tunnels.connections($0, of: s) } ?? 0
-        if let old, listening, n > 0, (old.localPort, old.host, old.port) != (t.localPort, t.host, t.port),
-           await !confirm("Change “\(old.title)”?", info: n == 1 ? "It listens anew: 1 open connection closes." : "It listens anew: \(n) open connections close.", ok: "Save") {
-            return
-        }
+    /// Saved; one listening that now goes another way listens anew (`sync`: on another port, here) — the connections
+    /// it has open live on to where they went. One that was on but couldn't listen tries again.
+    private func saveTunnelSheet(_ t: Tunnel, replacing old: Tunnel?, in s: SavedServer, turnOn now: Bool) {
+        let st = old.flatMap { tunnels.state($0, of: s) }, listening = st?.listener != nil, failed = st != nil && !listening && t.on
         guard let i = savedServers.firstIndex(where: { $0.id == s.id }) else { return }
         savedServers[i] = s
-        Config.save("servers.json", savedServers)   // `sync`: gone, or listening anew on the same port
-        if now || (listening && old?.localPort != t.localPort) { turnOn(t, of: s) }
+        Config.save("servers.json", savedServers)
+        if now || failed || (listening && old?.localPort != t.localPort) { turnOn(t, of: s) } else { releaseIdleServers() }
         refreshSidebar()
     }
 
@@ -235,6 +238,7 @@ extension AppDelegate {
                   let i = savedServers.firstIndex(where: { $0.id == s.id }) else { return }
             savedServers[i].tunnels.removeAll { $0.localPort == t.localPort }
             Config.save("servers.json", savedServers)
+            releaseIdleServers()
         }
     }
 }

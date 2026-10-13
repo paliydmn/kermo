@@ -303,6 +303,9 @@ final class Tunnels {
         let token = UUID()              // a listener started again: the old one's word no longer counts
     }
     private(set) var states: [Key: State] = [:]
+    /// Listeners that stopped taking connections but keep their open ones (the screen locked; a tunnel that listens
+    /// anew after an edit), until those end: Disconnect and quitting still end them, and count them when they ask.
+    private var held: [(server: String, title: String, listener: TunnelListener)] = []
     /// One started or stopped listening (the sidebar shows it).
     var changed: () -> Void = {}
     /// A status line.
@@ -323,11 +326,12 @@ final class Tunnels {
     /// Servers (`ServerRow.key`) a tunnel listens for: in use, so their connection stays up (`releaseIdleServers`).
     var inUse: Set<String> { Set(states.values.filter { $0.listener != nil }.map { ServerRow.key($0.server.target) }) }
 
-    /// Listens on its port (again, if it did); nil, or why it can't — a taken port, with the next free one.
+    /// Listens on its port (again, if it did: the connections open so far live on); nil, or why it can't — a taken
+    /// port, with the next free one.
     @discardableResult
     func start(_ t: Tunnel, of s: SavedServer) -> String? {
         let key = Self.key(t, s)
-        states.removeValue(forKey: key)?.listener?.stop()   // not `stop`: told once, when it listens anew (its server stays in use)
+        states.removeValue(forKey: key).map(hold)   // not `stop`: told once, when it listens anew (its server stays in use)
         var st = State(tunnel: t, server: s)
         defer {
             states[key] = st
@@ -349,19 +353,34 @@ final class Tunnels {
         }
     }
 
-    /// Closes its port; its connections close too, unless `keepConnections`.
-    func stop(_ t: Tunnel, of s: SavedServer, keepConnections: Bool = false) { stop(Self.key(t, s), keepConnections: keepConnections) }
+    /// Closes its port and its connections.
+    func stop(_ t: Tunnel, of s: SavedServer) { stop(Self.key(t, s)) }
 
-    private func stop(_ key: Key, keepConnections: Bool = false) {
+    private func stop(_ key: Key) {
         guard let st = states.removeValue(forKey: key) else { return }
-        st.listener?.stop(keepConnections: keepConnections)
+        st.listener?.stop()
         changed()
+    }
+
+    /// Its port closes; its open connections live on, held.
+    private func hold(_ st: State) {
+        guard let l = st.listener else { return }
+        l.stop(keepConnections: true)
+        held.removeAll { $0.listener.connections == 0 }
+        if l.connections > 0 { held.append((ServerRow.key(st.server.target), st.tunnel.title, l)) }
+    }
+
+    /// Disconnect: what the server's held listeners still keep ends.
+    func endHeld(_ server: String) {
+        held.filter { $0.server == server }.forEach { $0.listener.stop() }
+        held.removeAll { $0.server == server }
     }
 
     /// Quitting: every port closes, every connection with it.
     func stopAll() {
         states.values.forEach { $0.listener?.stop() }
-        states = [:]
+        held.forEach { $0.listener.stop() }
+        (states, held) = ([:], [])
     }
 
     private func heard(_ e: TunnelListener.Event, _ key: Key, _ token: UUID) {
@@ -388,8 +407,9 @@ final class Tunnels {
         if !failed.isEmpty { say("Tunnels not listening: " + failed.joined(separator: "; "), true) }
     }
 
-    /// The saved servers changed: a tunnel gone (or its server) stops; one whose way or server's address changed
-    /// listens again that way; a new name or URL just shows.
+    /// The saved servers changed: a tunnel gone (or its server) stops; one whose way or server changed listens anew —
+    /// its open connections live on — unless its server is now one that's locked (that asks for Touch ID first); a new
+    /// name or URL just shows.
     func sync(_ servers: [SavedServer]) {
         for (key, st) in states {
             guard let s = servers.first(where: { $0.id == key.server }), let t = s.tunnels.first(where: { $0.localPort == key.port }) else {
@@ -401,6 +421,10 @@ final class Tunnels {
                 states[key]?.server = s
             } else if st.listener == nil {
                 stop(key)
+            } else if ServerRow.key(s.target) != ServerRow.key(st.server.target) && Self.locked(s, among: servers) {
+                states.removeValue(forKey: key).map(hold)
+                changed()
+                say("“\(t.title)” turned off: “\(s.title)” is locked — Turn On asks for Touch ID", false)
             } else if let why = start(t, of: s) {
                 say("“\(t.title)”: \(why)", true)
             }
@@ -412,7 +436,8 @@ final class Tunnels {
     func relock(_ servers: [SavedServer]) {
         let off = states.filter { $0.value.listener != nil && Self.locked($0.value.server, among: servers) }
         guard !off.isEmpty else { return }
-        off.keys.forEach { stop($0, keepConnections: true) }
+        for key in off.keys { states.removeValue(forKey: key).map(hold) }
+        changed()
         let names = off.values.map { "\($0.tunnel.title) (\($0.server.title))" }.sorted()
         heldNote = "Locked servers' tunnels turned off: " + names.joined(separator: ", ")
     }
@@ -423,18 +448,21 @@ final class Tunnels {
         say(n, false)
     }
 
-    /// "Postgres (3 connections), Grafana": `tunnels` listening, with their connections.
-    func described(_ tunnels: [(Tunnel, SavedServer)]) -> String {
-        tunnels.map { t, s in
-            let n = connections(t, of: s)
-            return t.title + (n == 0 ? "" : " (\(n) connection\(n == 1 ? "" : "s"))")
-        }.joined(separator: ", ")
+    /// "Postgres (3 connections), Grafana": the server's (`ServerRow.key`) tunnels listening and those held with
+    /// connections still open; all of them with `server` nil.
+    func described(server: String? = nil) -> String {
+        let live = states.values.filter { st in st.listener != nil && (server == nil || ServerRow.key(st.server.target) == server) }
+            .map { ($0.tunnel.title, $0.listener!.connections) }
+        let kept = held.filter { server == nil || $0.server == server }.map { ($0.title, $0.listener.connections) }.filter { $0.1 > 0 }
+        return (live.sorted { $0.0 < $1.0 } + kept).map { t, n in t + (n == 0 ? "" : " (\(n) connection\(n == 1 ? "" : "s"))") }
+            .joined(separator: ", ")
     }
 
-    /// Quitting closes these: only tunnels with connections open are worth a question.
+    /// Quitting closes these: only tunnels with connections open are worth a question (held ones too).
     func quitNote() -> String? {
-        let busy = states.values.filter { ($0.listener?.connections ?? 0) > 0 }.map { ($0.tunnel, $0.server) }.sorted { $0.0.title < $1.0.title }
-        return busy.isEmpty ? nil : "Tunnels: \(described(busy)) — they close"
+        let busy = states.values.compactMap { st in st.listener.map { (st.tunnel.title, $0.connections) } }.filter { $0.1 > 0 }.sorted { $0.0 < $1.0 }
+            + held.map { ($0.title, $0.listener.connections) }.filter { $0.1 > 0 }
+        return busy.isEmpty ? nil : "Tunnels: " + busy.map { "\($0) (\($1) connection\($1 == 1 ? "" : "s"))" }.joined(separator: ", ") + " — they close"
     }
 }
 

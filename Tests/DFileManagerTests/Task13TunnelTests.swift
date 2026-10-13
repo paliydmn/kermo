@@ -44,6 +44,25 @@ private func dial(_ port: Int) -> Int32 {
     return s
 }
 
+/// Sends `text` and reads it back (`cat` echoes).
+private func echoes(_ fd: Int32, _ text: String) -> Bool {
+    _ = text.withCString { write(fd, $0, strlen($0)) }
+    var buf = [UInt8](repeating: 0, count: text.utf8.count)
+    var got = 0
+    while got < buf.count {
+        let n = buf.withUnsafeMutableBytes { read(fd, $0.baseAddress! + got, $0.count - got) }
+        if n <= 0 { return false }
+        got += n
+    }
+    return String(decoding: buf, as: UTF8.self) == text
+}
+
+/// The other end closed it.
+private func ends(_ fd: Int32) -> Bool {
+    var b: UInt8 = 0
+    return read(fd, &b, 1) == 0
+}
+
 /// Ports nobody listens on now (the kernel's picks).
 private func freePorts(_ n: Int) throws -> [Int] {
     let ls = try (0..<n).map { _ in try TunnelListener(port: 0, child: { _ in .init(executable: "/bin/cat") }, onEvent: { _ in }) }
@@ -125,30 +144,36 @@ private func freePorts(_ n: Int) throws -> [Int] {
     }
 
     /// The screen locks: a locked server's tunnels stop listening, their connections live on; the unlocked server's go
-    /// on. Back at the Mac, the status line names them — once.
+    /// on. Back at the Mac, the status line names them — once. What they keep is still Kermo's: quitting asks about it
+    /// and ends it, and so does Disconnect.
     @Test func lockingTheScreenTurnsLockedServersTunnelsOff() async throws {
         let p = try freePorts(2)
         let vault = server("vault", locked: true, [Tunnel(localPort: p[0], port: 8200)]), db = server("db1", [Tunnel(localPort: p[1], port: 5432)])
         defer { tunnels.stopAll() }
         tunnels.start(vault.tunnels[0], of: vault)
         tunnels.start(db.tunnels[0], of: db)
-        let c = dial(p[0])
-        defer { close(c) }
-        await waitUntil { tunnels.connections(vault.tunnels[0], of: vault) == 1 }
+        let c = dial(p[0]), d = dial(p[0])
+        defer { close(c); close(d) }
+        await waitUntil { tunnels.connections(vault.tunnels[0], of: vault) == 2 }
         tunnels.relock([vault, db])
         #expect(!tunnels.isListening(vault.tunnels[0], of: vault) && tunnels.isListening(db.tunnels[0], of: db))
         #expect(dial(p[0]) == -1)
-        _ = "still".withCString { write(c, $0, 5) }
-        var buf = [UInt8](repeating: 0, count: 5)
-        #expect(read(c, &buf, 5) == 5 && String(decoding: buf, as: UTF8.self) == "still", "its connection lives on")
+        #expect(echoes(c, "still"), "its connection lives on")
         #expect(said.lines.isEmpty, "said once the Mac is back")
         tunnels.sayHeldNote()
         tunnels.sayHeldNote()
         #expect(said.lines == ["Locked servers' tunnels turned off: localhost:8200 (vault)"] && said.errors == [false])
+        #expect(tunnels.quitNote() == "Tunnels: localhost:8200 (2 connections) — they close")
+        #expect(tunnels.described(server: ServerRow.key(vault.target)) == "localhost:8200 (2 connections)")
+        tunnels.endHeld(ServerRow.key(db.target))
+        #expect(echoes(c, "on"), "another server's Disconnect leaves it")
+        tunnels.endHeld(ServerRow.key(vault.target))   // its Disconnect
+        #expect(ends(c) && ends(d) && tunnels.quitNote() == nil)
     }
 
-    /// Saved servers changed: a tunnel deleted, or its server, stops; a new port, host or server address listens anew;
-    /// a new name just shows. Quitting asks only about tunnels with connections open.
+    /// Saved servers changed: a tunnel deleted, or its server, stops; a new name just shows; a new way or server — the
+    /// Lock box ticked too — listens anew, and the connections it had live on to where they went (quitting still ends
+    /// them). Moved to a locked server's address it doesn't listen: that asks for Touch ID.
     @Test func editsReachTheListeningPorts() async throws {
         let p = try freePorts(3)
         var db = server("db1", [Tunnel(localPort: p[0], port: 5432), Tunnel(localPort: p[1], port: 6379)])
@@ -159,7 +184,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         defer { close(c) }
         await waitUntil { tunnels.connections(db.tunnels[0], of: db) == 1 }
         #expect(tunnels.quitNote() == "Tunnels: Postgres (1 connection) — they close")
-        #expect(tunnels.described(db.tunnels.map { ($0, db) }) == "Postgres (1 connection), Redis")
+        #expect(tunnels.described(server: ServerRow.key(db.target)) == "Postgres (1 connection), Redis")
 
         db.tunnels[0].name = "Main DB"
         tunnels.sync([db])
@@ -167,13 +192,29 @@ private func freePorts(_ n: Int) throws -> [Int] {
         db.tunnels[0].host = "db.internal"
         tunnels.sync([db])
         #expect(tunnels.isListening(db.tunnels[0], of: db) && tunnels.state(db.tunnels[0], of: db)?.tunnel.host == "db.internal")
-        var b: UInt8 = 0
-        #expect(read(c, &b, 1) == 0, "listening anew ended the old way's connections")
+        #expect(echoes(c, "kept"), "listening anew keeps the old way's connection")
+        #expect(tunnels.quitNote() == "Tunnels: Main DB (1 connection) — they close")
+        db.locked = true   // the server's connection lingers 60 s now: listens anew for the next ones
+        let token = tunnels.state(db.tunnels[0], of: db)?.token
+        tunnels.sync([db])
+        #expect(tunnels.isListening(db.tunnels[0], of: db) && tunnels.state(db.tunnels[0], of: db)?.token != token && echoes(c, "lock"))
+        db.locked = false
+        tunnels.sync([db])
+
+        var vault = server("vault", locked: true, [])
+        vault.host = "vault.invalid"
+        var moved = db
+        moved.host = vault.host   // to a locked server's address, by an edit of this unlocked one
+        tunnels.sync([moved, vault])
+        #expect(!tunnels.isListening(moved.tunnels[0], of: moved) && dial(p[0]) == -1 && echoes(c, "held"))
+        #expect(said.lines.suffix(2).sorted() == ["“Main DB” turned off: “db1” is locked — Turn On asks for Touch ID",
+                                                  "“Redis” turned off: “db1” is locked — Turn On asks for Touch ID"])
+        tunnels.sync([db])
         db.tunnels.removeLast()
         tunnels.sync([db])
-        #expect(dial(p[1]) == -1 && tunnels.states.count == 1)
-        tunnels.sync([])
-        #expect(tunnels.states.isEmpty && dial(p[0]) == -1 && tunnels.inUse.isEmpty)
+        #expect(dial(p[1]) == -1 && tunnels.states.isEmpty)
+        tunnels.stopAll()
+        #expect(ends(c) && tunnels.inUse.isEmpty)
     }
 
     /// A tunnel's item says its name, port and open connections, its state by a ● (and to VoiceOver), why it failed in

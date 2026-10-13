@@ -958,6 +958,7 @@ extension AppDelegate {
             let password = inputs[5].stringValue   // as typed: spaces count
             s.startDir = v[6].isEmpty ? nil : v[6]
             s.locked = lock.state == .on
+            s.tunnels = savedServers.first { $0.id == s.id }?.tunnels ?? s.tunnels   // as they are now, not when the sheet opened
             let forget = hasPassword && forgetBox.state == .on, forgetSudo = hasSudo && forgetSudoBox.state == .on
             if let p = s.problem {   // after this sheet is gone
                 return DispatchQueue.main.async {
@@ -996,7 +997,8 @@ extension AppDelegate {
     func deleteServer(_ s: SavedServer) {
         Task {
             guard await ServerLock.authorize(s, "delete") else { return }
-            let info = "Its saved passwords too. Open sessions stay open.", history = historyToDelete(with: s)
+            let listening = tunnels.listening(s).isEmpty ? "" : " Its tunnels turn off: \(tunnels.described(server: ServerRow.key(s.target)))."
+            let info = "Its saved passwords too. Open sessions stay open." + listening, history = historyToDelete(with: s)
             let answer = history == nil ? await confirm("Delete “\(s.title)”?", info: info, ok: "Delete") ? 0 : 2
                 : await choose("Delete “\(s.title)”?", info: info + " Its file history — the versions its saves kept on this Mac — can go too.",
                                ["Delete", "Delete with File History", "Cancel"])

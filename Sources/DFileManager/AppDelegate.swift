@@ -64,10 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         AuditLog.failed = { [unowned self] in active.flash($0, error: true) }
         ServerLock.relockOnScreenLockAndSleep()
         ServerLock.onRelock = { [unowned self] in tunnels.relock(savedServers) }
-        tunnels.changed = { [unowned self] in
-            refreshSidebar()
-            releaseIdleServers()   // the last tunnel of a server that nothing else shows: its connection goes too
-        }
+        tunnels.changed = { [unowned self] in refreshSidebar() }
         tunnels.say = { [unowned self] in active.flash($0, error: $1) }
         // Back from a locked screen or sleep: the tunnels that went off with it are named once (`relock`).
         let back: @Sendable (Notification) -> Void = { _ in
@@ -240,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// A server nothing shows any more (no panel tab, no running SSH tab, not connecting) keeps no logged-in
     /// connection: closing its last session closes that too, instead of ControlPersist's 10 minutes.
-    private func releaseIdleServers() {
+    func releaseIdleServers() {
         let inUse = Set(panels.flatMap { $0.remoteTabs.map(\.target) + [$0.connecting].compactMap { $0 } }.map(ServerRow.key)
                         + terminal.tabs.filter { $0.exitStatus == nil }.compactMap(\.target).map(ServerRow.key))   // starting or running
             .union(tunnels.inUse)   // else the next client would log in again
@@ -606,9 +603,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func disconnect(_ t: SFTPTarget) {
         let key = ServerRow.key(t)
         let live = (terminal?.tabs ?? []).filter { $0.isRunning && $0.target.map(ServerRow.key) == key }
-        let listening = savedServers.filter { ServerRow.key($0.target) == key }.flatMap { s in tunnels.listening(s).map { ($0, s) } }
+        let listening = tunnels.described(server: key)
         let info = [live.isEmpty ? nil : live.count == 1 ? "Its SSH session ends." : "Its \(live.count) SSH sessions end.",
-                    listening.isEmpty ? nil : "Its tunnels turn off: \(tunnels.described(listening))."].compactMap { $0 }
+                    listening.isEmpty ? nil : "Its tunnels turn off: \(listening)."].compactMap { $0 }
         Task {
             if !info.isEmpty, await !confirm("Disconnect from \(t.host)?", info: info.joined(separator: " "), ok: "Disconnect") { return }
             await disconnectNow(key)
@@ -617,9 +614,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func disconnectNow(_ key: String) async {
         SudoPasswords.forget(key)
+        // Their ports close first, so no client logs in again meanwhile; not through `turnOffNow`, whose
+        // releaseIdleServers would end the connection only gently.
         for s in savedServers where ServerRow.key(s.target) == key {
-            for t in tunnels.listening(s) { turnOffNow(t, of: s) }
+            for t in tunnels.listening(s) {
+                tunnels.stop(t, of: s)
+                saveTunnel(t, of: s, on: false)
+            }
         }
+        tunnels.endHeld(key)   // connections kept from before the screen locked, or from before an edit
         // First: an SSH tab ending or the last file tab closing lets releaseIdleServers end it only gently (`-O stop`).
         await Masters.stop(now: true) { ServerRow.key($0) == key }
         // Its SSH tabs' ssh too: a master stopped after a wake or a network change is no longer known, nor reachable by
