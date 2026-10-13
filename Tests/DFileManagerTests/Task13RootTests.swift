@@ -144,6 +144,28 @@ extension ServerLockTests {
     #expect(SSHPasswords.get(t, sudo: true) == nil && SSHPasswords.get(t) == nil, "the saved server moved: both go")
 }
 
+/// The server sheet's "Forget the saved sudo password" removes it where it was — from the Keychain and from memory —
+/// and leaves the ssh password alone.
+@Test func serverSheetForgetsTheSudoPassword() async {
+    let host = "me@dfm-fsudo-\(UUID().uuidString).invalid"
+    let s = SavedServer(address: host)!
+    defer { SSHPasswords.set(nil, for: s.target); SSHPasswords.set(nil, for: s.target, sudo: true); SudoPasswords.forget() }
+    SSHPasswords.set("ssh-pw", for: s.target)
+    SSHPasswords.set("sudo-pw", for: s.target, sudo: true)
+    SudoPasswords.taken(s.target.asRoot(), "sudo-pw")
+    let app = AppDelegate()
+    app.savedServers = [s]
+    app.storePassword(old: s, new: s, typed: "", forget: false, forgetSudo: false)
+    #expect(SSHPasswords.get(s.target, sudo: true) == "sudo-pw", "not ticked: kept")
+    app.storePassword(old: s, new: s, typed: "", forget: false, forgetSudo: true)
+    #expect(SSHPasswords.get(s.target, sudo: true) == nil && SSHPasswords.get(s.target) == "ssh-pw")
+    var asked = 0
+    let was = SudoPasswords.ask
+    SudoPasswords.ask = { _, _ in asked += 1; return nil }
+    defer { SudoPasswords.ask = was }
+    #expect(await Blocking.run { SudoPasswords.password(s.target.asRoot(), wrong: false) } == nil && asked == 1, "gone from memory too")
+}
+
 /// A locked server's root panel asks for Touch ID as its user's does (same user@host:port); refused, the panel stays.
 @Test func rootPanelOfALockedServerAsks() async throws {
     var local = SavedServer(address: "localhost")!

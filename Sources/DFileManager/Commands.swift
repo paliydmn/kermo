@@ -837,11 +837,13 @@ extension AppDelegate {
         }
     }
 
-    /// The saved password is never shown, only replaced or forgotten (see `storePassword`).
+    /// The saved password is never shown, only replaced or forgotten (see `storePassword`); so is a root panel's sudo
+    /// password saved there ("Save in Keychain" in its sheet), which can only be forgotten here.
     private func showServerSheet(_ server: SavedServer, title: String, connect: ServerSession.Kind,
-                                 problem: String = "", password: String = "", forget: Bool = false) {
+                                 problem: String = "", password: String = "", forget: Bool = false, forgetSudo: Bool = false) {
         let saved = savedServers.contains { $0.id == server.id }
         let hasPassword = !server.host.isEmpty && SSHPasswords.has(server.target)
+        let hasSudo = !server.host.isEmpty && SSHPasswords.has(server.target, sudo: true)
         let fields: [(String, String, String)] = [
             ("Name", server.name, "shown in the sidebar; empty = the address"),
             ("Host", server.host, "address or ~/.ssh/config host"),
@@ -874,7 +876,11 @@ extension AppDelegate {
         lock.state = server.locked ? .on : .off
         let forgetBox = NSButton(checkboxWithTitle: "Forget the saved password", target: nil, action: nil)
         forgetBox.state = forget ? .on : .off
-        let extra: [[NSView]] = (hasPassword ? [[NSGridCell.emptyContentView, forgetBox]] : []) + [[NSGridCell.emptyContentView, lock]]
+        let forgetSudoBox = NSButton(checkboxWithTitle: "Forget the saved sudo password", target: nil, action: nil)
+        forgetSudoBox.toolTip = "The one a root panel saved in the Keychain (“Kermo sudo”); the next root panel asks again"
+        forgetSudoBox.state = forgetSudo ? .on : .off
+        let extra: [[NSView]] = (hasPassword ? [[NSGridCell.emptyContentView, forgetBox]] : [])
+            + (hasSudo ? [[NSGridCell.emptyContentView, forgetSudoBox]] : []) + [[NSGridCell.emptyContentView, lock]]
         let grid = NSGridView(views: zip(fields, inputs).map { [NSTextField(labelWithString: $0.0 + ":"), $1 === keyField ? keyRow : $1] } + extra)
         grid.column(at: 0).xPlacement = .trailing
         grid.rowAlignment = .firstBaseline
@@ -906,16 +912,16 @@ extension AppDelegate {
             let password = inputs[5].stringValue   // as typed: spaces count
             s.startDir = v[6].isEmpty ? nil : v[6]
             s.locked = lock.state == .on
-            let forget = hasPassword && forgetBox.state == .on
+            let forget = hasPassword && forgetBox.state == .on, forgetSudo = hasSudo && forgetSudoBox.state == .on
             if let p = s.problem {   // after this sheet is gone
                 return DispatchQueue.main.async {
-                    self.showServerSheet(s, title: title, connect: connect, problem: p, password: password, forget: forget)
+                    self.showServerSheet(s, title: title, connect: connect, problem: p, password: password, forget: forget, forgetSudo: forgetSudo)
                 }
             }
             let old = savedServers.first { $0.id == s.id }
             if let i = savedServers.firstIndex(where: { $0.id == s.id }) { savedServers[i] = s } else { savedServers.append(s) }
             Config.save("servers.json", savedServers)
-            let status = storePassword(old: old, new: s, typed: password, forget: forget)
+            let status = storePassword(old: old, new: s, typed: password, forget: forget, forgetSudo: forgetSudo)
             if status != errSecSuccess {
                 showError(JobErrorMessage("Couldn't save the password in the Keychain: \(SecCopyErrorMessageString(status, nil) as String? ?? "error \(status)")"))
             }
@@ -926,10 +932,16 @@ extension AppDelegate {
 
     /// A password never follows an address change: Edit could otherwise hand it to whatever server was typed in.
     /// Typed: saved for the (new) address. Forget: removed — only where it was (a moved server's new address may hold
-    /// another one's). Nothing typed: whatever that address has stays.
+    /// another one's). Nothing typed: whatever that address has stays. `forgetSudo`: the sudo password saved where it was
+    /// goes, from memory too.
     @discardableResult
-    func storePassword(old: SavedServer?, new s: SavedServer, typed: String, forget: Bool) -> OSStatus {
+    func storePassword(old: SavedServer?, new s: SavedServer, typed: String, forget: Bool, forgetSudo: Bool = false) -> OSStatus {
         let moved = old.map { !SSHPasswords.sameKey($0.target, s.target) } ?? false
+        if forgetSudo {
+            let at = (old ?? s).target
+            SSHPasswords.set(nil, for: at, sudo: true)
+            SudoPasswords.forget(SudoPasswords.key(at))
+        }
         if let old, moved { forgetPassword(old) }
         if !typed.isEmpty { return SSHPasswords.set(typed, for: s.target) }
         return forget && !moved ? SSHPasswords.set(nil, for: s.target) : errSecSuccess
