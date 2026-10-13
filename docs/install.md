@@ -1,30 +1,30 @@
-# Requirements and installation
+[Kermo documentation](../README.md#documentation)
 
-Kermo requires macOS 14 or later. To install a packaged release, open the DMG, drag Kermo to Applications, then open it. Local releases are not notarized by Apple, so the first launch is blocked: on macOS 15 or later click **Open Anyway** in System Settings > Privacy & Security; on macOS 14 Control-click the app and choose **Open**. Kermo was called DFileManager before: settings and permissions carry over, so delete the old DFileManager.app.
+# Install Kermo
 
-To create a universal installer for Apple Silicon and Intel Macs:
+Kermo needs macOS 14 or later and runs on Apple Silicon and Intel Macs.
 
-```bash
-./package.sh                                   # writes universal .pkg and .dmg files to dist/
-```
+## Install a release
 
-Send the `.pkg` file for the simplest installation: opening it runs the standard macOS installer and places Kermo in Applications. Because local releases are not notarized by Apple, the recipient allows the package the same way on the first open.
+1. Download the `.dmg` or the `.pkg` from the [latest release](https://github.com/paliydmn/kermo/releases/latest).
+2. Open the DMG and drag **Kermo** to Applications. With the `.pkg`, open it and run the standard macOS installer, which puts Kermo in Applications.
+3. Kermo isn't notarized by Apple, so macOS blocks it the first time: when you open the app from the DMG, or when you open the `.pkg`. Allow it:
+   - on macOS 15 or later, click **Open Anyway** in System Settings ▸ Privacy & Security;
+   - on macOS 14, Control-click it and choose **Open**.
 
-Building from source requires the Command Line Tools. The full Xcode installation is not required.
+To update, replace the app in Applications. Releases are signed ad hoc, so macOS can ask again for permissions such as Full Disk Access after an update.
 
-```bash
-./cert.sh                                      # create a local signing certificate (run once)
-./build.sh                                     # build build/Kermo.app
-cp -R build/Kermo.app /Applications/           # install the app
-open /Applications/Kermo.app                   # launch it
-```
+Kermo was called DFileManager before. Settings carry over (same config folder, same defaults); delete the old DFileManager.app.
 
-Running `./cert.sh` once creates a local self-signed certificate in your login keychain. This keeps Full Disk Access and other macOS permissions from being reset after every rebuild. Without the certificate, `build.sh` uses ad-hoc signing.
+## Build from source
 
-Other development commands:
+You need the Command Line Tools; Xcode isn't required. See [Contributing](../CONTRIBUTING.md#build-and-run).
 
-```bash
-./test.sh                                      # run tests (works around a CLT swift-testing plugin bug)
-swift run -c release bench                     # benchmark and verify 100k generated files
-swift run -c release bench ~/Library           # benchmark a real directory
-```
+## Uninstall
+
+1. Quit Kermo and drag Kermo.app to the Trash.
+2. Optional, to remove everything it kept:
+   - the folder `~/.config/dfilemanager` (settings, saved servers, file history, production log);
+   - its options: `defaults delete com.dmn.dfilemanager`;
+   - the `fm` link in `/usr/local/bin`, if you installed it;
+   - the Keychain items "Kermo: …" and "Kermo sudo: …" (Keychain Access).

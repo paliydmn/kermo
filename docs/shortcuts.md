@@ -1,62 +1,126 @@
+[Kermo documentation](../README.md#documentation)
+
 # Keyboard shortcuts
 
-Every function-key action also has an ⌥+number shortcut (⌥0 = F10) because Mac function keys control media by default. Shortcuts are bound to physical keys, so they work with any keyboard layout (the ISO § key counts as `` ` ``); menu items still show and match the characters of the current layout, so on a layout that moves Latin letters (Dvorak, AZERTY) a letter shortcut in a menu follows the letter. To remap any shortcut, choose **Edit Keymap…** from the application menu.
+Every shortcut in Kermo, grouped by what it does. Press F1 in the app for the list of command shortcuts, generated from your current keymap.
 
-Clashes with macOS: ⌘⇧/ (computer root) is also the system's Help-menu search, and ⌃1…⌃7 (Finder tags) switch desktops once you have several — turn those off in System Settings › Keyboard › Keyboard Shortcuts, or remap the command. ⌘M minimizes the window, as everywhere on the Mac.
+Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ Command, always in that order (⌃⌥⇧⌘), so ⇧⌘P means Shift, Command and P together. A slash separates the keys of paired actions: "Copy / Move: F5 / F6".
 
-| Action | Shortcut |
+- **Find any command** with ⇧⌘P: it is listed with its shortcut. (The viewer and editor keys and mouse marking aren't commands, so search doesn't list them.)
+- **Function keys:** F1–F10 and ⇧F4, ⇧F6, ⇧F8 also work as ⌥ plus the digit (⌥0 is F10, ⌥⇧6 is ⇧F6), because Mac function keys control media by default. The other F-key shortcuts (⇧F2, ⌥F1, ⌥F5, ⌥F7, ⌥F9, ⌥F10) have no digit twin: use fn, or remap them.
+- **Layouts:** shortcuts are bound to physical keys, so they work with any keyboard layout (the ISO § key counts as `` ` ``). Menus show the characters of your current layout, so on a layout that moves Latin letters (Dvorak, AZERTY) a letter shortcut in a menu follows the letter.
+- **Remap:** choose **Kermo ▸ Edit Keymap…**, then **Reload Config** to apply it (see [Configuration](configuration.md#keymap)).
+
+> [!NOTE]
+> Two shortcuts clash with macOS: ⇧⌘/ (computer root) is also the Help menu search, and ⌃1…⌃7 (Finder tags) switch desktops once you have several. Turn them off in System Settings ▸ Keyboard ▸ Keyboard Shortcuts, or remap the command. ⌘M minimizes the window, as everywhere on the Mac.
+
+## Search and help
+
+| Action | Keys |
 |---|---|
-| **Search**: commands, folders and files (all actions below) | ⌘⇧P, F9, ⌥9 |
+| Search commands, folders and files | ⇧⌘P, F9, ⌥9 |
 | Keyboard shortcuts cheat sheet | F1, ⌥1 |
+
+## Panels, tabs and navigation
+
+| Action | Keys |
+|---|---|
+| Next panel / panel N | Tab / ⌘1…⌘4 |
+| Add / close a panel (2–4; F5 and F6 target the previously active one) | ⌥⌘N / ⌥⌘W |
 | Show / hide the Places sidebar | ⌃⌘S |
 | Keyboard focus to the sidebar (↑↓ choose, ↩ open, ⎋ back to the panel) | ⌃⇧S |
-| Go to directory (bookmarks ★ + frequently used) / add bookmark | ⌘P / ⌘D |
-| Next panel / panel N | Tab / ⌘1…⌘4 |
-| Back to the panels from a viewer or editor (Window menu) | ⌘0 |
-| Add / close panel (2–4; F5/F6 target the previously active panel) | ⌘⌥N / ⌘⌥W |
-| Directory tree (←/→ collapse/expand, ↩ open) | F10, ⌥0, ⌥F10, ⌘⇧T |
-| Open / enter an `.app` bundle | ↩ / ⌘↓ |
+| New tab / close tab (or click its ×) | ⌘T / ⌘W |
+| Next / previous tab | ⌃⇥, ⇧⌘] / ⌃⇧⇥, ⇧⌘[ |
+| Swap panels / open the same folder in the other panel | ⌘U / ⌥= |
+| Go to a folder (bookmarks ★ and frequent folders) | ⌘P |
+| Bookmark this folder (again: remove the bookmark) | ⌘D |
+| Path entry with Tab completion | ⌘L, ⇧⌘G |
 | Up / back / forward | ⌫, ⌘↑ / ⌘[ / ⌘] |
-| Home / computer root | ⌘⇧H / ⌘⇧/ |
-| Path entry with Tab completion | ⌘L, ⌘⇧G |
-| Tabs: new / close (or click a tab's ×) / next / previous | ⌘T / ⌘W / ⌃⇥, ⌘⇧] / ⌃⇧⇥, ⌘⇧[ |
-| Swap panels / open the same directory in the other panel | ⌘U / ⌥= |
-| Quick filter (text, `*.glob`, `re:`) / presets and recent filters | / / ⌘/ |
-| Find files (name / content / Spotlight) | ⌘F, ⌥F7 |
+| Home / computer root | ⇧⌘H / ⇧⌘/ |
+| Directory tree (←/→ collapse/expand, ↩ open) | F10, ⌥0, ⌥F10, ⇧⌘T |
+| Open / enter an `.app` bundle | ↩ / ⌘↓ |
+| Follow a link's target | ⌘J |
+| Show hidden files / refresh | ⇧⌘. / ⌘R |
+| Volumes / eject | ⇧⌘V, ⌥F1 / ⌥⌘E |
+| Back to the panels from a viewer or editor | ⌘0 |
+
+## Marking, filtering and finding
+
+| Action | Keys |
+|---|---|
+| Mark files (Midnight Commander style) | Space, ⇧↑ / ⇧↓, ⌘-click, ⇧-click |
+| Mark all / unmark all / invert | ⌘A / ⇧⌘A / `*` |
+| Mark / unmark files by mask (folders are never touched) | `+` / `-` |
+| Quick filter (text, `*.glob`, `re:`) / presets and recent filters | `/` / ⌘/ |
+| Find files (name, content, Spotlight) | ⌘F, ⌥F7 |
+| Calculate directory sizes: all / one | ⌥Space / Space (⎋ stops) |
 | Quick View in the other panel / Quick Look | ⌃Q / ⌘Y |
-| Mark files (MC style) | Space, ⇧↑/⇧↓, ⌘-click, ⇧-click |
-| Mark all / unmark / invert / mark by mask / unmark by mask | ⌘A / ⌘⇧A / `*` / `+` / `-` |
-| Calculate directory sizes (all) | ⌥Space (Space calculates one; ⎋ stops) |
-| View / Edit | F3, ⌥3 / F4, ⌥4 |
-| Copy / Move | F5, ⌥5 / F6, ⌥6 |
-| Rename / batch rename | ⇧F6, ⇧⌥6 / ⌘⇧M |
-| New directory / new file | F7, ⌥7, ⌘⇧N / ⇧F4, ⇧⌥4 |
-| Move to Trash / delete permanently | F8, ⌥8, ⌘⌫, ⌦ / ⇧F8, ⌘⌥⌫, ⇧⌦ |
-| Put Back (restore an item Kermo moved to Trash) | ⌘⌫ / F8 in Trash |
-| Undo / redo (rename, move, Trash, copy, mkdir) | ⌘Z / ⌘⇧Z |
+
+## Files
+
+| Action | Keys |
+|---|---|
+| View / edit | F3, ⌥3 / F4, ⌥4 |
+| Copy / move | F5, ⌥5 / F6, ⌥6 |
+| Rename / batch rename | ⇧F6, ⌥⇧6 / ⇧⌘M |
+| New folder / new file | F7, ⌥7, ⇧⌘N / ⇧F4, ⌥⇧4 |
+| Move to Trash | F8, ⌥8, ⌘⌫, ⌦ |
+| Delete permanently | ⇧F8, ⌥⇧8, ⌥⌘⌫, ⇧⌦ |
+| Put Back (restore an item Kermo moved to the Trash) | ⌘⌫ or F8 in the Trash |
+| Undo / redo (this Mac's files; not a server's, not permanent delete) | ⌘Z / ⇧⌘Z |
 | Info: permissions, owner, xattr, ACL, hashes, signature | ⌘I |
-| User command menu / command line | F2, ⌥2 / ⌘E (↩ run in the ⌃O shell — aliases, colors, sudo, your history; ⇧↩ output window; ⌘↩ run in Terminal; ↑↓ history) |
-| Insert the cursor name / the marked items' full paths into the command line — or into the shell while the ⌃O terminal is up | ⌃↩ / ⌃⇧↩ |
-| Reveal in Finder / open Terminal here | ⌘⇧R / ⌘⌥T |
-| Copy files / paste / move here | ⌘C / ⌘V / ⌘⌥V |
-| Copy path / name | ⌘⇧C / ⌘⌥C |
-| Show hidden files / refresh | ⌘⇧. / ⌘R |
-| Connect to server in a file panel: SFTP (`~/.ssh/config`, `user@host:/path`) or smb:// nfs:// afp:// | ⌃⌘K |
-| New SSH session: a shell on a server in the ⌃O terminal (inside the terminal ⌘K clears it) | ⌘K |
-| Replace panels with terminal (the panel follows `cd`); ⌃O twice quickly sends ⌃O to the terminal | ⌃O |
-| Terminal text bigger / smaller | ⌘+ / ⌘− |
-| Open archive as directory / extract / create archive | ↩ / F5, ⌥F9 / ⌥F5 |
-| Compare directories, recursively (mark differences) / synchronize (two-way or mirror → / ←) — also with a server | ⇧F2 / ⌘⇧S |
-| Diff two files — also a server's (two marked, the cursor and the same name in the other panel, or both cursors) | ⌘⇧D |
+| Permissions and owner (chmod, chown; also on a server) | ⌥⌘A |
+| Copy files / paste / move here | ⌘C / ⌘V / ⌥⌘V |
+| Copy path / name | ⇧⌘C / ⌥⌘C |
+| Reveal in Finder / open Terminal here | ⇧⌘R / ⌥⌘T |
+| Create a symbolic link | ⌥⌘L |
+| Open an archive as a folder / extract / create | ↩ / F5, ⌥F9 / ⌥F5 |
+| Finder tags: color / remove all / edit | ⌃1…⌃7 / ⌃0 / ⌃T |
+
+**Create Hard Link…**, **Split File…** and **Combine Parts…** (`.000`, `.001`, …) are in the **File** menu and in search, without a key.
+
+## Compare and Git
+
+| Action | Keys |
+|---|---|
+| Compare folders recursively (marks differences) | ⇧F2 |
+| Synchronize folders (two-way or mirror → / ←; also with a server) | ⇧⌘S |
+| Diff two files (two marked, the cursor and the same name in the other panel, or both cursors; also a server's) | ⇧⌘D |
 | Git: only changes / all changes as a list / diff against HEAD | ⌃G / ⌃⇧G / ⌃D |
-| Git: log of the file (with patches) / blame — in the viewer; stage / unstage marked files | ⌃L / ⌃⇧L; ⌃⇧A / ⌃⇧U |
-| Finder tags: Finder color / remove all / edit | ⌃1…⌃7 / ⌃0 / ⌃T |
-| Split file into parts / combine (`.000`, `.001`, …) | **File** menu |
-| Theme (System, Midnight Commander, Far Manager, Solarized Dark/Light, Dracula, Nord, Gruvbox, Monokai, One Dark, Tokyo Night, Catppuccin, GitHub Light) | View ▸ Theme… |
-| Create symbolic link / follow link target | ⌘⌥L / ⌘J |
-| Volumes / Eject | ⌘⇧V, ⌥F1 / ⌘⌥E |
-| Run as administrator: copy / move / mkdir / delete / root shell | **Admin** menu (or search, ⌘⇧P) |
-| Server panel as root / as its user again (see SFTP panel) | ⌃⌘R / ⌃⇧⌘R (**Admin** ▸ Reopen Panel as Root / as User) |
-| Viewer: find / wrap / hex / plist-JSON / follow (tail -f) / close | ⌘F / w / h / p / f / Esc, F3, q, ⌘W |
-| Viewer, files larger than 32 MB: go to (`50%`, `1.5G`, `end`) / start, end / search entire file, next result | g / Home, End / `/`, n |
-| Editor: save / find and replace / close | ⌘S / ⌘F / Esc, ⌘W |
+| Git: log of the file / blame (in the viewer) | ⌃L / ⌃⇧L |
+| Git: stage / unstage the marked files | ⌃⇧A / ⌃⇧U |
+
+## Servers, terminal and commands
+
+| Action | Keys |
+|---|---|
+| Connect to a server in a file panel (SFTP; `~/.ssh/config`, `user@host:/path`, or `smb://` `nfs://` `afp://`) | ⌃⌘K |
+| New SSH session: a shell on a server in the terminal (inside the terminal, ⌘K clears it) | ⌘K |
+| Server panel as root / as its user again | ⌃⌘R / ⌃⇧⌘R |
+| Replace the panels with the terminal (the panel follows `cd`); press ⌃O twice quickly to send ⌃O to the terminal | ⌃O |
+| Terminal text bigger / smaller | ⌘+ / ⌘− |
+| User command menu / command line | F2, ⌥2 / ⌘E |
+| Insert the cursor's name / the marked items' full paths into the command line, or into the shell while the terminal is open | ⌃↩ / ⌃⇧↩ |
+
+In the command line, ↑↓ browse its history. On a local panel ↩ runs the line in the ⌃O shell (your aliases, colors, `sudo`, history), ⇧↩ in an output window, ⌘↩ in Terminal. On a server panel ↩ and ⇧↩ run it over ssh in an output window, and ⌘↩ opens an SSH tab with the command.
+
+**Admin ▸ Copy as Administrator…**, **Move as Administrator…**, **New Folder as Administrator…**, **Delete as Administrator…** and **Root Shell Here (Terminal)** (also in search) work on this Mac's files. See [Administrator rights](files.md#administrator-rights).
+
+## Viewer and editor
+
+| Action | Keys |
+|---|---|
+| Viewer: find / wrap / hex / plist and JSON / follow (`tail -f`) / close | ⌘F / `w` / `h` / `p` / `f` / ⎋, F3, F10, `q`, ⌘W |
+| Viewer: show only lines with / without text | `&` |
+| Viewer, files over 4 MB: go to (`50%`, `1.5G`, `end`) / start, end / search the whole file, next result | `g` / Home or ⌘↑, End or ⌘↓ / `/`, `n` |
+| Editor: save / find and replace / close | ⌘S / ⌘F / ⎋, ⌘W |
+
+The keys for large files work only in text mode, not while the file is followed (`f`) or filtered (`&`); in hex mode only `g` works. More in [Viewer and editor](viewer-editor.md).
+
+Standard app keys such as ⌘Q, ⌘H and ⌘G (find next in the editor), and the cursor keys (↑↓, Home, End, PgUp, PgDn), aren't listed.
+
+## Appearance
+
+| Action | Keys |
+|---|---|
+| Theme: System, Midnight Commander, Far Manager, Solarized Dark / Light, Dracula, Nord, Gruvbox Dark, Monokai, One Dark, Tokyo Night, Catppuccin Mocha, GitHub Light | **View ▸ Theme…** |
