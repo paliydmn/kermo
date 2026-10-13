@@ -85,6 +85,8 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
         case noProgram(String)
         /// Root only, and this is a user's panel: not run.
         case needsRoot
+        /// An "after" check that didn't get to run (sudo refused, cancelled): the save is in, unchecked.
+        case notRun(String)
     }
 
     /// A check that didn't get to run: sudo refused, or the server couldn't be reached. Not a verdict on the file.
@@ -134,29 +136,80 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
 }
 
 extension SFTPClient {
-    /// A save's check failed: the server's file is as it was (before) — or was put back (after).
+    /// A save's check failed: the server's file is as it was (before), or was put back (after) — or why not.
     public struct CheckFailed: LocalizedError {
         public let rule: ConfigCheck
         public let status: Int32
         public let output: String
+        /// What the server's file is now, said in a sentence; "" for a "before" check (as it was).
+        public var now = ""
+        /// An "after" check's: the server's file's attributes now — the next save's baseline.
+        public var attrs: Attrs?
         public var program: String { ConfigCheck.program(rule.check ?? "") }
         public var errorDescription: String? { "“\(program)” found a problem (exit \(status)): \(output)" }
     }
 
-    /// `upload` with the file's check (`rule`, nil: none): before it takes the file's place — a failure leaves the file as
-    /// it was (`CheckFailed`), a check that couldn't run too (`ConfigCheck.NotRun`: sudoers and sshd_config never go in
-    /// unchecked). Returns the new attributes and how the check went (nil: none for this file).
+    /// `upload` with the file's check (`rule`, nil: none). "Before": on the partial file, before it takes the file's place
+    /// — a failure leaves the file as it was (`CheckFailed`), and so does a check that couldn't run (`ConfigCheck.NotRun`:
+    /// sudoers and sshd_config never go in unchecked). "After": on the file in place; a failure puts back the text this
+    /// save replaced (the bytes `replaced` got: never looked for elsewhere) over the same `upload` — unless someone
+    /// changed it meanwhile (`ChangedOnServer`: theirs stays), or its old text wasn't kept (over `ServerHistory.fileLimit`);
+    /// a new file is removed (unless it changed meanwhile). ⎋ doesn't stop that. The new text isn't kept as a version. A check that couldn't run
+    /// leaves the save in (`.notRun`). Returns the new attributes and how the check went (nil: none for this file).
     public func save(_ local: String, to remote: String, baseline: Attrs?, force: Bool = false, cancel: CancelFlag? = nil, rule: ConfigCheck?,
                      env: [String: String] = [:], replaced: ((Attrs, Data?) -> Void)? = nil) throws -> (attrs: Attrs, outcome: ConfigCheck.Outcome?) {
-        guard let rule, let command = rule.check, !rule.after else {
+        guard let rule, let command = rule.check else {
             return (try upload(local, to: remote, baseline: baseline, force: force, cancel: cancel, replaced: replaced), nil)
         }
         var outcome: ConfigCheck.Outcome?
-        let attrs = try upload(local, to: remote, baseline: baseline, force: force, cancel: cancel, replaced: replaced) { [target] partial in
-            let o = try ConfigCheck.run(ConfigCheck.expand(command, path: partial), on: target, root: rule.needsRoot, env: env, cancel: cancel)
-            if case .failed(let status, let output) = o { throw CheckFailed(rule: rule, status: status, output: output) }
-            outcome = o
+        if !rule.after {
+            let attrs = try upload(local, to: remote, baseline: baseline, force: force, cancel: cancel, replaced: replaced) { [target] partial in
+                let o = try ConfigCheck.run(ConfigCheck.expand(command, path: partial), on: target, root: rule.needsRoot, env: env, cancel: cancel)
+                if case .failed(let status, let output) = o { throw CheckFailed(rule: rule, status: status, output: output) }
+                outcome = o
+            }
+            return (attrs, outcome)
         }
-        return (attrs, outcome)
+        var old: Data?, had = false
+        let attrs = try upload(local, to: remote, baseline: baseline, force: force, cancel: cancel) { a, data in
+            (had, old) = (true, data)
+            replaced?(a, data)
+        }
+        do {
+            outcome = try ConfigCheck.run(ConfigCheck.expand(command, path: remote), on: target, root: rule.needsRoot, env: env, cancel: cancel)
+        } catch let e as ConfigCheck.NotRun {
+            return (attrs, .notRun(e.message))
+        } catch is CancellationError {
+            return (attrs, .notRun("cancelled"))
+        }
+        guard case .failed(let status, let output) = outcome else { return (attrs, outcome) }
+        var failed = CheckFailed(rule: rule, status: status, output: output, attrs: attrs)
+        let host = target.host
+        guard let old else {
+            if had {
+                failed.now = "Not put back: it's over \(ServerHistory.fileLimit >> 20) MB, so its old text wasn't kept. The file on \(host) has your text."
+            } else if let now = try? lstat(remote), now.size == attrs.size, now.mtime == attrs.mtime, (try? remove(remote)) != nil {
+                // A new file: back as it was is none (a broken drop-in left in conf.d would stop the next restart).
+                (failed.now, failed.attrs) = ("Removed: there was no such file on \(host) before this save.", .nothing)
+            } else {
+                failed.now = "Not removed: it changed on \(host) meanwhile, and what's there now stays."
+            }
+            throw failed
+        }
+        let previous = cancel?.onCancel(nil)   // a broken config half put back is worse than a wait
+        defer { cancel?.onCancel(previous) }
+        let tmp = NSTemporaryDirectory() + "dfm-putback-" + UUID().uuidString
+        defer { unlink(tmp) }
+        do {
+            guard FileManager.default.createFile(atPath: tmp, contents: old, attributes: [.posixPermissions: 0o600]) else { throw LocalFS.posixError() }
+            failed.attrs = try upload(tmp, to: remote, baseline: attrs)
+            failed.now = "Put back: the file on \(host) is as it was before this save."
+        } catch let e as ChangedOnServer {
+            failed.attrs = e.attrs
+            failed.now = "Not put back: it changed on \(host) meanwhile, and what's there now stays."
+        } catch {
+            failed.now = "Not put back: \(error.localizedDescription). The file on \(host) may have your text."
+        }
+        throw failed
     }
 }

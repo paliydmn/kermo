@@ -230,4 +230,74 @@ extension SudoPasswordTests {
     #expect(try user.save(d + "/l", to: d + "/sudoers", baseline: nil, rule: rule).outcome == .needsRoot)
     #expect(FileManager.default.contents(atPath: d + "/sudoers") == Data("new".utf8))
 }
+
+/// "After": the check runs on the file in place; a failure puts back the text this save replaced — the bytes the save
+/// itself read, over the same upload, never the history folder's — and keeps no version of the bad text. The version
+/// it replaced is in the history. Exact round trips (2 KB, opened with F4): 8 when it passes, as unchecked; 16 when
+/// it's put back (the put-back is a save of its own, checked against what this one wrote).
+@Test func badTextIsPutBack() throws {
+    let d = checkDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let h = ServerHistory(root: d + "/history"), rule = ConfigCheck(match: "*.conf", check: badCheck, when: .after, reload: "true")
+    let file = d + "/site.conf"
+    func put(_ p: String, _ text: String) throws { try Data((text + String(repeating: "#", count: 2048 - text.count)).utf8).write(to: URL(fileURLWithPath: p)) }
+    func text() -> String { String(decoding: FileManager.default.contents(atPath: file)!, as: UTF8.self) }
+    try put(file, "good\n")
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    let a = try c.download(file, to: d + "/l")
+    try put(d + "/l", "BAD\n")
+    var before = c.roundTrips
+    let e = #expect(throws: SFTPClient.CheckFailed.self) {
+        try c.save(d + "/l", to: file, baseline: a, rule: rule) { h.keep($1, $0, of: c.target, file) }
+    }
+    #expect(c.roundTrips - before == 16, "\(c.roundTrips - before) round trips")
+    #expect(e?.output == "checking \(file)\nline 1: BAD here\n", "the file in place, not a partial one")
+    #expect(e?.now == "Put back: the file on localhost is as it was before this save." && text().hasPrefix("good\n"))
+    let now = try c.stat(file)
+    #expect(e?.attrs?.size == now.size && e?.attrs?.mtime == now.mtime, "the editor's next baseline: what's there")
+    let versions = h.versions(of: c.target, file)
+    #expect(versions.count == 1 && FileManager.default.contents(atPath: versions[0].path).map { String(decoding: $0, as: UTF8.self).hasPrefix("good\n") } == true,
+            "the version this save replaced; none of the bad text")
+    try put(d + "/l", "fine\n")
+    before = c.roundTrips
+    let ok = try c.save(d + "/l", to: file, baseline: e?.attrs, rule: rule) { h.keep($1, $0, of: c.target, file) }
+    #expect(c.roundTrips - before == 8 && ok.outcome == .passed("checking \(file)\nok\n") && text().hasPrefix("fine\n") && h.versions(of: c.target, file).count == 2)
 }
+
+/// Not put back: someone wrote the file between the save and the check (here the check itself) — theirs stays, as
+/// "changed on the server" always does; a file over 5 MB (its old text wasn't kept). A new file is removed, unless it
+/// changed meanwhile. Each says so, and
+/// gives what's there now as the next baseline. An "after" check that can't run, or is root only on a user's panel:
+/// the save is in, unchecked, and says so.
+@Test func putBackOnlyWhatThisSaveReplaced() throws {
+    let d = checkDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    try Data("mine".utf8).write(to: URL(fileURLWithPath: d + "/l"))
+    func failed(_ name: String, _ check: String) -> SFTPClient.CheckFailed? {
+        #expect(throws: SFTPClient.CheckFailed.self) { try c.save(d + "/l", to: d + "/" + name, baseline: nil, rule: ConfigCheck(match: "*", check: check, when: .after)) }
+    }
+    try Data("old".utf8).write(to: URL(fileURLWithPath: d + "/theirs.conf"))
+    let theirs = failed("theirs.conf", #"sh -c 'echo theirs > "$1"; exit 1' x %f"#)
+    #expect(theirs?.now == "Not put back: it changed on localhost meanwhile, and what's there now stays.")
+    #expect(FileManager.default.contents(atPath: d + "/theirs.conf") == Data("theirs\n".utf8) && theirs?.attrs?.size == 7)
+
+    try Data(repeating: 0x61, count: Int(ServerHistory.fileLimit) + 1).write(to: URL(fileURLWithPath: d + "/big.conf"))
+    #expect(failed("big.conf", "false")?.now == "Not put back: it's over 5 MB, so its old text wasn't kept. The file on localhost has your text.")
+    #expect(FileManager.default.contents(atPath: d + "/big.conf") == Data("mine".utf8))
+    let new = failed("new.conf", "false")
+    #expect(new?.now == "Removed: there was no such file on localhost before this save." && new?.attrs == .nothing)
+    #expect(!FileManager.default.fileExists(atPath: d + "/new.conf"), "a new broken drop-in doesn't stay to stop the next restart")
+    #expect(failed("new2.conf", #"sh -c 'echo theirs > "$1"; exit 1' x %f"#)?.now == "Not removed: it changed on localhost meanwhile, and what's there now stays.")
+
+    let refusing = try fakeSudo(d, #"[ "$3" = sh ] && { echo "Sorry, user me is not allowed to execute '/bin/sh' as root on web." >&2; exit 1; }; shift 2; exec "$@""#)
+    let root = try SFTPClient(.local(sudo: refusing))
+    defer { root.close() }
+    let r = try root.save(d + "/l", to: d + "/nginx.conf", baseline: nil, rule: ConfigCheck(match: "*", check: "nginx -t", when: .after, root: true))
+    #expect(r.outcome == .notRun("“nginx” couldn't run on localhost as root: sudo on localhost refused: Sorry, user me is not allowed to execute '/bin/sh' as root on web."))
+    #expect(try c.save(d + "/l", to: d + "/nginx.conf", baseline: nil, rule: ConfigCheck(match: "*", check: "nginx -t", when: .after, root: true)).outcome == .needsRoot)
+}
+}
+

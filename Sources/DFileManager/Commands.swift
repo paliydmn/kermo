@@ -1164,6 +1164,7 @@ extension AppDelegate {
             return true
         case .failure(let e as SFTPClient.CheckFailed):
             Editor.markUnsaved(saved)
+            if let a = e.attrs { state.baseline = a }   // an "after" check: what's there now, put back or not
             let (message, info) = Self.checkFailed(e, name: name, host: target.host, kept: Editor.window(for: saved) == nil ? saved.path : nil)
             _ = await choose(message, info: info, ["OK"], on: Editor.window(for: saved))
             return false
@@ -1260,6 +1261,7 @@ extension AppDelegate {
         case .passed, .failed: "checked: \(ConfigCheck.program(rule?.check ?? ""))"   // a failed one never gets here
         case .noProgram(let p): "no check for this file (no \(p) there)"
         case .needsRoot: "check needs root — ⌃⌘R opens the panel as root"
+        case .notRun(let why): "unchecked: \(why)"
         }
     }
 
@@ -1270,7 +1272,7 @@ extension AppDelegate {
         let shown = (lines.count > 30 ? ["…"] + lines.suffix(30) : lines).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         let text = kept.map { "Your text is kept in \($0)." } ?? "Your text stays unsaved here."
         return ("“\(name)” didn't pass “\(e.program)” on \(host)",
-                (shown.isEmpty ? "It exited with \(e.status)." : shown) + "\n\nNot saved there: the file on \(host) is as it was. " + text)
+                (shown.isEmpty ? "It exited with \(e.status)." : shown) + "\n\n" + (e.now.isEmpty ? "Not saved there: the file on \(host) is as it was." : e.now) + " " + text)
     }
 
     private func notSaved(_ saved: URL, to target: SFTPTarget, _ e: Error) -> Bool {
