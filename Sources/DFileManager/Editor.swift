@@ -147,6 +147,14 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         window?.representedURL = remote == nil ? url : nil
     }
 
+    /// Says something in place of the subtitle for a few seconds (a server save's "no history: …"): the panels'
+    /// status line is behind this window.
+    static func flash(_ url: URL, _ text: String) { open.first { $0.url == url }?.flash(text) }
+    func flash(_ text: String) {
+        window?.subtitle = text.bidiVisible
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in MainActor.assumeIsolated { self?.retitle() } }
+    }
+
     private var encodingName: String { encoding == .utf8 ? lossy ? "UTF-8 (damaged)" : "UTF-8" : "Windows-1251" }
 
     typealias Loaded = (String, String.Encoding, lossy: Bool, bom: Bool, crlf: Bool, Stamp?, SHA256.Digest)

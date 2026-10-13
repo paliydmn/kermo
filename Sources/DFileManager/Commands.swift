@@ -1099,7 +1099,11 @@ extension AppDelegate {
         case .success(let (attrs, note)):
             state.baseline = attrs
             for p in panels where p.remote?.target == target { p.reload() }
-            if let note { panel.flash("Saved “\(name)” to \(target.host) · no history: \(note)") }
+            if let note {
+                let said = "Saved “\(name)” to \(target.host) · no history: \(note)"
+                panel.flash(said)
+                Editor.flash(saved, said)
+            }
             return true
         case .failure(let e as SFTPClient.ChangedOnServer):
             Editor.markUnsaved(saved)
