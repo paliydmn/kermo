@@ -33,7 +33,7 @@ Use `./test.sh`, not `swift test`: it works around a Command Line Tools bug with
 
 - A change users can see adds a line under `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md).
 - The docs change in the same pull request. A new or changed shortcut goes into [docs/shortcuts.md](docs/shortcuts.md), an option into [docs/configuration.md](docs/configuration.md), and so on: the [index](README.md#documentation) lists the pages.
-- Tests pass: `./test.sh`.
+- Tests pass: `./test.sh`. If you touched the docs, `python3 tools/check-docs.py` finds broken links and anchors.
 - Nothing local gets in: no real host names, user names, paths or passwords in code, tests, docs, screenshots or commit messages. Examples use `me`, `user@host`, `example.com`.
 
 ## Writing docs
