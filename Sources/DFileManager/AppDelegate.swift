@@ -51,6 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationDidFinishLaunching(_ notification: Notification) {
         applyConfig(reportProblems: false)
         SFTP.password = { SSHPasswords.get($0) }
+        SFTP.sudoPassword = { SudoPasswords.password($0, wrong: $1) }
+        SFTP.sudoPasswordTaken = { SudoPasswords.taken($0, $1) }
         ServerLock.servers = { [unowned self] in savedServers }
         ServerCopies.upload = { [unowned self] c in await upload(c.url, to: c.path, on: c.target, c.state) }
         ServerLock.relockOnScreenLockAndSleep()
@@ -583,6 +585,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func disconnectNow(_ key: String) async {
+        SudoPasswords.forget(key)
         // First: an SSH tab ending or the last file tab closing lets releaseIdleServers end it only gently (`-O stop`).
         await Masters.stop(now: true) { ServerRow.key($0) == key }
         // Its SSH tabs' ssh too: a master stopped after a wake or a network change is no longer known, nor reachable by
@@ -1073,6 +1076,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
         }
         window.makeFirstResponder(active.table)
+        return response == .alertFirstButtonReturn ? field.stringValue : nil
+    }
+
+    /// A root panel's sudo password for `t`'s server: a sheet on the window in front (an editor saving, say), never shown
+    /// again or kept anywhere but `SudoPasswords`. `wrong`: sudo refused the one before.
+    func askSudoPassword(_ t: SFTPTarget, wrong: Bool) async -> String? {
+        let alert = NSAlert()
+        alert.messageText = (wrong ? "Sorry, try again: " : "") + "sudo password on \(t.host)"
+        alert.informativeText = "To open its files as root. It goes to sudo there, through ssh, and nowhere else."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSSecureTextField(string: "")
+        field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }
+        let over: NSWindow = NSApp.keyWindow.flatMap { $0 is NSPanel ? nil : $0 } ?? window
+        let response: NSApplication.ModalResponse = await withCheckedContinuation { cont in
+            alert.beginSheetModal(for: over) { cont.resume(returning: $0) }
+        }
         return response == .alertFirstButtonReturn ? field.stringValue : nil
     }
 

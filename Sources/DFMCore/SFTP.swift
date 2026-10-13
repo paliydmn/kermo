@@ -201,6 +201,12 @@ public enum SFTP {
     /// only when a login is due.
     nonisolated(unsafe) public static var password: (@Sendable (SFTPTarget) -> String?)?
 
+    /// A root panel's sudo password, when its server's sudo wants one (`SudoServer`): saved or asked for; `wrong`: the
+    /// one given before was refused. nil: none given. Set once at launch; called off the main thread, one at a time.
+    nonisolated(unsafe) public static var sudoPassword: (@Sendable (SFTPTarget, _ wrong: Bool) -> String?)?
+    /// That sudo took it (worth keeping).
+    nonisolated(unsafe) public static var sudoPasswordTaken: (@Sendable (SFTPTarget, String) -> Void)?
+
     /// Runs `login` with the target's saved password waiting for the askpass script in a FIFO ($DFM_ASKPASS_FIFO):
     /// not an environment variable (those show in `ps eww`), not a file. Read once, then gone, so a wrong password's
     /// second prompt asks the user. Gone when `login` returns, read or not.

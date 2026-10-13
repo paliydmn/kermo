@@ -58,10 +58,10 @@ public final class SFTPClient: @unchecked Sendable {
     public init(_ t: SFTPTarget, env: [String: String] = [:], cancel: CancelFlag? = nil) throws {
         target = t
         try SFTP.startMaster(t, env: env, cancel: cancel)
-        var sudoPath = ""
+        var sudoPath = "", sudoPassword: String?
         if t.sudo {
-            sudoPath = try SudoServer.prepare(t, env: env, cancel: cancel)
-            let (program, arguments) = SudoServer.launch(t, path: sudoPath)
+            (sudoPath, sudoPassword) = try SudoServer.prepare(t, env: env, cancel: cancel)
+            let (program, arguments) = SudoServer.launch(t, path: sudoPath, password: sudoPassword != nil)
             process.executableURL = URL(fileURLWithPath: program)
             process.arguments = arguments
         } else if let server = t.localServer {
@@ -101,10 +101,19 @@ public final class SFTPClient: @unchecked Sendable {
         let previous = cancel?.onCancel { [self] in close() } ?? nil
         defer { cancel?.onCancel(previous) }
 
+        let late = CancelFlag()   // no answer to a password session: its sudo took the packet as well
         do {
             var hello = Packet(Self.INIT)
             hello.u32(3)
-            try send(hello)
+            // sudo reads the password line, then sftp-server the packet: one write, nothing between them.
+            try send(hello, after: sudoPassword.map { Data(($0 + "\n").utf8) } ?? Data())
+            if sudoPassword != nil {
+                DispatchQueue.global().asyncAfter(deadline: .now() + SudoServer.versionWait) { [weak self] in
+                    guard let self, isConnected, cond.withLock({ answers }) == 0 else { return }
+                    late.cancel()
+                    close()
+                }
+            }
             let (type, body) = try wait(0)
             var r = Reader(body)
             guard type == Self.VERSION, try r.u32() >= 3 else { throw protocolError("unexpected greeting") }
@@ -113,6 +122,7 @@ public final class SFTPClient: @unchecked Sendable {
             close()   // else ssh and the reader thread stay forever
             guard t.sudo else { throw error }
             SudoServer.forget(t)   // sudoers changed since it was looked at, say: looked at again next time
+            if late.isCancelled { throw SudoServer.noStdinPassword(t, path: sudoPath) }
             if !(error is CancellationError), cancel?.isCancelled != true, let why = SudoServer.explain(t, path: sudoPath, errors.text) {
                 throw SFTPError(message: why, connection: true)
             }
@@ -715,8 +725,9 @@ public final class SFTPClient: @unchecked Sendable {
 
     // MARK: - Wire
 
+    /// `after`: bytes that go first, in the same write (a password line for sudo, before INIT).
     @discardableResult
-    func send(_ p: Packet) throws -> UInt32 {
+    func send(_ p: Packet, after prefix: Data = Data()) throws -> UInt32 {
         var p = p
         let id: UInt32 = cond.withLock {
             defer { nextID &+= 1; if nextID == 0 { nextID = 1 } }
@@ -725,7 +736,7 @@ public final class SFTPClient: @unchecked Sendable {
         if p.type != Self.INIT { p.setID(id) }
         lastSent = id
         guard isConnected else { throw lostError() }
-        var out = Data()
+        var out = prefix
         withUnsafeBytes(of: UInt32(p.body.count).bigEndian) { out.append(contentsOf: $0) }
         out.append(p.body)
         let ok = out.withUnsafeBytes { buf -> Bool in

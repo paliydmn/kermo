@@ -123,6 +123,45 @@ enum SSHPasswords {
     }
 }
 
+/// Root panels' sudo passwords (`SFTP.sudoPassword`): asked for in a sheet, then kept in memory while in use — 5 minutes
+/// after the last use, as sudo's own ticket — and forgotten when the screen locks, the Mac sleeps or the server is
+/// disconnected. One per user@host:port. Off the main thread: a session asks while it connects.
+enum SudoPasswords {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var kept: [String: (password: String, used: Date)] = [:]
+    static let grace: TimeInterval = 300
+    /// The dialog (`AppDelegate.askSudoPassword`); replaced in tests. nil: cancelled.
+    @MainActor static var ask: @MainActor (SFTPTarget, _ wrong: Bool) async -> String? = { t, wrong in
+        await (NSApp.delegate as? AppDelegate)?.askSudoPassword(t, wrong: wrong)
+    }
+
+    static func key(_ t: SFTPTarget) -> String { "\(t.host):\(t.port ?? 22)" }   // ServerRow.key
+
+    /// The one kept for `t`, else asked for (waits for the dialog). `wrong`: the one given before goes first.
+    static func password(_ t: SFTPTarget, wrong: Bool) -> String? {
+        let key = key(t)
+        if wrong { forget(key) } else if let p = lock.withLock({ () -> String? in
+            guard let k = kept[key], Date().timeIntervalSince(k.used) < grace else { return nil }
+            kept[key]?.used = Date()
+            return k.password
+        }) { return p }
+        let answered = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var answer: String?
+        Task { @MainActor in
+            answer = await ask(t, wrong)
+            answered.signal()
+        }
+        answered.wait()
+        return answer
+    }
+
+    /// sudo took it: kept for the next session.
+    static func taken(_ t: SFTPTarget, _ password: String) { lock.withLock { kept[key(t)] = (password, Date()) } }
+
+    /// That server's (`key`), or all.
+    static func forget(_ key: String? = nil) { lock.withLock { if let key { kept[key] = nil } else { kept = [:] } } }
+}
+
 /// Locked saved servers ask for Touch ID or the Mac password before a new connection (by any route to the same
 /// user@host:port: sidebar, picker, typed address, reconnect), an edit or a delete. One success unlocks the server
 /// for 5 minutes, or until the screen locks or the Mac sleeps. Open sessions stay open.
@@ -158,7 +197,10 @@ enum ServerLock {
         return await authorize(s, "connect to")
     }
 
-    static func relock() { unlockedUntil = [:] }
+    static func relock() {
+        unlockedUntil = [:]
+        SudoPasswords.forget()
+    }
 
     static func relockOnScreenLockAndSleep() {
         let ws = NSWorkspace.shared.notificationCenter
