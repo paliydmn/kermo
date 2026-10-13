@@ -872,7 +872,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         promptLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         promptLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 360).isActive = true
         cmdField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        cmdField.placeholderString = "⌘E: shell command in this folder · %f %s %d %D · ↩ run in the shell · ⇧↩ output window · ⌘↩ in Terminal · ↑↓ history"
+        cmdField.placeholderString = Self.commandHint(root: nil)
         cmdField.isBordered = false
         cmdField.drawsBackground = false
         cmdField.focusRingType = .none
@@ -979,6 +979,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// One check per folder at a time: on a share that stopped answering, each Tab or tab switch would hold one more thread.
     private static let folderChecks = Coalesced<Bool>()
 
+    /// The command line's placeholder. On a root panel it says whose shell ⌘E runs in: the user's, not root's.
+    static func commandHint(root: SFTPTarget?) -> String {
+        let user = root.map { t in t.host.lastIndex(of: "@").map { String(t.host[..<$0]) } ?? "your user" }
+        return "⌘E: shell command in this folder" + (user.map { " as \($0), not root" } ?? "")
+            + " · %f %s %d %D · ↩ run in the shell · ⇧↩ output window · ⌘↩ in Terminal · ↑↓ history"
+    }
+
     private func updatePrompt() {
         guard panels.indices.contains(activeIndex) else { return }
         cmdField.isHidden = terminal?.isShown == true   // ⌘E doesn't work under the terminal; the prompt label stays (host:cwd of an SSH tab)
@@ -988,9 +995,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if terminal?.isShown == true, let t = terminal.current { remote = t.host.map { ($0, t.cwd) }; local = t.folder ?? local }
         else { remote = active.remote.map { ($0.target.host, $0.dir) } }
         let path = remote.map { r in r.dir.map { "\(r.host):\($0)" } ?? r.host } ?? (local as NSString).abbreviatingWithTildeInPath
-        promptLabel.stringValue = (remote != nil ? "🌐 " : "") + path + " $"
+        promptLabel.stringValue = (remote != nil ? "🌐 " : "") + path + " $"   // ⌘E runs as the user, on a root panel too
+        let root = terminal?.isShown == true ? nil : active.remote.flatMap { $0.target.sudo ? $0 : nil }
+        cmdField.placeholderString = Self.commandHint(root: root?.target)
         sidebar.highlight(sidebarKey)
-        window?.title = path.bidiVisible
+        window?.title = root.map { "\($0.target.shown):\($0.dir) #" }?.bidiVisible ?? path.bidiVisible   // what the panel's header says
         guard remote == nil else { window?.representedURL = nil; return }
         let dir = active.path   // proxy icon, once the folder is known to be there (asked off the main thread)
         Task {

@@ -213,3 +213,10 @@ extension ServerLockTests {
     for _ in 0..<250 where panel.remote == nil || panel.connecting != nil { try? await Task.sleep(for: .milliseconds(20)) }
     #expect(panel.remote?.target == .local() && calls >= 2 && unused == 0, "\(calls) changes, \(unused) with nothing in use")
 }
+
+/// On a root panel the command line says ⌘E runs as the user (its prompt keeps "user@host $"); elsewhere as before.
+@Test @MainActor func commandLineSaysWhoseShellOnARootPanel() {
+    #expect(AppDelegate.commandHint(root: nil).hasPrefix("⌘E: shell command in this folder · %f"))
+    #expect(AppDelegate.commandHint(root: SFTPTarget(host: "deploy@web").asRoot()).hasPrefix("⌘E: shell command in this folder as deploy, not root · "))
+    #expect(AppDelegate.commandHint(root: SFTPTarget(host: "web").asRoot()).contains(" as your user, not root · "))
+}
