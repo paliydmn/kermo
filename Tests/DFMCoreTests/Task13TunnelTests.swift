@@ -99,6 +99,48 @@ import Testing
     #expect(t.failure("", server: "w") == nil && t.failure("\n \n", server: "w") == nil)
 }
 
+/// What a listener told, in order (its threads call in).
+private final class Events: @unchecked Sendable {
+    private let lock = NSLock()
+    private var all: [TunnelListener.Event] = []
+    func add(_ e: TunnelListener.Event) { lock.withLock { all.append(e) } }
+    var list: [TunnelListener.Event] { lock.withLock { all } }
+}
+
+/// A client connected to 127.0.0.1:`port`, or -1. Reads wait up to 10 s.
+private func dial(_ port: Int) -> Int32 {
+    let s = socket(AF_INET, SOCK_STREAM, 0)
+    var on: Int32 = 1, wait = timeval(tv_sec: 10, tv_usec: 0)
+    setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+    var a = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: UInt16(port).bigEndian,
+                        sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+    let r = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(s, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+    if r != 0 { close(s); return -1 }
+    return s
+}
+
+private func send(_ fd: Int32, _ text: String) { _ = text.withCString { write(fd, $0, strlen($0)) } }
+
+/// What comes until the end (or `count` bytes).
+private func receive(_ fd: Int32, count: Int = .max) -> String {
+    var out = Data(), buf = [UInt8](repeating: 0, count: 65536)
+    while out.count < count {
+        let n = read(fd, &buf, min(buf.count, count - out.count))
+        if n <= 0 { break }
+        out += buf[0..<n]
+    }
+    return String(decoding: out, as: UTF8.self)
+}
+
+private func waitUntil(_ seconds: TimeInterval = 10, _ done: () -> Bool) -> Bool {
+    let end = Date() + seconds
+    while !done() { if Date() > end { return false }; usleep(10_000) }
+    return true
+}
+
+private let cat: @Sendable (CancelFlag) throws -> TunnelListener.Child = { _ in .init(executable: "/bin/cat") }
+
 // These run processes: in the one serialized suite with the rest (`SudoPasswordTests`).
 extension SudoPasswordTests {
 
@@ -117,6 +159,171 @@ extension SudoPasswordTests {
     #expect(e.connection)
     #expect(e.message.hasPrefix("ssh: Could not resolve hostname dfm-no-such-host.invalid") && !e.message.contains("stale"), "got: \(e.message)")
     #expect(!FileManager.default.fileExists(atPath: log))
+}
+
+/// Each connection gets a child of its own with the socket as its stdin and stdout (`cat` here: an echo): the bytes go
+/// both ways, the client sees the end once it closed its half, and each connection counts while it lasts.
+@Test func aTunnelGivesEachConnectionAChild() throws {
+    let events = Events()
+    let l = try TunnelListener(port: 0, child: cat, onEvent: events.add)
+    defer { l.stop() }
+    let a = dial(l.port), b = dial(l.port)
+    defer { close(a); close(b) }
+    #expect(waitUntil { l.connections == 2 })
+    send(a, "one")
+    shutdown(a, SHUT_WR)
+    #expect(receive(a) == "one")
+    #expect(waitUntil { l.connections == 1 })
+    send(b, "two")
+    shutdown(b, SHUT_WR)
+    #expect(receive(b) == "two")
+    #expect(waitUntil { l.connections == 0 })
+    #expect(events.list == [.opened, .opened, .closed(failure: nil), .closed(failure: nil)])
+}
+
+/// `stop`: the port closes and the children go, so clients see their connections end; the port can be listened on
+/// again at once (their TIME_WAIT doesn't hold it); nothing is told after. `keepConnections` (the screen locked): the
+/// port closes, the connections live on — and no child holds the port (close-on-exec). A login under way gives up.
+@Test func stoppingATunnelClosesItsPortAndItsConnections() throws {
+    let events = Events()
+    let l = try TunnelListener(port: 0, child: cat, onEvent: events.add)
+    let a = dial(l.port)
+    defer { close(a) }
+    send(a, "x")
+    #expect(receive(a, count: 1) == "x", "the child runs")
+    l.stop()
+    #expect(receive(a) == "", "its connection ends")
+    #expect(waitUntil { l.connections == 0 })
+    #expect(dial(l.port) == -1 && TunnelListener.isFree(l.port))
+    for _ in 0..<20 {   // free when `stop` returns: Turn Off, then On at once, or an edit listening anew
+        let again = try TunnelListener(port: l.port, child: cat, onEvent: { _ in })
+        again.stop()
+    }
+    #expect(events.list == [.opened], "nothing after stop")
+
+    let k = try TunnelListener(port: 0, child: cat, onEvent: { _ in })
+    let c = dial(k.port)
+    defer { close(c) }
+    send(c, "y")
+    #expect(receive(c, count: 1) == "y")
+    k.stop(keepConnections: true)
+    #expect(dial(k.port) == -1 && TunnelListener.isFree(k.port), "no child keeps the port")
+    send(c, "z")
+    #expect(receive(c, count: 1) == "z", "the connection lives on")
+    shutdown(c, SHUT_WR)
+    #expect(receive(c) == "")
+    #expect(waitUntil { k.connections == 0 })
+
+    let logins = Events()
+    let w = try TunnelListener(port: 0, child: { cancel in
+        while !cancel.isCancelled { usleep(10_000) }
+        throw CancellationError()
+    }, onEvent: logins.add)
+    let d = dial(w.port)
+    defer { close(d) }
+    #expect(waitUntil { w.connections == 1 })
+    w.stop()
+    #expect(receive(d) == "")
+    #expect(waitUntil { w.connections == 0 })
+    #expect(logins.list == [.opened])
+}
+
+/// A taken port fails at once and says so, and the next free one is found — also when someone listens on every
+/// address (a local Postgres on *:5432): quietly taking localhost from it would send its clients to the server.
+@Test func aTakenPortSaysSoAndTheNextFreeOne() throws {
+    let a = try TunnelListener(port: 0, child: cat, onEvent: { _ in })
+    defer { a.stop() }
+    #expect(throws: Tunnel.Problem(message: "Port \(a.port) is in use on this Mac")) { try TunnelListener(port: a.port, child: cat, onEvent: { _ in }) }
+    #expect(!TunnelListener.isFree(a.port))
+    let next = try #require(TunnelListener.freePort(after: a.port))
+    #expect(next > a.port && TunnelListener.isFree(next))
+    #expect(TunnelListener.freePort(after: 65535) == nil)
+
+    let s = socket(AF_INET, SOCK_STREAM, 0)   // as servers listen: every address, SO_REUSEADDR
+    defer { close(s) }
+    var on: Int32 = 1
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
+    var addr = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: 0,
+                           sin_addr: in_addr(s_addr: INADDR_ANY), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+    var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+    _ = withUnsafeMutablePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(s, $0, len) } }
+    #expect(listen(s, 1) == 0)
+    _ = withUnsafeMutablePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(s, $0, &len) } }
+    let p = Int(UInt16(bigEndian: addr.sin_port))
+    #expect(!TunnelListener.isFree(p))
+    #expect(throws: Tunnel.Problem(message: "Port \(p) is in use on this Mac")) { try TunnelListener(port: p, child: cat, onEvent: { _ in }) }
+}
+
+/// A connection whose child can't start (the login failed) ends at once and says why; one whose child failed says what
+/// `failure` made of its exit status and stderr.
+@Test func aFailedConnectionSaysWhy() throws {
+    let events = Events()
+    let l = try TunnelListener(port: 0, child: { _ in throw Tunnel.Problem(message: "me@h: Permission denied (publickey).") }, onEvent: events.add)
+    defer { l.stop() }
+    let a = dial(l.port)
+    defer { close(a) }
+    #expect(receive(a) == "")
+    #expect(waitUntil { events.list.count == 2 })
+    #expect(events.list == [.opened, .closed(failure: "me@h: Permission denied (publickey).")])
+
+    let failed = Events()
+    let m = try TunnelListener(port: 0, child: { _ in
+        .init(executable: "/bin/sh", arguments: ["-c", "echo refused >&2; exit 255"]) { status, said in "\(status): \(said)" }
+    }, onEvent: failed.add)
+    defer { m.stop() }
+    let b = dial(m.port)
+    defer { close(b) }
+    #expect(receive(b) == "")
+    #expect(waitUntil { failed.list.count == 2 })
+    #expect(failed.list == [.opened, .closed(failure: "255: refused\n")])
+}
+
+/// Through a real master (the test's sshd, the master started as `startMaster` starts one): the bytes go both ways and
+/// the end comes through, ten connections at once; a refusal reads from the master's log in plain words — nothing
+/// listens there, forwarding not allowed (PermitOpen); `::1` reaches ssh in brackets.
+@Test(.timeLimit(.minutes(1))) func aTunnelRidesTheServersMaster() throws {
+    let echo = try TunnelListener(port: 0, child: cat, onEvent: { _ in })   // the service on the "server" (this Mac)
+    defer { echo.stop() }
+    let nobody = freeTCPPort()
+    try withTestSSHD(config: "PermitOpen 127.0.0.1:\(echo.port) 127.0.0.1:\(nobody)") { t, _, _ in
+        func tunnel(_ host: String, _ port: Int) throws -> (TunnelListener, Events) {
+            let events = Events()
+            let child = Tunnel(localPort: 0, host: host, port: port).child(on: t, env: [:], server: "test")
+            return (try TunnelListener(port: 0, child: child, onEvent: events.add), events)
+        }
+        var st = stat()
+        #expect(lstat(SFTP.masterLog(t), &st) == 0 && st.st_mode & 0o777 == 0o600, "the master's log is owner-only")
+        let (ok, okEvents) = try tunnel("127.0.0.1", echo.port)
+        defer { ok.stop() }
+        let a = dial(ok.port)
+        send(a, "through the master")
+        shutdown(a, SHUT_WR)
+        #expect(receive(a) == "through the master")
+        close(a)
+        #expect(waitUntil { okEvents.list == [.opened, .closed(failure: nil)] }, "\(okEvents.list)")
+        let ten = (0..<10).map { _ in dial(ok.port) }
+        for (i, c) in ten.enumerated() { send(c, "\(i)") }
+        #expect(ten.enumerated().allSatisfy { receive($1, count: 1) == "\($0)" })
+        #expect(ok.connections == 10)
+        ten.forEach { close($0) }
+        #expect(waitUntil { ok.connections == 0 })
+
+        let (none, noneEvents) = try tunnel("127.0.0.1", nobody)
+        defer { none.stop() }
+        let b = dial(none.port)
+        #expect(receive(b) == "")
+        close(b)
+        #expect(waitUntil { noneEvents.list.count == 2 })
+        #expect(noneEvents.list.last == .closed(failure: "Nothing listens on 127.0.0.1:\(nobody) (as seen from test)"))
+
+        let (v6, v6Events) = try tunnel("::1", echo.port)
+        defer { v6.stop() }
+        let c = dial(v6.port)
+        #expect(receive(c) == "")
+        close(c)
+        #expect(waitUntil { v6Events.list.count == 2 })
+        #expect(v6Events.list.last == .closed(failure: "test forbids port forwarding (AllowTcpForwarding / PermitOpen)"))
+    }
 }
 
 }
