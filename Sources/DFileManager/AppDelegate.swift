@@ -667,6 +667,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                           var copy = s
                           copy.id = UUID()
                           copy.name = s.title + " copy"
+                          copy.tunnels = s.tunnels.map { var t = $0; t.on = false; return t }   // their ports are the original's
                           editServer(copy, title: "Duplicate “\(s.title)”")
                       },
                       MenuAction.item("Delete…") { [unowned self] in deleteServer(s) }]

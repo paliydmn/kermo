@@ -17,6 +17,7 @@ struct SavedServer: Codable, Equatable {
     var startDir: String?      // SFTP; nil = the login folder
     var locked = false         // Touch ID / the Mac password to connect, edit or delete (ServerLock)
     var prod = false           // production: red in the sidebar and panel header; delete, overwrite and move there ask first
+    var tunnels: [Tunnel] = [] // ports on this Mac that lead to it, or past it (`Tunnels`)
 
     init() {}
 
@@ -42,6 +43,7 @@ struct SavedServer: Codable, Equatable {
         startDir = try c.decodeIfPresent(String.self, forKey: .startDir)
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
         prod = try c.decodeIfPresent(Bool.self, forKey: .prod) ?? false
+        tunnels = try c.decodeIfPresent([Tunnel].self, forKey: .tunnels) ?? []
     }
 
     /// A saved server at this address (user@host:port) is tagged production.
@@ -74,7 +76,7 @@ struct SavedServer: Codable, Equatable {
         if let k = identityFile, !FileManager.default.isReadableFile(atPath: (k as NSString).expandingTildeInPath) {
             return "Can't read the key file “\(k)”."
         }
-        return nil
+        return Tunnel.problem(tunnels)
     }
 
     static func load() -> [SavedServer] {
