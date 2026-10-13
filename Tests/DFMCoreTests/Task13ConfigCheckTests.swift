@@ -88,6 +88,19 @@ import Testing
     #expect(ConfigCheck.expand("x %f %f", path: "/a b") == "x '/a b' '/a b'")
     #expect(ConfigCheck.expand("date +%%s; echo 100%% %%f %f", path: "/x") == "date +%s; echo 100% %f /x")
     #expect(ConfigCheck.expand("nginx -t", path: "/etc/nginx/nginx.conf") == "nginx -t")
+    #expect(ConfigCheck.program("nginx -t") == "nginx" && ConfigCheck.program("LC_ALL=C TZ=UTC promtool check config %f") == "promtool")
+}
+
+/// Held, a flag isn't cancelled any more: the work is past where it can stop. Not if it was cancelled already.
+@Test func heldFlagsDontCancel() {
+    let f = CancelFlag(), ran = CancelFlag()
+    f.onCancel { ran.cancel() }
+    #expect(f.hold())
+    f.cancel()
+    #expect(!f.isCancelled && !ran.isCancelled)
+    let g = CancelFlag()
+    g.cancel()
+    #expect(!g.hold() && g.isCancelled)
 }
 
 /// `ConfigCheck.run`'s outcome, or its error as a failure with status -1 (`#expect` of a `try … == .case(…)` doesn't compile).
@@ -220,15 +233,16 @@ extension SudoPasswordTests {
             try c.save(d + "/l", to: file, baseline: a, rule: rule) { _, _ in kept += 1 }
         }
         let failTrips = c.roundTrips - before
-        #expect(e?.status == 1 && e?.output == "checking \(d)/\(partials().first ?? ".dfm-partial-…")\nline 1: BAD here\n" || e?.output.hasSuffix("line 1: BAD here\n") == true)
-        #expect(e?.output.contains("/.dfm-partial-") == true, "checked the partial file, not the file")
+        #expect(e?.status == 1 && e?.output.hasPrefix("checking \(d)/.dfm-partial-") == true && e?.output.hasSuffix("\nline 1: BAD here\n") == true,
+                "checked the partial file, not the file: \(e?.output ?? "")")
         #expect(String(decoding: FileManager.default.contents(atPath: real)!, as: UTF8.self).hasPrefix("good\n") && partials().isEmpty && kept == 0, "link: \(link)")
         #expect(failTrips == (link ? 7 : 6), "a failed check: \(failTrips) round trips (link: \(link)) — the write, the check, the partial removed")
         try put(d + "/l", "fine\n")
         before = c.roundTrips
         let (attrs, outcome) = try c.save(d + "/l", to: file, baseline: a, rule: rule) { _, _ in kept += 1 }
         #expect(c.roundTrips - before == (link ? 13 : 8), "checked and saved: as unchecked (link: \(link))")
-        #expect(outcome == .passed("checking \(d)/\(partials().first ?? "")\nok\n") || outcome.map { if case .passed = $0 { true } else { false } } == true)
+        guard case .passed(let said)? = outcome else { Issue.record("\(String(describing: outcome))"); return }
+        #expect(said.hasPrefix("checking \(d)/.dfm-partial-") && said.hasSuffix("\nok\n"))
         #expect(String(decoding: FileManager.default.contents(atPath: real)!, as: UTF8.self).hasPrefix("fine\n") && attrs.size == 2048 && partials().isEmpty && kept == 1)
         if link { #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: file)) == real, "still a link") }
     }
@@ -296,7 +310,8 @@ extension SudoPasswordTests {
 
 /// Not put back: someone wrote the file between the save and the check (here the check itself) — theirs stays, as
 /// "changed on the server" always does; a file over 5 MB (its old text wasn't kept). A new file is removed, unless it
-/// changed meanwhile. Each says so, and
+/// changed meanwhile. Each says so, and gives what this save left there as the next baseline (theirs is asked about
+/// then). Before that:
 /// gives what's there now as the next baseline. An "after" check that can't run, or is root only on a user's panel:
 /// the save is in, unchecked, and says so.
 @Test func putBackOnlyWhatThisSaveReplaced() throws {
@@ -311,7 +326,8 @@ extension SudoPasswordTests {
     try Data("old".utf8).write(to: URL(fileURLWithPath: d + "/theirs.conf"))
     let theirs = failed("theirs.conf", #"sh -c 'echo theirs > "$1"; exit 1' x %f"#)
     #expect(theirs?.now == "Not put back: it changed on localhost meanwhile, and what's there now stays.")
-    #expect(FileManager.default.contents(atPath: d + "/theirs.conf") == Data("theirs\n".utf8) && theirs?.attrs?.size == 7)
+    #expect(FileManager.default.contents(atPath: d + "/theirs.conf") == Data("theirs\n".utf8))
+    #expect(theirs?.attrs?.size == 4, "the baseline is what this save wrote: the next save asks about their change, never overwrites it")
 
     try Data(repeating: 0x61, count: Int(ServerHistory.fileLimit) + 1).write(to: URL(fileURLWithPath: d + "/big.conf"))
     #expect(failed("big.conf", "false")?.now == "Not put back: it's over 5 MB, so its old text wasn't kept. The file on localhost has your text.")
@@ -319,7 +335,8 @@ extension SudoPasswordTests {
     let new = failed("new.conf", "false")
     #expect(new?.now == "Removed: there was no such file on localhost before this save." && new?.attrs == .nothing)
     #expect(!FileManager.default.fileExists(atPath: d + "/new.conf"), "a new broken drop-in doesn't stay to stop the next restart")
-    #expect(failed("new2.conf", #"sh -c 'echo theirs > "$1"; exit 1' x %f"#)?.now == "Not removed: it changed on localhost meanwhile, and what's there now stays.")
+    let new2 = failed("new2.conf", #"sh -c 'echo theirs > "$1"; exit 1' x %f"#)
+    #expect(new2?.now == "Not removed: it changed on localhost meanwhile, and what's there now stays." && new2?.attrs?.size == 4)
 
     let refusing = try fakeSudo(d, #"[ "$3" = sh ] && { echo "Sorry, user me is not allowed to execute '/bin/sh' as root on web." >&2; exit 1; }; shift 2; exec "$@""#)
     let root = try SFTPClient(.local(sudo: refusing))
@@ -327,6 +344,39 @@ extension SudoPasswordTests {
     let r = try root.save(d + "/l", to: d + "/nginx.conf", baseline: nil, rule: ConfigCheck(match: "*", check: "nginx -t", when: .after, root: true))
     #expect(r.outcome == .notRun("“nginx” couldn't run on localhost as root: sudo on localhost refused: Sorry, user me is not allowed to execute '/bin/sh' as root on web."))
     #expect(try c.save(d + "/l", to: d + "/nginx.conf", baseline: nil, rule: ConfigCheck(match: "*", check: "nginx -t", when: .after, root: true)).outcome == .needsRoot)
+}
+
+/// Once an "after" save replaced the file, nothing cancels it: ⎋ during the check lets the check finish and its verdict
+/// through; Cancel on the sudo password sheet the check asked for leaves the save in, unchecked — the flag isn't
+/// cancelled, so the panel's `busy` hands the result on instead of a bare cancel.
+@Test func afterTheFileIsReplacedNothingCancels() throws {
+    let d = checkDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    try Data("old".utf8).write(to: URL(fileURLWithPath: d + "/a.conf"))
+    try Data("new".utf8).write(to: URL(fileURLWithPath: d + "/l"))
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    let flag = CancelFlag()
+    DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { flag.cancel() }   // ⎋ while the check runs
+    let r = try c.save(d + "/l", to: d + "/a.conf", baseline: nil, cancel: flag, rule: ConfigCheck(match: "*", check: "sh -c 'sleep 1; echo done'", when: .after))
+    #expect(r.outcome == .passed("done\n") && !flag.isCancelled)
+
+    // sftp-server needs no password there, a shell does.
+    let fake = try fakeSudo(d, #"""
+        case "$1" in
+        -n) [ "$3" = sh ] && { echo "sudo: a password is required" >&2; exit 1; }; shift 2; exec "$@";;
+        -S) IFS= read -r pw; [ "$pw" = kermo-test-pw ] || exit 1; shift 5; exec "$@";;
+        esac
+        exit 2
+        """#)
+    let root = try SFTPClient(.local(sudo: fake))
+    defer { root.close() }
+    let a = Answers([nil])
+    try Self.answering(a) {
+        let sheet = CancelFlag()
+        let r = try root.save(d + "/l", to: d + "/a.conf", baseline: nil, cancel: sheet, rule: ConfigCheck(match: "*", check: "nginx -t", when: .after, root: true))
+        #expect(r.outcome == .notRun("cancelled") && !sheet.isCancelled && a.wrong == [false])
+    }
 }
 }
 

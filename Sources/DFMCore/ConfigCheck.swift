@@ -118,7 +118,9 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
     }
 
     /// The program a command runs: its first word.
-    public static func program(_ command: String) -> String { command.split(whereSeparator: { $0 == " " || $0 == "\t" }).first.map(String.init) ?? "" }
+    public static func program(_ command: String) -> String {
+        command.split(whereSeparator: { $0 == " " || $0 == "\t" }).first { !$0.contains("=") }.map(String.init) ?? ""   // past `VAR=x`
+    }
 
     static let ran = "kermo-ran", missing = "kermo-no-program"
 
@@ -165,7 +167,8 @@ extension SFTPClient {
         public let output: String
         /// What the server's file is now, said in a sentence; "" for a "before" check (as it was).
         public var now = ""
-        /// An "after" check's: the server's file's attributes now — the next save's baseline.
+        /// An "after" check's: the next save's baseline — what this save left there: the old text put back, no file, or
+        /// its own text (a change someone else made since is asked about then, never taken as the baseline).
         public var attrs: Attrs?
         public var program: String { ConfigCheck.program(rule.check ?? "") }
         public var errorDescription: String? { "“\(program)” found a problem (exit \(status)): \(output)" }
@@ -176,7 +179,8 @@ extension SFTPClient {
     /// sudoers and sshd_config never go in unchecked). "After": on the file in place; a failure puts back the text this
     /// save replaced (the bytes `replaced` got: never looked for elsewhere) over the same `upload` — unless someone
     /// changed it meanwhile (`ChangedOnServer`: theirs stays), or its old text wasn't kept (over `ServerHistory.fileLimit`);
-    /// a new file is removed (unless it changed meanwhile). ⎋ doesn't stop that. The new text isn't kept as a version. A check that couldn't run
+    /// a new file is removed (unless it changed meanwhile). Once the file is replaced, ⎋ stops nothing (`hold`): what it
+    /// comes to is said, never lost to a cancel. The new text isn't kept as a version. A check that couldn't run
     /// leaves the save in (`.notRun`). Returns the new attributes and how the check went (nil: none for this file).
     public func save(_ local: String, to remote: String, baseline: Attrs?, force: Bool = false, cancel: CancelFlag? = nil, rule: ConfigCheck?,
                      env: [String: String] = [:], replaced: ((Attrs, Data?) -> Void)? = nil) throws -> (attrs: Attrs, outcome: ConfigCheck.Outcome?) {
@@ -197,11 +201,13 @@ extension SFTPClient {
             (had, old) = (true, data)
             replaced?(a, data)
         }
+        // ponytail: ⎋ in the moment between the rename and this still loses what happened, as for any save.
+        cancel?.hold()
         do {
             outcome = try ConfigCheck.run(ConfigCheck.expand(command, path: remote), on: target, root: rule.needsRoot, env: env, cancel: cancel)
         } catch let e as ConfigCheck.NotRun {
             return (attrs, .notRun(e.message))
-        } catch is CancellationError {
+        } catch is CancellationError {   // the sudo password asked for the check: Cancel
             return (attrs, .notRun("cancelled"))
         }
         guard case .failed(let status, let output) = outcome else { return (attrs, outcome) }
@@ -210,24 +216,26 @@ extension SFTPClient {
         guard let old else {
             if had {
                 failed.now = "Not put back: it's over \(ServerHistory.fileLimit >> 20) MB, so its old text wasn't kept. The file on \(host) has your text."
-            } else if let now = try? lstat(remote), now.size == attrs.size, now.mtime == attrs.mtime, (try? remove(remote)) != nil {
+            } else if let now = try? lstat(remote), now.size == attrs.size, now.mtime == attrs.mtime {
                 // A new file: back as it was is none (a broken drop-in left in conf.d would stop the next restart).
-                (failed.now, failed.attrs) = ("Removed: there was no such file on \(host) before this save.", .nothing)
+                do {
+                    try remove(remote)
+                    (failed.now, failed.attrs) = ("Removed: there was no such file on \(host) before this save.", .nothing)
+                } catch {
+                    failed.now = "Not removed: \(error.localizedDescription). The file on \(host) has your text."
+                }
             } else {
                 failed.now = "Not removed: it changed on \(host) meanwhile, and what's there now stays."
             }
             throw failed
         }
-        let previous = cancel?.onCancel(nil)   // a broken config half put back is worse than a wait
-        defer { cancel?.onCancel(previous) }
         let tmp = NSTemporaryDirectory() + "dfm-putback-" + UUID().uuidString
         defer { unlink(tmp) }
         do {
             guard FileManager.default.createFile(atPath: tmp, contents: old, attributes: [.posixPermissions: 0o600]) else { throw LocalFS.posixError() }
             failed.attrs = try upload(tmp, to: remote, baseline: attrs)
             failed.now = "Put back: the file on \(host) is as it was before this save."
-        } catch let e as ChangedOnServer {
-            failed.attrs = e.attrs
+        } catch is ChangedOnServer {
             failed.now = "Not put back: it changed on \(host) meanwhile, and what's there now stays."
         } catch {
             failed.now = "Not put back: \(error.localizedDescription). The file on \(host) may have your text."

@@ -300,15 +300,14 @@ public enum SFTP {
     }
 
     /// One SFTP session for `body` (or the `kept` one). Cancelled, it throws CancellationError, not the "connection
-    /// closed" of the session the cancel closed (the panel tells those apart) — but a check's verdict as it is: what's
-    /// on the server then has to be said.
+    /// closed" of the session the cancel closed (the panel tells those apart).
     public static func session<T>(_ t: SFTPTarget, env: [String: String], cancel: CancelFlag?, on kept: KeptSession?,
                                   _ body: (SFTPClient) throws -> T) throws -> T {
         let flag = cancel ?? CancelFlag()
         do {
             if let kept { return try kept.run(env: env, cancel: flag, body) }
             return try SFTPClient.session(t, env: env, cancel: flag, body)
-        } catch where flag.isCancelled && !(error is SFTPClient.CheckFailed) { throw CancellationError() }
+        } catch where flag.isCancelled { throw CancellationError() }
     }
 
     /// The type letter of a special file → its S_IFMT type (kept in `mode`; see FileItem).
