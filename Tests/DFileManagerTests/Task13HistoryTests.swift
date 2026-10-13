@@ -54,6 +54,11 @@ import Testing
     asked = []
     #expect(await pair([], nil, nil, "o") == nil && asked.isEmpty, "no file under the cursor")
     #expect(await pair(["c"], "c", "s", nil, there: false) == nil)
+
+    // What the diff and its window call each side: a server's file "host:/path", a version its file and date.
+    #expect(AppDelegate.DiffSide(path: "/srv/a", server: SFTPTarget(host: "me@web")).label == "me@web:/srv/a")
+    #expect(AppDelegate.DiffSide(path: "/h/me@web/srv/a@2026-10-12_03-04-05", name: "me@web:/srv/a @ 2026-10-12 03:04:05").label == "me@web:/srv/a @ 2026-10-12 03:04:05")
+    #expect(AppDelegate.DiffSide(path: "/tmp/a").label == "/tmp/a")
 }
 
 extension ServerCopiesTests {

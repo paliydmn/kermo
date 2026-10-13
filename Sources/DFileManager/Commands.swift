@@ -1147,7 +1147,7 @@ extension AppDelegate {
                 let view: @MainActor () -> Void = { Viewer.show(url) }
                 let diff: @MainActor () -> Void = { [unowned self] in
                     let there = DiffSide(path: path, server: target, size: now?.size ?? 0, mtime: now?.mtime ?? 0, look: now == nil)
-                    Task { await self.diff(DiffSide(path: v.path), there, in: panel) }
+                    Task { await self.diff(DiffSide(path: v.path, name: "\(target.host):\(path) @ \(when)"), there, in: panel) }
                 }
                 let revert: @MainActor () -> Void = { [unowned self] in
                     let state = RemoteEdit(baseline: now ?? .nothing)
@@ -1554,7 +1554,8 @@ extension AppDelegate {
         var server: SFTPTarget? = nil
         var size: Int64 = 0, mtime: Double = 0
         var look = false   // a link (its own size says nothing), or a size not known: the server is asked first
-        var label: String { server.map { "\($0.host):\(path)" } ?? path }
+        var name: String? = nil   // what the diff calls it, if not its path ("host:/path" on a server)
+        var label: String { name ?? server.map { "\($0.host):\(path)" } ?? path }
     }
 
     /// A panel's marked files (or the cursor's), and its cursor's: on a server, as its listing has them.
@@ -1611,7 +1612,9 @@ extension AppDelegate {
         if let tool = defaults.string(forKey: "diffCommand") {
             Shell.spawn(Self.fillDiff(tool, qa, qb), in: panel.path)
         } else {
-            Shell.run(Self.diffCommand(la, lb, labels: a.server == nil && b.server == nil ? nil : (a.label, b.label)), in: panel.path, diff: true)
+            let named = a.server != nil || b.server != nil || a.name != nil || b.name != nil
+            Shell.run(Self.diffCommand(la, lb, labels: named ? (a.label, b.label) : nil), in: panel.path, diff: true,
+                      title: named ? "diff \(a.label) ↔ \(b.label)" : nil)   // not the copies' temp paths
         }
     }
 
