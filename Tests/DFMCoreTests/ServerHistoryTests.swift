@@ -220,3 +220,12 @@ private let when = Calendar.current.date(from: DateComponents(year: 2026, month:
     #expect(FileManager.default.contents(atPath: d + "/f") == Data("new".utf8))
     #expect(note?.lowercased().contains("permission") == true, "\(note ?? "")")
 }
+
+/// A version's name ends in its date, which hid the file's own extension: viewed or edited, it had no highlighting.
+@Test func versionsKeepTheirFilesSyntax() {
+    #expect(Syntax.language(forFileName: "nginx.conf@2026-10-12_03-04-05") == Syntax.language(forFileName: "nginx.conf"))
+    #expect(Syntax.language(forFileName: "nginx.conf") != nil)
+    #expect(Syntax.language(forFileName: "deploy.sh@2026-10-12_03-04-05-2") == .shell)
+    #expect(Syntax.language(forFileName: "Dockerfile@2026-10-12_03-04-05") == .dockerfile)
+    #expect(Syntax.language(forFileName: "notes@home.sh") == .shell, "an @ alone isn't a version")
+}
