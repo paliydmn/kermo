@@ -33,11 +33,38 @@ enum SudoServer {
         if let path = lock.withLock({ known[key(t)] }) { return path }
         var out = Data()
         let (status, errors) = try SSHCommand.run(t, probe(t), env: env, cancel: cancel) { out += $0 }
-        guard let path = pick(out), status == 0 else {
-            throw SFTPError(message: "sudo on \(t.host) didn't run sftp-server: " + (errors.isEmpty ? "exit \(status)" : errors), connection: true)
-        }
+        let path = try check(t, out, status, errors)
         lock.withLock { known[key(t)] = path }
         return path
+    }
+
+    /// `probe`'s answer: the path when sudo ran it (exit 0, whatever it said on stderr — a lecture, a warning), else why
+    /// not, in plain words. Only how it failed is told by its text.
+    static func check(_ t: SFTPTarget, _ out: Data, _ status: Int32, _ errors: String) throws -> String {
+        guard let path = pick(out) else {
+            throw SFTPError(message: "sftp-server not found on \(t.host) (looked in \(paths.joined(separator: ", "))). "
+                            + "On Alpine sshd serves SFTP itself (internal-sftp): apk add openssh-sftp-server.", connection: true)
+        }
+        guard status != 0 else { return path }
+        throw SFTPError(message: explain(t, path: path, errors) ?? "sudo on \(t.host) didn't run sftp-server: " + (errors.isEmpty ? "exit \(status)" : errors),
+                        connection: true)
+    }
+
+    /// What sudo says when it wants a password and may not ask (`-n`): sudo 1.8 / 1.9, sudo-rs 0.2.13, sudo-rs 0.2.2.
+    static let passwordTexts = ["a password is required", "interactive authentication is required", "authentication failed: interaction required"]
+
+    /// sudo's refusal in plain words; nil for anything else.
+    static func explain(_ t: SFTPTarget, path: String, _ errors: String) -> String? {
+        let user = t.host.contains("@") ? String(t.host[..<t.host.lastIndex(of: "@")!]) : "<user>"
+        if passwordTexts.contains(where: errors.contains) {
+            return "sudo on \(t.host) needs a password to run sftp-server as root. To open it without one, allow it there in sudoers: "
+                + "\(user) ALL=(root) NOPASSWD: \(path)"
+        }
+        if errors.contains("must have a tty") {
+            return "sudo on \(t.host) runs only from a terminal (Defaults requiretty), and sftp-server has none. "
+                + "To open it as root, allow it there in sudoers: Defaults:\(user) !requiretty"
+        }
+        return nil
     }
 
     /// The path `probe` printed. A login script may print too: only a line that is one of `paths` counts.

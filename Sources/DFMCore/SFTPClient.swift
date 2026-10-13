@@ -58,9 +58,10 @@ public final class SFTPClient: @unchecked Sendable {
     public init(_ t: SFTPTarget, env: [String: String] = [:], cancel: CancelFlag? = nil) throws {
         target = t
         try SFTP.startMaster(t, env: env, cancel: cancel)
+        var sudoPath = ""
         if t.sudo {
-            let path = try SudoServer.prepare(t, env: env, cancel: cancel)
-            let (program, arguments) = SudoServer.launch(t, path: path)
+            sudoPath = try SudoServer.prepare(t, env: env, cancel: cancel)
+            let (program, arguments) = SudoServer.launch(t, path: sudoPath)
             process.executableURL = URL(fileURLWithPath: program)
             process.arguments = arguments
         } else if let server = t.localServer {
@@ -110,7 +111,11 @@ public final class SFTPClient: @unchecked Sendable {
             while !r.atEnd { extensions[try r.text()] = try r.text() }
         } catch {
             close()   // else ssh and the reader thread stay forever
-            if t.sudo { SudoServer.forget(t) }
+            guard t.sudo else { throw error }
+            SudoServer.forget(t)   // sudoers changed since it was looked at, say: looked at again next time
+            if !(error is CancellationError), cancel?.isCancelled != true, let why = SudoServer.explain(t, path: sudoPath, errors.text) {
+                throw SFTPError(message: why, connection: true)
+            }
             throw error
         }
     }
