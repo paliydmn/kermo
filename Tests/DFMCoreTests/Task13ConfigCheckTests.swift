@@ -89,3 +89,81 @@ import Testing
     #expect(ConfigCheck.expand("date +%%s; echo 100%% %%f %f", path: "/x") == "date +%s; echo 100% %f /x")
     #expect(ConfigCheck.expand("nginx -t", path: "/etc/nginx/nginx.conf") == "nginx -t")
 }
+
+/// `ConfigCheck.run`'s outcome, or its error as a failure with status -1 (`#expect` of a `try … == .case(…)` doesn't compile).
+private func ran(_ command: String, on t: SFTPTarget, root: Bool = false) -> ConfigCheck.Outcome {
+    do { return try ConfigCheck.run(command, on: t, root: root) } catch { return .failed(status: -1, output: "\(error)") }
+}
+
+private func checkDir() -> String {
+    let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-check-" + UUID().uuidString
+    try! FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+    return d
+}
+
+/// A stand-in validator: fails on a file with "BAD" in it, saying so on stderr.
+let badCheck = #"sh -c 'echo "checking $1"; grep -q BAD "$1" && { echo "line 1: BAD here" >&2; exit 1; }; echo ok' check %f"#
+
+// These run processes: in the one serialized suite with the rest (`SudoPasswordTests`).
+extension SudoPasswordTests {
+
+/// A check runs on the file's server (`.local()`: this Mac's sh) as the panel's user: its exit status (255 too, as
+/// `sshd -t` gives) and output, stdout and stderr in order; `%f` with a space and a quote is one word there. A program
+/// that isn't there is no check, not a failure; a root-only check on a user's panel isn't run at all.
+@Test func checksRunOnTheServerAsThePanelsUser() throws {
+    let d = checkDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let file = d + "/a b'c.conf"
+    try Data("listen 80; BAD\n".utf8).write(to: URL(fileURLWithPath: file))
+    #expect(ran(ConfigCheck.expand(badCheck, path: file), on: .local()) == .failed(status: 1, output: "checking \(file)\nline 1: BAD here\n"))
+    try Data("listen 80;\n".utf8).write(to: URL(fileURLWithPath: file))
+    #expect(ran(ConfigCheck.expand(badCheck, path: file), on: .local()) == .passed("checking \(file)\nok\n"))
+    #expect(ran("sh -c 'echo no >&2; exit 255'", on: .local()) == .failed(status: 255, output: "no\n"))
+    #expect(ran("kermo-no-such-validator -t %f", on: .local()) == .noProgram("kermo-no-such-validator"))
+    #expect(ran("sshd -t", on: .local(), root: true) == .needsRoot)
+}
+
+/// On a root panel the check runs through the server's sudo (`sudo -n -- sh -c …`); its own exit status counts, not sudo's.
+@Test func rootChecksRunThroughSudo() throws {
+    let d = checkDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let fake = try fakeSudo(d), t = SFTPTarget.local(sudo: fake)
+    #expect(ran("sh -c 'echo as root'", on: t, root: true) == .passed("as root\n"))
+    #expect(sudoLog(fake).count == 1 && sudoLog(fake)[0].hasPrefix("-n -- sh -c PATH="))
+    #expect(ran("sh -c 'echo broken >&2; exit 1'", on: t) == .failed(status: 1, output: "broken\n"))
+    #expect(ran("kermo-no-such-validator", on: t) == .noProgram("kermo-no-such-validator"))
+}
+
+/// Where sudo wants a password: `-n` first, then the password (the panel's, kept — or asked) as a line on stdin,
+/// never in the command line or sudo's log. A wrong one asks again; a check that fails after the password was taken
+/// is the file's failure, not the password's (told by what the script printed, not the exit status).
+@Test func rootChecksWithASudoPassword() throws {
+    let d = checkDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let fake = try fakeSudo(d, Self.passwordSudo)
+    let a = Answers(["nope", "kermo-test-pw"])
+    try Self.answering(a) {
+        #expect(ran("sh -c 'echo bad >&2; exit 1'", on: .local(sudo: fake), root: true) == .failed(status: 1, output: "bad\n"))
+        #expect(a.wrong == [false, true] && a.taken == ["kermo-test-pw"])
+        #expect(sudoLog(fake).map { String($0.prefix(19)) } == ["-n -- sh -c PATH=\"$", "-S -p  -k -- sh -c ", "-S -p  -k -- sh -c "])
+    }
+    #expect(!(try String(contentsOfFile: fake + ".log", encoding: .utf8)).contains("kermo-test-pw"))
+}
+
+/// sudo that won't run it (NOPASSWD for sftp-server only, no other rule): its words, nothing asked — the check didn't
+/// run, which is no verdict on the file. Wanting a password with no way to ask: said so.
+@Test func rootCheckSudoWontRunSaysWhy() throws {
+    let d = checkDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let fake = try fakeSudo(d, #"echo "Sorry, user me is not allowed to execute '/bin/sh' as root on web." >&2; exit 1"#)
+    let a = Answers(["kermo-test-pw"])
+    try Self.answering(a) {
+        let e = #expect(throws: ConfigCheck.NotRun.self) { try ConfigCheck.run("visudo -cf /x", on: .local(sudo: fake), root: true) }
+        #expect(e?.message == "“visudo” couldn't run on localhost as root: sudo on localhost refused: Sorry, user me is not allowed to execute '/bin/sh' as root on web.")
+        #expect(a.wrong.isEmpty)
+    }
+    let pw = try fakeSudo(d, Self.passwordSudo)
+    let e = #expect(throws: ConfigCheck.NotRun.self) { try ConfigCheck.run("visudo -cf /x", on: .local(sudo: pw), root: true) }
+    #expect(e?.message == "“visudo” couldn't run on localhost as root: sudo on localhost needs a password")
+}
+}

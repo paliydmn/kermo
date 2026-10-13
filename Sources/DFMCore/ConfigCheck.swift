@@ -76,4 +76,59 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
     public static func expand(_ command: String, path: String) -> String {
         command.components(separatedBy: "%%").map { $0.replacingOccurrences(of: "%f", with: ShellContext.quote(path)) }.joined(separator: "%")
     }
+
+    /// How a check (or a reload) went: its output is stdout and stderr together, in order.
+    public enum Outcome: Equatable, Sendable {
+        case passed(String)
+        case failed(status: Int32, output: String)
+        /// Its program isn't on that server: "no check for this file".
+        case noProgram(String)
+        /// Root only, and this is a user's panel: not run.
+        case needsRoot
+    }
+
+    /// A check that didn't get to run: sudo refused, or the server couldn't be reached. Not a verdict on the file.
+    public struct NotRun: LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
+    }
+
+    /// The program a command runs: its first word.
+    static func program(_ command: String) -> String { command.split(whereSeparator: { $0 == " " || $0 == "\t" }).first.map(String.init) ?? "" }
+
+    static let ran = "kermo-ran", missing = "kermo-no-program"
+
+    /// What runs there, in `sh` (the login shell may be any): the sbin folders in PATH (a user's on Debian has none, and
+    /// haproxy, apachectl live there), a line saying it runs — sudo let it, whatever its exit status — whether the
+    /// program is there, then the command with its stderr on stdout, in order, apart from sudo's own words.
+    static func script(_ command: String) -> String {
+        "PATH=\"$PATH:/usr/local/sbin:/usr/sbin:/sbin\"; echo \(ran); command -v \(ShellContext.quote(program(command))) >/dev/null 2>&1 || "
+            + "{ echo \(missing); exit 0; }; exec 2>&1; " + command
+    }
+
+    /// Runs `command` (expanded) on `t`'s server — on a root panel's as root, through its sudo (`sudo -n`; where it wants
+    /// a password, the one the panel's sudo took, kept or asked: on stdin, never in the command line); else as its user.
+    /// `root`: the command works only as root — on a user's panel it doesn't run. One ssh command over the panel's
+    /// connection; where sudo wants a password, two (`-n` first, every time: a password goes nowhere else).
+    public static func run(_ command: String, on t: SFTPTarget, root: Bool = false, env: [String: String] = [:], cancel: CancelFlag? = nil) throws -> Outcome {
+        if root && !t.sudo { return .needsRoot }
+        let ranLine = Data((ran + "\n").utf8)
+        let status: Int32, out: Data
+        do {
+            if t.sudo {
+                (status, out) = try SudoServer.run(t, script: script(command), env: env, cancel: cancel) { $0.range(of: ranLine) != nil }
+            } else {
+                var o = Data()
+                let (s, errors) = try SSHCommand.run(t, "sh -c " + ShellContext.quote(script(command)), env: env, cancel: cancel, options: ["-x", "-a"]) { o += $0 }
+                guard o.range(of: ranLine) != nil else { throw SFTPError(message: errors.isEmpty ? "exit \(s)" : errors) }
+                (status, out) = (s, o)
+            }
+        } catch let e as SFTPError {
+            throw NotRun(message: "“\(program(command))” couldn't run on \(t.host)\(t.sudo ? " as root" : ""): \(e.message)")
+        }
+        let text = String(decoding: out, as: UTF8.self).replacingOccurrences(of: "\r\n", with: "\n")   // sshd's messages end in CRLF
+        let after = String(text[text.range(of: ran + "\n")!.upperBound...])   // a login script may print before it
+        if after.hasPrefix(missing + "\n") { return .noProgram(program(command)) }
+        return status == 0 ? .passed(after) : .failed(status: status, output: after)
+    }
 }
