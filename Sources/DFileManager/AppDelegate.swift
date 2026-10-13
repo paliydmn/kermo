@@ -1080,23 +1080,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// A root panel's sudo password for `t`'s server: a sheet on the window in front (an editor saving, say), never shown
-    /// again or kept anywhere but `SudoPasswords`. `wrong`: sudo refused the one before.
-    func askSudoPassword(_ t: SFTPTarget, wrong: Bool) async -> String? {
+    /// again or kept anywhere but `SudoPasswords` (and the Keychain, if ticked). `wrong`: sudo refused the one before.
+    func askSudoPassword(_ t: SFTPTarget, wrong: Bool) async -> (password: String, save: Bool)? {
         let alert = NSAlert()
         alert.messageText = (wrong ? "Sorry, try again: " : "") + "sudo password on \(t.host)"
         alert.informativeText = "To open its files as root. It goes to sudo there, through ssh, and nowhere else."
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
         let field = NSSecureTextField(string: "")
-        field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
-        alert.accessoryView = field
+        field.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        let save = NSButton(checkboxWithTitle: "Save in Keychain", target: nil, action: nil)
+        save.toolTip = "Kept as “Kermo sudo” in the login keychain, apart from the ssh password; gone once sudo refuses it, or with the saved server"
+        let stack = NSStackView(views: [field, save])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.frame = NSRect(x: 0, y: 0, width: 300, height: 52)
+        alert.accessoryView = stack
         alert.window.initialFirstResponder = field
         if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }
         let over: NSWindow = NSApp.keyWindow.flatMap { $0 is NSPanel ? nil : $0 } ?? window
         let response: NSApplication.ModalResponse = await withCheckedContinuation { cont in
             alert.beginSheetModal(for: over) { cont.resume(returning: $0) }
         }
-        return response == .alertFirstButtonReturn ? field.stringValue : nil
+        return response == .alertFirstButtonReturn ? (field.stringValue, save.state == .on) : nil
     }
 
     /// A sheet with `buttons` (the last one is Cancel / ⎋) on `sheetWindow` (default: the main one); returns the index pressed.

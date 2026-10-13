@@ -88,8 +88,10 @@ struct SavedServer: Codable, Equatable {
 }
 
 /// SSH passwords in the login keychain: one per user@host:port, readable by this app without asking (others ask).
+/// `sudo`: a root panel's sudo password there (`SudoPasswords`), an item of its own: neither ever reads the other.
 enum SSHPasswords {
-    private static func query(_ t: SFTPTarget) -> [CFString: Any] {
+    private static func query(_ t: SFTPTarget, sudo: Bool) -> [CFString: Any] {
+        if sudo { return [kSecClass: kSecClassGenericPassword, kSecAttrService: "Kermo sudo", kSecAttrAccount: SudoPasswords.key(t)] }
         let at = t.host.lastIndex(of: "@")
         return [kSecClass: kSecClassInternetPassword, kSecAttrProtocol: kSecAttrProtocolSSH,
                 kSecAttrServer: at.map { String(t.host[t.host.index(after: $0)...]) } ?? t.host,
@@ -100,10 +102,10 @@ enum SSHPasswords {
     static func sameKey(_ a: SFTPTarget, _ b: SFTPTarget) -> Bool { a.host == b.host && (a.port ?? 22) == (b.port ?? 22) }
 
     /// Without reading it.
-    static func has(_ t: SFTPTarget) -> Bool { SecItemCopyMatching(query(t) as CFDictionary, nil) == errSecSuccess }
+    static func has(_ t: SFTPTarget, sudo: Bool = false) -> Bool { SecItemCopyMatching(query(t, sudo: sudo) as CFDictionary, nil) == errSecSuccess }
 
-    static func get(_ t: SFTPTarget) -> String? {
-        var q = query(t)
+    static func get(_ t: SFTPTarget, sudo: Bool = false) -> String? {
+        var q = query(t, sudo: sudo)
         q[kSecReturnData] = true
         q[kSecMatchLimit] = kSecMatchLimitOne
         var out: CFTypeRef?
@@ -113,50 +115,63 @@ enum SSHPasswords {
 
     /// "" or nil forgets it.
     @discardableResult
-    static func set(_ password: String?, for t: SFTPTarget) -> OSStatus {
-        SecItemDelete(query(t) as CFDictionary)
+    static func set(_ password: String?, for t: SFTPTarget, sudo: Bool = false) -> OSStatus {
+        SecItemDelete(query(t, sudo: sudo) as CFDictionary)
         guard let password, !password.isEmpty else { return errSecSuccess }
-        var q = query(t)
+        var q = query(t, sudo: sudo)
         q[kSecValueData] = Data(password.utf8)
-        q[kSecAttrLabel] = "Kermo: \(t.host)" + (t.port.map { ":\($0)" } ?? "")
+        q[kSecAttrLabel] = "Kermo\(sudo ? " sudo" : ""): \(t.host)" + (t.port.map { ":\($0)" } ?? "")
         return SecItemAdd(q as CFDictionary, nil)
     }
 }
 
 /// Root panels' sudo passwords (`SFTP.sudoPassword`): asked for in a sheet, then kept in memory while in use — 5 minutes
 /// after the last use, as sudo's own ticket — and forgotten when the screen locks, the Mac sleeps or the server is
-/// disconnected. One per user@host:port. Off the main thread: a session asks while it connects.
+/// disconnected. In the Keychain too if the sheet's "Save in Keychain" was ticked, once sudo took it; one sudo refuses
+/// goes from there as well. One per user@host:port. Off the main thread: a session asks while it connects.
 enum SudoPasswords {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var kept: [String: (password: String, used: Date)] = [:]
+    nonisolated(unsafe) private static var toSave: [String: String] = [:]   // typed with "Save in Keychain", not taken yet
     static let grace: TimeInterval = 300
     /// The dialog (`AppDelegate.askSudoPassword`); replaced in tests. nil: cancelled.
-    @MainActor static var ask: @MainActor (SFTPTarget, _ wrong: Bool) async -> String? = { t, wrong in
+    @MainActor static var ask: @MainActor (SFTPTarget, _ wrong: Bool) async -> (password: String, save: Bool)? = { t, wrong in
         await (NSApp.delegate as? AppDelegate)?.askSudoPassword(t, wrong: wrong)
     }
 
     static func key(_ t: SFTPTarget) -> String { "\(t.host):\(t.port ?? 22)" }   // ServerRow.key
 
-    /// The one kept for `t`, else asked for (waits for the dialog). `wrong`: the one given before goes first.
+    /// The one kept for `t` (memory, then Keychain), else asked for (waits for the dialog). `wrong`: the one given before
+    /// goes first, from the Keychain too.
     static func password(_ t: SFTPTarget, wrong: Bool) -> String? {
         let key = key(t)
-        if wrong { forget(key) } else if let p = lock.withLock({ () -> String? in
+        if wrong {
+            forget(key)
+            SSHPasswords.set(nil, for: t, sudo: true)
+        } else if let p = lock.withLock({ () -> String? in
             guard let k = kept[key], Date().timeIntervalSince(k.used) < grace else { return nil }
             kept[key]?.used = Date()
             return k.password
-        }) { return p }
+        }) ?? SSHPasswords.get(t, sudo: true) { return p }
         let answered = DispatchSemaphore(value: 0)
-        nonisolated(unsafe) var answer: String?
+        nonisolated(unsafe) var answer: (password: String, save: Bool)?
         Task { @MainActor in
             answer = await ask(t, wrong)
             answered.signal()
         }
         answered.wait()
-        return answer
+        if let answer { lock.withLock { toSave[key] = answer.save ? answer.password : nil } }
+        return answer?.password
     }
 
-    /// sudo took it: kept for the next session.
-    static func taken(_ t: SFTPTarget, _ password: String) { lock.withLock { kept[key(t)] = (password, Date()) } }
+    /// sudo took it: kept for the next session, and saved if the user asked to.
+    static func taken(_ t: SFTPTarget, _ password: String) {
+        let save = lock.withLock { () -> Bool in
+            kept[key(t)] = (password, Date())
+            return toSave.removeValue(forKey: key(t)) == password
+        }
+        if save { SSHPasswords.set(password, for: t, sudo: true) }
+    }
 
     /// That server's (`key`), or all.
     static func forget(_ key: String? = nil) { lock.withLock { if let key { kept[key] = nil } else { kept = [:] } } }

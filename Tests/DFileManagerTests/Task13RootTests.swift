@@ -30,7 +30,7 @@ extension ServerLockTests {
     let t = SFTPTarget(host: "me@web").asRoot()
     var asked: [Bool] = []
     let was = SudoPasswords.ask
-    SudoPasswords.ask = { _, wrong in asked.append(wrong); return "typed" }
+    SudoPasswords.ask = { _, wrong in asked.append(wrong); return ("typed", false) }
     defer { SudoPasswords.ask = was; SudoPasswords.forget() }
     #expect(await Blocking.run { SudoPasswords.password(t, wrong: false) } == "typed" && asked == [false])
     #expect(await Blocking.run { SudoPasswords.password(t, wrong: false) } == "typed" && asked == [false, false], "not taken yet: asked again")
@@ -47,6 +47,40 @@ extension ServerLockTests {
     await AppDelegate().disconnectNow(SudoPasswords.key(t))
     _ = await Blocking.run { SudoPasswords.password(t, wrong: false) }
     #expect(asked.count == 5, "disconnected: forgotten")
+}
+
+/// "Save in Keychain": there once sudo took it, an item apart from the ssh password (neither reads the other); used when
+/// memory forgot it; a refused one goes from there; a saved server's address change or deletion takes it too.
+@Test func sudoPasswordInTheKeychain() async {
+    let host = "me@dfm-sudo-\(UUID().uuidString).invalid"
+    let t = SFTPTarget(host: host).asRoot()
+    defer { SSHPasswords.set(nil, for: t, sudo: true); SSHPasswords.set(nil, for: t); SudoPasswords.forget() }
+    var answers: [(password: String, save: Bool)?] = [("pw1", true)]
+    let was = SudoPasswords.ask
+    SudoPasswords.ask = { _, _ in answers.removeFirst() }
+    defer { SudoPasswords.ask = was }
+    #expect(await Blocking.run { SudoPasswords.password(t, wrong: false) } == "pw1")
+    #expect(SSHPasswords.get(t, sudo: true) == nil, "not before sudo took it")
+    SudoPasswords.taken(t, "pw1")
+    #expect(SSHPasswords.get(t, sudo: true) == "pw1" && SSHPasswords.get(t) == nil)
+    SSHPasswords.set("ssh-pw", for: t)
+    #expect(SSHPasswords.get(t) == "ssh-pw" && SSHPasswords.get(t, sudo: true) == "pw1", "two items")
+    SudoPasswords.forget()   // the screen locked
+    #expect(await Blocking.run { SudoPasswords.password(t, wrong: false) } == "pw1" && answers.isEmpty, "from the Keychain, not asked")
+    answers = [("pw2", false)]
+    #expect(await Blocking.run { SudoPasswords.password(t, wrong: true) } == "pw2")
+    #expect(SSHPasswords.get(t, sudo: true) == nil && SSHPasswords.get(t) == "ssh-pw", "refused: out of the Keychain; the ssh one stays")
+    SudoPasswords.taken(t, "pw2")
+    #expect(SSHPasswords.get(t, sudo: true) == nil, "not ticked: not saved")
+
+    SSHPasswords.set("pw3", for: t, sudo: true)
+    let app = AppDelegate()
+    let a = SavedServer(address: host)!
+    var moved = a
+    moved.host = "dfm-elsewhere-\(UUID().uuidString).invalid"
+    app.savedServers = [moved]
+    app.storePassword(old: a, new: moved, typed: "", forget: false)
+    #expect(SSHPasswords.get(t, sudo: true) == nil && SSHPasswords.get(t) == nil, "the saved server moved: both go")
 }
 
 /// A locked server's root panel asks for Touch ID as its user's does (same user@host:port); refused, the panel stays.

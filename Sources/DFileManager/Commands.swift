@@ -927,7 +927,7 @@ extension AppDelegate {
     func deleteServer(_ s: SavedServer) {
         Task {
             guard await ServerLock.authorize(s, "delete") else { return }
-            let info = "Its saved password too. Open sessions stay open.", history = historyToDelete(with: s)
+            let info = "Its saved passwords too. Open sessions stay open.", history = historyToDelete(with: s)
             let answer = history == nil ? await confirm("Delete “\(s.title)”?", info: info, ok: "Delete") ? 0 : 2
                 : await choose("Delete “\(s.title)”?", info: info + " Its file history — the versions its saves kept on this Mac — can go too.",
                                ["Delete", "Delete with File History", "Cancel"])
@@ -966,9 +966,11 @@ extension AppDelegate {
         Config.save("server-pins.json", serverPins)
     }
 
-    /// Keeps a password another saved server still logs in with.
+    /// Keeps a password another saved server still logs in with. Its sudo password (root panels) goes with it.
     private func forgetPassword(_ s: SavedServer) {
-        if !savedServers.contains(where: { SSHPasswords.sameKey($0.target, s.target) }) { SSHPasswords.set(nil, for: s.target) }
+        guard !savedServers.contains(where: { SSHPasswords.sameKey($0.target, s.target) }) else { return }
+        SSHPasswords.set(nil, for: s.target)
+        SSHPasswords.set(nil, for: s.target, sudo: true)
     }
 
     func connect(_ input: String, newTab: Bool = false, panel: PanelViewController? = nil) {
