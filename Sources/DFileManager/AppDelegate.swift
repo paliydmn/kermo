@@ -546,8 +546,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         servers.connecting = Set(panels.compactMap(\.connecting?.host))
         servers.errors = sftpErrors
         for s in savedServers {
-            let on = tunnels.listening(s).map(\.title)
-            if !on.isEmpty { servers.tunnels[ServerRow.key(s.target), default: []] += on }
+            let key = ServerRow.key(s.target), on = tunnels.listening(s).map(\.title)
+            let failed = s.tunnels.compactMap { t in tunnels.state(t, of: s)?.error.map { "\(t.title): \($0)" } }
+            if !on.isEmpty { servers.tunnels[key, default: []] += on }
+            if !failed.isEmpty { servers.failedTunnels[key, default: []] += failed }
         }
         sidebar.show(SidebarModel.sections(bookmarks: bookmarks, frecent: frecency.ranked(), volumes: volumes, servers: servers,
                                            tags: defaults.stringArray(forKey: "recentTags") ?? []))
@@ -641,8 +643,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         case .sftp:
             if let s = r.sftp.first, plain { showSession(s) }
             else { openServer(r, .sftp, newTab: mods.contains(.command), panel: mods.contains(.option) ? other : nil) }
-        case .edit: r.saved.map { editServer($0, title: "Edit “\($0.title)”") }
-        case .close: r.sessions.forEach(closeSession)
         }
     }
 
@@ -711,7 +711,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return [.separator()] + items.compactMap { $0 }
     }
 
-    /// Production: red in the sidebar and the panel headers; delete, overwrite and move there ask first.
+    /// Production: its color in the sidebar and the panel headers; delete, overwrite and move there ask first.
     private func setProd(_ s: SavedServer, _ on: Bool) {
         guard let i = savedServers.firstIndex(where: { $0.id == s.id }) else { return }
         savedServers[i].prod = on

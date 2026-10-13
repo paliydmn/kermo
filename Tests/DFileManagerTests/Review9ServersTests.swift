@@ -32,8 +32,8 @@ import Testing
     #expect(AppDelegate.changed(from: .sftp(a), to: .sftp(b), move: true) == [a, b])
 }
 
-/// R9: the active server's name stays whole in a narrow sidebar; its SSH / SFTP buttons give way first ("S…", then
-/// gone). A name too long for the row is cut too: nothing goes past the row's end (the × and the status).
+/// R9: a server's name stays whole in a narrow sidebar next to what's open (SSH, SFTP: icons, no words). A name too
+/// long for the row is cut, never the icons: nothing goes past the row's end.
 @MainActor @Test func serverNameStaysWholeNextToItsButtons() throws {
     func layout(_ title: String, width: CGFloat) throws -> (name: NSTextField, row: NSStackView) {
         let s = SavedServer(address: "root@\(title)")!
@@ -49,15 +49,17 @@ import Testing
         cell.layoutSubtreeIfNeeded()
         return (try #require(view.arrangedSubviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == title }), view)
     }
+    func fits(_ row: NSStackView, _ width: CGFloat) -> Bool {
+        row.arrangedSubviews.allSatisfy { $0.frame.maxX <= width } && row.arrangedSubviews.compactMap { $0 as? ServerChips }
+            .allSatisfy { chips in chips.arrangedSubviews.allSatisfy { $0.frame.width >= $0.intrinsicContentSize.width } }
+    }
     for width: CGFloat in [140, 180, 220] {
         let (name, row) = try layout("nas-backup", width: width)
         #expect(name.frame.width >= name.intrinsicContentSize.width, "\(width)")
-        #expect(row.frame.width == width && row.arrangedSubviews.allSatisfy { $0.frame.maxX <= width }, "\(width)")
+        #expect(row.frame.width == width && fits(row, width), "\(width)")
         let (long, longRow) = try layout("production-db-primary-eu", width: width)
-        #expect(long.frame.width < long.intrinsicContentSize.width && longRow.arrangedSubviews.allSatisfy { $0.frame.maxX <= width }, "\(width)")
+        #expect(long.frame.width < long.intrinsicContentSize.width && fits(longRow, width), "\(width)")
     }
-    let ssh = try #require(layout("nas-backup", width: 180).row.arrangedSubviews.compactMap { $0 as? NSButton }.first { $0.title == "SSH" })
-    #expect(ssh.frame.width >= 18, "room for the name and \"S…\"")
 }
 
 extension ServerLockTests {
@@ -78,7 +80,7 @@ extension ServerLockTests {
     prod.prod = true
     ServerLock.servers = { [prod] }
     defer { ServerLock.servers = { [] } }
-    #expect(SavedServer.title(SFTPTarget(host: "root@db"), "/etc/my.cnf") == "🔴 PROD root@db:/etc/my.cnf")
+    #expect(SavedServer.title(SFTPTarget(host: "root@db"), "/etc/my.cnf") == "🟣 PROD root@db:/etc/my.cnf")
     #expect(SavedServer.title(SFTPTarget(host: "web"), "/etc/nginx/nginx.conf") == "web:/etc/nginx/nginx.conf")
 }
 
@@ -98,16 +100,16 @@ extension ServerLockTests {
 }
 }
 
-/// R27: the sidebar's SSH button follows the sessions: an SSH tab whose ssh ended (`exit`) leaves no green badge.
+/// R27: the sidebar's SSH icon follows the sessions: an SSH tab whose ssh ended (`exit`) leaves no green badge.
 @MainActor @Test func endedSSHSessionLeavesNoBadge() throws {
     let t = SFTPTarget(host: "root@web")
     let row = ServerRow(target: t, title: "web", sessions: [ServerSession(id: UUID(), kind: .ssh, target: t, running: false),
                                                            ServerSession(id: UUID(), kind: .sftp, target: t, dir: "/")])
     let view = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(row))) as? NSStackView)
-    let buttons = view.arrangedSubviews.compactMap { $0 as? NSButton }
-    let ssh = try #require(buttons.first { $0.title == "SSH" }), sftp = try #require(buttons.first { $0.title == "SFTP" })
-    #expect(ssh is HoverButton && ssh.contentTintColor != .systemGreen, "shown on hover only, like a server with nothing open")
-    #expect(!(sftp is HoverButton) && sftp.contentTintColor == .systemGreen)
+    let chips = try #require(view.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)
+    #expect(chips.arrangedSubviews.map { $0.accessibilityLabel() } == ["1 SFTP panel open"])
+    let actions = try #require(view.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView).arrangedSubviews.compactMap { $0 as? NSButton }
+    #expect(actions.first { $0.accessibilityLabel() == "SSH" }?.contentTintColor == .secondaryLabelColor, "as on a server with nothing open")
 }
 
 /// R27: a panel leaving the server for a local folder ends its session there (the sidebar's SFTP badge goes with it).
@@ -265,4 +267,55 @@ extension ServerLockTests {
     #expect(w.title == "web:/etc/nginx/nginx.conf" && !w.subtitle.contains("dfm-sftp-") && w.representedURL == nil)
     #expect(await e.saveAs(URL(fileURLWithPath: dir + "/mine.conf")))
     #expect(w.title == "mine.conf" && w.representedURL?.lastPathComponent == "mine.conf")
+}
+
+/// A server row at rest says what's open — SSH and SFTP in green with a count from 2, tunnels listening (red when one
+/// failed) — and under the mouse offers SSH, SFTP, Tunnels ▸ (a server with tunnels) and ⋯ instead.
+/// Production is in its color, not red; a locked server's icon says so; the tooltip says all of it.
+@MainActor @Test func serverRowSaysItsStateAndOffersItsActions() throws {
+    var s = SavedServer(address: "root@db:2222")!
+    s.prod = true
+    s.locked = true
+    s.tunnels = [Tunnel(localPort: 15432, port: 5432), Tunnel(localPort: 16379, port: 6379)]
+    let row = ServerRow(target: s.target, saved: s, title: "db",
+                        sessions: [ServerSession(id: UUID(), kind: .ssh, target: s.target), ServerSession(id: UUID(), kind: .ssh, target: s.target),
+                                   ServerSession(id: UUID(), kind: .sftp, target: s.target, dir: "/")],
+                        tunnels: ["Postgres", "Redis"], failedTunnels: ["Redis: db can't resolve cache"])
+    let view = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(row))) as? NSStackView)
+    let name = try #require(view.arrangedSubviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == "db" })
+    #expect(name.textColor == SavedServer.color && SavedServer.color != .systemRed)
+    #expect((view.arrangedSubviews.first as? NSImageView)?.image?.accessibilityDescription == "Server, locked")
+    let chips = try #require(view.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)
+    let toolbar = try #require(view.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView)
+    let shown = chips.arrangedSubviews.compactMap { $0 as? NSButton }
+    #expect(shown.map { $0.accessibilityLabel() } == ["2 SSH sessions open", "1 SFTP panel open", "2 tunnels listening, one failed"])
+    #expect(shown.map(\.title) == ["2", "", "2"] && shown.map(\.contentTintColor) == [.systemGreen, .systemGreen, .systemRed])
+    #expect(toolbar.arrangedSubviews.map { $0.accessibilityLabel() } == ["SSH", "SFTP", "Tunnels", "Server menu"])
+    #expect(toolbar.isHidden && !chips.isHidden, "at rest: the state")
+    #expect(view.toolTip == """
+        root@db:2222 · locked · production · SSH 2, SFTP 1 open
+        Tunnels listening: Postgres, Redis
+        Redis: db can't resolve cache
+        Click: its session · double-click: SSH · ⋯ or right-click: everything else
+        """)
+    let rowView = HoverRowView()
+    rowView.addSubview(view)
+    rowView.isSelected = true
+    #expect(toolbar.isHidden && !chips.isHidden, "selected — the current server: still its state")
+    func mouse(_ type: NSEvent.EventType) -> NSEvent {
+        NSEvent.enterExitEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+                               eventNumber: 0, trackingNumber: 0, userData: nil)!
+    }
+    rowView.mouseEntered(with: mouse(.mouseEntered))
+    #expect(!toolbar.isHidden && chips.isHidden, "under the mouse: the actions")
+    rowView.mouseExited(with: mouse(.mouseExited))
+    #expect(toolbar.isHidden && !chips.isHidden)
+
+    let plain = ServerRow(target: SFTPTarget(host: "web"), title: "web", status: .failed("Connection refused"))
+    let quiet = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(plain))) as? NSStackView)
+    #expect((quiet.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)?.arrangedSubviews.isEmpty == true, "nothing open, nothing shown")
+    #expect((quiet.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView)?.arrangedSubviews.map { $0.accessibilityLabel() } == ["SSH", "SFTP", "Server menu"],
+            "no tunnels: no Tunnels button")
+    #expect((quiet.arrangedSubviews.first as? NSImageView)?.image?.accessibilityDescription == "Server, its last connection failed")
+    #expect(quiet.toolTip?.hasPrefix("web\nConnection refused\n") == true)
 }
