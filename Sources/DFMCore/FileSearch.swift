@@ -195,17 +195,22 @@ extension FileItem {
 /// Thread-safe "stop" flag shared between the UI and a background worker.
 public final class CancelFlag: @unchecked Sendable {
     private let lock = NSLock()
-    private var cancelled = false
+    private var cancelled = false, held = false
     private var handler: (@Sendable () -> Void)?
     public init() {}
     public func cancel() {
         let h = lock.withLock { () -> (@Sendable () -> Void)? in
+            guard !held else { return nil }
             cancelled = true
             defer { handler = nil }
             return handler
         }
         h?()
     }
+    /// From now on `cancel()` does nothing: the work is past where it can stop (a server file replaced, its check and
+    /// put-back to come), and what it comes to has to be told. False if it was cancelled already.
+    @discardableResult
+    public func hold() -> Bool { lock.withLock { held = !cancelled; return held } }
     public var isCancelled: Bool { lock.withLock { cancelled } }
     /// Runs `handler` on cancel (right away if already cancelled), replacing the previous one; nil removes it.
     /// Returns the one replaced: a step that hooks in for a while puts it back (`onCancel(previous)`), so the

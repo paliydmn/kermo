@@ -211,6 +211,7 @@ extension AppDelegate {
         cmd("admin.shell", "Root Shell Here (Terminal)", [], menu: "Admin", aliases: "root sudo") { $0.runShell("sudo -s", in: .terminalApp) },
         cmd("admin.rootPanel", "Reopen Panel as Root", ["ctrl+cmd+r"], menu: "Admin", short: "As root", aliases: "root sudo server etc") { $0.reopenPanel(asRoot: true) },
         cmd("admin.userPanel", "Reopen Panel as User", ["ctrl+shift+cmd+r"], menu: "Admin", short: "As user", aliases: "root sudo server user") { $0.reopenPanel(asRoot: false) },
+        cmd("admin.auditLog", "Show Production Log", [], menu: "Admin", aliases: "audit journal prod history") { $0.showAuditLog() },
 
         // Clipboard
         cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", short: "Copy path", aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetURLs.map(\.path)) },
@@ -225,6 +226,7 @@ extension AppDelegate {
             try? FileManager.default.createDirectory(atPath: Config.dir, withIntermediateDirectories: true)
             $0.active.navigate(to: Config.dir)
         },
+        cmd("validators.edit", "Edit Validators…", [], menu: "Kermo", aliases: "check config server reload") { $0.editValidators() },
         cmd("usermenu.edit", "Edit User Menu…", [], menu: "Kermo") {
             _ = $0.userCommands()   // writes the example file on first use
             $0.openInEditor(URL(fileURLWithPath: Config.path("usermenu.json")))
@@ -367,6 +369,44 @@ extension AppDelegate {
         return examples
     }
 
+    /// ~/.config/dfilemanager/validators.json: the user's own checks for server files, looked at before the built-in ones.
+    /// The first time, an example — not the built-in rules (copied there, they'd never get Kermo's changes to them).
+    func editValidators() {
+        let path = Self.validatorsPath
+        if !FileManager.default.fileExists(atPath: path) {
+            try? FileManager.default.createDirectory(atPath: Config.dir, withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: path, contents: Data(Self.validatorsExample.utf8), attributes: [.posixPermissions: 0o600])
+        }
+        openInEditor(URL(fileURLWithPath: path))
+    }
+
+    /// Tests: a file of their own.
+    static var validatorsPath = Config.path("validators.json")
+
+    static let validatorsExample = """
+        [
+          {
+            "match": "/etc/caddy/Caddyfile",
+            "check": "caddy validate --adapter caddyfile --config %f",
+            "reload": "systemctl reload caddy"
+          },
+          {
+            "match": "/etc/prometheus/prometheus.yml",
+            "check": "promtool check config %f",
+            "reload": "systemctl reload prometheus"
+          }
+        ]
+
+        """
+
+    /// ~/.config/dfilemanager/audit.jsonl in the viewer (`AuditLog`).
+    func showAuditLog() {
+        guard FileManager.default.fileExists(atPath: AuditLog.path) else {
+            return active.flash("No production log yet: saves, commands, copies, deletes and reloads on a production server go there")
+        }
+        Viewer.show(URL(fileURLWithPath: AuditLog.path))
+    }
+
     func showUserMenu() {
         let mine = userCommands()
         let items = Self.userCommands(mine, onServer: active.remote != nil).map { c in
@@ -403,10 +443,14 @@ extension AppDelegate {
                 // R1: rm, mv, chmod, chown, dd, systemctl stop/restart on a production server ask first.
                 if SavedServer.isProd(r.target), Shell.isDangerous(expanded),
                    await !confirm("Run “\(expanded)” on \(r.target.host) (production)?", info: "In \(r.dir).", ok: "Run") { return }
-                if dest == .terminalApp { return openSSH(r.target, command: SSHCommand.shell(in: r.dir, after: expanded)) }
+                if dest == .terminalApp {
+                    AuditLog.write(r.target.asUser, "command", paths: [r.dir], command: expanded, exit: nil)   // its end is the terminal's; as the user, root panel or not
+                    return openSSH(r.target, command: SSHCommand.shell(in: r.dir, after: expanded))
+                }
                 let login = await Blocking.run { Result { try SFTP.startMaster(r.target, env: env) } }
                 if case .failure(let e) = login { return showError(e) }
-                Shell.run(expanded, on: r.target, in: r.dir) { [weak self] _ in
+                Shell.run(expanded, on: r.target, in: r.dir) { [weak self] status in
+                    AuditLog.write(r.target.asUser, "command", paths: [r.dir], command: expanded, exit: status)   // ran as the user (ssh)
                     for p in self?.panels ?? [] where p.remote?.target.asUser == r.target.asUser { p.reload() }
                 }
             }
@@ -1099,7 +1143,7 @@ extension AppDelegate {
 
     /// Every save of a server file (F4's ⌘S, another app's, Revert) goes here. The version it replaces goes into the
     /// file history; if it can't, the save goes on and the status line says why.
-    func upload(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool = false) async -> Bool {
+    func upload(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool = false, action: String = "save") async -> Bool {
         let name = (remotePath as NSString).lastPathComponent   // the copy's own, but not a version's (Revert)
         let note = state.prodNote(target)
         if !note.isEmpty {
@@ -1110,27 +1154,49 @@ extension AppDelegate {
             state.prodConfirmed = true
         }
         let env = SSHAskpass.env, baseline = state.baseline, history = serverHistory
+        let (rules, problem) = ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath))
+        let rule = ConfigCheck.rule(for: remotePath, in: rules)
         // No panel of its own: the one showing that server (else the active one) says it's saving; ⎋ there cancels.
         let panel = panels.first { $0.remote?.target == target } ?? active
         let kept = Self.keptSession(of: target, in: panels)
         let r = await panel.busy("Saving “\(name)” to \(target.host)…") { flag in
             try SFTP.session(target, env: env, cancel: flag, on: kept) { c in
-                var note: String?
-                let keep: ((SFTPClient.Attrs, Data?) -> Void)? = history.map { h in { note = h.keep($1, $0, of: target, remotePath) } }
-                let attrs = try c.upload(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, replaced: keep)
-                return (attrs, note)
+                var note: String?, old: Data?
+                // The text it replaces: for the history, and for Compare before a reload.
+                let keep: ((SFTPClient.Attrs, Data?) -> Void)? = history == nil && rule?.reload == nil ? nil : { a, data in
+                    old = data
+                    note = history?.keep(data, a, of: target, remotePath)
+                }
+                let checking = "Checking “\(name)” on \(target.host) (\(ConfigCheck.program(rule?.check ?? "")))…"   // ⎋ stops nothing then
+                let (attrs, outcome) = try c.save(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, rule: rule, env: env,
+                                                  replaced: keep, checking: { Task { @MainActor in panel.busy(flag, says: checking) } })
+                let reload = rule?.reload(after: outcome, on: target, old: old) { try? Data(contentsOf: saved) }
+                return (attrs, note, outcome, reload.map { ($0, old) })
             }
         }
         switch r {
-        case .success(let (attrs, note)):
+        case .success(let (attrs, note, outcome, reload)):
+            AuditLog.write(target, action, paths: [remotePath], exit: 0)
             state.baseline = attrs
             for p in panels where p.remote?.target.asUser == target.asUser { p.reload() }   // root's or user's: one server
-            if let note {
-                let said = "Saved “\(name)” to \(target.host) · no history: \(note)"
+            let notes = [note.map { "no history: \($0)" }, outcome.map { Self.checkNote($0, of: rule) }, Self.reloadNote(rule, outcome, on: target), problem]
+                .compactMap { $0 }
+            if !notes.isEmpty {
+                let said = "Saved “\(name)” to \(target.host) · " + notes.joined(separator: " · ")
                 panel.flash(said)
                 Editor.flash(saved, said)
             }
+            if let (command, old) = reload {   // not waited for: the next save needn't wait for the answer
+                Task { await offerReload(command, after: saved, to: remotePath, on: target, old: old, in: panel) }
+            }
             return true
+        case .failure(let e as SFTPClient.CheckFailed):
+            AuditLog.write(target, action, paths: [remotePath], exit: e.status, error: "“\(e.program)” failed. " + (e.now.isEmpty ? "Not saved." : e.now))
+            Editor.markUnsaved(saved)
+            if let a = e.attrs { state.baseline = a }   // an "after" check: what's there now, put back or not
+            let (message, info) = Self.checkFailed(e, name: name, host: target.host, kept: Editor.window(for: saved) == nil ? saved.path : nil)
+            _ = await choose(message, info: info, ["OK"], on: Editor.window(for: saved))
+            return false
         case .failure(let e as SFTPClient.ChangedOnServer):
             Editor.markUnsaved(saved)
             let keeps = Editor.window(for: saved) == nil ? "in \(saved.path)" : "unsaved here"   // the editor may be gone
@@ -1142,13 +1208,14 @@ extension AppDelegate {
             while true {   // Compare asks again once the diff is up
                 switch await choose("“\(name)” changed on \(target.host) since you opened it", info: info, ["Overwrite", "Compare", "Cancel"],
                                     default: 2, on: Editor.window(for: saved)) {   // ⌘S ↩ never writes over theirs
-                case 0: return await upload(saved, to: remotePath, on: target, state, force: true)
+                case 0: return await upload(saved, to: remotePath, on: target, state, force: true, action: action)
                 case 1: await diff(DiffSide(path: saved.path, name: "\(name) (yours)"),
                                    DiffSide(path: remotePath, server: target, size: e.attrs.size, mtime: e.attrs.mtime), in: panel)
                 default: return false
                 }
             }
         case .failure(let e):
+            if !(e is CancellationError) { AuditLog.write(target, action, paths: [remotePath], exit: 1, error: e.localizedDescription) }
             return notSaved(saved, to: target, e)
         }
     }
@@ -1201,7 +1268,7 @@ extension AppDelegate {
                 let revert: @MainActor () -> Void = { [unowned self] in
                     let state = RemoteEdit(baseline: now ?? .nothing)
                     Task {
-                        guard await upload(url, to: path, on: target, state) else { return }
+                        guard await upload(url, to: path, on: target, state, action: "revert") else { return }
                         panel.flash("“\(name)” on \(target.host) is back to its version of \(when)")
                         // Its editor shows that now, unless it has changes of its own.
                         if let e = Editor.editing(target, path), let data = await Blocking.run(.userInitiated, { try? Data(contentsOf: url) }) {
@@ -1218,6 +1285,97 @@ extension AppDelegate {
         }
     }
 
+    /// "Reload …?" once a save passed its check (`ConfigCheck.reload`): Compare shows the save's change first (the text
+    /// it replaced against the one saved); on a production server the question says so and ↩ answers Cancel. The reload
+    /// runs as the check did: as root through sudo on a root panel. Its output shows only if it fails.
+    func offerReload(_ command: String, after saved: URL, to path: String, on target: SFTPTarget, old: Data?, in panel: PanelViewController) async {
+        let name = (path as NSString).lastPathComponent, q = Self.reloadQuestion(command, name: name, on: target)
+        var before: String?
+        ask: while true {
+            switch await choose(q.message, info: q.info, ["Reload", "Compare", "Cancel"], default: q.default, on: Editor.window(for: saved)) {
+            case 0: break ask
+            case 1:
+                guard let old else { panel.flash("Nothing to compare: the text before this save wasn't kept (over 5 MB, or a new file)"); continue }
+                if before == nil { before = Self.textBefore(old, name: name) }
+                guard let before else { continue }
+                await diff(DiffSide(path: before, name: "\(target.host):\(path) (before this save)"), DiffSide(path: saved.path, name: "\(target.host):\(path)"), in: panel)
+            default: return
+            }
+        }
+        await reload(command, after: saved, to: path, on: target, in: panel)
+    }
+
+    /// Runs the reload the question was about; its output shows only if it fails.
+    func reload(_ command: String, after saved: URL, to path: String, on target: SFTPTarget, in panel: PanelViewController) async {
+        let env = SSHAskpass.env
+        let r = await panel.busy("Reloading on \(target.host)…") { flag in try ConfigCheck.run(command, on: target, env: env, cancel: flag) }
+        let log = { (exit: Int32?, error: String?) in AuditLog.write(target, "reload", paths: [path], command: command, exit: exit, error: error) }
+        switch r {
+        case .success(.passed):
+            log(0, nil)
+            panel.flash("Reloaded on \(target.host): \(command)")
+            Editor.flash(saved, "Reloaded on \(target.host)")
+        case .success(.failed(let status, let output)):
+            log(status, output)
+            let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            _ = await choose("“\(command)” failed on \(target.host)", info: text.isEmpty ? "It exited with \(status)." : String(text.suffix(4000)), ["OK"],
+                             on: Editor.window(for: saved))
+        case .success(.noProgram(let why)):
+            log(127, why)
+            panel.flash("Not reloaded on \(target.host): \(why)", error: true)
+        case .success: break   // needs root, not run: only checks
+        case .failure(is CancellationError): log(nil, "cancelled, may have run")   // ⎋ stops the wait, not what was sent
+        case .failure(let e):
+            log(1, e.localizedDescription)
+            showError(e)
+        }
+    }
+
+    /// The reload question: on a production server it says so, and ↩ is Cancel (elsewhere ↩ is Reload and ⎋ Cancel, as
+    /// any alert has them); sshd moving to another port says what that does.
+    static func reloadQuestion(_ command: String, name: String, on target: SFTPTarget) -> (message: String, info: String, default: Int?) {
+        let socket = command == ConfigCheck.sshdSocketReload ? "\n\nPort or ListenAddress changed. Where systemd listens for sshd (ssh.socket, "
+            + "Ubuntu 22.10 and later) this reloads systemd and restarts ssh.socket: this connection stays, new ones go to the new port." : ""
+        return ("Reload after saving “\(name)”?",
+                SavedServer.prodNote([target]) + "Runs “\(command)” on \(target.host)\(target.sudo ? " as root" : "")." + socket,
+                SavedServer.isProd(target) ? 2 : nil)
+    }
+
+    /// The text a save replaced, in a temp copy of its own (owner-only; swept with the server copies), for Compare.
+    static func textBefore(_ data: Data, name: String) -> String? {
+        let dir = NSTemporaryDirectory() + "dfm-sftp-" + UUID().uuidString
+        guard (try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil else { return nil }
+        let file = (dir as NSString).appendingPathComponent(name)
+        return FileManager.default.createFile(atPath: file, contents: data, attributes: [.posixPermissions: 0o600]) ? file : nil
+    }
+
+    /// A reload this save would have offered as root, on a user's panel (the built-in ones reload services): said instead.
+    static func reloadNote(_ rule: ConfigCheck?, _ outcome: ConfigCheck.Outcome?, on target: SFTPTarget) -> String? {
+        guard let rule, rule.reload(after: outcome, on: target, old: nil, new: { nil }) == nil,
+              rule.reload(after: outcome, on: target.asRoot(), old: nil, new: { nil }) != nil else { return nil }
+        return "reload needs root — ⌃⌘R opens the panel as root"
+    }
+
+    /// What the status line says of a save's check: passed, no program there, or root only on a user's panel.
+    static func checkNote(_ outcome: ConfigCheck.Outcome, of rule: ConfigCheck?) -> String {
+        switch outcome {
+        case .passed, .failed: "checked: \(ConfigCheck.program(rule?.check ?? ""))"   // a failed one never gets here
+        case .noProgram(let why): "no check for this file (\(why))"
+        case .needsRoot: "check needs root — ⌃⌘R opens the panel as root"
+        case .notRun(let why): "unchecked: \(why)"
+        }
+    }
+
+    /// The dialog for a save whose check failed: what the check said (its last lines), and where things are.
+    /// `kept`: the editor is gone, the text is only in that file.
+    static func checkFailed(_ e: SFTPClient.CheckFailed, name: String, host: String, kept: String?) -> (message: String, info: String) {
+        let lines = e.output.split(separator: "\n", omittingEmptySubsequences: false)
+        let shown = (lines.count > 30 ? ["…"] + lines.suffix(30) : lines).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = kept.map { "Your text is kept in \($0)." } ?? "Your text stays unsaved here."
+        return ("“\(name)” didn't pass “\(e.program)” on \(host)",
+                (shown.isEmpty ? "It exited with \(e.status)." : shown) + "\n\n" + (e.now.isEmpty ? "Not saved there: the file on \(host) is as it was." : e.now) + " " + text)
+    }
+
     private func notSaved(_ saved: URL, to target: SFTPTarget, _ e: Error) -> Bool {
         Editor.markUnsaved(saved)
         if let m = Self.notUploaded(saved, host: target.host, e, editorOpen: Editor.window(for: saved) != nil) { showError(JobErrorMessage(m)) }
@@ -1231,15 +1389,25 @@ extension AppDelegate {
         if error is CancellationError {
             return editorOpen ? nil : "“\(saved.lastPathComponent)” wasn't saved to \(host).\(kept)"
         }
+        if let e = error as? ConfigCheck.NotRun {   // checked before it takes the file's place: nothing changed there
+            return "“\(saved.lastPathComponent)” wasn't saved to \(host): its check didn't run. \(e.message)\(kept)"
+        }
         return "Saved locally, but uploading to \(host) failed: \(error.localizedDescription)\(kept)"
     }
 
     /// One operation over the native client (names go as bytes, no `sftp -b` quoting), then the server's panels reload.
-    private func remoteOp(_ title: String, _ target: SFTPTarget, select: String? = nil, _ op: @escaping @Sendable (SFTPClient) throws -> Void) {
+    /// `paths`: what it changes, for the production log.
+    func remoteOp(_ title: String, _ target: SFTPTarget, paths: [String], select: String? = nil, _ op: @escaping @Sendable (SFTPClient) throws -> Void) {
         let env = SSHAskpass.env
         Task {
             let r = await active.busy("\(title) on \(target.host)…") { flag in try SFTPClient.session(target, env: env, cancel: flag, op) }
-            if case .failure(let e) = r, !(e is CancellationError) { showError(JobErrorMessage("\(title): \(e.localizedDescription)")) }
+            switch r {
+            case .success: AuditLog.write(target, title.lowercased(), paths: paths, exit: 0)
+            case .failure(is CancellationError): break
+            case .failure(let e):
+                AuditLog.write(target, title.lowercased(), paths: paths, exit: 1, error: e.localizedDescription)
+                showError(JobErrorMessage("\(title): \(e.localizedDescription)"))
+            }
             for p in panels where p.remote?.target.asUser == target.asUser { p.reload(select: select) }
         }
     }
@@ -1249,7 +1417,7 @@ extension AppDelegate {
         Task {
             guard let name = await prompt("New folder on \(target.host):", value: "", ok: "Create"), !name.isEmpty else { return }
             let path = (dir as NSString).appendingPathComponent(name)
-            remoteOp("New folder", target, select: name) { try $0.mkdir(path) }
+            remoteOp("New folder", target, paths: [path], select: name) { try $0.mkdir(path) }
         }
     }
 
@@ -1262,7 +1430,7 @@ extension AppDelegate {
                   name != item.name, !name.isEmpty else { return }
             let from = (dir as NSString).appendingPathComponent(item.name)
             let to = name.hasPrefix("/") ? name : (dir as NSString).appendingPathComponent(name)
-            remoteOp("Rename", target, select: (to as NSString).lastPathComponent) { try $0.rename(from, to, replace: false) }
+            remoteOp("Rename", target, paths: [from, to], select: (to as NSString).lastPathComponent) { try $0.rename(from, to, replace: false) }
         }
     }
 
@@ -1430,8 +1598,10 @@ extension AppDelegate {
                 return
             }
             guard let keep = await keepExisting(clashes, in: DirSync.place(.sftp(target), dest)) else { return }
-            Shell.run(RemoteArchive.extractCommand(file, to: dest, keep: keep), on: target, in: dir,
-                      title: "Extract “\((item.name as NSString).lastPathComponent)” → \(dest) on \(target.host)") { [weak self] _ in
+            let command = RemoteArchive.extractCommand(file, to: dest, keep: keep)
+            Shell.run(command, on: target, in: dir,
+                      title: "Extract “\((item.name as NSString).lastPathComponent)” → \(dest) on \(target.host)") { [weak self] status in
+                AuditLog.write(target.asUser, "extract", paths: [file], to: dest, command: command, exit: status)   // ran as the user (ssh)
                 for p in self?.panels ?? [] where p.remote?.target.asUser == target.asUser { p.reload() }
             }
         }
@@ -1898,7 +2068,9 @@ extension AppDelegate {
         if !locked.isEmpty || !prod.isEmpty {
             Task {
                 for t in locked where await !ServerLock.authorize(t) { return active.flash("🔒 \(t.host) stays locked") }
-                if !prod.isEmpty, await !confirm(title + "?", info: prod + "Files there may be overwritten" + (move ? " or removed." : "."),
+                let landing = side == .local ? [] : sources.map { (dir as NSString).appendingPathComponent(name ?? ($0 as NSString).lastPathComponent) }
+                let unchecked = Self.uncheckedNote(landing, rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules)
+                if !prod.isEmpty, await !confirm(title + "?", info: prod + "Files there may be overwritten" + (move ? " or removed." : ".") + unchecked,
                                                   ok: move ? "Move" : "Copy") { return }
                 enqueueTransfer(sources, from: from, to: dir, on: side, name: name, move: move, prodAsked: true)
             }
@@ -1931,8 +2103,20 @@ extension AppDelegate {
                 ? "\(deleted) item\(deleted == 1 ? "" : "s") only there \(deleted == 1 ? "is" : "are") deleted — a server has no Trash. This can't be undone."
                 : "Files there may be overwritten."), ok: "Synchronize") else { return false }
         }
-        for (job, label) in jobs { ops.enqueue(job, title: label) }
+        for (job, label) in jobs {
+            syncJobs.add(job)   // the production log says "sync"
+            ops.enqueue(job, title: label)
+        }
         return true
+    }
+
+    /// Files a copy or move puts where a save is checked before it takes the file's place (sudoers, sshd_config …): they
+    /// go in as they are — said in the production question. ponytail: the items it names, not what's inside a folder.
+    nonisolated static func uncheckedNote(_ paths: [String], rules: [ConfigCheck]) -> String {
+        let hit = paths.filter { ConfigCheck.rule(for: $0, in: rules).map { $0.check != nil && !$0.after } == true }
+        guard let first = hit.first else { return "" }
+        let what = hit.count == 1 ? "“\((first as NSString).lastPathComponent)” isn't" : "\(hit.count) of them aren't"
+        return "\n\n\(what) checked: a copy goes in as it is. Open it with F4 and save it to have it checked."
     }
 
     /// The servers where a copy or move changes files: where it goes, and for a move where it comes from too.
@@ -1977,7 +2161,7 @@ extension AppDelegate {
                               info: "To change the owner instead, keep its colon: “\(text.trimmingCharacters(in: .whitespaces)):”.", ok: "Set Mode") { return }
             if let r {
                 let each = items.map { ((r.dir as NSString).appendingPathComponent($0.name), $0) }
-                return remoteOp("Permissions", r.target) { c in
+                return remoteOp("Permissions", r.target, paths: each.map(\.0)) { c in
                     for (path, it) in each {
                         let owner = ids.uid == nil && ids.gid == nil ? nil : (uid: ids.uid ?? it.uid, gid: ids.gid ?? it.gid)   // unknown: left as is
                         try c.setAttrs(path, mtime: nil, mode: mode, owner: owner)
@@ -2278,6 +2462,8 @@ extension AppDelegate {
     }
 
     func jobFinished(_ job: FileJob) {
+        AuditLog.write(job, sync: syncJobs.contains(job))
+        syncJobs.remove(job)
         // Local panels follow the disk (FSEvents); a server panel has to ask again.
         for p in panels {
             if let r = p.remote, [job.from, job.to].contains(where: { if case .sftp(let t) = $0 { t.asUser == r.target.asUser } else { false } }) { p.reload() }

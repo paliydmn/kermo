@@ -1012,9 +1012,11 @@ extension SFTPClient {
     /// `cancel` stops it (CancellationError) and removes the partial file, over a slow link too (`closeWhenQuiet`).
     /// `replaced` gets the file it replaced, once it's in place: its attributes, and its bytes up to
     /// `ServerHistory.fileLimit` (nil over that) — from the check's own read when there is one, else read first.
+    /// `check` gets the partial file's path once it holds all of the new text, before it takes the file's place (either
+    /// way): a throw leaves the file as it was, the partial file gone (`ConfigCheck`'s "before").
     @discardableResult
     public func upload(_ local: String, to remote: String, baseline: Attrs?, force: Bool = false, cancel: CancelFlag? = nil,
-                       replaced: ((Attrs, Data?) -> Void)? = nil) throws -> Attrs {
+                       replaced: ((Attrs, Data?) -> Void)? = nil, check: ((_ partial: String) throws -> Void)? = nil) throws -> Attrs {
         let previous = cancel?.onCancel { [self] in closeWhenQuiet() } ?? nil
         defer { cancel?.onCancel(previous) }
         let entry = try lstat(remote)
@@ -1057,6 +1059,7 @@ extension SFTPClient {
             throw error
         }
         do {
+            try check?(partial)
             let mine = try lstat(partial)
             if let cur, writesInPlace || entry?.kind == .link || cur.uid == nil || cur.uid != mine?.uid || cur.gid != mine?.gid {
                 if canCopyData {

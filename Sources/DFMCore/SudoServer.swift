@@ -85,10 +85,17 @@ enum SudoServer {
     /// A password sudo takes (`SFTP.sudoPassword`), tried alone first: the session's own command with the password line
     /// and end of file — sftp-server ends at once — so a wrong one costs one attempt there. Sent with the first packet
     /// instead, that packet would count as a second attempt and the session hang. Not `sudo -v`: where every rule the
-    /// user has is NOPASSWD it passes without reading anything, whatever was typed. Three tries, as sudo's own; Cancel
-    /// cancels what asked (a job doesn't ask again for its next item). One at a time: sessions behind a dialog take the
-    /// answer it got.
+    /// user has is NOPASSWD it passes without reading anything, whatever was typed.
     static func password(_ t: SFTPTarget, path: String, env: [String: String], cancel: CancelFlag?) throws -> String {
+        try withPassword(t, command(t, [path], password: true), env: env, cancel: cancel, path: path) { status, _ in status == 0 }.password
+    }
+
+    /// Runs `command` (sudo with `-S -p '' -k`) with a password on its stdin, a line, then end of file — until sudo takes
+    /// one (`took`, from its exit status and output). Three tries, as sudo's own; Cancel cancels what asked (a job
+    /// doesn't ask again for its next item). One at a time: sessions behind a dialog take the answer it got. Only after
+    /// `sudo -n` refused for want of a password just now: with NOPASSWD sudo reads no password, and the line goes to the command.
+    static func withPassword(_ t: SFTPTarget, _ command: String, env: [String: String], cancel: CancelFlag?, path: String? = nil,
+                             took: (Int32, Data) -> Bool) throws -> (password: String, status: Int32, out: Data) {
         try asking.withLock {
             var wrong = false, said = ""
             for _ in 0..<3 {
@@ -98,14 +105,15 @@ enum SudoServer {
                     throw CancellationError()
                 }
                 guard !password.contains(where: \.isNewline) else { wrong = true; continue }   // sudo reads one line
-                let (status, errors) = try SSHCommand.run(t, command(t, path: path, password: true), env: env, cancel: cancel,
-                                                          options: ["-x", "-a"], stdin: Data((password + "\n").utf8)) { _ in }
-                if status == 0 {
+                var out = Data()
+                let (status, errors) = try SSHCommand.run(t, command, env: env, cancel: cancel, options: ["-x", "-a"],
+                                                          stdin: Data((password + "\n").utf8)) { out += $0 }
+                if took(status, out) {
                     SFTP.sudoPasswordTaken?(t, password)
-                    return password
+                    return (password, status, out)
                 }
                 if errors.contains("invalid option") { throw noStdinPassword(t, path: path) }   // sudo-rs 0.2.2: no -p
-                // It took the password but won't run sftp-server for this user: asking again won't help.
+                // It took the password but won't run that command for this user: asking again won't help.
                 if notAllowedTexts.contains(where: errors.contains) { throw SFTPError(message: "sudo on \(t.host) refused: " + errors, connection: true) }
                 (wrong, said) = (true, errors)
             }
@@ -113,11 +121,27 @@ enum SudoServer {
         }
     }
 
+    /// `script` (sh) as root there: `sudo -n` first; only where that refused for want of a password, again with the
+    /// password (kept or asked) on its stdin. `ran`: sudo ran it — from its output, never its exit status (the script's
+    /// own). A refusal of another kind throws sudo's words; one for want of a password with no way to ask, too.
+    static func run(_ t: SFTPTarget, script: String, env: [String: String], cancel: CancelFlag?, ran: (Data) -> Bool) throws -> (status: Int32, out: Data) {
+        let line = { (password: Bool) in command(t, ["sh", "-c", script], password: password) }
+        var out = Data()
+        let (status, errors) = try SSHCommand.run(t, line(false), env: env, cancel: cancel, options: ["-x", "-a"]) { out += $0 }
+        if ran(out) { return (status, out) }
+        guard SFTP.sudoPassword != nil, passwordTexts.contains(where: errors.contains) else {
+            throw SFTPError(message: "sudo on \(t.host) " + (passwordTexts.contains(where: errors.contains) ? "needs a password" : "refused: " + (errors.isEmpty ? "exit \(status)" : errors)))
+        }
+        let r = try withPassword(t, line(true), env: env, cancel: cancel) { _, out in ran(out) }
+        return (r.status, r.out)
+    }
+
     /// sudo-rs 0.2.2 takes no password this way (no `-p`; and it reads all of stdin, not a line).
-    static func noStdinPassword(_ t: SFTPTarget, path: String) -> SFTPError {
+    static func noStdinPassword(_ t: SFTPTarget, path: String?) -> SFTPError {
         let user = t.host.contains("@") ? String(t.host[..<t.host.lastIndex(of: "@")!]) : "<user>"
         return SFTPError(message: "sudo on \(t.host) can't take a password from Kermo (it reads no password line from stdin, as sudo-rs 0.2.2). "
-                         + "To open it as root, allow sftp-server without one there in sudoers: \(user) ALL=(root) NOPASSWD: \(path)", connection: true)
+                         + (path.map { "To open it as root, allow sftp-server without one there in sudoers: \(user) ALL=(root) NOPASSWD: \($0)" }
+                            ?? "Checks as root need sudo without a password there."), connection: true)
     }
 
     /// The path `probe` printed. A login script may print too: only a line that is one of `paths` counts.
@@ -133,13 +157,13 @@ enum SudoServer {
     /// `password`: sudo reads it from stdin, a line before the first packet (`-S`, no prompt, no ticket: `-k`).
     static func launch(_ t: SFTPTarget, path: String, password: Bool = false) -> (program: String, arguments: [String]) {
         if t.localServer != nil { return (program(t), words(password) + ["--", path]) }
-        return ("/usr/bin/ssh", SFTP.connectionOptions(t) + ["-x", "-a", "-T"] + t.arguments() + [command(t, path: path, password: password)])
+        return ("/usr/bin/ssh", SFTP.connectionOptions(t) + ["-x", "-a", "-T"] + t.arguments() + [command(t, [path], password: password)])
     }
 
     private static func words(_ password: Bool) -> [String] { password ? ["-S", "-p", "", "-k"] : ["-n"] }
 
-    /// The session's command line there (the login shell parses it); the stand-in's path for a test target.
-    static func command(_ t: SFTPTarget, path: String, password: Bool) -> String {
-        ([ShellContext.quote(program(t))] + words(password).map { $0.isEmpty ? "''" : $0 } + ["--", ShellContext.quote(path)]).joined(separator: " ")
+    /// sudo running `argv` there, as a command line (the login shell parses it); the stand-in's path for a test target.
+    static func command(_ t: SFTPTarget, _ argv: [String], password: Bool) -> String {
+        ([ShellContext.quote(program(t))] + words(password).map { $0.isEmpty ? "''" : $0 } + ["--"] + argv.map(ShellContext.quote)).joined(separator: " ")
     }
 }

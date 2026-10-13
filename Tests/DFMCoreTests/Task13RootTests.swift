@@ -5,7 +5,7 @@ import Testing
 // Task 13: a server panel as root (`SFTPTarget.sudo`).
 
 /// A stand-in for a server's sudo: logs its arguments next to itself, then runs what follows `-n --`.
-func fakeSudo(_ dir: String, _ body: String = #"[ "$1" = -n ] && [ "$2" = -- ] || exit 2; exec "$3""#) throws -> String {
+func fakeSudo(_ dir: String, _ body: String = #"[ "$1" = -n ] && [ "$2" = -- ] || exit 2; shift 2; exec "$@""#) throws -> String {
     let path = dir + "/sudo-" + UUID().uuidString.prefix(8)
     try Data("#!/bin/sh\necho \"$*\" >> \"$0.log\"\n\(body)\n".utf8).write(to: URL(fileURLWithPath: path))
     chmod(path, 0o755)
@@ -163,7 +163,7 @@ static let passwordSudo = #"""
     -n) echo "sudo: a password is required" >&2; exit 1;;
     -S) [ "$2" = -p ] && [ "$3" = "" ] && [ "$4" = -k ] && [ "$5" = -- ] || exit 2
         IFS= read -r pw; [ "$pw" = "kermo-test-pw" ] || { echo "Sorry, try again." >&2; echo "sudo: 1 incorrect password attempt" >&2; exit 1; }
-        exec "$6";;
+        shift 5; exec "$@";;
     esac
     exit 2
     """#

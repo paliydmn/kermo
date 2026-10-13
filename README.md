@@ -134,7 +134,39 @@ Clashes with macOS: ⌘⇧/ (computer root) is also the system's Help-menu searc
   - When sudo refuses, the panel says why: it needs a password, `Defaults requiretty` (old RHEL/CentOS; turn it off for the user), or no `sftp-server` (Alpine serves SFTP from sshd itself: `apk add openssh-sftp-server`).
   - Saves go the same way as the user's: the file history, the production question, "changed on the server since you opened it". New files, folders and copies belong to root:root, as with any `sudo`. On a server with SELinux (`/sys/fs/selinux`) a save writes into the file itself instead of renaming a new one over it, so the file keeps its label.
   - Root and the user are two accounts: F5 / F6 between a root panel and a user panel of the same server copy through this Mac, each side with its own rights. ⌘C / ⌘V carry the user's account, never root, and so does anything dropped from another app; a drag from a root panel to another Kermo panel stays root. Nothing pasted, dropped or restored opens a server as root. A locked server asks for Touch ID as for any connection.
-  - Only the file operations run as root: search, archives, Git status, the user menu, ⌘E and ⌃O run as the user. The command line says so: its prompt stays `user@host:/path $`, and on a root panel it reads "⌘E: shell command in this folder as user, not root".
+  - Only the file operations run as root — and a save's check and reload (below): search, archives, Git status, the user menu, ⌘E and ⌃O run as the user. The command line says so: its prompt stays `user@host:/path $`, and on a root panel it reads "⌘E: shell command in this folder as user, not root".
+- **Checks on save:** saving a server config checks it with the server's own tool. Nothing is installed there; a tool that isn't there is no check, and the status line says "no check for this file" — so does a check that says "command not found" (exit 127), such as docker without its compose plugin.
+  - **Before it takes the file's place** — for files that stand alone. A save first writes the whole new text to a partial file next to the old one (`.dfm-partial-…`, which services don't read from their include folders); the check runs on that, and only if it passes does it replace the file. A failure leaves the file on the server as it was, shows what the tool said, and keeps your text unsaved in the editor. A check that couldn't run (sudo refused it) stops the save too: a broken `sudoers` would break `sudo -n` — and with it a root panel — even for a second.
+  - **After, with the old text put back** — for configs with includes, which only the live tree can check. If the check fails, the text this save replaced goes back at once (a new file is removed), and the dialog says so. Not when someone changed the file in between (theirs stays) or it's over 5 MB (its old text isn't kept); then the dialog says that instead. The file history keeps the version the save replaced, not the bad one.
+
+    | File | Check | When | Reload |
+    |---|---|---|---|
+    | `/etc/sudoers`, `/etc/sudoers.d/*` | `visudo -cf` | before | — |
+    | `/etc/ssh/sshd_config` | `sshd -t -f` | before | `systemctl reload ssh` (or `sshd`) |
+    | `/etc/ssh/sshd_config.d/*` | `sshd -t` | after | the same |
+    | `/etc/haproxy/haproxy.cfg` | `haproxy -c -f` | before | `systemctl reload haproxy` |
+    | `/etc/nftables.conf` | `nft -c -f` | before | — (apply it yourself: `nft -f`) |
+    | `/etc/nginx/*` | `nginx -t` | after | `systemctl reload nginx` |
+    | `/etc/apache2/*`, `/etc/httpd/*` | `apachectl configtest` | after | `systemctl reload apache2` / `httpd` |
+    | `/etc/systemd/system/*.service`, `*.timer` | `systemd-analyze verify` | after | `systemctl daemon-reload` |
+    | `/etc/postfix/*` | `postfix check` | after | `postfix reload` |
+    | `/etc/bind/named.conf*`, `/etc/named.conf` | `named-checkconf` | after | `rndc reload` |
+    | `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml` anywhere | `docker compose config -q` | before | — |
+
+  - **Copies aren't checked:** F5, F6 and drag and drop put a file in as it is. On a production server the question says so when it lands where a save would be checked first (sudoers, `sshd_config` …): open it with F4 and save it to have it checked.
+  - **As root:** on a root panel the check runs through the server's `sudo` — `sudo -n`, or with the sudo password the panel uses (kept, or asked for), given on stdin, never in a command line; `sudo -n` is tried first every time. On a user's panel the checks that work only as root (`sudo`, `sshd`, `nft`, `nginx`, `postfix`, and `haproxy` and `apachectl`, which may read a key only root can) aren't run, and the status line says "check needs root — ⌃⌘R opens the panel as root". Each check is one ssh command over the panel's connection (two where sudo wants a password); with sudo, it's a line in sudo's log.
+  - **Reload:** once a config passed its check, **Reload after saving …?** names the command and who runs it; **Compare** shows the save's change first (the text it replaced against yours). It runs as the check did; on a user's panel only reloads of your own rules are offered, since the built-in ones need root (the status line says "reload needs root"). On a production server the question says so, and ↩ answers Cancel. Its output shows only if it fails. When `Port` or `ListenAddress` changes in `sshd_config` and systemd listens for sshd (`ssh.socket`, Ubuntu 22.10 and later), a reload doesn't move the port, so the reload is `systemctl daemon-reload && systemctl restart ssh.socket` — the question warns that new connections go to the new port (this one stays).
+  - **Your own rules** go in `~/.config/dfilemanager/validators.json` (**Edit Validators…** in the Kermo menu or ⌘⇧P starts it with an example), in the same shape, and are looked at before the built-in ones — the first that matches wins. `match` is a glob of the path on the server (`*` crosses `/`, so `/opt/app/nginx/*` is everything under it; without a `/` it matches the file's name anywhere); `check` a shell command run there, `%f` the file's path (quoted for you; `%%` is a `%`); `when` `"before"` (the default) or `"after"`; `reload` optional; `"root": true` for a check that works only as root. `"check": null` turns a check off for those paths. A file that doesn't parse leaves the built-in rules, and the status line says why. For example:
+
+    ```json
+    [
+      { "match": "/etc/caddy/Caddyfile", "check": "caddy validate --adapter caddyfile --config %f", "reload": "systemctl reload caddy" },
+      { "match": "/etc/prometheus/prometheus.yml", "check": "promtool check config %f", "reload": "systemctl reload prometheus" },
+      { "match": "/opt/app/nginx/*", "check": "docker exec app-nginx nginx -t", "when": "after", "reload": "docker exec app-nginx nginx -s reload" },
+      { "match": "/etc/nginx/sites-available/*", "check": null }
+    ]
+    ```
+- **Production log:** on a server tagged production, what Kermo does there goes into `~/.config/dfilemanager/audit.jsonl`, a JSON line each — saves and reverts (and how their check ended), commands (⌘E, F2), copies, moves and deletes (F5, F6, F8, Synchronize), renames, permissions, new folders, extracting, reloads — with the time, the server (`"root": true` from a root panel), the paths, the command and its exit status (none for one handed to Terminal; a reload stopped with ⎋ says it may have run). If a line can't be written, the status line says so once. Read it with `grep` or `jq`, or **Show Production Log** (Admin menu, ⌘⇧P). A command line may hold a secret (`mysql -pXXX`, a token in a `curl` header): the file is owner-only, but it's a plain file on this Mac — turn it off with `defaults write com.dmn.dfilemanager auditLog -bool false`.
 
 Git repositories show a status column, and the status bar displays the branch and ↑↓ indicators — also on an SFTP panel, when the server has git 2.26 or newer. The editor includes line numbers and syntax highlighting for shell, YAML, JSON, configuration files, XML/plist, Python, and more.
 
@@ -163,7 +195,7 @@ On a server tagged production, `systemctl stop` / `restart` asks first.
 
 ## Configuration
 
-Configuration files are stored in `~/.config/dfilemanager/`: `keymap.json`, `usermenu.json`, `filters.json`, `bookmarks.json` (sidebar Favorites), and `frecency.json` (sidebar Frequent, ⌘P).
+Configuration files are stored in `~/.config/dfilemanager/`: `keymap.json`, `usermenu.json`, `validators.json` (checks of server configs on save, see SFTP panel), `filters.json`, `bookmarks.json` (sidebar Favorites), and `frecency.json` (sidebar Frequent, ⌘P). `audit.jsonl` is the production log.
 
 Drag and drop works like Finder: files are moved on the same disk (or the same server) and copied to another disk or server. Hold ⌥ to force a copy or ⌘ to force a move. Files dropped on the ⌃O terminal are typed into its shell as quoted paths (a local shell only: a server can't see this Mac's files).
 
@@ -176,6 +208,7 @@ Set advanced options with `defaults write com.dmn.dfilemanager <key> <value>`:
 - `editorBundleID`: external editor to use instead of the built-in editor
 - `diffCommand`: file comparison tool, for example `'code --diff %1 %2'` (a server's file comes as its local copy)
 - `serverHistory`: `false` keeps no versions of the server files you save (see SFTP panel)
+- `auditLog`: `false` writes no production log (see SFTP panel)
 
 ## Shell integration
 

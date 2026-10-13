@@ -767,7 +767,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         busyOps.append((flag, mine))
         if after == 0 { busyMessage = mine } else {
             DispatchQueue.main.asyncAfter(deadline: .now() + after) { [weak self] in
-                MainActor.assumeIsolated { if let self, self.busyOps.contains(where: { $0.flag === flag }) { self.busyMessage = mine } }
+                MainActor.assumeIsolated { if let self, let op = self.busyOps.first(where: { $0.flag === flag }) { self.busyMessage = op.message } }
             }
         }
         // Back on ⎋ at once, even while `work` sits in a call that can't be stopped (a share that stopped
@@ -781,9 +781,17 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 once.run { c.resume(returning: r) }
             }
         }
+        let shown = busyOps.first { $0.flag === flag }?.message ?? mine
         busyOps.removeAll { $0.flag === flag }
-        if busyMessage == mine { busyMessage = busyOps.last?.message }   // one still running says so again
+        if busyMessage == shown { busyMessage = busyOps.last?.message }   // one still running says so again
         return flag.isCancelled ? .failure(CancellationError()) : r
+    }
+
+    /// What the `busy` running with `flag` says from now on: a step ⎋ no longer stops, say. Gone already: nothing.
+    func busy(_ flag: CancelFlag, says message: String) {
+        guard let i = busyOps.firstIndex(where: { $0.flag === flag }) else { return }
+        if busyMessage == busyOps[i].message { busyMessage = message }
+        busyOps[i].message = message
     }
 
     /// Briefly shows a message in the status line; `error`: one saying what failed.

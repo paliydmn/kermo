@@ -41,7 +41,7 @@ public final class FileJob: @unchecked Sendable {
     public let destDir: String?
     public let targetName: String?
     /// Explicit source → destination paths (Synchronize Folders); used instead of destDir when set.
-    let pairs: [(src: String, dst: String)]
+    public let pairs: [(src: String, dst: String)]
 
     /// Called on the worker thread. Return (choice, applyToAllRemaining).
     public var resolveConflict: @Sendable (Conflict) -> (ConflictChoice, Bool) = { _ in (.skip, false) }

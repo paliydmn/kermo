@@ -4,10 +4,13 @@ import DFMCore
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSTextFieldDelegate, NSWindowDelegate, NSToolbarDelegate {
     private(set) var window: NSWindow!
-    private(set) var panels: [PanelViewController] = []
+    var panels: [PanelViewController] = []   // set at launch (tests: their own)
     private(set) var ops: OpsController!
     /// Move jobs an undo/redo started (across volumes): their own undo is registered already.
     var replayJobs: [FileJob] = []
+    /// Synchronize's jobs not finished yet: the production log calls them "sync". Weak: one cancelled while queued never
+    /// finishes, and its address may be another job's later.
+    let syncJobs = NSHashTable<FileJob>.weakObjects()
     /// The last undo/redo's disk work: each waits for the one before (`afterUndoWork`).
     var undoWork: Task<Void, Never>?
     var terminal: EmbeddedTerminal!   // set in tests
@@ -55,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         SFTP.sudoPasswordTaken = { SudoPasswords.taken($0, $1) }
         ServerLock.servers = { [unowned self] in savedServers }
         ServerCopies.upload = { [unowned self] c in await upload(c.url, to: c.path, on: c.target, c.state) }
+        AuditLog.failed = { [unowned self] in active.flash($0, error: true) }
         ServerLock.relockOnScreenLockAndSleep()
         Masters.stopOnWake()
         Masters.stopOnNetworkChange()
