@@ -53,6 +53,57 @@ private func tempDir(_ tag: String) throws -> String {
     #expect(panel.dirSizes == ["one": 3, "two": 5])
 }
 
+/// A server's du gives the sizes it can (one "at least": ≥ in the Size column), a name it left out is walked; a server
+/// whose du doesn't count is remembered, and walked from then on without asking it again.
+@MainActor @Test func serverSizesByDu() async throws {
+    let d = try tempDir("rdu")
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let name = "sftp-server-du-" + UUID().uuidString.prefix(8)   // a target of its own: `noDu` isn't another test's
+    try FileManager.default.createSymbolicLink(atPath: d + "/" + name, withDestinationPath: "/usr/libexec/sftp-server")
+    let t = SFTPTarget.local(server: d + "/" + name)
+    final class Asked: @unchecked Sendable {   // touched on the main thread only
+        var names: [[String]] = []
+        var answer: [String: ServerSizes.Size]? = ["one": .init(bytes: 4096, partial: true)]
+    }
+    let asked = Asked()
+    let real = PanelViewController.measureRemote
+    PanelViewController.measureRemote = { names, dir, target, env, cancel in
+        guard target == t else { return try real(names, dir, target, env, cancel) }   // another test's
+        return DispatchQueue.main.sync {
+            asked.names.append(names)
+            return asked.answer
+        }
+    }
+    defer { PanelViewController.measureRemote = real }
+    let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    panel.loadRemote(t, dir: d, select: nil)
+    await waitUntil { panel.remote?.dir == d }
+
+    panel.computeAllDirSizes()
+    await waitUntil { panel.dirSizes.count == 2 }
+    #expect(panel.dirSizes == ["one": 4096, "two": 5] && panel.partialSizes == ["one"], "two: walked")
+    #expect(asked.names == [["one", "two"]])
+    panel.moveCursor(toName: "one")
+    let row = panel.table.selectedRow
+    let cell = panel.tableView(panel.table, viewFor: panel.table.tableColumns.first { $0.identifier.rawValue == "size" }, row: row) as? NSTableCellView
+    #expect(cell?.textField?.stringValue.hasPrefix("≥ ") == true)
+
+    asked.answer = nil   // this server's du doesn't count
+    panel.loadRemote(t, dir: d + "/one", select: nil)
+    await waitUntil { panel.remote?.dir == d + "/one" }
+    panel.computeAllDirSizes()
+    await waitUntil { panel.dirSizes.count == 1 }
+    #expect(panel.dirSizes == ["deep": 3] && asked.names.count == 2 && PanelViewController.noDu.contains(t))
+    panel.loadRemote(t, dir: d, select: nil)
+    await waitUntil { panel.remote?.dir == d }
+    panel.computeAllDirSizes()
+    await waitUntil { panel.dirSizes.count == 2 }
+    #expect(panel.dirSizes == ["one": 3, "two": 5] && asked.names.count == 2, "not asked again")
+    PanelViewController.noDu.remove(t)
+}
+
 /// The app's copies of server files (`ServerCopies`) are one list: these tests take turns.
 @Suite(.serialized) @MainActor struct ServerCopiesTests {
 

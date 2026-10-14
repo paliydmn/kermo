@@ -78,7 +78,7 @@ extension SudoPasswordTests {
 
 /// A stand-in du first in PATH (`.local()`: this Mac's sh) answering as GNU du does: each name as given, one argument
 /// each (spaces, a leading "-", a quote), stdout read though it exits 1, the unreadable one "at least". This Mac's own du
-/// has no `-b`: no sizes (the walk). A root panel's goes through its sudo, `-n` first.
+/// has no `-b`: no sizes (the walk). A root panel's goes through its sudo, `-n` only: one that refuses walks too.
 @Test func duRunsInTheFolderThere() throws {
     let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-du-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: d + "/bin", withIntermediateDirectories: true)
@@ -107,9 +107,16 @@ extension SudoPasswordTests {
     let fake = try fakeSudo(d)
     #expect(try ServerSizes.measure(["a b"], in: d + "/srv dir", on: .local(sudo: fake), env: env) == ["a b": .init(bytes: 3)])
     #expect(sudoLog(fake).first?.hasPrefix("-n -- sh -c ") == true)
+    // sudo that runs only sftp-server (as docs/root-panel.md has it), or wants a password: no sheet, no error — the walk.
+    let refusing = try fakeSudo(d, #"echo "sudo: a password is required" >&2; exit 1"#)
+    #expect(try ServerSizes.measure(["a b"], in: d + "/srv dir", on: .local(sudo: refusing), env: env) == nil)
+    #expect(sudoLog(refusing).filter { $0.hasPrefix("-") }.map { $0.prefix(11) } == ["-n -- sh -c"], "asked once, never with a password")
 
-    #expect(try ServerSizes.measure(["a b"], in: d + "/srv dir", on: .local(), env: ["KERMO_WANT_DIR": d + "/srv dir"]) == nil,
+    #expect(try ServerSizes.measure(["a b"], in: d + "/srv dir", on: .local(), env: ["PATH": "/usr/bin:/bin", "KERMO_WANT_DIR": d + "/srv dir"]) == nil,
             "this Mac's du: no -b")
+    let latin1 = String(String.UnicodeScalarView([Unicode.Scalar(WireName.base + 0xE9)!]))   // a byte that isn't UTF-8, as listed
+    #expect(try ServerSizes.measure(["a b", "x" + latin1], in: d + "/srv dir", on: .local(), env: env) == ["a b": .init(bytes: 3)], "that name: walked")
+    #expect(try ServerSizes.measure(["a b"], in: d + "/caf" + latin1, on: .local(), env: env) == [:], "a folder no command line names: all walked")
     let e = try #require(throws: SFTPError.self) { try ServerSizes.measure(["a"], in: d + "/nowhere", on: .local(), env: env) }
     #expect(e.message.contains("nowhere"))
 }
@@ -158,7 +165,6 @@ extension SudoPasswordTests {
     }
     #expect(gone, "du \(du) still runs")
     if !gone { kill(du, SIGKILL) }
-    p.waitUntilExit()
 }
 
 }

@@ -70,8 +70,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private(set) var dirSizes: [String: Int64] = [:]
     /// Server folders du couldn't read all of: their size is "at least".
     private(set) var partialSizes = Set<String>()
-    /// Servers (`ServerRow.key`, root apart) whose du counts no bytes (BSD): their folders are walked, till quit.
-    private static var noDu = Set<String>()
+    /// Servers (root apart) where du doesn't count (BSD's has no -b, no shell, sudo that won't run it): their folders
+    /// are walked, till quit.
+    static var noDu = Set<SFTPTarget>()
+    /// What asks a server's du (tests: a stand-in).
+    nonisolated(unsafe) static var measureRemote: @Sendable ([String], String, SFTPTarget, [String: String], CancelFlag) throws -> [String: ServerSizes.Size]? = {
+        try ServerSizes.measure($0, in: $1, on: $2, env: $3, cancel: $4)
+    }
     /// What counts a local folder's bytes, looking at `isCancelled` as it goes (tests: one that waits).
     nonisolated(unsafe) static var measureLocal: @Sendable (String, () -> Bool) -> Int64 = { DirLister.measure($0, isCancelled: $1).bytes }
     private var sizeGen = 0
@@ -1582,7 +1587,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         sizeQueue += names.filter { !sizeQueue.contains($0) }
         guard sizeWalk == nil else { return }   // the walk running takes them next
         let flag = CancelFlag(), gen = sizeGen, env = SSHAskpass.env, r = remote, base = path
-        let duKey = r.map { ServerRow.key($0.target) + ($0.target.sudo ? "#" : "") }
+        let duKey = r?.target
         sizeWalk = flag
         let found: @Sendable (String, Int64, Bool) -> Void = { [weak self] name, bytes, partial in
             DispatchQueue.main.async { MainActor.assumeIsolated { if self?.sizeGen == gen { self?.setSize(name, bytes, partial: partial) } } }
@@ -1606,7 +1611,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                     }
                     var walk = names, noDu = false
                     if du {
-                        if let sizes = try ServerSizes.measure(names, in: r.dir, on: r.target, env: env, cancel: flag) {
+                        if let sizes = try Self.measureRemote(names, r.dir, r.target, env, flag) {
                             for (name, s) in sizes { found(name, s.bytes, s.partial) }
                             walk = names.filter { sizes[$0] == nil }
                         } else {

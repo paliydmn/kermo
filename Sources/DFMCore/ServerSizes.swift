@@ -29,29 +29,29 @@ public enum ServerSizes {
         wait $p; s=$?; kill $w 2>/dev/null; exit $s
         """
 
-    /// The sizes of the folders `names` in `dir` on `t`'s server, by its du — on a root panel's as root, through its sudo
-    /// (`sudo -n`; a password only where that refused for want of one). One ssh command over the connection for every
-    /// few thousand names (a command line there is one argument: Linux takes 128 KiB). nil: no du there that counts
-    /// bytes (BSD, macOS) — the caller walks instead. Throws what went wrong otherwise; CancellationError on ⎋.
+    /// The sizes of the folders `names` in `dir` on `t`'s server, by its du — on a root panel's as root, through `sudo -n`.
+    /// One ssh command over the connection for every few thousand names (a command line there is one argument: Linux
+    /// takes 128 KiB). nil: no du there that counts bytes (BSD, macOS), or the script didn't get to run (an account
+    /// without a shell, `ForceCommand internal-sftp`; sudo that runs only sftp-server, or wants a password) — the caller
+    /// walks instead, as before. Throws what went wrong otherwise (a folder gone); CancellationError on ⎋.
+    // ponytail: a root panel whose sudo wants a password walks (as before): asking it again for du, or holding sudo's
+    // password lock through a long du, cost more than the walk; the session's kept password if that ever matters.
     /// A name with a newline (du's line would break) or with bytes that aren't UTF-8 (`WireName`: a command line can't
-    /// name them) isn't asked about: no size for it here, as for one that's gone — the caller walks those.
+    /// name them) isn't asked about: no size for it here, as for one that's gone — the caller walks those; in a folder
+    /// with such bytes in its own path, all of them.
     public static func measure(_ names: [String], in dir: String, on t: SFTPTarget, env: [String: String] = [:],
                                cancel: CancelFlag? = nil) throws -> [String: Size]? {
         var out: [String: Size] = [:]
+        guard !dir.unicodeScalars.contains(where: WireName.isEscape) else { return out }   // a folder no command line can name: all walked
         let names = names.filter { !$0.contains("\n") && !$0.unicodeScalars.contains(where: WireName.isEscape) }
         for chunk in chunks(names) {
             let script = "set -- " + ([dir] + chunk).map(ShellContext.quote).joined(separator: " ") + "\n" + Self.script
-            let status: Int32, output: Data, errors: String
-            if t.sudo {
-                (status, output, errors) = try SudoServer.run(t, script: script, env: env, cancel: cancel) { $0.range(of: Data((ran + "\n").utf8)) != nil }
-            } else {
-                var o = Data()
-                (status, errors) = try SSHCommand.run(t, "sh -c " + ShellContext.quote(script), env: env, cancel: cancel, options: ["-x", "-a"]) { o += $0 }
-                output = o
-            }
+            let line = t.sudo ? SudoServer.command(t, ["sh", "-c", script], password: false) : "sh -c " + ShellContext.quote(script)
+            var output = Data()
+            let (status, errors) = try SSHCommand.run(t, line, env: env, cancel: cancel, options: ["-x", "-a"]) { output += $0 }
             let text = String(decoding: output, as: UTF8.self)
             let lines = text.split(separator: "\n")
-            if lines.contains(Substring(noDu)) { return nil }
+            if !lines.contains(Substring(ran)) || lines.contains(Substring(noDu)) { return nil }
             guard lines.contains(Substring(marker)), status == 0 || status == 1 else {
                 let said = errors.split(whereSeparator: \.isNewline).joined(separator: "\n")   // the watcher's blank lines out
                 throw SFTPError(message: said.isEmpty ? "du failed on \(t.host) (exit \(status))" : said)
