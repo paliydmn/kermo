@@ -22,7 +22,8 @@ On a production server, what Kermo does there goes into `~/.config/dfilemanager/
 - saves and reverts (a failed check shows as its exit status and what became of the file; a passed or skipped check leaves nothing in the line);
 - commands (⌘E, F2, Run on Servers…);
 - copies, moves and deletes (F5, F6, F8, Synchronize);
-- renames, permissions, new folders, extracting and reloads.
+- renames, permissions, new folders, extracting and reloads;
+- a key added with Copy SSH Key to Server….
 
 Each line has the time, the server, the paths, the command and its exit status. There is no exit status for a command handed to Terminal, and a reload stopped with ⎋ says it may have run. `"root": true` marks what ran as root from a root panel: saves, copies, moves, deletes, renames, permissions, new folders and reloads. Commands and extracting always run as the user and carry no `root`. If a line can't be written, the status line says so once.
 

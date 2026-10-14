@@ -23,7 +23,7 @@ Updating, uninstalling and building from source: [Install Kermo](docs/install.md
 - **Find and compare.** Search by name, content or Spotlight; compare and synchronize folders, also with a server; diff files. → [Search, compare and synchronize](docs/search-compare.md)
 - **View and edit.** A viewer for multi-gigabyte files with hex and `tail -f`; an editor with syntax highlighting. → [Viewer and editor](docs/viewer-editor.md)
 - **Git.** Status column, branch, diff, log, blame, stage; switch branches, commit and sync from the sidebar. → [Git](docs/git.md)
-- **Servers.** SFTP panels and SSH sessions through the system OpenSSH, saved servers with Touch ID locks, copy between this Mac and servers. → [Servers and SSH](docs/servers.md), [Files on a server](docs/server-files.md)
+- **Servers.** SFTP panels and SSH sessions through the system OpenSSH, saved servers with Touch ID locks, your SSH key copied to a server in one step, copy between this Mac and servers. → [Servers and SSH](docs/servers.md), [Files on a server](docs/server-files.md)
 - **Safe server edits.** Open files as root through the server's own `sudo`, check a config with the server's tool before it is saved, reload the service, and get earlier versions back. → [Server files as root](docs/root-panel.md), [Checks on save](docs/config-checks.md)
 - **Tunnels.** Forward a server's database or web admin to `localhost`, or pick from the ports it listens on. → [SSH tunnels](docs/tunnels.md)
 - **Terminal.** A shell in the window whose panel follows `cd`; SSH tabs; a user menu, one command on several servers at once, and the `fm` command. → [Terminal](docs/terminal.md), [Commands](docs/commands.md)
@@ -61,7 +61,7 @@ Mac function keys control media by default: ⌥ plus the digit does the same (�
 - [Commands, user menu and `fm`](docs/commands.md): ⌘E, F2, placeholders, the `fm` launcher.
 
 **Servers and administration**
-- [Servers and SSH](docs/servers.md): connect, save, lock, mark as production.
+- [Servers and SSH](docs/servers.md): connect, save, lock, mark as production, copy your SSH key.
 - [Files on a server](docs/server-files.md): copy, edit, preview, compare, file history.
 - [Server files as root](docs/root-panel.md): a root panel through `sudo`.
 - [Checks on save and reloads](docs/config-checks.md): `visudo`, `nginx -t` and the like before a bad save.
