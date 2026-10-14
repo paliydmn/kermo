@@ -76,12 +76,13 @@ public enum ListeningPorts {
         return .success(parse(lines[(at + 1)...].joined(separator: "\n")))
     }
 
-    /// "127.0.0.53%lo:53", "*:80", "[::1]:631", ":::22" (netstat's IPv6, no brackets): the port after the last ":".
+    /// "127.0.0.53%lo:53", "*:80", "[::1]:631", "[::]%eth0:22", ":::22" (netstat's IPv6, no brackets): the port after the
+    /// last ":".
     static func local(_ s: Substring) -> (String, Int)? {
         guard let colon = s.lastIndex(of: ":"), let port = Int(s[s.index(after: colon)...]), (1...65535).contains(port) else { return nil }
         var host = String(s[..<colon])
+        if let pct = host.firstIndex(of: "%") { host = String(host[..<pct]) }   // ss: "[fe80::1]%eth0:22" too
         if host.hasPrefix("["), host.hasSuffix("]") { host = String(host.dropFirst().dropLast()) }
-        if let pct = host.firstIndex(of: "%") { host = String(host[..<pct]) }
         switch host {
         case "*", "0.0.0.0", "::", "": return ("*", port)
         case "127.0.0.1", "::1": return ("localhost", port)

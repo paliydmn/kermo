@@ -39,9 +39,11 @@ extension SudoPasswordTests {
 @Test func aCommandRunsOnEachServer() {
     let heard = Heard()
     let servers = ["web1", "web2", "db"].enumerated().map { MultiRun.Server(name: $1, target: .local(persist: $0)) }   // three targets
+    let ended = Heard()
     let outcomes = MultiRun.run(servers, "printf 'a'; sleep 0.2; printf 'b\\r\\n'; echo two; echo oops >&2; printf 'no end'; exit 3",
-                                cancel: CancelFlag(), line: heard.add)
+                                cancel: CancelFlag(), ended: { i, o in ended.add(i, "\(o)", false) }, line: heard.add)
     #expect(outcomes == [.exit(3), .exit(3), .exit(3)])
+    #expect((0..<3).allSatisfy { ended.of($0) == ["exit(3)"] }, "each told once, as it ended")
     for i in 0..<3 { #expect(heard.of(i).sorted() == ["! oops", "ab", "no end", "two"], "\(heard.of(i))") }
 
     let refused = Heard()
@@ -79,6 +81,12 @@ extension SudoPasswordTests {
         let outcomes = MultiRun.run([MultiRun.Server(name: "here", target: t)], "echo start; sleep 5; echo done", cancel: cancel, line: heard.add)
         #expect(Date().timeIntervalSince(started) < 2.5, "\(Date().timeIntervalSince(started)) s")
         #expect(outcomes == [.stopped] && heard.of(0) == ["start"])
+        // A command that never stops writing to stderr doesn't hold the reader either.
+        let busy = CancelFlag()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { busy.cancel() }
+        let begun = Date()
+        let noisy = MultiRun.run([MultiRun.Server(name: "here", target: t)], "while :; do echo x >&2; sleep 0.01; done", cancel: busy, line: { _, _, _ in })
+        #expect(Date().timeIntervalSince(begun) < 2.5 && noisy == [.stopped], "\(Date().timeIntervalSince(begun)) s")
     }
 }
 
@@ -87,10 +95,11 @@ extension SudoPasswordTests {
     let heard = Heard(), cancel = CancelFlag()
     DispatchQueue.global().asyncAfter(deadline: .now() + 0.4) { cancel.cancel() }
     let started = Date()
+    let ended = Heard()
     let outcomes = MultiRun.run((1...3).map { MultiRun.Server(name: "s\($0)", target: .local()) }, "echo start; sleep 5; echo done",
-                                cancel: cancel, line: heard.add)
+                                cancel: cancel, ended: { i, o in ended.add(i, "\(o)", false) }, line: heard.add)
     #expect(Date().timeIntervalSince(started) < 3)
-    #expect(outcomes == [.stopped, .stopped, .stopped])
+    #expect(outcomes == [.stopped, .stopped, .stopped] && (0..<3).allSatisfy { ended.of($0) == ["stopped"] })
     #expect((0..<3).allSatisfy { heard.of($0) == ["start"] })
 }
 

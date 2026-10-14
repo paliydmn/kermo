@@ -454,17 +454,15 @@ public enum SSHCommand {
         return (p.terminationStatus, errors.joined(separator: "\n"))
     }
 
-    /// Hands over what `fd` gives until its end, or until `over` says so (looked at each 0.1 s while it's quiet).
+    /// Hands over what `fd` gives until its end, or until `over` says so (looked at each pass, and each 0.1 s while
+    /// it's quiet: a command there that never stops writing doesn't hold it).
     private static func drain(_ fd: Int32, until over: () -> Bool, _ chunk: (Data) -> Void) {
         var buf = [UInt8](repeating: 0, count: 1 << 16)
         var wait = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-        while true {
+        while !over() {
             let ready = poll(&wait, 1, 100)
             if ready < 0 && errno == EINTR { continue }
-            if ready == 0 {
-                if over() { return }
-                continue
-            }
+            if ready == 0 { continue }
             let n = Darwin.read(fd, &buf, buf.count)
             if n < 0 && errno == EINTR { continue }
             if n <= 0 { return }

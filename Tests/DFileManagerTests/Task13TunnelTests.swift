@@ -269,6 +269,14 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(go.items[0].isSectionHeader && go.items[3].isSectionHeader)
     }
 
+    /// U14: back with a taken port, ↩ takes "Use N", not the taken port again; ⎋ stays Cancel's.
+    @Test func aTakenPortsSheetTakesTheFreeOneOnReturn() {
+        let alert = NSAlert()
+        ["Save & Turn On", "Save", "Use 15433", "Cancel"].forEach { alert.addButton(withTitle: $0) }
+        AppDelegate.returnTakes(alert.buttons[2], in: alert)
+        #expect(alert.buttons.map(\.keyEquivalent) == ["", "", "\r", "\u{1b}"])
+    }
+
     /// The sidebar shows "⇄ 2" on a server's row while its tunnels listen; ⌘⇧P finds Tunnels… and New Tunnel….
     @Test func listeningTunnelsShowInTheSidebarAndSearch() {
         var list = ServerList(saved: [server("db1", [])])
@@ -327,6 +335,12 @@ private func freePorts(_ n: Int) throws -> [Int] {
         let webSaved = server("web", [v])   // the same address, saved since
         tunnels.adopt(v, of: web, into: webSaved)
         #expect(tunnels.state(v, of: web) == nil && tunnels.state(v, of: webSaved)?.token == since && !tunnels.isTemporary(v, of: webSaved))
+        let e = dial(p[1])   // under another key now: its word still found by the listener's token
+        _ = "no\n".withCString { write(e, $0, 3) }
+        #expect(ends(e))
+        close(e)
+        await waitUntil { tunnels.state(v, of: webSaved)?.error != nil }
+        #expect(said.lines.last == "Redis: refused")
         tunnels.stop(v, of: webSaved)
 
         let w = Tunnel(localPort: p[2], port: 80)

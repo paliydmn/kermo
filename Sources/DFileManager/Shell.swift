@@ -18,11 +18,12 @@ enum Shell {
     }
 
     /// One command on several servers (Run on Servers…), in one output window: each line as it comes, "web1 │ …", stderr
-    /// in red; then the summary. ⎋ stops them all and keeps the window; again, closes it. `onEnd`: each server's outcome,
-    /// in `servers`' order. `skipped`: named in the summary (locked, Touch ID refused).
+    /// in red; then the summary. ⎋ stops them all and keeps the window; again, closes it. `ended`: each server's outcome
+    /// (its index in `servers`) as soon as it's known — whatever becomes of the window. `skipped`: named in the summary
+    /// (locked, Touch ID refused).
     static func run(_ command: String, on servers: [MultiRun.Server], skipped: [String], env: [String: String], title: String,
-                    onEnd: @escaping @MainActor ([MultiRun.Outcome]) -> Void) {
-        OutputWindow.start(command, on: servers, skipped: skipped, env: env, title: title, onEnd: onEnd)
+                    ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
+        OutputWindow.start(command, on: servers, skipped: skipped, env: env, title: title, ended: ended)
     }
 
     /// Fire-and-forget (GUI tools like `code --diff`): no output window.
@@ -163,8 +164,8 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
     }
 
     static func start(_ command: String, on servers: [MultiRun.Server], skipped: [String], env: [String: String], title: String,
-                      onEnd: @escaping @MainActor ([MultiRun.Outcome]) -> Void) {
-        let w = OutputWindow(servers, skipped: skipped, command: command, env: env, onEnd: onEnd)
+                      ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
+        let w = OutputWindow(servers, skipped: skipped, command: command, env: env, ended: ended)
         w.window?.title = title.bidiVisible
         open.append(w)
         w.showWindow(nil)
@@ -241,7 +242,7 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
     }
 
     /// Run on Servers': `MultiRun` on a thread of its own, its lines taken in batches; the summary once all are over.
-    private init(_ list: [MultiRun.Server], skipped: [String], command: String, env: [String: String], onEnd: @escaping @MainActor ([MultiRun.Outcome]) -> Void) {
+    private init(_ list: [MultiRun.Server], skipped: [String], command: String, env: [String: String], ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
         let (w, tv) = Self.window()
         let count = list.count + skipped.count
         w.subtitle = "\(count) server\(count == 1 ? "" : "s") · running… · Esc stops all"
@@ -252,7 +253,9 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         let names = list.map(\.name), width = names.map(\.count).max() ?? 0   // the skipped have no lines
         let inbox = LineInbox(), over = over
         Thread { [weak self] in
-            let outcomes = MultiRun.run(list, command, env: env, cancel: cancel) { i, text, error in
+            let outcomes = MultiRun.run(list, command, env: env, cancel: cancel, ended: { i, o in
+                DispatchQueue.main.async { MainActor.assumeIsolated { ended(i, o) } }   // not through the window: it may be gone
+            }) { i, text, error in
                 guard inbox.put((i, text, error)) else { return }   // a hop is on its way already: it takes this too
                 DispatchQueue.main.async { MainActor.assumeIsolated { self?.show(inbox.take(), names, width, in: tv) } }
             }
@@ -274,7 +277,6 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
                     self.kept(in: tv)
                     self.window?.subtitle = "\(count) server\(count == 1 ? "" : "s") · " + (cancel.isCancelled ? "stopped" : "done")
                         + " · " + String(format: "%.1fs", Date().timeIntervalSince(self.started)) + " · Esc closes"
-                    onEnd(outcomes)
                 }
             }
         }.start()

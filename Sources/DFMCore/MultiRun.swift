@@ -17,10 +17,12 @@ public enum MultiRun {
     /// dialogs come one after another; a server whose connection is up doesn't wait for them. `line`: each whole line
     /// as it comes — stdout's, or stderr's (`error`) — with its server's index, one call at a time: a line never mixes
     /// two servers' text, nor is cut by a read. `cancel` stops them all. Blocks; returns each one's outcome, in order.
+    /// `ended`: each server's outcome as soon as it's known (stopped ones too), on the thread that ran it.
     /// `login`: in place of the master's (tests), always called, one at a time.
     // ponytail: a login to a server that doesn't answer holds the others' logins up to ConnectTimeout (15 s).
     public static func run(_ servers: [Server], _ command: String, env: [String: String] = [:], limit: Int = 8, cancel: CancelFlag,
                            login: (@Sendable (SFTPTarget, CancelFlag) throws -> Void)? = nil,
+                           ended: (@Sendable (_ server: Int, _ outcome: Outcome) -> Void)? = nil,
                            line: @escaping @Sendable (_ server: Int, _ text: String, _ error: Bool) -> Void) -> [Outcome] {
         let lock = NSLock(), gate = NSLock(), say = NSLock()
         nonisolated(unsafe) var outcomes = [Outcome](repeating: .stopped, count: servers.count), next = 0
@@ -30,6 +32,7 @@ public enum MultiRun {
         let said: @Sendable (Int, String, Bool) -> Void = { i, text, error in say.withLock { line(i, text, error) } }
 
         func serve(_ i: Int) {
+            defer { ended?(i, lock.withLock { outcomes[i] }) }
             let t = servers[i].target, flag = flags[i]
             let out = Lines { said(i, $0, false) }, err = Lines { text in
                 if !text.contains("Warning: Permanently added") { said(i, text, true) }

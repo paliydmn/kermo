@@ -99,6 +99,8 @@ let busyboxSample = """
          will not be shown, you would have to be root to see it all.)
         """
     #expect(ListeningPorts.parse(noise) == [ListeningPort(port: 22, addresses: ["*"])])
+    let scoped = "LISTEN 0 128 [fe80::1]%eth0:2222 [::]:*\nLISTEN 0 128 [::]%eth0:2223 [::]:*\n"   // ss: the interface after the brackets
+    #expect(ListeningPorts.parse(scoped) == [ListeningPort(port: 2222, addresses: ["fe80::1"]), ListeningPort(port: 2223, addresses: ["*"])])
     #expect(ListeningPorts.parse("").isEmpty && ListeningPorts.parse("\r\n\n").isEmpty)
     #expect(ListeningPorts.parse("LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\r\n") == [ListeningPort(port: 22, addresses: ["*"])], "CRLF")
 }

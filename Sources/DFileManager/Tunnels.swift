@@ -205,17 +205,14 @@ extension AppDelegate {
         let save = old == nil ? ["Save & Turn On", "Save"] : ["Save"]
         (save + (free.map { ["Use \($0)"] } ?? []) + ["Cancel"]).forEach { alert.addButton(withTitle: $0) }
         if old != nil { alert.addButton(withTitle: "Delete…").hasDestructiveAction = true }
-        if free != nil {   // back with a taken port: ↩ takes the free one, not the taken one again (⎋ is still Cancel)
-            alert.buttons.forEach { $0.keyEquivalent = "" }
-            alert.buttons[save.count].keyEquivalent = "\r"
-        }
+        if free != nil { Self.returnTakes(alert.buttons[save.count], in: alert) }   // back with a taken port: ↩ takes the free one
         alert.accessoryView = grid
         alert.window.initialFirstResponder = forward.isEmpty ? forwardField : nameField
 
         let draft = Tunnel(localPort: 0, port: 0)
         func update(said: String? = nil) {
             let read = try? draft.reading(forwardField.stringValue).get()
-            for b in alert.buttons.prefix(save.count) { b.isEnabled = read != nil }
+            for b in alert.buttons.prefix(save.count + (free == nil ? 0 : 1)) { b.isEnabled = read != nil }   // Use N too
             nameField.placeholderString = read.map(\.title) ?? "the port's own: Postgres, Redis, Grafana…"
             urlField.placeholderString = read?.link?.absoluteString ?? "none — a web page's, if it is one: http://localhost:…"
             if case .failure(let p) = draft.reading(forwardField.stringValue), !forwardField.stringValue.isEmpty || said != nil {
@@ -256,6 +253,12 @@ extension AppDelegate {
             }
             saveTunnelSheet(t, replacing: old, in: s, turnOn: turnOnNow)
         }
+    }
+
+    /// ↩ answers `button`, no longer the first; ⎋ stays Cancel's.
+    static func returnTakes(_ button: NSButton, in alert: NSAlert) {
+        alert.buttons.filter { $0.keyEquivalent == "\r" }.forEach { $0.keyEquivalent = "" }
+        button.keyEquivalent = "\r"
     }
 
     /// Saved; one listening that now goes another way listens anew (`sync`: on another port, here) — the connections
@@ -310,23 +313,30 @@ extension AppDelegate {
         }, freeTextLast: true)   // "k13 db" picks the server, not a host named so
     }
 
-    /// The ports `t`'s server listens on (U1): a locked server asks first (U6); the Picker says it's looking meanwhile —
-    /// ⎋ there stops the look — and gives way to the ports, or closes with why not in the status line.
+    /// The ports `t`'s server listens on (U1): a locked server asks first (U6), then the login, if one is due — as F2's,
+    /// before anything shows: its dialogs take the focus, which closes a Picker. The Picker then says it's looking — ⎋
+    /// there stops the look — and gives way to the ports, or closes with why not in the status line.
     func forwardPort(on t: SFTPTarget) {
         let s = savedServer(at: t) ?? SavedServer(target: t)
         Task {
             if let locked = ServerLock.server(for: s.target), await !ServerLock.authorize(locked, "look at the ports of") {
                 return tunnels.say("🔒 \(s.title) stays locked", false)
             }
+            let env = SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For “Forward Port” on \(s.title)"]) { $1 }
+            let login = await Blocking.run { Result { try SFTP.startMaster(s.target, env: env) } }
+            if case .failure(let e) = login {
+                if !(e is CancellationError) { tunnels.say(e.localizedDescription, true) }
+                return releaseIdleServers()
+            }
             let cancel = CancelFlag()   // set by ⎋ there — and by its giving way, when the look is over anyway
             Picker.show(over: window, placeholder: "Looking at \(s.title)'s ports…", items: [], onDismiss: { cancel.cancel() })
-            let env = SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For “Forward Port” on \(s.title)"]) { $1 }
             let result = await Blocking.run { Result { try ListeningPorts.read(on: s.target, server: s.title, env: env, cancel: cancel) } }
-            guard !cancel.isCancelled else { return }
+            guard !cancel.isCancelled else { return releaseIdleServers() }
             switch result {
             case .failure(let e):
                 Picker.dismiss()
                 tunnels.say(e.localizedDescription, true)
+                releaseIdleServers()
             case .success(let ports): showPorts(ports, of: s)
             }
         }
@@ -335,10 +345,14 @@ extension AppDelegate {
     /// One row a port (U2): ":5432 Postgres", its process and where it listens, and "→ localhost:15432" where a tunnel of
     /// the server already goes there. ↩ forwards it, ⌘O and opens it in the browser, ⌘C and copies the address, ⌘S and
     /// saves it as the server's tunnel (U4).
+    /// Closed without forwarding, the server lets its connection go if nothing else uses it (as after a last panel).
     func showPorts(_ ports: [ListeningPort], of s: SavedServer) {
-        guard !ports.isEmpty else { return tunnels.say("\(s.title): nothing listens on TCP", false) }
+        guard !ports.isEmpty else {
+            Picker.dismiss()
+            return tunnels.say("\(s.title): nothing listens on TCP", false)
+        }
         Picker.show(over: window, placeholder: (s.prod ? SavedServer.mark : "") + "\(s.title)'s ports — ↩ forward · ⌘O browser · ⌘C copy · ⌘S save",
-                    items: portItems(ports, of: s))
+                    items: portItems(ports, of: s), onDismiss: { [unowned self] in releaseIdleServers() })
     }
 
     func portItems(_ ports: [ListeningPort], of s: SavedServer) -> [Picker.Item] {

@@ -47,18 +47,22 @@ extension AppDelegate {
         return (run, skipped)
     }
 
-    /// The output window; each production server's run a line in the production log once it's over.
+    /// The output window; each production server's run a line in the production log as soon as it's over (one done
+    /// isn't lost to quitting while another still runs). Once all are over, the servers nothing else uses let their
+    /// connection go, as after closing a last panel.
     static func start(_ command: String, on run: [RunOnServersSheet.Choice], of count: Int, skipped: [String], env: [String: String]) {
+        var left = run.count
         Shell.run(command, on: run.map { MultiRun.Server(name: $0.title, target: $0.target) }, skipped: skipped, env: env,
-                  title: "Run on \(count) server\(count == 1 ? "" : "s"): \(command)") { outcomes in
-            for (c, o) in zip(run, outcomes) {   // as F2's: ran as the user (ssh)
-                switch o {
-                case .exit(let s): AuditLog.write(c.target, "command", paths: [], command: command, exit: s)
-                case .notRun(let why): AuditLog.write(c.target, "command", paths: [], command: command, exit: 255, error: why)
-                case .stopped: AuditLog.write(c.target, "command", paths: [], command: command, exit: nil, error: "stopped")
-                case .skipped: break
-                }
+                  title: "Run on \(count) server\(count == 1 ? "" : "s"): \(command)") { i, o in
+            let t = run[i].target   // as F2's: ran as the user (ssh)
+            switch o {
+            case .exit(let s): AuditLog.write(t, "command", paths: [], command: command, exit: s)
+            case .notRun(let why): AuditLog.write(t, "command", paths: [], command: command, exit: 255, error: why)
+            case .stopped: AuditLog.write(t, "command", paths: [], command: command, exit: nil, error: "stopped")
+            case .skipped: break
             }
+            left -= 1
+            if left == 0 { (NSApp.delegate as? AppDelegate)?.releaseIdleServers() }
         }
     }
 }

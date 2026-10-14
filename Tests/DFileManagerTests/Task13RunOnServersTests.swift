@@ -13,11 +13,11 @@ import Testing
     _ = NSApplication.shared
     let title = "Run on 3 servers: k13-" + UUID().uuidString.prefix(6)
     let servers = [MultiRun.Server(name: "web1", target: .local(persist: 1)), MultiRun.Server(name: "db", target: .local(persist: 2))]
-    var outcomes: [MultiRun.Outcome]?
-    Shell.run("echo hi; echo no >&2; exit 3", on: servers, skipped: ["vault"], env: [:], title: title) { outcomes = $0 }
+    var outcomes: [Int: MultiRun.Outcome] = [:]
+    Shell.run("echo hi; echo no >&2; exit 3", on: servers, skipped: ["vault"], env: [:], title: title) { outcomes[$0] = $1 }
     let w = try #require(NSApp.windows.first { $0.title == title })
-    for _ in 0..<500 where outcomes == nil { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(outcomes == [.exit(3), .exit(3)])
+    for _ in 0..<500 where !w.subtitle.contains("done") { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(outcomes == [0: .exit(3), 1: .exit(3)], "each server's, as it ended")
     let storage = try #require(text(w))
     let lines = storage.string.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     #expect(lines.filter { $0.hasPrefix("web1 │ ") }.sorted() == ["web1 │ hi", "web1 │ no"] && lines.filter { $0.hasPrefix("db   │ ") }.count == 2,
@@ -32,14 +32,14 @@ import Testing
     w.close()
 
     let slow = "Run on 2 servers: k13-" + UUID().uuidString.prefix(6)
-    var ended: [MultiRun.Outcome]?
-    Shell.run("echo start; sleep 5; echo done", on: servers, skipped: [], env: [:], title: slow) { ended = $0 }
+    var ended: [Int: MultiRun.Outcome] = [:]
+    Shell.run("echo start; sleep 5; echo done", on: servers, skipped: [], env: [:], title: slow) { ended[$0] = $1 }
     let s = try #require(NSApp.windows.first { $0.title == slow })
     defer { s.close() }
     for _ in 0..<300 where text(s)?.string.components(separatedBy: "start").count != 3 { try await Task.sleep(for: .milliseconds(10)) }
     s.windowController?.cancelOperation(nil)
-    for _ in 0..<300 where ended == nil { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(ended == [.stopped, .stopped] && s.isVisible && text(s)?.string.hasSuffix("⎋ 2 stopped\n") == true)
+    for _ in 0..<300 where !s.subtitle.contains("stopped ·") { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(ended == [0: .stopped, 1: .stopped] && s.isVisible && text(s)?.string.hasSuffix("⎋ 2 stopped\n") == true)
     #expect(s.subtitle.hasPrefix("2 servers · stopped · "))
     s.windowController?.cancelOperation(nil)
     #expect(!s.isVisible, "⎋ again closes it")
