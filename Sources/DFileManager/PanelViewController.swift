@@ -1094,9 +1094,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                     // ↩ is Cancel: the old key goes only when asked, and the next login asks about the new one (askpass).
                     let check = SavedServer.isProd(target) ? "\n\nCheck the new fingerprint with the server's admin first." : ""
                     let alert = AppDelegate.alert("Can't connect to \(target.host)", info: error.message + check, ["Cancel", "Remove Old Key…"], default: 0)
-                    alert.beginSheetModal(for: window) { [weak self] r in
-                        guard r == .alertSecondButtonReturn else { return }
-                        MainActor.assumeIsolated { self?.removeOldKey(change, then: { $0.loadRemote(target, dir: dir, select: select, keep: keep, onFailure: onFailure) }) }
+                    Task { [weak self] in
+                        guard await AppDelegate.sheet(alert, on: window) == 1 else { return }
+                        self?.removeOldKey(change, then: { $0.loadRemote(target, dir: dir, select: select, keep: keep, onFailure: onFailure) })
                     }
                 } else if let window = view.window {
                     let alert = NSAlert()

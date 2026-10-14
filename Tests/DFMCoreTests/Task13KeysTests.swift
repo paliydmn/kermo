@@ -38,9 +38,17 @@ import Testing
                                fingerprint: "SHA256:KKEiekWvluTKax6JzdMGedc4ocvunCpugqUdDJAmUf4"))
     #expect(c?.message("web1").hasPrefix("web1's host key has changed. Either the server was reinstalled, or someone is intercepting the connection.") == true)
     #expect(HostKeyChange.parse("me@web1: Permission denied (publickey,password).") == nil)
-    let failed = SFTP.loginFailure(said, SFTPTarget(host: "me@web1"))
+    let web1 = "user me\nhostname 192.0.2.7\nport 2222\nuserknownhostsfile /Users/me/.ssh/known_hosts /Users/me/.ssh/known_hosts2\n"
+    let failed = SFTP.loginFailure(said, SFTPTarget(host: "me@web1")) { web1 }
     #expect(failed.connection && failed.hostKey == c && failed.message == c?.message("me@web1"), "everywhere a login fails, in plain words")
-    #expect(SFTP.loginFailure("Permission denied", SFTPTarget(host: "web1")).message == "Permission denied")
+    #expect(SFTP.loginFailure("Permission denied", SFTPTarget(host: "web1")) { web1 }.message == "Permission denied")
+    // The server's banner can say all that too, about another host or file: then it's only text, nothing to remove.
+    for other in [web1.replacingOccurrences(of: "port 2222", with: "port 22"),
+                  web1.replacingOccurrences(of: "userknownhostsfile /Users/me/.ssh/known_hosts ", with: "userknownhostsfile "),
+                  "hostkeyalias web1\n" + web1] {
+        #expect(SFTP.loginFailure(said, SFTPTarget(host: "me@web1")) { other }.hostKey == nil, "\(other)")
+    }
+    #expect(SFTP.knownHosts(sshG: "hostkeyalias web1\n" + web1)?.name == "web1" && SFTP.knownHosts(sshG: web1)?.name == "[192.0.2.7]:2222")
     #expect(HostKeyChange.parse(said.replacingOccurrences(of: "Offending ED25519 key in /Users/me/.ssh/known_hosts:12\n", with: "")) == nil, "no line to remove")
 }
 
@@ -74,6 +82,14 @@ extension SudoPasswordTests {
     #expect(refused.status == 255)
     let change = try #require(HostKeyChange.parse(refused.said), "\(refused.said)")
     #expect(change.host == "[127.0.0.1]:\(t.port!)" && change.file == d + "/known_hosts" && change.line == 1)
+    let g = Process(), out = Pipe()
+    g.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+    g.arguments = ["-G", "-o", "UserKnownHostsFile=\(d)/known_hosts"] + t.arguments()
+    (g.standardInput, g.standardOutput, g.standardError) = (FileHandle.nullDevice, out, FileHandle.nullDevice)
+    try g.run()
+    let sshG = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    #expect(SFTP.loginFailure(refused.said, t) { sshG }.hostKey == change, "ssh -G names this host and file")
+    try #require(change.file == d + "/known_hosts")
     try change.remove()
     #expect(!(try String(contentsOfFile: d + "/known_hosts", encoding: .utf8)).contains(other))
     #expect(throws: SFTPError.self) { try change.remove() }   // nothing left to find: not "done"

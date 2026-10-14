@@ -145,7 +145,9 @@ extension Tunnel {
         return { cancel in
             try gate.pass(since: Date()) {
                 do { try SFTP.startMaster(t, env: env, cancel: cancel) } catch let e as SFTPError {
-                    throw Problem(message: tunnel.failure(e.message, server: server) ?? e.message)
+                    // A changed host key is said already, in plain words: its first line (the fingerprint is in the panel's alert).
+                    let hostKey = e.hostKey != nil ? e.message.split(whereSeparator: \.isNewline).first.map(String.init) : nil
+                    throw Problem(message: hostKey ?? tunnel.failure(e.message, server: server) ?? e.message)
                 }
             }
             let log = SFTP.masterLog(t)
