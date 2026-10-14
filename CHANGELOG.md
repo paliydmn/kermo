@@ -55,6 +55,7 @@ Release:
 
 ### Fixed
 
+- **Timeouts fire on time while the app is busy:** a git that hangs is stopped, and a server gone silent cut off, after their set time even when many listings wait on slow disks at once; their timers shared threads with that work and could come seconds late.
 - **⎋ on a command over ssh** (a config check, a look at a server's ports) no longer waits until the command on the server ends: ssh's shared connection kept the command's error output open until then.
 - A server's shared connection was stopped right after its first folder listing in a panel, so the next save, preview, copy or root panel logged in again (asking for the password again where ssh needs one).
 - **Panels:** a folder reloading by itself (or after a save to its server) no longer wipes the status line's "… ⎋ cancels" of an operation still running there, or a message shown a moment before.

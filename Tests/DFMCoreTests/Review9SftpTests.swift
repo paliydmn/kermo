@@ -107,7 +107,7 @@ private func connect(_ server: String, cancel: CancelFlag? = nil) -> Result<SFTP
     let server = fakeServer(d, connected ? "\(readInit); \(version)" : "")
     defer { kill(server) }
     let flag = CancelFlag()
-    DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { flag.cancel() }
+    Timeouts.queue.asyncAfter(deadline: .now() + 0.3) { flag.cancel() }
     let r = try #require(within(5) { Result { try SFTPClient.session(.local(server: server), cancel: flag) { try $0.lstat("/") } } },
                          "cancel didn't stop it")
     #expect(throws: (any Error).self) { try r.get() }
@@ -123,7 +123,7 @@ private func connect(_ server: String, cancel: CancelFlag? = nil) -> Result<SFTP
     defer { kill(server) }
     try Data("x".utf8).write(to: URL(fileURLWithPath: d + "/file"))
     let job = FileJob(.copy, sources: [d + "/file"], from: .local, to: .sftp(.local(server: server)), destDir: d + "/up")
-    DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { job.cancel() }
+    Timeouts.queue.asyncAfter(deadline: .now() + 0.3) { job.cancel() }
     #expect(within(10) { job.run() } != nil, "cancel didn't stop the job")   // cut after 5 s of silence
     #expect(!running(server))
 }
