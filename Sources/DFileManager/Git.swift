@@ -29,14 +29,13 @@ extension AppDelegate {
                 for args in steps {
                     let r = GitStatus.act(args, in: root, env: env, cancel: flag)
                     out += r.output
-                    if !r.ok { return (ok: false, output: out) }
+                    if !r.ok { return (failed: args.first, output: out) }
                 }
-                return (ok: true, output: out)
+                return (failed: String?.none, output: out)
             }
             for p in panels where p === panel || p.git?.root == root { p.reload() }
             switch r {
-            case .success(let r) where r.ok: panel.flash(done(r.output))
-            case .success(let r): gitFailed("git \(steps.last?.first ?? "") didn't work", r.output)
+            case .success(let r): if let step = r.failed { gitFailed("git \(step) didn't work", r.output) } else { panel.flash(done(r.output)) }
             case .failure: panel.flash("Stopped")
             }
         }
