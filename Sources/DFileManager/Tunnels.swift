@@ -307,7 +307,7 @@ extension AppDelegate {
         Picker.show(over: window, placeholder: "Forward a port of which server? — or type user@host", items: items, freeText: { q in
             guard case let .sftp(t, _)? = ServerAddress.parse(q) else { return [] }
             return [Picker.Item(title: "Ports of “\(q)”", detail: "↩") { [unowned self] in self.forwardPort(on: t) }]
-        })
+        }, freeTextLast: true)   // "k13 db" picks the server, not a host named so
     }
 
     /// The ports `t`'s server listens on (U1): a locked server asks first (U6); the Picker says it's looking meanwhile —
@@ -337,7 +337,7 @@ extension AppDelegate {
     /// saves it as the server's tunnel (U4).
     func showPorts(_ ports: [ListeningPort], of s: SavedServer) {
         guard !ports.isEmpty else { return tunnels.say("\(s.title): nothing listens on TCP", false) }
-        Picker.show(over: window, placeholder: (s.prod ? SavedServer.mark : "") + "\(s.title)'s ports — ↩ forward · ⌘O open in browser · ⌘C copy address · ⌘S save as a tunnel",
+        Picker.show(over: window, placeholder: (s.prod ? SavedServer.mark : "") + "\(s.title)'s ports — ↩ forward · ⌘O browser · ⌘C copy · ⌘S save",
                     items: portItems(ports, of: s))
     }
 

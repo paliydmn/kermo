@@ -64,6 +64,7 @@ extension ServerLockTests {
     RunOnServersSheet.show(on: parent, choices: choices, ticked: [ServerRow.key(web.target)], command: "") { ran = ($0, $1.map(\.title)) }
     let sheet = try #require(RunOnServersSheet.current)
     defer { sheet.close() }
+    #expect((sheet.window?.firstResponder as? NSTextView)?.delegate === sheet.command, "typing goes to the command")
     #expect(sheet.boxes.map(\.title) == ["web1   me@web1.invalid", "🔒 me@vault.invalid", "web2   ~/.ssh/config"])
     #expect(sheet.boxes[0].attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == SavedServer.color)
     #expect(sheet.boxes.map(\.state) == [.on, .off, .off])

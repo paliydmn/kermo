@@ -87,6 +87,7 @@ final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearch
         let s = RunOnServersSheet(choices: choices, ticked: ticked, command: command, onRun: onRun)
         current = s
         parent.beginSheet(s.window!)
+        s.window!.makeFirstResponder(s.command)   // a sheet doesn't take its initialFirstResponder
     }
 
     private init(choices: [Choice], ticked: Set<String>, command text: String, onRun: @escaping (String, [Choice]) -> Void) {
@@ -173,7 +174,7 @@ final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearch
         ])
         window!.title = "Run on Servers"
         window!.contentView = root
-        window!.initialFirstResponder = command
+        window!.autorecalculatesKeyViewLoop = true   // Tab: command, filter, the boxes (with keyboard navigation on), the buttons
         update()
         keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             let ticked = MainActor.assumeIsolated { () -> Bool in
