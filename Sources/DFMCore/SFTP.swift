@@ -399,9 +399,10 @@ public enum SSHCommand {
     /// Runs `command` on the server without a terminal (its login shell parses it), handing stdout over as it
     /// arrives; the test target (`.local()`) runs it here with /bin/sh. Returns the exit status and stderr.
     /// `stdin`: what the command reads, then end of file (a secret goes this way: never in its command line); none
-    /// by default. `options`: ssh's, before the host.
+    /// by default. `options`: ssh's, before the host. `onErrors`: stderr too as it arrives, on a thread of its own.
     public static func run(_ t: SFTPTarget, _ command: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
-                           options: [String] = [], stdin: Data? = nil, onOutput: (Data) -> Void) throws -> (status: Int32, errors: String) {
+                           options: [String] = [], stdin: Data? = nil, onErrors: (@Sendable (Data) -> Void)? = nil,
+                           onOutput: (Data) -> Void) throws -> (status: Int32, errors: String) {
         try SFTP.startMaster(t, env: env, cancel: cancel)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: t.localServer == nil ? "/usr/bin/ssh" : "/bin/sh")
@@ -435,7 +436,17 @@ public enum SSHCommand {
         let previous = cancel?.onCancel { p.terminate() } ?? nil
         defer { cancel?.onCancel(previous) }
         nonisolated(unsafe) var errData = Data()
-        let errReader = Thread { errData = err.fileHandleForReading.readDataToEndOfFile() }
+        let errReader = Thread {
+            guard let onErrors else { return errData = err.fileHandleForReading.readDataToEndOfFile() }
+            var buf = [UInt8](repeating: 0, count: 1 << 14)
+            while true {
+                let n = Darwin.read(err.fileHandleForReading.fileDescriptor, &buf, buf.count)
+                if n < 0 && errno == EINTR { continue }
+                if n <= 0 { break }
+                errData += buf[0..<n]
+                onErrors(Data(buf[0..<n]))
+            }
+        }
         errReader.start()
         var buf = [UInt8](repeating: 0, count: 1 << 16)
         while true {
