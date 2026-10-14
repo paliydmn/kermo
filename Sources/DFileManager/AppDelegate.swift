@@ -503,6 +503,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         sidebar.sectionMenu = { [unowned self] id in
             id != "servers" ? [] : [MenuAction.item("New Server…") { [unowned self] in editServer(SavedServer(), title: "New Server") },
                                     MenuAction.item("Connect…") { [unowned self] in showConnect(ssh: true) },
+                                    MenuAction.item("Run on Servers…") { [unowned self] in runOnServers() },
                                     MenuAction.item("Edit SSH Config") { [unowned self] in editSSHConfig() }]
         }
         NotificationCenter.default.addObserver(self, selector: #selector(reloadVolumes), name: NSWindow.didBecomeKeyNotification, object: window)

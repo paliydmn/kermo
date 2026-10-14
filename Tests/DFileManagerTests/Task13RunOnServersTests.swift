@@ -44,3 +44,84 @@ import Testing
     s.windowController?.cancelOperation(nil)
     #expect(!s.isVisible, "⎋ again closes it")
 }
+
+extension ServerLockTests {
+/// The sheet (U8): every server Connect… lists, the last choice ticked; production in its color, locked with 🔒. The
+/// filter narrows by name or address, ⌘A ticks all it shows, and what runs is what's ticked and shown — the button says
+/// how many, and is off with none or no command.
+@Test func runOnServersSheetPicksWhatRuns() throws {
+    _ = NSApplication.shared
+    var web = SavedServer(address: "me@web1.invalid")!
+    web.name = "web1"
+    web.prod = true
+    var vault = SavedServer(address: "me@vault.invalid")!
+    vault.locked = true
+    let choices = [RunOnServersSheet.Choice(title: "web1", target: web.target, saved: web),
+                   RunOnServersSheet.Choice(title: "me@vault.invalid", target: vault.target, saved: vault),
+                   RunOnServersSheet.Choice(title: "web2", target: SFTPTarget(host: "web2"), saved: nil)]
+    let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+    var ran: (String, [String])?
+    RunOnServersSheet.show(on: parent, choices: choices, ticked: [ServerRow.key(web.target)], command: "") { ran = ($0, $1.map(\.title)) }
+    let sheet = try #require(RunOnServersSheet.current)
+    defer { sheet.close() }
+    #expect(sheet.boxes.map(\.title) == ["web1   me@web1.invalid", "🔒 me@vault.invalid", "web2   ~/.ssh/config"])
+    #expect(sheet.boxes[0].attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == SavedServer.color)
+    #expect(sheet.boxes.map(\.state) == [.on, .off, .off])
+    #expect(sheet.runButton.title == "Run on 1 Server" && !sheet.runButton.isEnabled, "no command yet")
+    sheet.command.stringValue = "uptime"
+    sheet.update()
+    #expect(sheet.runButton.isEnabled)
+    sheet.filtered("WEB")
+    #expect(sheet.boxes.map(\.isHidden) == [false, true, false])
+    sheet.tickShown()
+    #expect(sheet.runButton.title == "Run on 2 Servers" && sheet.boxes[1].state == .off)
+    sheet.boxes[1].state = .on
+    sheet.update()
+    #expect(sheet.chosen.map(\.title) == ["web1", "web2"], "the hidden one doesn't run, ticked or not")
+    sheet.filtered("")
+    #expect(sheet.runButton.title == "Run on 3 Servers")
+    sheet.run()
+    #expect(ran?.0 == "uptime" && ran?.1 == ["web1", "me@vault.invalid", "web2"] && RunOnServersSheet.current == nil)
+}
+
+/// U11: a command that removes or stops things asks once, naming every production server (on none: no question, nor
+/// for any other command); locked ones ask for Touch ID one after another before anything runs — refused, skipped. A
+/// production server's run is a line in the production log with its exit status.
+@Test func runOnServersAsksAndLogs() async throws {
+    _ = NSApplication.shared
+    var db = SavedServer(address: "me@db.invalid")!, web = SavedServer(address: "localhost")!, vault = SavedServer(address: "me@vault.invalid")!
+    (db.prod, web.prod, vault.locked) = (true, true, true)
+    var asked: [String] = []
+    ServerLock.servers = { [db, web, vault] }
+    ServerLock.authenticate = { asked.append($0); return false }
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-runon-" + UUID().uuidString
+    let was = AuditLog.path, off = UserDefaults.standard.object(forKey: "auditLog")
+    AuditLog.path = dir + "/audit.jsonl"
+    UserDefaults.standard.removeObject(forKey: "auditLog")
+    defer {
+        ServerLock.servers = { [] }
+        ServerLock.relock()
+        AuditLog.path = was
+        UserDefaults.standard.set(off, forKey: "auditLog")
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+    let q = try #require(AppDelegate.runQuestion("sudo systemctl restart nginx", on: [db.target, web.target, SFTPTarget(host: "test")]))
+    #expect(q.message == "Run “sudo systemctl restart nginx” on 3 servers?")
+    #expect(q.info == "“me@db.invalid” and “localhost” are production servers. It runs on each of them at once.")
+    #expect(AppDelegate.runQuestion("uptime", on: [db.target]) == nil && AppDelegate.runQuestion("rm -rf /tmp/x", on: [SFTPTarget(host: "test")]) == nil)
+
+    let local = RunOnServersSheet.Choice(title: "web", target: .local(), saved: web)   // .local(): localhost, the production one
+    let chosen = [RunOnServersSheet.Choice(title: "vault", target: vault.target, saved: vault), local]
+    let (run, skipped) = await AppDelegate.unlocked(chosen)
+    #expect(run.map(\.title) == ["web"] && skipped == ["vault"] && asked == ["run a command on “me@vault.invalid”"])
+
+    let title = "Run on 2 servers: echo k13-" + UUID().uuidString.prefix(6)
+    AppDelegate.start(String(title.dropFirst("Run on 2 servers: ".count)) + "; exit 4", on: run, of: 2, skipped: skipped, env: [:])
+    let w = try #require(NSApp.windows.first { $0.title.hasPrefix(title) })
+    defer { w.close() }
+    for _ in 0..<500 where !FileManager.default.fileExists(atPath: AuditLog.path) { try await Task.sleep(for: .milliseconds(10)) }
+    let line = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: AuditLog.path))) as? [String: Any])
+    #expect(line["action"] as? String == "command" && line["exit"] as? Int == 4 && (line["command"] as? String)?.hasSuffix("; exit 4") == true)
+    #expect(line["server"] as? String == "localhost" && line["paths"] as? [String] == [])
+}
+}
