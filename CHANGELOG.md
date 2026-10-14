@@ -13,6 +13,8 @@ Release:
 
 ## [Unreleased]
 
+## [1.1] - 2026-10-14
+
 ### Added
 
 - **Server file history:** every save of a server file (F4's ⌘S, a save in another app) keeps the version it replaces on this Mac, in `~/.config/dfilemanager/history.noindex/<server>/<path there>/<name>@<date>`: 20 versions a file and 200 MB in all, the oldest going first. "Overwrite" after someone else's change keeps their version. A file over 5 MB gets none, and the status line says so (and, for a few seconds, the editor that saved); so they do when a version can't be written, and the save goes on. Saving a small file you opened with F4 costs no extra wait: the check before writing already reads it. The folder is owner-only and out of Spotlight and Time Machine; `defaults write com.dmn.dfilemanager serverHistory -bool false` turns it off.
@@ -82,5 +84,6 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.0...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.1...HEAD
+[1.1]: https://github.com/paliydmn/kermo/releases/tag/v1.1
 [1.0]: https://github.com/paliydmn/kermo/releases/tag/v1.0
