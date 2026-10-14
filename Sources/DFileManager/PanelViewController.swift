@@ -845,8 +845,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         if code == "•" { return ("•", .systemOrange, "changes inside") }
         if code == "??" { return ("?", .secondaryLabelColor, "untracked") }
         if code == "!!" { return ("!", .tertiaryLabelColor, "ignored") }
+        if GitStatus.isConflict(code) { return ("U", .systemPurple, "conflict") }
         let x = code.first ?? " ", y = code.last ?? " "
-        if x == "U" || y == "U" || code == "AA" || code == "DD" { return ("U", .systemPurple, "conflict") }
         let letter = x != " " ? x : y
         let word = ["M": "modified", "A": "added", "D": "deleted", "R": "renamed", "C": "copied", "T": "type changed"][String(letter)] ?? "changed"
         return x != " " ? (String(x), .systemGreen, word + ", staged") : (String(y), .systemRed, word)
