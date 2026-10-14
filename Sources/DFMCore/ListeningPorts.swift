@@ -46,6 +46,36 @@ public enum ListeningPorts {
         return ports.values.sorted { $0.port < $1.port }
     }
 
+    /// What runs there, in `sh` (the login shell may be any): ss if there is one, else netstat — each said by a line first
+    /// (a login script may print before it) — and the sbin folders in PATH (ss is in /usr/sbin on Red Hat). ss without -H:
+    /// an old one has no such option, and its header is passed over anyway.
+    static let script = "PATH=\"$PATH:/usr/sbin:/sbin\"; if command -v ss >/dev/null 2>&1; then echo kermo-ss; exec ss -ltnp; "
+        + "elif command -v netstat >/dev/null 2>&1; then echo kermo-netstat; exec netstat -ltnp; else echo kermo-none; fi"
+
+    /// The ports `t`'s server listens on: one ssh command over its connection (a login first if it's down: the saved
+    /// password, askpass — `env`). `server`: as the sidebar names it. Throws a failed login as ssh said it, and in plain
+    /// words a server without ss or netstat, or one that failed.
+    public static func read(on t: SFTPTarget, server: String, env: [String: String] = [:], cancel: CancelFlag? = nil) throws -> [ListeningPort] {
+        var out = Data()
+        let (status, errors) = try SSHCommand.run(t, "sh -c " + ShellContext.quote(script), env: env, cancel: cancel, options: ["-x", "-a"]) { out += $0 }
+        return try outcome(status: status, output: String(decoding: out, as: UTF8.self), errors: errors, server: server).get()
+    }
+
+    /// What the script's run comes to: the tool's line, then its output (netstat's "not all processes" warning on stderr,
+    /// exit 0, isn't a failure).
+    static func outcome(status: Int32, output: String, errors: String, server: String) -> Result<[ListeningPort], SFTPError> {
+        let lines = output.split(whereSeparator: \.isNewline)
+        guard let at = lines.firstIndex(where: { ["kermo-ss", "kermo-netstat", "kermo-none"].contains($0) }) else {
+            return .failure(SFTPError(message: errors.isEmpty ? "Couldn't look at the ports of \(server) (exit \(status))" : errors))
+        }
+        let tool = lines[at].dropFirst("kermo-".count)
+        if tool == "none" { return .failure(SFTPError(message: "\(server) has neither ss nor netstat to tell its ports")) }
+        guard status == 0 else {
+            return .failure(SFTPError(message: "\(tool) failed on \(server): " + (errors.isEmpty ? "exit \(status)" : errors)))
+        }
+        return .success(parse(lines[(at + 1)...].joined(separator: "\n")))
+    }
+
     /// "127.0.0.53%lo:53", "*:80", "[::1]:631", ":::22" (netstat's IPv6, no brackets): the port after the last ":".
     static func local(_ s: Substring) -> (String, Int)? {
         guard let colon = s.lastIndex(of: ":"), let port = Int(s[s.index(after: colon)...]), (1...65535).contains(port) else { return nil }

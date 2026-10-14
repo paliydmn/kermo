@@ -102,3 +102,51 @@ let busyboxSample = """
     #expect(ListeningPorts.parse("").isEmpty && ListeningPorts.parse("\r\n\n").isEmpty)
     #expect(ListeningPorts.parse("LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\r\n") == [ListeningPort(port: 22, addresses: ["*"])], "CRLF")
 }
+
+/// What the server's run comes to: the ports after the tool's line (a login script's words before it don't count); a
+/// failed login as ssh said it; a server without either tool, or one that failed, in plain words — netstat's warning
+/// with exit 0 is no failure.
+@Test func aPortsLookSaysWhatWentWrong() {
+    func said(_ status: Int32, _ output: String, _ errors: String = "") -> String {
+        switch ListeningPorts.outcome(status: status, output: output, errors: errors, server: "db1") {
+        case .success(let ports): ports.map { "\($0.port)" }.joined(separator: " ")
+        case .failure(let e): e.message
+        }
+    }
+    #expect(said(0, "Welcome!\nkermo-ss\n" + ssSample) == "22 53 80 5432 8000 18090")
+    #expect(said(0, "kermo-netstat\n" + netstatSample, "(Not all processes could be identified, non-owned process info") == "22 53 80 18090")
+    #expect(said(0, "kermo-ss\n") == "", "nothing listens")
+    #expect(said(0, "kermo-none\n") == "db1 has neither ss nor netstat to tell its ports")
+    #expect(said(1, "kermo-ss\n", "Cannot open netlink socket: Permission denied") == "ss failed on db1: Cannot open netlink socket: Permission denied")
+    #expect(said(2, "kermo-netstat\n") == "netstat failed on db1: exit 2")
+    #expect(said(255, "", "me@db1: Permission denied (publickey).") == "me@db1: Permission denied (publickey).", "a login's words as they are")
+    #expect(said(127, "") == "Couldn't look at the ports of db1 (exit 127)")
+}
+
+extension SudoPasswordTests {
+
+/// One ssh command runs the look (`.local()`: this Mac's sh), with stand-in `ss` and `netstat` first in PATH — the Mac's
+/// own netstat speaks BSD: ss when there is one, else netstat (its warning on stderr is no failure), each asked for
+/// listening TCP ports, numbers and processes.
+@Test func portsAreReadWithSsElseNetstat() throws {
+    let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-ports-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    func fake(_ name: String, _ output: String, stderr: String = "") throws {
+        let body = "#!/bin/sh\n[ \"$*\" = -ltnp ] || { echo \"wrong options: $*\" >&2; exit 9; }\n"
+            + "echo '\(stderr)' >&2\ncat <<'END'\n\(output)END\n"
+        try Data(body.utf8).write(to: URL(fileURLWithPath: d + "/" + name))
+        chmod(d + "/" + name, 0o755)
+    }
+    let env = ["PATH": d + ":/usr/bin:/bin"]
+    try fake("netstat", netstatSample, stderr: "(Not all processes could be identified, non-owned process info")
+    #expect(try ListeningPorts.read(on: .local(), server: "db1", env: env).map(\.port) == [22, 53, 80, 18090], "no ss here: netstat")
+    try fake("ss", ssSample)
+    let ports = try ListeningPorts.read(on: .local(), server: "db1", env: env)
+    #expect(ports.map(\.port) == [22, 53, 80, 5432, 8000, 18090] && ports.last?.process == "python3")
+    try Data("#!/bin/sh\necho 'Cannot open netlink socket: Permission denied' >&2\nexit 1\n".utf8).write(to: URL(fileURLWithPath: d + "/ss"))
+    let e = try #require(throws: SFTPError.self) { try ListeningPorts.read(on: .local(), server: "db1", env: env) }
+    #expect(e.message == "ss failed on db1: Cannot open netlink socket: Permission denied")
+}
+
+}
