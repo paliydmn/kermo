@@ -20,7 +20,7 @@ Updating, uninstalling and building from source: [Install Kermo](docs/install.md
 - **Files.** Copy and move in a queue with progress, pause and undo; marking in Midnight Commander style; archives, batch rename, Finder tags. → [Files and folders](docs/files.md)
 - **Find and compare.** Search by name, content or Spotlight; compare and synchronize folders, also with a server; diff files. → [Search, compare and synchronize](docs/search-compare.md)
 - **View and edit.** A viewer for multi-gigabyte files with hex and `tail -f`; an editor with syntax highlighting. → [Viewer and editor](docs/viewer-editor.md)
-- **Git.** Status column, branch, diff, log, blame, stage. → [Git](docs/git.md)
+- **Git.** Status column, branch, diff, log, blame, stage; switch branches, commit and sync from the sidebar. → [Git](docs/git.md)
 - **Servers.** SFTP panels and SSH sessions through the system OpenSSH, saved servers with Touch ID locks, copy between this Mac and servers. → [Servers and SSH](docs/servers.md), [Files on a server](docs/server-files.md)
 - **Safe server edits.** Open files as root through the server's own `sudo`, check a config with the server's tool before it is saved, reload the service, and get earlier versions back. → [Server files as root](docs/root-panel.md), [Checks on save](docs/config-checks.md)
 - **Tunnels.** Forward a server's database or web admin to `localhost`. → [SSH tunnels](docs/tunnels.md)
@@ -54,7 +54,7 @@ Mac function keys control media by default: ⌥ plus the digit does the same (�
 - [Files and folders](docs/files.md): copy, move, delete, undo, rename, archives, tags.
 - [Search, compare and synchronize](docs/search-compare.md): filter, find, compare folders, diff.
 - [Viewer and editor](docs/viewer-editor.md): large files, hex, follow, syntax highlighting.
-- [Git](docs/git.md): status, diff, log, blame, stage.
+- [Git](docs/git.md): status, diff, log, blame, stage, branches, commit, sync.
 - [Terminal and SSH sessions](docs/terminal.md): the ⌃O terminal and shell integration.
 - [Commands, user menu and `fm`](docs/commands.md): ⌘E, F2, placeholders, the `fm` launcher.
 

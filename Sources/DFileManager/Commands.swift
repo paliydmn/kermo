@@ -106,12 +106,6 @@ extension AppDelegate {
         cmd("view.perms", "Show Permissions & Owner", [], menu: "View", short: "Perms", aliases: "mode rwx owner group columns") {
             $0.togglePerms()
         },
-        cmd("view.gitOnly", "Show Only Git Changes", ["ctrl+g"], menu: "View", short: "Git only", aliases: "git status dirty edited filter source control") {
-            $0.toggleGitOnly()
-        },
-        cmd("git.changes", "Git Changes", ["ctrl+shift+g"], menu: "View", short: "Git changes", aliases: "git status dirty edited source control list") {
-            $0.active.showGitChanges()
-        },
         cmd("view.refresh", "Refresh", ["cmd+r"], menu: "View", short: "Refresh") { $0.active.reload() },
         cmd("view.theme", "Theme…", [], menu: "View", aliases: "colors dark midnight commander solarized") { $0.showThemes() },
         cmd("view.filter", "Quick Filter", ["/"], menu: "View", short: "Filter", aliases: "filter glob regex") { $0.active.beginFilter() },
@@ -186,16 +180,35 @@ extension AppDelegate {
         cmd("file.combine", "Combine Parts…", [], menu: "File", aliases: "join merge chunks") { $0.combineDialog() },
         cmd("file.diff", "Compare Files (diff)", ["cmd+shift+d"], menu: "File", short: "Diff", aliases: "compare files") { $0.diffFiles() },   // not ⌘⌥D: macOS takes it (Dock hiding)
         cmd("server.history", "Server File History…", [], menu: "File", aliases: "versions revert previous backup undo save sftp") { $0.serverFileHistory() },
-        cmd("git.diff", "Git Diff", ["ctrl+d"], menu: "File", short: "Git diff", aliases: "git difference changes against head") { $0.gitDiff() },
-        cmd("git.log", "Git Log of File", ["ctrl+l"], menu: "File", short: "Git log", aliases: "git history commits follow patch") { $0.gitHistory(blame: false) },
-        cmd("git.blame", "Git Blame", ["ctrl+shift+l"], menu: "File", short: "Git blame", aliases: "git annotate who changed lines") { $0.gitHistory(blame: true) },
-        cmd("git.stage", "Git Stage", ["ctrl+shift+a"], menu: "File", short: "Stage", aliases: "git add index") { $0.gitStage(undo: false) },
-        cmd("git.unstage", "Git Unstage", ["ctrl+shift+u"], menu: "File", short: "Unstage", aliases: "git reset restore staged index") { $0.gitStage(undo: true) },
         cmd("file.eject", "Eject Volume", ["cmd+opt+e"], menu: "File", short: "Eject", aliases: "unmount disk") { $0.ejectVolume() },
         cmd("file.info", "Get Info", ["cmd+i"], menu: "File", short: "Info", aliases: "get info permissions chmod chown owner hash checksum xattr quarantine") {
             guard let url = $0.active.infoURL else { return $0.active.flash("Get Info is for this Mac's files — on a server, ⌘⌥A sets permissions and owner") }
             InfoWindow.show(url)
         },
+
+        // Git: the work tree of the active panel (the sidebar's Git section)
+        cmd("git.switch", "Switch Branch…", ["ctrl+b"], menu: "Git", short: "Branch", aliases: "git checkout branch tag create new") { $0.showBranches() },
+        cmd("git.newBranch", "New Branch…", [], menu: "Git", short: "New branch", aliases: "git checkout create branch") { $0.newBranch(from: nil) },
+        cmd("git.commit", "Commit…", ["ctrl+shift+c"], menu: "Git", short: "Commit", aliases: "git commit amend message") { $0.showCommit() },
+        cmd("git.sync", "Sync", [], menu: "Git", short: "Sync", aliases: "git pull push synchronize remote origin") { $0.gitSync() },
+        cmd("git.publish", "Publish Branch", [], menu: "Git", short: "Publish", aliases: "git push upstream origin remote") { $0.gitPublish() },
+        cmd("git.pull", "Pull", [], menu: "Git", short: "Pull", aliases: "git pull fast-forward remote origin") { $0.gitPull() },
+        cmd("git.push", "Push", [], menu: "Git", short: "Push", aliases: "git push remote origin") { $0.gitPush() },
+        cmd("git.fetch", "Fetch", [], menu: "Git", short: "Fetch", aliases: "git fetch prune remote origin") { $0.gitFetch() },
+        cmd("git.changes", "Git Changes", ["ctrl+shift+g"], menu: "Git", short: "Git changes", aliases: "git status dirty edited source control list") {
+            $0.active.showGitChanges()
+        },
+        cmd("view.gitOnly", "Show Only Git Changes", ["ctrl+g"], menu: "Git", short: "Git only", aliases: "git status dirty edited filter source control") {
+            $0.toggleGitOnly()
+        },
+        cmd("git.diff", "Git Diff", ["ctrl+d"], menu: "Git", short: "Git diff", aliases: "git difference changes against head") { $0.gitDiff() },
+        cmd("git.log", "Git Log of File", ["ctrl+l"], menu: "Git", short: "Git log", aliases: "git history commits follow patch") { $0.gitHistory(blame: false) },
+        cmd("git.blame", "Git Blame", ["ctrl+shift+l"], menu: "Git", short: "Git blame", aliases: "git annotate who changed lines") { $0.gitHistory(blame: true) },
+        cmd("git.stage", "Git Stage", ["ctrl+shift+a"], menu: "Git", short: "Stage", aliases: "git add index") { $0.gitStage(undo: false) },
+        cmd("git.unstage", "Git Unstage", ["ctrl+shift+u"], menu: "Git", short: "Unstage", aliases: "git reset restore staged index") { $0.gitStage(undo: true) },
+        cmd("git.root", "Go to Repository Root", [], menu: "Git", short: "Repo root", aliases: "git top level work tree") { $0.gitRootFolder() },
+        cmd("git.copyBranch", "Copy Branch Name", [], menu: "Git", aliases: "git branch clipboard") { $0.gitCopyBranch() },
+        cmd("git.init", "Initialize Git Repository…", [], menu: "Git", aliases: "git init new repository create") { $0.gitInit() },
 
         // Shell
         cmd("usermenu", "User Menu…", ["f2", "opt+2"], menu: "File", short: "Menu", aliases: "user menu") { $0.showUserMenu() },
@@ -631,7 +644,7 @@ extension AppDelegate {
         let items = saved.map { p in Picker.Item(title: p.title, subtitle: p.filter, detail: "preset") { panel.applyFilter(p.filter) } }
             + recent.map { r in Picker.Item(title: r, detail: "recent") { panel.applyFilter(r) } }
         Picker.show(over: window, placeholder: "Filter presets — edit in ~/.config/dfilemanager/filters.json", items: items, freeText: { q in
-            q.isEmpty ? nil : Picker.Item(title: "Filter: \(q)", detail: "↩") { panel.applyFilter(q) }
+            q.isEmpty ? [] : [Picker.Item(title: "Filter: \(q)", detail: "↩") { panel.applyFilter(q) }]
         })
     }
 
@@ -824,7 +837,7 @@ extension AppDelegate {
         Picker.show(over: window, placeholder: ssh ? "SSH to: a server, user@host, ssh://host:port — ⌘E edits yours"
                                                    : "SFTP to: a server, user@host:/path, sftp://…, smb://server/share, nfs://… — ⌘E edits yours",
                     items: items, freeText: { q in
-            q.isEmpty ? nil : Picker.Item(title: (ssh ? "SSH to" : "Connect to") + " “\(q)”", detail: "↩") { go(q) }
+            q.isEmpty ? [] : [Picker.Item(title: (ssh ? "SSH to" : "Connect to") + " “\(q)”", detail: "↩") { go(q) }]
         })
     }
 

@@ -113,6 +113,32 @@ struct ServerRow: Equatable {
     var sftp: [ServerSession] { sessions.filter { $0.kind == .sftp } }
 }
 
+/// The Git section, pinned under the list: the active panel's work tree (here or on a server), from the `git status`
+/// the panel already runs for its Git column — no git of its own.
+struct GitRow: Equatable {
+    let status: GitStatus
+    var server: String? = nil   // the host of a server panel: the state shows there, the actions are this Mac's
+
+    var repo: String { (status.root as NSString).lastPathComponent }
+    /// The count shown: conflicts if any, else changes — in the panel's folder, as its Git column (`git status -- .`).
+    var changed: Int { status.conflicts > 0 ? status.conflicts : status.changes.count }
+    var arrows: String { [status.behind > 0 ? "↓\(status.behind)" : nil, status.ahead > 0 ? "↑\(status.ahead)" : nil].compactMap { $0 }.joined(separator: " ") }
+    /// A branch no remote has yet: ⟳ becomes Publish.
+    var publishes: Bool { server == nil && status.upstream == nil && !status.detached }
+
+    func tip(now: Date = Date()) -> String {
+        let st = status, here = st.subdir.isEmpty ? "" : " in this folder"
+        let place = server.map { "\($0):\(st.root)" } ?? (st.root as NSString).abbreviatingWithTildeInPath
+        let upstream = st.detached ? "detached HEAD" : st.upstream.map { $0 + (st.gone ? " is gone" : arrows.isEmpty ? " · up to date" : " · " + arrows) }
+            ?? "not on a remote yet"
+        let changes = st.conflicts > 0 ? "\(st.conflicts) file\(st.conflicts == 1 ? "" : "s") in conflict\(here)"
+            : st.changes.isEmpty ? "no changes\(here)" : "\(st.changes.count) change\(st.changes.count == 1 ? "" : "s")\(here), \(st.staged) staged"
+        let fetched = st.fetched.map { "fetched " + RelativeDateTimeFormatter().localizedString(for: $0, relativeTo: now) }
+        return ([place, upstream, changes] + (fetched.map { [$0] } ?? [])).joined(separator: " · ") + "\n"
+            + (server == nil ? "Click: switch branch · ⋯ or right-click: everything else" : "Git actions work in this Mac's folders · ⋯: copy the branch name")
+    }
+}
+
 struct SidebarSection: Equatable {
     let id: String
     let title: String
@@ -271,7 +297,7 @@ enum ServerAction: String { case row, ssh, sftp }
 
 /// Swaps a server row's state for its actions while the mouse is over the row. Not for being selected: that's the
 /// current server, whose name and state matter most, and a click always comes with a hover.
-final class HoverRowView: NSTableRowView {
+class HoverRowView: NSTableRowView {
     private var hovering = false { didSet { update() } }
 
     override func updateTrackingAreas() {
@@ -294,6 +320,22 @@ final class HoverRowView: NSTableRowView {
             else { v.subviews.forEach(walk) }
         }
         walk(self)
+    }
+}
+
+/// The Git section's row, outside the outline: a click (not on one of its buttons) and a right-click of its own.
+final class GitRowView: HoverRowView {
+    var onClick: (() -> Void)?
+    var menuItems: (() -> [NSMenuItem])?
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) {
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
+    }
+    override func accessibilityPerformPress() -> Bool { onClick?(); return onClick != nil }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let m = NSMenu()
+        (menuItems?() ?? []).forEach(m.addItem)
+        return m.items.isEmpty ? nil : m
     }
 }
 
@@ -351,8 +393,13 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
     var keyFor: (String) -> String = { _ in "" }       // command id → its first key, for section headers
     var onLeave: (() -> Void)?                         // ⎋ while focused: the keys go back to the panel
     var onCommandKey: ((NSEvent) -> Bool)?             // any other key while focused: the panels' shortcuts
+    var onGitCommand: ((String) -> Void)?              // the Git row's click and buttons: a command id
+    var gitMenu: (() -> [NSMenuItem])?                 // its ⋯ and right-click
 
     private let outline = SidebarOutline()
+    private let scroll = NSScrollView()
+    private let gitBlock = NSStackView()   // pinned under the list: always in the same place, however long the list
+    private var gitRow: GitRow?
     private var theme = Theme.current
     private var roots: [Node] = []
     /// NSOutlineView doesn't retain its items, and around a reload (selection, group-row caches) it still asks about the
@@ -392,22 +439,33 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         outline.menu?.delegate = self
         outline.registerForDraggedTypes([.fileURL, Self.favoriteDrag, TransferItems.remoteType])
         outline.setDraggingSourceOperationMask([.copy, .move, .generic], forLocal: false)
-        let scroll = NSScrollView()
         scroll.documentView = outline
         scroll.verticalScroller = ThemeScroller()
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
-        view = scroll
+        gitBlock.orientation = .vertical
+        gitBlock.spacing = 0
+        gitBlock.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 6, right: 0)
+        gitBlock.wantsLayer = true
+        gitBlock.isHidden = true
+        let column = NSStackView(views: [scroll, gitBlock])   // a hidden block gives the list its height back
+        column.orientation = .vertical
+        column.spacing = 0
+        for v in [scroll, gitBlock] { v.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
+        scroll.setContentHuggingPriority(.init(1), for: .vertical)
+        view = column
         applyTheme()
     }
 
     /// System theme: the native source list. Others: their background, text and folder colors.
     func applyTheme() {
         theme = Theme.current
-        (view as? NSScrollView)?.drawsBackground = theme.background != nil
-        (view as? NSScrollView)?.backgroundColor = theme.background ?? .clear
-        ((view as? NSScrollView)?.verticalScroller as? ThemeScroller)?.fill = theme.background
-        (view as? NSScrollView)?.verticalScroller?.needsDisplay = true
+        scroll.drawsBackground = theme.background != nil
+        scroll.backgroundColor = theme.background ?? .clear
+        (scroll.verticalScroller as? ThemeScroller)?.fill = theme.background
+        scroll.verticalScroller?.needsDisplay = true
+        gitBlock.layer?.backgroundColor = theme.background?.cgColor
+        buildGit()
         outline.style = theme.background == nil ? .sourceList : .plain
         outline.backgroundColor = theme.background ?? .clear
         outline.reloadData()
@@ -727,6 +785,135 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
             menu = NSMenu()
             items.forEach(menu.addItem)
         }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.isFlipped ? button.bounds.maxY + 4 : -4), in: button)
+    }
+
+    // MARK: - Git, pinned under the list
+
+    /// The Git section for the active panel's work tree; nil: it isn't in one (or its config can run commands) — no
+    /// section, and the list gets the room.
+    func showGit(_ row: GitRow?) {
+        loadViewIfNeeded()
+        guard row != gitRow else { return }
+        gitRow = row
+        buildGit()
+    }
+
+    private func buildGit() {
+        gitBlock.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        gitBlock.isHidden = gitRow == nil
+        guard let r = gitRow else { return }
+        let line = NSBox()   // the list scrolls under the section: a line where it ends
+        line.boxType = .separator
+        for v in [line, gitHeader(r), gitView(r)] {
+            gitBlock.addArrangedSubview(v)
+            v.widthAnchor.constraint(equalTo: gitBlock.widthAnchor).isActive = true
+        }
+    }
+
+    /// "GIT  kermo           ⌃B", as the outline's section headers.
+    private func gitHeader(_ r: GitRow) -> NSView {
+        let title = NSTextField(labelWithString: "GIT")
+        title.font = .systemFont(ofSize: 11, weight: .semibold)
+        title.textColor = .secondaryLabelColor
+        let repo = NSTextField(labelWithString: r.repo)
+        repo.font = .systemFont(ofSize: 11)
+        repo.textColor = .tertiaryLabelColor
+        repo.lineBreakMode = .byTruncatingTail
+        repo.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let key = NSTextField(labelWithString: r.server == nil ? keyFor("git.switch") : "")
+        key.font = .systemFont(ofSize: 10)
+        key.textColor = .tertiaryLabelColor
+        let h = row([title, repo, spacer(), key])
+        h.edgeInsets = NSEdgeInsets(top: 8, left: 16, bottom: 4, right: 25)   // in line with the outline's headers and their keys
+        h.toolTip = r.server.map { "\($0):\(r.status.root)" } ?? r.status.root
+        return h
+    }
+
+    /// Branch icon and name, then what there is to tell: changes (conflicts, red), ↓↑ to pull and push, a cloud for a
+    /// branch no remote has yet. Under the mouse: Git Changes, Commit, Sync (or Publish) and ⋯ — on a server panel
+    /// only ⋯. A click switches branch. As the server row: the row never reflows, a narrow column cuts the name.
+    func gitView(_ r: GitRow) -> GitRowView {
+        let st = r.status, local = r.server == nil
+        let icon = NSImageView(image: NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Branch")!)
+        icon.contentTintColor = theme.background == nil ? .controlAccentColor : theme.dir
+        let name = ServerName(labelWithString: st.branch)
+        name.textColor = theme.text
+        name.lineBreakMode = .byTruncatingMiddle
+        name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        name.setContentHuggingPriority(.init(1), for: .horizontal)
+
+        func chip(_ symbol: String?, _ title: String, _ color: NSColor, _ id: String?, _ label: String) -> NSButton {
+            let image = symbol.map { NSImage(systemSymbolName: $0, accessibilityDescription: nil)!.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))! }
+            let b = id == nil ? NSButton(title: title, target: nil, action: nil) : PillButton(title: title, target: self, action: #selector(gitButton(_:)))
+            b.image = image
+            b.imagePosition = image == nil ? .noImage : title.isEmpty ? .imageOnly : .imageLeading
+            b.imageHugsTitle = true
+            b.isBordered = false
+            b.font = .systemFont(ofSize: 10, weight: .semibold)
+            b.contentTintColor = color
+            b.identifier = id.map { .init($0) }
+            b.toolTip = label
+            b.setAccessibilityLabel(label)
+            return b
+        }
+        let conflicts = st.conflicts > 0, n = r.changed
+        let changeSymbol = conflicts ? "exclamationmark.triangle.fill" : "plusminus", changeColor: NSColor = conflicts ? .systemRed : .secondaryLabelColor
+        let changeLabel = conflicts ? "\(n) file\(n == 1 ? "" : "s") in conflict" : "\(n) change\(n == 1 ? "" : "s")"
+        let chips = ServerChips(views: [
+            n == 0 ? nil : chip(changeSymbol, "\(n)", changeColor, nil, changeLabel),
+            r.arrows.isEmpty ? nil : chip(nil, r.arrows, .secondaryLabelColor, nil, "\(st.behind) to pull, \(st.ahead) to push"),
+            r.publishes ? chip("icloud.and.arrow.up", "", .secondaryLabelColor, nil, "Not on a remote yet") : nil,
+        ].compactMap { $0 })
+        let more = NSButton(image: NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Git menu")!
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))!, target: self, action: #selector(gitButton(_:)))
+        more.isBordered = false
+        more.contentTintColor = .secondaryLabelColor
+        more.identifier = .init("git.menu")
+        more.toolTip = "Everything Git: Switch Branch, Commit, Pull, Push, Fetch…"
+        let sync = st.detached || st.gone ? nil : r.publishes
+            ? chip("icloud.and.arrow.up", "", .secondaryLabelColor, "git.publish", "Publish Branch: push it to origin")
+            : chip("arrow.triangle.2.circlepath", r.arrows, .secondaryLabelColor, "git.sync", "Sync: pull (fast-forward only), then push")
+        let toolbar = ServerToolbar(views: !local ? [more] : [
+            n == 0 ? nil : chip(changeSymbol, "\(n)", changeColor, "git.changes", "Git Changes"),
+            st.changes.isEmpty || conflicts ? nil : chip("checkmark", "", .secondaryLabelColor, "git.commit", "Commit…"),
+            sync, more,
+        ].compactMap { $0 })
+        chips.spacing = 4
+        toolbar.spacing = 2
+        toolbar.isHidden = true
+
+        let line = row([icon, name, chips, toolbar])
+        line.spacing = 6
+        line.edgeInsets = NSEdgeInsets(top: 0, left: 19, bottom: 0, right: 8)   // the icon under the places' icons
+        let v = GitRowView()
+        v.backgroundColor = .clear
+        v.toolTip = r.tip()
+        v.setAccessibilityRole(.button)
+        v.setAccessibilityLabel("Branch \(st.branch)")
+        line.translatesAutoresizingMaskIntoConstraints = false
+        v.addSubview(line)
+        NSLayoutConstraint.activate([
+            line.leadingAnchor.constraint(equalTo: v.leadingAnchor), line.trailingAnchor.constraint(equalTo: v.trailingAnchor),
+            line.topAnchor.constraint(equalTo: v.topAnchor), line.bottomAnchor.constraint(equalTo: v.bottomAnchor),
+            v.heightAnchor.constraint(equalToConstant: 24),
+        ])
+        v.onClick = { [weak self, weak more] in
+            if local { self?.onGitCommand?("git.switch") } else if let more { self?.popGitMenu(from: more) }
+        }
+        v.menuItems = { [weak self] in self?.gitMenu?() ?? [] }
+        return v
+    }
+
+    @objc private func gitButton(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        if id == "git.menu" { return popGitMenu(from: sender) }
+        DispatchQueue.main.async { [weak self] in self?.onGitCommand?(id) }   // what it runs may rebuild this row
+    }
+
+    private func popGitMenu(from button: NSButton) {
+        let menu = NSMenu()
+        (gitMenu?() ?? []).forEach(menu.addItem)
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.isFlipped ? button.bounds.maxY + 4 : -4), in: button)
     }
 

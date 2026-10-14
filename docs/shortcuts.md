@@ -89,6 +89,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Git: only changes / all changes as a list / diff against HEAD | ⌃G / ⌃⇧G / ⌃D |
 | Git: log of the file / blame (in the viewer) | ⌃L / ⌃⇧L |
 | Git: stage / unstage the marked files | ⌃⇧A / ⌃⇧U |
+| Git: switch or create a branch / commit | ⌃B / ⌃⇧C |
 
 ## Servers, terminal and commands
 

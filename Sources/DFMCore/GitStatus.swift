@@ -5,6 +5,12 @@ public struct GitStatus: Sendable, Equatable {
     public var branch = ""
     public var ahead = 0
     public var behind = 0
+    public var upstream: String?   // "origin/main"; nil: the branch isn't on a remote yet
+    public var gone = false        // its upstream was deleted (a merged PR's branch, after fetch --prune)
+    public var detached = false    // "HEAD (no branch)"
+    public var root = ""           // the work tree
+    public var subdir = ""         // the listed folder within it ("" at the root): `changes` cover only that
+    public var fetched: Date?      // the last fetch (FETCH_HEAD's time), on this Mac
     /// Name in the listed folder → porcelain "XY" code ("M ", " M", "??", "A ", "UU"…), or "•" for a
     /// folder with changes somewhere inside.
     public var marks: [String: String] = [:]
@@ -30,7 +36,9 @@ public struct GitStatus: Sendable, Equatable {
               let data = git(["-c", "core.fsmonitor=false", "status", "--ignore-submodules=all", "--porcelain=v1", "-b", "-z"]
                              + (allUntracked ? ["--untracked-files=all"] : []) + ["--", "."], in: dir)
         else { return nil }
-        return parse(String(decoding: data, as: UTF8.self), repoRoot: root, dir: (dir as NSString).resolvingSymlinksInPath)
+        var st = parse(String(decoding: data, as: UTF8.self), repoRoot: root, dir: (dir as NSString).resolvingSymlinksInPath)
+        st.fetched = (try? FileManager.default.attributesOfItem(atPath: root + "/.git/FETCH_HEAD"))?[.modificationDate] as? Date   // ponytail: not in a linked worktree (.git is a file)
+        return st
     }
 
     /// The work tree `dir` is in, if that repo's own config can't make git run a command (see `isInert`).
@@ -144,12 +152,16 @@ public struct GitStatus: Sendable, Equatable {
         "extensions.worktreeconfig", "remote.url", "remote.pushurl", "remote.fetch", "remote.push", "remote.tagopt",
         "remote.mirror", "remote.prune", "remote.gh-resolved", "submodule.url", "submodule.path", "submodule.active",
         "lfs.repositoryformatversion", "lfs.access",
-        "core.hookspath",   // husky; status with --no-optional-locks writes no index, so post-index-change never runs
+        // husky. Status with --no-optional-locks writes no index, so post-index-change never runs; the Git section's
+        // commit, switch, pull and push run hooks, as they do in a terminal — the user asked for those.
+        "core.hookspath",
     ]
 
     static func parse(_ output: String, repoRoot: String, dir: String) -> GitStatus {
         var st = GitStatus()
         let prefix = dir == repoRoot ? "" : String(dir.dropFirst(repoRoot.count + 1)) + "/"
+        st.root = repoRoot
+        st.subdir = String(prefix.dropLast())
         var records = output.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)[...]
         while let rec = records.popFirst() {
             if rec.hasPrefix("## ") {
@@ -182,11 +194,18 @@ public struct GitStatus: Sendable, Equatable {
         return (items, deleted)
     }
 
-    /// "main...origin/main [ahead 1, behind 2]", "No commits yet on main", "HEAD (no branch)".
+    /// Changes that are merge conflicts: "UU", "AU", "DU", "AA", "DD"…
+    public static func isConflict(_ code: String) -> Bool { code.contains("U") || code == "AA" || code == "DD" }
+    public var conflicts: Int { changes.values.filter(Self.isConflict).count }
+    /// Changes with something in the index (staged), conflicts aside.
+    public var staged: Int { changes.values.filter { !Self.isConflict($0) && !" ?!".contains($0.first ?? " ") }.count }
+
+    /// "main...origin/main [ahead 1, behind 2]", "main...origin/main [gone]", "No commits yet on main", "HEAD (no branch)".
     private static func parseBranch(_ s: String, into st: inout GitStatus) {
         var head = s
         if let r = s.range(of: " [") {
             head = String(s[..<r.lowerBound])
+            st.gone = s[r.upperBound...] == "gone]"
             for part in s[r.upperBound...].dropLast().split(separator: ",") {
                 let kv = part.split(separator: " ")
                 if kv.count == 2, let n = Int(kv[1]) {
@@ -195,7 +214,86 @@ public struct GitStatus: Sendable, Equatable {
             }
         }
         if head.hasPrefix("No commits yet on ") { head = String(head.dropFirst("No commits yet on ".count)) }
-        st.branch = head.components(separatedBy: "...").first ?? head
+        let parts = head.components(separatedBy: "...")
+        st.branch = parts[0]
+        st.upstream = parts.count > 1 ? parts[1] : nil
+        st.detached = head == "HEAD (no branch)"
+    }
+
+    // MARK: - What the Git section runs (switch, commit, pull, push…)
+
+    /// A branch or tag for Switch Branch, newest first.
+    public struct Ref: Sendable, Equatable {
+        public enum Kind: Sendable { case local, remote, tag }
+        public var name: String   // "main", "origin/feature", "v1.0"
+        public var kind: Kind
+        public var hash = "", subject = "", age = ""   // age: "3 hours ago"
+        public var current = false
+        public var gone = false   // a local branch whose upstream was deleted (merged, then fetch --prune)
+    }
+
+    /// Local branches, then remote ones that have no local branch of their name, and tags — each group in
+    /// `for-each-ref`'s order (newest first). Remotes' HEAD isn't listed. nil: git didn't run or failed.
+    public static func refs(_ dir: String) -> [Ref]? {
+        let r = act(["for-each-ref", "--sort=-creatordate",
+                     "--format=%(HEAD)%00%(refname)%00%(objectname:short)%00%(creatordate:relative)%00%(upstream:track)%00%(subject)",
+                     "refs/heads", "refs/remotes", "refs/tags"], in: dir, timeout: 30)
+        return r.ok ? parseRefs(r.output) : nil
+    }
+
+    static func parseRefs(_ output: String) -> [Ref] {
+        let all = output.split(separator: "\n").compactMap { line -> Ref? in
+            let f = line.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+            guard f.count == 6 else { return nil }
+            let kinds: [(String, Ref.Kind)] = [("refs/heads/", .local), ("refs/remotes/", .remote), ("refs/tags/", .tag)]
+            guard let (prefix, kind) = kinds.first(where: { f[1].hasPrefix($0.0) }), !(kind == .remote && f[1].hasSuffix("/HEAD")) else { return nil }
+            return Ref(name: String(f[1].dropFirst(prefix.count)), kind: kind, hash: f[2], subject: f[5], age: f[3],
+                       current: f[0] == "*", gone: f[4] == "[gone]")
+        }
+        let local = Set(all.filter { $0.kind == .local }.map(\.name))
+        let remote = all.filter { r in r.kind == .remote && !local.contains(String(r.name.drop { $0 != "/" }.dropFirst())) }
+        return all.filter { $0.kind == .local } + remote + all.filter { $0.kind == .tag }
+    }
+
+    /// Runs a git command the user asked for in the work tree `dir` is in, after the same `trustedRoot` check as
+    /// everything else, every time (D-020). `output` is what git printed, stdout and stderr together, as a terminal
+    /// shows it. `env` adds to the app's environment (the askpass for a push). Killed on ⎋ (`cancel`) or after
+    /// `timeout`: a pull waits on the network, and on someone typing a password.
+    public static func act(_ args: [String], in dir: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
+                           timeout: TimeInterval = 600) -> (ok: Bool, output: String) {
+        guard trustedRoot(dir) != nil else { return (false, "Git didn't run: this repository's own config can run commands.") }
+        return run(args, in: dir, env: env, cancel: cancel, timeout: timeout)
+    }
+
+    /// `git init` in `dir`, unless it's in a work tree already (a repo inside a repo is rarely what's meant).
+    public static func initialize(_ dir: String) -> (ok: Bool, output: String) {
+        if let root = repoRoot(dir) { return (false, "Already in a Git repository: \(root)") }
+        return run(["init"], in: dir, env: [:], cancel: nil, timeout: 30)
+    }
+
+    private static func run(_ args: [String], in dir: String, env: [String: String], cancel: CancelFlag?, timeout: TimeInterval) -> (ok: Bool, output: String) {
+        guard available else { return (false, "Git needs the Command Line Tools (xcode-select --install)") }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        p.arguments = ["-C", dir] + args
+        p.environment = ProcessInfo.processInfo.environment.merging(["LC_ALL": "C", "GIT_TERMINAL_PROMPT": "0"].merging(env) { $1 }) { $1 }
+        let out = Pipe()
+        p.standardInput = FileHandle.nullDevice
+        p.standardOutput = out
+        p.standardError = out
+        guard (try? p.run()) != nil else { return (false, "Git didn't start") }
+        // The whole group (Process makes git its leader): ssh, a hook, the askpass dialog go too, and the pipe closes.
+        let pid = p.processIdentifier
+        let previous = cancel?.onCancel { killpg(pid, SIGTERM) } ?? nil
+        defer { cancel?.onCancel(previous) }
+        let kill = DispatchWorkItem { killpg(pid, SIGTERM) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: kill)
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        kill.cancel()
+        let text = String(decoding: data, as: UTF8.self)
+        guard p.terminationReason == .exit else { return (false, text + "\n(stopped)") }
+        return (p.terminationStatus == 0, text)
     }
 }
 
