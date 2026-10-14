@@ -10,7 +10,7 @@ What Kermo does to keep a server safe from a slip, and what it keeps on your Mac
 
 - **Purple, not red.** The server's icon and name in the sidebar, its tunnels and a root panel's header are purple, and titles say 🟣 PROD. Red is kept for what failed; orange is a [root panel](root-panel.md).
 - **Changes ask first**, and the question starts with "“host” is a production server". That covers saving a file (the first save in an editor; later saves there don't ask again), reverting a version, copying, moving, deleting, renaming, changing permissions, extracting, synchronizing and reloading a service. A new folder is created without a question, but it is logged.
-- **Dangerous commands ask.** A command from ⌘E, F2 or the user menu asks (“Run “…” on host (production)?”) only when it starts with `rm`, `mv`, `chmod`, `chown`, `dd` or `systemctl stop` / `restart`, also behind `sudo`, `env` and the like. Any other command runs without a question, and is logged.
+- **Dangerous commands ask.** A command from ⌘E, F2 or the user menu asks (“Run “…” on host (production)?”) only when it starts with `rm`, `mv`, `chmod`, `chown`, `dd` or `systemctl stop` / `restart`, also behind `sudo`, `env` and the like. Any other command runs without a question, and is logged. [Run on Servers…](commands.md#run-on-several-servers) asks once for all the production servers it runs on, with ↩ on **Cancel**.
 - **Safe defaults.** On the reload question ↩ answers **Cancel**. A copy that lands where a save would be [checked first](config-checks.md#copies-arent-checked) (`sudoers`, `sshd_config` …) says so in its question.
 - **A log of what you did.** See below.
 - **Opening a tunnel doesn't ask:** a tunnel changes nothing on the server by itself.
@@ -20,7 +20,7 @@ What Kermo does to keep a server safe from a slip, and what it keeps on your Mac
 On a production server, what Kermo does there goes into `~/.config/dfilemanager/audit.jsonl`, one JSON line each:
 
 - saves and reverts (a failed check shows as its exit status and what became of the file; a passed or skipped check leaves nothing in the line);
-- commands (⌘E, F2);
+- commands (⌘E, F2, Run on Servers…);
 - copies, moves and deletes (F5, F6, F8, Synchronize);
 - renames, permissions, new folders, extracting and reloads.
 
@@ -44,4 +44,4 @@ Server passwords are never put on a command line or in a file. A [locked server]
 
 ## What listens on this Mac
 
-Only [SSH tunnels](tunnels.md) listen, and only on `127.0.0.1` and `::1`. Any program or user on this Mac can connect to such a port, so keep a tunnel to a production database off when you don't need it.
+Only [SSH tunnels](tunnels.md) listen, temporary ones too, and only on `127.0.0.1` and `::1`. Any program or user on this Mac can connect to such a port, so keep a tunnel to a production database off when you don't need it.

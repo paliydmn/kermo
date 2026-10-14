@@ -15,6 +15,25 @@ Run a shell command on the files in front of you, keep your own commands in a me
 
 On this Mac, ↩ works as Midnight Commander's subshell does: your aliases and functions, colors, `sudo` and `git commit` prompts, Tab completion and ⌃R all work, and the command lands in the shell's history. On a root panel the command still runs as the user ([root panel](root-panel.md#what-runs-as-root)).
 
+## Run on several servers
+
+**Run on Servers…** (⇧⌘P, the **Admin** menu, or the sidebar's **Servers** header menu) runs one command on several servers at once, the way the command line runs one on a server panel: in each server's login shell, over its ssh connection, without a terminal. So use `sudo -n`, which works where sudo needs no password and otherwise says "a password is required"; plain `sudo` that wants a password stops with "a terminal is required". You see what sudo said. No placeholders: `%f` and `%d` mean nothing across servers.
+
+1. Type the command. The sheet lists your saved servers and the hosts in `~/.ssh/config`, as the Connect picker does; production ones are purple, locked ones have 🔒.
+2. Tick the servers. The filter narrows the list by name or address, and ⌘A in the filter ticks all it shows. What runs is what's ticked and shown.
+3. Click **Run on 5 Servers** (↩). The last choice and command come back next time.
+
+Up to 8 servers run at once. Logins go one at a time, so password dialogs come one after another, each saying it's "For “Run on Servers”". One output window shows the lines as they come, each under its server's name, errors in red:
+
+```
+web1 │ 14:02:11 up 31 days,  2 users,  load average: 0.08, 0.03, 0.01
+db2  │ sudo: a password is required
+```
+
+At the end a summary names what didn't go well: `✓ 5  ✗ 1 (db2: exit 1)  🔒 1 skipped (vault)`. ⎋ stops them all and keeps the window for the summary; ⎋ again closes it.
+
+On [production servers](safety.md#production-servers) a command that removes, moves or stops things asks once, naming them all, with ↩ on **Cancel**; each run is a line in the production log. A [locked server](servers.md#lock-a-server) asks for Touch ID before anything runs; refuse, and only that one is skipped.
+
 ## Placeholders
 
 In the command line and in the user menu:

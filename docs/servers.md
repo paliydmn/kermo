@@ -40,10 +40,12 @@ Right-click a server row in the sidebar (or click **⋯** under the mouse):
 - **Edit…** opens the sheet again. **Duplicate…** makes a copy named "name copy"; its tunnels are copied but turned off.
 - **Delete…** removes the server and its saved passwords from the Keychain (unless another saved server has the same address). It offers to delete its [file history](server-files.md#file-history) too. Open sessions stay open and its tunnels turn off.
 - **Pin** keeps the server at the top of the Servers list. **Remove from Recents** drops a recent address.
-- **Open SSH Session**, **Open SFTP**, **Open SFTP in New Tab / in Other Panel**, **Open SFTP as Root** ([root panel](root-panel.md)), **Tunnels** ([tunnels](tunnels.md)), **Copy SSH Command** and **Close All Sessions** (the connection closes too, unless a tunnel is on; **Disconnect** also turns tunnels off).
+- **Open SSH Session**, **Open SFTP**, **Open SFTP in New Tab / in Other Panel**, **Open SFTP as Root** ([root panel](root-panel.md)), **Tunnels** ([tunnels](tunnels.md); **Forward Port…** there works on any server row), **Copy SSH Command** and **Close All Sessions** (the connection closes too, unless a tunnel is on; **Disconnect** also turns tunnels off).
 - **Mark as Production** / **Unmark Production** and **Save as Production…**: see below.
 
 **Go ▸ Edit SSH Config** opens `~/.ssh/config` in the editor and creates it with an example if it doesn't exist.
+
+To run one command on several servers at once, choose **Run on Servers…** in the Servers header's right-click menu: see [Run on several servers](commands.md#run-on-several-servers).
 
 ## Server rows in the sidebar
 
@@ -53,7 +55,7 @@ A row shows what is open on the server:
 - `⇄` for tunnels that are listening (red when one failed);
 - a lock on the icon for a locked server, a red dot when the last connection failed, purple for a production server.
 
-Under the mouse the row shows **SSH**, **SFTP**, **Tunnels** (only for a saved server that has tunnels) and **⋯**. A click goes to the server's open session. With nothing open, a double-click connects with SSH, so a single click on an idle server does nothing. The tooltip says all of it.
+Under the mouse the row shows **SSH**, **SFTP**, **Tunnels** (for a saved server that has tunnels, or a server with [temporary ones](tunnels.md#forward-a-port-the-server-listens-on)) and **⋯**. A click goes to the server's open session. With nothing open, a double-click connects with SSH, so a single click on an idle server does nothing. The tooltip says all of it.
 
 ## Lock a server
 

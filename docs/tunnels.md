@@ -2,13 +2,13 @@
 
 # SSH tunnels
 
-Reach ports on this Mac that lead to a saved server, or past it: a database that listens only on the server's localhost, a web admin (Grafana, RabbitMQ, Proxmox), a host behind the server. The server must be [saved](servers.md#save-a-server).
+Reach ports on this Mac that lead to a saved server, or past it: a database that listens only on the server's localhost, a web admin (Grafana, RabbitMQ, Proxmox), a host behind the server. A tunnel you keep belongs to a [saved server](servers.md#save-a-server); [Forward Port…](#forward-a-port-the-server-listens-on) makes a temporary one on any server.
 
 ## Open the tunnel list
 
 - A saved server's sidebar menu ▸ **Tunnels**.
 - **Go ▸ Tunnels** lists every server's tunnels.
-- ⇧⌘P: **Tunnels…** (↩ turns one on or off, ⌘E edits it, ⌘C copies its address, ⌘O opens it in the browser, ⌘⌫ deletes it) and **New Tunnel…** (on the server the panel is on, or pick one).
+- ⇧⌘P: **Tunnels…** (↩ turns one on or off, ⌘E edits it, ⌘C copies its address, ⌘O opens it in the browser, ⌘S saves a temporary one, ⌘⌫ deletes it), **New Tunnel…** (on the server the panel is on, or pick one) and **Forward Port…**.
 
 ## Add a tunnel
 
@@ -27,6 +27,23 @@ Choose **New Tunnel…**, then fill in:
 - **URL**, optional. A web port gets one, so **Open in Browser** works (it turns the tunnel on first if it's off).
 
 A local port that's taken is said at once, with the next free one ("Use 15433"). Kermo never changes a tunnel's port by itself: a stable port is what your database client keeps.
+
+## Forward a port the server listens on
+
+**Forward Port…** (⇧⌘P, **Go ▸ Tunnels**, or a server's sidebar menu ▸ **Tunnels**) asks the server what it listens on — its own `ss`, or `netstat` where there's no `ss` (BusyBox included) — on the server the panel or SSH tab is on, or one you pick, saved or not. While it looks, the picker says so; ⎋ stops it. A locked server asks for Touch ID first.
+
+Each port is a row: ":5432 Postgres · postgres · localhost only", ":80 · nginx · all addresses". The program shows where the server shows it: without root, `ss` and `netstat` name only your own processes. A port that listens on one other address alone is forwarded to that address. A port a tunnel of the server already forwards says where: "→ localhost:15432".
+
+| Key | Does |
+|---|---|
+| ↩ | Forwards the port by a temporary tunnel |
+| ⌘O | The same, and opens it in the browser |
+| ⌘C | The same, and copies its address |
+| ⌘S | The same, and saves it as one of the server's tunnels (the server must be saved) |
+
+The tunnel takes the same port on this Mac when it's free, else the next free one, and the status line says so: "Postgres: localhost:5433 → db1:5432 (5432 is taken here) · listening". It never moves afterwards. A port that a saved tunnel already goes to turns that tunnel on instead.
+
+**Temporary tunnels** live until you turn them off, Disconnect, the lock or quitting. They're marked "temporary" in the menus and in **Tunnels…**, show `⇄` on their server's row (the row stays in the sidebar while they listen), and their menu has Turn Off, Open in Browser, Copy Address and, once the server is saved, **Save**, which keeps the port open and makes it a tunnel that listens at launch.
 
 ## How it works
 
@@ -64,7 +81,7 @@ A production server's tunnels are purple, like the server. Turning one on doesn'
 
 ## Where tunnels are kept
 
-With their server in `~/.config/dfilemanager/servers.json`, read at launch:
+With their server in `~/.config/dfilemanager/servers.json`, read at launch (temporary ones aren't kept anywhere):
 
 ```json
 "tunnels": [{ "name": "Postgres", "localPort": 15432, "host": "localhost", "port": 5432, "on": true }]

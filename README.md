@@ -23,8 +23,8 @@ Updating, uninstalling and building from source: [Install Kermo](docs/install.md
 - **Git.** Status column, branch, diff, log, blame, stage; switch branches, commit and sync from the sidebar. → [Git](docs/git.md)
 - **Servers.** SFTP panels and SSH sessions through the system OpenSSH, saved servers with Touch ID locks, copy between this Mac and servers. → [Servers and SSH](docs/servers.md), [Files on a server](docs/server-files.md)
 - **Safe server edits.** Open files as root through the server's own `sudo`, check a config with the server's tool before it is saved, reload the service, and get earlier versions back. → [Server files as root](docs/root-panel.md), [Checks on save](docs/config-checks.md)
-- **Tunnels.** Forward a server's database or web admin to `localhost`. → [SSH tunnels](docs/tunnels.md)
-- **Terminal.** A shell in the window whose panel follows `cd`; SSH tabs; a user menu and the `fm` command. → [Terminal](docs/terminal.md), [Commands](docs/commands.md)
+- **Tunnels.** Forward a server's database or web admin to `localhost`, or pick from the ports it listens on. → [SSH tunnels](docs/tunnels.md)
+- **Terminal.** A shell in the window whose panel follows `cd`; SSH tabs; a user menu, one command on several servers at once, and the `fm` command. → [Terminal](docs/terminal.md), [Commands](docs/commands.md)
 - **Production safety.** A production server is purple, asks before changes and logs what you did. → [Safety on servers](docs/safety.md)
 
 ## Keyboard at a glance
