@@ -1,8 +1,9 @@
 import Foundation
 
 /// Folder sizes on a server by its own `du` (Space / ⌥Space on a server panel): one command over the connection instead
-/// of an SFTP walk of every folder. `du -slbx`: GNU and busybox both know it — apparent bytes (`-b`), each hard link
-/// counted (`-l`) and nothing past the folder's file system (`-x`), as the walk counts. BSD's du has no `-b`: then the walk.
+/// of an SFTP walk of every folder. `du -slbx`: GNU, uutils and busybox know it — apparent bytes (`-b`), each hard link
+/// counted (`-l`) and nothing past the folder's file system (`-x`), as the walk counts (busybox adds each folder's own
+/// size, the walk doesn't: a little more). BSD's du has no `-b`: then the walk.
 public enum ServerSizes {
     public struct Size: Equatable, Sendable {
         public var bytes: Int64

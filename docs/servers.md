@@ -51,7 +51,7 @@ To run one command on several servers at once, choose **Run on Servers…** in t
 
 **Copy SSH Key to Server…** puts this Mac's public key into the server's `~/.ssh/authorized_keys`, so it logs in with the key instead of a password. It is in each server row's menu and in search; from search it works on the server of the active panel or SSH tab, or asks which server (type `user@host` for one that isn't listed).
 
-- **Which key:** the server's **Key file** (its `.pub` next to it) if it has one, else `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or `id_rsa.pub`. With several, you pick one.
+- **Which key:** the server's **Key file** (its `.pub` next to it) if it has one, else `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or `id_rsa.pub`. With several, you pick one. A key file without its `.pub` gets the command that writes it (`ssh-keygen -y -f`), not another key: the server's logins use that one.
 - **No key yet:** Kermo doesn't make one (a passphrase belongs in Terminal). The dialog gives the command, `ssh-keygen -t ed25519`, to copy.
 - It logs in as any connection does (the saved password or the password dialog, which says it's for Copy SSH Key), adds the key unless it's there already (`~/.ssh` and the file are made owner-only when new), then logs in with the key alone to check it took. ⎋ stops it. A locked server asks for Touch ID first; a production server asks first and logs it.
 - If the key went in but a login with it fails, the dialog shows ssh's words. Usually sshd refuses keys in a home folder or `~/.ssh` that others can write to (`StrictModes`).
@@ -62,7 +62,7 @@ To run one command on several servers at once, choose **Run on Servers…** in t
 If a server's host key no longer matches the one in `known_hosts`, Kermo won't connect and says so plainly: the server was reinstalled, or someone is intercepting the connection. It shows the new key's fingerprint and the file and line of the old one. Nothing is removed by itself.
 
 - Opening the server's files, the alert has **Remove Old Key…** (↩ is **Cancel**). It runs `ssh-keygen -R` on that file (the old file is kept as `known_hosts.old`) and connects again; the new key is then asked about as for a server seen the first time. On a production server the alert adds: check the new fingerprint with the server's admin first.
-- Elsewhere (tunnels, Forward Port…, Run on Servers…) the same words show without the button. An SSH tab shows ssh's own message.
+- Elsewhere (Forward Port…, Run on Servers…, a tunnel's tooltip) the same words show without the button. An SSH tab shows ssh's own message too.
 
 ## Server rows in the sidebar
 

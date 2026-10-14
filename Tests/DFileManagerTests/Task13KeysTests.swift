@@ -5,7 +5,8 @@ import Testing
 
 // Task 13: Copy SSH Key to Server… — which key, and where it's offered.
 
-/// The server's own key file's public half if it has one; else ~/.ssh's usual ones that are there, ed25519 first.
+/// The server's own key file's public half (none without it: its logins use that key); else ~/.ssh's usual ones that
+/// are there, ed25519 first.
 @Test func theKeyToCopy() throws {
     let home = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-keys-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: home + "/.ssh", withIntermediateDirectories: true)
@@ -14,7 +15,7 @@ import Testing
     for k in ["id_rsa", "id_ed25519", "work"] { FileManager.default.createFile(atPath: home + "/.ssh/\(k).pub", contents: Data("ssh-x AAAA".utf8)) }
     #expect(AppDelegate.publicKeys(identity: nil, home: home) == [home + "/.ssh/id_ed25519.pub", home + "/.ssh/id_rsa.pub"])
     #expect(AppDelegate.publicKeys(identity: home + "/.ssh/work", home: home) == [home + "/.ssh/work.pub"])
-    #expect(AppDelegate.publicKeys(identity: home + "/.ssh/nopub", home: home).count == 2, "no .pub next to it: the usual ones")
+    #expect(AppDelegate.publicKeys(identity: home + "/.ssh/nopub", home: home).isEmpty, "no .pub next to it: none — its logins use that key")
 }
 
 /// In each server's menu after Copy SSH Command, and in ⌘⇧P.

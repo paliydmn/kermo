@@ -22,7 +22,7 @@ extension AppDelegate {
     func copyKey(to t: SFTPTarget) {
         let s = savedServer(at: t) ?? SavedServer(target: t)
         let keys = Self.publicKeys(identity: s.identityFile)
-        guard !keys.isEmpty else { return noKeyYet() }
+        guard !keys.isEmpty else { return noKeyYet(s.identityFile) }
         if keys.count == 1 { return copyKey(keys[0], to: s) }
         Picker.show(over: window, placeholder: "Which key goes to \(s.title)?", items: keys.map { pub in
             let comment = (try? String(contentsOfFile: pub, encoding: .utf8)).flatMap(SSHKeyCopy.line)?.split(separator: " ").dropFirst(2).joined(separator: " ")
@@ -30,20 +30,25 @@ extension AppDelegate {
         })
     }
 
-    /// The public key files to offer: `identity`'s (".pub" next to it) if it has one, else ~/.ssh's id_ed25519, id_ecdsa
-    /// and id_rsa that are there.
+    /// The public key files to offer: the server's own key file's (".pub" next to it) — the one its logins use, so no
+    /// other — else ~/.ssh's id_ed25519, id_ecdsa and id_rsa that are there.
     nonisolated static func publicKeys(identity: String?, home: String = NSHomeDirectory()) -> [String] {
         let fm = FileManager.default
-        if let own = identity.map({ ($0 as NSString).expandingTildeInPath + ".pub" }), fm.fileExists(atPath: own) { return [own] }
+        if let own = identity.map({ ($0 as NSString).expandingTildeInPath + ".pub" }) { return fm.fileExists(atPath: own) ? [own] : [] }
         return ["id_ed25519", "id_ecdsa", "id_rsa"].map { home + "/.ssh/\($0).pub" }.filter { fm.fileExists(atPath: $0) }
     }
 
-    /// No key on this Mac: Kermo makes none (a passphrase is the terminal's business) — the command to make one.
-    private func noKeyYet() {
-        let command = "ssh-keygen -t ed25519"
+    /// No key to copy: Kermo makes none (a passphrase is the terminal's business) — the command to make one; for the
+    /// server's own key file without its ".pub", the command that writes it.
+    private func noKeyYet(_ identity: String?) {
+        let (title, command, info) = identity.map { k in
+            ("No “\((k as NSString).lastPathComponent).pub” next to the server's key file",
+             "ssh-keygen -y -f \(ShellContext.quote((k as NSString).expandingTildeInPath)) > \(ShellContext.quote((k as NSString).expandingTildeInPath + ".pub"))",
+             "Its logins use \(k), so that's the key to copy. Write its public half in Terminal:")
+        } ?? ("No SSH key on this Mac yet", "ssh-keygen -t ed25519", "Make one in Terminal:")
+        let after = identity == nil ? "It asks where to keep it (↩ takes ~/.ssh/id_ed25519) and for a passphrase. " : ""
         Task {
-            let r = await choose("No SSH key on this Mac yet", info: "Make one in Terminal:\n\n\(command)\n\nIt asks where to keep it (↩ takes "
-                                 + "~/.ssh/id_ed25519) and for a passphrase. Then Copy SSH Key to Server… again.", ["Copy Command", "Show Docs", "Cancel"])
+            let r = await choose(title, info: "\(info)\n\n\(command)\n\n\(after)Then Copy SSH Key to Server… again.", ["Copy Command", "Show Docs", "Cancel"])
             if r == 0 {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(command, forType: .string)
