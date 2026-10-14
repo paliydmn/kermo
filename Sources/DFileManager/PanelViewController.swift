@@ -1085,7 +1085,15 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 connecting = nil
             case .failure(let error as SFTPError) where error.connection:
                 onRemoteResult?(target, error.message)
-                if let window = view.window {
+                if let window = view.window, let change = error.hostKey {
+                    // ↩ is Cancel: the old key goes only when asked, and the next login asks about the new one (askpass).
+                    let check = SavedServer.isProd(target) ? "\n\nCheck the new fingerprint with the server's admin first." : ""
+                    let alert = AppDelegate.alert("Can't connect to \(target.host)", info: error.message + check, ["Cancel", "Remove Old Key…"], default: 0)
+                    alert.beginSheetModal(for: window) { [weak self] r in
+                        guard r == .alertSecondButtonReturn else { return }
+                        MainActor.assumeIsolated { self?.removeOldKey(change, then: { $0.loadRemote(target, dir: dir, select: select, keep: keep, onFailure: onFailure) }) }
+                    }
+                } else if let window = view.window {
                     let alert = NSAlert()
                     alert.messageText = "Can't connect to \(target.host)"
                     alert.informativeText = error.message
@@ -1097,6 +1105,18 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 else { onRemoteResult?(target, error.localizedDescription) }
                 if let onFailure { return onFailure(error) }
                 if !(error is CancellationError) { NSSound.beep(); flash("\(target.host): \(error.localizedDescription)", error: true) }
+            }
+        }
+    }
+
+    /// "Remove Old Key…": the server's old host key out of known_hosts, then `then` (connect again: ssh asks about the new one).
+    func removeOldKey(_ change: HostKeyChange, then: @escaping @MainActor (PanelViewController) -> Void) {
+        Task {
+            switch await Blocking.run(.userInitiated, { Result { try change.remove() } }) {
+            case .success: then(self)
+            case .failure(let e):
+                NSSound.beep()
+                flash(e.localizedDescription, error: true)
             }
         }
     }

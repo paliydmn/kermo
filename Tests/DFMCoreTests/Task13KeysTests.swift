@@ -13,7 +13,72 @@ import Testing
     #expect(SSHKeyCopy.line("ssh-ed25519 AAAA;rm x") == nil && SSHKeyCopy.line("") == nil)
 }
 
+/// What ssh says when a server's host key changed (OpenSSH 10.3; the same with BatchMode): read from the line that names
+/// the file in full ("Add correct host key in …" cuts it short), the host as known_hosts names it. The address's own line
+/// (CheckHostIP) isn't the one; other failures aren't a change.
+@Test func aChangedHostKeyIsRead() {
+    let said = """
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        @    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
+        @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!
+        Someone could be eavesdropping on you right now (man-in-the-middle attack)!
+        It is also possible that a host key has just been changed.
+        The fingerprint for the ED25519 key sent by the remote host is
+        SHA256:KKEiekWvluTKax6JzdMGedc4ocvunCpugqUdDJAmUf4.
+        Please contact your system administrator.
+        Add correct host key in /Users/me/.ssh/kno to get rid of this message.
+        Offending key for IP in /Users/me/.ssh/known_hosts:7
+        Offending ED25519 key in /Users/me/.ssh/known_hosts:12
+        Host key for [192.0.2.7]:2222 has changed and you have requested strict checking.
+        Host key verification failed.
+        """
+    let c = HostKeyChange.parse(said)
+    #expect(c == HostKeyChange(host: "[192.0.2.7]:2222", file: "/Users/me/.ssh/known_hosts", line: 12, keyType: "ED25519",
+                               fingerprint: "SHA256:KKEiekWvluTKax6JzdMGedc4ocvunCpugqUdDJAmUf4"))
+    #expect(c?.message("web1").hasPrefix("web1's host key has changed. Either the server was reinstalled, or someone is intercepting the connection.") == true)
+    #expect(HostKeyChange.parse("me@web1: Permission denied (publickey,password).") == nil)
+    let failed = SFTP.loginFailure(said, SFTPTarget(host: "me@web1"))
+    #expect(failed.connection && failed.hostKey == c && failed.message == c?.message("me@web1"), "everywhere a login fails, in plain words")
+    #expect(SFTP.loginFailure("Permission denied", SFTPTarget(host: "web1")).message == "Permission denied")
+    #expect(HostKeyChange.parse(said.replacingOccurrences(of: "Offending ED25519 key in /Users/me/.ssh/known_hosts:12\n", with: "")) == nil, "no line to remove")
+}
+
 extension SudoPasswordTests {
+
+/// A server's host key replaced: ssh refuses, the change is read from what it said, the old key goes from the file it
+/// named (the test's own known_hosts), and the next login takes the new key.
+@Test(.timeLimit(.minutes(1))) func aChangedHostKeyIsRemovedAndTheNextLoginWorks() throws { try withTestSSHD { t, d, _ in
+    func ssh(_ checking: String) throws -> (status: Int32, said: String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        p.arguments = ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=\(checking)", "-o", "UserKnownHostsFile=\(d)/known_hosts",
+                       "-o", "ControlPath=none", "-o", "AddKeysToAgent=no"] + t.arguments() + ["true"]
+        let err = Pipe()
+        (p.standardInput, p.standardOutput, p.standardError) = (FileHandle.nullDevice, FileHandle.nullDevice, err)
+        try p.run()
+        let said = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        return (p.terminationStatus, said)
+    }
+    #expect(try ssh("yes").status == 0, "known")
+    let gen = Process()
+    gen.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
+    gen.arguments = ["-q", "-t", "ed25519", "-N", "", "-f", d + "/other_host_key"]
+    try gen.run()
+    gen.waitUntilExit()
+    let other = try String(contentsOfFile: d + "/other_host_key.pub", encoding: .utf8).split(separator: " ").prefix(2).joined(separator: " ")
+    try Data("[127.0.0.1]:\(t.port!) \(other)\n".utf8).write(to: URL(fileURLWithPath: d + "/known_hosts"))
+
+    let refused = try ssh("yes")
+    #expect(refused.status == 255)
+    let change = try #require(HostKeyChange.parse(refused.said), "\(refused.said)")
+    #expect(change.host == "[127.0.0.1]:\(t.port!)" && change.file == d + "/known_hosts" && change.line == 1)
+    try change.remove()
+    #expect(!(try String(contentsOfFile: d + "/known_hosts", encoding: .utf8)).contains(other))
+    #expect(throws: SFTPError.self) { try change.remove() }   // nothing left to find: not "done"
+    #expect(try ssh("accept-new").status == 0, "the new key taken, as the askpass question would")
+} }
 
 /// The key goes in once — a second time finds it there — after a newline the file's last line lacked, into a folder
 /// and file made owner-only; then a login with that key alone works, past the shared connection. Before, it didn't.

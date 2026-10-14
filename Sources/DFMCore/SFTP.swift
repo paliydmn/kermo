@@ -66,6 +66,8 @@ public struct SFTPError: LocalizedError {
     public var connection = false
     /// The SFTP status code, when a server answered with one (SFTPClient).
     public var code: UInt32? = nil
+    /// The login failed because the server's host key changed (`message` says so plainly).
+    public var hostKey: HostKeyChange? = nil
     public var errorDescription: String? { message }
 }
 
@@ -153,7 +155,13 @@ public enum SFTP {
         if cancel?.isCancelled == true { throw CancellationError() }
         guard !up else { return }
         // ponytail: no fallback once the master failed with a message; add one if a server ever refuses `-N` but serves sftp.
-        if !why.isEmpty { throw SFTPError(message: why, connection: true) }   // else the session's ssh tries and says why
+        if !why.isEmpty { throw loginFailure(why, t) }   // else the session's ssh tries and says why
+    }
+
+    /// A failed login as ssh's log has it: a changed host key in plain words (and what to remove), else ssh's words.
+    static func loginFailure(_ why: String, _ t: SFTPTarget) -> SFTPError {
+        guard let change = HostKeyChange.parse(why) else { return SFTPError(message: why, connection: true) }
+        return SFTPError(message: change.message(t.host), connection: true, hostKey: change)
     }
 
     /// The shared connection to `t` is up (`ssh -O check`): what rides on it needs no login.
