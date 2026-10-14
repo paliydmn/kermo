@@ -260,11 +260,12 @@ private func freePorts(_ n: Int) throws -> [Int] {
         let bad = app.tunnelItem(web.tunnels[0], of: web)
         #expect(bad.image?.accessibilityDescription == "failed" && bad.toolTip == "“-x” isn't a host name." && bad.attributedTitle == nil)
 
-        #expect(app.tunnelsItem(for: db).submenu?.items.map(\.title) == ["Postgres → \(p[0]) · 1", "Grafana → \(p[1])", "", "New Tunnel…"])
-        #expect(app.tunnelsItem(for: server("none", [])).submenu?.items.map(\.title) == ["New Tunnel…"])
+        #expect(app.tunnelsItem(for: db, at: db.target).submenu?.items.map(\.title)
+                == ["Postgres → \(p[0]) · 1", "Grafana → \(p[1])", "", "New Tunnel…", "Forward Port…"])
+        #expect(app.tunnelsItem(for: server("none", []), at: server("none", []).target).submenu?.items.map(\.title) == ["New Tunnel…", "Forward Port…"])
         let go = try #require(app.goTunnelsItem().submenu)
         go.delegate?.menuNeedsUpdate?(go)
-        #expect(go.items.map(\.title) == ["db1", "Postgres → \(p[0]) · 1", "Grafana → \(p[1])", "web", "-x:80 → 1", "", "New Tunnel…"])
+        #expect(go.items.map(\.title) == ["db1", "Postgres → \(p[0]) · 1", "Grafana → \(p[1])", "web", "-x:80 → 1", "", "New Tunnel…", "Forward Port…"])
         #expect(go.items[0].isSectionHeader && go.items[3].isSectionHeader)
     }
 
@@ -334,6 +335,67 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(!tunnels.isListening(w, of: web) && tunnels.temporaries().isEmpty)
         #expect(tunnels.start(Tunnel(localPort: p[0], port: 1), of: web, temporary: true) != nil && tunnels.temporaries().isEmpty,
                 "one that can't listen leaves nothing behind")
+    }
+
+    /// Forward Port's Picker (U2): a row a port — its usual name, process and where it listens, "→ localhost:L" where a
+    /// tunnel of the server already goes there. ↩ forwards it by a temporary tunnel on the same port here, the next free
+    /// one when that's taken (said, U3), and again says it's there already. Temporary ones show "· temporary" in the
+    /// server's menu (Turn Off, Copy Address — Save only for a saved server), in Go ▸ Tunnels under their server (one not
+    /// saved after the saved ones), and keep an unsaved server's sidebar row, with its ⇄.
+    @Test func forwardPortMakesTemporaryTunnels() async throws {
+        let app = AppDelegate()
+        app.tunnels.child = tunnels.child
+        app.tunnels.say = { [said] in said.add($0, $1) }
+        let p = try freePorts(2)
+        let taken = try TunnelListener(port: p[0], child: { _ in .init(executable: "/bin/cat") }, onEvent: { _ in })
+        defer { taken.stop(); app.tunnels.stopAll() }
+        let db = server("db1", [Tunnel(name: "Main", localPort: p[1], port: 6379)])
+        app.savedServers = [db]
+        let ports = [ListeningPort(port: p[0], addresses: ["*"], process: "nginx"), ListeningPort(port: 5432, addresses: ["localhost"]),
+                     ListeningPort(port: 6379, addresses: ["localhost"], process: "redis-server")]
+        var rows = app.portItems(ports, of: db)
+        #expect(rows.map(\.title) == [":\(p[0])", ":5432 Postgres", ":6379 Redis"])
+        #expect(rows.map(\.subtitle) == ["nginx · all addresses", "localhost only", "redis-server · localhost only"])
+        #expect(rows.map(\.detail) == ["", "", ""], "Main isn't listening")
+        #expect(rows[0].keys.keys.map(\.display).sorted() == ["⌘C", "⌘O", "⌘S"])
+
+        rows[0].run()
+        let next = try #require(app.tunnels.temporaries().first?.tunnel)
+        #expect(next.localPort > p[0] && next.host == "localhost" && next.port == p[0] && next.title == "nginx")
+        #expect(said.lines.last == "nginx: localhost:\(next.localPort) → db1:\(p[0]) (\(p[0]) is taken here) · listening" && said.errors.last == false)
+        let c = dial(next.localPort)
+        #expect(c != -1)
+        defer { close(c) }
+        await waitUntil { app.tunnels.connections(next, of: db) == 1 }
+        rows = app.portItems(ports, of: db)
+        #expect(rows[0].detail == "→ localhost:\(next.localPort) · temporary")
+        rows[0].run()
+        #expect(app.tunnels.temporaries().count == 1 && said.lines.last == "nginx: localhost:\(next.localPort) → db1:\(p[0]) · listening already")
+
+        let item = app.tunnelItem(next, of: db)
+        #expect(item.title == "nginx → \(next.localPort) · 1 · temporary" && item.submenu?.items.map(\.title) == ["Turn Off", "Copy Address", "Save"])
+        #expect(app.tunnelsItem(for: db, at: db.target).submenu?.items.map(\.title)
+                == ["Main → \(p[1])", "nginx → \(next.localPort) · 1 · temporary", "", "New Tunnel…", "Forward Port…"])
+
+        let web = SavedServer(target: SFTPTarget(host: "me@web.invalid", port: 2222))   // not saved
+        #expect(web.target == SFTPTarget(host: "me@web.invalid", port: 2222) && web.title == "me@web.invalid")
+        app.forward(ListeningPort(port: 8080, addresses: ["192.0.2.10"]), of: web, .none)
+        let w = try #require(app.tunnels.temporaries(server: ServerRow.key(web.target)).first?.tunnel)
+        #expect(w.host == "192.0.2.10" && said.lines.last == "192.0.2.10:8080: localhost:\(w.localPort) → me@web.invalid → 192.0.2.10:8080"
+                + (w.localPort == 8080 ? "" : " (8080 is taken here)") + " · listening")
+        #expect(app.tunnelItem(w, of: web).submenu?.items.map(\.title) == ["Turn Off", "Open in Browser", "Copy Address"], "Save: not until it's saved")
+        #expect(app.tunnelsItem(for: nil, at: web.target).submenu?.items.map(\.title) == ["192.0.2.10:8080 → \(w.localPort) · temporary", "", "Forward Port…"])
+        let go = try #require(app.goTunnelsItem().submenu)
+        go.delegate?.menuNeedsUpdate?(go)
+        #expect(go.items.map(\.title) == ["db1", "Main → \(p[1])", "nginx → \(next.localPort) · 1 · temporary",
+                                          "me@web.invalid", "192.0.2.10:8080 → \(w.localPort) · temporary", "", "New Tunnel…", "Forward Port…"])
+
+        var list = ServerList(saved: [db], recents: (1...6).map { "me@r\($0).invalid" }, forwarded: [web.target])
+        list.tunnels = [ServerRow.key(web.target): [w.title]]
+        let row = try #require(SidebarModel.serverRows(list).first { $0.key == ServerRow.key(web.target) }, "kept past the five places")
+        #expect(row.tunnels == [w.title] && row.saved == nil)
+        app.tunnels.stop(w, of: web)   // Turn Off (its releaseIdleServers needs the window)
+        #expect(app.tunnels.temporaries(server: ServerRow.key(web.target)).isEmpty && dial(w.localPort) == -1)
     }
 }
 

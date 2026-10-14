@@ -31,6 +31,15 @@ struct SavedServer: Codable, Equatable {
         startDir = path
     }
 
+    /// One never saved, as a saved one (a temporary tunnel's server): its address, nothing more.
+    init(target t: SFTPTarget) {
+        let at = t.host.lastIndex(of: "@")
+        host = at.map { String(t.host[t.host.index(after: $0)...]) } ?? t.host
+        user = at.map { String(t.host[..<$0]) }
+        port = t.port
+        identityFile = t.identity
+    }
+
     /// Hand-edited files may leave out anything but the host.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)

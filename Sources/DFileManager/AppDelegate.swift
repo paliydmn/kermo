@@ -554,6 +554,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if !on.isEmpty { servers.tunnels[key, default: []] += on }
             if !failed.isEmpty { servers.failedTunnels[key, default: []] += failed }
         }
+        for st in tunnels.temporaries() {   // Forward Port's: on any server, an unsaved one's row stays while they do
+            let key = ServerRow.key(st.server.target)
+            servers.tunnels[key, default: []].append(st.tunnel.title)
+            if let e = st.error { servers.failedTunnels[key, default: []].append("\(st.tunnel.title): \(e)") }
+            if !servers.forwarded.contains(where: { ServerRow.key($0) == key }) { servers.forwarded.append(st.server.target) }
+        }
         sidebar.show(SidebarModel.sections(bookmarks: bookmarks, frecent: frecency.ranked(), volumes: volumes, servers: servers,
                                            tags: defaults.stringArray(forKey: "recentTags") ?? []))
         sidebar.highlight(sidebarKey)
@@ -680,7 +686,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 : MenuAction.item("Disconnect") { [unowned self] in disconnect(r.target) },
             r.saved.map { unlocked("Copy SSH Command", $0, "copy the command of", copy) } ?? MenuAction.item("Copy SSH Command", copy),
             MenuAction.item("Show File History") { [unowned self] in showFileHistory(r.target) },
-            r.saved.map { tunnelsItem(for: $0) },
+            tunnelsItem(for: r.saved, at: r.target),
             .separator(),
             MenuAction.item(r.pinned ? "Unpin" : "Pin") { [unowned self] in
                 unpin(r.key)
