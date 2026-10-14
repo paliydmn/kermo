@@ -557,7 +557,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         for st in tunnels.temporaries() {   // Forward Port's: on any server, an unsaved one's row stays while they do
             let key = ServerRow.key(st.server.target)
-            servers.tunnels[key, default: []].append(st.tunnel.title)
+            servers.tunnels[key, default: []].append(st.tunnel.title + " (temporary)")   // the row's tooltip
             if let e = st.error { servers.failedTunnels[key, default: []].append("\(st.tunnel.title): \(e)") }
             if !servers.forwarded.contains(where: { ServerRow.key($0) == key }) { servers.forwarded.append(st.server.target) }
         }
@@ -667,7 +667,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         openSFTP(r.target.asRoot(root), dir: dir ?? r.saved?.startDir, title: r.title, newTab: newTab, panel: panel)
     }
 
-    private func serverMenu(_ place: Place) -> [NSMenuItem] {
+    func serverMenu(_ place: Place) -> [NSMenuItem] {
         guard case .server(let r) = place else { return [] }
         let copy: @MainActor () -> Void = {
             NSPasteboard.general.clearContents()
@@ -687,6 +687,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 : MenuAction.item("Disconnect") { [unowned self] in disconnect(r.target) },
             r.saved.map { unlocked("Copy SSH Command", $0, "copy the command of", copy) } ?? MenuAction.item("Copy SSH Command", copy),
             MenuAction.item("Show File History") { [unowned self] in showFileHistory(r.target) },
+            MenuAction.item("Forward Port…") { [unowned self] in forwardPort(on: r.target) },
             tunnelsItem(for: r.saved, at: r.target),
             .separator(),
             MenuAction.item(r.pinned ? "Unpin" : "Pin") { [unowned self] in

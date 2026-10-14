@@ -30,7 +30,7 @@ A local port that's taken is said at once, with the next free one ("Use 15433").
 
 ## Forward a port the server listens on
 
-**Forward Port…** (⇧⌘P, **Go ▸ Tunnels**, or a server's sidebar menu ▸ **Tunnels**) asks the server what it listens on — its own `ss`, or `netstat` where there's no `ss` (BusyBox included) — on the server the panel or SSH tab is on, or one you pick, saved or not. A locked server asks for Touch ID first, and a password, if one is due, is asked next. While it looks, the picker says so; ⎋ stops it.
+**Forward Port…** (⇧⌘P, **Go ▸ Tunnels**, or a server's sidebar menu, also under its **Tunnels**) asks the server what it listens on — its own `ss`, or `netstat` where there's no `ss` (BusyBox included) — on the server the panel or SSH tab is on, or one you pick, saved or not. A locked server asks for Touch ID first, and a password, if one is due, is asked next. While it looks, the picker says so; ⎋ stops it.
 
 Each port is a row: ":5432 Postgres · postgres · localhost only", ":80 · nginx · all addresses". The program shows where the server shows it: without root, `ss` and `netstat` name only your own processes. A port that listens on one other address alone is forwarded to that address. A port a tunnel of the server already forwards says where: "→ localhost:15432".
 
@@ -43,7 +43,7 @@ Each port is a row: ":5432 Postgres · postgres · localhost only", ":80 · ngin
 
 The tunnel takes the same port on this Mac when it's free, else the next free one, and the status line says so: "Postgres: localhost:5433 → db1:5432 (5432 is taken here) · listening". It never moves afterwards. A port that a saved tunnel already goes to turns that tunnel on instead.
 
-**Temporary tunnels** live until you turn them off, Disconnect, the lock or quitting. They're marked "temporary" in the menus and in **Tunnels…**, show `⇄` on their server's row (the row stays in the sidebar while they listen), and their menu has Turn Off, Open in Browser, Copy Address and, once the server is saved, **Save**, which keeps the port open and makes it a tunnel that listens at launch.
+**Temporary tunnels** live until you turn them off, Disconnect, the lock or quitting. They're marked "temporary" in the menus and in **Tunnels…**, show `⇄` on their server's row (the row stays in the sidebar while they listen; its tooltip marks them "temporary"), and their menu has Turn Off, Open in Browser, Copy Address and, once the server is saved, **Save**, which keeps the port open and makes it a tunnel that listens at launch.
 
 ## How it works
 

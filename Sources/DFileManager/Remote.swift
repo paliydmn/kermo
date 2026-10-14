@@ -80,6 +80,8 @@ struct SavedServer: Codable, Equatable {
         SFTPTarget(host: user.map { "\($0)@\(host)" } ?? host, port: port, identity: identityFile, persist: locked ? 60 : nil)
     }
     var title: String { name.isEmpty ? target.host : name }
+    /// As a server picker lists it: locked and production said up front.
+    var pickerTitle: String { (locked ? "🔒 " : "") + (prod ? Self.mark : "") + title }
 
     /// Why ssh can't take it, or nil. A leading "-" would make ssh read it as an option (-oProxyCommand=…).
     var problem: String? {

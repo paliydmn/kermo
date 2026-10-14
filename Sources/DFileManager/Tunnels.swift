@@ -303,7 +303,7 @@ extension AppDelegate {
     func forwardPort() {
         if let here = terminal.isShown ? terminal.current?.target : active.remote?.target { return forwardPort(on: here.asUser) }
         let items = serverChoices().map { c in
-            Picker.Item(title: (c.saved?.locked == true ? "🔒 " : "") + c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config") { [unowned self] in
+            Picker.Item(title: c.saved?.pickerTitle ?? c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config") { [unowned self] in
                 forwardPort(on: c.target)
             }
         }

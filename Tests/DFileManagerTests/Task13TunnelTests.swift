@@ -269,6 +269,18 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(go.items[0].isSectionHeader && go.items[3].isSectionHeader)
     }
 
+    /// Forward Port… is in every server row's menu, before its Tunnels ▸ (which has it too); server pickers say locked
+    /// and production up front.
+    @Test func forwardPortIsInEachServersMenu() {
+        let app = AppDelegate()
+        let row = ServerRow(target: SFTPTarget(host: "me@web.invalid"), saved: nil, title: "web")
+        let titles = app.serverMenu(.server(row)).map(\.title)
+        #expect(titles.firstIndex(of: "Forward Port…").map { titles[$0 + 1] } == "Tunnels", "\(titles)")
+        var s = server("vault", locked: true, [])
+        s.prod = true
+        #expect(s.pickerTitle == "🔒 " + SavedServer.mark + "vault" && server("db1", []).pickerTitle == "db1")
+    }
+
     /// U14: back with a taken port, ↩ takes "Use N", not the taken port again; ⎋ stays Cancel's.
     @Test func aTakenPortsSheetTakesTheFreeOneOnReturn() {
         let alert = NSAlert()
