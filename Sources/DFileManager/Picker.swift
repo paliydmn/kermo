@@ -23,31 +23,35 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     private let items: [Item]
     private var shown: [Item] = []
     private let rank: (Item, String) -> Int?
-    private let freeText: ((String) -> Item?)?
+    private let freeText: ((String) -> [Item])?
+    private let freeTextLast: Bool
     private let selected: Int
     private var onDismiss: (@MainActor () -> Void)?
     private weak var parent: NSWindow?
 
     /// `rank` scores an item against the query (nil = hide); default fuzzy-matches title + subtitle.
     /// Ties keep the given order, so pass items best-first.
-    /// `freeText` turns whatever was typed into an extra first row (e.g. "Connect to “user@host”").
+    /// `freeText` turns whatever was typed into extra first rows (e.g. "Connect to “user@host”"); `freeTextLast`: after
+    /// the matches instead, so ↩ takes a match (Switch Branch: "conf" switches to a branch, not creates "conf").
     /// `selected`: the row highlighted while nothing is typed. `onDismiss`: closed without choosing.
     static func show(over window: NSWindow, placeholder: String, items: [Item], rank: ((Item, String) -> Int?)? = nil,
-                     freeText: ((String) -> Item?)? = nil, selected: Int = 0, onDismiss: (@MainActor () -> Void)? = nil) {
+                     freeText: ((String) -> [Item])? = nil, freeTextLast: Bool = false, selected: Int = 0,
+                     onDismiss: (@MainActor () -> Void)? = nil) {
         current?.close()
         let p = Picker(parent: window, placeholder: placeholder, items: items,
                        rank: rank ?? { item, q in Fuzzy.score(q, item.title + " " + item.subtitle) }, freeText: freeText,
-                       selected: selected, onDismiss: onDismiss)
+                       freeTextLast: freeTextLast, selected: selected, onDismiss: onDismiss)
         current = p
         p.present()
     }
 
     private init(parent: NSWindow, placeholder: String, items: [Item], rank: @escaping (Item, String) -> Int?,
-                 freeText: ((String) -> Item?)?, selected: Int, onDismiss: (@MainActor () -> Void)?) {
+                 freeText: ((String) -> [Item])?, freeTextLast: Bool, selected: Int, onDismiss: (@MainActor () -> Void)?) {
         self.parent = parent
         self.items = items
         self.rank = rank
         self.freeText = freeText
+        self.freeTextLast = freeTextLast
         self.selected = selected
         self.onDismiss = onDismiss
         super.init()
@@ -145,7 +149,8 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
                 .compactMap { i, it in rank(it, q).map { (score: $0, i: i, it: it) } }
                 .sorted { $0.score != $1.score ? $0.score > $1.score : $0.i < $1.i }
                 .prefix(300).map(\.it)
-            if let extra = freeText?(q.trimmingCharacters(in: .whitespaces)) { shown.insert(extra, at: 0) }
+            let extra = freeText?(q.trimmingCharacters(in: .whitespaces)) ?? []
+            if freeTextLast { shown += extra } else { shown.insert(contentsOf: extra, at: 0) }
         }
         table.reloadData()
         if !shown.isEmpty {

@@ -631,7 +631,7 @@ extension AppDelegate {
         let items = saved.map { p in Picker.Item(title: p.title, subtitle: p.filter, detail: "preset") { panel.applyFilter(p.filter) } }
             + recent.map { r in Picker.Item(title: r, detail: "recent") { panel.applyFilter(r) } }
         Picker.show(over: window, placeholder: "Filter presets — edit in ~/.config/dfilemanager/filters.json", items: items, freeText: { q in
-            q.isEmpty ? nil : Picker.Item(title: "Filter: \(q)", detail: "↩") { panel.applyFilter(q) }
+            q.isEmpty ? [] : [Picker.Item(title: "Filter: \(q)", detail: "↩") { panel.applyFilter(q) }]
         })
     }
 
@@ -824,7 +824,7 @@ extension AppDelegate {
         Picker.show(over: window, placeholder: ssh ? "SSH to: a server, user@host, ssh://host:port — ⌘E edits yours"
                                                    : "SFTP to: a server, user@host:/path, sftp://…, smb://server/share, nfs://… — ⌘E edits yours",
                     items: items, freeText: { q in
-            q.isEmpty ? nil : Picker.Item(title: (ssh ? "SSH to" : "Connect to") + " “\(q)”", detail: "↩") { go(q) }
+            q.isEmpty ? [] : [Picker.Item(title: (ssh ? "SSH to" : "Connect to") + " “\(q)”", detail: "↩") { go(q) }]
         })
     }
 
