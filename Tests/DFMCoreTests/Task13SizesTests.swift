@@ -4,7 +4,7 @@ import Testing
 
 // Task 13: folder sizes by the server's own `du` (`ServerSizes`).
 
-/// GNU du 9.4 and busybox 1.37 on a folder with an unreadable subfolder and a name that isn't there: each prints what it
+/// GNU du 9.4 (uutils 0.8 says the same) and busybox 1.37 on a folder with an unreadable subfolder and a name that isn't there: each prints what it
 /// could read, its complaints on stderr, and exits 1. A size with a complaint under it is "at least".
 @Test func duAnswersAreReadWhateverTheExitStatus() {
     let names = ["a", "b", "missing"]
@@ -13,7 +13,7 @@ import Testing
         du: cannot access 'missing': No such file or directory
         """, status: 1, names: names)
     #expect(gnu == ["a": .init(bytes: 3349), "b": .init(bytes: 500, partial: true)])
-    let busybox = ServerSizes.parse("kermo-sizes\n11541\ta\n12788\tb\n", errors: "\n\ndu: can't open 'b/locked': Permission denied\n\n",
+    let busybox = ServerSizes.parse("kermo-sizes\n11541\ta\n12788\tb\n", errors: "\n\ndu: can't open 'b/locked': Permission denied\n\ndu: missing: No such file or directory\n",
                                     status: 1, names: names)
     #expect(busybox == ["a": .init(bytes: 11541), "b": .init(bytes: 12788, partial: true)])
     #expect(ServerSizes.parse("kermo-sizes\n0\ta\n", errors: "", status: 0, names: names) == ["a": .init(bytes: 0)])

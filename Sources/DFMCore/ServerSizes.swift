@@ -90,9 +90,10 @@ public enum ServerSizes {
         guard status != 0 else { return out }
         var partial = Set<String>(), all = false
         for line in errors.split(whereSeparator: \.isNewline) where line.hasPrefix("du: ") {
-            // "du: cannot read directory 'b/locked': Permission denied" (GNU), "du: can't open 'b/locked': …" (busybox)
-            guard let q = line.range(of: " '") else { all = true; continue }   // not the one in "can't"
-            let name = String(line[q.upperBound...].prefix { $0 != "/" && $0 != "'" })
+            // "du: cannot read directory 'b/locked': Permission denied" (GNU, uutils), "du: can't open 'b/locked': …",
+            // "du: missing: No such file or directory" (busybox)
+            let path = line.range(of: " '").map { line[$0.upperBound...] } ?? line.dropFirst(4).prefix { $0 != ":" }   // not the ' in "can't"
+            let name = String(path.prefix { $0 != "/" && $0 != "'" })
             if wanted.contains(name) { partial.insert(name) } else { all = true }
         }
         for name in out.keys where all || partial.contains(name) { out[name]!.partial = true }
