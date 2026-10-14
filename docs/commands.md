@@ -32,8 +32,6 @@ db2  │ sudo: a password is required
 
 At the end a summary names what didn't go well: `✓ 5  ✗ 1 (db2: exit 1)  🔒 1 skipped (vault)`. ⎋ stops them all and keeps the window for the summary; ⎋ again closes it. Stopping ends the ssh connections; without a terminal, a command on the server that writes nothing (a `sleep`) may run on to its end there.
 
-Once all are over, servers that no panel, SSH tab or tunnel uses close their shared connection, as after closing a last panel: the next run logs in again.
-
 On [production servers](safety.md#production-servers) a command that removes, moves or stops things asks once, naming them all, with ↩ on **Cancel**; each run is a line in the production log. A [locked server](servers.md#lock-a-server) asks for Touch ID before anything runs; refuse, and only that one is skipped.
 
 ## Placeholders

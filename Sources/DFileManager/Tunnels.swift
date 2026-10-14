@@ -326,17 +326,16 @@ extension AppDelegate {
             let login = await Blocking.run { Result { try SFTP.startMaster(s.target, env: env) } }
             if case .failure(let e) = login {
                 if !(e is CancellationError) { tunnels.say(e.localizedDescription, true) }
-                return releaseIdleServers()
+                return
             }
             let cancel = CancelFlag()   // set by ⎋ there — and by its giving way, when the look is over anyway
             Picker.show(over: window, placeholder: "Looking at \(s.title)'s ports…", items: [], onDismiss: { cancel.cancel() })
             let result = await Blocking.run { Result { try ListeningPorts.read(on: s.target, server: s.title, env: env, cancel: cancel) } }
-            guard !cancel.isCancelled else { return releaseIdleServers() }
+            guard !cancel.isCancelled else { return }
             switch result {
             case .failure(let e):
                 Picker.dismiss()
                 tunnels.say(e.localizedDescription, true)
-                releaseIdleServers()
             case .success(let ports): showPorts(ports, of: s)
             }
         }
@@ -345,15 +344,13 @@ extension AppDelegate {
     /// One row a port (U2): ":5432 Postgres", its process and where it listens, and "→ localhost:15432" where a tunnel of
     /// the server already goes there. ↩ forwards it, ⌘O and opens it in the browser, ⌘C and copies the address, ⌘S and
     /// saves it as the server's tunnel (U4).
-    /// Closed without forwarding, the server lets its connection go if nothing else uses it (as after a last panel).
     func showPorts(_ ports: [ListeningPort], of s: SavedServer) {
         guard !ports.isEmpty else {
             Picker.dismiss()
-            tunnels.say("\(s.title): nothing listens on TCP", false)
-            return releaseIdleServers()
+            return tunnels.say("\(s.title): nothing listens on TCP", false)
         }
         Picker.show(over: window, placeholder: (s.prod ? SavedServer.mark : "") + "\(s.title)'s ports — ↩ forward · ⌘O browser · ⌘C copy · ⌘S save",
-                    items: portItems(ports, of: s), onDismiss: { [unowned self] in releaseIdleServers() })
+                    items: portItems(ports, of: s))
     }
 
     func portItems(_ ports: [ListeningPort], of s: SavedServer) -> [Picker.Item] {

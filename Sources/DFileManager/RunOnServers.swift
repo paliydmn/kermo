@@ -48,10 +48,9 @@ extension AppDelegate {
     }
 
     /// The output window; each production server's run a line in the production log as soon as it's over (one done
-    /// isn't lost to quitting while another still runs). Once all are over, the servers nothing else uses let their
-    /// connection go, as after closing a last panel.
+    /// isn't lost to quitting while another still runs). The servers' connections stay for ControlPersist, as ssh's
+    /// own do: the next run needs no login.
     static func start(_ command: String, on run: [RunOnServersSheet.Choice], of count: Int, skipped: [String], env: [String: String]) {
-        var left = run.count
         Shell.run(command, on: run.map { MultiRun.Server(name: $0.title, target: $0.target) }, skipped: skipped, env: env,
                   title: "Run on \(count) server\(count == 1 ? "" : "s"): \(command)") { i, o in
             let t = run[i].target   // as F2's: ran as the user (ssh)
@@ -61,8 +60,6 @@ extension AppDelegate {
             case .stopped: AuditLog.write(t, "command", paths: [], command: command, exit: nil, error: "stopped")
             case .skipped: break
             }
-            left -= 1
-            if left == 0 { (NSApp.delegate as? AppDelegate)?.releaseIdleServers() }
         }
     }
 }
