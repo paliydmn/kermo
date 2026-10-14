@@ -108,7 +108,8 @@ extension ServerLockTests {
     }
     let q = try #require(AppDelegate.runQuestion("sudo systemctl restart nginx", on: [db.target, web.target, SFTPTarget(host: "test")]))
     #expect(q.message == "Run “sudo systemctl restart nginx” on 3 servers?")
-    #expect(q.info == "“me@db.invalid” and “localhost” are production servers. It runs on each of them at once.")
+    #expect(q.info == "“me@db.invalid” and “localhost” are production servers. It runs on all 3 at once.")
+    #expect(AppDelegate.runQuestion("rm x", on: [db.target])?.info == "“me@db.invalid” is a production server.")
     #expect(AppDelegate.runQuestion("uptime", on: [db.target]) == nil && AppDelegate.runQuestion("rm -rf /tmp/x", on: [SFTPTarget(host: "test")]) == nil)
 
     let local = RunOnServersSheet.Choice(title: "web", target: .local(), saved: web)   // .local(): localhost, the production one

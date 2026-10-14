@@ -31,7 +31,7 @@ extension AppDelegate {
     static func runQuestion(_ command: String, on targets: [SFTPTarget]) -> (message: String, info: String)? {
         let prod = SavedServer.prodNote(targets)
         guard !prod.isEmpty, Shell.isDangerous(command) else { return nil }
-        return ("Run “\(command)” on \(targets.count) server\(targets.count == 1 ? "" : "s")?", prod + "It runs on each of them at once.")
+        return ("Run “\(command)” on \(targets.count) server\(targets.count == 1 ? "" : "s")?", targets.count == 1 ? String(prod.dropLast()) : prod + "It runs on all \(targets.count) at once.")
     }
 
     /// Touch ID for each locked one, one after another, before anything runs: one refused is skipped.
