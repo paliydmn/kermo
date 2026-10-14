@@ -68,6 +68,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var marked = Set<String>()
     private var filter: Mask?
     private(set) var dirSizes: [String: Int64] = [:]
+    /// Server folders du couldn't read all of: their size is "at least".
+    private(set) var partialSizes = Set<String>()
+    /// Servers (`ServerRow.key`, root apart) whose du counts no bytes (BSD): their folders are walked, till quit.
+    private static var noDu = Set<String>()
+    /// What counts a local folder's bytes, looking at `isCancelled` as it goes (tests: one that waits).
+    nonisolated(unsafe) static var measureLocal: @Sendable (String, () -> Bool) -> Int64 = { DirLister.measure($0, isCancelled: $1).bytes }
     private var sizeGen = 0
     /// Server folders waiting to be counted, and the walk counting them (one at a time, over one connection).
     private var sizeQueue: [String] = []
@@ -677,9 +683,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private func bytes(of items: [FileItem]) -> Int64 { items.reduce(0) { $0 + ($1.kind == .dir ? dirSizes[$1.name] ?? 0 : $1.size) } }
 
     /// The Size column: a folder's measured bytes or <DIR>; a special file's type, which has no size to show.
-    static func sizeText(_ it: FileItem, measured: Int64?) -> String {
+    /// `partial`: du couldn't read all of the folder — "≥ 1.2 GB".
+    static func sizeText(_ it: FileItem, measured: Int64?, partial: Bool = false) -> String {
         switch it.kind {
-        case .dir: measured.map { sizeFmt.string(fromByteCount: $0) } ?? "<DIR>"
+        case .dir: measured.map { (partial ? "≥ " : "") + sizeFmt.string(fromByteCount: $0) } ?? "<DIR>"
         case .link where it.linkDir: "<DIR>"
         case .other:
             switch mode_t(truncatingIfNeeded: it.mode) & S_IFMT {
@@ -1535,6 +1542,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// The folder's sizes are another folder's now: the ones on their way are dropped, a server walk stops.
     private func clearSizes() {
         dirSizes.removeAll()
+        partialSizes.removeAll()
         sizeGen += 1
         sizeQueue.removeAll()
         sizeWalk?.cancel()
@@ -1542,35 +1550,52 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     /// One walk at a time (on a server, over one connection), folders asked for meanwhile (Space down a list) next;
-    /// the status line says so and ⎋ stops it, as does leaving the folder (`clearSizes`).
+    /// the status line says so and ⎋ stops it, as does leaving the folder (`clearSizes`). On a server its du counts them
+    /// (one command for them all, no SFTP session); one without a du that counts bytes, and names du can't be given, walk.
     private func computeSizes(_ names: [String]) {
         guard archive == nil else { return }
         sizeQueue += names.filter { !sizeQueue.contains($0) }
         guard sizeWalk == nil else { return }   // the walk running takes them next
         let flag = CancelFlag(), gen = sizeGen, env = SSHAskpass.env, r = remote, base = path
+        let duKey = r.map { ServerRow.key($0.target) + ($0.target.sudo ? "#" : "") }
         sizeWalk = flag
-        let found: @Sendable (String, Int64) -> Void = { [weak self] name, bytes in
-            DispatchQueue.main.async { MainActor.assumeIsolated { if self?.sizeGen == gen { self?.setSize(name, bytes) } } }
+        let found: @Sendable (String, Int64, Bool) -> Void = { [weak self] name, bytes, partial in
+            DispatchQueue.main.async { MainActor.assumeIsolated { if self?.sizeGen == gen { self?.setSize(name, bytes, partial: partial) } } }
         }
         Task { [weak self] in
             while let self, sizeWalk === flag {
                 let names = sizeQueue.filter { dirSizes[$0] == nil }
                 sizeQueue.removeAll()
                 guard !names.isEmpty else { sizeWalk = nil; return }
+                let du = duKey.map { !Self.noDu.contains($0) } ?? false
                 // On this Mac most walks take a moment: Space down a list would flash the message on every folder.
-                let result = await busy("Counting folder sizes…", after: r == nil ? 0.4 : 0, flag: flag) { flag in
-                    func each(_ measure: (String) throws -> Int64) rethrows { for name in names { found(name, try measure(name)) } }
+                let result = await busy("Counting folder sizes…", after: r == nil ? 0.4 : 0, flag: flag) { flag -> Bool in
+                    func each(_ names: [String], _ measure: (String) throws -> Int64) rethrows { for name in names { found(name, try measure(name), false) } }
                     guard let r else {
-                        return try each {
-                            let bytes = DirLister.measure((base as NSString).appendingPathComponent($0), isCancelled: { flag.isCancelled }).bytes
+                        try each(names) {
+                            let bytes = Self.measureLocal((base as NSString).appendingPathComponent($0)) { flag.isCancelled }
                             if flag.isCancelled { throw CancellationError() }   // a part of it: no size
                             return bytes
                         }
+                        return false
                     }
-                    try SFTPClient.session(r.target, env: env, cancel: flag) { c in
-                        try each { try c.measure((r.dir as NSString).appendingPathComponent($0), cancel: flag) }
+                    var walk = names, noDu = false
+                    if du {
+                        if let sizes = try ServerSizes.measure(names, in: r.dir, on: r.target, env: env, cancel: flag) {
+                            for (name, s) in sizes { found(name, s.bytes, s.partial) }
+                            walk = names.filter { sizes[$0] == nil }
+                        } else {
+                            noDu = true
+                        }
                     }
+                    if !walk.isEmpty {
+                        try SFTPClient.session(r.target, env: env, cancel: flag) { c in
+                            try each(walk) { try c.measure((r.dir as NSString).appendingPathComponent($0), cancel: flag) }
+                        }
+                    }
+                    return noDu
                 }
+                if case .success(true) = result, let duKey { Self.noDu.insert(duKey) }
                 if case .failure(let error) = result {
                     if sizeWalk === flag { sizeWalk = nil; sizeQueue.removeAll() }
                     if !(error is CancellationError) { flash("Can't count folder sizes: \(error.localizedDescription)", error: true) }
@@ -1580,8 +1605,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
 
-    private func setSize(_ name: String, _ bytes: Int64) {
+    private func setSize(_ name: String, _ bytes: Int64, partial: Bool = false) {
         dirSizes[name] = bytes
+        if partial { partialSizes.insert(name) } else { partialSizes.remove(name) }
         totalSize = self.bytes(of: rows)
         if let r = row(named: name) { table.reloadData(forRowIndexes: [r], columnIndexes: [table.column(withIdentifier: .init("size"))]) }
         updateStatus()
@@ -1935,7 +1961,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             tf.setAccessibilityLabel(mark?.2)
             return cell
         case "size":
-            tf.stringValue = it.map { Self.sizeText($0, measured: dirSizes[$0.name]) } ?? ""
+            tf.stringValue = it.map { Self.sizeText($0, measured: dirSizes[$0.name], partial: partialSizes.contains($0.name)) } ?? ""
         case "mode":
             tf.stringValue = it.flatMap { archive == nil ? Perms.string($0.mode) : nil } ?? ""
         case "owner", "group":

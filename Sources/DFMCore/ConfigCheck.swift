@@ -146,7 +146,7 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
         let status: Int32, out: Data
         do {
             if t.sudo {
-                (status, out) = try SudoServer.run(t, script: script(command), env: env, cancel: cancel) { $0.range(of: ranLine) != nil }
+                (status, out, _) = try SudoServer.run(t, script: script(command), env: env, cancel: cancel) { $0.range(of: ranLine) != nil }
             } else {
                 var o = Data()
                 let (s, errors) = try SSHCommand.run(t, "sh -c " + ShellContext.quote(script(command)), env: env, cancel: cancel, options: ["-x", "-a"]) { o += $0 }

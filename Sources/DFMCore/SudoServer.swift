@@ -95,7 +95,7 @@ enum SudoServer {
     /// doesn't ask again for its next item). One at a time: sessions behind a dialog take the answer it got. Only after
     /// `sudo -n` refused for want of a password just now: with NOPASSWD sudo reads no password, and the line goes to the command.
     static func withPassword(_ t: SFTPTarget, _ command: String, env: [String: String], cancel: CancelFlag?, path: String? = nil,
-                             took: (Int32, Data) -> Bool) throws -> (password: String, status: Int32, out: Data) {
+                             took: (Int32, Data) -> Bool) throws -> (password: String, status: Int32, out: Data, errors: String) {
         try asking.withLock {
             var wrong = false, said = ""
             for _ in 0..<3 {
@@ -110,7 +110,7 @@ enum SudoServer {
                                                           stdin: Data((password + "\n").utf8)) { out += $0 }
                 if took(status, out) {
                     SFTP.sudoPasswordTaken?(t, password)
-                    return (password, status, out)
+                    return (password, status, out, errors)
                 }
                 if errors.contains("invalid option") { throw noStdinPassword(t, path: path) }   // sudo-rs 0.2.2: no -p
                 // It took the password but won't run that command for this user: asking again won't help.
@@ -124,16 +124,17 @@ enum SudoServer {
     /// `script` (sh) as root there: `sudo -n` first; only where that refused for want of a password, again with the
     /// password (kept or asked) on its stdin. `ran`: sudo ran it — from its output, never its exit status (the script's
     /// own). A refusal of another kind throws sudo's words; one for want of a password with no way to ask, too.
-    static func run(_ t: SFTPTarget, script: String, env: [String: String], cancel: CancelFlag?, ran: (Data) -> Bool) throws -> (status: Int32, out: Data) {
+    /// `errors`: its stderr (sudo's own words in it too).
+    static func run(_ t: SFTPTarget, script: String, env: [String: String], cancel: CancelFlag?, ran: (Data) -> Bool) throws -> (status: Int32, out: Data, errors: String) {
         let line = { (password: Bool) in command(t, ["sh", "-c", script], password: password) }
         var out = Data()
         let (status, errors) = try SSHCommand.run(t, line(false), env: env, cancel: cancel, options: ["-x", "-a"]) { out += $0 }
-        if ran(out) { return (status, out) }
+        if ran(out) { return (status, out, errors) }
         guard SFTP.sudoPassword != nil, passwordTexts.contains(where: errors.contains) else {
             throw SFTPError(message: "sudo on \(t.host) " + (passwordTexts.contains(where: errors.contains) ? "needs a password" : "refused: " + (errors.isEmpty ? "exit \(status)" : errors)))
         }
         let r = try withPassword(t, line(true), env: env, cancel: cancel) { _, out in ran(out) }
-        return (r.status, r.out)
+        return (r.status, r.out, r.errors)
     }
 
     /// sudo-rs 0.2.2 takes no password this way (no `-p`; and it reads all of stdin, not a line).

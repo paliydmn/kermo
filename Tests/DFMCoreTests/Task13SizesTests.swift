@@ -32,3 +32,104 @@ import Testing
             "exit 0: nothing went unread")
     #expect(ServerSizes.parse("12\ta\n", errors: "", status: 0, names: ["a"]).isEmpty, "no script line: nothing is du's")
 }
+
+/// A long list goes in several runs, each command line well under Linux's 128 KiB for one argument, in order.
+@Test func manyNamesGoInSeveralRuns() {
+    let names = (0..<20_000).map { "folder-\($0)'s" }
+    let runs = ServerSizes.chunks(names)
+    #expect(runs.count > 1 && Array(runs.joined()) == names)
+    for run in runs {
+        let line = "sh -c " + ShellContext.quote("set -- " + (["/srv"] + run).map(ShellContext.quote).joined(separator: " ") + "\n" + ServerSizes.script)
+        #expect(line.utf8.count < 100_000)
+    }
+    #expect(ServerSizes.chunks([]) == [] && ServerSizes.chunks(["a"]) == [["a"]])
+}
+
+extension SudoPasswordTests {
+
+/// A stand-in du first in PATH (`.local()`: this Mac's sh) answering as GNU du does: each name as given, one argument
+/// each (spaces, a leading "-", a quote), stdout read though it exits 1, the unreadable one "at least". This Mac's own du
+/// has no `-b`: no sizes (the walk). A root panel's goes through its sudo, `-n` first.
+@Test func duRunsInTheFolderThere() throws {
+    let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-du-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: d + "/bin", withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    try Data("""
+        #!/bin/sh
+        [ "$1" = -slbx ] || exit 9
+        [ "$2" = /dev/null ] && { printf '0\\t/dev/null\\n'; exit 0; }
+        [ "$2" = -- ] || exit 9; shift 2
+        [ "$(pwd -P)" = "$KERMO_WANT_DIR" ] || { echo "du: wrong folder $(pwd)" >&2; exit 9; }
+        s=0
+        for n; do
+          [ "$n" = locked ] && { echo "du: cannot read directory 'locked/x': Permission denied" >&2; s=1; }
+          [ "$n" = missing ] && { echo "du: cannot access 'missing': No such file or directory" >&2; s=1; continue; }
+          printf '%s\\t%s\\n' "${#n}" "$n"
+        done
+        exit $s
+        """.utf8).write(to: URL(fileURLWithPath: d + "/bin/du"))
+    chmod(d + "/bin/du", 0o755)
+    try FileManager.default.createDirectory(atPath: d + "/srv dir", withIntermediateDirectories: true)
+    let env = ["PATH": d + "/bin:/usr/bin:/bin", "KERMO_WANT_DIR": d + "/srv dir"]
+    let names = ["a b", "-rf", "it's", "locked", "missing"]
+    let sizes = try ServerSizes.measure(names, in: d + "/srv dir", on: .local(), env: env)
+    #expect(sizes == ["a b": .init(bytes: 3), "-rf": .init(bytes: 3), "it's": .init(bytes: 4), "locked": .init(bytes: 6, partial: true)])
+
+    let fake = try fakeSudo(d)
+    #expect(try ServerSizes.measure(["a b"], in: d + "/srv dir", on: .local(sudo: fake), env: env) == ["a b": .init(bytes: 3)])
+    #expect(sudoLog(fake).first?.hasPrefix("-n -- sh -c ") == true)
+
+    #expect(try ServerSizes.measure(["a b"], in: d + "/srv dir", on: .local(), env: ["KERMO_WANT_DIR": d + "/srv dir"]) == nil,
+            "this Mac's du: no -b")
+    let e = try #require(throws: SFTPError.self) { try ServerSizes.measure(["a"], in: d + "/nowhere", on: .local(), env: env) }
+    #expect(e.message.contains("nowhere"))
+}
+
+/// ⎋ ends this side's ssh: `measure` is back at once. On a server du would go on (sshd sends it no signal, and it writes
+/// nothing until it's done): the script's watcher finds its stderr closed and kills it. Here as there — the script in a
+/// session of its own (this Mac's Process.terminate reaches the whole group), and only its pipes closed.
+@Test(.timeLimit(.minutes(1))) func escStopsDuThere() async throws {
+    let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-du-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: d + "/bin", withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    try Data("""
+        #!/bin/sh
+        [ "$2" = /dev/null ] && exit 0
+        echo $$ > "\(d)/pid"
+        exec sleep 30
+        """.utf8).write(to: URL(fileURLWithPath: d + "/bin/du"))
+    chmod(d + "/bin/du", 0o755)
+    let env = ["PATH": d + "/bin:/usr/bin:/bin"]
+    let cancel = CancelFlag()
+    Timeouts.queue.asyncAfter(deadline: .now() + 0.5) { cancel.cancel() }
+    let started = Date()
+    #expect(throws: CancellationError.self) { try ServerSizes.measure(["a"], in: d, on: .local(), env: env, cancel: cancel) }
+    #expect(Date().timeIntervalSince(started) < 5)
+
+    unlink(d + "/pid")
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+    p.arguments = ["-e", "setsid; exec @ARGV", "/bin/sh", "-c", "set -- \(ShellContext.quote(d)) a\n" + ServerSizes.script]
+    p.environment = env
+    let out = Pipe(), err = Pipe()
+    (p.standardInput, p.standardOutput, p.standardError) = (FileHandle.nullDevice, out, err)
+    try p.run()
+    var pid: Int32?
+    for _ in 0..<50 where pid == nil {
+        pid = Int32(String(decoding: FileManager.default.contents(atPath: d + "/pid") ?? Data(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+        if pid == nil { try await Task.sleep(for: .milliseconds(100)) }
+    }
+    let du = try #require(pid)
+    try out.fileHandleForReading.close()   // what sshd does once ssh is gone
+    try err.fileHandleForReading.close()
+    var gone = false
+    for _ in 0..<50 where !gone {
+        gone = kill(du, 0) != 0
+        if !gone { try await Task.sleep(for: .milliseconds(100)) }
+    }
+    #expect(gone, "du \(du) still runs")
+    if !gone { kill(du, SIGKILL) }
+    p.waitUntilExit()
+}
+
+}
