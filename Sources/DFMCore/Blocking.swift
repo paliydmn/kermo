@@ -15,6 +15,13 @@ public enum Blocking {
     }
 }
 
+/// Timeouts and watchdogs (a git that hangs, a server gone silent): a queue of their own. A global queue's threads are
+/// shared with blocking work, and while that pool was busy (the test suite: dozens at once) a 0.3 s timer there fired
+/// 5 s late; a serial queue always gets a thread. What runs here must be quick: a kill, a cancel, a close.
+public enum Timeouts {
+    public static let queue = DispatchQueue(label: "kermo.timeouts")
+}
+
 /// `Blocking.run`, one per key at a time: callers that come while one runs wait for one more run, started when it
 /// returns, and all get its result. Listing a folder on a dead mount hangs for good; every reload, tab switch or
 /// other panel showing it would take another thread until GCD has none left. Now it's one per folder.

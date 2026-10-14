@@ -179,7 +179,7 @@ private func read(_ path: String) -> String? {
 
 @Test func connectingCanBeCancelled() {
     let flag = CancelFlag()
-    DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { flag.cancel() }
+    Timeouts.queue.asyncAfter(deadline: .now() + 0.5) { flag.cancel() }
     let started = Date()
     do {
         _ = try SFTP.list(SFTPTarget(host: "10.255.255.1"), "/", cancel: flag)   // never answers: ConnectTimeout is 15 s

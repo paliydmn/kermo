@@ -482,7 +482,7 @@ public enum SSHCommand {
     /// `run`'s output; nil if it failed or ran over `timeout` (a server that stopped answering).
     public static func output(_ t: SFTPTarget, _ command: String, env: [String: String] = [:], timeout: TimeInterval = 30) -> Data? {
         let flag = CancelFlag()
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { flag.cancel() }
+        Timeouts.queue.asyncAfter(deadline: .now() + timeout) { flag.cancel() }
         var data = Data()
         guard let (status, _) = try? run(t, command, env: env, cancel: flag, onOutput: { data += $0 }), status == 0 else { return nil }
         return data

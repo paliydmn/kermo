@@ -13,6 +13,8 @@ Release:
 
 ## [Unreleased]
 
+## [1.1] - 2026-10-14
+
 ### Added
 
 - **Server file history:** every save of a server file (F4's ⌘S, a save in another app) keeps the version it replaces on this Mac, in `~/.config/dfilemanager/history.noindex/<server>/<path there>/<name>@<date>`: 20 versions a file and 200 MB in all, the oldest going first. "Overwrite" after someone else's change keeps their version. A file over 5 MB gets none, and the status line says so (and, for a few seconds, the editor that saved); so they do when a version can't be written, and the save goes on. Saving a small file you opened with F4 costs no extra wait: the check before writing already reads it. The folder is owner-only and out of Spotlight and Time Machine; `defaults write com.dmn.dfilemanager serverHistory -bool false` turns it off.
@@ -29,7 +31,7 @@ Release:
 - **Forward Port…** (⌘⇧P, Go ▸ Tunnels, a server's sidebar menu): what the server listens on, from its own `ss` (or `netstat` where there's none), one row a port — its usual name, the program where the server shows it (`ss` shows only your own without root), and whether it listens on localhost only, on all addresses or on one address (the tunnel then goes there). ↩ forwards it by a temporary tunnel on the same port here — the next free one when that's taken, and the status line says so; ⌘O also opens it in the browser, ⌘C copies its address, ⌘S saves it as one of the server's tunnels. Ports a tunnel already forwards say where ("→ localhost:15432"). Temporary tunnels work on any server, one that isn't saved too, and last until Turn Off, Disconnect or quitting (a locked server's also stop when the screen locks); they're marked "temporary" in the menus and in **Tunnels…**, with **Save** once the server is saved, and the sidebar shows `⇄` on their server (its tooltip marks them temporary). A locked server asks for Touch ID before its ports are looked at.
 - **Run on Servers…** (⌘⇧P, the Admin menu, the sidebar's Servers menu): one command on several servers at once, as F2 runs one on a server — in each server's login shell, without a terminal (so `sudo` only with `-n`). One sheet takes the command and the servers, saved ones and `~/.ssh/config` hosts with check boxes (production in purple, locked ones with 🔒); a filter narrows the list by name or address, ⌘A there ticks all it shows and ⇧⌘A unticks them, and what runs is what's ticked and shown. The last choice and command come back next time. Up to 8 run at once; logins go one at a time, so password dialogs come one after another, and say what they're for. One output window shows each line as it comes under its server's name (`web1 │ …`, errors in red), then a summary: `✓ 5  ✗ 1 (db2: exit 1)  🔒 1 skipped (vault)`; ⎋ stops them all, and again closes the window; once it's over, ⌘R runs it again on the same servers. A command that removes, moves or stops things (`rm`, `mv`, `chmod`, `chown`, `dd`, `systemctl stop|restart`) asks once when production servers are among them, naming them all, with ↩ on Cancel; locked servers ask for Touch ID one after another before anything runs, and one refused is skipped. Each production server's run goes into the production log with its exit status.
 - **Git in the sidebar:** while the active panel is in a repository, a Git section at the bottom of the sidebar shows the branch, its changes, ↓↑ to pull and push, and a cloud for a branch no remote has yet. A click opens **Switch Branch…** (⌃B): branches and tags newest first, ↩ switches, a new name creates one, ⌘N branches from the highlighted one, ⌘⌫ deletes a merged one. **Commit…** (⌃⇧C) takes the message in the search window and offers the staged files, all changes, or an amend while the last commit isn't pushed. **Sync** (`pull --ff-only`, then `push`), **Publish Branch**, **Pull**, **Push** and **Fetch** ask for a passphrase in the same dialog as servers, and ⎋ stops them. **Initialize Git Repository…** shows the folder first. Nothing forces, rebases or stashes; when git refuses, a sheet shows what it said.
-- **Documentation:** the README is a short overview with an index, and the manual is in `docs/`, one page per topic: install, getting started, panels and search, files, viewer and editor, Git, terminal, servers, root panel, config checks, tunnels, safety, shortcuts, configuration, troubleshooting. CONTRIBUTING.md says how to build, test and write docs.
+- **Documentation:** the README is a short overview with an index, and the manual is in `docs/`, one page per topic: install, getting started, panels and search, files, viewer and editor, Git, terminal, servers, root panel, config checks, tunnels, safety, shortcuts, configuration, troubleshooting. CONTRIBUTING.md says how to build, test and write docs. Screenshots, made with made-up files and servers, show the window, the sidebar's server rows, Forward Port and Run on Servers; a test keeps the shortcut and option tables in step with the code.
 
 ### Changed
 
@@ -55,6 +57,7 @@ Release:
 
 ### Fixed
 
+- **Timeouts fire on time while the app is busy:** a git that hangs is stopped, and a server gone silent cut off, after their set time even when many listings wait on slow disks at once; their timers shared threads with that work and could come seconds late.
 - **⎋ on a command over ssh** (a config check, a look at a server's ports) no longer waits until the command on the server ends: ssh's shared connection kept the command's error output open until then.
 - A server's shared connection was stopped right after its first folder listing in a panel, so the next save, preview, copy or root panel logged in again (asking for the password again where ssh needs one).
 - **Panels:** a folder reloading by itself (or after a save to its server) no longer wipes the status line's "… ⎋ cancels" of an operation still running there, or a message shown a moment before.
@@ -81,5 +84,6 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.0...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.1...HEAD
+[1.1]: https://github.com/paliydmn/kermo/releases/tag/v1.1
 [1.0]: https://github.com/paliydmn/kermo/releases/tag/v1.0

@@ -260,7 +260,7 @@ private func write(_ path: String, _ text: String) {
     chmod(repo + "/.git/hooks/pre-commit", 0o755)
     git(["add", "."], in: repo)
     let flag = CancelFlag()
-    DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { flag.cancel() }
+    Timeouts.queue.asyncAfter(deadline: .now() + 0.5) { flag.cancel() }
     let start = Date()
     let r = GitStatus.act(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-m", "x"], in: repo, cancel: flag)
     #expect(!r.ok && Date().timeIntervalSince(start) < 10)   // the hook's sleep went with git

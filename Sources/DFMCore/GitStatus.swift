@@ -125,7 +125,7 @@ public struct GitStatus: Sendable, Equatable {
         p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return nil }
         let kill = DispatchWorkItem { p.terminate() }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: kill)
+        Timeouts.queue.asyncAfter(deadline: .now() + timeout, execute: kill)
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         kill.cancel()
@@ -287,7 +287,7 @@ public struct GitStatus: Sendable, Equatable {
         let previous = cancel?.onCancel { killpg(pid, SIGTERM) } ?? nil
         defer { cancel?.onCancel(previous) }
         let kill = DispatchWorkItem { killpg(pid, SIGTERM) }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: kill)
+        Timeouts.queue.asyncAfter(deadline: .now() + timeout, execute: kill)
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         kill.cancel()

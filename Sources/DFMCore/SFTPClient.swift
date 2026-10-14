@@ -111,7 +111,7 @@ public final class SFTPClient: @unchecked Sendable {
             // sudo reads the password line, then sftp-server the packet: one write, nothing between them.
             try send(hello, after: sudoPassword.map { Data(($0 + "\n").utf8) } ?? Data())
             if sudoPassword != nil {
-                DispatchQueue.global().asyncAfter(deadline: .now() + SudoServer.versionWait) { [weak self] in
+                Timeouts.queue.asyncAfter(deadline: .now() + SudoServer.versionWait) { [weak self] in
                     guard let self, isConnected, cond.withLock({ answers }) == 0 else { return }
                     late.cancel()
                     close()
@@ -159,7 +159,7 @@ public final class SFTPClient: @unchecked Sendable {
     /// partial file stays (a cancelled job doesn't connect again to remove it).
     public func closeWhenQuiet(_ seconds: Double = 5) {
         let heard = cond.withLock { answers }
-        DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { [self] in
+        Timeouts.queue.asyncAfter(deadline: .now() + seconds) { [self] in
             guard isConnected else { return }
             if cond.withLock({ answers }) == heard { close() } else { closeWhenQuiet(seconds) }
         }

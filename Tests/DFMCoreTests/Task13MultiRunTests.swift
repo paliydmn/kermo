@@ -76,14 +76,14 @@ extension SudoPasswordTests {
 @Test(.timeLimit(.minutes(1))) func cancellingDoesntWaitForTheServer() throws {
     try withTestSSHD { t, _, _ in
         let cancel = CancelFlag(), heard = Heard()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { cancel.cancel() }
+        Timeouts.queue.asyncAfter(deadline: .now() + 0.5) { cancel.cancel() }
         let started = Date()
         let outcomes = MultiRun.run([MultiRun.Server(name: "here", target: t)], "echo start; sleep 5; echo done", cancel: cancel, line: heard.add)
         #expect(Date().timeIntervalSince(started) < 2.5, "\(Date().timeIntervalSince(started)) s")
         #expect(outcomes == [.stopped] && heard.of(0) == ["start"])
         // A command that never stops writing to stderr doesn't hold the reader either.
         let busy = CancelFlag()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { busy.cancel() }
+        Timeouts.queue.asyncAfter(deadline: .now() + 0.5) { busy.cancel() }
         let begun = Date()
         let noisy = MultiRun.run([MultiRun.Server(name: "here", target: t)], "while :; do echo x >&2; sleep 0.01; done", cancel: busy, line: { _, _, _ in })
         #expect(Date().timeIntervalSince(begun) < 2.5 && noisy == [.stopped], "\(Date().timeIntervalSince(begun)) s")
@@ -93,7 +93,7 @@ extension SudoPasswordTests {
 /// ⎋ stops them all at once: none runs on to its end, and each says it was stopped.
 @Test func cancellingStopsEveryServer() {
     let heard = Heard(), cancel = CancelFlag()
-    DispatchQueue.global().asyncAfter(deadline: .now() + 0.4) { cancel.cancel() }
+    Timeouts.queue.asyncAfter(deadline: .now() + 0.4) { cancel.cancel() }
     let started = Date()
     let ended = Heard()
     let outcomes = MultiRun.run((1...3).map { MultiRun.Server(name: "s\($0)", target: .local()) }, "echo start; sleep 5; echo done",

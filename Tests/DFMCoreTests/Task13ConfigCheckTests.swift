@@ -379,7 +379,7 @@ extension SudoPasswordTests {
     let c = try SFTPClient(.local())
     defer { c.close() }
     let flag = CancelFlag()
-    DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { flag.cancel() }   // ⎋ while the check runs
+    Timeouts.queue.asyncAfter(deadline: .now() + 0.3) { flag.cancel() }   // ⎋ while the check runs
     let said = CancelFlag()   // `checking` heard: the app says "Checking …" then
     let r = try c.save(d + "/l", to: d + "/a.conf", baseline: nil, cancel: flag, rule: ConfigCheck(match: "*", check: "sh -c 'sleep 1; echo done'", when: .after),
                        checking: { said.cancel() })

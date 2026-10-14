@@ -38,7 +38,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Up / back / forward | ⌫, ⌘↑ / ⌘[ / ⌘] |
 | Home / computer root | ⇧⌘H / ⇧⌘/ |
 | Directory tree (←/→ collapse/expand, ↩ open) | F10, ⌥0, ⌥F10, ⇧⌘T |
-| Open / enter an `.app` bundle | ↩ / ⌘↓ |
+| Open / enter an `.app` bundle | ↩ (or the keypad's ⌤) / ⌘↓ |
 | Follow a link's target | ⌘J |
 | Show hidden files / refresh | ⇧⌘. / ⌘R |
 | Volumes / eject | ⇧⌘V, ⌥F1 / ⌥⌘E |
@@ -99,7 +99,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | New SSH session: a shell on a server in the terminal (inside the terminal, ⌘K clears it) | ⌘K |
 | Server panel as root / as its user again | ⌃⌘R / ⌃⇧⌘R |
 | Replace the panels with the terminal (the panel follows `cd`); press ⌃O twice quickly to send ⌃O to the terminal | ⌃O |
-| Terminal text bigger / smaller | ⌘+ / ⌘− |
+| Terminal text bigger / smaller | ⌘+ or ⌘= / ⌘− |
 | User command menu / command line | F2, ⌥2 / ⌘E |
 | Insert the cursor's name / the marked items' full paths into the command line, or into the shell while the terminal is open | ⌃↩ / ⌃⇧↩ |
 

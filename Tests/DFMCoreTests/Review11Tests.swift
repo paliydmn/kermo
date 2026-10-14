@@ -205,14 +205,14 @@ private let spotlightIndexesHome = {
 @Test func loginsToOneServerTakeTurns() throws {
     let t = SFTPTarget(host: "dfm-a13-\(UUID().uuidString.prefix(6)).invalid")
     let first = try #require(SFTP.beginLogin(t, cancel: nil))
-    DispatchQueue.global().asyncAfter(deadline: .now() + 0.4) { first.end() }
+    Timeouts.queue.asyncAfter(deadline: .now() + 0.4) { first.end() }
     let started = Date()
     let second = SFTP.beginLogin(t, cancel: nil)   // waits for the first
     #expect(second != nil && Date().timeIntervalSince(started) >= 0.3)
     let other = SFTP.beginLogin(SFTPTarget(host: "dfm-other.invalid"), cancel: nil)   // another server: at once
     other?.end()
     let flag = CancelFlag()
-    DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { flag.cancel() }
+    Timeouts.queue.asyncAfter(deadline: .now() + 0.2) { flag.cancel() }
     #expect(SFTP.beginLogin(t, cancel: flag) == nil, "⎋ stops the wait")
     second?.end()
     SFTP.beginLogin(t, cancel: nil)?.end()   // free again

@@ -49,6 +49,8 @@ To run one command on several servers at once, choose **Run on Servers…** in t
 
 ## Server rows in the sidebar
 
+![Server rows: a production server in purple with an SFTP panel open, a server with a tunnel listening, a locked one](images/server-rows.png)
+
 A row shows what is open on the server:
 
 - `>_` for SSH and a folder for SFTP, in green (with a count from 2);
