@@ -47,6 +47,7 @@ extension AppDelegate {
         cmd("tunnel.list", "Tunnels…", [], short: "Tunnels", aliases: "port forward localhost database -L") { $0.showTunnels() },
         cmd("tunnel.new", "New Tunnel…", [], short: "New tunnel", aliases: "port forward localhost database -L") { $0.newTunnel() },
         cmd("tunnel.forward", "Forward Port…", [], short: "Forward port", aliases: "ports listening ss netstat tunnel localhost -L") { $0.forwardPort() },
+        cmd("ssh.copyKey", "Copy SSH Key to Server…", [], short: "Copy SSH key", aliases: "ssh-copy-id authorized_keys public key login password") { $0.copyKey() },
         cmd("ssh.config", "Edit SSH Config", [], menu: "Go", short: "SSH config", aliases: "ssh config hosts ~/.ssh/config") { $0.editSSHConfig() },
         cmd("ssh.reconnect", "Reconnect SSH Session", [], menu: "Go", short: "Reconnect", aliases: "ssh") { app in
             if app.terminal.isShown { app.terminal.reconnect() } else { NSSound.beep() }
