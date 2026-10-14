@@ -6,6 +6,8 @@ macOS 14 or later · Apple Silicon and Intel · [MIT license](LICENSE)
 
 [![Kermo in 80 seconds: SFTP, SSH, Git, live logs and production safety](docs/video.jpg)](https://youtu.be/hjXibnVEQ9c)
 
+![Kermo with a Git project on this Mac and a production server's folder over SFTP; the sidebar lists favorites, frequent folders, servers and the Git branch](docs/images/main-window.png)
+
 ## Install
 
 1. Download the `.dmg` or `.pkg` from the [latest release](https://github.com/paliydmn/kermo/releases/latest).

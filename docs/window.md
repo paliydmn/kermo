@@ -4,6 +4,8 @@
 
 How the Kermo window is laid out, and the three ways to reach anything: the key bar, the Places sidebar and search. All keys are in [Keyboard shortcuts](shortcuts.md).
 
+![The window: the Places sidebar on the left, a local Git project and a server over SFTP in two panels, the command line and the key bar at the bottom](images/main-window.png)
+
 ## Panels and tabs
 
 The window shows two to four panels side by side, each with its own tabs. Tab moves between panels. With three or four panels, F5 and F6 target the panel that was active before this one. A panel can show a folder on this Mac, a [server](servers.md), an archive, a Git list or search results.
