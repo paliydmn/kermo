@@ -331,6 +331,7 @@ final class GitRowView: HoverRowView {
     override func mouseUp(with event: NSEvent) {
         if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
     }
+    override func accessibilityPerformPress() -> Bool { onClick?(); return onClick != nil }
     override func menu(for event: NSEvent) -> NSMenu? {
         let m = NSMenu()
         (menuItems?() ?? []).forEach(m.addItem)
@@ -824,7 +825,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         key.font = .systemFont(ofSize: 10)
         key.textColor = .tertiaryLabelColor
         let h = row([title, repo, spacer(), key])
-        h.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 4, right: 14)
+        h.edgeInsets = NSEdgeInsets(top: 8, left: 16, bottom: 4, right: 25)   // in line with the outline's headers and their keys
         h.toolTip = r.server.map { "\($0):\(r.status.root)" } ?? r.status.root
         return h
     }
@@ -883,8 +884,8 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         toolbar.isHidden = true
 
         let line = row([icon, name, chips, toolbar])
-        line.spacing = 4
-        line.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 8)
+        line.spacing = 6
+        line.edgeInsets = NSEdgeInsets(top: 0, left: 19, bottom: 0, right: 8)   // the icon under the places' icons
         let v = GitRowView()
         v.backgroundColor = .clear
         v.toolTip = r.tip()

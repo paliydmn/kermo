@@ -62,7 +62,7 @@ extension AppDelegate {
             let current = st.detached ? "HEAD" : st.branch
             let items = [Picker.Item(title: "＋ New Branch…", subtitle: "from \(current), or type its name above") { [unowned self] in newBranch(from: nil) }]
                 + refs.map { ref in branchItem(ref, root: st.root) }
-            Picker.show(over: window, placeholder: "Switch to a branch or tag — or type a new name · ⌘N new branch from the highlighted one · ⌘⌫ delete a merged branch",
+            Picker.show(over: window, placeholder: "Switch branch — or type a new name · ⌘N branch from the highlighted · ⌘⌫ delete merged",
                         items: items, freeText: { [unowned self] q in
                 let name = q.replacingOccurrences(of: #"\s+"#, with: "-", options: .regularExpression)   // as VS Code: "ports multi" → ports-multi
                 guard !name.isEmpty, !refs.contains(where: { $0.kind == .local && $0.name == name }) else { return [] }
