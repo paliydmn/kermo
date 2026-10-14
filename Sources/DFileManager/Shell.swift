@@ -17,6 +17,16 @@ enum Shell {
         OutputWindow.start(command, in: dir, on: server, diff: false, title: title, onExit: onExit)
     }
 
+    /// One command on several servers (Run on Servers…), in one output window: each line as it comes, "web1 │ …", stderr
+    /// in red; then the summary. ⎋ stops them all and keeps the window; again, closes it. `ended`: each server's outcome
+    /// (its index in `servers`) as soon as it's known — whatever becomes of the window. `skipped`: named in the summary
+    /// (locked, Touch ID refused). `again`: ⌘R once it's over (given this window, for a question); true — it started
+    /// again, in a window of its own — closes this one.
+    static func run(_ command: String, on servers: [MultiRun.Server], skipped: [String], env: [String: String], title: String,
+                    again: (@MainActor (NSWindow?) async -> Bool)? = nil, ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
+        OutputWindow.start(command, on: servers, skipped: skipped, env: env, title: title, again: again, ended: ended)
+    }
+
     /// Fire-and-forget (GUI tools like `code --diff`): no output window.
     static func spawn(_ command: String, in dir: String) {
         let p = Process()
@@ -114,13 +124,44 @@ private final class Inbox: @unchecked Sendable {
     }
 }
 
+/// An output window, seeing its key equivalents before the main menu does (⌘R is Refresh there).
+private final class KeyWindow: NSWindow {
+    var onKey: ((NSEvent) -> Bool)?
+    override func performKeyEquivalent(with event: NSEvent) -> Bool { onKey?(event) == true || super.performKeyEquivalent(with: event) }
+}
+
+/// Lines of several servers (`MultiRun`) read off their pipes and not shown yet: the main thread takes them in batches.
+private final class LineInbox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [(server: Int, text: String, error: Bool)] = [], scheduled = false
+
+    /// True if the main thread has to be asked to take it.
+    func put(_ line: (Int, String, Bool)) -> Bool {
+        lock.withLock {
+            lines.append(line)
+            defer { scheduled = true }
+            return !scheduled
+        }
+    }
+
+    func take() -> [(server: Int, text: String, error: Bool)] {
+        lock.withLock {
+            defer { lines = []; scheduled = false }
+            return lines
+        }
+    }
+}
+
 @MainActor
 private final class OutputWindow: NSWindowController, NSWindowDelegate {
     private static var open: [OutputWindow] = []
-    private let textView = NSTextView()
     private let process = Process()
     private let started = Date()
     private static let ansi = try! NSRegularExpression(pattern: "\u{1B}\\[[0-9;?]*[A-Za-z]")
+    /// Run on Servers': stops them all — no process of the window's own then.
+    private var servers: CancelFlag?
+    /// Set once they're all over: what `alive` reads, also at quit (no run loop to hear it then).
+    private let over = CancelFlag()
 
     static func start(_ command: String, in dir: String, on server: SFTPTarget?, diff: Bool, title: String?, onExit: @escaping @MainActor (Int32) -> Void) {
         let w = OutputWindow(command, dir, server, diff, onExit)
@@ -129,16 +170,19 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         w.showWindow(nil)
     }
 
-    private init(_ command: String, _ dir: String, _ server: SFTPTarget?, _ diff: Bool, _ onExit: @escaping @MainActor (Int32) -> Void) {
-        let place = server.map { "🌐 \($0.host):\(dir)" } ?? (dir as NSString).abbreviatingWithTildeInPath
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 520),
-                         styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        w.title = (server.map { "\($0.host) $ " } ?? "$ ") + command.bidiVisible
-        w.subtitle = place + " · running… · Esc closes (and stops)"
-        w.isReleasedWhenClosed = false
-        super.init(window: w)
-        w.delegate = self
+    static func start(_ command: String, on servers: [MultiRun.Server], skipped: [String], env: [String: String], title: String,
+                      again: (@MainActor (NSWindow?) async -> Bool)?, ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
+        let w = OutputWindow(servers, skipped: skipped, command: command, env: env, again: again, ended: ended)
+        w.window?.title = title.bidiVisible
+        open.append(w)
+        w.showWindow(nil)
+    }
 
+    /// The window and its text view, empty.
+    private static func window() -> (KeyWindow, NSTextView) {
+        let w = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 520),
+                         styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        w.isReleasedWhenClosed = false
         let scroll = NSTextView.scrollableTextView()
         let tv = scroll.documentView as! NSTextView
         tv.isEditable = false
@@ -148,6 +192,16 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         w.contentView = scroll
         w.center()
         w.setFrameAutosaveName("Output")
+        return (w, tv)
+    }
+
+    private init(_ command: String, _ dir: String, _ server: SFTPTarget?, _ diff: Bool, _ onExit: @escaping @MainActor (Int32) -> Void) {
+        let place = server.map { "🌐 \($0.host):\(dir)" } ?? (dir as NSString).abbreviatingWithTildeInPath
+        let (w, tv) = Self.window()
+        w.title = (server.map { "\($0.host) $ " } ?? "$ ") + command.bidiVisible
+        w.subtitle = place + " · running… · Esc stops"
+        super.init(window: w)
+        w.delegate = self
 
         if let server {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
@@ -181,7 +235,7 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         report = { [weak self] in
             guard let self else { return }
             let secs = String(format: "%.1fs", Date().timeIntervalSince(self.started))
-            self.window?.subtitle = place + " · exit \(self.status) · \(secs)" + (self.trimmed ? " · only the last 4 MB kept" : "")
+            self.window?.subtitle = place + " · exit \(self.status) · \(secs)" + (self.trimmed ? " · only the last 4 MB kept" : "") + " · Esc closes"
             if diff {
                 // diff exits 1 when files differ — that's the normal case, not an error.
                 Self.colorizeDiff(tv)
@@ -193,7 +247,68 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         }
         do { try process.run() } catch { append(Data("\(error.localizedDescription)\n".utf8), true, in: tv) }
     }
+
+    /// Run on Servers': `MultiRun` on a thread of its own, its lines taken in batches; the summary once all are over.
+    private init(_ list: [MultiRun.Server], skipped: [String], command: String, env: [String: String],
+                 again: (@MainActor (NSWindow?) async -> Bool)?, ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
+        let (w, tv) = Self.window()
+        let count = list.count + skipped.count
+        w.subtitle = "\(count) server\(count == 1 ? "" : "s") · running… · Esc stops all"
+        let cancel = CancelFlag()
+        servers = cancel
+        super.init(window: w)
+        w.delegate = self
+        w.onKey = { [weak self] e in   // ⌘R: again, once it's over (before the main menu's Refresh)
+            guard let self, Shortcut(event: e) == Shortcut("cmd+r"), let again else { return false }
+            if alive { NSSound.beep() } else { Task { if await again(self.window) { self.window?.close() } } }
+            return true
+        }
+        let names = list.map(\.name), width = names.map(\.count).max() ?? 0   // the skipped have no lines
+        let inbox = LineInbox(), over = over
+        Thread { [weak self] in
+            let outcomes = MultiRun.run(list, command, env: env, cancel: cancel, ended: { i, o in
+                DispatchQueue.main.async { MainActor.assumeIsolated { ended(i, o) } }   // not through the window: it may be gone
+            }) { i, text, error in
+                guard inbox.put((i, text, error)) else { return }   // a hop is on its way already: it takes this too
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.show(inbox.take(), names, width, in: tv) } }
+            }
+            over.cancel()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.show(inbox.take(), names, width, in: tv)
+                    let summary = MultiRun.summary(zip(names, outcomes).map { ($0, $1) } + skipped.map { ($0, .skipped) })
+                    let text = NSMutableAttributedString(string: "\n" + summary + "\n", attributes: [
+                        .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .bold), .foregroundColor: NSColor.textColor])
+                    let all = text.string as NSString, x = all.range(of: "✗")
+                    if x.location != NSNotFound {   // the failures in red, with their names
+                        let next = all.range(of: "  ", range: NSRange(location: x.location, length: all.length - x.location)).location
+                        text.addAttribute(.foregroundColor, value: NSColor.systemRed,
+                                          range: NSRange(location: x.location, length: (next == NSNotFound ? all.length - 1 : next) - x.location))
+                    }
+                    tv.textStorage?.append(text)
+                    self.kept(in: tv)
+                    self.window?.subtitle = "\(count) server\(count == 1 ? "" : "s") · " + (cancel.isCancelled ? "stopped" : "done")
+                        + " · " + String(format: "%.1fs", Date().timeIntervalSince(self.started)) + " · Esc closes" + (again == nil ? "" : " · ⌘R again")
+                }
+            }
+        }.start()
+    }
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Several servers' lines: "web1 │ " dimmed, then the line, red from stderr.
+    private func show(_ lines: [(server: Int, text: String, error: Bool)], _ names: [String], _ width: Int, in tv: NSTextView) {
+        guard let storage = tv.textStorage, !lines.isEmpty else { return }
+        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let batch = NSMutableAttributedString()
+        for l in lines {
+            let text = Self.ansi.stringByReplacingMatches(in: l.text, range: NSRange(l.text.startIndex..., in: l.text), withTemplate: "")
+            batch.append(NSAttributedString(string: MultiRun.label(names[l.server], width: width), attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
+            batch.append(NSAttributedString(string: text + "\n", attributes: [.font: font, .foregroundColor: l.error ? NSColor.systemRed : NSColor.textColor]))
+        }
+        storage.append(batch)
+        kept(in: tv)
+    }
 
     /// What the window keeps (UTF-16 units): the oldest lines go — a `tail -f` left for a day would grow without end.
     static let limit = 4 << 20
@@ -231,6 +346,12 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
             .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
             .foregroundColor: isErr ? NSColor.systemRed : NSColor.textColor,
         ])
+        kept(in: tv)
+    }
+
+    /// What it keeps (`limit`), and the end in view.
+    private func kept(in tv: NSTextView) {
+        guard let storage = tv.textStorage else { return }
         let cut = FollowReader.trimCount(storage.mutableString, limit: Self.limit)
         if cut > 0 {
             storage.deleteCharacters(in: NSRange(location: 0, length: cut))
@@ -252,7 +373,17 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         storage.endEditing()
     }
 
-    override func cancelOperation(_ sender: Any?) { window?.performClose(nil) }
+    /// ⎋: what runs stops first, and the window stays with what it said (several servers': and the summary); ⎋ again —
+    /// or with nothing running — closes it, a command that ignored the first one getting its SIGKILL as closing gives.
+    private var stopAsked = false
+    override func cancelOperation(_ sender: Any?) {
+        if !stopAsked, stop() {
+            stopAsked = true
+            window?.subtitle = "stopping… · Esc again closes"
+        } else {
+            window?.performClose(nil)
+        }
+    }
 
     /// The process group is still there — the shell (Process made it a group leader), or a child it left behind
     /// (`sleep 30 &`, `tail -f x &`), which `process.isRunning` wouldn't see. Pid 0: the process never ran (killpg(0) would be us).
@@ -263,6 +394,7 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
     /// a periodic look (or a kqueue on the group) would close it.
     private var gone = false
     private var alive: Bool {
+        if servers != nil { return !over.isCancelled }
         guard !gone, process.processIdentifier > 0 else { return false }
         gone = killpg(process.processIdentifier, 0) != 0
         return !gone
@@ -272,10 +404,10 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
     /// `forceKill` is the SIGKILL for what ignores it.
     private func stop() -> Bool {
         guard alive else { return false }
-        killpg(process.processIdentifier, SIGTERM)
+        if let servers { servers.cancel() } else { killpg(process.processIdentifier, SIGTERM) }   // their ssh get a SIGTERM each
         return true
     }
-    private func forceKill() { if alive { killpg(process.processIdentifier, SIGKILL) } }
+    private func forceKill() { if servers == nil, alive { killpg(process.processIdentifier, SIGKILL) } }
 
     /// Closed while the command ran: stopping, SIGKILL in 2 s — and `terminateAll` reaches them meanwhile.
     private static var stopping: [OutputWindow] = []

@@ -45,6 +45,9 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         p.present()
     }
 
+    /// Closes the one showing, as ⎋ does (its `onDismiss` runs): one shown while something loads, which failed.
+    static func dismiss() { current?.close() }
+
     private init(parent: NSWindow, placeholder: String, items: [Item], rank: @escaping (Item, String) -> Int?,
                  freeText: ((String) -> [Item])?, freeTextLast: Bool, selected: Int, onDismiss: (@MainActor () -> Void)?) {
         self.parent = parent

@@ -399,9 +399,10 @@ public enum SSHCommand {
     /// Runs `command` on the server without a terminal (its login shell parses it), handing stdout over as it
     /// arrives; the test target (`.local()`) runs it here with /bin/sh. Returns the exit status and stderr.
     /// `stdin`: what the command reads, then end of file (a secret goes this way: never in its command line); none
-    /// by default. `options`: ssh's, before the host.
+    /// by default. `options`: ssh's, before the host. `onErrors`: stderr too as it arrives, on a thread of its own.
     public static func run(_ t: SFTPTarget, _ command: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
-                           options: [String] = [], stdin: Data? = nil, onOutput: (Data) -> Void) throws -> (status: Int32, errors: String) {
+                           options: [String] = [], stdin: Data? = nil, onErrors: (@Sendable (Data) -> Void)? = nil,
+                           onOutput: (Data) -> Void) throws -> (status: Int32, errors: String) {
         try SFTP.startMaster(t, env: env, cancel: cancel)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: t.localServer == nil ? "/usr/bin/ssh" : "/bin/sh")
@@ -435,20 +436,38 @@ public enum SSHCommand {
         let previous = cancel?.onCancel { p.terminate() } ?? nil
         defer { cancel?.onCancel(previous) }
         nonisolated(unsafe) var errData = Data()
-        let errReader = Thread { errData = err.fileHandleForReading.readDataToEndOfFile() }
-        errReader.start()
-        var buf = [UInt8](repeating: 0, count: 1 << 16)
-        while true {
-            let n = Darwin.read(out.fileHandleForReading.fileDescriptor, &buf, buf.count)
-            if n < 0 && errno == EINTR { continue }
-            if n <= 0 { break }
-            onOutput(Data(buf[0..<n]))
+        // Cancelled and ssh gone: stop reading. In mux mode the master keeps the server's end of our stderr until the
+        // command there ends (the end of a `sleep 600`, or never), so ⎋ would wait for it.
+        let over: @Sendable () -> Bool = { cancel?.isCancelled == true && !p.isRunning }
+        let errReader = Thread {
+            drain(err.fileHandleForReading.fileDescriptor, until: over) { d in
+                errData += d
+                onErrors?(d)
+            }
         }
+        errReader.start()
+        drain(out.fileHandleForReading.fileDescriptor, until: over, onOutput)
         p.waitUntilExit()
         while !errReader.isFinished { usleep(1000) }
         if cancel?.isCancelled == true { throw CancellationError() }
         let errors = String(decoding: errData, as: UTF8.self).split(separator: "\n").filter { !$0.contains("Warning: Permanently added") }
         return (p.terminationStatus, errors.joined(separator: "\n"))
+    }
+
+    /// Hands over what `fd` gives until its end, or until `over` says so (looked at each pass, and each 0.1 s while
+    /// it's quiet: a command there that never stops writing doesn't hold it).
+    private static func drain(_ fd: Int32, until over: () -> Bool, _ chunk: (Data) -> Void) {
+        var buf = [UInt8](repeating: 0, count: 1 << 16)
+        var wait = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        while !over() {
+            let ready = poll(&wait, 1, 100)
+            if ready < 0 && errno == EINTR { continue }
+            if ready == 0 { continue }
+            let n = Darwin.read(fd, &buf, buf.count)
+            if n < 0 && errno == EINTR { continue }
+            if n <= 0 { return }
+            chunk(Data(buf[0..<n]))
+        }
     }
 
     /// `run`'s whole output; a failure throws what it said.

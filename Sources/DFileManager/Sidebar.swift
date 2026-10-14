@@ -82,6 +82,7 @@ struct ServerList: Equatable {
     var errors: [String: String] = [:]  // SFTP host → last error
     var tunnels: [String: [String]] = [:]   // ServerRow.key → its tunnels listening
     var failedTunnels: [String: [String]] = [:]   // ServerRow.key → "Postgres: why" for each whose last connection failed
+    var forwarded: [SFTPTarget] = []    // servers with temporary tunnels (Forward Port): listed, as those with sessions are
 }
 
 /// One server in the Servers list — saved, a ~/.ssh/config host, or an address as typed — with its open sessions.
@@ -206,6 +207,7 @@ enum SidebarModel {
         list.pins.compactMap(parse).forEach { add($0) }
         let room = max(places, rows.count + 1)
         (list.recents.compactMap(parse) + list.sessions.map(\.target)).forEach { add($0) { rows.count < room || !$0.sessions.isEmpty } }
+        list.forwarded.forEach { add($0) }
         (list.saved.map(\.target) + configTargets).forEach { add($0) { _ in rows.count < room } }
         let order = (list.pins.compactMap(parse) + list.saved.map(\.target) + configTargets).map(ServerRow.key)
         func rank(_ r: ServerRow) -> Int { order.firstIndex(of: r.key) ?? order.count }
@@ -706,7 +708,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
                  ssh > 0 ? "\(ssh) open — click to go there  ·  ⌘-click: another one" : "Open an SSH session  ·  ⌘-click: another one"),
             pill("folder", sftp, sftp > 0 ? .systemGreen : .secondaryLabelColor, "sftp", "SFTP",
                  sftp > 0 ? "\(sftp) open — click to go there  ·  ⌘-click: another one" : "Open over SFTP  ·  ⌘-click: in a new tab, ⌥-click: in the other panel"),
-        ] + (server.saved?.tunnels.isEmpty == false
+        ] + (server.saved?.tunnels.isEmpty == false || !server.tunnels.isEmpty || !server.failedTunnels.isEmpty
              ? [pill("arrow.left.arrow.right", server.tunnels.count, tunnelColor, "tunnels", "Tunnels", (tunnels + ["Click: its tunnels"]).joined(separator: "\n"))] : [])
           + [more])
         chips.spacing = 4

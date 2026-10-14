@@ -503,6 +503,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         sidebar.sectionMenu = { [unowned self] id in
             id != "servers" ? [] : [MenuAction.item("New Server…") { [unowned self] in editServer(SavedServer(), title: "New Server") },
                                     MenuAction.item("Connect…") { [unowned self] in showConnect(ssh: true) },
+                                    MenuAction.item("Run on Servers…") { [unowned self] in runOnServers() },
                                     MenuAction.item("Edit SSH Config") { [unowned self] in editSSHConfig() }]
         }
         NotificationCenter.default.addObserver(self, selector: #selector(reloadVolumes), name: NSWindow.didBecomeKeyNotification, object: window)
@@ -553,6 +554,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             let failed = s.tunnels.compactMap { t in tunnels.state(t, of: s)?.error.map { "\(t.title): \($0)" } }
             if !on.isEmpty { servers.tunnels[key, default: []] += on }
             if !failed.isEmpty { servers.failedTunnels[key, default: []] += failed }
+        }
+        for st in tunnels.temporaries() {   // Forward Port's: on any server, an unsaved one's row stays while they do
+            let key = ServerRow.key(st.server.target)
+            servers.tunnels[key, default: []].append(st.tunnel.title + " (temporary)")   // the row's tooltip
+            if let e = st.error { servers.failedTunnels[key, default: []].append("\(st.tunnel.title): \(e)") }
+            if !servers.forwarded.contains(where: { ServerRow.key($0) == key }) { servers.forwarded.append(st.server.target) }
         }
         sidebar.show(SidebarModel.sections(bookmarks: bookmarks, frecent: frecency.ranked(), volumes: volumes, servers: servers,
                                            tags: defaults.stringArray(forKey: "recentTags") ?? []))
@@ -627,6 +634,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 saveTunnel(t, of: s, on: false)
             }
         }
+        tunnels.stopTemporaries(server: key)   // Forward Port's
         tunnels.endHeld(key)   // connections kept from before the screen locked, or from before an edit
         // First: an SSH tab ending or the last file tab closing lets releaseIdleServers end it only gently (`-O stop`).
         await Masters.stop(now: true) { ServerRow.key($0) == key }
@@ -659,7 +667,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         openSFTP(r.target.asRoot(root), dir: dir ?? r.saved?.startDir, title: r.title, newTab: newTab, panel: panel)
     }
 
-    private func serverMenu(_ place: Place) -> [NSMenuItem] {
+    func serverMenu(_ place: Place) -> [NSMenuItem] {
         guard case .server(let r) = place else { return [] }
         let copy: @MainActor () -> Void = {
             NSPasteboard.general.clearContents()
@@ -679,7 +687,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 : MenuAction.item("Disconnect") { [unowned self] in disconnect(r.target) },
             r.saved.map { unlocked("Copy SSH Command", $0, "copy the command of", copy) } ?? MenuAction.item("Copy SSH Command", copy),
             MenuAction.item("Show File History") { [unowned self] in showFileHistory(r.target) },
-            r.saved.map { tunnelsItem(for: $0) },
+            MenuAction.item("Forward Port…") { [unowned self] in forwardPort(on: r.target) },
+            tunnelsItem(for: r.saved, at: r.target),
             .separator(),
             MenuAction.item(r.pinned ? "Unpin" : "Pin") { [unowned self] in
                 unpin(r.key)

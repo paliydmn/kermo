@@ -46,6 +46,7 @@ extension AppDelegate {
         },
         cmd("tunnel.list", "Tunnels…", [], short: "Tunnels", aliases: "port forward localhost database -L") { $0.showTunnels() },
         cmd("tunnel.new", "New Tunnel…", [], short: "New tunnel", aliases: "port forward localhost database -L") { $0.newTunnel() },
+        cmd("tunnel.forward", "Forward Port…", [], short: "Forward port", aliases: "ports listening ss netstat tunnel localhost -L") { $0.forwardPort() },
         cmd("ssh.config", "Edit SSH Config", [], menu: "Go", short: "SSH config", aliases: "ssh config hosts ~/.ssh/config") { $0.editSSHConfig() },
         cmd("ssh.reconnect", "Reconnect SSH Session", [], menu: "Go", short: "Reconnect", aliases: "ssh") { app in
             if app.terminal.isShown { app.terminal.reconnect() } else { NSSound.beep() }
@@ -227,6 +228,9 @@ extension AppDelegate {
         cmd("admin.rootPanel", "Reopen Panel as Root", ["ctrl+cmd+r"], menu: "Admin", short: "As root", aliases: "root sudo server etc") { $0.reopenPanel(asRoot: true) },
         cmd("admin.userPanel", "Reopen Panel as User", ["ctrl+shift+cmd+r"], menu: "Admin", short: "As user", aliases: "root sudo server user") { $0.reopenPanel(asRoot: false) },
         cmd("admin.auditLog", "Show Production Log", [], menu: "Admin", aliases: "audit journal prod history") { $0.showAuditLog() },
+        cmd("server.runOn", "Run on Servers…", [], menu: "Admin", short: "Run on servers", aliases: "ssh command several many all servers parallel pssh") {
+            $0.runOnServers()
+        },
 
         // Clipboard
         cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", short: "Copy path", aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetURLs.map(\.path)) },
@@ -823,7 +827,7 @@ extension AppDelegate {
                 editServer(SavedServer(), title: "New Server", connect: kind)
             }]
             + savedServers.map { s in
-                Picker.Item(title: (s.locked ? "🔒 " : "") + s.title, subtitle: ServerRow.address(s.target), detail: "✎ ⌘E   " + label,
+                Picker.Item(title: s.pickerTitle, subtitle: ServerRow.address(s.target), detail: "✎ ⌘E   " + label,
                             edit: { [unowned self] in editServer(s, title: "Edit “\(s.title)”") }) { [unowned self] in
                     openServer(ServerRow(target: s.target, saved: s, title: s.title), kind)
                 }

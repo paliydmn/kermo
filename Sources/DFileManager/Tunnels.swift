@@ -24,11 +24,12 @@ extension AppDelegate {
         }
     }
 
-    /// Its port closes, its connections too, and it stays off at launch; the server's connection goes too if nothing
-    /// else uses it now.
+    /// Its port closes, its connections too, and it stays off at launch (a temporary one is gone); the server's
+    /// connection goes too if nothing else uses it now.
     func turnOffNow(_ t: Tunnel, of s: SavedServer) {
+        let temporary = tunnels.isTemporary(t, of: s)
         tunnels.stop(t, of: s)
-        saveTunnel(t, of: s, on: false)
+        if !temporary { saveTunnel(t, of: s, on: false) }
         releaseIdleServers()
     }
 
@@ -45,9 +46,10 @@ extension AppDelegate {
     /// A tunnel's item (U3): "Postgres → 15432 · 3" with a ● — green listening, grey off, red when its last connection
     /// failed (the tooltip says why) — and what to do with it in a submenu, so a stray click never cuts a client off.
     /// In production's color on a production server, as the server is.
+    /// A temporary one (U5): "· temporary", and Turn Off, Open in Browser, Copy Address, Save (once its server is saved).
     func tunnelItem(_ t: Tunnel, of s: SavedServer) -> NSMenuItem {
-        let st = tunnels.state(t, of: s), on = st?.listener != nil, n = tunnels.connections(t, of: s)
-        let it = NSMenuItem(title: "\(t.title) → \(t.localPort)" + (n > 0 ? " · \(n)" : ""), action: nil, keyEquivalent: "")
+        let st = tunnels.state(t, of: s), on = st?.listener != nil, n = tunnels.connections(t, of: s), temporary = st?.temporary == true
+        let it = NSMenuItem(title: "\(t.title) → \(t.localPort)" + (n > 0 ? " · \(n)" : "") + (temporary ? " · temporary" : ""), action: nil, keyEquivalent: "")
         let failed = st?.error != nil
         let color: NSColor = failed ? .systemRed : on ? .systemGreen : .tertiaryLabelColor
         it.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: failed ? "failed" : on ? "listening" : "off")?
@@ -55,6 +57,14 @@ extension AppDelegate {
         it.toolTip = st?.error ?? t.route(via: s.title)
         if s.prod { it.attributedTitle = NSAttributedString(string: it.title, attributes: [.foregroundColor: SavedServer.color, .font: NSFont.menuFont(ofSize: 0)]) }
         let menu = NSMenu()
+        if temporary {
+            [MenuAction.item("Turn Off") { [unowned self] in turnOff(t, of: s) },
+             t.link.map { url in MenuAction.item("Open in Browser") { [unowned self] in openTunnel(t, of: s, url) } },
+             MenuAction.item("Copy Address") { [unowned self] in copyAddress(t) },
+             savedServer(at: s.target).map { _ in MenuAction.item("Save") { [unowned self] in saveTemporary(t, of: s) } }].compactMap { $0 }.forEach(menu.addItem)
+            it.submenu = menu
+            return it
+        }
         [on ? MenuAction.item("Turn Off") { [unowned self] in turnOff(t, of: s) } : MenuAction.item("Turn On") { [unowned self] in turnOn(t, of: s) },
          !on && failed && t.on ? MenuAction.item("Turn Off") { [unowned self] in turnOffNow(t, of: s) } : nil,   // couldn't listen: not at launch either
          t.link.map { url in MenuAction.item("Open in Browser") { [unowned self] in openTunnel(t, of: s, url) } },
@@ -66,29 +76,46 @@ extension AppDelegate {
         return it
     }
 
-    /// A server's sidebar menu ▸ Tunnels.
-    func tunnelsItem(for s: SavedServer) -> NSMenuItem {
+    /// A server row's menu ▸ Tunnels: a saved server's tunnels, then the temporary ones on its address (an unsaved
+    /// server has those alone); New Tunnel… (saved) and Forward Port….
+    func tunnelsItem(for s: SavedServer?, at target: SFTPTarget) -> NSMenuItem {
         let it = NSMenuItem(title: "Tunnels", action: nil, keyEquivalent: "")
         let menu = NSMenu()
-        s.tunnels.map { tunnelItem($0, of: s) }.forEach(menu.addItem)
-        if !s.tunnels.isEmpty { menu.addItem(.separator()) }
-        menu.addItem(MenuAction.item("New Tunnel…") { [unowned self] in editTunnel(nil, of: s) })
+        let items = (s.map { s in s.tunnels.map { tunnelItem($0, of: s) } } ?? [])
+            + tunnels.temporaries(server: ServerRow.key(target)).map { tunnelItem($0.tunnel, of: $0.server) }
+        items.forEach(menu.addItem)
+        if !items.isEmpty { menu.addItem(.separator()) }
+        if let s { menu.addItem(MenuAction.item("New Tunnel…") { [unowned self] in editTunnel(nil, of: s) }) }
+        menu.addItem(MenuAction.item("Forward Port…") { [unowned self] in forwardPort(on: target) })
         it.submenu = menu
         return it
     }
 
-    /// Go ▸ Tunnels (U2): every saved server's tunnels under its name, built each time it opens.
+    /// Go ▸ Tunnels (U2): every saved server's tunnels under its name — the temporary ones on its address too — then
+    /// those of servers not saved; built each time it opens.
     func goTunnelsItem() -> NSMenuItem {
         let it = NSMenuItem(title: "Tunnels", action: nil, keyEquivalent: "")
         it.submenu = LiveMenu(title: "Tunnels") { [unowned self] in
             var items: [NSMenuItem] = []
-            for s in savedServers where !s.tunnels.isEmpty {
-                let header = NSMenuItem.sectionHeader(title: s.title)
-                if s.prod { header.attributedTitle = NSAttributedString(string: s.title, attributes: [.foregroundColor: SavedServer.color, .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize)]) }
-                items += [header] + s.tunnels.map { tunnelItem($0, of: s) }
+            func header(_ title: String, prod: Bool) -> NSMenuItem {
+                let h = NSMenuItem.sectionHeader(title: title)
+                if prod { h.attributedTitle = NSAttributedString(string: title, attributes: [.foregroundColor: SavedServer.color, .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize)]) }
+                return h
+            }
+            var temporaries = tunnels.temporaries()
+            for s in savedServers {
+                let key = ServerRow.key(s.target), mine = temporaries.filter { ServerRow.key($0.server.target) == key }
+                temporaries.removeAll { ServerRow.key($0.server.target) == key }
+                guard !s.tunnels.isEmpty || !mine.isEmpty else { continue }
+                items += [header(s.title, prod: s.prod)] + s.tunnels.map { tunnelItem($0, of: s) } + mine.map { tunnelItem($0.tunnel, of: $0.server) }
+            }
+            for key in temporaries.map({ ServerRow.key($0.server.target) }).reduce(into: [String](), { if !$0.contains($1) { $0.append($1) } }) {
+                let mine = temporaries.filter { ServerRow.key($0.server.target) == key }
+                items += [header(mine[0].server.title, prod: false)] + mine.map { tunnelItem($0.tunnel, of: $0.server) }
             }
             if !items.isEmpty { items.append(.separator()) }
-            return items + [MenuAction.item("New Tunnel…") { [unowned self] in newTunnel() }]
+            return items + [MenuAction.item("New Tunnel…") { [unowned self] in newTunnel() },
+                            MenuAction.item("Forward Port…") { [unowned self] in forwardPort() }]
         }
         return it
     }
@@ -109,6 +136,15 @@ extension AppDelegate {
     /// at hand).
     func showTunnels(newOnly: Bool = false) {
         var items: [Picker.Item] = []
+        for st in newOnly ? [] : tunnels.temporaries() {   // ↩ turns one off: it goes
+            let (t, s) = (st.tunnel, st.server), n = tunnels.connections(t, of: s)
+            var keys: [Shortcut: @MainActor () -> Void] = [Shortcut("cmd+c")!: { [unowned self] in copyAddress(t) }]
+            if let url = t.link { keys[Shortcut("cmd+o")!] = { [unowned self] in openTunnel(t, of: s, url) } }
+            if savedServer(at: s.target) != nil { keys[Shortcut("cmd+s")!] = { [unowned self] in saveTemporary(t, of: s) } }
+            items.append(Picker.Item(title: "\(t.title) → \(t.localPort)", subtitle: (SavedServer.isProd(s.target) ? "🟣 PROD · " : "") + (st.error ?? t.route(via: s.title)),
+                                     detail: (st.error != nil ? "failed" : n > 0 ? "listening · \(n) open" : "listening") + " · temporary",
+                                     keys: keys) { [unowned self] in turnOff(t, of: s) })
+        }
         for s in savedServers where !newOnly {
             for t in s.tunnels {
                 let st = tunnels.state(t, of: s), n = tunnels.connections(t, of: s)
@@ -123,9 +159,9 @@ extension AppDelegate {
             }
         }
         items += savedServers.map { s in Picker.Item(title: "New Tunnel on “\(s.title)”…", subtitle: s.target.host) { [unowned self] in editTunnel(nil, of: s) } }
-        guard !items.isEmpty else { return active.flash("Tunnels belong to saved servers: save one first (New Server…)") }
+        guard !items.isEmpty else { return active.flash("Tunnels belong to saved servers: save one first (New Server…), or Forward Port… for now") }
         Picker.show(over: window, placeholder: newOnly ? "New tunnel on which server?"
-                    : "Tunnels — ↩ on / off · ⌘E edit · ⌘C copy address · ⌘O open in browser · ⌘⌫ delete", items: items)
+                    : "Tunnels — ↩ on / off · ⌘E edit · ⌘C copy address · ⌘O open in browser · ⌘S save · ⌘⌫ delete", items: items)
     }
 
     /// New Tunnel… (⌘⇧P, Go ▸ Tunnels): on the saved server the active panel or SSH tab is on; else pick one.
@@ -169,13 +205,14 @@ extension AppDelegate {
         let save = old == nil ? ["Save & Turn On", "Save"] : ["Save"]
         (save + (free.map { ["Use \($0)"] } ?? []) + ["Cancel"]).forEach { alert.addButton(withTitle: $0) }
         if old != nil { alert.addButton(withTitle: "Delete…").hasDestructiveAction = true }
+        if free != nil { Self.returnTakes(alert.buttons[save.count], in: alert) }   // back with a taken port: ↩ takes the free one
         alert.accessoryView = grid
         alert.window.initialFirstResponder = forward.isEmpty ? forwardField : nameField
 
         let draft = Tunnel(localPort: 0, port: 0)
         func update(said: String? = nil) {
             let read = try? draft.reading(forwardField.stringValue).get()
-            for b in alert.buttons.prefix(save.count) { b.isEnabled = read != nil }
+            for b in alert.buttons.prefix(save.count + (free == nil ? 0 : 1)) { b.isEnabled = read != nil }   // Use N too
             nameField.placeholderString = read.map(\.title) ?? "the port's own: Postgres, Redis, Grafana…"
             urlField.placeholderString = read?.link?.absoluteString ?? "none — a web page's, if it is one: http://localhost:…"
             if case .failure(let p) = draft.reading(forwardField.stringValue), !forwardField.stringValue.isEmpty || said != nil {
@@ -218,6 +255,12 @@ extension AppDelegate {
         }
     }
 
+    /// ↩ answers `button`, no longer the first; ⎋ stays Cancel's.
+    static func returnTakes(_ button: NSButton, in alert: NSAlert) {
+        alert.buttons.filter { $0.keyEquivalent == "\r" }.forEach { $0.keyEquivalent = "" }
+        button.keyEquivalent = "\r"
+    }
+
     /// Saved; one listening that now goes another way listens anew (`sync`: on another port, here) — the connections
     /// it has open live on to where they went. One that was on but couldn't listen tries again.
     private func saveTunnelSheet(_ t: Tunnel, replacing old: Tunnel?, in s: SavedServer, turnOn now: Bool) {
@@ -240,6 +283,156 @@ extension AppDelegate {
             savedServers[i].tunnels.removeAll { $0.localPort == t.localPort }
             Config.save("servers.json", savedServers)
             releaseIdleServers()
+        }
+    }
+}
+
+// Forward Port… (README "Tunnels"): what a server listens on, in a Picker; a port picked is forwarded by a temporary tunnel.
+extension AppDelegate {
+    /// The saved server at `t`'s address (user@host:port), if there is one.
+    func savedServer(at t: SFTPTarget) -> SavedServer? { savedServers.first { ServerRow.key($0.target) == ServerRow.key(t) } }
+
+    /// Saved servers, then the ~/.ssh/config hosts not saved — as Connect… lists them.
+    func serverChoices() -> [(title: String, target: SFTPTarget, saved: SavedServer?)] {
+        let saved = Set(savedServers.map { ServerRow.key($0.target) })
+        return savedServers.map { ($0.title, $0.target, $0) }
+            + SSHConfig.hosts().map { SFTPTarget(host: $0.alias) }.filter { !saved.contains(ServerRow.key($0)) }.map { ($0.host, $0, nil) }
+    }
+
+    /// Forward Port… (⌘⇧P, Go ▸ Tunnels): on the server the active panel or SSH tab is on (as its user); else pick one.
+    func forwardPort() {
+        if let here = terminal.isShown ? terminal.current?.target : active.remote?.target { return forwardPort(on: here.asUser) }
+        let items = serverChoices().map { c in
+            Picker.Item(title: c.saved?.pickerTitle ?? c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config") { [unowned self] in
+                forwardPort(on: c.target)
+            }
+        }
+        Picker.show(over: window, placeholder: "Forward a port of which server? — or type user@host", items: items, freeText: { q in
+            guard case let .sftp(t, _)? = ServerAddress.parse(q) else { return [] }
+            return [Picker.Item(title: "Ports of “\(q)”", detail: "↩") { [unowned self] in self.forwardPort(on: t) }]
+        }, freeTextLast: true)   // "web db" picks the server, not a host named so
+    }
+
+    /// The ports `t`'s server listens on (U1): a locked server asks first (U6), then the login, if one is due — as F2's,
+    /// before anything shows: its dialogs take the focus, which closes a Picker. The Picker then says it's looking — ⎋
+    /// there stops the look — and gives way to the ports, or closes with why not in the status line.
+    func forwardPort(on t: SFTPTarget) {
+        let s = savedServer(at: t) ?? SavedServer(target: t)
+        Task {
+            if let locked = ServerLock.server(for: s.target), await !ServerLock.authorize(locked, "look at the ports of") {
+                return tunnels.say("🔒 \(s.title) stays locked", false)
+            }
+            let env = SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For “Forward Port” on \(s.title)"]) { $1 }
+            let login = await Blocking.run { Result { try SFTP.startMaster(s.target, env: env) } }
+            if case .failure(let e) = login {
+                if !(e is CancellationError) { tunnels.say(e.localizedDescription, true) }
+                return
+            }
+            let cancel = CancelFlag()   // set by ⎋ there — and by its giving way, when the look is over anyway
+            Picker.show(over: window, placeholder: "Looking at \(s.title)'s ports…", items: [], onDismiss: { cancel.cancel() })
+            let result = await Blocking.run { Result { try ListeningPorts.read(on: s.target, server: s.title, env: env, cancel: cancel) } }
+            guard !cancel.isCancelled else { return }
+            switch result {
+            case .failure(let e):
+                Picker.dismiss()
+                tunnels.say(e.localizedDescription, true)
+            case .success(let ports): showPorts(ports, of: s)
+            }
+        }
+    }
+
+    /// One row a port (U2): ":5432 Postgres", its process and where it listens, and "→ localhost:15432" where a tunnel of
+    /// the server already goes there. ↩ forwards it, ⌘O and opens it in the browser, ⌘C and copies the address, ⌘S and
+    /// saves it as the server's tunnel (U4).
+    func showPorts(_ ports: [ListeningPort], of s: SavedServer) {
+        guard !ports.isEmpty else {
+            Picker.dismiss()
+            return tunnels.say("\(s.title): nothing listens on TCP", false)
+        }
+        Picker.show(over: window, placeholder: (s.prod ? SavedServer.mark : "") + "\(s.title)'s ports — ↩ forward · ⌘O browser · ⌘C copy · ⌘S save",
+                    items: portItems(ports, of: s))
+    }
+
+    func portItems(_ ports: [ListeningPort], of s: SavedServer) -> [Picker.Item] {
+        ports.map { p -> Picker.Item in
+            let to = tunnelTo(p, of: s).flatMap { tunnels.isListening($0.tunnel, of: $0.server) ? $0 : nil }
+            var keys: [Shortcut: @MainActor () -> Void] = [:]
+            for (key, then) in [("cmd+o", PortThen.open), ("cmd+c", .copy), ("cmd+s", .save)] {
+                keys[Shortcut(key)!] = { [unowned self] in forward(p, of: s, then) }
+            }
+            return Picker.Item(title: ":\(p.port)" + (Tunnel.knownNames[p.port].map { " " + $0 } ?? ""),
+                               subtitle: ([p.process, p.reach].compactMap { $0 }).joined(separator: " · "),
+                               detail: to.map { "→ \($0.tunnel.address)" + ($0.temporary ? " · temporary" : "") } ?? "", keys: keys) { [unowned self] in
+                forward(p, of: s, .none)
+            }
+        }
+    }
+
+    enum PortThen { case none, open, copy, save }
+
+    /// A tunnel of the server — saved or temporary — that goes to this port: to its address, or to localhost for one
+    /// that listens there or everywhere.
+    private func tunnelTo(_ p: ListeningPort, of s: SavedServer) -> (tunnel: Tunnel, server: SavedServer, temporary: Bool)? {
+        let local = ["localhost", "127.0.0.1", "::1"]
+        func goes(_ t: Tunnel) -> Bool { t.port == p.port && (t.host == p.host || local.contains(t.host) && local.contains(p.host)) }
+        let saved = savedServer(at: s.target).map { s in s.tunnels.filter(goes).map { ($0, s, false) } } ?? []
+        let temporary = tunnels.temporaries(server: ServerRow.key(s.target)).filter { goes($0.tunnel) }.map { ($0.tunnel, $0.server, true) }
+        return (saved + temporary).first { tunnels.isListening($0.0, of: $0.1) } ?? (saved + temporary).first
+    }
+
+    /// ↩ on a port: a tunnel already going there serves (a saved one that's off turns on); else a temporary one on the
+    /// same port here — the next free one when it's taken, said (U3) — which then never moves by itself.
+    func forward(_ p: ListeningPort, of s: SavedServer, _ then: PortThen) {
+        if let to = tunnelTo(p, of: s) {
+            let (t, owner) = (to.tunnel, to.server)
+            if tunnels.isListening(t, of: owner) {
+                if then == .none { tunnels.say("\(t.title): \(t.address) → \(owner.title):\(t.port) · listening already", false) }
+                return portThen(t, of: owner, then)
+            }
+            return turnOn(t, of: owner) { [unowned self] in portThen(t, of: owner, then) }
+        }
+        guard let local = freeLocalPort(p.port) else { return tunnels.say("No free port on this Mac near \(p.port)", true) }
+        let t = Tunnel(name: Tunnel.knownNames[p.port] ?? p.process ?? "", localPort: local, host: p.host, port: p.port)
+        if let why = tunnels.start(t, of: s, temporary: true) { return tunnels.say("“\(t.title)”: \(why)", true) }
+        tunnels.say("\(t.title): " + (t.host == "localhost" ? "\(t.address) → \(s.title):\(t.port)" : t.route(via: s.title))
+                    + (local == p.port ? "" : " (\(p.port) is taken here)") + " · listening", false)
+        portThen(t, of: s, then)
+    }
+
+    private func portThen(_ t: Tunnel, of s: SavedServer, _ then: PortThen) {
+        switch then {
+        case .none: break
+        case .open: NSWorkspace.shared.open(t.link ?? URL(string: "http://localhost:\(t.localPort)")!)   // asked for: a web page, whatever the port
+        case .copy: copyAddress(t)
+        case .save: saveTemporary(t, of: s)
+        }
+    }
+
+    /// The server's port on this Mac too, if it's free and no saved tunnel has it (that one couldn't listen later);
+    /// else the next such one.
+    func freeLocalPort(_ port: Int) -> Int? {
+        let saved = Set(savedServers.flatMap(\.tunnels).map(\.localPort))
+        return stride(from: port, through: min(port + 100, 65535), by: 1).first { !saved.contains($0) && TunnelListener.isFree($0) }
+    }
+
+    /// Save (U4, U5): a temporary tunnel becomes its saved server's — on, so it listens at launch too — without closing
+    /// its port; one on a server not saved stays temporary, and the status line says so.
+    func saveTemporary(_ t: Tunnel, of temporary: SavedServer) {
+        guard tunnels.isTemporary(t, of: temporary) else { return tunnels.say("“\(t.title)” is saved already", false) }
+        guard let s = savedServer(at: temporary.target) else {
+            return tunnels.say("Save the server first (New Server…): “\(t.title)” stays temporary", false)
+        }
+        Task {
+            guard await ServerLock.authorize(s, "change the tunnels of"), tunnels.isTemporary(t, of: temporary),
+                  let i = savedServers.firstIndex(where: { $0.id == s.id }) else { return }
+            var saved = t
+            saved.on = true
+            if let p = Tunnel.problem(savedServers[i].tunnels + [saved]) { return tunnels.say("“\(t.title)” not saved: \(p)", true) }
+            tunnels.adopt(t, of: temporary, into: savedServers[i])   // first: `sync` then finds it the server's
+            savedServers[i].tunnels.append(saved)
+            Config.save("servers.json", savedServers)
+            refreshSidebar()
+            tunnels.say("“\(t.title)” saved as a tunnel of \(s.title)", false)
         }
     }
 }
