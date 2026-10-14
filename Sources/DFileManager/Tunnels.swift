@@ -349,7 +349,8 @@ extension AppDelegate {
     func showPorts(_ ports: [ListeningPort], of s: SavedServer) {
         guard !ports.isEmpty else {
             Picker.dismiss()
-            return tunnels.say("\(s.title): nothing listens on TCP", false)
+            tunnels.say("\(s.title): nothing listens on TCP", false)
+            return releaseIdleServers()
         }
         Picker.show(over: window, placeholder: (s.prod ? SavedServer.mark : "") + "\(s.title)'s ports — ↩ forward · ⌘O browser · ⌘C copy · ⌘S save",
                     items: portItems(ports, of: s), onDismiss: { [unowned self] in releaseIdleServers() })
