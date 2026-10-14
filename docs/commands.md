@@ -32,7 +32,7 @@ web1 │ 14:02:11 up 31 days,  2 users,  load average: 0.08, 0.03, 0.01
 db2  │ sudo: a password is required
 ```
 
-At the end a summary names what didn't go well: `✓ 5  ✗ 1 (db2: exit 1)  🔒 1 skipped (vault)`. ⎋ stops them all and keeps the window for the summary; ⎋ again closes it. Stopping ends the ssh connections; without a terminal, a command on the server that writes nothing (a `sleep`) may run on to its end there.
+At the end a summary names what didn't go well: `✓ 5  ✗ 1 (db2: exit 1)  🔒 1 skipped (vault)`. ⎋ stops them all and keeps the window for the summary; ⎋ again closes it. Once it's over, **⌘R** runs the same command on the same servers again, without the sheet: production servers ask again, a locked one asks for Touch ID if its 5 minutes are up, and the new window takes the old one's place. Stopping ends the ssh connections; without a terminal, a command on the server that writes nothing (a `sleep`) may run on to its end there.
 
 On [production servers](safety.md#production-servers) a command that removes, moves or stops things asks once, naming them all, with ↩ on **Cancel**; each run is a line in the production log. A [locked server](servers.md#lock-a-server) asks for Touch ID before anything runs; refuse, and only that one is skipped.
 

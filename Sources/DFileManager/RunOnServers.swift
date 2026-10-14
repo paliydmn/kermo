@@ -18,13 +18,20 @@ extension AppDelegate {
     /// U11: a command that removes, moves or stops things (`Shell.isDangerous`) on production servers asks once, naming
     /// them all, ↩ answering Cancel; other commands don't ask, as F2 there doesn't. Locked servers ask for Touch ID one
     /// after another before anything runs — one refused is skipped, the rest run. Each production server's run is a
-    /// line in the production log, with its exit status.
-    func runOnServers(_ command: String, _ chosen: [RunOnServersSheet.Choice]) async {
-        if let q = Self.runQuestion(command, on: chosen.map(\.target)), await choose(q.message, info: q.info, ["Run", "Cancel"], default: 1) != 0 { return }
+    /// line in the production log, with its exit status. ⌘R in its window runs it again the same way (`askingOn`: the
+    /// question on that window). False: nothing started.
+    @discardableResult
+    func runOnServers(_ command: String, _ chosen: [RunOnServersSheet.Choice], askingOn sheetWindow: NSWindow? = nil) async -> Bool {
+        if let q = Self.runQuestion(command, on: chosen.map(\.target)),
+           await choose(q.message, info: q.info, ["Run", "Cancel"], default: 1, on: sheetWindow) != 0 { return false }
         let (run, skipped) = await Self.unlocked(chosen)
-        guard !run.isEmpty else { return active.flash("🔒 Nothing ran: the servers stayed locked") }
+        guard !run.isEmpty else {
+            active.flash("🔒 Nothing ran: the servers stayed locked")
+            return false
+        }
         let env = SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For “Run on Servers”"]) { $1 }
-        Self.start(command, on: run, of: chosen.count, skipped: skipped, env: env)
+        Self.start(command, on: run, of: chosen.count, skipped: skipped, env: env) { [unowned self] in await runOnServers(command, chosen, askingOn: $0) }
+        return true
     }
 
     /// The question before a dangerous command on production servers, naming them all; nil: none to ask.
@@ -50,9 +57,10 @@ extension AppDelegate {
     /// The output window; each production server's run a line in the production log as soon as it's over (one done
     /// isn't lost to quitting while another still runs). The servers' connections stay for ControlPersist, as ssh's
     /// own do: the next run needs no login.
-    static func start(_ command: String, on run: [RunOnServersSheet.Choice], of count: Int, skipped: [String], env: [String: String]) {
+    static func start(_ command: String, on run: [RunOnServersSheet.Choice], of count: Int, skipped: [String], env: [String: String],
+                      again: (@MainActor (NSWindow?) async -> Bool)? = nil) {
         Shell.run(command, on: run.map { MultiRun.Server(name: $0.title, target: $0.target) }, skipped: skipped, env: env,
-                  title: "Run on \(count) server\(count == 1 ? "" : "s"): \(command)") { i, o in
+                  title: "Run on \(count) server\(count == 1 ? "" : "s"): \(command)", again: again) { i, o in
             let t = run[i].target   // as F2's: ran as the user (ssh)
             switch o {
             case .exit(let s): AuditLog.write(t, "command", paths: [], command: command, exit: s)

@@ -45,6 +45,30 @@ import Testing
     #expect(!s.isVisible, "⎋ again closes it")
 }
 
+/// ⌘R in a several-servers window runs it again (asked with this window, before the main menu's Refresh sees the
+/// key) once it's over — not while it runs; started again, this window closes.
+@MainActor @Test func commandRRunsItAgain() async throws {
+    _ = NSApplication.shared
+    let title = "Run on 1 server: k13-" + UUID().uuidString.prefix(6)
+    var asked: [NSWindow?] = [], answer = false, ended = false
+    Shell.run("sleep 0.4", on: [MultiRun.Server(name: "here", target: .local())], skipped: [], env: [:], title: title,
+              again: { asked.append($0); return answer }) { _, _ in ended = true }
+    let w = try #require(NSApp.windows.first { $0.title == title })
+    defer { w.close() }
+    let r = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: w.windowNumber,
+                                          context: nil, characters: "r", charactersIgnoringModifiers: "r", isARepeat: false, keyCode: 15))
+    #expect(w.performKeyEquivalent(with: r) && asked.isEmpty, "not while it runs")
+    for _ in 0..<300 where !(ended && w.subtitle.contains("done")) { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(w.subtitle.hasSuffix("Esc closes · ⌘R again"), "\(w.subtitle)")
+    #expect(w.performKeyEquivalent(with: r))
+    for _ in 0..<100 where asked.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(asked.count == 1 && asked[0] === w && w.isVisible, "not started again: it stays")
+    answer = true
+    _ = w.performKeyEquivalent(with: r)
+    for _ in 0..<100 where w.isVisible { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(asked.count == 2 && !w.isVisible)
+}
+
 /// Any output window: ⎋ stops the command and keeps what it printed (its exit said); ⎋ again closes the window.
 @MainActor @Test func escStopsFirstThenCloses() async throws {
     _ = NSApplication.shared

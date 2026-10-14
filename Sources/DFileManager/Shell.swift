@@ -20,10 +20,11 @@ enum Shell {
     /// One command on several servers (Run on Servers…), in one output window: each line as it comes, "web1 │ …", stderr
     /// in red; then the summary. ⎋ stops them all and keeps the window; again, closes it. `ended`: each server's outcome
     /// (its index in `servers`) as soon as it's known — whatever becomes of the window. `skipped`: named in the summary
-    /// (locked, Touch ID refused).
+    /// (locked, Touch ID refused). `again`: ⌘R once it's over (given this window, for a question); true — it started
+    /// again, in a window of its own — closes this one.
     static func run(_ command: String, on servers: [MultiRun.Server], skipped: [String], env: [String: String], title: String,
-                    ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
-        OutputWindow.start(command, on: servers, skipped: skipped, env: env, title: title, ended: ended)
+                    again: (@MainActor (NSWindow?) async -> Bool)? = nil, ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
+        OutputWindow.start(command, on: servers, skipped: skipped, env: env, title: title, again: again, ended: ended)
     }
 
     /// Fire-and-forget (GUI tools like `code --diff`): no output window.
@@ -123,6 +124,12 @@ private final class Inbox: @unchecked Sendable {
     }
 }
 
+/// An output window, seeing its key equivalents before the main menu does (⌘R is Refresh there).
+private final class KeyWindow: NSWindow {
+    var onKey: ((NSEvent) -> Bool)?
+    override func performKeyEquivalent(with event: NSEvent) -> Bool { onKey?(event) == true || super.performKeyEquivalent(with: event) }
+}
+
 /// Lines of several servers (`MultiRun`) read off their pipes and not shown yet: the main thread takes them in batches.
 private final class LineInbox: @unchecked Sendable {
     private let lock = NSLock()
@@ -164,16 +171,16 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
     }
 
     static func start(_ command: String, on servers: [MultiRun.Server], skipped: [String], env: [String: String], title: String,
-                      ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
-        let w = OutputWindow(servers, skipped: skipped, command: command, env: env, ended: ended)
+                      again: (@MainActor (NSWindow?) async -> Bool)?, ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
+        let w = OutputWindow(servers, skipped: skipped, command: command, env: env, again: again, ended: ended)
         w.window?.title = title.bidiVisible
         open.append(w)
         w.showWindow(nil)
     }
 
     /// The window and its text view, empty.
-    private static func window() -> (NSWindow, NSTextView) {
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 520),
+    private static func window() -> (KeyWindow, NSTextView) {
+        let w = KeyWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 520),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         let scroll = NSTextView.scrollableTextView()
@@ -242,7 +249,8 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
     }
 
     /// Run on Servers': `MultiRun` on a thread of its own, its lines taken in batches; the summary once all are over.
-    private init(_ list: [MultiRun.Server], skipped: [String], command: String, env: [String: String], ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
+    private init(_ list: [MultiRun.Server], skipped: [String], command: String, env: [String: String],
+                 again: (@MainActor (NSWindow?) async -> Bool)?, ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
         let (w, tv) = Self.window()
         let count = list.count + skipped.count
         w.subtitle = "\(count) server\(count == 1 ? "" : "s") · running… · Esc stops all"
@@ -250,6 +258,11 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         servers = cancel
         super.init(window: w)
         w.delegate = self
+        w.onKey = { [weak self] e in   // ⌘R: again, once it's over (before the main menu's Refresh)
+            guard let self, Shortcut(event: e) == Shortcut("cmd+r"), let again else { return false }
+            if alive { NSSound.beep() } else { Task { if await again(self.window) { self.window?.close() } } }
+            return true
+        }
         let names = list.map(\.name), width = names.map(\.count).max() ?? 0   // the skipped have no lines
         let inbox = LineInbox(), over = over
         Thread { [weak self] in
@@ -276,7 +289,7 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
                     tv.textStorage?.append(text)
                     self.kept(in: tv)
                     self.window?.subtitle = "\(count) server\(count == 1 ? "" : "s") · " + (cancel.isCancelled ? "stopped" : "done")
-                        + " · " + String(format: "%.1fs", Date().timeIntervalSince(self.started)) + " · Esc closes"
+                        + " · " + String(format: "%.1fs", Date().timeIntervalSince(self.started)) + " · Esc closes" + (again == nil ? "" : " · ⌘R again")
                 }
             }
         }.start()
