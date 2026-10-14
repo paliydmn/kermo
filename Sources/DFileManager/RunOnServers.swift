@@ -66,7 +66,7 @@ extension AppDelegate {
 
 /// Run on Servers…' sheet: the command (focused), a filter, the servers with check boxes — production in its color,
 /// locked with 🔒 — and "Run on N Servers", the default button, off with no server or no command. What runs is what's
-/// ticked and shown: the filter hides the rest. ⌘A in the filter ticks all shown.
+/// ticked and shown: the filter hides the rest. ⌘A in the filter ticks all shown, ⇧⌘A unticks them.
 @MainActor
 final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearchFieldDelegate {
     struct Choice {
@@ -100,7 +100,7 @@ final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearch
         command.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         command.placeholderString = "uptime · df -h / · systemctl is-active nginx"
         command.delegate = self
-        filter.placeholderString = "Filter by name or host — ⌘A ticks all shown"
+        filter.placeholderString = "Filter by name or host — ⌘A ticks all shown, ⇧⌘A none"
         filter.delegate = self
         let note = NSTextField(wrappingLabelWithString: "Runs in each server's login shell, as F2 does: no terminal, so sudo only with -n.")
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -179,9 +179,10 @@ final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearch
         update()
         keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             let ticked = MainActor.assumeIsolated { () -> Bool in
-                guard let self, e.window === self.window, Shortcut(event: e) == Shortcut("cmd+a"),
+                let key = Shortcut(event: e), all = key == Shortcut("cmd+a")
+                guard let self, e.window === self.window, all || key == Shortcut("cmd+shift+a"),
                       (self.window?.firstResponder as? NSTextView)?.delegate === self.filter else { return false }
-                self.tickShown()
+                self.tickShown(all)
                 return true
             }
             return ticked ? nil : e
@@ -201,8 +202,9 @@ final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearch
         update()
     }
 
-    func tickShown() {
-        boxes.filter { !$0.isHidden }.forEach { $0.state = .on }
+    /// The boxes shown: all ticked, or (`false`) none.
+    func tickShown(_ on: Bool = true) {
+        boxes.filter { !$0.isHidden }.forEach { $0.state = on ? .on : .off }
         update()
     }
 

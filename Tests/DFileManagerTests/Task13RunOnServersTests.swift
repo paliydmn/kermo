@@ -81,6 +81,12 @@ extension ServerLockTests {
     #expect(sheet.chosen.map(\.title) == ["web1", "web2"], "the hidden one doesn't run, ticked or not")
     sheet.filtered("")
     #expect(sheet.runButton.title == "Run on 3 Servers")
+    sheet.filtered("vault")
+    sheet.tickShown(false)   // ⇧⌘A
+    sheet.filtered("")
+    #expect(sheet.boxes.map(\.state) == [.on, .off, .on] && sheet.runButton.title == "Run on 2 Servers")
+    sheet.boxes[1].state = .on
+    sheet.update()
     sheet.run()
     #expect(ran?.0 == "uptime" && ran?.1 == ["web1", "me@vault.invalid", "web2"] && RunOnServersSheet.current == nil)
 }
