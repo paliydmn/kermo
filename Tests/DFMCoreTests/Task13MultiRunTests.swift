@@ -69,6 +69,19 @@ extension SudoPasswordTests {
     #expect(most(logins) == 1, "one login at a time")
 }
 
+/// Over a real ssh master (this Mac's sshd): ⎋ ends the run at once. In mux mode the master keeps the server's end of
+/// the command's stderr until the command there ends, so it used to wait for the whole `sleep 5`.
+@Test(.timeLimit(.minutes(1))) func cancellingDoesntWaitForTheServer() throws {
+    try withTestSSHD { t, _, _ in
+        let cancel = CancelFlag(), heard = Heard()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { cancel.cancel() }
+        let started = Date()
+        let outcomes = MultiRun.run([MultiRun.Server(name: "here", target: t)], "echo start; sleep 5; echo done", cancel: cancel, line: heard.add)
+        #expect(Date().timeIntervalSince(started) < 2.5, "\(Date().timeIntervalSince(started)) s")
+        #expect(outcomes == [.stopped] && heard.of(0) == ["start"])
+    }
+}
+
 /// ⎋ stops them all at once: none runs on to its end, and each says it was stopped.
 @Test func cancellingStopsEveryServer() {
     let heard = Heard(), cancel = CancelFlag()

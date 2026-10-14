@@ -436,30 +436,40 @@ public enum SSHCommand {
         let previous = cancel?.onCancel { p.terminate() } ?? nil
         defer { cancel?.onCancel(previous) }
         nonisolated(unsafe) var errData = Data()
+        // Cancelled and ssh gone: stop reading. In mux mode the master keeps the server's end of our stderr until the
+        // command there ends (the end of a `sleep 600`, or never), so ⎋ would wait for it.
+        let over: @Sendable () -> Bool = { cancel?.isCancelled == true && !p.isRunning }
         let errReader = Thread {
-            guard let onErrors else { return errData = err.fileHandleForReading.readDataToEndOfFile() }
-            var buf = [UInt8](repeating: 0, count: 1 << 14)
-            while true {
-                let n = Darwin.read(err.fileHandleForReading.fileDescriptor, &buf, buf.count)
-                if n < 0 && errno == EINTR { continue }
-                if n <= 0 { break }
-                errData += buf[0..<n]
-                onErrors(Data(buf[0..<n]))
+            drain(err.fileHandleForReading.fileDescriptor, until: over) { d in
+                errData += d
+                onErrors?(d)
             }
         }
         errReader.start()
-        var buf = [UInt8](repeating: 0, count: 1 << 16)
-        while true {
-            let n = Darwin.read(out.fileHandleForReading.fileDescriptor, &buf, buf.count)
-            if n < 0 && errno == EINTR { continue }
-            if n <= 0 { break }
-            onOutput(Data(buf[0..<n]))
-        }
+        drain(out.fileHandleForReading.fileDescriptor, until: over, onOutput)
         p.waitUntilExit()
         while !errReader.isFinished { usleep(1000) }
         if cancel?.isCancelled == true { throw CancellationError() }
         let errors = String(decoding: errData, as: UTF8.self).split(separator: "\n").filter { !$0.contains("Warning: Permanently added") }
         return (p.terminationStatus, errors.joined(separator: "\n"))
+    }
+
+    /// Hands over what `fd` gives until its end, or until `over` says so (looked at each 0.1 s while it's quiet).
+    private static func drain(_ fd: Int32, until over: () -> Bool, _ chunk: (Data) -> Void) {
+        var buf = [UInt8](repeating: 0, count: 1 << 16)
+        var wait = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        while true {
+            let ready = poll(&wait, 1, 100)
+            if ready < 0 && errno == EINTR { continue }
+            if ready == 0 {
+                if over() { return }
+                continue
+            }
+            let n = Darwin.read(fd, &buf, buf.count)
+            if n < 0 && errno == EINTR { continue }
+            if n <= 0 { return }
+            chunk(Data(buf[0..<n]))
+        }
     }
 
     /// `run`'s whole output; a failure throws what it said.
