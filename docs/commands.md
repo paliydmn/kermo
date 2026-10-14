@@ -13,6 +13,8 @@ Run a shell command on the files in front of you, keep your own commands in a me
 | This Mac | Types the command into the ⌃O terminal's shell | Runs it in an output window (no TTY, any file name) | Runs it in Terminal.app, or the app in `terminalBundleID` |
 | A server | Runs it over ssh in an output window | The same | Opens an SSH tab with the command |
 
+In an output window ⎋ stops the command and keeps what it printed; ⎋ again, or once it's over, closes the window. Closing it or quitting Kermo stops the command too.
+
 On this Mac, ↩ works as Midnight Commander's subshell does: your aliases and functions, colors, `sudo` and `git commit` prompts, Tab completion and ⌃R all work, and the command lands in the shell's history. On a root panel the command still runs as the user ([root panel](root-panel.md#what-runs-as-root)).
 
 ## Run on several servers

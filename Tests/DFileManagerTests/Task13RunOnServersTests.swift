@@ -45,6 +45,23 @@ import Testing
     #expect(!s.isVisible, "⎋ again closes it")
 }
 
+/// Any output window: ⎋ stops the command and keeps what it printed (its exit said); ⎋ again closes the window.
+@MainActor @Test func escStopsFirstThenCloses() async throws {
+    _ = NSApplication.shared
+    let title = "k13 esc " + UUID().uuidString.prefix(6)
+    var status: Int32?
+    Shell.run("echo before; sleep 30", in: NSTemporaryDirectory(), title: title) { status = $0 }
+    let w = try #require(NSApp.windows.first { $0.title == title })
+    for _ in 0..<300 where text(w)?.string.hasPrefix("before") != true { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(w.subtitle.hasSuffix("running… · Esc stops"))
+    w.windowController?.cancelOperation(nil)
+    for _ in 0..<300 where status == nil { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(status != nil && status != 0 && w.isVisible && text(w)?.string.hasPrefix("before\n") == true, "stopped, still showing it")
+    #expect(w.subtitle.hasSuffix(" · Esc closes"), "\(w.subtitle)")
+    w.windowController?.cancelOperation(nil)
+    #expect(!w.isVisible)
+}
+
 extension ServerLockTests {
 /// The sheet (U8): every server Connect… lists, the last choice ticked; production in its color, locked with 🔒. The
 /// filter narrows by name or address, ⌘A ticks all it shows, and what runs is what's ticked and shown — the button says

@@ -36,6 +36,7 @@ Release:
 - **A Git menu:** the Git commands moved there from File and View (their keys are the same), with the new branch, commit and sync commands.
 - **Sidebar server rows:** what's open shows as icons — `>_` SSH and a folder for SFTP in green (a count from 2), `⇄` for tunnels (red when one failed) — and the server's icon carries a lock (locked) or a red dot (its last connection failed). Under the mouse: SSH, SFTP, Tunnels and ⋯, the server's whole menu; Edit, Pin and Close All Sessions are there now. Names get the room: at 180 pt they no longer shrink to a few letters.
 - **Server pickers** (Connect, Forward Port) mark production servers `🟣 PROD`, as they mark locked ones `🔒`.
+- **Output windows** (⌘E ⇧↩, a server panel's commands, Extract, Compress …): ⎋ stops the command and keeps the window with what it printed; ⎋ again, or once it's over, closes it. It used to close at once.
 - **The tunnel sheet:** back with "Port N is in use", ↩ takes the free port it offers ("Use N+1") instead of trying the taken one again.
 - **Production servers are marked in purple**, not red, in the sidebar, menus and headers, and titles say `🟣 PROD`: red is left for what failed.
 - **Speed:** undo and redo of a move, undo of a copy and batch rename do their disk work in the background: thousands of items on a network share no longer freeze the window. So do rename, Go to Link Target, diff, compress, `fm` and Info's chmod, chown and flags: a share that stopped answering doesn't hang the app.

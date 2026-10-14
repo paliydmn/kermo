@@ -192,7 +192,7 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         let place = server.map { "🌐 \($0.host):\(dir)" } ?? (dir as NSString).abbreviatingWithTildeInPath
         let (w, tv) = Self.window()
         w.title = (server.map { "\($0.host) $ " } ?? "$ ") + command.bidiVisible
-        w.subtitle = place + " · running… · Esc closes (and stops)"
+        w.subtitle = place + " · running… · Esc stops"
         super.init(window: w)
         w.delegate = self
 
@@ -228,7 +228,7 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         report = { [weak self] in
             guard let self else { return }
             let secs = String(format: "%.1fs", Date().timeIntervalSince(self.started))
-            self.window?.subtitle = place + " · exit \(self.status) · \(secs)" + (self.trimmed ? " · only the last 4 MB kept" : "")
+            self.window?.subtitle = place + " · exit \(self.status) · \(secs)" + (self.trimmed ? " · only the last 4 MB kept" : "") + " · Esc closes"
             if diff {
                 // diff exits 1 when files differ — that's the normal case, not an error.
                 Self.colorizeDiff(tv)
@@ -360,9 +360,16 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         storage.endEditing()
     }
 
-    /// ⎋: several servers' runs stop first, and the window stays for their summary.
+    /// ⎋: what runs stops first, and the window stays with what it said (several servers': and the summary); ⎋ again —
+    /// or with nothing running — closes it, a command that ignored the first one getting its SIGKILL as closing gives.
+    private var stopAsked = false
     override func cancelOperation(_ sender: Any?) {
-        if servers != nil, stop() { window?.subtitle = "stopping…" } else { window?.performClose(nil) }
+        if !stopAsked, stop() {
+            stopAsked = true
+            window?.subtitle = "stopping… · Esc again closes"
+        } else {
+            window?.performClose(nil)
+        }
     }
 
     /// The process group is still there — the shell (Process made it a group leader), or a child it left behind
