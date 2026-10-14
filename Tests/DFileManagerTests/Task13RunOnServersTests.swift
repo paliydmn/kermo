@@ -11,7 +11,7 @@ import Testing
 /// meanwhile, so it isn't looked at here.)
 @MainActor @Test func severalServersShareOneOutputWindow() async throws {
     _ = NSApplication.shared
-    let title = "Run on 3 servers: k13-" + UUID().uuidString.prefix(6)
+    let title = "Run on 3 servers: dfm-" + UUID().uuidString.prefix(6)
     let servers = [MultiRun.Server(name: "web1", target: .local(persist: 1)), MultiRun.Server(name: "db", target: .local(persist: 2))]
     var outcomes: [Int: MultiRun.Outcome] = [:]
     Shell.run("echo hi; echo no >&2; exit 3", on: servers, skipped: ["vault"], env: [:], title: title) { outcomes[$0] = $1 }
@@ -31,7 +31,7 @@ import Testing
     #expect(w.subtitle.hasPrefix("3 servers · done · ") && w.subtitle.hasSuffix(" · Esc closes"))
     w.close()
 
-    let slow = "Run on 2 servers: k13-" + UUID().uuidString.prefix(6)
+    let slow = "Run on 2 servers: dfm-" + UUID().uuidString.prefix(6)
     var ended: [Int: MultiRun.Outcome] = [:]
     Shell.run("echo start; sleep 5; echo done", on: servers, skipped: [], env: [:], title: slow) { ended[$0] = $1 }
     let s = try #require(NSApp.windows.first { $0.title == slow })
@@ -49,7 +49,7 @@ import Testing
 /// key) once it's over — not while it runs; started again, this window closes.
 @MainActor @Test func commandRRunsItAgain() async throws {
     _ = NSApplication.shared
-    let title = "Run on 1 server: k13-" + UUID().uuidString.prefix(6)
+    let title = "Run on 1 server: dfm-" + UUID().uuidString.prefix(6)
     var asked: [NSWindow?] = [], answer = false, ended = false
     Shell.run("sleep 0.4", on: [MultiRun.Server(name: "here", target: .local())], skipped: [], env: [:], title: title,
               again: { asked.append($0); return answer }) { _, _ in ended = true }
@@ -72,7 +72,7 @@ import Testing
 /// Any output window: ⎋ stops the command and keeps what it printed (its exit said); ⎋ again closes the window.
 @MainActor @Test func escStopsFirstThenCloses() async throws {
     _ = NSApplication.shared
-    let title = "k13 esc " + UUID().uuidString.prefix(6)
+    let title = "dfm esc " + UUID().uuidString.prefix(6)
     var status: Int32?
     Shell.run("echo before; sleep 30", in: NSTemporaryDirectory(), title: title) { status = $0 }
     let w = try #require(NSApp.windows.first { $0.title == title })
@@ -164,7 +164,7 @@ extension ServerLockTests {
     let (run, skipped) = await AppDelegate.unlocked(chosen)
     #expect(run.map(\.title) == ["web"] && skipped == ["vault"] && asked == ["run a command on “me@vault.invalid”"])
 
-    let title = "Run on 2 servers: echo k13-" + UUID().uuidString.prefix(6)
+    let title = "Run on 2 servers: echo dfm-" + UUID().uuidString.prefix(6)
     AppDelegate.start(String(title.dropFirst("Run on 2 servers: ".count)) + "; exit 4", on: run, of: 2, skipped: skipped, env: [:])
     let w = try #require(NSApp.windows.first { $0.title.hasPrefix(title) })
     defer { w.close() }

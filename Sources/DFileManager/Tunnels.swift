@@ -310,7 +310,7 @@ extension AppDelegate {
         Picker.show(over: window, placeholder: "Forward a port of which server? — or type user@host", items: items, freeText: { q in
             guard case let .sftp(t, _)? = ServerAddress.parse(q) else { return [] }
             return [Picker.Item(title: "Ports of “\(q)”", detail: "↩") { [unowned self] in self.forwardPort(on: t) }]
-        }, freeTextLast: true)   // "k13 db" picks the server, not a host named so
+        }, freeTextLast: true)   // "web db" picks the server, not a host named so
     }
 
     /// The ports `t`'s server listens on (U1): a locked server asks first (U6), then the login, if one is due — as F2's,
