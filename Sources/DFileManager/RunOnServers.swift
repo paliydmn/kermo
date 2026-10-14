@@ -38,7 +38,8 @@ extension AppDelegate {
     static func runQuestion(_ command: String, on targets: [SFTPTarget]) -> (message: String, info: String)? {
         let prod = SavedServer.prodNote(targets)
         guard !prod.isEmpty, Shell.isDangerous(command) else { return nil }
-        return ("Run “\(command)” on \(targets.count) server\(targets.count == 1 ? "" : "s")?", targets.count == 1 ? String(prod.dropLast()) : prod + "It runs on all \(targets.count) at once.")
+        return ("Run “\(command)” on \(targets.count) server\(targets.count == 1 ? "" : "s")?", targets.count == 1 ? String(prod.dropLast())
+                : prod + "It runs on \(targets.count == 2 ? "both" : "all \(targets.count)") at once.")
     }
 
     /// Touch ID for each locked one, one after another, before anything runs: one refused is skipped.
@@ -188,7 +189,7 @@ final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearch
         keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             let ticked = MainActor.assumeIsolated { () -> Bool in
                 let key = Shortcut(event: e), all = key == Shortcut("cmd+a")
-                guard let self, e.window === self.window, all || key == Shortcut("cmd+shift+a"),
+                guard let self, self.window?.isKeyWindow == true, all || key == Shortcut("cmd+shift+a"),
                       (self.window?.firstResponder as? NSTextView)?.delegate === self.filter else { return false }
                 self.tickShown(all)
                 return true
