@@ -82,6 +82,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var links: [String: (target: String, error: Int32)] = [:]
     private var totalSize: Int64 = 0
     private var freeSpace = ""
+    /// What's free where the server panel is ("120 GB"), when its server tells; nil: it doesn't.
+    private var remoteFree: String?
     /// `DirSync.mtimeTolerance` of the folder, read with the listing: off the main thread, where a hung mount can't freeze the UI.
     private(set) var mtimeTolerance: Double = 1
     private var sortKey = SortKey.name
@@ -664,7 +666,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         // A message just flashed stays its time through a re-list, a git status or a folder size coming in.
         if let f = flashed, f.until > Date() { statusError = f.error; return statusLabel.stringValue = f.text }
         var s = Self.countText(rows.count, "items", totalSize) + " · \(freeSpace) free"
-        if let r = remote { s = "\(r.target.sudo ? "#" : "🌐") sftp · \(r.target.shown) · " + Self.countText(rows.count, "items", 0) }   // marks: below, as anywhere
+        if let r = remote {   // marks: below, as anywhere
+            s = "\(r.target.sudo ? "#" : "🌐") sftp · \(r.target.shown) · " + Self.countText(rows.count, "items", 0) + (remoteFree.map { " · \($0) free" } ?? "")
+        }
         if let g = git {
             s += " · ⎇ \(g.branch)" + (g.ahead > 0 ? " ↑\(g.ahead)" : "") + (g.behind > 0 ? " ↓\(g.behind)" : "")
         }
@@ -1056,13 +1060,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 flash("🔒 \(target.host) stays locked")
                 return
             }
-            let result = await Blocking.run(.userInitiated) { () -> Result<(String, [FileItem], [String: (String, String)], [String: (target: String, error: Int32)]), Error> in
+            let result = await Blocking.run(.userInitiated) { () -> Result<(String, [FileItem], [String: (String, String)], [String: (target: String, error: Int32)], Int64?), Error> in
                 Result {
                     let d = try dir ?? SFTP.home(target, env: SSHAskpass.env, cancel: flag, on: session)
-                    var owners: [String: (String, String)] = [:], links: [String: (target: String, error: Int32)] = [:]
+                    var owners: [String: (String, String)] = [:], links: [String: (target: String, error: Int32)] = [:], free: Int64?
                     let items = try SFTP.list(target, d, env: SSHAskpass.env, cancel: flag, owners: { owners[$0] = ($1, $2) },
-                                              links: { links[$0] = ($1, $2) }, on: session)
-                    return (d, items, owners, links)
+                                              links: { links[$0] = ($1, $2) }, free: { free = $0 }, on: session)
+                    return (d, items, owners, links, free)
                 }
             }
             guard let self, gen == loadGen else { return }
@@ -1072,10 +1076,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             if case .failure = result { connecting = nil }
             busyMessage = busyOps.last?.message
             switch result {
-            case .success(let (d, items, owners, found)):
+            case .success(let (d, items, owners, found, free)):
                 onRemoteResult?(target, nil)
                 remoteOwners = owners
                 links = found
+                remoteFree = free.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
                 enterRemote(target, d, items, select: select, keep: keep)
                 connecting = nil
             case .failure(let error as SFTPError) where error.connection:

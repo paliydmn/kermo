@@ -620,6 +620,27 @@ public final class SFTPClient: @unchecked Sendable {
         return WriteStream(self, try open(path, flags, mode: 0o600), path, offset: UInt64(offset))
     }
 
+    /// Asks what's free on the file system of `path` (`statvfs@openssh.com`), the answer not waited for: sent before a
+    /// listing, it rides the listing's wave — its answer is there by the time the names are (`free(answer:)`). nil: the
+    /// server has no such extension.
+    func askFree(_ path: String) -> UInt32? {
+        guard extensions["statvfs@openssh.com"] != nil else { return nil }
+        var p = Packet(Self.EXTENDED)
+        p.string("statvfs@openssh.com")
+        p.string(path)
+        return try? send(p)
+    }
+
+    /// `askFree`'s answer: the bytes free to the user (f_bavail × f_frsize — `df`'s Available). nil: none (refused).
+    func free(answer id: UInt32) -> Int64? {
+        guard let (type, body) = try? wait(id), type == Self.EXTENDED_REPLY else { return nil }
+        var r = Reader(body)
+        guard let bsize = try? r.u64(), let frsize = try? r.u64(), (try? r.u64()) != nil, (try? r.u64()) != nil,
+              let bavail = try? r.u64() else { return nil }
+        let (bytes, over) = bavail.multipliedReportingOverflow(by: frsize > 0 ? frsize : bsize)
+        return over ? Int64.max : Int64(clamping: bytes)
+    }
+
     /// Server-side copy (`copy-data`): the bytes never cross the network.
     public var canCopyData: Bool { extensions["copy-data"] != nil }
 
@@ -841,7 +862,7 @@ public final class SFTPClient: @unchecked Sendable {
     static let REMOVE: UInt8 = 13, MKDIR: UInt8 = 14, RMDIR: UInt8 = 15, REALPATH: UInt8 = 16, STAT: UInt8 = 17, RENAME: UInt8 = 18
     static let READLINK: UInt8 = 19, SYMLINK: UInt8 = 20
     static let STATUS: UInt8 = 101, HANDLE: UInt8 = 102, DATA: UInt8 = 103, NAME: UInt8 = 104, ATTRS: UInt8 = 105
-    static let EXTENDED: UInt8 = 200
+    static let EXTENDED: UInt8 = 200, EXTENDED_REPLY: UInt8 = 201
     static let FXF_READ: UInt32 = 1, FXF_WRITE: UInt32 = 2, FXF_CREAT: UInt32 = 8, FXF_TRUNC: UInt32 = 0x10, FXF_EXCL: UInt32 = 0x20
     static let ATTR_SIZE: UInt32 = 1, ATTR_UIDGID: UInt32 = 2, ATTR_PERMISSIONS: UInt32 = 4, ATTR_ACMODTIME: UInt32 = 8
     static let ATTR_EXTENDED: UInt32 = 0x8000_0000

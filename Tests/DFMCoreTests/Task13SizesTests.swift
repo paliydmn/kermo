@@ -45,6 +45,35 @@ import Testing
     #expect(ServerSizes.chunks([]) == [] && ServerSizes.chunks(["a"]) == [["a"]])
 }
 
+/// A server panel's status line says what's free there (`statvfs@openssh.com`: what `df` calls Available), asked in the
+/// listing's own wave: the listing waits no more than before. A listing that fails drops the question with it.
+@Test func freeSpaceRidesTheListingsWave() throws {
+    let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-free-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    for i in 0..<150 { FileManager.default.createFile(atPath: d + "/f\(i)", contents: nil) }
+    let kept = KeptSession(.local())
+    defer { kept.close() }
+    _ = try SFTP.list(.local(), d, on: kept)
+    let c = try #require(kept.client)
+    var before = c.roundTrips
+    _ = try SFTP.list(.local(), d, on: kept)
+    let plain = c.roundTrips - before
+    var free: Int64?
+    before = c.roundTrips
+    #expect(try SFTP.list(.local(), d, free: { free = $0 }, on: kept).count == 150)
+    #expect(c.roundTrips - before == plain, "\(c.roundTrips - before) against \(plain)")
+    var st = statvfs()
+    #expect(statvfs(d, &st) == 0)
+    let available = Int64(st.f_bavail) * Int64(st.f_frsize)
+    #expect(abs((free ?? -1) - available) < 64 << 20, "\(String(describing: free)) against \(available)")
+
+    #expect(throws: SFTPError.self) { try SFTP.list(.local(), d + "/gone", free: { _ in Issue.record("a failed listing says nothing") }, on: kept) }
+    free = nil
+    #expect(try SFTP.list(.local(), d, free: { free = $0 }, on: kept).count == 150 && free != nil)
+    #expect(kept.client === c)
+}
+
 extension SudoPasswordTests {
 
 /// A stand-in du first in PATH (`.local()`: this Mac's sh) answering as GNU du does: each name as given, one argument

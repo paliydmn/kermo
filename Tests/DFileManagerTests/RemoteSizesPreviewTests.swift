@@ -27,13 +27,14 @@ private func tempDir(_ tag: String) throws -> String {
     return d
 }
 
-/// ⌥Space on a server counts every folder; Space down the list queues each after the walk running; another folder
-/// starts with none.
+/// ⌥Space on a server counts every folder (this Mac's du has no -b: walked); Space down the list queues each after the
+/// walk running; another folder starts with none.
 @MainActor @Test func serverFolderSizes() async throws {
     let d = try tempDir("rsizes")
     defer { try? FileManager.default.removeItem(atPath: d) }
     let panel = try await serverPanel(d)
     defer { panel.shutdown() }
+    #expect(panel.statusText.hasPrefix("🌐 sftp · localhost · 2 items · ") && panel.statusText.hasSuffix(" free"), "what's free there, as on this Mac")
 
     panel.computeAllDirSizes()
     await waitUntil { panel.dirSizes.count == 2 }

@@ -304,12 +304,21 @@ public enum SFTP {
     /// Over SFTP itself (READDIR): names come as the server's bytes, never through `ls` text or sftp's globbing.
     /// `owners` hears each item's owner and group: the server's names where its `ls -l` line has them, else numbers.
     /// `links` hears where each symlink points and the errno following it gives (0: there). `kept`: as in `home`.
+    /// `free` hears the bytes free there, where the server tells (`statvfs@openssh.com`) — asked in the same wave as the
+    /// listing: no wait of its own.
     public static func list(_ t: SFTPTarget, _ dir: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
                             owners: ((_ name: String, _ owner: String, _ group: String) -> Void)? = nil,
                             links: ((_ name: String, _ target: String, _ error: Int32) -> Void)? = nil,
-                            on kept: KeptSession? = nil) throws -> [FileItem] {
+                            free: ((Int64) -> Void)? = nil, on kept: KeptSession? = nil) throws -> [FileItem] {
         try session(t, env: env, cancel: cancel, on: kept) { c in
-            var items = try c.list(dir, owners: owners).filter { FileJob.isSafeName($0.name) }.map { name, a in
+            let df = free == nil ? nil : c.askFree(dir)
+            var listed: [(name: String, attrs: SFTPClient.Attrs)]
+            do { listed = try c.list(dir, owners: owners) } catch {
+                if let df { c.forget([df]) }
+                throw error
+            }
+            if let df, let bytes = c.free(answer: df) { free?(bytes) }
+            var items = listed.filter { FileJob.isSafeName($0.name) }.map { name, a in
                 FileItem(name: name, kind: a.kind, size: a.size, mtime: a.mtime, mode: a.type | (a.mode ?? 0), flags: 0,
                          uid: a.uid ?? FileItem.unknown, gid: a.gid ?? FileItem.unknown)
             }
