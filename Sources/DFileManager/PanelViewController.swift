@@ -130,7 +130,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private(set) var connecting: SFTPTarget? { didSet { if connecting != oldValue { onSessionsChange?() } } }
     var onSessionsChange: (() -> Void)?
     var onRemoteResult: ((SFTPTarget, String?) -> Void)?   // a listing came back: nil, or the error
-    private var git: GitStatus?
+    /// The folder's `git status`: the column, the branch in the status line, the sidebar's Git section.
+    private(set) var git: GitStatus?
+    var onGitChange: (() -> Void)?
     private var theme = Theme.current
 
     /// `path` is the local folder; with `remote` set the tab is on a server and returns to `path` when it leaves.
@@ -834,6 +836,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
         guard st != git else { return }
         git = st
+        onGitChange?()
         if gitOnly { return applyView(select: currentName) }
         if col >= 0 { table.reloadData(forRowIndexes: IndexSet(0..<table.numberOfRows), columnIndexes: [col]) }
         updateStatus()

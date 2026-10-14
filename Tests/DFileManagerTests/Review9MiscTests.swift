@@ -217,7 +217,7 @@ private final class CountingPreview: QLPreviewPanel {
     var opened: [Place] = [], left = 0
     sidebar.onOpen = { p, _ in opened.append(p) }
     sidebar.onLeave = { left += 1 }
-    let outline = try #require((sidebar.view as? NSScrollView)?.documentView as? NSOutlineView)
+    let outline = try #require(((sidebar.view as? NSStackView)?.arrangedSubviews.first as? NSScrollView)?.documentView as? NSOutlineView)
     window.makeFirstResponder(outline)
     #expect(window.firstResponder !== outline, "the key view loop and a click pass it by")
 

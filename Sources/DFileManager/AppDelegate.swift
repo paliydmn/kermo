@@ -327,6 +327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             releaseIdleServers()
         }
         panel.onGone = { [unowned self] in forgetGone([$0]) }
+        panel.onGitChange = { [unowned self, unowned panel] in if panel === active { updateGitRow() } }
         panel.onRemoteResult = { [unowned self] target, error in
             guard sftpErrors[target.host] != error else { return }
             sftpErrors[target.host] = error
@@ -497,6 +498,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         sidebar.onCommandKey = { [unowned self] in runKey($0) }
         sidebar.onServer = { [unowned self] in serverAction($0, $1, $2) }
         sidebar.serverMenu = { [unowned self] in serverMenu($0) }
+        sidebar.onGitCommand = { [unowned self] in run($0) }
+        sidebar.gitMenu = { [unowned self] in gitMenu() }
         sidebar.sectionMenu = { [unowned self] id in
             id != "servers" ? [] : [MenuAction.item("New Server…") { [unowned self] in editServer(SavedServer(), title: "New Server") },
                                     MenuAction.item("Connect…") { [unowned self] in showConnect(ssh: true) },
@@ -817,7 +820,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// servers, they refuse there instead of quietly working on this Mac.
     static let localOnly: Set<String> = ["file.info", "go.tree", "panel.swap", "file.reveal", "file.symlink",
                                          "file.hardlink", "file.split", "file.combine", "git.diff", "file.eject",
-                                         "git.log", "git.blame", "git.stage", "git.unstage", "admin.copy", "admin.move", "admin.mkdir", "admin.delete", "admin.shell"]
+                                         "git.log", "git.blame", "git.stage", "git.unstage", "admin.copy", "admin.move", "admin.mkdir", "admin.delete", "admin.shell",
+                                         "git.switch", "git.newBranch", "git.commit", "git.sync", "git.publish", "git.pull", "git.push", "git.fetch", "git.init"]
 
     private func perform(_ c: Command) {
         if active.remote != nil, !terminal.isShown, Self.localOnly.contains(c.id) { return active.flash("Not available on a server panel") }
@@ -1001,6 +1005,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         submenu("Admin", [])
         submenu("View", [])
         submenu("Go", [], trailing: [.separator(), goTunnelsItem()])
+        submenu("Git", [])
         // AppKit lists the open windows below.
         NSApp.windowsMenu = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
@@ -1025,6 +1030,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             + " · %f %s %d %D · ↩ run in the shell · ⇧↩ output window · ⌘↩ in Terminal · ↑↓ history"
     }
 
+    /// The sidebar's Git section follows the active panel: its work tree, or none.
+    private func updateGitRow() {
+        sidebar.showGit(active.git.map { GitRow(status: $0, server: active.remote?.target.host) })
+    }
+
     private func updatePrompt() {
         guard panels.indices.contains(activeIndex) else { return }
         cmdField.isHidden = terminal?.isShown == true   // ⌘E doesn't work under the terminal; the prompt label stays (host:cwd of an SSH tab)
@@ -1038,6 +1048,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let root = terminal?.isShown == true ? nil : active.remote.flatMap { $0.target.sudo ? $0 : nil }
         cmdField.placeholderString = Self.commandHint(root: root?.target)
         sidebar.highlight(sidebarKey)
+        updateGitRow()
         window?.title = root.map { "\($0.target.shown):\($0.dir) #" }?.bidiVisible ?? path.bidiVisible   // what the panel's header says
         guard remote == nil else { window?.representedURL = nil; return }
         let dir = active.path   // proxy icon, once the folder is known to be there (asked off the main thread)
