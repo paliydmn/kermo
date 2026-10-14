@@ -30,7 +30,7 @@ A local port that's taken is said at once, with the next free one ("Use 15433").
 
 ## Forward a port the server listens on
 
-**Forward Port…** (⇧⌘P, **Go ▸ Tunnels**, or a server's sidebar menu ▸ **Tunnels**) asks the server what it listens on — its own `ss`, or `netstat` where there's no `ss` (BusyBox included) — on the server the panel or SSH tab is on, or one you pick, saved or not. While it looks, the picker says so; ⎋ stops it. A locked server asks for Touch ID first.
+**Forward Port…** (⇧⌘P, **Go ▸ Tunnels**, or a server's sidebar menu ▸ **Tunnels**) asks the server what it listens on — its own `ss`, or `netstat` where there's no `ss` (BusyBox included) — on the server the panel or SSH tab is on, or one you pick, saved or not. A locked server asks for Touch ID first, and a password, if one is due, is asked next. While it looks, the picker says so; ⎋ stops it.
 
 Each port is a row: ":5432 Postgres · postgres · localhost only", ":80 · nginx · all addresses". The program shows where the server shows it: without root, `ss` and `netstat` name only your own processes. A port that listens on one other address alone is forwarded to that address. A port a tunnel of the server already forwards says where: "→ localhost:15432".
 
