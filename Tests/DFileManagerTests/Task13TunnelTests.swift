@@ -279,6 +279,62 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(hits.first?.hits.prefix(2).map(\.title).sorted() == ["New Tunnel…", "Tunnels…"])
     }
 
+
+    /// Forward Port's tunnels are temporary, on any server — one never saved too: saved servers changing (`sync`) leaves
+    /// them be; they keep their server in use, quitting and Disconnect name and end them, the lock turns a locked
+    /// address's off. Save makes one the server's own without closing its port — the one it was on, or that server saved
+    /// since — and what its connections say is still heard.
+    @Test func temporaryTunnelsLiveUntilTurnedOff() async throws {
+        tunnels.child = { _, _ in { _ in
+            .init(executable: "/bin/sh", arguments: ["-c", "read x; [ \"$x\" = ok ] && echo ok || exit 255"]) { status, _ in status == 0 ? nil : "refused" }
+        } }
+        let p = try freePorts(3)
+        let db = server("db1", []), web = SavedServer(address: "me@web.invalid")!   // web: not saved
+        let t = Tunnel(localPort: p[0], port: 5432), u = Tunnel(localPort: p[1], port: 80)
+        defer { tunnels.stopAll() }
+        #expect(tunnels.start(t, of: db, temporary: true) == nil && tunnels.start(u, of: web, temporary: true) == nil)
+        let token = tunnels.state(t, of: db)?.token
+        tunnels.sync([db])   // servers.json saved: no tunnel of theirs in it
+        tunnels.sync([])
+        #expect(tunnels.isListening(t, of: db) && tunnels.isListening(u, of: web) && tunnels.state(t, of: db)?.token == token)
+        #expect(tunnels.isTemporary(t, of: db) && Set(tunnels.temporaries().map(\.tunnel.localPort)) == [p[0], p[1]])
+        #expect(tunnels.temporaries(server: ServerRow.key(web.target)).map(\.tunnel) == [u])
+        #expect(tunnels.inUse == [ServerRow.key(db.target), ServerRow.key(web.target)])
+        let c = dial(p[1])
+        defer { close(c) }
+        await waitUntil { tunnels.connections(u, of: web) == 1 }
+        #expect(tunnels.quitNote() == "Tunnels: localhost:80 (1 connection) — they close")
+        #expect(tunnels.described(server: ServerRow.key(web.target)) == "localhost:80 (1 connection)")
+        tunnels.stopTemporaries(server: ServerRow.key(web.target))   // Disconnect
+        #expect(ends(c) && dial(p[1]) == -1 && tunnels.temporaries().map(\.tunnel) == [t])
+
+        var saved = db
+        saved.tunnels = [Tunnel(localPort: p[0], port: 5432, on: true)]
+        tunnels.adopt(saved.tunnels[0], of: db, into: saved)
+        tunnels.sync([saved])
+        #expect(!tunnels.isTemporary(saved.tunnels[0], of: saved) && tunnels.state(saved.tunnels[0], of: saved)?.token == token)
+        let d = dial(p[0])
+        _ = "no\n".withCString { write(d, $0, 3) }
+        #expect(ends(d))
+        close(d)
+        await waitUntil { tunnels.state(saved.tunnels[0], of: saved)?.error != nil }
+        #expect(said.lines == ["Postgres: refused"], "its word is heard after Save")
+
+        let v = Tunnel(localPort: p[1], port: 6379)
+        tunnels.start(v, of: web, temporary: true)
+        let since = tunnels.state(v, of: web)?.token
+        let webSaved = server("web", [v])   // the same address, saved since
+        tunnels.adopt(v, of: web, into: webSaved)
+        #expect(tunnels.state(v, of: web) == nil && tunnels.state(v, of: webSaved)?.token == since && !tunnels.isTemporary(v, of: webSaved))
+        tunnels.stop(v, of: webSaved)
+
+        let w = Tunnel(localPort: p[2], port: 80)
+        tunnels.start(w, of: web, temporary: true)
+        tunnels.relock([server("web", locked: true, [])])   // a locked server at its address
+        #expect(!tunnels.isListening(w, of: web) && tunnels.temporaries().isEmpty)
+        #expect(tunnels.start(Tunnel(localPort: p[0], port: 1), of: web, temporary: true) != nil && tunnels.temporaries().isEmpty,
+                "one that can't listen leaves nothing behind")
+    }
 }
 
 /// A value the tests' child closures read off the main thread.

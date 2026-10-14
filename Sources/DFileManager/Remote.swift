@@ -296,6 +296,8 @@ enum Masters {
 /// Saved servers' tunnels while they listen (README "Tunnels"): a `TunnelListener` each, by server and local port.
 /// Each connection logs in when the server's master is down — after sleep or a network change too (`Masters` stops it
 /// then), so nothing restarts — and rides it otherwise. The listeners' word comes in on the main thread.
+/// Temporary ones (Forward Port…) live here alone, until Turn Off, Disconnect, the lock or quitting — on any server, an
+/// unsaved one as a `SavedServer` made for it (never saved); servers.json and `sync` never see them.
 @MainActor
 final class Tunnels {
     struct Key: Hashable { let server: UUID, port: Int }
@@ -306,6 +308,7 @@ final class Tunnels {
         var error: String?              // why the last connection failed, or why it can't listen
         var said: String?               // the last failure the status line told: a new one once, not each retry of a pool
         let token = UUID()              // a listener started again: the old one's word no longer counts
+        var temporary = false
     }
     private(set) var states: [Key: State] = [:]
     /// Listeners that stopped taking connections but keep their open ones (the screen locked; a tunnel that listens
@@ -332,14 +335,15 @@ final class Tunnels {
     var inUse: Set<String> { Set(states.values.filter { $0.listener != nil }.map { ServerRow.key($0.server.target) }) }
 
     /// Listens on its port (again, if it did: the connections open so far live on); nil, or why it can't — a taken
-    /// port, with the next free one.
+    /// port, with the next free one. `temporary`: one that can't listen leaves nothing behind.
     @discardableResult
-    func start(_ t: Tunnel, of s: SavedServer) -> String? {
+    func start(_ t: Tunnel, of s: SavedServer, temporary: Bool = false) -> String? {
         let key = Self.key(t, s)
-        states.removeValue(forKey: key).map(hold)   // not `stop`: told once, when it listens anew (its server stays in use)
-        var st = State(tunnel: t, server: s)
+        let was = states.removeValue(forKey: key)
+        was.map(hold)   // not `stop`: told once, when it listens anew (its server stays in use)
+        var st = State(tunnel: t, server: s, temporary: temporary || was?.temporary == true)
         defer {
-            states[key] = st
+            if st.listener != nil || !st.temporary { states[key] = st }
             changed()
         }
         if let p = t.problem {
@@ -349,7 +353,7 @@ final class Tunnels {
         let token = st.token
         do {
             st.listener = try TunnelListener(port: t.localPort, child: child(t, s)) { [weak self] e in
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.heard(e, key, token) } }
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.heard(e, token) } }
             }
             return nil
         } catch {
@@ -383,6 +387,28 @@ final class Tunnels {
         changed()
     }
 
+    func isTemporary(_ t: Tunnel, of s: SavedServer) -> Bool { state(t, of: s)?.temporary == true }
+
+    /// The temporary tunnels, by local port; those of one server (`ServerRow.key`) with `server`.
+    func temporaries(server: String? = nil) -> [State] {
+        states.values.filter { $0.temporary && (server == nil || ServerRow.key($0.server.target) == server) }.sorted { $0.tunnel.localPort < $1.tunnel.localPort }
+    }
+
+    /// Disconnect: the server's temporary tunnels close, with their connections.
+    func stopTemporaries(server: String) {
+        temporaries(server: server).forEach { stop(Self.key($0.tunnel, $0.server)) }
+    }
+
+    /// Save: a temporary tunnel becomes `s`'s — the one it was on, or that server saved since — without closing its port
+    /// (servers.json gets it next, and `sync` then finds it as it is). Listens anew only if `s` connects another way.
+    func adopt(_ t: Tunnel, of temporary: SavedServer, into s: SavedServer) {
+        guard var st = states.removeValue(forKey: Self.key(t, temporary)) else { return }
+        let other = st.server.target != s.target
+        (st.temporary, st.server, st.tunnel) = (false, s, t)
+        states[Self.key(t, s)] = st
+        if other { start(t, of: s) } else { changed() }
+    }
+
     /// Disconnect: what the server's held listeners still keep ends.
     func endHeld(_ server: String) {
         held.filter { $0.server == server }.forEach { $0.listener.stop() }
@@ -396,8 +422,9 @@ final class Tunnels {
         (states, held) = ([:], [])
     }
 
-    private func heard(_ e: TunnelListener.Event, _ key: Key, _ token: UUID) {
-        guard case .closed(let failure) = e, var st = states[key], st.token == token else { return }
+    /// By the listener's token, not its key: a temporary tunnel saved keeps its listener under its server's key.
+    private func heard(_ e: TunnelListener.Event, _ token: UUID) {
+        guard case .closed(let failure) = e, let key = states.first(where: { $0.value.token == token })?.key, var st = states[key] else { return }
         let flipped = (st.error == nil) != (failure == nil)   // the sidebar shows failed or fine, not each retry
         st.error = failure   // a clean end clears the last failure
         if let failure, failure != st.said {
@@ -426,7 +453,7 @@ final class Tunnels {
     /// its open connections live on — unless its server is now one that's locked (that asks for Touch ID first); a new
     /// name or URL just shows.
     func sync(_ servers: [SavedServer]) {
-        for (key, st) in states {
+        for (key, st) in states where !st.temporary {
             guard let s = servers.first(where: { $0.id == key.server }), let t = s.tunnels.first(where: { $0.localPort == key.port }) else {
                 stop(key)
                 continue

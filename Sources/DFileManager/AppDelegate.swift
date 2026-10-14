@@ -627,6 +627,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 saveTunnel(t, of: s, on: false)
             }
         }
+        tunnels.stopTemporaries(server: key)   // Forward Port's
         tunnels.endHeld(key)   // connections kept from before the screen locked, or from before an edit
         // First: an SSH tab ending or the last file tab closing lets releaseIdleServers end it only gently (`-O stop`).
         await Masters.stop(now: true) { ServerRow.key($0) == key }
