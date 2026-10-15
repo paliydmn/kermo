@@ -2663,6 +2663,7 @@ extension AppDelegate {
 
     func jobFinished(_ job: FileJob) {
         AuditLog.write(job, sync: syncJobs.contains(job))
+        reloadVolumes()   // Locations' free space
         syncJobs.remove(job)
         // Local panels follow the disk (FSEvents); a server panel has to ask again.
         for p in panels {

@@ -535,11 +535,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ws.addObserver(self, selector: #selector(volumeGone(_:)), name: NSWorkspace.didUnmountNotification, object: nil)
         refreshSidebar()
         reloadVolumes()
+        let tick = Timer.scheduledTimer(timeInterval: 30, target: self, selector: #selector(volumeTick), userInfo: nil, repeats: true)
+        tick.tolerance = 5
     }
+
+    /// Free space moves without a notice: read again every 30 s while Kermo is the app in front.
+    @objc private func volumeTick() { if NSApp.isActive { reloadVolumes() } }
 
     /// Off the main thread: a hung network mount must not freeze the window. ~/.ssh/config comes along
     /// (also when the window becomes key), so edits to it show up without a restart.
-    @objc private func reloadVolumes() { volumeRuns.request(key: "") }
+    @objc func reloadVolumes() { volumeRuns.request(key: "") }
 
     /// A panel on a disk that went away leaves it now (up to /Volumes), not at its next re-list.
     @objc private func volumeGone(_ n: Notification) {
@@ -551,8 +556,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private lazy var volumeRuns = SingleFlight(interval: .zero) { [weak self] in await self?.loadVolumes() }
 
     private func loadVolumes() async {
-        (volumes, configHosts) = await Blocking.run { (SidebarModel.volumes(), SSHConfig.hosts().map(\.alias)) }
-        refreshSidebar()
+        let (new, hosts) = await Blocking.run { (SidebarModel.volumes(), SSHConfig.hosts().map(\.alias)) }
+        // Free space differs by some bytes at every read: the sidebar is rebuilt only when what it shows has changed.
+        let same = new.map(SidebarModel.row) == volumes.map(SidebarModel.row) && hosts == configHosts
+        (volumes, configHosts) = (new, hosts)
+        if !same { refreshSidebar() }
     }
 
     /// The sidebar row of where you are: the terminal's tab, the active panel's server tab, or its folder.

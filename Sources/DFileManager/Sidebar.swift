@@ -335,6 +335,8 @@ enum ServerAction: String { case row, ssh, sftp }
 /// current server, whose name and state matter most, and a click always comes with a hover.
 class HoverRowView: NSTableRowView {
     private var hovering = false { didSet { update() } }
+    override var isSelected: Bool { didSet { update() } }
+    override var isEmphasized: Bool { didSet { update() } }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -353,9 +355,40 @@ class HoverRowView: NSTableRowView {
             if v is ServerToolbar { v.isHidden = !hovering }
             else if v is ServerChips { v.isHidden = hovering }
             else if let name = v as? ServerName { name.lineBreakMode = hovering ? .byTruncatingTail : .byTruncatingMiddle }
+            else if let f = v as? VolumeFigures { f.onAccent = isSelected && isEmphasized }
             else { v.subviews.forEach(walk) }
         }
         walk(self)
+    }
+}
+
+/// A volume's "110 GB / 350 GB": used in red, free in green, in what room the name leaves — cut from the end, or
+/// gone, in a narrow column (the tooltip has them). White on the accent of a focused selection, where red and green
+/// don't read.
+final class VolumeFigures: NSTextField {
+    private let used: String, free: String
+    var onAccent = false { didSet { if onAccent != oldValue { paint() } } }
+
+    init(used: String, free: String) {
+        (self.used, self.free) = (used, free)
+        super.init(frame: .zero)
+        (isEditable, isSelectable, isBordered, drawsBackground) = (false, false, false, false)
+        lineBreakMode = .byTruncatingTail
+        setContentCompressionResistancePriority(.init(200), for: .horizontal)   // below the name's: the name keeps its room
+        paint()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func paint() {
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        func part(_ s: String, _ c: NSColor) -> NSAttributedString {
+            NSAttributedString(string: s, attributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: onAccent ? .alternateSelectedControlTextColor : c, .paragraphStyle: style])
+        }
+        let s = NSMutableAttributedString(attributedString: part(used, .systemRed))
+        s.append(part(" / ", .secondaryLabelColor))
+        s.append(part(free, .systemGreen))
+        attributedStringValue = s
     }
 }
 
@@ -622,6 +655,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         case .volume(let v):
             let (path, name, ejectable) = (v.path, v.name, v.ejectable)
             let r = placeRow(ejectable ? "externaldrive" : "internaldrive", name, v.tip)
+            if !v.used.isEmpty { r.addArrangedSubview(spacer()); r.addArrangedSubview(VolumeFigures(used: v.used, free: v.free)) }
             if ejectable {
                 let b = NSButton(image: NSImage(systemSymbolName: "eject.fill", accessibilityDescription: "Eject")!, target: self, action: #selector(eject(_:)))
                 b.isBordered = false
