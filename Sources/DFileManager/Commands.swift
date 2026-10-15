@@ -242,9 +242,9 @@ extension AppDelegate {
         },
 
         // Clipboard
-        cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", short: "Copy path", aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetURLs.map(\.path)) },
+        cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", short: "Copy path", aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetPaths) },
         cmd("edit.copyName", "Copy Name", ["cmd+opt+c"], menu: "Edit", short: "Copy name", aliases: "clipboard") {
-            $0.copyToPasteboard($0.active.targetURLs.map(\.lastPathComponent))
+            $0.copyToPasteboard($0.active.targetPaths.map { ($0 as NSString).lastPathComponent })
         },
         cmd("edit.pasteMove", "Move Here", ["cmd+opt+v"], menu: "Edit", short: "Move here") { $0.pasteFiles(move: true) },
 

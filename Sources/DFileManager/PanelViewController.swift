@@ -272,6 +272,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     /// What an operation acts on: the marked items, or the cursor item if nothing is marked.
+    /// Copy Path / Copy Name: `targetURLs`' paths; on a server, the paths there (the folder's from its menu).
+    var targetPaths: [String] {
+        guard let r = remote else { return targetURLs.map(\.path) }
+        if forFolder { return [r.dir] }
+        return (remoteSelection?.items ?? []).map { (r.dir as NSString).appendingPathComponent($0.name) }
+    }
+
     var targetURLs: [URL] {
         guard archive == nil, remote == nil else { return [] }
         if forFolder { return [URL(fileURLWithPath: path)] }
@@ -2153,8 +2160,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         menu.addItem(withTitle: "Paste", action: #selector(paste(_:)), keyEquivalent: "").target = self
         menu.addItem(.separator())
         add(remote != nil ? "SSH Here" : "Open in Terminal", "file.terminal")
+        if archive == nil { add("Copy Path", "edit.copyPath") }
         if remote == nil, archive == nil {   // this Mac's folder
-            add("Copy Path", "edit.copyPath")
             add("Reveal in Finder", "file.reveal")
             add("Get Info", "file.info")
         }

@@ -125,8 +125,17 @@ private func tempDir() -> String {
     await waitUntil { panel.remote?.dir == d }
     let menu = NSMenu()
     panel.fillMenu(menu, row: -1)
-    #expect(menu.items.filter { !$0.isSeparatorItem }.map(\.title) == ["New File…", "New Folder…", "Paste", "SSH Here", "Show Hidden Files", "Sort By",
-                                                                      "Calculate Folder Sizes", "Services…", "Containers…"])
+    #expect(menu.items.filter { !$0.isSeparatorItem }.map(\.title) == ["New File…", "New Folder…", "Paste", "SSH Here", "Copy Path", "Show Hidden Files",
+                                                                      "Sort By", "Calculate Folder Sizes", "Services…", "Containers…"])
+    // Copy Path there: the server's paths — the folder's from its menu, the cursor's file's otherwise.
+    FileManager.default.createFile(atPath: d + "/site.conf", contents: nil)
+    panel.reload(select: "site.conf")
+    await waitUntil { panel.currentName == "site.conf" }
+    #expect(panel.targetPaths == [d + "/site.conf"])
+    var seen: [String] = []
+    panel.onCommand = { _ in seen = panel.targetPaths }
+    menu.performActionForItem(at: menu.indexOfItem(withTitle: "Copy Path"))
+    #expect(seen == [d])
 }
 
 /// ⇧F5 never replaces: a name that's there (a dangling link too) is taken, here and on a server.

@@ -18,9 +18,10 @@ F5 / F6, ⌘C / ⌘V and drag and drop copy and move files in every direction: s
 - **↩** opens a file in its app (so does Quick Look's **Open with**, except for a config ⌘Y shows through a read-only `.txt` copy). Every save there goes up to the server the same way. If someone changed the file there meanwhile, you're asked first (**Compare** shows the differences); on a production server you're asked once as well.
 - An app that autosaves (TextEdit) sends its autosaves too, so on a production server F4 is the safer choice. Quitting names what didn't reach the server; its copy is kept.
 - Saving a server config checks it first: see [Checks on save](config-checks.md).
+- ⇧⌘C **Copy Path** and ⌥⌘C **Copy Name** copy the marked items' paths (or names) on the server, as `/etc/nginx/nginx.conf`, ready for a command there.
 - ⇧F4 (⌥⇧4) **New File…** creates an empty file there (`rw-r--r--`, never over an existing one) and opens it in the editor as F4 does. On a [root panel](root-panel.md) it's root's.
 - ⇧F5 (⌥⇧5) **Copy Here As…** copies there, next to itself, under a new name (`nginx.conf.bak`), or with a suffix for several marked; a folder whole. The server copies it itself where it can, as within-server copies do. A taken name is an error, never replaced. On a production server the name prompt says so, and the copy goes into the production log.
-- Right-click empty space or `..` for the folder's menu, as on this Mac ([Context menu](files.md#context-menu)): there **SSH Here** opens a shell in that folder, **Services…** and **Containers…** are in it too, and Copy Path, Reveal in Finder and Get Info are left out.
+- Right-click empty space or `..` for the folder's menu, as on this Mac ([Context menu](files.md#context-menu)): there **SSH Here** opens a shell in that folder, **Copy Path** copies the folder's path on the server, **Services…** and **Containers…** are in it too, and Reveal in Finder and Get Info are left out.
 
 ## Preview, sizes and compare
 
