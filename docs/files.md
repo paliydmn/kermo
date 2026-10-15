@@ -84,7 +84,7 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 
 ## Sizes, hidden files and sort
 
-- Space on a folder marks it and counts its size. ⌥Space (**Calculate Folder Sizes**) counts every folder, and ⎋ stops. It adds up file bytes, not disk blocks, skips volumes mounted inside, and is forgotten when you leave.
+- Space on a folder marks it and counts its size. ⌥Space (**Calculate Folder Sizes**) counts every folder, and ⎋ (or **Cancel** in the status line) stops. It adds up file bytes, not disk blocks, skips volumes mounted inside, and is forgotten when you leave.
 - ⇧⌘. (**Show Hidden Files**) shows names starting with `.` and files with the hidden flag, in every panel, and is remembered.
 - Click **Name**, **Size** or **Modified** to sort, again to reverse. Folders stay first. Each folder remembers its sort.
 

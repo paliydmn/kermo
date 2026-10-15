@@ -132,10 +132,10 @@ private func onServer(_ dir: String, at remoteDir: String) async throws -> Panel
     let view = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(row))) as? NSStackView)
     let toolbar = try #require(view.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView)
     let buttons = toolbar.arrangedSubviews.compactMap { $0 as? PillButton }
-    #expect(buttons.map { $0.accessibilityLabel() } == ["SSH", "SFTP"])
+    #expect(buttons.map { $0.accessibilityLabel() } == ["SSH", "SFTP", "Server menu"])
     let plain = NSButton(image: try #require(buttons[1].image), target: nil, action: nil)
     plain.isBordered = false
-    #expect(buttons[1].intrinsicContentSize.width == plain.intrinsicContentSize.width + 8, "a few pt wider, no bezel")
+    #expect(buttons[1].intrinsicContentSize.width == max(plain.intrinsicContentSize.width + 8, 22), "a few pt wider, no bezel")
 }
 
 // MARK: - I10: systemctl in the F2 menu, on a server panel only

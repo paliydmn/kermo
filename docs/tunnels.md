@@ -63,7 +63,7 @@ Each tunnel shows a ●:
 
 The reason is in the tooltip and, once per new reason, in the status line: "Nothing listens on localhost:5432 (as seen from db1)", "db1 forbids port forwarding (AllowTcpForwarding / PermitOpen)", "db1 can't resolve db.internal". It comes from ssh's own log of that connection (`/tmp/dfm-ssh-<uid>/log-<host>_<port>`, owner-only, gone with the connection).
 
-The sidebar shows `⇄` on a server while its tunnels listen (`⇄ 2` for two), red when one failed. Under the mouse it opens the server's tunnels.
+The sidebar shows a green `⇄` on a server while its tunnels listen (`⇄ 2` for two), red when one failed. Under the mouse it opens the server's tunnels.
 
 ## Turn off and quit
 

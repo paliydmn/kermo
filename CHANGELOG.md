@@ -21,6 +21,9 @@ Release:
 ### Changed
 
 - **Folder sizes on a server** (Space, ⌥Space) come from the server's own `du`, one command for all the folders, instead of an SFTP walk of every folder: much faster on a large or distant server. A folder `du` couldn't read all of shows as `≥ 1.2 GB`; ⎋ stops `du` on the server too; a root panel's runs as root (`sudo -n`). Where `du` can't run — BSD's has no `-b`, an account without a shell, sudo that allows only `sftp-server` — the folders are walked as before.
+- **Cancel** in the status line, in red, next to whatever ⎋ stops there (folder sizes, connecting, a download…): the same for the mouse.
+- The sidebar's `⇄` is green while a server's tunnels listen, as SSH and SFTP are when open (red still when one failed).
+- A server row's buttons (SSH, SFTP, Tunnels, ⋯) and the Git section's take clicks around their icons, not only on them.
 - **A changed host key** is said plainly wherever a connection fails — reinstalled server or someone intercepting, the new fingerprint, the old key's file and line — instead of ssh's banner. Opening a server's files, the alert offers **Remove Old Key…** (↩ is Cancel), then connects again and asks about the new key; on a production server it asks you to check the fingerprint with the admin first.
 
 ## [1.1] - 2026-10-14

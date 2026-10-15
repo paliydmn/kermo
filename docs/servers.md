@@ -71,7 +71,7 @@ If a server's host key no longer matches the one in `known_hosts`, Kermo won't c
 A row shows what is open on the server:
 
 - `>_` for SSH and a folder for SFTP, in green (with a count from 2);
-- `⇄` for tunnels that are listening (red when one failed);
+- `⇄` for tunnels that are listening, in green (red when one failed);
 - a lock on the icon for a locked server, a red dot when the last connection failed, purple for a production server.
 
 Under the mouse the row shows **SSH**, **SFTP**, **Tunnels** (for a saved server that has tunnels, or a server with [temporary ones](tunnels.md#forward-a-port-the-server-listens-on)) and **⋯**. A click goes to the server's open session. With nothing open, a double-click connects with SSH, so a single click on an idle server does nothing. The tooltip says all of it.

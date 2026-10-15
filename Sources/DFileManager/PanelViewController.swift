@@ -54,6 +54,17 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
     private let spinner = NSProgressIndicator()
+    /// Next to a busy message that ⎋ cancels: the same for the mouse.
+    lazy var cancelButton: PillButton = {
+        let b = PillButton(title: "Cancel", target: self, action: #selector(cancelClicked))
+        b.isBordered = false
+        b.minSide = 0   // the status line keeps its height
+        b.font = .systemFont(ofSize: 11, weight: .medium)
+        b.contentTintColor = .systemRed
+        b.toolTip = "⎋ cancels too"
+        b.isHidden = true
+        return b
+    }()
     /// Shown in the status line with a spinner while a listing, connection or download is in flight.
     var busyMessage: String? { didSet { if busyMessage != oldValue { updateStatus() } } }
 
@@ -327,7 +338,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         errorIcon.contentTintColor = .systemRed
         errorIcon.symbolConfiguration = .init(pointSize: 11, weight: .regular)
         errorIcon.isHidden = true
-        let footer = Self.column([filterField, NSStackView(views: [spinner, errorIcon, statusLabel])])
+        let footer = Self.column([filterField, NSStackView(views: [spinner, errorIcon, statusLabel, cancelButton])])
         let v = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 700))
         v.wantsLayer = true   // the active panel's frame
         for sub in [header, scroll, footer] as [NSView] {
@@ -667,7 +678,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         spinner.isHidden = !busy
         busy ? spinner.startAnimation(nil) : spinner.stopAnimation(nil)
         statusError = false
-        if let busyMessage { return statusLabel.stringValue = busyMessage }
+        let cancellable = busyMessage?.hasSuffix(" ⎋ cancels") == true
+        cancelButton.isHidden = !cancellable
+        if let busyMessage { return statusLabel.stringValue = cancellable ? String(busyMessage.dropLast(" ⎋ cancels".count)) : busyMessage }
         // A message just flashed stays its time through a re-list, a git status or a folder size coming in.
         if let f = flashed, f.until > Date() { statusError = f.error; return statusLabel.stringValue = f.text }
         var s = Self.countText(rows.count, "items", totalSize) + " · \(freeSpace) free"
@@ -777,6 +790,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         remoteFlag?.cancel()
         busyOps.forEach { $0.flag.cancel() }
     }
+
+    @objc private func cancelClicked() { cancelBusy() }
 
     /// `after`: the message waits that long (⎋ doesn't), so quick work doesn't flash it.
     func busy<T: Sendable>(_ message: String, after: Double = 0, flag: CancelFlag = CancelFlag(),
