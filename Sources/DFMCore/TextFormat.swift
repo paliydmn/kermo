@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 /// Viewer helpers: decoding, hex dumps, readable plist/JSON, log-line highlighting.
 public enum TextFormat {
@@ -53,6 +54,24 @@ public enum TextFormat {
         let sample = data.dropFirst(lead).prefix(8192)
         let control = sample.reduce(0) { n, b in n + ((b < 0x20 && ![8, 9, 10, 11, 12, 13, 27].contains(b)) || b == 0x7f ? 1 : 0) }
         return control * 20 > sample.count
+    }
+
+    /// Quick Look previews it by its name: macOS knows the extension as text, an image, PDF, audio or video, an
+    /// archive or a property list. `.conf`, `.env`, `.bak`, `syslog.1` or no extension at all it doesn't know (a
+    /// made-up type), and `server.key` / `id_rsa.pub` it takes for a Keynote or Publisher file: an icon only.
+    public static func quickLookShows(_ name: String) -> Bool {
+        let ext = (name as NSString).pathExtension
+        guard !ext.isEmpty, let t = UTType(filenameExtension: ext) else { return false }
+        return [UTType.text, .image, .pdf, .audiovisualContent, .archive, .propertyList].contains { t.conforms(to: $0) }
+    }
+
+    /// How much of a file's start `previewsAsText` looks at.
+    public static let previewSniff = 64 << 10
+
+    /// Text the panel previews itself, where Quick Look would show an icon: a name it doesn't know, and a start
+    /// (`previewSniff`) that doesn't look binary — what F3 would show as text. UTF-16 reads as binary there too.
+    public static func previewsAsText(_ name: String, head: Data) -> Bool {
+        !quickLookShows(name) && !looksBinary(head.prefix(previewSniff))
     }
 
     public static let nulRunLimit = 256 << 20
