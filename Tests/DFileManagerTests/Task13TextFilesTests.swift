@@ -62,6 +62,15 @@ private func tempDir() -> String {
     let second = TextCopies.make([hosts])
     #expect(!FileManager.default.fileExists(atPath: copy.path), "the ones before go")
     #expect(second[hosts].map { FileManager.default.fileExists(atPath: $0.path) } == true)
+    // Two search hits with one name: a copy each.
+    try FileManager.default.createDirectory(atPath: d + "/a", withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(atPath: d + "/b", withIntermediateDirectories: false)
+    FileManager.default.createFile(atPath: d + "/a/config", contents: Data("a\n".utf8))
+    FileManager.default.createFile(atPath: d + "/b/config", contents: Data("b\n".utf8))
+    let a = URL(fileURLWithPath: d + "/a/config"), b = URL(fileURLWithPath: d + "/b/config")
+    let both = TextCopies.make([a, b])
+    #expect(both[a].flatMap { FileManager.default.contents(atPath: $0.path) } == Data("a\n".utf8))
+    #expect(both[b].flatMap { FileManager.default.contents(atPath: $0.path) } == Data("b\n".utf8))
     TempCopies.remove(TextCopies.dir)
 }
 

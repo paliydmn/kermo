@@ -2338,6 +2338,7 @@ extension AppDelegate {
         guard !paths.isEmpty else { return NSSound.beep() }
         let one = (paths[0] as NSString).lastPathComponent, host = r.map { " on \($0.target.host)" } ?? ""
         Task {
+            if let r { guard await unlock([.sftp(r.target)]) else { return } }   // once, not per item
             let value = paths.count == 1 ? one + ".bak" : ".bak", info = r.map { SavedServer.prodNote([$0.target]) } ?? ""
             guard let typed = await prompt(paths.count == 1 ? "Copy “\(one)”\(host) here as:" : "Copy \(paths.count) items\(host) here with the suffix:",
                                            value: value, ok: "Copy", info: info,
@@ -2346,13 +2347,19 @@ extension AppDelegate {
             guard !typed.contains("/") else { return showError(JobErrorMessage("A name can't contain “/”")) }
             let copies = Self.copiesAs(paths, typed)
             if paths.count == 1, copies[0].to == paths[0] { return }
+            // A config a save would check goes in as it is: said, on a production server, as F5 says it.
+            if let r, !info.isEmpty, case let unchecked = Self.uncheckedNote(copies.map(\.to), rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules),
+               !unchecked.isEmpty, await !confirm("Copy to \(r.target.host)?", info: info + unchecked.trimmingCharacters(in: .newlines), ok: "Copy") { return }
             let to = copies.map(\.to), taken: [String]
             if let r {
                 let env = SSHAskpass.env
-                guard case .success(let t) = await active.busy("Copy as on \(r.target.host)…", { flag in
+                switch await active.busy("Copy as on \(r.target.host)…", { flag in
                     try SFTPClient.session(r.target, env: env, cancel: flag) { Self.taken(to, on: $0) }
-                }) else { return }
-                taken = t
+                }) {
+                case .success(let t): taken = t
+                case .failure(is CancellationError): return
+                case .failure(let e): return showError(e)
+                }
             } else {
                 taken = await Blocking.run { Self.taken(to, on: nil) }   // off the main thread: a share that doesn't answer
             }

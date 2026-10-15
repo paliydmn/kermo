@@ -62,7 +62,20 @@ public enum TextFormat {
     public static func quickLookShows(_ name: String) -> Bool {
         let ext = (name as NSString).pathExtension
         guard !ext.isEmpty, let t = UTType(filenameExtension: ext) else { return false }
-        return [UTType.text, .image, .pdf, .audiovisualContent, .archive, .propertyList].contains { t.conforms(to: $0) }
+        return [UTType.text, .image, .pdf, .audiovisualContent, .archive, .propertyList, .message, .threeDContent].contains { t.conforms(to: $0) }
+    }
+
+    /// `data` without a UTF-8 character cut at its end (a lead byte whose continuation bytes didn't fit).
+    static func utf8Whole(_ data: Data) -> Data {
+        guard !data.isEmpty else { return data }
+        for back in 1...min(3, data.count) {
+            let b = data[data.endIndex - back]
+            guard b & 0xC0 == 0x80 else {   // not a continuation byte: a lead (or ASCII) — whole if its length fits
+                let need = b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1
+                return need > back ? data.dropLast(back) : data
+            }
+        }
+        return data
     }
 
     /// How much of a file's start `previewsAsText` looks at.
@@ -75,20 +88,24 @@ public enum TextFormat {
     }
 
     /// A copy of `src` in `dir` named `<name>.txt`, so Quick Look shows it as text: a clone where the volume allows
-    /// (no bytes copied), else its first `limit` bytes — named `<name> (first 4 MB).txt` when that cuts it. Owner-only:
-    /// a server's `.env` or key may be in it.
+    /// (no bytes copied), else its first `limit` bytes — named `<name> (first 4 MB).txt` when that cuts it, never inside
+    /// a UTF-8 character. Read by the owner only: a server's `.env` or key may be in it, and an app Quick Look opens it
+    /// in mustn't save into a copy that's thrown away.
     public static func textCopy(of src: String, in dir: String, limit: Int = 4 << 20) throws -> String {
         let name = (src as NSString).lastPathComponent
         var dst = (dir as NSString).appendingPathComponent(name + ".txt")
         if clonefile(src, dst, 0) == 0 {
-            chmod(dst, 0o600)
+            chmod(dst, 0o400)
             return dst
         }
         guard let h = FileHandle(forReadingAtPath: src) else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         defer { try? h.close() }
-        let head = try h.read(upToCount: limit + 1) ?? Data()
-        if head.count > limit { dst = (dir as NSString).appendingPathComponent("\(name) (first \(limit >> 20) MB).txt") }
-        guard FileManager.default.createFile(atPath: dst, contents: head.prefix(limit), attributes: [.posixPermissions: 0o600])
+        var head = try h.read(upToCount: limit + 1) ?? Data()
+        if head.count > limit {
+            dst = (dir as NSString).appendingPathComponent("\(name) (first \(limit >> 20) MB).txt")
+            head = utf8Whole(head.prefix(limit))
+        }
+        guard FileManager.default.createFile(atPath: dst, contents: head, attributes: [.posixPermissions: 0o400])
         else { throw POSIXError(.EIO) }
         return dst
     }

@@ -6,7 +6,7 @@ import Testing
 
 @Test func quickLookKeepsWhatItShows() {
     for name in ["app.log", "a.json", "notes.txt", "run.sh", "README.md", "x.yaml", "photo.jpg", "doc.pdf", "clip.mov",
-                 "a.plist", "logs.tar.gz", "page.html", "logo.svg"] {
+                 "a.plist", "logs.tar.gz", "page.html", "logo.svg", "mail.eml", "part.stl"] {
         #expect(TextFormat.quickLookShows(name), "\(name)")
         #expect(!TextFormat.previewsAsText(name, head: Data("hello\n".utf8)), "\(name)")
     }
@@ -48,7 +48,7 @@ import Testing
     let copy = try TextFormat.textCopy(of: src, in: d + "/a")
     #expect(copy == d + "/a/site.conf.txt")
     #expect(FileManager.default.contents(atPath: copy) == text)
-    #expect((try FileManager.default.attributesOfItem(atPath: copy)[.posixPermissions] as? Int) == 0o600)
+    #expect((try FileManager.default.attributesOfItem(atPath: copy)[.posixPermissions] as? Int) == 0o400)
     // Not a clone (one already there makes clonefile fail): the start, cut and named so past the limit.
     let big = d + "/big.log.1"
     FileManager.default.createFile(atPath: big, contents: Data(repeating: UInt8(ascii: "x"), count: 3 << 20))
@@ -57,5 +57,21 @@ import Testing
     let cut = try TextFormat.textCopy(of: big, in: d + "/b", limit: 2 << 20)
     #expect(cut == d + "/b/big.log.1 (first 2 MB).txt")
     #expect(FileManager.default.contents(atPath: cut)?.count == 2 << 20)
-    #expect((try FileManager.default.attributesOfItem(atPath: cut)[.posixPermissions] as? Int) == 0o600)
+    #expect((try FileManager.default.attributesOfItem(atPath: cut)[.posixPermissions] as? Int) == 0o400)
+}
+
+/// A cut copy ends on a whole UTF-8 character, so Quick Look still reads it as UTF-8.
+@Test func aCutCopyKeepsCharactersWhole() throws {
+    #expect(TextFormat.utf8Whole(Data("aб".utf8)) == Data("aб".utf8))
+    #expect(TextFormat.utf8Whole(Data("aб".utf8).dropLast()) == Data("a".utf8))
+    #expect(TextFormat.utf8Whole(Data("a€".utf8).dropLast()) == Data("a".utf8))
+    #expect(TextFormat.utf8Whole(Data("a😀".utf8).dropLast(2)) == Data("a".utf8))
+    #expect(TextFormat.utf8Whole(Data()) == Data())
+    let d = NSTemporaryDirectory() + "dfm-t13cut-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    FileManager.default.createFile(atPath: d + "/ru.conf", contents: Data(String(repeating: "б", count: 1 << 20).utf8))   // 2 MB
+    FileManager.default.createFile(atPath: d + "/ru.conf.txt", contents: nil)   // no clone
+    let cut = try TextFormat.textCopy(of: d + "/ru.conf", in: d, limit: (1 << 20) + 1)
+    #expect(FileManager.default.contents(atPath: cut).flatMap { String(data: $0, encoding: .utf8) }?.count == 1 << 19)
 }

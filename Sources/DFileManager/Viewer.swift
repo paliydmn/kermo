@@ -906,9 +906,11 @@ final class TextPeek: NSScrollView {
         return Viewer.painted(TextFormat.decode(head.prefix(limit)).text + more, name: url.lastPathComponent)
     }
 
-    func show(_ p: Viewer.Painted, numbers: Bool) {
+    /// `top`: a new file, shown from its start; else the same one again (a re-list), where it was.
+    func show(_ p: Viewer.Painted, numbers: Bool, top: Bool = true) {
+        let at = contentView.bounds.origin
         Viewer.show(p, in: textView)
-        textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        if top { textView.scrollRangeToVisible(NSRange(location: 0, length: 0)) } else { contentView.scroll(to: at); reflectScrolledClipView(contentView) }
         if numbers, ruler == nil {
             ruler = LineNumberRuler(textView: textView)
             verticalRulerView = ruler

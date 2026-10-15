@@ -15,7 +15,7 @@ F5 / F6, ⌘C / ⌘V and drag and drop copy and move files in every direction: s
 ## Open and edit
 
 - **F3** views a file, **F4** edits it. The editor uploads the file after every ⌘S, and closing with changes asks first.
-- **↩** opens a file in its app (so does Quick Look's **Open with**). Every save there goes up to the server the same way. If someone changed the file there meanwhile, you're asked first (**Compare** shows the differences); on a production server you're asked once as well.
+- **↩** opens a file in its app (so does Quick Look's **Open with**, except for a config ⌘Y shows through a read-only `.txt` copy). Every save there goes up to the server the same way. If someone changed the file there meanwhile, you're asked first (**Compare** shows the differences); on a production server you're asked once as well.
 - An app that autosaves (TextEdit) sends its autosaves too, so on a production server F4 is the safer choice. Quitting names what didn't reach the server; its copy is kept.
 - Saving a server config checks it first: see [Checks on save](config-checks.md).
 - ⇧F4 (⌥⇧4) **New File…** creates an empty file there (`rw-r--r--`, never over an existing one) and opens it in the editor as F4 does. On a [root panel](root-panel.md) it's root's.

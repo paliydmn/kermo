@@ -42,6 +42,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var quickView: QLPreviewView?
     private var textPeek: TextPeek?   // over `quickView`, for a text Quick Look shows as an icon
     private var peekGen = 0
+    private var peeked: URL?   // the file `textPeek` shows: shown again (a re-list), it keeps its scroll
     var peekedText: String? { textPeek?.isHidden == false ? textPeek?.textView.string : nil }   // tests
 
     private let tabBar = NSStackView()   // one button per tab, each with a close ×
@@ -1443,7 +1444,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             let text = await Blocking.run(.userInitiated) { TextPeek.read(url) }
             guard let self, gen == peekGen else { return }
             guard let text else { return quickLook() }
-            textPeek.show(text, numbers: UserDefaults.standard.bool(forKey: "viewerLineNumbers"))
+            textPeek.show(text, numbers: UserDefaults.standard.bool(forKey: "viewerLineNumbers"), top: peeked != url || textPeek.isHidden)
+            peeked = url
             textPeek.isHidden = false
             quickView.isHidden = true
             quickView.previewItem = nil   // a video there doesn't play on behind it
@@ -2042,6 +2044,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             panel.dataSource = nil
             panel.delegate = nil
             quickLook = nil
+            if !lookCopies.isEmpty {   // closed: its copies go
+                lookGen += 1
+                lookCopies = [:]
+                Task { await Blocking.run { _ = TextCopies.make([]) } }
+            }
         }
     }
 
@@ -2072,6 +2079,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     func showContextMenu() {
         guard let menu = table.menu else { return }
         let r = table.selectedRow
+        if r >= 0 { table.scrollRowToVisible(r) }
         let rect = r >= 0 ? table.rect(ofRow: r) : NSRect(x: 0, y: table.visibleRect.minY, width: 0, height: 0)
         menuRow = r
         defer { menuRow = nil }
@@ -2143,7 +2151,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         menu.addItem(withTitle: "Paste", action: #selector(paste(_:)), keyEquivalent: "").target = self
         menu.addItem(.separator())
         add(remote != nil ? "SSH Here" : "Open in Terminal", "file.terminal")
-        if remote == nil {   // this Mac's folder
+        if remote == nil, archive == nil {   // this Mac's folder
             add("Copy Path", "edit.copyPath")
             add("Reveal in Finder", "file.reveal")
             add("Get Info", "file.info")
@@ -2306,8 +2314,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// then, the file itself).
     private func copyTexts() {
         lookGen += 1
-        let gen = lookGen, urls = quickLooked.filter { !TextFormat.quickLookShows($0.lastPathComponent) }
-        lookCopies = lookCopies.filter { urls.contains($0.key) }
+        let gen = lookGen, urls = quickLooked.prefix(TextCopies.most).filter { !TextFormat.quickLookShows($0.lastPathComponent) }
+        let wanted = Set(urls)
+        lookCopies = lookCopies.filter { wanted.contains($0.key) }
         guard !urls.isEmpty else { return }
         Task { [weak self] in
             let made = await Blocking.run(.userInitiated) { TextCopies.make(urls) }
@@ -2433,19 +2442,25 @@ enum TextCopies {
     // ponytail: the first 50 of the marked; the rest show as Quick Look does. Lazily, per item shown, if one marks more.
     static let most = 50
 
-    /// The copies of those of `urls` that read as text; each call's in a folder of its own, the ones before removed.
+    private static let lock = NSLock()   // one at a time: each removes the copies before it
+
+    /// The copies of those of `urls` that read as text; each in a folder of its own (two marked search hits may share
+    /// a name), the ones before removed.
     static func make(_ urls: [URL]) -> [URL: URL] {
+        lock.lock()
+        defer { lock.unlock() }
         let fm = FileManager.default, mine = (dir as NSString).appendingPathComponent(UUID().uuidString)
         mkdir(dir, 0o700)
         for old in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] { TempCopies.remove((dir as NSString).appendingPathComponent(old)) }
         guard mkdir(mine, 0o700) == 0 else { return [:] }
         var made: [URL: URL] = [:]
-        for url in urls.prefix(most) where FileInfo.notRegular(url.path) == nil {
+        for (i, url) in urls.prefix(most).enumerated() where FileInfo.notRegular(url.path) == nil {
             guard let h = FileHandle(forReadingAtPath: url.path) else { continue }
             let head = (try? h.read(upToCount: TextFormat.previewSniff)) ?? Data()
             try? h.close()
-            guard TextFormat.previewsAsText(url.lastPathComponent, head: head),
-                  let copy = try? TextFormat.textCopy(of: url.path, in: mine) else { continue }
+            let own = (mine as NSString).appendingPathComponent(String(i))
+            guard TextFormat.previewsAsText(url.lastPathComponent, head: head), mkdir(own, 0o700) == 0,
+                  let copy = try? TextFormat.textCopy(of: url.path, in: own) else { continue }
             made[url] = URL(fileURLWithPath: copy)
         }
         return made
