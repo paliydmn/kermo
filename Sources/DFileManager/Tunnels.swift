@@ -300,44 +300,13 @@ extension AppDelegate {
     }
 
     /// Forward Port… (⌘⇧P, Go ▸ Tunnels): on the server the active panel or SSH tab is on (as its user); else pick one.
-    func forwardPort() {
-        if let here = terminal.isShown ? terminal.current?.target : active.remote?.target { return forwardPort(on: here.asUser) }
-        let items = serverChoices().map { c in
-            Picker.Item(title: c.saved?.pickerTitle ?? c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config") { [unowned self] in
-                forwardPort(on: c.target)
-            }
-        }
-        Picker.show(over: window, placeholder: "Forward a port of which server? — or type user@host", items: items, freeText: { q in
-            guard case let .sftp(t, _)? = ServerAddress.parse(q) else { return [] }
-            return [Picker.Item(title: "Ports of “\(q)”", detail: "↩") { [unowned self] in self.forwardPort(on: t) }]
-        }, freeTextLast: true)   // "web db" picks the server, not a host named so
-    }
+    func forwardPort() { onServer("Forward a port of") { [unowned self] in forwardPort(on: $0.asUser) } }
 
-    /// The ports `t`'s server listens on (U1): a locked server asks first (U6), then the login, if one is due — as F2's,
-    /// before anything shows: its dialogs take the focus, which closes a Picker. The Picker then says it's looking — ⎋
-    /// there stops the look — and gives way to the ports, or closes with why not in the status line.
+    /// The ports `t`'s server listens on (U1): a locked server asks first (U6), then the login (`look`).
     func forwardPort(on t: SFTPTarget) {
-        let s = savedServer(at: t) ?? SavedServer(target: t)
-        Task {
-            if let locked = ServerLock.server(for: s.target), await !ServerLock.authorize(locked, "look at the ports of") {
-                return tunnels.say("🔒 \(s.title) stays locked", false)
-            }
-            let env = SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For “Forward Port” on \(s.title)"]) { $1 }
-            let login = await Blocking.run { Result { try SFTP.startMaster(s.target, env: env) } }
-            if case .failure(let e) = login {
-                if !(e is CancellationError) { tunnels.say(e.localizedDescription, true) }
-                return
-            }
-            let cancel = CancelFlag()   // set by ⎋ there — and by its giving way, when the look is over anyway
-            Picker.show(over: window, placeholder: "Looking at \(s.title)'s ports…", items: [], onDismiss: { cancel.cancel() })
-            let result = await Blocking.run { Result { try ListeningPorts.read(on: s.target, server: s.title, env: env, cancel: cancel) } }
-            guard !cancel.isCancelled else { return }
-            switch result {
-            case .failure(let e):
-                Picker.dismiss()
-                tunnels.say(e.localizedDescription, true)
-            case .success(let ports): showPorts(ports, of: s)
-            }
+        look(at: t, "ports", for: "Forward Port", say: { [unowned self] in tunnels.say($0, $1) },
+             { t, title, env, cancel in try ListeningPorts.read(on: t, server: title, env: env, cancel: cancel) }) { [unowned self] ports, s in
+            showPorts(ports, of: s)
         }
     }
 

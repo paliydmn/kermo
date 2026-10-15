@@ -12,9 +12,11 @@ enum Shell {
         OutputWindow.start(command, in: dir, on: nil, diff: diff, title: title, onExit: onExit)
     }
 
-    /// On a server, in its folder `dir`, over the panel's ssh connection (the login shell there runs it).
-    static func run(_ command: String, on server: SFTPTarget, in dir: String, title: String? = nil, onExit: @escaping @MainActor (Int32) -> Void = { _ in }) {
-        OutputWindow.start(command, in: dir, on: server, diff: false, title: title, onExit: onExit)
+    /// On a server, in its folder `dir`, over the panel's ssh connection (the login shell there runs it). `follow`: a
+    /// simple command that runs until stopped (`journalctl -f`), which then ends there too (`SSHCommand.endsWithSSH`).
+    static func run(_ command: String, on server: SFTPTarget, in dir: String, follow: Bool = false, title: String? = nil,
+                    onExit: @escaping @MainActor (Int32) -> Void = { _ in }) {
+        OutputWindow.start(command, in: dir, on: server, diff: false, follow: follow, title: title, onExit: onExit)
     }
 
     /// One command on several servers (Run on Servers…), in one output window: each line as it comes, "web1 │ …", stderr
@@ -163,8 +165,9 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
     /// Set once they're all over: what `alive` reads, also at quit (no run loop to hear it then).
     private let over = CancelFlag()
 
-    static func start(_ command: String, in dir: String, on server: SFTPTarget?, diff: Bool, title: String?, onExit: @escaping @MainActor (Int32) -> Void) {
-        let w = OutputWindow(command, dir, server, diff, onExit)
+    static func start(_ command: String, in dir: String, on server: SFTPTarget?, diff: Bool, follow: Bool = false, title: String?,
+                      onExit: @escaping @MainActor (Int32) -> Void) {
+        let w = OutputWindow(command, dir, server, diff, follow, onExit)
         if let title { w.window?.title = title.bidiVisible }
         open.append(w)
         w.showWindow(nil)
@@ -195,7 +198,10 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         return (w, tv)
     }
 
-    private init(_ command: String, _ dir: String, _ server: SFTPTarget?, _ diff: Bool, _ onExit: @escaping @MainActor (Int32) -> Void) {
+    /// A follow's stdin, held open while its ssh runs and never written (`SSHCommand.endsWithSSH`).
+    private var held: FileHandle?
+
+    private init(_ command: String, _ dir: String, _ server: SFTPTarget?, _ diff: Bool, _ follow: Bool, _ onExit: @escaping @MainActor (Int32) -> Void) {
         let place = server.map { "🌐 \($0.host):\(dir)" } ?? (dir as NSString).abbreviatingWithTildeInPath
         let (w, tv) = Self.window()
         w.title = (server.map { "\($0.host) $ " } ?? "$ ") + command.bidiVisible
@@ -205,7 +211,7 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
 
         if let server {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            process.arguments = SSHCommand.arguments(server, command: SSHCommand.inDir(dir, command), tty: false)
+            process.arguments = SSHCommand.arguments(server, command: SSHCommand.inDir(dir, follow ? SSHCommand.endsWithSSH(command) : command), tty: false)
             process.environment = ProcessInfo.processInfo.environment.merging(SSHAskpass.env) { $1 }
             process.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
         } else {
@@ -213,7 +219,13 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
             process.arguments = ["-lc", command]
             process.currentDirectoryURL = URL(fileURLWithPath: dir)
         }
-        process.standardInput = FileHandle.nullDevice
+        if server != nil, follow {
+            let input = Pipe()
+            process.standardInput = input
+            held = input.fileHandleForWriting
+        } else {
+            process.standardInput = FileHandle.nullDevice
+        }
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
@@ -228,7 +240,7 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         }
         process.terminationHandler = { [weak self] p in
             let status = p.terminationStatus
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.status = status; self?.ended() } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.status = status; try? self?.held?.close(); self?.ended() } }
             // A child that keeps a pipe (`./server &`) would hold the report forever: half a second after the exit it comes anyway.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { MainActor.assumeIsolated { self?.ended(now: true) } }
         }

@@ -690,6 +690,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             MenuAction.item("Show File History") { [unowned self] in showFileHistory(r.target) },
             MenuAction.item("Forward Port…") { [unowned self] in forwardPort(on: r.target) },
             tunnelsItem(for: r.saved, at: r.target),
+            MenuAction.item("Services…") { [unowned self] in showServices(on: r.target) },
+            MenuAction.item("Containers…") { [unowned self] in showContainers(on: r.target) },
             .separator(),
             MenuAction.item(r.pinned ? "Unpin" : "Pin") { [unowned self] in
                 unpin(r.key)
