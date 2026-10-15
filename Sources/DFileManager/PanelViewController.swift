@@ -75,7 +75,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var sortedBy: (key: SortKey, ascending: Bool)?
     private var loadedGen = 0
     private var lastLoadSeconds = 0.0
-    private var rows: [FileItem] = []    // filtered + sorted; ".." is not stored here
+    private var rows: [FileItem] = [] { didSet { rowIndex = nil } }   // filtered + sorted; ".." is not stored here
+    /// `rows`' names to their place, built on the first lookup after they change: a folder's size coming in was a scan of them.
+    private var rowIndex: [String: Int]?
     private var marked = Set<String>()
     private var filter: Mask?
     private(set) var dirSizes: [String: Int64] = [:]
@@ -199,7 +201,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         hasParent ? (row == 0 ? nil : rows[row - 1]) : rows[row]
     }
     private func row(named name: String) -> Int? {
-        rows.firstIndex { $0.name == name }.map { $0 + (hasParent ? 1 : 0) }
+        if rowIndex == nil { rowIndex = Dictionary(rows.enumerated().map { ($1.name, $0) }, uniquingKeysWith: { a, _ in a }) }
+        return rowIndex![name].map { $0 + (hasParent ? 1 : 0) }
     }
     private func url(of item: FileItem) -> URL {
         URL(fileURLWithPath: (path as NSString).appendingPathComponent(item.name), isDirectory: item.kind == .dir)
@@ -1606,8 +1609,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let flag = CancelFlag(), gen = sizeGen, env = SSHAskpass.env, r = remote, base = path
         let duKey = r?.target
         sizeWalk = flag
+        // Sizes reach the main thread in bunches: one hop, one redraw and one status for all that came meanwhile.
+        let inbox = SizeInbox()
         let found: @Sendable (String, Int64, Bool) -> Void = { [weak self] name, bytes, partial in
-            DispatchQueue.main.async { MainActor.assumeIsolated { if self?.sizeGen == gen { self?.setSize(name, bytes, partial: partial) } } }
+            guard inbox.add((name, bytes, partial)) else { return }   // a hop is on its way already
+            DispatchQueue.main.async { MainActor.assumeIsolated { let s = inbox.take(); if self?.sizeGen == gen { self?.setSizes(s) } } }
         }
         Task { [weak self] in
             while let self, sizeWalk === flag {
@@ -1652,12 +1658,27 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
 
-    private func setSize(_ name: String, _ bytes: Int64, partial: Bool = false) {
-        dirSizes[name] = bytes
-        if partial { partialSizes.insert(name) } else { partialSizes.remove(name) }
-        totalSize = self.bytes(of: rows)
-        if let r = row(named: name) { table.reloadData(forRowIndexes: [r], columnIndexes: [table.column(withIdentifier: .init("size"))]) }
+    private func setSizes(_ sizes: [(name: String, bytes: Int64, partial: Bool)]) {
+        var shown = IndexSet()
+        for (name, bytes, partial) in sizes {
+            if let r = row(named: name) {
+                totalSize += bytes - (dirSizes[name] ?? 0)   // only what's listed counts, as in `bytes(of: rows)`
+                shown.insert(r)
+            }
+            dirSizes[name] = bytes
+            if partial { partialSizes.insert(name) } else { partialSizes.remove(name) }
+        }
+        table.reloadData(forRowIndexes: shown, columnIndexes: [table.column(withIdentifier: .init("size"))])
         updateStatus()
+    }
+
+    /// Folder sizes counted off the main thread, waiting for it.
+    private final class SizeInbox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var sizes: [(name: String, bytes: Int64, partial: Bool)] = []
+        /// True when the inbox was empty: the caller sends the hop that takes it.
+        func add(_ s: (String, Int64, Bool)) -> Bool { lock.withLock { sizes.append(s); return sizes.count == 1 } }
+        func take() -> [(name: String, bytes: Int64, partial: Bool)] { lock.withLock { defer { sizes = [] }; return sizes } }
     }
 
     // MARK: - Path field (⌘L) and quick filter (/)
