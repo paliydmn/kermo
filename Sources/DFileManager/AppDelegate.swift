@@ -1153,7 +1153,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     // MARK: - Dialogs (sheets on the main window)
 
-    func prompt(_ message: String, value: String, ok: String, info: String = "", selectBaseName: Bool = false) async -> String? {
+    /// `select`: what's selected in `value` (else all of it, or its base name with `selectBaseName`).
+    func prompt(_ message: String, value: String, ok: String, info: String = "", selectBaseName: Bool = false, select: NSRange? = nil) async -> String? {
         let alert = NSAlert()
         alert.messageText = message.bidiVisible
         alert.informativeText = info.bidiVisible
@@ -1169,6 +1170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 let base = (value as NSString).deletingPathExtension
                 field.currentEditor()?.selectedRange = NSRange(location: 0, length: (base.isEmpty ? value : base).utf16.count)
             }
+            if let select { field.currentEditor()?.selectedRange = select }
         }
         window.makeFirstResponder(active.table)
         return response == .alertFirstButtonReturn ? field.stringValue : nil

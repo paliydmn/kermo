@@ -161,6 +161,7 @@ extension AppDelegate {
         cmd("file.copy", "Copy To…", ["f5", "opt+5"], menu: "File", short: "Copy") { $0.transferDialog(move: false) },
         cmd("file.move", "Move To…", ["f6", "opt+6"], menu: "File", short: "Move") { $0.transferDialog(move: true) },
         cmd("file.rename", "Rename…", ["shift+f6", "shift+opt+6"], menu: "File", short: "Rename") { $0.renameDialog() },
+        cmd("file.copyAs", "Copy Here As…", ["shift+f5", "shift+opt+5"], menu: "File", short: "Copy as", aliases: "duplicate backup bak") { $0.copyAsDialog() },
         cmd("file.multirename", "Multi-Rename…", ["cmd+shift+m"], menu: "File", short: "Rename many", aliases: "batch multi rename") { $0.multiRename() },   // ⌘M minimizes
         cmd("file.mkdir", "New Folder…", ["f7", "opt+7", "cmd+shift+n"], menu: "File", short: "MkDir", aliases: "mkdir new folder directory") { $0.mkdirDialog() },
         cmd("file.new", "New File…", ["shift+f4", "shift+opt+4"], menu: "File", short: "New file") { $0.newFileDialog() },
@@ -2318,6 +2319,65 @@ extension AppDelegate {
             registerMoves("Rename", [(from: url.path, to: dst)])
             forgetGone([url.path])   // not after a case-only rename
             active.reload(select: name)
+        }
+    }
+
+    /// A copy next to each marked item (or the cursor's): one under a typed name ("x.conf.bak", `.bak` selected, so ↩
+    /// takes it), several with a typed suffix. A name that's taken is an error, never replaced; folders go whole.
+    /// On a server it's that server's copy (`copy-data`, where it has it) — on a production one the name asked is the
+    /// question, and the production log has its line.
+    func copyAsDialog() {
+        if active.archive != nil { return readOnly() }
+        let r = active.remote
+        let paths = r.map { r in (active.remoteSelection?.items ?? []).map { (r.dir as NSString).appendingPathComponent($0.name) } } ?? active.targetURLs.map(\.path)
+        guard !paths.isEmpty else { return NSSound.beep() }
+        let one = (paths[0] as NSString).lastPathComponent, host = r.map { " on \($0.target.host)" } ?? ""
+        Task {
+            let value = paths.count == 1 ? one + ".bak" : ".bak", info = r.map { SavedServer.prodNote([$0.target]) } ?? ""
+            guard let typed = await prompt(paths.count == 1 ? "Copy “\(one)”\(host) here as:" : "Copy \(paths.count) items\(host) here with the suffix:",
+                                           value: value, ok: "Copy", info: info,
+                                           select: paths.count == 1 ? NSRange(location: one.utf16.count, length: 4) : nil),
+                  !typed.isEmpty else { return }
+            guard !typed.contains("/") else { return showError(JobErrorMessage("A name can't contain “/”")) }
+            let copies = Self.copiesAs(paths, typed)
+            if paths.count == 1, copies[0].to == paths[0] { return }
+            let to = copies.map(\.to), taken: [String]
+            if let r {
+                let env = SSHAskpass.env
+                guard case .success(let t) = await active.busy("Copy as on \(r.target.host)…", { flag in
+                    try SFTPClient.session(r.target, env: env, cancel: flag) { Self.taken(to, on: $0) }
+                }) else { return }
+                taken = t
+            } else {
+                taken = await Blocking.run { Self.taken(to, on: nil) }   // off the main thread: a share that doesn't answer
+            }
+            if !taken.isEmpty {
+                let names = taken.map { "“\(($0 as NSString).lastPathComponent)”" }.joined(separator: ", ")
+                return showError(JobErrorMessage("\(names) already \(taken.count == 1 ? "exists" : "exist") — nothing copied."))
+            }
+            for (from, to) in copies {
+                let (dir, name) = ((to as NSString).deletingLastPathComponent, (to as NSString).lastPathComponent)
+                if let r {
+                    enqueueTransfer([from], from: .sftp(r.target), to: dir, on: .sftp(r.target), name: name, move: false, prodAsked: true)
+                } else {
+                    ops.enqueue(FileJob(.copy, sources: [from], destDir: dir, targetName: name), title: "Copy “\((from as NSString).lastPathComponent)” as “\(name)”")
+                }
+            }
+            active.unmarkAll()
+        }
+    }
+
+    /// Those of `paths` already there (a link too), on the server `c` or here.
+    nonisolated static func taken(_ paths: [String], on c: SFTPClient?) -> [String] {
+        guard let c else { return paths.filter { var st = stat(); return lstat($0, &st) == 0 } }
+        return zip(paths, c.lstat(paths)).compactMap { path, there in if case .success(_?) = there { path } else { nil } }
+    }
+
+    /// Where each copy goes: next to it, under `typed` (one) or with `typed` after its name (several).
+    nonisolated static func copiesAs(_ paths: [String], _ typed: String) -> [(from: String, to: String)] {
+        paths.map { p in
+            let dir = (p as NSString).deletingLastPathComponent
+            return (p, (dir as NSString).appendingPathComponent(paths.count == 1 ? typed : (p as NSString).lastPathComponent + typed))
         }
     }
 

@@ -65,8 +65,51 @@ private func tempDir() -> String {
     TempCopies.remove(TextCopies.dir)
 }
 
+/// ⇧F5: one copy under the typed name, several with the typed suffix — each next to itself (a search lists many folders).
+@Test func copiesAsGoNextToThemselves() {
+    #expect(AppDelegate.copiesAs(["/a/x.conf"], "x.conf.bak").map(\.to) == ["/a/x.conf.bak"])
+    #expect(AppDelegate.copiesAs(["/a/x.conf", "/b/y"], ".bak").map(\.to) == ["/a/x.conf.bak", "/b/y.bak"])
+    #expect(AppDelegate.copiesAs(["/a/x"], "y").map(\.from) == ["/a/x"])
+}
+
+/// ⇧F5 here: a folder goes whole under its new name, the original as it was.
+@Test func aFolderCopiesAsAWhole() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    try FileManager.default.createDirectory(atPath: d + "/conf.d/sub", withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: d + "/conf.d/sub/a.conf", contents: Data("a\n".utf8))
+    let (from, to) = AppDelegate.copiesAs([d + "/conf.d"], "conf.d.bak")[0]
+    let job = FileJob(.copy, sources: [from], destDir: d, targetName: (to as NSString).lastPathComponent)
+    job.run()
+    #expect(FileManager.default.contents(atPath: d + "/conf.d.bak/sub/a.conf") == Data("a\n".utf8))
+    #expect(FileManager.default.fileExists(atPath: d + "/conf.d/sub/a.conf"))
+}
+
 /// Each runs this Mac's sftp-server: they take turns.
 @Suite(.serialized) @MainActor struct TextFileServerTests {
+
+/// ⇧F5 on a server: a copy there under the new name (`copy-data` when the server has it).
+@Test func aServerFileCopiesAsThere() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    FileManager.default.createFile(atPath: d + "/site.conf", contents: Data("listen 80;\n".utf8))
+    let canCopyData = try SFTPClient.session(.local(), cancel: CancelFlag()) { $0.canCopyData }
+    let job = FileJob(.copy, sources: [d + "/site.conf"], from: .sftp(.local()), to: .sftp(.local()), destDir: d, targetName: "site.conf.bak")
+    job.run()
+    #expect(job.progress.errors.isEmpty)
+    #expect(FileManager.default.contents(atPath: d + "/site.conf.bak") == Data("listen 80;\n".utf8), "copy-data: \(canCopyData)")
+}
+
+/// ⇧F5 never replaces: a name that's there (a dangling link too) is taken, here and on a server.
+@Test func copyAsSeesTakenNames() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    FileManager.default.createFile(atPath: d + "/a.bak", contents: nil)
+    try FileManager.default.createSymbolicLink(atPath: d + "/gone.bak", withDestinationPath: d + "/nowhere")
+    let paths = [d + "/a.bak", d + "/gone.bak", d + "/free.bak"]
+    #expect(AppDelegate.taken(paths, on: nil) == [d + "/a.bak", d + "/gone.bak"])
+    #expect(try SFTPClient.session(.local(), cancel: CancelFlag()) { AppDelegate.taken(paths, on: $0) } == [d + "/a.bak", d + "/gone.bak"])
+}
 
 /// ⇧F4 on a server: an empty `rw-r--r--` file; an existing one is an error and keeps what it had.
 @Test func aNewServerFileNeverEmptiesOne() throws {
