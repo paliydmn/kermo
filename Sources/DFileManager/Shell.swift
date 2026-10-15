@@ -159,7 +159,6 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
     private static var open: [OutputWindow] = []
     private let process = Process()
     private let started = Date()
-    private static let ansi = try! NSRegularExpression(pattern: "\u{1B}\\[[0-9;?]*[A-Za-z]")
     /// Run on Servers': stops them all — no process of the window's own then.
     private var servers: CancelFlag?
     /// Set once they're all over: what `alive` reads, also at quit (no run loop to hear it then).
@@ -314,9 +313,11 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         let batch = NSMutableAttributedString()
         for l in lines {
-            let text = Self.ansi.stringByReplacingMatches(in: l.text, range: NSRange(l.text.startIndex..., in: l.text), withTemplate: "")
+            let (text, runs) = ANSI.parse(l.text)   // ponytail: a color left on at a line's end doesn't go on into that server's next one
             batch.append(NSAttributedString(string: MultiRun.label(names[l.server], width: width), attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
-            batch.append(NSAttributedString(string: text + "\n", attributes: [.font: font, .foregroundColor: l.error ? NSColor.systemRed : NSColor.textColor]))
+            let line = NSMutableAttributedString(string: text + "\n", attributes: [.font: font, .foregroundColor: l.error ? NSColor.systemRed : NSColor.textColor])
+            if !l.error { for r in runs { line.addAttributes(ANSIColors.attributes(r.style, font: font), range: r.range) } }   // stderr: red wins
+            batch.append(line)
         }
         storage.append(batch)
         kept(in: tv)
@@ -350,14 +351,25 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         _ = alive   // looked at now, a finished command's group is seen gone — and stays so (see `alive`)
     }
 
+    /// Each stream's colors (`ANSI`): a sequence cut by a read waits for the next one, a color goes on.
+    private var ansi = [ANSI(), ANSI()]
+
+    /// stdout in its colors; stderr red whatever colors it has (red wins).
     private func append(_ data: Data, _ isErr: Bool, in tv: NSTextView) {
         guard let storage = tv.textStorage else { return }
-        var s = utf8Chunk(data, rest: &rest[isErr ? 1 : 0])
-        s = Self.ansi.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "")
-        appendTerminalOutput(s, to: storage, pendingCR: &pendingCR, attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
-            .foregroundColor: isErr ? NSColor.systemRed : NSColor.textColor,
-        ])
+        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let base: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: isErr ? NSColor.systemRed : NSColor.textColor]
+        let (s, runs) = ansi[isErr ? 1 : 0].feed(utf8Chunk(data, rest: &rest[isErr ? 1 : 0]), end: data.isEmpty)
+        // In pieces of one style each: a CR in any of them redraws the line, whatever its colors.
+        let text = s as NSString
+        var at = 0
+        for r in isErr ? [] : runs {
+            appendTerminalOutput(text.substring(with: NSRange(location: at, length: r.range.location - at)), to: storage, pendingCR: &pendingCR, attributes: base)
+            appendTerminalOutput(text.substring(with: r.range), to: storage, pendingCR: &pendingCR,
+                                 attributes: base.merging(ANSIColors.attributes(r.style, font: font)) { $1 })
+            at = NSMaxRange(r.range)
+        }
+        appendTerminalOutput(text.substring(from: at), to: storage, pendingCR: &pendingCR, attributes: base)
         kept(in: tv)
     }
 

@@ -96,3 +96,48 @@ enum SyntaxColors {
         storage.endEditing()
     }
 }
+
+/// Terminal colors (`ANSI`) as this app's, shared by the viewer and the output window: system colors, so each reads
+/// in light and dark; black and white are the text's own grays.
+enum ANSIColors {
+    static func color(_ c: Int) -> NSColor {
+        switch c % 8 {
+        case 0: .secondaryLabelColor
+        case 1: .systemRed
+        case 2: .systemGreen
+        case 3: c < 8 ? .systemOrange : .systemYellow
+        case 4: .systemBlue
+        case 5: .systemPink
+        case 6: .systemCyan
+        default: .textColor
+        }
+    }
+
+    static func attributes(_ s: ANSI.Style, font: NSFont) -> [NSAttributedString.Key: Any] {
+        var a: [NSAttributedString.Key: Any] = [:]
+        if let c = s.color { a[.foregroundColor] = color(c) }
+        if s.bold { a[.font] = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) }
+        return a
+    }
+
+    /// `runs` (from `offset` on in `storage`) in their colors.
+    static func apply(_ runs: [ANSI.Run], to storage: NSTextStorage, offset: Int = 0, font: NSFont) {
+        guard !runs.isEmpty else { return }
+        storage.beginEditing()
+        for r in runs where r.range.location + offset + r.range.length <= storage.length {
+            storage.addAttributes(attributes(r.style, font: font), range: NSRange(location: r.range.location + offset, length: r.range.length))
+        }
+        storage.endEditing()
+    }
+
+    /// The level tints (`TextFormat.logLevels`) of lines without a color of their own: a colored line keeps its colors.
+    static func uncolored(_ levels: [(range: NSRange, level: TextFormat.Level)], _ runs: [ANSI.Run]) -> [(range: NSRange, level: TextFormat.Level)] {
+        let colored = runs.filter { $0.style.color != nil }
+        guard !colored.isEmpty else { return levels }
+        var j = 0
+        return levels.sorted { $0.range.location < $1.range.location }.filter { l in   // both by place: one pass
+            while j < colored.count, NSMaxRange(colored[j].range) <= l.range.location { j += 1 }
+            return !(j < colored.count && colored[j].range.location < NSMaxRange(l.range))
+        }
+    }
+}

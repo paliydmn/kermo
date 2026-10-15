@@ -24,9 +24,12 @@ final class Viewer: NSWindowController, NSWindowDelegate {
     private var followTask: Task<Void, Never>?
     private var follower: FollowReader?   // made on the first poll from `followOffset`; kept across f off/on
     private var polling = false           // a FollowReader is polled from one thread at a time
-    private var followOffset: UInt64 = 0 { didSet { follower = nil; filterRest = ""; held = "" } }   // the text was reloaded: follow from its end
+    private var followOffset: UInt64 = 0 { didSet { follower = nil; filterRest = ""; held = ""; heldRuns = []; ansi = ANSI() } }   // the text was reloaded: follow from its end
     /// What a poll read after f went off (it was on its way): shown when f is on again — the reader is past it.
     private var held = ""
+    private var heldRuns: [ANSI.Run] = []
+    /// The colors of what follow appends: a sequence cut between two polls waits, a color goes on.
+    private var ansi = ANSI()
     private(set) var lineFilter: LineFilter?   // & : only the lines with (or without) a text, the followed ones too
     private var filterRest = ""   // followed text after its last "\n", filtered once the line is whole
     var followLimit = 8 << 20   // UTF-16 units kept while following; the oldest lines go
@@ -215,8 +218,8 @@ final class Viewer: NSWindowController, NSWindowDelegate {
                 return openBig()
             }
             let lang = Syntax.language(forFileName: url.lastPathComponent)
-            let (text, info, size, binary, levels, syntax, grepped) = await Blocking.run(.userInitiated) {
-                () -> (String, String, UInt64, Bool, [(range: NSRange, level: TextFormat.Level)], [(range: NSRange, token: Syntax.Token)], Bool) in
+            let (text, info, size, binary, levels, syntax, grepped, runs) = await Blocking.run(.userInitiated) {
+                () -> (String, String, UInt64, Bool, [(range: NSRange, level: TextFormat.Level)], [(range: NSRange, token: Syntax.Token)], Bool, [ANSI.Run]) in
                 var (text, info, size, binary) = Self.read(url, newMode, hexOffset: hexOffset, asText: asText, label: shown, base: base)
                 var grepped = false
                 if newMode != .hex, !binary, let filter {
@@ -226,15 +229,17 @@ final class Viewer: NSWindowController, NSWindowDelegate {
                         text = filter.apply(text)
                     }
                 }
+                if binary { return (text, info, size, true, [], [], false, []) }
+                var runs: [ANSI.Run] = []
+                if newMode == .text { (text, runs) = ANSI.parse(text) }   // colors, not escape sequences (hex: the bytes)
                 let n = text.utf16.count
-                if binary { return (text, info, size, true, [], [], false) }
                 // Known formats get syntax colors; anything else (logs) gets error/warning tints. Size-capped to stay fast.
                 if newMode != .hex, let lang = lang ?? (newMode == .pretty ? .xml : nil), n <= 2 << 20 {
                     let isJSON = newMode == .pretty && (text.hasPrefix("{") || text.hasPrefix("["))
-                    return (text, info, size, false, [], Syntax.tokens(text, isJSON ? .json : lang), grepped)
+                    return (text, info, size, false, [], Syntax.tokens(text, isJSON ? .json : lang), grepped, runs)
                 }
-                let levels = newMode == .text && n <= 8 << 20 ? TextFormat.logLevels(in: text) : []
-                return (text, info, size, false, levels, [], grepped)
+                let levels = newMode == .text && n <= 8 << 20 ? ANSIColors.uncolored(TextFormat.logLevels(in: text), runs) : []
+                return (text, info, size, false, levels, [], grepped, runs)
             }
             guard let self, gen == loadGen else { return }
             spinner.stopAnimation(nil)
@@ -245,6 +250,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
             textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: [
                 .font: Self.font, .foregroundColor: NSColor.textColor]))
             if syntax.isEmpty { Self.tint(textView.textStorage!, levels, offset: 0) } else { SyntaxColors.apply(syntax, to: textView.textStorage!) }
+            ANSIColors.apply(runs, to: textView.textStorage!, font: Self.font)
             textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
             updateSubtitle()
         }
@@ -417,8 +423,8 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         guard !sliding, !polling else { return }
         polling = true
         defer { polling = false }
-        let filter = lineFilter, carried = filterRest, made = follower, path = url.path, from = followOffset
-        let polled = await Blocking.run(.utility) { () -> (FollowReader, String, [(range: NSRange, level: TextFormat.Level)], String)? in
+        let filter = lineFilter, carried = filterRest, made = follower, path = url.path, from = followOffset, colors = ansi
+        let polled = await Blocking.run(.utility) { () -> (FollowReader, String, [(range: NSRange, level: TextFormat.Level)], String, ANSI, [ANSI.Run])? in
             // Opened here, not on the main thread: a file on a share that stopped answering.
             // A FIFO is never opened: that waits for a writer for good (and would take its data from the real reader).
             guard let reader = made ?? (FileInfo.notRegular(path) == nil ? FollowReader(path: path, from: from) : nil) else { return nil }
@@ -430,20 +436,26 @@ final class Viewer: NSWindowController, NSWindowDelegate {
                 case .truncated: "\n——— file truncated ———\n"
                 }
             }.joined()
-            return (reader, text, TextFormat.logLevels(in: text), rest)
+            var colors = colors
+            let (plain, runs) = colors.feed(text)
+            return (reader, plain, ANSIColors.uncolored(TextFormat.logLevels(in: plain), runs), rest, colors, runs)
         }
-        guard let (reader, read, readLevels, rest) = polled, follower === made, followOffset == from else { return }   // reloaded meanwhile
+        guard let (reader, read, readLevels, rest, colors, readRuns) = polled, follower === made, followOffset == from else { return }   // reloaded meanwhile
         follower = reader
         filterRest = rest
-        guard followTask != nil else { held += read; return }   // f off meanwhile
-        let text = held + read, levels = held.isEmpty ? readLevels : TextFormat.logLevels(in: text)
-        held = ""
+        ansi = colors
+        let shift = held.utf16.count
+        let runs = heldRuns + readRuns.map { ANSI.Run(NSRange(location: $0.range.location + shift, length: $0.range.length), $0.style) }
+        guard followTask != nil else { (held, heldRuns) = (held + read, runs); return }   // f off meanwhile
+        let text = held + read, levels = held.isEmpty ? readLevels : ANSIColors.uncolored(TextFormat.logLevels(in: text), runs)
+        (held, heldRuns) = ("", [])
         guard !text.isEmpty, let storage = textView.textStorage, let lm = textView.layoutManager else { return }
         let clip = scroll.contentView
         let atEnd = clip.bounds.maxY >= textView.frame.height - 20
         let start = storage.length
         storage.append(NSAttributedString(string: text, attributes: [.font: Self.font, .foregroundColor: NSColor.textColor]))
         Self.tint(storage, levels, offset: start)
+        ANSIColors.apply(runs, to: storage, offset: start, font: Self.font)
         let cut = FollowReader.trimCount(storage.mutableString, limit: followLimit)
         if cut > 0 {   // keep what's on screen in place
             let dy = atEnd ? 0 : lm.lineFragmentRect(forGlyphAt: lm.glyphIndexForCharacter(at: cut), effectiveRange: nil).minY
@@ -506,6 +518,8 @@ extension Viewer {
     }
 
     /// Laid out in full before scrolling so positions are exact; 256 KB lays out in ~70 ms (1 MB: ~280 ms).
+    /// ponytail: a window shows escape sequences as they are — positions in it map back to the file's bytes, which a
+    /// hidden sequence would shift; colors there would need that map to skip them.
     fileprivate static let windowSize = 256 << 10
 
     /// Maps the file (once) and shows the window around `offset` (`.max`: the end).
@@ -605,16 +619,18 @@ extension Viewer {
         let gen = loadGen
         spinner.startAnimation(nil)
         Task { [weak self] in
-            let (text, enc, levels, more) = await Blocking.run(.userInitiated) {
-                () -> (String, String, [(range: NSRange, level: TextFormat.Level)], Bool) in
+            let (text, enc, levels, more, runs) = await Blocking.run(.userInitiated) {
+                () -> (String, String, [(range: NSRange, level: TextFormat.Level)], Bool, [ANSI.Run]) in
                 let (kept, more) = filter.apply(file, limit: Self.hugeLimit)
-                let (text, enc) = TextFormat.decode(kept)
-                return (text, enc, TextFormat.logLevels(in: text), more)
+                let (decoded, enc) = TextFormat.decode(kept)
+                let (text, runs) = ANSI.parse(decoded)
+                return (text, enc, ANSIColors.uncolored(TextFormat.logLevels(in: text), runs), more, runs)
             }
             guard let self, gen == loadGen else { return }
             spinner.stopAnimation(nil)
             textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: [.font: Self.font, .foregroundColor: NSColor.textColor]))
             Self.tint(textView.textStorage!, levels, offset: 0)
+            ANSIColors.apply(runs, to: textView.textStorage!, font: Self.font)
             if followTask != nil { textView.scrollToEndOfDocument(nil) } else { textView.scrollRangeToVisible(NSRange(location: 0, length: 0)) }
             let fmt = { (n: Int) in ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file) }
             info = "\(label ?? fmt(d.count)) · \(enc)" + (more ? " · first \(fmt(Self.hugeLimit)) of matching lines" : "")
