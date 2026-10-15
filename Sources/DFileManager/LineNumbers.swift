@@ -4,6 +4,8 @@ import DFMCore
 /// Line-number gutter for a TextKit 1 NSTextView (create the view with `usingTextLayoutManager: false`).
 final class LineNumberRuler: NSRulerView {
     private var lineStarts: [Int]?   // UTF-16 offsets of line starts; rebuilt lazily after edits
+    /// Lines before the text's first (a followed log's that dropped off the top): numbers go on from there.
+    var firstLine = 0
 
     init(textView: NSTextView) {
         super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
@@ -65,7 +67,7 @@ final class LineNumberRuler: NSRulerView {
                 y = lm.extraLineFragmentRect.minY   // empty last line
             }
             let p = convert(NSPoint(x: 0, y: y + tv.textContainerInset.height), from: tv)
-            let label = "\(line + 1)" as NSString
+            let label = "\(firstLine + line + 1)" as NSString
             let size = label.size(withAttributes: attrs)
             label.draw(at: NSPoint(x: ruleThickness - size.width - 6, y: p.y + 1), withAttributes: attrs)
             line += 1

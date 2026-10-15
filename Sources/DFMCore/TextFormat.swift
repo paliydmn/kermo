@@ -101,6 +101,12 @@ public enum TextFormat {
     private static let warningLine = try! NSRegularExpression(
         pattern: "^.*\\b(warn|warning|deprecated)\\b.*$", options: [.caseInsensitive, .anchorsMatchLines])
 
+    /// What one line looks like: an error, a warning (an error wins), or neither.
+    public static func level<S: StringProtocol>(of line: S) -> Level? {
+        let s = String(line), all = NSRange(s.startIndex..., in: s)
+        return errorLine.firstMatch(in: s, range: all) != nil ? .error : warningLine.firstMatch(in: s, range: all) != nil ? .warning : nil
+    }
+
     /// Whole lines that look like errors or warnings (errors win when a line has both).
     public static func logLevels(in text: String) -> [(range: NSRange, level: Level)] {
         let all = NSRange(text.startIndex..., in: text)
@@ -113,9 +119,12 @@ public enum TextFormat {
 }
 
 /// The viewer's & filter (less's &pattern): lines that contain `text`, case folded, or with `exclude` ("!text")
-/// the ones that don't. ponytail: plain text only; a "re:" regex like the panel filter's when one is missed.
+/// the ones that don't — and its `e`: only the lines that look like errors, or errors and warnings
+/// (`TextFormat.level`, its colors aside). ponytail: plain text only; a "re:" regex like the panel filter's when one is missed.
 public struct LineFilter: Sendable, Equatable {
     public let text: String, exclude: Bool
+    /// `.error`: error lines only; `.warning`: errors and warnings; nil: any line.
+    public var level: TextFormat.Level?
 
     /// "error": lines with it; "!error": lines without it; "" or "!" is no filter.
     public init?(_ spec: String) {
@@ -124,9 +133,20 @@ public struct LineFilter: Sendable, Equatable {
         if text.isEmpty { return nil }
     }
 
+    /// Lines by their level alone.
+    public init(level: TextFormat.Level) { (text, exclude, self.level) = ("", false, level) }
+
     public var spec: String { (exclude ? "!" : "") + text }
 
-    public func keeps(_ line: Substring) -> Bool { (line.range(of: text, options: .caseInsensitive) != nil) != exclude }
+    public func keeps(_ line: Substring) -> Bool {
+        (text.isEmpty || (line.range(of: text, options: .caseInsensitive) != nil) != exclude) && keepsLevel(line)
+    }
+
+    func keepsLevel<S: StringProtocol>(_ line: S) -> Bool {
+        guard let level else { return true }
+        let l = TextFormat.level(of: ANSI.strip(line))
+        return level == .warning ? l != nil : l == .error
+    }
 
     /// The kept lines of `rest` + `text`; what comes after the last "\n" (a line still being written) is left in
     /// `rest` for the next piece (follow).
@@ -158,9 +178,10 @@ public struct LineFilter: Sendable, Equatable {
                 line.append(contentsOf: UnsafeRawBufferPointer(rebasing: b[pos..<end]))
                 let hit = line.withUnsafeMutableBytes { l in
                     BigFile.foldCase(l)
-                    return memmem(l.baseAddress, l.count, needle, needle.count) != nil
+                    return needle.isEmpty || memmem(l.baseAddress, l.count, needle, needle.count) != nil
                 }
-                if hit != exclude {
+                if hit != exclude, level == nil || keepsLevel(String(decoding: UnsafeRawBufferPointer(rebasing: b[pos..<end]), as: UTF8.self)) {
+                    // ponytail: `e` decodes each line for its regex — seconds on a GB log, only while it's on
                     if out.count + end - pos > limit { return true }
                     out.append(contentsOf: UnsafeRawBufferPointer(rebasing: b[pos..<end]))
                 }

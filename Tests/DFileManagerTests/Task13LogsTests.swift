@@ -80,3 +80,65 @@ private func tempDir() throws -> String {
     #expect(ANSIColors.uncolored(levels, runs).map(\.range.location) == [0, 16], "b's colored; c only bold")
     #expect(ANSIColors.uncolored(levels, []).count == 3)
 }
+
+/// `e` goes all → errors and warnings → errors only → all, with an `&` filter or without, and the subtitle says which;
+/// `&` keeps it. `l` numbers the lines (remembered) where they count from the file's start, and says where they can't.
+@MainActor @Test func viewerLevelsAndLineNumbers() async throws {
+    _ = NSApplication.shared
+    let was = UserDefaults.standard.object(forKey: "viewerLineNumbers")
+    defer { UserDefaults.standard.set(was, forKey: "viewerLineNumbers") }
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let path = dir + "/app.log"
+    try Data("GET / 200\nwarning: slow\nGET /x error 500\nPOST / 200\n".utf8).write(to: URL(fileURLWithPath: path))
+    let v = Viewer(URL(fileURLWithPath: path))
+    defer { v.close() }
+    let tv = try #require(v.scroll.documentView as? NSTextView)
+    func until(_ what: String, _ ok: () -> Bool) async throws {
+        for _ in 0..<500 where !ok() { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(ok(), "\(what): \(tv.string) · \(v.window?.subtitle ?? "")")
+    }
+    try await until("loaded") { tv.string.hasPrefix("GET / 200") }
+    v.cycleLevels()
+    try await until("errors and warnings") { tv.string == "warning: slow\nGET /x error 500\n" }
+    #expect(v.window?.subtitle.contains("ERRORS + WARNINGS") == true)
+    v.cycleLevels()
+    try await until("errors") { tv.string == "GET /x error 500\n" && v.window?.subtitle.contains("ERRORS ONLY") == true }
+    v.setLineFilter({ var f = LineFilter("post"); f?.level = v.lineFilter?.level; return f }())
+    try await until("both") { tv.string == "" }
+    v.cycleLevels()
+    try await until("all levels, still POST") { tv.string == "POST / 200\n" && v.window?.subtitle.contains("ERRORS") == false }
+    v.setLineFilter(nil)
+    try await until("all") { tv.string.hasPrefix("GET / 200\nwarning") }
+
+    v.setNumbers(true)
+    #expect(v.scroll.rulersVisible && UserDefaults.standard.bool(forKey: "viewerLineNumbers"))
+    v.cycleLevels()
+    try await until("filtered") { v.window?.subtitle.contains("line numbers: not while filtered") == true }
+    #expect(!v.scroll.rulersVisible)
+    v.cycleLevels(); v.cycleLevels()
+    try await until("back") { v.lineFilter == nil && v.scroll.rulersVisible }
+    v.setNumbers(false)
+    #expect(!v.scroll.rulersVisible)
+}
+
+/// Following, scrolled up: the subtitle says it's paused and End resumes; at the end again it says following.
+@MainActor @Test func aFollowScrolledUpSaysItsPaused() async throws {
+    _ = NSApplication.shared
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let path = dir + "/long.log"
+    try Data((1...400).map { "line \($0)\n" }.joined().utf8).write(to: URL(fileURLWithPath: path))
+    let v = Viewer(URL(fileURLWithPath: path))
+    defer { v.close() }
+    let tv = try #require(v.scroll.documentView as? NSTextView)
+    for _ in 0..<500 where !tv.string.hasPrefix("line 1\n") { try await Task.sleep(for: .milliseconds(10)) }
+    v.setFollow(true)
+    #expect(v.window?.subtitle.contains("FOLLOWING · paused") == false)
+    tv.scrollRangeToVisible(NSRange(location: 0, length: 0))
+    for _ in 0..<100 where v.window?.subtitle.contains("paused — End resumes") != true { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(v.window?.subtitle.contains("FOLLOWING · paused — End resumes") == true)
+    tv.scrollToEndOfDocument(nil)
+    for _ in 0..<100 where v.window?.subtitle.contains("paused") == true { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(v.window?.subtitle.contains("FOLLOWING") == true && v.window?.subtitle.contains("paused") == false)
+}

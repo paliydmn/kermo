@@ -47,3 +47,19 @@ private func shown(_ r: (text: String, runs: [ANSI.Run])) -> String {
     var c = ANSI()
     #expect(c.feed("\u{1B}[1;3", end: true).text == "")
 }
+
+/// `e`: errors only, or errors and warnings — by the words the tints go by, a line's colors aside — alone or with an
+/// `&` text, in the text and over a mapped file's bytes alike.
+@Test func lineFiltersKeepLevels() throws {
+    let text = "1 started\n2 warning: disk\n3 ERROR: down\n\u{1B}[31m4 fatal\u{1B}[0m crash\n5 deprecated error\n6 ok"
+    #expect(LineFilter(level: .error).apply(text) == "3 ERROR: down\n\u{1B}[31m4 fatal\u{1B}[0m crash\n5 deprecated error\n")
+    #expect(LineFilter(level: .warning).apply(text) == "2 warning: disk\n3 ERROR: down\n\u{1B}[31m4 fatal\u{1B}[0m crash\n5 deprecated error\n")
+    var down = try #require(LineFilter("!down"))
+    down.level = .error
+    #expect(down.apply(text) == "\u{1B}[31m4 fatal\u{1B}[0m crash\n5 deprecated error\n" && down.spec == "!down")
+    #expect(LineFilter(level: .warning).spec == "" && LineFilter(level: .error) != LineFilter(level: .warning))
+    let (kept, more) = LineFilter(level: .error).apply(Data(text.utf8), limit: 1 << 20)
+    #expect(String(decoding: kept, as: UTF8.self) == LineFilter(level: .error).apply(text) && !more)
+    #expect(String(decoding: down.apply(Data(text.utf8), limit: 1 << 20).0, as: UTF8.self) == down.apply(text))
+    #expect(TextFormat.level(of: "x error") == .error && TextFormat.level(of: "a warning") == .warning && TextFormat.level(of: "fine") == nil)
+}
