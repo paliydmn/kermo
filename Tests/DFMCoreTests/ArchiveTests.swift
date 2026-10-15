@@ -183,6 +183,16 @@ private func read(_ path: String) -> String? {
         sh("chmod -R u+w proj && rm -rf proj/sub/deep && { [ ! -L ro ] || rm ro; }", in: dest)   // no link left for Overwrite to trash
     }
 
+    // Overwrite into a read-only folder that was there already fails for its files, as plain tar does ("Can't
+    // unlink"), and the error names where the file was going, not the staging folder
+    sh("chmod -R u+w ro && rm -rf ro && mkdir ro && printf mine > ro/r && chmod 555 ro", in: dest)
+    let staging = ArchiveIndex.stagingFolder(in: dest)
+    try FileManager.default.createDirectory(atPath: staging, withIntermediateDirectories: false)
+    sh("tar xf ../t.tar.gz -C \(staging) ro", in: dest)
+    #expect(ArchiveIndex.moveExtracted(staging, to: dest, keep: false) == [dest + "/ro/r: Permission denied"])
+    #expect(read(dest + "/ro/r") == "mine" && FileJob.lstat(staging) == nil)
+    sh("chmod u+w ro", in: dest)
+
     let cancelled = ArchiveIndex.stagingFolder(in: dest)
     try FileManager.default.createDirectory(atPath: cancelled, withIntermediateDirectories: false)
     sh("tar xf ../t.tar.gz -C \(cancelled)", in: dest)

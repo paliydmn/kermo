@@ -198,7 +198,9 @@ public struct ArchiveIndex: Sendable {
             if FileJob.lstat(p).map({ $0.st_mode & S_IFMT == S_IFDIR }) == true { chmod(p, mode) }
         }
         discardStaging(staging)
-        return job.progress.errors
+        // named where they'd have landed: the staging folder is gone, and its name means nothing to the user
+        let from = (staging as NSString).appendingPathComponent(""), to = (dest as NSString).appendingPathComponent("")
+        return job.progress.errors.map { $0.hasPrefix(from) ? to + $0.dropFirst(from.count) : $0 }
     }
 
     /// Removes a staging folder and whatever is still in it, read-only folders too.
