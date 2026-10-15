@@ -391,9 +391,9 @@ class HoverRowView: NSTableRowView {
     }
 }
 
-/// A volume's "110 GB / 350 GB": used in red, free in green, in what room the name leaves — cut from the end, or
-/// gone, in a narrow column (the tooltip has them). White on the accent of a focused selection, where red and green
-/// don't read.
+/// A volume's "110 GB / 350 GB": used in red, free in green, in what room the name leaves — cut from the end with
+/// "…", or gone in a narrow column (the tooltip has them): never a bare "1" of "110 GB" that reads as a number.
+/// White on the accent of a focused selection, where red and green don't read.
 final class VolumeFigures: NSTextField {
     private let used: String, free: String
     var onAccent = false { didSet { if onAccent != oldValue { paint() } } }
@@ -403,6 +403,8 @@ final class VolumeFigures: NSTextField {
         super.init(frame: .zero)
         (isEditable, isSelectable, isBordered, drawsBackground) = (false, false, false, false)
         lineBreakMode = .byTruncatingTail
+        (usesSingleLineMode, maximumNumberOfLines) = (true, 1)   // a cut with "…", not a wrap out of sight
+        cell?.wraps = false
         setContentCompressionResistancePriority(.init(200), for: .horizontal)   // below the name's: the name keeps its room
         paint()
     }
@@ -419,6 +421,11 @@ final class VolumeFigures: NSTextField {
         s.append(part(free, .systemGreen))
         attributedStringValue = s
     }
+
+    /// The whole used figure and "/…" at least.
+    var shown: Bool { bounds.width >= ceil(NSAttributedString(string: used + " /…", attributes: [.font: NSFont.systemFont(ofSize: 10)]).size().width) }
+
+    override func draw(_ dirtyRect: NSRect) { if shown { super.draw(dirtyRect) } }
 }
 
 /// The Git section's row, outside the outline: a click (not on one of its buttons) and a right-click of its own.
@@ -684,7 +691,8 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         case .volume(let v):
             let (path, name, ejectable) = (v.path, v.name, v.ejectable)
             let r = placeRow(ejectable ? "externaldrive" : "internaldrive", name, v.tip, dim: !v.mounted)
-            if !v.used.isEmpty { r.addArrangedSubview(spacer()); r.addArrangedSubview(VolumeFigures(used: v.used, free: v.free)) }
+            r.addArrangedSubview(spacer())   // the buttons in one column at the right, figures or not
+            if !v.used.isEmpty { r.addArrangedSubview(VolumeFigures(used: v.used, free: v.free)) }
             func button(_ symbol: String, _ action: VolumeAction) {
                 let b = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: action.rawValue)!, target: self, action: #selector(volumeButton(_:)))
                 b.isBordered = false

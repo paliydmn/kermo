@@ -67,6 +67,46 @@ final class DiskWatch: @unchecked Sendable {
         }
     }
 
+    /// The physical disk under the volume mounted at `path`: for APFS the one its container lives on (the topmost
+    /// whole IOMedia), not the container's synthesized disk.
+    func device(of path: String) async -> String? {
+        await withCheckedContinuation { c in
+            queue.async { [self] in
+                var entry = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, URL(fileURLWithPath: path) as CFURL).map(DADiskCopyIOMedia) ?? 0
+                var found: String?
+                while entry != 0 {
+                    if IOObjectConformsTo(entry, "IOMedia") != 0, IORegistryEntryCreateCFProperty(entry, "Whole" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? Bool == true {
+                        found = IORegistryEntryCreateCFProperty(entry, "BSD Name" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? String
+                    }
+                    var parent: io_registry_entry_t = 0
+                    let r = IORegistryEntryGetParentEntry(entry, kIOServicePlane, &parent)
+                    IOObjectRelease(entry)
+                    entry = r == KERN_SUCCESS ? parent : 0
+                }
+                c.resume(returning: found)
+            }
+        }
+    }
+
+    /// Ejects the disk `bsd` if it's still there and an external or removable one: an APFS stick stays plugged in
+    /// after macOS unmounts its volumes and "ejects" the container. Nil when done or gone; else why not.
+    func eject(_ bsd: String) async -> String? {
+        await withCheckedContinuation { (c: CheckedContinuation<String?, Never>) in
+            queue.async { [self] in
+                guard let disk = DADiskCreateFromBSDName(kCFAllocatorDefault, session, bsd), let d = DADiskCopyDescription(disk) as? [String: Any],
+                      d[kDADiskDescriptionMediaEjectableKey as String] as? Bool == true,
+                      d[kDADiskDescriptionDeviceInternalKey as String] as? Bool != true || d[kDADiskDescriptionMediaRemovableKey as String] as? Bool == true
+                else { return c.resume(returning: nil) }
+                DADiskEject(disk, DADiskEjectOptions(kDADiskEjectOptionDefault), { _, dissenter, done in
+                    let c = Unmanaged<Ejected>.fromOpaque(done!).takeRetainedValue().c
+                    c.resume(returning: dissenter.map { (DADissenterGetStatusString($0) as String?).flatMap { $0.isEmpty ? nil : $0 } ?? Disks.why(DADissenterGetStatus($0)) })
+                }, Unmanaged.passRetained(Ejected(c)).toOpaque())
+            }
+        }
+    }
+
+    private final class Ejected { let c: CheckedContinuation<String?, Never>; init(_ c: CheckedContinuation<String?, Never>) { self.c = c } }
+
     struct MountError: Error { let text: String; init(_ text: String) { self.text = text } }
     private final class Done { let c: CheckedContinuation<Result<String, MountError>, Never>; init(_ c: CheckedContinuation<Result<String, MountError>, Never>) { self.c = c } }
 

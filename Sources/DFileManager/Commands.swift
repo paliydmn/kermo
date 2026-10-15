@@ -1839,7 +1839,7 @@ extension AppDelegate {
     }
 
     func showVolumes() {
-        let keys: Set<URLResourceKey> = [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey,
+        let keys: Set<URLResourceKey> = [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey,
                                          .volumeIsEjectableKey, .volumeLocalizedFormatDescriptionKey]
         Task { [self] in
             // Off the main thread: a stick that stopped answering. A network share keeps to the kernel's figures.
@@ -1847,7 +1847,7 @@ extension AppDelegate {
                 let fmt = ByteCountFormatter()
                 return SidebarModel.mounts().map { m in
                     let v = m.local ? try? URL(fileURLWithPath: m.path).resourceValues(forKeys: keys) : nil
-                    let free = m.local ? v?.volumeAvailableCapacity.map { fmt.string(fromByteCount: Int64($0)) } ?? "?" : fmt.string(fromByteCount: m.free)
+                    let free = m.local ? v?.volumeAvailableCapacityForImportantUsage.map { fmt.string(fromByteCount: $0) } ?? "?" : fmt.string(fromByteCount: m.free)
                     let total = m.local ? v?.volumeTotalCapacity.map { fmt.string(fromByteCount: Int64($0)) } ?? "?" : fmt.string(fromByteCount: m.total)
                     return (m.path, v?.volumeName ?? (m.path as NSString).lastPathComponent,
                             "\(m.path) · \(free) free of \(total) · \(v?.volumeLocalizedFormatDescription ?? m.type)", v?.volumeIsEjectable == true || !m.local)
@@ -1885,9 +1885,12 @@ extension AppDelegate {
             if unmount {
                 do { try await FileManager.default.unmountVolume(at: vol, options: [.withoutUI]) } catch let e { error = e }   // the alert is ours
             } else {
+                let device = await diskWatch?.device(of: vol.path)
                 error = await Blocking.run { () -> Error? in
                     do { try NSWorkspace.shared.unmountAndEjectDevice(at: vol); return nil } catch { return error }
                 }
+                // An APFS stick: that unmounted it and "ejected" its container; the stick itself is still there.
+                if error == nil, let device, let why = await diskWatch?.eject(device) { error = JobErrorMessage(why) }
             }
             if let error {
                 // Who holds it: what macOS says doesn't name them. The spinner stays meanwhile (up to lsof's 3 s).

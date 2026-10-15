@@ -20,7 +20,14 @@ import Testing
     func color(_ at: Int) -> NSColor? { s.attribute(.foregroundColor, at: at, effectiveRange: nil) as? NSColor }
     #expect(color(0) == .systemRed && color(s.length - 1) == .systemGreen)
     #expect(f.contentCompressionResistancePriority(for: .horizontal) < name.contentCompressionResistancePriority(for: .horizontal))
-    #expect(f.lineBreakMode == .byTruncatingTail)
+    #expect(f.lineBreakMode == .byTruncatingTail && f.maximumNumberOfLines == 1 && f.cell?.wraps == false)
+    // Room for "110 GB /…": drawn, cut with "…"; less: nothing, not a "1" that reads as a number.
+    f.frame.size.width = f.intrinsicContentSize.width
+    #expect(f.shown)
+    f.frame.size.width = 60
+    #expect(f.shown)
+    f.frame.size.width = 15
+    #expect(!f.shown)
     #expect(r.toolTip == "/Volumes/USB · 110 GB used of 460 GB · 350 GB free")
 
     let row = HoverRowView()
