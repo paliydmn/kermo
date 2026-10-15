@@ -28,6 +28,8 @@ public final class FileJob: @unchecked Sendable {
         public var totalFiles = 0, doneFiles = 0
         public var current = ""
         public var errors: [String] = []
+        /// Copying already, while the totals are still being counted.
+        public var counting = false
     }
 
     public let kind: Kind
@@ -94,6 +96,9 @@ public final class FileJob: @unchecked Sendable {
     /// Each folder's files and bytes as `measure` counted them: what Skip adds to the progress, without a second walk.
     var measured: [String: (files: Int, bytes: Int64)] = [:]
     static func foldedPath(_ p: String) -> String { p.precomposedStringWithCanonicalMapping.lowercased() }
+    /// Count the totals while copying instead of before (nil: when the sources are on this Mac's internal disk — an
+    /// SSD, where two walks of one tree don't slow each other; a hard disk or a stick would seek between them).
+    var countWhileCopying: Bool?
     /// Fired by `cancel()`: a transfer over SFTP drops its connections, so a stalled server can't hold it up.
     let cancelFlag = CancelFlag()
 
@@ -171,11 +176,29 @@ public final class FileJob: @unchecked Sendable {
             update { $0.state = .scanning }
             if let destDir { sweepPartials(LocalFS(), destDir) }
             countsItems = kind == .move && destDir.map { d in sources.allSatisfy { Self.sameVolume($0, d) } } == true
-            let (files, bytes) = countsItems ? (sources.count, Int64(0)) : sources.reduce((0, Int64(0))) { acc, s in
-                let t = DirLister.measure(s, isCancelled: { isCancelled })
-                return (acc.0 + t.0, acc.1 + t.1)
+            let over = CancelFlag()   // stops a count still going once the copy is done: its totals are what was done
+            defer {
+                over.cancel()
+                update { if $0.counting { $0.totalFiles = $0.doneFiles; $0.totalBytes = $0.doneBytes; $0.counting = false } }
             }
-            update { $0.totalFiles = files; $0.totalBytes = bytes; $0.state = .running }
+            let count = { [self] in
+                sources.reduce((0, Int64(0))) { acc, s in
+                    let t = DirLister.measure(s, isCancelled: { isCancelled || over.isCancelled })
+                    return (acc.0 + t.0, acc.1 + t.1)
+                }
+            }
+            if countsItems {
+                update { $0.totalFiles = sources.count; $0.state = .running }
+            } else if countWhileCopying ?? sources.allSatisfy(Self.isInternal) {
+                update { $0.counting = true; $0.state = .running }
+                Thread { [self] in
+                    let (files, bytes) = count()
+                    if !over.isCancelled { update { $0.totalFiles = files; $0.totalBytes = bytes; $0.counting = false } }
+                }.start()
+            } else {
+                let (files, bytes) = count()
+                update { $0.totalFiles = files; $0.totalBytes = bytes; $0.state = .running }
+            }
             for (src, dst) in pairs {
                 guard !isCancelled else { break }
                 if changedSinceCompare(LocalFS(), src, LocalFS(), dst) { skipCount(src); continue }
@@ -478,6 +501,11 @@ public final class FileJob: @unchecked Sendable {
             if parent == p || parent.isEmpty { return false }
             p = parent
         }
+    }
+
+    /// On this Mac's own disk (not a stick, a share or a disk image).
+    static func isInternal(_ path: String) -> Bool {
+        (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.volumeIsInternalKey]).volumeIsInternal) == true
     }
 
     /// Can `path` be renamed into `dir`? rename(2) can't cross volumes (EXDEV): those need a copy and a delete.

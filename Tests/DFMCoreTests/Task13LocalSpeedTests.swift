@@ -29,6 +29,28 @@ import Testing
     #expect(!FileSearch.fileContains(p, Array("ПРИВІТx".utf8), caseSensitive: true))
 }
 
+/// On this Mac's own disk a copy starts at once and counts its totals alongside; they end up the same, and the
+/// bar is determinate again when it's done. A disk image (the RAM disk), a stick or a share counts first, as before.
+@Test func aCopyCountsItsTotalsAlongside() throws {
+    let d = NSTemporaryDirectory() + "k13count-" + UUID().uuidString
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    for i in 0..<20 {
+        try FileManager.default.createDirectory(atPath: "\(d)/src/d\(i)", withIntermediateDirectories: true)
+        for j in 0..<10 { try Data(count: j).write(to: URL(fileURLWithPath: "\(d)/src/d\(i)/f\(j)")) }
+    }
+    try FileManager.default.createDirectory(atPath: d + "/dst", withIntermediateDirectories: true)
+    let job = FileJob(.copy, sources: [d + "/src"], destDir: d + "/dst")
+    job.countWhileCopying = true
+    job.run()
+    let p = job.progress
+    #expect(p.state == .done && !p.counting)
+    #expect(p.totalFiles == 200 && p.doneFiles == 200 && p.totalBytes == 900 && p.doneBytes == 900)
+    #expect(DirLister.measure(d + "/dst/src") == (200, 900))
+
+    #expect(FileJob.isInternal(Foundation.NSTemporaryDirectory()))
+    if d.hasPrefix(ramDisk + "/") { #expect(!FileJob.isInternal(d)) }
+}
+
 /// The RAM disk test.sh makes, if it's there: a mount point whose parent (/Volumes) is on this Mac's own volume.
 /// Mounting an image for a test asks for Touch ID on macOS 27, so the tests use the one already mounted.
 private let ramDisk = "/Volumes/KermoRAM"
