@@ -35,4 +35,27 @@ private var ramDiskMounted: Bool {
         FileSearch.run(q, isCancelled: { found.count > 10_000 }) { found.append($0.name) }
         #expect(!found.contains { $0.hasPrefix("KermoRAM/") })
     }
+
+    /// A move whose folder merges into a mount point: /Volumes is on the source's volume, /Volumes/KermoRAM isn't,
+    /// so what's inside is copied over and deleted, never renamed (EXDEV).
+    @Test func aMoveMergingIntoAMountPointCopies() throws {
+        let src = Foundation.NSTemporaryDirectory() + "k13move-" + UUID().uuidString   // this Mac's volume, as /Volumes
+        let name = "k13move-" + UUID().uuidString
+        defer {
+            try? FileManager.default.removeItem(atPath: src)
+            try? FileManager.default.removeItem(atPath: ramDisk + "/" + name)
+        }
+        try FileManager.default.createDirectory(atPath: src + "/KermoRAM/\(name)/sub", withIntermediateDirectories: true)
+        try Data("a".utf8).write(to: URL(fileURLWithPath: src + "/KermoRAM/\(name)/a"))
+        try Data("b".utf8).write(to: URL(fileURLWithPath: src + "/KermoRAM/\(name)/sub/b"))
+        try #require(FileJob.sameVolume(src + "/KermoRAM", "/Volumes"))
+        let job = FileJob(.move, sources: [src + "/KermoRAM"], destDir: "/Volumes")
+        job.resolveConflict = { c in (c.bothDirs ? .overwrite : .skip, false) }   // merge KermoRAM, nothing else
+        job.resolveError = { path, message in Issue.record("\(path): \(message)"); return (.skip, false) }
+        job.run()
+        #expect(job.progress.errors.isEmpty)
+        #expect(try String(contentsOfFile: "\(ramDisk)/\(name)/a", encoding: .utf8) == "a")
+        #expect(try String(contentsOfFile: "\(ramDisk)/\(name)/sub/b", encoding: .utf8) == "b")
+        #expect(!FileManager.default.fileExists(atPath: src + "/KermoRAM"))
+    }
 }

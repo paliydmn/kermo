@@ -66,7 +66,17 @@ public final class FileJob: @unchecked Sendable {
     var countsItems = false   // a move that renames: progress counts the items, no walk of their trees
     /// Device and inode of everything this job created (worker thread only): see `Conflict.createdByThisJob`.
     private var created = Set<String>()
-    private func noteCreated(_ path: String) { if let s = Self.lstat(path) { created.insert("\(s.st_dev):\(s.st_ino)") } }
+    /// Its device (nil: gone).
+    @discardableResult
+    private func noteCreated(_ path: String) -> dev_t? {
+        guard let s = Self.lstat(path) else { return nil }
+        created.insert(Self.key(s))
+        return s.st_dev
+    }
+    private static func key(_ s: stat) -> String { "\(s.st_dev):\(s.st_ino)" }
+    /// The folder a `transfer` writes into, as its caller already knows it: its device (a rename needs the source on
+    /// it), and whether this job made it, or one above it. Saves looking at each file's destination folder again.
+    private struct Into { let dev: dev_t, created: Bool }
     /// `path` or a folder above it is one this job created: a folder moved here by one rename brings its whole tree.
     private func isCreated(_ path: String) -> Bool {
         var p = path
@@ -209,13 +219,16 @@ public final class FileJob: @unchecked Sendable {
 
     /// Deletes bottom-up and keeps going past what can't go, each failure under its own path. (removeItem stops
     /// at the first one: half the tree gone, and the error names only the top folder.) Never follows symlinks.
+    /// `isDir`: as the folder's listing said (nil: look).
     @discardableResult
-    private func remove(_ path: String) -> Bool {
-        guard let s = Self.lstat(path), s.st_mode & S_IFMT == S_IFDIR else { return attempt(path) { try Self.check(unlink(path)) } }
+    private func remove(_ path: String, isDir: Bool? = nil) -> Bool {
+        guard isDir ?? (Self.lstat(path).map { $0.st_mode & S_IFMT == S_IFDIR } ?? false) else {
+            return attempt(path) { try Self.check(unlink(path)) }
+        }
         var ok = true
         for child in (try? DirLister.list(path)) ?? [] {
             guard !isCancelled else { return false }
-            ok = remove((path as NSString).appendingPathComponent(child.name)) && ok
+            ok = remove((path as NSString).appendingPathComponent(child.name), isDir: child.kind == .dir) && ok
         }
         return ok && attempt(path) { try Self.check(rmdir(path)) }   // a folder with leftovers stays, already reported
     }
@@ -242,8 +255,9 @@ public final class FileJob: @unchecked Sendable {
     /// merged or overwritten).
     /// `top`: a source the user picked. Only there can the destination lie inside the source folder — below it
     /// the destination is a folder this job made or merged into, and symlinks are copied, never followed.
+    /// `into`: what the caller knows of the destination's folder (nil: a top item, looked at when needed).
     @discardableResult
-    private func transfer(_ src: String, _ dstIn: String, move: Bool, top: Bool = false) -> String? {
+    private func transfer(_ src: String, _ dstIn: String, move: Bool, top: Bool = false, into: Into? = nil) -> String? {
         waitWhilePaused()   // APFS clones never call the copyfile progress callback, so pause takes effect here
         guard !isCancelled else { return nil }
         var dst = dstIn
@@ -257,47 +271,51 @@ public final class FileJob: @unchecked Sendable {
 
         if src == dst {
             // Copy onto itself = duplicate (Finder behaviour); move onto itself = no-op.
-            if move { skipCount(src); return nil }
+            if move { skipCount(src, s); return nil }
             dst = Self.uniqueName(dst)
         } else if top && srcIsDir && (dst.hasPrefix(src + "/") || Self.isInside((dst as NSString).deletingLastPathComponent, s)) {
             fail(src, "Cannot \(move ? "move" : "copy") a folder into itself")
             return nil
         }
 
-        let sameVolume = Self.sameVolume(src, (dst as NSString).deletingLastPathComponent)
         var merge = false
         var createsNew = true
+        var createdHere = into?.created ?? false   // dst, when it's a folder this job made (or is inside one)
+        var dstDev: dev_t?
 
         if let d = Self.lstat(dst) {
             createsNew = false
             let dstIsDir = d.st_mode & S_IFMT == S_IFDIR
+            createdHere = into.map { $0.created || created.contains(Self.key(d)) } ?? isCreated(dst)
+            dstDev = d.st_dev
             let conflict = Conflict(src: src, dst: dst, srcSize: Int64(s.st_size), dstSize: Int64(d.st_size),
                                     srcMtime: Self.mtime(s), dstMtime: Self.mtime(d), bothDirs: srcIsDir && dstIsDir,
-                                    replacesFolder: dstIsDir && !srcIsDir, createdByThisJob: isCreated(dst))
+                                    replacesFolder: dstIsDir && !srcIsDir, createdByThisJob: createdHere)
             var choice = askConflict(conflict)
             if choice == .overwriteIfNewer {
                 choice = conflict.srcMtime > conflict.dstMtime || conflict.bothDirs ? .overwrite : .skip
             }
             switch choice {
             case .cancel: cancel(); return nil
-            case .skip: skipCount(src); return nil
+            case .skip: skipCount(src, s); return nil
             case .keepBoth:
                 dst = Self.uniqueName(dst)
                 createsNew = true
+                createdHere = into?.created ?? false
             case .overwrite, .overwriteIfNewer:
                 if srcIsDir && dstIsDir {
                     merge = true
                 } else if srcIsDir || dstIsDir {
                     // Type mismatch (file ↔ folder): the destination goes to the Trash, never straight away.
                     guard attempt(dst, { try FileManager.default.trashItem(at: URL(fileURLWithPath: dst), resultingItemURL: nil) })
-                    else { skipCount(src); return nil }
+                    else { skipCount(src, s); return nil }
                 }
                 // file → file overwrite is handled atomically below (temp + rename).
             }
         }
 
         // Fast path: same-volume move is a rename (instant, keeps everything).
-        if move && sameVolume && !merge {
+        if move && !merge && into.map({ $0.dev == s.st_dev }) ?? Self.sameVolume(src, (dst as NSString).deletingLastPathComponent) {
             guard attempt(src, { try Self.check(Darwin.rename(src, dst)) }) else { return nil }
             noteCreated(dst)
             if !countsItems {
@@ -309,8 +327,9 @@ public final class FileJob: @unchecked Sendable {
 
         if srcIsDir {
             if !merge {
-                guard attempt(dst, { try Self.check(mkdir(dst, 0o700)) }) else { skipCount(src); return nil }
-                noteCreated(dst)
+                guard attempt(dst, { try Self.check(mkdir(dst, 0o700)) }) else { skipCount(src, s); return nil }
+                dstDev = noteCreated(dst)
+                createdHere = true
             }
             var children: [FileItem] = []
             // Unreadable (mode 000, TCC, a pulled drive): an error to retry or skip, not an empty folder.
@@ -321,17 +340,18 @@ public final class FileJob: @unchecked Sendable {
                 let names = Set(children.map(\.name))
                 children.removeAll { $0.name.hasPrefix("._") && names.contains(String($0.name.dropFirst(2))) }
             }
+            let here = dstDev.map { Into(dev: $0, created: createdHere) }
             for child in children {
                 guard !isCancelled else { return nil }
                 transfer((src as NSString).appendingPathComponent(child.name),
-                         (dst as NSString).appendingPathComponent(child.name), move: move)
+                         (dst as NSString).appendingPathComponent(child.name), move: move, into: here)
             }
             // Permissions, xattrs, ACLs and dates last, so a read-only source dir doesn't block its own copy.
             // Not on a folder merged into: that one keeps its own (a FAT folder must not make ~/.ssh 0777).
             if !merge { _ = copyfile(src, dst, nil, copyfile_flags_t(COPYFILE_METADATA)) }
             if move { _ = rmdir(src) }   // fails harmlessly if something inside was skipped
         } else {
-            guard copyFile(src, dst) else { return nil }
+            guard copyFile(src, dst, size: Int64(s.st_size)) else { return nil }
             noteCreated(dst)
             if move { attempt(src) { try Self.check(unlink(src)) } }
         }
@@ -340,9 +360,8 @@ public final class FileJob: @unchecked Sendable {
 
     /// Copies one file (or symlink) with APFS clone when possible, into a hidden partial file renamed over `dst`
     /// once whole: a crash or a pulled drive never leaves a cut-off file under the real name.
-    private func copyFile(_ src: String, _ dst: String) -> Bool {
+    private func copyFile(_ src: String, _ dst: String, size: Int64) -> Bool {
         let target = (dst as NSString).deletingLastPathComponent + "/" + Self.partialName()
-        let size = Self.lstat(src).map { Int64($0.st_size) } ?? 0
 
         let ok = attempt(src) {
             let state = copyfile_state_alloc()
@@ -418,9 +437,11 @@ public final class FileJob: @unchecked Sendable {
         attempt(path) { throw JobError(message: message) }
     }
 
-    private func skipCount(_ src: String) {
+    /// `s`: `src` as just looked at (a file's size is that; a folder is walked).
+    private func skipCount(_ src: String, _ s: stat? = nil) {
         guard !countsItems else { return }
-        let (f, b) = DirLister.measure(src, isCancelled: { isCancelled })
+        let (f, b) = s.map { $0.st_mode & S_IFMT == S_IFDIR } == false ? (1, Int64(s!.st_size))
+            : DirLister.measure(src, isCancelled: { isCancelled })
         update { $0.doneFiles += f; $0.doneBytes += b }
     }
 
