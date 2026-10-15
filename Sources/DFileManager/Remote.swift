@@ -597,7 +597,7 @@ enum NetworkMount {
 /// viewer or editor closes; at launch, any older than a day (opened in another app: nothing says when that's done)
 /// — except one marked kept: the only copy of text that didn't reach its server.
 enum TempCopies {
-    static let prefixes = ["dfm-sftp-", "dfm-archive-", "dfm-git-", "dfm-command-"]   // dfm-git-: Git Log / Blame text; dfm-command-: ⌘↩ scripts
+    static let prefixes = ["dfm-sftp-", "dfm-archive-", "dfm-git-", "dfm-command-", "dfm-text-"]   // dfm-git-: Git Log / Blame text; dfm-command-: ⌘↩ scripts; dfm-text-: ⌘Y's .txt copies
     static let keptMarker = ".dfm-kept"
 
     /// The file lives in one of these copies (so Save As doesn't offer that folder: it goes with the copy).

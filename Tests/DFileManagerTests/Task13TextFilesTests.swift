@@ -46,3 +46,21 @@ private func tempDir() -> String {
     #expect(panel.peekedText == nil)
     // No setQuickView(false): QLPreviewView's close asserts outside a window.
 }
+
+/// ⌘Y: texts get a `.txt` copy, binary files none; each call's copies replace the ones before.
+@Test func quickLookGetsTxtCopiesOfTexts() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    FileManager.default.createFile(atPath: d + "/hosts", contents: Data("127.0.0.1 localhost\n".utf8))
+    FileManager.default.createFile(atPath: d + "/blob", contents: Data([0x7f, 0x45, 0x4c, 0x46] + [UInt8](repeating: 0, count: 64)))
+    let hosts = URL(fileURLWithPath: d + "/hosts"), blob = URL(fileURLWithPath: d + "/blob")
+    let first = TextCopies.make([hosts, blob, URL(fileURLWithPath: d)])
+    #expect(first.keys.map(\.path) == [hosts.path])
+    let copy = try #require(first[hosts])
+    #expect(copy.lastPathComponent == "hosts.txt" && copy.path.hasPrefix(TextCopies.dir + "/"))
+    #expect(FileManager.default.contents(atPath: copy.path) == Data("127.0.0.1 localhost\n".utf8))
+    let second = TextCopies.make([hosts])
+    #expect(!FileManager.default.fileExists(atPath: copy.path), "the ones before go")
+    #expect(second[hosts].map { FileManager.default.fileExists(atPath: $0.path) } == true)
+    TempCopies.remove(TextCopies.dir)
+}

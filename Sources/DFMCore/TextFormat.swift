@@ -74,6 +74,25 @@ public enum TextFormat {
         !quickLookShows(name) && !looksBinary(head.prefix(previewSniff))
     }
 
+    /// A copy of `src` in `dir` named `<name>.txt`, so Quick Look shows it as text: a clone where the volume allows
+    /// (no bytes copied), else its first `limit` bytes — named `<name> (first 4 MB).txt` when that cuts it. Owner-only:
+    /// a server's `.env` or key may be in it.
+    public static func textCopy(of src: String, in dir: String, limit: Int = 4 << 20) throws -> String {
+        let name = (src as NSString).lastPathComponent
+        var dst = (dir as NSString).appendingPathComponent(name + ".txt")
+        if clonefile(src, dst, 0) == 0 {
+            chmod(dst, 0o600)
+            return dst
+        }
+        guard let h = FileHandle(forReadingAtPath: src) else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { try? h.close() }
+        let head = try h.read(upToCount: limit + 1) ?? Data()
+        if head.count > limit { dst = (dir as NSString).appendingPathComponent("\(name) (first \(limit >> 20) MB).txt") }
+        guard FileManager.default.createFile(atPath: dst, contents: head.prefix(limit), attributes: [.posixPermissions: 0o600])
+        else { throw POSIXError(.EIO) }
+        return dst
+    }
+
     public static let nulRunLimit = 256 << 20
     private static let zeros = [UInt8](repeating: 0, count: 64 << 10)
 

@@ -35,3 +35,27 @@ import Testing
     let head = Data(repeating: UInt8(ascii: "a"), count: TextFormat.previewSniff) + Data(repeating: 0, count: 100_000)
     #expect(TextFormat.previewsAsText("big.conf", head: head))
 }
+
+/// ⌘Y's `.txt` copy: a clone on the same volume, the first `limit` bytes elsewhere (named so when that cuts it);
+/// owner-only either way.
+@Test func aTextCopyIsAClonedOrCutTxt() throws {
+    let d = NSTemporaryDirectory() + "dfm-t13copy-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let src = d + "/site.conf", text = Data("listen 80;\n".utf8)
+    FileManager.default.createFile(atPath: src, contents: text, attributes: [.posixPermissions: 0o644])
+    try FileManager.default.createDirectory(atPath: d + "/a", withIntermediateDirectories: false)
+    let copy = try TextFormat.textCopy(of: src, in: d + "/a")
+    #expect(copy == d + "/a/site.conf.txt")
+    #expect(FileManager.default.contents(atPath: copy) == text)
+    #expect((try FileManager.default.attributesOfItem(atPath: copy)[.posixPermissions] as? Int) == 0o600)
+    // Not a clone (one already there makes clonefile fail): the start, cut and named so past the limit.
+    let big = d + "/big.log.1"
+    FileManager.default.createFile(atPath: big, contents: Data(repeating: UInt8(ascii: "x"), count: 3 << 20))
+    try FileManager.default.createDirectory(atPath: d + "/b", withIntermediateDirectories: false)
+    FileManager.default.createFile(atPath: d + "/b/big.log.1.txt", contents: nil)
+    let cut = try TextFormat.textCopy(of: big, in: d + "/b", limit: 2 << 20)
+    #expect(cut == d + "/b/big.log.1 (first 2 MB).txt")
+    #expect(FileManager.default.contents(atPath: cut)?.count == 2 << 20)
+    #expect((try FileManager.default.attributesOfItem(atPath: cut)[.posixPermissions] as? Int) == 0o600)
+}

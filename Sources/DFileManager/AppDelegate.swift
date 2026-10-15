@@ -199,6 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         for t in SFTP.masterTargets { SFTP.stopMaster(t, now: true) }   // no logged-in connection outlives the app
         Shell.terminateAll()   // nor does a `tail -f` in an output window
         ServerCopies.quit()   // the server files' copies on the server go; the others are kept
+        TempCopies.remove(TextCopies.dir)
     }
 
     /// What quitting would lose — unsaved editors, running copies, SSH sessions, programs in shells: one

@@ -143,6 +143,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var forwardStack: [String] = []
     private var quickLook: QLPreviewPanel?   // while it previews this panel's items
     private var quickLooked: [URL] = []      // what it last loaded
+    private var lookCopies: [URL: URL] = [:]  // a text it would show as an icon → its `.txt` copy (`TextCopies`)
+    private var lookGen = 0
     private var previewFor: PreviewKey?   // the cursor's file last asked for: on its way, here, too big or failed (asked again once the cursor comes back)
     private var previewFlag: CancelFlag?
     struct PreviewKey: Equatable { let path: String, size: Int64, mtime: Double, link: Bool }
@@ -2025,6 +2027,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             quickLook = panel
             fetchPreview()
             quickLooked = quickLookURLs
+            copyTexts()
         }
     }
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
@@ -2226,6 +2229,22 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         guard quickLookURLs != quickLooked else { return }
         quickLooked = quickLookURLs
         quickLook.reloadData()
+        copyTexts()
+    }
+
+    /// Texts Quick Look would show as an icon get a `.txt` copy it shows as text (made off the main thread; till
+    /// then, the file itself).
+    private func copyTexts() {
+        lookGen += 1
+        let gen = lookGen, urls = quickLooked.filter { !TextFormat.quickLookShows($0.lastPathComponent) }
+        lookCopies = lookCopies.filter { urls.contains($0.key) }
+        guard !urls.isEmpty else { return }
+        Task { [weak self] in
+            let made = await Blocking.run(.userInitiated) { TextCopies.make(urls) }
+            guard let self, gen == lookGen, let quickLook else { return }
+            lookCopies = made
+            if !made.isEmpty { quickLook.reloadData() }
+        }
     }
 
     /// Native type-to-jump: typing "rea" moves the cursor to README.
@@ -2326,13 +2345,47 @@ extension PanelViewController: @preconcurrency QLPreviewPanelDataSource, @precon
     /// The panel may still ask for an index of the listing it last counted (a re-list or unmarking meanwhile).
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
         let urls = quickLookURLs
-        return urls.indices.contains(index) ? urls[index] as NSURL : nil
+        guard urls.indices.contains(index) else { return nil }
+        return lookCopies[urls[index]].map { TextCopies.Item($0, title: urls[index].lastPathComponent) } ?? urls[index] as NSURL
     }
     /// Arrow keys in the Quick Look window move our cursor, so previews follow along.
     func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
         guard event.type == .keyDown, event.keyCode != 53 else { return false }   // Esc closes Quick Look
         table.keyDown(with: event)
         return true
+    }
+}
+
+/// ⌘Y's `.txt` copies of texts Quick Look would show as an icon, in one owner-only folder per launch: the ones before
+/// go with each new preview, all of them at quit (a crash's, with the launch sweep: `TempCopies.prefixes`).
+enum TextCopies {
+    static let dir = NSTemporaryDirectory() + "dfm-text-" + UUID().uuidString
+    // ponytail: the first 50 of the marked; the rest show as Quick Look does. Lazily, per item shown, if one marks more.
+    static let most = 50
+
+    /// The copies of those of `urls` that read as text; each call's in a folder of its own, the ones before removed.
+    static func make(_ urls: [URL]) -> [URL: URL] {
+        let fm = FileManager.default, mine = (dir as NSString).appendingPathComponent(UUID().uuidString)
+        mkdir(dir, 0o700)
+        for old in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] { TempCopies.remove((dir as NSString).appendingPathComponent(old)) }
+        guard mkdir(mine, 0o700) == 0 else { return [:] }
+        var made: [URL: URL] = [:]
+        for url in urls.prefix(most) where FileInfo.notRegular(url.path) == nil {
+            guard let h = FileHandle(forReadingAtPath: url.path) else { continue }
+            let head = (try? h.read(upToCount: TextFormat.previewSniff)) ?? Data()
+            try? h.close()
+            guard TextFormat.previewsAsText(url.lastPathComponent, head: head),
+                  let copy = try? TextFormat.textCopy(of: url.path, in: mine) else { continue }
+            made[url] = URL(fileURLWithPath: copy)
+        }
+        return made
+    }
+
+    /// A copy shown under its file's own name.
+    final class Item: NSObject, QLPreviewItem {
+        let previewItemURL: URL?
+        let previewItemTitle: String?
+        init(_ url: URL, title: String) { (previewItemURL, previewItemTitle) = (url, title) }
     }
 }
 
