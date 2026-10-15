@@ -3,7 +3,7 @@ import DFMCore
 
 /// Line-number gutter for a TextKit 1 NSTextView (create the view with `usingTextLayoutManager: false`).
 final class LineNumberRuler: NSRulerView {
-    private var lineStarts: [Int]?   // UTF-16 offsets of line starts; rebuilt lazily after edits
+    private var lineStarts: [Int]?   // UTF-16 offsets of line starts: moved along by edits, built in full when nil
     /// Lines before the text's first (a followed log's that dropped off the top): numbers go on from there.
     var firstLine = 0
 
@@ -11,29 +11,60 @@ final class LineNumberRuler: NSRulerView {
         super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
         clientView = textView
         ruleThickness = 44
-        NotificationCenter.default.addObserver(self, selector: #selector(textChanged), name: NSText.didChangeNotification, object: textView)
+        NotificationCenter.default.addObserver(self, selector: #selector(edited), name: NSTextStorage.didProcessEditingNotification,
+                                               object: textView.textStorage)
         NotificationCenter.default.addObserver(self, selector: #selector(redraw), name: NSView.boundsDidChangeNotification,
                                                object: textView.enclosingScrollView?.contentView)
     }
     required init(coder: NSCoder) { fatalError() }
 
-    @objc private func textChanged() { lineStarts = nil; needsDisplay = true }
+    /// A keystroke in a 30 MB log was a count of all its lines again: now only the lines the edit touched.
+    @objc private func edited(_ n: Notification) {
+        guard let storage = n.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
+        if let old = lineStarts { lineStarts = Self.lineStarts(old, storage.mutableString, edited: storage.editedRange, delta: storage.changeInLength) }
+        needsDisplay = true
+    }
     @objc private func redraw() { needsDisplay = true }
 
-    /// Lets the owner say the whole text was replaced (setting `string` posts no didChange notification).
-    func invalidate() { textChanged() }
+    /// Lets the owner say the whole text was replaced: counted again in full.
+    func invalidate() { lineStarts = nil; needsDisplay = true }
+
+    /// Where `text`'s lines start (a last empty line after a final "\n" too).
+    static func lineStarts(_ text: NSString) -> [Int] { scan(text, from: 0, into: [0]) }
+
+    /// `starts` (right for the text before the edit) for `text` after it: `edited` is the changed range in `text`,
+    /// `delta` how much longer the text got. The lines from the one before the edit (a "\r" there may now pair with a
+    /// "\n") are looked at again until a line start lines up with an old one past the edit: the rest only moves.
+    static func lineStarts(_ starts: [Int], _ text: NSString, edited: NSRange, delta: Int) -> [Int] {
+        let from = max(0, edited.location - 1)
+        var lo = 0, hi = starts.count - 1   // the last start at or before `from`
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if starts[mid] <= from { lo = mid } else { hi = mid - 1 }
+        }
+        let oldEnd = NSMaxRange(edited) - delta
+        var j = lo + 1
+        return scan(text, from: starts[lo], into: Array(starts[...lo])) { i in
+            while j < starts.count, starts[j] + delta < i { j += 1 }
+            return j < starts.count && starts[j] >= oldEnd && starts[j] + delta == i ? starts[j...].map { $0 + delta } : nil
+        }
+    }
+
+    /// Line starts from `i` (a line start) on, appended to `s`; `rest` may finish them once a start is known.
+    private static func scan(_ text: NSString, from i: Int, into s: [Int], rest: (Int) -> [Int]? = { _ in nil }) -> [Int] {
+        var s = s, i = i
+        let len = text.length
+        while i < len {
+            i = NSMaxRange(text.lineRange(for: NSRange(location: i, length: 0)))
+            if i < len, let tail = rest(i) { return s + tail }   // the same text from here on: the same lines
+            if i < len || text.character(at: len - 1) == 10 && i == len { s.append(i) }
+        }
+        return s
+    }
 
     private func starts(_ text: NSString) -> [Int] {
-        if let lineStarts { return lineStarts }
-        var s = [0]
-        let len = text.length
-        var i = 0
-        while i < len {
-            let r = text.lineRange(for: NSRange(location: i, length: 0))
-            i = NSMaxRange(r)
-            if i < len || text.length > 0 && text.character(at: len - 1) == 10 && i == len { s.append(i) }
-        }
-        lineStarts = s
+        if lineStarts == nil { lineStarts = Self.lineStarts(text) }
+        let s = lineStarts!
         // Widen the gutter for files with many lines.
         let digits = max(3, String(s.count).count)
         let width = CGFloat(digits) * 8 + 14
@@ -45,7 +76,7 @@ final class LineNumberRuler: NSRulerView {
         guard let tv = clientView as? NSTextView, let lm = tv.layoutManager, let tc = tv.textContainer else { return }
         NSColor.textBackgroundColor.setFill()
         bounds.fill()
-        let text = tv.string as NSString
+        guard let text = tv.textStorage?.mutableString else { return }   // not `string`: a copy of all of it on every draw
         let lines = starts(text)
         let glyphs = lm.glyphRange(forBoundingRect: tv.visibleRect, in: tc)
         let chars = lm.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)

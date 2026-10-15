@@ -197,3 +197,31 @@ private func tempDir() throws -> String {
     #expect(!e.changed)
     #expect(e.windowShouldClose(try #require(e.window)))
 }
+
+/// Line starts moved along by edits are the ones counted afresh: random inserts and deletes anywhere, with "\n",
+/// "\r\n", a lone "\r" (which may come to pair with a "\n"), U+2028, a final newline put in and taken out.
+@MainActor @Test func lineStartsFollowEdits() {
+    var rng = SystemRandomNumberGenerator()
+    let bits = ["a", "bc", "\n", "\r", "\r\n", "\u{2028}", "ї", "\n\n", "xyz\n"]
+    func piece() -> String { (0..<Int.random(in: 0...4, using: &rng)).map { _ in bits.randomElement(using: &rng)! }.joined() }
+    for _ in 0..<300 {
+        let text = NSMutableString(string: (0..<Int.random(in: 0...12, using: &rng)).map { _ in piece() }.joined())
+        var starts = LineNumberRuler.lineStarts(text)
+        for _ in 0..<20 {
+            let at = Int.random(in: 0...text.length, using: &rng), cut = Int.random(in: 0...min(3, text.length - at), using: &rng)
+            let new = Bool.random(using: &rng) ? piece() : ""
+            text.replaceCharacters(in: NSRange(location: at, length: cut), with: new)
+            let edited = NSRange(location: at, length: (new as NSString).length), delta = (new as NSString).length - cut
+            starts = LineNumberRuler.lineStarts(starts, text, edited: edited, delta: delta)
+            #expect(starts == LineNumberRuler.lineStarts(text), "\(text.debugDescription)")
+            if starts != LineNumberRuler.lineStarts(text) { return }
+        }
+    }
+    let t = NSMutableString(string: "a\nb")   // a final newline: a last, empty line
+    var s = LineNumberRuler.lineStarts(t)
+    t.append("\n")
+    s = LineNumberRuler.lineStarts(s, t, edited: NSRange(location: 3, length: 1), delta: 1)
+    #expect(s == [0, 2, 4])
+    t.deleteCharacters(in: NSRange(location: 3, length: 1))
+    #expect(LineNumberRuler.lineStarts(s, t, edited: NSRange(location: 3, length: 0), delta: -1) == [0, 2])
+}

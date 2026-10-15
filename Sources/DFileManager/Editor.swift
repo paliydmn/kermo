@@ -117,6 +117,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         textView.minSize = NSSize(width: 0, height: scroll.contentSize.height)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
+        // Lays out what's on screen, not the whole text first: typing at the top of a 30 MB log stays quick.
+        textView.layoutManager?.allowsNonContiguousLayout = true
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
         textView.isRichText = false
