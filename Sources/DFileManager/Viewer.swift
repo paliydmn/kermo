@@ -56,7 +56,10 @@ final class Viewer: NSWindowController, NSWindowDelegate {
     private var followStopped = false   // the server's `tail -F` ended and wasn't started again
     /// `l`: the line-number gutter (remembered), shown where the text is the whole file from its first line.
     private var ruler: LineNumberRuler?
-    private var numbersOn: Bool { UserDefaults.standard.bool(forKey: "viewerLineNumbers") }
+    /// Lines a follow dropped off the top since the text was loaded: numbers go on from there.
+    private var dropped = 0
+    var defaults = UserDefaults.standard   // tests: their own
+    private var numbersOn: Bool { defaults.bool(forKey: "viewerLineNumbers") }
     /// Following, scrolled up from the end: what comes in waits below (End resumes).
     private var followPaused = false
     /// Called once the window closes (a temp copy goes then).
@@ -214,22 +217,21 @@ final class Viewer: NSWindowController, NSWindowDelegate {
             scroll.hasVerticalRuler = true
         }
         scroll.rulersVisible = on
+        ruler?.firstLine = dropped
         ruler?.invalidate()
         return why
     }
 
     /// `l`: line numbers on or off, here and in viewers to come.
     func setNumbers(_ on: Bool) {   // internal for tests
-        UserDefaults.standard.set(on, forKey: "viewerLineNumbers")
+        defaults.set(on, forKey: "viewerLineNumbers")
         updateSubtitle()
     }
 
     /// `e`: all lines → errors and warnings → errors only → all, together with an `&` filter.
     func cycleLevels() {   // internal for tests
         let next: TextFormat.Level? = switch lineFilter?.level { case nil: .warning; case .warning?: .error; case .error?: nil }
-        var f = lineFilter.flatMap { $0.text.isEmpty ? nil : LineFilter($0.spec) }   // its text, without a level
-        if let next { if f == nil { f = LineFilter(level: next) } else { f!.level = next } }
-        setLineFilter(f)
+        setLineFilter(Self.filter(lineFilter?.spec ?? "", level: next))
     }
 
     // MARK: - Loading (off main thread)
@@ -289,7 +291,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
             followOffset = size
             textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: [
                 .font: Self.font, .foregroundColor: NSColor.textColor]))
-            ruler?.firstLine = 0
+            dropped = 0
             if syntax.isEmpty { Self.tint(textView.textStorage!, levels, offset: 0) } else { SyntaxColors.apply(syntax, to: textView.textStorage!) }
             ANSIColors.apply(runs, to: textView.textStorage!, font: Self.font)
             textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
@@ -394,6 +396,8 @@ final class Viewer: NSWindowController, NSWindowDelegate {
 
     /// The lines of the server's `path` that `f` keeps, by `grep -F` there (ASCII case folded), up to `hugeLimit` of
     /// them; nil if it didn't run (no grep, the connection gone): the caller filters what it has.
+    /// ponytail: grep sees the raw bytes — a text across a color's codes ("ERROR: x" in a colored log) isn't found
+    /// there; a local filter of the tail would be, at the cost of the whole log.
     nonisolated static func serverLines(_ t: SFTPTarget, _ path: String, _ f: LineFilter) -> Data? {
         let command = "LC_ALL=C grep -a -F -i \(f.exclude ? "-v " : "")-e \(ShellContext.quote(f.text)) -- \(ShellContext.quote(path))"
         var out = Data(), full = false
@@ -499,8 +503,9 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         Self.tint(storage, levels, offset: start)
         ANSIColors.apply(runs, to: storage, offset: start, font: Self.font)
         let cut = FollowReader.trimCount(storage.mutableString, limit: followLimit)
-        if cut > 0, let ruler {   // the lines that go still count
-            ruler.firstLine += storage.mutableString.substring(to: cut).utf16.reduce(0) { $1 == 10 ? $0 + 1 : $0 }
+        if cut > 0 {   // the lines that go still count
+            dropped += storage.mutableString.substring(to: cut).utf16.reduce(0) { $1 == 10 ? $0 + 1 : $0 }
+            ruler?.firstLine = dropped
         }
         if cut > 0 {   // keep what's on screen in place
             let dy = atEnd ? 0 : lm.lineFragmentRect(forGlyphAt: lm.glyphIndexForCharacter(at: cut), effectiveRange: nil).minY
@@ -783,12 +788,17 @@ extension Viewer {
     }
 
     fileprivate func filterDialog() {
-        ask("Show only lines with (!text: lines without it; empty: all lines):", value: lineFilter?.spec ?? "") { [weak self] s in
+        ask("Show only lines with (!text: lines without it; empty: no text filter):", value: lineFilter?.spec ?? "") { [weak self] s in
             guard let self else { return }
-            var f = LineFilter(s)
-            if let level = lineFilter?.level { if f == nil { f = LineFilter(level: level) } else { f!.level = level } }   // `e` stays
-            setLineFilter(f)
+            setLineFilter(Self.filter(s, level: lineFilter?.level))
         }
+    }
+
+    /// `&`'s text with `e`'s level kept: the level alone when the text is empty, nil when neither.
+    nonisolated static func filter(_ spec: String, level: TextFormat.Level?) -> LineFilter? {
+        var f = LineFilter(spec)
+        if let level { if f == nil { f = LineFilter(level: level) } else { f!.level = level } }
+        return f
     }
 
     /// Shows the text again through `filter` (nil: all of it), in text mode; a huge file is remapped first, so a

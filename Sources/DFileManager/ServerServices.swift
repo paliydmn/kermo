@@ -21,8 +21,9 @@ extension AppDelegate {
     /// look — and gives way to `show`, or closes with why not (`say`). `command`: what asks for the password.
     func look<T: Sendable>(at t: SFTPTarget, _ what: String, for command: String, say: @escaping @MainActor (String, Bool) -> Void,
                            _ read: @escaping @Sendable (SFTPTarget, String, [String: String], CancelFlag) throws -> T,
-                           show: @escaping @MainActor (T, SavedServer) -> Void) {
+                           show: @escaping @MainActor (T, SavedServer, SFTPTarget) -> Void) {
         let s = savedServer(at: t) ?? SavedServer(target: t)
+        let t = s.target.asRoot(t.sudo)   // a saved server's: its key and connection time, whatever was typed
         Task {
             if let locked = ServerLock.server(for: s.target), await !ServerLock.authorize(locked, "look at the \(what) of") {
                 return say("🔒 \(s.title) stays locked", false)
@@ -42,7 +43,7 @@ extension AppDelegate {
             case .failure(let e):
                 Picker.dismiss()
                 say(e.localizedDescription, true)
-            case .success(let found): show(found, s)
+            case .success(let found): show(found, s, t)
             }
         }
     }
@@ -65,7 +66,7 @@ extension AppDelegate {
 
     func showServices(on t: SFTPTarget) {
         look(at: t, "services", for: "Services", say: { [unowned self] in active.flash($0, error: $1) },
-             { t, title, env, cancel in try Services.read(on: t.asUser, server: title, env: env, cancel: cancel) }) { [unowned self] units, s in
+             { t, title, env, cancel in try Services.read(on: t.asUser, server: title, env: env, cancel: cancel) }) { [unowned self] units, s, t in
             guard !units.isEmpty else {
                 Picker.dismiss()
                 return active.flash("\(s.title): systemd lists no services there")
@@ -121,7 +122,7 @@ extension AppDelegate {
 
     func showContainers(on t: SFTPTarget) {
         look(at: t, "containers", for: "Containers", say: { [unowned self] in active.flash($0, error: $1) },
-             { t, title, env, cancel in try Containers.read(on: t.asUser, server: title, env: env, cancel: cancel) }) { [unowned self] found, s in
+             { t, title, env, cancel in try Containers.read(on: t.asUser, server: title, env: env, cancel: cancel) }) { [unowned self] found, s, t in
             guard !found.containers.isEmpty else {
                 Picker.dismiss()
                 return active.flash("\(s.title): \(found.tool) has no containers there")
@@ -134,10 +135,10 @@ extension AppDelegate {
 
     /// "web" · "running · Up 3 hours" · its image (S5). ↩ its log as it goes, ⌘R a restart — as the user, whose
     /// docker or podman it is — ⌘C its name.
-    func containerItem(_ c: ContainerInfo, tool: String, on t: SFTPTarget, of s: SavedServer) -> Picker.Item {
+    func containerItem(_ c: ContainerInfo, tool: String, on t: SFTPTarget, of s: SavedServer, pasteboard: NSPasteboard = .general) -> Picker.Item {
         let copy: @MainActor () -> Void = { [unowned self] in
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(c.name, forType: .string)
+            pasteboard.clearContents()
+            pasteboard.setString(c.name, forType: .string)
             active.flash("Copied “\(c.name)”")
         }
         let state = c.status.isEmpty ? c.state : "\(c.state) · \(c.status)"

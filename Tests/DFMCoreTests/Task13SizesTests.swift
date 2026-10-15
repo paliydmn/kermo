@@ -145,7 +145,7 @@ extension SudoPasswordTests {
     unlink(d + "/pid")
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
-    p.arguments = ["-e", "setsid; exec @ARGV", "/bin/sh", "-c", "set -- \(ShellContext.quote(d)) a\n" + ServerSizes.script]
+    p.arguments = ["-MPOSIX", "-e", "POSIX::setsid(); exec @ARGV", "/bin/sh", "-c", "set -- \(ShellContext.quote(d)) a\n" + ServerSizes.script]
     p.environment = env
     let out = Pipe(), err = Pipe()
     (p.standardInput, p.standardOutput, p.standardError) = (FileHandle.nullDevice, out, err)

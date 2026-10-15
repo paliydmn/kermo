@@ -30,7 +30,7 @@ private func shown(_ r: (text: String, runs: [ANSI.Run])) -> String {
 }
 
 /// Read in pieces: a sequence cut at a piece's end waits for the next one; a color goes on across pieces; at the very
-/// end a cut one goes.
+/// end a cut one loses its ESC only.
 @Test func ansiReadInPieces() {
     var a = ANSI()
     let one = a.feed("before \u{1B}[3")
@@ -43,23 +43,43 @@ private func shown(_ r: (text: String, runs: [ANSI.Run])) -> String {
     #expect(four.text == " plain" && four.runs.isEmpty && a.style.isPlain)
     var b = ANSI()
     _ = b.feed("x\u{1B}]0;never ends")
-    #expect(b.feed(" more", end: true).text == "", "an unended title at the very end goes")
+    #expect(b.feed(" more", end: true).text == "]0;never ends more", "an unended title at the very end: only its ESC goes")
     var c = ANSI()
-    #expect(c.feed("\u{1B}[1;3", end: true).text == "")
+    #expect(c.feed("\u{1B}[1;3", end: true).text == "[1;3")
 }
 
 /// `e`: errors only, or errors and warnings — by the words the tints go by, a line's colors aside — alone or with an
 /// `&` text, in the text and over a mapped file's bytes alike.
 @Test func lineFiltersKeepLevels() throws {
-    let text = "1 started\n2 warning: disk\n3 ERROR: down\n\u{1B}[31m4 fatal\u{1B}[0m crash\n5 deprecated error\n6 ok"
-    #expect(LineFilter(level: .error).apply(text) == "3 ERROR: down\n\u{1B}[31m4 fatal\u{1B}[0m crash\n5 deprecated error\n")
-    #expect(LineFilter(level: .warning).apply(text) == "2 warning: disk\n3 ERROR: down\n\u{1B}[31m4 fatal\u{1B}[0m crash\n5 deprecated error\n")
+    let text = "1 started\n2 warning: disk\n3 ERROR: down\n\u{1B}[31m4 fatal\u{1B}[0m crash\n5 deprecated error\n6 ok\n\u{1B}[31mERROR\u{1B}[0m: x"
+    #expect(LineFilter(level: .error).apply(text) == "3 ERROR: down\n\u{1B}[31m4 fatal\u{1B}[0m crash\n5 deprecated error\n\u{1B}[31mERROR\u{1B}[0m: x")
+    #expect(LineFilter(level: .warning).apply(text) == "2 warning: disk\n3 ERROR: down\n\u{1B}[31m4 fatal\u{1B}[0m crash\n5 deprecated error\n\u{1B}[31mERROR\u{1B}[0m: x")
     var down = try #require(LineFilter("!down"))
     down.level = .error
-    #expect(down.apply(text) == "\u{1B}[31m4 fatal\u{1B}[0m crash\n5 deprecated error\n" && down.spec == "!down")
+    #expect(down.apply(text) == "\u{1B}[31m4 fatal\u{1B}[0m crash\n5 deprecated error\n\u{1B}[31mERROR\u{1B}[0m: x" && down.spec == "!down")
     #expect(LineFilter(level: .warning).spec == "" && LineFilter(level: .error) != LineFilter(level: .warning))
+    // `&` matches what the viewer shows: the colors' codes aside.
+    let shownText = try #require(LineFilter("error: x"))
+    #expect(shownText.apply(text) == "\u{1B}[31mERROR\u{1B}[0m: x")
+    #expect(String(decoding: shownText.apply(Data(text.utf8), limit: 1 << 20).0, as: UTF8.self) == "\u{1B}[31mERROR\u{1B}[0m: x")
+    #expect(try #require(LineFilter("31m")).apply(text) == "", "nor the codes themselves")
     let (kept, more) = LineFilter(level: .error).apply(Data(text.utf8), limit: 1 << 20)
     #expect(String(decoding: kept, as: UTF8.self) == LineFilter(level: .error).apply(text) && !more)
     #expect(String(decoding: down.apply(Data(text.utf8), limit: 1 << 20).0, as: UTF8.self) == down.apply(text))
     #expect(TextFormat.level(of: "x error") == .error && TextFormat.level(of: "a warning") == .warning && TextFormat.level(of: "fine") == nil)
+}
+
+/// What a log can hold by accident or on purpose never costs text or the app: a huge RGB component, an OSC that never
+/// ends (the text after it stays; a line end ends it), a lone ESC before a line end, a private CSI ending in `m`, the
+/// colon RGB form with its empty color-space slot.
+@Test func ansiSurvivesBrokenSequences() {
+    #expect(shown(ANSI.parse("\u{1B}[38;2;4000000000;0;0mX\u{1B}[38;2;0;99999999999;0mY")) == "X=9 Y=10")
+    #expect(ANSI.parse("a\u{1B}]0;title never ends\nnext line\nlast").text == "a\nnext line\nlast")
+    #expect(ANSI.parse("a\u{1B}]0;never").text == "a]0;never", "end of text: only the ESC goes")
+    var a = ANSI()
+    let long = String(repeating: "x", count: 300)
+    #expect(a.feed("b\u{1B}]" + long).text.hasSuffix(long), "past what a sequence can be: kept as text")
+    #expect(ANSI.parse("foo\u{1B}\nbar\u{1B}é").text == "foo\nbaré")
+    #expect(shown(ANSI.parse("\u{1B}[31mred\u{1B}[>4;1mstill")) == "redstill=1", "modifyOtherKeys isn't SGR")
+    #expect(shown(ANSI.parse("\u{1B}[38:2::255:128:0morange\u{1B}[38:5:4mblue")) == "orange=3 blue=4")
 }

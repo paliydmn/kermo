@@ -62,11 +62,18 @@ public struct ANSI: Sendable {
                 i += 1
                 continue
             }
-            guard let length = Self.sequence(all, at: i) else {   // cut here: the rest waits for the next piece
-                if !end, all.count - i < 256 { pending = Array(all[i...]) }   // ponytail: past 256 it's no sequence; dropped
-                break
+            guard let length = Self.sequence(all, at: i) else {
+                if !end, all.count - i < 256 {   // cut here: the rest waits for the next piece
+                    pending = Array(all[i...])
+                    break
+                }
+                i += 1   // never ended (or too long to be one): only the ESC goes, the text stays
+                continue
             }
-            if all[i + 1] == "[", all[i + length - 1] == "m" { restyle(Self.sgr(String(String.UnicodeScalarView(all[(i + 2)..<(i + length - 1)])), style)) }
+            if all[i + 1] == "[", all[i + length - 1] == "m" {
+                let params = String(String.UnicodeScalarView(all[(i + 2)..<(i + length - 1)]))
+                if params.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ";" || $0 == ":") }) { restyle(Self.sgr(params, style)) }   // not `ESC[>4;1m`
+            }
             i += length
         }
         if !style.isPlain, at > runStart { runs.append(Run(NSRange(location: runStart, length: at - runStart), style)) }
@@ -74,7 +81,8 @@ public struct ANSI: Sendable {
     }
 
     /// The length of the escape sequence at `i` (an ESC), or nil if it's cut off by the end. CSI: ESC [ parameters
-    /// final; OSC: ESC ] … BEL or ESC \; a charset choice: ESC ( B; else ESC and one more.
+    /// final; OSC: ESC ] … BEL or ESC \ (a line end or another control ends a broken one, and stays); a charset
+    /// choice: ESC ( B; else ESC and one more printable (anything else stays).
     static func sequence(_ s: [Unicode.Scalar], at i: Int) -> Int? {
         guard i + 1 < s.count else { return nil }
         switch s[i + 1] {
@@ -91,18 +99,25 @@ public struct ANSI: Sendable {
             while j < s.count {
                 if s[j] == "\u{07}" { return j - i + 1 }
                 if s[j] == "\u{1B}" { return j + 1 < s.count ? (s[j + 1] == "\\" ? j - i + 2 : j - i) : nil }
+                if s[j].value < 0x20 { return j - i }
                 j += 1
             }
             return nil
         case "(", ")", "*", "+": return i + 2 < s.count ? 3 : nil
-        default: return 2
+        default: return (0x20...0x7E).contains(s[i + 1].value) ? 2 : 1
         }
     }
 
-    /// `style` after an SGR's parameters ("1;31", "38;5;208", "" = reset).
+    /// `style` after an SGR's parameters ("1;31", "38;5;208", "38:2::255:128:0", "" = reset).
     static func sgr(_ params: String, _ style: Style) -> Style {
         var s = style
-        let p = params.split(omittingEmptySubsequences: false, whereSeparator: { $0 == ";" || $0 == ":" }).map { Int($0) ?? 0 }
+        var p: [Int] = []
+        for group in params.split(separator: ";", omittingEmptySubsequences: false) {
+            // A colon group is one color of its own: 38:5:n, 38:2:r:g:b, or with a color space first 38:2:cs:r:g:b.
+            var sub = group.split(separator: ":", omittingEmptySubsequences: false).map { min(Int($0) ?? 0, 1 << 16) }
+            if sub.count == 6, sub[1] == 2 { sub.remove(at: 2) }
+            p += sub
+        }
         var k = 0
         while k < p.count {
             switch p[k] {
@@ -144,7 +159,8 @@ public struct ANSI: Sendable {
     }
 
     static func nearest(_ r: Int, _ g: Int, _ b: Int) -> Int {
-        palette.indices.min { a, z in
+        let (r, g, b) = (min(max(r, 0), 255), min(max(g, 0), 255), min(max(b, 0), 255))   // a log's 4000000000 overflows the squares
+        return palette.indices.min { a, z in
             let d = { (i: Int) in let (pr, pg, pb) = palette[i]; return (pr - r) * (pr - r) + (pg - g) * (pg - g) + (pb - b) * (pb - b) }
             return d(a) < d(z)
         }!

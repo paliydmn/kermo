@@ -82,8 +82,10 @@ let unitsPlain = """
         case .failure(let e): e.message
         }
     }
-    let ps = "old\texited\tExited (0) 2 days ago\tbusybox:1\nweb\trunning\tUp 3 hours\tnginx:1\napi\trunning\tUp 5 minutes (healthy)\tregistry.example.com/api:2\n"
-    #expect(said(0, "Hi!\nkermo-podman\n" + ps) == "podman: api=running/Up 5 minutes (healthy)/registry.example.com/api:2 web=running/Up 3 hours/nginx:1 old=exited/Exited (0) 2 days ago/busybox:1")
+    let ps = "old\tExited (0) 2 days ago\tbusybox:1\nweb\tUp 3 hours\tnginx:1\napi\tUp 5 minutes (healthy)\tregistry.example.com/api:2\n"
+        + "held\tUp 2 days (Paused)\tredis:7\nnew\tCreated\tpostgres:16\n"
+    #expect(said(0, "Hi!\nkermo-podman\n" + ps) == "podman: api=running/Up 5 minutes (healthy)/registry.example.com/api:2 web=running/Up 3 hours/nginx:1 "
+            + "held=paused/Up 2 days (Paused)/redis:7 new=created/Created/postgres:16 old=exited/Exited (0) 2 days ago/busybox:1")
     #expect(said(0, "kermo-docker\n") == "docker: ")
     #expect(said(0, "kermo-none\n") == "web1 has neither docker nor podman")
     #expect(said(1, "kermo-docker\n", "permission denied while trying to connect to the Docker daemon socket")
@@ -123,15 +125,15 @@ extension SudoPasswordTests {
     #expect(try Services.read(on: .local(), server: "web1", env: env).map(\.name) == ["backup", "db", "web"], "an old systemd: the table")
 
     try fake("podman", """
-        [ "$*" = "ps -a --format {{.Names}}\\t{{.State}}\\t{{.Status}}\\t{{.Image}}" ] || { echo "wrong: $*" >&2; exit 9; }
-        printf 'web\\trunning\\tUp 3 hours\\tnginx:1\\n'
+        [ "$*" = "ps -a --format {{.Names}}\\t{{.Status}}\\t{{.Image}}" ] || { echo "wrong: $*" >&2; exit 9; }
+        printf 'web\\tUp 3 hours\\tnginx:1\\n'
         """)
     var r = try Containers.read(on: .local(), server: "web1", env: env)
     #expect(r.tool == "podman" && r.containers == [ContainerInfo(name: "web", state: "running", status: "Up 3 hours", image: "nginx:1")])
     try fake("docker", "echo 'permission denied while trying to connect to the Docker daemon socket' >&2; exit 1\n")
     let e = try #require(throws: SFTPError.self) { try Containers.read(on: .local(), server: "web1", env: env) }
     #expect(e.message == "docker failed on web1: permission denied while trying to connect to the Docker daemon socket")
-    try fake("docker", "printf 'db\\texited\\tExited (1) 1 hour ago\\tpostgres:16\\n'\n")
+    try fake("docker", "printf 'db\\tExited (1) 1 hour ago\\tpostgres:16\\n'\n")
     r = try Containers.read(on: .local(), server: "web1", env: env)
     #expect(r.tool == "docker" && r.containers.map(\.name) == ["db"])
 }
@@ -145,7 +147,7 @@ extension SudoPasswordTests {
     func start(_ command: String) throws -> (Process, Pipe) {
         let p = Process(), input = Pipe()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/perl")   // a session of its own: only the pipe reaches it, as over ssh
-        p.arguments = ["-e", "setsid; exec @ARGV", "/bin/sh", "-c", SSHCommand.endsWithSSH(command)]
+        p.arguments = ["-MPOSIX", "-e", "POSIX::setsid(); exec @ARGV", "/bin/sh", "-c", SSHCommand.endsWithSSH(command)]
         (p.standardInput, p.standardOutput, p.standardError) = (input, FileHandle.nullDevice, FileHandle.nullDevice)
         try p.run()
         return (p, input)

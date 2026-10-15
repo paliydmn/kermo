@@ -138,13 +138,15 @@ public struct LineFilter: Sendable, Equatable {
 
     public var spec: String { (exclude ? "!" : "") + text }
 
+    /// By the line as the viewer shows it: terminal colors' codes aside.
     public func keeps(_ line: Substring) -> Bool {
-        (text.isEmpty || (line.range(of: text, options: .caseInsensitive) != nil) != exclude) && keepsLevel(line)
+        let shown = ANSI.strip(line)
+        return (text.isEmpty || (shown.range(of: text, options: .caseInsensitive) != nil) != exclude) && keepsLevel(shown)
     }
 
-    func keepsLevel<S: StringProtocol>(_ line: S) -> Bool {
+    func keepsLevel(_ shown: String) -> Bool {
         guard let level else { return true }
-        let l = TextFormat.level(of: ANSI.strip(line))
+        let l = TextFormat.level(of: shown)
         return level == .warning ? l != nil : l == .error
     }
 
@@ -176,11 +178,13 @@ public struct LineFilter: Sendable, Equatable {
                 let end = memchr(base + pos, 10, b.count - pos).map { base.distance(to: UnsafeRawPointer($0)) + 1 } ?? b.count
                 line.removeAll(keepingCapacity: true)
                 line.append(contentsOf: UnsafeRawBufferPointer(rebasing: b[pos..<end]))
-                let hit = line.withUnsafeMutableBytes { l in
+                // A line with terminal colors, or a level to look at, goes by its text as shown (decoded: slower, rarer).
+                let shown = level != nil || line.contains(0x1B) ? ANSI.strip(String(decoding: line, as: UTF8.self)) : nil
+                let hit = shown.map { text.isEmpty || $0.range(of: text, options: .caseInsensitive) != nil } ?? line.withUnsafeMutableBytes { l in
                     BigFile.foldCase(l)
                     return needle.isEmpty || memmem(l.baseAddress, l.count, needle, needle.count) != nil
                 }
-                if hit != exclude, level == nil || keepsLevel(String(decoding: UnsafeRawBufferPointer(rebasing: b[pos..<end]), as: UTF8.self)) {
+                if hit != exclude, shown.map(keepsLevel) ?? true {
                     // ponytail: `e` decodes each line for its regex — seconds on a GB log, only while it's on
                     if out.count + end - pos > limit { return true }
                     out.append(contentsOf: UnsafeRawBufferPointer(rebasing: b[pos..<end]))

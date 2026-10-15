@@ -85,13 +85,15 @@ private func tempDir() throws -> String {
 /// `&` keeps it. `l` numbers the lines (remembered) where they count from the file's start, and says where they can't.
 @MainActor @Test func viewerLevelsAndLineNumbers() async throws {
     _ = NSApplication.shared
-    let was = UserDefaults.standard.object(forKey: "viewerLineNumbers")
-    defer { UserDefaults.standard.set(was, forKey: "viewerLineNumbers") }
+    let suite = "dfm-test-" + UUID().uuidString   // not the defaults other viewers read meanwhile
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
     let dir = try tempDir()
     defer { try? FileManager.default.removeItem(atPath: dir) }
     let path = dir + "/app.log"
     try Data("GET / 200\nwarning: slow\nGET /x error 500\nPOST / 200\n".utf8).write(to: URL(fileURLWithPath: path))
     let v = Viewer(URL(fileURLWithPath: path))
+    v.defaults = defaults
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
     func until(_ what: String, _ ok: () -> Bool) async throws {
@@ -104,7 +106,7 @@ private func tempDir() throws -> String {
     #expect(v.window?.subtitle.contains("ERRORS + WARNINGS") == true)
     v.cycleLevels()
     try await until("errors") { tv.string == "GET /x error 500\n" && v.window?.subtitle.contains("ERRORS ONLY") == true }
-    v.setLineFilter({ var f = LineFilter("post"); f?.level = v.lineFilter?.level; return f }())
+    v.setLineFilter(Viewer.filter("post", level: v.lineFilter?.level))   // what & does
     try await until("both") { tv.string == "" }
     v.cycleLevels()
     try await until("all levels, still POST") { tv.string == "POST / 200\n" && v.window?.subtitle.contains("ERRORS") == false }
@@ -112,7 +114,7 @@ private func tempDir() throws -> String {
     try await until("all") { tv.string.hasPrefix("GET / 200\nwarning") }
 
     v.setNumbers(true)
-    #expect(v.scroll.rulersVisible && UserDefaults.standard.bool(forKey: "viewerLineNumbers"))
+    #expect(v.scroll.rulersVisible && defaults.bool(forKey: "viewerLineNumbers"))
     v.cycleLevels()
     try await until("filtered") { v.window?.subtitle.contains("line numbers: not while filtered") == true }
     #expect(!v.scroll.rulersVisible)
@@ -120,6 +122,15 @@ private func tempDir() throws -> String {
     try await until("back") { v.lineFilter == nil && v.scroll.rulersVisible }
     v.setNumbers(false)
     #expect(!v.scroll.rulersVisible)
+}
+
+/// `&` keeps `e`'s level: an empty entry leaves the level alone, a text goes with it; neither is no filter.
+@Test func aTextFilterKeepsTheLevel() {
+    #expect(Viewer.filter("", level: .error) == LineFilter(level: .error))
+    let both = Viewer.filter("db", level: .warning)
+    #expect(both?.text == "db")
+    #expect(both?.level == .warning)
+    #expect(Viewer.filter("", level: nil) == nil && Viewer.filter("!x", level: nil) == LineFilter("!x"))
 }
 
 /// Following, scrolled up: the subtitle says it's paused and End resumes; at the end again it says following.

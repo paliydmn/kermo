@@ -1130,9 +1130,10 @@ extension AppDelegate {
         }
     }
 
-    /// A server file only root may write — root's, no write bit for group or others — opened by another user.
+    /// A server file only root may write — root's, no write bit for group or others — opened by another user: one
+    /// named in the address (an alias's user is ~/.ssh/config's, maybe root: then nothing is said).
     static func rootsOnly(_ a: SFTPClient.Attrs, for t: SFTPTarget) -> Bool {
-        !t.sudo && a.uid == 0 && (a.mode ?? 0) & 0o022 == 0 && !t.host.hasPrefix("root@")
+        !t.sudo && a.uid == 0 && (a.mode ?? 0) & 0o022 == 0 && t.host.contains("@") && !t.host.hasPrefix("root@")
     }
 
     @MainActor final class RemoteEdit {
@@ -1355,6 +1356,8 @@ extension AppDelegate {
     @discardableResult
     func runThere(_ command: String, on target: SFTPTarget, action: String, paths: [String] = [], busy: String, done: String,
                   ask: (message: String, button: String)? = nil, saved: URL? = nil, in panel: PanelViewController) async -> Bool {
+        // A locked server's Touch ID again if its time ran out since it was looked at (a Picker can stay open).
+        if let s = ServerLock.server(for: target), await !ServerLock.authorize(s, "run “\(command)” on") { return false }
         if let ask, let info = Self.prodQuestion(command, on: target) {
             guard await choose(ask.message, info: info, [ask.button, "Cancel"], default: 1) == 0 else { return false }   // ↩ = Cancel
         }

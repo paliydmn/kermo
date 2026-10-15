@@ -125,9 +125,12 @@ enum ANSIColors {
     /// `runs` (from `offset` on in `storage`) in their colors.
     static func apply(_ runs: [ANSI.Run], to storage: NSTextStorage, offset: Int = 0, font: NSFont) {
         guard !runs.isEmpty else { return }
+        let bold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)   // once, not per run
         storage.beginEditing()
         for r in runs where r.range.location + offset + r.range.length <= storage.length {
-            storage.addAttributes(attributes(r.style, font: font), range: NSRange(location: r.range.location + offset, length: r.range.length))
+            var a: [NSAttributedString.Key: Any] = r.style.bold ? [.font: bold] : [:]
+            if let c = r.style.color { a[.foregroundColor] = color(c) }
+            storage.addAttributes(a, range: NSRange(location: r.range.location + offset, length: r.range.length))
         }
         storage.endEditing()
     }

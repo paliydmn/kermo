@@ -103,8 +103,8 @@ public struct ContainerInfo: Equatable, Sendable {
 
 public enum Containers {
     /// docker if there is one, else podman — said by a line first. A template, not `{{json .}}`: podman's `Names` is an
-    /// array there, docker's a string.
-    static let script = "LC_ALL=C; export LC_ALL; f='{{.Names}}\\t{{.State}}\\t{{.Status}}\\t{{.Image}}'; "
+    /// array there, docker's a string. No `{{.State}}`: docker before 20.10 has none (`state(of:)` reads the status).
+    static let script = "LC_ALL=C; export LC_ALL; f='{{.Names}}\\t{{.Status}}\\t{{.Image}}'; "
         + "if command -v docker >/dev/null 2>&1; then echo kermo-docker; exec docker ps -a --format \"$f\"; "
         + "elif command -v podman >/dev/null 2>&1; then echo kermo-podman; exec podman ps -a --format \"$f\"; else echo kermo-none; fi"
 
@@ -126,9 +126,16 @@ public enum Containers {
         guard status == 0 else { return .failure(SFTPError(message: "\(tool) failed on \(server): " + (errors.isEmpty ? "exit \(status)" : errors))) }
         let all = lines[(at + 1)...].compactMap { line -> ContainerInfo? in
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-            return f.count >= 4 ? ContainerInfo(name: f[0], state: f[1], status: f[2], image: f[3...].joined(separator: "\t")) : nil
+            return f.count >= 3 ? ContainerInfo(name: f[0], state: state(of: f[1]), status: f[1], image: f[2...].joined(separator: "\t")) : nil
         }
         return .success((tool, all.sorted { a, b in a.running != b.running ? a.running : a.name.lowercased() < b.name.lowercased() }))
+    }
+
+    /// The state docker's and podman's status says: "Up 3 hours" running, "Up 2 days (Paused)" paused, "Exited (0) …"
+    /// exited, "Created" created…
+    static func state(of status: String) -> String {
+        if status.hasPrefix("Up ") || status == "Up" { return status.hasSuffix("(Paused)") ? "paused" : "running" }
+        return status.split(separator: " ").first.map { $0.lowercased() } ?? ""
     }
 
     // What runs on one (`safe` only).

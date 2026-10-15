@@ -305,7 +305,7 @@ extension AppDelegate {
     /// The ports `t`'s server listens on (U1): a locked server asks first (U6), then the login (`look`).
     func forwardPort(on t: SFTPTarget) {
         look(at: t, "ports", for: "Forward Port", say: { [unowned self] in tunnels.say($0, $1) },
-             { t, title, env, cancel in try ListeningPorts.read(on: t, server: title, env: env, cancel: cancel) }) { [unowned self] ports, s in
+             { t, title, env, cancel in try ListeningPorts.read(on: t, server: title, env: env, cancel: cancel) }) { [unowned self] ports, s, _ in
             showPorts(ports, of: s)
         }
     }

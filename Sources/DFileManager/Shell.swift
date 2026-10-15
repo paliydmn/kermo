@@ -29,6 +29,12 @@ enum Shell {
         OutputWindow.start(command, on: servers, skipped: skipped, env: env, title: title, again: again, ended: ended)
     }
 
+    /// What the server's login shell runs for `command` in `dir`: a follow wrapped to end with ssh (its stdin then a
+    /// pipe held open, see `OutputWindow`).
+    static func remote(_ command: String, in dir: String, follow: Bool) -> String {
+        SSHCommand.inDir(dir, follow ? SSHCommand.endsWithSSH(command) : command)
+    }
+
     /// Fire-and-forget (GUI tools like `code --diff`): no output window.
     static func spawn(_ command: String, in dir: String) {
         let p = Process()
@@ -210,7 +216,7 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
 
         if let server {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            process.arguments = SSHCommand.arguments(server, command: SSHCommand.inDir(dir, follow ? SSHCommand.endsWithSSH(command) : command), tty: false)
+            process.arguments = SSHCommand.arguments(server, command: Shell.remote(command, in: dir, follow: follow), tty: false)
             process.environment = ProcessInfo.processInfo.environment.merging(SSHAskpass.env) { $1 }
             process.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
         } else {

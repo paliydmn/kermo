@@ -38,12 +38,12 @@ import Testing
                                     tool: "podman", on: .local(), of: s)
         #expect(box.title == "api" && box.subtitle == "running · Up 5 minutes" && box.detail == "registry.example.com/api:2")
         #expect(box.keys.keys.map(\.display).sorted() == ["⌘C", "⌘R"])
-        let pb = NSPasteboard.general.string(forType: .string)
-        defer { NSPasteboard.general.clearContents(); if let pb { NSPasteboard.general.setString(pb, forType: .string) } }
-        let odd = app.containerItem(ContainerInfo(name: "-x", state: "exited", status: "", image: "busybox"), tool: "docker", on: .local(), of: s)
+        let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString))   // not the user's clipboard
+        defer { pb.releaseGlobally() }
+        let odd = app.containerItem(ContainerInfo(name: "-x", state: "exited", status: "", image: "busybox"), tool: "docker", on: .local(), of: s, pasteboard: pb)
         #expect(odd.subtitle == "exited")
         odd.keys[Shortcut("cmd+c")!]?()
-        #expect(NSPasteboard.general.string(forType: .string) == "-x", "copying the name is fine")
+        #expect(pb.string(forType: .string) == "-x", "copying the name is fine")
         odd.run()
         #expect(panel.statusText.hasPrefix("“-x” has characters"))
     }
@@ -55,6 +55,7 @@ import Testing
         #expect(AppDelegate.rootsOnly(a, for: SFTPTarget(host: "me@web")))
         #expect(!AppDelegate.rootsOnly(a, for: SFTPTarget(host: "me@web").asRoot()))
         #expect(!AppDelegate.rootsOnly(a, for: SFTPTarget(host: "root@web")))
+        #expect(!AppDelegate.rootsOnly(a, for: SFTPTarget(host: "web")), "an alias's user may be root: nothing said")
         var mine = a
         mine.uid = 1000
         #expect(!AppDelegate.rootsOnly(mine, for: SFTPTarget(host: "me@web")))
@@ -76,6 +77,12 @@ import Testing
         let w = try #require(Editor.window(for: url))
         defer { w.close() }
         #expect(w.subtitle == "“k.service” is root's")
+    }
+
+    /// A follow's remote command ends with ssh; anything else runs as it did.
+    @Test func aFollowsCommandEndsWithSSH() {
+        #expect(Shell.remote("journalctl -u x.service -f", in: "/", follow: true) == SSHCommand.inDir("/", SSHCommand.endsWithSSH("journalctl -u x.service -f")))
+        #expect(Shell.remote("ls", in: "/srv", follow: false) == "cd -- /srv && ls")
     }
 
     /// Services… and Containers… are in each server's menu, after Forward Port… and Tunnels ▸, and in ⌘⇧P.
@@ -121,6 +128,41 @@ private func until(_ done: () -> Bool) async {
     #expect(panel.statusText == "Restarted web on localhost")
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "restart -- web.service\n")
     #expect((try? String(contentsOfFile: dir + "/sudo.log", encoding: .utf8))?.hasPrefix("-n -- sh -c ") == true)
+}
+
+/// On a production server ⌘R asks first and ↩ is Cancel: nothing runs, nothing is logged; Restart runs it.
+@Test func aRestartOnProductionAsksAndReturnIsCancel() async throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-svc-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: dir + "/bin", withIntermediateDirectories: true)
+    let was = AuditLog.path
+    AuditLog.path = dir + "/audit.jsonl"
+    defer { AuditLog.path = was; ServerLock.servers = { [] }; AppDelegate.answering = nil; try? FileManager.default.removeItem(atPath: dir) }
+    try Data("#!/bin/sh\necho \"$*\" >> \(dir)/systemctl.log\n".utf8).write(to: URL(fileURLWithPath: dir + "/bin/systemctl"))
+    chmod(dir + "/bin/systemctl", 0o755)
+    let sudo = dir + "/sudo"
+    try Data("#!/bin/sh\n[ \"$1\" = -n ] && [ \"$2\" = -- ] || exit 2\nshift 2\nPATH=\(dir)/bin:$PATH exec \"$@\"\n".utf8).write(to: URL(fileURLWithPath: sudo))
+    chmod(sudo, 0o755)
+    var prod = SavedServer(address: "localhost")!
+    prod.prod = true
+    ServerLock.servers = { [prod] }
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    let app = AppDelegate()
+    app.panels = [panel]
+    let t = SFTPTarget.local(sudo: sudo).asRoot(false)
+    var asked: [(String, [String], Int?)] = []
+    AppDelegate.answering = { m, b, d in asked.append((m, b, d)); return d ?? 0 }   // ↩
+    let unit = ServiceUnit(unit: "web.service", active: "active", sub: "running")
+    #expect(await app.runThere(Services.restart(unit), on: t.asRoot(), action: "restart", busy: "…", done: "Restarted",
+                               ask: ("Restart web on localhost?", "Restart"), in: panel) == false)
+    #expect(asked.count == 1 && asked[0].1 == ["Restart", "Cancel"] && asked[0].2 == 1, "↩ is Cancel")
+    #expect(!FileManager.default.fileExists(atPath: dir + "/systemctl.log") && !FileManager.default.fileExists(atPath: AuditLog.path))
+    AppDelegate.answering = { _, _, _ in 0 }   // Restart
+    app.serviceItem(unit, on: t, of: SavedServer(target: t)).keys[Shortcut("cmd+r")!]?()
+    await until { FileManager.default.fileExists(atPath: AuditLog.path) }
+    #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "restart -- web.service\n")
+    #expect((try? String(contentsOfFile: AuditLog.path, encoding: .utf8))?.contains(#""action":"restart""#) == true)
 }
 
 /// On a production server a restart asks first (↩ = Cancel) and says what runs, as whom; elsewhere it just runs.

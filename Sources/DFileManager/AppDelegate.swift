@@ -1181,9 +1181,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// A sheet with `buttons` (the last one is Cancel / ⎋) on `sheetWindow` (default: the main one); returns the index pressed.
     /// `default`: the button ↩ answers (else the first). Esc still answers Cancel when ↩ took its key.
     func choose(_ message: String, info: String, _ buttons: [String], default: Int? = nil, on sheetWindow: NSWindow? = nil) async -> Int {
+        if let answer = Self.answering { return answer(message, buttons, `default`) }
         if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }   // asked by a save in another app: the Dock icon bounces
         return await Self.sheet(Self.alert(message, info: info, buttons, default: `default`), on: sheetWindow ?? window)
     }
+
+    /// Tests: answers `choose` instead of a sheet (the message, the buttons, the one ↩ presses).
+    static var answering: (@MainActor (String, [String], Int?) -> Int)?
 
     /// `alert` as a sheet on `window`; the button's index. A Cancel that took ↩ (`alert(default:)`) answers ⎋ too.
     static func sheet(_ alert: NSAlert, on window: NSWindow) async -> Int {
