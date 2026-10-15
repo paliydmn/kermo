@@ -467,6 +467,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let started = Date()
         // Set before the sort: the rows come from it (`sortedAll`), and the resolve after finds nothing to change.
         let linkDirs = newPath == path && watcher != nil ? Set(all.filter(\.linkDir).map(\.name)) : []
+        // A re-list (the watcher's, mostly) that finds what's shown: told off the main thread, so it costs it nothing.
+        let shown = newPath == path && watcher != nil && select == nil && keep == nil ? all : nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, gen == self.loadGen, self.loadedGen < gen else { return }
@@ -483,11 +485,22 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                             DirSync.mtimeTolerance([newPath]), FolderID(path: newPath))
                 }
             }
+            // Not in the listing's work: another panel's call may have run that one, against its own rows.
+            var same = false
+            if let shown, case .success(let r) = result { same = await Blocking.run(.userInitiated) { r.0 == shown } }
             guard let self, gen == loadGen else { return }
             loadedGen = gen
             busyMessage = busyOps.last?.message
             lastLoadSeconds = Date().timeIntervalSince(started)
             switch result {
+            case .success(let (items, free, _, _, tolerance, folder)) where same && newPath == path && watcher != nil:
+                // Nothing changed: the rows, marks, cursor and sort stay; the free space, git status and links may have.
+                freeSpace = free
+                mtimeTolerance = tolerance
+                if folder != watchedID { watch() }
+                updateStatus()
+                refreshGit()
+                resolveLinks(items, in: newPath, gen: gen)
             case .success(let (items, free, sorted, order, tolerance, folder)):
                 var old = path, history = history
                 let changed = newPath != old || watcher == nil
@@ -537,7 +550,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                     onPathChange?()
                 } else {
                     select = select ?? currentName   // where the cursor is now, not when the reload started
-                    marked.formIntersection(items.map(\.name))
+                    if !marked.isEmpty { marked.formIntersection(items.map(\.name)) }
                     if folder != watchedID { watch() }
                 }
                 if let keep { restore(keep, in: items) }
@@ -1203,7 +1216,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         all = items
         (sortedAll, sortedBy) = sorted
         if sameDir {
-            marked.formIntersection(items.map(\.name))
+            if !marked.isEmpty { marked.formIntersection(items.map(\.name)) }
         } else {
             marked.removeAll()
             clearSizes()

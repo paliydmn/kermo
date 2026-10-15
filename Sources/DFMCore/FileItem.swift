@@ -1,6 +1,6 @@
 import Foundation
 
-public struct FileItem: Sendable {
+public struct FileItem: Sendable, Equatable {
     public enum Kind: UInt8, Sendable { case file, dir, link, other }
 
     public let name: String

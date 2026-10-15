@@ -95,3 +95,25 @@ private func item(_ name: String, _ kind: FileItem.Kind = .file, size: Int64 = 0
         #expect(shown() == want, "\(text)")
     }
 }
+
+/// A re-list that finds the folder as shown leaves the rows alone (the same array, nothing re-filtered or redrawn);
+/// one that finds a change shows it.
+@MainActor @Test func anUnchangedReListLeavesTheRows() async throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    for name in ["a", "b"] { FileManager.default.createFile(atPath: d + "/" + name, contents: Data()) }
+    let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    await waitUntil { panel.listedItems.count == 2 }
+    try await Task.sleep(for: .milliseconds(300))   // the first listing's link resolve and git look are done
+    func rowsBuffer() -> UnsafeRawPointer? { panel.listedItems.withUnsafeBufferPointer { UnsafeRawPointer($0.baseAddress) } }
+    let before = rowsBuffer()
+    panel.reload()
+    try await Task.sleep(for: .seconds(1))   // nothing to wait for: it must not come
+    #expect(rowsBuffer() == before && panel.listedItems.map(\.name) == ["a", "b"])
+    FileManager.default.createFile(atPath: d + "/c", contents: Data())
+    panel.reload()
+    await waitUntil { panel.listedItems.count == 3 }
+    #expect(rowsBuffer() != before)
+}
