@@ -43,7 +43,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     private let tabBar = NSStackView()   // one button per tab, each with a close ×
     private let pathField = NSTextField(string: "")
-    private let filterField = NSTextField(string: "")
+    let filterField = NSTextField(string: "")   // internal: tests type into it
     private let statusLabel = NSTextField(labelWithString: "")
     private let errorIcon = NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Error")!)
     /// The status line says what failed: red behind a warning sign, in an inactive panel too. The next status clears it.
@@ -71,10 +71,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var all: [FileItem] = [] { didSet { sortedAll = nil; sorting = nil; sortGen += 1 } }   // as listed
     /// `all` in the current sort order, cached: filtering and toggling hidden files reuse it instead of
     /// re-sorting (1M names take ~1 s to sort, 80 ms to filter).
-    private var sortedAll: [FileItem]?
+    private var sortedAll: [FileItem]? { didSet { folded = nil } }
     private var sortedBy: (key: SortKey, ascending: Bool)?
-    /// The order a big listing is being sorted in off the main thread, and which listing that is (`all` changes it).
-    private var sorting: (key: SortKey, ascending: Bool)?
+    /// `sortedAll`'s names as masks see them, folded once a filter needs them: typing in the filter folded every name on every key.
+    private var folded: Mask.Folded?
+    /// What a big listing is being sorted (and folded) for off the main thread, and which listing that is (`all` changes it).
+    private var sorting: (key: SortKey, ascending: Bool, fold: Bool)?
     private var sortGen = 0
     /// Sorting more than this many waits for the main thread no more: it goes off it (5k names take ~4 ms).
     static let sortOnMain = 5000
@@ -612,14 +614,19 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         if newFolder { flashed = nil }
         let oldRow = table.selectedRow, oldName = currentName
         let cursorShown = NSLocationInRange(oldRow, table.rows(in: table.visibleRect))
-        if sortedAll == nil || sortedBy?.key != sortKey || sortedBy?.ascending != ascending {
+        let fresh = sortedAll != nil && sortedBy?.key == sortKey && sortedBy?.ascending == ascending
+        if !fresh || filter != nil && folded == nil {
             guard all.count <= Self.sortOnMain else { return sortOffMain(select: name, newFolder: newFolder) }
-            sortedAll = all.sortedForPanel(by: sortKey, ascending: ascending)
-            sortedBy = (sortKey, ascending)
+            if !fresh { (sortedAll, sortedBy) = (all.sortedForPanel(by: sortKey, ascending: ascending), (sortKey, ascending)) }
+            if filter != nil { folded = Mask.Folded(sortedAll!.lazy.map(\.name)) }
         }
-        let changed = gitOnly ? git?.marks : nil
+        let sorted = sortedAll!, changed = gitOnly ? git?.marks : nil, mask = filter, names = folded
         // Results already went through the search's (or git's) own idea of hidden; ⌘⇧. would drop .gitignore.
-        rows = sortedAll!.filter { (showHidden || searchTitle != nil || !$0.isHidden) && (filter?.matches($0.name) ?? true) && (changed?[$0.name] != nil || changed == nil) }
+        rows = sorted.indices.filter { i in
+            let it = sorted[i]
+            return (showHidden || searchTitle != nil || !it.isHidden) && (mask.map { $0.matches(i, of: names!, name: it.name) } ?? true)
+                && (changed?[it.name] != nil || changed == nil)
+        }.map { sorted[$0] }
         totalSize = bytes(of: rows)
         guard isViewLoaded else { return }
         table.reloadData()   // drops the selection: Quick Look is told once the cursor is back
@@ -634,23 +641,31 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// main thread, the rows on screen staying as they are till it's back; the cursor stays on its name. Rows of
     /// another place (an archive's folder) go at once: they mustn't pass for these. One sort per order at a time.
     private func sortOffMain(select name: String?, newFolder: Bool) {
-        let key = sortKey, asc = ascending, items = all, gen = sortGen
+        let key = sortKey, asc = ascending, fold = filter != nil, items = all, gen = sortGen
+        let done = sortedBy?.key == key && sortedBy?.ascending == asc ? sortedAll : nil   // only the names to fold
         if newFolder { rows = []; table.reloadData(); updateStatus() }
-        guard sorting?.key != key || sorting?.ascending != asc else { return }   // on its way: it shows what's asked by then
-        sorting = (key, asc)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, gen == self.sortGen, self.sorting != nil, self.busyMessage == nil else { return }
-                self.busyMessage = "Sorting…"
+        // On its way: it shows what's asked by then.
+        guard sorting.map({ $0.key != key || $0.ascending != asc || fold && !$0.fold }) ?? true else { return }
+        sorting = (key, asc, fold)
+        if done == nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, gen == self.sortGen, self.sorting != nil, self.busyMessage == nil else { return }
+                    self.busyMessage = "Sorting…"
+                }
             }
         }
         Task { [weak self] in
-            let sorted = await Blocking.run(.userInitiated) { items.sortedForPanel(by: key, ascending: asc) }
+            let (sorted, names) = await Blocking.run(.userInitiated) { () -> ([FileItem], Mask.Folded?) in
+                let sorted = done ?? items.sortedForPanel(by: key, ascending: asc)
+                return (sorted, fold ? Mask.Folded(sorted.lazy.map(\.name)) : nil)
+            }
             guard let self else { return }
-            if gen == sortGen, sorting?.key == key && sorting?.ascending == asc { sorting = nil }
+            if gen == sortGen, sorting.map({ $0.key == key && $0.ascending == asc && $0.fold == fold }) == true { sorting = nil }
             if sorting == nil, busyMessage == "Sorting…" { busyMessage = busyOps.last?.message }
             guard gen == sortGen, key == sortKey && asc == ascending else { return }   // clicked again: that sort shows
             (sortedAll, sortedBy) = (sorted, (key, asc))
+            folded = names
             applyView(select: name ?? currentName, newFolder: newFolder)
         }
     }
@@ -1297,10 +1312,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     func addSearchResults(_ items: [FileItem], from flag: CancelFlag) {
         guard flag === searchFlag, searchTitle != nil else { return }
         // To the end as found, sorted once when the search ends: re-sorting every batch made 100 000 hits a minute's work.
-        var sorted = sortedAll
+        var sorted = sortedAll, names = folded
         all += items
         sorted?.append(contentsOf: items)
+        names?.append(items.lazy.map(\.name))
         sortedAll = sorted
+        folded = names
         applyView(select: currentName)
     }
 

@@ -6,7 +6,7 @@ import Testing
 // Task 13: what the main thread no longer does in big folders.
 
 @MainActor private func waitUntil(_ done: () -> Bool) async {
-    for _ in 0..<500 where !done() { try? await Task.sleep(for: .milliseconds(10)) }
+    for _ in 0..<500 { if done() { return }; try? await Task.sleep(for: .milliseconds(10)) }
 }
 private func tempDir() -> String {
     let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t13ui-" + UUID().uuidString
@@ -65,4 +65,33 @@ private func item(_ name: String, _ kind: FileItem.Kind = .file, size: Int64 = 0
     await waitUntil { panel.listedItems.first?.name != before.first }
     #expect(panel.listedItems.map(\.size) == (0..<n).reversed().map(Int64.init))
     #expect(panel.currentName == "f03000")
+}
+
+/// The filter over a big listing, its names folded once off the main thread, shows what each name folded on every
+/// key did: typed on, back, a glob, Cyrillic in another case, NFD.
+@MainActor @Test func aBigListingsFilterMatchesAsBefore() async throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    await waitUntil { panel.statusText.contains("0 items") }
+    let names = (0..<(PanelViewController.sortOnMain + 500)).map { i in
+        (i % 3 == 0 ? "Файл-" : i % 3 == 1 ? "file" : "cafe\u{301}") + "\(i).\(["log", "txt"][i % 2])"
+    }
+    let flag = panel.beginSearch("t13")
+    panel.addSearchResults(names.map { item($0) }, from: flag)
+    panel.finishSearch(flag)
+    let sorted = names.map { item($0) }.sortedForPanel(by: .name, ascending: true).map(\.name)
+    await waitUntil { panel.listedItems.map(\.name) == sorted }
+    func shown() -> Set<String> { Set(panel.listedItems.map(\.name)) }
+    func expected(_ text: String) -> Set<String> { Set(names.filter { Mask(filter: text)!.matches($0) }) }
+    panel.beginFilter()
+    for text in ["f", "fi", "fil", "file1", "file", "ФАЙЛ-1", "café", "*.LOG", "1*.log", "1"] {
+        let want = expected(text)   // once: the wait asks again and again
+        panel.filterField.stringValue = text
+        panel.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: panel.filterField))
+        await waitUntil { shown() == want }
+        #expect(shown() == want, "\(text)")
+    }
 }
