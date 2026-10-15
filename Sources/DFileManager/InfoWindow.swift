@@ -297,32 +297,62 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
         }
     }
 
-    @objc private func md5() { checksum("MD5") { var h = Insecure.MD5(); return ({ h.update(data: $0) }, { h.finalize().hex }) } }
-    @objc private func sha1() { checksum("SHA-1") { var h = Insecure.SHA1(); return ({ h.update(data: $0) }, { h.finalize().hex }) } }
-    @objc private func sha256() { checksum("SHA-256") { var h = SHA256(); return ({ h.update(data: $0) }, { h.finalize().hex }) } }
+    @objc private func md5() { checksum("MD5") }
+    @objc private func sha1() { checksum("SHA-1") }
+    @objc private func sha256() { checksum("SHA-256") }
 
-    /// Streams the file through the hasher in 1 MB chunks off the main thread.
-    private func checksum(_ name: String, _ make: @escaping @Sendable () -> ((Data) -> Void, () -> String)) {
+    /// The pass the first checksum button started; the others take its result, waiting for it if it's still reading.
+    private var digests: Task<Result<[String: String], DigestFailure>, Never>?
+    struct DigestFailure: Error { let text: String }
+
+    private func checksum(_ name: String) {
         extra.append("\(name): computing…")
         let i = extra.count - 1
-        let path = path, cancel = cancel   // closing the window stops it
+        let pass = digests ?? {
+            let path = path, cancel = cancel   // closing the window stops it
+            let pass = Task { await Blocking.run(.userInitiated) { Self.digests(path, cancel: cancel) } }
+            digests = pass
+            return pass
+        }()
         Task { [weak self] in
-            let result = await Blocking.run(.userInitiated) { () -> String in
-                var st = stat()   // a placeholder would be downloaded whole just to hash it
-                if stat(path, &st) == 0 && st.st_flags & UInt32(SF_DATALESS) != 0 { return "skipped: not downloaded (iCloud / Dropbox)" }
-                if let what = FileInfo.notRegular(path) { return "skipped: \(what)" }   // a FIFO would block the read for good
-                guard let h = FileHandle(forReadingAtPath: path) else { return "can't read (\(String(cString: strerror(errno))))" }
-                defer { try? h.close() }
-                let (update, finish) = make()
-                do {   // a read that fails (a disk error, a share gone) says so: a hash of what came before would pass for the file's
-                    while !cancel.isCancelled, let chunk = try h.read(upToCount: 1 << 20), !chunk.isEmpty { update(chunk) }
-                } catch { return "can't read (\(error.localizedDescription))" }
-                return cancel.isCancelled ? "stopped" : finish()
-            }
+            let result = await pass.value
             guard let self else { return }
-            extra[i] = "\(name):".padding(toLength: 12, withPad: " ", startingAt: 0) + result
+            if case .failure = result, digests == pass { digests = nil }   // the next click tries again
+            let text = switch result {
+            case .success(let all): all[name] ?? ""
+            case .failure(let f): f.text
+            }
+            extra[i] = "\(name):".padding(toLength: 12, withPad: " ", startingAt: 0) + text
             render()
         }
+    }
+
+    /// MD5, SHA-1 and SHA-256 of the file, by name, in one read of it (1 MB at a time): on a slow disk three reads
+    /// fight each other.
+    nonisolated static func digests(_ path: String, cancel: CancelFlag) -> Result<[String: String], DigestFailure> {
+        func fail(_ text: String) -> Result<[String: String], DigestFailure> { .failure(DigestFailure(text: text)) }
+        var st = stat()   // a placeholder would be downloaded whole just to hash it
+        if stat(path, &st) == 0 && st.st_flags & UInt32(SF_DATALESS) != 0 { return fail("skipped: not downloaded (iCloud / Dropbox)") }
+        if let what = FileInfo.notRegular(path) { return fail("skipped: \(what)") }   // a FIFO would block the read for good
+        let fd = Darwin.open(path, O_RDONLY | O_CLOEXEC)
+        guard fd >= 0 else { return fail("can't read (\(String(cString: strerror(errno))))") }
+        defer { Darwin.close(fd) }
+        var md5 = Insecure.MD5(), sha1 = Insecure.SHA1(), sha256 = SHA256()
+        let buf = UnsafeMutableRawBufferPointer.allocate(byteCount: 1 << 20, alignment: 16)
+        defer { buf.deallocate() }
+        while !cancel.isCancelled {
+            let n = Darwin.read(fd, buf.baseAddress, buf.count)
+            if n < 0 && errno == EINTR { continue }
+            // a read that fails (a disk error, a share gone) says so: a hash of what came before would pass for the file's
+            if n < 0 { return fail("can't read (\(String(cString: strerror(errno))))") }
+            if n == 0 { break }
+            let chunk = UnsafeRawBufferPointer(rebasing: buf[..<n])
+            md5.update(bufferPointer: chunk)
+            sha1.update(bufferPointer: chunk)
+            sha256.update(bufferPointer: chunk)
+        }
+        if cancel.isCancelled { return fail("stopped") }
+        return .success(["MD5": md5.finalize().hex, "SHA-1": sha1.finalize().hex, "SHA-256": sha256.finalize().hex])
     }
 }
 
