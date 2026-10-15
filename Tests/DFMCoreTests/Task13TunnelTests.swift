@@ -154,7 +154,7 @@ private func dialV6(_ port: Int) -> Int32 {
     return s
 }
 
-private final class Locked<T>: @unchecked Sendable {
+final class Locked<T>: @unchecked Sendable {
     private let lock = NSLock()
     private var v: T
     init(_ value: T) { v = value }

@@ -96,9 +96,12 @@ public final class FileJob: @unchecked Sendable {
     /// Each folder's files and bytes as `measure` counted them: what Skip adds to the progress, without a second walk.
     var measured: [String: (files: Int, bytes: Int64)] = [:]
     static func foldedPath(_ p: String) -> String { p.precomposedStringWithCanonicalMapping.lowercased() }
-    /// Count the totals while copying instead of before (nil: when the sources are on this Mac's internal disk — an
-    /// SSD, where two walks of one tree don't slow each other; a hard disk or a stick would seek between them).
+    /// A copy counts its totals while copying instead of before (nil: when the sources are on this Mac's internal
+    /// disk — an SSD, where two walks of one tree don't slow each other; a hard disk or a stick would seek between
+    /// them). Never a move: it renames or deletes the sources from under the count.
     var countWhileCopying: Bool?
+    /// Tests: runs on the counting thread before it counts.
+    var beforeCounting: @Sendable () -> Void = {}
     /// Fired by `cancel()`: a transfer over SFTP drops its connections, so a stalled server can't hold it up.
     let cancelFlag = CancelFlag()
 
@@ -189,9 +192,10 @@ public final class FileJob: @unchecked Sendable {
             }
             if countsItems {
                 update { $0.totalFiles = sources.count; $0.state = .running }
-            } else if countWhileCopying ?? sources.allSatisfy(Self.isInternal) {
+            } else if kind == .copy && countWhileCopying ?? sources.allSatisfy(Self.isInternal) {
                 update { $0.counting = true; $0.state = .running }
                 Thread { [self] in
+                    beforeCounting()
                     let (files, bytes) = count()
                     if !over.isCancelled { update { $0.totalFiles = files; $0.totalBytes = bytes; $0.counting = false } }
                 }.start()

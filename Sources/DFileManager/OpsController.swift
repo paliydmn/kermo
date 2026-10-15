@@ -283,7 +283,7 @@ final class JobRow {   // internal for tests
             } else if p.totalBytes > 0 {
                 s += " · \(fmt.string(fromByteCount: p.doneBytes)) of \(fmt.string(fromByteCount: p.totalBytes))"
                 if speed > 1, !job.isPaused {
-                    let eta = Int(Double(p.totalBytes - p.doneBytes) / speed)
+                    let eta = Int(Double(max(0, p.totalBytes - p.doneBytes)) / speed)
                     s += " · \(fmt.string(fromByteCount: Int64(speed)))/s · \(eta / 60):\(String(format: "%02d", eta % 60))"
                 }
             }

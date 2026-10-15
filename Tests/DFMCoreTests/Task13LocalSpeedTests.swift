@@ -14,6 +14,13 @@ import Testing
     #expect(root["dev"] == .some(true))
     #expect(volumes["Data"] == .some(true))
     #expect(try DirLister.list("/").count == root.count)
+    // everything under /System/Volumes is a volume of its own; Data has its device, and was walked whole before
+    #expect(DirLister.measure("/System/Volumes").files < 10_000)
+    var q = SearchQuery(root: "/System/Volumes")
+    q.includeHidden = true
+    var found = 0
+    FileSearch.run(q, isCancelled: { found > 10_000 }) { _ in found += 1 }
+    #expect(found < 10_000)
 }
 
 /// A two-byte letter cut by the 1 MB edge is folded once both halves are read (only the new bytes are folded).
@@ -29,26 +36,56 @@ import Testing
     #expect(!FileSearch.fileContains(p, Array("ПРИВІТx".utf8), caseSensitive: true))
 }
 
-/// On this Mac's own disk a copy starts at once and counts its totals alongside; they end up the same, and the
-/// bar is determinate again when it's done. A disk image (the RAM disk), a stick or a share counts first, as before.
-@Test func aCopyCountsItsTotalsAlongside() throws {
-    let d = NSTemporaryDirectory() + "k13count-" + UUID().uuidString
-    defer { try? FileManager.default.removeItem(atPath: d) }
+private func countTree(_ d: String) throws {
     for i in 0..<20 {
         try FileManager.default.createDirectory(atPath: "\(d)/src/d\(i)", withIntermediateDirectories: true)
         for j in 0..<10 { try Data(count: j).write(to: URL(fileURLWithPath: "\(d)/src/d\(i)/f\(j)")) }
     }
-    try FileManager.default.createDirectory(atPath: d + "/dst", withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(atPath: d + "/dst/src/d3", withIntermediateDirectories: true)
+}
+
+/// On this Mac's own disk a copy starts at once and counts its totals alongside. The count ends first: its totals
+/// show while the copy goes on (asked here about a file that's there already) and the bar is determinate again.
+@Test func aCopyCountsItsTotalsAlongside() throws {
+    let d = NSTemporaryDirectory() + "k13count-" + UUID().uuidString
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    try countTree(d)
+    try Data("old".utf8).write(to: URL(fileURLWithPath: d + "/dst/src/d3/f5"))
     let job = FileJob(.copy, sources: [d + "/src"], destDir: d + "/dst")
     job.countWhileCopying = true
+    let seen = Locked<FileJob.Progress?>(nil)
+    job.resolveConflict = { [unowned job] c in
+        if c.bothDirs { return (.overwrite, false) }
+        for _ in 0..<500 where job.progress.counting { usleep(10_000) }   // the count has its own thread: wait for it
+        seen.update { $0 = job.progress }
+        return (.overwrite, false)
+    }
     job.run()
+    let mid = try #require(seen.value)
+    #expect(!mid.counting && mid.totalFiles == 200 && mid.totalBytes == 900 && mid.doneFiles < 200)
     let p = job.progress
-    #expect(p.state == .done && !p.counting)
-    #expect(p.totalFiles == 200 && p.doneFiles == 200 && p.totalBytes == 900 && p.doneBytes == 900)
+    #expect(p.state == .done && !p.counting && p.totalFiles == 200 && p.doneFiles == 200 && p.totalBytes == 900)
     #expect(DirLister.measure(d + "/dst/src") == (200, 900))
+}
 
-    #expect(FileJob.isInternal(Foundation.NSTemporaryDirectory()))
-    if d.hasPrefix(ramDisk + "/") { #expect(!FileJob.isInternal(d)) }
+/// The copy ends before its count: what it did is its totals, and the count, once it gets going, changes nothing.
+@Test func aCopyDoneBeforeItsCountTakesWhatItDid() throws {
+    let d = NSTemporaryDirectory() + "k13count-" + UUID().uuidString
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    try countTree(d)
+    let job = FileJob(.copy, sources: [d + "/src"], destDir: d + "/dst")
+    job.countWhileCopying = true
+    let gate = DispatchSemaphore(value: 0), counted = DispatchSemaphore(value: 0)
+    job.beforeCounting = { gate.wait(); counted.signal() }
+    job.resolveConflict = { _ in (.overwrite, false) }
+    job.run()
+    var p = job.progress
+    #expect(p.state == .done && !p.counting && p.totalFiles == 200 && p.doneFiles == 200 && p.totalBytes == 900)
+    gate.signal()
+    counted.wait()
+    usleep(50_000)   // the count after it, cut short (the copy is over): it must not write its totals
+    p = job.progress
+    #expect(p.totalFiles == 200 && p.totalBytes == 900 && !p.counting)
 }
 
 /// The RAM disk test.sh makes, if it's there: a mount point whose parent (/Volumes) is on this Mac's own volume.
@@ -69,6 +106,23 @@ private var ramDiskMounted: Bool {
         q.includeHidden = true
         FileSearch.run(q, isCancelled: { found.count > 10_000 }) { found.append($0.name) }
         #expect(!found.contains { $0.hasPrefix("KermoRAM/") })
+    }
+
+    /// A move counts first even where a copy would count alongside: it deletes its sources from under the count.
+    @Test func aMoveNeverCountsAlongside() throws {
+        let src = Foundation.NSTemporaryDirectory() + "k13move-" + UUID().uuidString   // this Mac's volume
+        let dst = ramDisk + "/k13move-" + UUID().uuidString                            // another one
+        defer { try? FileManager.default.removeItem(atPath: src); try? FileManager.default.removeItem(atPath: dst) }
+        try FileManager.default.createDirectory(atPath: src + "/t", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: dst, withIntermediateDirectories: true)
+        try Data("abc".utf8).write(to: URL(fileURLWithPath: src + "/t/f"))
+        let job = FileJob(.move, sources: [src + "/t"], destDir: dst)
+        job.countWhileCopying = true
+        let ran = Locked(false)
+        job.beforeCounting = { ran.update { $0 = true } }
+        job.run()
+        #expect(!ran.value)
+        #expect(job.progress.totalFiles == 1 && job.progress.doneFiles == 1 && FileJob.lstat(dst + "/t/f") != nil)
     }
 
     /// A move whose folder merges into a mount point: /Volumes is on the source's volume, /Volumes/KermoRAM isn't,
