@@ -40,12 +40,33 @@ Right-click a server row in the sidebar (or click **⋯** under the mouse):
 - **Edit…** opens the sheet again. **Duplicate…** makes a copy named "name copy"; its tunnels are copied but turned off.
 - **Delete…** removes the server and its saved passwords from the Keychain (unless another saved server has the same address). It offers to delete its [file history](server-files.md#file-history) too. Open sessions stay open and its tunnels turn off.
 - **Pin** keeps the server at the top of the Servers list. **Remove from Recents** drops a recent address.
-- **Open SSH Session**, **Open SFTP**, **Open SFTP in New Tab / in Other Panel**, **Open SFTP as Root** ([root panel](root-panel.md)), **Forward Port…** and **Tunnels** ([tunnels](tunnels.md); both on any server row), **Copy SSH Command**, **Copy SSH Key to Server…** ([below](#copy-your-ssh-key-to-a-server)) and **Close All Sessions** (the connection closes too, unless a tunnel is on; **Disconnect** also turns tunnels off).
+- **Open SSH Session**, **Open SFTP**, **Open SFTP in New Tab / in Other Panel**, **Open SFTP as Root** ([root panel](root-panel.md)), **Forward Port…** and **Tunnels** ([tunnels](tunnels.md); both on any server row), **Services…** and **Containers…** ([below](#services-and-containers)), **Copy SSH Command**, **Copy SSH Key to Server…** ([below](#copy-your-ssh-key-to-a-server)) and **Close All Sessions** (the connection closes too, unless a tunnel is on; **Disconnect** also turns tunnels off).
 - **Mark as Production** / **Unmark Production** and **Save as Production…**: see below.
 
 **Go ▸ Edit SSH Config** opens `~/.ssh/config` in the editor and creates it with an example if it doesn't exist.
 
 To run one command on several servers at once, choose **Run on Servers…** in the Servers header's right-click menu: see [Run on several servers](commands.md#run-on-several-servers).
+
+## Services and containers
+
+**Services…** and **Containers…** (⌘⇧P, a server's sidebar menu) list what a server runs, in the same search window as Forward Port…: on the server of the active panel or SSH tab, otherwise you pick one. A locked server asks for Touch ID first; ⎋ stops the look.
+
+**Services…** asks the server's `systemctl` (systemd's JSON where it has it, its table on an old one). A row is the service's name, its state (`active · running`, `failed`) and its description; failed ones come first, then by name, and typing searches all three. Services systemd only knows by name (`not-found`) are left out.
+
+| Key | Does |
+|---|---|
+| ↩ | `systemctl status` in an output window |
+| ⌘L | its log as it goes (`journalctl -u … -n 200 -f`) in an output window; ⎋ stops it, ⎋ again closes |
+| ⌘E | its unit file in the editor, with what any server file gets there: history, and for `/etc/systemd/system` a check and `daemon-reload` after saving |
+| ⌘R | restart it, as root |
+
+Status and log run as you. Without the `adm` or `systemd-journal` group the log shows only your own services' lines, and `journalctl` says so. The restart runs as root through the server's `sudo`, the way a [reload after a save](config-checks.md) runs: `sudo -n` where it needs no password, otherwise the sudo password (kept, from the Keychain, or asked). A unit file only root may write opens too, and the editor says to open the panel as root (⌃⌘R) to save it; from a root panel ⌘E opens it as root.
+
+**Containers…** asks the server's `docker`, or `podman` where there's no docker, as you: the containers your user may see. A row is the name, its state and status (`running · Up 3 hours`) and its image; running ones first. ↩ shows its log as it goes (`logs --tail 200 -f`), ⌘R restarts it, ⌘C copies its name.
+
+The connection a look logs in with stays for its idle time (10 minutes, 60 seconds for a locked server) even when no panel shows the server, so the next look, ↩ or ⌘R needs no login; **Disconnect** ends it, and a locked server's ends when the screen locks. The same goes for Forward Port… and Run on Servers….
+
+On a production server a restart asks first, ↩ being Cancel, and goes into the [production log](safety.md#production-log). A name goes into a command only if it's made of the characters systemd or docker allow in one; any other name is listed, and its keys only say why nothing runs. A log stopped with ⎋ stops on the server too, not just on this Mac.
 
 ## Copy your SSH key to a server
 

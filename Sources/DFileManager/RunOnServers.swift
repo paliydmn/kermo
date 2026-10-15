@@ -60,6 +60,7 @@ extension AppDelegate {
     /// own do: the next run needs no login.
     static func start(_ command: String, on run: [RunOnServersSheet.Choice], of count: Int, skipped: [String], env: [String: String],
                       again: (@MainActor (NSWindow?) async -> Bool)? = nil) {
+        run.forEach { (NSApp.delegate as? AppDelegate)?.noteLook($0.target) }   // not ended by the next panel change
         Shell.run(command, on: run.map { MultiRun.Server(name: $0.title, target: $0.target) }, skipped: skipped, env: env,
                   title: "Run on \(count) server\(count == 1 ? "" : "s"): \(command)", again: again) { i, o in
             let t = run[i].target   // as F2's: ran as the user (ssh)

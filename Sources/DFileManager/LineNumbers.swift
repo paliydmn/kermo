@@ -4,6 +4,8 @@ import DFMCore
 /// Line-number gutter for a TextKit 1 NSTextView (create the view with `usingTextLayoutManager: false`).
 final class LineNumberRuler: NSRulerView {
     private var lineStarts: [Int]?   // UTF-16 offsets of line starts; rebuilt lazily after edits
+    /// Lines before the text's first (a followed log's that dropped off the top): numbers go on from there.
+    var firstLine = 0
 
     init(textView: NSTextView) {
         super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
@@ -65,7 +67,7 @@ final class LineNumberRuler: NSRulerView {
                 y = lm.extraLineFragmentRect.minY   // empty last line
             }
             let p = convert(NSPoint(x: 0, y: y + tv.textContainerInset.height), from: tv)
-            let label = "\(line + 1)" as NSString
+            let label = "\(firstLine + line + 1)" as NSString
             let size = label.size(withAttributes: attrs)
             label.draw(at: NSPoint(x: ruleThickness - size.width - 6, y: p.y + 1), withAttributes: attrs)
             line += 1
@@ -94,5 +96,53 @@ enum SyntaxColors {
             storage.addAttribute(.foregroundColor, value: color(token), range: range)
         }
         storage.endEditing()
+    }
+}
+
+/// Terminal colors (`ANSI`) as this app's, shared by the viewer and the output window: system colors, so each reads
+/// in light and dark; black and white are the text's own grays.
+enum ANSIColors {
+    static func color(_ c: Int) -> NSColor {
+        switch c % 8 {
+        case 0: .secondaryLabelColor
+        case 1: .systemRed
+        case 2: .systemGreen
+        case 3: c < 8 ? .systemOrange : .systemYellow
+        case 4: .systemBlue
+        case 5: .systemPink
+        case 6: .systemCyan
+        default: .textColor
+        }
+    }
+
+    static func attributes(_ s: ANSI.Style, font: NSFont) -> [NSAttributedString.Key: Any] {
+        var a: [NSAttributedString.Key: Any] = [:]
+        if let c = s.color { a[.foregroundColor] = color(c) }
+        if s.bold { a[.font] = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) }
+        return a
+    }
+
+    /// `runs` (from `offset` on in `storage`) in their colors.
+    static func apply(_ runs: [ANSI.Run], to storage: NSTextStorage, offset: Int = 0, font: NSFont) {
+        guard !runs.isEmpty else { return }
+        let bold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)   // once, not per run
+        storage.beginEditing()
+        for r in runs where r.range.location + offset + r.range.length <= storage.length {
+            var a: [NSAttributedString.Key: Any] = r.style.bold ? [.font: bold] : [:]
+            if let c = r.style.color { a[.foregroundColor] = color(c) }
+            storage.addAttributes(a, range: NSRange(location: r.range.location + offset, length: r.range.length))
+        }
+        storage.endEditing()
+    }
+
+    /// The level tints (`TextFormat.logLevels`) of lines without a color of their own: a colored line keeps its colors.
+    static func uncolored(_ levels: [(range: NSRange, level: TextFormat.Level)], _ runs: [ANSI.Run]) -> [(range: NSRange, level: TextFormat.Level)] {
+        let colored = runs.filter { $0.style.color != nil }
+        guard !colored.isEmpty else { return levels }
+        var j = 0
+        return levels.sorted { $0.range.location < $1.range.location }.filter { l in   // both by place: one pass
+            while j < colored.count, NSMaxRange(colored[j].range) <= l.range.location { j += 1 }
+            return !(j < colored.count && colored[j].range.location < NSMaxRange(l.range))
+        }
     }
 }

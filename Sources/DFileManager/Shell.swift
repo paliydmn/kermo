@@ -12,9 +12,11 @@ enum Shell {
         OutputWindow.start(command, in: dir, on: nil, diff: diff, title: title, onExit: onExit)
     }
 
-    /// On a server, in its folder `dir`, over the panel's ssh connection (the login shell there runs it).
-    static func run(_ command: String, on server: SFTPTarget, in dir: String, title: String? = nil, onExit: @escaping @MainActor (Int32) -> Void = { _ in }) {
-        OutputWindow.start(command, in: dir, on: server, diff: false, title: title, onExit: onExit)
+    /// On a server, in its folder `dir`, over the panel's ssh connection (the login shell there runs it). `follow`: a
+    /// simple command that runs until stopped (`journalctl -f`), which then ends there too (`SSHCommand.endsWithSSH`).
+    static func run(_ command: String, on server: SFTPTarget, in dir: String, follow: Bool = false, title: String? = nil,
+                    onExit: @escaping @MainActor (Int32) -> Void = { _ in }) {
+        OutputWindow.start(command, in: dir, on: server, diff: false, follow: follow, title: title, onExit: onExit)
     }
 
     /// One command on several servers (Run on Servers…), in one output window: each line as it comes, "web1 │ …", stderr
@@ -25,6 +27,12 @@ enum Shell {
     static func run(_ command: String, on servers: [MultiRun.Server], skipped: [String], env: [String: String], title: String,
                     again: (@MainActor (NSWindow?) async -> Bool)? = nil, ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
         OutputWindow.start(command, on: servers, skipped: skipped, env: env, title: title, again: again, ended: ended)
+    }
+
+    /// What the server's login shell runs for `command` in `dir`: a follow wrapped to end with ssh (its stdin then a
+    /// pipe held open, see `OutputWindow`).
+    static func remote(_ command: String, in dir: String, follow: Bool) -> String {
+        SSHCommand.inDir(dir, follow ? SSHCommand.endsWithSSH(command) : command)
     }
 
     /// Fire-and-forget (GUI tools like `code --diff`): no output window.
@@ -157,14 +165,14 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
     private static var open: [OutputWindow] = []
     private let process = Process()
     private let started = Date()
-    private static let ansi = try! NSRegularExpression(pattern: "\u{1B}\\[[0-9;?]*[A-Za-z]")
     /// Run on Servers': stops them all — no process of the window's own then.
     private var servers: CancelFlag?
     /// Set once they're all over: what `alive` reads, also at quit (no run loop to hear it then).
     private let over = CancelFlag()
 
-    static func start(_ command: String, in dir: String, on server: SFTPTarget?, diff: Bool, title: String?, onExit: @escaping @MainActor (Int32) -> Void) {
-        let w = OutputWindow(command, dir, server, diff, onExit)
+    static func start(_ command: String, in dir: String, on server: SFTPTarget?, diff: Bool, follow: Bool = false, title: String?,
+                      onExit: @escaping @MainActor (Int32) -> Void) {
+        let w = OutputWindow(command, dir, server, diff, follow, onExit)
         if let title { w.window?.title = title.bidiVisible }
         open.append(w)
         w.showWindow(nil)
@@ -195,7 +203,10 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         return (w, tv)
     }
 
-    private init(_ command: String, _ dir: String, _ server: SFTPTarget?, _ diff: Bool, _ onExit: @escaping @MainActor (Int32) -> Void) {
+    /// A follow's stdin, held open while its ssh runs and never written (`SSHCommand.endsWithSSH`).
+    private var held: FileHandle?
+
+    private init(_ command: String, _ dir: String, _ server: SFTPTarget?, _ diff: Bool, _ follow: Bool, _ onExit: @escaping @MainActor (Int32) -> Void) {
         let place = server.map { "🌐 \($0.host):\(dir)" } ?? (dir as NSString).abbreviatingWithTildeInPath
         let (w, tv) = Self.window()
         w.title = (server.map { "\($0.host) $ " } ?? "$ ") + command.bidiVisible
@@ -205,7 +216,7 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
 
         if let server {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            process.arguments = SSHCommand.arguments(server, command: SSHCommand.inDir(dir, command), tty: false)
+            process.arguments = SSHCommand.arguments(server, command: Shell.remote(command, in: dir, follow: follow), tty: false)
             process.environment = ProcessInfo.processInfo.environment.merging(SSHAskpass.env) { $1 }
             process.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
         } else {
@@ -213,7 +224,13 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
             process.arguments = ["-lc", command]
             process.currentDirectoryURL = URL(fileURLWithPath: dir)
         }
-        process.standardInput = FileHandle.nullDevice
+        if server != nil, follow {
+            let input = Pipe()
+            process.standardInput = input
+            held = input.fileHandleForWriting
+        } else {
+            process.standardInput = FileHandle.nullDevice
+        }
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
@@ -228,7 +245,7 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         }
         process.terminationHandler = { [weak self] p in
             let status = p.terminationStatus
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.status = status; self?.ended() } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.status = status; try? self?.held?.close(); self?.ended() } }
             // A child that keeps a pipe (`./server &`) would hold the report forever: half a second after the exit it comes anyway.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { MainActor.assumeIsolated { self?.ended(now: true) } }
         }
@@ -302,9 +319,11 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         let batch = NSMutableAttributedString()
         for l in lines {
-            let text = Self.ansi.stringByReplacingMatches(in: l.text, range: NSRange(l.text.startIndex..., in: l.text), withTemplate: "")
+            let (text, runs) = ANSI.parse(l.text)   // ponytail: a color left on at a line's end doesn't go on into that server's next one
             batch.append(NSAttributedString(string: MultiRun.label(names[l.server], width: width), attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
-            batch.append(NSAttributedString(string: text + "\n", attributes: [.font: font, .foregroundColor: l.error ? NSColor.systemRed : NSColor.textColor]))
+            let line = NSMutableAttributedString(string: text + "\n", attributes: [.font: font, .foregroundColor: l.error ? NSColor.systemRed : NSColor.textColor])
+            if !l.error { for r in runs { line.addAttributes(ANSIColors.attributes(r.style, font: font), range: r.range) } }   // stderr: red wins
+            batch.append(line)
         }
         storage.append(batch)
         kept(in: tv)
@@ -338,14 +357,25 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         _ = alive   // looked at now, a finished command's group is seen gone — and stays so (see `alive`)
     }
 
+    /// Each stream's colors (`ANSI`): a sequence cut by a read waits for the next one, a color goes on.
+    private var ansi = [ANSI(), ANSI()]
+
+    /// stdout in its colors; stderr red whatever colors it has (red wins).
     private func append(_ data: Data, _ isErr: Bool, in tv: NSTextView) {
         guard let storage = tv.textStorage else { return }
-        var s = utf8Chunk(data, rest: &rest[isErr ? 1 : 0])
-        s = Self.ansi.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "")
-        appendTerminalOutput(s, to: storage, pendingCR: &pendingCR, attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
-            .foregroundColor: isErr ? NSColor.systemRed : NSColor.textColor,
-        ])
+        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let base: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: isErr ? NSColor.systemRed : NSColor.textColor]
+        let (s, runs) = ansi[isErr ? 1 : 0].feed(utf8Chunk(data, rest: &rest[isErr ? 1 : 0]), end: data.isEmpty)
+        // In pieces of one style each: a CR in any of them redraws the line, whatever its colors.
+        let text = s as NSString
+        var at = 0
+        for r in isErr ? [] : runs {
+            appendTerminalOutput(text.substring(with: NSRange(location: at, length: r.range.location - at)), to: storage, pendingCR: &pendingCR, attributes: base)
+            appendTerminalOutput(text.substring(with: r.range), to: storage, pendingCR: &pendingCR,
+                                 attributes: base.merging(ANSIColors.attributes(r.style, font: font)) { $1 })
+            at = NSMaxRange(r.range)
+        }
+        appendTerminalOutput(text.substring(from: at), to: storage, pendingCR: &pendingCR, attributes: base)
         kept(in: tv)
     }
 

@@ -2,7 +2,8 @@ import AppKit
 import DFMCore
 import UniformTypeIdentifiers
 
-/// F3 viewer. Keys: & filter lines (!text: without it) · h hex · p readable plist/JSON · f follow (tail -f) · w wrap · ⌘F find · Esc/q/F3 close.
+/// F3 viewer. Keys: & filter lines (!text: without it) · e errors and warnings, errors only, all · h hex · p readable plist/JSON ·
+/// f follow (tail -f) · l line numbers · w wrap · ⌘F find · Esc/q/F3 close.
 /// Text ≤ 4 MB loads whole. Bigger files (and rotated logs unpacking past 4 MB, via a temp copy) are memory-mapped and shown through a sliding 256 KB window:
 /// scrolling past either edge slides it; g goes to a position, / and n search the whole file. Error/warning lines are tinted.
 @MainActor
@@ -24,9 +25,12 @@ final class Viewer: NSWindowController, NSWindowDelegate {
     private var followTask: Task<Void, Never>?
     private var follower: FollowReader?   // made on the first poll from `followOffset`; kept across f off/on
     private var polling = false           // a FollowReader is polled from one thread at a time
-    private var followOffset: UInt64 = 0 { didSet { follower = nil; filterRest = ""; held = "" } }   // the text was reloaded: follow from its end
+    private var followOffset: UInt64 = 0 { didSet { follower = nil; filterRest = ""; held = ""; heldRuns = []; ansi = ANSI() } }   // the text was reloaded: follow from its end
     /// What a poll read after f went off (it was on its way): shown when f is on again — the reader is past it.
     private var held = ""
+    private var heldRuns: [ANSI.Run] = []
+    /// The colors of what follow appends: a sequence cut between two polls waits, a color goes on.
+    private var ansi = ANSI()
     private(set) var lineFilter: LineFilter?   // & : only the lines with (or without) a text, the followed ones too
     private var filterRest = ""   // followed text after its last "\n", filtered once the line is whole
     var followLimit = 8 << 20   // UTF-16 units kept while following; the oldest lines go
@@ -50,6 +54,14 @@ final class Viewer: NSWindowController, NSWindowDelegate {
     private var tail: String?   // a server log's tail is shown: how much of it (& filters just that, unless grep there ran)
     private var serverFiltered = false   // & ran grep on the server: the lines are the whole log's
     private var followStopped = false   // the server's `tail -F` ended and wasn't started again
+    /// `l`: the line-number gutter (remembered), shown where the text is the whole file from its first line.
+    private var ruler: LineNumberRuler?
+    /// Lines a follow dropped off the top since the text was loaded: numbers go on from there.
+    private var dropped = 0
+    var defaults = UserDefaults.standard   // tests: their own
+    private var numbersOn: Bool { defaults.bool(forKey: "viewerLineNumbers") }
+    /// Following, scrolled up from the end: what comes in waits below (End resumes).
+    private var followPaused = false
     /// Called once the window closes (a temp copy goes then).
     var onClose: (@MainActor () -> Void)?
 
@@ -172,22 +184,54 @@ final class Viewer: NSWindowController, NSWindowDelegate {
             load(mode == .hex ? .text : .hex)
         case 35: load(mode == .pretty ? .text : .pretty)          // p
         case 3: setFollow(followTask == nil)                     // f
+        case 14: cycleLevels()                                    // e
+        case 37: setNumbers(!numbersOn)                           // l
         default: return false
         }
         return true
     }
 
     private func updateSubtitle() {
-        var keys = ["& filter", "h hex", "f follow", "w wrap", "⌘F find", "Esc close"]
+        var keys = ["& filter", "e errors", "h hex", "f follow", "l lines", "w wrap", "⌘F find", "Esc close"]
         if canPretty { keys.insert("p readable", at: 2) }
         if big != nil && mode == .text && lineFilter == nil { keys.insert(contentsOf: ["g go to", "/ n find in file"], at: 0) }
         if isHuge && mode == .hex { keys.insert("g go to", at: 0) }
-        let filtered = mode == .hex ? nil : lineFilter.map {
-            "LINES \($0.exclude ? "WITHOUT" : "WITH") “\($0.text)”"
+        let filtered = mode == .hex ? nil : lineFilter.map { f in
+            [f.text.isEmpty ? nil : "LINES \(f.exclude ? "WITHOUT" : "WITH") “\(f.text)”",
+             f.level.map { $0 == .error ? "ERRORS ONLY" : "ERRORS + WARNINGS" }].compactMap { $0 }.joined(separator: " · ")
                 + (serverFiltered ? " IN THE WHOLE FILE (grep on the server)" : tail.map { " IN THE LAST \($0) ONLY" } ?? "")
         }
-        let follow = followTask != nil ? ["FOLLOWING"] : followStopped ? ["FOLLOW STOPPED · f to resume"] : []
-        window?.subtitle = ([info] + [filtered].compactMap { $0 } + follow + keys).joined(separator: " · ")
+        let follow = followTask != nil ? [followPaused ? "FOLLOWING · paused — End resumes" : "FOLLOWING"] : followStopped ? ["FOLLOW STOPPED · f to resume"] : []
+        window?.subtitle = ([info] + [filtered, showNumbers()].compactMap { $0 } + follow + keys).joined(separator: " · ")
+    }
+
+    /// The gutter on or off as `l` and the text allow; what to say where it can't be: numbers count from the file's
+    /// first line, so not for a big file's window, a log's tail, or a filtered view (hex has its offsets).
+    private func showNumbers() -> String? {
+        let why = !numbersOn || mode == .hex ? nil : isHuge ? "line numbers: files up to 4 MB"
+            : tail != nil ? "line numbers: not for the last part of a log" : lineFilter != nil ? "line numbers: not while filtered" : nil
+        let on = numbersOn && mode != .hex && why == nil
+        if on, ruler == nil {
+            ruler = LineNumberRuler(textView: textView)
+            scroll.verticalRulerView = ruler
+            scroll.hasVerticalRuler = true
+        }
+        scroll.rulersVisible = on
+        ruler?.firstLine = dropped
+        ruler?.invalidate()
+        return why
+    }
+
+    /// `l`: line numbers on or off, here and in viewers to come.
+    func setNumbers(_ on: Bool) {   // internal for tests
+        defaults.set(on, forKey: "viewerLineNumbers")
+        updateSubtitle()
+    }
+
+    /// `e`: all lines → errors and warnings → errors only → all, together with an `&` filter.
+    func cycleLevels() {   // internal for tests
+        let next: TextFormat.Level? = switch lineFilter?.level { case nil: .warning; case .warning?: .error; case .error?: nil }
+        setLineFilter(Self.filter(lineFilter?.spec ?? "", level: next))
     }
 
     // MARK: - Loading (off main thread)
@@ -215,26 +259,29 @@ final class Viewer: NSWindowController, NSWindowDelegate {
                 return openBig()
             }
             let lang = Syntax.language(forFileName: url.lastPathComponent)
-            let (text, info, size, binary, levels, syntax, grepped) = await Blocking.run(.userInitiated) {
-                () -> (String, String, UInt64, Bool, [(range: NSRange, level: TextFormat.Level)], [(range: NSRange, token: Syntax.Token)], Bool) in
+            let (text, info, size, binary, levels, syntax, grepped, runs) = await Blocking.run(.userInitiated) {
+                () -> (String, String, UInt64, Bool, [(range: NSRange, level: TextFormat.Level)], [(range: NSRange, token: Syntax.Token)], Bool, [ANSI.Run]) in
                 var (text, info, size, binary) = Self.read(url, newMode, hexOffset: hexOffset, asText: asText, label: shown, base: base)
                 var grepped = false
                 if newMode != .hex, !binary, let filter {
-                    if let server, let lines = Self.serverLines(server.target, server.path, filter) {
+                    if let server, !filter.text.isEmpty, let lines = Self.serverLines(server.target, server.path, filter) {
                         (text, grepped) = (TextFormat.decode(lines).text, true)
+                        if let level = filter.level { text = LineFilter(level: level).apply(text) }   // grep took the text: the level is looked at here
                     } else {
                         text = filter.apply(text)
                     }
                 }
+                if binary { return (text, info, size, true, [], [], false, []) }
+                var runs: [ANSI.Run] = []
+                if newMode == .text { (text, runs) = ANSI.parse(text) }   // colors, not escape sequences (hex: the bytes)
                 let n = text.utf16.count
-                if binary { return (text, info, size, true, [], [], false) }
                 // Known formats get syntax colors; anything else (logs) gets error/warning tints. Size-capped to stay fast.
                 if newMode != .hex, let lang = lang ?? (newMode == .pretty ? .xml : nil), n <= 2 << 20 {
                     let isJSON = newMode == .pretty && (text.hasPrefix("{") || text.hasPrefix("["))
-                    return (text, info, size, false, [], Syntax.tokens(text, isJSON ? .json : lang), grepped)
+                    return (text, info, size, false, [], Syntax.tokens(text, isJSON ? .json : lang), grepped, runs)
                 }
-                let levels = newMode == .text && n <= 8 << 20 ? TextFormat.logLevels(in: text) : []
-                return (text, info, size, false, levels, [], grepped)
+                let levels = newMode == .text && n <= 8 << 20 ? ANSIColors.uncolored(TextFormat.logLevels(in: text), runs) : []
+                return (text, info, size, false, levels, [], grepped, runs)
             }
             guard let self, gen == loadGen else { return }
             spinner.stopAnimation(nil)
@@ -244,7 +291,9 @@ final class Viewer: NSWindowController, NSWindowDelegate {
             followOffset = size
             textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: [
                 .font: Self.font, .foregroundColor: NSColor.textColor]))
+            dropped = 0
             if syntax.isEmpty { Self.tint(textView.textStorage!, levels, offset: 0) } else { SyntaxColors.apply(syntax, to: textView.textStorage!) }
+            ANSIColors.apply(runs, to: textView.textStorage!, font: Self.font)
             textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
             updateSubtitle()
         }
@@ -330,6 +379,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         remoteTail?.terminate()
         remoteTail = nil
         followStopped = false
+        followPaused = false
         if isHuge && wasOn && !on && mode == .text { big = nil; openBig(around: .max) }   // remap: the file grew
         if on, let remote, unpacked == nil { startTail(remote) }
         if on {
@@ -346,6 +396,8 @@ final class Viewer: NSWindowController, NSWindowDelegate {
 
     /// The lines of the server's `path` that `f` keeps, by `grep -F` there (ASCII case folded), up to `hugeLimit` of
     /// them; nil if it didn't run (no grep, the connection gone): the caller filters what it has.
+    /// ponytail: grep sees the raw bytes — a text across a color's codes ("ERROR: x" in a colored log) isn't found
+    /// there; a local filter of the tail would be, at the cost of the whole log.
     nonisolated static func serverLines(_ t: SFTPTarget, _ path: String, _ f: LineFilter) -> Data? {
         let command = "LC_ALL=C grep -a -F -i \(f.exclude ? "-v " : "")-e \(ShellContext.quote(f.text)) -- \(ShellContext.quote(path))"
         var out = Data(), full = false
@@ -417,8 +469,8 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         guard !sliding, !polling else { return }
         polling = true
         defer { polling = false }
-        let filter = lineFilter, carried = filterRest, made = follower, path = url.path, from = followOffset
-        let polled = await Blocking.run(.utility) { () -> (FollowReader, String, [(range: NSRange, level: TextFormat.Level)], String)? in
+        let filter = lineFilter, carried = filterRest, made = follower, path = url.path, from = followOffset, colors = ansi
+        let polled = await Blocking.run(.utility) { () -> (FollowReader, String, [(range: NSRange, level: TextFormat.Level)], String, ANSI, [ANSI.Run])? in
             // Opened here, not on the main thread: a file on a share that stopped answering.
             // A FIFO is never opened: that waits for a writer for good (and would take its data from the real reader).
             guard let reader = made ?? (FileInfo.notRegular(path) == nil ? FollowReader(path: path, from: from) : nil) else { return nil }
@@ -430,21 +482,31 @@ final class Viewer: NSWindowController, NSWindowDelegate {
                 case .truncated: "\n——— file truncated ———\n"
                 }
             }.joined()
-            return (reader, text, TextFormat.logLevels(in: text), rest)
+            var colors = colors
+            let (plain, runs) = colors.feed(text)
+            return (reader, plain, ANSIColors.uncolored(TextFormat.logLevels(in: plain), runs), rest, colors, runs)
         }
-        guard let (reader, read, readLevels, rest) = polled, follower === made, followOffset == from else { return }   // reloaded meanwhile
+        guard let (reader, read, readLevels, rest, colors, readRuns) = polled, follower === made, followOffset == from else { return }   // reloaded meanwhile
         follower = reader
         filterRest = rest
-        guard followTask != nil else { held += read; return }   // f off meanwhile
-        let text = held + read, levels = held.isEmpty ? readLevels : TextFormat.logLevels(in: text)
-        held = ""
+        ansi = colors
+        let shift = held.utf16.count
+        let runs = heldRuns + readRuns.map { ANSI.Run(NSRange(location: $0.range.location + shift, length: $0.range.length), $0.style) }
+        guard followTask != nil else { (held, heldRuns) = (held + read, runs); return }   // f off meanwhile
+        let text = held + read, levels = held.isEmpty ? readLevels : ANSIColors.uncolored(TextFormat.logLevels(in: text), runs)
+        (held, heldRuns) = ("", [])
         guard !text.isEmpty, let storage = textView.textStorage, let lm = textView.layoutManager else { return }
         let clip = scroll.contentView
         let atEnd = clip.bounds.maxY >= textView.frame.height - 20
         let start = storage.length
         storage.append(NSAttributedString(string: text, attributes: [.font: Self.font, .foregroundColor: NSColor.textColor]))
         Self.tint(storage, levels, offset: start)
+        ANSIColors.apply(runs, to: storage, offset: start, font: Self.font)
         let cut = FollowReader.trimCount(storage.mutableString, limit: followLimit)
+        if cut > 0 {   // the lines that go still count
+            dropped += storage.mutableString.substring(to: cut).utf16.reduce(0) { $1 == 10 ? $0 + 1 : $0 }
+            ruler?.firstLine = dropped
+        }
         if cut > 0 {   // keep what's on screen in place
             let dy = atEnd ? 0 : lm.lineFragmentRect(forGlyphAt: lm.glyphIndexForCharacter(at: cut), effectiveRange: nil).minY
             let top = clip.bounds.origin
@@ -455,6 +517,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
                 scroll.reflectScrolledClipView(clip)
             }
         }
+        ruler?.invalidate()
         if atEnd { textView.scrollToEndOfDocument(nil) }
     }
 
@@ -506,6 +569,8 @@ extension Viewer {
     }
 
     /// Laid out in full before scrolling so positions are exact; 256 KB lays out in ~70 ms (1 MB: ~280 ms).
+    /// ponytail: a window shows escape sequences as they are — positions in it map back to the file's bytes, which a
+    /// hidden sequence would shift; colors there would need that map to skip them.
     fileprivate static let windowSize = 256 << 10
 
     /// Maps the file (once) and shows the window around `offset` (`.max`: the end).
@@ -605,16 +670,18 @@ extension Viewer {
         let gen = loadGen
         spinner.startAnimation(nil)
         Task { [weak self] in
-            let (text, enc, levels, more) = await Blocking.run(.userInitiated) {
-                () -> (String, String, [(range: NSRange, level: TextFormat.Level)], Bool) in
+            let (text, enc, levels, more, runs) = await Blocking.run(.userInitiated) {
+                () -> (String, String, [(range: NSRange, level: TextFormat.Level)], Bool, [ANSI.Run]) in
                 let (kept, more) = filter.apply(file, limit: Self.hugeLimit)
-                let (text, enc) = TextFormat.decode(kept)
-                return (text, enc, TextFormat.logLevels(in: text), more)
+                let (decoded, enc) = TextFormat.decode(kept)
+                let (text, runs) = ANSI.parse(decoded)
+                return (text, enc, ANSIColors.uncolored(TextFormat.logLevels(in: text), runs), more, runs)
             }
             guard let self, gen == loadGen else { return }
             spinner.stopAnimation(nil)
             textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: [.font: Self.font, .foregroundColor: NSColor.textColor]))
             Self.tint(textView.textStorage!, levels, offset: 0)
+            ANSIColors.apply(runs, to: textView.textStorage!, font: Self.font)
             if followTask != nil { textView.scrollToEndOfDocument(nil) } else { textView.scrollRangeToVisible(NSRange(location: 0, length: 0)) }
             let fmt = { (n: Int) in ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file) }
             info = "\(label ?? fmt(d.count)) · \(enc)" + (more ? " · first \(fmt(Self.hugeLimit)) of matching lines" : "")
@@ -628,6 +695,10 @@ extension Viewer {
     /// and column 0 of several rows is where the next row starts, not the window's start: going back takes pulling
     /// past the edge (a trackpad's overscroll), or Home / g. A resize's own scrolling slides nothing.
     @objc fileprivate func scrolled() {
+        if followTask != nil {   // L4: scrolled up, it stays put while lines come in — the subtitle says so
+            let paused = scroll.contentView.bounds.maxY < textView.frame.height - 20
+            if paused != followPaused { followPaused = paused; updateSubtitle() }
+        }
         guard let big, !sliding, !scroll.inLiveResize, mode == .text, followTask == nil, lineFilter == nil, let lm = textView.layoutManager, let tc = textView.textContainer else { return }
         let b = scroll.contentView.bounds, f = textView.frame, used = lm.usedRect(for: tc).height
         let tall = wrap || used > b.height, oneRow = used < 2 * lm.defaultLineHeight(for: Self.font)
@@ -717,9 +788,17 @@ extension Viewer {
     }
 
     fileprivate func filterDialog() {
-        ask("Show only lines with (!text: lines without it; empty: all lines):", value: lineFilter?.spec ?? "") { [weak self] s in
-            self?.setLineFilter(LineFilter(s))
+        ask("Show only lines with (!text: lines without it; empty: no text filter):", value: lineFilter?.spec ?? "") { [weak self] s in
+            guard let self else { return }
+            setLineFilter(Self.filter(s, level: lineFilter?.level))
         }
+    }
+
+    /// `&`'s text with `e`'s level kept: the level alone when the text is empty, nil when neither.
+    nonisolated static func filter(_ spec: String, level: TextFormat.Level?) -> LineFilter? {
+        var f = LineFilter(spec)
+        if let level { if f == nil { f = LineFilter(level: level) } else { f!.level = level } }
+        return f
     }
 
     /// Shows the text again through `filter` (nil: all of it), in text mode; a huge file is remapped first, so a

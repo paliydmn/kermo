@@ -47,6 +47,8 @@ extension AppDelegate {
         cmd("tunnel.list", "Tunnels…", [], short: "Tunnels", aliases: "port forward localhost database -L") { $0.showTunnels() },
         cmd("tunnel.new", "New Tunnel…", [], short: "New tunnel", aliases: "port forward localhost database -L") { $0.newTunnel() },
         cmd("tunnel.forward", "Forward Port…", [], short: "Forward port", aliases: "ports listening ss netstat tunnel localhost -L") { $0.forwardPort() },
+        cmd("server.services", "Services…", [], short: "Services", aliases: "systemd systemctl service status restart journal journalctl log unit") { $0.showServices() },
+        cmd("server.containers", "Containers…", [], short: "Containers", aliases: "docker podman container logs restart") { $0.showContainers() },
         cmd("ssh.copyKey", "Copy SSH Key to Server…", [], short: "Copy SSH key", aliases: "ssh-copy-id authorized_keys public key login password") { $0.copyKey() },
         cmd("ssh.config", "Edit SSH Config", [], menu: "Go", short: "SSH config", aliases: "ssh config hosts ~/.ssh/config") { $0.editSSHConfig() },
         cmd("ssh.reconnect", "Reconnect SSH Session", [], menu: "Go", short: "Reconnect", aliases: "ssh") { app in
@@ -1091,15 +1093,21 @@ extension AppDelegate {
     /// made on the server meanwhile without asking.
     func remoteOpen(_ how: RemoteOpen) {
         guard let (target, dir, item) = active.remoteCursor, item.kind != .dir else { return NSSound.beep() }
-        let remotePath = (dir as NSString).appendingPathComponent(item.name)
+        remoteOpen(how, target, (dir as NSString).appendingPathComponent(item.name), listed: (item.size, item.mtime), in: active)
+    }
+
+    /// The same for a server's file by its path (⌘E on a service: its unit file). `listed`: its size and time as a
+    /// panel listed it (another app's saves check against them); none, as downloaded.
+    func remoteOpen(_ how: RemoteOpen, _ target: SFTPTarget, _ remotePath: String, listed: (Int64, Double)? = nil, in panel: PanelViewController) {
+        let name = (remotePath as NSString).lastPathComponent
         let tmp = NSTemporaryDirectory() + "dfm-sftp-" + UUID().uuidString
         mkdir(tmp, 0o700)
-        let local = URL(fileURLWithPath: tmp).appendingPathComponent((item.name as NSString).lastPathComponent)   // a search hit's is a path
-        let panel = active, env = SSHAskpass.env
+        let local = URL(fileURLWithPath: tmp).appendingPathComponent(name)
+        let env = SSHAskpass.env
         // F3 on a big log: its tail.
-        let last = how == .view ? Viewer.tailLimit(for: item.name) : nil
+        let last = how == .view ? Viewer.tailLimit(for: name) : nil
         Task {
-            let r = await panel.busy("Downloading “\(item.name)”…") { flag in
+            let r = await panel.busy("Downloading “\(name)”…") { flag in
                 try SFTPClient.session(target, env: env, cancel: flag) { try $0.download(remotePath, to: local.path, last: last) }
             }
             guard case .success(let opened) = r else {
@@ -1109,16 +1117,23 @@ extension AppDelegate {
             }
             switch how {
             case .open:   // another app: its saves go up as F4's do
-                ServerCopies.add(.init(local, target, remotePath, listed: (item.size, item.mtime), baseline: opened, preview: false))
+                ServerCopies.add(.init(local, target, remotePath, listed: listed ?? (opened.size, opened.mtime), baseline: opened, preview: false))
                 NSWorkspace.shared.open(local)
             case .view: Viewer.show(local, remote: (target, remotePath, max(0, opened.size - (last ?? opened.size)))) { TempCopies.remove(tmp) }
             case .edit:
                 let state = RemoteEdit(baseline: opened)
-                Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath, state), onSaved: { [self] saved in
+                let note = Self.rootsOnly(opened, for: target) ? "“\(name)” is root's: saving it needs the panel as root (⌃⌘R)" : nil
+                Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath, state), note: note, onSaved: { [self] saved in
                     state.save(in: tmp) { await self.upload(saved, to: remotePath, on: target, state) }
                 }, onClose: { state.closed(removing: tmp) })
             }
         }
+    }
+
+    /// A server file only root may write — root's, no write bit for group or others — opened by another user: one
+    /// named in the address (an alias's user is ~/.ssh/config's, maybe root: then nothing is said).
+    static func rootsOnly(_ a: SFTPClient.Attrs, for t: SFTPTarget) -> Bool {
+        !t.sudo && a.uid == 0 && (a.mode ?? 0) & 0o022 == 0 && t.host.contains("@") && !t.host.hasPrefix("root@")
     }
 
     @MainActor final class RemoteEdit {
@@ -1329,28 +1344,52 @@ extension AppDelegate {
 
     /// Runs the reload the question was about; its output shows only if it fails.
     func reload(_ command: String, after saved: URL, to path: String, on target: SFTPTarget, in panel: PanelViewController) async {
+        await runThere(command, on: target, action: "reload", paths: [path], busy: "Reloading on \(target.host)…",
+                       done: "Reloaded on \(target.host): \(command)", saved: saved, in: panel)
+    }
+
+    /// A command that changes something on a server — a reload, a restart — run as a save's check is (`ConfigCheck.run`):
+    /// on a root target as root, through its sudo (`sudo -n`, else the password it takes: kept, Keychain or asked, on
+    /// stdin), else as the user. `ask`: on a production server it asks first, ↩ = Cancel (a reload's own question asked
+    /// already). A line in the production log; the status line (and `saved`'s editor) says it went; a failure shows its
+    /// output. ⎋ stops the wait, not what was sent. True: it ran, exit 0.
+    @discardableResult
+    func runThere(_ command: String, on target: SFTPTarget, action: String, paths: [String] = [], busy: String, done: String,
+                  ask: (message: String, button: String)? = nil, saved: URL? = nil, in panel: PanelViewController) async -> Bool {
+        // A locked server's Touch ID again if its time ran out since it was looked at (a Picker can stay open).
+        if let s = ServerLock.server(for: target), await !ServerLock.authorize(s, "run “\(command)” on") { return false }
+        if let ask, let info = Self.prodQuestion(command, on: target) {
+            guard await choose(ask.message, info: info, [ask.button, "Cancel"], default: 1) == 0 else { return false }   // ↩ = Cancel
+        }
         let env = SSHAskpass.env
-        let r = await panel.busy("Reloading on \(target.host)…") { flag in try ConfigCheck.run(command, on: target, env: env, cancel: flag) }
-        let log = { (exit: Int32?, error: String?) in AuditLog.write(target, "reload", paths: [path], command: command, exit: exit, error: error) }
+        let r = await panel.busy(busy) { flag in try ConfigCheck.run(command, on: target, env: env, cancel: flag) }
+        let log = { (exit: Int32?, error: String?) in AuditLog.write(target, action, paths: paths, command: command, exit: exit, error: error) }
         switch r {
         case .success(.passed):
             log(0, nil)
-            panel.flash("Reloaded on \(target.host): \(command)")
-            Editor.flash(saved, "Reloaded on \(target.host)")
+            panel.flash(done)
+            if let saved { Editor.flash(saved, done) }
+            return true
         case .success(.failed(let status, let output)):
             log(status, output)
             let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
             _ = await choose("“\(command)” failed on \(target.host)", info: text.isEmpty ? "It exited with \(status)." : String(text.suffix(4000)), ["OK"],
-                             on: Editor.window(for: saved))
+                             on: saved.flatMap(Editor.window(for:)))
         case .success(.noProgram(let why)):
             log(127, why)
-            panel.flash("Not reloaded on \(target.host): \(why)", error: true)
+            panel.flash("“\(command)” didn't run on \(target.host): \(why)", error: true)
         case .success: break   // needs root, not run: only checks
         case .failure(is CancellationError): log(nil, "cancelled, may have run")   // ⎋ stops the wait, not what was sent
         case .failure(let e):
             log(1, e.localizedDescription)
             showError(e)
         }
+        return false
+    }
+
+    /// What `runThere` asks on a production server (nil elsewhere: it just runs).
+    static func prodQuestion(_ command: String, on target: SFTPTarget) -> String? {
+        SavedServer.isProd(target) ? SavedServer.prodNote([target]) + "Runs “\(command)” on \(target.host)\(target.sudo ? " as root" : "")." : nil
     }
 
     /// The reload question: on a production server it says so, and ↩ is Cancel (elsewhere ↩ is Reload and ⎋ Cancel, as
