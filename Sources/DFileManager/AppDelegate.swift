@@ -25,8 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     let search = HeaderSearch()
     private var splitController: NSSplitViewController!
     private var volumes: [Volume] = []
-    private var disks: [Disk] = []   // DiskArbitration's that Kermo may mount
-    private var diskWatch: DiskWatch?
+    var disks: [Disk] = []   // DiskArbitration's that Kermo may mount
+    var diskWatch: DiskWatch?
+    var volumeBusy: Set<String> = []   // mounting, unmounting, ejecting: mount points, and BSD names of those not mounted
     private var configHosts: [String] = []   // ~/.ssh/config aliases
     private var sftpErrors: [String: String] = [:]   // host → its last failure, until any panel gets through
     private var sidebarRefresh: Task<Void, Never>?
@@ -516,7 +517,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             refreshSidebar()
         }
         sidebar.onTransfer = { [unowned self] items, dir, move in enqueueTransfer(items.paths, from: items.from, to: dir, name: nil, move: move) }
-        sidebar.onEject = { [unowned self] in ejectVolume($0) }
+        sidebar.onVolume = { [unowned self] v, action in
+            switch action {
+            case .mount: if let d = v.disk { mountVolume(d) }
+            case .unmount: ejectVolume(v.path, unmount: true)
+            case .eject: ejectVolume(v.path)
+            }
+        }
         sidebar.onLeave = { [unowned self] in window.makeFirstResponder(active.table) }
         sidebar.onCommandKey = { [unowned self] in runKey($0) }
         sidebar.onServer = { [unowned self] in serverAction($0, $1, $2) }
@@ -596,7 +603,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if let e = st.error { servers.failedTunnels[key, default: []].append("\(st.tunnel.title): \(e)") }
             if !servers.forwarded.contains(where: { ServerRow.key($0) == key }) { servers.forwarded.append(st.server.target) }
         }
-        sidebar.show(SidebarModel.sections(bookmarks: bookmarks, frecent: frecency.ranked(), volumes: volumes, disks: disks, servers: servers,
+        sidebar.show(SidebarModel.sections(bookmarks: bookmarks, frecent: frecency.ranked(), volumes: volumes, disks: disks, busy: volumeBusy, servers: servers,
                                            tags: defaults.stringArray(forKey: "recentTags") ?? []))
         sidebar.highlight(sidebarKey)
     }
@@ -611,6 +618,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return
         }
         switch place {
+        case .volume(let v): if let d = v.disk, !v.mounted { mountVolume(d, open: true) }
         case .serverFolder(let e):
             guard let r = Bookmark.remote(e) else { return NSSound.beep() }
             openBookmark(r, newTab: mods.contains(.command), panel: mods.contains(.option) ? other : nil)
@@ -867,7 +875,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Commands that would act on the local folder hidden behind a server panel (its `path`). Until they learn
     /// servers, they refuse there instead of quietly working on this Mac.
     static let localOnly: Set<String> = ["file.info", "go.tree", "panel.swap", "file.reveal", "file.symlink",
-                                         "file.hardlink", "file.split", "file.combine", "git.diff", "file.eject",
+                                         "file.hardlink", "file.split", "file.combine", "git.diff", "file.eject", "file.unmount",
                                          "git.log", "git.blame", "git.stage", "git.unstage", "admin.copy", "admin.move", "admin.mkdir", "admin.delete", "admin.shell",
                                          "git.switch", "git.newBranch", "git.commit", "git.sync", "git.publish", "git.pull", "git.push", "git.fetch", "git.init"]
 

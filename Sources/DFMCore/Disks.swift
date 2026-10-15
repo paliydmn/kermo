@@ -38,3 +38,21 @@ public enum Disks {
                     mountPath: (key(kDADiskDescriptionVolumePathKey) as? URL).map { $0.path })
     }
 }
+
+extension Disks {
+    /// A DiskArbitration status in words, for "Couldn't mount “X”: …" (its own text, when it has one, comes first).
+    public static func why(_ status: Int32) -> String {
+        switch UInt32(bitPattern: status) {
+        case 0xF8DA_0002: return "it's in use"
+        case 0xF8DA_0004: return "another app has it to itself"
+        case 0xF8DA_0006: return "it's gone"
+        case 0xF8DA_0007: return "it isn't mounted"
+        case 0xF8DA_0008, 0xF8DA_0009: return "macOS doesn't allow it"
+        case 0xF8DA_000A: return "the disk isn't ready"
+        case 0xF8DA_000B: return "the disk is read-only"
+        case 0xF8DA_000C: return "macOS can't mount this kind of volume"
+        case let s where s & 0xFC00_0000 == 0x0C00_0000: return String(cString: strerror(Int32(s & 0x3FFF)))   // unix_err(errno)
+        default: return String(format: "DiskArbitration error 0x%08X", UInt32(bitPattern: status))
+        }
+    }
+}

@@ -5,8 +5,8 @@ import Testing
 
 // PR 12b: Locations — used / free, disks not mounted, Mount / Unmount, a spinner and who holds a disk.
 
-@MainActor private func volumeRow(_ v: VolumeRow) throws -> NSStackView {
-    try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .volume(v))) as? NSStackView)
+@MainActor private func volumeRow(_ v: VolumeRow, in c: SidebarController = SidebarController()) throws -> NSStackView {
+    try #require(c.outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .volume(v))) as? NSStackView)
 }
 
 /// V1: "110 GB / 350 GB" right of the name — used red, free green — giving way to the name in a narrow column;
@@ -56,4 +56,53 @@ import Testing
     #expect(name.textColor == .secondaryLabelColor)
     #expect(!view.arrangedSubviews.contains { ($0 as? NSButton)?.image?.accessibilityDescription == "Eject" })
     #expect(try volumeRow(rows[1]).arrangedSubviews.contains { ($0 as? NSButton)?.image?.accessibilityDescription == "Eject" })
+}
+
+/// V3–V5: one not mounted has Mount (button and menu); a disk's mounted volume Unmount and Eject; a disk image's or a
+/// share's Eject alone (unmounted, it couldn't be mounted again here); while one is under way, a spinner in the
+/// button's place and nothing to choose.
+@MainActor @Test func aVolumeRowOffersMountUnmountEject() throws {
+    let stick = Disk(bsd: "disk9s2", name: "STICK", format: "ExFAT", size: 0, mountPath: nil)
+    let usb = Disk(bsd: "disk7s1", name: "USB", format: "APFS", size: 0, mountPath: "/Volumes/USB")
+    let c = SidebarController()
+    var asked: [(String, VolumeAction)] = []
+    c.onVolume = { asked.append(($0.name, $1)) }
+    let vols = [Volume(path: "/", name: "HD", free: 1, total: 2, ejectable: false),
+                Volume(path: "/Volumes/USB", name: "USB", free: 1, total: 2, ejectable: true),
+                Volume(path: "/Volumes/IMG", name: "IMG", free: 1, total: 2, ejectable: true)]
+    func rows(busy: Set<String> = []) -> [VolumeRow] {
+        let s = SidebarModel.sections(bookmarks: [], frecent: [], volumes: vols, disks: [stick, usb], busy: busy, servers: ServerList(), tags: [])
+        c.show(s)
+        return s[2].places.compactMap { if case .volume(let v) = $0 { v } else { nil } }
+    }
+    let r = rows()
+    #expect(r.map(\.actions) == [[], [.unmount, .eject], [.eject], [.mount]])
+    func button(_ v: VolumeRow) throws -> NSButton? { try volumeRow(v, in: c).arrangedSubviews.compactMap { $0 as? NSButton }.first }
+    #expect(try button(r[0]) == nil)
+    let mount = try #require(try button(r[3]))
+    #expect(mount.image?.accessibilityDescription == "Mount" && mount.toolTip == "Mount “STICK”")
+    func click(_ b: NSButton) { NSApp.sendAction(b.action!, to: b.target, from: b) }
+    click(mount)
+    let eject = try #require(try button(r[1]))
+    #expect(eject.image?.accessibilityDescription == "Eject")
+    click(eject)
+    #expect(asked.map(\.0) == ["STICK", "USB"] && asked.map(\.1) == [.mount, .eject])
+
+    let busy = rows(busy: ["/Volumes/USB", "disk9s2"])
+    #expect(busy[1].busy && busy[3].busy && !busy[2].busy)
+    #expect(busy[1].actions.isEmpty && busy[3].actions.isEmpty)
+    for v in [busy[1], busy[3]] {
+        let view = try volumeRow(v)
+        #expect(view.arrangedSubviews.contains { $0 is NSProgressIndicator } && !view.arrangedSubviews.contains { $0 is NSButton })
+    }
+    // A button drawn before the work began asks nothing while it's under way.
+    click(eject)
+    #expect(asked.count == 2)
+}
+
+/// ⌘⇧P has Unmount next to Eject; behind a server panel neither acts on the local folder there.
+@MainActor @Test func unmountIsACommandForThisMac() {
+    let c = AppDelegate().makeCommands().first { $0.id == "file.unmount" }
+    #expect(c?.title == "Unmount Volume" && c?.menu == "File")
+    #expect(AppDelegate.localOnly.isSuperset(of: ["file.unmount", "file.eject"]))
 }

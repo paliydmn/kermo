@@ -165,8 +165,13 @@ struct VolumeRow: Equatable {
     var used = "", free = "", total = ""
     let ejectable: Bool
     var disk: Disk? = nil
+    var busy = false   // being mounted, unmounted or ejected
 
     var mounted: Bool { !path.isEmpty }
+    /// What `busy` holds for it.
+    var key: String { mounted ? path : disk?.bsd ?? "" }
+    /// Its menu's: Mount when it isn't; Unmount for one Kermo can mount again; Eject. Nothing while one is under way.
+    var actions: [VolumeAction] { busy ? [] : !mounted ? [.mount] : (disk != nil ? [.unmount] : []) + (ejectable ? [.eject] : []) }
 
     var tip: String {
         if !mounted, let d = disk { return "Not mounted · " + [d.format, d.size > 0 ? SidebarModel.sizes.string(fromByteCount: d.size) : ""].filter { !$0.isEmpty }.joined(separator: " · ") }
@@ -176,14 +181,18 @@ struct VolumeRow: Equatable {
 
 /// What the sidebar shows, from data the app already keeps.
 enum SidebarModel {
-    static func sections(bookmarks: [String], frecent: [String], volumes: [Volume], disks: [Disk] = [], servers: ServerList,
+    static func sections(bookmarks: [String], frecent: [String], volumes: [Volume], disks: [Disk] = [], busy: Set<String> = [], servers: ServerList,
                          tags: [String]) -> [SidebarSection] {
         [
             SidebarSection(id: "fav", title: "Favorites", command: "go.bookmark",
                            places: bookmarks.map { Bookmark.remote($0) == nil ? .folder($0) : .serverFolder($0) }),
             SidebarSection(id: "freq", title: "Frequent", command: "go.jump",
                            places: frecent.filter { !bookmarks.contains($0) }.prefix(5).map(Place.folder)),
-            SidebarSection(id: "loc", title: "Locations", command: "go.volumes", places: locations(volumes, disks).map(Place.volume)),
+            SidebarSection(id: "loc", title: "Locations", command: "go.volumes", places: locations(volumes, disks).map {
+                var v = $0
+                v.busy = busy.contains(v.key)
+                return .volume(v)
+            }),
             SidebarSection(id: "servers", title: "Servers", command: "ssh.new", places: serverRows(servers).map(Place.server) + [.connect]),
             SidebarSection(id: "tags", title: "Tags", command: "tag.edit", places: [.tagColors] + tags.map(Place.tag)),
         ]
@@ -349,6 +358,7 @@ final class ServerName: NSTextField {}
 
 /// What a server row's click or button asks for.
 enum ServerAction: String { case row, ssh, sftp }
+enum VolumeAction: String { case mount = "Mount", unmount = "Unmount", eject = "Eject" }
 
 /// Swaps a server row's state for its actions while the mouse is over the row. Not for being selected: that's the
 /// current server, whose name and state matter most, and a click always comes with a hover.
@@ -474,7 +484,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
     var onTag: ((String) -> Void)?
     var onFavorites: (([String]) -> Void)?             // reordered / added / removed
     var onTransfer: ((TransferItems, String, Bool) -> Void)?   // files dropped on a place (what, folder, move)
-    var onEject: ((String) -> Void)?
+    var onVolume: ((VolumeRow, VolumeAction) -> Void)?
     var onServer: ((ServerRow, ServerAction, NSEvent.ModifierFlags) -> Void)?   // a server row's buttons
     var serverMenu: ((Place) -> [NSMenuItem])?        // context menu of a server row
     var sectionMenu: ((String) -> [NSMenuItem])?       // context menu of a section header, by section id
@@ -675,13 +685,16 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
             let (path, name, ejectable) = (v.path, v.name, v.ejectable)
             let r = placeRow(ejectable ? "externaldrive" : "internaldrive", name, v.tip, dim: !v.mounted)
             if !v.used.isEmpty { r.addArrangedSubview(spacer()); r.addArrangedSubview(VolumeFigures(used: v.used, free: v.free)) }
-            if ejectable, v.mounted {
-                let b = NSButton(image: NSImage(systemSymbolName: "eject.fill", accessibilityDescription: "Eject")!, target: self, action: #selector(eject(_:)))
+            func button(_ symbol: String, _ action: VolumeAction) {
+                let b = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: action.rawValue)!, target: self, action: #selector(volumeButton(_:)))
                 b.isBordered = false
-                b.identifier = .init(path)
-                b.toolTip = "Eject “\(name)”"
+                b.identifier = .init("\(action.rawValue) \(v.key)")
+                b.toolTip = "\(action.rawValue) “\(name)”"
                 r.addArrangedSubview(b)
             }
+            if v.busy { r.addArrangedSubview(Self.spinner()) }   // in the button's place: one thing at a time
+            else if !v.mounted { button("plus.circle", .mount) }
+            else if ejectable { button("eject.fill", .eject) }
             return r
         case .server(let server):
             return serverRow(server)
@@ -745,11 +758,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         let failed: String? = if case .failed(let m) = server.status { m } else { nil }
         let icon: NSView
         if server.status == .connecting {
-            let spin = NSProgressIndicator()
-            spin.style = .spinning
-            spin.controlSize = .small
-            spin.startAnimation(nil)
-            icon = spin
+            icon = Self.spinner()
         } else {
             let tint = prod ? SavedServer.color : theme.background == nil ? .controlAccentColor : theme.dir
             icon = NSImageView(image: Self.serverIcon(tint, locked: locked, failed: failed != nil))
@@ -812,6 +821,14 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
                      + (failed.map { [$0] } ?? []) + tunnels + ["Click: its session · double-click: SSH · ⋯ or right-click: everything else"])
             .joined(separator: "\n")
         return r
+    }
+
+    static func spinner() -> NSProgressIndicator {
+        let spin = NSProgressIndicator()
+        spin.style = .spinning
+        spin.controlSize = .small
+        spin.startAnimation(nil)
+        return spin
     }
 
     /// The server's rack in `tint`, with a lock (locked) and a red dot (its last connection failed) in its corners — cut
@@ -1008,7 +1025,11 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.isFlipped ? button.bounds.maxY + 4 : -4), in: button)
     }
 
-    @objc private func eject(_ sender: NSButton) { sender.identifier.map { onEject?($0.rawValue) } }
+    @objc private func volumeButton(_ sender: NSButton) {
+        guard let parts = sender.identifier?.rawValue.split(separator: " ", maxSplits: 1), parts.count == 2,
+              let action = VolumeAction(rawValue: String(parts[0])) else { return }
+        for case let .volume(v) in places where v.key == parts[1] && !v.busy { onVolume?(v, action) }
+    }
     @objc private func tagDot(_ sender: NSButton) { sender.identifier.map { onTag?($0.rawValue) } }
 
     // MARK: - Context menu
@@ -1021,10 +1042,10 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         if roots.first?.children.contains(where: { $0 === node }) == true, let p = place.bookmark {
             menu.addItem(withTitle: "Remove from Favorites", action: #selector(removeFavorite(_:)), keyEquivalent: "").representedObject = p
         }
-        if case .volume(let v) = place, v.ejectable, v.mounted {
-            menu.addItem(withTitle: "Eject", action: #selector(ejectItem(_:)), keyEquivalent: "").representedObject = v.path
-        }
         menu.items.forEach { $0.target = self }
+        if case .volume(let v) = place {
+            for a in v.actions { menu.addItem(MenuAction.item(a.rawValue) { [weak self] in self?.onVolume?(v, a) }) }
+        }
         serverMenu?(place).forEach(menu.addItem)
     }
 
@@ -1033,7 +1054,6 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
     private var favorites: [String] { roots.first?.children.compactMap(\.place?.bookmark) ?? [] }
 
     @objc private func removeFavorite(_ sender: NSMenuItem) { onFavorites?(favorites.filter { $0 != sender.representedObject as? String }) }
-    @objc private func ejectItem(_ sender: NSMenuItem) { (sender.representedObject as? String).map { onEject?($0) } }
 
     // MARK: - Drag & drop: folders onto Favorites pin them (drag within to reorder); files onto a place copy / move there
 
