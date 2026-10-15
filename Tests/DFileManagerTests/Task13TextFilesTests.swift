@@ -76,6 +76,14 @@ private func tempDir() -> String {
     let kept = TextCopies.make([hosts], ticket: newer)
     #expect(TextCopies.make([a], ticket: older).isEmpty)
     #expect(kept[hosts].map { FileManager.default.fileExists(atPath: $0.path) } == true)
+    // Past the first ones: a copy as Quick Look comes to it, next to the latest ones; none once newer ones came.
+    let more = TextCopies.one(b, ticket: newer)
+    #expect(more.flatMap { FileManager.default.contents(atPath: $0.path) } == Data("b\n".utf8))
+    #expect(kept[hosts].map { FileManager.default.fileExists(atPath: $0.path) } == true)
+    #expect(TextCopies.one(blob, ticket: newer) == nil, "binary: Quick Look's")
+    _ = TextCopies.make([], ticket: TextCopies.ticket())
+    #expect(TextCopies.one(a, ticket: newer) == nil)
+    #expect(!FileManager.default.fileExists(atPath: more!.path))
     TempCopies.remove(TextCopies.dir)
 }
 

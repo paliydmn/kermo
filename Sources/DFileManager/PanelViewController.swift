@@ -146,6 +146,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var quickLooked: [URL] = []      // what it last loaded
     private var lookCopies: [URL: URL] = [:]  // a text it would show as an icon → its `.txt` copy (`TextCopies`)
     private var lookGen = 0
+    private var lookTicket = 0       // the copies' `TextCopies.ticket`
+    private var lookAsked: Set<URL> = []   // past the first `TextCopies.most`: copied when Quick Look shows them
     private var previewFor: PreviewKey?   // the cursor's file last asked for: on its way, here, too big or failed (asked again once the cursor comes back)
     private var previewFlag: CancelFlag?
     struct PreviewKey: Equatable { let path: String, size: Int64, mtime: Double, link: Bool }
@@ -2326,8 +2328,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let gen = lookGen, urls = quickLooked.prefix(TextCopies.most).filter { !TextFormat.quickLookShows($0.lastPathComponent) }
         let wanted = Set(urls)
         lookCopies = lookCopies.filter { wanted.contains($0.key) }
-        guard !urls.isEmpty else { return }
+        lookAsked = []
+        guard quickLooked.contains(where: { !TextFormat.quickLookShows($0.lastPathComponent) }) else { return }
         let ticket = TextCopies.ticket()
+        lookTicket = ticket
         Task { [weak self] in
             let made = await Blocking.run(.userInitiated) { TextCopies.make(urls, ticket: ticket) }
             guard let self, gen == lookGen, let quickLook else { return }
@@ -2435,7 +2439,18 @@ extension PanelViewController: @preconcurrency QLPreviewPanelDataSource, @precon
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
         let urls = quickLookURLs
         guard urls.indices.contains(index) else { return nil }
-        return lookCopies[urls[index]].map { TextCopies.Item($0, title: urls[index].lastPathComponent) } ?? urls[index] as NSURL
+        let url = urls[index]
+        if let copy = lookCopies[url] { return TextCopies.Item(copy, title: url.lastPathComponent) }
+        if index >= TextCopies.most, !TextFormat.quickLookShows(url.lastPathComponent), lookAsked.insert(url).inserted {
+            let gen = lookGen, ticket = lookTicket
+            Task { [weak self] in   // past the first ones: its copy now it's shown
+                let copy = await Blocking.run(.userInitiated) { TextCopies.one(url, ticket: ticket) }
+                guard let self, gen == lookGen, let copy, let quickLook else { return }
+                lookCopies[url] = copy
+                quickLook.refreshCurrentPreviewItem()
+            }
+        }
+        return url as NSURL
     }
     /// Arrow keys in the Quick Look window move our cursor, so previews follow along.
     func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
@@ -2449,12 +2464,13 @@ extension PanelViewController: @preconcurrency QLPreviewPanelDataSource, @precon
 /// go with each new preview, all of them at quit (a crash's, with the launch sweep: `TempCopies.prefixes`).
 enum TextCopies {
     static let dir = NSTemporaryDirectory() + "dfm-text-" + UUID().uuidString
-    // ponytail: the first 50 of the marked; the rest show as Quick Look does. Lazily, per item shown, if one marks more.
+    /// Copied together, at once; the marked past them are copied as Quick Look comes to each.
     static let most = 50
 
     private static let lock = NSLock()   // one at a time: each removes the copies before it
     @MainActor private static var issued = 0
     nonisolated(unsafe) private static var latest = 0   // under `lock`
+    nonisolated(unsafe) private static var folder: String?   // the latest `make`'s, under `lock`
 
     /// The order `make`s were asked for in, taken on the main thread: one asked for earlier, running later, mustn't
     /// remove a newer one's copies.
@@ -2473,17 +2489,29 @@ enum TextCopies {
         mkdir(dir, 0o700)
         for old in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] { TempCopies.remove((dir as NSString).appendingPathComponent(old)) }
         guard mkdir(mine, 0o700) == 0 else { return [:] }
+        folder = mine
         var made: [URL: URL] = [:]
-        for (i, url) in urls.prefix(most).enumerated() where FileInfo.notRegular(url.path) == nil {
-            guard let h = FileHandle(forReadingAtPath: url.path) else { continue }
-            let head = (try? h.read(upToCount: TextFormat.previewSniff)) ?? Data()
-            try? h.close()
-            let own = (mine as NSString).appendingPathComponent(String(i))
-            guard TextFormat.previewsAsText(url.lastPathComponent, head: head), mkdir(own, 0o700) == 0,
-                  let copy = try? TextFormat.textCopy(of: url.path, in: own) else { continue }
-            made[url] = URL(fileURLWithPath: copy)
-        }
+        for url in urls.prefix(most) { made[url] = copy(url, in: mine) }
         return made
+    }
+
+    /// One more copy, with the latest `make`'s (`ticket`): nil once a newer one came, or for what isn't text.
+    static func one(_ url: URL, ticket: Int) -> URL? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard ticket == latest, let folder else { return nil }
+        return copy(url, in: folder)
+    }
+
+    /// In a folder of its own there: two marked search hits may share a name.
+    private static func copy(_ url: URL, in folder: String) -> URL? {
+        guard FileInfo.notRegular(url.path) == nil, let h = FileHandle(forReadingAtPath: url.path) else { return nil }
+        let head = (try? h.read(upToCount: TextFormat.previewSniff)) ?? Data()
+        try? h.close()
+        let own = (folder as NSString).appendingPathComponent(UUID().uuidString)
+        guard TextFormat.previewsAsText(url.lastPathComponent, head: head), mkdir(own, 0o700) == 0,
+              let copy = try? TextFormat.textCopy(of: url.path, in: own) else { return nil }
+        return URL(fileURLWithPath: copy)
     }
 
     /// A copy shown under its file's own name.
