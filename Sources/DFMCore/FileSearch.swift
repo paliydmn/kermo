@@ -47,14 +47,15 @@ public enum FileSearch {
         var rootStat = stat()
         guard lstat(q.root, &rootStat) == 0 else { return skipped }
         func walk(_ dir: String, _ rel: String) {
-            for item in (try? DirLister.list(dir.isEmpty ? "/" : dir)) ?? [] {
+            var entries: [(FileItem, Bool?)] = []
+            try? DirLister.each(dir.isEmpty ? "/" : dir) { entries.append(($0, $1)) }
+            for (item, mount) in entries {
                 if isCancelled() { return }
                 let full = dir + "/" + item.name
                 let relName = rel.isEmpty ? item.name : rel + "/" + item.name
                 if matches(item, full) { onMatch(item.renamed(relName)) }
-                if item.kind == .dir && (q.includeHidden || !item.isHidden) {
-                    var s = stat()
-                    if lstat(full, &s) == 0 && s.st_dev == rootStat.st_dev { walk(full, relName) }
+                if item.kind == .dir && (q.includeHidden || !item.isHidden) && !DirLister.crosses(full, mount, rootStat.st_dev) {
+                    walk(full, relName)
                 }
             }
         }
