@@ -41,7 +41,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Open / enter an `.app` bundle | ↩ (or the keypad's ⌤) / ⌘↓ |
 | Follow a link's target | ⌘J |
 | Show hidden files / refresh | ⇧⌘. / ⌘R |
-| Volumes / eject | ⇧⌘V, ⌥F1 / ⌥⌘E |
+| Volumes (↩ on a gray one mounts it) / eject | ⇧⌘V, ⌥F1 / ⌥⌘E |
 | Back to the panels from a viewer or editor | ⌘0 |
 
 ## Marking, filtering and finding

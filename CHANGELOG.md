@@ -24,6 +24,8 @@ Release:
 - **Copy Here As…** (⇧F5, ⌥⇧5): a copy next to the item under a new name (`nginx.conf.bak`, `.bak` selected), or a suffix for each of several marked; folders whole; a taken name is an error, never replaced. On a server the server copies it where it can; a production one says so and logs it.
 - **New File…** (⇧F4) on a server and a root panel: an empty file there, never over an existing one, opened in the editor.
 - **A folder's context menu:** right-click empty space or `..` for New File…, New Folder…, Paste, Open in Terminal (SSH Here on a server), Copy Path, Reveal in Finder, Get Info, Show Hidden Files, Sort By, Calculate Folder Sizes, Git Changes, and a server's Services… and Containers…. An item's menu gains New File… and Copy Here As….
+- **Used and free space in Locations:** `110 GB / 350 GB` right of a volume's name, used in red, free in green, in whatever room the name leaves (all of it in the tooltip). Read again every 30 seconds while Kermo is in front and after each file operation.
+- **Mount and Unmount:** Locations lists in gray the volumes of plugged-in external or removable disks that aren't mounted, with ⊕ to mount one (a click on the row mounts and opens it, as ↩ does in Volumes…). A volume's right-click menu has Unmount (the disk stays plugged in) next to Eject, and ⇧⌘P has **Unmount Volume**. A spinner shows while either runs.
 - **⇧F10 and the Menu key** of a PC keyboard open the cursor item's context menu by its row (the folder's on `..`). **Sort by Name / Size / Modified** and **Reverse Sort Order** are commands in ⇧⌘P.
 
 ### Changed
@@ -38,6 +40,7 @@ Release:
 - ↩ or F3 on a file inside a tar stops reading the archive at that file.
 - **Forward Port…, Services…, Containers… and Run on Servers…** keep the server's connection for its idle time (10 minutes, 60 seconds for a locked server) even when no panel shows the server, as plain ssh does: the next look needs no login or password. Before, the next change of any panel ended it. Disconnect ends it; a locked server's ends when the screen locks.
 - **Terminal colors** show as colors in the viewer and in output windows (and Run on Servers'), instead of escape codes in the viewer and nothing in output windows; errors stay red, and a colored log line isn't also tinted by its level.
+- **A volume that won't eject** says who holds it, for example `Couldn't eject “KINGSTON”: in use by Preview, zsh`, from `lsof`, instead of only macOS's "in use".
 - Editing a server file only root may write, from a user's panel, says in the editor that saving it needs the panel as root (⌃⌘R).
 - **Info's checksums:** the first of MD5, SHA-1 and SHA-256 you press reads the file once for all three; the others then show at once. A read error is said in the system's words.
 - Faster on this Mac: folder sizes, copies and Find Files no longer look at each subfolder on its own to stay on one volume; merging copies, Find Files by content and Compare contents do less work per file; `git status` in a slow repository runs at most every twice its own time (still at most once a second).
