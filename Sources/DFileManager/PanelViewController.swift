@@ -640,11 +640,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             if !fresh { (sortedAll, sortedBy) = (all.sortedForPanel(by: sortKey, ascending: ascending), (sortKey, ascending)) }
             if filter != nil { folded = Mask.Folded(sortedAll!.lazy.map(\.name)) }
         }
-        let sorted = sortedAll!, changed = gitOnly ? git?.marks : nil, mask = filter, names = folded
         // Results already went through the search's (or git's) own idea of hidden; ⌘⇧. would drop .gitignore.
+        // All in locals: a property of `self` read per row is a main-actor check per row (a third of a 1M filter).
+        let sorted = sortedAll!, changed = gitOnly ? git?.marks : nil, mask = filter, names = folded, hidden = showHidden || searchTitle != nil
         rows = sorted.indices.filter { i in
             let it = sorted[i]
-            return (showHidden || searchTitle != nil || !it.isHidden) && (mask.map { $0.matches(i, of: names!, name: it.name) } ?? true)
+            return (hidden || !it.isHidden) && (mask.map { $0.matches(i, of: names!, name: it.name) } ?? true)
                 && (changed?[it.name] != nil || changed == nil)
         }.map { sorted[$0] }
         totalSize = bytes(of: rows)
@@ -774,7 +775,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     static func countText(_ n: Int, _ noun: String, _ bytes: Int64) -> String {
         "\(n) \(n == 1 && noun == "items" ? "item" : noun)" + (bytes > 0 ? ", " + sizeFmt.string(fromByteCount: bytes) : "")
     }
-    private func bytes(of items: [FileItem]) -> Int64 { items.reduce(0) { $0 + ($1.kind == .dir ? dirSizes[$1.name] ?? 0 : $1.size) } }
+    private func bytes(of items: [FileItem]) -> Int64 {
+        let sizes = dirSizes   // not `self`'s per item (see `applyView`)
+        return items.reduce(0) { $0 + ($1.kind == .dir ? sizes[$1.name] ?? 0 : $1.size) }
+    }
 
     /// The Size column: a folder's measured bytes or <DIR>; a special file's type, which has no size to show.
     /// `partial`: du couldn't read all of the folder — "≥ 1.2 GB".
