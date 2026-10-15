@@ -63,6 +63,21 @@ import Testing
         #expect(!AppDelegate.rootsOnly(shared, for: SFTPTarget(host: "me@web")))
     }
 
+    /// A note for a file's editor is said once its window is open (it opens after the file is read, off the main thread).
+    @Test func anEditorsNoteShowsOnceItsOpen() async throws {
+        _ = NSApplication.shared
+        let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-svc-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let url = URL(fileURLWithPath: dir + "/k.service")
+        try Data("[Unit]\n".utf8).write(to: url)
+        Editor.open(url, note: "“k.service” is root's")
+        await until { Editor.window(for: url) != nil }
+        let w = try #require(Editor.window(for: url))
+        defer { w.close() }
+        #expect(w.subtitle == "“k.service” is root's")
+    }
+
     /// Services… and Containers… are in each server's menu, after Forward Port… and Tunnels ▸, and in ⌘⇧P.
     @Test func servicesAndContainersAreInEachServersMenu() {
         let app = AppDelegate()

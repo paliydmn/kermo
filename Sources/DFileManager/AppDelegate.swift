@@ -1157,7 +1157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func askSudoPassword(_ t: SFTPTarget, wrong: Bool) async -> (password: String, save: Bool)? {
         let alert = NSAlert()
         alert.messageText = (wrong ? "Sorry, try again: " : "") + "sudo password on \(t.host)"
-        alert.informativeText = "To open its files as root. It goes to sudo there, through ssh, and nowhere else."
+        alert.informativeText = "For root there: a root panel, a reload, a restart. It goes to sudo there, through ssh, and nowhere else."
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
         let field = NSSecureTextField(string: "")

@@ -61,8 +61,9 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     var onClose: (@MainActor () -> Void)?
 
     /// Reads the file off the main thread (up to 32 MB, or a share that doesn't answer), then opens the window.
+    /// `note`: said in its subtitle once it's open (`flash`).
     static func open(_ url: URL, remote: String? = nil, server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)? = nil,
-                     onSaved: (@MainActor (URL) -> Void)? = nil, onClose: (@MainActor () -> Void)? = nil) {
+                     note: String? = nil, onSaved: (@MainActor (URL) -> Void)? = nil, onClose: (@MainActor () -> Void)? = nil) {
         if let existing = open.first(where: { $0.url == url }) { return existing.window!.makeKeyAndOrderFront(nil) }
         Task {
             let loaded = await Blocking.run(.userInitiated) { Result { try load(url) } }
@@ -75,6 +76,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
                 e.server = server
                 open.append(e)
                 e.showWindow(nil)
+                if let note { e.flash(note) }
             } catch {
                 onClose?()
                 let a = NSAlert(error: error)

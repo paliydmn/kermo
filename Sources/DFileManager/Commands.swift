@@ -1122,10 +1122,10 @@ extension AppDelegate {
             case .view: Viewer.show(local, remote: (target, remotePath, max(0, opened.size - (last ?? opened.size)))) { TempCopies.remove(tmp) }
             case .edit:
                 let state = RemoteEdit(baseline: opened)
-                Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath, state), onSaved: { [self] saved in
+                let note = Self.rootsOnly(opened, for: target) ? "“\(name)” is root's: saving it needs the panel as root (⌃⌘R)" : nil
+                Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath, state), note: note, onSaved: { [self] saved in
                     state.save(in: tmp) { await self.upload(saved, to: remotePath, on: target, state) }
                 }, onClose: { state.closed(removing: tmp) })
-                if Self.rootsOnly(opened, for: target) { Editor.flash(local, "“\(name)” is root's: saving it needs the panel as root (⌃⌘R)") }
             }
         }
     }
