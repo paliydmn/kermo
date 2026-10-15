@@ -1444,10 +1444,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             let text = await Blocking.run(.userInitiated) { TextPeek.read(url) }
             guard let self, gen == peekGen else { return }
             guard let text else { return quickLook() }
-            textPeek.show(text, numbers: UserDefaults.standard.bool(forKey: "viewerLineNumbers"), top: peeked != url || textPeek.isHidden)
-            peeked = url
-            textPeek.isHidden = false
+            let top = peeked != url || textPeek.isHidden
+            textPeek.isHidden = false   // first: laid out while shown
             quickView.isHidden = true
+            textPeek.show(text, numbers: UserDefaults.standard.bool(forKey: "viewerLineNumbers"), top: top)
+            peeked = url
             quickView.previewItem = nil   // a video there doesn't play on behind it
         }
     }

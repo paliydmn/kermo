@@ -1506,8 +1506,10 @@ extension AppDelegate {
         }
     }
 
-    /// Created with O_EXCL (an existing file is an error, never emptied), `rw-r--r--` as `touch` makes it.
+    /// Created with O_EXCL (an existing file is an error, never emptied), `rw-r--r--` as `touch` makes it. Looked for
+    /// first only to say so plainly: SFTP v3 answers O_EXCL's "exists" with a bare "Failure".
     nonisolated static func newServerFile(_ c: SFTPClient, _ path: String) throws {
+        if try c.lstat(path) != nil { throw JobErrorMessage("“\((path as NSString).lastPathComponent)” already exists.") }
         _ = try c.openWrite(path, exclusive: true).finish(mtime: nil, mode: 0o644)
     }
 

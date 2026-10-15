@@ -910,6 +910,8 @@ final class TextPeek: NSScrollView {
     func show(_ p: Viewer.Painted, numbers: Bool, top: Bool = true) {
         let at = contentView.bounds.origin
         Viewer.show(p, in: textView)
+        textView.minSize = NSSize(width: 0, height: contentSize.height)
+        textView.sizeToFit()   // laid out while hidden, it kept the last file's height: lines past it weren't drawn
         if top { textView.scrollRangeToVisible(NSRange(location: 0, length: 0)) } else { contentView.scroll(to: at); reflectScrolledClipView(contentView) }
         if numbers, ruler == nil {
             ruler = LineNumberRuler(textView: textView)

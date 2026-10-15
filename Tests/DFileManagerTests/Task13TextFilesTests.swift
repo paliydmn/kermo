@@ -142,7 +142,7 @@ private func tempDir() -> String {
     FileManager.default.createFile(atPath: d + "/taken.conf", contents: Data("keep\n".utf8))
     try SFTPClient.session(.local(), cancel: CancelFlag()) { c in
         try AppDelegate.newServerFile(c, d + "/new.conf")
-        #expect(throws: (any Error).self) { try AppDelegate.newServerFile(c, d + "/taken.conf") }
+        #expect { try AppDelegate.newServerFile(c, d + "/taken.conf") } throws: { $0.localizedDescription == "“taken.conf” already exists." }
     }
     let a = try FileManager.default.attributesOfItem(atPath: d + "/new.conf")
     #expect(a[.size] as? Int == 0 && a[.posixPermissions] as? Int == 0o644)
@@ -203,4 +203,11 @@ private func tempDir() -> String {
     let shift = KeyBarModel.layers(AppDelegate().makeCommands()).first { $0.mods == .shift }!.slots
     let fkeys = shift.filter { $0.key.hasPrefix("⇧F") }.map { "\($0.key) \($0.label)" }
     #expect(fkeys == ["⇧F2 Compare", "⇧F4 New file", "⇧F5 Copy as", "⇧F6 Rename", "⇧F8 Delete", "⇧F10 Menu"], "\(shift.map(\.key))")
+}
+
+/// The production log names where a copy went: the new name for one copied under it.
+@MainActor @Test func theLogNamesACopysNewName() {
+    #expect(AuditLog.destination(FileJob(.copy, sources: ["/s/a"], destDir: "/s", targetName: "a.bak")) == "/s/a.bak")
+    #expect(AuditLog.destination(FileJob(.copy, sources: ["/s/a", "/s/b"], destDir: "/d")) == "/d")
+    #expect(AuditLog.destination(FileJob(.delete, sources: ["/s/a"])) == nil)
 }
