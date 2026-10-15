@@ -127,6 +127,11 @@ extension AppDelegate {
             if app.terminal.isShown { app.terminal.zoom(by: -1) } else { NSSound.beep() }
         },
         cmd("view.dirsizes", "Calculate Folder Sizes", ["opt+space"], menu: "View", short: "Sizes", aliases: "folder size disk usage du") { $0.active.computeAllDirSizes() },
+        cmd("view.sort.name", "Sort by Name", [], aliases: "order") { $0.active.sort(by: .name) },
+        cmd("view.sort.size", "Sort by Size", [], aliases: "order biggest") { $0.active.sort(by: .size) },
+        cmd("view.sort.mtime", "Sort by Modified", [], aliases: "order date time newest") { $0.active.sort(by: .mtime) },
+        cmd("view.sort.reverse", "Reverse Sort Order", [], aliases: "order descending ascending") { $0.active.reverseSort() },
+        cmd("panel.menu", "Show Context Menu", ["shift+f10", "menu"], short: "Menu", aliases: "right click actions") { $0.active.showContextMenu() },
 
         // Marking (MC style: cursor ≠ marked set)
         cmd("mark.toggle", "Mark / Unmark", ["space"], menu: "Mark", short: "Mark") { $0.active.toggleMark(move: 1) },
@@ -161,6 +166,7 @@ extension AppDelegate {
         cmd("file.copy", "Copy To…", ["f5", "opt+5"], menu: "File", short: "Copy") { $0.transferDialog(move: false) },
         cmd("file.move", "Move To…", ["f6", "opt+6"], menu: "File", short: "Move") { $0.transferDialog(move: true) },
         cmd("file.rename", "Rename…", ["shift+f6", "shift+opt+6"], menu: "File", short: "Rename") { $0.renameDialog() },
+        cmd("file.copyAs", "Copy Here As…", ["shift+f5", "shift+opt+5"], menu: "File", short: "Copy as", aliases: "duplicate backup bak") { $0.copyAsDialog() },
         cmd("file.multirename", "Multi-Rename…", ["cmd+shift+m"], menu: "File", short: "Rename many", aliases: "batch multi rename") { $0.multiRename() },   // ⌘M minimizes
         cmd("file.mkdir", "New Folder…", ["f7", "opt+7", "cmd+shift+n"], menu: "File", short: "MkDir", aliases: "mkdir new folder directory") { $0.mkdirDialog() },
         cmd("file.new", "New File…", ["shift+f4", "shift+opt+4"], menu: "File", short: "New file") { $0.newFileDialog() },
@@ -236,9 +242,9 @@ extension AppDelegate {
         },
 
         // Clipboard
-        cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", short: "Copy path", aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetURLs.map(\.path)) },
+        cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", short: "Copy path", aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetPaths) },
         cmd("edit.copyName", "Copy Name", ["cmd+opt+c"], menu: "Edit", short: "Copy name", aliases: "clipboard") {
-            $0.copyToPasteboard($0.active.targetURLs.map(\.lastPathComponent))
+            $0.copyToPasteboard($0.active.targetPaths.map { ($0 as NSString).lastPathComponent })
         },
         cmd("edit.pasteMove", "Move Here", ["cmd+opt+v"], menu: "Edit", short: "Move here") { $0.pasteFiles(move: true) },
 
@@ -1458,12 +1464,16 @@ extension AppDelegate {
 
     /// One operation over the native client (names go as bytes, no `sftp -b` quoting), then the server's panels reload.
     /// `paths`: what it changes, for the production log.
-    func remoteOp(_ title: String, _ target: SFTPTarget, paths: [String], select: String? = nil, _ op: @escaping @Sendable (SFTPClient) throws -> Void) {
+    /// `then`: once it's done (not after a failure).
+    func remoteOp(_ title: String, _ target: SFTPTarget, paths: [String], select: String? = nil, _ op: @escaping @Sendable (SFTPClient) throws -> Void,
+                  then: (() -> Void)? = nil) {
         let env = SSHAskpass.env
         Task {
             let r = await active.busy("\(title) on \(target.host)…") { flag in try SFTPClient.session(target, env: env, cancel: flag, op) }
             switch r {
-            case .success: AuditLog.write(target, title.lowercased(), paths: paths, exit: 0)
+            case .success:
+                AuditLog.write(target, title.lowercased(), paths: paths, exit: 0)
+                then?()
             case .failure(is CancellationError): break
             case .failure(let e):
                 AuditLog.write(target, title.lowercased(), paths: paths, exit: 1, error: e.localizedDescription)
@@ -1480,6 +1490,27 @@ extension AppDelegate {
             let path = (dir as NSString).appendingPathComponent(name)
             remoteOp("New folder", target, paths: [path], select: name) { try $0.mkdir(path) }
         }
+    }
+
+    /// An empty file there, then F4 on it. Never over an existing one (O_EXCL).
+    private func remoteNewFile() {
+        guard let r = active.remote else { return }
+        let (target, panel) = (r.target, active)
+        Task {
+            guard let name = await prompt("New file on \(target.host):", value: "", ok: "Create", info: SavedServer.prodNote([target])),
+                  !name.isEmpty else { return }
+            let path = name.hasPrefix("/") ? name : (r.dir as NSString).appendingPathComponent(name)
+            remoteOp("New file", target, paths: [path], select: (path as NSString).lastPathComponent, { try Self.newServerFile($0, path) }) { [self] in
+                remoteOpen(.edit, target, path, in: panel)
+            }
+        }
+    }
+
+    /// Created with O_EXCL (an existing file is an error, never emptied), `rw-r--r--` as `touch` makes it. Looked for
+    /// first only to say so plainly: SFTP v3 answers O_EXCL's "exists" with a bare "Failure".
+    nonisolated static func newServerFile(_ c: SFTPClient, _ path: String) throws {
+        if try c.lstat(path) != nil { throw JobErrorMessage("“\((path as NSString).lastPathComponent)” already exists.") }
+        _ = try c.openWrite(path, exclusive: true).finish(mtime: nil, mode: 0o644)
     }
 
     /// Never over an existing item (sftp's `rename` is posix-rename, which silently replaced it); `Foo` → `foo` works.
@@ -2298,6 +2329,72 @@ extension AppDelegate {
         }
     }
 
+    /// A copy next to each marked item (or the cursor's): one under a typed name ("x.conf.bak", `.bak` selected, so ↩
+    /// takes it), several with a typed suffix. A name that's taken is an error, never replaced; folders go whole.
+    /// On a server it's that server's copy (`copy-data`, where it has it) — on a production one the name asked is the
+    /// question, and the production log has its line.
+    func copyAsDialog() {
+        if active.archive != nil { return readOnly() }
+        let r = active.remote
+        let paths = r.map { r in (active.remoteSelection?.items ?? []).map { (r.dir as NSString).appendingPathComponent($0.name) } } ?? active.targetURLs.map(\.path)
+        guard !paths.isEmpty else { return NSSound.beep() }
+        let one = (paths[0] as NSString).lastPathComponent, host = r.map { " on \($0.target.host)" } ?? ""
+        Task {
+            if let r { guard await unlock([.sftp(r.target)]) else { return } }   // once, not per item
+            let value = paths.count == 1 ? one + ".bak" : ".bak", info = r.map { SavedServer.prodNote([$0.target]) } ?? ""
+            guard let typed = await prompt(paths.count == 1 ? "Copy “\(one)”\(host) here as:" : "Copy \(paths.count) items\(host) here with the suffix:",
+                                           value: value, ok: "Copy", info: info,
+                                           select: paths.count == 1 ? NSRange(location: one.utf16.count, length: 4) : nil),
+                  !typed.isEmpty else { return }
+            guard !typed.contains("/") else { return showError(JobErrorMessage("A name can't contain “/”")) }
+            let copies = Self.copiesAs(paths, typed)
+            if paths.count == 1, copies[0].to == paths[0] { return }
+            // A config a save would check goes in as it is: said, on a production server, as F5 says it.
+            if let r, !info.isEmpty, case let unchecked = Self.uncheckedNote(copies.map(\.to), rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules),
+               !unchecked.isEmpty, await !confirm("Copy to \(r.target.host)?", info: info + unchecked.trimmingCharacters(in: .newlines), ok: "Copy") { return }
+            let to = copies.map(\.to), taken: [String]
+            if let r {
+                let env = SSHAskpass.env
+                switch await active.busy("Copy as on \(r.target.host)…", { flag in
+                    try SFTPClient.session(r.target, env: env, cancel: flag) { Self.taken(to, on: $0) }
+                }) {
+                case .success(let t): taken = t
+                case .failure(is CancellationError): return
+                case .failure(let e): return showError(e)
+                }
+            } else {
+                taken = await Blocking.run { Self.taken(to, on: nil) }   // off the main thread: a share that doesn't answer
+            }
+            if !taken.isEmpty {
+                let names = taken.map { "“\(($0 as NSString).lastPathComponent)”" }.joined(separator: ", ")
+                return showError(JobErrorMessage("\(names) already \(taken.count == 1 ? "exists" : "exist") — nothing copied."))
+            }
+            for (from, to) in copies {
+                let (dir, name) = ((to as NSString).deletingLastPathComponent, (to as NSString).lastPathComponent)
+                if let r {
+                    enqueueTransfer([from], from: .sftp(r.target), to: dir, on: .sftp(r.target), name: name, move: false, prodAsked: true)
+                } else {
+                    ops.enqueue(FileJob(.copy, sources: [from], destDir: dir, targetName: name), title: "Copy “\((from as NSString).lastPathComponent)” as “\(name)”")
+                }
+            }
+            active.unmarkAll()
+        }
+    }
+
+    /// Those of `paths` already there (a link too), on the server `c` or here.
+    nonisolated static func taken(_ paths: [String], on c: SFTPClient?) -> [String] {
+        guard let c else { return paths.filter { var st = stat(); return lstat($0, &st) == 0 } }
+        return zip(paths, c.lstat(paths)).compactMap { path, there in if case .success(_?) = there { path } else { nil } }
+    }
+
+    /// Where each copy goes: next to it, under `typed` (one) or with `typed` after its name (several).
+    nonisolated static func copiesAs(_ paths: [String], _ typed: String) -> [(from: String, to: String)] {
+        paths.map { p in
+            let dir = (p as NSString).deletingLastPathComponent
+            return (p, (dir as NSString).appendingPathComponent(paths.count == 1 ? typed : (p as NSString).lastPathComponent + typed))
+        }
+    }
+
     func mkdirDialog() {
         if active.remote != nil { return remoteMkdir() }
         if active.archive != nil { return readOnly() }
@@ -2325,7 +2422,8 @@ extension AppDelegate {
     }
 
     func newFileDialog() {
-        if active.archive != nil || active.remote != nil { return readOnly() }
+        if active.remote != nil { return remoteNewFile() }
+        if active.archive != nil { return readOnly() }
         Task {
             guard let name = await prompt("New file:", value: "", ok: "Create"), !name.isEmpty else { return }
             let path = resolve(name)

@@ -40,6 +40,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private let corner = PanelHeaderCorner()
     private var systemCorner: NSView?
     private var quickView: QLPreviewView?
+    private var textPeek: TextPeek?   // over `quickView`, for a text Quick Look shows as an icon
+    private var peekGen = 0
+    private var peeked: URL?   // the file `textPeek` shows: shown again (a re-list), it keeps its scroll
+    var peekedText: String? { textPeek?.isHidden == false ? textPeek?.textView.string : nil }   // tests
 
     private let tabBar = NSStackView()   // one button per tab, each with a close ×
     private let pathField = NSTextField(string: "")
@@ -140,6 +144,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var forwardStack: [String] = []
     private var quickLook: QLPreviewPanel?   // while it previews this panel's items
     private var quickLooked: [URL] = []      // what it last loaded
+    private var lookCopies: [URL: URL] = [:]  // a text it would show as an icon → its `.txt` copy (`TextCopies`)
+    private var lookGen = 0
+    private var lookTicket = 0       // the copies' `TextCopies.ticket`
+    private var lookAsked: Set<URL> = []   // past the first `TextCopies.most`: copied when Quick Look shows them
     private var previewFor: PreviewKey?   // the cursor's file last asked for: on its way, here, too big or failed (asked again once the cursor comes back)
     private var previewFlag: CancelFlag?
     struct PreviewKey: Equatable { let path: String, size: Int64, mtime: Double, link: Bool }
@@ -230,7 +238,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var infoURL: URL? {
         guard remote == nil else { return nil }
         if let a = archive { return URL(fileURLWithPath: a.index.file) }
-        return cursorURL ?? URL(fileURLWithPath: path)
+        return (forFolder ? nil : cursorURL) ?? URL(fileURLWithPath: path)
     }
 
     var cursorURL: URL? {
@@ -266,8 +274,16 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     /// What an operation acts on: the marked items, or the cursor item if nothing is marked.
+    /// Copy Path / Copy Name: `targetURLs`' paths; on a server, the paths there (the folder's from its menu).
+    var targetPaths: [String] {
+        guard let r = remote else { return targetURLs.map(\.path) }
+        if forFolder { return [r.dir] }
+        return (remoteSelection?.items ?? []).map { (r.dir as NSString).appendingPathComponent($0.name) }
+    }
+
     var targetURLs: [URL] {
         guard archive == nil, remote == nil else { return [] }
+        if forFolder { return [URL(fileURLWithPath: path)] }
         return marked.isEmpty ? (cursorURL.map { [$0] } ?? []) : rows.filter { marked.contains($0.name) }.map(url(of:))
     }
 
@@ -984,6 +1000,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         UserDefaults.standard.set(d, forKey: "folderSort")
     }
 
+    /// Sort By (the folder menu, ⇧⌘P): as a click on that column's header, in its first direction.
+    func sort(by key: SortKey) {
+        if key != sortKey { table.sortDescriptors = [NSSortDescriptor(key: key.rawValue, ascending: key == .name)] }
+    }
+    func reverseSort() { table.sortDescriptors = [NSSortDescriptor(key: sortKey.rawValue, ascending: !ascending)] }
+
     func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
         guard !suppressSortCallback, let d = tableView.sortDescriptors.first, let key = d.key.flatMap(SortKey.init) else { return }
         sortKey = key
@@ -1389,25 +1411,56 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func setQuickView(_ on: Bool) {
         if on, quickView == nil, let qv = QLPreviewView(frame: scroll.frame, style: .normal) {
-            qv.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(qv)
-            NSLayoutConstraint.activate([
-                qv.topAnchor.constraint(equalTo: scroll.topAnchor),
-                qv.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
-                qv.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
-                qv.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
-            ])
+            let peek = TextPeek()
+            peek.isHidden = true
+            for v in [qv, peek] as [NSView] {
+                v.translatesAutoresizingMaskIntoConstraints = false
+                view.addSubview(v)
+                NSLayoutConstraint.activate([
+                    v.topAnchor.constraint(equalTo: scroll.topAnchor),
+                    v.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
+                    v.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
+                    v.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
+                ])
+            }
             scroll.isHidden = true
             quickView = qv
+            textPeek = peek
         } else if !on, let qv = quickView {
+            peekGen += 1
             qv.close()
             qv.removeFromSuperview()
+            textPeek?.removeFromSuperview()
             quickView = nil
+            textPeek = nil
             scroll.isHidden = false
         }
     }
 
-    func preview(_ url: URL?) { quickView?.previewItem = url as NSURL? }
+    /// Quick Look's preview, or our own of a text it would show as an icon (read off the main thread; the one shown
+    /// stays till the next is ready, so passing over files doesn't flicker).
+    func preview(_ url: URL?) {
+        guard let quickView, let textPeek else { return }
+        peekGen += 1
+        func quickLook() {
+            textPeek.isHidden = true
+            quickView.isHidden = false
+            quickView.previewItem = url as NSURL?
+        }
+        guard let url, !TextFormat.quickLookShows(url.lastPathComponent) else { return quickLook() }
+        let gen = peekGen
+        Task { [weak self] in
+            let text = await Blocking.run(.userInitiated) { TextPeek.read(url) }
+            guard let self, gen == peekGen else { return }
+            guard let text else { return quickLook() }
+            let top = peeked != url || textPeek.isHidden
+            textPeek.isHidden = false   // first: laid out while shown
+            quickView.isHidden = true
+            textPeek.show(text, numbers: UserDefaults.standard.bool(forKey: "viewerLineNumbers"), top: top)
+            peeked = url
+            quickView.previewItem = nil   // a video there doesn't play on behind it
+        }
+    }
 
     // MARK: - Tabs (each keeps its own path, cursor and history)
 
@@ -1993,6 +2046,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             quickLook = panel
             fetchPreview()
             quickLooked = quickLookURLs
+            copyTexts()
         }
     }
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
@@ -2000,6 +2054,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             panel.dataSource = nil
             panel.delegate = nil
             quickLook = nil
+            if !lookCopies.isEmpty {   // closed: its copies go
+                lookGen += 1
+                lookCopies = [:]
+                let ticket = TextCopies.ticket()
+                Task { await Blocking.run { _ = TextCopies.make([], ticket: ticket) } }
+            }
         }
     }
 
@@ -2021,6 +2081,21 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// The file the context menu's "Open With" lists apps for.
     private var openWith: URL?
+    /// The row a menu opened from the keyboard is for (`clickedRow` is −1 then).
+    private var menuRow: Int?
+    /// A folder menu's command is running: it acts on this folder, not on the cursor's item.
+    private var forFolder = false
+
+    /// The Menu key, ⇧F10: the cursor's item's menu by its row (not by the mouse); on ".." or nothing, the folder's.
+    func showContextMenu() {
+        guard let menu = table.menu else { return }
+        let r = table.selectedRow
+        if r >= 0 { table.scrollRowToVisible(r) }
+        let rect = r >= 0 ? table.rect(ofRow: r) : NSRect(x: 0, y: table.visibleRect.minY, width: 0, height: 0)
+        menuRow = r
+        defer { menuRow = nil }
+        menu.popUp(positioning: nil, at: NSPoint(x: rect.minX + 24, y: rect.maxY), in: table)
+    }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
@@ -2028,14 +2103,20 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             if let openWith { fillOpenWith(menu, for: openWith) }
             return
         }
-        let r = table.clickedRow
-        guard r >= 0, let it = item(at: r) else { return }
+        let r = menuRow ?? table.clickedRow
         onFocus?()   // the menu's commands act on the active panel: make it this one
-        // Like Finder: a click outside the marked set acts on the clicked item alone, never on marks elsewhere.
-        if !marked.contains(it.name) {
+        // Like Finder: a click outside the marked set acts on the clicked item alone, never on marks elsewhere. The
+        // keyboard's acts as the F-keys do: on the marks, or the cursor's.
+        if menuRow == nil, r >= 0, let it = item(at: r), !marked.contains(it.name) {
             if !marked.isEmpty { unmarkAll() }
             moveCursor(to: r)
         }
+        fillMenu(menu, row: r)
+    }
+
+    /// The context menu of `row`'s item; of the folder for ".." and empty space (−1). Each item is a command.
+    func fillMenu(_ menu: NSMenu, row: Int) {   // internal for tests
+        guard row >= 0, let it = item(at: row) else { return fillFolderMenu(menu) }
         func add(_ title: String, _ id: String) {
             let mi = menu.addItem(withTitle: title, action: #selector(contextCommand(_:)), keyEquivalent: "")
             mi.target = self
@@ -2059,10 +2140,49 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         add("Copy Path", "edit.copyPath")
         add("Copy Name", "edit.copyName")
         menu.addItem(.separator())
+        add("New File…", "file.new")
         add("Rename…", "file.rename")
+        add("Copy Here As…", "file.copyAs")
         add("Copy To…", "file.copy")
         add("Move To…", "file.move")
         add("Move to Trash", "file.trash")
+    }
+
+    private func fillFolderMenu(_ menu: NSMenu) {
+        @discardableResult func add(_ title: String, _ id: String, to m: NSMenu? = nil, on: Bool = false) -> NSMenuItem {
+            let mi = (m ?? menu).addItem(withTitle: title, action: #selector(contextCommand(_:)), keyEquivalent: "")
+            mi.target = self
+            mi.representedObject = id
+            mi.tag = 1   // for the folder
+            mi.state = on ? .on : .off
+            return mi
+        }
+        add("New File…", "file.new")
+        add("New Folder…", "file.mkdir")
+        menu.addItem(withTitle: "Paste", action: #selector(paste(_:)), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        add(remote != nil ? "SSH Here" : "Open in Terminal", "file.terminal")
+        if archive == nil { add("Copy Path", "edit.copyPath") }
+        if remote == nil, archive == nil {   // this Mac's folder
+            add("Reveal in Finder", "file.reveal")
+            add("Get Info", "file.info")
+        }
+        menu.addItem(.separator())
+        add("Show Hidden Files", "view.hidden", on: showHidden)
+        let sort = NSMenu()
+        for (title, key) in [("Name", SortKey.name), ("Size", .size), ("Modified", .mtime)] {
+            add(title, "view.sort." + key.rawValue, to: sort, on: sortKey == key)
+        }
+        sort.addItem(.separator())
+        add("Reverse", "view.sort.reverse", to: sort, on: ascending != (sortKey == .name))
+        menu.addItem(withTitle: "Sort By", action: nil, keyEquivalent: "").submenu = sort
+        add("Calculate Folder Sizes", "view.dirsizes")
+        if git != nil || remote != nil { menu.addItem(.separator()) }
+        if git != nil { add("Git Changes", "git.changes") }
+        if remote != nil {
+            add("Services…", "server.services")
+            add("Containers…", "server.containers")
+        }
     }
 
     private func fillOpenWith(_ m: NSMenu, for url: URL) {
@@ -2076,7 +2196,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
 
-    @objc private func contextCommand(_ sender: NSMenuItem) { onCommand?(sender.representedObject as! String) }
+    @objc private func contextCommand(_ sender: NSMenuItem) {
+        forFolder = sender.tag == 1
+        defer { forFolder = false }
+        onCommand?(sender.representedObject as! String)
+    }
 
     @objc private func openWith(_ sender: NSMenuItem) {
         NSWorkspace.shared.open(targetURLs, withApplicationAt: sender.representedObject as! URL, configuration: NSWorkspace.OpenConfiguration())
@@ -2194,6 +2318,26 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         guard quickLookURLs != quickLooked else { return }
         quickLooked = quickLookURLs
         quickLook.reloadData()
+        copyTexts()
+    }
+
+    /// Texts Quick Look would show as an icon get a `.txt` copy it shows as text (made off the main thread; till
+    /// then, the file itself).
+    private func copyTexts() {
+        lookGen += 1
+        let gen = lookGen, urls = quickLooked.prefix(TextCopies.most).filter { !TextFormat.quickLookShows($0.lastPathComponent) }
+        let wanted = Set(urls)
+        lookCopies = lookCopies.filter { wanted.contains($0.key) }
+        lookAsked = []
+        guard quickLooked.contains(where: { !TextFormat.quickLookShows($0.lastPathComponent) }) else { return }
+        let ticket = TextCopies.ticket()
+        lookTicket = ticket
+        Task { [weak self] in
+            let made = await Blocking.run(.userInitiated) { TextCopies.make(urls, ticket: ticket) }
+            guard let self, gen == lookGen, let quickLook else { return }
+            lookCopies = made
+            if !made.isEmpty { quickLook.reloadData() }
+        }
     }
 
     /// Native type-to-jump: typing "rea" moves the cursor to README.
@@ -2294,13 +2438,87 @@ extension PanelViewController: @preconcurrency QLPreviewPanelDataSource, @precon
     /// The panel may still ask for an index of the listing it last counted (a re-list or unmarking meanwhile).
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
         let urls = quickLookURLs
-        return urls.indices.contains(index) ? urls[index] as NSURL : nil
+        guard urls.indices.contains(index) else { return nil }
+        let url = urls[index]
+        if let copy = lookCopies[url] { return TextCopies.Item(copy, title: url.lastPathComponent) }
+        if index >= TextCopies.most, !TextFormat.quickLookShows(url.lastPathComponent), lookAsked.insert(url).inserted {
+            let gen = lookGen, ticket = lookTicket
+            Task { [weak self] in   // past the first ones: its copy now it's shown
+                let copy = await Blocking.run(.userInitiated) { TextCopies.one(url, ticket: ticket) }
+                guard let self, gen == lookGen, let copy, let quickLook else { return }
+                lookCopies[url] = copy
+                quickLook.refreshCurrentPreviewItem()
+            }
+        }
+        return url as NSURL
     }
     /// Arrow keys in the Quick Look window move our cursor, so previews follow along.
     func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
         guard event.type == .keyDown, event.keyCode != 53 else { return false }   // Esc closes Quick Look
         table.keyDown(with: event)
         return true
+    }
+}
+
+/// ⌘Y's `.txt` copies of texts Quick Look would show as an icon, in one owner-only folder per launch: the ones before
+/// go with each new preview, all of them at quit (a crash's, with the launch sweep: `TempCopies.prefixes`).
+enum TextCopies {
+    static let dir = NSTemporaryDirectory() + "dfm-text-" + UUID().uuidString
+    /// Copied together, at once; the marked past them are copied as Quick Look comes to each.
+    static let most = 50
+
+    private static let lock = NSLock()   // one at a time: each removes the copies before it
+    @MainActor private static var issued = 0
+    nonisolated(unsafe) private static var latest = 0   // under `lock`
+    nonisolated(unsafe) private static var folder: String?   // the latest `make`'s, under `lock`
+
+    /// The order `make`s were asked for in, taken on the main thread: one asked for earlier, running later, mustn't
+    /// remove a newer one's copies.
+    @MainActor static func ticket() -> Int { issued += 1; return issued }
+
+    /// The copies of those of `urls` that read as text; each in a folder of its own (two marked search hits may share
+    /// a name), the ones before removed. With an older `ticket` than one already made: nothing.
+    static func make(_ urls: [URL], ticket: Int? = nil) -> [URL: URL] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let ticket {
+            guard ticket > latest else { return [:] }
+            latest = ticket
+        }
+        let fm = FileManager.default, mine = (dir as NSString).appendingPathComponent(UUID().uuidString)
+        mkdir(dir, 0o700)
+        for old in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] { TempCopies.remove((dir as NSString).appendingPathComponent(old)) }
+        guard mkdir(mine, 0o700) == 0 else { return [:] }
+        folder = mine
+        var made: [URL: URL] = [:]
+        for url in urls.prefix(most) { made[url] = copy(url, in: mine) }
+        return made
+    }
+
+    /// One more copy, with the latest `make`'s (`ticket`): nil once a newer one came, or for what isn't text.
+    static func one(_ url: URL, ticket: Int) -> URL? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard ticket == latest, let folder else { return nil }
+        return copy(url, in: folder)
+    }
+
+    /// In a folder of its own there: two marked search hits may share a name.
+    private static func copy(_ url: URL, in folder: String) -> URL? {
+        guard FileInfo.notRegular(url.path) == nil, let h = FileHandle(forReadingAtPath: url.path) else { return nil }
+        let head = (try? h.read(upToCount: TextFormat.previewSniff)) ?? Data()
+        try? h.close()
+        let own = (folder as NSString).appendingPathComponent(UUID().uuidString)
+        guard TextFormat.previewsAsText(url.lastPathComponent, head: head), mkdir(own, 0o700) == 0,
+              let copy = try? TextFormat.textCopy(of: url.path, in: own) else { return nil }
+        return URL(fileURLWithPath: copy)
+    }
+
+    /// A copy shown under its file's own name.
+    final class Item: NSObject, QLPreviewItem {
+        let previewItemURL: URL?
+        let previewItemTitle: String?
+        init(_ url: URL, title: String) { (previewItemURL, previewItemTitle) = (url, title) }
     }
 }
 

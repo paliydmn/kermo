@@ -42,15 +42,23 @@ import Foundation
 
     /// A finished copy, move or delete (F5, F6, F8, Synchronize): a line for each production server it changed files on
     /// (one for a move within a server). Synchronize's copies name each file's two places, the server's among them.
+    /// Where a job's items went: its folder, or for one item under a new name (Copy Here As, F5 to a name) that
+    /// name's path; nil for a delete.
+    static func destination(_ job: FileJob) -> String? {
+        guard job.kind != .delete, let dir = job.destDir else { return nil }
+        return job.targetName.map { (dir as NSString).appendingPathComponent($0) } ?? dir
+    }
+
     static func write(_ job: FileJob, sync: Bool) {
         let kind = switch job.kind { case .copy: "copy"; case .move: "move"; case .delete: "delete"; case .trash: "trash" }
         let p = job.progress, ok = p.state == .done && p.errors.isEmpty
         let error = p.state == .cancelled ? "cancelled" : p.errors.isEmpty ? nil : p.errors.prefix(5).joined(separator: "\n")
         let paths = job.pairs.isEmpty ? job.sources : job.pairs.map { "\($0.src) → \($0.dst)" }
+        let to = destination(job)
         var done: [SFTPTarget] = []
         for t in AppDelegate.changed(from: job.from, to: job.to, move: job.kind == .move) where !done.contains(t) {
             done.append(t)
-            write(t, (sync ? "sync " : "") + kind, paths: paths, to: job.kind == .delete ? nil : job.destDir, exit: ok ? 0 : 1, error: ok ? nil : error)
+            write(t, (sync ? "sync " : "") + kind, paths: paths, to: to, exit: ok ? 0 : 1, error: ok ? nil : error)
         }
     }
 }

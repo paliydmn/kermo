@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 /// Viewer helpers: decoding, hex dumps, readable plist/JSON, log-line highlighting.
 public enum TextFormat {
@@ -53,6 +54,60 @@ public enum TextFormat {
         let sample = data.dropFirst(lead).prefix(8192)
         let control = sample.reduce(0) { n, b in n + ((b < 0x20 && ![8, 9, 10, 11, 12, 13, 27].contains(b)) || b == 0x7f ? 1 : 0) }
         return control * 20 > sample.count
+    }
+
+    /// Quick Look previews it by its name: macOS knows the extension as text, an image, PDF, audio or video, an
+    /// archive or a property list. `.conf`, `.env`, `.bak`, `syslog.1` or no extension at all it doesn't know (a
+    /// made-up type), and `server.key` / `id_rsa.pub` it takes for a Keynote or Publisher file: an icon only.
+    public static func quickLookShows(_ name: String) -> Bool {
+        let ext = (name as NSString).pathExtension
+        guard !ext.isEmpty, let t = UTType(filenameExtension: ext) else { return false }
+        return [UTType.text, .image, .pdf, .audiovisualContent, .archive, .propertyList, .message, .threeDContent].contains { t.conforms(to: $0) }
+    }
+
+    /// `data` without a UTF-8 character cut at its end (a lead byte whose continuation bytes didn't fit).
+    static func utf8Whole(_ data: Data) -> Data {
+        guard !data.isEmpty else { return data }
+        for back in 1...min(3, data.count) {
+            let b = data[data.endIndex - back]
+            guard b & 0xC0 == 0x80 else {   // not a continuation byte: a lead (or ASCII) — whole if its length fits
+                let need = b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 1
+                return need > back ? data.dropLast(back) : data
+            }
+        }
+        return data
+    }
+
+    /// How much of a file's start `previewsAsText` looks at.
+    public static let previewSniff = 64 << 10
+
+    /// Text the panel previews itself, where Quick Look would show an icon: a name it doesn't know, and a start
+    /// (`previewSniff`) that doesn't look binary — what F3 would show as text. UTF-16 reads as binary there too.
+    public static func previewsAsText(_ name: String, head: Data) -> Bool {
+        !quickLookShows(name) && !looksBinary(head.prefix(previewSniff))
+    }
+
+    /// A copy of `src` in `dir` named `<name>.txt`, so Quick Look shows it as text: a clone where the volume allows
+    /// (no bytes copied), else its first `limit` bytes — named `<name> (first 4 MB).txt` when that cuts it, never inside
+    /// a UTF-8 character. Read by the owner only: a server's `.env` or key may be in it, and an app Quick Look opens it
+    /// in mustn't save into a copy that's thrown away.
+    public static func textCopy(of src: String, in dir: String, limit: Int = 4 << 20) throws -> String {
+        let name = (src as NSString).lastPathComponent
+        var dst = (dir as NSString).appendingPathComponent(name + ".txt")
+        if clonefile(src, dst, 0) == 0 {
+            chmod(dst, 0o400)
+            return dst
+        }
+        guard let h = FileHandle(forReadingAtPath: src) else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { try? h.close() }
+        var head = try h.read(upToCount: limit + 1) ?? Data()
+        if head.count > limit {
+            dst = (dir as NSString).appendingPathComponent("\(name) (first \(limit >> 20) MB).txt")
+            head = utf8Whole(head.prefix(limit))
+        }
+        guard FileManager.default.createFile(atPath: dst, contents: head, attributes: [.posixPermissions: 0o400])
+        else { throw POSIXError(.EIO) }
+        return dst
     }
 
     public static let nulRunLimit = 256 << 20

@@ -20,6 +20,11 @@ Release:
 - **Containers…** (⌘⇧P, a server's sidebar menu): the server's docker (or podman) containers, running first, with their status and image. ↩ shows its log as it goes, ⌘R restarts it, ⌘C copies its name. A restart on a production server asks first (↩ is Cancel) and goes into the production log. Only names made of the characters systemd and docker allow are put into commands. A log stopped with ⎋ stops on the server too.
 - **Viewer:** `e` shows errors and warnings only, then errors only, then all lines, with `&` or without (`&` now matches lines as shown, colors' codes aside); `l` shows line numbers (files up to 4 MB, remembered). Following, a scrolled-up view says `paused — End resumes`.
 - **Free space on the server** in a server panel's status line: `🌐 sftp · web1 · 120 items · 120 GB free` (`df`'s Available), asked with the listing at no extra wait.
+- **Text previews of configs:** ⌃Q and ⌘Y show as text a file Quick Look shows only as an icon — `.conf`, `.env`, `.bak`, `syslog.1`, `server.key`, no extension — when its start reads as text. ⌃Q shows it itself with F3's colors and line numbers (the first 256 KB); ⌘Y through a read-only `.txt` copy for you alone, gone when Quick Look shows something else or closes, and at quit. On a server too.
+- **Copy Here As…** (⇧F5, ⌥⇧5): a copy next to the item under a new name (`nginx.conf.bak`, `.bak` selected), or a suffix for each of several marked; folders whole; a taken name is an error, never replaced. On a server the server copies it where it can; a production one says so and logs it.
+- **New File…** (⇧F4) on a server and a root panel: an empty file there, never over an existing one, opened in the editor.
+- **A folder's context menu:** right-click empty space or `..` for New File…, New Folder…, Paste, Open in Terminal (SSH Here on a server), Copy Path, Reveal in Finder, Get Info, Show Hidden Files, Sort By, Calculate Folder Sizes, Git Changes, and a server's Services… and Containers…. An item's menu gains New File… and Copy Here As….
+- **⇧F10 and the Menu key** of a PC keyboard open the cursor item's context menu by its row (the folder's on `..`). **Sort by Name / Size / Modified** and **Reverse Sort Order** are commands in ⇧⌘P.
 
 ### Changed
 
@@ -38,6 +43,9 @@ Release:
 - Faster on this Mac: folder sizes, copies and Find Files no longer look at each subfolder on its own to stay on one volume; merging copies, Find Files by content and Compare contents do less work per file; `git status` in a slow repository runs at most every twice its own time (still at most once a second).
 - **A folder of more than 5,000 items sorts in the background** (a column header clicked, search results done, links found to be folders, a server folder listed): the list stays as it was until it's done, `Sorting…` shows after a moment, and the cursor stays on its item. A million names held the window for a second.
 - Big folders and files no longer hold the window: the quick filter folds the names once instead of on every key (a million names: 0.3 s a key to ~15 ms); ⌥Space over thousands of folders no longer adds up the whole list per folder (4000 folders among 200,000 items: 45 s to under 0.1 s); ⇧⌘P stops ranking a query you've typed past and skips names that can't match; the folder watcher's re-list does nothing when nothing changed; the editor's line numbers follow an edit instead of counting a 30 MB file's lines on every key, and its colors repaint only what changed (a 2 MB script: 15 s after each pause in typing to a few hundredths); Open With in the context menu looks up apps when it opens.
+- **Copy Path** (⇧⌘C) and **Copy Name** (⌥⌘C) work in a server panel: the paths on the server (they only beeped there).
+- **Connect to Server** (⌃⌘K, ⌘K) takes a port followed by a path, `user@host:2222/etc/nginx`, as a URL would; before, it went to port 22 looking for a folder named `2222/etc/nginx`.
+- **The production log** names a copy's new name when one item is copied under another (Copy Here As, F5 to a name), not only its folder.
 
 ### Fixed
 

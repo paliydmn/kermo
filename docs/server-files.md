@@ -15,13 +15,17 @@ F5 / F6, ⌘C / ⌘V and drag and drop copy and move files in every direction: s
 ## Open and edit
 
 - **F3** views a file, **F4** edits it. The editor uploads the file after every ⌘S, and closing with changes asks first.
-- **↩** opens a file in its app (so does Quick Look's **Open with**). Every save there goes up to the server the same way. If someone changed the file there meanwhile, you're asked first (**Compare** shows the differences); on a production server you're asked once as well.
+- **↩** opens a file in its app (so does Quick Look's **Open with**, except for a config ⌘Y shows through a read-only `.txt` copy). Every save there goes up to the server the same way. If someone changed the file there meanwhile, you're asked first (**Compare** shows the differences); on a production server you're asked once as well.
 - An app that autosaves (TextEdit) sends its autosaves too, so on a production server F4 is the safer choice. Quitting names what didn't reach the server; its copy is kept.
 - Saving a server config checks it first: see [Checks on save](config-checks.md).
+- ⇧⌘C **Copy Path** and ⌥⌘C **Copy Name** copy the marked items' paths (or names) on the server, as `/etc/nginx/nginx.conf`, ready for a command there.
+- ⇧F4 (⌥⇧4) **New File…** creates an empty file there (`rw-r--r--`, never over an existing one) and opens it in the editor as F4 does. On a [root panel](root-panel.md) it's root's.
+- ⇧F5 (⌥⇧5) **Copy Here As…** copies there, next to itself, under a new name (`nginx.conf.bak`), or with a suffix for several marked; a folder whole. The server copies it itself where it can, as within-server copies do. A taken name is an error, never replaced. On a production server the name prompt says so, and the copy goes into the production log.
+- Right-click empty space or `..` for the folder's menu, as on this Mac ([Context menu](files.md#context-menu)): there **SSH Here** opens a shell in that folder, **Copy Path** copies the folder's path on the server, **Services…** and **Containers…** are in it too, and Reveal in Finder and Get Info are left out.
 
 ## Preview, sizes and compare
 
-- **⌃Q** and **⌘Y** preview the file under the cursor. It is fetched once the cursor rests on it (up to 64 MB). Copies stay until you quit, 256 MB of them at most. ⌘Y shows the cursor's file, not the marked ones.
+- **⌃Q** and **⌘Y** preview the file under the cursor. It is fetched once the cursor rests on it (up to 64 MB). Copies stay until you quit, 256 MB of them at most. ⌘Y shows the cursor's file, not the marked ones. A config Quick Look shows only as an icon (`.conf`, `.env`, no extension) shows as text, as on this Mac ([Preview](files.md#preview)).
 - **⌥Space** (and Space on a folder) counts folder sizes with the server's own `du` (`du -slbx`, as GNU, uutils and busybox know it), one command for all of them: file bytes (busybox adds each folder's own 4 KB), each hard link counted, volumes mounted inside skipped. A folder `du` couldn't read all of shows as `≥ 1.2 GB`. ⎋ stops it, and `du` on the server too. On a [root panel](root-panel.md#what-runs-as-root) `du` runs as root. Where `du` can't do it — no `-b` (BSD), an account without a shell (SFTP only) — the folders are walked over SFTP, one after another, as before.
 - The status line says what's free on the server's disk there, as `df` calls it Available: `🌐 sftp · web1 · 120 items · 120 GB free`. A server that doesn't tell (no `statvfs@openssh.com`) shows no figure.
 - **⇧⌘D** compares a server's file with one on this Mac or on another server. The file is fetched as ⌃Q fetches it and shown as `host:/path` in the diff.

@@ -19,6 +19,7 @@ struct Shortcut: Hashable {
             "left": (123, fk(NSLeftArrowFunctionKey), "←"), "right": (124, fk(NSRightArrowFunctionKey), "→"),
             "down": (125, fk(NSDownArrowFunctionKey), "↓"), "up": (126, fk(NSUpArrowFunctionKey), "↑"),
             "kpstar": (67, "*", "*"), "kpplus": (69, "+", "+"), "kpminus": (78, "-", "-"),
+            "menu": (110, fk(NSMenuFunctionKey), "Menu"),   // a PC keyboard's (kVK_ContextualMenu)
         ]
         let fcodes: [UInt16] = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111]
         for (i, code) in fcodes.enumerated() {
