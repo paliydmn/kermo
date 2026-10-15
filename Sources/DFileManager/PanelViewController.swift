@@ -2048,7 +2048,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             if !lookCopies.isEmpty {   // closed: its copies go
                 lookGen += 1
                 lookCopies = [:]
-                Task { await Blocking.run { _ = TextCopies.make([]) } }
+                let ticket = TextCopies.ticket()
+                Task { await Blocking.run { _ = TextCopies.make([], ticket: ticket) } }
             }
         }
     }
@@ -2319,8 +2320,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let wanted = Set(urls)
         lookCopies = lookCopies.filter { wanted.contains($0.key) }
         guard !urls.isEmpty else { return }
+        let ticket = TextCopies.ticket()
         Task { [weak self] in
-            let made = await Blocking.run(.userInitiated) { TextCopies.make(urls) }
+            let made = await Blocking.run(.userInitiated) { TextCopies.make(urls, ticket: ticket) }
             guard let self, gen == lookGen, let quickLook else { return }
             lookCopies = made
             if !made.isEmpty { quickLook.reloadData() }
@@ -2444,12 +2446,22 @@ enum TextCopies {
     static let most = 50
 
     private static let lock = NSLock()   // one at a time: each removes the copies before it
+    @MainActor private static var issued = 0
+    nonisolated(unsafe) private static var latest = 0   // under `lock`
+
+    /// The order `make`s were asked for in, taken on the main thread: one asked for earlier, running later, mustn't
+    /// remove a newer one's copies.
+    @MainActor static func ticket() -> Int { issued += 1; return issued }
 
     /// The copies of those of `urls` that read as text; each in a folder of its own (two marked search hits may share
-    /// a name), the ones before removed.
-    static func make(_ urls: [URL]) -> [URL: URL] {
+    /// a name), the ones before removed. With an older `ticket` than one already made: nothing.
+    static func make(_ urls: [URL], ticket: Int? = nil) -> [URL: URL] {
         lock.lock()
         defer { lock.unlock() }
+        if let ticket {
+            guard ticket > latest else { return [:] }
+            latest = ticket
+        }
         let fm = FileManager.default, mine = (dir as NSString).appendingPathComponent(UUID().uuidString)
         mkdir(dir, 0o700)
         for old in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] { TempCopies.remove((dir as NSString).appendingPathComponent(old)) }

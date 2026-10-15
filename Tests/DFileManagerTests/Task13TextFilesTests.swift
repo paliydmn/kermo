@@ -48,7 +48,7 @@ private func tempDir() -> String {
 }
 
 /// ⌘Y: texts get a `.txt` copy, binary files none; each call's copies replace the ones before.
-@Test func quickLookGetsTxtCopiesOfTexts() throws {
+@MainActor @Test func quickLookGetsTxtCopiesOfTexts() throws {
     let d = tempDir()
     defer { try? FileManager.default.removeItem(atPath: d) }
     FileManager.default.createFile(atPath: d + "/hosts", contents: Data("127.0.0.1 localhost\n".utf8))
@@ -71,6 +71,11 @@ private func tempDir() -> String {
     let both = TextCopies.make([a, b])
     #expect(both[a].flatMap { FileManager.default.contents(atPath: $0.path) } == Data("a\n".utf8))
     #expect(both[b].flatMap { FileManager.default.contents(atPath: $0.path) } == Data("b\n".utf8))
+    // One asked for earlier that runs later leaves the newer copies alone.
+    let older = TextCopies.ticket(), newer = TextCopies.ticket()
+    let kept = TextCopies.make([hosts], ticket: newer)
+    #expect(TextCopies.make([a], ticket: older).isEmpty)
+    #expect(kept[hosts].map { FileManager.default.fileExists(atPath: $0.path) } == true)
     TempCopies.remove(TextCopies.dir)
 }
 

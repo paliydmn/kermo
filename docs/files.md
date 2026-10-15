@@ -68,7 +68,7 @@ A dialog asks. For files it shows size and date of both (**← newer** marks the
 
 Right-click an item for its menu: Open, Open With, Quick Look, View, Edit, Get Info, Reveal in Finder, Open in Terminal, Copy Path and Copy Name, then New File…, Rename…, Copy Here As…, Copy To…, Move To… and Move to Trash. Clicking an item outside the marked ones acts on it alone.
 
-Right-click empty space or `..` for the folder's menu: New File…, New Folder…, Paste; Open in Terminal, Copy Path, Reveal in Finder and Get Info of the folder; Show Hidden Files, **Sort By** (Name, Size, Modified, Reverse) and Calculate Folder Sizes; Git Changes in a repository.
+Right-click empty space or `..` for the folder's menu: New File…, New Folder…, Paste; Open in Terminal; Copy Path, Reveal in Finder and Get Info of the folder (not inside an archive); Show Hidden Files, **Sort By** (Name, Size, Modified, Reverse) and Calculate Folder Sizes; Git Changes in a repository.
 
 From the keyboard, ⇧F10 or a PC keyboard's Menu key opens the cursor item's menu next to its row, acting on the marked items as the F-keys do; on `..` it opens the folder's menu. Sort by Name, Size or Modified and Reverse Sort Order are also commands in ⇧⌘P.
 
