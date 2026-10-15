@@ -36,7 +36,7 @@ enum Place: Equatable {
     var path: String? {
         switch self {
         case .folder(let p): p
-        case .volume(let v): v.path
+        case .volume(let v): v.path.isEmpty ? nil : v.path
         default: nil
         }
     }
@@ -154,28 +154,36 @@ struct Volume: Equatable, Sendable {
     let free: Int64?
     var total: Int64? = nil
     let ejectable: Bool
+    var device = ""   // "/dev/disk4s1"
 }
 
-/// A Locations row: its volume's figures as shown ("" where the volume doesn't say).
+/// A Locations row: its volume's figures as shown ("" where the volume doesn't say). `disk`: DiskArbitration's, for
+/// one Kermo may mount and unmount; with no `path`, it isn't mounted.
 struct VolumeRow: Equatable {
     let path: String
     let name: String
     var used = "", free = "", total = ""
     let ejectable: Bool
+    var disk: Disk? = nil
 
-    var tip: String { used.isEmpty ? path : "\(path) · \(used) used of \(total) · \(free) free" }
+    var mounted: Bool { !path.isEmpty }
+
+    var tip: String {
+        if !mounted, let d = disk { return "Not mounted · " + [d.format, d.size > 0 ? SidebarModel.sizes.string(fromByteCount: d.size) : ""].filter { !$0.isEmpty }.joined(separator: " · ") }
+        return used.isEmpty ? path : "\(path) · \(used) used of \(total) · \(free) free"
+    }
 }
 
 /// What the sidebar shows, from data the app already keeps.
 enum SidebarModel {
-    static func sections(bookmarks: [String], frecent: [String], volumes: [Volume], servers: ServerList,
+    static func sections(bookmarks: [String], frecent: [String], volumes: [Volume], disks: [Disk] = [], servers: ServerList,
                          tags: [String]) -> [SidebarSection] {
         [
             SidebarSection(id: "fav", title: "Favorites", command: "go.bookmark",
                            places: bookmarks.map { Bookmark.remote($0) == nil ? .folder($0) : .serverFolder($0) }),
             SidebarSection(id: "freq", title: "Frequent", command: "go.jump",
                            places: frecent.filter { !bookmarks.contains($0) }.prefix(5).map(Place.folder)),
-            SidebarSection(id: "loc", title: "Locations", command: "go.volumes", places: volumes.map { .volume(row($0)) }),
+            SidebarSection(id: "loc", title: "Locations", command: "go.volumes", places: locations(volumes, disks).map(Place.volume)),
             SidebarSection(id: "servers", title: "Servers", command: "ssh.new", places: serverRows(servers).map(Place.server) + [.connect]),
             SidebarSection(id: "tags", title: "Tags", command: "tag.edit", places: [.tagColors] + tags.map(Place.tag)),
         ]
@@ -192,10 +200,19 @@ enum SidebarModel {
 
     /// Used = total − free (free as Finder counts it for a local disk: with what macOS would clear for an important
     /// file), when the volume knows both; a share's kernel figures of 0 / 0 say nothing.
-    static func row(_ v: Volume) -> VolumeRow {
-        guard let free = v.free, let total = v.total, total > 0 else { return VolumeRow(path: v.path, name: v.name, ejectable: v.ejectable) }
+    static func row(_ v: Volume, disks: [Disk] = []) -> VolumeRow {
+        let disk = disks.first { $0.mountPath == v.path || "/dev/" + $0.bsd == v.device }
+        guard let free = v.free, let total = v.total, total > 0 else { return VolumeRow(path: v.path, name: v.name, ejectable: v.ejectable, disk: disk) }
         return VolumeRow(path: v.path, name: v.name, used: sizes.string(fromByteCount: max(0, total - free)),
-                         free: sizes.string(fromByteCount: free), total: sizes.string(fromByteCount: total), ejectable: v.ejectable)
+                         free: sizes.string(fromByteCount: free), total: sizes.string(fromByteCount: total), ejectable: v.ejectable, disk: disk)
+    }
+
+    /// Mounted volumes, then the disks' volumes that aren't (not one the kernel has mounted already, which
+    /// DiskArbitration may not have told yet).
+    static func locations(_ volumes: [Volume], _ disks: [Disk]) -> [VolumeRow] {
+        let devices = Set(volumes.map(\.device))
+        return volumes.map { row($0, disks: disks) }
+            + disks.filter { $0.mountPath == nil && !devices.contains("/dev/" + $0.bsd) }.map { VolumeRow(path: "", name: $0.name, ejectable: true, disk: $0) }
     }
 
     /// SFTP's last attempt at a host: connecting, failed, or neither.
@@ -241,7 +258,7 @@ enum SidebarModel {
     }
 
     /// A mounted volume as the kernel last knew it (MNT_NOWAIT): a dead network mount isn't asked, so it can't hang.
-    struct Mount: Sendable { let path: String, type: String, local: Bool, free: Int64, total: Int64 }
+    struct Mount: Sendable { let path: String, type: String, local: Bool, free: Int64, total: Int64; var device = "" }
 
     /// Blocks × block size, capped: an exotic volume's figures could overflow Int64 (a trap, not a wrong number).
     static func bytes(_ blocks: UInt64, _ size: UInt32) -> Int64 {
@@ -258,7 +275,8 @@ enum SidebarModel {
             var s = s
             func str<T>(_ t: inout T) -> String { withUnsafeBytes(of: &t) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) } }
             let free = bytes(s.f_bavail, s.f_bsize), total = bytes(s.f_blocks, s.f_bsize)
-            return Mount(path: str(&s.f_mntonname), type: str(&s.f_fstypename), local: s.f_flags & UInt32(MNT_LOCAL) != 0, free: free, total: total)
+            return Mount(path: str(&s.f_mntonname), type: str(&s.f_fstypename), local: s.f_flags & UInt32(MNT_LOCAL) != 0, free: free, total: total,
+                         device: str(&s.f_mntfromname))
         }
     }
 
@@ -267,10 +285,11 @@ enum SidebarModel {
     static func volumes(_ mounts: [Mount] = mounts()) -> [Volume] {
         let keys: Set<URLResourceKey> = [.volumeNameKey, .volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey, .volumeIsEjectableKey]
         return mounts.map { m in
-            guard m.local else { return Volume(path: m.path, name: (m.path as NSString).lastPathComponent, free: m.free, total: m.total, ejectable: true) }
+            guard m.local else { return Volume(path: m.path, name: (m.path as NSString).lastPathComponent, free: m.free, total: m.total, ejectable: true, device: m.device) }
             let v = try? URL(fileURLWithPath: m.path).resourceValues(forKeys: keys)
             return Volume(path: m.path, name: v?.volumeName ?? (m.path as NSString).lastPathComponent,
-                          free: v?.volumeAvailableCapacityForImportantUsage, total: v?.volumeTotalCapacity.map(Int64.init), ejectable: v?.volumeIsEjectable == true)
+                          free: v?.volumeAvailableCapacityForImportantUsage, total: v?.volumeTotalCapacity.map(Int64.init), ejectable: v?.volumeIsEjectable == true,
+                          device: m.device)
         }
     }
 
@@ -654,9 +673,9 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
                             detail: Bookmark.remote(e)?.target.host ?? "")
         case .volume(let v):
             let (path, name, ejectable) = (v.path, v.name, v.ejectable)
-            let r = placeRow(ejectable ? "externaldrive" : "internaldrive", name, v.tip)
+            let r = placeRow(ejectable ? "externaldrive" : "internaldrive", name, v.tip, dim: !v.mounted)
             if !v.used.isEmpty { r.addArrangedSubview(spacer()); r.addArrangedSubview(VolumeFigures(used: v.used, free: v.free)) }
-            if ejectable {
+            if ejectable, v.mounted {
                 let b = NSButton(image: NSImage(systemSymbolName: "eject.fill", accessibilityDescription: "Eject")!, target: self, action: #selector(eject(_:)))
                 b.isBordered = false
                 b.identifier = .init(path)
@@ -701,11 +720,12 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         return s
     }
 
-    private func placeRow(_ symbol: String, _ title: String, _ tip: String, detail: String = "") -> NSStackView {
+    /// `dim`: a volume not mounted, in gray.
+    private func placeRow(_ symbol: String, _ title: String, _ tip: String, detail: String = "", dim: Bool = false) -> NSStackView {
         let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!)
-        icon.contentTintColor = theme.background == nil ? .controlAccentColor : theme.dir
+        icon.contentTintColor = dim ? .tertiaryLabelColor : theme.background == nil ? .controlAccentColor : theme.dir
         let label = NSTextField(labelWithString: title)
-        label.textColor = theme.text
+        label.textColor = dim ? .secondaryLabelColor : theme.text
         label.lineBreakMode = .byTruncatingMiddle
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let d = NSTextField(labelWithString: detail)
@@ -1001,7 +1021,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         if roots.first?.children.contains(where: { $0 === node }) == true, let p = place.bookmark {
             menu.addItem(withTitle: "Remove from Favorites", action: #selector(removeFavorite(_:)), keyEquivalent: "").representedObject = p
         }
-        if case .volume(let v) = place, v.ejectable {
+        if case .volume(let v) = place, v.ejectable, v.mounted {
             menu.addItem(withTitle: "Eject", action: #selector(ejectItem(_:)), keyEquivalent: "").representedObject = v.path
         }
         menu.items.forEach { $0.target = self }

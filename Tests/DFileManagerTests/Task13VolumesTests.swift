@@ -34,3 +34,26 @@ import Testing
     let none = try volumeRow(VolumeRow(path: "/Volumes/S", name: "S", ejectable: true))
     #expect(!none.arrangedSubviews.contains { $0 is VolumeFigures } && none.toolTip == "/Volumes/S")
 }
+
+/// V3: a disk's volume that isn't mounted comes after the mounted ones, gray, no path to open, no eject; one the
+/// kernel has mounted already (DiskArbitration not caught up) isn't listed twice; a mounted one knows its disk.
+@MainActor @Test func aVolumeNotMountedIsListedGray() throws {
+    let stick = Disk(bsd: "disk9s2", name: "STICK", format: "ExFAT", size: 31_000_000_000, mountPath: nil)
+    let card = Disk(bsd: "disk8s1", name: "CARD", format: "MS-DOS (FAT32)", size: 0, mountPath: nil)
+    let usb = Disk(bsd: "disk7s1", name: "USB", format: "APFS", size: 0, mountPath: "/Volumes/USB")
+    let vols = [Volume(path: "/", name: "Macintosh HD", free: 1, total: 2, ejectable: false, device: "/dev/disk3s1s1"),
+                Volume(path: "/Volumes/USB", name: "USB", free: 1, total: 2, ejectable: true, device: "/dev/disk7s1"),
+                Volume(path: "/Volumes/CARD", name: "CARD", free: 1, total: 2, ejectable: true, device: "/dev/disk8s1")]
+    let rows = SidebarModel.locations(vols, [card, stick, usb])
+    #expect(rows.map(\.name) == ["Macintosh HD", "USB", "CARD", "STICK"])
+    #expect(rows[0].disk == nil && rows[1].disk == usb && rows[2].disk == card, "by its mount point, or by its device")
+    let s = try #require(rows.last)
+    #expect(!s.mounted && Place.volume(s).path == nil && !Place.volume(s).selectable)
+    #expect(s.tip == "Not mounted · ExFAT · \(SidebarModel.sizes.string(fromByteCount: 31_000_000_000))")
+
+    let view = try volumeRow(s)
+    let name = try #require(view.arrangedSubviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == "STICK" })
+    #expect(name.textColor == .secondaryLabelColor)
+    #expect(!view.arrangedSubviews.contains { ($0 as? NSButton)?.image?.accessibilityDescription == "Eject" })
+    #expect(try volumeRow(rows[1]).arrangedSubviews.contains { ($0 as? NSButton)?.image?.accessibilityDescription == "Eject" })
+}

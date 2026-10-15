@@ -25,6 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     let search = HeaderSearch()
     private var splitController: NSSplitViewController!
     private var volumes: [Volume] = []
+    private var disks: [Disk] = []   // DiskArbitration's that Kermo may mount
+    private var diskWatch: DiskWatch?
     private var configHosts: [String] = []   // ~/.ssh/config aliases
     private var sftpErrors: [String: String] = [:]   // host → its last failure, until any panel gets through
     private var sidebarRefresh: Task<Void, Never>?
@@ -535,6 +537,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ws.addObserver(self, selector: #selector(volumeGone(_:)), name: NSWorkspace.didUnmountNotification, object: nil)
         refreshSidebar()
         reloadVolumes()
+        diskWatch = DiskWatch { [weak self] in
+            self?.disks = $0
+            self?.refreshSidebar()
+        }
         let tick = Timer.scheduledTimer(timeInterval: 30, target: self, selector: #selector(volumeTick), userInfo: nil, repeats: true)
         tick.tolerance = 5
     }
@@ -558,7 +564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func loadVolumes() async {
         let (new, hosts) = await Blocking.run { (SidebarModel.volumes(), SSHConfig.hosts().map(\.alias)) }
         // Free space differs by some bytes at every read: the sidebar is rebuilt only when what it shows has changed.
-        let same = new.map(SidebarModel.row) == volumes.map(SidebarModel.row) && hosts == configHosts
+        let same = new.map { SidebarModel.row($0) } == volumes.map { SidebarModel.row($0) } && new.map(\.device) == volumes.map(\.device) && hosts == configHosts
         (volumes, configHosts) = (new, hosts)
         if !same { refreshSidebar() }
     }
@@ -590,7 +596,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if let e = st.error { servers.failedTunnels[key, default: []].append("\(st.tunnel.title): \(e)") }
             if !servers.forwarded.contains(where: { ServerRow.key($0) == key }) { servers.forwarded.append(st.server.target) }
         }
-        sidebar.show(SidebarModel.sections(bookmarks: bookmarks, frecent: frecency.ranked(), volumes: volumes, servers: servers,
+        sidebar.show(SidebarModel.sections(bookmarks: bookmarks, frecent: frecency.ranked(), volumes: volumes, disks: disks, servers: servers,
                                            tags: defaults.stringArray(forKey: "recentTags") ?? []))
         sidebar.highlight(sidebarKey)
     }
