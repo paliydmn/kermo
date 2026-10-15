@@ -159,6 +159,44 @@ private func read(_ path: String) -> String? {
     }
 }
 
+/// Read-only folders (0555, as tar sets them) still move out of the staging folder — into a new place and merged —
+/// and are read-only again where they land; Cancel removes such a staging folder whole; a day-old one a quit left is
+/// cleared by the next. Keep Existing doesn't drop an archive's folder silently where a link is.
+@Test func aWholeTarWithReadOnlyFolders() throws {
+    let root = sampleTree()
+    defer { sh("chmod -R u+w .", in: root); try? FileManager.default.removeItem(atPath: root) }
+    sh("mkdir ro && printf R > ro/r && chmod 555 proj/sub/deep proj/sub ro && tar czf t.tar.gz proj ro && chmod -R u+w proj ro", in: root)
+    sh("mkdir -p dest/proj/sub && printf old > dest/proj/a.txt && mkdir elsewhere && ln -s elsewhere dest/ro", in: root)
+    let dest = root + "/dest"
+
+    for keep in [true, false] {
+        let staging = ArchiveIndex.stagingFolder(in: dest)
+        try FileManager.default.createDirectory(atPath: staging, withIntermediateDirectories: false)
+        sh("tar xf ../t.tar.gz -C \(staging)", in: dest)
+        let errors = ArchiveIndex.moveExtracted(staging, to: dest, keep: keep)
+        #expect(errors == (keep ? [dest + "/ro: not a folder, kept"] : []))
+        #expect(read(dest + "/proj/sub/deep/c.txt") == "C" && read(dest + "/proj/sub/b.txt") == "B")
+        #expect(FileJob.lstat(dest + "/proj/sub/deep").map { $0.st_mode & 0o777 } == 0o555)   // moved: read-only again
+        #expect(FileJob.lstat(dest + "/proj/sub").map { $0.st_mode & 0o777 } != 0o555)   // merged into: its own mode
+        #expect(read(dest + "/ro/r") == (keep ? nil : "R"))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dest).sorted() == ["proj", "ro"])
+        sh("chmod -R u+w proj && rm -rf proj/sub/deep && { [ ! -L ro ] || rm ro; }", in: dest)   // no link left for Overwrite to trash
+    }
+
+    let cancelled = ArchiveIndex.stagingFolder(in: dest)
+    try FileManager.default.createDirectory(atPath: cancelled, withIntermediateDirectories: false)
+    sh("tar xf ../t.tar.gz -C \(cancelled)", in: dest)
+    ArchiveIndex.discardStaging(cancelled)
+    #expect(FileJob.lstat(cancelled) == nil)
+
+    let stale = dest + "/" + ArchiveIndex.stagingPrefix + "old", fresh = dest + "/" + ArchiveIndex.stagingPrefix + "now"
+    try FileManager.default.createDirectory(atPath: stale + "/x", withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(atPath: fresh, withIntermediateDirectories: true)
+    sh("chmod 555 \(stale)/x && touch -t 202001010000 \(stale)", in: dest)
+    _ = ArchiveIndex.stagingFolder(in: dest)
+    #expect(FileJob.lstat(stale) == nil && FileJob.lstat(fresh) != nil)   // a run going on now is left alone
+}
+
 @Test func wholeArchiveEmptyArchiveAndLinks() throws {
     let root = sampleTree()
     defer { try? FileManager.default.removeItem(atPath: root) }

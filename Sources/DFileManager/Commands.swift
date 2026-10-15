@@ -1592,14 +1592,15 @@ extension AppDelegate {
             let shown = (dest as NSString).abbreviatingWithTildeInPath
             let args = ["-x", "-f", file, "-C", staging ?? dest]
             Shell.run("/usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dest,
-                      title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)") { [weak self] _ in
+                      title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)") { [weak self] status in
                 guard let self else { return }
                 guard let staging else { return panels.forEach { $0.reload() } }
                 Task {
-                    let clashes = await Blocking.run { ArchiveIndex.clashes(staging, dest) }
-                    let keep = await self.keepExisting(clashes, in: shown)
+                    // stopped (⎋) or failed: half an archive doesn't land in `dest`; the window says what tar said
+                    let clashes = await Blocking.run { status == 0 ? ArchiveIndex.clashes(staging, dest) : [] }
+                    let keep = status == 0 ? await self.keepExisting(clashes, in: shown) : nil
                     let errors = await Blocking.run {
-                        guard let keep else { try? FileManager.default.removeItem(atPath: staging); return [String]() }
+                        guard let keep else { ArchiveIndex.discardStaging(staging); return [String]() }
                         return ArchiveIndex.moveExtracted(staging, to: dest, keep: keep)
                     }
                     self.panels.forEach { $0.reload() }

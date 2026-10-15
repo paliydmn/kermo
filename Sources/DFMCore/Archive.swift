@@ -158,10 +158,15 @@ public struct ArchiveIndex: Sendable {
     }
 
     /// Where a whole tar unpacks when `dest` has something in it already: a hidden folder inside `dest`, so what's at
-    /// its top then moves out by rename (`moveExtracted`).
+    /// its top then moves out by rename (`moveExtracted`). Ones a quit or a crash left there a day ago or more go first.
     public static func stagingFolder(in dest: String) -> String {
-        (dest as NSString).appendingPathComponent(".kermo-extract-" + UUID().uuidString)
+        let old = Date().timeIntervalSince1970 - 86_400
+        for item in (try? DirLister.list(dest)) ?? [] where item.kind == .dir && item.name.hasPrefix(stagingPrefix) && item.mtime < old {
+            discardStaging((dest as NSString).appendingPathComponent(item.name))
+        }
+        return (dest as NSString).appendingPathComponent(stagingPrefix + UUID().uuidString)
     }
+    static let stagingPrefix = ".kermo-extract-"
 
     /// What's at the top of `staging` that `dest` has already.
     public static func clashes(_ staging: String, _ dest: String) -> [String] {
@@ -170,18 +175,54 @@ public struct ArchiveIndex: Sendable {
 
     /// Moves what's at the top of `staging` into `dest` as bsdtar would have put it there: folders merge, a file
     /// that's there already stays (`keep`, bsdtar's -k) or is replaced. A folder an archive's file would replace
-    /// stays, and so it's reported (bsdtar can't remove one that has something in it either). Then `staging` goes.
-    /// Returns what couldn't be moved.
+    /// stays, and so does a file (or link) where the archive has a folder under Keep Existing: both are reported, as
+    /// what they hold isn't extracted. Then `staging` goes. Returns what couldn't be moved.
     public static func moveExtracted(_ staging: String, to dest: String, keep: Bool) -> [String] {
+        let locked = unlockFolders(staging)
+        let existed = Set(locked.map(\.rel).filter { FileJob.lstat((dest as NSString).appendingPathComponent($0)) != nil })
         let tops = ((try? DirLister.list(staging)) ?? []).map { (staging as NSString).appendingPathComponent($0.name) }
         let job = FileJob(.move, sources: tops, destDir: dest)
         job.resolveConflict = { [unowned job] c in
             if c.replacesFolder { job.update { $0.errors.append("\(c.dst): a folder is there, kept") }; return (.skip, false) }
+            if keep && !c.bothDirs && FileJob.lstat(c.src).map({ $0.st_mode & S_IFMT == S_IFDIR }) == true {
+                job.update { $0.errors.append("\(c.dst): not a folder, kept") }
+                return (.skip, false)
+            }
             return (c.bothDirs || !keep ? .overwrite : .skip, false)
         }
         job.run()
-        try? FileManager.default.removeItem(atPath: staging)
+        // the archive's read-only folders read-only again where they landed, deepest first (a folder without u+x
+        // would stop the ones under it); folders merged into keep their own mode
+        for (rel, mode) in locked.sorted(by: { $0.rel.count > $1.rel.count }) where !existed.contains(rel) {
+            let p = (dest as NSString).appendingPathComponent(rel)
+            if FileJob.lstat(p).map({ $0.st_mode & S_IFMT == S_IFDIR }) == true { chmod(p, mode) }
+        }
+        discardStaging(staging)
         return job.progress.errors
+    }
+
+    /// Removes a staging folder and whatever is still in it, read-only folders too.
+    public static func discardStaging(_ staging: String) {
+        _ = unlockFolders(staging)
+        try? FileManager.default.removeItem(atPath: staging)
+    }
+
+    /// Folders tar made read-only (0555) can't be moved to another folder (rename updates their "..") nor emptied:
+    /// each gets the owner's rwx; returns their paths under `root` and modes, to put back.
+    private static func unlockFolders(_ root: String) -> [(rel: String, mode: mode_t)] {
+        var out: [(rel: String, mode: mode_t)] = []
+        func walk(_ rel: String) {
+            let path = rel.isEmpty ? root : (root as NSString).appendingPathComponent(rel)
+            guard let st = FileJob.lstat(path), st.st_mode & S_IFMT == S_IFDIR else { return }
+            let mode = st.st_mode & 0o7777
+            if mode & S_IRWXU != S_IRWXU {
+                if !rel.isEmpty { out.append((rel, mode)) }
+                chmod(path, mode | S_IRWXU)
+            }
+            for c in (try? DirLister.list(path)) ?? [] where c.kind == .dir { walk(rel.isEmpty ? c.name : rel + "/" + c.name) }
+        }
+        walk("")
+        return out
     }
 
     /// bsdtar arguments to create `archive` (format from its extension: .zip .tar.gz .tgz .tar.bz2 .tar.xz .7z)
