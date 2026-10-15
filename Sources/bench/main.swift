@@ -79,6 +79,10 @@ try measure("list (FileManager + resourceValues)", runs: 1) { _ = try DirLister.
 measure("sort by name (natural)") { _ = fast.sortedForPanel(by: .name, ascending: true) }
 measure("sort by size") { _ = fast.sortedForPanel(by: .size, ascending: false) }
 measure("filter hidden") { _ = fast.filter { !$0.isHidden } }
+measure("filter (Mask) each name folded") { let m = Mask(filter: "file1")!; _ = fast.filter { m.matches($0.name) } }
+let folded = Mask.Folded(fast.lazy.map(\.name))
+measure("filter (Mask) names folded once") { let m = Mask(filter: "file1")!; _ = fast.indices.filter { m.matches($0, of: folded, name: fast[$0].name) } }
+measure("fold the names (a filter, once)") { _ = Mask.Folded(fast.lazy.map(\.name)) }
 
 /// precondition() drops its message in -O builds; this one always prints.
 func check(_ ok: Bool, _ msg: @autoclosure () -> String) {

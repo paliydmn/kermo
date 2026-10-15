@@ -1,3 +1,4 @@
+import DFMCore
 import Testing
 @testable import DFileManager
 
@@ -35,4 +36,13 @@ import Testing
     #expect(r.map(\.group) == ["Recent"] && r[0].hits.count == HeaderSearchModel.recentMax, "a favorite in Recent isn't listed twice")
     for t: SearchHit.Target in [.command("file.copy"), .folder("/a:b"), .server("h:/x"), .disk("a:b")] { #expect(SearchHit.Target(key: t.key!) == t) }
     #expect(SearchHit.Target.file("x").key == nil)
+}
+
+/// A query typed on stops the ranking of the last one: a cancelled ranking leaves the panel's names out.
+@Test @MainActor func aCancelledRankingStops() {
+    let files = (0..<5000).map { "file\($0).log" }, flag = CancelFlag()
+    let ranked = { HeaderSearchModel.results("file", commands: [], folders: [], files: files, recent: [], cancel: flag) }
+    #expect(ranked().first { $0.group == "In This Panel" }?.hits.count == HeaderSearchModel.perGroup)
+    flag.cancel()
+    #expect(ranked().first { $0.group == "In This Panel" } == nil)
 }

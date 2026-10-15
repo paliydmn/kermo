@@ -43,7 +43,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     private let tabBar = NSStackView()   // one button per tab, each with a close ×
     private let pathField = NSTextField(string: "")
-    private let filterField = NSTextField(string: "")
+    let filterField = NSTextField(string: "")   // internal: tests type into it
     private let statusLabel = NSTextField(labelWithString: "")
     private let errorIcon = NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Error")!)
     /// The status line says what failed: red behind a warning sign, in an inactive panel too. The next status clears it.
@@ -68,14 +68,25 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// Shown in the status line with a spinner while a listing, connection or download is in flight.
     var busyMessage: String? { didSet { if busyMessage != oldValue { updateStatus() } } }
 
-    private var all: [FileItem] = [] { didSet { sortedAll = nil } }   // as listed
+    private var all: [FileItem] = [] { didSet { sortedAll = nil; sorting = nil; sortGen += 1; pendingSelect = nil } }   // as listed
     /// `all` in the current sort order, cached: filtering and toggling hidden files reuse it instead of
-    /// re-sorting (1M names take ~1.6 s to sort, 80 ms to filter).
-    private var sortedAll: [FileItem]?
+    /// re-sorting (1M names take ~1 s to sort, 80 ms to filter).
+    private var sortedAll: [FileItem]? { didSet { folded = nil } }
     private var sortedBy: (key: SortKey, ascending: Bool)?
+    /// `sortedAll`'s names as masks see them, folded once a filter needs them: typing in the filter folded every name on every key.
+    private var folded: Mask.Folded?
+    /// What a big listing is being sorted (and folded) for off the main thread, and which listing that is (`all` changes it).
+    private var sorting: (key: SortKey, ascending: Bool, fold: Bool)?
+    private var sortGen = 0
+    /// The name the cursor goes to once a new place's sort is back (its rows are empty till then): a tab switch keeps it.
+    private var pendingSelect: String?
+    /// Sorting more than this many waits for the main thread no more: it goes off it (5k names take ~4 ms).
+    static let sortOnMain = 5000
     private var loadedGen = 0
     private var lastLoadSeconds = 0.0
-    private var rows: [FileItem] = []    // filtered + sorted; ".." is not stored here
+    private var rows: [FileItem] = [] { didSet { rowIndex = nil } }   // filtered + sorted; ".." is not stored here
+    /// `rows`' names to their place, built on the first lookup after they change: a folder's size coming in was a scan of them.
+    private var rowIndex: [String: Int]?
     private var marked = Set<String>()
     private var filter: Mask?
     private(set) var dirSizes: [String: Int64] = [:]
@@ -199,7 +210,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         hasParent ? (row == 0 ? nil : rows[row - 1]) : rows[row]
     }
     private func row(named name: String) -> Int? {
-        rows.firstIndex { $0.name == name }.map { $0 + (hasParent ? 1 : 0) }
+        if rowIndex == nil { rowIndex = Dictionary(rows.enumerated().map { ($1.name, $0) }, uniquingKeysWith: { a, _ in a }) }
+        return rowIndex![name].map { $0 + (hasParent ? 1 : 0) }
     }
     private func url(of item: FileItem) -> URL {
         URL(fileURLWithPath: (path as NSString).appendingPathComponent(item.name), isDirectory: item.kind == .dir)
@@ -457,6 +469,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let started = Date()
         // Set before the sort: the rows come from it (`sortedAll`), and the resolve after finds nothing to change.
         let linkDirs = newPath == path && watcher != nil ? Set(all.filter(\.linkDir).map(\.name)) : []
+        // A re-list (the watcher's, mostly) that finds what's shown: told off the main thread, so it costs it nothing.
+        let shown = newPath == path && watcher != nil && select == nil && keep == nil ? all : nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, gen == self.loadGen, self.loadedGen < gen else { return }
@@ -473,11 +487,25 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                             DirSync.mtimeTolerance([newPath]), FolderID(path: newPath))
                 }
             }
+            // Not in the listing's work: another panel's call may have run that one, against its own rows.
+            // Names byte for byte: `==` takes "é" and "e\u{301}" (a rename from one to the other) for the same.
+            var same = false
+            if let shown, case .success(let r) = result {
+                same = await Blocking.run(.userInitiated) { r.0 == shown && zip(r.0, shown).allSatisfy { $0.name.utf8.elementsEqual($1.name.utf8) } }
+            }
             guard let self, gen == loadGen else { return }
             loadedGen = gen
             busyMessage = busyOps.last?.message
             lastLoadSeconds = Date().timeIntervalSince(started)
             switch result {
+            case .success(let (items, free, _, _, tolerance, folder)) where same && newPath == path && watcher != nil:
+                // Nothing changed: the rows, marks, cursor and sort stay; the free space, git status and links may have.
+                freeSpace = free
+                mtimeTolerance = tolerance
+                if folder != watchedID { watch() }
+                updateStatus()
+                refreshGit()
+                resolveLinks(items, in: newPath, gen: gen)
             case .success(let (items, free, sorted, order, tolerance, folder)):
                 var old = path, history = history
                 let changed = newPath != old || watcher == nil
@@ -527,7 +555,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                     onPathChange?()
                 } else {
                     select = select ?? currentName   // where the cursor is now, not when the reload started
-                    marked.formIntersection(items.map(\.name))
+                    if !marked.isEmpty { marked.formIntersection(items.map(\.name)) }
                     if folder != watchedID { watch() }
                 }
                 if let keep { restore(keep, in: items) }
@@ -604,14 +632,22 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         if newFolder { flashed = nil }
         let oldRow = table.selectedRow, oldName = currentName
         let cursorShown = NSLocationInRange(oldRow, table.rows(in: table.visibleRect))
-        if sortedAll == nil || sortedBy?.key != sortKey || sortedBy?.ascending != ascending {
-            // ponytail: a header click on a huge folder still sorts on the main thread; move off-main if it bites.
-            sortedAll = all.sortedForPanel(by: sortKey, ascending: ascending)
-            sortedBy = (sortKey, ascending)
+        let fresh = sortedAll != nil && sortedBy?.key == sortKey && sortedBy?.ascending == ascending
+        if !fresh || filter != nil && folded == nil {
+            // A search still running sorts and folds here, as each batch arrives: one off the main thread would be
+            // outdated by the next batch before it's back.
+            guard all.count <= Self.sortOnMain || searching else { return sortOffMain(select: name, newFolder: newFolder) }
+            if !fresh { (sortedAll, sortedBy) = (all.sortedForPanel(by: sortKey, ascending: ascending), (sortKey, ascending)) }
+            if filter != nil { folded = Mask.Folded(sortedAll!.lazy.map(\.name)) }
         }
-        let changed = gitOnly ? git?.marks : nil
         // Results already went through the search's (or git's) own idea of hidden; ⌘⇧. would drop .gitignore.
-        rows = sortedAll!.filter { (showHidden || searchTitle != nil || !$0.isHidden) && (filter?.matches($0.name) ?? true) && (changed?[$0.name] != nil || changed == nil) }
+        // All in locals: a property of `self` read per row is a main-actor check per row (a third of a 1M filter).
+        let sorted = sortedAll!, changed = gitOnly ? git?.marks : nil, mask = filter, names = folded, hidden = showHidden || searchTitle != nil
+        rows = sorted.indices.filter { i in
+            let it = sorted[i]
+            return (hidden || !it.isHidden) && (mask.map { $0.matches(i, of: names!, name: it.name) } ?? true)
+                && (changed?[it.name] != nil || changed == nil)
+        }.map { sorted[$0] }
         totalSize = bytes(of: rows)
         guard isViewLoaded else { return }
         table.reloadData()   // drops the selection: Quick Look is told once the cursor is back
@@ -620,6 +656,43 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         moveCursor(to: r, scroll: newFolder || cursorShown || name != oldName || r != oldRow)
         reloadQuickLook()
         updateStatus()
+    }
+
+    /// A big listing in another order (a header click, search results done, links to folders found): sorted off the
+    /// main thread, the rows on screen staying as they are till it's back; the cursor stays on its name. Rows of
+    /// another place (an archive's folder) go at once: they mustn't pass for these. One sort per order at a time.
+    private func sortOffMain(select name: String?, newFolder: Bool) {
+        let key = sortKey, asc = ascending, fold = filter != nil, items = all, gen = sortGen
+        let done = sortedBy?.key == key && sortedBy?.ascending == asc ? sortedAll : nil   // only the names to fold
+        // The cursor where it is when the sort is back (it may move on the rows meanwhile), unless sent to a name.
+        let keepCursor = !newFolder && name == currentName
+        if newFolder { rows = []; totalSize = 0; pendingSelect = name; table.reloadData(); updateStatus() }
+        // On its way: it shows what's asked by then.
+        guard sorting.map({ $0.key != key || $0.ascending != asc || fold && !$0.fold }) ?? true else { return }
+        sorting = (key, asc, fold)
+        if done == nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, gen == self.sortGen, self.sorting != nil, self.busyMessage == nil else { return }
+                    self.busyMessage = "Sorting…"
+                }
+            }
+        }
+        Task { [weak self] in
+            let (sorted, names) = await Blocking.run(.userInitiated) { () -> ([FileItem], Mask.Folded?) in
+                let sorted = done ?? items.sortedForPanel(by: key, ascending: asc)
+                return (sorted, fold ? Mask.Folded(sorted.lazy.map(\.name)) : nil)
+            }
+            guard let self else { return }
+            if gen == sortGen, sorting.map({ $0.key == key && $0.ascending == asc && $0.fold == fold }) == true { sorting = nil }
+            if sorting == nil, busyMessage == "Sorting…" { busyMessage = busyOps.last?.message }
+            guard gen == sortGen, key == sortKey && asc == ascending else { return }   // clicked again: that sort shows
+            (sortedAll, sortedBy) = (sorted, (key, asc))
+            folded = names
+            let select = keepCursor ? currentName : name ?? pendingSelect
+            pendingSelect = nil
+            applyView(select: select, newFolder: newFolder)
+        }
     }
 
     /// Kernel tells us when the directory changes; coalesce bursts into one reload.
@@ -702,7 +775,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     static func countText(_ n: Int, _ noun: String, _ bytes: Int64) -> String {
         "\(n) \(n == 1 && noun == "items" ? "item" : noun)" + (bytes > 0 ? ", " + sizeFmt.string(fromByteCount: bytes) : "")
     }
-    private func bytes(of items: [FileItem]) -> Int64 { items.reduce(0) { $0 + ($1.kind == .dir ? dirSizes[$1.name] ?? 0 : $1.size) } }
+    private func bytes(of items: [FileItem]) -> Int64 {
+        let sizes = dirSizes   // not `self`'s per item (see `applyView`)
+        return items.reduce(0) { $0 + ($1.kind == .dir ? sizes[$1.name] ?? 0 : $1.size) }
+    }
 
     /// The Size column: a folder's measured bytes or <DIR>; a special file's type, which has no size to show.
     /// `partial`: du couldn't read all of the folder — "≥ 1.2 GB".
@@ -1068,7 +1144,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         remoteFlag = flag
         let opening = remote?.target != target   // not a folder of the server already open here
         if kept?.target != target { kept?.close(); kept = KeptSession(target) }
-        let session = kept
+        let session = kept, order = (key: sortKey, ascending: ascending)
         if opening {
             busyMessage = "Connecting to \(target.host)… ⎋ cancels"
             connecting = target
@@ -1082,13 +1158,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 flash("🔒 \(target.host) stays locked")
                 return
             }
-            let result = await Blocking.run(.userInitiated) { () -> Result<(String, [FileItem], [String: (String, String)], [String: (target: String, error: Int32)], Int64?), Error> in
+            let result = await Blocking.run(.userInitiated) { () -> Result<(String, [FileItem], [FileItem], [String: (String, String)], [String: (target: String, error: Int32)], Int64?), Error> in
                 Result {
                     let d = try dir ?? SFTP.home(target, env: SSHAskpass.env, cancel: flag, on: session)
                     var owners: [String: (String, String)] = [:], links: [String: (target: String, error: Int32)] = [:], free: Int64?
                     let items = try SFTP.list(target, d, env: SSHAskpass.env, cancel: flag, owners: { owners[$0] = ($1, $2) },
                                               links: { links[$0] = ($1, $2) }, free: { free = $0 }, on: session)
-                    return (d, items, owners, links, free)
+                    return (d, items, items.sortedForPanel(by: order.key, ascending: order.ascending), owners, links, free)
                 }
             }
             guard let self, gen == loadGen else { return }
@@ -1098,12 +1174,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             if case .failure = result { connecting = nil }
             busyMessage = busyOps.last?.message
             switch result {
-            case .success(let (d, items, owners, found, free)):
+            case .success(let (d, items, sorted, owners, found, free)):
                 onRemoteResult?(target, nil)
                 remoteOwners = owners
                 links = found
                 remoteFree = free.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
-                enterRemote(target, d, items, select: select, keep: keep)
+                enterRemote(target, d, items, sorted: (sorted, order), select: select, keep: keep)
                 connecting = nil
             case .failure(let error as SFTPError) where error.connection:
                 onRemoteResult?(target, error.message)
@@ -1143,7 +1219,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
 
-    private func enterRemote(_ target: SFTPTarget, _ dir: String, _ items: [FileItem], select: String?, keep: TabMarks? = nil) {
+    private func enterRemote(_ target: SFTPTarget, _ dir: String, _ items: [FileItem], sorted: ([FileItem], (key: SortKey, ascending: Bool)),
+                             select: String?, keep: TabMarks? = nil) {
         let sameDir = remote?.target == target && remote?.dir == dir
         let select = select ?? (sameDir ? currentName : nil)   // a reload keeps the cursor where it is now
         watcher?.cancel()
@@ -1152,8 +1229,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         if searchTitle != nil { searchFlag?.cancel(); searchTitle = nil; searching = false }
         remote = (target, dir)
         all = items
+        (sortedAll, sortedBy) = sorted
         if sameDir {
-            marked.formIntersection(items.map(\.name))
+            if !marked.isEmpty { marked.formIntersection(items.map(\.name)) }
         } else {
             marked.removeAll()
             clearSizes()
@@ -1262,10 +1340,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     func addSearchResults(_ items: [FileItem], from flag: CancelFlag) {
         guard flag === searchFlag, searchTitle != nil else { return }
         // To the end as found, sorted once when the search ends: re-sorting every batch made 100 000 hits a minute's work.
-        var sorted = sortedAll
+        var sorted = sortedAll, names = folded
         all += items
         sorted?.append(contentsOf: items)
+        names?.append(items.lazy.map(\.name))
         sortedAll = sorted
+        folded = names
         applyView(select: currentName)
     }
 
@@ -1393,7 +1473,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     private func saveTab() {
         tabs[tabIndex].path = path
-        tabs[tabIndex].cursor = currentName
+        tabs[tabIndex].cursor = currentName ?? pendingSelect
         tabs[tabIndex].back = backStack
         tabs[tabIndex].forward = forwardStack
         tabs[tabIndex].remote = remote
@@ -1606,8 +1686,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let flag = CancelFlag(), gen = sizeGen, env = SSHAskpass.env, r = remote, base = path
         let duKey = r?.target
         sizeWalk = flag
+        // Sizes reach the main thread in bunches: one hop, one redraw and one status for all that came meanwhile.
+        let inbox = SizeInbox()
         let found: @Sendable (String, Int64, Bool) -> Void = { [weak self] name, bytes, partial in
-            DispatchQueue.main.async { MainActor.assumeIsolated { if self?.sizeGen == gen { self?.setSize(name, bytes, partial: partial) } } }
+            guard inbox.add((name, bytes, partial)) else { return }   // a hop is on its way already
+            DispatchQueue.main.async { MainActor.assumeIsolated { let s = inbox.take(); if self?.sizeGen == gen { self?.setSizes(s) } } }
         }
         Task { [weak self] in
             while let self, sizeWalk === flag {
@@ -1652,12 +1735,27 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
 
-    private func setSize(_ name: String, _ bytes: Int64, partial: Bool = false) {
-        dirSizes[name] = bytes
-        if partial { partialSizes.insert(name) } else { partialSizes.remove(name) }
-        totalSize = self.bytes(of: rows)
-        if let r = row(named: name) { table.reloadData(forRowIndexes: [r], columnIndexes: [table.column(withIdentifier: .init("size"))]) }
+    private func setSizes(_ sizes: [(name: String, bytes: Int64, partial: Bool)]) {
+        var shown = IndexSet()
+        for (name, bytes, partial) in sizes {
+            if let r = row(named: name) {
+                totalSize += bytes - (dirSizes[name] ?? 0)   // only what's listed counts, as in `bytes(of: rows)`
+                shown.insert(r)
+            }
+            dirSizes[name] = bytes
+            if partial { partialSizes.insert(name) } else { partialSizes.remove(name) }
+        }
+        table.reloadData(forRowIndexes: shown, columnIndexes: [table.column(withIdentifier: .init("size"))])
         updateStatus()
+    }
+
+    /// Folder sizes counted off the main thread, waiting for it.
+    private final class SizeInbox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var sizes: [(name: String, bytes: Int64, partial: Bool)] = []
+        /// True when the inbox was empty: the caller sends the hop that takes it.
+        func add(_ s: (String, Int64, Bool)) -> Bool { lock.withLock { sizes.append(s); return sizes.count == 1 } }
+        func take() -> [(name: String, bytes: Int64, partial: Bool)] { lock.withLock { defer { sizes = [] }; return sizes } }
     }
 
     // MARK: - Path field (⌘L) and quick filter (/)
@@ -1921,8 +2019,15 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     // MARK: - Context menu
 
+    /// The file the context menu's "Open With" lists apps for.
+    private var openWith: URL?
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if menu !== table.menu {   // "Open With", opening
+            if let openWith { fillOpenWith(menu, for: openWith) }
+            return
+        }
         let r = table.clickedRow
         guard r >= 0, let it = item(at: r) else { return }
         onFocus?()   // the menu's commands act on the active panel: make it this one
@@ -1937,9 +2042,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             mi.representedObject = id
         }
         add("Open", "open")
-        let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
-        openWith.submenu = openWithMenu(for: url(of: it))
-        menu.addItem(openWith)
+        // Its apps and their icons are looked up when it opens, not on every right-click.
+        let apps = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+        apps.submenu = NSMenu()
+        apps.submenu?.delegate = self
+        openWith = url(of: it)
+        menu.addItem(apps)
         menu.addItem(.separator())
         add("Quick Look", "file.quicklook")
         add("View", "file.view")
@@ -1957,8 +2065,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         add("Move to Trash", "file.trash")
     }
 
-    private func openWithMenu(for url: URL) -> NSMenu {
-        let m = NSMenu()
+    private func fillOpenWith(_ m: NSMenu, for url: URL) {
         for app in NSWorkspace.shared.urlsForApplications(toOpen: url) {
             let mi = m.addItem(withTitle: FileManager.default.displayName(atPath: app.path), action: #selector(openWith(_:)), keyEquivalent: "")
             mi.target = self
@@ -1967,7 +2074,6 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             icon.size = NSSize(width: 16, height: 16)
             mi.image = icon
         }
-        return m
     }
 
     @objc private func contextCommand(_ sender: NSMenuItem) { onCommand?(sender.representedObject as! String) }

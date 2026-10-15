@@ -36,6 +36,8 @@ Release:
 - Editing a server file only root may write, from a user's panel, says in the editor that saving it needs the panel as root (⌃⌘R).
 - **Info's checksums:** the first of MD5, SHA-1 and SHA-256 you press reads the file once for all three; the others then show at once. A read error is said in the system's words.
 - Faster on this Mac: folder sizes, copies and Find Files no longer look at each subfolder on its own to stay on one volume; merging copies, Find Files by content and Compare contents do less work per file; `git status` in a slow repository runs at most every twice its own time (still at most once a second).
+- **A folder of more than 5,000 items sorts in the background** (a column header clicked, search results done, links found to be folders, a server folder listed): the list stays as it was until it's done, `Sorting…` shows after a moment, and the cursor stays on its item. A million names held the window for a second.
+- Big folders and files no longer hold the window: the quick filter folds the names once instead of on every key (a million names: 0.3 s a key to ~15 ms); ⌥Space over thousands of folders no longer adds up the whole list per folder (4000 folders among 200,000 items: 45 s to under 0.1 s); ⇧⌘P stops ranking a query you've typed past and skips names that can't match; the folder watcher's re-list does nothing when nothing changed; the editor's line numbers follow an edit instead of counting a 30 MB file's lines on every key, and its colors repaint only what changed (a 2 MB script: 15 s after each pause in typing to a few hundredths); Open With in the context menu looks up apps when it opens.
 
 ### Fixed
 

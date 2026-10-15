@@ -47,7 +47,9 @@ enum HeaderSearchModel {
     static let perGroup = 8
     static let recentMax = 10
 
-    static func results(_ query: String, commands: [Command], folders: [SearchHit], files: [String], recent: [String]) -> [(group: String, hits: [SearchHit])] {
+    /// `cancel`: a query typed on since stops ranking a big folder's names (looked at every 1024).
+    static func results(_ query: String, commands: [Command], folders: [SearchHit], files: [String], recent: [String],
+                        cancel: CancelFlag? = nil) -> [(group: String, hits: [SearchHit])] {
         let q = query.trimmingCharacters(in: .whitespaces)
         let cmds = commands.filter { $0.id != "app.palette" }
         func hit(_ c: Command) -> SearchHit {
@@ -67,8 +69,12 @@ enum HeaderSearchModel {
             return [("Recent", Array(r)), ("Favorites", fav)].filter { !$0.1.isEmpty }
         }
         func ranked<T>(_ items: [T], _ score: (T) -> Int?) -> [T] {
-            items.enumerated().compactMap { i, it in score(it).map { ($0, i, it) } }
-                .sorted { $0.0 != $1.0 ? $0.0 > $1.0 : $0.1 < $1.1 }.prefix(perGroup).map(\.2)
+            var hits: [(Int, Int, T)] = []
+            for (i, it) in items.enumerated() {
+                if i & 1023 == 0, cancel?.isCancelled == true { return [] }
+                if let s = score(it) { hits.append((s, i, it)) }
+            }
+            return hits.sorted { $0.0 != $1.0 ? $0.0 > $1.0 : $0.1 < $1.1 }.prefix(perGroup).map(\.2)
         }
         let groups: [(String, [SearchHit])] = [
             ("Commands", ranked(cmds) { c in [c.title, c.short, c.aliases].compactMap { Fuzzy.score(q, $0) }.max() }.map(hit)),
@@ -85,8 +91,9 @@ enum HeaderSearchModel {
 @MainActor
 final class HeaderSearch: NSObject, NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     let item = NSSearchToolbarItem(itemIdentifier: .init("search"))
-    /// Ranks the query; the ranking itself (every name in the panel) runs off the main thread.
-    var results: (String) async -> [(group: String, hits: [SearchHit])] = { _ in [] }
+    /// Ranks the query; the ranking itself (every name in the panel) runs off the main thread, until the flag says
+    /// another query took its place.
+    var results: (String, CancelFlag) async -> [(group: String, hits: [SearchHit])] = { _, _ in [] }
     var onChoose: ((SearchHit, _ otherPanel: Bool) -> Void)?
     var onCancel: (() -> Void)?
     var onRemove: ((SearchHit) -> Void)?
@@ -95,6 +102,7 @@ final class HeaderSearch: NSObject, NSSearchFieldDelegate, NSTableViewDataSource
     private var rows: [Row] = []
     private var shown: String?   // the query the rows are for; nil while the list is closed
     private var pending: Task<Void, Never>?
+    private var ranking: CancelFlag?   // the pending query's ranking
     private let list = NonKeyPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
     private let table = NSTableView()
 
@@ -146,11 +154,13 @@ final class HeaderSearch: NSObject, NSSearchFieldDelegate, NSTableViewDataSource
     /// result if the field still says the same, then runs `then` on it.
     private func update(delay: Duration = .zero, then: (() -> Void)? = nil) {
         pending?.cancel()
-        let q = item.searchField.stringValue
+        ranking?.cancel()
+        let q = item.searchField.stringValue, flag = CancelFlag()
+        ranking = flag
         pending = Task { [weak self] in
             if delay > .zero { try? await Task.sleep(for: delay) }
             guard !Task.isCancelled, let self else { return }
-            let r = await results(q)
+            let r = await results(q, flag)
             guard !Task.isCancelled, q == item.searchField.stringValue else { return }
             shown = q
             show(r)
@@ -173,6 +183,7 @@ final class HeaderSearch: NSObject, NSSearchFieldDelegate, NSTableViewDataSource
 
     private func close() {
         pending?.cancel()   // a ranking still running mustn't reopen the list
+        ranking?.cancel()
         shown = nil
         list.parent?.removeChildWindow(list)
         list.orderOut(nil)

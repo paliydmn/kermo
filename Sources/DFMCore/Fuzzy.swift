@@ -5,6 +5,10 @@ public enum Fuzzy {
     /// Picks the best placement of the query letters (not just the first one found): rewards letters at
     /// word starts (after / space _ - .) and consecutive runs (weighted highest), and prefers shorter candidates. O(query × candidate).
     public static func score(_ query: String, _ candidate: String) -> Int? {
+        mayMatch(query, candidate) ? fullScore(query, candidate) : nil
+    }
+
+    static func fullScore(_ query: String, _ candidate: String) -> Int? {
         let q = Array(query.lowercased().filter { $0 != " " })
         if q.isEmpty { return 0 }
         let c = Array(candidate.lowercased())
@@ -26,6 +30,23 @@ public enum Fuzzy {
             prev = cur
         }
         return prev.compactMap { $0 }.max().map { $0 * 10 - n }
+    }
+
+    /// False when a plain-ASCII candidate lacks the query's letters in order, from the bytes alone: no arrays, no
+    /// Unicode (most names in a big folder go no further). Anything not ASCII may lowercase into a match (K, the
+    /// Kelvin sign, is "k"): true, the full scoring decides.
+    static func mayMatch(_ query: String, _ candidate: String) -> Bool {
+        func lower(_ b: UInt8) -> UInt8 { b >= 65 && b <= 90 ? b | 0x20 : b }
+        var c = candidate.utf8.makeIterator()
+        for q in query.utf8 where q != 32 {   // the query's spaces aren't letters to find
+            guard q < 0x80 else { return true }
+            while true {
+                guard let b = c.next() else { return false }
+                if b >= 0x80 { return true }
+                if lower(b) == lower(q) { break }
+            }
+        }
+        return true
     }
 }
 

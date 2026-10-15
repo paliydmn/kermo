@@ -32,6 +32,10 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     private var ruler: LineNumberRuler!
     private var language: Syntax.Language?
     private var highlightGen = 0
+    /// The tokens the text wears now and its length then; and what's been edited since (from where, and how far
+    /// from the end): the next tint paints only that and where tokens changed.
+    private var tinted: (tokens: [(range: NSRange, token: Syntax.Token)], length: Int)?
+    private var editedSince: (from: Int, tail: Int)?
     private var encoding: String.Encoding
     /// Read as UTF-8 with bytes that aren't UTF-8 shown as U+FFFD: saving writes U+FFFD in their place.
     private var lossy = false
@@ -117,6 +121,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         textView.minSize = NSSize(width: 0, height: scroll.contentSize.height)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
+        // Lays out what's on screen, not the whole text first: typing at the top of a 30 MB log stays quick.
+        textView.layoutManager?.allowsNonContiguousLayout = true
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
         textView.isRichText = false
@@ -133,6 +139,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         textView.isContinuousSpellCheckingEnabled = false
         textView.string = text
         textView.delegate = self
+        NotificationCenter.default.addObserver(self, selector: #selector(storageEdited), name: NSTextStorage.didProcessEditingNotification,
+                                               object: textView.textStorage)
         scroll.documentView = textView
         ruler = LineNumberRuler(textView: textView)
         scroll.verticalRulerView = ruler
@@ -251,7 +259,13 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         highlight(after: 0.3)
     }
 
-    /// Re-tints the whole text in the background once typing pauses; skips texts over 2 MB.
+    @objc private func storageEdited(_ n: Notification) {
+        guard let s = n.object as? NSTextStorage, s.editedMask.contains(.editedCharacters) else { return }
+        let r = s.editedRange, tail = s.length - NSMaxRange(r)
+        editedSince = (min(editedSince?.from ?? r.location, r.location), min(editedSince?.tail ?? tail, tail))
+    }
+
+    /// Re-tints the text in the background once typing pauses (what changed only); skips texts over 2 MB.
     private func highlight(after delay: TimeInterval) {
         guard let lang = language else { return }
         highlightGen += 1
@@ -264,7 +278,16 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
                 Task {
                     let tokens = await Task.detached(priority: .userInitiated) { Syntax.tokens(text, lang) }.value
                     guard gen == self.highlightGen, let storage = self.textView.textStorage, storage.string == text else { return }
-                    SyntaxColors.apply(tokens, to: storage)
+                    let len = storage.length, e = self.editedSince ?? (len, 0)
+                    if let t = self.tinted {
+                        let edited = NSRange(location: e.from, length: max(0, len - e.tail - e.from))
+                        if let r = SyntaxColors.changed(t.tokens, tokens, edited: edited, delta: len - t.length, length: len) {
+                            SyntaxColors.apply(tokens, to: storage, in: r)
+                        }
+                    } else {
+                        SyntaxColors.apply(tokens, to: storage)
+                    }
+                    (self.tinted, self.editedSince) = ((tokens, len), nil)
                 }
             }
         }

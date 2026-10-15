@@ -51,3 +51,20 @@ import Testing
     #expect(Mask(filter: "a.b")!.matches("xa.by") && !Mask(filter: "a.b")!.matches("axb"))   // dot is literal
     #expect(Mask("") == nil && Mask(";,") == nil)
 }
+
+/// Names folded once match as each name folded on every call: NFD and Cyrillic, case, globs, plain text, regex.
+@Test func foldedNamesMatchAsNamesDo() {
+    let names = ["Їжак.txt".decomposedStringWithCanonicalMapping, "ЇЖАК.TXT", "café.LOG", "cafe\u{301}.log", "report.pdf",
+                 "a[b]c", "x?y", "dir/x.log", ".zshrc", "Straße", "K\u{212A}elvin", "", "v1.10", "notes", "qx\u{301}", "x?\u{301}"]
+    let folded = Mask.Folded(names)
+    let masks = ["жак", "ЖАК.t", "café", "CAFÉ.log", "*.log", "*.LOG; *.txt", "[ab]*", "x?y", "re:^v\\d", "re:CAF", "port",
+                 "a[b]c", "e", "ss", "k", "*", "?", "a,b", "q?\u{301}", "x?\u{301}"]
+    for spec in masks {
+        guard let m = Mask(filter: spec) else { continue }
+        for (i, n) in names.enumerated() { #expect(m.matches(i, of: folded, name: n) == m.matches(n), "\(spec) on \(n)") }
+    }
+    var more = Mask.Folded(names.prefix(3))
+    more.append(names.dropFirst(3))
+    #expect(more.count == names.count)
+    #expect(names.indices.allSatisfy { Mask(filter: "log")!.matches($0, of: more, name: names[$0]) == Mask(filter: "log")!.matches(names[$0]) })
+}

@@ -68,3 +68,16 @@ import Testing
     #expect(back.ranked(now: now) == ["/a"] && back.entries["/a"]?.count == 2)
     #expect(Frecency().ranked().isEmpty)
 }
+
+/// The bytes-only "no" ahead of the scoring never turns away a match: random names and queries, ASCII and not
+/// (the Kelvin sign lowercases to k), rank as the scoring alone does.
+@Test func fuzzyRanksTheSameWithItsQuickNo() {
+    var rng = SystemRandomNumberGenerator()
+    let letters = "abcKkXZ._- 019".map(String.init) + ["\u{212A}", "é", "e\u{301}", "ї", "Ї", "ß", "\r\n"]
+    func word(_ n: ClosedRange<Int>) -> String { (0..<Int.random(in: n, using: &rng)).map { _ in letters.randomElement(using: &rng)! }.joined() }
+    let names = (0..<3000).map { _ in word(0...12) } + ["Kelvin", "\u{212A}elvin", "README.md", "Downloads", "ЇЖАК"]
+    for q in (0..<200).map({ _ in word(1...4) }) + ["k", "dwn", "ї", "ijak", " ", "rd md"] {
+        for n in names { #expect(Fuzzy.score(q, n) == Fuzzy.fullScore(q, n), "\(q) in \(n)") }
+    }
+    #expect(Fuzzy.score("k", "\u{212A}elvin") != nil && Fuzzy.score("zz", "Downloads") == nil)
+}
