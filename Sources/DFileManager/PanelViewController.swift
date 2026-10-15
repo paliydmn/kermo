@@ -235,7 +235,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var infoURL: URL? {
         guard remote == nil else { return nil }
         if let a = archive { return URL(fileURLWithPath: a.index.file) }
-        return cursorURL ?? URL(fileURLWithPath: path)
+        return (forFolder ? nil : cursorURL) ?? URL(fileURLWithPath: path)
     }
 
     var cursorURL: URL? {
@@ -273,6 +273,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// What an operation acts on: the marked items, or the cursor item if nothing is marked.
     var targetURLs: [URL] {
         guard archive == nil, remote == nil else { return [] }
+        if forFolder { return [URL(fileURLWithPath: path)] }
         return marked.isEmpty ? (cursorURL.map { [$0] } ?? []) : rows.filter { marked.contains($0.name) }.map(url(of:))
     }
 
@@ -988,6 +989,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         d[path] = sortKey == .name && ascending ? nil : "\(sortKey.rawValue):\(ascending ? 1 : 0)"
         UserDefaults.standard.set(d, forKey: "folderSort")
     }
+
+    /// Sort By (the folder menu, ⇧⌘P): as a click on that column's header, in its first direction.
+    func sort(by key: SortKey) {
+        if key != sortKey { table.sortDescriptors = [NSSortDescriptor(key: key.rawValue, ascending: key == .name)] }
+    }
+    func reverseSort() { table.sortDescriptors = [NSSortDescriptor(key: sortKey.rawValue, ascending: !ascending)] }
 
     func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
         guard !suppressSortCallback, let d = tableView.sortDescriptors.first, let key = d.key.flatMap(SortKey.init) else { return }
@@ -2056,6 +2063,20 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// The file the context menu's "Open With" lists apps for.
     private var openWith: URL?
+    /// The row a menu opened from the keyboard is for (`clickedRow` is −1 then).
+    private var menuRow: Int?
+    /// A folder menu's command is running: it acts on this folder, not on the cursor's item.
+    private var forFolder = false
+
+    /// The Menu key, ⇧F10: the cursor's item's menu by its row (not by the mouse); on ".." or nothing, the folder's.
+    func showContextMenu() {
+        guard let menu = table.menu else { return }
+        let r = table.selectedRow
+        let rect = r >= 0 ? table.rect(ofRow: r) : NSRect(x: 0, y: table.visibleRect.minY, width: 0, height: 0)
+        menuRow = r
+        defer { menuRow = nil }
+        menu.popUp(positioning: nil, at: NSPoint(x: rect.minX + 24, y: rect.maxY), in: table)
+    }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
@@ -2063,14 +2084,20 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             if let openWith { fillOpenWith(menu, for: openWith) }
             return
         }
-        let r = table.clickedRow
-        guard r >= 0, let it = item(at: r) else { return }
+        let r = menuRow ?? table.clickedRow
         onFocus?()   // the menu's commands act on the active panel: make it this one
-        // Like Finder: a click outside the marked set acts on the clicked item alone, never on marks elsewhere.
-        if !marked.contains(it.name) {
+        // Like Finder: a click outside the marked set acts on the clicked item alone, never on marks elsewhere. The
+        // keyboard's acts as the F-keys do: on the marks, or the cursor's.
+        if menuRow == nil, r >= 0, let it = item(at: r), !marked.contains(it.name) {
             if !marked.isEmpty { unmarkAll() }
             moveCursor(to: r)
         }
+        fillMenu(menu, row: r)
+    }
+
+    /// The context menu of `row`'s item; of the folder for ".." and empty space (−1). Each item is a command.
+    func fillMenu(_ menu: NSMenu, row: Int) {   // internal for tests
+        guard row >= 0, let it = item(at: row) else { return fillFolderMenu(menu) }
         func add(_ title: String, _ id: String) {
             let mi = menu.addItem(withTitle: title, action: #selector(contextCommand(_:)), keyEquivalent: "")
             mi.target = self
@@ -2094,10 +2121,49 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         add("Copy Path", "edit.copyPath")
         add("Copy Name", "edit.copyName")
         menu.addItem(.separator())
+        add("New File…", "file.new")
         add("Rename…", "file.rename")
+        add("Copy Here As…", "file.copyAs")
         add("Copy To…", "file.copy")
         add("Move To…", "file.move")
         add("Move to Trash", "file.trash")
+    }
+
+    private func fillFolderMenu(_ menu: NSMenu) {
+        @discardableResult func add(_ title: String, _ id: String, to m: NSMenu? = nil, on: Bool = false) -> NSMenuItem {
+            let mi = (m ?? menu).addItem(withTitle: title, action: #selector(contextCommand(_:)), keyEquivalent: "")
+            mi.target = self
+            mi.representedObject = id
+            mi.tag = 1   // for the folder
+            mi.state = on ? .on : .off
+            return mi
+        }
+        add("New File…", "file.new")
+        add("New Folder…", "file.mkdir")
+        menu.addItem(withTitle: "Paste", action: #selector(paste(_:)), keyEquivalent: "").target = self
+        menu.addItem(.separator())
+        add(remote != nil ? "SSH Here" : "Open in Terminal", "file.terminal")
+        if remote == nil {   // this Mac's folder
+            add("Copy Path", "edit.copyPath")
+            add("Reveal in Finder", "file.reveal")
+            add("Get Info", "file.info")
+        }
+        menu.addItem(.separator())
+        add("Show Hidden Files", "view.hidden", on: showHidden)
+        let sort = NSMenu()
+        for (title, key) in [("Name", SortKey.name), ("Size", .size), ("Modified", .mtime)] {
+            add(title, "view.sort." + key.rawValue, to: sort, on: sortKey == key)
+        }
+        sort.addItem(.separator())
+        add("Reverse", "view.sort.reverse", to: sort, on: ascending != (sortKey == .name))
+        menu.addItem(withTitle: "Sort By", action: nil, keyEquivalent: "").submenu = sort
+        add("Calculate Folder Sizes", "view.dirsizes")
+        if git != nil || remote != nil { menu.addItem(.separator()) }
+        if git != nil { add("Git Changes", "git.changes") }
+        if remote != nil {
+            add("Services…", "server.services")
+            add("Containers…", "server.containers")
+        }
     }
 
     private func fillOpenWith(_ m: NSMenu, for url: URL) {
@@ -2111,7 +2177,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
 
-    @objc private func contextCommand(_ sender: NSMenuItem) { onCommand?(sender.representedObject as! String) }
+    @objc private func contextCommand(_ sender: NSMenuItem) {
+        forFolder = sender.tag == 1
+        defer { forFolder = false }
+        onCommand?(sender.representedObject as! String)
+    }
 
     @objc private func openWith(_ sender: NSMenuItem) {
         NSWorkspace.shared.open(targetURLs, withApplicationAt: sender.representedObject as! URL, configuration: NSWorkspace.OpenConfiguration())

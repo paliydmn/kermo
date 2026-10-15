@@ -127,6 +127,11 @@ extension AppDelegate {
             if app.terminal.isShown { app.terminal.zoom(by: -1) } else { NSSound.beep() }
         },
         cmd("view.dirsizes", "Calculate Folder Sizes", ["opt+space"], menu: "View", short: "Sizes", aliases: "folder size disk usage du") { $0.active.computeAllDirSizes() },
+        cmd("view.sort.name", "Sort by Name", [], aliases: "order") { $0.active.sort(by: .name) },
+        cmd("view.sort.size", "Sort by Size", [], aliases: "order biggest") { $0.active.sort(by: .size) },
+        cmd("view.sort.mtime", "Sort by Modified", [], aliases: "order date time newest") { $0.active.sort(by: .mtime) },
+        cmd("view.sort.reverse", "Reverse Sort Order", [], aliases: "order descending ascending") { $0.active.reverseSort() },
+        cmd("panel.menu", "Show Context Menu", ["shift+f10", "menu"], short: "Menu", aliases: "right click actions") { $0.active.showContextMenu() },
 
         // Marking (MC style: cursor ≠ marked set)
         cmd("mark.toggle", "Mark / Unmark", ["space"], menu: "Mark", short: "Mark") { $0.active.toggleMark(move: 1) },

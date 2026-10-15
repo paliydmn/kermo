@@ -100,6 +100,21 @@ private func tempDir() -> String {
     #expect(FileManager.default.contents(atPath: d + "/site.conf.bak") == Data("listen 80;\n".utf8), "copy-data: \(canCopyData)")
 }
 
+/// A server's folder menu: SSH Here, its services and containers; nothing that's this Mac's only.
+@Test func aServersFolderMenu() async throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    panel.loadRemote(.local(), dir: d, select: nil)
+    await waitUntil { panel.remote?.dir == d }
+    let menu = NSMenu()
+    panel.fillMenu(menu, row: -1)
+    #expect(menu.items.filter { !$0.isSeparatorItem }.map(\.title) == ["New File…", "New Folder…", "Paste", "SSH Here", "Show Hidden Files", "Sort By",
+                                                                      "Calculate Folder Sizes", "Services…", "Containers…"])
+}
+
 /// ⇧F5 never replaces: a name that's there (a dangling link too) is taken, here and on a server.
 @Test func copyAsSeesTakenNames() throws {
     let d = tempDir()
@@ -124,4 +139,52 @@ private func tempDir() -> String {
     #expect(a[.size] as? Int == 0 && a[.posixPermissions] as? Int == 0o644)
     #expect(FileManager.default.contents(atPath: d + "/taken.conf") == Data("keep\n".utf8))
 }
+}
+
+/// Right-click on empty space or "..": the folder's menu, each item a command acting on the folder (Copy Path: its
+/// path, not the cursor's file). A row's has New File… and Copy Here As….
+@MainActor @Test func theFolderMenuIsCommands() async throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    FileManager.default.createFile(atPath: d + "/a.conf", contents: nil)
+    let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    await waitUntil { panel.listedItems.count == 1 }
+    panel.moveCursor(toName: "a.conf")
+    let sorts = UserDefaults.standard.object(forKey: "folderSort")
+    defer { UserDefaults.standard.set(sorts, forKey: "folderSort") }
+    let ids = Set(AppDelegate().makeCommands().map(\.id))
+    func items(_ m: NSMenu) -> [NSMenuItem] { m.items.flatMap { [$0] + ($0.submenu.map(items) ?? []) } }
+
+    let folder = NSMenu()
+    panel.fillMenu(folder, row: -1)
+    #expect(folder.items.filter { !$0.isSeparatorItem }.map(\.title) == ["New File…", "New Folder…", "Paste", "Open in Terminal", "Copy Path",
+                                                                        "Reveal in Finder", "Get Info", "Show Hidden Files", "Sort By", "Calculate Folder Sizes"])
+    #expect(items(folder).compactMap { $0.representedObject as? String }.allSatisfy(ids.contains))
+    #expect(items(folder).first { $0.title == "Name" }?.state == .on && items(folder).first { $0.title == "Reverse" }?.state == .off)
+    var seen: [URL] = []
+    panel.onCommand = { _ in seen = panel.targetURLs }
+    folder.performActionForItem(at: folder.indexOfItem(withTitle: "Copy Path"))
+    #expect(seen.map(\.path) == [d])
+    #expect(panel.targetURLs.map(\.lastPathComponent) == ["a.conf"], "after it, the cursor's again")
+    let parent = NSMenu()
+    panel.fillMenu(parent, row: 0)   // ".."
+    #expect(parent.items.map(\.title) == folder.items.map(\.title))
+
+    let row = NSMenu()
+    panel.fillMenu(row, row: 1)
+    let titles = row.items.map(\.title)
+    #expect(titles.firstIndex(of: "New File…")! < titles.firstIndex(of: "Rename…")!)
+    #expect(titles.firstIndex(of: "Copy Here As…") == titles.firstIndex(of: "Rename…")! + 1)
+    #expect(row.items.compactMap { $0.representedObject as? String }.filter { $0 != "open" }.allSatisfy(ids.contains))
+
+    // Sort By acts as a header click would; Reverse turns it round.
+    panel.reverseSort()
+    let reversed = NSMenu()
+    panel.fillMenu(reversed, row: -1)
+    #expect(items(reversed).first { $0.title == "Reverse" }?.state == .on)
+    panel.sort(by: .size)
+    #expect(panel.table.sortDescriptors.first?.key == "size" && panel.table.sortDescriptors.first?.ascending == false)
+    panel.sort(by: .name)
 }
