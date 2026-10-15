@@ -120,13 +120,39 @@ enum SyntaxColors {
         }
     }
 
-    static func apply(_ tokens: [(range: NSRange, token: Syntax.Token)], to storage: NSTextStorage) {
+    /// `region`: only there (what `changed` found); nil: all of the text.
+    static func apply(_ tokens: [(range: NSRange, token: Syntax.Token)], to storage: NSTextStorage, in region: NSRange? = nil) {
+        let all = NSRange(location: 0, length: storage.length), region = region.map { NSIntersectionRange($0, all) } ?? all
         storage.beginEditing()
-        storage.addAttribute(.foregroundColor, value: NSColor.textColor, range: NSRange(location: 0, length: storage.length))
+        storage.addAttribute(.foregroundColor, value: NSColor.textColor, range: region)
         for (range, token) in tokens where NSMaxRange(range) <= storage.length {
-            storage.addAttribute(.foregroundColor, value: color(token), range: range)
+            let r = NSIntersectionRange(range, region)
+            if r.length > 0 { storage.addAttribute(.foregroundColor, value: color(token), range: r) }
         }
         storage.endEditing()
+    }
+
+    /// What a re-tint must paint (nil: nothing): the text edited since the last one (`edited`, in the new text: typed
+    /// letters wear their neighbour's color) and wherever the tokens differ. A token before the edit that's the
+    /// same, or one after it that's the same moved along by `delta`, keeps its color: re-setting all of them held a
+    /// 2 MB file's window for 15 s, setting them over a text's worth of runs being that slow.
+    static func changed(_ old: [(range: NSRange, token: Syntax.Token)], _ new: [(range: NSRange, token: Syntax.Token)],
+                        edited: NSRange, delta: Int, length: Int) -> NSRange? {
+        func same(_ a: (range: NSRange, token: Syntax.Token), _ b: (range: NSRange, token: Syntax.Token), by d: Int) -> Bool {
+            a.token == b.token && a.range.length == b.range.length && a.range.location + d == b.range.location
+        }
+        var k = 0, m = 0
+        while k < old.count, k < new.count, NSMaxRange(new[k].range) <= edited.location, same(old[k], new[k], by: 0) { k += 1 }
+        while m < old.count - k, m < new.count - k, new[new.count - 1 - m].range.location >= NSMaxRange(edited),
+              same(old[old.count - 1 - m], new[new.count - 1 - m], by: delta) { m += 1 }
+        var lo = edited.location, hi = NSMaxRange(edited)
+        if k < new.count - m { lo = min(lo, new[k].range.location); hi = max(hi, NSMaxRange(new[new.count - 1 - m].range)) }
+        if k < old.count - m {   // where the old ones are now: as they were before the edit, moved along after it
+            let first = old[k].range.location, last = NSMaxRange(old[old.count - 1 - m].range)
+            (lo, hi) = (min(lo, first, first + delta), max(hi, last, last + delta))
+        }
+        (lo, hi) = (max(0, lo), min(length, hi))
+        return hi > lo ? NSRange(location: lo, length: hi - lo) : nil
     }
 }
 

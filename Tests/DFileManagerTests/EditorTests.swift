@@ -1,4 +1,5 @@
 import AppKit
+import DFMCore
 import Testing
 @testable import DFileManager
 
@@ -224,4 +225,55 @@ private func tempDir() throws -> String {
     #expect(s == [0, 2, 4])
     t.deleteCharacters(in: NSRange(location: 3, length: 1))
     #expect(LineNumberRuler.lineStarts(s, t, edited: NSRange(location: 3, length: 0), delta: -1) == [0, 2])
+}
+
+/// A re-tint paints only what changed, and the text ends up as a full tint would color it: a block comment opened
+/// and closed midway, a letter typed right after a string (it wears the string's red till the tint), random edits.
+@MainActor @Test func aReTintColorsAsAFullOneWould() async throws {
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let file = dir + "/a.c"
+    try (0..<40).map { "int f\($0)(void) { return \"s\($0)\" + 0x\($0); } // done \($0)\n" }.joined().write(toFile: file, atomically: true, encoding: .utf8)
+    let e = try Editor(URL(fileURLWithPath: file))
+    defer { e.window?.close() }
+    let storage = e.textView.textStorage!
+    func colors(_ s: NSTextStorage) -> [String] {
+        var out: [String] = []
+        s.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: s.length)) { v, r, _ in out.append("\(r.location)+\(r.length) \(String(describing: v))") }
+        return out
+    }
+    func full() -> [String] {
+        let copy = NSTextStorage(attributedString: storage)
+        SyntaxColors.apply(Syntax.tokens(copy.string, .clike), to: copy)
+        return colors(copy)
+    }
+    func type(_ s: String, at i: Int, replacing n: Int = 0) async {
+        e.textView.setSelectedRange(NSRange(location: i, length: n))
+        e.textView.insertText(s, replacementRange: e.textView.selectedRange())
+        for _ in 0..<300 { if colors(storage) == full() { break }; try? await Task.sleep(for: .milliseconds(10)) }
+        #expect(colors(storage) == full(), "after “\(s)” at \(i)")
+    }
+    for _ in 0..<300 { if colors(storage) == full() { break }; try? await Task.sleep(for: .milliseconds(10)) }   // the first tint
+    let mid = (storage.string as NSString).range(of: "int f20").location
+    await type("/*", at: mid)             // everything after it a comment
+    await type("*/", at: mid + 200)       // and back
+    let quote = (storage.string as NSString).range(of: "\"s3\"").location + 4
+    await type("x", at: quote)            // right after a string: plain again
+    var rng = SystemRandomNumberGenerator()
+    for _ in 0..<15 {
+        let at = Int.random(in: 0...storage.length, using: &rng)
+        await type(["\"", "/*", "*/", "//", "\n", "0x1f", "q"].randomElement(using: &rng)!, at: at, replacing: min(Int.random(in: 0...3, using: &rng), storage.length - at))
+    }
+}
+
+/// What a re-tint paints: the edit itself even with the tokens all the same (typed letters may wear a neighbour's
+/// color), and a token that only looks unmoved after an edit before it (it's another text there now).
+@MainActor @Test func aReTintPaintsTheEditAndWhatMoved() {
+    let s = (range: NSRange(location: 5, length: 2), token: Syntax.Token.string)
+    #expect(SyntaxColors.changed([s], [s], edited: NSRange(location: 9, length: 1), delta: 1, length: 20) == NSRange(location: 9, length: 1))
+    #expect(SyntaxColors.changed([s], [s], edited: NSRange(location: 20, length: 0), delta: 0, length: 20) == nil)
+    // 3 letters in at 0: the old string is at 8 now, the one at 5 is new.
+    #expect(SyntaxColors.changed([s], [s], edited: NSRange(location: 0, length: 3), delta: 3, length: 20) == NSRange(location: 0, length: 10))
+    let moved = (range: NSRange(location: 8, length: 2), token: Syntax.Token.string)
+    #expect(SyntaxColors.changed([s], [moved], edited: NSRange(location: 0, length: 3), delta: 3, length: 20) == NSRange(location: 0, length: 3))
 }
