@@ -2004,8 +2004,15 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     // MARK: - Context menu
 
+    /// The file the context menu's "Open With" lists apps for.
+    private var openWith: URL?
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if menu !== table.menu {   // "Open With", opening
+            if let openWith { fillOpenWith(menu, for: openWith) }
+            return
+        }
         let r = table.clickedRow
         guard r >= 0, let it = item(at: r) else { return }
         onFocus?()   // the menu's commands act on the active panel: make it this one
@@ -2020,9 +2027,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             mi.representedObject = id
         }
         add("Open", "open")
-        let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
-        openWith.submenu = openWithMenu(for: url(of: it))
-        menu.addItem(openWith)
+        // Its apps and their icons are looked up when it opens, not on every right-click.
+        let apps = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+        apps.submenu = NSMenu()
+        apps.submenu?.delegate = self
+        openWith = url(of: it)
+        menu.addItem(apps)
         menu.addItem(.separator())
         add("Quick Look", "file.quicklook")
         add("View", "file.view")
@@ -2040,8 +2050,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         add("Move to Trash", "file.trash")
     }
 
-    private func openWithMenu(for url: URL) -> NSMenu {
-        let m = NSMenu()
+    private func fillOpenWith(_ m: NSMenu, for url: URL) {
         for app in NSWorkspace.shared.urlsForApplications(toOpen: url) {
             let mi = m.addItem(withTitle: FileManager.default.displayName(atPath: app.path), action: #selector(openWith(_:)), keyEquivalent: "")
             mi.target = self
@@ -2050,7 +2059,6 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             icon.size = NSSize(width: 16, height: 16)
             mi.image = icon
         }
-        return m
     }
 
     @objc private func contextCommand(_ sender: NSMenuItem) { onCommand?(sender.representedObject as! String) }
