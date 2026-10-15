@@ -232,16 +232,33 @@ public enum DirSync {
             + (it.right == nil ? [.trashLeft] : []) + (it.left == nil ? [.trashRight] : []) + [.skip]
     }
 
-    /// Cancelled, it stops at the next 1 MB: false, never "equal" unread.
+    /// Cancelled, it stops at the next 1 MB: false, never "equal" unread. Both read into the same two buffers.
     public static func filesEqual(_ a: String, _ b: String, isCancelled: () -> Bool = { false }) -> Bool {
-        guard let ha = FileHandle(forReadingAtPath: a), let hb = FileHandle(forReadingAtPath: b) else { return false }
-        defer { try? ha.close(); try? hb.close() }
+        let fa = open(a, O_RDONLY | O_CLOEXEC), fb = open(b, O_RDONLY | O_CLOEXEC)
+        defer { if fa >= 0 { close(fa) }; if fb >= 0 { close(fb) } }
+        guard fa >= 0, fb >= 0 else { return false }
+        let size = 1 << 20
+        let x = UnsafeMutableRawPointer.allocate(byteCount: size, alignment: 16), y = UnsafeMutableRawPointer.allocate(byteCount: size, alignment: 16)
+        defer { x.deallocate(); y.deallocate() }
         while !isCancelled() {
             // A read that fails isn't the end: two files that can't be read aren't the same.
-            guard let x = try? ha.read(upToCount: 1 << 20) ?? Data(), let y = try? hb.read(upToCount: 1 << 20) ?? Data() else { return false }
-            if x != y { return false }
-            if x.isEmpty { return true }
+            let n = fill(fa, x, size), m = fill(fb, y, size)
+            guard n >= 0, n == m else { return false }
+            if n == 0 { return true }
+            if memcmp(x, y, n) != 0 { return false }
         }
         return false
+    }
+
+    /// Reads until `count` bytes or the end of the file (a short read isn't the end); -1: an error.
+    private static func fill(_ fd: Int32, _ p: UnsafeMutableRawPointer, _ count: Int) -> Int {
+        var got = 0
+        while got < count {
+            let r = read(fd, p + got, count - got)
+            if r < 0 { if errno == EINTR { continue }; return -1 }
+            if r == 0 { break }
+            got += r
+        }
+        return got
     }
 }
