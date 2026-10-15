@@ -19,6 +19,8 @@ public struct RenamePattern: Sendable {
 
     public init() {}
 
+    private static let calendar = Calendar(identifier: .gregorian)
+
     /// Input the preview can't turn into a name (typed mid-edit, so report it — never trap).
     public struct Invalid: LocalizedError {
         public let message: String
@@ -45,7 +47,12 @@ public struct RenamePattern: Sendable {
             let s = String(n)
             return String(repeating: "0", count: max(0, counterDigits - s.count)) + s
         }
-        let date = Calendar(identifier: .gregorian).dateComponents(in: .current, from: Date(timeIntervalSince1970: mtime))
+        // Only a date token asks for the date: the preview runs this for every file on every key.
+        var components: DateComponents?
+        var date: DateComponents {
+            if components == nil { components = Self.calendar.dateComponents(in: .current, from: Date(timeIntervalSince1970: mtime)) }
+            return components!
+        }
         func two(_ v: Int?) -> String { String(format: "%02d", v ?? 0) }
 
         func expand(_ mask: String) throws -> String {
