@@ -301,23 +301,30 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
     @objc private func sha1() { checksum("SHA-1") }
     @objc private func sha256() { checksum("SHA-256") }
 
-    /// The pass the first checksum button started; the others take its result, waiting for it if it's still reading.
-    private var digests: Task<Result<[String: String], DigestFailure>, Never>?
+    /// The pass the first checksum button started, for the file as it was then (inode, size, date); the other buttons
+    /// take its result, waiting for it if it's still reading. A file changed since gets a new pass.
+    private var digests: (file: String, pass: Task<Result<[String: String], DigestFailure>, Never>)?
     struct DigestFailure: Error { let text: String }
 
     private func checksum(_ name: String) {
         extra.append("\(name): computing…")
         let i = extra.count - 1
-        let pass = digests ?? {
-            let path = path, cancel = cancel   // closing the window stops it
-            let pass = Task { await Blocking.run(.userInitiated) { Self.digests(path, cancel: cancel) } }
-            digests = pass
-            return pass
-        }()
+        let path = path, cancel = cancel   // closing the window stops it
         Task { [weak self] in
-            let result = await pass.value
+            let file = await Blocking.run(.userInitiated) { () -> String in
+                var st = stat()
+                return stat(path, &st) == 0 ? "\(st.st_ino) \(st.st_size) \(st.st_mtimespec.tv_sec).\(st.st_mtimespec.tv_nsec)" : ""
+            }
             guard let self else { return }
-            if case .failure = result, digests == pass { digests = nil }   // the next click tries again
+            let pass: Task<Result<[String: String], DigestFailure>, Never>
+            if let d = digests, d.file == file {
+                pass = d.pass
+            } else {
+                pass = Task { await Blocking.run(.userInitiated) { Self.digests(path, cancel: cancel) } }
+                digests = (file, pass)
+            }
+            let result = await pass.value
+            if case .failure = result, digests?.pass == pass { digests = nil }   // the next click tries again
             let text = switch result {
             case .success(let all): all[name] ?? ""
             case .failure(let f): f.text

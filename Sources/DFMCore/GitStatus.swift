@@ -337,7 +337,7 @@ public struct GitStatus: Sendable, Equatable {
                 }
                 guard flight == mine else { return }
                 again = false
-                let key = self.key, start = ContinuousClock.now
+                let key = self.key, start = SuspendingClock.now   // a run the Mac slept through didn't take hours
                 await run()
                 guard flight == mine else { return }
                 last = (key, .now, .now - start)
