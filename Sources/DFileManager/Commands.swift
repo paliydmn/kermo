@@ -1458,12 +1458,16 @@ extension AppDelegate {
 
     /// One operation over the native client (names go as bytes, no `sftp -b` quoting), then the server's panels reload.
     /// `paths`: what it changes, for the production log.
-    func remoteOp(_ title: String, _ target: SFTPTarget, paths: [String], select: String? = nil, _ op: @escaping @Sendable (SFTPClient) throws -> Void) {
+    /// `then`: once it's done (not after a failure).
+    func remoteOp(_ title: String, _ target: SFTPTarget, paths: [String], select: String? = nil, _ op: @escaping @Sendable (SFTPClient) throws -> Void,
+                  then: (() -> Void)? = nil) {
         let env = SSHAskpass.env
         Task {
             let r = await active.busy("\(title) on \(target.host)…") { flag in try SFTPClient.session(target, env: env, cancel: flag, op) }
             switch r {
-            case .success: AuditLog.write(target, title.lowercased(), paths: paths, exit: 0)
+            case .success:
+                AuditLog.write(target, title.lowercased(), paths: paths, exit: 0)
+                then?()
             case .failure(is CancellationError): break
             case .failure(let e):
                 AuditLog.write(target, title.lowercased(), paths: paths, exit: 1, error: e.localizedDescription)
@@ -1480,6 +1484,25 @@ extension AppDelegate {
             let path = (dir as NSString).appendingPathComponent(name)
             remoteOp("New folder", target, paths: [path], select: name) { try $0.mkdir(path) }
         }
+    }
+
+    /// An empty file there, then F4 on it. Never over an existing one (O_EXCL).
+    private func remoteNewFile() {
+        guard let r = active.remote else { return }
+        let (target, panel) = (r.target, active)
+        Task {
+            guard let name = await prompt("New file on \(target.host):", value: "", ok: "Create", info: SavedServer.prodNote([target])),
+                  !name.isEmpty else { return }
+            let path = name.hasPrefix("/") ? name : (r.dir as NSString).appendingPathComponent(name)
+            remoteOp("New file", target, paths: [path], select: (path as NSString).lastPathComponent, { try Self.newServerFile($0, path) }) { [self] in
+                remoteOpen(.edit, target, path, in: panel)
+            }
+        }
+    }
+
+    /// Created with O_EXCL (an existing file is an error, never emptied), `rw-r--r--` as `touch` makes it.
+    nonisolated static func newServerFile(_ c: SFTPClient, _ path: String) throws {
+        _ = try c.openWrite(path, exclusive: true).finish(mtime: nil, mode: 0o644)
     }
 
     /// Never over an existing item (sftp's `rename` is posix-rename, which silently replaced it); `Foo` → `foo` works.
@@ -2325,7 +2348,8 @@ extension AppDelegate {
     }
 
     func newFileDialog() {
-        if active.archive != nil || active.remote != nil { return readOnly() }
+        if active.remote != nil { return remoteNewFile() }
+        if active.archive != nil { return readOnly() }
         Task {
             guard let name = await prompt("New file:", value: "", ok: "Create"), !name.isEmpty else { return }
             let path = resolve(name)

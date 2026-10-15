@@ -64,3 +64,21 @@ private func tempDir() -> String {
     #expect(second[hosts].map { FileManager.default.fileExists(atPath: $0.path) } == true)
     TempCopies.remove(TextCopies.dir)
 }
+
+/// Each runs this Mac's sftp-server: they take turns.
+@Suite(.serialized) @MainActor struct TextFileServerTests {
+
+/// ⇧F4 on a server: an empty `rw-r--r--` file; an existing one is an error and keeps what it had.
+@Test func aNewServerFileNeverEmptiesOne() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    FileManager.default.createFile(atPath: d + "/taken.conf", contents: Data("keep\n".utf8))
+    try SFTPClient.session(.local(), cancel: CancelFlag()) { c in
+        try AppDelegate.newServerFile(c, d + "/new.conf")
+        #expect(throws: (any Error).self) { try AppDelegate.newServerFile(c, d + "/taken.conf") }
+    }
+    let a = try FileManager.default.attributesOfItem(atPath: d + "/new.conf")
+    #expect(a[.size] as? Int == 0 && a[.posixPermissions] as? Int == 0o644)
+    #expect(FileManager.default.contents(atPath: d + "/taken.conf") == Data("keep\n".utf8))
+}
+}
