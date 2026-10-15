@@ -178,3 +178,19 @@ private func until(_ done: () -> Bool) async {
     #expect(AppDelegate.prodQuestion("podman restart -- api", on: web) == "“me@web” is a production server. Runs “podman restart -- api” on me@web.")
 }
 }
+
+/// A server a look logged in to keeps its connection for its ControlPersist though no panel shows it (the next look
+/// needs no login); then, or after Disconnect, it goes as any idle one.
+@MainActor @Test func aLooksConnectionStaysForItsPersist() async {
+    let app = AppDelegate()
+    let web = SFTPTarget(host: "me@web.invalid"), db = SFTPTarget(host: "me@db.invalid", persist: 30)
+    #expect(Set(app.idleServers([web, db]).map(\.host)) == ["me@web.invalid", "me@db.invalid"], "nothing shows them")
+    app.noteLook(web)
+    app.noteLook(db)
+    #expect(app.idleServers([web, db]).isEmpty)
+    #expect(app.idleServers([web, db], now: Date().addingTimeInterval(60)).map(\.host) == ["me@db.invalid"], "a locked one's short persist")
+    #expect(app.idleServers([web, db], now: Date().addingTimeInterval(601)).count == 2)
+    app.noteLook(web)
+    await app.disconnectNow(ServerRow.key(web))
+    #expect(app.idleServers([web]).map(\.host) == ["me@web.invalid"], "Disconnect ends the keep")
+}

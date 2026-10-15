@@ -64,6 +64,8 @@ Status and log run as you. Without the `adm` or `systemd-journal` group the log 
 
 **Containers…** asks the server's `docker`, or `podman` where there's no docker, as you: the containers your user may see. A row is the name, its state and status (`running · Up 3 hours`) and its image; running ones first. ↩ shows its log as it goes (`logs --tail 200 -f`), ⌘R restarts it, ⌘C copies its name.
 
+The connection a look logs in with stays for its idle time (10 minutes, 60 seconds for a locked server) even when no panel shows the server, so the next look, ↩ or ⌘R needs no login; **Disconnect** ends it, and a locked server's ends when the screen locks. The same goes for Forward Port… and Run on Servers….
+
 On a production server a restart asks first, ↩ being Cancel, and goes into the [production log](safety.md#production-log). A name goes into a command only if it's made of the characters systemd or docker allow in one; any other name is listed, and its keys only say why nothing runs. A log stopped with ⎋ stops on the server too, not just on this Mac.
 
 ## Copy your SSH key to a server

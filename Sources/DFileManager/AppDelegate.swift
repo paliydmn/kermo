@@ -5,6 +5,9 @@ import DFMCore
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSTextFieldDelegate, NSWindowDelegate, NSToolbarDelegate {
     private(set) var window: NSWindow!
     var panels: [PanelViewController] = []   // set at launch (tests: their own)
+    /// Servers a look (Services…, Containers…, Forward Port…, Run on Servers) logged in to, by key, until when their
+    /// connection is kept for the next look though nothing shows them: its ControlPersist, as plain ssh keeps it.
+    var looked: [String: Date] = [:]
     private(set) var ops: OpsController!
     /// Move jobs an undo/redo started (across volumes): their own undo is registered already.
     var replayJobs: [FileJob] = []
@@ -63,7 +66,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ServerCopies.upload = { [unowned self] c in await upload(c.url, to: c.path, on: c.target, c.state) }
         AuditLog.failed = { [unowned self] in active.flash($0, error: true) }
         ServerLock.relockOnScreenLockAndSleep()
-        ServerLock.onRelock = { [unowned self] in tunnels.relock(savedServers) }
+        ServerLock.onRelock = { [unowned self] in
+            tunnels.relock(savedServers)
+            for s in savedServers where s.locked { looked[ServerRow.key(s.target)] = nil }   // a locked server's look ends with the lock
+            releaseIdleServers()
+        }
         tunnels.changed = { [unowned self] in refreshSidebar() }
         tunnels.say = { [unowned self] in active.flash($0, error: $1) }
         // Back from a locked screen or sleep: the tunnels that went off with it are named once (`relock`).
@@ -236,15 +243,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// A server nothing shows any more (no panel tab, no running SSH tab, not connecting) keeps no logged-in
-    /// connection: closing its last session closes that too, instead of ControlPersist's 10 minutes.
+    /// connection: closing its last session closes that too, instead of ControlPersist's 10 minutes — unless a look
+    /// used it lately (`looked`): the next look, a minute later, needn't log in again (a password asked again).
     func releaseIdleServers() {
-        let inUse = Set(panels.flatMap { $0.remoteTabs.map(\.target) + [$0.connecting].compactMap { $0 } }.map(ServerRow.key)
-                        + terminal.tabs.filter { $0.exitStatus == nil }.compactMap(\.target).map(ServerRow.key))   // starting or running
-            .union(tunnels.inUse)   // else the next client would log in again
-        let idle = SFTP.masterTargets.filter { !inUse.contains(ServerRow.key($0)) }
+        let idle = idleServers(SFTP.masterTargets)
         guard !idle.isEmpty else { return }
         DispatchQueue.global().async { for t in idle { SFTP.stopMaster(t, now: false) } }
     }
+
+    /// Of `masters`, the connections `releaseIdleServers` ends.
+    func idleServers(_ masters: Set<SFTPTarget>, now: Date = Date()) -> [SFTPTarget] {
+        looked = looked.filter { $0.value > now }
+        let inUse = Set(panels.flatMap { $0.remoteTabs.map(\.target) + [$0.connecting].compactMap { $0 } }.map(ServerRow.key)
+                        + (terminal?.tabs ?? []).filter { $0.exitStatus == nil }.compactMap(\.target).map(ServerRow.key))   // starting or running
+            .union(tunnels.inUse)   // else the next client would log in again
+            .union(looked.keys)
+        return masters.filter { !inUse.contains(ServerRow.key($0)) }
+    }
+
+    /// A look logged in to `t`'s server (or rode its connection): kept for its ControlPersist from now.
+    func noteLook(_ t: SFTPTarget) { looked[ServerRow.key(t)] = Date().addingTimeInterval(TimeInterval(t.persist ?? 600)) }
 
     private func recordVisit(_ path: String) {
         frecency.visit(path)
@@ -626,6 +644,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func disconnectNow(_ key: String) async {
         SudoPasswords.forget(key)
+        looked[key] = nil
         // Their ports close first, so no client logs in again meanwhile; not through `turnOffNow`, whose
         // releaseIdleServers would end the connection only gently.
         for s in savedServers where ServerRow.key(s.target) == key {

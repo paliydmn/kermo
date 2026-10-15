@@ -34,6 +34,7 @@ extension AppDelegate {
                 if !(e is CancellationError) { say(e.localizedDescription, true) }
                 return
             }
+            noteLook(t)   // the next look rides it, though no panel shows the server
             let cancel = CancelFlag()   // set by ⎋ there — and by its giving way, when the look is over anyway
             Picker.show(over: window, placeholder: "Looking at \(s.title)'s \(what)…", items: [], onDismiss: { cancel.cancel() })
             let title = s.title
