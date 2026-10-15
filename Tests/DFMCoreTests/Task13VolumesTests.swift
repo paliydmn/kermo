@@ -44,6 +44,10 @@ private func stick(_ extra: [CFString: Any] = [:]) -> [String: Any] {
     // An external macOS disk's service volumes; its Data or a Time Machine one stay.
     for role in ["Preboot", "Recovery", "VM", "Update", "xART", "Hardware"] { #expect(Disks.disk(stick(), roles: [role]) == nil, "\(role)") }
     #expect(Disks.disk(stick(), roles: ["Data"]) != nil && Disks.disk(stick(), roles: ["Backup"]) != nil)
+    // An external macOS disk's System volume: its snapshot is what's mounted.
+    #expect(Disks.disk(stick(), roles: ["System"]) == nil)
+    // A Mac started from an external disk: its volumes are its own.
+    #expect(Disks.disk(stick(), roles: ["Data"], boot: true) == nil)
     // Nothing to mount: the whole disk, a raw partition, a file system macOS doesn't know.
     #expect(Disks.disk(stick([kDADiskDescriptionVolumeMountableKey: false])) == nil)
     var raw = stick()
@@ -65,7 +69,8 @@ private func stick(_ extra: [CFString: Any] = [:]) -> [String: Any] {
 @Test func diskArbitrationStatusInWords() {
     #expect(Disks.why(Int32(bitPattern: 0xF8DA_0002)) == "it's in use")
     #expect(Disks.why(Int32(bitPattern: 0xF8DA_000C)) == "macOS can't mount this kind of volume")
-    #expect(Disks.why(Int32(bitPattern: 0x0C00_0000 | UInt32(EPERM))) == String(cString: strerror(EPERM)))
+    #expect(Disks.why(Int32(bitPattern: 0x0000_C000 | UInt32(EPERM))) == String(cString: strerror(EPERM)))   // unix_err(EPERM), diskutil's 49153
+    #expect(Disks.why(49168) == String(cString: strerror(EBUSY)))
     #expect(Disks.why(Int32(bitPattern: 0xF8DA_0001)) == "DiskArbitration error 0xF8DA0001")
 }
 

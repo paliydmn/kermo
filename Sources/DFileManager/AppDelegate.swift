@@ -618,7 +618,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return
         }
         switch place {
-        case .volume(let v): if let d = v.disk, !v.mounted { mountVolume(d, open: true) }
+        case .volume(let v): if let d = v.disk, !v.mounted { mountVolume(d) { [unowned self] in openPlace(.folder($0), mods) } }   // then as any place
         case .serverFolder(let e):
             guard let r = Bookmark.remote(e) else { return NSSound.beep() }
             openBookmark(r, newTab: mods.contains(.command), panel: mods.contains(.option) ? other : nil)

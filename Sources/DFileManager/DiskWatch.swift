@@ -11,6 +11,14 @@ final class DiskWatch: @unchecked Sendable {
     private let queue = DispatchQueue(label: "kermo.disks")
     private var disks: [String: Disk] = [:]   // on `queue`, by BSD name
     private var pending = false
+    /// The whole disk the Mac started from (for APFS its container): none of its volumes is listed, external or not.
+    private lazy var boot: String? = Self.bsd(DADiskCreateFromVolumePath(kCFAllocatorDefault, session, URL(fileURLWithPath: "/") as CFURL).flatMap(DADiskCopyWholeDisk))
+
+    /// Its BSD name, read while the disk is alive (the C string is the disk's own).
+    static func bsd(_ disk: DADisk?) -> String? {
+        guard let disk else { return nil }
+        return withExtendedLifetime(disk) { DADiskGetBSDName(disk).map { String(cString: $0) } }
+    }
     private let changed: @MainActor @Sendable ([Disk]) -> Void
 
     /// Lives as long as the app: the callbacks hold it unretained.
@@ -24,9 +32,11 @@ final class DiskWatch: @unchecked Sendable {
     }
 
     private func update(_ disk: DADisk, gone: Bool = false) {
-        guard let bsd = DADiskGetBSDName(disk).map({ String(cString: $0) }) else { return }
+        guard let bsd = Self.bsd(disk) else { return }
         let found = gone ? nil : (DADiskCopyDescription(disk) as? [String: Any]).flatMap { d in
-            Disks.disk(d).flatMap { _ in Disks.disk(d, roles: Self.roles(disk)) }   // the registry only for what passed
+            Disks.disk(d).flatMap { _ in   // the registry only for what passed
+                Disks.disk(d, roles: Self.roles(disk), boot: boot != nil && Self.bsd(DADiskCopyWholeDisk(disk)) == boot)
+            }
         }
         guard disks[bsd] != found else { return }
         disks[bsd] = found

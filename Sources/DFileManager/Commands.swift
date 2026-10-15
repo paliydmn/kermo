@@ -1856,7 +1856,7 @@ extension AppDelegate {
             let items = rows.map { r in
                 Picker.Item(title: r.title, subtitle: r.subtitle, detail: r.eject ? "⏏ ⌘⌥E" : "") { [unowned self] in active.navigate(to: r.path) }
             } + SidebarModel.locations([], disks).compactMap { v in
-                v.disk.map { d in Picker.Item(title: d.name, subtitle: v.tip, detail: "↩ Mount") { [unowned self] in mountVolume(d, open: true) } }
+                v.disk.map { d in Picker.Item(title: d.name, subtitle: v.tip, detail: "↩ Mount") { [unowned self] in mountVolume(d) { [unowned self] in active.navigate(to: $0) } } }
             }
             Picker.show(over: window, placeholder: "Volumes…", items: items)
         }
@@ -1883,7 +1883,7 @@ extension AppDelegate {
             active.flash((unmount ? "Unmounting" : "Ejecting") + " “\(name)”…")
             var error: Error?
             if unmount {
-                do { try await FileManager.default.unmountVolume(at: vol, options: []) } catch let e { error = e }
+                do { try await FileManager.default.unmountVolume(at: vol, options: [.withoutUI]) } catch let e { error = e }   // the alert is ours
             } else {
                 error = await Blocking.run { () -> Error? in
                     do { try NSWorkspace.shared.unmountAndEjectDevice(at: vol); return nil } catch { return error }
@@ -1903,9 +1903,9 @@ extension AppDelegate {
         }
     }
 
-    /// DiskArbitration mounts it where macOS would. `open`: then the active panel goes there (its row clicked, ↩ in
-    /// Volumes…); the Mount button only mounts.
-    func mountVolume(_ disk: Disk, open: Bool = false) {
+    /// DiskArbitration mounts it where macOS would. `then`: where it went, to open it (its row clicked, ↩ in Volumes…);
+    /// the Mount button only mounts.
+    func mountVolume(_ disk: Disk, then open: ((String) -> Void)? = nil) {
         guard let diskWatch, volumeBusy.insert(disk.bsd).inserted else { return }
         refreshSidebar()
         Task {
@@ -1915,7 +1915,7 @@ extension AppDelegate {
             switch r {
             case .success(let path):
                 reloadVolumes()
-                if open { active.navigate(to: path) } else { active.flash("“\(disk.name)” mounted") }
+                if let open { open(path) } else { active.flash("“\(disk.name)” mounted") }
             case .failure(let e): showError(JobErrorMessage("Couldn't mount “\(disk.name)”: \(e.text)"))
             }
         }
