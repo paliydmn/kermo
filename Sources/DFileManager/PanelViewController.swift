@@ -68,11 +68,16 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// Shown in the status line with a spinner while a listing, connection or download is in flight.
     var busyMessage: String? { didSet { if busyMessage != oldValue { updateStatus() } } }
 
-    private var all: [FileItem] = [] { didSet { sortedAll = nil } }   // as listed
+    private var all: [FileItem] = [] { didSet { sortedAll = nil; sorting = nil; sortGen += 1 } }   // as listed
     /// `all` in the current sort order, cached: filtering and toggling hidden files reuse it instead of
-    /// re-sorting (1M names take ~1.6 s to sort, 80 ms to filter).
+    /// re-sorting (1M names take ~1 s to sort, 80 ms to filter).
     private var sortedAll: [FileItem]?
     private var sortedBy: (key: SortKey, ascending: Bool)?
+    /// The order a big listing is being sorted in off the main thread, and which listing that is (`all` changes it).
+    private var sorting: (key: SortKey, ascending: Bool)?
+    private var sortGen = 0
+    /// Sorting more than this many waits for the main thread no more: it goes off it (5k names take ~4 ms).
+    static let sortOnMain = 5000
     private var loadedGen = 0
     private var lastLoadSeconds = 0.0
     private var rows: [FileItem] = [] { didSet { rowIndex = nil } }   // filtered + sorted; ".." is not stored here
@@ -608,7 +613,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let oldRow = table.selectedRow, oldName = currentName
         let cursorShown = NSLocationInRange(oldRow, table.rows(in: table.visibleRect))
         if sortedAll == nil || sortedBy?.key != sortKey || sortedBy?.ascending != ascending {
-            // ponytail: a header click on a huge folder still sorts on the main thread; move off-main if it bites.
+            guard all.count <= Self.sortOnMain else { return sortOffMain(select: name, newFolder: newFolder) }
             sortedAll = all.sortedForPanel(by: sortKey, ascending: ascending)
             sortedBy = (sortKey, ascending)
         }
@@ -623,6 +628,31 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         moveCursor(to: r, scroll: newFolder || cursorShown || name != oldName || r != oldRow)
         reloadQuickLook()
         updateStatus()
+    }
+
+    /// A big listing in another order (a header click, search results done, links to folders found): sorted off the
+    /// main thread, the rows on screen staying as they are till it's back; the cursor stays on its name. Rows of
+    /// another place (an archive's folder) go at once: they mustn't pass for these. One sort per order at a time.
+    private func sortOffMain(select name: String?, newFolder: Bool) {
+        let key = sortKey, asc = ascending, items = all, gen = sortGen
+        if newFolder { rows = []; table.reloadData(); updateStatus() }
+        guard sorting?.key != key || sorting?.ascending != asc else { return }   // on its way: it shows what's asked by then
+        sorting = (key, asc)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, gen == self.sortGen, self.sorting != nil, self.busyMessage == nil else { return }
+                self.busyMessage = "Sorting…"
+            }
+        }
+        Task { [weak self] in
+            let sorted = await Blocking.run(.userInitiated) { items.sortedForPanel(by: key, ascending: asc) }
+            guard let self else { return }
+            if gen == sortGen, sorting?.key == key && sorting?.ascending == asc { sorting = nil }
+            if sorting == nil, busyMessage == "Sorting…" { busyMessage = busyOps.last?.message }
+            guard gen == sortGen, key == sortKey && asc == ascending else { return }   // clicked again: that sort shows
+            (sortedAll, sortedBy) = (sorted, (key, asc))
+            applyView(select: name ?? currentName, newFolder: newFolder)
+        }
     }
 
     /// Kernel tells us when the directory changes; coalesce bursts into one reload.
@@ -1071,7 +1101,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         remoteFlag = flag
         let opening = remote?.target != target   // not a folder of the server already open here
         if kept?.target != target { kept?.close(); kept = KeptSession(target) }
-        let session = kept
+        let session = kept, order = (key: sortKey, ascending: ascending)
         if opening {
             busyMessage = "Connecting to \(target.host)… ⎋ cancels"
             connecting = target
@@ -1085,13 +1115,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 flash("🔒 \(target.host) stays locked")
                 return
             }
-            let result = await Blocking.run(.userInitiated) { () -> Result<(String, [FileItem], [String: (String, String)], [String: (target: String, error: Int32)], Int64?), Error> in
+            let result = await Blocking.run(.userInitiated) { () -> Result<(String, [FileItem], [FileItem], [String: (String, String)], [String: (target: String, error: Int32)], Int64?), Error> in
                 Result {
                     let d = try dir ?? SFTP.home(target, env: SSHAskpass.env, cancel: flag, on: session)
                     var owners: [String: (String, String)] = [:], links: [String: (target: String, error: Int32)] = [:], free: Int64?
                     let items = try SFTP.list(target, d, env: SSHAskpass.env, cancel: flag, owners: { owners[$0] = ($1, $2) },
                                               links: { links[$0] = ($1, $2) }, free: { free = $0 }, on: session)
-                    return (d, items, owners, links, free)
+                    return (d, items, items.sortedForPanel(by: order.key, ascending: order.ascending), owners, links, free)
                 }
             }
             guard let self, gen == loadGen else { return }
@@ -1101,12 +1131,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             if case .failure = result { connecting = nil }
             busyMessage = busyOps.last?.message
             switch result {
-            case .success(let (d, items, owners, found, free)):
+            case .success(let (d, items, sorted, owners, found, free)):
                 onRemoteResult?(target, nil)
                 remoteOwners = owners
                 links = found
                 remoteFree = free.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
-                enterRemote(target, d, items, select: select, keep: keep)
+                enterRemote(target, d, items, sorted: (sorted, order), select: select, keep: keep)
                 connecting = nil
             case .failure(let error as SFTPError) where error.connection:
                 onRemoteResult?(target, error.message)
@@ -1146,7 +1176,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
 
-    private func enterRemote(_ target: SFTPTarget, _ dir: String, _ items: [FileItem], select: String?, keep: TabMarks? = nil) {
+    private func enterRemote(_ target: SFTPTarget, _ dir: String, _ items: [FileItem], sorted: ([FileItem], (key: SortKey, ascending: Bool)),
+                             select: String?, keep: TabMarks? = nil) {
         let sameDir = remote?.target == target && remote?.dir == dir
         let select = select ?? (sameDir ? currentName : nil)   // a reload keeps the cursor where it is now
         watcher?.cancel()
@@ -1155,6 +1186,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         if searchTitle != nil { searchFlag?.cancel(); searchTitle = nil; searching = false }
         remote = (target, dir)
         all = items
+        (sortedAll, sortedBy) = sorted
         if sameDir {
             marked.formIntersection(items.map(\.name))
         } else {

@@ -42,3 +42,27 @@ private func item(_ name: String, _ kind: FileItem.Kind = .file, size: Int64 = 0
     await waitUntil { panel.dirSizes.count == 300 }
     #expect(panel.statusText.contains(PanelViewController.countText(301, "items", 45_150 + 7)))
 }
+
+/// A header click on a big listing sorts off the main thread: the rows stay as they were till it's back, and then the
+/// cursor is still on its name.
+@MainActor @Test func aBigListingSortsOffTheMainThread() async throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    await waitUntil { panel.statusText.contains("0 items") }
+    let n = PanelViewController.sortOnMain + 1000
+    let flag = panel.beginSearch("t13")
+    panel.addSearchResults((0..<n).shuffled().map { item(String(format: "f%05d", $0), size: Int64($0)) }, from: flag)
+    panel.finishSearch(flag)
+    await waitUntil { panel.listedItems.first?.name == "f00000" }
+    #expect(panel.listedItems.map(\.name) == (0..<n).map { String(format: "f%05d", $0) })
+    panel.moveCursor(toName: "f03000")
+    let before = panel.listedItems.map(\.name)
+    panel.table.sortDescriptors = [NSSortDescriptor(key: "size", ascending: false)]
+    #expect(panel.listedItems.map(\.name) == before)   // not sorted yet: off the main thread
+    await waitUntil { panel.listedItems.first?.name != before.first }
+    #expect(panel.listedItems.map(\.size) == (0..<n).reversed().map(Int64.init))
+    #expect(panel.currentName == "f03000")
+}
