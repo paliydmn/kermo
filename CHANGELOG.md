@@ -52,6 +52,7 @@ Release:
 
 ### Fixed
 
+- **Eject of an APFS stick or card** takes the stick itself away. Before, only its volume was unmounted and the stick stayed plugged in.
 - The size of `/` and Find Files from `/` counted and found everything under `/System/Volumes/Data` twice (it has `/`'s own device on current macOS); now once.
 
 ## [1.1] - 2026-10-14
