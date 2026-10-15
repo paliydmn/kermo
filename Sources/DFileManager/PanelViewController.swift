@@ -68,7 +68,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// Shown in the status line with a spinner while a listing, connection or download is in flight.
     var busyMessage: String? { didSet { if busyMessage != oldValue { updateStatus() } } }
 
-    private var all: [FileItem] = [] { didSet { sortedAll = nil; sorting = nil; sortGen += 1 } }   // as listed
+    private var all: [FileItem] = [] { didSet { sortedAll = nil; sorting = nil; sortGen += 1; pendingSelect = nil } }   // as listed
     /// `all` in the current sort order, cached: filtering and toggling hidden files reuse it instead of
     /// re-sorting (1M names take ~1 s to sort, 80 ms to filter).
     private var sortedAll: [FileItem]? { didSet { folded = nil } }
@@ -78,6 +78,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// What a big listing is being sorted (and folded) for off the main thread, and which listing that is (`all` changes it).
     private var sorting: (key: SortKey, ascending: Bool, fold: Bool)?
     private var sortGen = 0
+    /// The name the cursor goes to once a new place's sort is back (its rows are empty till then): a tab switch keeps it.
+    private var pendingSelect: String?
     /// Sorting more than this many waits for the main thread no more: it goes off it (5k names take ~4 ms).
     static let sortOnMain = 5000
     private var loadedGen = 0
@@ -486,8 +488,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 }
             }
             // Not in the listing's work: another panel's call may have run that one, against its own rows.
+            // Names byte for byte: `==` takes "é" and "e\u{301}" (a rename from one to the other) for the same.
             var same = false
-            if let shown, case .success(let r) = result { same = await Blocking.run(.userInitiated) { r.0 == shown } }
+            if let shown, case .success(let r) = result {
+                same = await Blocking.run(.userInitiated) { r.0 == shown && zip(r.0, shown).allSatisfy { $0.name.utf8.elementsEqual($1.name.utf8) } }
+            }
             guard let self, gen == loadGen else { return }
             loadedGen = gen
             busyMessage = busyOps.last?.message
@@ -629,7 +634,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let cursorShown = NSLocationInRange(oldRow, table.rows(in: table.visibleRect))
         let fresh = sortedAll != nil && sortedBy?.key == sortKey && sortedBy?.ascending == ascending
         if !fresh || filter != nil && folded == nil {
-            guard all.count <= Self.sortOnMain else { return sortOffMain(select: name, newFolder: newFolder) }
+            // A search still running sorts and folds here, as each batch arrives: one off the main thread would be
+            // outdated by the next batch before it's back.
+            guard all.count <= Self.sortOnMain || searching else { return sortOffMain(select: name, newFolder: newFolder) }
             if !fresh { (sortedAll, sortedBy) = (all.sortedForPanel(by: sortKey, ascending: ascending), (sortKey, ascending)) }
             if filter != nil { folded = Mask.Folded(sortedAll!.lazy.map(\.name)) }
         }
@@ -656,7 +663,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private func sortOffMain(select name: String?, newFolder: Bool) {
         let key = sortKey, asc = ascending, fold = filter != nil, items = all, gen = sortGen
         let done = sortedBy?.key == key && sortedBy?.ascending == asc ? sortedAll : nil   // only the names to fold
-        if newFolder { rows = []; table.reloadData(); updateStatus() }
+        // The cursor where it is when the sort is back (it may move on the rows meanwhile), unless sent to a name.
+        let keepCursor = !newFolder && name == currentName
+        if newFolder { rows = []; totalSize = 0; pendingSelect = name; table.reloadData(); updateStatus() }
         // On its way: it shows what's asked by then.
         guard sorting.map({ $0.key != key || $0.ascending != asc || fold && !$0.fold }) ?? true else { return }
         sorting = (key, asc, fold)
@@ -679,7 +688,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             guard gen == sortGen, key == sortKey && asc == ascending else { return }   // clicked again: that sort shows
             (sortedAll, sortedBy) = (sorted, (key, asc))
             folded = names
-            applyView(select: name ?? currentName, newFolder: newFolder)
+            let select = keepCursor ? currentName : name ?? pendingSelect
+            pendingSelect = nil
+            applyView(select: select, newFolder: newFolder)
         }
     }
 
@@ -1458,7 +1469,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     private func saveTab() {
         tabs[tabIndex].path = path
-        tabs[tabIndex].cursor = currentName
+        tabs[tabIndex].cursor = currentName ?? pendingSelect
         tabs[tabIndex].back = backStack
         tabs[tabIndex].forward = forwardStack
         tabs[tabIndex].remote = remote

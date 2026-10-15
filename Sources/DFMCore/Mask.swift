@@ -25,7 +25,7 @@ public struct Mask {
         }
         cglobs = globs.map { Array($0.utf8CString) }
         let g = globs.first ?? ""
-        plain = globs.count == 1 && g.count > 2 && g.hasPrefix("*") && g.hasSuffix("*") && !g.dropFirst().dropLast().contains { "*?[\\".contains($0) }
+        plain = globs.count == 1 && g.count > 2 && g.hasPrefix("*") && g.hasSuffix("*") && !g.utf8.dropFirst().dropLast().contains { "*?[\\".utf8.contains($0) }
             ? Array(String(g.dropFirst().dropLast()).utf8CString) : nil
     }
 

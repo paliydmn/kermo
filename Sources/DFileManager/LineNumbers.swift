@@ -21,7 +21,8 @@ final class LineNumberRuler: NSRulerView {
     /// A keystroke in a 30 MB log was a count of all its lines again: now only the lines the edit touched.
     @objc private func edited(_ n: Notification) {
         guard let storage = n.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
-        if let old = lineStarts { lineStarts = Self.lineStarts(old, storage.mutableString, edited: storage.editedRange, delta: storage.changeInLength) }
+        if storage.editedRange.length == storage.length { lineStarts = nil }   // all of it replaced: counted when drawn
+        else if let old = lineStarts { lineStarts = Self.lineStarts(old, storage.mutableString, edited: storage.editedRange, delta: storage.changeInLength) }
         needsDisplay = true
     }
     @objc private func redraw() { needsDisplay = true }
