@@ -8,7 +8,7 @@ Find the symptom, apply the fix. If yours isn't here, see the end of the page.
 |---|---|---|
 | Kermo won't open the first time | It isn't notarized by Apple. Click **Open Anyway** in System Settings ▸ Privacy & Security (macOS 15+), or Control-click the app and choose **Open** (macOS 14). | [Install](install.md) |
 | macOS asks for Full Disk Access again | Releases are signed ad hoc, so an update looks like a new app to macOS. Grant it again. | [Install](install.md) |
-| A shortcut does nothing | macOS may take it first: ⇧⌘/ is Help search, ⌃1…⌃7 switch desktops, ⌘M minimizes. Turn the system shortcut off or remap the command. Function keys without fn control media: use ⌥ plus the digit (F1–F10, ⇧F4, ⇧F6, ⇧F8); the other F-key shortcuts need fn or a remap. | [Shortcuts](shortcuts.md) |
+| A shortcut does nothing | macOS may take it first: ⇧⌘/ is Help search, ⌃1…⌃7 switch desktops, ⌘M minimizes. Turn the system shortcut off or remap the command. Function keys without fn control media: use ⌥ plus the digit (F1–F10, ⇧F4, ⇧F5, ⇧F6, ⇧F8); the other F-key shortcuts need fn or a remap. | [Shortcuts](shortcuts.md) |
 | A remapped key never fires | Reload Config reports keys macOS takes before Kermo sees them (⌥⌘D, ⌘M …). Choose another. | [Configuration](configuration.md#keymap) |
 | No Git column | The repository's own config names commands Kermo won't run, or git isn't installed. | [Git](git.md#when-there-is-no-git-column) |
 | The panel doesn't follow `cd` in the terminal | Add the snippet to `~/.zshrc`. | [Terminal](terminal.md#shell-integration) |

@@ -188,3 +188,10 @@ private func tempDir() -> String {
     #expect(panel.table.sortDescriptors.first?.key == "size" && panel.table.sortDescriptors.first?.ascending == false)
     panel.sort(by: .name)
 }
+
+/// The Shift layer of the key bar: the file actions side by side, as F-keys in order.
+@MainActor @Test func theShiftLayerHasTheFileActionsInOrder() {
+    let shift = KeyBarModel.layers(AppDelegate().makeCommands()).first { $0.mods == .shift }!.slots
+    let fkeys = shift.filter { $0.key.hasPrefix("⇧F") }.map { "\($0.key) \($0.label)" }
+    #expect(fkeys == ["⇧F2 Compare", "⇧F4 New file", "⇧F5 Copy as", "⇧F6 Rename", "⇧F8 Delete", "⇧F10 Menu"], "\(shift.map(\.key))")
+}

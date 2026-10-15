@@ -20,6 +20,11 @@ Release:
 - **Containers…** (⌘⇧P, a server's sidebar menu): the server's docker (or podman) containers, running first, with their status and image. ↩ shows its log as it goes, ⌘R restarts it, ⌘C copies its name. A restart on a production server asks first (↩ is Cancel) and goes into the production log. Only names made of the characters systemd and docker allow are put into commands. A log stopped with ⎋ stops on the server too.
 - **Viewer:** `e` shows errors and warnings only, then errors only, then all lines, with `&` or without (`&` now matches lines as shown, colors' codes aside); `l` shows line numbers (files up to 4 MB, remembered). Following, a scrolled-up view says `paused — End resumes`.
 - **Free space on the server** in a server panel's status line: `🌐 sftp · web1 · 120 items · 120 GB free` (`df`'s Available), asked with the listing at no extra wait.
+- **Text previews of configs:** ⌃Q and ⌘Y show as text a file Quick Look shows only as an icon — `.conf`, `.env`, `.bak`, `syslog.1`, `server.key`, no extension — when its start reads as text. ⌃Q shows it itself with F3's colors and line numbers (the first 256 KB); ⌘Y through an owner-only `.txt` copy, gone with the next preview and at quit. On a server too.
+- **Copy Here As…** (⇧F5, ⌥⇧5): a copy next to the item under a new name (`nginx.conf.bak`, `.bak` selected), or a suffix for each of several marked; folders whole; a taken name is an error, never replaced. On a server the server copies it where it can; a production one says so and logs it.
+- **New File…** (⇧F4) on a server and a root panel: an empty file there, never over an existing one, opened in the editor.
+- **A folder's context menu:** right-click empty space or `..` for New File…, New Folder…, Paste, Open in Terminal (SSH Here on a server), Copy Path, Reveal in Finder, Get Info, Show Hidden Files, Sort By, Calculate Folder Sizes, Git Changes, and a server's Services… and Containers…. An item's menu gains New File… and Copy Here As….
+- **⇧F10 and the Menu key** of a PC keyboard open the cursor item's context menu by its row (the folder's on `..`). **Sort by Name / Size / Modified** and **Reverse Sort Order** are commands in ⇧⌘P.
 
 ### Changed
 
