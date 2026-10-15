@@ -13,6 +13,19 @@ Release:
 
 ## [Unreleased]
 
+### Added
+
+- **Copy SSH Key to Server…** (a server's sidebar menu and ⌘⇧P): puts this Mac's public key into the server's `~/.ssh/authorized_keys` over the connection you already have (one login, the key on stdin), adds it only if it isn't there, then logs in with the key alone to check it took. The server's own key file, else `~/.ssh/id_ed25519`, `id_ecdsa` or `id_rsa` (several: pick one; none: the `ssh-keygen` command to make one). A locked server asks for Touch ID, a production one asks first and logs it. Afterwards a saved server without a key file gets this one, and a saved password can be forgotten.
+- **Free space on the server** in a server panel's status line: `🌐 sftp · web1 · 120 items · 120 GB free` (`df`'s Available), asked with the listing at no extra wait.
+
+### Changed
+
+- **Folder sizes on a server** (Space, ⌥Space) come from the server's own `du`, one command for all the folders, instead of an SFTP walk of every folder: much faster on a large or distant server. A folder `du` couldn't read all of shows as `≥ 1.2 GB`; ⎋ stops `du` on the server too; a root panel's runs as root (`sudo -n`). Where `du` can't run — BSD's has no `-b`, an account without a shell, sudo that allows only `sftp-server` — the folders are walked as before.
+- **Cancel** in the status line, in red, next to whatever ⎋ stops there (folder sizes, connecting, a download…): the same for the mouse.
+- The sidebar's `⇄` is green while a server's tunnels listen, as SSH and SFTP are when open (red still when one failed).
+- A server row's buttons (SSH, SFTP, Tunnels, ⋯) and the Git section's take clicks around their icons, not only on them.
+- **A changed host key** is said plainly wherever a connection fails — reinstalled server or someone intercepting, the new fingerprint, the old key's file and line — instead of ssh's banner. Opening a server's files, the alert offers **Remove Old Key…** (↩ is Cancel), then connects again and asks about the new key; on a production server it asks you to check the fingerprint with the admin first.
+
 ## [1.1] - 2026-10-14
 
 ### Added

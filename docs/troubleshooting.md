@@ -18,6 +18,9 @@ Find the symptom, apply the fix. If yours isn't here, see the end of the page.
 | "check needs root" or "reload needs root" | Reopen the panel as root with ⌃⌘R. | [Checks](config-checks.md#root-and-user) |
 | "changed on host since you opened it" | Someone changed the file meanwhile. **Compare** shows the difference before you overwrite. | [Files on a server](server-files.md#open-and-edit) |
 | No version in the file history | Files over 5 MB get none, and history may be off (`serverHistory`). | [File history](server-files.md#file-history) |
+| "host key has changed" | The server was reinstalled, or someone is intercepting the connection. Check the new fingerprint, then **Remove Old Key…** in the alert. | [Servers](servers.md#when-the-host-key-changed) |
+| "… but logging in with it failed" after Copy SSH Key | The key is on the server, but sshd won't take it: usually the home folder, `~/.ssh` or `authorized_keys` there can be written by others (`StrictModes`). | [Servers](servers.md#copy-your-ssh-key-to-a-server) |
+| Folder sizes on a server show `≥` | Its `du` couldn't read all of the folder (permissions). A root panel counts all of it. | [Files on a server](server-files.md#preview-sizes-and-compare) |
 | A tunnel is red | The tooltip says why: the remote port is closed, forwarding is forbidden, the host name doesn't resolve, or your local port is taken. | [Tunnels](tunnels.md#state) |
 | A tunnel turns red with "Port N is in use" | Another program has the port. Turn the tunnel off, choose **Edit…** and give it another local port. When you save a port that is taken, Kermo offers the next free one. | [Tunnels](tunnels.md#add-a-tunnel) |
 

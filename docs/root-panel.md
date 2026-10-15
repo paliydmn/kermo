@@ -40,6 +40,7 @@ Only the file operations run as root, plus a save's [check and reload](config-ch
 
 - Saves go the same way as the user's: [file history](server-files.md#file-history), the production question, "changed on the server since you opened it".
 - New files, folders and copies belong to `root:root`, as with any `sudo`.
+- Folder sizes (Space, ⌥Space) come from `du` through `sudo -n`. Where sudo doesn't allow that without a password (a rule for `sftp-server` alone, say), the folders are walked over the root session instead, as before.
 - On a server with SELinux (`/sys/fs/selinux`) a save writes into the file itself instead of renaming a new one over it, so the file keeps its label.
 
 ## Root and user are two accounts

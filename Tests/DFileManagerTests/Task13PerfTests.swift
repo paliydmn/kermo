@@ -32,6 +32,44 @@ private func tempDir() -> String {
     #expect(panel.dirSizes == ["one": 3, "two": 5])
 }
 
+/// ⎋ in the middle of a local count stops it there: the folder being counted gets no size (a part of it isn't one), the
+/// ones after it aren't counted. The count of the first one waits until ⎋ came.
+@MainActor @Test func escStopsALocalCountMidway() async throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    for name in ["one", "two"] { try FileManager.default.createDirectory(atPath: d + "/" + name, withIntermediateDirectories: true) }
+    let entered = DispatchSemaphore(value: 0), go = DispatchSemaphore(value: 0)
+    final class Counted: @unchecked Sendable { let lock = NSLock(); var names: [String] = [] }
+    let counted = Counted()
+    let real = PanelViewController.measureLocal
+    PanelViewController.measureLocal = { path, isCancelled in
+        guard path.hasPrefix(d) else { return real(path, isCancelled) }   // another test's
+        counted.lock.withLock { counted.names.append((path as NSString).lastPathComponent) }
+        entered.signal()
+        go.wait()
+        return real(path, isCancelled)
+    }
+    defer { PanelViewController.measureLocal = real }
+    let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    await waitUntil { panel.table.numberOfRows == 2 }
+    panel.computeAllDirSizes()
+    await withCheckedContinuation { c in DispatchQueue.global().async { entered.wait(); c.resume() } }
+    panel.cancelBusy()
+    go.signal()
+    try await Task.sleep(for: .milliseconds(300))
+    #expect(counted.lock.withLock { counted.names } == ["one"] && panel.dirSizes.isEmpty)
+    #expect(!panel.statusText.contains("Counting"))
+}
+
+/// A server folder du couldn't read all of is "at least" its size.
+@MainActor @Test func aPartialSizeIsAtLeast() {
+    let dir = FileItem(name: "var", kind: .dir, size: 0, mtime: 0, mode: 0o755, flags: 0)
+    #expect(PanelViewController.sizeText(dir, measured: 2048, partial: true).hasPrefix("≥ "))
+    #expect(!PanelViewController.sizeText(dir, measured: 2048).hasPrefix("≥"))
+}
+
 /// After an auto-reload, links to folders showed and sorted as files, and the resolve after it left them there.
 @MainActor @Test func reloadKeepsLinksToFoldersWithTheFolders() async throws {
     let d = tempDir()

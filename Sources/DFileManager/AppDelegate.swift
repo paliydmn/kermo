@@ -686,6 +686,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             r.sessions.isEmpty && !SFTP.masterTargets.contains { ServerRow.key($0) == r.key } ? nil
                 : MenuAction.item("Disconnect") { [unowned self] in disconnect(r.target) },
             r.saved.map { unlocked("Copy SSH Command", $0, "copy the command of", copy) } ?? MenuAction.item("Copy SSH Command", copy),
+            MenuAction.item("Copy SSH Key to Server…") { [unowned self] in copyKey(to: r.target) },
             MenuAction.item("Show File History") { [unowned self] in showFileHistory(r.target) },
             MenuAction.item("Forward Port…") { [unowned self] in forwardPort(on: r.target) },
             tunnelsItem(for: r.saved, at: r.target),
@@ -1178,7 +1179,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// A sheet with `buttons` (the last one is Cancel / ⎋) on `sheetWindow` (default: the main one); returns the index pressed.
     /// `default`: the button ↩ answers (else the first). Esc still answers Cancel when ↩ took its key.
     func choose(_ message: String, info: String, _ buttons: [String], default: Int? = nil, on sheetWindow: NSWindow? = nil) async -> Int {
-        let alert = Self.alert(message, info: info, buttons, default: `default`)
+        if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }   // asked by a save in another app: the Dock icon bounces
+        return await Self.sheet(Self.alert(message, info: info, buttons, default: `default`), on: sheetWindow ?? window)
+    }
+
+    /// `alert` as a sheet on `window`; the button's index. A Cancel that took ↩ (`alert(default:)`) answers ⎋ too.
+    static func sheet(_ alert: NSAlert, on window: NSWindow) async -> Int {
         let esc = alert.buttons.first { $0.title == "Cancel" && $0.keyEquivalent == "\r" }.map { cancel in
             NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
                 guard e.keyCode == 53, e.window === alert.window else { return e }
@@ -1187,9 +1193,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
         }
         defer { esc.map(NSEvent.removeMonitor) }
-        if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }   // asked by a save in another app: the Dock icon bounces
         let response: NSApplication.ModalResponse = await withCheckedContinuation { cont in
-            alert.beginSheetModal(for: sheetWindow ?? window) { cont.resume(returning: $0) }
+            alert.beginSheetModal(for: window) { cont.resume(returning: $0) }
         }
         return response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
     }

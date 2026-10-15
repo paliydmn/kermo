@@ -269,8 +269,8 @@ extension ServerLockTests {
     #expect(w.title == "mine.conf" && w.representedURL?.lastPathComponent == "mine.conf")
 }
 
-/// A server row at rest says what's open — SSH and SFTP in green with a count from 2, tunnels listening (red when one
-/// failed) — and under the mouse offers SSH, SFTP, Tunnels ▸ (a server with tunnels) and ⋯ instead.
+/// A server row at rest says what's open — SSH, SFTP and tunnels listening in green with a count from 2 (tunnels red
+/// when one failed) — and under the mouse offers SSH, SFTP, Tunnels ▸ (a server with tunnels) and ⋯ instead.
 /// Production is in its color, not red; a locked server's icon says so; the tooltip says all of it.
 @MainActor @Test func serverRowSaysItsStateAndOffersItsActions() throws {
     var s = SavedServer(address: "root@db:2222")!
@@ -318,4 +318,18 @@ extension ServerLockTests {
             "no tunnels: no Tunnels button")
     #expect((quiet.arrangedSubviews.first as? NSImageView)?.image?.accessibilityDescription == "Server, its last connection failed")
     #expect(quiet.toolTip?.hasPrefix("web\nConnection refused\n") == true)
+
+    // Tunnels listening, none failed: green, as what's open. The actions take clicks around their icons, as tall as a
+    // row lets them.
+    let up = ServerRow(target: s.target, saved: s, title: "db", tunnels: ["Postgres"])
+    let upView = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(up))) as? NSStackView)
+    #expect((upView.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)?.arrangedSubviews.map { ($0 as? NSButton)?.contentTintColor } == [.systemGreen])
+    let actions = try #require(upView.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView)
+    actions.isHidden = false
+    for (height, side) in [(24.0, 22.0), (18, 18)] {
+        upView.frame = NSRect(x: 0, y: 0, width: 260, height: height)
+        upView.layoutSubtreeIfNeeded()
+        let sizes = actions.arrangedSubviews.map { $0.alignmentRect(forFrame: $0.frame).size }   // the frame takes clicks a bit past it
+        #expect(sizes.allSatisfy { $0.width >= 22 && $0.height == side }, "\(height): \(sizes)")
+    }
 }

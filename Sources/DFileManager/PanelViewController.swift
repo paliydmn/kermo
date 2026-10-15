@@ -54,6 +54,17 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
     private let spinner = NSProgressIndicator()
+    /// Next to a busy message that ⎋ cancels: the same for the mouse.
+    lazy var cancelButton: PillButton = {
+        let b = PillButton(title: "Cancel", target: self, action: #selector(cancelClicked))
+        b.isBordered = false
+        b.minSide = 0   // the status line keeps its height
+        b.font = .systemFont(ofSize: 11, weight: .medium)
+        b.contentTintColor = .systemRed
+        b.toolTip = "⎋ cancels too"
+        b.isHidden = true
+        return b
+    }()
     /// Shown in the status line with a spinner while a listing, connection or download is in flight.
     var busyMessage: String? { didSet { if busyMessage != oldValue { updateStatus() } } }
 
@@ -68,6 +79,17 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var marked = Set<String>()
     private var filter: Mask?
     private(set) var dirSizes: [String: Int64] = [:]
+    /// Server folders du couldn't read all of: their size is "at least".
+    private(set) var partialSizes = Set<String>()
+    /// Servers (root apart) where du doesn't count (BSD's has no -b, no shell, sudo that won't run it): their folders
+    /// are walked, till quit.
+    static var noDu = Set<SFTPTarget>()
+    /// What asks a server's du (tests: a stand-in).
+    nonisolated(unsafe) static var measureRemote: @Sendable ([String], String, SFTPTarget, [String: String], CancelFlag) throws -> [String: ServerSizes.Size]? = {
+        try ServerSizes.measure($0, in: $1, on: $2, env: $3, cancel: $4)
+    }
+    /// What counts a local folder's bytes, looking at `isCancelled` as it goes (tests: one that waits).
+    nonisolated(unsafe) static var measureLocal: @Sendable (String, () -> Bool) -> Int64 = { DirLister.measure($0, isCancelled: $1).bytes }
     private var sizeGen = 0
     /// Server folders waiting to be counted, and the walk counting them (one at a time, over one connection).
     private var sizeQueue: [String] = []
@@ -76,6 +98,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var links: [String: (target: String, error: Int32)] = [:]
     private var totalSize: Int64 = 0
     private var freeSpace = ""
+    /// What's free where the server panel is ("120 GB"), when its server tells; nil: it doesn't.
+    private var remoteFree: String?
     /// `DirSync.mtimeTolerance` of the folder, read with the listing: off the main thread, where a hung mount can't freeze the UI.
     private(set) var mtimeTolerance: Double = 1
     private var sortKey = SortKey.name
@@ -314,7 +338,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         errorIcon.contentTintColor = .systemRed
         errorIcon.symbolConfiguration = .init(pointSize: 11, weight: .regular)
         errorIcon.isHidden = true
-        let footer = Self.column([filterField, NSStackView(views: [spinner, errorIcon, statusLabel])])
+        let footer = Self.column([filterField, NSStackView(views: [spinner, errorIcon, statusLabel, cancelButton])])
         let v = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 700))
         v.wantsLayer = true   // the active panel's frame
         for sub in [header, scroll, footer] as [NSView] {
@@ -654,11 +678,15 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         spinner.isHidden = !busy
         busy ? spinner.startAnimation(nil) : spinner.stopAnimation(nil)
         statusError = false
-        if let busyMessage { return statusLabel.stringValue = busyMessage }
+        let cancellable = busyMessage?.hasSuffix(" ⎋ cancels") == true
+        cancelButton.isHidden = !cancellable
+        if let busyMessage { return statusLabel.stringValue = cancellable ? String(busyMessage.dropLast(" ⎋ cancels".count)) : busyMessage }
         // A message just flashed stays its time through a re-list, a git status or a folder size coming in.
         if let f = flashed, f.until > Date() { statusError = f.error; return statusLabel.stringValue = f.text }
         var s = Self.countText(rows.count, "items", totalSize) + " · \(freeSpace) free"
-        if let r = remote { s = "\(r.target.sudo ? "#" : "🌐") sftp · \(r.target.shown) · " + Self.countText(rows.count, "items", 0) }   // marks: below, as anywhere
+        if let r = remote {   // marks: below, as anywhere
+            s = "\(r.target.sudo ? "#" : "🌐") sftp · \(r.target.shown) · " + Self.countText(rows.count, "items", 0) + (remoteFree.map { " · \($0) free" } ?? "")
+        }
         if let g = git {
             s += " · ⎇ \(g.branch)" + (g.ahead > 0 ? " ↑\(g.ahead)" : "") + (g.behind > 0 ? " ↓\(g.behind)" : "")
         }
@@ -677,9 +705,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private func bytes(of items: [FileItem]) -> Int64 { items.reduce(0) { $0 + ($1.kind == .dir ? dirSizes[$1.name] ?? 0 : $1.size) } }
 
     /// The Size column: a folder's measured bytes or <DIR>; a special file's type, which has no size to show.
-    static func sizeText(_ it: FileItem, measured: Int64?) -> String {
+    /// `partial`: du couldn't read all of the folder — "≥ 1.2 GB".
+    static func sizeText(_ it: FileItem, measured: Int64?, partial: Bool = false) -> String {
         switch it.kind {
-        case .dir: measured.map { sizeFmt.string(fromByteCount: $0) } ?? "<DIR>"
+        case .dir: measured.map { (partial ? "≥ " : "") + sizeFmt.string(fromByteCount: $0) } ?? "<DIR>"
         case .link where it.linkDir: "<DIR>"
         case .other:
             switch mode_t(truncatingIfNeeded: it.mode) & S_IFMT {
@@ -761,6 +790,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         remoteFlag?.cancel()
         busyOps.forEach { $0.flag.cancel() }
     }
+
+    @objc private func cancelClicked() { cancelBusy() }
 
     /// `after`: the message waits that long (⎋ doesn't), so quick work doesn't flash it.
     func busy<T: Sendable>(_ message: String, after: Double = 0, flag: CancelFlag = CancelFlag(),
@@ -1049,13 +1080,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 flash("🔒 \(target.host) stays locked")
                 return
             }
-            let result = await Blocking.run(.userInitiated) { () -> Result<(String, [FileItem], [String: (String, String)], [String: (target: String, error: Int32)]), Error> in
+            let result = await Blocking.run(.userInitiated) { () -> Result<(String, [FileItem], [String: (String, String)], [String: (target: String, error: Int32)], Int64?), Error> in
                 Result {
                     let d = try dir ?? SFTP.home(target, env: SSHAskpass.env, cancel: flag, on: session)
-                    var owners: [String: (String, String)] = [:], links: [String: (target: String, error: Int32)] = [:]
+                    var owners: [String: (String, String)] = [:], links: [String: (target: String, error: Int32)] = [:], free: Int64?
                     let items = try SFTP.list(target, d, env: SSHAskpass.env, cancel: flag, owners: { owners[$0] = ($1, $2) },
-                                              links: { links[$0] = ($1, $2) }, on: session)
-                    return (d, items, owners, links)
+                                              links: { links[$0] = ($1, $2) }, free: { free = $0 }, on: session)
+                    return (d, items, owners, links, free)
                 }
             }
             guard let self, gen == loadGen else { return }
@@ -1065,15 +1096,24 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             if case .failure = result { connecting = nil }
             busyMessage = busyOps.last?.message
             switch result {
-            case .success(let (d, items, owners, found)):
+            case .success(let (d, items, owners, found, free)):
                 onRemoteResult?(target, nil)
                 remoteOwners = owners
                 links = found
+                remoteFree = free.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
                 enterRemote(target, d, items, select: select, keep: keep)
                 connecting = nil
             case .failure(let error as SFTPError) where error.connection:
                 onRemoteResult?(target, error.message)
-                if let window = view.window {
+                if let window = view.window, let change = error.hostKey {
+                    // ↩ is Cancel: the old key goes only when asked, and the next login asks about the new one (askpass).
+                    let check = SavedServer.isProd(target) ? "\n\nCheck the new fingerprint with the server's admin first." : ""
+                    let alert = AppDelegate.alert("Can't connect to \(target.host)", info: error.message + check, ["Cancel", "Remove Old Key…"], default: 0)
+                    Task { [weak self] in
+                        guard await AppDelegate.sheet(alert, on: window) == 1 else { return }
+                        self?.removeOldKey(change, then: { $0.loadRemote(target, dir: dir, select: select, keep: keep, onFailure: onFailure) })
+                    }
+                } else if let window = view.window {
                     let alert = NSAlert()
                     alert.messageText = "Can't connect to \(target.host)"
                     alert.informativeText = error.message
@@ -1085,6 +1125,18 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 else { onRemoteResult?(target, error.localizedDescription) }
                 if let onFailure { return onFailure(error) }
                 if !(error is CancellationError) { NSSound.beep(); flash("\(target.host): \(error.localizedDescription)", error: true) }
+            }
+        }
+    }
+
+    /// "Remove Old Key…": the server's old host key out of known_hosts, then `then` (connect again: ssh asks about the new one).
+    func removeOldKey(_ change: HostKeyChange, then: @escaping @MainActor (PanelViewController) -> Void) {
+        Task {
+            switch await Blocking.run(.userInitiated, { Result { try change.remove() } }) {
+            case .success: then(self)
+            case .failure(let e):
+                NSSound.beep()
+                flash(e.localizedDescription, error: true)
             }
         }
     }
@@ -1535,6 +1587,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// The folder's sizes are another folder's now: the ones on their way are dropped, a server walk stops.
     private func clearSizes() {
         dirSizes.removeAll()
+        partialSizes.removeAll()
         sizeGen += 1
         sizeQueue.removeAll()
         sizeWalk?.cancel()
@@ -1542,35 +1595,52 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     /// One walk at a time (on a server, over one connection), folders asked for meanwhile (Space down a list) next;
-    /// the status line says so and ⎋ stops it, as does leaving the folder (`clearSizes`).
+    /// the status line says so and ⎋ stops it, as does leaving the folder (`clearSizes`). On a server its du counts them
+    /// (one command for them all, no SFTP session); one without a du that counts bytes, and names du can't be given, walk.
     private func computeSizes(_ names: [String]) {
         guard archive == nil else { return }
         sizeQueue += names.filter { !sizeQueue.contains($0) }
         guard sizeWalk == nil else { return }   // the walk running takes them next
         let flag = CancelFlag(), gen = sizeGen, env = SSHAskpass.env, r = remote, base = path
+        let duKey = r?.target
         sizeWalk = flag
-        let found: @Sendable (String, Int64) -> Void = { [weak self] name, bytes in
-            DispatchQueue.main.async { MainActor.assumeIsolated { if self?.sizeGen == gen { self?.setSize(name, bytes) } } }
+        let found: @Sendable (String, Int64, Bool) -> Void = { [weak self] name, bytes, partial in
+            DispatchQueue.main.async { MainActor.assumeIsolated { if self?.sizeGen == gen { self?.setSize(name, bytes, partial: partial) } } }
         }
         Task { [weak self] in
             while let self, sizeWalk === flag {
                 let names = sizeQueue.filter { dirSizes[$0] == nil }
                 sizeQueue.removeAll()
                 guard !names.isEmpty else { sizeWalk = nil; return }
+                let du = duKey.map { !Self.noDu.contains($0) } ?? false
                 // On this Mac most walks take a moment: Space down a list would flash the message on every folder.
-                let result = await busy("Counting folder sizes…", after: r == nil ? 0.4 : 0, flag: flag) { flag in
-                    func each(_ measure: (String) throws -> Int64) rethrows { for name in names { found(name, try measure(name)) } }
+                let result = await busy("Counting folder sizes…", after: r == nil ? 0.4 : 0, flag: flag) { flag -> Bool in
+                    func each(_ names: [String], _ measure: (String) throws -> Int64) rethrows { for name in names { found(name, try measure(name), false) } }
                     guard let r else {
-                        return try each {
-                            let bytes = DirLister.measure((base as NSString).appendingPathComponent($0), isCancelled: { flag.isCancelled }).bytes
+                        try each(names) {
+                            let bytes = Self.measureLocal((base as NSString).appendingPathComponent($0)) { flag.isCancelled }
                             if flag.isCancelled { throw CancellationError() }   // a part of it: no size
                             return bytes
                         }
+                        return false
                     }
-                    try SFTPClient.session(r.target, env: env, cancel: flag) { c in
-                        try each { try c.measure((r.dir as NSString).appendingPathComponent($0), cancel: flag) }
+                    var walk = names, noDu = false
+                    if du {
+                        if let sizes = try Self.measureRemote(names, r.dir, r.target, env, flag) {
+                            for (name, s) in sizes { found(name, s.bytes, s.partial) }
+                            walk = names.filter { sizes[$0] == nil }
+                        } else {
+                            noDu = true
+                        }
                     }
+                    if !walk.isEmpty {
+                        try SFTPClient.session(r.target, env: env, cancel: flag) { c in
+                            try each(walk) { try c.measure((r.dir as NSString).appendingPathComponent($0), cancel: flag) }
+                        }
+                    }
+                    return noDu
                 }
+                if case .success(true) = result, let duKey { Self.noDu.insert(duKey) }
                 if case .failure(let error) = result {
                     if sizeWalk === flag { sizeWalk = nil; sizeQueue.removeAll() }
                     if !(error is CancellationError) { flash("Can't count folder sizes: \(error.localizedDescription)", error: true) }
@@ -1580,8 +1650,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
 
-    private func setSize(_ name: String, _ bytes: Int64) {
+    private func setSize(_ name: String, _ bytes: Int64, partial: Bool = false) {
         dirSizes[name] = bytes
+        if partial { partialSizes.insert(name) } else { partialSizes.remove(name) }
         totalSize = self.bytes(of: rows)
         if let r = row(named: name) { table.reloadData(forRowIndexes: [r], columnIndexes: [table.column(withIdentifier: .init("size"))]) }
         updateStatus()
@@ -1935,7 +2006,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             tf.setAccessibilityLabel(mark?.2)
             return cell
         case "size":
-            tf.stringValue = it.map { Self.sizeText($0, measured: dirSizes[$0.name]) } ?? ""
+            tf.stringValue = it.map { Self.sizeText($0, measured: dirSizes[$0.name], partial: partialSizes.contains($0.name)) } ?? ""
         case "mode":
             tf.stringValue = it.flatMap { archive == nil ? Perms.string($0.mode) : nil } ?? ""
         case "owner", "group":

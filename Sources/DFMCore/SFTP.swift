@@ -66,6 +66,8 @@ public struct SFTPError: LocalizedError {
     public var connection = false
     /// The SFTP status code, when a server answered with one (SFTPClient).
     public var code: UInt32? = nil
+    /// The login failed because the server's host key changed (`message` says so plainly).
+    public var hostKey: HostKeyChange? = nil
     public var errorDescription: String? { message }
 }
 
@@ -153,7 +155,38 @@ public enum SFTP {
         if cancel?.isCancelled == true { throw CancellationError() }
         guard !up else { return }
         // ponytail: no fallback once the master failed with a message; add one if a server ever refuses `-N` but serves sftp.
-        if !why.isEmpty { throw SFTPError(message: why, connection: true) }   // else the session's ssh tries and says why
+        if !why.isEmpty { throw loginFailure(why, t) { sshG(t) } }   // else the session's ssh tries and says why
+    }
+
+    /// A failed login as ssh's log has it: a changed host key in plain words (and what to remove), else ssh's words.
+    /// The log holds the server's banner too, which could imitate ssh's warning about another host: the change counts
+    /// only for `t`'s own name in one of the files ssh reads for it (`ssh -G`).
+    static func loginFailure(_ why: String, _ t: SFTPTarget, sshG: () -> String? = { nil }) -> SFTPError {
+        guard let change = HostKeyChange.parse(why), let known = sshG().flatMap(knownHosts(sshG:)),
+              change.host == known.name, known.files.contains(change.file)
+        else { return SFTPError(message: why, connection: true) }
+        return SFTPError(message: change.message(t.host), connection: true, hostKey: change)
+    }
+
+    /// The name known_hosts files `t`'s key under (HostKeyAlias, else the host name; "[host]:port" off port 22) and the
+    /// files ssh reads for it, from `ssh -G`'s output.
+    static func knownHosts(sshG: String) -> (name: String, files: [String])? {
+        let o = options(sshG)
+        guard let host = o["hostkeyalias"] ?? o["hostname"] else { return nil }
+        let port = o["port"].flatMap { Int($0) } ?? 22
+        let name = o["hostkeyalias"] != nil || port == 22 ? String(host) : "[\(host)]:\(port)"
+        let files = (o["userknownhostsfile"] ?? "").split(separator: " ").map { (String($0) as NSString).expandingTildeInPath }
+        return (name, files)
+    }
+
+    /// `ssh -G`'s lines as option → value (the first of each, as ssh takes them).
+    private static func options(_ sshG: String) -> [Substring: Substring] {
+        var o: [Substring: Substring] = [:]
+        for line in sshG.split(separator: "\n") {
+            let kv = line.split(separator: " ", maxSplits: 1)
+            if kv.count == 2, o[kv[0]] == nil { o[kv[0]] = kv[1] }
+        }
+        return o
     }
 
     /// The shared connection to `t` is up (`ssh -O check`): what rides on it needs no login.
@@ -274,7 +307,10 @@ public enum SFTP {
 
     /// user@host the way ssh names the target in its prompts: `ssh -G`'s user and HostKeyAlias, else HostName
     /// (a ~/.ssh/config alias resolved, lowercased). Doesn't connect.
-    static func promptLogin(_ t: SFTPTarget) -> String? {
+    static func promptLogin(_ t: SFTPTarget) -> String? { sshG(t).flatMap(promptLogin(sshG:)) }
+
+    /// What ssh would use for `t` (`ssh -G`: ~/.ssh/config applied). Doesn't connect.
+    static func sshG(_ t: SFTPTarget) -> String? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         p.arguments = ["-G"] + connectionOptions(t) + t.arguments()
@@ -283,15 +319,11 @@ public enum SFTP {
         guard (try? p.run()) != nil else { return nil }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
-        return p.terminationStatus == 0 ? promptLogin(sshG: String(decoding: data, as: UTF8.self)) : nil
+        return p.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
     }
 
     static func promptLogin(sshG: String) -> String? {
-        var o: [Substring: Substring] = [:]
-        for line in sshG.split(separator: "\n") {
-            let kv = line.split(separator: " ", maxSplits: 1)
-            if kv.count == 2, o[kv[0]] == nil { o[kv[0]] = kv[1] }
-        }
+        let o = options(sshG)
         guard let user = o["user"], let host = o["hostkeyalias"] ?? o["hostname"] else { return nil }
         return "\(user)@\(host)"
     }
@@ -304,12 +336,21 @@ public enum SFTP {
     /// Over SFTP itself (READDIR): names come as the server's bytes, never through `ls` text or sftp's globbing.
     /// `owners` hears each item's owner and group: the server's names where its `ls -l` line has them, else numbers.
     /// `links` hears where each symlink points and the errno following it gives (0: there). `kept`: as in `home`.
+    /// `free` hears the bytes free there, where the server tells (`statvfs@openssh.com`) — asked in the same wave as the
+    /// listing: no wait of its own.
     public static func list(_ t: SFTPTarget, _ dir: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
                             owners: ((_ name: String, _ owner: String, _ group: String) -> Void)? = nil,
                             links: ((_ name: String, _ target: String, _ error: Int32) -> Void)? = nil,
-                            on kept: KeptSession? = nil) throws -> [FileItem] {
+                            free: ((Int64) -> Void)? = nil, on kept: KeptSession? = nil) throws -> [FileItem] {
         try session(t, env: env, cancel: cancel, on: kept) { c in
-            var items = try c.list(dir, owners: owners).filter { FileJob.isSafeName($0.name) }.map { name, a in
+            let df = free == nil ? nil : c.askFree(dir)
+            var listed: [(name: String, attrs: SFTPClient.Attrs)]
+            do { listed = try c.list(dir, owners: owners) } catch {
+                if let df { c.forget([df]) }
+                throw error
+            }
+            if let df, let bytes = c.free(answer: df) { free?(bytes) }
+            var items = listed.filter { FileJob.isSafeName($0.name) }.map { name, a in
                 FileItem(name: name, kind: a.kind, size: a.size, mtime: a.mtime, mode: a.type | (a.mode ?? 0), flags: 0,
                          uid: a.uid ?? FileItem.unknown, gid: a.gid ?? FileItem.unknown)
             }

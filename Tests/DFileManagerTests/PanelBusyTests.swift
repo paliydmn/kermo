@@ -54,9 +54,13 @@ import Testing
     let running = Task { await panel.busy("Counting folder sizes…") { flag in while !flag.isCancelled { usleep(10_000) } } }
     while panel.busyMessage == nil { await Task.yield() }
     try await reList(adding: "g")
-    #expect(panel.busyMessage == "Counting folder sizes… ⎋ cancels" && panel.statusText == panel.busyMessage, "\(panel.statusText)")
-    panel.cancelBusy()
-    _ = await running.value
+    #expect(panel.busyMessage == "Counting folder sizes… ⎋ cancels" && panel.statusText == "Counting folder sizes…", "\(panel.statusText)")
+    #expect(!panel.cancelButton.isHidden, "the ⎋ hint is a red Cancel button")
+    panel.view.layoutSubtreeIfNeeded()
+    #expect(panel.cancelButton.alignmentRect(forFrame: panel.cancelButton.frame).height >= 13, "\(panel.cancelButton.frame)")
+    panel.cancelButton.performClick(nil)
+    #expect((try? await running.value.get()) == nil, "cancelled")
+    #expect(panel.cancelButton.isHidden)
 
     panel.flashTime = 600   // a loaded Mac's re-list may take longer than the usual 2.5 s
     panel.flash("Saved · no history: file over 5 MB")

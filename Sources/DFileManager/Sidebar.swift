@@ -261,12 +261,19 @@ private final class SidebarOutline: NSOutlineView {
 }
 
 /// SSH / SFTP / tunnels on a server row: a rounded fill says "button" without a bezel's width (the narrow sidebar needs
-/// it for the name); the one under the mouse fills more.
+/// it for the name); the one under the mouse fills more. It takes clicks on at least `minSide` square around the fill:
+/// a 10 pt icon alone is a hard target.
 class PillButton: NSButton {
     private var over = false { didSet { if over != oldValue { needsDisplay = true } } }
+    var minSide: CGFloat = 22 { didSet { invalidateIntrinsicContentSize() } }
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setContentCompressionResistancePriority(.defaultLow, for: .vertical)   // a shorter row (small sidebar icons): a shorter target
+    }
+    required init?(coder: NSCoder) { super.init(coder: coder) }
     override var intrinsicContentSize: NSSize {   // 4 pt of fill each side of the title
         let s = super.intrinsicContentSize
-        return NSSize(width: s.width + 8, height: s.height)
+        return NSSize(width: max(s.width + 8, minSide), height: max(s.height, minSide))
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -278,13 +285,14 @@ class PillButton: NSButton {
     override func viewDidHide() { over = false }
     override func draw(_ dirtyRect: NSRect) {
         (contentTintColor ?? .labelColor).withAlphaComponent(over ? 0.22 : 0.1).setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: 1), xRadius: 4, yRadius: 4).fill()
+        let fill = bounds.insetBy(dx: 0, dy: max(1, (bounds.height - super.intrinsicContentSize.height) / 2 + 1))   // as tall as the title
+        NSBezierPath(roundedRect: fill, xRadius: 4, yRadius: 4).fill()
         super.draw(dirtyRect)
     }
 }
 
-/// A server row's state at rest: what's open there (green, a count from 2) and its tunnels listening (red when one
-/// failed). `ServerToolbar` stands in its place while the mouse is over the row.
+/// A server row's state at rest: what's open there and its tunnels listening (green, a count from 2; a tunnel red when
+/// one failed). `ServerToolbar` stands in its place while the mouse is over the row.
 final class ServerChips: NSStackView {}
 
 /// A server row's actions, under the mouse: SSH, SFTP, Tunnels ▸ and ⋯ (the row's whole menu).
@@ -648,8 +656,8 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
     }
 
     /// Icon (production's color; a lock and a red dot — its last connection failed — cut into its corners; a spinner
-    /// while connecting) and name, then what's open: SSH and SFTP (green, a count from 2), tunnels listening (red when
-    /// one failed). Under the mouse that gives way to SSH, SFTP, Tunnels ▸ and ⋯ (the row's whole menu); the tooltip
+    /// while connecting) and name, then what's open: SSH, SFTP and tunnels listening (green, a count from 2; tunnels red
+    /// when one failed). Under the mouse that gives way to SSH, SFTP, Tunnels ▸ and ⋯ (the row's whole menu); the tooltip
     /// says all of it. A narrow column cuts the name, never the icons.
     private func serverRow(_ server: ServerRow) -> NSStackView {
         let prod = server.saved?.prod == true, locked = server.saved?.locked == true
@@ -674,7 +682,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         let ssh = server.ssh.filter(\.running).count, sftp = server.sftp.count   // an SSH tab whose ssh ended (`exit`, Disconnect) isn't open
         let open = [ssh > 0 ? "SSH \(ssh)" : nil, sftp > 0 ? "SFTP \(sftp)" : nil].compactMap { $0 }.joined(separator: ", ")
         let tunnels = (server.tunnels.isEmpty ? [] : ["Tunnels listening: " + server.tunnels.joined(separator: ", ")]) + server.failedTunnels
-        let tunnelColor: NSColor = server.failedTunnels.isEmpty ? .secondaryLabelColor : .systemRed
+        let tunnelColor: NSColor = !server.failedTunnels.isEmpty ? .systemRed : server.tunnels.isEmpty ? .secondaryLabelColor : .systemGreen
         /// An action is a pill; a state just its icon and count, so it takes less of the name's width.
         func pill(_ symbol: String, _ count: Int, _ color: NSColor, _ action: String, _ label: String, _ tip: String, state: Bool = false) -> NSButton {
             let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))!
@@ -697,7 +705,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
                                          "\(server.tunnels.count) tunnel\(server.tunnels.count == 1 ? "" : "s") listening" + (server.failedTunnels.isEmpty ? "" : ", one failed"),
                                          tunnels.joined(separator: "\n"), state: true),
         ].compactMap { $0 })
-        let more = NSButton(image: NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Server menu")!
+        let more = PillButton(image: NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Server menu")!
             .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))!, target: self, action: #selector(serverButton(_:)))
         more.isBordered = false
         more.contentTintColor = .secondaryLabelColor
@@ -867,7 +875,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
             r.arrows.isEmpty ? nil : chip(nil, r.arrows, .secondaryLabelColor, nil, "\(st.behind) to pull, \(st.ahead) to push"),
             r.publishes ? chip("icloud.and.arrow.up", "", .secondaryLabelColor, nil, "Not on a remote yet") : nil,
         ].compactMap { $0 })
-        let more = NSButton(image: NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Git menu")!
+        let more = PillButton(image: NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Git menu")!
             .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))!, target: self, action: #selector(gitButton(_:)))
         more.isBordered = false
         more.contentTintColor = .secondaryLabelColor
