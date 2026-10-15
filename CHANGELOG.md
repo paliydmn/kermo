@@ -16,6 +16,9 @@ Release:
 ### Added
 
 - **Copy SSH Key to Server…** (a server's sidebar menu and ⌘⇧P): puts this Mac's public key into the server's `~/.ssh/authorized_keys` over the connection you already have (one login, the key on stdin), adds it only if it isn't there, then logs in with the key alone to check it took. The server's own key file, else `~/.ssh/id_ed25519`, `id_ecdsa` or `id_rsa` (several: pick one; none: the `ssh-keygen` command to make one). A locked server asks for Touch ID, a production one asks first and logs it. Afterwards a saved server without a key file gets this one, and a saved password can be forgotten.
+- **Services…** (⌘⇧P, a server's sidebar menu): the server's systemd services, failed first, each with its state and description. ↩ shows `systemctl status`, ⌘L its log as it goes (`journalctl -f`), ⌘E opens its unit file in the editor, ⌘R restarts it as root through the server's `sudo` (`sudo -n`, else the sudo password, as a reload after a save). On the server of the active panel or SSH tab, or one you pick; a locked server asks for Touch ID.
+- **Containers…** (⌘⇧P, a server's sidebar menu): the server's docker (or podman) containers, running first, with their status and image. ↩ shows its log as it goes, ⌘R restarts it, ⌘C copies its name. A restart on a production server asks first (↩ is Cancel) and goes into the production log. Only names made of the characters systemd and docker allow are put into commands. A log stopped with ⎋ stops on the server too.
+- **Viewer:** `e` shows errors and warnings only, then errors only, then all lines, with `&` or without; `l` shows line numbers (files up to 4 MB, remembered). Following, a scrolled-up view says `paused — End resumes`.
 - **Free space on the server** in a server panel's status line: `🌐 sftp · web1 · 120 items · 120 GB free` (`df`'s Available), asked with the listing at no extra wait.
 
 ### Changed
@@ -28,6 +31,8 @@ Release:
 - **Extracting all of a tar** (⌥F9 on a `.tar.gz`, `.tar.xz`…) no longer reads the archive once first just for the names at its top: into an empty or new folder it unpacks straight in; into one with things in it, it unpacks into a hidden `.kermo-extract-…` folder there, then asks **Keep Existing** / **Overwrite** / **Cancel** if any of it is there already (Cancel removes what was unpacked) and moves it out. A tar that fails or is stopped leaves nothing behind. Zip and 7z are as before.
 - **A copy on this Mac's own disk** starts at once and counts its total alongside (`counting…`, a moving bar) instead of walking everything first. Sticks, shares and disk images count first, as before.
 - ↩ or F3 on a file inside a tar stops reading the archive at that file.
+- **Terminal colors** show as colors in the viewer and in output windows (and Run on Servers'), instead of escape codes in the viewer and nothing in output windows; errors stay red, and a colored log line isn't also tinted by its level.
+- Editing a server file only root may write, from a user's panel, says in the editor that saving it needs the panel as root (⌃⌘R).
 - **Info's checksums:** the first of MD5, SHA-1 and SHA-256 you press reads the file once for all three; the others then show at once. A read error is said in the system's words.
 - Faster on this Mac: folder sizes, copies and Find Files no longer look at each subfolder on its own to stay on one volume; merging copies, Find Files by content and Compare contents do less work per file; `git status` in a slow repository runs at most every twice its own time (still at most once a second).
 
