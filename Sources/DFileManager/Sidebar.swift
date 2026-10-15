@@ -27,7 +27,7 @@ enum Bookmark {
 enum Place: Equatable {
     case folder(String)                                        // Favorites, Frequent
     case serverFolder(String)                                  // a Favorite on a server (its Bookmark entry)
-    case volume(path: String, name: String, free: String, ejectable: Bool)
+    case volume(VolumeRow)
     case server(ServerRow)
     case connect                                               // "Connect…": the picker with every server
     case tagColors                                             // Finder's 7 colors as one row of dots
@@ -35,7 +35,8 @@ enum Place: Equatable {
 
     var path: String? {
         switch self {
-        case .folder(let p), .volume(let p, _, _, _): p
+        case .folder(let p): p
+        case .volume(let v): v.path
         default: nil
         }
     }
@@ -151,25 +152,50 @@ struct Volume: Equatable, Sendable {
     let path: String
     let name: String
     let free: Int64?
+    var total: Int64? = nil
     let ejectable: Bool
+}
+
+/// A Locations row: its volume's figures as shown ("" where the volume doesn't say).
+struct VolumeRow: Equatable {
+    let path: String
+    let name: String
+    var used = "", free = "", total = ""
+    let ejectable: Bool
+
+    var tip: String { used.isEmpty ? path : "\(path) · \(used) used of \(total) · \(free) free" }
 }
 
 /// What the sidebar shows, from data the app already keeps.
 enum SidebarModel {
     static func sections(bookmarks: [String], frecent: [String], volumes: [Volume], servers: ServerList,
                          tags: [String]) -> [SidebarSection] {
-        let fmt = ByteCountFormatter()
-        return [
+        [
             SidebarSection(id: "fav", title: "Favorites", command: "go.bookmark",
                            places: bookmarks.map { Bookmark.remote($0) == nil ? .folder($0) : .serverFolder($0) }),
             SidebarSection(id: "freq", title: "Frequent", command: "go.jump",
                            places: frecent.filter { !bookmarks.contains($0) }.prefix(5).map(Place.folder)),
-            SidebarSection(id: "loc", title: "Locations", command: "go.volumes", places: volumes.map {
-                .volume(path: $0.path, name: $0.name, free: $0.free.map(fmt.string(fromByteCount:)) ?? "", ejectable: $0.ejectable)
-            }),
+            SidebarSection(id: "loc", title: "Locations", command: "go.volumes", places: volumes.map { .volume(row($0)) }),
             SidebarSection(id: "servers", title: "Servers", command: "ssh.new", places: serverRows(servers).map(Place.server) + [.connect]),
             SidebarSection(id: "tags", title: "Tags", command: "tag.edit", places: [.tagColors] + tags.map(Place.tag)),
         ]
+    }
+
+    /// The shortest sizes: "110 GB", "0 KB", never "bytes". Set up once, then only read (formatters are thread-safe).
+    nonisolated(unsafe) static let sizes = {
+        let f = ByteCountFormatter()
+        f.allowedUnits = [.useKB, .useMB, .useGB, .useTB, .usePB]
+        f.isAdaptive = false
+        f.allowsNonnumericFormatting = false
+        return f
+    }()
+
+    /// Used = total − free (free as Finder counts it for a local disk: with what macOS would clear for an important
+    /// file), when the volume knows both; a share's kernel figures of 0 / 0 say nothing.
+    static func row(_ v: Volume) -> VolumeRow {
+        guard let free = v.free, let total = v.total, total > 0 else { return VolumeRow(path: v.path, name: v.name, ejectable: v.ejectable) }
+        return VolumeRow(path: v.path, name: v.name, used: sizes.string(fromByteCount: max(0, total - free)),
+                         free: sizes.string(fromByteCount: free), total: sizes.string(fromByteCount: total), ejectable: v.ejectable)
     }
 
     /// SFTP's last attempt at a host: connecting, failed, or neither.
@@ -239,12 +265,12 @@ enum SidebarModel {
     /// Mounted volumes. Local disks are read for name and free space (off the main thread: a stuck disk can block);
     /// network shares come from the kernel's figures alone, since a statfs on a dead one never returns.
     static func volumes(_ mounts: [Mount] = mounts()) -> [Volume] {
-        let keys: Set<URLResourceKey> = [.volumeNameKey, .volumeAvailableCapacityForImportantUsageKey, .volumeIsEjectableKey]
+        let keys: Set<URLResourceKey> = [.volumeNameKey, .volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey, .volumeIsEjectableKey]
         return mounts.map { m in
-            guard m.local else { return Volume(path: m.path, name: (m.path as NSString).lastPathComponent, free: m.free, ejectable: true) }
+            guard m.local else { return Volume(path: m.path, name: (m.path as NSString).lastPathComponent, free: m.free, total: m.total, ejectable: true) }
             let v = try? URL(fileURLWithPath: m.path).resourceValues(forKeys: keys)
             return Volume(path: m.path, name: v?.volumeName ?? (m.path as NSString).lastPathComponent,
-                          free: v?.volumeAvailableCapacityForImportantUsage, ejectable: v?.volumeIsEjectable == true)
+                          free: v?.volumeAvailableCapacityForImportantUsage, total: v?.volumeTotalCapacity.map(Int64.init), ejectable: v?.volumeIsEjectable == true)
         }
     }
 
@@ -593,8 +619,9 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         case .serverFolder(let e):
             return placeRow("server.rack", Bookmark.title(e), e + "  ·  ⌘-click: in a new tab, ⌥-click: in the other panel",
                             detail: Bookmark.remote(e)?.target.host ?? "")
-        case let .volume(path, name, free, ejectable):
-            let r = placeRow(ejectable ? "externaldrive" : "internaldrive", name, free.isEmpty ? path : "\(path) · \(free) free")   // narrow column: free space in the tooltip
+        case .volume(let v):
+            let (path, name, ejectable) = (v.path, v.name, v.ejectable)
+            let r = placeRow(ejectable ? "externaldrive" : "internaldrive", name, v.tip)
             if ejectable {
                 let b = NSButton(image: NSImage(systemSymbolName: "eject.fill", accessibilityDescription: "Eject")!, target: self, action: #selector(eject(_:)))
                 b.isBordered = false
@@ -940,8 +967,8 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         if roots.first?.children.contains(where: { $0 === node }) == true, let p = place.bookmark {
             menu.addItem(withTitle: "Remove from Favorites", action: #selector(removeFavorite(_:)), keyEquivalent: "").representedObject = p
         }
-        if case let .volume(path, _, _, true) = place {
-            menu.addItem(withTitle: "Eject", action: #selector(ejectItem(_:)), keyEquivalent: "").representedObject = path
+        if case .volume(let v) = place, v.ejectable {
+            menu.addItem(withTitle: "Eject", action: #selector(ejectItem(_:)), keyEquivalent: "").representedObject = v.path
         }
         menu.items.forEach { $0.target = self }
         serverMenu?(place).forEach(menu.addItem)
