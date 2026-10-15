@@ -40,6 +40,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private let corner = PanelHeaderCorner()
     private var systemCorner: NSView?
     private var quickView: QLPreviewView?
+    private var textPeek: TextPeek?   // over `quickView`, for a text Quick Look shows as an icon
+    private var peekGen = 0
+    var peekedText: String? { textPeek?.isHidden == false ? textPeek?.textView.string : nil }   // tests
 
     private let tabBar = NSStackView()   // one button per tab, each with a close ×
     private let pathField = NSTextField(string: "")
@@ -1389,25 +1392,54 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func setQuickView(_ on: Bool) {
         if on, quickView == nil, let qv = QLPreviewView(frame: scroll.frame, style: .normal) {
-            qv.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(qv)
-            NSLayoutConstraint.activate([
-                qv.topAnchor.constraint(equalTo: scroll.topAnchor),
-                qv.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
-                qv.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
-                qv.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
-            ])
+            let peek = TextPeek()
+            peek.isHidden = true
+            for v in [qv, peek] as [NSView] {
+                v.translatesAutoresizingMaskIntoConstraints = false
+                view.addSubview(v)
+                NSLayoutConstraint.activate([
+                    v.topAnchor.constraint(equalTo: scroll.topAnchor),
+                    v.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
+                    v.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
+                    v.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
+                ])
+            }
             scroll.isHidden = true
             quickView = qv
+            textPeek = peek
         } else if !on, let qv = quickView {
+            peekGen += 1
             qv.close()
             qv.removeFromSuperview()
+            textPeek?.removeFromSuperview()
             quickView = nil
+            textPeek = nil
             scroll.isHidden = false
         }
     }
 
-    func preview(_ url: URL?) { quickView?.previewItem = url as NSURL? }
+    /// Quick Look's preview, or our own of a text it would show as an icon (read off the main thread; the one shown
+    /// stays till the next is ready, so passing over files doesn't flicker).
+    func preview(_ url: URL?) {
+        guard let quickView, let textPeek else { return }
+        peekGen += 1
+        func quickLook() {
+            textPeek.isHidden = true
+            quickView.isHidden = false
+            quickView.previewItem = url as NSURL?
+        }
+        guard let url, !TextFormat.quickLookShows(url.lastPathComponent) else { return quickLook() }
+        let gen = peekGen
+        Task { [weak self] in
+            let text = await Blocking.run(.userInitiated) { TextPeek.read(url) }
+            guard let self, gen == peekGen else { return }
+            guard let text else { return quickLook() }
+            textPeek.show(text, numbers: UserDefaults.standard.bool(forKey: "viewerLineNumbers"))
+            textPeek.isHidden = false
+            quickView.isHidden = true
+            quickView.previewItem = nil   // a video there doesn't play on behind it
+        }
+    }
 
     // MARK: - Tabs (each keeps its own path, cursor and history)
 

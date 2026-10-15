@@ -150,7 +150,30 @@ final class Viewer: NSWindowController, NSWindowDelegate {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    private static let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    static let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+
+    /// A text with its colors, made off the main thread (`painted`) and put in a text view on it (`show`).
+    struct Painted: Sendable {
+        var text: String
+        var levels: [(range: NSRange, level: TextFormat.Level)] = []
+        var syntax: [(range: NSRange, token: Syntax.Token)] = []
+        var runs: [ANSI.Run] = []
+    }
+
+    /// F3's colors for a text named `name`: escape sequences become colors, then a known format gets syntax colors and
+    /// anything else (a log) error/warning tints. Size-capped to stay fast, as F3's.
+    nonisolated static func painted(_ text: String, name: String) -> Painted {
+        let (plain, runs) = ANSI.parse(text), n = plain.utf16.count
+        if let lang = Syntax.language(forFileName: name), n <= 2 << 20 { return Painted(text: plain, syntax: Syntax.tokens(plain, lang), runs: runs) }
+        return Painted(text: plain, levels: n <= 8 << 20 ? ANSIColors.uncolored(TextFormat.logLevels(in: plain), runs) : [], runs: runs)
+    }
+
+    static func show(_ p: Painted, in textView: NSTextView) {
+        let storage = textView.textStorage!
+        storage.setAttributedString(NSAttributedString(string: p.text, attributes: [.font: font, .foregroundColor: NSColor.textColor]))
+        if p.syntax.isEmpty { tint(storage, p.levels, offset: 0) } else { SyntaxColors.apply(p.syntax, to: storage) }
+        ANSIColors.apply(p.runs, to: storage, font: font)
+    }
 
     func windowWillClose(_ notification: Notification) {
         followTask?.cancel()
@@ -289,11 +312,8 @@ final class Viewer: NSWindowController, NSWindowDelegate {
             if binary { mode = .hex }   // what's shown: h then shows it as text
             self.info = info
             followOffset = size
-            textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: [
-                .font: Self.font, .foregroundColor: NSColor.textColor]))
+            Self.show(Painted(text: text, levels: levels, syntax: syntax, runs: runs), in: textView)
             dropped = 0
-            if syntax.isEmpty { Self.tint(textView.textStorage!, levels, offset: 0) } else { SyntaxColors.apply(syntax, to: textView.textStorage!) }
-            ANSIColors.apply(runs, to: textView.textStorage!, font: Self.font)
             textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
             updateSubtitle()
         }
@@ -846,5 +866,55 @@ private final class ViewerTextView: NSTextView {
 
     override func keyDown(with event: NSEvent) {
         if onKey?(event) != true { super.keyDown(with: event) }
+    }
+}
+
+/// ⌃Q's own view of a text Quick Look would show as an icon (`TextFormat.previewsAsText`): read-only, F3's colors and
+/// line numbers, the file's first `limit` bytes.
+final class TextPeek: NSScrollView {
+    static let limit = 256 << 10
+    let textView = NSTextView(usingTextLayoutManager: false)   // TextKit 1: the line-number gutter
+    private var ruler: LineNumberRuler?
+
+    init() {
+        super.init(frame: .zero)
+        hasVerticalScroller = true
+        hasHorizontalScroller = true
+        autohidesScrollers = true
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.textContainerInset = NSSize(width: 4, height: 4)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        documentView = textView
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// The file's text as shown, read and colored off the main thread; nil for what Quick Look shows (binary, not a
+    /// regular file, unreadable). Past `limit`: the first part, and a line that says so.
+    nonisolated static func read(_ url: URL) -> Viewer.Painted? {
+        guard FileInfo.notRegular(url.path) == nil, let h = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? h.close() }
+        let head = (try? h.read(upToCount: limit + 1)) ?? Data()
+        guard TextFormat.previewsAsText(url.lastPathComponent, head: head) else { return nil }
+        let more = head.count > limit ? "\n\n··· first \(limit >> 10) KB · F3 views it all ···\n" : ""
+        return Viewer.painted(TextFormat.decode(head.prefix(limit)).text + more, name: url.lastPathComponent)
+    }
+
+    func show(_ p: Viewer.Painted, numbers: Bool) {
+        Viewer.show(p, in: textView)
+        textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        if numbers, ruler == nil {
+            ruler = LineNumberRuler(textView: textView)
+            verticalRulerView = ruler
+            hasVerticalRuler = true
+        }
+        rulersVisible = numbers
+        ruler?.invalidate()
     }
 }
