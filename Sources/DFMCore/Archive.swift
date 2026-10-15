@@ -150,6 +150,40 @@ public struct ArchiveIndex: Sendable {
         try Self.tar(extractArguments(names, from: inner, to: dest))
     }
 
+    /// The tar family, compressed or not. It has no table of contents: listing one reads (and unpacks) all of it.
+    public static func isTar(_ name: String) -> Bool {
+        let n = name.lowercased()
+        return [".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz", ".tbz2", ".tar.xz", ".txz", ".tar.zst", ".tzst", ".tar.lz4"]
+            .contains(where: n.hasSuffix)
+    }
+
+    /// Where a whole tar unpacks when `dest` has something in it already: a hidden folder inside `dest`, so what's at
+    /// its top then moves out by rename (`moveExtracted`).
+    public static func stagingFolder(in dest: String) -> String {
+        (dest as NSString).appendingPathComponent(".kermo-extract-" + UUID().uuidString)
+    }
+
+    /// What's at the top of `staging` that `dest` has already.
+    public static func clashes(_ staging: String, _ dest: String) -> [String] {
+        ((try? DirLister.list(staging)) ?? []).map(\.name).filter { FileJob.lstat((dest as NSString).appendingPathComponent($0)) != nil }.sorted()
+    }
+
+    /// Moves what's at the top of `staging` into `dest` as bsdtar would have put it there: folders merge, a file
+    /// that's there already stays (`keep`, bsdtar's -k) or is replaced. A folder an archive's file would replace
+    /// stays, and so it's reported (bsdtar can't remove one that has something in it either). Then `staging` goes.
+    /// Returns what couldn't be moved.
+    public static func moveExtracted(_ staging: String, to dest: String, keep: Bool) -> [String] {
+        let tops = ((try? DirLister.list(staging)) ?? []).map { (staging as NSString).appendingPathComponent($0.name) }
+        let job = FileJob(.move, sources: tops, destDir: dest)
+        job.resolveConflict = { [unowned job] c in
+            if c.replacesFolder { job.update { $0.errors.append("\(c.dst): a folder is there, kept") }; return (.skip, false) }
+            return (c.bothDirs || !keep ? .overwrite : .skip, false)
+        }
+        job.run()
+        try? FileManager.default.removeItem(atPath: staging)
+        return job.progress.errors
+    }
+
     /// bsdtar arguments to create `archive` (format from its extension: .zip .tar.gz .tgz .tar.bz2 .tar.xz .7z)
     /// from `names` inside `dir`. Run with COPYFILE_DISABLE=1 so no "._*" AppleDouble files get added.
     public static func createArguments(_ archive: String, names: [String], in dir: String) -> [String] {

@@ -133,6 +133,32 @@ private func read(_ path: String) -> String? {
     #expect(!idx.extractArguments([], from: "", to: "/d").contains("-q"))
 }
 
+/// A whole tar into a folder that has some of it already (task 13 §8.4): unpacked into a hidden folder there, then
+/// moved out. Keep Existing keeps what's there and adds the rest (folders merge), Overwrite replaces files; a folder
+/// a file would replace stays, reported. Nothing is left of the hidden folder.
+@Test func aWholeTarMovesOutOfItsStagingFolder() throws {
+    for keep in [true, false] {
+        let root = sampleTree()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        sh("printf file > proj/sub/deep/c.txt.d && tar czf t.tar.gz proj && mkdir -p dest/proj/sub/deep/c.txt.d", in: root)
+        sh("printf old > dest/proj/a.txt && printf mine > dest/proj/mine && printf x > dest/proj/sub/deep/c.txt.d/x", in: root)
+        let dest = root + "/dest"
+        #expect(ArchiveIndex.isTar("t.tar.gz") && ArchiveIndex.isTar("T.TGZ") && !ArchiveIndex.isTar("t.zip"))
+
+        let staging = ArchiveIndex.stagingFolder(in: dest)
+        try FileManager.default.createDirectory(atPath: staging, withIntermediateDirectories: false)
+        sh("tar xf ../t.tar.gz -C \(staging)", in: dest)
+        #expect(ArchiveIndex.clashes(staging, dest) == ["proj"])
+        let errors = ArchiveIndex.moveExtracted(staging, to: dest, keep: keep)
+        #expect(errors == [dest + "/proj/sub/deep/c.txt.d: a folder is there, kept"])
+        #expect(read(dest + "/proj/a.txt") == (keep ? "old" : "A"))
+        #expect(read(dest + "/proj/mine") == "mine")
+        #expect(read(dest + "/proj/sub/b.txt") == "B" && read(dest + "/proj/sub/deep/c.txt") == "C")
+        #expect(read(dest + "/proj/sub/deep/c.txt.d/x") == "x")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dest) == ["proj"])   // staging gone
+    }
+}
+
 @Test func wholeArchiveEmptyArchiveAndLinks() throws {
     let root = sampleTree()
     defer { try? FileManager.default.removeItem(atPath: root) }
