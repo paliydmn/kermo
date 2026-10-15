@@ -1889,11 +1889,15 @@ extension AppDelegate {
                     do { try NSWorkspace.shared.unmountAndEjectDevice(at: vol); return nil } catch { return error }
                 }
             }
-            volumeBusy.remove(vol.path)
-            refreshSidebar()
             if let error {
-                showError(JobErrorMessage("Couldn't \(unmount ? "unmount" : "eject") “\(name)”: \(error.localizedDescription)"))
+                // Who holds it: what macOS says doesn't name them. The spinner stays meanwhile (up to lsof's 3 s).
+                let path = vol.path, names = await Blocking.run { Disks.holders(of: path) }
+                volumeBusy.remove(vol.path)
+                refreshSidebar()
+                showError(JobErrorMessage("Couldn't \(unmount ? "unmount" : "eject") “\(name)”: \(Disks.inUse(by: names) ?? error.localizedDescription)"))
             } else {
+                volumeBusy.remove(vol.path)
+                refreshSidebar()
                 active.flash("“\(name)” " + (unmount ? "unmounted" : "ejected"))
             }
         }

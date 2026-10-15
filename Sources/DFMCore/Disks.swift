@@ -55,4 +55,34 @@ extension Disks {
         default: return String(format: "DiskArbitration error 0x%08X", UInt32(bitPattern: status))
         }
     }
+
+    /// The processes `lsof -F c` names (a "c" line each; "p" lines are their ids), each once, in its order.
+    public static func holders(lsof: String) -> [String] {
+        var seen = Set<String>()
+        return lsof.split(separator: "\n").compactMap { $0.first == "c" ? String($0.dropFirst()) : nil }.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    /// "in use by Preview, zsh", three at most, then "…".
+    public static func inUse(by names: [String]) -> String? {
+        names.isEmpty ? nil : "in use by " + names.prefix(3).joined(separator: ", ") + (names.count > 3 ? "…" : "")
+    }
+
+    /// Who has files open on the volume mounted at `mount` — asked only when it wouldn't unmount; lsof stopped after
+    /// `timeout` (it reads every process's files).
+    public static func holders(of mount: String, timeout: TimeInterval = 3) -> [String] {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        p.arguments = ["+c", "0", "-F", "c", "+f", "--", mount]   // +c 0: the whole name; +f: a file system's every file
+        let out = Pipe()
+        p.standardInput = FileHandle.nullDevice
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return [] }
+        let kill = DispatchWorkItem { p.terminate() }
+        Timeouts.queue.asyncAfter(deadline: .now() + timeout, execute: kill)
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        kill.cancel()
+        return holders(lsof: String(decoding: data, as: UTF8.self))
+    }
 }
