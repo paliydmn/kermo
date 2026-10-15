@@ -7,7 +7,7 @@ Connect to a server, save it, lock it and mark it as production. Kermo uses the 
 ## Connect
 
 - **⌃⌘K** opens a server's files in the active panel (SFTP). **⌘K** opens a shell on a server in the terminal (SSH); inside the terminal, ⌘K clears it.
-- Both open a picker. Type `user@host:/path` or `sftp://host:2222/path`, or choose a saved server (🔒 locked, 🟣 PROD production), a recent one or a host from `~/.ssh/config`. ⌃⌘K also takes `smb://`, `nfs://` and `afp://` addresses and mounts them.
+- Both open a picker. Type `user@host:/path`, `user@host:2222/path` or `sftp://host:2222/path`, or choose a saved server (🔒 locked, 🟣 PROD production), a recent one or a host from `~/.ssh/config`. ⌃⌘K also takes `smb://`, `nfs://` and `afp://` addresses and mounts them.
 - A panel keeps one connection to its server while it shows it, so opening a folder doesn't start ssh again. After sleep or a network change the next folder connects again.
 - If an SSH tab's session ends, **Go ▸ Reconnect SSH Session** (or the tab's **Reconnect** button, ↩) starts it again. **Go ▸ Disconnect Server** ends the server's shared connection: its SSH sessions end, its file tabs go back, its tunnels turn off, and a remembered sudo password is forgotten. It asks first while an SSH session is running or a tunnel is listening.
 

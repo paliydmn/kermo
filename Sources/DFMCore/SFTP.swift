@@ -614,7 +614,7 @@ public enum ServerAddress: Equatable {
     case sftp(SFTPTarget, path: String?)
     case mount(URL)
 
-    /// "user@host:/path", "host", "host:2222[:/path]", "[fe80::1]:2222", "sftp://user@host:2222/path" → SFTP;
+    /// "user@host:/path", "host", "host:2222[:/path]", "host:2222/path", "[fe80::1]:2222", "sftp://user@host:2222/path" → SFTP;
     /// "smb://…", "nfs://…", "afp://…" → mount.
     /// nil for a host starting with "-": that's an ssh option (-oProxyCommand=…), never a server.
     public static func parse(_ input: String) -> ServerAddress? {
@@ -658,6 +658,11 @@ public enum ServerAddress: Equatable {
             guard let p = Int(pieces[0]), (1...65535).contains(p) else { return nil }
             port = p
             rest = pieces.count == 2 ? pieces[1] : ""
+        } else if let slash = rest.firstIndex(of: "/"), slash > rest.startIndex, rest[..<slash].allSatisfy({ $0.isASCII && $0.isNumber }) {
+            // "host:2222/etc", as in a URL: the port, then the path (not a folder named 2222 in the home folder).
+            guard let p = Int(rest[..<slash]), (1...65535).contains(p) else { return nil }
+            port = p
+            rest = rest[slash...]
         }
         return .sftp(SFTPTarget(host: host, port: port), path: rest.isEmpty ? nil : String(rest))
     }

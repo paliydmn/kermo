@@ -75,3 +75,14 @@ import Testing
     let cut = try TextFormat.textCopy(of: d + "/ru.conf", in: d, limit: (1 << 20) + 1)
     #expect(FileManager.default.contents(atPath: cut).flatMap { String(data: $0, encoding: .utf8) }?.count == 1 << 19)
 }
+
+/// ⌃⌘K: "host:2222/etc" is a port and a path, as in a URL; a path that doesn't start with digits and "/" stays a path.
+@Test func anAddressTakesAPortBeforeAPath() {
+    #expect(ServerAddress.parse("u@h:2222/etc/nginx") == .sftp(SFTPTarget(host: "u@h", port: 2222), path: "/etc/nginx"))
+    #expect(ServerAddress.parse("h:2222/") == .sftp(SFTPTarget(host: "h", port: 2222), path: "/"))
+    #expect(ServerAddress.parse("u@[::1]:2222/etc") == .sftp(SFTPTarget(host: "u@::1", port: 2222), path: "/etc"))
+    #expect(ServerAddress.parse("h:99999/etc") == nil, "no such port")
+    #expect(ServerAddress.parse("h:2222:/etc") == .sftp(SFTPTarget(host: "h", port: 2222), path: "/etc"), "as before")
+    #expect(ServerAddress.parse("h:docs/2222") == .sftp(SFTPTarget(host: "h"), path: "docs/2222"), "a folder in the home one, as before")
+    #expect(ServerAddress.parse("h:/2222") == .sftp(SFTPTarget(host: "h"), path: "/2222"))
+}
