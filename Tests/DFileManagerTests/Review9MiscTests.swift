@@ -168,7 +168,7 @@ private final class CountingPreview: QLPreviewPanel {
     _ = NSApplication.shared
     let s = HeaderSearch()
     var asked: [String] = []
-    s.results = { q in asked.append(q); return [("In This Panel", [SearchHit(title: q, target: .file(q))])] }
+    s.results = { q, _ in asked.append(q); return [("In This Panel", [SearchHit(title: q, target: .file(q))])] }
     for q in ["a", "ab", "abc"] {
         s.item.searchField.stringValue = q
         s.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: s.item.searchField))
@@ -185,7 +185,7 @@ private final class CountingPreview: QLPreviewPanel {
     _ = NSApplication.shared
     let s = HeaderSearch()
     var asked: [String] = [], chosen: [SearchHit] = []
-    s.results = { q in
+    s.results = { q, _ in
         asked.append(q)
         return q.isEmpty ? [("Recent", [SearchHit(title: "Move to Trash", target: .command("file.trash"))])]
                          : [("Commands", [SearchHit(title: q, target: .command(q))])]

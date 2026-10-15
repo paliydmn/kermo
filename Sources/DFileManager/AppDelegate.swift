@@ -468,7 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func windowDidResize(_ notification: Notification) { applySidebarRule() }
 
     private func setUpSearch() {
-        search.results = { [unowned self] q in
+        search.results = { [unowned self] q, flag in
             let fav = bookmarks.map { SearchHit(title: Bookmark.title($0), subtitle: ($0 as NSString).abbreviatingWithTildeInPath, detail: "★", target: .folder($0)) }
             let freq = frecency.ranked().filter { !bookmarks.contains($0) }.prefix(300).map {
                 SearchHit(title: Self.folderName($0), subtitle: ($0 as NSString).abbreviatingWithTildeInPath, target: .folder($0))
@@ -477,7 +477,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             let servers = (defaults.stringArray(forKey: "recentServers") ?? []).map { SearchHit(title: $0, detail: "server", target: .server($0)) }
             let commands = commands, folders = fav + freq + vols + servers, files = active.listedItems.map(\.name)
             let recent = defaults.stringArray(forKey: "searchRecent") ?? []
-            return await Blocking.run(.userInitiated) { HeaderSearchModel.results(q, commands: commands, folders: folders, files: files, recent: recent) }
+            return await Blocking.run(.userInitiated) {
+                HeaderSearchModel.results(q, commands: commands, folders: folders, files: files, recent: recent, cancel: flag)
+            }
         }
         search.onCancel = { [unowned self] in window.makeFirstResponder(active.table) }
         // Compared as targets: a command chosen before folders were kept is stored as its bare id.
