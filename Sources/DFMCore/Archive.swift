@@ -9,6 +9,7 @@ public struct ArchiveIndex: Sendable {
     private let tree: [String: [FileItem]]   // folder inside the archive ("" = root) → its children
     private let entryPrefix: String           // "./" or "/" if entries are stored that way (`tar -cf x.tar .`, `tar -P`)
     let charset: String?                      // zip names stored without the UTF-8 flag: "CP866" or "CP1251"; nil = UTF-8
+    var repeated: Set<String> = []            // paths stored more than once (`tar -r`): the listing shows the last one
 
     private static let extensions: Set<String> = ["zip", "jar", "war", "ear", "apk", "ipa", "tar", "tgz", "tbz", "tbz2",
                                                   "txz", "tzst", "7z", "rar", "iso", "cpio", "xar"]
@@ -34,7 +35,7 @@ public struct ArchiveIndex: Sendable {
             throw ArchiveError(archive_error_string(a).map { String(cString: $0) } ?? "can't open archive")
         }
         var folders: [String: [String: FileItem]] = ["": [:]]
-        var explicit = Set<String>()
+        var explicit = Set<String>(), repeated = Set<String>()
         var entryPrefix = ""
         var legacy: [UInt8] = []   // names that aren't UTF-8 (a Windows zip): their bytes, to tell the code page
 
@@ -46,7 +47,7 @@ public struct ArchiveIndex: Sendable {
                     isExplicit: false)
             }
             if isExplicit || folders[parent]?[item.name] == nil { folders[parent, default: [:]][item.name] = item }
-            if isExplicit { explicit.insert(path) }
+            if isExplicit && !explicit.insert(path).inserted { repeated.insert(path) }
             if item.kind == .dir { folders[path, default: [:]] = folders[path] ?? [:] }
         }
 
@@ -76,7 +77,7 @@ public struct ArchiveIndex: Sendable {
         let format = archive_format_name(a).map { String(cString: $0) } ?? "archive"
         if !legacy.isEmpty && format.hasPrefix("ZIP") { return try read(file, charset: legacyCharset(legacy)) }
         return ArchiveIndex(file: file, format: format, tree: folders.mapValues { Array($0.values) }, entryPrefix: entryPrefix,
-                            charset: charset)
+                            charset: charset, repeated: repeated)
     }
 
     /// Windows zips keep names in the DOS code page (CP866 for Cyrillic), some tools in CP1251: the one whose
@@ -124,6 +125,12 @@ public struct ArchiveIndex: Sendable {
         let depth = (inner.isEmpty ? 0 : inner.split(separator: "/").count) + (entryPrefix.isEmpty ? 0 : 1)
         if depth > 0 { args += ["--strip-components", String(depth)] }
         let dir = inner.isEmpty ? "" : inner + "/"
+        // One file: stop at it (-q) instead of reading the rest of the archive. Not a folder (its contents follow it),
+        // nor a name stored twice (-q takes the first; the listing shows, and a full read leaves, the last).
+        if names.count == 1, tree[inner]?.first(where: { $0.name == names[0] }).map({ $0.kind != .dir }) == true,
+           !repeated.contains(dir + names[0]) {
+            args.insert("-q", at: 1)
+        }
         return args + ["--"] + names.map { entryPrefix + Self.literalPattern(dir + $0) }   // "--": a member named "--use-compress-program=…" is a name
     }
 

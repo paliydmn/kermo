@@ -113,6 +113,26 @@ private func read(_ path: String) -> String? {
     #expect(dot.extractArguments(["a.txt"], from: "", to: "/d").suffix(4) == ["--strip-components", "1", "--", "./a.txt"])
 }
 
+/// One file stops at it (-q, task 13 §8.4); a folder, two names or a name stored twice read on: -q takes the first
+/// copy, while the listing shows the last.
+@Test func oneFileStopsAtItUnlessItsStoredTwice() throws {
+    let root = sampleTree()
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    sh("tar cf twice.tar proj && printf new > proj/a.txt && tar rf twice.tar proj/a.txt", in: root)
+    let idx = try ArchiveIndex.read(root + "/twice.tar")
+    #expect(idx.list("proj")?.first { $0.name == "a.txt" }?.size == 3)
+    #expect(!idx.extractArguments(["a.txt"], from: "proj", to: "/d").contains("-q"))
+    try idx.extract(["a.txt"], from: "proj", to: root + "/out")
+    #expect(read(root + "/out/a.txt") == "new")
+
+    #expect(idx.extractArguments(["b.txt"], from: "proj/sub", to: "/d")[1] == "-q")
+    try idx.extract(["b.txt"], from: "proj/sub", to: root + "/one")
+    #expect(read(root + "/one/b.txt") == "B")
+    #expect(!idx.extractArguments(["sub"], from: "proj", to: "/d").contains("-q"))
+    #expect(!idx.extractArguments(["a.txt", "sub"], from: "proj", to: "/d").contains("-q"))
+    #expect(!idx.extractArguments([], from: "", to: "/d").contains("-q"))
+}
+
 @Test func wholeArchiveEmptyArchiveAndLinks() throws {
     let root = sampleTree()
     defer { try? FileManager.default.removeItem(atPath: root) }
