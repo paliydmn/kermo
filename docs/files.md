@@ -24,6 +24,8 @@ Press F5 (⌥5) for **Copy To…** and F6 (⌥6) for **Move To…**. The dialog 
 
 Every copy, move, Trash and delete gets a row above the key bar: files done of total, bytes, speed, time left and the current name.
 
+- A copy on this Mac's own disk starts at once and counts the total alongside: until it's counted, the row reads `1234 · 56 MB · counting…` and the bar moves without a fraction. From a stick, a share or a disk image it counts first ("Scanning…"), as two walks would make a hard disk seek.
+
 - **Pause** (copies and moves) and **Cancel** sit on the row. Cancel stops at once: finished items stay, a half-written file is removed.
 - Jobs on this Mac run one at a time and wait as **Queued**. **Start Now** (▶▶) runs one next to the others.
 - A move inside one volume is a rename: instant. To another volume it copies, then removes each original.
@@ -75,6 +77,8 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 - Inside, ⌫ goes up, ↩ on a file extracts it to a temporary folder and opens it, and F3 views it. Delete, rename, paste and drops are refused.
 - **Extract…** (⌥F9, and F5 inside an archive) unpacks the marked entries (or the cursor's) into the folder you confirm, by default the other panel's. On an archive file in a normal folder F5 copies the file; ⌥F9 extracts all of it.
 - Names that already exist ask **Keep Existing** (folders merge), **Overwrite** or **Cancel**.
+- All of a tar (`.tar.gz`, `.tar.xz` and the like) isn't read once first just for its names: into an empty or new folder it unpacks straight in. Into a folder with things in it, it unpacks into a hidden `.kermo-extract-…` folder there and asks the question when tar is done; **Cancel** then removes what was unpacked. A file in the archive where the folder has a folder of that name leaves the folder, and says so.
+- ↩ or F3 on one file inside a tar stops reading the archive at that file.
 - ⌥F5 **Compress…** packs the marked items into a `.zip` it proposes in the other panel's folder, named after the item (or the current folder, for several). Edit the path to change it. The extension picks the format: `.zip`, `.tar.gz`, `.tgz`, `.tar.bz2`, `.tar.xz`, `.7z`. A name that exists is refused, and no `._` files are added.
 - Extract, Compress, Split and Combine run in an output window, not in the queue: no progress row, no undo.
 
@@ -84,14 +88,14 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 
 ## Sizes, hidden files and sort
 
-- Space on a folder marks it and counts its size. ⌥Space (**Calculate Folder Sizes**) counts every folder, and ⎋ (or **Cancel** in the status line) stops. It adds up file bytes, not disk blocks, skips volumes mounted inside, and is forgotten when you leave.
+- Space on a folder marks it and counts its size. ⌥Space (**Calculate Folder Sizes**) counts every folder, and ⎋ (or **Cancel** in the status line) stops. It adds up file bytes, not disk blocks, skips volumes mounted inside (`/` counts its data once, through `/Users` and the other firmlinks), and is forgotten when you leave.
 - ⇧⌘. (**Show Hidden Files**) shows names starting with `.` and files with the hidden flag, in every panel, and is remembered.
 - Click **Name**, **Size** or **Modified** to sort, again to reverse. Folders stay first. Each folder remembers its sort.
 
 ## Tags, Info and permissions
 
 - ⌃1…⌃7 toggle Finder's colors (red, orange, yellow, green, blue, purple, gray); the first marked item decides whether all gain or lose it. ⌃0 removes all tags. ⌃T **Tags…** sets them by name, comma-separated.
-- ⌘I **Get Info** shows the cursor item: path, kind, size, owner, mode, flags, dates, inode, xattrs, quarantine, ACL and a folder's contents. Buttons: **chmod**, **chown**, **Hidden**, **Locked (uchg)**, **Remove Quarantine**, **Code Signature**, **MD5**, **SHA-1**, **SHA-256**. A refused change offers **Try as Administrator**.
+- ⌘I **Get Info** shows the cursor item: path, kind, size, owner, mode, flags, dates, inode, xattrs, quarantine, ACL and a folder's contents. Buttons: **chmod**, **chown**, **Hidden**, **Locked (uchg)**, **Remove Quarantine**, **Code Signature**, **MD5**, **SHA-1**, **SHA-256**. The first checksum you press reads the file once for all three; the other two then show at once. A refused change offers **Try as Administrator**.
 - ⌥⌘A **Permissions & Owner…** takes `755`, `me:staff` or `644 me:staff` for the marked items. A part left as shown isn't changed. A numeric owner needs its colon (`1000:`); without it Kermo asks before taking the number as a mode. It doesn't enter folders and changes a symbolic link itself.
 - View ▸ **Show Permissions & Owner** adds Permissions, Owner and Group columns to every panel (they drop out when a panel is too narrow).
 - ⇧⌘R **Reveal in Finder**, ⇧⌘C **Copy Path** and ⌥⌘C **Copy Name** (one per line) act on the marked items.

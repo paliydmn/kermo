@@ -25,6 +25,15 @@ Release:
 - The sidebar's `⇄` is green while a server's tunnels listen, as SSH and SFTP are when open (red still when one failed).
 - A server row's buttons (SSH, SFTP, Tunnels, ⋯) and the Git section's take clicks around their icons, not only on them.
 - **A changed host key** is said plainly wherever a connection fails — reinstalled server or someone intercepting, the new fingerprint, the old key's file and line — instead of ssh's banner. Opening a server's files, the alert offers **Remove Old Key…** (↩ is Cancel), then connects again and asks about the new key; on a production server it asks you to check the fingerprint with the admin first.
+- **Extracting all of a tar** (⌥F9 on a `.tar.gz`, `.tar.xz`…) no longer reads the archive once first just for the names at its top: into an empty or new folder it unpacks straight in; into one with things in it, it unpacks into a hidden `.kermo-extract-…` folder there and asks **Keep Existing** / **Overwrite** / **Cancel** once tar is done (Cancel removes what was unpacked), then moves it out. Zip and 7z are as before.
+- **A copy on this Mac's own disk** starts at once and counts its total alongside (`counting…`, a moving bar) instead of walking everything first. Sticks, shares and disk images count first, as before.
+- ↩ or F3 on a file inside a tar stops reading the archive at that file.
+- **Info's checksums:** the first of MD5, SHA-1 and SHA-256 you press reads the file once for all three; the others then show at once. A read error is said in the system's words.
+- Faster on this Mac: folder sizes, copies and Find Files no longer look at each subfolder on its own to stay on one volume; merging copies, Find Files by content and Compare contents do less work per file; `git status` in a slow repository runs at most every twice its own time (still at most once a second).
+
+### Fixed
+
+- The size of `/` and Find Files from `/` counted and found everything under `/System/Volumes/Data` twice (it has `/`'s own device on current macOS); now once.
 
 ## [1.1] - 2026-10-14
 
