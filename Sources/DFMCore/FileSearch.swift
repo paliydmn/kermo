@@ -47,14 +47,15 @@ public enum FileSearch {
         var rootStat = stat()
         guard lstat(q.root, &rootStat) == 0 else { return skipped }
         func walk(_ dir: String, _ rel: String) {
-            for item in (try? DirLister.list(dir.isEmpty ? "/" : dir)) ?? [] {
+            var entries: [(FileItem, Bool?)] = []
+            try? DirLister.each(dir.isEmpty ? "/" : dir) { entries.append(($0, $1)) }
+            for (item, mount) in entries {
                 if isCancelled() { return }
                 let full = dir + "/" + item.name
                 let relName = rel.isEmpty ? item.name : rel + "/" + item.name
                 if matches(item, full) { onMatch(item.renamed(relName)) }
-                if item.kind == .dir && (q.includeHidden || !item.isHidden) {
-                    var s = stat()
-                    if lstat(full, &s) == 0 && s.st_dev == rootStat.st_dev { walk(full, relName) }
+                if item.kind == .dir && (q.includeHidden || !item.isHidden) && !DirLister.crosses(full, mount, rootStat.st_dev) {
+                    walk(full, relName)
                 }
             }
         }
@@ -68,22 +69,36 @@ public enum FileSearch {
         item.isDataless ? nil : fileContains(path, needle, caseSensitive: caseSensitive, isCancelled: isCancelled)
     }
 
-    /// Streams the file in 1 MB chunks (overlapping by needle length − 1, so matches across chunk edges count).
-    /// Cancelled, it stops at the next chunk: false.
+    /// Streams the file in 1 MB chunks (overlapping by needle length − 1, so matches across chunk edges count) through
+    /// one buffer: the overlap is moved to its start, the next chunk read in after it. Cancelled, it stops at the
+    /// next chunk: false.
     public static func fileContains(_ path: String, _ needle: [UInt8], caseSensitive: Bool, isCancelled: () -> Bool = { false }) -> Bool {
-        guard !needle.isEmpty, let h = FileHandle(forReadingAtPath: path) else { return false }
-        defer { try? h.close() }
+        guard !needle.isEmpty else { return false }
+        let fd = open(path, O_RDONLY | O_CLOEXEC)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
         var n = needle
         if !caseSensitive { n.withUnsafeMutableBytes(BigFile.foldCase) }
-        var carry: [UInt8] = []
-        while !isCancelled(), let chunk = try? h.read(upToCount: 1 << 20), !chunk.isEmpty {
-            var buf = carry + chunk
-            if !caseSensitive { buf.withUnsafeMutableBytes(BigFile.foldCase) }
-            let found = buf.withUnsafeBytes { b in n.withUnsafeBytes { m in memmem(b.baseAddress, b.count, m.baseAddress, m.count) != nil } }
-            if found { return true }
-            carry = Array(buf.suffix(n.count - 1))
+        let chunk = 1 << 20
+        var buf = [UInt8](repeating: 0, count: n.count - 1 + chunk)
+        return buf.withUnsafeMutableBytes { b in
+            n.withUnsafeBytes { m in
+                var carry = 0, offset: off_t = 0
+                while !isCancelled() {
+                    let got = pread(fd, b.baseAddress! + carry, chunk, offset)
+                    if got < 0 && errno == EINTR { continue }
+                    guard got > 0 else { return false }
+                    offset += off_t(got)
+                    let end = carry + got
+                    // from the carried byte before: a letter's two UTF-8 bytes may straddle the edge (folding twice is once)
+                    if !caseSensitive { BigFile.foldCase(UnsafeMutableRawBufferPointer(rebasing: b[max(0, carry - 1)..<end])) }
+                    if memmem(b.baseAddress, end, m.baseAddress, m.count) != nil { return true }
+                    carry = min(m.count - 1, end)
+                    memmove(b.baseAddress!, b.baseAddress! + end - carry, carry)
+                }
+                return false
+            }
         }
-        return false
     }
 
     /// mdfind's paths as they come; stops it once `isCancelled` (looked at every 0.1 s while it says nothing).

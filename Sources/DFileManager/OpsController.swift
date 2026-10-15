@@ -262,8 +262,8 @@ final class JobRow {   // internal for tests
             bar.startAnimation(nil)
             detail.stringValue = "Scanning…"
         default:
-            bar.stopAnimation(nil)
-            bar.isIndeterminate = false
+            bar.isIndeterminate = p.counting   // copying already, the totals still being counted
+            if p.counting { bar.startAnimation(nil) } else { bar.stopAnimation(nil) }
             let fraction = p.totalBytes > 0 ? Double(p.doneBytes) / Double(p.totalBytes)
                 : p.totalFiles > 0 ? Double(p.doneFiles) / Double(p.totalFiles) : 0
             bar.doubleValue = fraction
@@ -278,10 +278,12 @@ final class JobRow {   // internal for tests
             lastTime = now
 
             var s = "\(p.doneFiles)/\(p.totalFiles)"
-            if p.totalBytes > 0 {
+            if p.counting {
+                s = "\(p.doneFiles) · \(fmt.string(fromByteCount: p.doneBytes)) · counting…"
+            } else if p.totalBytes > 0 {
                 s += " · \(fmt.string(fromByteCount: p.doneBytes)) of \(fmt.string(fromByteCount: p.totalBytes))"
                 if speed > 1, !job.isPaused {
-                    let eta = Int(Double(p.totalBytes - p.doneBytes) / speed)
+                    let eta = Int(Double(max(0, p.totalBytes - p.doneBytes)) / speed)
                     s += " · \(fmt.string(fromByteCount: Int64(speed)))/s · \(eta / 60):\(String(format: "%02d", eta % 60))"
                 }
             }

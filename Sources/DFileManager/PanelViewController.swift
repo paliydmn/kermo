@@ -847,7 +847,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var gitApplies: Bool { archive == nil && searchTitle == nil }
 
     /// One `git status` per panel at a time: reloads in a busy repo would otherwise pile them up.
-    private lazy var gitRuns = SingleFlight { [weak self] in await self?.loadGit() }
+    /// `git status` at most once a second, or twice its last run's time apart: one taking 4 s in a repo that a build
+    /// keeps changing would keep git busy most of the time.
+    private lazy var gitRuns = SingleFlight(timesLastRun: 2) { [weak self] in await self?.loadGit() }
 
     private func loadGit() async {   // not inline: Swift 6.4 rejects a lazy initializer that awaits `Blocking.run`
         guard gitApplies else { return }

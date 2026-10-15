@@ -1555,6 +1555,7 @@ extension AppDelegate {
             guard let input = await prompt("Extract \(what) to:", value: ((other.path + "/") as NSString).abbreviatingWithTildeInPath, ok: "Extract")
             else { return }
             let dest = resolve(input)
+            if sel == nil && ArchiveIndex.isTar(file) { return extractWholeTar(file, to: dest) }
             // What lands at the top of `dest`; bsdtar would silently replace any of it that's there already.
             let (index, clashes) = await Blocking.run { () -> (ArchiveIndex?, [String]) in
                 let index = sel?.index ?? (try? ArchiveIndex.read(file))
@@ -1568,6 +1569,46 @@ extension AppDelegate {
             var args = index?.extractArguments(sel?.names ?? [], from: sel?.inner ?? "", to: dest) ?? ["-x", "-f", file, "-C", dest]
             if keep { args.insert("-k", at: 1) }
             Shell.run("/usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dest) { _ in self.panels.forEach { $0.reload() } }
+        }
+    }
+
+    /// All of a tar, without reading it once first just for the names at its top (listing a .tar.gz unpacks all of
+    /// it). Into an empty or new folder as it is; else into a hidden folder inside `dest`, and once that's done, what
+    /// was there already is asked about, then the rest moves out by rename.
+    private func extractWholeTar(_ file: String, to dest: String) {
+        Task {
+            let staging: String?
+            do {
+                staging = try await Blocking.run { () throws -> String? in
+                    try FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true)
+                    guard try !FileManager.default.contentsOfDirectory(atPath: dest).isEmpty else { return nil }
+                    let staging = ArchiveIndex.stagingFolder(in: dest)
+                    try FileManager.default.createDirectory(atPath: staging, withIntermediateDirectories: false)
+                    return staging
+                }
+            } catch {
+                return showError(error)
+            }
+            let shown = (dest as NSString).abbreviatingWithTildeInPath
+            let args = ["-x", "-f", file, "-C", staging ?? dest]
+            Shell.run("/usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dest,
+                      title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)") { [weak self] status in
+                guard let self else { return }
+                guard let staging else { return panels.forEach { $0.reload() } }
+                Task {
+                    // stopped (⎋) or failed: half an archive doesn't land in `dest`; the window says what tar said
+                    let clashes = await Blocking.run { status == 0 ? ArchiveIndex.clashes(staging, dest) : [] }
+                    let keep = status == 0 ? await self.keepExisting(clashes, in: shown) : nil
+                    let errors = await Blocking.run {
+                        guard let keep else { ArchiveIndex.discardStaging(staging); return [String]() }
+                        return ArchiveIndex.moveExtracted(staging, to: dest, keep: keep)
+                    }
+                    self.panels.forEach { $0.reload() }
+                    if !errors.isEmpty {
+                        self.showError(JobErrorMessage(errors.prefix(8).joined(separator: "\n") + (errors.count > 8 ? "\n…" : "")))
+                    }
+                }
+            }
         }
     }
 

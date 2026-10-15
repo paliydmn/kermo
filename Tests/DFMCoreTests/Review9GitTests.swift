@@ -53,6 +53,13 @@ import Testing
     #expect(maxInFlight == 1)
 }
 
+/// Task 13 §8.4: a slow `git status` waits twice its own time before the next; a quick one, the interval.
+@Test func aSlowRunWaitsLonger() {
+    #expect(SingleFlight.gap(.seconds(1), timesLastRun: 2, took: .seconds(4)) == .seconds(8))
+    #expect(SingleFlight.gap(.seconds(1), timesLastRun: 2, took: .milliseconds(200)) == .seconds(1))
+    #expect(SingleFlight.gap(.zero, timesLastRun: 0, took: .seconds(4)) == .zero)   // the volume list: as before
+}
+
 /// L14: going into another folder doesn't wait out the interval of the previous one.
 @MainActor @Test func gitStatusForANewFolderStartsRightAway() async throws {
     var runs = 0

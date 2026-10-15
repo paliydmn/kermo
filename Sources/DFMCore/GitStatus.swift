@@ -299,19 +299,27 @@ public struct GitStatus: Sendable, Equatable {
 
 /// Runs `run` one at a time, for refreshes that come faster than they finish (`git status` on every reload of
 /// a busy repo): a request while one runs only marks it to run once more after. A run for the same key starts at
-/// least `interval` after the previous one ended, so a slow one doesn't run back to back. A new key (another
-/// folder) doesn't wait, not even for a run still going for the old one: that run is left to finish on its own.
+/// least `interval` after the previous one ended — or `timesLastRun` times as long as that run took, if longer —
+/// so a slow one doesn't run back to back. A new key (another folder) doesn't wait, not even for a run still going
+/// for the old one: that run is left to finish on its own.
 @MainActor public final class SingleFlight {
     private let interval: Duration
+    private let timesLastRun: Int
     private let run: @MainActor () async -> Void
     private var again = false
     private var key = ""
     private var flight = 0, running = false   // `flight` numbers the loop that owns the requests; older loops just stop
-    private var last: (key: String, end: ContinuousClock.Instant)?
+    private var last: (key: String, end: ContinuousClock.Instant, took: Duration)?
 
-    public init(interval: Duration = .seconds(1), run: @escaping @MainActor () async -> Void) {
+    public init(interval: Duration = .seconds(1), timesLastRun: Int = 0, run: @escaping @MainActor () async -> Void) {
         self.interval = interval
+        self.timesLastRun = timesLastRun
         self.run = run
+    }
+
+    /// The wait between the end of one run and the start of the next for the same key.
+    nonisolated static func gap(_ interval: Duration, timesLastRun: Int, took: Duration) -> Duration {
+        max(interval, took * timesLastRun)
     }
 
     public func request(key: String) {
@@ -324,13 +332,15 @@ public struct GitStatus: Sendable, Equatable {
         let mine = flight
         Task {
             while again, flight == mine {
-                if let last, last.key == self.key { try? await Task.sleep(until: last.end + interval, clock: .continuous) }
+                if let last, last.key == self.key {
+                    try? await Task.sleep(until: last.end + Self.gap(interval, timesLastRun: timesLastRun, took: last.took), clock: .continuous)
+                }
                 guard flight == mine else { return }
                 again = false
-                let key = self.key
+                let key = self.key, start = SuspendingClock.now   // a run the Mac slept through didn't take hours
                 await run()
                 guard flight == mine else { return }
-                last = (key, .now)
+                last = (key, .now, .now - start)
             }
             if flight == mine { running = false }
         }

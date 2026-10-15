@@ -9,6 +9,7 @@ public struct ArchiveIndex: Sendable {
     private let tree: [String: [FileItem]]   // folder inside the archive ("" = root) → its children
     private let entryPrefix: String           // "./" or "/" if entries are stored that way (`tar -cf x.tar .`, `tar -P`)
     let charset: String?                      // zip names stored without the UTF-8 flag: "CP866" or "CP1251"; nil = UTF-8
+    var repeated: Set<String> = []            // paths stored more than once (`tar -r`): the listing shows the last one
 
     private static let extensions: Set<String> = ["zip", "jar", "war", "ear", "apk", "ipa", "tar", "tgz", "tbz", "tbz2",
                                                   "txz", "tzst", "7z", "rar", "iso", "cpio", "xar"]
@@ -34,7 +35,7 @@ public struct ArchiveIndex: Sendable {
             throw ArchiveError(archive_error_string(a).map { String(cString: $0) } ?? "can't open archive")
         }
         var folders: [String: [String: FileItem]] = ["": [:]]
-        var explicit = Set<String>()
+        var explicit = Set<String>(), repeated = Set<String>()
         var entryPrefix = ""
         var legacy: [UInt8] = []   // names that aren't UTF-8 (a Windows zip): their bytes, to tell the code page
 
@@ -46,7 +47,7 @@ public struct ArchiveIndex: Sendable {
                     isExplicit: false)
             }
             if isExplicit || folders[parent]?[item.name] == nil { folders[parent, default: [:]][item.name] = item }
-            if isExplicit { explicit.insert(path) }
+            if isExplicit && !explicit.insert(path).inserted { repeated.insert(path) }
             if item.kind == .dir { folders[path, default: [:]] = folders[path] ?? [:] }
         }
 
@@ -76,7 +77,7 @@ public struct ArchiveIndex: Sendable {
         let format = archive_format_name(a).map { String(cString: $0) } ?? "archive"
         if !legacy.isEmpty && format.hasPrefix("ZIP") { return try read(file, charset: legacyCharset(legacy)) }
         return ArchiveIndex(file: file, format: format, tree: folders.mapValues { Array($0.values) }, entryPrefix: entryPrefix,
-                            charset: charset)
+                            charset: charset, repeated: repeated)
     }
 
     /// Windows zips keep names in the DOS code page (CP866 for Cyrillic), some tools in CP1251: the one whose
@@ -124,6 +125,12 @@ public struct ArchiveIndex: Sendable {
         let depth = (inner.isEmpty ? 0 : inner.split(separator: "/").count) + (entryPrefix.isEmpty ? 0 : 1)
         if depth > 0 { args += ["--strip-components", String(depth)] }
         let dir = inner.isEmpty ? "" : inner + "/"
+        // One file: stop at it (-q) instead of reading the rest of the archive. Not a folder (its contents follow it),
+        // nor a name stored twice (-q takes the first; the listing shows, and a full read leaves, the last).
+        if names.count == 1, tree[inner]?.first(where: { $0.name == names[0] }).map({ $0.kind != .dir }) == true,
+           !repeated.contains(dir + names[0]) {
+            args.insert("-q", at: 1)
+        }
         return args + ["--"] + names.map { entryPrefix + Self.literalPattern(dir + $0) }   // "--": a member named "--use-compress-program=…" is a name
     }
 
@@ -141,6 +148,83 @@ public struct ArchiveIndex: Sendable {
     public func extract(_ names: [String], from inner: String, to dest: String) throws {
         try FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true)
         try Self.tar(extractArguments(names, from: inner, to: dest))
+    }
+
+    /// The tar family, compressed or not. It has no table of contents: listing one reads (and unpacks) all of it.
+    public static func isTar(_ name: String) -> Bool {
+        let n = name.lowercased()
+        return [".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz", ".tbz2", ".tar.xz", ".txz", ".tar.zst", ".tzst", ".tar.lz4"]
+            .contains(where: n.hasSuffix)
+    }
+
+    /// Where a whole tar unpacks when `dest` has something in it already: a hidden folder inside `dest`, so what's at
+    /// its top then moves out by rename (`moveExtracted`). Ones a quit or a crash left there a day ago or more go first.
+    public static func stagingFolder(in dest: String) -> String {
+        let old = Date().timeIntervalSince1970 - 86_400
+        for item in (try? DirLister.list(dest)) ?? [] where item.kind == .dir && item.name.hasPrefix(stagingPrefix) && item.mtime < old {
+            discardStaging((dest as NSString).appendingPathComponent(item.name))
+        }
+        return (dest as NSString).appendingPathComponent(stagingPrefix + UUID().uuidString)
+    }
+    static let stagingPrefix = ".kermo-extract-"
+
+    /// What's at the top of `staging` that `dest` has already.
+    public static func clashes(_ staging: String, _ dest: String) -> [String] {
+        ((try? DirLister.list(staging)) ?? []).map(\.name).filter { FileJob.lstat((dest as NSString).appendingPathComponent($0)) != nil }.sorted()
+    }
+
+    /// Moves what's at the top of `staging` into `dest` as bsdtar would have put it there: folders merge, a file
+    /// that's there already stays (`keep`, bsdtar's -k) or is replaced. A folder an archive's file would replace
+    /// stays, and so does a file (or link) where the archive has a folder under Keep Existing: both are reported, as
+    /// what they hold isn't extracted. Then `staging` goes. Returns what couldn't be moved.
+    public static func moveExtracted(_ staging: String, to dest: String, keep: Bool) -> [String] {
+        let locked = unlockFolders(staging)
+        let existed = Set(locked.map(\.rel).filter { FileJob.lstat((dest as NSString).appendingPathComponent($0)) != nil })
+        let tops = ((try? DirLister.list(staging)) ?? []).map { (staging as NSString).appendingPathComponent($0.name) }
+        let job = FileJob(.move, sources: tops, destDir: dest)
+        job.resolveConflict = { [unowned job] c in
+            if c.replacesFolder { job.update { $0.errors.append("\(c.dst): a folder is there, kept") }; return (.skip, false) }
+            if keep && !c.bothDirs && FileJob.lstat(c.src).map({ $0.st_mode & S_IFMT == S_IFDIR }) == true {
+                job.update { $0.errors.append("\(c.dst): not a folder, kept") }
+                return (.skip, false)
+            }
+            return (c.bothDirs || !keep ? .overwrite : .skip, false)
+        }
+        job.run()
+        // the archive's read-only folders read-only again where they landed, deepest first (a folder without u+x
+        // would stop the ones under it); folders merged into keep their own mode
+        for (rel, mode) in locked.sorted(by: { $0.rel.count > $1.rel.count }) where !existed.contains(rel) {
+            let p = (dest as NSString).appendingPathComponent(rel)
+            if FileJob.lstat(p).map({ $0.st_mode & S_IFMT == S_IFDIR }) == true { chmod(p, mode) }
+        }
+        discardStaging(staging)
+        // named where they'd have landed: the staging folder is gone, and its name means nothing to the user
+        let from = (staging as NSString).appendingPathComponent(""), to = (dest as NSString).appendingPathComponent("")
+        return job.progress.errors.map { $0.hasPrefix(from) ? to + $0.dropFirst(from.count) : $0 }
+    }
+
+    /// Removes a staging folder and whatever is still in it, read-only folders too.
+    public static func discardStaging(_ staging: String) {
+        _ = unlockFolders(staging)
+        try? FileManager.default.removeItem(atPath: staging)
+    }
+
+    /// Folders tar made read-only (0555) can't be moved to another folder (rename updates their "..") nor emptied:
+    /// each gets the owner's rwx; returns their paths under `root` and modes, to put back.
+    private static func unlockFolders(_ root: String) -> [(rel: String, mode: mode_t)] {
+        var out: [(rel: String, mode: mode_t)] = []
+        func walk(_ rel: String) {
+            let path = rel.isEmpty ? root : (root as NSString).appendingPathComponent(rel)
+            guard let st = FileJob.lstat(path), st.st_mode & S_IFMT == S_IFDIR else { return }
+            let mode = st.st_mode & 0o7777
+            if mode & S_IRWXU != S_IRWXU {
+                if !rel.isEmpty { out.append((rel, mode)) }
+                chmod(path, mode | S_IRWXU)
+            }
+            for c in (try? DirLister.list(path)) ?? [] where c.kind == .dir { walk(rel.isEmpty ? c.name : rel + "/" + c.name) }
+        }
+        walk("")
+        return out
     }
 
     /// bsdtar arguments to create `archive` (format from its extension: .zip .tar.gz .tgz .tar.bz2 .tar.xz .7z)
