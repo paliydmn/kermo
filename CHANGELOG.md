@@ -13,6 +13,8 @@ Release:
 
 ## [Unreleased]
 
+## [1.2] - 2026-10-16
+
 ### Added
 
 - **Copy SSH Key to Server…** (a server's sidebar menu and ⌘⇧P): puts this Mac's public key into the server's `~/.ssh/authorized_keys` over the connection you already have (one login, the key on stdin), adds it only if it isn't there, then logs in with the key alone to check it took. The server's own key file, else `~/.ssh/id_ed25519`, `id_ecdsa` or `id_rsa` (several: pick one; none: the `ssh-keygen` command to make one). A locked server asks for Touch ID, a production one asks first and logs it. Afterwards a saved server without a key file gets this one, and a saved password can be forgotten.
@@ -129,6 +131,7 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.1...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.2...HEAD
+[1.2]: https://github.com/paliydmn/kermo/releases/tag/v1.2
 [1.1]: https://github.com/paliydmn/kermo/releases/tag/v1.1
 [1.0]: https://github.com/paliydmn/kermo/releases/tag/v1.0
