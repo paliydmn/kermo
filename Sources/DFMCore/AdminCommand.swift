@@ -59,23 +59,27 @@ public enum SudoTouchID {
     }
 
     /// sudo_local with Touch ID on: the file as it is (none: the template), its commented-out pam_tid line uncommented,
-    /// the rest as it was. No such line: it's added at the end — after pam_reattach (tmux), which must come first.
+    /// the rest as it was. No such line, or pam_reattach (tmux) below it, which must come first: the line goes at the end.
     public static func enabled(_ current: String?, template: String) -> String {
         var lines = (current ?? template).components(separatedBy: "\n")
         let commented = lines.firstIndex { l in
             let t = l.drop { $0 == " " || $0 == "\t" }
             return t.hasPrefix("#") && isTouchID(t.drop { $0 == "#" || $0 == " " || $0 == "\t" })
         }
-        if let i = commented {
+        if let i = commented, !lines[(i + 1)...].contains(where: { !$0.drop { $0 == " " || $0 == "\t" }.hasPrefix("#") && $0.contains("pam_reattach") }) {
             lines[i] = String(lines[i].drop { $0 == " " || $0 == "\t" || $0 == "#" })
         } else {
+            if let i = commented { lines.remove(at: i) }
             lines.insert("auth       sufficient     pam_tid.so", at: lines.last == "" ? lines.count - 1 : lines.count)
         }
         let text = lines.joined(separator: "\n")
         return text.hasSuffix("\n") ? text : text + "\n"
     }
 
-    /// Run as root: `temp`'s text into sudo_local, never through a symlink (`AdminCommand.writeContents`); a new file
-    /// is 0644 whatever the umask — PAM refuses one others can write.
-    public static func command(from temp: String) -> String { "umask 022 && " + AdminCommand.writeContents(from: temp, to: file) }
+    /// Run as root: `text` into sudo_local, never through a symlink; a new file is 0644 whatever the umask (PAM refuses
+    /// one others can write). The text is in the command itself (osascript's argv): a temp file of the user's could be
+    /// changed by anything running as them while macOS asks for the password.
+    public static func command(writing text: String) -> String {
+        "umask 022 && [ ! -L \(file) ] && /usr/bin/printf '%s' \(ShellContext.quote(text)) > \(file)"
+    }
 }

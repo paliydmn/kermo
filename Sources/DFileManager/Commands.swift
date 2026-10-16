@@ -338,33 +338,32 @@ extension AppDelegate {
     func enableSudoTouchID() {
         let dir = Self.pamDir, panel = active
         Task {
-            let read = await Blocking.run(.userInitiated) { () -> Result<(String?, String?), Error> in
+            let read = await Blocking.run(.userInitiated) { () -> Result<(String?, String?, Bool), Error> in
                 Result {
                     let file = dir + "/sudo_local"
-                    let current = FileManager.default.fileExists(atPath: file) ? try String(contentsOfFile: file, encoding: .utf8) : nil
-                    return (current, try? String(contentsOfFile: dir + "/sudo_local.template", encoding: .utf8))
+                    var st = stat()
+                    let there = lstat(file, &st) == 0, link = there && st.st_mode & S_IFMT == S_IFLNK   // the write refuses a link
+                    let current = there && !link ? try String(contentsOfFile: file, encoding: .utf8) : nil
+                    return (current, try? String(contentsOfFile: dir + "/sudo_local.template", encoding: .utf8), link)
                 }
             }
-            guard case .success(let (current, template)) = read else {   // there but not readable: never written over
+            guard case .success(let (current, template, link)) = read else {   // there but not readable: never written over
                 return panel.flash("Can't read \(dir)/sudo_local", error: true)
             }
+            if link { return panel.flash("\(dir)/sudo_local is a symlink, kept by something else: Kermo leaves it alone", error: true) }
             if SudoTouchID.state(current) == .on { return panel.flash("Touch ID for sudo is already on") }
             guard current != nil || template != nil else {
                 return panel.flash("No \(dir)/sudo_local.template on this Mac: Touch ID for sudo needs macOS 14 or later", error: true)
             }
             guard await choose("Let sudo in Terminal use Touch ID?",
                                info: "Kermo writes \(SudoTouchID.file) (survives macOS updates); macOS asks for your password.",
-                               ["Enable", "Cancel"], default: 0) == 0 else { return }
-            let tmp = NSTemporaryDirectory() + "dfm-sudo-local-" + UUID().uuidString
-            defer { unlink(tmp) }
-            guard (try? Data(SudoTouchID.enabled(current, template: template ?? "").utf8).write(to: URL(fileURLWithPath: tmp))) != nil else {
-                return panel.flash("Can't write \(tmp)", error: true)
-            }
-            switch await Self.runAsAdmin(SudoTouchID.command(from: tmp)) {
+                               ["Enable", "Cancel"]) == 0 else { return }
+            let text = SudoTouchID.enabled(current, template: template ?? "")
+            switch await Self.runAsAdmin(SudoTouchID.command(writing: text)) {
             case .ok:
                 let now = await Blocking.run(.userInitiated) { try? String(contentsOfFile: dir + "/sudo_local", encoding: .utf8) }
-                if SudoTouchID.state(now) == .on { panel.flash("Touch ID for sudo is on — new Terminal windows use it") }
-                else { panel.flash("Touch ID for sudo didn't turn on: \(dir)/sudo_local has no pam_tid line", error: true) }
+                if now == text { panel.flash("Touch ID for sudo is on — new Terminal windows use it") }
+                else { panel.flash("Touch ID for sudo didn't turn on: \(dir)/sudo_local isn't what Kermo wrote", error: true) }
             case .cancelled: break
             case .failed(let msg): panel.flash("Couldn't turn on Touch ID for sudo: \(msg)", error: true)
             }
@@ -500,7 +499,7 @@ extension AppDelegate {
             return ShellContext(dir: r.dir, otherDir: other.remote?.target.asUser == r.target.asUser ? other.remote?.dir : nil,
                                 cursor: active.remoteCursor?.item.name, targets: active.remoteSelection?.items.map(\.name) ?? [])
         }
-        return ShellContext(dir: active.path, otherDir: other.remote == nil ? other.path : nil, cursor: active.cursorURL?.lastPathComponent,
+        return ShellContext(dir: active.path, otherDir: other.remote == nil && other.parked == nil ? other.path : nil, cursor: active.cursorURL?.lastPathComponent,
                             targets: active.targetURLs.map(\.lastPathComponent))
     }
 
@@ -619,7 +618,7 @@ extension AppDelegate {
 
     /// ⌘D: this folder — on a server, that server's folder — in Favorites, or out again.
     func toggleBookmark() {
-        let p = active.remote.map { Bookmark.entry($0.target, $0.dir) } ?? active.path
+        let p = (active.remote ?? active.parked).map { Bookmark.entry($0.target, $0.dir) } ?? active.path   // what the header says
         if let i = bookmarks.firstIndex(of: p) {
             bookmarks.remove(at: i)
             active.flash("☆ Removed bookmark")
@@ -764,6 +763,7 @@ extension AppDelegate {
 
     /// `name` prefills the name field (toolbar search's "Search … on disk").
     func searchDialog(name prefill: String? = nil) {
+        if let hint = active.parkedHint { return active.flash(hint) }   // ⇧⌘P's "on disk" comes here directly
         if let prefill { defaults.set(prefill, forKey: "searchName") }
         let name = NSTextField(string: defaults.string(forKey: "searchName") ?? "")
         name.placeholderString = "name: text, *.glob;*.glob or re:regex — empty = any"
@@ -1925,7 +1925,7 @@ extension AppDelegate {
             guard volumeBusy.insert(vol.path).inserted else { return active.flash("“\(name)”: one thing at a time") }
             refreshSidebar()
             // Don't leave panels sitting on it (their watchers use O_EVTONLY, which doesn't block unmount).
-            for p in panels where p.path == vol.path || p.path.hasPrefix(vol.path + "/") { p.navigate(to: NSHomeDirectory()) }
+            for p in panels where p.parked == nil && (p.path == vol.path || p.path.hasPrefix(vol.path + "/")) { p.navigate(to: NSHomeDirectory()) }   // a parked one shows nothing of it
             active.flash((unmount ? "Unmounting" : "Ejecting") + " “\(name)”…")
             var error: Error?
             if unmount {

@@ -610,7 +610,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                         guard let self, m == moves else { return }
                         navigate(to: up)
                     }
-                } else if all.isEmpty && newPath != NSHomeDirectory() {
+                } else if all.isEmpty && parked == nil && newPath != NSHomeDirectory() {   // parked: it stays, the error said
                     navigate(to: NSHomeDirectory(), history: .none)   // e.g. restored path no longer exists
                 }
             }
@@ -955,7 +955,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         gitRuns.request(key: remote.map { "\($0.target.host):\($0.target.port ?? 0):\($0.dir)" } ?? path)
     }
 
-    private var gitApplies: Bool { archive == nil && searchTitle == nil }
+    private var gitApplies: Bool { archive == nil && searchTitle == nil && parked == nil }
 
     /// One `git status` per panel at a time: reloads in a busy repo would otherwise pile them up.
     /// `git status` at most once a second, or twice its last run's time apart: one taking 4 s in a repo that a build
@@ -1254,13 +1254,20 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// another way in (⌃⌘R: as root). Failing, the tab stays parked.
     func connectParked(_ target: SFTPTarget? = nil) {
         guard let p = parked else { return }
-        loadRemote(target ?? p.target, dir: p.dir, select: tabs[tabIndex].cursor)
+        loadRemote(target ?? p.target, dir: p.dir, select: tabs[tabIndex].cursor) { [weak self] error in
+            // Still parked (its folder gone, say): no session kept for it either.
+            guard let self, parked != nil else { return }
+            kept?.close()
+            kept = nil
+            if !(error is CancellationError), (error as? SFTPError)?.connection != true { NSSound.beep(); flash("\(p.target.host): \(error.localizedDescription)", error: true) }
+        }
     }
 
     /// Shows a server tab parked: whatever was on screen goes, and nothing is listed.
     private func park(_ p: (target: SFTPTarget, dir: String)) {
         loadGen += 1   // a listing on its way doesn't land over it
         connecting = nil
+        busyMessage = busyOps.last?.message   // that listing's "Connecting…" too
         watcher?.cancel()
         watcher = nil
         if searchTitle != nil { searchFlag?.cancel(); searchTitle = nil; searching = false }
@@ -1526,7 +1533,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         tabs.indices.map { i in
             let t = tabs[i], now = i == tabIndex
             let server = now ? remote ?? parked : t.remote ?? t.parked
-            return Session.Tab(path: now ? path : t.path, cursor: now && parked == nil ? currentName ?? pendingSelect : t.cursor,
+            // The cursor's name; none yet (its listing is on its way): the one it came with.
+            return Session.Tab(path: now ? path : t.path, cursor: now && parked == nil ? currentName ?? pendingSelect ?? t.cursor : t.cursor,
                                server: server?.target, root: server?.target.sudo == true, dir: server?.dir)
         }
     }
@@ -1587,7 +1595,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     private func saveTab() {
         tabs[tabIndex].path = path
-        if parked == nil { tabs[tabIndex].cursor = currentName ?? pendingSelect }   // a parked tab's is its own
+        // A parked tab's is its own; a tab whose listing isn't in yet keeps the one it came with.
+        if parked == nil { tabs[tabIndex].cursor = currentName ?? pendingSelect ?? tabs[tabIndex].cursor }
         tabs[tabIndex].parked = parked
         tabs[tabIndex].back = backStack
         tabs[tabIndex].forward = forwardStack
@@ -1629,6 +1638,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             path = t.path
             park(p)
         } else {
+            // Off a parked tab: this tab's own at once — switching again before the listing is back saves it, not that one.
+            if parked != nil { (parked, path) = (nil, t.path) }
             navigate(to: t.path, select: t.cursor, history: .none, keep: keep)
         }
         updateTabBar()

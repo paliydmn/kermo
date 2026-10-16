@@ -21,9 +21,12 @@ struct Session: Codable, Equatable {
     /// Each divider's place, a fraction of the panels' width.
     var dividers: [Double] = []
 
-    /// The saved one; before it, `panelTabs` / `panelTabIndex` (local folders only), before them `panelPaths`.
+    /// The saved one; before it, `panelTabs` / `panelTabIndex` (local folders only), before them `panelPaths`. An older
+    /// Kermo run since writes only those: then they're newer, and they win.
     static func load(_ d: UserDefaults) -> Session {
-        if let data = d.data(forKey: "panelSession"), let s = try? JSONDecoder().decode(Session.self, from: data), !s.panels.isEmpty { return s }
+        if let data = d.data(forKey: "panelSession"), let s = try? JSONDecoder().decode(Session.self, from: data), !s.panels.isEmpty,
+           (d.array(forKey: "panelTabs") as? [[String]]).map({ $0 == s.panels.map { $0.tabs.map(\.path) } }) ?? true,
+           (d.array(forKey: "panelTabIndex") as? [Int]).map({ $0 == s.panels.map(\.index) }) ?? true { return s }
         let legacy = d.stringArray(forKey: "panelPaths")?.map { [$0] }
         let tabs = (d.array(forKey: "panelTabs") as? [[String]]) ?? legacy ?? [[NSHomeDirectory()], ["/"]]
         let indices = d.array(forKey: "panelTabIndex") as? [Int] ?? [0, 0]

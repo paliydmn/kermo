@@ -39,6 +39,13 @@ private func scratchDefaults() -> (UserDefaults, String) {
     d.removeObject(forKey: "panelTabIndex")
     d.set(["/a", "/b"], forKey: "panelPaths")
     #expect(Session.load(d) == Session(panels: [Session.Panel(tabs: [Session.Tab(path: "/a")], index: 0), Session.Panel(tabs: [Session.Tab(path: "/b")], index: 0)]))
+
+    s.save(d)   // then an older Kermo ran, and moved: its keys are newer
+    d.set([["/var"], ["/"]], forKey: "panelTabs")
+    #expect(Session.load(d).panels.map { $0.tabs.map(\.path) } == [["/var"], ["/"]])
+    s.save(d)
+    d.set([0, 0], forKey: "panelTabIndex")
+    #expect(Session.load(d).panels.map(\.index) == [0, 0] && Session.load(d).panels[0].tabs[0].server == nil)
 }
 
 /// The dividers come back as saved when they make sense for the panels there are; otherwise even.
@@ -83,7 +90,18 @@ private func scratchDefaults() -> (UserDefaults, String) {
     #expect(panel.parked?.target == web && panel.remoteTabs.isEmpty && panel.sessionTabs == saved)
 
     panel.reload()   // ⌘R: still nothing listed
-    #expect(panel.parked != nil)
+    try? await Task.sleep(for: .milliseconds(300))
+    #expect(panel.parked != nil && panel.listedItems.isEmpty && panel.table.numberOfRows == 1)
+    panel.navigate(to: d + "/gone")   // a way out that fails: it stays parked, the error said
+    await waitUntil { panel.statusText.contains("gone") }
+    try? await Task.sleep(for: .milliseconds(300))
+    #expect(panel.parked != nil && panel.path == d && panel.statusText.contains("gone"))
+    // Off it and straight back, before the local tab's listing is in: each tab keeps its own.
+    panel.switchTab(by: 1)
+    panel.switchTab(by: 1)
+    await waitUntil { panel.parked != nil }
+    try? await Task.sleep(for: .milliseconds(300))
+    #expect(panel.parked?.target == web && panel.sessionTabs == saved)
     panel.goUp()   // ⌘↑ (any way out): the tab's own folder
     await waitUntil { panel.parked == nil && panel.listedItems.count == 1 }
     #expect(panel.path == d && panel.remote == nil && panel.listedItems.map(\.name) == ["local.txt"])
@@ -112,6 +130,8 @@ private func scratchDefaults() -> (UserDefaults, String) {
     app.panels.forEach { $0.loadViewIfNeeded() }
     defer { app.panels.forEach { $0.shutdown() } }
     #expect(app.idleServers([web]) == [web])
+    app.panels.swapAt(0, 1)   // %D in a command: never the local folder behind the other, parked panel
+    #expect(app.shellContext.otherDir == nil)
 }
 
 /// A folder over 5000 names (sorted off the main thread) comes back with the cursor on its saved name.
@@ -129,8 +149,8 @@ private func scratchDefaults() -> (UserDefaults, String) {
 
 /// On a parked tab only what doesn't touch its files runs; the rest says ↩ connects. Every id named there is a command.
 @MainActor @Test func aParkedTabRunsOnlyWhatLeavesItsFilesAlone() {
-    for id in ["open", "open.inside", "go.home", "go.connect", "go.path", "tab.new", "tab.next", "view.hidden", "view.refresh",
-               "panel.switch", "admin.rootPanel", "admin.sudoTouchID", "app.palette", "server.services"] {
+    for id in ["open", "open.inside", "go.home", "go.connect", "go.path", "go.bookmark", "tab.new", "tab.next", "view.hidden", "view.refresh",
+               "panel.switch", "panel.focus2", "admin.rootPanel", "admin.sudoTouchID", "app.palette", "server.services"] {
         #expect(AppDelegate.runsParked(id), "\(id)")
     }
     for id in ["file.copy", "file.move", "file.mkdir", "file.new", "file.delete", "file.edit", "edit.pasteMove", "mark.toggle",
@@ -138,9 +158,7 @@ private func scratchDefaults() -> (UserDefaults, String) {
         #expect(!AppDelegate.runsParked(id), "\(id)")
     }
     let ids = Set(AppDelegate().makeCommands().map(\.id))
-    for id in ["open", "open.inside", "panel.switch", "panel.add", "panel.close", "admin.rootPanel", "admin.userPanel", "admin.auditLog",
-               "admin.sudoTouchID", "usermenu.edit", "validators.edit", "go.tree", "go.linktarget", "view.terminal", "view.dirsizes",
-               "server.history"] + AppDelegate.toOther {
+    for id in AppDelegate.parkedRuns.union(AppDelegate.parkedRefuses).union(AppDelegate.toOther).union(["panel.focus1", "panel.focus4"]) {
         #expect(ids.contains(id), "\(id)")
     }
 }
@@ -189,18 +207,17 @@ extension ServerLockTests {
     let template = "# sudo_local: local config file which survives system update and is included for sudo\n"
         + "# uncomment following line to enable Touch ID for sudo\n#auth       sufficient     pam_tid.so\n"
     try Data(template.utf8).write(to: URL(fileURLWithPath: d + "/sudo_local.template"))
-    var asked: [(String, [String], Int?)] = [], ran: [String] = [], written: [String] = [], temps: [String] = []
+    var asked: [(String, [String], Int?)] = [], ran: [String] = []
     let (dir, admin) = (AppDelegate.pamDir, AppDelegate.runAsAdmin)
     AppDelegate.pamDir = d
-    AppDelegate.runAsAdmin = { command in   // as the real write would: the temp file's text into (the copy's) sudo_local
+    AppDelegate.runAsAdmin = { command in   // the real command, run by sh on the copy's sudo_local instead of /etc's
         ran.append(command)
-        guard let r = command.range(of: "/bin/cat "), let end = command.range(of: " > ", range: r.upperBound..<command.endIndex) else { return .failed("?") }
-        let tmp = String(command[r.upperBound..<end.lowerBound])
-        temps.append(tmp)
-        let text = (try? String(contentsOfFile: tmp, encoding: .utf8)) ?? ""
-        written.append(text)
-        try? Data(text.utf8).write(to: URL(fileURLWithPath: d + "/sudo_local"))
-        return .ok
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", command.replacingOccurrences(of: SudoTouchID.file, with: d + "/sudo_local")]
+        try? p.run()
+        p.waitUntilExit()
+        return p.terminationStatus == 0 ? .ok : .failed("exit \(p.terminationStatus)")
     }
     defer { AppDelegate.pamDir = dir; AppDelegate.runAsAdmin = admin; AppDelegate.answering = nil }
     let app = AppDelegate()
@@ -212,21 +229,35 @@ extension ServerLockTests {
     app.enableSudoTouchID()
     await waitUntil { asked.count == 1 }
     try? await Task.sleep(for: .milliseconds(100))
-    #expect(asked.first?.0 == "Let sudo in Terminal use Touch ID?" && asked.first?.1 == ["Enable", "Cancel"] && asked.first?.2 == 0, "↩ is Enable")
+    #expect(asked.first?.0 == "Let sudo in Terminal use Touch ID?" && asked.first?.1 == ["Enable", "Cancel"] && asked.first?.2 == nil,
+            "↩ is Enable, ⎋ Cancel")
     #expect(ran.isEmpty)
 
     AppDelegate.answering = { m, b, def in asked.append((m, b, def)); return 0 }   // Enable
     app.enableSudoTouchID()
     await waitUntil { app.panels[0].statusText.contains("Touch ID for sudo is on") }
     #expect(app.panels[0].statusText == "Touch ID for sudo is on — new Terminal windows use it")
-    try #require(ran.count == 1 && temps.count == 1)
-    #expect(ran[0] == "umask 022 && [ ! -L /etc/pam.d/sudo_local ] && /bin/cat \(temps[0]) > /etc/pam.d/sudo_local", "sudo_local, and only it")
-    #expect(!temps[0].hasPrefix("/etc") && !FileManager.default.fileExists(atPath: temps[0]), "the temp file is gone after")
-    #expect(written == [template.replacingOccurrences(of: "\n#auth", with: "\nauth")])
+    let on = template.replacingOccurrences(of: "\n#auth", with: "\nauth")
+    try #require(ran.count == 1)
+    #expect(ran[0] == SudoTouchID.command(writing: on) && ran[0].components(separatedBy: "/etc/").count == 3, "sudo_local, and only it")
+    #expect(try String(contentsOfFile: d + "/sudo_local", encoding: .utf8) == on)
 
     app.panels[0].flash("")
     app.enableSudoTouchID()
     await waitUntil { app.panels[0].statusText == "Touch ID for sudo is already on" }
     #expect(app.panels[0].statusText == "Touch ID for sudo is already on" && asked.count == 2 && ran.count == 1)
+
+    // A symlink (managed by something else): left alone, nothing asked.
+    try FileManager.default.removeItem(atPath: d + "/sudo_local")
+    try FileManager.default.createSymbolicLink(atPath: d + "/sudo_local", withDestinationPath: d + "/sudo_local.template")
+    app.enableSudoTouchID()
+    await waitUntil { app.panels[0].statusText.contains("symlink") }
+    #expect(app.panels[0].statusText.contains("is a symlink") && asked.count == 2 && ran.count == 1)
+}
+
+/// A Cancel that isn't ↩ still answers ⎋.
+@MainActor @Test func cancelKeepsEscapeBesideAnotherDefault() {
+    let a = AppDelegate.alert("?", info: "", ["Enable", "Cancel"], default: 0)
+    #expect(a.buttons.map(\.keyEquivalent) == ["\r", "\u{1b}"])
 }
 }

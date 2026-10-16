@@ -784,7 +784,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         savedServers[i].prod = on
         Config.save("servers.json", savedServers)
         refreshSidebar()
-        panels.filter { $0.remote != nil }.forEach { $0.showPath() }   // not an archive's or search's header
+        panels.filter { $0.remote != nil || $0.parked != nil }.forEach { $0.showPath() }   // not an archive's or search's header
     }
 
     /// A menu item that asks for Touch ID first if the server is locked.
@@ -890,14 +890,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// What runs on a parked server tab (`PanelViewController.parked`): going elsewhere, tabs, panels, the view, the
     /// app's windows; ↩ connects. The rest would act on the local folder behind it.
     static func runsParked(_ id: String) -> Bool {
-        ["open", "open.inside", "panel.switch", "panel.add", "panel.close", "admin.rootPanel", "admin.userPanel", "admin.auditLog",
-         "admin.sudoTouchID", "usermenu.edit", "validators.edit"].contains(id)
-            || !["go.tree", "go.linktarget", "view.terminal", "view.dirsizes", "server.history"].contains(id)
-            && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term"].contains(String(id.prefix { $0 != "." }))
+        parkedRuns.contains(id) || id.hasPrefix("panel.focus")
+            || !parkedRefuses.contains(id) && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term"].contains(String(id.prefix { $0 != "." }))
     }
+    static let parkedRuns: Set<String> = ["open", "open.inside", "panel.switch", "panel.add", "panel.close", "admin.rootPanel", "admin.userPanel",
+                                          "admin.auditLog", "admin.sudoTouchID", "usermenu.edit", "validators.edit"]
+    static let parkedRefuses: Set<String> = ["go.tree", "go.linktarget", "view.terminal", "view.dirsizes", "server.history"]
 
-    /// Commands that put files into the other panel, or compare with it: not into a parked one's local folder.
-    static let toOther: Set<String> = ["file.copy", "file.move", "panel.compare", "panel.sync", "panel.swap", "panel.same"]
+    /// Commands that put files into the other panel (or suggest it), or compare with it: not into a parked one's local folder.
+    static let toOther: Set<String> = ["file.copy", "file.move", "panel.compare", "panel.sync", "panel.swap", "panel.same", "admin.copy",
+                                       "admin.move", "file.extract", "file.compress", "file.symlink", "file.hardlink"]
 
     private func perform(_ c: Command) {
         if !terminal.isShown {
@@ -1283,7 +1285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         alert.alertStyle = .warning
         buttons.forEach { alert.addButton(withTitle: $0) }
         if let d = `default` {   // a button has one key: ↩ moves to it, off the rest
-            alert.buttons.forEach { $0.keyEquivalent = "" }
+            alert.buttons.forEach { $0.keyEquivalent = $0.title == "Cancel" ? "\u{1b}" : "" }   // a Cancel keeps ⎋
             alert.buttons[d].keyEquivalent = "\r"
         }
         return alert

@@ -34,9 +34,13 @@ private let template = "# sudo_local: local config file which survives system up
     #expect(SudoTouchID.enabled("auth optional pam_reattach.so", template: template) == "auth optional pam_reattach.so\nauth       sufficient     pam_tid.so\n",
             "no newline at the end")
     #expect(SudoTouchID.enabled("# mine\n# auth sufficient pam_tid.so\n", template: template) == "# mine\nauth sufficient pam_tid.so\n")
+    #expect(SudoTouchID.enabled(template + reattach, template: template) == "# sudo_local: local config file which survives system update and is included for sudo\n"
+        + "# uncomment following line to enable Touch ID for sudo\n" + reattach + "auth       sufficient     pam_tid.so\n", "reattach added below the template's line: after it")
 }
 
-/// The one write: the temp file's text into /etc/pam.d/sudo_local, never through a symlink, 0644 if new.
+/// The one write: the text itself into /etc/pam.d/sudo_local (no temp file to swap meanwhile), never through a symlink,
+/// 0644 if new; quoted, whatever the text holds.
 @Test func touchIDWritesSudoLocalOnly() {
-    #expect(SudoTouchID.command(from: "/tmp/x y") == "umask 022 && [ ! -L /etc/pam.d/sudo_local ] && /bin/cat '/tmp/x y' > /etc/pam.d/sudo_local")
+    #expect(SudoTouchID.command(writing: "auth x\n") == "umask 022 && [ ! -L /etc/pam.d/sudo_local ] && /usr/bin/printf '%s' 'auth x\n' > /etc/pam.d/sudo_local")
+    #expect(SudoTouchID.command(writing: "it's $(x) %s\n").contains(#"'it'\''s $(x) %s"#))
 }
