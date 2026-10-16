@@ -53,6 +53,8 @@ To run one command on several servers at once, choose **Run on Servers…** in t
 
 **Services…** asks the server's `systemctl` (systemd's JSON where it has it, its table on an old one). A row is the service's name, its state (`active · running`, `failed`) and its description; failed ones come first, then by name, and typing searches all three. Services systemd only knows by name (`not-found`) are left out.
 
+![Services… on web-01: a failed worker first, then each service with its state and description](images/services.png)
+
 | Key | Does |
 |---|---|
 | ↩ | `systemctl status` in an output window |

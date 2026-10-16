@@ -34,7 +34,7 @@ cat > $APP/Contents/Info.plist <<EOF
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleExecutable</key><string>Kermo</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.1</string>
+  <key>CFBundleShortVersionString</key><string>1.2</string>
   <key>CFBundleVersion</key><string>$(git rev-parse --short HEAD 2>/dev/null || echo dev)$(git diff --quiet HEAD 2>/dev/null || echo +)</string>
   <key>NSHumanReadableCopyright</key><string>© 2026 Palii</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
