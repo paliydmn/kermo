@@ -44,7 +44,7 @@ How to use it:
 - **Unmount:** the volume goes and its disk stays plugged in, so the row turns gray, ready to mount again. Right-click a volume for **Mount**, **Unmount** or **Eject**. **Unmount Volume** is also in ⇧⌘P, for the active panel's volume.
 - **While it runs:** a spinner takes the button's place, and the row takes no second Mount, Unmount or Eject. Before Unmount or Eject, panels on the volume go to your home folder.
 - **When a volume won't go:** the alert names who holds it, for example `Couldn't eject “KINGSTON”: in use by Preview, zsh`. Close the file there and try again.
-- **Which volumes show unmounted:** only external and removable disks, a card in the Mac's reader among them. This Mac's own disk, disk images, network shares, the EFI partition and macOS's service volumes (Preboot, Recovery, VM…) never do. Unmount is offered only for volumes that can be mounted again from here. A disk image's or a share's row has Eject only.
+- **Which volumes show unmounted:** only external and removable disks, a card in the Mac's reader among them. This Mac's own disk, the disk the Mac started from (an external one too), disk images, network shares, the EFI partition and macOS's service volumes (Preboot, Recovery, VM…) never do. On an external macOS disk the mounted system snapshot is listed, not its System volume. Unmount is offered only for volumes that can be mounted again from here. A disk image's or a share's row has Eject only.
 
 ## Search
 
