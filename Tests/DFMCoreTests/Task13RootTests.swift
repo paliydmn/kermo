@@ -244,7 +244,7 @@ static func answering(_ a: Answers, _ body: () throws -> Void) rethrows {
         IFS= read -r pw; echo "Sorry, user me is not allowed to execute '$6' as root on web." >&2; exit 1
         """#)
     let a = Answers(["kermo-test-pw", "kermo-test-pw", "kermo-test-pw"])
-    try Self.answering(a) {
+    Self.answering(a) {
         let e = #expect(throws: SFTPError.self) { try SFTPClient(.local(sudo: fake)) }
         #expect(e?.message == "sudo on localhost refused: Sorry, user me is not allowed to execute '/usr/libexec/sftp-server' as root on web.")
         #expect(a.wrong == [false] && a.taken.isEmpty)

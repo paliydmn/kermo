@@ -19,7 +19,15 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         var reconnect: NSButton?
         var command: String?      // SSH: what to run instead of a login shell, once
         var cwd: String?          // the folder its shell last told (OSC 7); SSH: on the server
-        init(kind: Kind, view: DropTerminalView) { self.kind = kind; self.view = view; view.acceptsLocalPaths = kind == .shell }
+        init(kind: Kind, view: DropTerminalView) {
+            self.kind = kind
+            self.view = view
+            view.acceptsLocalPaths = kind == .shell
+            // Lines pasted by a right-click into a production server, or as root, ask first.
+            if case .ssh(let t) = kind {
+                view.pasteRisk = { SavedServer.isProd(t) ? "\(SavedServer.name(for: t)) (production)" : t.host.hasPrefix("root@") ? t.host : nil }
+            }
+        }
 
         var target: SFTPTarget? { if case .ssh(let t) = kind { t } else { nil } }
         var host: String? { target?.host }
@@ -575,6 +583,65 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
 /// as Terminal does. Only a local tab's: this Mac's paths mean nothing to a server's shell.
 final class DropTerminalView: LocalProcessTerminalView {
     var acceptsLocalPaths = true
+    /// Where several lines pasted by a right-click ask first (`pasteQuestion`): "web1 (production)", "root@web1"; nil:
+    /// nowhere. A shell there that runs each line as it comes, without bracketed paste, would run them all.
+    var pasteRisk: () -> String? = { nil }
+    /// The question (tests answer it): the text, where, the window; true pastes. ↩ is Cancel.
+    static var pasteQuestion: @MainActor (String, String, NSWindow?) async -> Bool = { text, place, window in
+        let lines = text.split(whereSeparator: { $0 == "\n" || $0 == "\r" }).count
+        let a = AppDelegate.alert("Paste \(lines) lines into \(place)?", info: "Its shell runs each line as it arrives.", ["Paste", "Cancel"], default: 1)
+        guard let window else { return a.runModal() == .alertFirstButtonReturn }
+        return await AppDelegate.sheet(a, on: window) == 0
+    }
+    private var upMonitor: Any?   // a selection being dragged: copied once the button is up
+    var pasteboard = NSPasteboard.general   // tests: their own
+
+    // PuTTY's mouse. A selection goes to the clipboard as it's made (`terminalCopyOnSelect`); a right-click pastes
+    // (`terminalRightClickPaste`) — in a program that reads the mouse itself (mc, htop, vim's mouse=a), ⇧-right-click.
+    static func on(_ key: String) -> Bool { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
+
+    override func selectionChanged(source: Terminal) {
+        super.selectionChanged(source: source)
+        guard Self.on("terminalCopyOnSelect") else { return }
+        guard NSEvent.pressedMouseButtons & 1 != 0 else { return copySelection() }   // ⌘A, or made at once
+        guard upMonitor == nil else { return }   // dragging: once, when it ends — not on every move
+        upMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] e in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.dragEnded() } }   // after the view's own mouseUp
+            return e
+        }
+    }
+
+    private func dragEnded() {
+        upMonitor.map(NSEvent.removeMonitor)
+        upMonitor = nil
+        copySelection()
+    }
+
+    /// The selection into the clipboard; nothing selected (a click cleared it): the clipboard stays.
+    func copySelection() {
+        guard let text = getSelection(), !text.isEmpty else { return }
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
+    /// A plain right-click is the program's when it reads the mouse itself; ⇧ pastes there anyway.
+    nonisolated static func rightClickPastes(shift: Bool, programReadsMouse: Bool) -> Bool { shift || !programReadsMouse }
+
+    /// Several lines into a shell that runs each as it comes (no bracketed paste), where that's risky: ask.
+    nonisolated static func pasteAsks(_ text: String, bracketed: Bool, risky: Bool) -> Bool { risky && !bracketed && text.contains { $0 == "\n" || $0 == "\r" } }
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard Self.on("terminalRightClickPaste"),
+              Self.rightClickPastes(shift: event.modifierFlags.contains(.shift), programReadsMouse: allowMouseReporting && getTerminal().mouseMode != .off)
+        else { return super.rightMouseDown(with: event) }
+        window?.makeFirstResponder(self)
+        guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return NSSound.beep() }
+        let risk = pasteRisk(), ask = Self.pasteAsks(text, bracketed: getTerminal().bracketedPasteMode, risky: risk != nil)
+        Task {
+            if ask, let risk, await !Self.pasteQuestion(text, risk, window) { return }
+            paste(self)   // as ⌘V: bracketed when the shell asked for it
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)

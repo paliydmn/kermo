@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var sftpErrors: [String: String] = [:]   // host → its last failure, until any panel gets through
     private var sidebarRefresh: Task<Void, Never>?
     private var activeIndex = 0
+    private var restoredDividers: [Double] = []   // the session's, till the panels are first laid out
     /// Where F5/F6 go: the panel that was active before this one (with 2 panels, simply the other one).
     private weak var target: PanelViewController?
     var quickViewOn = false
@@ -87,16 +88,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         Task { _ = await Blocking.run { GitStatus.available } }   // runs xcode-select: not on the main thread at first use
         DispatchQueue.global(qos: .utility).async { TempCopies.sweep() }
 
-        // Session: each panel's tabs and which one is active.
-        let legacy = defaults.stringArray(forKey: "panelPaths")?.map { [$0] }
-        let tabs = (defaults.array(forKey: "panelTabs") as? [[String]]) ?? legacy ?? [[NSHomeDirectory()], ["/"]]
-        let indices = defaults.array(forKey: "panelTabIndex") as? [Int] ?? [0, 0]
+        // Session: each panel's tabs (a server's parked: no connection without a click), the active one, the dividers.
+        let session = Session.load(defaults)
         let showHidden = defaults.bool(forKey: "showHidden")
-        panels = (0..<min(max(tabs.count, 2), 4)).map { i in
-            PanelViewController(tabs: tabs.indices.contains(i) ? tabs[i] : ["/"], index: indices.indices.contains(i) ? indices[i] : 0,
-                                showHidden: showHidden)
+        panels = (0..<min(max(session.panels.count, 2), 4)).map { i in
+            let p = session.panels.indices.contains(i) ? session.panels[i] : Session.Panel(tabs: [Session.Tab(path: "/")], index: 0)
+            return PanelViewController(session: p.tabs, index: p.index, showHidden: showHidden)
         }
         panels.forEach(wire)
+        activeIndex = min(max(session.active, 0), panels.count - 1)
+        restoredDividers = session.dividers
 
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 750),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -121,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         setUpSidebar()
         setUpSearch()
         window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(panels[0].table)
+        window.makeFirstResponder(active.table)
         updatePanelStates()
         updatePrompt()
         tunnels.startSaved(savedServers)
@@ -197,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationDidBecomeActive(_ notification: Notification) { tunnels.sayHeldNote() }
 
     func applicationWillTerminate(_ notification: Notification) {
+        saveSession()   // the cursors, the active panel, the dividers: none of them saves it as it changes
         Config.save("frecency.json", frecency)
         tunnels.stopAll()   // first: a client connecting now would start a login
         for t in SFTP.masterTargets { SFTP.stopMaster(t, now: true) }   // no logged-in connection outlives the app
@@ -318,9 +320,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    private func saveSession() {
-        defaults.set(panels.map(\.tabPaths), forKey: "panelTabs")
-        defaults.set(panels.map(\.tabIndex), forKey: "panelTabIndex")
+    private func saveSession() { session.save(defaults) }
+
+    /// What a restart brings back.
+    var session: Session {
+        let w = split?.bounds.width ?? 0
+        return Session(panels: panels.map { Session.Panel(tabs: $0.sessionTabs, index: $0.tabIndex) }, active: activeIndex,
+                       dividers: w > 0 ? panels.dropLast().map { Double($0.view.frame.maxX / w) } : [])
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -358,7 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         panel.onPathChange = { [unowned self, unowned panel] in
             saveSession()
             updatePrompt()
-            if panel.remote == nil { recordVisit(panel.path) }
+            if panel.remote == nil && panel.parked == nil { recordVisit(panel.path) }   // a parked tab's folder isn't on screen
             // Frequent re-ranks a moment later, so the list doesn't jump while you're browsing.
             sidebarRefresh?.cancel()
             sidebarRefresh = Task { [weak self] in
@@ -427,10 +433,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         releaseIdleServers()    // nor their connections kept 10 minutes for nobody
     }
 
+    /// Even widths; at launch, the dividers where they were (`restoredDividers`).
     private func equalizePanels() {
+        let saved = restoredDividers
+        restoredDividers = []
         DispatchQueue.main.async { [self] in
-            let w = split.bounds.width / CGFloat(panels.count)
-            for i in 0..<panels.count - 1 { split.setPosition(w * CGFloat(i + 1), ofDividerAt: i) }
+            for (i, f) in Session.dividers(saved, panels: panels.count).enumerated() { split.setPosition(split.bounds.width * f, ofDividerAt: i) }
         }
     }
 
@@ -579,7 +587,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// The sidebar row of where you are: the terminal's tab, the active panel's server tab, or its folder.
     private var sidebarKey: String? {
         if terminal.isShown { return terminal.current?.id.uuidString }
-        return active.remoteTabs.first(where: \.isCurrent)?.id.uuidString ?? active.path
+        return active.remoteTabs.first(where: \.isCurrent)?.id.uuidString ?? (active.parked == nil ? active.path : nil)   // parked: no row is it
     }
 
     func refreshSidebar() {
@@ -776,7 +784,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         savedServers[i].prod = on
         Config.save("servers.json", savedServers)
         refreshSidebar()
-        panels.filter { $0.remote != nil }.forEach { $0.showPath() }   // not an archive's or search's header
+        panels.filter { $0.remote != nil || $0.parked != nil }.forEach { $0.showPath() }   // not an archive's or search's header
     }
 
     /// A menu item that asks for Touch ID first if the server is locked.
@@ -879,7 +887,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                                          "git.log", "git.blame", "git.stage", "git.unstage", "admin.copy", "admin.move", "admin.mkdir", "admin.delete", "admin.shell",
                                          "git.switch", "git.newBranch", "git.commit", "git.sync", "git.publish", "git.pull", "git.push", "git.fetch", "git.init"]
 
+    /// What runs on a parked server tab (`PanelViewController.parked`): going elsewhere, tabs, panels, the view, the
+    /// app's windows; ↩ connects. The rest would act on the local folder behind it.
+    static func runsParked(_ id: String) -> Bool {
+        parkedRuns.contains(id) || id.hasPrefix("panel.focus")
+            || !parkedRefuses.contains(id) && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term"].contains(String(id.prefix { $0 != "." }))
+    }
+    static let parkedRuns: Set<String> = ["open", "open.inside", "panel.switch", "panel.add", "panel.close", "admin.rootPanel", "admin.userPanel",
+                                          "admin.auditLog", "admin.sudoTouchID", "usermenu.edit", "validators.edit"]
+    static let parkedRefuses: Set<String> = ["go.tree", "go.linktarget", "view.terminal", "view.dirsizes", "server.history"]
+
+    /// Commands that put files into the other panel (or suggest it), or compare with it: not into a parked one's local folder.
+    static let toOther: Set<String> = ["file.copy", "file.move", "panel.compare", "panel.sync", "panel.swap", "panel.same", "admin.copy",
+                                       "admin.move", "file.extract", "file.compress", "file.symlink", "file.hardlink"]
+
     private func perform(_ c: Command) {
+        if !terminal.isShown {
+            if let hint = active.parkedHint, !Self.runsParked(c.id) { return active.flash(hint) }
+            if let hint = other.parkedHint, Self.toOther.contains(c.id) { return active.flash("The other panel: " + hint) }
+        }
         if active.remote != nil, !terminal.isShown, Self.localOnly.contains(c.id) { return active.flash("Not available on a server panel") }
         c.run(self)
         keyBar.commandRan(c.id)
@@ -1098,10 +1124,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let remote: (host: String, dir: String?)?
         var local = active.path
         if terminal?.isShown == true, let t = terminal.current { remote = t.host.map { ($0, t.cwd) }; local = t.folder ?? local }
-        else { remote = active.remote.map { ($0.target.host, $0.dir) } }
+        else { remote = (active.remote ?? active.parked).map { ($0.target.host, $0.dir) } }
         let path = remote.map { r in r.dir.map { "\(r.host):\($0)" } ?? r.host } ?? (local as NSString).abbreviatingWithTildeInPath
         promptLabel.stringValue = (remote != nil ? "🌐 " : "") + path + " $"   // ⌘E runs as the user, on a root panel too
-        let root = terminal?.isShown == true ? nil : active.remote.flatMap { $0.target.sudo ? $0 : nil }
+        let root = terminal?.isShown == true ? nil : (active.remote ?? active.parked).flatMap { $0.target.sudo ? $0 : nil }
         cmdField.placeholderString = Self.commandHint(root: root?.target)
         sidebar.highlight(sidebarKey)
         updateGitRow()
@@ -1161,6 +1187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func runCommandLine(in dest: ShellWhere) {
         let command = cmdField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !command.isEmpty else { return }
+        if let hint = active.parkedHint { return active.flash(hint) }   // it'd run in the local folder behind it
         var h = history
         h.removeAll { $0 == command }
         h.append(command)
@@ -1258,7 +1285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         alert.alertStyle = .warning
         buttons.forEach { alert.addButton(withTitle: $0) }
         if let d = `default` {   // a button has one key: ↩ moves to it, off the rest
-            alert.buttons.forEach { $0.keyEquivalent = "" }
+            alert.buttons.forEach { $0.keyEquivalent = $0.title == "Cancel" ? "\u{1b}" : "" }   // a Cancel keeps ⎋
             alert.buttons[d].keyEquivalent = "\r"
         }
         return alert

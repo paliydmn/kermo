@@ -39,3 +39,47 @@ public enum AdminCommand {
         ["-e", "on run argv", "-e", "do shell script (item 1 of argv) with administrator privileges", "-e", "end run", command]
     }
 }
+
+/// Touch ID for sudo in Terminal: `pam_tid.so` in /etc/pam.d/sudo_local, which /etc/pam.d/sudo includes (macOS 14 and
+/// later) and macOS updates leave alone — they reset `sudo` itself.
+public enum SudoTouchID {
+    public static let file = "/etc/pam.d/sudo_local"
+
+    public enum State: Equatable, Sendable { case on, off, noFile }
+
+    /// `text`: sudo_local's, nil when there's none. On: an `auth … pam_tid.so` line not commented out.
+    public static func state(_ text: String?) -> State {
+        guard let text else { return .noFile }
+        return text.split(whereSeparator: \.isNewline).contains { isTouchID($0) } ? .on : .off
+    }
+
+    private static func isTouchID(_ line: Substring) -> Bool {
+        let f = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+        return f.count >= 3 && f[0] == "auth" && f[2].contains("pam_tid.so")
+    }
+
+    /// sudo_local with Touch ID on: the file as it is (none: the template), its commented-out pam_tid line uncommented,
+    /// the rest as it was. No such line, or pam_reattach (tmux) below it, which must come first: the line goes at the end.
+    public static func enabled(_ current: String?, template: String) -> String {
+        var lines = (current ?? template).components(separatedBy: "\n")
+        let commented = lines.firstIndex { l in
+            let t = l.drop { $0 == " " || $0 == "\t" }
+            return t.hasPrefix("#") && isTouchID(t.drop { $0 == "#" || $0 == " " || $0 == "\t" })
+        }
+        if let i = commented, !lines[(i + 1)...].contains(where: { !$0.drop { $0 == " " || $0 == "\t" }.hasPrefix("#") && $0.contains("pam_reattach") }) {
+            lines[i] = String(lines[i].drop { $0 == " " || $0 == "\t" || $0 == "#" })
+        } else {
+            if let i = commented { lines.remove(at: i) }
+            lines.insert("auth       sufficient     pam_tid.so", at: lines.last == "" ? lines.count - 1 : lines.count)
+        }
+        let text = lines.joined(separator: "\n")
+        return text.hasSuffix("\n") ? text : text + "\n"
+    }
+
+    /// Run as root: `text` into sudo_local, never through a symlink; a new file is 0644 whatever the umask (PAM refuses
+    /// one others can write). The text is in the command itself (osascript's argv): a temp file of the user's could be
+    /// changed by anything running as them while macOS asks for the password.
+    public static func command(writing text: String) -> String {
+        "umask 022 && [ ! -L \(file) ] && /usr/bin/printf '%s' \(ShellContext.quote(text)) > \(file)"
+    }
+}

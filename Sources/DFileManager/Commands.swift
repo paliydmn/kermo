@@ -237,6 +237,9 @@ extension AppDelegate {
         cmd("admin.shell", "Root Shell Here (Terminal)", [], menu: "Admin", aliases: "root sudo") { $0.runShell("sudo -s", in: .terminalApp) },
         cmd("admin.rootPanel", "Reopen Panel as Root", ["ctrl+cmd+r"], menu: "Admin", short: "As root", aliases: "root sudo server etc") { $0.reopenPanel(asRoot: true) },
         cmd("admin.userPanel", "Reopen Panel as User", ["ctrl+shift+cmd+r"], menu: "Admin", short: "As user", aliases: "root sudo server user") { $0.reopenPanel(asRoot: false) },
+        cmd("admin.sudoTouchID", "Enable Touch ID for sudo", [], menu: "Admin", aliases: "touch id fingerprint sudo terminal pam tid password") {
+            $0.enableSudoTouchID()
+        },
         cmd("admin.auditLog", "Show Production Log", [], menu: "Admin", aliases: "audit journal prod history") { $0.showAuditLog() },
         cmd("server.runOn", "Run on Servers…", [], menu: "Admin", short: "Run on servers", aliases: "ssh command several many all servers parallel pssh") {
             $0.runOnServers()
@@ -317,12 +320,54 @@ extension AppDelegate {
     }
 
     /// The server panel's folder again as root (its sudo there: `SFTPTarget.sudo`), or as its user. Only ever on purpose:
-    /// nothing pasted, dropped or restored opens one as root. A locked server asks as for any connection.
+    /// nothing pasted, dropped or restored opens one as root (a restored root tab is parked: ↩ there connects). A locked server asks as for any connection.
     func reopenPanel(asRoot: Bool) {
         let panel = active
+        if let p = panel.parked { return panel.connectParked(p.target.asRoot(asRoot)) }   // a restored tab: connects so
         guard let r = panel.remote else { return panel.flash("Reopen Panel as \(asRoot ? "Root" : "User") is for a server's panel: connect first (⌃⌘K)") }
         guard r.target.sudo != asRoot else { return panel.flash(asRoot ? "This panel is root already — ⌃⇧⌘R reopens it as the user" : "This panel is its user's already — ⌃⌘R reopens it as root") }
         panel.loadRemote(r.target.asRoot(asRoot), dir: r.dir, select: panel.currentName)
+    }
+
+    /// Where Enable Touch ID for sudo reads sudo_local and its template (tests: a copy), and what runs its write as root
+    /// (tests: a stand-in — the real one asks for the password and writes /etc/pam.d).
+    static var pamDir = "/etc/pam.d"
+    static var runAsAdmin: (String) async -> Admin.Outcome = Admin.run
+
+    /// Admin ▸ Enable Touch ID for sudo: pam_tid in /etc/pam.d/sudo_local, after a question and macOS's password.
+    func enableSudoTouchID() {
+        let dir = Self.pamDir, panel = active
+        Task {
+            let read = await Blocking.run(.userInitiated) { () -> Result<(String?, String?, Bool), Error> in
+                Result {
+                    let file = dir + "/sudo_local"
+                    var st = stat()
+                    let there = lstat(file, &st) == 0, link = there && st.st_mode & S_IFMT == S_IFLNK   // the write refuses a link
+                    let current = there && !link ? try String(contentsOfFile: file, encoding: .utf8) : nil
+                    return (current, try? String(contentsOfFile: dir + "/sudo_local.template", encoding: .utf8), link)
+                }
+            }
+            guard case .success(let (current, template, link)) = read else {   // there but not readable: never written over
+                return panel.flash("Can't read \(dir)/sudo_local", error: true)
+            }
+            if link { return panel.flash("\(dir)/sudo_local is a symlink, kept by something else: Kermo leaves it alone", error: true) }
+            if SudoTouchID.state(current) == .on { return panel.flash("Touch ID for sudo is already on") }
+            guard current != nil || template != nil else {
+                return panel.flash("No \(dir)/sudo_local.template on this Mac: Touch ID for sudo needs macOS 14 or later", error: true)
+            }
+            guard await choose("Let sudo in Terminal use Touch ID?",
+                               info: "Kermo writes \(SudoTouchID.file) (survives macOS updates); macOS asks for your password.",
+                               ["Enable", "Cancel"]) == 0 else { return }
+            let text = SudoTouchID.enabled(current, template: template ?? "")
+            switch await Self.runAsAdmin(SudoTouchID.command(writing: text)) {
+            case .ok:
+                let now = await Blocking.run(.userInitiated) { try? String(contentsOfFile: dir + "/sudo_local", encoding: .utf8) }
+                if now == text { panel.flash("Touch ID for sudo is on — new Terminal windows use it") }
+                else { panel.flash("Touch ID for sudo didn't turn on: \(dir)/sudo_local isn't what Kermo wrote", error: true) }
+            case .cancelled: break
+            case .failed(let msg): panel.flash("Couldn't turn on Touch ID for sudo: \(msg)", error: true)
+            }
+        }
     }
 
     /// Symlinks the bundled `fm` script into /usr/local/bin (asks for a password if that folder is root's).
@@ -454,7 +499,7 @@ extension AppDelegate {
             return ShellContext(dir: r.dir, otherDir: other.remote?.target.asUser == r.target.asUser ? other.remote?.dir : nil,
                                 cursor: active.remoteCursor?.item.name, targets: active.remoteSelection?.items.map(\.name) ?? [])
         }
-        return ShellContext(dir: active.path, otherDir: other.remote == nil ? other.path : nil, cursor: active.cursorURL?.lastPathComponent,
+        return ShellContext(dir: active.path, otherDir: other.remote == nil && other.parked == nil ? other.path : nil, cursor: active.cursorURL?.lastPathComponent,
                             targets: active.targetURLs.map(\.lastPathComponent))
     }
 
@@ -573,7 +618,7 @@ extension AppDelegate {
 
     /// ⌘D: this folder — on a server, that server's folder — in Favorites, or out again.
     func toggleBookmark() {
-        let p = active.remote.map { Bookmark.entry($0.target, $0.dir) } ?? active.path
+        let p = (active.remote ?? active.parked).map { Bookmark.entry($0.target, $0.dir) } ?? active.path   // what the header says
         if let i = bookmarks.firstIndex(of: p) {
             bookmarks.remove(at: i)
             active.flash("☆ Removed bookmark")
@@ -718,6 +763,7 @@ extension AppDelegate {
 
     /// `name` prefills the name field (toolbar search's "Search … on disk").
     func searchDialog(name prefill: String? = nil) {
+        if let hint = active.parkedHint { return active.flash(hint) }   // ⇧⌘P's "on disk" comes here directly
         if let prefill { defaults.set(prefill, forKey: "searchName") }
         let name = NSTextField(string: defaults.string(forKey: "searchName") ?? "")
         name.placeholderString = "name: text, *.glob;*.glob or re:regex — empty = any"
@@ -1301,15 +1347,15 @@ extension AppDelegate {
             let items = versions.enumerated().map { i, v in
                 let url = URL(fileURLWithPath: v.path), when = when(v)
                 let view: @MainActor () -> Void = { Viewer.show(url) }
-                let diff: @MainActor () -> Void = { [unowned self] in
+                let diff: @MainActor () -> Void = { [self] in
                     let there = DiffSide(path: path, server: target, size: now?.size ?? 0, mtime: now?.mtime ?? 0, look: now == nil)
                     Task { await self.diff(side(v), there, in: panel) }
                 }
-                let diffBefore: @MainActor () -> Void = { [unowned self] in   // newest first: the one before is next
+                let diffBefore: @MainActor () -> Void = { [self] in   // newest first: the one before is next
                     guard versions.indices.contains(i + 1) else { return panel.flash("That's the oldest version kept: nothing before it to compare") }
                     Task { await self.diff(side(versions[i + 1]), side(v), in: panel) }
                 }
-                let revert: @MainActor () -> Void = { [unowned self] in
+                let revert: @MainActor () -> Void = { [self] in
                     let state = RemoteEdit(baseline: now ?? .nothing)
                     Task {
                         guard await upload(url, to: path, on: target, state, action: "revert") else { return }
@@ -1663,8 +1709,7 @@ extension AppDelegate {
             let shown = (dest as NSString).abbreviatingWithTildeInPath
             let args = ["-x", "-f", file, "-C", staging ?? dest]
             Shell.run("/usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dest,
-                      title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)") { [weak self] status in
-                guard let self else { return }
+                      title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)") { [self] status in
                 guard let staging else { return panels.forEach { $0.reload() } }
                 Task {
                     // stopped (⎋) or failed: half an archive doesn't land in `dest`; the window says what tar said
@@ -1879,7 +1924,7 @@ extension AppDelegate {
             guard volumeBusy.insert(vol.path).inserted else { return active.flash("“\(name)”: one thing at a time") }
             refreshSidebar()
             // Don't leave panels sitting on it (their watchers use O_EVTONLY, which doesn't block unmount).
-            for p in panels where p.path == vol.path || p.path.hasPrefix(vol.path + "/") { p.navigate(to: NSHomeDirectory()) }
+            for p in panels where p.parked == nil && (p.path == vol.path || p.path.hasPrefix(vol.path + "/")) { p.navigate(to: NSHomeDirectory()) }   // a parked one shows nothing of it
             active.flash((unmount ? "Unmounting" : "Ejecting") + " “\(name)”…")
             var error: Error?
             if unmount {

@@ -61,8 +61,9 @@ private func onServer(_ dir: String, at remoteDir: String) async throws -> Panel
     defer { try? FileManager.default.removeItem(atPath: dir) }
     let saved = PanelViewController.confirmLeaving
     defer { PanelViewController.confirmLeaving = saved }
-    var asked: [String] = [], answer = false
-    PanelViewController.confirmLeaving = { target, back, _ in asked.append("\(target.host) \(back)"); return answer }
+    var asked: [String] = []
+    let answer = Later(false)
+    PanelViewController.confirmLeaving = { target, back, _ in asked.append("\(target.host) \(back)"); return answer.value }
 
     let panel = try await onServer(dir, at: "/usr")
     defer { panel.shutdown() }
@@ -75,7 +76,7 @@ private func onServer(_ dir: String, at remoteDir: String) async throws -> Panel
     try await Task.sleep(for: .milliseconds(100))
     #expect(asked == ["localhost \(dir)"] && panel.remote?.dir == "/" && panel.tabPaths.count == 1)
 
-    answer = true
+    answer.value = true
     panel.goUp()   // Disconnect
     await waitUntil { panel.remote == nil }
     #expect(asked.count == 2 && panel.remote == nil && panel.path == dir && panel.tabPaths.count == 1)

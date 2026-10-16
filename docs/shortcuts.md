@@ -102,6 +102,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Server panel as root / as its user again | ⌃⌘R / ⌃⇧⌘R |
 | Replace the panels with the terminal (the panel follows `cd`); press ⌃O twice quickly to send ⌃O to the terminal | ⌃O |
 | Terminal text bigger / smaller | ⌘+ or ⌘= / ⌘− |
+| Terminal: selecting copies; a right-click pastes (⇧-right-click in mc, htop and the like) | select / right-click |
 | User command menu / command line | F2, ⌥2 / ⌘E |
 | Insert the cursor's name / the marked items' full paths into the command line, or into the shell while the terminal is open | ⌃↩ / ⌃⇧↩ |
 
