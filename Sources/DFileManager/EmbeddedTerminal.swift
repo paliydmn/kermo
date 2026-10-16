@@ -25,7 +25,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             view.acceptsLocalPaths = kind == .shell
             // Lines pasted by a right-click into a production server, or as root, ask first.
             if case .ssh(let t) = kind {
-                view.pasteRisk = { SavedServer.isProd(t) ? "\(t.host) (production)" : t.host.hasPrefix("root@") ? t.host : nil }
+                view.pasteRisk = { SavedServer.isProd(t) ? "\(SavedServer.name(for: t)) (production)" : t.host.hasPrefix("root@") ? t.host : nil }
             }
         }
 

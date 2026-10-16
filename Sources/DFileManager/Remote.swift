@@ -61,6 +61,10 @@ struct SavedServer: Codable, Equatable {
     static let mark = "🟣 PROD "
 
     /// A saved server at this address (user@host:port) is tagged production.
+    /// A saved server's name for `t`, else its address: what questions and hints call it.
+    @MainActor static func name(for t: SFTPTarget) -> String {
+        ServerLock.servers().first { !$0.name.isEmpty && SSHPasswords.sameKey($0.target, t) }?.name ?? t.shown
+    }
     @MainActor static func isProd(_ t: SFTPTarget) -> Bool { ServerLock.servers().contains { $0.prod && SSHPasswords.sameKey($0.target, t) } }
 
     /// A server file's editor title: "web:/etc/nginx/nginx.conf", "🟣 PROD web:/…" on a production server, "root@web:/… #"

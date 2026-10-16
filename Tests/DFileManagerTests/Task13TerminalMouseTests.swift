@@ -46,12 +46,13 @@ extension ServerLockTests {
 @Test func whereAPasteOfSeveralLinesAsks() {
     var prod = SavedServer(address: "deploy@web1.invalid")!
     prod.prod = true
+    prod.name = "web1"
     ServerLock.servers = { [prod] }
     defer { ServerLock.servers = { [] } }
     func risk(_ k: EmbeddedTerminal.Kind) -> String? {
         EmbeddedTerminal.Tab(kind: k, view: DropTerminalView(frame: .zero)).view.pasteRisk()
     }
-    #expect(risk(.ssh(prod.target)) == "deploy@web1.invalid (production)")
+    #expect(risk(.ssh(prod.target)) == "web1 (production)", "by its saved name")
     #expect(risk(.ssh(SFTPTarget(host: "root@db.invalid"))) == "root@db.invalid")
     #expect(risk(.ssh(SFTPTarget(host: "me@db.invalid"))) == nil)
     #expect(risk(.shell) == nil)
