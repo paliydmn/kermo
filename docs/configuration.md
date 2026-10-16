@@ -58,6 +58,8 @@ Set an option with `defaults write com.dmn.dfilemanager <key> <value>`. Remove i
 | `terminalFont` | font name | SF Mono | Font of the [terminal](terminal.md#options) |
 | `terminalFontSize` | points | 13 | Its size, 9–36 (⌘+ / ⌘− save it) |
 | `terminalOptionIsMeta` | `-bool` | `true` | ⌥ is Meta in the terminal; `false` lets ⌥ type your layout's characters |
+| `terminalCopyOnSelect` | `-bool` | `true` | Text selected in the terminal goes to the clipboard at once, as in PuTTY; `false`: only ⌘C copies |
+| `terminalRightClickPaste` | `-bool` | `true` | A right-click in the terminal pastes, as in PuTTY (⇧-right-click in mc, htop and the like); `false`: it doesn't |
 | `terminalBundleID` | bundle id | `com.apple.Terminal` | App used by ⌥⌘T and ⌘↩, for example `com.googlecode.iterm2` |
 | `editorBundleID` | bundle id | built-in editor | External editor used instead of the [built-in one](viewer-editor.md) for files on this Mac (server files always open in the built-in editor) |
 | `editorFinalNewline` | `-bool` | config files only | Whether new editor windows end saved text with a newline; **File ▸ Ensure Final Newline** overrides it per window |
