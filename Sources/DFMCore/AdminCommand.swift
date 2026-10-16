@@ -39,3 +39,43 @@ public enum AdminCommand {
         ["-e", "on run argv", "-e", "do shell script (item 1 of argv) with administrator privileges", "-e", "end run", command]
     }
 }
+
+/// Touch ID for sudo in Terminal: `pam_tid.so` in /etc/pam.d/sudo_local, which /etc/pam.d/sudo includes (macOS 14 and
+/// later) and macOS updates leave alone — they reset `sudo` itself.
+public enum SudoTouchID {
+    public static let file = "/etc/pam.d/sudo_local"
+
+    public enum State: Equatable, Sendable { case on, off, noFile }
+
+    /// `text`: sudo_local's, nil when there's none. On: an `auth … pam_tid.so` line not commented out.
+    public static func state(_ text: String?) -> State {
+        guard let text else { return .noFile }
+        return text.split(whereSeparator: \.isNewline).contains { isTouchID($0) } ? .on : .off
+    }
+
+    private static func isTouchID(_ line: Substring) -> Bool {
+        let f = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+        return f.count >= 3 && f[0] == "auth" && f[2].contains("pam_tid.so")
+    }
+
+    /// sudo_local with Touch ID on: the file as it is (none: the template), its commented-out pam_tid line uncommented,
+    /// the rest as it was. No such line: it's added at the end — after pam_reattach (tmux), which must come first.
+    public static func enabled(_ current: String?, template: String) -> String {
+        var lines = (current ?? template).components(separatedBy: "\n")
+        let commented = lines.firstIndex { l in
+            let t = l.drop { $0 == " " || $0 == "\t" }
+            return t.hasPrefix("#") && isTouchID(t.drop { $0 == "#" || $0 == " " || $0 == "\t" })
+        }
+        if let i = commented {
+            lines[i] = String(lines[i].drop { $0 == " " || $0 == "\t" || $0 == "#" })
+        } else {
+            lines.insert("auth       sufficient     pam_tid.so", at: lines.last == "" ? lines.count - 1 : lines.count)
+        }
+        let text = lines.joined(separator: "\n")
+        return text.hasSuffix("\n") ? text : text + "\n"
+    }
+
+    /// Run as root: `temp`'s text into sudo_local, never through a symlink (`AdminCommand.writeContents`); a new file
+    /// is 0644 whatever the umask — PAM refuses one others can write.
+    public static func command(from temp: String) -> String { "umask 022 && " + AdminCommand.writeContents(from: temp, to: file) }
+}
