@@ -169,6 +169,7 @@ extension ServerLockTests {
 @Test func returnOnAParkedTabConnects() async throws {
     var local = SavedServer(address: "localhost")!
     local.locked = true
+    local.name = "k13 box"
     var asked = 0, answer = false
     ServerLock.servers = { [local] }
     ServerLock.authenticate = { _ in asked += 1; return answer }
@@ -181,6 +182,7 @@ extension ServerLockTests {
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
     func settle() async { for _ in 0..<250 where panel.busyMessage != nil { try? await Task.sleep(for: .milliseconds(20)) } }
+    #expect(panel.parkedHint == "Not connected — ↩ connects to k13 box", "a saved server by its name")
     panel.openCursor(intoPackage: false)
     await settle()
     #expect(asked == 1 && panel.remote == nil && panel.parked != nil)

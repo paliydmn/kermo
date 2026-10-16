@@ -174,8 +174,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// Connect does: a locked server asks first). Nothing is asked of the server till then, and it isn't an open
     /// session (`remoteTabs`); any other way out goes to `path`, the tab's local folder.
     private(set) var parked: (target: SFTPTarget, dir: String)? { didSet { styleHeader() } }
-    /// What a parked panel says to whatever would act on its files.
-    var parkedHint: String? { parked.map { "Not connected — ↩ connects to \($0.target.shown)".bidiVisible } }
+    /// What a parked panel says to whatever would act on its files: the server by its saved name, else its address.
+    var parkedHint: String? {
+        parked.map { p in
+            let name = ServerLock.servers().first { !$0.name.isEmpty && SSHPasswords.sameKey($0.target, p.target) }?.name ?? p.target.shown
+            return "Not connected — ↩ connects to \(name)".bidiVisible
+        }
+    }
     /// A server being connected to (first listing still running), for the sidebar.
     private(set) var connecting: SFTPTarget? { didSet { if connecting != oldValue { onSessionsChange?() } } }
     var onSessionsChange: (() -> Void)?

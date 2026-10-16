@@ -364,7 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         panel.onPathChange = { [unowned self, unowned panel] in
             saveSession()
             updatePrompt()
-            if panel.remote == nil { recordVisit(panel.path) }
+            if panel.remote == nil && panel.parked == nil { recordVisit(panel.path) }   // a parked tab's folder isn't on screen
             // Frequent re-ranks a moment later, so the list doesn't jump while you're browsing.
             sidebarRefresh?.cancel()
             sidebarRefresh = Task { [weak self] in
