@@ -317,9 +317,10 @@ extension AppDelegate {
     }
 
     /// The server panel's folder again as root (its sudo there: `SFTPTarget.sudo`), or as its user. Only ever on purpose:
-    /// nothing pasted, dropped or restored opens one as root. A locked server asks as for any connection.
+    /// nothing pasted, dropped or restored opens one as root (a restored root tab is parked: ↩ there connects). A locked server asks as for any connection.
     func reopenPanel(asRoot: Bool) {
         let panel = active
+        if let p = panel.parked { return panel.connectParked(p.target.asRoot(asRoot)) }   // a restored tab: connects so
         guard let r = panel.remote else { return panel.flash("Reopen Panel as \(asRoot ? "Root" : "User") is for a server's panel: connect first (⌃⌘K)") }
         guard r.target.sudo != asRoot else { return panel.flash(asRoot ? "This panel is root already — ⌃⇧⌘R reopens it as the user" : "This panel is its user's already — ⌃⌘R reopens it as root") }
         panel.loadRemote(r.target.asRoot(asRoot), dir: r.dir, select: panel.currentName)

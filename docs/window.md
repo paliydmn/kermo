@@ -10,6 +10,18 @@ How the Kermo window is laid out, and the three ways to reach anything: the key 
 
 The window shows two to four panels side by side, each with its own tabs. Tab moves between panels. With three or four panels, F5 and F6 target the panel that was active before this one. A panel can show a folder on this Mac, a [server](servers.md), an archive, a Git list or search results.
 
+### After a restart
+
+Kermo comes back as you left it: each panel's tabs and the one in front, the active panel, each tab's cursor (on the same name; on the first row if that item is gone) and the dividers between the panels. Filters, Back / Forward history and marks start clean.
+
+A server tab comes back **not connected**. Its header says where it was (`🌐 web1:/etc/nginx`, `#` at the end for a root panel), and its only row says `Not connected — ↩ connects to web1`. Nothing is sent to any server until you ask, production and locked ones included:
+
+- **↩** or a double-click connects, as Connect does: a locked server asks for Touch ID first, and the cursor goes back to its name. A root tab connects as root; ⌃⌘R / ⌃⇧⌘R choose root or the user instead.
+- ⌘↑ or ⌫ goes to the tab's folder on this Mac; the sidebar, ⌘L and the like go where you point, as on a local tab.
+- The F-keys, the command line and anything else that would act on the files say `Not connected — ↩ connects to web1` and do nothing; so do copies and moves into it from the other panel.
+
+SSH tabs in the terminal come back the same way: ↩ reconnects them ([Terminal](terminal.md)).
+
 ## Key bar
 
 The bottom row shows F1–F10. Hold ⇧, ⌥, ⌘ or ⌃ (or a combination such as ⇧⌘ or ⌃⌘) for a moment and it shows every shortcut that uses those modifiers.
