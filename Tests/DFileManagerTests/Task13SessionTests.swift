@@ -3,7 +3,7 @@ import AppKit
 import Testing
 @testable import DFileManager
 
-// Task 13 (В6): what a restart brings back.
+// Task 13 (В6, В7): what a restart brings back, and Touch ID for sudo.
 
 @MainActor private func waitUntil(_ done: () -> Bool) async {
     for _ in 0..<500 { if done() { return }; try? await Task.sleep(for: .milliseconds(10)) }
@@ -130,7 +130,7 @@ private func scratchDefaults() -> (UserDefaults, String) {
 /// On a parked tab only what doesn't touch its files runs; the rest says ↩ connects. Every id named there is a command.
 @MainActor @Test func aParkedTabRunsOnlyWhatLeavesItsFilesAlone() {
     for id in ["open", "open.inside", "go.home", "go.connect", "go.path", "tab.new", "tab.next", "view.hidden", "view.refresh",
-               "panel.switch", "admin.rootPanel", "app.palette", "server.services"] {
+               "panel.switch", "admin.rootPanel", "admin.sudoTouchID", "app.palette", "server.services"] {
         #expect(AppDelegate.runsParked(id), "\(id)")
     }
     for id in ["file.copy", "file.move", "file.mkdir", "file.new", "file.delete", "file.edit", "edit.pasteMove", "mark.toggle",
@@ -139,7 +139,7 @@ private func scratchDefaults() -> (UserDefaults, String) {
     }
     let ids = Set(AppDelegate().makeCommands().map(\.id))
     for id in ["open", "open.inside", "panel.switch", "panel.add", "panel.close", "admin.rootPanel", "admin.userPanel", "admin.auditLog",
-               "usermenu.edit", "validators.edit", "go.tree", "go.linktarget", "view.terminal", "view.dirsizes",
+               "admin.sudoTouchID", "usermenu.edit", "validators.edit", "go.tree", "go.linktarget", "view.terminal", "view.dirsizes",
                "server.history"] + AppDelegate.toOther {
         #expect(ids.contains(id), "\(id)")
     }
@@ -179,5 +179,54 @@ extension ServerLockTests {
     rootPanel.openCursor(intoPackage: false)
     await waitUntil { rootPanel.remote != nil }
     #expect(rootPanel.remote?.target == root && rootPanel.remote?.target.sudo == true)
+}
+
+/// Enable Touch ID for sudo: asks, then writes sudo_local from the template with pam_tid uncommented — the command is
+/// the one write to /etc/pam.d/sudo_local and nothing else. On already: says so, asks nothing. Cancel: nothing runs.
+@Test func touchIDForSudoAsksThenWritesSudoLocalOnly() async throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let template = "# sudo_local: local config file which survives system update and is included for sudo\n"
+        + "# uncomment following line to enable Touch ID for sudo\n#auth       sufficient     pam_tid.so\n"
+    try Data(template.utf8).write(to: URL(fileURLWithPath: d + "/sudo_local.template"))
+    var asked: [(String, [String], Int?)] = [], ran: [String] = [], written: [String] = [], temps: [String] = []
+    let (dir, admin) = (AppDelegate.pamDir, AppDelegate.runAsAdmin)
+    AppDelegate.pamDir = d
+    AppDelegate.runAsAdmin = { command in   // as the real write would: the temp file's text into (the copy's) sudo_local
+        ran.append(command)
+        guard let r = command.range(of: "/bin/cat "), let end = command.range(of: " > ", range: r.upperBound..<command.endIndex) else { return .failed("?") }
+        let tmp = String(command[r.upperBound..<end.lowerBound])
+        temps.append(tmp)
+        let text = (try? String(contentsOfFile: tmp, encoding: .utf8)) ?? ""
+        written.append(text)
+        try? Data(text.utf8).write(to: URL(fileURLWithPath: d + "/sudo_local"))
+        return .ok
+    }
+    defer { AppDelegate.pamDir = dir; AppDelegate.runAsAdmin = admin; AppDelegate.answering = nil }
+    let app = AppDelegate()
+    app.panels = [PanelViewController(tabs: [d], index: 0, showHidden: false), PanelViewController(tabs: [d], index: 0, showHidden: false)]
+    app.panels.forEach { $0.loadViewIfNeeded() }
+    defer { app.panels.forEach { $0.shutdown() } }
+
+    AppDelegate.answering = { m, b, def in asked.append((m, b, def)); return 1 }   // Cancel
+    app.enableSudoTouchID()
+    await waitUntil { asked.count == 1 }
+    try? await Task.sleep(for: .milliseconds(100))
+    #expect(asked.first?.0 == "Let sudo in Terminal use Touch ID?" && asked.first?.1 == ["Enable", "Cancel"] && asked.first?.2 == 0, "↩ is Enable")
+    #expect(ran.isEmpty)
+
+    AppDelegate.answering = { m, b, def in asked.append((m, b, def)); return 0 }   // Enable
+    app.enableSudoTouchID()
+    await waitUntil { app.panels[0].statusText.contains("Touch ID for sudo is on") }
+    #expect(app.panels[0].statusText == "Touch ID for sudo is on — new Terminal windows use it")
+    try #require(ran.count == 1 && temps.count == 1)
+    #expect(ran[0] == "umask 022 && [ ! -L /etc/pam.d/sudo_local ] && /bin/cat \(temps[0]) > /etc/pam.d/sudo_local", "sudo_local, and only it")
+    #expect(!temps[0].hasPrefix("/etc") && !FileManager.default.fileExists(atPath: temps[0]), "the temp file is gone after")
+    #expect(written == [template.replacingOccurrences(of: "\n#auth", with: "\nauth")])
+
+    app.panels[0].flash("")
+    app.enableSudoTouchID()
+    await waitUntil { app.panels[0].statusText == "Touch ID for sudo is already on" }
+    #expect(app.panels[0].statusText == "Touch ID for sudo is already on" && asked.count == 2 && ran.count == 1)
 }
 }

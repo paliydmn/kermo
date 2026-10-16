@@ -891,7 +891,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// app's windows; ↩ connects. The rest would act on the local folder behind it.
     static func runsParked(_ id: String) -> Bool {
         ["open", "open.inside", "panel.switch", "panel.add", "panel.close", "admin.rootPanel", "admin.userPanel", "admin.auditLog",
-         "usermenu.edit", "validators.edit"].contains(id)
+         "admin.sudoTouchID", "usermenu.edit", "validators.edit"].contains(id)
             || !["go.tree", "go.linktarget", "view.terminal", "view.dirsizes", "server.history"].contains(id)
             && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term"].contains(String(id.prefix { $0 != "." }))
     }

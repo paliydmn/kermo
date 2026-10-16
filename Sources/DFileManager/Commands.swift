@@ -237,6 +237,9 @@ extension AppDelegate {
         cmd("admin.shell", "Root Shell Here (Terminal)", [], menu: "Admin", aliases: "root sudo") { $0.runShell("sudo -s", in: .terminalApp) },
         cmd("admin.rootPanel", "Reopen Panel as Root", ["ctrl+cmd+r"], menu: "Admin", short: "As root", aliases: "root sudo server etc") { $0.reopenPanel(asRoot: true) },
         cmd("admin.userPanel", "Reopen Panel as User", ["ctrl+shift+cmd+r"], menu: "Admin", short: "As user", aliases: "root sudo server user") { $0.reopenPanel(asRoot: false) },
+        cmd("admin.sudoTouchID", "Enable Touch ID for sudo", [], menu: "Admin", aliases: "touch id fingerprint sudo terminal pam tid password") {
+            $0.enableSudoTouchID()
+        },
         cmd("admin.auditLog", "Show Production Log", [], menu: "Admin", aliases: "audit journal prod history") { $0.showAuditLog() },
         cmd("server.runOn", "Run on Servers…", [], menu: "Admin", short: "Run on servers", aliases: "ssh command several many all servers parallel pssh") {
             $0.runOnServers()
@@ -324,6 +327,48 @@ extension AppDelegate {
         guard let r = panel.remote else { return panel.flash("Reopen Panel as \(asRoot ? "Root" : "User") is for a server's panel: connect first (⌃⌘K)") }
         guard r.target.sudo != asRoot else { return panel.flash(asRoot ? "This panel is root already — ⌃⇧⌘R reopens it as the user" : "This panel is its user's already — ⌃⌘R reopens it as root") }
         panel.loadRemote(r.target.asRoot(asRoot), dir: r.dir, select: panel.currentName)
+    }
+
+    /// Where Enable Touch ID for sudo reads sudo_local and its template (tests: a copy), and what runs its write as root
+    /// (tests: a stand-in — the real one asks for the password and writes /etc/pam.d).
+    static var pamDir = "/etc/pam.d"
+    static var runAsAdmin: (String) async -> Admin.Outcome = Admin.run
+
+    /// Admin ▸ Enable Touch ID for sudo: pam_tid in /etc/pam.d/sudo_local, after a question and macOS's password.
+    func enableSudoTouchID() {
+        let dir = Self.pamDir, panel = active
+        Task {
+            let read = await Blocking.run(.userInitiated) { () -> Result<(String?, String?), Error> in
+                Result {
+                    let file = dir + "/sudo_local"
+                    let current = FileManager.default.fileExists(atPath: file) ? try String(contentsOfFile: file, encoding: .utf8) : nil
+                    return (current, try? String(contentsOfFile: dir + "/sudo_local.template", encoding: .utf8))
+                }
+            }
+            guard case .success(let (current, template)) = read else {   // there but not readable: never written over
+                return panel.flash("Can't read \(dir)/sudo_local", error: true)
+            }
+            if SudoTouchID.state(current) == .on { return panel.flash("Touch ID for sudo is already on") }
+            guard current != nil || template != nil else {
+                return panel.flash("No \(dir)/sudo_local.template on this Mac: Touch ID for sudo needs macOS 14 or later", error: true)
+            }
+            guard await choose("Let sudo in Terminal use Touch ID?",
+                               info: "Kermo writes \(SudoTouchID.file) (survives macOS updates); macOS asks for your password.",
+                               ["Enable", "Cancel"], default: 0) == 0 else { return }
+            let tmp = NSTemporaryDirectory() + "dfm-sudo-local-" + UUID().uuidString
+            defer { unlink(tmp) }
+            guard (try? Data(SudoTouchID.enabled(current, template: template ?? "").utf8).write(to: URL(fileURLWithPath: tmp))) != nil else {
+                return panel.flash("Can't write \(tmp)", error: true)
+            }
+            switch await Self.runAsAdmin(SudoTouchID.command(from: tmp)) {
+            case .ok:
+                let now = await Blocking.run(.userInitiated) { try? String(contentsOfFile: dir + "/sudo_local", encoding: .utf8) }
+                if SudoTouchID.state(now) == .on { panel.flash("Touch ID for sudo is on — new Terminal windows use it") }
+                else { panel.flash("Touch ID for sudo didn't turn on: \(dir)/sudo_local has no pam_tid line", error: true) }
+            case .cancelled: break
+            case .failed(let msg): panel.flash("Couldn't turn on Touch ID for sudo: \(msg)", error: true)
+            }
+        }
     }
 
     /// Symlinks the bundled `fm` script into /usr/local/bin (asks for a password if that folder is root's).

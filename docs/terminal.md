@@ -32,6 +32,13 @@ fi
 
 Without it the panel still follows the shell's folder when you hide the terminal (⌃O), and the tab gets its folder's name when it's shown or switched to. With it, both update on every `cd`. fish and bash aren't checked.
 
+## Touch ID for sudo
+
+**Admin ▸ Enable Touch ID for sudo** (also in ⇧⌘P) lets `sudo` in a terminal on this Mac take your fingerprint instead of your password. Kermo asks first, then writes `/etc/pam.d/sudo_local` — macOS's `sudo_local.template` with its `pam_tid.so` line on — and macOS asks for your password once to write it. A `sudo_local` of your own keeps its lines; the Touch ID line goes after them. The file survives macOS updates; new terminal windows use it. If it's on already, Kermo says so and asks nothing.
+
+- **Turning it off:** `sudo rm /etc/pam.d/sudo_local` (or put `#` before the `pam_tid.so` line in it).
+- **In tmux or screen** Touch ID needs [pam_reattach](https://github.com/fabianishere/pam_reattach): `brew install pam-reattach`, then the line `auth optional /opt/homebrew/lib/pam/pam_reattach.so` in `sudo_local` before the `pam_tid.so` one.
+
 ## Options
 
 Set them with `defaults write com.dmn.dfilemanager <key> <value>`:
