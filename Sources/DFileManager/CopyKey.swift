@@ -14,7 +14,7 @@ extension AppDelegate {
         }
         Picker.show(over: window, placeholder: "Copy your SSH key to which server? — or type user@host", items: items, freeText: { q in
             guard case let .sftp(t, _)? = ServerAddress.parse(q) else { return [] }
-            return [Picker.Item(title: "Copy your key to “\(q)”", detail: "↩") { [unowned self] in self.copyKey(to: t) }]
+            return [Picker.Item(title: "Copy your key to “\(q)”", detail: "↩") { [self] in copyKey(to: t) }]
         }, freeTextLast: true)
     }
 

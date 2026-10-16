@@ -31,7 +31,7 @@ public enum MultiRun {
         defer { cancel.onCancel(previous) }
         let said: @Sendable (Int, String, Bool) -> Void = { i, text, error in say.withLock { line(i, text, error) } }
 
-        func serve(_ i: Int) {
+        @Sendable func serve(_ i: Int) {
             defer { ended?(i, lock.withLock { outcomes[i] }) }
             let t = servers[i].target, flag = flags[i]
             let out = Lines { said(i, $0, false) }, err = Lines { text in

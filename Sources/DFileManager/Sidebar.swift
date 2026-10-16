@@ -689,7 +689,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
             return placeRow("server.rack", Bookmark.title(e), e + "  ·  ⌘-click: in a new tab, ⌥-click: in the other panel",
                             detail: Bookmark.remote(e)?.target.host ?? "")
         case .volume(let v):
-            let (path, name, ejectable) = (v.path, v.name, v.ejectable)
+            let (name, ejectable) = (v.name, v.ejectable)
             let r = placeRow(ejectable ? "externaldrive" : "internaldrive", name, v.tip, dim: !v.mounted)
             r.addArrangedSubview(spacer())   // the buttons in one column at the right, figures or not
             if !v.used.isEmpty { r.addArrangedSubview(VolumeFigures(used: v.used, free: v.free)) }

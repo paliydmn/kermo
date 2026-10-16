@@ -50,9 +50,10 @@ import Testing
 @MainActor @Test func commandRRunsItAgain() async throws {
     _ = NSApplication.shared
     let title = "Run on 1 server: dfm-" + UUID().uuidString.prefix(6)
-    var asked: [NSWindow?] = [], answer = false, ended = false
+    var asked: [NSWindow?] = [], ended = false
+    let answer = Later(false)
     Shell.run("sleep 0.4", on: [MultiRun.Server(name: "here", target: .local())], skipped: [], env: [:], title: title,
-              again: { asked.append($0); return answer }) { _, _ in ended = true }
+              again: { asked.append($0); return answer.value }) { _, _ in ended = true }
     let w = try #require(NSApp.windows.first { $0.title == title })
     defer { w.close() }
     let r = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: w.windowNumber,
@@ -63,7 +64,7 @@ import Testing
     #expect(w.performKeyEquivalent(with: r))
     for _ in 0..<100 where asked.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
     #expect(asked.count == 1 && asked[0] === w && w.isVisible, "not started again: it stays")
-    answer = true
+    answer.value = true
     _ = w.performKeyEquivalent(with: r)
     for _ in 0..<100 where w.isVisible { try await Task.sleep(for: .milliseconds(10)) }
     #expect(asked.count == 2 && !w.isVisible)

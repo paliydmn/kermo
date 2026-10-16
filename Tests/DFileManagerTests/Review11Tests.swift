@@ -174,7 +174,7 @@ private func tempDir() -> String {
     let e = try Editor(URL(fileURLWithPath: d + "/a.conf"))
     e.textView.string = "new\n"
     nonisolated(unsafe) var onMain: Bool?, editable: Bool?
-    nonisolated(unsafe) let tv = e.textView
+    let tv = e.textView
     e.willRewriteInPlace = { _ in
         onMain = Thread.isMainThread
         let read = { MainActor.assumeIsolated { tv.isEditable } }
@@ -193,7 +193,7 @@ private func tempDir() -> String {
     defer { try? FileManager.default.removeItem(atPath: d) }
     FileManager.default.createFile(atPath: d + "/a", contents: Data("x".utf8))
     let ops = OpsController(window: NSWindow()) { _ in }
-    weak var done: FileJob?, dropped: FileJob?
+    weak var done: FileJob?
     do {
         let job = FileJob(.copy, sources: [d + "/a"], destDir: d + "/out")
         try FileManager.default.createDirectory(atPath: d + "/out", withIntermediateDirectories: true)

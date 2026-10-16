@@ -1347,15 +1347,15 @@ extension AppDelegate {
             let items = versions.enumerated().map { i, v in
                 let url = URL(fileURLWithPath: v.path), when = when(v)
                 let view: @MainActor () -> Void = { Viewer.show(url) }
-                let diff: @MainActor () -> Void = { [unowned self] in
+                let diff: @MainActor () -> Void = { [self] in
                     let there = DiffSide(path: path, server: target, size: now?.size ?? 0, mtime: now?.mtime ?? 0, look: now == nil)
                     Task { await self.diff(side(v), there, in: panel) }
                 }
-                let diffBefore: @MainActor () -> Void = { [unowned self] in   // newest first: the one before is next
+                let diffBefore: @MainActor () -> Void = { [self] in   // newest first: the one before is next
                     guard versions.indices.contains(i + 1) else { return panel.flash("That's the oldest version kept: nothing before it to compare") }
                     Task { await self.diff(side(versions[i + 1]), side(v), in: panel) }
                 }
-                let revert: @MainActor () -> Void = { [unowned self] in
+                let revert: @MainActor () -> Void = { [self] in
                     let state = RemoteEdit(baseline: now ?? .nothing)
                     Task {
                         guard await upload(url, to: path, on: target, state, action: "revert") else { return }
@@ -1709,8 +1709,7 @@ extension AppDelegate {
             let shown = (dest as NSString).abbreviatingWithTildeInPath
             let args = ["-x", "-f", file, "-C", staging ?? dest]
             Shell.run("/usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dest,
-                      title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)") { [weak self] status in
-                guard let self else { return }
+                      title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)") { [self] status in
                 guard let staging else { return panels.forEach { $0.reload() } }
                 Task {
                     // stopped (⎋) or failed: half an archive doesn't land in `dest`; the window says what tar said

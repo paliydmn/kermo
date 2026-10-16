@@ -223,7 +223,7 @@ private func read(_ path: String) -> String? {
     #expect(answers == ["s3cr et", ""], "a second prompt (wrong password) gets nothing: the dialog asks")
     #expect(path.hasPrefix(SFTP.controlDir + "/") && !FileManager.default.fileExists(atPath: path))
     // Unread (the key was enough): still gone afterwards.
-    try SFTP.withPassword(t) { env in
+    SFTP.withPassword(t) { env in
         path = env["DFM_ASKPASS_FIFO"] ?? ""
         #expect(FileManager.default.fileExists(atPath: path))
     }

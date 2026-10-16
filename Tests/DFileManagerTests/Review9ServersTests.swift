@@ -237,7 +237,7 @@ extension ServerLockTests {
         _ = try SFTP.list(u, dir, on: ku)
         SFTP.noteMaster(t)
         SFTP.noteMaster(u)
-        try await recording { stops in
+        await recording { stops in
             await Masters.stop(now: false) { $0 == t }
             #expect(stops.all.map(\.0) == [t])
             #expect(kt.client?.isConnected == false && ku.client?.isConnected == true, "another server's stays")

@@ -184,7 +184,7 @@ public final class FileJob: @unchecked Sendable {
                 over.cancel()
                 update { if $0.counting { $0.totalFiles = $0.doneFiles; $0.totalBytes = $0.doneBytes; $0.counting = false } }
             }
-            let count = { [self] in
+            let count: @Sendable () -> (Int, Int64) = { [self] in
                 sources.reduce((0, Int64(0))) { acc, s in
                     let t = DirLister.measure(s, isCancelled: { isCancelled || over.isCancelled })
                     return (acc.0 + t.0, acc.1 + t.1)

@@ -872,7 +872,7 @@ private final class ViewerTextView: NSTextView {
 /// ⌃Q's own view of a text Quick Look would show as an icon (`TextFormat.previewsAsText`): read-only, F3's colors and
 /// line numbers, the file's first `limit` bytes.
 final class TextPeek: NSScrollView {
-    static let limit = 256 << 10
+    nonisolated static let limit = 256 << 10
     let textView = NSTextView(usingTextLayoutManager: false)   // TextKit 1: the line-number gutter
     private var ruler: LineNumberRuler?
 

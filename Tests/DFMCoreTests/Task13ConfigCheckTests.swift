@@ -206,7 +206,7 @@ extension SudoPasswordTests {
     defer { try? FileManager.default.removeItem(atPath: d) }
     let fake = try fakeSudo(d, Self.passwordSudo)
     let a = Answers(["nope", "kermo-test-pw"])
-    try Self.answering(a) {
+    Self.answering(a) {
         #expect(ran("sh -c 'echo bad >&2; exit 1'", on: .local(sudo: fake), root: true) == .failed(status: 1, output: "bad\n"))
         #expect(a.wrong == [false, true] && a.taken == ["kermo-test-pw"])
         #expect(sudoLog(fake).map { String($0.prefix(19)) } == ["-n -- sh -c PATH=\"$", "-S -p  -k -- sh -c ", "-S -p  -k -- sh -c "])
@@ -221,7 +221,7 @@ extension SudoPasswordTests {
     defer { try? FileManager.default.removeItem(atPath: d) }
     let fake = try fakeSudo(d, #"echo "Sorry, user me is not allowed to execute '/bin/sh' as root on web." >&2; exit 1"#)
     let a = Answers(["kermo-test-pw"])
-    try Self.answering(a) {
+    Self.answering(a) {
         let e = #expect(throws: ConfigCheck.NotRun.self) { try ConfigCheck.run("visudo -cf /x", on: .local(sudo: fake), root: true) }
         #expect(e?.message == "“visudo” couldn't run on localhost as root: sudo on localhost refused: Sorry, user me is not allowed to execute '/bin/sh' as root on web.")
         #expect(a.wrong.isEmpty)
