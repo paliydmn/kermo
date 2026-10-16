@@ -191,6 +191,7 @@ extension AppDelegate {
         cmd("file.diff", "Compare Files (diff)", ["cmd+shift+d"], menu: "File", short: "Diff", aliases: "compare files") { $0.diffFiles() },   // not ⌘⌥D: macOS takes it (Dock hiding)
         cmd("server.history", "Server File History…", [], menu: "File", aliases: "versions revert previous backup undo save sftp") { $0.serverFileHistory() },
         cmd("file.eject", "Eject Volume", ["cmd+opt+e"], menu: "File", short: "Eject", aliases: "unmount disk") { $0.ejectVolume() },
+        cmd("file.unmount", "Unmount Volume", [], menu: "File", short: "Unmount", aliases: "disk eject") { $0.ejectVolume(unmount: true) },
         cmd("file.info", "Get Info", ["cmd+i"], menu: "File", short: "Info", aliases: "get info permissions chmod chown owner hash checksum xattr quarantine") {
             guard let url = $0.active.infoURL else { return $0.active.flash("Get Info is for this Mac's files — on a server, ⌘⌥A sets permissions and owner") }
             InfoWindow.show(url)
@@ -1838,7 +1839,7 @@ extension AppDelegate {
     }
 
     func showVolumes() {
-        let keys: Set<URLResourceKey> = [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey,
+        let keys: Set<URLResourceKey> = [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey,
                                          .volumeIsEjectableKey, .volumeLocalizedFormatDescriptionKey]
         Task { [self] in
             // Off the main thread: a stick that stopped answering. A network share keeps to the kernel's figures.
@@ -1846,7 +1847,7 @@ extension AppDelegate {
                 let fmt = ByteCountFormatter()
                 return SidebarModel.mounts().map { m in
                     let v = m.local ? try? URL(fileURLWithPath: m.path).resourceValues(forKeys: keys) : nil
-                    let free = m.local ? v?.volumeAvailableCapacity.map { fmt.string(fromByteCount: Int64($0)) } ?? "?" : fmt.string(fromByteCount: m.free)
+                    let free = m.local ? v?.volumeAvailableCapacityForImportantUsage.map { fmt.string(fromByteCount: $0) } ?? "?" : fmt.string(fromByteCount: m.free)
                     let total = m.local ? v?.volumeTotalCapacity.map { fmt.string(fromByteCount: Int64($0)) } ?? "?" : fmt.string(fromByteCount: m.total)
                     return (m.path, v?.volumeName ?? (m.path as NSString).lastPathComponent,
                             "\(m.path) · \(free) free of \(total) · \(v?.volumeLocalizedFormatDescription ?? m.type)", v?.volumeIsEjectable == true || !m.local)
@@ -1854,12 +1855,16 @@ extension AppDelegate {
             }
             let items = rows.map { r in
                 Picker.Item(title: r.title, subtitle: r.subtitle, detail: r.eject ? "⏏ ⌘⌥E" : "") { [unowned self] in active.navigate(to: r.path) }
+            } + SidebarModel.locations([], disks).compactMap { v in
+                v.disk.map { d in Picker.Item(title: d.name, subtitle: v.tip, detail: "↩ Mount") { [unowned self] in mountVolume(d) { [unowned self] in active.navigate(to: $0) } } }
             }
             Picker.show(over: window, placeholder: "Volumes…", items: items)
         }
     }
 
-    func ejectVolume(_ path: String? = nil) {
+    /// Eject: the disk goes. Unmount: the volume only — its disk stays, and Locations has it in gray, with Mount (so
+    /// only for a disk's volume Kermo can mount again: not a disk image's, a share's or this Mac's own).
+    func ejectVolume(_ path: String? = nil, unmount: Bool = false) {
         let url = URL(fileURLWithPath: path ?? active.path)
         Task {   // the volume is asked off the main thread: a dead share may never answer
             let found = await Blocking.run { () -> (vol: URL, name: String)? in
@@ -1868,13 +1873,54 @@ extension AppDelegate {
                 return (vol, rv?.volumeName ?? vol.lastPathComponent)
             }
             guard let (vol, name) = found else { return active.flash("This folder isn't on an ejectable volume") }
+            if unmount, !disks.contains(where: { $0.mountPath == vol.path }) {
+                return active.flash("“\(name)” couldn't be mounted again from here: Eject it instead")
+            }
+            guard volumeBusy.insert(vol.path).inserted else { return active.flash("“\(name)”: one thing at a time") }
+            refreshSidebar()
             // Don't leave panels sitting on it (their watchers use O_EVTONLY, which doesn't block unmount).
             for p in panels where p.path == vol.path || p.path.hasPrefix(vol.path + "/") { p.navigate(to: NSHomeDirectory()) }
-            active.flash("Ejecting “\(name)”…")
-            let error = await Blocking.run { () -> String? in
-                do { try NSWorkspace.shared.unmountAndEjectDevice(at: vol); return nil } catch { return error.localizedDescription }
+            active.flash((unmount ? "Unmounting" : "Ejecting") + " “\(name)”…")
+            var error: Error?
+            if unmount {
+                do { try await FileManager.default.unmountVolume(at: vol, options: [.withoutUI]) } catch let e { error = e }   // the alert is ours
+            } else {
+                let device = await diskWatch?.device(of: vol.path)
+                error = await Blocking.run { () -> Error? in
+                    do { try NSWorkspace.shared.unmountAndEjectDevice(at: vol); return nil } catch { return error }
+                }
+                // An APFS stick: that unmounted it and "ejected" its container; the stick itself is still there.
+                if error == nil, let device, let why = await diskWatch?.eject(device) { error = JobErrorMessage(why) }
             }
-            if let error { showError(JobErrorMessage("Couldn't eject “\(name)”: \(error)")) } else { active.flash("“\(name)” ejected") }
+            if let error {
+                // Who holds it: what macOS says doesn't name them. The spinner stays meanwhile (up to lsof's 3 s).
+                let path = vol.path, names = await Blocking.run { Disks.holders(of: path) }
+                volumeBusy.remove(vol.path)
+                refreshSidebar()
+                showError(JobErrorMessage("Couldn't \(unmount ? "unmount" : "eject") “\(name)”: \(Disks.inUse(by: names) ?? error.localizedDescription)"))
+            } else {
+                volumeBusy.remove(vol.path)
+                refreshSidebar()
+                active.flash("“\(name)” " + (unmount ? "unmounted" : "ejected"))
+            }
+        }
+    }
+
+    /// DiskArbitration mounts it where macOS would. `then`: where it went, to open it (its row clicked, ↩ in Volumes…);
+    /// the Mount button only mounts.
+    func mountVolume(_ disk: Disk, then open: ((String) -> Void)? = nil) {
+        guard let diskWatch, volumeBusy.insert(disk.bsd).inserted else { return }
+        refreshSidebar()
+        Task {
+            let r = await diskWatch.mount(disk.bsd)
+            volumeBusy.remove(disk.bsd)
+            refreshSidebar()
+            switch r {
+            case .success(let path):
+                reloadVolumes()
+                if let open { open(path) } else { active.flash("“\(disk.name)” mounted") }
+            case .failure(let e): showError(JobErrorMessage("Couldn't mount “\(disk.name)”: \(e.text)"))
+            }
         }
     }
 
@@ -2663,6 +2709,7 @@ extension AppDelegate {
 
     func jobFinished(_ job: FileJob) {
         AuditLog.write(job, sync: syncJobs.contains(job))
+        reloadVolumes()   // Locations' free space
         syncJobs.remove(job)
         // Local panels follow the disk (FSEvents); a server panel has to ask again.
         for p in panels {

@@ -23,14 +23,15 @@ import Testing
 
 @Test func sidebarSectionsFromAppData() {
     let s = SidebarModel.sections(bookmarks: ["/a", "/b"], frecent: ["/b", "/c", "/d", "/a", "/e", "/f", "/g", "/h"],
-                                  volumes: [Volume(path: "/", name: "Macintosh HD", free: 1_000_000_000, ejectable: false),
+                                  volumes: [Volume(path: "/", name: "Macintosh HD", free: 1_000_000_000, total: 3_000_000_000, ejectable: false),
                                             Volume(path: "/Volumes/USB", name: "USB", free: nil, ejectable: true)],
                                   servers: ServerList(), tags: ["work", "home"])
     #expect(s.map(\.id) == ["fav", "freq", "loc", "servers", "tags"])
     #expect(s[0].places == [.folder("/a"), .folder("/b")])
     #expect(s[1].places == ["/c", "/d", "/e", "/f", "/g"].map(Place.folder), "top 5, favorites left out")
-    #expect(s[2].places == [.volume(path: "/", name: "Macintosh HD", free: ByteCountFormatter().string(fromByteCount: 1_000_000_000), ejectable: false),
-                            .volume(path: "/Volumes/USB", name: "USB", free: "", ejectable: true)])
+    let size = SidebarModel.sizes.string(fromByteCount:)
+    #expect(s[2].places == [.volume(VolumeRow(path: "/", name: "Macintosh HD", used: size(2_000_000_000), free: size(1_000_000_000), total: size(3_000_000_000), ejectable: false)),
+                            .volume(VolumeRow(path: "/Volumes/USB", name: "USB", ejectable: true))])
     #expect(s[3].places == [.connect])
     #expect(s[4].places == [.tagColors, .tag("work"), .tag("home")])
     #expect(SidebarModel.tagColors.count == 7)
@@ -272,11 +273,29 @@ extension ServerLockTests {
 @Test func networkVolumesAreNotAsked() throws {
     let dead = SidebarModel.Mount(path: "/Volumes/dead-\(UUID().uuidString)", type: "smbfs", local: false, free: 4096 * 1000, total: 1 << 30)
     let v = SidebarModel.volumes([dead])
-    #expect(v == [Volume(path: dead.path, name: (dead.path as NSString).lastPathComponent, free: 4096 * 1000, ejectable: true)])
+    #expect(v == [Volume(path: dead.path, name: (dead.path as NSString).lastPathComponent, free: 4096 * 1000, total: 1 << 30, ejectable: true)])
 
     let mounts = SidebarModel.mounts()
     #expect(!mounts.contains { $0.path == "/dev" }, "hidden mounts stay out, as with .skipHiddenVolumes")
     let root = try #require(SidebarModel.volumes(mounts).first { $0.path == "/" })
     let rv = try URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeNameKey])
-    #expect(root.name == rv.volumeName && (root.free ?? 0) > 0 && !root.ejectable)
+    #expect(root.name == rv.volumeName && (root.free ?? 0) > 0 && (root.total ?? 0) > root.free ?? 0 && !root.ejectable)
+}
+
+/// PR 12b: a volume's row knows used (total − free), free and total, as the shortest sizes; a volume that doesn't
+/// say its total (a share whose kernel figures are 0 / 0, a disk that didn't answer) shows nothing.
+@Test func aVolumeRowHasUsedAndFree() {
+    let r = SidebarModel.row(Volume(path: "/Volumes/USB", name: "USB", free: 350_000_000_000, total: 460_000_000_000, ejectable: true))
+    #expect(r.used == SidebarModel.sizes.string(fromByteCount: 110_000_000_000) && r.free == SidebarModel.sizes.string(fromByteCount: 350_000_000_000))
+    #expect(r.tip == "/Volumes/USB · \(r.used) used of \(r.total) · \(r.free) free")
+    #expect(!r.used.contains("bytes") && !SidebarModel.sizes.string(fromByteCount: 0).contains("Zero"))
+    for (free, total) in [(Int64?.none, Int64?(1 << 30)), (0, 0), (5, nil)] {
+        let none = SidebarModel.row(Volume(path: "/Volumes/S", name: "S", free: free, total: total, ejectable: true))
+        #expect(none == VolumeRow(path: "/Volumes/S", name: "S", ejectable: true) && none.tip == "/Volumes/S")
+    }
+    // Free counted with what macOS would clear can be more than the total takes: used is 0, not negative.
+    #expect(SidebarModel.row(Volume(path: "/", name: "HD", free: 9, total: 5, ejectable: false)).used == SidebarModel.sizes.string(fromByteCount: 0))
+    // A share: the kernel's figures, read as they are.
+    let share = SidebarModel.volumes([SidebarModel.Mount(path: "/Volumes/share-\(UUID().uuidString)", type: "smbfs", local: false, free: 1 << 30, total: 4 << 30)])
+    #expect(SidebarModel.row(share[0]).used == SidebarModel.sizes.string(fromByteCount: 3 << 30))
 }

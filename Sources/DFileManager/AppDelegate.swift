@@ -25,6 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     let search = HeaderSearch()
     private var splitController: NSSplitViewController!
     private var volumes: [Volume] = []
+    var disks: [Disk] = []   // DiskArbitration's that Kermo may mount
+    var diskWatch: DiskWatch?
+    var volumeBusy: Set<String> = []   // mounting, unmounting, ejecting: mount points, and BSD names of those not mounted
     private var configHosts: [String] = []   // ~/.ssh/config aliases
     private var sftpErrors: [String: String] = [:]   // host → its last failure, until any panel gets through
     private var sidebarRefresh: Task<Void, Never>?
@@ -514,7 +517,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             refreshSidebar()
         }
         sidebar.onTransfer = { [unowned self] items, dir, move in enqueueTransfer(items.paths, from: items.from, to: dir, name: nil, move: move) }
-        sidebar.onEject = { [unowned self] in ejectVolume($0) }
+        sidebar.onVolume = { [unowned self] v, action in
+            switch action {
+            case .mount: if let d = v.disk { mountVolume(d) }
+            case .unmount: ejectVolume(v.path, unmount: true)
+            case .eject: ejectVolume(v.path)
+            }
+        }
         sidebar.onLeave = { [unowned self] in window.makeFirstResponder(active.table) }
         sidebar.onCommandKey = { [unowned self] in runKey($0) }
         sidebar.onServer = { [unowned self] in serverAction($0, $1, $2) }
@@ -535,11 +544,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ws.addObserver(self, selector: #selector(volumeGone(_:)), name: NSWorkspace.didUnmountNotification, object: nil)
         refreshSidebar()
         reloadVolumes()
+        diskWatch = DiskWatch { [weak self] in
+            self?.disks = $0
+            self?.refreshSidebar()
+        }
+        let tick = Timer.scheduledTimer(timeInterval: 30, target: self, selector: #selector(volumeTick), userInfo: nil, repeats: true)
+        tick.tolerance = 5
     }
+
+    /// Free space moves without a notice: read again every 30 s while Kermo is the app in front.
+    @objc private func volumeTick() { if NSApp.isActive { reloadVolumes() } }
 
     /// Off the main thread: a hung network mount must not freeze the window. ~/.ssh/config comes along
     /// (also when the window becomes key), so edits to it show up without a restart.
-    @objc private func reloadVolumes() { volumeRuns.request(key: "") }
+    @objc func reloadVolumes() { volumeRuns.request(key: "") }
 
     /// A panel on a disk that went away leaves it now (up to /Volumes), not at its next re-list.
     @objc private func volumeGone(_ n: Notification) {
@@ -551,8 +569,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private lazy var volumeRuns = SingleFlight(interval: .zero) { [weak self] in await self?.loadVolumes() }
 
     private func loadVolumes() async {
-        (volumes, configHosts) = await Blocking.run { (SidebarModel.volumes(), SSHConfig.hosts().map(\.alias)) }
-        refreshSidebar()
+        let (new, hosts) = await Blocking.run { (SidebarModel.volumes(), SSHConfig.hosts().map(\.alias)) }
+        // Free space differs by some bytes at every read: the sidebar is rebuilt only when what it shows has changed.
+        let same = new.map { SidebarModel.row($0) } == volumes.map { SidebarModel.row($0) } && new.map(\.device) == volumes.map(\.device) && hosts == configHosts
+        (volumes, configHosts) = (new, hosts)
+        if !same { refreshSidebar() }
     }
 
     /// The sidebar row of where you are: the terminal's tab, the active panel's server tab, or its folder.
@@ -582,7 +603,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if let e = st.error { servers.failedTunnels[key, default: []].append("\(st.tunnel.title): \(e)") }
             if !servers.forwarded.contains(where: { ServerRow.key($0) == key }) { servers.forwarded.append(st.server.target) }
         }
-        sidebar.show(SidebarModel.sections(bookmarks: bookmarks, frecent: frecency.ranked(), volumes: volumes, servers: servers,
+        sidebar.show(SidebarModel.sections(bookmarks: bookmarks, frecent: frecency.ranked(), volumes: volumes, disks: disks, busy: volumeBusy, servers: servers,
                                            tags: defaults.stringArray(forKey: "recentTags") ?? []))
         sidebar.highlight(sidebarKey)
     }
@@ -597,6 +618,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return
         }
         switch place {
+        case .volume(let v): if let d = v.disk, !v.mounted { mountVolume(d) { [unowned self] in openPlace(.folder($0), mods) } }   // then as any place
         case .serverFolder(let e):
             guard let r = Bookmark.remote(e) else { return NSSound.beep() }
             openBookmark(r, newTab: mods.contains(.command), panel: mods.contains(.option) ? other : nil)
@@ -853,7 +875,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Commands that would act on the local folder hidden behind a server panel (its `path`). Until they learn
     /// servers, they refuse there instead of quietly working on this Mac.
     static let localOnly: Set<String> = ["file.info", "go.tree", "panel.swap", "file.reveal", "file.symlink",
-                                         "file.hardlink", "file.split", "file.combine", "git.diff", "file.eject",
+                                         "file.hardlink", "file.split", "file.combine", "git.diff", "file.eject", "file.unmount",
                                          "git.log", "git.blame", "git.stage", "git.unstage", "admin.copy", "admin.move", "admin.mkdir", "admin.delete", "admin.shell",
                                          "git.switch", "git.newBranch", "git.commit", "git.sync", "git.publish", "git.pull", "git.push", "git.fetch", "git.init"]
 
