@@ -4,7 +4,7 @@ A keyboard-first file manager and admin console for macOS: 2–4 panels, SFTP an
 
 macOS 14 or later · Apple Silicon and Intel · [MIT license](LICENSE)
 
-[![Kermo in 80 seconds: SFTP, SSH, Git, live logs and production safety](docs/video.jpg)](https://youtu.be/hjXibnVEQ9c)
+[![Kermo 1.2 in 3½ minutes: files, SFTP and SSH, systemd services, live logs, containers, SSH tunnels and Git](docs/video.jpg)](https://youtu.be/8g9k_CSyGTw)
 
 ![Kermo with a Git project on this Mac and a production server's folder over SFTP; the sidebar lists favorites, frequent folders, servers and the Git branch](docs/images/main-window.png)
 
