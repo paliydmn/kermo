@@ -212,9 +212,10 @@ private func read(_ path: String) -> String? {
         p.waitUntilExit()
         return String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     }
-    let t = SFTPTarget(host: "me@nas")
-    SFTP.password = { $0 == t ? "s3cr et" : nil }
-    defer { SFTP.password = nil }
+    let t = SFTPTarget(host: "me@nas"), reads = QAFlagCounter()
+    SFTP.password = { reads.add(); return $0 == t ? "s3cr et" : nil }
+    SFTP.hasPassword = { $0 == t }
+    defer { SFTP.password = nil; SFTP.hasPassword = { SFTP.password?($0) != nil } }
     var path = ""
     let answers = try SFTP.withPassword(t) { env in
         path = env["DFM_ASKPASS_FIFO"] ?? ""
@@ -222,11 +223,13 @@ private func read(_ path: String) -> String? {
     }
     #expect(answers == ["s3cr et", ""], "a second prompt (wrong password) gets nothing: the dialog asks")
     #expect(path.hasPrefix(SFTP.controlDir + "/") && !FileManager.default.fileExists(atPath: path))
-    // Unread (the key was enough): still gone afterwards.
+    #expect(reads.count == 1)
+    // Unread (the key was enough): still gone afterwards, and the Keychain never asked (its dialog, an app re-signed).
     SFTP.withPassword(t) { env in
         path = env["DFM_ASKPASS_FIFO"] ?? ""
         #expect(FileManager.default.fileExists(atPath: path))
     }
     #expect(!FileManager.default.fileExists(atPath: path))
+    #expect(reads.count == 1, "a login by key reads no password")
     #expect(SFTP.withPassword(SFTPTarget(host: "other")) { $0 }.isEmpty, "no saved password: no FIFO")
 }

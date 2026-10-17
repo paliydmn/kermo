@@ -956,8 +956,9 @@ extension AppDelegate {
         }
     }
 
-    /// The saved password is never shown, only replaced or forgotten (see `storePassword`); so is a root panel's sudo
-    /// password saved there ("Save in Keychain" in its sheet), which can only be forgotten here.
+    /// The saved password shows as dots; the eye shows it after Touch ID or the Mac password, every time. Shown and left
+    /// as it was, it isn't stored again (so it never follows a changed Host; see `storePassword`). A root panel's sudo
+    /// password saved there ("Save in Keychain" in its sheet) can only be forgotten here.
     private func showServerSheet(_ server: SavedServer, title: String, connect: ServerSession.Kind,
                                  problem: String = "", password: String = "", forget: Bool = false, forgetSudo: Bool = false) {
         let saved = savedServers.contains { $0.id == server.id }
@@ -969,7 +970,7 @@ extension AppDelegate {
             ("User", server.user ?? "", "empty = ssh's default"),
             ("Port", server.port.map(String.init) ?? "", "22"),
             ("Key file", server.identityFile ?? "", "empty = ssh's own (agent, ~/.ssh/config)"),
-            ("Password", password, hasPassword ? "saved in Keychain — type to replace" : "empty = ask each time; saved in Keychain"),
+            ("Password", password, hasPassword ? "••••••••" : "empty = ask each time; saved in Keychain"),
             ("Start folder", server.startDir ?? "", "for SFTP; empty = the login folder"),
         ]
         let inputs = fields.map { label, value, hint in
@@ -990,6 +991,41 @@ extension AppDelegate {
             open.message = "The private key (not the .pub one)"
             if open.runModal() == .OK, let url = open.url { keyField.stringValue = (url.path as NSString).abbreviatingWithTildeInPath }
         }
+        // Password: dots, or as text behind the eye.
+        let pwField = inputs[5], shown = NSTextField(string: "")
+        if hasPassword { pwField.toolTip = "Saved in Keychain — type to replace" }
+        let eye = NSButton(image: NSImage(systemSymbolName: "eye", accessibilityDescription: "Show the password")!, target: nil, action: nil)
+        eye.bezelStyle = .accessoryBarAction
+        eye.toolTip = "Show the password (a saved one asks for Touch ID or the Mac password)"
+        pwField.constraints.forEach { if $0.firstAttribute == .width { $0.constant = 300 - eye.fittingSize.width - 6 } }
+        shown.widthAnchor.constraint(equalToConstant: 300 - eye.fittingSize.width - 6).isActive = true
+        shown.placeholderString = pwField.placeholderString
+        shown.isHidden = true
+        let pwRow = NSStackView(views: [pwField, shown, eye])
+        pwRow.spacing = 6
+        let revealed = NSMutableString()   // the saved one, once shown
+        let show = { (on: Bool) in
+            (pwField.isHidden, shown.isHidden) = (on, !on)
+            eye.image = NSImage(systemSymbolName: on ? "eye.slash" : "eye", accessibilityDescription: on ? "Hide the password" : "Show the password")
+            pwRow.window?.makeFirstResponder(on ? shown : pwField)
+        }
+        let revealer = MenuAction.attach(to: eye) {
+            guard shown.isHidden else {
+                pwField.stringValue = shown.stringValue
+                return show(false)
+            }
+            guard pwField.stringValue.isEmpty, hasPassword else {
+                shown.stringValue = pwField.stringValue
+                return show(true)
+            }
+            Task {
+                guard await ServerLock.authenticate("show the saved password for “\(server.title)”") else { return }
+                guard let p = SSHPasswords.get(server.target) else { return NSSound.beep() }
+                revealed.setString(p)
+                shown.stringValue = p
+                show(true)
+            }
+        }
         let lock = NSButton(checkboxWithTitle: "Lock with Touch ID or the Mac password", target: nil, action: nil)
         lock.toolTip = "Asked before connecting, editing, duplicating or deleting; once per 5 minutes, again after the screen locks"
         lock.state = server.locked ? .on : .off
@@ -1000,7 +1036,7 @@ extension AppDelegate {
         forgetSudoBox.state = forgetSudo ? .on : .off
         let extra: [[NSView]] = (hasPassword ? [[NSGridCell.emptyContentView, forgetBox]] : [])
             + (hasSudo ? [[NSGridCell.emptyContentView, forgetSudoBox]] : []) + [[NSGridCell.emptyContentView, lock]]
-        let grid = NSGridView(views: zip(fields, inputs).map { [NSTextField(labelWithString: $0.0 + ":"), $1 === keyField ? keyRow : $1] } + extra)
+        let grid = NSGridView(views: zip(fields, inputs).map { [NSTextField(labelWithString: $0.0 + ":"), $1 === keyField ? keyRow : $1 === pwField ? pwRow : $1] } + extra)
         grid.column(at: 0).xPlacement = .trailing
         grid.rowAlignment = .firstBaseline
         grid.rowSpacing = 8
@@ -1016,7 +1052,7 @@ extension AppDelegate {
         alert.accessoryView = grid
         alert.window.initialFirstResponder = inputs[server.host.isEmpty ? 1 : 0]
         alert.beginSheetModal(for: window) { [unowned self] r in
-            _ = chooser
+            _ = (chooser, revealer)
             window.makeFirstResponder(active.table)
             if saved && r == .alertThirdButtonReturn { return deleteServer(server) }
             let connecting = !saved && r == .alertFirstButtonReturn
@@ -1028,7 +1064,8 @@ extension AppDelegate {
             s.user = v[2].isEmpty ? nil : v[2]
             s.port = v[3].isEmpty ? nil : Int(v[3]) ?? 0   // 0: not a port, the check says so
             s.identityFile = v[4].isEmpty ? nil : v[4]
-            let password = inputs[5].stringValue   // as typed: spaces count
+            let typed = shown.isHidden ? pwField.stringValue : shown.stringValue   // as typed: spaces count
+            let password = typed == revealed as String ? "" : typed   // shown, not changed: stays where it is
             s.startDir = v[6].isEmpty ? nil : v[6]
             s.locked = lock.state == .on
             s.tunnels = savedServers.first { $0.id == s.id }?.tunnels ?? s.tunnels   // as they are now, not when the sheet opened

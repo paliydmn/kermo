@@ -27,7 +27,7 @@ To keep a server you already used, right-click its recent or `~/.ssh/config` row
 | **User** | ssh's default | |
 | **Port** | 22 | 1–65535. |
 | **Key file** | ssh's own choice (agent, `~/.ssh/config`) | **Choose…** opens `~/.ssh`. |
-| **Password** | ask every time | Saved in the login Keychain as "Kermo: user@host" (with `:port` for a port other than 22), one per user, host and port. Never shown again; type to replace it. |
+| **Password** | ask every time | Saved in the login Keychain as "Kermo: user@host" (with `:port` for a port other than 22), one per user, host and port. Shown as dots; the eye beside it shows it after Touch ID or the Mac password. Type to replace it. Read only when ssh asks for a password: a server that takes your key never reads it. |
 | **Start folder** | the login folder | Where SFTP opens. |
 | **Lock with Touch ID or the Mac password** | not locked | See below. |
 

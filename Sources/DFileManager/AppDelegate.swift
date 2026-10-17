@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationDidFinishLaunching(_ notification: Notification) {
         applyConfig(reportProblems: false)
         SFTP.password = { SSHPasswords.get($0) }
+        SFTP.hasPassword = { SSHPasswords.has($0) }
         SFTP.sudoPassword = { SudoPasswords.password($0, wrong: $1) }
         SFTP.sudoPasswordTaken = { SudoPasswords.taken($0, $1) }
         ServerLock.servers = { [unowned self] in savedServers }
