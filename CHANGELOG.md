@@ -13,6 +13,14 @@ Release:
 
 ## [Unreleased]
 
+### Changed
+
+- **Server sheet:** a saved password shows as dots, and the eye beside it shows it after Touch ID or the Mac password (every time). Shown and left as it was, it isn't saved again.
+
+### Fixed
+
+- A saved password is read from the Keychain only when ssh asks for it. A server that takes your key no longer reads it at all, and an SSH tab read it twice: after an update macOS asked for the Keychain password again and again.
+
 ## [1.2] - 2026-10-16
 
 ### Added

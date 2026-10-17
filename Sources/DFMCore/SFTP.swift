@@ -257,8 +257,10 @@ public enum SFTP {
     }
 
     /// A saved password for the target, if any (the app's Keychain). Set once at launch; called off the main thread,
-    /// only when a login is due.
+    /// only when ssh asks for it: a read may bring up the Keychain's own dialog (an app whose signature changed).
     nonisolated(unsafe) public static var password: (@Sendable (SFTPTarget) -> String?)?
+    /// Whether there is one, without reading it (no dialog). Set once at launch.
+    nonisolated(unsafe) public static var hasPassword: @Sendable (SFTPTarget) -> Bool = { password?($0) != nil }
 
     /// A root panel's sudo password, when its server's sudo wants one (`SudoServer`): saved or asked for; `wrong`: the
     /// one given before was refused. nil: none given. Set once at launch; called off the main thread, one at a time.
@@ -268,15 +270,17 @@ public enum SFTP {
 
     /// Runs `login` with the target's saved password waiting for the askpass script in a FIFO ($DFM_ASKPASS_FIFO):
     /// not an environment variable (those show in `ps eww`), not a file. Read once, then gone, so a wrong password's
-    /// second prompt asks the user. Gone when `login` returns, read or not.
+    /// second prompt asks the user. Gone when `login` returns, read or not. Taken from the Keychain only once askpass
+    /// opens the FIFO: a login by key never reads it.
     /// Only the target's own prompt gets it ($DFM_ASKPASS_FOR, see `askpassSavedPassword`): a ProxyJump bastion's
     /// ssh asks through the same askpass. If ssh can't say how it will name the target, the user is asked.
     static func withPassword<T>(_ t: SFTPTarget, _ login: ([String: String]) throws -> T) rethrows -> T {
-        guard let secret = password?(t), let who = promptLogin(t) else { return try login([:]) }
-        return try withSecret(secret, for: who, login)
+        guard hasPassword(t), let who = promptLogin(t) else { return try login([:]) }
+        return try withSecret(password?(t), for: who, login)
     }
 
-    static func withSecret<T>(_ secret: String, for who: String, _ login: ([String: String]) throws -> T) rethrows -> T {
+    static func withSecret<T>(_ secret: @autoclosure @escaping @Sendable () -> String?, for who: String,
+                              _ login: ([String: String]) throws -> T) rethrows -> T {
         let path = controlDir + "/pw-" + UUID().uuidString
         guard mkfifo(path, 0o600) == 0 else { return try login([:]) }
         let done = CancelFlag()
@@ -286,7 +290,7 @@ public enum SFTP {
                 if fd < 0 { usleep(20_000); continue }
                 unlink(path)
                 _ = fcntl(fd, F_SETNOSIGPIPE, 1)
-                _ = secret.withCString { write(fd, $0, strlen($0)) }
+                _ = secret()?.withCString { write(fd, $0, strlen($0)) }   // none (denied): empty, then the dialog
                 close(fd)
                 return
             }

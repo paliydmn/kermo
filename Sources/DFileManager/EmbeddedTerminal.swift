@@ -325,7 +325,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     /// Prompts (password, passphrase, host key) come up in the tab itself: no SSH_ASKPASS here. But a saved
     /// password logs in first, in the background through askpass; ssh then rides on that connection.
     private func login(_ tab: Tab, _ t: SFTPTarget) {
-        guard SFTP.password?(t) != nil else { return startSSH(tab, t) }
+        guard SFTP.hasPassword(t) else { return startSSH(tab, t) }
         tab.view.feed(text: "Logging in to \(t.host)…\r\n")
         Task {
             let r = await Blocking.run { Result { try SFTP.startMaster(t, env: SSHAskpass.env) } }
