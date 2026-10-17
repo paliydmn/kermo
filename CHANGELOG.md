@@ -13,6 +13,8 @@ Release:
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-17
+
 ### Changed
 
 - **Server sheet:** a saved password shows as dots, and the eye beside it shows it after Touch ID or the Mac password (every time). Shown and left as it was, it isn't saved again.
@@ -139,7 +141,8 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.2...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/paliydmn/kermo/releases/tag/v1.2.1
 [1.2]: https://github.com/paliydmn/kermo/releases/tag/v1.2
 [1.1]: https://github.com/paliydmn/kermo/releases/tag/v1.1
 [1.0]: https://github.com/paliydmn/kermo/releases/tag/v1.0
