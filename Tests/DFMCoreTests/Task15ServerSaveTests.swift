@@ -113,3 +113,34 @@ private func proxy(in dir: String, name: String = "", bare: Bool = false, drop: 
     #expect(text(locked + "/f") == "new\n" && inode(locked + "/f") == ino)
     #expect(partials(d).isEmpty && partials(locked).isEmpty)
 }
+
+/// A root panel's ⌘S on another owner's file (no SELinux): the partial file gets the file's owner and group, then is
+/// renamed over it — a new inode, never a moment as root's. Here the stand-in sudo runs as this user, so "another
+/// owner" is another of its groups (the partial file takes its folder's). The user's own panel writes into it.
+@Test func rootSaveGivesThePartialTheFilesOwner() throws {
+    // This Mac's own temp folder: test.sh's RAM disk ignores owners. A few bytes.
+    let d = (Foundation.NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t15-" + UUID().uuidString
+    try fm.createDirectory(atPath: d, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(atPath: d) }
+    var st = stat()
+    stat(d, &st)
+    var groups = [gid_t](repeating: 0, count: 64)
+    let n = Int(getgroups(64, &groups))
+    guard let other = groups.prefix(max(0, n)).first(where: { $0 != st.st_gid }) else { return }
+    for root in [true, false] {
+        let file = d + "/f\(root)"
+        put(file, "old text, longer\n")
+        chown(file, uid_t.max, other)   // -1: the owner stays
+        chmod(file, 0o640)
+        put(d + "/local", "new text\n")
+        let c = try SFTPClient(root ? .local(sudo: try fakeSudo(d)) : .local())
+        defer { c.close() }
+        let ino = inode(file)
+        try c.upload(d + "/local", to: file, baseline: try c.stat(file))
+        var now = stat()
+        lstat(file, &now)
+        #expect(text(file) == "new text\n" && now.st_gid == other && now.st_mode & 0o7777 == 0o640)
+        #expect((now.st_ino != ino) == root, root ? "renamed over" : "written into")
+        #expect(partials(d).isEmpty)
+    }
+}

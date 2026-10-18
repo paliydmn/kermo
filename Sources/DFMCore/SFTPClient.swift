@@ -1113,8 +1113,21 @@ extension SFTPClient {
         do {
             try check?(partial)
             let mine = try lstat(partial)
-            let foreign = cur.map { writesInPlace || $0.uid == nil || $0.uid != mine?.uid || $0.gid != mine?.gid } ?? false
-            if let real, !aside, !foreign {
+            var inPlace = real == nil || aside || writesInPlace && cur != nil
+            if !inPlace, let cur, cur.uid == nil || cur.uid != mine?.uid || cur.gid != mine?.gid {
+                // Root gives the partial file the file's owner, then renames it over: never a moment as root's file.
+                // Not allowed (NFS's root_squash), or anyone else's session: copied into the file, which keeps its own.
+                if target.sudo, let uid = cur.uid, let gid = cur.gid {
+                    do {
+                        try setAttrs(partial, mtime: nil, mode: nil, owner: (uid, gid))
+                        // chown drops setuid/setgid
+                        if let m = cur.mode, m & 0o6000 != 0 { try setAttrs(partial, mtime: nil, mode: m) }
+                    } catch let e as SFTPError where !e.connection { inPlace = true }
+                } else {
+                    inPlace = true
+                }
+            }
+            if let real, !inPlace {
                 if let modeError { throw modeError }
                 try rename(partial, real, replace: true)
             } else {
