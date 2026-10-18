@@ -232,10 +232,10 @@ extension SudoPasswordTests {
 }
 
 /// "Before": the check runs on the partial file next to it — a failure leaves the server's file as it was (renamed over
-/// it or copied into it: a symlink's target, another owner's file, SELinux), the partial file gone, no version kept;
+/// it or copied into it: another owner's file, SELinux), the partial file gone, no version kept;
 /// the check's words come back. Then a good text goes in. Exact round trips of ⌘S (2 KB, opened with F4): 8 checked or
 /// not — the check is an ssh command, no SFTP packet (8 on the code before, `rootSaveWritesInPlaceUnderSELinux`); a
-/// failed one 6 (a symlink 7: one more to follow it).
+/// failed one 6. A symlink one more each (`realpath`): its target is renamed over as a plain file is (sss-2; 13 before).
 @Test func badTextNeverReplacesTheFile() throws {
     let d = checkDir()
     defer { try? FileManager.default.removeItem(atPath: d) }
@@ -262,7 +262,7 @@ extension SudoPasswordTests {
         try put(d + "/l", "fine\n")
         before = c.roundTrips
         let (attrs, outcome) = try c.save(d + "/l", to: file, baseline: a, rule: rule) { _, _ in kept += 1 }
-        #expect(c.roundTrips - before == (link ? 13 : 8), "checked and saved: as unchecked (link: \(link))")
+        #expect(c.roundTrips - before == (link ? 9 : 8), "checked and saved: as unchecked: \(c.roundTrips - before) (link: \(link))")
         guard case .passed(let said)? = outcome else { Issue.record("\(String(describing: outcome))"); return }
         #expect(said.hasPrefix("checking \(d)/.dfm-partial-") && said.hasSuffix("\nok\n"))
         #expect(String(decoding: FileManager.default.contents(atPath: real)!, as: UTF8.self).hasPrefix("fine\n") && attrs.size == 2048 && partials().isEmpty && kept == 1)

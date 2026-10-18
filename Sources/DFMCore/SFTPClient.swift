@@ -56,6 +56,7 @@ public final class SFTPClient: @unchecked Sendable {
     /// and it stops counting; no test gets there.)
     private(set) var roundTrips = 0
     private var lastSent: UInt32 = 0, waveEnd: UInt32 = 0
+    private var saved = Set<String>(), swept = Set<String>()   // folders saves put partial files in; looked through (`sweepPartials`)
     private let errors = ErrorTail()
 
     public init(_ t: SFTPTarget, env: [String: String] = [:], cancel: CancelFlag? = nil) throws {
@@ -445,16 +446,18 @@ public final class SFTPClient: @unchecked Sendable {
         try expectOK(p, link)
     }
 
-    /// Modification (and access) time, permission bits, owner and group (both: v3 sends them together). Doesn't
-    /// follow a symlink only if the server can't.
-    public func setAttrs(_ path: String, mtime: Double?, mode: UInt32?, owner: (uid: UInt32, gid: UInt32)? = nil) throws {
-        try expectOK(Self.setstat(path, mtime: mtime, mode: mode, owner: owner), path)
+    /// Modification (and access) time, permission bits, owner and group (both: v3 sends them together), size (cut
+    /// or grown to). Doesn't follow a symlink only if the server can't.
+    public func setAttrs(_ path: String, mtime: Double?, mode: UInt32?, owner: (uid: UInt32, gid: UInt32)? = nil, size: Int64? = nil) throws {
+        try expectOK(Self.setstat(path, mtime: mtime, mode: mode, owner: owner, size: size), path)
     }
 
-    static func setstat(_ path: String, mtime: Double?, mode: UInt32?, owner: (uid: UInt32, gid: UInt32)? = nil) -> Packet {
+    static func setstat(_ path: String, mtime: Double?, mode: UInt32?, owner: (uid: UInt32, gid: UInt32)? = nil, size: Int64? = nil) -> Packet {
         var p = Packet(Self.SETSTAT)
         p.string(path)
-        p.u32((owner == nil ? 0 : Self.ATTR_UIDGID) | (mtime == nil ? 0 : Self.ATTR_ACMODTIME) | (mode == nil ? 0 : Self.ATTR_PERMISSIONS))
+        p.u32((size == nil ? 0 : Self.ATTR_SIZE) | (owner == nil ? 0 : Self.ATTR_UIDGID) | (mtime == nil ? 0 : Self.ATTR_ACMODTIME)
+              | (mode == nil ? 0 : Self.ATTR_PERMISSIONS))
+        if let size { p.u64(UInt64(max(0, size))) }
         if let owner { p.u32(owner.uid); p.u32(owner.gid) }
         if let mode { p.u32(mode & 0o7777) }
         if let mtime { p.u32(UInt32(clamping: Int64(mtime))); p.u32(UInt32(clamping: Int64(mtime))) }
@@ -613,10 +616,11 @@ public final class SFTPClient: @unchecked Sendable {
         }
     }
 
-    /// `offset` > 0 continues a partial file; 0 creates (or truncates) it. `exclusive`: fail if it exists.
+    /// `offset` > 0 continues a partial file; 0 creates (or truncates) it. `exclusive`: fail if it exists. `truncate`
+    /// false: written over from the start, what's past the end left (the caller cuts it).
     /// A new file is owner-only (a key or .env in transit is nobody else's business); callers set its real mode.
-    public func openWrite(_ path: String, offset: Int64 = 0, exclusive: Bool = false) throws -> WriteStream {
-        let flags = Self.FXF_WRITE | Self.FXF_CREAT | (offset > 0 ? 0 : exclusive ? Self.FXF_EXCL : Self.FXF_TRUNC)
+    public func openWrite(_ path: String, offset: Int64 = 0, exclusive: Bool = false, truncate: Bool = true) throws -> WriteStream {
+        let flags = Self.FXF_WRITE | Self.FXF_CREAT | (offset > 0 || !truncate ? 0 : exclusive ? Self.FXF_EXCL : Self.FXF_TRUNC)
         return WriteStream(self, try open(path, flags, mode: 0o600), path, offset: UInt64(offset))
     }
 
@@ -644,11 +648,13 @@ public final class SFTPClient: @unchecked Sendable {
     /// Server-side copy (`copy-data`): the bytes never cross the network.
     public var canCopyData: Bool { extensions["copy-data"] != nil }
 
-    /// Copies `length` bytes (0 = to the end) of `from` at `offset` into `to` at the same offset.
-    public func copyData(_ from: String, to: String, offset: Int64, length: Int64) throws {
+    /// Copies `length` bytes (0 = to the end) of `from` at `offset` into `to` at the same offset. `truncate` as `openWrite`'s.
+    /// `opened`: `to` is open — from here on it may not be as it was.
+    public func copyData(_ from: String, to: String, offset: Int64, length: Int64, truncate: Bool = true, opened: () -> Void = {}) throws {
         let rh = try open(from, Self.FXF_READ)
         defer { closeUnheard(rh) }
-        let wh = try open(to, Self.FXF_WRITE | Self.FXF_CREAT | (offset > 0 ? 0 : Self.FXF_TRUNC), mode: 0o600)   // new: owner-only, as openWrite
+        let wh = try open(to, Self.FXF_WRITE | Self.FXF_CREAT | (offset > 0 || !truncate ? 0 : Self.FXF_TRUNC), mode: 0o600)   // new: owner-only, as openWrite
+        opened()
         defer { try? closeHandle(wh) }
         var p = Packet(Self.EXTENDED)
         p.string("copy-data")
@@ -986,6 +992,15 @@ extension SFTPClient {
         public var errorDescription: String? { "It changed on the server since it was opened." }
     }
 
+    /// A save written into the file failed on the way: the file may be cut short there — unless its old text went
+    /// back (`restored`). The new text, whole, stays in `partial` next to it.
+    public struct InPlaceFailed: LocalizedError {
+        public let partial: String
+        public let restored: Bool
+        public let error: Error
+        public var errorDescription: String? { error.localizedDescription }
+    }
+
     /// Files this big at most get a `sha256` in their baseline (configs, scripts): reading them back costs little.
     public static let hashLimit: Int64 = 1 << 20
 
@@ -1025,23 +1040,47 @@ extension SFTPClient {
         return out
     }
 
+    /// Where a symlink leads (`realpath`; nil: it can't be followed) and what's there (`stat`; nil: nothing), asked
+    /// together: one wait.
+    private func follow(_ link: String) throws -> (real: String?, attrs: Attrs?) {
+        var r = Packet(Self.REALPATH), s = Packet(Self.STAT)
+        r.string(link)
+        s.string(link)
+        let rid = try send(r)
+        let sid: UInt32
+        do { sid = try send(s) } catch { forget([rid]); throw error }
+        let named = try wait(rid), stated = try wait(sid)
+        var n = Reader(named.body)
+        let real = named.type == Self.NAME && (try? n.u32()) == 1 ? try? n.text() : nil
+        if stated.type == Self.STATUS {
+            do { try status(stated.body, path: link, okOnly: true) } catch let e as SFTPError where e.code == Self.NO_SUCH_FILE { return (real, nil) }
+        }
+        guard stated.type == Self.ATTRS else { throw protocolError("STAT answered \(stated.type)") }
+        var a = Reader(stated.body)
+        return (real, try a.attrs())
+    }
+
     /// Puts the local file in place of `remote`. First all of it into a partial file next to it, so a dropped
     /// connection never leaves a cut-off config; then renamed over it — or, if that would change the owner
-    /// (someone else's file), `remote` is a symlink or the session `writesInPlace`, copied into it on the server, which
-    /// keeps owner, mode, links and SELinux label. Throws `ChangedOnServer` if the server's copy isn't `baseline` any more, unless `force`.
+    /// (someone else's file) or the session `writesInPlace`, copied into it on the server, which keeps owner, mode,
+    /// links and SELinux label. A symlink stays one: what it points to is saved (`realpath`), the same way. Throws `ChangedOnServer` if the server's copy isn't `baseline` any more, unless `force`.
     /// Returns the new attributes (the next baseline).
     /// `cancel` stops it (CancellationError) and removes the partial file, over a slow link too (`closeWhenQuiet`).
     /// `replaced` gets the file it replaced, once it's in place: its attributes, and its bytes up to
     /// `ServerHistory.fileLimit` (nil over that) — from the check's own read when there is one, else read first.
     /// `check` gets the partial file's path once it holds all of the new text, before it takes the file's place (either
-    /// way): a throw leaves the file as it was, the partial file gone (`ConfigCheck`'s "before").
+    /// way): a throw leaves the file as it was, the partial file gone (`ConfigCheck`'s "before"). A copy into the file
+    /// that fails once begun puts the old text back if it can and throws `InPlaceFailed`; ⎋ stops nothing by then.
     @discardableResult
     public func upload(_ local: String, to remote: String, baseline: Attrs?, force: Bool = false, cancel: CancelFlag? = nil,
                        replaced: ((Attrs, Data?) -> Void)? = nil, check: ((_ partial: String) throws -> Void)? = nil) throws -> Attrs {
         let previous = cancel?.onCancel { [self] in closeWhenQuiet() } ?? nil
         defer { cancel?.onCancel(previous) }
         let entry = try lstat(remote)
-        let cur = entry?.kind == .link ? try stat(remote) : entry
+        // A symlink (nginx's sites-enabled/*): the file it points to takes the partial file's place. `real` nil: it
+        // can't be followed (a folder on the way is missing) — written through, as another owner's file.
+        var real: String? = remote, cur = entry
+        if entry?.kind == .link { (real, cur) = try follow(remote) }
         let keep = replaced != nil && cur?.kind == .file && cur!.size <= ServerHistory.fileLimit
         var old: Data?
         // Size + whole-second mtime is all SFTP v3 tells; a same-size change within that second shows in the content.
@@ -1059,9 +1098,17 @@ extension SFTPClient {
         let fd = Darwin.open(local, O_RDONLY)
         guard fd >= 0 else { throw LocalFS.posixError() }
         defer { Darwin.close(fd) }
-        let partial = ((remote as NSString).deletingLastPathComponent as NSString).appendingPathComponent(FileJob.partialName())
-        let w = try openWrite(partial, exclusive: true)
-        var hash = SHA256()
+        func partialFile(next path: String) -> String { ((path as NSString).deletingLastPathComponent as NSString).appendingPathComponent(FileJob.partialName()) }
+        var partial = partialFile(next: real ?? remote), aside = false
+        let w: WriteStream
+        do {
+            w = try openWrite(partial, exclusive: true)
+        } catch let e as SFTPError where !e.connection && real != nil && real != remote {
+            // The link's target is in a folder that isn't ours to write in: next to the link, copied into the file.
+            (partial, aside) = (partialFile(next: remote), true)
+            w = try openWrite(partial, exclusive: true)
+        }
+        var hash = SHA256(), length: Int64 = 0
         var modeError: Error?   // the mode didn't take: no rename then (a copy into `remote` keeps its own)
         do {
             var buf = [UInt8](repeating: 0, count: 1 << 16)
@@ -1071,6 +1118,7 @@ extension SFTPClient {
                 if n < 0 { if errno == EINTR { continue }; throw LocalFS.posixError() }
                 if n == 0 { break }
                 hash.update(data: buf[0..<n])
+                length += Int64(n)
                 try w.write(Data(buf[0..<n]))
             }
             modeError = try w.finish(mtime: nil, mode: cur?.mode ?? 0o644)   // with the close: one wait, not two
@@ -1079,31 +1127,81 @@ extension SFTPClient {
             try? remove(partial)
             throw error
         }
+        let into = real ?? remote
+        var touched = false   // the copy into the file began: it may not be as it was
         do {
             try check?(partial)
             let mine = try lstat(partial)
-            if let cur, writesInPlace || entry?.kind == .link || cur.uid == nil || cur.uid != mine?.uid || cur.gid != mine?.gid {
-                if canCopyData {
-                    try copyData(partial, to: remote, offset: 0, length: 0)
+            var inPlace = real == nil || aside || writesInPlace && cur != nil
+            if !inPlace, let cur, cur.uid == nil || cur.uid != mine?.uid || cur.gid != mine?.gid {
+                // Root gives the partial file the file's owner, then renames it over: never a moment as root's file.
+                // Not allowed (NFS's root_squash), or anyone else's session: copied into the file, which keeps its own.
+                if target.sudo, let uid = cur.uid, let gid = cur.gid {
+                    do {
+                        try setAttrs(partial, mtime: nil, mode: nil, owner: (uid, gid))
+                        // chown drops setuid/setgid
+                        if let m = cur.mode, m & 0o6000 != 0 { try setAttrs(partial, mtime: nil, mode: m) }
+                    } catch let e as SFTPError where !e.connection { inPlace = true }
                 } else {
-                    let r = try openRead(partial, sizeHint: mine?.size ?? 0)
+                    inPlace = true
+                }
+            }
+            if let real, !inPlace {
+                if let modeError { throw modeError }
+                try rename(partial, real, replace: true)
+            } else {
+                // Never opened with TRUNC: written over from the start, then cut to its new length. A drop on the
+                // way leaves the old text, or the new one's start over the old one's end — never an empty file.
+                // Its old text is read first, whatever the history wants: what a failure puts back.
+                if old == nil, let cur, cur.kind == .file, cur.size <= ServerHistory.fileLimit { old = try contents(into, size: cur.size) }
+                guard cancel?.hold() != false else { throw CancellationError() }
+                if canCopyData {
+                    try copyData(partial, to: into, offset: 0, length: 0, truncate: false) { touched = true }
+                } else {
+                    let r = try openRead(partial, sizeHint: length)
                     defer { r.close() }
-                    let out = try openWrite(remote)
+                    let out = try openWrite(into, truncate: false)
+                    touched = true
                     do { while let d = try r.read() { try out.write(d) }; try out.finish() } catch { out.close(); throw error }
                 }
+                try setAttrs(into, mtime: nil, mode: nil, size: length)
                 try? remove(partial)
-            } else {
-                if let modeError { throw modeError }
-                try rename(partial, remote, replace: true)
             }
         } catch {
-            try? remove(partial)
-            throw error
+            guard touched else {
+                try? remove(partial)
+                throw error
+            }
+            // The partial file stays: the only whole copy of the new text there.
+            var restored = false
+            if let old, isConnected {
+                do {
+                    let out = try openWrite(into, truncate: false)
+                    do { try out.write(old); try out.finish() } catch { out.close(); throw error }
+                    try setAttrs(into, mtime: nil, mode: nil, size: Int64(old.count))
+                    restored = true
+                } catch {}   // not put back: said so
+            }
+            throw InPlaceFailed(partial: partial, restored: restored, error: error)
         }
         if let cur, cur.kind == .file { replaced?(cur, keep ? old : nil) }
         var a = try stat(remote)
         if a.size <= Self.hashLimit { a.sha256 = Data(hash.finalize()) }   // what was sent: the next save's baseline
+        saved.insert((partial as NSString).deletingLastPathComponent)
         return a
+    }
+
+    /// Partial files earlier saves left where this session's saves went (a dropped connection, a failed copy into the
+    /// file, the app quit), once over a day old (`FileJob.isStalePartial`): a running save's is newer. Each folder once a
+    /// session — its listing is two waits. ponytail: a folder of 100 000 names costs its listing; a cap if that bites.
+    public func sweepPartials() {
+        for dir in saved.subtracting(swept) {
+            swept.insert(dir)
+            guard let items = try? list(dir) else { continue }
+            let cutoff = Date().timeIntervalSince1970 - 86_400
+            let stale = items.filter { FileJob.isStalePartial($0.name, $0.attrs, before: cutoff) }
+            if !stale.isEmpty { _ = remove(stale.map { (dir as NSString).appendingPathComponent($0.name) }) }
+        }
     }
 }
 

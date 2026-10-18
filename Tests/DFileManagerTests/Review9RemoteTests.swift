@@ -28,8 +28,14 @@ private func tempRoot() throws -> String {
     var t = [timeval(tv_sec: Int(old.timeIntervalSince1970), tv_usec: 0), timeval(tv_sec: Int(old.timeIntervalSince1970), tv_usec: 0)]
     lutimes(root + "/dfm-sftp-link", &t)
 
+    // T-07: a save as administrator's or a put-back's text, a file of its own (a crash left it).
+    for name in ["dfm-admin-save-old", "dfm-putback-old", "dfm-admin-save-new"] {
+        try Data("root's text\n".utf8).write(to: URL(fileURLWithPath: root + "/" + name))
+        if name.hasSuffix("old") { try fm.setAttributes([.modificationDate: old], ofItemAtPath: root + "/" + name) }
+    }
+
     TempCopies.sweep(in: root)
-    #expect(try fm.contentsOfDirectory(atPath: root).sorted() == ["dfm-sftp-kept-old", "dfm-sftp-new", "dfm-ssh-old", "other-old"])
+    #expect(try fm.contentsOfDirectory(atPath: root).sorted() == ["dfm-admin-save-new", "dfm-sftp-kept-old", "dfm-sftp-new", "dfm-ssh-old", "other-old"])
     #expect(fm.fileExists(atPath: outside))
 }
 

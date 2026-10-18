@@ -1,5 +1,5 @@
 import AppKit
-import DFMCore
+@testable import DFMCore
 import Testing
 @testable import DFileManager
 
@@ -180,6 +180,41 @@ private func tempDir() throws -> String {
     #expect(open.contains("no route") && !open.contains(saved.path))
     let closed = AppDelegate.notUploaded(saved, host: "srv", Failed(), editorOpen: false) ?? ""
     #expect(closed.contains("no route") && closed.contains(saved.path))
+}
+
+/// sss-2: a save written into the server's file that failed on the way says what the file there is now — maybe cut
+/// short, or put back — and where the whole new text is on the server (the partial file).
+@MainActor @Test func aFailedWriteIntoTheFileSaysWhereTheTextIs() {
+    let saved = URL(fileURLWithPath: "/tmp/dfm-sftp-X/site.conf")
+    struct Full: LocalizedError { var errorDescription: String? { "No space left on device" } }
+    let partial = "/etc/nginx/sites-available/.dfm-partial-1-X"
+    let cut = AppDelegate.notUploaded(saved, host: "srv", SFTPClient.InPlaceFailed(partial: partial, restored: false, error: Full()), editorOpen: true) ?? ""
+    #expect(cut.contains("No space left on device") && cut.contains("may be cut short") && cut.contains(partial), "\(cut)")
+    let back = AppDelegate.notUploaded(saved, host: "srv", SFTPClient.InPlaceFailed(partial: partial, restored: true, error: Full()), editorOpen: false) ?? ""
+    #expect(back.contains("put back") && !back.contains("cut short") && back.contains(partial) && back.contains(saved.path), "\(back)")
+}
+
+/// T-07: a save's temp file a crash left next to the file goes at the next save there once a day old (by its name's
+/// time and its date; an older version's name has none: its date alone). A fresh one may be a save running.
+@MainActor @Test func aSaveSweepsDayOldTempFilesOfSaves() async throws {
+    _ = NSApplication.shared
+    let fm = FileManager.default
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-editor-" + UUID().uuidString
+    try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(atPath: dir) }
+    let now = Int(Date().timeIntervalSince1970), old = Date(timeIntervalSinceNow: -2 * 86_400)
+    let stale = [".dfm-save-\(now - 2 * 86_400)-\(UUID().uuidString)", ".dfm-save-\(UUID().uuidString)"]
+    let fresh = [".dfm-save-\(now - 60)-\(UUID().uuidString)", ".dfm-save-\(now)-\(UUID().uuidString)"]
+    for (i, n) in (stale + fresh).enumerated() {
+        try Data("half a save\n".utf8).write(to: URL(fileURLWithPath: dir + "/" + n))
+        if i != 3 { try fm.setAttributes([.modificationDate: old], ofItemAtPath: dir + "/" + n) }   // a running one's name is new, its date may not be
+    }
+    try Data("original\n".utf8).write(to: URL(fileURLWithPath: dir + "/doc.txt"))
+    let e = try Editor(URL(fileURLWithPath: dir + "/doc.txt"))
+    defer { e.close() }
+    e.textView.string = "edited\n"
+    #expect(await e.save())
+    #expect(try fm.contentsOfDirectory(atPath: dir).sorted() == (fresh + ["doc.txt"]).sorted())
 }
 
 /// Typing and undoing it all back is no change: closing doesn't ask. A real change does.

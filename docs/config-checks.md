@@ -10,7 +10,7 @@ Saving a server config (⌘S in the F4 editor, a save from another app, or a rev
 
 **Before the file is replaced** — for files that stand alone:
 
-1. Kermo writes the whole new text to a partial file next to the old one (`.dfm-partial-…`; services don't read those from their include folders).
+1. Kermo writes the whole new text to a partial file next to the old one (`.dfm-partial-…`; services don't read those from their include folders). For a symlink, that's next to the file it points to.
 2. The check runs on the partial file. Only if it passes does the new file replace the old one.
 3. If it fails, the file on the server stays as it was, the dialog shows what the tool said, and your text stays unsaved in the editor.
 
