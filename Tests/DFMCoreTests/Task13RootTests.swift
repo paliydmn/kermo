@@ -94,8 +94,9 @@ private func rootTempDir() -> String {
 
 /// ⌘S from a root panel: the same `upload` as the user's panel — 8 round trips for a 2 KB file opened with F4, the
 /// new text renamed over it. With SELinux on the server (`/sys/fs/selinux`, looked at with sftp-server's path) it
-/// writes into the file itself (the same inode keeps its label): 12 round trips — copied into on the server, as a
-/// symlink's (13: one more to follow it) or another owner's file always was. Measured on the code before: 8 and 13.
+/// writes into the file itself (the same inode keeps its label): 12 round trips — copied into on the server, as
+/// another owner's file always was. Measured on the code before: 8 and 13. A symlink's target is renamed over as a
+/// plain file is: 9, one more to follow it (sss-2; copied into it before, 13).
 @Test func rootSaveWritesInPlaceUnderSELinux() throws {
     let d = rootTempDir()
     defer { try? FileManager.default.removeItem(atPath: d) }
@@ -121,7 +122,7 @@ private func rootTempDir() -> String {
     #expect(user.trips == 8 && !user.inPlace && !user.flag)
     #expect(root.trips == 8 && !root.inPlace && !root.flag, "root without SELinux: renamed, as the user's")
     #expect(selinux.trips == 12 && selinux.inPlace && selinux.flag, "the partial file, copied into the file, removed; no rename")
-    #expect(link.trips == 13 && link.inPlace, "as before")
+    #expect(link.trips == 9 && !link.inPlace, "the target renamed over: \(link.trips)")
 }
 
 /// sudo's refusals in plain words, told apart by exit status and text: each "needs a password" (sudo 1.8/1.9,
