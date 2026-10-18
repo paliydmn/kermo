@@ -144,3 +144,39 @@ private func proxy(in dir: String, name: String = "", bare: Bool = false, drop: 
         #expect(partials(d).isEmpty)
     }
 }
+
+/// A root panel under SELinux writes into the file itself. The connection drops right after the file is opened for
+/// it: the old text is still there, not an empty file (it was opened with TRUNC); the new text is in the partial file.
+@Test func aDropRightAfterTheOpenLeavesTheOldText() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    let file = d + "/f.conf"
+    put(file, "old text\n")
+    put(d + "/local", "new text\n")
+    let p = proxy(in: d, name: "f.conf", drop: true)
+    let c = try SFTPClient(.local(sudo: try fakeSudo(d, #"[ "$1" = -n ] || exit 2; exec \#(p)"#), selinux: true))
+    defer { c.close() }
+    #expect(c.writesInPlace)
+    let a = try c.download(file, to: d + "/base")
+    #expect(throws: (any Error).self) { try c.upload(d + "/local", to: file, baseline: a) { _, _ in } }
+    #expect(text(file) == "old text\n")
+    #expect(partials(d).map { text(d + "/" + $0) } == ["new text\n"])
+}
+
+/// Written into, a shorter new text leaves none of the old one's end: cut to its length — with copy-data, and
+/// with WRITEs (a server without it).
+@Test func aShorterTextWrittenIntoLeavesNoTail() throws {
+    for bare in [false, true] {
+        let d = tempDir()
+        defer { try? fm.removeItem(atPath: d) }
+        let file = d + "/f.conf"
+        put(file, String(repeating: "old text, much longer\n", count: 100))
+        put(d + "/local", "new\n")
+        let c = try SFTPClient(.local(sudo: try fakeSudo(d, #"[ "$1" = -n ] || exit 2; exec \#(proxy(in: d, bare: bare))"#), selinux: true))
+        defer { c.close() }
+        #expect(c.canCopyData == !bare)
+        let ino = inode(file)
+        let after = try c.upload(d + "/local", to: file, baseline: try c.stat(file))
+        #expect(text(file) == "new\n" && after.size == 4 && inode(file) == ino && partials(d).isEmpty, "bare: \(bare)")
+    }
+}

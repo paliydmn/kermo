@@ -445,16 +445,18 @@ public final class SFTPClient: @unchecked Sendable {
         try expectOK(p, link)
     }
 
-    /// Modification (and access) time, permission bits, owner and group (both: v3 sends them together). Doesn't
-    /// follow a symlink only if the server can't.
-    public func setAttrs(_ path: String, mtime: Double?, mode: UInt32?, owner: (uid: UInt32, gid: UInt32)? = nil) throws {
-        try expectOK(Self.setstat(path, mtime: mtime, mode: mode, owner: owner), path)
+    /// Modification (and access) time, permission bits, owner and group (both: v3 sends them together), size (cut
+    /// or grown to). Doesn't follow a symlink only if the server can't.
+    public func setAttrs(_ path: String, mtime: Double?, mode: UInt32?, owner: (uid: UInt32, gid: UInt32)? = nil, size: Int64? = nil) throws {
+        try expectOK(Self.setstat(path, mtime: mtime, mode: mode, owner: owner, size: size), path)
     }
 
-    static func setstat(_ path: String, mtime: Double?, mode: UInt32?, owner: (uid: UInt32, gid: UInt32)? = nil) -> Packet {
+    static func setstat(_ path: String, mtime: Double?, mode: UInt32?, owner: (uid: UInt32, gid: UInt32)? = nil, size: Int64? = nil) -> Packet {
         var p = Packet(Self.SETSTAT)
         p.string(path)
-        p.u32((owner == nil ? 0 : Self.ATTR_UIDGID) | (mtime == nil ? 0 : Self.ATTR_ACMODTIME) | (mode == nil ? 0 : Self.ATTR_PERMISSIONS))
+        p.u32((size == nil ? 0 : Self.ATTR_SIZE) | (owner == nil ? 0 : Self.ATTR_UIDGID) | (mtime == nil ? 0 : Self.ATTR_ACMODTIME)
+              | (mode == nil ? 0 : Self.ATTR_PERMISSIONS))
+        if let size { p.u64(UInt64(max(0, size))) }
         if let owner { p.u32(owner.uid); p.u32(owner.gid) }
         if let mode { p.u32(mode & 0o7777) }
         if let mtime { p.u32(UInt32(clamping: Int64(mtime))); p.u32(UInt32(clamping: Int64(mtime))) }
@@ -613,10 +615,11 @@ public final class SFTPClient: @unchecked Sendable {
         }
     }
 
-    /// `offset` > 0 continues a partial file; 0 creates (or truncates) it. `exclusive`: fail if it exists.
+    /// `offset` > 0 continues a partial file; 0 creates (or truncates) it. `exclusive`: fail if it exists. `truncate`
+    /// false: written over from the start, what's past the end left (the caller cuts it).
     /// A new file is owner-only (a key or .env in transit is nobody else's business); callers set its real mode.
-    public func openWrite(_ path: String, offset: Int64 = 0, exclusive: Bool = false) throws -> WriteStream {
-        let flags = Self.FXF_WRITE | Self.FXF_CREAT | (offset > 0 ? 0 : exclusive ? Self.FXF_EXCL : Self.FXF_TRUNC)
+    public func openWrite(_ path: String, offset: Int64 = 0, exclusive: Bool = false, truncate: Bool = true) throws -> WriteStream {
+        let flags = Self.FXF_WRITE | Self.FXF_CREAT | (offset > 0 || !truncate ? 0 : exclusive ? Self.FXF_EXCL : Self.FXF_TRUNC)
         return WriteStream(self, try open(path, flags, mode: 0o600), path, offset: UInt64(offset))
     }
 
@@ -644,11 +647,11 @@ public final class SFTPClient: @unchecked Sendable {
     /// Server-side copy (`copy-data`): the bytes never cross the network.
     public var canCopyData: Bool { extensions["copy-data"] != nil }
 
-    /// Copies `length` bytes (0 = to the end) of `from` at `offset` into `to` at the same offset.
-    public func copyData(_ from: String, to: String, offset: Int64, length: Int64) throws {
+    /// Copies `length` bytes (0 = to the end) of `from` at `offset` into `to` at the same offset. `truncate` as `openWrite`'s.
+    public func copyData(_ from: String, to: String, offset: Int64, length: Int64, truncate: Bool = true) throws {
         let rh = try open(from, Self.FXF_READ)
         defer { closeUnheard(rh) }
-        let wh = try open(to, Self.FXF_WRITE | Self.FXF_CREAT | (offset > 0 ? 0 : Self.FXF_TRUNC), mode: 0o600)   // new: owner-only, as openWrite
+        let wh = try open(to, Self.FXF_WRITE | Self.FXF_CREAT | (offset > 0 || !truncate ? 0 : Self.FXF_TRUNC), mode: 0o600)   // new: owner-only, as openWrite
         defer { try? closeHandle(wh) }
         var p = Packet(Self.EXTENDED)
         p.string("copy-data")
@@ -1092,7 +1095,7 @@ extension SFTPClient {
             (partial, aside) = (partialFile(next: remote), true)
             w = try openWrite(partial, exclusive: true)
         }
-        var hash = SHA256()
+        var hash = SHA256(), length: Int64 = 0
         var modeError: Error?   // the mode didn't take: no rename then (a copy into `remote` keeps its own)
         do {
             var buf = [UInt8](repeating: 0, count: 1 << 16)
@@ -1102,6 +1105,7 @@ extension SFTPClient {
                 if n < 0 { if errno == EINTR { continue }; throw LocalFS.posixError() }
                 if n == 0 { break }
                 hash.update(data: buf[0..<n])
+                length += Int64(n)
                 try w.write(Data(buf[0..<n]))
             }
             modeError = try w.finish(mtime: nil, mode: cur?.mode ?? 0o644)   // with the close: one wait, not two
@@ -1131,15 +1135,18 @@ extension SFTPClient {
                 if let modeError { throw modeError }
                 try rename(partial, real, replace: true)
             } else {
+                // Never opened with TRUNC: written over from the start, then cut to its new length. A drop on the
+                // way leaves the old text, or the new one's start over the old one's end — never an empty file.
                 let into = real ?? remote
                 if canCopyData {
-                    try copyData(partial, to: into, offset: 0, length: 0)
+                    try copyData(partial, to: into, offset: 0, length: 0, truncate: false)
                 } else {
-                    let r = try openRead(partial, sizeHint: mine?.size ?? 0)
+                    let r = try openRead(partial, sizeHint: length)
                     defer { r.close() }
-                    let out = try openWrite(into)
+                    let out = try openWrite(into, truncate: false)
                     do { while let d = try r.read() { try out.write(d) }; try out.finish() } catch { out.close(); throw error }
                 }
+                try setAttrs(into, mtime: nil, mode: nil, size: length)
                 try? remove(partial)
             }
         } catch {
