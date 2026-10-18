@@ -321,6 +321,20 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         try h.close()
     }
 
+    /// Temp files of saves a crash left in `dir` (between their making and the rename), once a day old by name and
+    /// date: a running save's is newer. One named before names said when (an older version's): its date alone.
+    nonisolated private static func sweepSaves(in dir: String) {
+        let cutoff = Date().timeIntervalSince1970 - 86_400
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [] where name.hasPrefix(".dfm-save-") {
+            let made = name.dropFirst(".dfm-save-".count).split(separator: "-", maxSplits: 1).first.flatMap { Double($0) } ?? 0
+            let path = (dir as NSString).appendingPathComponent(name)
+            var st = stat()
+            guard made < cutoff, lstat(path, &st) == 0, st.st_mode & S_IFMT == S_IFREG, Double(st.st_mtimespec.tv_sec) < cutoff else { continue }
+            lchflags(path, 0)   // a locked original's uchg came along
+            unlink(path)
+        }
+    }
+
     /// Writes the text unless the file changed on disk meanwhile — then asks Overwrite / Reload / Cancel and returns false.
     /// `then` runs if a save that first asks about the encoding goes through after all (closing does).
     /// The disk work runs off the main thread (⌘S on a share that stopped answering hung the app); the text can't be
@@ -377,7 +391,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         do {
             // A rename would split a hard-linked file's links, and make someone else's file ours: those are rewritten in place.
             if fm.isWritableFile(atPath: dir), !exists || st.st_nlink == 1 && st.st_uid == geteuid() {
-                let tmp = (dir as NSString).appendingPathComponent(".dfm-save-\(UUID().uuidString)")
+                sweepSaves(in: dir)
+                let tmp = (dir as NSString).appendingPathComponent(".dfm-save-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString)")
                 // 0600 until the original's mode is copied on: a secret is never briefly world-readable.
                 do { try Self.write(data, to: Darwin.open(tmp, O_WRONLY | O_CREAT | O_EXCL, exists ? 0o600 : 0o666)) } catch { unlink(tmp); throw error }
                 if exists {
@@ -497,9 +512,9 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
             askOverwrite(now)
             return false
         }
-        let tmp = NSTemporaryDirectory() + "dfm-admin-save-" + UUID().uuidString
+        let tmp = NSTemporaryDirectory() + "dfm-admin-save-" + UUID().uuidString   // swept a day later (TempCopies)
         defer { unlink(tmp) }
-        guard (try? data.write(to: URL(fileURLWithPath: tmp))) != nil else { return false }
+        guard (try? Self.write(data, to: Darwin.open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0o600))) != nil else { return false }   // a root file's text: ours only
         switch await Self.runAsAdmin(AdminCommand.writeContents(from: tmp, to: path)) {
         case .ok:
             saved(await Blocking.run(.userInitiated) { Stamp(path) }, SHA256.hash(data: data))
