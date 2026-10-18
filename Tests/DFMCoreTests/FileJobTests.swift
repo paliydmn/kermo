@@ -438,6 +438,23 @@ private struct Sandbox {
     #expect(FileJob.lstat(s.p("dst/h.txt")).map { $0.st_flags & UInt32(UF_HIDDEN) } == UInt32(UF_HIDDEN))
 }
 
+/// A file locked in Finder (uchg): copyfile put the lock on the hidden partial too, so the rename failed ("Operation
+/// not permitted") and the partial, locked, stayed in the destination. Now the copy lands, locked as Finder's would be.
+@Test func copyOfALockedFileLandsLocked() throws {
+    let s = Sandbox()
+    defer {
+        for dir in [s.src, s.dst] { for n in (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [] { lchflags(dir + "/" + n, 0) } }
+        try? FileManager.default.removeItem(atPath: s.root)
+    }
+    s.write("src/a.txt", "locked")
+    #expect(lchflags(s.p("src/a.txt"), UInt32(UF_IMMUTABLE)) == 0)
+    let job = run(.copy, [s.p("src/a.txt")], to: s.dst)
+    #expect(job.progress.errors.isEmpty)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: s.dst) == ["a.txt"])
+    #expect(s.read("dst/a.txt") == "locked")
+    #expect(FileJob.lstat(s.p("dst/a.txt")).map { $0.st_flags & UInt32(UF_IMMUTABLE) } == UInt32(UF_IMMUTABLE))
+}
+
 @Test func moveOntoItselfIsANoOp() {
     let s = Sandbox()
     defer { try? FileManager.default.removeItem(atPath: s.root) }

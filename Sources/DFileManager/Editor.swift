@@ -467,6 +467,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         url = dest
         onSaved = nil
         remote = nil
+        server = nil   // else a revert from that file's server history would find this window and write over `dest`
         noticed = nil
         retitle()
         return await save(force: true)

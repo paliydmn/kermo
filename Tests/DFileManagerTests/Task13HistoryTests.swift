@@ -194,3 +194,24 @@ extension ServerCopiesTests {
     #expect(await !e.reverted(to: Data("older\n".utf8), attrs: before))
     #expect(e.textView.string == "mine\n" && e.server?.state.baseline == after, "its own changes stay")
 }
+
+/// Save As of a server file's copy kept the editor tied to that server's file: a later Revert from its Server File
+/// History found this window and wrote the old server text into the new local file. After Save As it's a local file.
+@MainActor @Test func saveAsLeavesTheServerFile() async throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-esas-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let copy = URL(fileURLWithPath: dir + "/app.conf"), mine = URL(fileURLWithPath: dir + "/mine.conf")
+    try Data("now\n".utf8).write(to: copy)
+    let t = SFTPTarget(host: "me@web.invalid"), attrs = SFTPClient.Attrs(kind: .file, size: 4, mtime: 100, mode: 0o644)
+    Editor.open(copy, remote: "web:/etc/app.conf", server: (t, "/etc/app.conf", AppDelegate.RemoteEdit(baseline: attrs)))
+    for _ in 0..<250 where Editor.editing(t, "/etc/app.conf") == nil { try await Task.sleep(for: .milliseconds(20)) }
+    let e = try #require(Editor.editing(t, "/etc/app.conf"))
+    defer { e.close() }
+    #expect(Editor.server(of: e.window)?.path == "/etc/app.conf")
+
+    #expect(await e.saveAs(mine))
+    #expect(Editor.editing(t, "/etc/app.conf") == nil && Editor.server(of: e.window) == nil)
+    #expect(await !e.reverted(to: Data("old\n".utf8), attrs: attrs))
+    #expect(FileManager.default.contents(atPath: mine.path) == Data("now\n".utf8) && e.textView.string == "now\n")
+}

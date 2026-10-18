@@ -41,10 +41,22 @@ public struct ArchiveIndex: Sendable {
 
         func add(_ path: String, _ item: FileItem, isExplicit: Bool) {
             let parent = (path as NSString).deletingLastPathComponent
-            if !parent.isEmpty && !explicit.contains(parent) && folders[parent] == nil {
-                // Many zips have no entries for folders; make them up from the file paths.
-                add(parent, FileItem(name: (parent as NSString).lastPathComponent, kind: .dir, size: 0, mtime: item.mtime, mode: 0, flags: 0),
-                    isExplicit: false)
+            // Many zips have no entries for folders; make them up from the file paths. In a loop, not a call per folder:
+            // a name 2000 folders deep (8 KB of zip) overran the 512 KB stack of the GCD thread the panel reads on.
+            // ponytail: the tree is keyed by full paths, so a chain of n folders keeps n²/2 bytes of keys (30000: ~1 GB);
+            // a tree by components if a pax tar with a megabytes-long name ever turns up.
+            var missing: [String] = []
+            var up = parent
+            while !up.isEmpty && !explicit.contains(up) && folders[up] == nil {
+                missing.append(up)
+                up = (up as NSString).deletingLastPathComponent
+            }
+            for dir in missing.reversed() {
+                let above = (dir as NSString).deletingLastPathComponent, name = (dir as NSString).lastPathComponent
+                if folders[above]?[name] == nil {
+                    folders[above, default: [:]][name] = FileItem(name: name, kind: .dir, size: 0, mtime: item.mtime, mode: 0, flags: 0)
+                }
+                folders[dir] = [:]
             }
             if isExplicit || folders[parent]?[item.name] == nil { folders[parent, default: [:]][item.name] = item }
             if isExplicit && !explicit.insert(path).inserted { repeated.insert(path) }

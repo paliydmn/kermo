@@ -13,6 +13,12 @@ Release:
 
 ## [Unreleased]
 
+### Fixed
+
+- Opening an archive with a very deeply nested path (a tiny zip with one file 2000 folders down) no longer crashes Kermo.
+- Copying a file locked in Finder works: the copy is locked too, as Finder's is. Before, it failed with "Operation not permitted" and left a hidden, locked partial file in the destination; such leftovers are now cleared after a day like the others.
+- **Save As…** of a server file's editor makes it an ordinary local file: a later revert from that server file's history no longer writes the old version into the file you saved.
+
 ## [1.2.1] - 2026-10-17
 
 ### Changed
