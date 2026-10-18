@@ -1,5 +1,5 @@
 import AppKit
-import DFMCore
+@testable import DFMCore
 import Testing
 @testable import DFileManager
 
@@ -180,6 +180,18 @@ private func tempDir() throws -> String {
     #expect(open.contains("no route") && !open.contains(saved.path))
     let closed = AppDelegate.notUploaded(saved, host: "srv", Failed(), editorOpen: false) ?? ""
     #expect(closed.contains("no route") && closed.contains(saved.path))
+}
+
+/// sss-2: a save written into the server's file that failed on the way says what the file there is now — maybe cut
+/// short, or put back — and where the whole new text is on the server (the partial file).
+@MainActor @Test func aFailedWriteIntoTheFileSaysWhereTheTextIs() {
+    let saved = URL(fileURLWithPath: "/tmp/dfm-sftp-X/site.conf")
+    struct Full: LocalizedError { var errorDescription: String? { "No space left on device" } }
+    let partial = "/etc/nginx/sites-available/.dfm-partial-1-X"
+    let cut = AppDelegate.notUploaded(saved, host: "srv", SFTPClient.InPlaceFailed(partial: partial, restored: false, error: Full()), editorOpen: true) ?? ""
+    #expect(cut.contains("No space left on device") && cut.contains("may be cut short") && cut.contains(partial), "\(cut)")
+    let back = AppDelegate.notUploaded(saved, host: "srv", SFTPClient.InPlaceFailed(partial: partial, restored: true, error: Full()), editorOpen: false) ?? ""
+    #expect(back.contains("put back") && !back.contains("cut short") && back.contains(partial) && back.contains(saved.path), "\(back)")
 }
 
 /// Typing and undoing it all back is no change: closing doesn't ask. A real change does.

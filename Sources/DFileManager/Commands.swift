@@ -1298,6 +1298,7 @@ extension AppDelegate {
                 let (attrs, outcome) = try c.save(saved.path, to: remotePath, baseline: baseline, force: force, cancel: flag, rule: rule, env: env,
                                                   replaced: keep, checking: { Task { @MainActor in panel.busy(flag, says: checking) } })
                 let reload = rule?.reload(after: outcome, on: target, old: old) { try? Data(contentsOf: saved) }
+                c.sweepPartials()   // the first save in a folder a session: two waits more
                 return (attrs, note, outcome, reload.map { ($0, old) })
             }
         }
@@ -1542,6 +1543,11 @@ extension AppDelegate {
         }
         if let e = error as? ConfigCheck.NotRun {   // checked before it takes the file's place: nothing changed there
             return "“\(saved.lastPathComponent)” wasn't saved to \(host): its check didn't run. \(e.message)\(kept)"
+        }
+        if let e = error as? SFTPClient.InPlaceFailed {
+            let now = e.restored ? "was put back as it was" : "may be cut short"
+            return "Uploading “\(saved.lastPathComponent)” to \(host) failed: \(e.error.localizedDescription). The file on \(host) \(now); "
+                + "your full text is in \(e.partial) there.\(kept)"
         }
         return "Saved locally, but uploading to \(host) failed: \(error.localizedDescription)\(kept)"
     }

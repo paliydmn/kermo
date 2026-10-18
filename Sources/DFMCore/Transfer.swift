@@ -443,12 +443,16 @@ extension FileJob {
     /// name says when it was made, too; one made over a day ago and not written since is nobody's any more.
     func sweepPartials(_ fs: TransferFS, _ dir: String) {
         let cutoff = Date().timeIntervalSince1970 - 86_400
-        for c in (try? fs.list(dir)) ?? [] where c.attrs.kind == .file && c.attrs.mtime < cutoff && Self.isSafeName(c.name) {
-            guard let made = Self.partialMade(c.name), made < cutoff else { continue }
+        for c in (try? fs.list(dir)) ?? [] where Self.isStalePartial(c.name, c.attrs, before: cutoff) {
             let path = (dir as NSString).appendingPathComponent(c.name)
             if fs is LocalFS { lchflags(path, 0) }   // a locked one an older version left: unlink can't remove it locked
             try? fs.remove(path)
         }
+    }
+
+    /// A partial file made and last written before `cutoff` (seconds since 1970): nobody's any more.
+    static func isStalePartial(_ name: String, _ a: SFTPClient.Attrs, before cutoff: Double) -> Bool {
+        a.kind == .file && a.mtime < cutoff && isSafeName(name) && (partialMade(name).map { $0 < cutoff } ?? false)
     }
 
     /// ".dfm-partial-<seconds since 1970>-<UUID>": a partial copy, and when it was begun.

@@ -158,9 +158,10 @@ private func proxy(in dir: String, name: String = "", bare: Bool = false, drop: 
     defer { c.close() }
     #expect(c.writesInPlace)
     let a = try c.download(file, to: d + "/base")
-    #expect(throws: (any Error).self) { try c.upload(d + "/local", to: file, baseline: a) { _, _ in } }
+    let e = #expect(throws: SFTPClient.InPlaceFailed.self) { try c.upload(d + "/local", to: file, baseline: a) { _, _ in } }
     #expect(text(file) == "old text\n")
     #expect(partials(d).map { text(d + "/" + $0) } == ["new text\n"])
+    #expect(e?.restored == false && e?.partial == d + "/" + (partials(d).first ?? "?"), "gone with the connection: nothing put back")
 }
 
 /// Written into, a shorter new text leaves none of the old one's end: cut to its length — with copy-data, and
@@ -179,4 +180,45 @@ private func proxy(in dir: String, name: String = "", bare: Bool = false, drop: 
         let after = try c.upload(d + "/local", to: file, baseline: try c.stat(file))
         #expect(text(file) == "new\n" && after.size == 4 && inode(file) == ino && partials(d).isEmpty, "bare: \(bare)")
     }
+}
+
+/// The server fails a WRITE into the file (a full disk, a quota) on a server without copy-data: the old text goes
+/// back over the same connection, the partial file with the new text stays, and the error says both.
+@Test func aFailedWriteIntoTheFilePutsTheOldTextBack() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    let file = d + "/f.conf"
+    put(file, "old text, longer than the new one\n")
+    put(d + "/local", "new text\n")
+    let p = proxy(in: d, name: "f.conf", bare: true, failWrite: true)
+    let c = try SFTPClient(.local(sudo: try fakeSudo(d, #"[ "$1" = -n ] || exit 2; exec \#(p)"#), selinux: true))
+    defer { c.close() }
+    let e = #expect(throws: SFTPClient.InPlaceFailed.self) { try c.upload(d + "/local", to: file, baseline: try c.stat(file)) }
+    #expect(text(file) == "old text, longer than the new one\n")
+    #expect(e?.restored == true && e.map { text($0.partial) } == "new text\n")
+    #expect(c.isConnected)
+}
+
+/// After a save, `sweepPartials` removes the partial files earlier saves left in its folder once over a day old (by
+/// name and date, as a copy's); a newer one may be a save still running and stays. Each folder once a session.
+@Test func aSaveSweepsOldPartialsInItsFolder() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    let now = Int(Date().timeIntervalSince1970)
+    let old = ".dfm-partial-\(now - 2 * 86_400)-\(UUID().uuidString)", fresh = ".dfm-partial-\(now - 60)-\(UUID().uuidString)"
+    for n in [old, fresh] { put(d + "/" + n, "a save's text\n") }
+    try fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -2 * 86_400)], ofItemAtPath: d + "/" + old)
+    put(d + "/f.conf", "old\n")
+    put(d + "/local", "new\n")
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    try c.upload(d + "/local", to: d + "/f.conf", baseline: try c.stat(d + "/f.conf"))
+    #expect(partials(d).count == 2, "the save alone sweeps nothing")
+    var before = c.roundTrips
+    c.sweepPartials()
+    #expect(partials(d) == [fresh] && text(d + "/f.conf") == "new\n")
+    #expect(c.roundTrips - before == 3, "open the folder, its reads, the remove: \(c.roundTrips - before)")
+    before = c.roundTrips
+    c.sweepPartials()
+    #expect(c.roundTrips == before, "once a folder a session")
 }

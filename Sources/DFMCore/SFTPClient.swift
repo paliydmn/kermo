@@ -56,6 +56,7 @@ public final class SFTPClient: @unchecked Sendable {
     /// and it stops counting; no test gets there.)
     private(set) var roundTrips = 0
     private var lastSent: UInt32 = 0, waveEnd: UInt32 = 0
+    private var saved = Set<String>(), swept = Set<String>()   // folders saves put partial files in; looked through (`sweepPartials`)
     private let errors = ErrorTail()
 
     public init(_ t: SFTPTarget, env: [String: String] = [:], cancel: CancelFlag? = nil) throws {
@@ -648,10 +649,12 @@ public final class SFTPClient: @unchecked Sendable {
     public var canCopyData: Bool { extensions["copy-data"] != nil }
 
     /// Copies `length` bytes (0 = to the end) of `from` at `offset` into `to` at the same offset. `truncate` as `openWrite`'s.
-    public func copyData(_ from: String, to: String, offset: Int64, length: Int64, truncate: Bool = true) throws {
+    /// `opened`: `to` is open — from here on it may not be as it was.
+    public func copyData(_ from: String, to: String, offset: Int64, length: Int64, truncate: Bool = true, opened: () -> Void = {}) throws {
         let rh = try open(from, Self.FXF_READ)
         defer { closeUnheard(rh) }
         let wh = try open(to, Self.FXF_WRITE | Self.FXF_CREAT | (offset > 0 || !truncate ? 0 : Self.FXF_TRUNC), mode: 0o600)   // new: owner-only, as openWrite
+        opened()
         defer { try? closeHandle(wh) }
         var p = Packet(Self.EXTENDED)
         p.string("copy-data")
@@ -989,6 +992,15 @@ extension SFTPClient {
         public var errorDescription: String? { "It changed on the server since it was opened." }
     }
 
+    /// A save written into the file failed on the way: the file may be cut short there — unless its old text went
+    /// back (`restored`). The new text, whole, stays in `partial` next to it.
+    public struct InPlaceFailed: LocalizedError {
+        public let partial: String
+        public let restored: Bool
+        public let error: Error
+        public var errorDescription: String? { error.localizedDescription }
+    }
+
     /// Files this big at most get a `sha256` in their baseline (configs, scripts): reading them back costs little.
     public static let hashLimit: Int64 = 1 << 20
 
@@ -1057,7 +1069,8 @@ extension SFTPClient {
     /// `replaced` gets the file it replaced, once it's in place: its attributes, and its bytes up to
     /// `ServerHistory.fileLimit` (nil over that) — from the check's own read when there is one, else read first.
     /// `check` gets the partial file's path once it holds all of the new text, before it takes the file's place (either
-    /// way): a throw leaves the file as it was, the partial file gone (`ConfigCheck`'s "before").
+    /// way): a throw leaves the file as it was, the partial file gone (`ConfigCheck`'s "before"). A copy into the file
+    /// that fails once begun puts the old text back if it can and throws `InPlaceFailed`; ⎋ stops nothing by then.
     @discardableResult
     public func upload(_ local: String, to remote: String, baseline: Attrs?, force: Bool = false, cancel: CancelFlag? = nil,
                        replaced: ((Attrs, Data?) -> Void)? = nil, check: ((_ partial: String) throws -> Void)? = nil) throws -> Attrs {
@@ -1114,6 +1127,8 @@ extension SFTPClient {
             try? remove(partial)
             throw error
         }
+        let into = real ?? remote
+        var touched = false   // the copy into the file began: it may not be as it was
         do {
             try check?(partial)
             let mine = try lstat(partial)
@@ -1137,26 +1152,56 @@ extension SFTPClient {
             } else {
                 // Never opened with TRUNC: written over from the start, then cut to its new length. A drop on the
                 // way leaves the old text, or the new one's start over the old one's end — never an empty file.
-                let into = real ?? remote
+                // Its old text is read first, whatever the history wants: what a failure puts back.
+                if old == nil, let cur, cur.kind == .file, cur.size <= ServerHistory.fileLimit { old = try contents(into, size: cur.size) }
+                guard cancel?.hold() != false else { throw CancellationError() }
                 if canCopyData {
-                    try copyData(partial, to: into, offset: 0, length: 0, truncate: false)
+                    try copyData(partial, to: into, offset: 0, length: 0, truncate: false) { touched = true }
                 } else {
                     let r = try openRead(partial, sizeHint: length)
                     defer { r.close() }
                     let out = try openWrite(into, truncate: false)
+                    touched = true
                     do { while let d = try r.read() { try out.write(d) }; try out.finish() } catch { out.close(); throw error }
                 }
                 try setAttrs(into, mtime: nil, mode: nil, size: length)
                 try? remove(partial)
             }
         } catch {
-            try? remove(partial)
-            throw error
+            guard touched else {
+                try? remove(partial)
+                throw error
+            }
+            // The partial file stays: the only whole copy of the new text there.
+            var restored = false
+            if let old, isConnected {
+                do {
+                    let out = try openWrite(into, truncate: false)
+                    do { try out.write(old); try out.finish() } catch { out.close(); throw error }
+                    try setAttrs(into, mtime: nil, mode: nil, size: Int64(old.count))
+                    restored = true
+                } catch {}   // not put back: said so
+            }
+            throw InPlaceFailed(partial: partial, restored: restored, error: error)
         }
         if let cur, cur.kind == .file { replaced?(cur, keep ? old : nil) }
         var a = try stat(remote)
         if a.size <= Self.hashLimit { a.sha256 = Data(hash.finalize()) }   // what was sent: the next save's baseline
+        saved.insert((partial as NSString).deletingLastPathComponent)
         return a
+    }
+
+    /// Partial files earlier saves left where this session's saves went (a dropped connection, a failed copy into the
+    /// file, the app quit), once over a day old (`FileJob.isStalePartial`): a running save's is newer. Each folder once a
+    /// session — its listing is two waits. ponytail: a folder of 100 000 names costs its listing; a cap if that bites.
+    public func sweepPartials() {
+        for dir in saved.subtracting(swept) {
+            swept.insert(dir)
+            guard let items = try? list(dir) else { continue }
+            let cutoff = Date().timeIntervalSince1970 - 86_400
+            let stale = items.filter { FileJob.isStalePartial($0.name, $0.attrs, before: cutoff) }
+            if !stale.isEmpty { _ = remove(stale.map { (dir as NSString).appendingPathComponent($0.name) }) }
+        }
     }
 }
 
