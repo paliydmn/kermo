@@ -273,3 +273,16 @@ private func read(_ path: String) -> String? {
     try idx.extract(["a[1].txt", "star*.txt"], from: "proj", to: root + "/out")
     #expect(read(root + "/out/a[1].txt") == "G" && read(root + "/out/star*.txt") == "S")
 }
+
+/// A zip's one name `a/a/…/a/x.txt` (2000 folders, 8 KB) crashed the app on ↩: each folder the zip doesn't list was
+/// made up by a recursive call, deeper than a GCD thread's 512 KB stack. Read as the panel reads it, in `Blocking.run`.
+@Test func deepArchiveOpensOffTheMainThread() async throws {
+    let root = NSTemporaryDirectory() + "dfm-deep-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    sh("python3 -I -c 'import zipfile; zipfile.ZipFile(\"d.zip\", \"w\").writestr(\"a/\" * 2000 + \"x.txt\", \"X\")'", in: root)
+    let idx = try await Blocking.run { try ArchiveIndex.read(root + "/d.zip") }
+    let inner = Array(repeating: "a", count: 2000).joined(separator: "/")
+    #expect(names(idx.list(inner)) == ["x.txt"])
+    #expect(names(idx.list("")) == ["a"] && idx.list((inner as NSString).deletingLastPathComponent)?.first?.kind == .dir)
+}
