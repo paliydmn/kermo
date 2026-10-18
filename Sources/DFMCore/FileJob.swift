@@ -378,7 +378,7 @@ public final class FileJob: @unchecked Sendable {
             if !merge { _ = copyfile(src, dst, nil, copyfile_flags_t(COPYFILE_METADATA)) }
             if move { _ = rmdir(src) }   // fails harmlessly if something inside was skipped
         } else {
-            guard copyFile(src, dst, size: Int64(s.st_size)) else { return nil }
+            guard copyFile(src, dst, size: Int64(s.st_size), flags: s.st_flags) else { return nil }
             noteCreated(dst)
             if move { attempt(src) { try Self.check(unlink(src)) } }
         }
@@ -387,8 +387,12 @@ public final class FileJob: @unchecked Sendable {
 
     /// Copies one file (or symlink) with APFS clone when possible, into a hidden partial file renamed over `dst`
     /// once whole: a crash or a pulled drive never leaves a cut-off file under the real name.
-    private func copyFile(_ src: String, _ dst: String, size: Int64) -> Bool {
+    /// `flags`: the source's. A file locked in Finder (uchg) or append-only passes that on to the partial, which then
+    /// can be neither renamed nor removed: it's unlocked for that, and the copy locked again under its real name.
+    private func copyFile(_ src: String, _ dst: String, size: Int64, flags: UInt32) -> Bool {
         let target = (dst as NSString).deletingLastPathComponent + "/" + Self.partialName()
+        let locked = flags & UInt32(UF_IMMUTABLE | UF_APPEND | SF_IMMUTABLE | SF_APPEND) != 0
+        func unlock() { if locked { lchflags(target, 0) } }
 
         let ok = attempt(src) {
             let state = copyfile_state_alloc()
@@ -400,11 +404,15 @@ public final class FileJob: @unchecked Sendable {
             lock.withLock { currentFileBytes = 0 }
             if r != 0 {
                 let err = errno
+                unlock()
                 unlink(target)
                 if isCancelled { return }
                 throw POSIXError(POSIXErrorCode(rawValue: err) ?? .EIO)
             }
+            unlock()
             do { try Self.check(Darwin.rename(target, dst)) } catch { unlink(target); throw error }
+            // all or nothing: a system flag (schg) takes root, and without it the user's own lock still goes back on
+            if locked && lchflags(dst, flags) != 0 { lchflags(dst, flags & UInt32(UF_SETTABLE)) }
         }
         if ok && !isCancelled {
             update { $0.doneFiles += 1; $0.doneBytes += size }

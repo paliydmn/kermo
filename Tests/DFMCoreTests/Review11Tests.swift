@@ -301,6 +301,7 @@ private let spotlightIndexesHome = {
     for n in [running, old, "._" + old] { write(d + "/dest/" + n, "x") }
     let twoDaysAgo = Date().addingTimeInterval(-2 * 86_400)
     for n in [running, old, "._" + old] { try FileManager.default.setAttributes([.modificationDate: twoDaysAgo], ofItemAtPath: d + "/dest/" + n) }
+    #expect(lchflags(d + "/dest/" + old, UInt32(UF_IMMUTABLE)) == 0, "a locked file's partial, as older versions left it")
     FileJob(.copy, sources: [d + "/src/a.txt"], destDir: d + "/dest").run()
     #expect(Set(try FileManager.default.contentsOfDirectory(atPath: d + "/dest")) == [running, "a.txt"])
     #expect(FileJob.partialMade("x.txt") == nil && FileJob.partialMade(".dfm-partial-" + UUID().uuidString) == 0)

@@ -125,6 +125,28 @@ private var ramDiskMounted: Bool {
         #expect(job.progress.totalFiles == 1 && job.progress.doneFiles == 1 && FileJob.lstat(dst + "/t/f") != nil)
     }
 
+    /// F6 of a Finder-locked file to another volume does what `mv` does: the copy lands (locked), the original can't
+    /// be deleted, so it stays and that's the one error. Nothing hidden is left behind.
+    @Test func aLockedFileMovedAcrossVolumesStaysToo() throws {
+        let src = Foundation.NSTemporaryDirectory() + "k15lock-" + UUID().uuidString   // this Mac's volume
+        let dst = ramDisk + "/k15lock-" + UUID().uuidString                            // another one
+        defer {
+            for dir in [src, dst] { for n in (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [] { lchflags(dir + "/" + n, 0) } }
+            try? FileManager.default.removeItem(atPath: src)
+            try? FileManager.default.removeItem(atPath: dst)
+        }
+        try FileManager.default.createDirectory(atPath: src, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: dst, withIntermediateDirectories: true)
+        try Data("a".utf8).write(to: URL(fileURLWithPath: src + "/a.txt"))
+        #expect(lchflags(src + "/a.txt", UInt32(UF_IMMUTABLE)) == 0)
+        let job = FileJob(.move, sources: [src + "/a.txt"], destDir: dst)
+        job.run()
+        #expect(job.progress.errors == ["\(src)/a.txt: Operation not permitted"])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dst) == ["a.txt"])
+        #expect(try String(contentsOfFile: dst + "/a.txt", encoding: .utf8) == "a" && FileJob.lstat(src + "/a.txt") != nil)
+        #expect(FileJob.lstat(dst + "/a.txt").map { $0.st_flags & UInt32(UF_IMMUTABLE) } == UInt32(UF_IMMUTABLE))
+    }
+
     /// A move whose folder merges into a mount point: /Volumes is on the source's volume, /Volumes/KermoRAM isn't,
     /// so what's inside is copied over and deleted, never renamed (EXDEV).
     @Test func aMoveMergingIntoAMountPointCopies() throws {

@@ -445,7 +445,9 @@ extension FileJob {
         let cutoff = Date().timeIntervalSince1970 - 86_400
         for c in (try? fs.list(dir)) ?? [] where c.attrs.kind == .file && c.attrs.mtime < cutoff && Self.isSafeName(c.name) {
             guard let made = Self.partialMade(c.name), made < cutoff else { continue }
-            try? fs.remove((dir as NSString).appendingPathComponent(c.name))
+            let path = (dir as NSString).appendingPathComponent(c.name)
+            if fs is LocalFS { lchflags(path, 0) }   // a locked one an older version left: unlink can't remove it locked
+            try? fs.remove(path)
         }
     }
 
