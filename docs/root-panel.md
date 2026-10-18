@@ -39,9 +39,10 @@ When sudo refuses, the panel says why: it needs a password; `Defaults requiretty
 Only the file operations run as root, plus a save's [check and reload](config-checks.md). Search, archives, Git status, the user menu, ⌘E and the terminal run as the user. The command line says so: its prompt stays `user@host:/path $`, and on a root panel it reads "⌘E: shell command in this folder as user, not root".
 
 - Saves go the same way as the user's: [file history](server-files.md#file-history), the production question, "changed on the server since you opened it".
+- Saving someone else's file (`www-data`'s, a user's) keeps its owner and group: the new file gets them before it replaces the old one, so it's never root's, not even for a moment.
 - New files, folders and copies belong to `root:root`, as with any `sudo`.
 - Folder sizes (Space, ⌥Space) come from `du` through `sudo -n`. Where sudo doesn't allow that without a password (a rule for `sftp-server` alone, say), the folders are walked over the root session instead, as before.
-- On a server with SELinux (`/sys/fs/selinux`) a save writes into the file itself instead of renaming a new one over it, so the file keeps its label.
+- On a server with SELinux (`/sys/fs/selinux`) a save writes into the file itself instead of renaming a new one over it, so the file keeps its label. It writes over the old text and then cuts it to length, so a dropped connection never leaves it empty ([Open and edit](server-files.md#open-and-edit)).
 
 ## Root and user are two accounts
 
