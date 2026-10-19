@@ -22,10 +22,40 @@ public enum AdminCommand {
 
     public static func mkdir(_ path: String) -> String { "/bin/mkdir -p \(q(path))" }
 
-    /// Overwrites the file's contents in place, so its owner, mode, ACL and hard links stay as they were.
-    /// Never through a symlink: as root, a link planted in a folder others can write would aim this anywhere.
-    public static func writeContents(from temp: String, to target: String) -> String {
-        "[ ! -L \(q(target)) ] && /bin/cat \(q(temp)) > \(q(target))"
+    /// Where `writeContents` gets the text: in the command itself, or a temp file of the user's when that's too long.
+    public enum Source: Sendable { case text(String), file(String) }
+
+    /// The longest command `writeContents` puts the text in: half of what osascript's argv took when measured
+    /// (1 044 483 bytes, ARG_MAX 1 MiB less the environment). Longer goes through a temp file.
+    public static let argvLimit = 512 << 10
+
+    /// What a write that found the file changed since `stamp` says on stderr: the editor asks as it does for any change.
+    public static let changedOnDisk = "changed on disk while the password was asked"
+
+    /// `printf` of `text`, quoted for the shell: text that travels in the command, not in a file.
+    public static func printing(_ text: String) -> String { "/usr/bin/printf '%s' \(q(text))" }
+
+    /// Overwrites the file's contents in place, so its owner, mode, ACL and hard links stay as they were. Root copies the
+    /// text into a file of its own first and writes only if it hashes to `sha256`: a temp file of the user's could be
+    /// changed by anything running as them while macOS asks for the password. Then nothing is written if the target is
+    /// now a symlink (as root, a link planted in a folder others can write would aim this anywhere) or isn't `stamp`
+    /// ("inode:size:mtime", `stat -f %i:%z:%Fm`; nil: it mustn't exist). Written over without truncating first and cut
+    /// to length after, so a failed write (a full disk) leaves the new text over the old, never an empty file.
+    // ponytail: the symlink check and the write are two calls, a link swapped in between is followed — only an
+    // O_NOFOLLOW open as root closes that (D-080: a root helper, which needs Developer ID signing).
+    public static func writeContents(_ source: Source, sha256: String, to target: String, stamp: String?, length: Int) -> String {
+        let t = q(target)
+        let copy = switch source {
+        case .text(let text): printing(text)
+        case .file(let path): "/bin/cat \(q(path))"
+        }
+        let unchanged = stamp.map { "[ \"$(/usr/bin/stat -f %i:%z:%Fm \(t))\" = \(q($0)) ]" } ?? "[ ! -e \(t) ]"
+        return "c=$(/usr/bin/mktemp /tmp/dfm-admin-save.XXXXXX) || exit 1; trap '/bin/rm -f \"$c\"' EXIT; "
+            + "\(copy) > \"$c\" || exit 1; "
+            + "[ \"$(/usr/bin/shasum -a 256 < \"$c\")\" = '\(sha256)  -' ] || { echo 'The text arrived changed; nothing was written.' >&2; exit 1; }; "
+            + "[ ! -L \(t) ] || { echo 'It is a symlink now; nothing was written.' >&2; exit 1; }; "
+            + "\(unchanged) || { echo '\(changedOnDisk)' >&2; exit 1; }; "
+            + "umask 022; /bin/dd if=\"$c\" of=\(t) bs=1m conv=notrunc status=none && /bin/dd if=/dev/null of=\(t) bs=1 seek=\(length) status=none"
     }
 
     /// -h: a symlink's own mode, never its target's (same as chown/chflags below).
@@ -80,6 +110,6 @@ public enum SudoTouchID {
     /// one others can write). The text is in the command itself (osascript's argv): a temp file of the user's could be
     /// changed by anything running as them while macOS asks for the password.
     public static func command(writing text: String) -> String {
-        "umask 022 && [ ! -L \(file) ] && /usr/bin/printf '%s' \(ShellContext.quote(text)) > \(file)"
+        "umask 022 && [ ! -L \(file) ] && \(AdminCommand.printing(text)) > \(file)"
     }
 }

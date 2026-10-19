@@ -54,7 +54,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     private var stamp: Stamp?
     private var digest: SHA256.Digest?
     /// The on-disk version the user was already asked about (sheets give the key back, which would ask again).
-    private var noticed: Stamp?
+    private(set) var noticed: Stamp?
     private var dirty = false { didSet { window?.isDocumentEdited = dirty } }
     private var unsent = false   // saved here, but not where it lives (a server): the same bytes still count as a change
     private(set) var saving = false   // a save's disk work is under way (the text can't be edited meanwhile)
@@ -491,8 +491,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// What saving writes: the symlink's target, so a linked dotfile stays a link instead of being replaced by a copy.
     private var realPath: String { url.resolvingSymlinksInPath().path }
 
-    /// Writes the text to a temp file we own, then `cat`s it over the target as root — so the file
-    /// keeps its owner, mode and hard links (what you want for /etc/hosts and friends).
+    /// Writes the text over the target as root, in place — so the file keeps its owner, mode and hard links (what you
+    /// want for /etc/hosts and friends). See `AdminCommand.writeContents`.
     private func offerAdminSave(_ data: Data, reason: String, force: Bool) {
         let a = NSAlert()
         a.messageText = "“\(url.lastPathComponent.bidiVisible)” is protected"
@@ -505,21 +505,40 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         }
     }
 
-    /// The file may have changed while the sheet was up: checks again right before writing as root.
+    /// The file may have changed while the sheet was up: checks again before asking for the password, and root checks
+    /// it once more right before writing (a change while the password was asked asks the same way).
     func adminSave(_ data: Data, force: Bool) async -> Bool {
         let path = realPath, stamp = stamp, digest = digest
-        if !force, let now = await Blocking.run(.userInitiated, { Self.changed(path, from: stamp, digest) }) {
+        let seen = await Blocking.run(.userInitiated) { (changed: force ? nil : Self.changed(path, from: stamp, digest), now: Stamp(path)) }
+        if let now = seen.changed {
             askOverwrite(now)
             return false
         }
-        let tmp = NSTemporaryDirectory() + "dfm-admin-save-" + UUID().uuidString   // swept a day later (TempCopies)
-        defer { unlink(tmp) }
-        guard (try? Self.write(data, to: Darwin.open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0o600))) != nil else { return false }   // a root file's text: ours only
-        switch await Self.runAsAdmin(AdminCommand.writeContents(from: tmp, to: path)) {
+        let hash = SHA256.hash(data: data)
+        let sha256 = hash.map { String(format: "%02x", $0) }.joined()
+        let onDisk = seen.now.map { "\($0.ino):\($0.size):\($0.sec).\(String(format: "%09d", $0.nsec))" }
+        func command(_ source: AdminCommand.Source) -> String {
+            AdminCommand.writeContents(source, sha256: sha256, to: path, stamp: onDisk, length: data.count)
+        }
+        // In the command when it fits: nothing of the user's to change while macOS asks for the password. Not UTF-8
+        // (Windows-1251) or a NUL can't go through argv; those and long texts go through a temp file root checks by hash.
+        let cmd: String, tmp: String?
+        if let c = String(data: data, encoding: .utf8).flatMap({ $0.contains("\0") ? nil : command(.text($0)) }), c.utf8.count <= AdminCommand.argvLimit {
+            (cmd, tmp) = (c, nil)
+        } else {
+            let t = NSTemporaryDirectory() + "dfm-admin-save-" + UUID().uuidString   // swept a day later (TempCopies)
+            guard (try? Self.write(data, to: Darwin.open(t, O_WRONLY | O_CREAT | O_EXCL, 0o600))) != nil else { unlink(t); return false }   // a root file's text: ours only
+            (cmd, tmp) = (command(.file(t)), t)
+        }
+        defer { if let tmp { unlink(tmp) } }
+        switch await Self.runAsAdmin(cmd) {
         case .ok:
-            saved(await Blocking.run(.userInitiated) { Stamp(path) }, SHA256.hash(data: data))
+            saved(await Blocking.run(.userInitiated) { Stamp(path) }, hash)
             return true
         case .cancelled: return false
+        case .failed(let msg) where msg.contains(AdminCommand.changedOnDisk):
+            askOverwrite(await Blocking.run(.userInitiated) { Stamp(path) })
+            return false
         case .failed(let msg):
             alert("Couldn't save as administrator", msg)
             return false

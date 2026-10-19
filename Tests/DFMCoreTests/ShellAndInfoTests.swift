@@ -49,8 +49,26 @@ import Testing
             "/usr/bin/ditto '/a/My File' '/Library/Dest/My File' && /usr/bin/ditto /b/x /Library/Dest/x")
     #expect(AdminCommand.move(["/a/it's"], to: "/opt") == "/bin/mv -n '/a/it'\\''s' /opt/")
     #expect(AdminCommand.delete(["/tmp/a b", "/tmp/-rf"]) == "/bin/rm -rf -- '/tmp/a b' /tmp/-rf")
-    #expect(AdminCommand.writeContents(from: "/tmp/t", to: "/etc/hosts") == "[ ! -L /etc/hosts ] && /bin/cat /tmp/t > /etc/hosts")
+    let write = AdminCommand.writeContents(.file("/tmp/a b"), sha256: "ab", to: "/etc/it's", stamp: "1:2:3.000000004", length: 5)
+    #expect(write.contains("/bin/cat '/tmp/a b' > \"$c\"") && write.contains("of='/etc/it'\\''s' bs=1 seek=5 ")
+            && write.contains("[ ! -L '/etc/it'\\''s' ]") && write.contains("= 1:2:3.000000004 ]"))
     #expect(AdminCommand.chown("root:wheel", "/x") == "/usr/sbin/chown -h root:wheel /x")
+}
+
+/// S-01: Save as Administrator's text travels in osascript's argv, through AppleScript and back to the shell: every
+/// byte must come out as it went in (CRLF, BOM, quotes, `%`, backslashes, a decomposed letter).
+@Test func adminTextComesThroughOsascriptByteForByte() throws {
+    let out = NSTemporaryDirectory() + "dfm-argv-" + UUID().uuidString
+    defer { unlink(out) }
+    let text = "\u{FEFF}line 1\r\nit's \"q\" %s %% \\ \\n $HOME `id` e\u{301} \u{0434}\t\r\n\n"
+    var args = AdminCommand.osascriptArguments(AdminCommand.printing(text) + " > " + ShellContext.quote(out))
+    args[3] = "do shell script (item 1 of argv)"   // without the privileges clause: no password in tests
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    p.arguments = args
+    try p.run()
+    p.waitUntilExit()
+    #expect(FileManager.default.contents(atPath: out) == Data(text.utf8))
 }
 
 @Test func adminCommandRunsThroughOsascriptArgv() throws {
