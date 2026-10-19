@@ -217,6 +217,34 @@ private func tempDir() throws -> String {
     #expect(try fm.contentsOfDirectory(atPath: dir).sorted() == (fresh + ["doc.txt"]).sorted())
 }
 
+/// T-07: Save as Administrator's temp copy of the text is the user's alone (0600) while root copies it over the file,
+/// and gone after. The admin step is stubbed: no password, nothing runs as root.
+@MainActor @Test func adminSaveTempFileIsOwnerOnly() async throws {
+    _ = NSApplication.shared
+    let fm = FileManager.default
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-editor-" + UUID().uuidString
+    try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(atPath: dir) }
+    try Data("original\n".utf8).write(to: URL(fileURLWithPath: dir + "/hosts"))
+    let e = try Editor(URL(fileURLWithPath: dir + "/hosts"))
+    defer { e.close() }
+    let admin = Editor.runAsAdmin
+    defer { Editor.runAsAdmin = admin }
+    var temp: String?, mode: mode_t?, text: Data?
+    Editor.runAsAdmin = { command in
+        guard let r = command.range(of: #"/\S*dfm-admin-save-[0-9A-F-]+"#, options: .regularExpression) else { return .failed(command) }
+        let path = String(command[r])
+        var st = stat()
+        if lstat(path, &st) == 0 { mode = st.st_mode & 0o777 }
+        (temp, text) = (path, FileManager.default.contents(atPath: path))
+        return .cancelled
+    }
+    #expect(await !e.adminSave(Data("root's text\n".utf8), force: true))
+    #expect(mode == 0o600, "\(String(mode ?? 0, radix: 8))")
+    #expect(text == Data("root's text\n".utf8))
+    #expect(temp.map { !fm.fileExists(atPath: $0) } == true, "removed after")
+}
+
 /// Typing and undoing it all back is no change: closing doesn't ask. A real change does.
 @MainActor @Test func editorAsksOnlyAboutRealChanges() throws {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-editor-" + UUID().uuidString
