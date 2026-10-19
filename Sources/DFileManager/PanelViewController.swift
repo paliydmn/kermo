@@ -1004,8 +1004,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     // MARK: - Sorting (remembered per folder)
 
     private nonisolated static func savedSort(for p: String) -> (key: SortKey, ascending: Bool) {
-        let parts = (UserDefaults.standard.dictionary(forKey: "folderSort")?[p] as? String)?.split(separator: ":")
-        return (parts.flatMap { SortKey(rawValue: String($0[0])) } ?? .name, parts.map { $0.count < 2 || $0[1] == "1" } ?? true)
+        sortOrder(UserDefaults.standard.dictionary(forKey: "folderSort")?[p] as? String)
+    }
+
+    /// `"size:0"` → by size, descending. Anything else (`defaults write`, a damaged plist) → by name, ascending.
+    nonisolated static func sortOrder(_ saved: String?) -> (key: SortKey, ascending: Bool) {
+        let parts = saved?.split(separator: ":") ?? []
+        return (parts.first.flatMap { SortKey(rawValue: String($0)) } ?? .name, parts.count < 2 || parts[1] == "1")
     }
 
     private func loadSort(for p: String) {

@@ -46,6 +46,7 @@ Release:
 - A broken `bookmarks.json`, `server-pins.json`, `frecency.json` or `trash.json` is no longer quietly replaced with an empty one at the next save: it's copied to `name.broken` first and Kermo says so. In bookmarks and pins only the entries that can't be read are left out.
 - Logged in to a server as `root` (not through a root panel), saving someone else's file now replaces it whole and gives it back its owner, as a root panel does. Before, it was written into in place.
 - The history of saved server files always stays out of Time Machine. Before, only a history folder this version created was left out; one from an older version was backed up, server secrets included.
+- A damaged folder sort setting (`defaults write … folderSort` with an empty value) no longer crashes Kermo every time that folder opens: it sorts by name.
 
 ## [1.2.1] - 2026-10-17
 
