@@ -17,6 +17,10 @@ public struct SFTPTarget: Sendable, Hashable, Codable {
     /// Tests only, never decoded: the stand-in `sudo` a root `.local()` target runs, and whether it says SELinux is on.
     private(set) var localSudo: String? = nil
     private(set) var localSELinux = false
+    /// Tests only, never decoded: who is root to a root `.local()` target (its stand-in sudo runs as this Mac's user).
+    private(set) var localRootUID: UInt32? = nil
+    /// Root's uid where a root session lands: 0 on a server.
+    var rootUID: UInt32 { localServer == nil ? 0 : localRootUID ?? getuid() }
     private enum CodingKeys: String, CodingKey { case host, port, identity, persist }
 
     public init(host: String, port: Int? = nil, identity: String? = nil, persist: Int? = nil) {
@@ -28,8 +32,9 @@ public struct SFTPTarget: Sendable, Hashable, Codable {
 
     /// `sudo`: a stand-in for the server's sudo (a script), which makes it a root target.
     public static func local(server: String = "/usr/libexec/sftp-server", persist: Int? = nil, sudo: String? = nil,
-                             selinux: Bool = false) -> SFTPTarget {
+                             selinux: Bool = false, rootUID: UInt32? = nil) -> SFTPTarget {
         var t = SFTPTarget(host: "localhost", persist: persist)
+        t.localRootUID = rootUID
         t.localServer = server
         t.localSudo = sudo
         t.sudo = sudo != nil

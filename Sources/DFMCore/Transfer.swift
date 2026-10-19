@@ -97,6 +97,9 @@ final class RemoteFS: TransferFS, @unchecked Sendable {
         return c
     }
 
+    /// Root's uid when this is a root session (a root panel), else nil.
+    var rootUID: UInt32? { target.sudo ? target.rootUID : nil }
+
     func close() { lock.withLock { client }?.close() }
     func closeWhenQuiet() { lock.withLock { client }?.closeWhenQuiet() }
 
@@ -275,6 +278,9 @@ extension FileJob {
         }
         update { $0.state = .scanning }
         if let destDir { sweepPartials(dst, destDir) }
+        // A root session writes a folder into `destDir` only if nobody else can change it (S-03): its owner could
+        // swap the folder just made for a link to /etc. One look, for the whole job.
+        if let destDir, (dst as? RemoteFS)?.rootUID != nil, let a = (try? dst.lstat(destDir)) ?? nil, othersCanChange(dst, a) { barredParent = destDir }
         var work = pairs.isEmpty ? sources.map { ($0, (destDir! as NSString).appendingPathComponent(targetName ?? ($0 as NSString).lastPathComponent)) } : pairs
         var seen = work.map { _ in (src: SFTPClient.Attrs?.none, dst: SFTPClient.Attrs??.none) }   // none: not looked at
         if !pairs.isEmpty {
@@ -346,7 +352,11 @@ extension FileJob {
     /// Skip / Abort under its own path. What stays keeps the folders above it, unasked: one real error, not a "not
     /// empty" for each of them up to the top. The progress counts each top once it's done.
     func removeAcross(_ fs: TransferFS, _ tops: [(path: String, attrs: SFTPClient.Attrs)]) {
-        var dirs = tops.filter { $0.attrs.kind == .dir }.map { (path: $0.path, parent: -1, kept: false) }, levels = [0..<dirs.count]
+        let barred = tops.filter { othersCanChange(fs, $0.attrs) }
+        barred.forEach { notEntered($0.path) }
+        update { $0.doneFiles += barred.count }
+        var dirs = tops.filter { $0.attrs.kind == .dir && !othersCanChange(fs, $0.attrs) }.map { (path: $0.path, parent: -1, kept: false) }
+        var levels = [0..<dirs.count]
         func keep(_ i: Int) {   // it and each folder above it
             var i = i
             while i >= 0 && !dirs[i].kept { dirs[i].kept = true; i = dirs[i].parent }
@@ -382,7 +392,8 @@ extension FileJob {
                     guard listed != nil || attempt(dirs[i].path, { items = try fs.list(dirs[i].path) }) else { keep(i); continue }
                     for c in items where Self.isSafeName(c.name) {
                         let p = (dirs[i].path as NSString).appendingPathComponent(c.name)
-                        if c.attrs.kind == .dir { dirs.append((p, i, false)) } else { files.append((p, i)) }
+                        if othersCanChange(fs, c.attrs) { notEntered(p); keep(i) }
+                        else if c.attrs.kind == .dir { dirs.append((p, i, false)) } else { files.append((p, i)) }
                     }
                 }
                 guard remove(files) else { return }
@@ -411,6 +422,7 @@ extension FileJob {
         func attrs(_ path: String, _ known: SFTPClient.Attrs?) -> SFTPClient.Attrs? { known?.typed ?? (try? fs.lstat(path)) ?? nil }
         guard let a = attrs(path, known) else { return (0, 0, -1) }
         guard a.kind == .dir else { return (1, a.size, -1) }
+        guard !othersCanChange(fs, a) else { return (0, 0, 0) }   // not gone into: nothing to count
         // Each folder with its parent: its own files first, what's below it added once all is listed.
         var dirs = [(path: path, parent: -1, files: 0, bytes: Int64(0))], level = 0..<1, depth = -1
         walk: while !level.isEmpty {
@@ -423,7 +435,7 @@ extension FileJob {
                     for child in items ?? [] where Self.isSafeName(child.name) {
                         let p = (dirs[i].path as NSString).appendingPathComponent(child.name)
                         guard let a = attrs(p, child.attrs) else { continue }
-                        if a.kind == .dir { dirs.append((p, i, 0, 0)) } else { dirs[i].files += 1; dirs[i].bytes += a.size }
+                        if a.kind == .dir { if !othersCanChange(fs, a) { dirs.append((p, i, 0, 0)) } } else { dirs[i].files += 1; dirs[i].bytes += a.size }
                     }
                 }
             }
@@ -466,6 +478,24 @@ extension FileJob {
         let rest = n.dropFirst(".dfm-partial-".count)
         guard let dash = rest.firstIndex(of: "-"), let t = Double(rest[..<dash]), rest.count > 36 else { return 0 }
         return t
+    }
+
+    /// S-03: a root session (a root panel) doesn't go into a folder someone else on the server can change — one that
+    /// isn't root's, or that its group or others may write to without the sticky bit. Between the listing that found
+    /// it and the next step in it (SFTP has no openat) they could swap what's there for a link to `/`, and root would
+    /// delete, read or write there. Its owner and mode come with that listing: no round trip more. One that doesn't
+    /// say (no owner or mode sent) counts as theirs.
+    /// ponytail: a top item's own folder isn't looked at (the top swapped between its look and its listing still
+    /// races), nor is a login as root that isn't a root panel; root-side helpers (`rm -r --one-file-system`) if it bites.
+    func othersCanChange(_ fs: TransferFS, _ a: SFTPClient.Attrs) -> Bool {
+        guard a.kind == .dir, let root = (fs as? RemoteFS)?.rootUID else { return false }
+        guard let uid = a.uid, let mode = a.mode else { return true }
+        return uid != root || mode & 0o022 != 0 && mode & UInt32(S_ISVTX) == 0
+    }
+
+    /// Said once in the summary, not asked: Retry would find the same folder.
+    func notEntered(_ path: String) {
+        update { $0.errors.append("\(path): someone else on the server can change this folder — not entered as root. Do it as its owner, or in a terminal there") }
     }
 
     /// A name a server sent can be anything: never one that leaves the folder it was listed in.
@@ -583,6 +613,9 @@ extension FileJob {
         let root = root ?? dst
         switch s.kind {
         case .dir:
+            if othersCanChange(sfs, s) { return notEntered(src) }
+            if merge, let d = existing, othersCanChange(dfs, d) { notEntered(dst); return skip(sfs, src, s) }
+            if top, let parent = barredParent, (dst as NSString).deletingLastPathComponent == parent { notEntered(parent); return skip(sfs, src, s) }
             // Listed before the copy exists: a folder that is somehow inside its source isn't copied into itself.
             var children: [(name: String, attrs: SFTPClient.Attrs)] = []
             guard attempt(src, { children = try sfs.list(src) }) else { return }
@@ -767,6 +800,7 @@ extension FileJob {
     /// Deletes what's at `path` (a folder with everything in it), never following a symlink.
     private func removeTree(_ fs: TransferFS, _ path: String, _ a: SFTPClient.Attrs) throws {
         guard a.kind == .dir else { return try fs.remove(path) }
+        if othersCanChange(fs, a) { throw JobError(message: "Someone else on the server can change this folder — not entered as root") }
         for child in try fs.list(path) where Self.isSafeName(child.name) {
             try removeTree(fs, (path as NSString).appendingPathComponent(child.name), child.attrs)
         }
