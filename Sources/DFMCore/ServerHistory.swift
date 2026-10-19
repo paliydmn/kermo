@@ -117,16 +117,14 @@ public struct ServerHistory: Sendable {
         guard URL(fileURLWithPath: dir).standardized.path.hasPrefix(URL(fileURLWithPath: root).standardized.path + "/") else {
             return "“\(path)” leads outside the history folder"
         }
-        let fresh = !FileManager.default.fileExists(atPath: root)
         do { try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) } catch {
             return error.localizedDescription
         }
-        if fresh {
-            var v = URLResourceValues()
-            v.isExcludedFromBackup = true
-            var url = URL(fileURLWithPath: root)
-            try? url.setResourceValues(v)
-        }
+        // Every time, not only when the folder is new: one made by an older build or by hand would go to Time Machine.
+        var v = URLResourceValues()
+        v.isExcludedFromBackup = true
+        var url = URL(fileURLWithPath: root)
+        try? url.setResourceValues(v)
         var n = 1, file = first, fd: Int32 = -1
         while true {   // two saves within a second: the next number, never over the first
             fd = open(file, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)

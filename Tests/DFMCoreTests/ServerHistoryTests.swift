@@ -126,6 +126,19 @@ private let when = Calendar.current.date(from: DateComponents(year: 2026, month:
     #expect(try URL(fileURLWithPath: h.root).resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
 }
 
+/// S-06: a history folder that's already there without the Time Machine exclusion (an older build's, made by hand)
+/// gets it with the next version kept.
+@Test func anOldHistoryFolderLeavesTimeMachineToo() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let h = ServerHistory(root: d + "/history.noindex")
+    try FileManager.default.createDirectory(atPath: h.root, withIntermediateDirectories: true)
+    func excluded() throws -> Bool? { try URL(fileURLWithPath: h.root).resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup }
+    #expect(try excluded() == false)
+    #expect(h.keep(Data("secret".utf8), attrs(6, mtime: 1_600_000_000), of: web, "/srv/app/.env", at: when) == nil)
+    #expect(try excluded() == true)
+}
+
 /// Each save to a server keeps the version it replaces. The check before writing already reads a small file whose
 /// baseline has its SHA-256 (F4's ⌘S): those bytes are the version, no wait more — 8 as before. Otherwise the file
 /// is read first, before it's overwritten: `force` (then the version is someone else's change), a baseline without a
