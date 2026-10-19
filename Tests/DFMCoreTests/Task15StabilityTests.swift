@@ -114,3 +114,23 @@ private func chattyServer(in dir: String) -> String {
     #expect(e?.message.contains("protocol error") == true, "\(e?.message ?? "")")
     #expect(throws: SFTPError.self) { try c.lstat(d) }
 }
+
+/// T-11: when /tmp/dfm-ssh-<uid> isn't ours, each run made a random folder there and left it behind. Only that one
+/// is removed at quit; a predictable one that is ours stays (the next run, or another Kermo, uses it).
+@Test func onlyARandomControlDirIsRemoved() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    let ours = SFTP.controlDir(predictable: d + "/ours")
+    #expect(ours == (d + "/ours", false))
+    SFTP.removeControlDir(ours)
+    #expect(fm.fileExists(atPath: d + "/ours"))
+
+    try fm.createSymbolicLink(atPath: d + "/swapped", withDestinationPath: d + "/ours")   // not a folder of ours
+    let random = SFTP.controlDir(predictable: d + "/swapped")
+    defer { if random.dir.hasPrefix("/tmp/dfm-ssh-") { try? fm.removeItem(atPath: random.dir) } }
+    #expect(random.random && random.dir.hasPrefix("/tmp/dfm-ssh-") && random.dir != SFTP.controlDir)
+    fm.createFile(atPath: random.dir + "/askpass", contents: nil)
+    SFTP.removeControlDir(random)
+    #expect(!fm.fileExists(atPath: random.dir))
+    #expect(fm.fileExists(atPath: d + "/ours"))
+}

@@ -90,16 +90,26 @@ public enum SFTP {
     /// Short path: unix socket paths are limited to 104 bytes, and ssh adds 17 while creating one (so not $TMPDIR).
     /// /tmp is shared, and the askpass script and mux sockets live here: use the predictable name only if that
     /// folder is really ours (another user may have made it first), else a fresh random one.
-    public static let controlDir: String = {
-        let dir = "/tmp/dfm-ssh-\(getuid())"
+    public static var controlDir: String { control.dir }
+    static let control = controlDir(predictable: "/tmp/dfm-ssh-\(getuid())")
+
+    /// `random`: the predictable folder wasn't ours, so this one was made for this run alone — nothing finds it again.
+    static func controlDir(predictable dir: String) -> (dir: String, random: Bool) {
         mkdir(dir, 0o700)
         var s = stat()
         // Sticky /tmp: once it's ours, nobody else can rename or replace it.
-        if lstat(dir, &s) == 0, s.st_mode & S_IFMT == S_IFDIR, s.st_uid == getuid(), chmod(dir, 0o700) == 0 { return dir }
+        if lstat(dir, &s) == 0, s.st_mode & S_IFMT == S_IFDIR, s.st_uid == getuid(), chmod(dir, 0o700) == 0 { return (dir, false) }
         var template = Array("/tmp/dfm-ssh-XXXXXXXX".utf8CString)
-        return template.withUnsafeMutableBufferPointer { mkdtemp($0.baseAddress!).map { String(cString: $0) } }
-            ?? NSTemporaryDirectory() + "dfm-ssh-unavailable"   // too long for sockets: ssh fails cleanly
-    }()
+        return template.withUnsafeMutableBufferPointer { mkdtemp($0.baseAddress!).map { (String(cString: $0), true) } }
+            ?? (NSTemporaryDirectory() + "dfm-ssh-unavailable", false)   // too long for sockets: ssh fails cleanly
+    }
+
+    /// At quit, once the masters are stopped: a random `controlDir` was left in /tmp after every run. Never the
+    /// predictable one — the next run (or another Kermo still running) uses it.
+    public static func removeControlDir() { removeControlDir(control) }
+    static func removeControlDir(_ c: (dir: String, random: Bool)) {
+        if c.random { try? FileManager.default.removeItem(atPath: c.dir) }
+    }
 
     /// Shared by SFTP sessions and the SSH tabs: whichever logs in first, the other rides on its connection.
     static func connectionOptions(_ t: SFTPTarget) -> [String] {

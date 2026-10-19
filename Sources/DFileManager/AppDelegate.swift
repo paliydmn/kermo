@@ -212,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         Shell.terminateAll()   // nor does a `tail -f` in an output window
         ServerCopies.quit()   // the server files' copies on the server go; the others are kept
         TempCopies.remove(TextCopies.dir)
+        SFTP.removeControlDir()   // after the masters and tunnels: their sockets and the askpass script are in it
     }
 
     /// What quitting would lose — unsaved editors, running copies, SSH sessions, programs in shells: one
