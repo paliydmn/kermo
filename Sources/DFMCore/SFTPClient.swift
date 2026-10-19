@@ -28,9 +28,11 @@ public final class SFTPClient: @unchecked Sendable {
     }
 
     public let target: SFTPTarget
-    /// A root session on a server with SELinux: `upload` writes into the file itself, never renames a new one over it —
-    /// the new one would have its folder's label, not the file's (`/etc/shadow` losing `shadow_t`).
+    /// A server with SELinux: `upload` writes into the file itself, never renames a new one over it — the new one would
+    /// have its folder's label, not the file's (`/etc/shadow` losing `shadow_t`, a chcon'd page in ~/public_html). A
+    /// root panel's sudo script tells; any other session asks with its first save's look (`upload`).
     public private(set) var writesInPlace = false
+    private var askedSELinux = false
     /// Extensions the server announced (name → version).
     public private(set) var extensions: [String: String] = [:]
 
@@ -65,6 +67,7 @@ public final class SFTPClient: @unchecked Sendable {
         var sudoPath = "", sudoPassword: String?
         if t.sudo {
             (sudoPath, sudoPassword, writesInPlace) = try SudoServer.prepare(t, env: env, cancel: cancel)
+            askedSELinux = true
             let (program, arguments) = SudoServer.launch(t, path: sudoPath, password: sudoPassword != nil)
             process.executableURL = URL(fileURLWithPath: program)
             process.arguments = arguments
@@ -1076,7 +1079,13 @@ extension SFTPClient {
                        replaced: ((Attrs, Data?) -> Void)? = nil, check: ((_ partial: String) throws -> Void)? = nil) throws -> Attrs {
         let previous = cancel?.onCancel { [self] in closeWhenQuiet() } ?? nil
         defer { cancel?.onCancel(previous) }
-        let entry = try lstat(remote)
+        let entry: Attrs?
+        if askedSELinux { entry = try lstat(remote) } else {
+            // In the same wave as the file's look: no wait of its own. A test target says it has it.
+            let looks = lstat([remote, target.localSELinux ? "/" : "/sys/fs/selinux"])
+            entry = try looks[0].get()
+            (writesInPlace, askedSELinux) = ((try? looks[1].get())??.kind == .dir, true)
+        }
         // A symlink (nginx's sites-enabled/*): the file it points to takes the partial file's place. `real` nil: it
         // can't be followed (a folder on the way is missing) — written through, as another owner's file.
         var real: String? = remote, cur = entry
@@ -1134,11 +1143,12 @@ extension SFTPClient {
             let mine = try lstat(partial)
             var inPlace = real == nil || aside || writesInPlace && cur != nil
             if !inPlace, let cur, cur.uid == nil || cur.uid != mine?.uid || cur.gid != mine?.gid {
-                // Root gives the partial file the file's owner, then renames it over: never a moment as root's file.
+                // Root — a root panel, or a login as root: the partial file we just made is uid 0's — gives the
+                // partial file the file's owner, then renames it over: never a moment as root's file.
                 // Not allowed (NFS's root_squash), or anyone else's session: copied into the file, which keeps its own.
                 // ponytail: SFTP v3 has no link count, so a hard-linked file is split (D-079); an `ssh stat -c %h` per
                 // save would tell, and then go in place like SELinux does.
-                if target.sudo, let uid = cur.uid, let gid = cur.gid {
+                if target.sudo || mine?.uid == 0, let uid = cur.uid, let gid = cur.gid {
                     do {
                         try setAttrs(partial, mtime: nil, mode: nil, owner: (uid, gid))
                         // chown drops setuid/setgid

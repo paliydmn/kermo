@@ -41,3 +41,10 @@ import Testing
     #expect(SFTP.promptLogin(sshG: "port 22\n") == nil)
     #expect(SFTP.promptLogin(SFTPTarget(host: "me@203.0.113.9", port: 2222)) == "me@203.0.113.9")
 }
+
+/// S-02: where ssh really goes, however it was written.
+@Test func identityIsWhereSshGoes() {
+    #expect(SFTP.identity(sshG: "user ROOT\nhostname web.example.com.\nport 22\n") == "root@web.example.com:22")
+    #expect(SFTP.identity(sshG: "user me\nhostname 192.0.2.5\nport 2222\nhostkeyalias Nas\n") == "me@nas:2222", "HostKeyAlias")
+    #expect(SFTP.identity(sshG: "user me\nhostname 192.0.2.5\n") == nil)
+}

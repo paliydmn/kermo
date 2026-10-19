@@ -24,8 +24,10 @@ private func file(_ name: String) -> FileItem { FileItem(name: name, kind: .file
     #expect(panel.statusText.hasPrefix("🔍 *.txt containing “needle”: 3 found · ⌫ back · "), "\(panel.statusText)")
 }
 
+/// By the clock: in the full suite the main actor is so busy at first that 500 sleeps of 10 ms took over 10 s.
 @MainActor private func waitUntil(_ done: () -> Bool) async {
-    for _ in 0..<500 where !done() { try? await Task.sleep(for: .milliseconds(10)) }
+    let end = Date().addingTimeInterval(20)
+    while !done(), Date() < end { try? await Task.sleep(for: .milliseconds(10)) }
 }
 private func tempDir() -> String {
     let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-r11-" + UUID().uuidString

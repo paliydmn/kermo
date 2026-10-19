@@ -60,12 +60,12 @@ struct SavedServer: Codable, Equatable {
     static var color: NSColor { .systemPurple }
     static let mark = "🟣 PROD "
 
-    /// A saved server at this address (user@host:port) is tagged production.
     /// A saved server's name for `t`, else its address: what questions and hints call it.
     @MainActor static func name(for t: SFTPTarget) -> String {
-        ServerLock.servers().first { !$0.name.isEmpty && SSHPasswords.sameKey($0.target, t) }?.name ?? t.shown
+        ServerLock.servers().first { !$0.name.isEmpty && ServerLock.same($0.target, t) }?.name ?? t.shown
     }
-    @MainActor static func isProd(_ t: SFTPTarget) -> Bool { ServerLock.servers().contains { $0.prod && SSHPasswords.sameKey($0.target, t) } }
+    /// A saved server that is the same server (`ServerLock.same`) is tagged production.
+    @MainActor static func isProd(_ t: SFTPTarget) -> Bool { ServerLock.servers().contains { $0.prod && ServerLock.same($0.target, t) } }
 
     /// A server file's editor title: "web:/etc/nginx/nginx.conf", "🟣 PROD web:/…" on a production server, "root@web:/… #"
     /// from a root panel.
@@ -131,6 +131,7 @@ enum SSHPasswords {
                 kSecAttrPort: t.port ?? 22]
     }
 
+    /// The Keychain item's address: the same string. Whether two are one server is `ServerLock.same`.
     static func sameKey(_ a: SFTPTarget, _ b: SFTPTarget) -> Bool { a.host == b.host && (a.port ?? 22) == (b.port ?? 22) }
 
     /// Without reading it.
@@ -214,11 +215,39 @@ enum SudoPasswords {
 }
 
 /// Locked saved servers ask for Touch ID or the Mac password before a new connection (by any route to the same
-/// user@host:port: sidebar, picker, typed address, reconnect), an edit or a delete. One success unlocks the server
-/// for 5 minutes, or until the screen locks or the Mac sleeps. Open sessions stay open.
+/// server however it's written — `same`: sidebar, picker, typed address or alias, reconnect), an edit or a delete.
+/// One success unlocks the server for 5 minutes, or until the screen locks or the Mac sleeps. Open sessions stay open.
 @MainActor
 enum ServerLock {
     static var servers: () -> [SavedServer] = { [] }
+    /// `SFTP.sshG`; replaced in tests (a config of their own, a count).
+    nonisolated(unsafe) static var sshG: @Sendable (SFTPTarget) -> String? = { SFTP.sshG($0) }
+    /// Where each address as written really goes (`SFTP.identity`), by "host#port"; nil: ssh -G couldn't tell.
+    private static var identities: [String: (target: SFTPTarget, identity: String?)] = [:]
+    private static func spelling(_ t: SFTPTarget) -> String { t.host + "#" + (t.port.map(String.init) ?? "") }
+
+    /// One server and account, however each is written — what ssh reaches. The main thread never waits for ssh -G:
+    /// an address not learned yet (`learn`) compares as written.
+    static func same(_ a: SFTPTarget, _ b: SFTPTarget) -> Bool {
+        if let x = identities[spelling(a)]?.identity, let y = identities[spelling(b)]?.identity { return x == y }
+        return SSHPasswords.sameKey(a, b)
+    }
+
+    /// `ssh -G` (~15 ms each) off the main thread for `targets` and the saved servers not learned yet. `again`:
+    /// everything learned so far as well — ~/.ssh/config, or a file it includes, may have changed (Connect… opening,
+    /// the saved servers changing).
+    static func learn(_ targets: [SFTPTarget] = [], again: Bool = false) async {
+        var todo = again ? identities.mapValues(\.target) : [:]
+        for t in targets + servers().map(\.target) where identities[spelling(t)] == nil { todo[spelling(t)] = t }
+        guard !todo.isEmpty else { return }
+        let list = Array(todo), sshG = sshG
+        let found = await Blocking.run { () -> [String?] in
+            nonisolated(unsafe) var out = [String?](repeating: nil, count: list.count)
+            DispatchQueue.concurrentPerform(iterations: list.count) { i in out[i] = sshG(list[i].value).flatMap(SFTP.identity(sshG:)) }
+            return out
+        }
+        for (i, (key, t)) in list.enumerated() { identities[key] = (t, found[i]) }
+    }
     /// Replaced in tests.
     static var authenticate: (String) async -> Bool = { reason in
         (try? await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)) ?? false
@@ -227,25 +256,31 @@ enum ServerLock {
     private static var unlockedUntil: [UUID: Date] = [:]
 
     static func server(for t: SFTPTarget) -> SavedServer? {
-        servers().first { $0.locked && SSHPasswords.sameKey($0.target, t) }
+        servers().first { $0.locked && same($0.target, t) }
     }
 
+    /// Also while `t` or a locked server isn't learned yet: `authorize` finds out.
     static func needsUnlock(_ t: SFTPTarget) -> Bool {
-        server(for: t).map { (unlockedUntil[$0.id] ?? .distantPast) < Date() } ?? false
+        let learned = { identities[spelling($0)] != nil }
+        if servers().contains(where: { $0.locked && !(learned($0.target) && learned(t)) }) { return true }
+        return server(for: t).map { (unlockedUntil[$0.id] ?? .distantPast) < Date() } ?? false
     }
 
     /// `action` completes "… to <action>" in the system's prompt.
     static func authorize(_ s: SavedServer, _ action: String) async -> Bool {
-        let s = server(for: s.target) ?? s   // an unlocked twin at a locked address shares its password: asks too
+        await learn([s.target])
+        let s = server(for: s.target) ?? s   // an unlocked twin of a locked server shares its connection: asks too
         guard s.locked, (unlockedUntil[s.id] ?? .distantPast) < Date() else { return true }
         guard await authenticate("\(action) “\(s.title)”") else { return false }
         unlockedUntil[s.id] = Date().addingTimeInterval(grace)
         return true
     }
 
-    static func authorize(_ t: SFTPTarget) async -> Bool {
+    /// Every new connection's way: learns `t` first, so a production server typed another way is known as one too.
+    static func authorize(_ t: SFTPTarget, _ action: String = "connect to") async -> Bool {
+        await learn([t])
         guard let s = server(for: t) else { return true }
-        return await authorize(s, "connect to")
+        return await authorize(s, action)
     }
 
     /// Also when the screen locks or the Mac sleeps (the app's tunnels: `Tunnels.relock`).
@@ -452,7 +487,7 @@ final class Tunnels {
 
     /// Locked: itself, or another saved server at its address is (`ServerLock`).
     private static func locked(_ s: SavedServer, among servers: [SavedServer]) -> Bool {
-        servers.contains { $0.locked && SSHPasswords.sameKey($0.target, s.target) }
+        servers.contains { $0.locked && ServerLock.same($0.target, s.target) }
     }
 
     /// At launch: the tunnels that were on listen, without connecting — a login waits for the first client. A locked
@@ -681,6 +716,7 @@ enum TempCopies {
                 return try c.download(path, to: local.path)
             }
             guard let attrs, !cancel.isCancelled else { TempCopies.remove(tmp); return nil }
+            FileInfo.quarantine(local.path)   // Quick Look's Open with hands it to another app, as ↩ does
             return (local, attrs)
         } catch {
             TempCopies.remove(tmp)

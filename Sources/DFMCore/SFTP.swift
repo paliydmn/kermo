@@ -313,17 +313,29 @@ public enum SFTP {
     /// (a ~/.ssh/config alias resolved, lowercased). Doesn't connect.
     static func promptLogin(_ t: SFTPTarget) -> String? { sshG(t).flatMap(promptLogin(sshG:)) }
 
-    /// What ssh would use for `t` (`ssh -G`: ~/.ssh/config applied). Doesn't connect.
-    static func sshG(_ t: SFTPTarget) -> String? {
+    /// What ssh would use for `t` (`ssh -G`: ~/.ssh/config applied, or `config` in its place). Doesn't connect.
+    public static func sshG(_ t: SFTPTarget, config: String? = nil) -> String? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        p.arguments = ["-G"] + connectionOptions(t) + t.arguments()
+        p.arguments = ["-G"] + (config.map { ["-F", $0] } ?? []) + connectionOptions(t) + t.arguments()
         let out = Pipe()
         p.standardInput = FileHandle.nullDevice; p.standardOutput = out; p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return nil }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         return p.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+    }
+
+    /// The server and account ssh really reaches, however the address was written: "user@host:port" from `ssh -G`'s
+    /// user and HostKeyAlias, else HostName, lowercased and without a trailing dot — an alias, "ROOT@…", "….example.com."
+    /// and a left-out user (ssh's own) come out the same as the saved address. Names, not addresses: an IP and its DNS
+    /// name stay two.
+    public static func identity(sshG: String) -> String? {
+        let o = options(sshG)
+        guard let user = o["user"], let host = o["hostkeyalias"] ?? o["hostname"], let port = o["port"] else { return nil }
+        var h = host.lowercased()
+        while h.hasSuffix(".") { h.removeLast() }
+        return "\(user.lowercased())@\(h):\(port)"
     }
 
     static func promptLogin(sshG: String) -> String? {

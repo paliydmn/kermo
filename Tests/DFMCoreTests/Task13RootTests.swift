@@ -97,7 +97,8 @@ private func rootTempDir() -> String {
 /// writes into the file itself (the same inode keeps its label): 13 round trips — copied into on the server, as
 /// another owner's file always was, then cut to its length (12 when that was a TRUNC; sss-2). Measured on the code
 /// before: 8 and 13. A symlink's target is renamed over as a
-/// plain file is: 9, one more to follow it (sss-2; copied into it before, 13).
+/// plain file is: 9, one more to follow it (sss-2; copied into it before, 13). Any session asks for SELinux in its first
+/// save's look, not a root panel's alone: the user's own file goes in place too, at the same 13 (F-14; renamed before).
 @Test func rootSaveWritesInPlaceUnderSELinux() throws {
     let d = rootTempDir()
     defer { try? FileManager.default.removeItem(atPath: d) }
@@ -120,10 +121,12 @@ private func rootTempDir() -> String {
     let root = try save(.local(sudo: try fakeSudo(d)), "root")
     let selinux = try save(.local(sudo: try fakeSudo(d), selinux: true), "selinux")
     let link = try save(.local(), "link", link: true)
+    let own = try save(.local(selinux: true), "own")
     #expect(user.trips == 8 && !user.inPlace && !user.flag)
     #expect(root.trips == 8 && !root.inPlace && !root.flag, "root without SELinux: renamed, as the user's")
     #expect(selinux.trips == 13 && selinux.inPlace && selinux.flag, "the partial file, copied into the file, cut, removed; no rename: \(selinux.trips)")
     #expect(link.trips == 9 && !link.inPlace, "the target renamed over: \(link.trips)")
+    #expect(own.trips == 13 && own.inPlace && own.flag, "SELinux without sudo: \(own.trips)")
 }
 
 /// sudo's refusals in plain words, told apart by exit status and text: each "needs a password" (sudo 1.8/1.9,

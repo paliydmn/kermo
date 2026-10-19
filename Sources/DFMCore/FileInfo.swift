@@ -76,6 +76,15 @@ public enum FileInfo {
         return String(bytes: buf, encoding: .utf8)
     }
 
+    /// Marked as come from elsewhere, as a browser marks a download (`0081;<time>;Kermo;`), so Gatekeeper looks before
+    /// another app opens or runs it (a `.command` from a server). One marked already keeps its mark: an archive's, which
+    /// bsdtar copies onto what it extracts (as `ditto` and Archive Utility do).
+    public static func quarantine(_ path: String) {
+        guard getxattr(path, "com.apple.quarantine", nil, 0, 0, XATTR_NOFOLLOW) < 0 else { return }
+        let mark = Array(String(format: "0081;%08x;Kermo;", Int(Date().timeIntervalSince1970)).utf8)
+        setxattr(path, "com.apple.quarantine", mark, mark.count, 0, XATTR_NOFOLLOW)
+    }
+
     /// Like `xattr -dr com.apple.quarantine`: the item and, for folders/bundles, everything inside. Returns how many had it.
     public static func removeQuarantine(_ path: String, cancel: CancelFlag = CancelFlag()) -> Int {
         var removed = removexattr(path, "com.apple.quarantine", XATTR_NOFOLLOW) == 0 ? 1 : 0

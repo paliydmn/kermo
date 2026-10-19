@@ -866,6 +866,7 @@ extension AppDelegate {
 
     /// ⌃⌘K: SFTP (or a smb/nfs mount) in the active panel; `ssh` (⌘K): an SSH tab in the terminal.
     func showConnect(ssh: Bool = false) {
+        Task { await ServerLock.learn(again: true) }   // ~/.ssh/config may have changed
         let kind: ServerSession.Kind = ssh ? .ssh : .sftp
         let label = ssh ? "SSH" : "SFTP"
         func key(_ address: String) -> String? {
@@ -1133,7 +1134,7 @@ extension AppDelegate {
     /// browse, view, compare or delete (F8) like any other.
     func showFileHistory(_ t: SFTPTarget) {
         Task {
-            if let s = ServerLock.server(for: t), await !ServerLock.authorize(s, "see the file history on") { return }
+            if await !ServerLock.authorize(t, "see the file history on") { return }
             let dir = ServerHistory(root: Self.historyRoot).folder(t)
             guard FileManager.default.fileExists(atPath: dir) else { return active.flash("No file history for \(t.host) yet: each save of one of its files keeps the version it replaces") }
             active.navigate(to: dir)
@@ -1178,6 +1179,9 @@ extension AppDelegate {
 
     enum RemoteOpen { case open, view, edit }
 
+    /// ↩ on a server's file or an archive's: its copy in its own app, quarantined first. Replaced in tests: nothing opens.
+    static var openInApp: (URL) -> Void = { NSWorkspace.shared.open($0) }
+
     /// Downloads the cursor file to a temp folder, then opens / views / edits it.
     /// Editing uploads the file back after every save — one upload at a time, and never over changes someone
     /// made on the server meanwhile without asking.
@@ -1207,8 +1211,9 @@ extension AppDelegate {
             }
             switch how {
             case .open:   // another app: its saves go up as F4's do
+                FileInfo.quarantine(local.path)
                 ServerCopies.add(.init(local, target, remotePath, listed: listed ?? (opened.size, opened.mtime), baseline: opened, preview: false))
-                NSWorkspace.shared.open(local)
+                Self.openInApp(local)
             case .view: Viewer.show(local, remote: (target, remotePath, max(0, opened.size - (last ?? opened.size)))) { TempCopies.remove(tmp) }
             case .edit:
                 let state = RemoteEdit(baseline: opened)
@@ -1371,7 +1376,7 @@ extension AppDelegate {
         let name = (path as NSString).lastPathComponent, env = SSHAskpass.env
         let panel = panels.first { $0.remote?.target == target } ?? active
         Task {
-            if let s = ServerLock.server(for: target), await !ServerLock.authorize(s, "see the file history on") { return }
+            if await !ServerLock.authorize(target, "see the file history on") { return }
             let versions = ServerHistory(root: Self.historyRoot).versions(of: target, path)
             guard !versions.isEmpty else { return panel.flash("No versions of “\(name)” from \(target.host) yet: each save keeps the one it replaces") }
             // What Revert checks against: a change made there after this asks first.
@@ -1448,7 +1453,7 @@ extension AppDelegate {
     func runThere(_ command: String, on target: SFTPTarget, action: String, paths: [String] = [], busy: String, done: String,
                   ask: (message: String, button: String)? = nil, saved: URL? = nil, in panel: PanelViewController) async -> Bool {
         // A locked server's Touch ID again if its time ran out since it was looked at (a Picker can stay open).
-        if let s = ServerLock.server(for: target), await !ServerLock.authorize(s, "run “\(command)” on") { return false }
+        if await !ServerLock.authorize(target, "run “\(command)” on") { return false }
         if let ask, let info = Self.prodQuestion(command, on: target) {
             guard await choose(ask.message, info: info, [ask.button, "Cancel"], default: 1) == 0 else { return false }   // ↩ = Cancel
         }
@@ -1700,7 +1705,10 @@ extension AppDelegate {
         sel.names = Array(sel.names.prefix(1))
         Task {
             guard let url = await extractToTemp(sel)?.first else { return }
-            if view { Viewer.show(url) { TempCopies.remove(url.deletingLastPathComponent().path) } } else { NSWorkspace.shared.open(url) }
+            if view { Viewer.show(url) { TempCopies.remove(url.deletingLastPathComponent().path) } } else {
+                FileInfo.quarantine(url.path)   // the archive's own if it has one, else Kermo's
+                Self.openInApp(url)
+            }
         }
     }
 

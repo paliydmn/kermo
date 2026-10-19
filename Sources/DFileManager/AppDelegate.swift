@@ -49,7 +49,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     var bookmarks: [String] = (try? Config.load("bookmarks.json", as: [String].self)) ?? []
     let tunnels = Tunnels()
     var savedServers = SavedServer.load() {
-        didSet { tunnels.sync(savedServers) }   // a tunnel gone or changed: its port follows
+        didSet {
+            tunnels.sync(savedServers)   // a tunnel gone or changed: its port follows
+            Task { await ServerLock.learn(again: true) }
+        }
     }
     var serverPins: [String] = (try? Config.load("server-pins.json", as: [String].self)) ?? []   // addresses, in pin order
     var frecency: Frecency = (try? Config.load("frecency.json", as: Frecency.self)) ?? Frecency()
@@ -126,7 +129,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         window.makeFirstResponder(active.table)
         updatePanelStates()
         updatePrompt()
-        tunnels.startSaved(savedServers)
+        Task {   // a locked server's alias saved too must not listen unasked
+            await ServerLock.learn()
+            tunnels.startSaved(savedServers)
+        }
         NSApp.activate()
         // The terminal eats control keys, so its commands (⌃O, ⌘T, ⌘W, ⌃⇥ …) are picked off here first.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [unowned self] e in

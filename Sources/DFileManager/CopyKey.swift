@@ -67,7 +67,7 @@ extension AppDelegate {
             guard let key = (try? String(contentsOfFile: pub, encoding: .utf8)).flatMap(SSHKeyCopy.line) else {
                 return panel.flash("“\((pub as NSString).abbreviatingWithTildeInPath)” isn't a public key", error: true)
             }
-            if let locked = ServerLock.server(for: t), await !ServerLock.authorize(locked, "copy your SSH key to") {
+            if await !ServerLock.authorize(t, "copy your SSH key to") {
                 return panel.flash("🔒 \(s.title) stays locked")
             }
             if SavedServer.isProd(t), await choose("\(s.title) is a production server. Add your key to its authorized_keys?",

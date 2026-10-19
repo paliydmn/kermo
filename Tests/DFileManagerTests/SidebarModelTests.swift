@@ -181,6 +181,66 @@ import Testing
     #expect(asked == 2, "already open here: not asked again")
     #expect(panel.remote?.dir == dir + "/sub")
 }
+
+/// S-02: an alias in ~/.ssh/config, "ROOT@…", a trailing dot and a left-out user reach the locked production server
+/// as its saved address does: Touch ID, purple and the questions go with them. Another port or user is another server.
+@Test func anotherWayOfWritingALockedServerIsTheSameServer() async throws {
+    let dir = Foundation.NSTemporaryDirectory() + "dfm-s02-\(UUID().uuidString)"
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let config = dir + "/config"
+    try "Host s02prod\n  HostName 192.0.2.10\n  User root\n".write(toFile: config, atomically: true, encoding: .utf8)
+    var prod = SavedServer(address: "root@192.0.2.10")!
+    (prod.locked, prod.prod) = (true, true)
+    var nas = SavedServer(address: "192.0.2.11")!   // no user: ssh's own
+    nas.locked = true
+    var asked: [String] = [], answer = false
+    let sshG = ServerLock.sshG
+    ServerLock.sshG = { SFTP.sshG($0, config: config) }
+    ServerLock.authenticate = { asked.append($0); return answer }
+    ServerLock.servers = { [prod, nas] }
+    defer { ServerLock.sshG = sshG; ServerLock.servers = { [] }; ServerLock.relock() }
+
+    for typed in ["s02prod", "ROOT@192.0.2.10", "root@192.0.2.10.", "Root@192.0.2.10.."] {
+        let t = SFTPTarget(host: typed)
+        #expect(ServerLock.needsUnlock(t), "\(typed): not learned yet, so asked")
+        #expect(await !ServerLock.authorize(t), "\(typed)")
+        #expect(asked.last == "connect to “root@192.0.2.10”" && ServerLock.needsUnlock(t) && SavedServer.isProd(t), "\(typed)")
+    }
+    #expect(await !ServerLock.authorize(SFTPTarget(host: NSUserName() + "@192.0.2.11", port: 22)), "the user ssh would use anyway")
+    #expect(asked.count == 5)
+    for other in [SFTPTarget(host: "root@192.0.2.10", port: 2222), SFTPTarget(host: "admin@192.0.2.10")] {
+        #expect(await ServerLock.authorize(other), "\(other.host):\(other.port ?? 22)")
+        #expect(!ServerLock.needsUnlock(other) && !SavedServer.isProd(other) && asked.count == 5)
+    }
+    answer = true
+    #expect(await ServerLock.authorize(SFTPTarget(host: "s02prod")) && !ServerLock.needsUnlock(prod.target), "unlocked by its alias")
+}
+
+/// The main thread never waits for ssh -G: before an address is learned, the lock and production compare it as written.
+@Test func anAddressNotLearnedYetRunsNoSSH() {
+    let calls = Locked(value: 0), sshG = ServerLock.sshG
+    ServerLock.sshG = { _ in calls.value += 1; return nil }
+    var prod = SavedServer(address: "root@192.0.2.20")!
+    (prod.locked, prod.prod) = (true, true)
+    ServerLock.servers = { [prod] }
+    defer { ServerLock.sshG = sshG; ServerLock.servers = { [] } }
+    for t in [SFTPTarget(host: "s02-not-learned"), SFTPTarget(host: "root@192.0.2.20", port: 22)] {
+        _ = (SavedServer.isProd(t), ServerLock.server(for: t), ServerLock.needsUnlock(t), SavedServer.name(for: t), SavedServer.title(t, "/"))
+    }
+    #expect(calls.value == 0)
+}
+}
+
+/// A value the closures above count in off the main thread.
+private final class Locked<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var v: T
+    init(value: T) { v = value }
+    var value: T {
+        get { lock.withLock { v } }
+        set { lock.withLock { v = newValue } }
+    }
 }
 
 /// The real login keychain: what Save writes, the login reads; Delete leaves nothing.
