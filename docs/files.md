@@ -91,7 +91,7 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 
 - Inside, ⌫ goes up, ↩ on a file extracts it to a temporary folder and opens it, and F3 views it. What ↩ opens is quarantined, so Gatekeeper checks it first: with the archive's own quarantine if it has one, as Archive Utility does, else as a download from Kermo. Delete, rename, paste and drops are refused.
 - **Extract…** (⌥F9, and F5 inside an archive) unpacks the marked entries (or the cursor's) into the folder you confirm, by default the other panel's. On an archive file in a normal folder F5 copies the file; ⌥F9 extracts all of it.
-- Names that already exist ask **Keep Existing** (folders merge), **Overwrite** or **Cancel**.
+- Names that already exist ask **Keep Existing** (folders merge), **Overwrite** or **Cancel**. Then the archive unpacks into a hidden `.kermo-extract-…` folder there and moves out once it's all done: if it fails or you stop it, nothing of it lands and your files stay as they were.
 - What a quarantined archive (a download) unpacks is quarantined too, as Archive Utility does; a clean archive's isn't.
 - All of a tar (`.tar.gz`, `.tar.xz` and the like) isn't read once first just for its names: into an empty or new folder it unpacks straight in. Into a folder with things in it, it unpacks into a hidden `.kermo-extract-…` folder there; when tar is done, names that exist ask the question, and **Cancel** removes what was unpacked. If tar fails or you stop it, nothing of it lands. Where the archive has a file and the folder a folder of that name, or (with Keep Existing) the archive a folder and the folder a file or link, yours stays, and you're told.
 - ↩ or F3 on one file inside a tar stops reading the archive at that file.

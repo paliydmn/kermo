@@ -1724,19 +1724,54 @@ extension AppDelegate {
             else { return }
             let dest = resolve(input)
             if sel == nil && ArchiveIndex.isTar(file) { return extractWholeTar(file, to: dest) }
-            // What lands at the top of `dest`; bsdtar would silently replace any of it that's there already.
-            let (index, clashes) = await Blocking.run { () -> (ArchiveIndex?, [String]) in
-                let index = sel?.index ?? (try? ArchiveIndex.read(file))
-                let top = sel?.names ?? (index?.list("") ?? []).map(\.name)
-                return (index, top.filter { var st = stat(); return Darwin.lstat((dest as NSString).appendingPathComponent($0), &st) == 0 })
+            await extract(file, sel, to: dest)
+        }
+    }
+
+    /// Extract once `dest` is known (all of a zip, 7z…, or a selection inside any archive). Over what's there it
+    /// unpacks into a hidden folder first, as a whole tar does: bsdtar removes a file and writes the new one under its
+    /// name, so ⎋, a full disk, a bad member or a quit midway would leave one gone and the other cut short. Returns
+    /// once it's all done.
+    func extract(_ file: String, _ sel: (index: ArchiveIndex, inner: String, names: [String])?, to dest: String) async {
+        // What lands at the top of `dest`; bsdtar would silently replace any of it that's there already.
+        let (index, clashes) = await Blocking.run { () -> (ArchiveIndex?, [String]) in
+            let index = sel?.index ?? (try? ArchiveIndex.read(file))
+            let top = sel?.names ?? (index?.list("") ?? []).map(\.name)
+            return (index, top.filter { var st = stat(); return Darwin.lstat((dest as NSString).appendingPathComponent($0), &st) == 0 })
+        }
+        let shown = (dest as NSString).abbreviatingWithTildeInPath
+        guard let keep = await keepExisting(clashes, in: shown) else { return }
+        let staging: String?
+        do {
+            staging = try await Blocking.run { () throws -> String? in
+                try FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true)
+                guard !clashes.isEmpty else { return nil }   // nothing there to lose: only what's new can be cut short
+                let staging = ArchiveIndex.stagingFolder(in: dest)
+                try FileManager.default.createDirectory(atPath: staging, withIntermediateDirectories: false)
+                return staging
             }
-            guard let keep = await keepExisting(clashes, in: (dest as NSString).abbreviatingWithTildeInPath) else { return }
-            do { try await Blocking.run { try FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true) } } catch {
-                return showError(error)
-            }
-            var args = index?.extractArguments(sel?.names ?? [], from: sel?.inner ?? "", to: dest) ?? ["-x", "-f", file, "-C", dest]
-            if keep { args.insert("-k", at: 1) }
-            Shell.run("/usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dest) { _ in self.panels.forEach { $0.reload() } }
+        } catch {
+            return showError(error)
+        }
+        let into = staging ?? dest
+        let args = index?.extractArguments(sel?.names ?? [], from: sel?.inner ?? "", to: into) ?? ["-x", "-f", file, "-C", into]
+        let status = await withCheckedContinuation { done in
+            Shell.run("/usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dest,
+                      title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)") { done.resume(returning: $0) }
+        }
+        if let staging { await moveOut(staging, to: dest, keep: status == 0 ? keep : nil) } else { panels.forEach { $0.reload() } }
+    }
+
+    /// The end of an extract through a staging folder: what's in it moves into `dest` (`keep`: what's there stays),
+    /// or with nil (stopped, failed, cancelled) none of it lands there. The window already says what tar said.
+    private func moveOut(_ staging: String, to dest: String, keep: Bool?) async {
+        let errors = await Blocking.run {
+            guard let keep else { ArchiveIndex.discardStaging(staging); return [String]() }
+            return ArchiveIndex.moveExtracted(staging, to: dest, keep: keep)
+        }
+        panels.forEach { $0.reload() }
+        if !errors.isEmpty {
+            showError(JobErrorMessage(errors.prefix(8).joined(separator: "\n") + (errors.count > 8 ? "\n…" : "")))
         }
     }
 
@@ -1763,17 +1798,9 @@ extension AppDelegate {
                       title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)") { [self] status in
                 guard let staging else { return panels.forEach { $0.reload() } }
                 Task {
-                    // stopped (⎋) or failed: half an archive doesn't land in `dest`; the window says what tar said
+                    // stopped (⎋) or failed: half an archive doesn't land in `dest`
                     let clashes = await Blocking.run { status == 0 ? ArchiveIndex.clashes(staging, dest) : [] }
-                    let keep = status == 0 ? await self.keepExisting(clashes, in: shown) : nil
-                    let errors = await Blocking.run {
-                        guard let keep else { ArchiveIndex.discardStaging(staging); return [String]() }
-                        return ArchiveIndex.moveExtracted(staging, to: dest, keep: keep)
-                    }
-                    self.panels.forEach { $0.reload() }
-                    if !errors.isEmpty {
-                        self.showError(JobErrorMessage(errors.prefix(8).joined(separator: "\n") + (errors.count > 8 ? "\n…" : "")))
-                    }
+                    await self.moveOut(staging, to: dest, keep: status == 0 ? await self.keepExisting(clashes, in: shown) : nil)
                 }
             }
         }
