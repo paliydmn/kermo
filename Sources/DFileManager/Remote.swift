@@ -99,15 +99,6 @@ struct SavedServer: Codable, Equatable {
         return Tunnel.problem(tunnels)
     }
 
-    static func load() -> [SavedServer] {
-        do { return try Config.load("servers.json", as: [SavedServer].self) ?? [] } catch {
-            // Saving would overwrite a hand edit gone wrong: keep it aside.
-            let path = Config.path("servers.json")
-            try? FileManager.default.removeItem(atPath: path + ".broken")
-            try? FileManager.default.moveItem(atPath: path, toPath: path + ".broken")
-            return []
-        }
-    }
 }
 
 extension SFTPTarget {

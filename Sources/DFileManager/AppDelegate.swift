@@ -46,16 +46,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     static let minWidth: CGFloat = 720
     private var responderObservation: NSKeyValueObservation?
     let defaults = UserDefaults.standard
-    var bookmarks: [String] = (try? Config.load("bookmarks.json", as: [String].self)) ?? []
+    var bookmarks: [String] = Config.noting(Config.loadEach("bookmarks.json", as: String.self))
     let tunnels = Tunnels()
-    var savedServers = SavedServer.load() {
+    var savedServers: [SavedServer] = Config.noting(Config.loadEach("servers.json", as: SavedServer.self)) {
         didSet {
             tunnels.sync(savedServers)   // a tunnel gone or changed: its port follows
             Task { await ServerLock.learn(again: true) }
         }
     }
-    var serverPins: [String] = (try? Config.load("server-pins.json", as: [String].self)) ?? []   // addresses, in pin order
-    var frecency: Frecency = (try? Config.load("frecency.json", as: Frecency.self)) ?? Frecency()
+    var serverPins: [String] = Config.noting(Config.loadEach("server-pins.json", as: String.self))   // addresses, in pin order
+    var frecency: Frecency = Config.noting(Config.loadKeeping("frecency.json", as: Frecency.self)) ?? Frecency()
     private var visitsSinceSave = 0
 
     var active: PanelViewController { panels[activeIndex] }
@@ -321,7 +321,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         keyBar.reload(cmds)
         refreshSidebar()   // section headers show keys
         NSApp.mainMenu = makeMenu()
-        configProblems = problems
+        configProblems = Config.unreadable + problems   // the state files' once, at launch
+        Config.unreadable = []
         if reportProblems {
             if problems.isEmpty { active.flash("Config reloaded") } else { showError(JobErrorMessage(problems.joined(separator: "\n"))) }
         }

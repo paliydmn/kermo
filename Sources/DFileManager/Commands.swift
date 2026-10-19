@@ -2658,7 +2658,9 @@ extension AppDelegate {
     /// Read, changed and saved on `trashLogQueue`: each entry is an lstat (a Trash on a share that doesn't answer
     /// never returns), and one queue keeps the changes in order — none lost to another read at the same time.
     nonisolated private static func changeTrashLog<T>(_ change: (inout [String: String]) -> T) -> T {
-        let saved = (try? Config.load("trash.json", as: [String: String].self)) ?? [:]
+        let (loaded, problem) = Config.loadKeeping("trash.json", as: [String: String].self)
+        if let problem { Task { @MainActor in (NSApp.delegate as? AppDelegate)?.active.flash(problem, error: true) } }   // read off launch: said now
+        let saved = loaded ?? [:]
         var log = saved.filter { var s = stat(); return lstat($0.key, &s) == 0 || errno != ENOENT }
         let result = change(&log)
         if log != saved { Config.save("trash.json", log) }

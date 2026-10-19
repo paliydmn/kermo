@@ -91,3 +91,60 @@ private func run(_ tool: String, _ args: [String], in dir: String) throws {
     #expect(e.window?.attachedSheet != nil, "says it couldn't save")
     #expect(e.window?.isDocumentEdited == true && e.textView.string == new, "the text stays, unsaved")
 }
+
+/// T-02: servers.json with one bad entry (`"port": "22"`, hand-edited) keeps the other two in the list; the file as
+/// it was is copied — not moved — to servers.json.broken byte for byte, and the problem says how many and where.
+/// Before, the whole list came back empty and the file was moved aside without a word. Never in ~/.config.
+@MainActor @Test func aBrokenServerEntryHidesOnlyItself() throws {
+    let dir = try folder()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let names = ["web", "db", "cache"]
+    let servers = names.map { n -> SavedServer in var s = SavedServer(); s.name = n; s.host = n + ".example.com"; return s }
+    var entries = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(servers)) as? [[String: Any]])
+    entries[1]["port"] = "22"
+    let text = try JSONSerialization.data(withJSONObject: entries, options: [.prettyPrinted])
+    try text.write(to: URL(fileURLWithPath: dir + "/servers.json"))
+
+    let (loaded, problem) = Config.loadEach("servers.json", as: SavedServer.self, in: dir)
+    #expect(loaded.map(\.name) == ["web", "cache"])
+    #expect(problem == "servers.json: 1 of 3 entries couldn't be read and are left out — the file as it was is kept as servers.json.broken")
+    #expect(FileManager.default.contents(atPath: dir + "/servers.json.broken") == text)
+    #expect(FileManager.default.contents(atPath: dir + "/servers.json") == text, "copied, not moved")
+
+    // said once at launch, with the config problems
+    let was = Config.unreadable
+    defer { Config.unreadable = was }
+    Config.unreadable = []
+    #expect(Config.noting((loaded, problem)).count == 2 && Config.unreadable == [problem])
+}
+
+/// T-03: a broken bookmarks.json (not even JSON) is copied aside before the first save writes over it; the same
+/// file again isn't copied twice, and another broken one doesn't replace the first copy. frecency.json — a whole.
+@MainActor @Test func aBrokenStateFileIsKeptBeforeItsSavedOver() throws {
+    let dir = try folder()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let file = dir + "/bookmarks.json", broken = Data(#"["~/a" "~/b"]"#.utf8)
+    try broken.write(to: URL(fileURLWithPath: file))
+    let (marks, problem) = Config.loadEach("bookmarks.json", as: String.self, in: dir)
+    #expect(marks.isEmpty)
+    #expect(problem?.hasPrefix("bookmarks.json couldn't be read (") == true)
+    #expect(problem?.hasSuffix(", so it starts empty — the file as it was is kept as bookmarks.json.broken") == true, "\(problem ?? "")")
+    try Data(#"["~/c"]"#.utf8).write(to: URL(fileURLWithPath: file))   // the first save, as Config.save writes it
+    #expect(FileManager.default.contents(atPath: file + ".broken") == broken)
+
+    try broken.write(to: URL(fileURLWithPath: file))
+    _ = Config.loadEach("bookmarks.json", as: String.self, in: dir)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: dir).sorted() == ["bookmarks.json", "bookmarks.json.broken"], "not twice")
+    let other = Data(#"["~/a", 5, "~/b"]"#.utf8)
+    try other.write(to: URL(fileURLWithPath: file))
+    let (some, said) = Config.loadEach("bookmarks.json", as: String.self, in: dir)
+    #expect(some == ["~/a", "~/b"] && said?.contains("1 of 3 entries") == true && said?.contains("bookmarks.json.broken-") == true)
+    #expect(FileManager.default.contents(atPath: file + ".broken") == broken, "the first copy stays")
+    let dated = try FileManager.default.contentsOfDirectory(atPath: dir).filter { $0.hasPrefix("bookmarks.json.broken-") }
+    #expect(dated.count == 1 && FileManager.default.contents(atPath: dir + "/" + (dated.first ?? "")) == other)
+
+    try Data("{".utf8).write(to: URL(fileURLWithPath: dir + "/frecency.json"))
+    let (frecency, why) = Config.loadKeeping("frecency.json", as: Frecency.self, in: dir)
+    #expect(frecency == nil && why?.hasSuffix("kept as frecency.json.broken") == true)
+    #expect(FileManager.default.contents(atPath: dir + "/frecency.json.broken") == Data("{".utf8))
+}

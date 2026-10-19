@@ -32,6 +32,8 @@ Release:
 - Saving a hard-linked file, or someone else's file in a folder you can write, in the editor can no longer leave it empty when the disk fills up or the write fails midway: the text is written over the old one and the file is cut to length only at the end.
 - **Split File…** no longer writes over parts of an earlier split when `.000` is gone but later parts are there, and **Combine Parts…** refuses parts of different sizes (two splits mixed) instead of joining them into garbage. Both now read the folder off the main thread.
 - **Move To…** (F6) to the same name in another case (`Foo` → `foo`) renames the item. Before, it asked whether to merge it with itself and then left the name as it was.
+- One entry in `servers.json` that can't be read (a hand edit such as `"port": "22"`) no longer empties the list of saved servers: only that entry is left out. Kermo says at launch what it left out and where the file as it was is kept (`servers.json.broken`, copied, not moved).
+- A broken `bookmarks.json`, `server-pins.json`, `frecency.json` or `trash.json` is no longer quietly replaced with an empty one at the next save: it's copied to `name.broken` first and Kermo says so. In bookmarks and pins only the entries that can't be read are left out.
 - Logged in to a server as `root` (not through a root panel), saving someone else's file now replaces it whole and gives it back its owner, as a root panel does. Before, it was written into in place.
 - The history of saved server files always stays out of Time Machine. Before, only a history folder this version created was left out; one from an older version was backed up, server secrets included.
 

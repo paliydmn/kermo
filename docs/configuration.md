@@ -20,7 +20,9 @@ Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`
 | `audit.jsonl` | The [production log](safety.md#production-log) | **Admin ▸ Show Production Log** |
 | `history.noindex/` | [Versions of server files](server-files.md#file-history) | Kermo writes it |
 
-Kermo also writes `server-pins.json` (the order of pinned servers), `trash.json` (where trashed items came from, for Put Back) and `servers.json.broken` (a `servers.json` that failed to parse, moved aside so the next save doesn't overwrite your hand edit).
+Kermo also writes `server-pins.json` (the order of pinned servers) and `trash.json` (where trashed items came from, for Put Back).
+
+A file Kermo writes back itself (`servers.json`, `bookmarks.json`, `server-pins.json`, `frecency.json`, `trash.json`) that it can't read is copied as it is to `name.broken` before anything is saved over it, and Kermo says so at launch (`trash.json`: when it's next read). In a list (servers, bookmarks, pins) only the entries that can't be read are left out; the rest load. A file that doesn't parse at all starts empty. When a `name.broken` with something else in it is there already, the new copy is `name.broken-<date>-<time>`.
 
 ## Keymap
 
@@ -46,7 +48,7 @@ Kermo also writes `server-pins.json` (the order of pinned servers), `trash.json`
 | `prod` | `true` marks the server as [production](servers.md#mark-a-server-as-production) |
 | `tunnels` | The server's [tunnels](tunnels.md#where-tunnels-are-kept) |
 
-Passwords are not in the file: they are in the Keychain. A file that doesn't parse is moved to `servers.json.broken`.
+Passwords are not in the file: they are in the Keychain. An entry that can't be read (`"port": "22"` in quotes, a misspelled `true`) is left out, the others load, and the file as it was is copied to `servers.json.broken`; see above.
 
 ## Options
 
