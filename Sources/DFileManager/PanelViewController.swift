@@ -1195,7 +1195,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             connecting = target
         }
         Task { [weak self] in
-            if opening, ServerLock.needsUnlock(target), await !ServerLock.authorize(target) {
+            if opening, await !ServerLock.authorize(target) {
                 guard let self, gen == loadGen else { return }
                 remoteFlag = nil
                 connecting = nil

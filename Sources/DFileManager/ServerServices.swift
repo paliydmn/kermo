@@ -25,7 +25,7 @@ extension AppDelegate {
         let s = savedServer(at: t) ?? SavedServer(target: t)
         let t = s.target.asRoot(t.sudo)   // a saved server's: its key and connection time, whatever was typed
         Task {
-            if let locked = ServerLock.server(for: s.target), await !ServerLock.authorize(locked, "look at the \(what) of") {
+            if await !ServerLock.authorize(s.target, "look at the \(what) of") {
                 return say("🔒 \(s.title) stays locked", false)
             }
             let env = SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For “\(command)” on \(s.title)"]) { $1 }

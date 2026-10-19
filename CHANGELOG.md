@@ -15,6 +15,7 @@ Release:
 
 ### Security
 
+- A locked server's Touch ID and a production server's purple mark, questions and log now go with the server, not with how its address is written: an `~/.ssh/config` alias of it, `ROOT@host`, a trailing dot or a left-out user no longer get past them.
 - **Save as Administrator** no longer writes from a file that something else running as you could change while macOS asks for the password: the text goes to root in the command itself (a text over about 500 KB goes through a file root checks against your text). It never leaves the file empty when the disk is full, and a change made to the file while the password dialog was up now asks "changed on disk" instead of being overwritten.
 
 ### Fixed

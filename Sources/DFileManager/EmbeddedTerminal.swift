@@ -309,8 +309,11 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             launch(tab, shell, [], execName: "-" + (shell as NSString).lastPathComponent,   // leading "-" = login shell
                    cwd: cwd)
         case .ssh(let t):
-            // New, reconnect, restored: a locked server asks first (ServerLock).
-            guard ServerLock.needsUnlock(t) else { return login(tab, t) }
+            // New, reconnect, restored: a locked server asks first (ServerLock); learned meanwhile, for production's marks.
+            guard ServerLock.needsUnlock(t) else {
+                Task { await ServerLock.learn([t]) }
+                return login(tab, t)
+            }
             Task {
                 guard await ServerLock.authorize(t) else {
                     tab.view.feed(text: "🔒 \(t.host) stays locked\r\n")

@@ -46,7 +46,7 @@ extension AppDelegate {
     static func unlocked(_ chosen: [RunOnServersSheet.Choice]) async -> (run: [RunOnServersSheet.Choice], skipped: [String]) {
         var run: [RunOnServersSheet.Choice] = [], skipped: [String] = []
         for c in chosen {
-            if ServerLock.needsUnlock(c.target), let s = ServerLock.server(for: c.target), await !ServerLock.authorize(s, "run a command on") {
+            if await !ServerLock.authorize(c.target, "run a command on") {
                 skipped.append(c.title)
             } else {
                 run.append(c)

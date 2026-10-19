@@ -41,7 +41,7 @@ Read the log with `grep` or `jq`, or choose **Admin ▸ Show Production Log** (o
 | Login Keychain | "Kermo: host" (ssh password), "Kermo sudo: host" (sudo password) | Keychain; each only if you chose to save it |
 | Memory | The sudo password for 5 minutes after its last use | Forgotten at screen lock, sleep and **Disconnect** |
 
-Server passwords are never put on a command line or in a file. A [locked server](servers.md#lock-a-server) asks for Touch ID or the Mac password before you use it.
+Server passwords are never put on a command line or in a file. A [locked server](servers.md#lock-a-server) asks for Touch ID or the Mac password before you use it, by its saved address, an `~/.ssh/config` alias of it or any other way of writing it ssh takes to the same user, host and port.
 
 ## What listens on this Mac
 
