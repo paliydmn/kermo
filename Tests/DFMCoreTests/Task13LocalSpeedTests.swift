@@ -147,6 +147,31 @@ private var ramDiskMounted: Bool {
         #expect(FileJob.lstat(dst + "/a.txt").map { $0.st_flags & UInt32(UF_IMMUTABLE) } == UInt32(UF_IMMUTABLE))
     }
 
+    /// sss-1 follow-up: F5 of a locked, transparently compressed file to another volume (no clone there) lands locked.
+    @Test func aLockedCompressedFileCopiedAcrossVolumesStaysLocked() throws {
+        let src = ramDisk + "/k15comp-" + UUID().uuidString                              // compresses (ditto --hfsCompression)
+        let dst = Foundation.NSTemporaryDirectory() + "k15comp-" + UUID().uuidString     // this Mac's volume; the file is small
+        defer {
+            for dir in [src, dst] { for n in (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [] { lchflags(dir + "/" + n, 0) } }
+            try? FileManager.default.removeItem(atPath: src)
+            try? FileManager.default.removeItem(atPath: dst)
+        }
+        try FileManager.default.createDirectory(atPath: src, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: dst, withIntermediateDirectories: true)
+        let text = String(repeating: "compress me please\n", count: 10_000)
+        try Data(text.utf8).write(to: URL(fileURLWithPath: src + "/plain.txt"))
+        let ditto = try Process.run(URL(fileURLWithPath: "/usr/bin/ditto"), arguments: ["--hfsCompression", "--noclone", src + "/plain.txt", src + "/a.txt"])
+        ditto.waitUntilExit()
+        let flags = try #require(FileJob.lstat(src + "/a.txt")?.st_flags)
+        try #require(flags & UInt32(UF_COMPRESSED) != 0, "the RAM disk didn't compress")
+        #expect(lchflags(src + "/a.txt", flags | UInt32(UF_IMMUTABLE)) == 0)
+        let job = FileJob(.copy, sources: [src + "/a.txt"], destDir: dst)
+        job.run()
+        #expect(job.progress.errors.isEmpty)
+        #expect(try String(contentsOfFile: dst + "/a.txt", encoding: .utf8) == text)
+        #expect(FileJob.lstat(dst + "/a.txt").map { $0.st_flags & UInt32(UF_IMMUTABLE) } == UInt32(UF_IMMUTABLE))
+    }
+
     /// A move whose folder merges into a mount point: /Volumes is on the source's volume, /Volumes/KermoRAM isn't,
     /// so what's inside is copied over and deleted, never renamed (EXDEV).
     @Test func aMoveMergingIntoAMountPointCopies() throws {

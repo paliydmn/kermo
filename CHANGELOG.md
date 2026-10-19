@@ -13,6 +13,10 @@ Release:
 
 ## [Unreleased]
 
+### Security
+
+- **Save as Administrator** no longer writes from a file that something else running as you could change while macOS asks for the password: the text goes to root in the command itself (a text over about 500 KB goes through a file root checks against your text). It never leaves the file empty when the disk is full, and a change made to the file while the password dialog was up now asks "changed on disk" instead of being overwritten.
+
 ### Fixed
 
 - Opening an archive with a very deeply nested path (a tiny zip with one file 2000 folders down) no longer crashes Kermo.
@@ -21,6 +25,7 @@ Release:
 - Saving a server file through a symlink (nginx's `sites-enabled`), someone else's file, or from a root panel under SELinux can no longer leave the file empty when the connection drops. A symlink's target is now replaced whole and the link stays a link. A root panel keeps the owner of someone else's file and still replaces it whole. What's still written into the file is written over the old text and cut to length only at the end.
 - If a save that writes into the server's file fails on the way, the old text is put back when the connection still works. The message says whether the file on the server was put back or may be cut short, and names the partial file there that has your full text. Before, it said only that the upload failed.
 - Temporary files a crash left behind are cleared: partial files of server saves (at a later save in that folder, once a day old), the local editor's save files, and those of **Save as Administrator** and a config check's put-back. **Save as Administrator**'s temporary copy of the text is now readable only by you.
+- The history of saved server files always stays out of Time Machine. Before, only a history folder this version created was left out; one from an older version was backed up, server secrets included.
 
 ## [1.2.1] - 2026-10-17
 

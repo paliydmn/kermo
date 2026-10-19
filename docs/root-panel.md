@@ -40,6 +40,7 @@ Only the file operations run as root, plus a save's [check and reload](config-ch
 
 - Saves go the same way as the user's: [file history](server-files.md#file-history), the production question, "changed on the server since you opened it".
 - Saving someone else's file (`www-data`'s, a user's) keeps its owner and group: the new file gets them before it replaces the old one, so it's never root's, not even for a moment.
+- Because the saved file is a new one, a file with hard links (other names for the same file) is split: the name you saved has the new text, its other names keep the old one. The same goes for root's own files. Configs rarely have hard links; edit such a file as its owner if its other names must follow.
 - New files, folders and copies belong to `root:root`, as with any `sudo`.
 - Folder sizes (Space, ⌥Space) come from `du` through `sudo -n`. Where sudo doesn't allow that without a password (a rule for `sftp-server` alone, say), the folders are walked over the root session instead, as before.
 - On a server with SELinux (`/sys/fs/selinux`) a save writes into the file itself instead of renaming a new one over it, so the file keeps its label. It writes over the old text and then cuts it to length, so a dropped connection never leaves it empty ([Open and edit](server-files.md#open-and-edit)).

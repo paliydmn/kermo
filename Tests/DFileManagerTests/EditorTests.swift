@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 @testable import DFMCore
 import Testing
 @testable import DFileManager
@@ -81,45 +82,24 @@ private func setMtime(_ path: String, like s: Editor.Stamp) {
     #expect(fm.contents(atPath: dir + "/real.conf") == Data("theirs\n".utf8))
 }
 
+/// What Save as Administrator's root write does, run as us instead (no root in tests): sh, with stderr as the failure,
+/// as osascript gives it.
+private func runAsUs(_ command: String) -> Admin.Outcome {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/bin/sh")
+    p.arguments = ["-c", command]
+    let err = Pipe()
+    p.standardError = err
+    try? p.run()
+    let msg = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    p.waitUntilExit()
+    return p.terminationStatus == 0 ? .ok : .failed(msg)
+}
+
 private func tempDir() throws -> String {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-editor-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     return dir
-}
-
-/// Save as Administrator checks the disk again right before the root write: a change made while the
-/// "is protected" sheet was up isn't overwritten. Overwrite (force) still goes through as root.
-@MainActor @Test func adminSaveRechecksTheDiskBeforeWriting() async throws {
-    _ = NSApplication.shared
-    let dir = try tempDir()
-    defer { try? FileManager.default.removeItem(atPath: dir) }
-    let path = dir + "/hosts"
-    try Data("v1\n".utf8).write(to: URL(fileURLWithPath: path))
-    var commands: [String] = []
-    let real = Editor.runAsAdmin
-    defer { Editor.runAsAdmin = real }
-    Editor.runAsAdmin = { cmd in   // no root in tests: run the same command as us
-        commands.append(cmd)
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", cmd]
-        try? p.run()
-        p.waitUntilExit()
-        return p.terminationStatus == 0 ? .ok : .failed("exit \(p.terminationStatus)")
-    }
-
-    let e = try Editor(URL(fileURLWithPath: path))
-    defer { e.close() }
-    e.textView.string = "mine\n"
-    try Data("theirs\n".utf8).write(to: URL(fileURLWithPath: path))   // while the sheet was up
-    #expect(await !e.adminSave(Data("mine\n".utf8), force: false))
-    #expect(commands.isEmpty)
-    #expect(FileManager.default.contents(atPath: path) == Data("theirs\n".utf8))
-
-    #expect(await e.adminSave(Data("mine\n".utf8), force: true))   // Overwrite → as administrator
-    #expect(commands.count == 1)
-    #expect(FileManager.default.contents(atPath: path) == Data("mine\n".utf8))
-    #expect(await e.adminSave(Data("mine\n".utf8), force: false))   // our own write is the new baseline
 }
 
 /// Save As from the conflict sheet: the text goes to the new file, the changed one is left alone,
@@ -217,32 +197,148 @@ private func tempDir() throws -> String {
     #expect(try fm.contentsOfDirectory(atPath: dir).sorted() == (fresh + ["doc.txt"]).sorted())
 }
 
-/// T-07: Save as Administrator's temp copy of the text is the user's alone (0600) while root copies it over the file,
-/// and gone after. The admin step is stubbed: no password, nothing runs as root.
-@MainActor @Test func adminSaveTempFileIsOwnerOnly() async throws {
-    _ = NSApplication.shared
-    let fm = FileManager.default
-    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-editor-" + UUID().uuidString
-    try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
-    defer { try? fm.removeItem(atPath: dir) }
-    try Data("original\n".utf8).write(to: URL(fileURLWithPath: dir + "/hosts"))
-    let e = try Editor(URL(fileURLWithPath: dir + "/hosts"))
-    defer { e.close() }
-    let admin = Editor.runAsAdmin
-    defer { Editor.runAsAdmin = admin }
-    var temp: String?, mode: mode_t?, text: Data?
-    Editor.runAsAdmin = { command in
-        guard let r = command.range(of: #"/\S*dfm-admin-save-[0-9A-F-]+"#, options: .regularExpression) else { return .failed(command) }
-        let path = String(command[r])
-        var st = stat()
-        if lstat(path, &st) == 0 { mode = st.st_mode & 0o777 }
-        (temp, text) = (path, FileManager.default.contents(atPath: path))
-        return .cancelled
+/// They swap the one `Editor.runAsAdmin`: one at a time.
+@Suite(.serialized) @MainActor struct AdminSaveTests {
+    /// Save as Administrator checks the disk again right before the root write: a change made while the
+    /// "is protected" sheet was up isn't overwritten. Overwrite (force) still goes through as root.
+    @Test func adminSaveRechecksTheDiskBeforeWriting() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let path = dir + "/hosts"
+        try Data("v1\n".utf8).write(to: URL(fileURLWithPath: path))
+        var commands: [String] = []
+        let real = Editor.runAsAdmin
+        defer { Editor.runAsAdmin = real }
+        Editor.runAsAdmin = { cmd in commands.append(cmd); return runAsUs(cmd) }
+
+        let e = try Editor(URL(fileURLWithPath: path))
+        defer { e.close() }
+        e.textView.string = "mine\n"
+        try Data("theirs\n".utf8).write(to: URL(fileURLWithPath: path))   // while the sheet was up
+        #expect(await !e.adminSave(Data("mine\n".utf8), force: false))
+        #expect(commands.isEmpty)
+        #expect(FileManager.default.contents(atPath: path) == Data("theirs\n".utf8))
+
+        #expect(await e.adminSave(Data("mine\n".utf8), force: true))   // Overwrite → as administrator
+        #expect(commands.count == 1)
+        #expect(FileManager.default.contents(atPath: path) == Data("mine\n".utf8))
+        #expect(await e.adminSave(Data("mine\n".utf8), force: false))   // our own write is the new baseline
     }
-    #expect(await !e.adminSave(Data("root's text\n".utf8), force: true))
-    #expect(mode == 0o600, "\(String(mode ?? 0, radix: 8))")
-    #expect(text == Data("root's text\n".utf8))
-    #expect(temp.map { !fm.fileExists(atPath: $0) } == true, "removed after")
+
+    /// S-01: Save as Administrator puts a text that fits in argv in the command itself — no temp file of ours exists for
+    /// anything running as us to change while macOS asks for the password. The admin step is stubbed: nothing runs as root.
+    @Test func adminSaveSendsAShortTextInTheCommand() async throws {
+        _ = NSApplication.shared
+        let fm = FileManager.default
+        let dir = try tempDir()
+        defer { try? fm.removeItem(atPath: dir) }
+        try Data("original\n".utf8).write(to: URL(fileURLWithPath: dir + "/hosts"))
+        let e = try Editor(URL(fileURLWithPath: dir + "/hosts"))
+        defer { e.close() }
+        let admin = Editor.runAsAdmin
+        defer { Editor.runAsAdmin = admin }
+        let text = "127.0.0.1 it's \"quoted\" $HOME `x` \\ %s\r\nend\n"
+        var command: String?, temps: [String] = []
+        Editor.runAsAdmin = { cmd in
+            command = cmd
+            temps = ((try? fm.contentsOfDirectory(atPath: Foundation.NSTemporaryDirectory())) ?? [])   // the editor's temp folder, not $DFM_TEST_TMP
+                .filter { $0.hasPrefix("dfm-admin-save-") && fm.contents(atPath: Foundation.NSTemporaryDirectory() + $0) == Data(text.utf8) }
+            return runAsUs(cmd)
+        }
+        #expect(await e.adminSave(Data(text.utf8), force: false))
+        #expect(command?.contains(ShellContext.quote(text)) == true)
+        #expect(command?.contains(Foundation.NSTemporaryDirectory() + "dfm-admin-save-") == false, "root's own copy only")
+        #expect(temps.isEmpty)
+        #expect(fm.contents(atPath: dir + "/hosts") == Data(text.utf8))
+    }
+
+    /// S-01 / T-07: a text too long for argv goes through a temp file that is the user's alone (0600) while root copies it,
+    /// and gone after. Root writes only what hashes to the text: a temp file changed meanwhile writes nothing.
+    @Test func adminSaveSendsALongTextThroughAnOwnerOnlyFileRootChecks() async throws {
+        _ = NSApplication.shared
+        let fm = FileManager.default
+        let dir = try tempDir()
+        defer { try? fm.removeItem(atPath: dir) }
+        try Data("original\n".utf8).write(to: URL(fileURLWithPath: dir + "/hosts"))
+        let e = try Editor(URL(fileURLWithPath: dir + "/hosts"))
+        defer { e.close() }
+        let admin = Editor.runAsAdmin
+        defer { Editor.runAsAdmin = admin }
+        let long = Data((String(repeating: "x", count: AdminCommand.argvLimit) + "\n").utf8)
+        var temp: String?, mode: mode_t?, text: Data?, swap = false
+        Editor.runAsAdmin = { cmd in
+            guard let r = cmd.range(of: #"/\S*dfm-admin-save-[0-9A-F-]+"#, options: .regularExpression) else { return .failed(cmd) }
+            let path = String(cmd[r])
+            var st = stat()
+            if lstat(path, &st) == 0 { mode = st.st_mode & 0o777 }
+            (temp, text) = (path, fm.contents(atPath: path))
+            if swap { try? Data("evil\n".utf8).write(to: URL(fileURLWithPath: path)) }   // while the password is asked
+            return runAsUs(cmd)
+        }
+        #expect(await e.adminSave(long, force: false))
+        #expect(mode == 0o600, "\(String(mode ?? 0, radix: 8))")
+        #expect(text == long)
+        #expect(temp.map { !fm.fileExists(atPath: $0) } == true, "removed after")
+        #expect(fm.contents(atPath: dir + "/hosts") == long)
+
+        swap = true
+        #expect(await !e.adminSave(long + Data("more\n".utf8), force: false))
+        #expect(fm.contents(atPath: dir + "/hosts") == long, "nothing written")
+        #expect(e.window?.attachedSheet != nil, "says why")
+    }
+
+    /// S-01: root checks the file right before writing — a change made while the password was asked isn't overwritten;
+    /// the editor asks "changed on disk" as it does for any change.
+    @Test func adminSaveAsksWhenTheFileChangedDuringThePassword() async throws {
+        _ = NSApplication.shared
+        let fm = FileManager.default
+        let dir = try tempDir()
+        defer { try? fm.removeItem(atPath: dir) }
+        let path = dir + "/hosts"
+        try Data("v1\n".utf8).write(to: URL(fileURLWithPath: path))
+        let e = try Editor(URL(fileURLWithPath: path))
+        defer { e.close() }
+        let admin = Editor.runAsAdmin
+        defer { Editor.runAsAdmin = admin }
+        Editor.runAsAdmin = { cmd in
+            try? Data("theirs, longer\n".utf8).write(to: URL(fileURLWithPath: path))
+            return runAsUs(cmd)
+        }
+        #expect(await !e.adminSave(Data("mine\n".utf8), force: false))
+        #expect(fm.contents(atPath: path) == Data("theirs, longer\n".utf8))
+        #expect(e.noticed != nil && e.noticed == Editor.Stamp(path), "asked about the version on disk")
+        #expect(e.window?.attachedSheet == nil, "not a failure")
+    }
+}
+
+/// F-03: the root write never empties the file first: a shorter text is cut to its length after, hard links stay, and a
+/// write that fails (a full disk; here a file size limit set right before it) never leaves it shorter — at worst the new
+/// text over the old.
+@Test func adminWriteRewritesInPlaceWithoutEmptyingFirst() throws {
+    let fm = FileManager.default
+    let dir = try tempDir()
+    defer { try? fm.removeItem(atPath: dir) }
+    let path = dir + "/hosts", other = dir + "/link"
+    try Data("a long old line\n".utf8).write(to: URL(fileURLWithPath: path))
+    #expect(link(path, other) == 0)
+    func write(_ text: String, limit: String = "") -> Admin.Outcome {
+        var st = stat()
+        stat(path, &st)
+        let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+        let stamp = "\(st.st_ino):\(st.st_size):\(st.st_mtimespec.tv_sec).\(String(format: "%09d", st.st_mtimespec.tv_nsec))"
+        let cmd = AdminCommand.writeContents(.text(text), sha256: digest, to: path, stamp: stamp, length: text.utf8.count)
+        #expect(cmd.contains("umask 022; "))
+        return runAsUs(cmd.replacingOccurrences(of: "umask 022; ", with: "umask 022; " + limit))
+    }
+    guard case .ok = write("short\n") else { Issue.record("write failed"); return }
+    #expect(fm.contents(atPath: path) == Data("short\n".utf8))
+    #expect(fm.contents(atPath: other) == Data("short\n".utf8), "hard link kept")
+
+    let old = String(repeating: "o", count: 8192), new = String(repeating: "n", count: 16384)   // the limit: 4 KiB
+    guard case .ok = write(old) else { Issue.record("write failed"); return }
+    guard case .failed = write(new, limit: "ulimit -f 4; trap '' XFSZ; ") else { Issue.record("wrote past the limit"); return }
+    #expect(fm.contents(atPath: path)?.count == old.utf8.count, "not cut short")
 }
 
 /// Typing and undoing it all back is no change: closing doesn't ask. A real change does.
