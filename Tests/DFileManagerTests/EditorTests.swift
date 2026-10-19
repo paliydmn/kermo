@@ -242,13 +242,13 @@ private func tempDir() throws -> String {
         var command: String?, temps: [String] = []
         Editor.runAsAdmin = { cmd in
             command = cmd
-            temps = ((try? fm.contentsOfDirectory(atPath: NSTemporaryDirectory())) ?? [])   // a file with our text, if any
-                .filter { $0.hasPrefix("dfm-admin-save-") && fm.contents(atPath: NSTemporaryDirectory() + $0) == Data(text.utf8) }
+            temps = ((try? fm.contentsOfDirectory(atPath: Foundation.NSTemporaryDirectory())) ?? [])   // the editor's temp folder, not $DFM_TEST_TMP
+                .filter { $0.hasPrefix("dfm-admin-save-") && fm.contents(atPath: Foundation.NSTemporaryDirectory() + $0) == Data(text.utf8) }
             return runAsUs(cmd)
         }
         #expect(await e.adminSave(Data(text.utf8), force: false))
         #expect(command?.contains(ShellContext.quote(text)) == true)
-        #expect(command?.contains(NSTemporaryDirectory() + "dfm-admin-save-") == false, "root's own copy only")
+        #expect(command?.contains(Foundation.NSTemporaryDirectory() + "dfm-admin-save-") == false, "root's own copy only")
         #expect(temps.isEmpty)
         #expect(fm.contents(atPath: dir + "/hosts") == Data(text.utf8))
     }
@@ -338,7 +338,7 @@ private func tempDir() throws -> String {
     let old = String(repeating: "o", count: 8192), new = String(repeating: "n", count: 16384)   // the limit: 4 KiB
     guard case .ok = write(old) else { Issue.record("write failed"); return }
     guard case .failed = write(new, limit: "ulimit -f 4; trap '' XFSZ; ") else { Issue.record("wrote past the limit"); return }
-    #expect(fm.contents(atPath: path)?.count == old.utf8.count, "not cut short")   // macOS refuses the whole write: old text
+    #expect(fm.contents(atPath: path)?.count == old.utf8.count, "not cut short")
 }
 
 /// Typing and undoing it all back is no change: closing doesn't ask. A real change does.
