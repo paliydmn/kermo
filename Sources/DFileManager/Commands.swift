@@ -1179,6 +1179,9 @@ extension AppDelegate {
 
     enum RemoteOpen { case open, view, edit }
 
+    /// ↩ on a server's file or an archive's: its copy in its own app, quarantined first. Replaced in tests: nothing opens.
+    static var openInApp: (URL) -> Void = { NSWorkspace.shared.open($0) }
+
     /// Downloads the cursor file to a temp folder, then opens / views / edits it.
     /// Editing uploads the file back after every save — one upload at a time, and never over changes someone
     /// made on the server meanwhile without asking.
@@ -1209,7 +1212,8 @@ extension AppDelegate {
             switch how {
             case .open:   // another app: its saves go up as F4's do
                 ServerCopies.add(.init(local, target, remotePath, listed: listed ?? (opened.size, opened.mtime), baseline: opened, preview: false))
-                NSWorkspace.shared.open(local)
+                FileInfo.quarantine(local.path)
+                Self.openInApp(local)
             case .view: Viewer.show(local, remote: (target, remotePath, max(0, opened.size - (last ?? opened.size)))) { TempCopies.remove(tmp) }
             case .edit:
                 let state = RemoteEdit(baseline: opened)
@@ -1701,7 +1705,10 @@ extension AppDelegate {
         sel.names = Array(sel.names.prefix(1))
         Task {
             guard let url = await extractToTemp(sel)?.first else { return }
-            if view { Viewer.show(url) { TempCopies.remove(url.deletingLastPathComponent().path) } } else { NSWorkspace.shared.open(url) }
+            if view { Viewer.show(url) { TempCopies.remove(url.deletingLastPathComponent().path) } } else {
+                FileInfo.quarantine(url.path)   // the archive's own if it has one, else Kermo's
+                Self.openInApp(url)
+            }
         }
     }
 

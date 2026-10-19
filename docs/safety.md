@@ -43,6 +43,8 @@ Read the log with `grep` or `jq`, or choose **Admin ▸ Show Production Log** (o
 
 Server passwords are never put on a command line or in a file. A [locked server](servers.md#lock-a-server) asks for Touch ID or the Mac password before you use it, by its saved address, an `~/.ssh/config` alias of it or any other way of writing it ssh takes to the same user, host and port.
 
+A file from a server or an archive that **↩** opens in another app is quarantined first, as a browser's download is, so Gatekeeper asks before a script or app runs ([server files](server-files.md#open-and-edit), [archives](files.md#archives)).
+
 ## What listens on this Mac
 
 Only [SSH tunnels](tunnels.md) listen, temporary ones too, and only on `127.0.0.1` and `::1`. Any program or user on this Mac can connect to such a port, so keep a tunnel to a production database off when you don't need it.
