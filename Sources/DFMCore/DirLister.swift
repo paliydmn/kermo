@@ -142,13 +142,13 @@ public enum DirLister {
                 let sub = (path as NSString).appendingPathComponent(item.name)
                 if !crosses(sub, mount, device) { subs.append(sub) }
             } else {
-                files += 1; bytes += item.size
+                files += 1; bytes = bytes.saturatingAdd(item.size)
             }
         }
         for sub in subs {
             if isCancelled() { break }
             let (f, b) = measureDir(sub, device: device, isCancelled: isCancelled)
-            files += f; bytes += b
+            files += f; bytes = bytes.saturatingAdd(b)
         }
         return (files, bytes)
     }

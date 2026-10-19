@@ -31,6 +31,15 @@ public struct FileItem: Sendable, Equatable {
     public var displayName: String { name.listed }
 }
 
+extension Int64 {
+    /// Sizes added up: a server can report any size, a sparse file up to 8 EiB, and two of those overflowed (a trap).
+    /// Past the end it stays at the end.
+    public func saturatingAdd(_ x: Int64) -> Int64 {
+        let (sum, over) = addingReportingOverflow(x)
+        return over ? (x > 0 ? .max : .min) : sum
+    }
+}
+
 extension String {
     /// For a list cell: bidi controls shown (`bidiVisible`), a newline as ␤ and other control characters as ?
     /// (like `ls -q`), so the row stays one line. Names, and a link's target beside one.

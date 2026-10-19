@@ -300,7 +300,7 @@ extension FileJob {
         for ((s, _), seen) in zip(work, seen) where !isCancelled {
             let m = countsItems ? (files: 1, bytes: Int64(0), depth: Int.max) : measure(src, s, seen.src)
             files += m.files
-            bytes += m.bytes
+            bytes = bytes.saturatingAdd(m.bytes)
             depths.append(max(m.depth, 0))
         }
         update { $0.totalFiles = files; $0.totalBytes = bytes; $0.state = .running }
@@ -441,7 +441,7 @@ extension FileJob {
                     for child in items ?? [] where Self.isSafeName(child.name) {
                         let p = (dirs[i].path as NSString).appendingPathComponent(child.name)
                         guard let a = attrs(p, child.attrs) else { continue }
-                        if a.kind == .dir { if !othersCanChange(fs, a) { dirs.append((p, i, 0, 0)) } } else { dirs[i].files += 1; dirs[i].bytes += a.size }
+                        if a.kind == .dir { if !othersCanChange(fs, a) { dirs.append((p, i, 0, 0)) } } else { dirs[i].files += 1; dirs[i].bytes = dirs[i].bytes.saturatingAdd(a.size) }
                     }
                 }
             }
@@ -449,7 +449,7 @@ extension FileJob {
         }
         for i in dirs.indices.dropFirst().reversed() {   // deepest first: a folder's own totals are whole by then
             dirs[dirs[i].parent].files += dirs[i].files
-            dirs[dirs[i].parent].bytes += dirs[i].bytes
+            dirs[dirs[i].parent].bytes = dirs[dirs[i].parent].bytes.saturatingAdd(dirs[i].bytes)
         }
         for d in dirs { measured[d.path] = (d.files, d.bytes) }
         return (dirs[0].files, dirs[0].bytes, depth)
@@ -512,7 +512,7 @@ extension FileJob {
     private func skip(_ fs: TransferFS, _ path: String, _ a: SFTPClient.Attrs) {
         guard !countsItems else { return }
         let (f, b) = measured[path] ?? { let m = measure(fs, path, a); return (m.files, m.bytes) }()   // a file: no walk
-        update { $0.doneFiles += f; $0.doneBytes += b }
+        update { $0.doneFiles += f; $0.doneBytes = $0.doneBytes.saturatingAdd(b) }
     }
 
     /// `root`: the top folder this job copies into (nil: this is the top). `maxDepth`: how deep the source's folders
@@ -614,7 +614,7 @@ extension FileJob {
             noteAcross(dst)
             guard !countsItems else { return }
             let (f, b, _) = measure(dfs, dst)
-            update { $0.doneFiles += f; $0.doneBytes += b }
+            update { $0.doneFiles += f; $0.doneBytes = $0.doneBytes.saturatingAdd(b) }
             return
         }
 
@@ -666,7 +666,7 @@ extension FileJob {
             if existing != nil { guard attempt(dst, { try dfs.remove(dst) }) else { return } }
             guard attempt(dst, { try dfs.symlink(target, at: dst) }) else { return }
             noteAcross(dst)
-            update { $0.doneFiles += 1; $0.doneBytes += s.size }   // what measure counted for it
+            update { $0.doneFiles += 1; $0.doneBytes = $0.doneBytes.saturatingAdd(s.size) }   // what measure counted for it
             if move { attempt(src) { try sfs.remove(src) } }
         case .file:
             guard copyAcross(sfs, src, s, dfs, dst, replace: existing != nil) else { return }
@@ -780,7 +780,7 @@ extension FileJob {
             try? dfs.remove(partial)
             return false
         }
-        update { $0.doneFiles += 1; $0.doneBytes += s.size }
+        update { $0.doneFiles += 1; $0.doneBytes = $0.doneBytes.saturatingAdd(s.size) }
         return true
     }
 

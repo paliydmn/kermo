@@ -17,3 +17,13 @@ import Testing
     #expect(PanelViewController.sortOrder("mtime:1") == (.mtime, true))
     #expect(PanelViewController.sortOrder("mtime") == (.mtime, true))
 }
+
+/// T-04: a server can say any size; two files of `Int64.max` marked (or listed) trapped the status line's sum.
+@Test func twoHugeSizesDontOverflowTheStatusLine() {
+    let huge = FileItem(name: "a", kind: .file, size: .max, mtime: 0, mode: 0o644, flags: 0)
+    let other = FileItem(name: "b", kind: .file, size: .max, mtime: 0, mode: 0o644, flags: 0)
+    let dir = FileItem(name: "d", kind: .dir, size: 0, mtime: 0, mode: 0o755, flags: 0)
+    #expect(PanelViewController.bytes(of: [huge, other], dirSizes: [:]) == .max)
+    #expect(PanelViewController.bytes(of: [huge, dir], dirSizes: ["d": .max]) == .max)
+    #expect(PanelViewController.bytes(of: [dir], dirSizes: ["d": 5]) == 5)
+}

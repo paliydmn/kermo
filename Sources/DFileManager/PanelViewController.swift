@@ -812,9 +812,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     static func countText(_ n: Int, _ noun: String, _ bytes: Int64) -> String {
         "\(n) \(n == 1 && noun == "items" ? "item" : noun)" + (bytes > 0 ? ", " + sizeFmt.string(fromByteCount: bytes) : "")
     }
-    private func bytes(of items: [FileItem]) -> Int64 {
-        let sizes = dirSizes   // not `self`'s per item (see `applyView`)
-        return items.reduce(0) { $0 + ($1.kind == .dir ? sizes[$1.name] ?? 0 : $1.size) }
+    private func bytes(of items: [FileItem]) -> Int64 { Self.bytes(of: items, dirSizes: dirSizes) }   // not `self`'s per item (see `applyView`)
+    nonisolated static func bytes(of items: [FileItem], dirSizes: [String: Int64]) -> Int64 {
+        items.reduce(0) { $0.saturatingAdd($1.kind == .dir ? dirSizes[$1.name] ?? 0 : $1.size) }
     }
 
     /// The Size column: a folder's measured bytes or <DIR>; a special file's type, which has no size to show.
@@ -1883,7 +1883,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         var shown = IndexSet()
         for (name, bytes, partial) in sizes {
             if let r = row(named: name) {
-                totalSize += bytes - (dirSizes[name] ?? 0)   // only what's listed counts, as in `bytes(of: rows)`
+                totalSize = totalSize.saturatingAdd(bytes - (dirSizes[name] ?? 0))   // only what's listed counts, as in `bytes(of: rows)`
                 shown.insert(r)
             }
             dirSizes[name] = bytes

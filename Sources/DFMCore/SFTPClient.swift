@@ -281,7 +281,7 @@ public final class SFTPClient: @unchecked Sendable {
         var bytes: Int64 = 0, level: [String] = []
         func add(_ path: String, _ known: Attrs?) {
             guard let a = known?.typed ?? (try? lstat(path)) ?? nil else { return }
-            if a.kind == .dir { level.append(path) } else { bytes += a.size }
+            if a.kind == .dir { level.append(path) } else { bytes = bytes.saturatingAdd(a.size) }
         }
         add(path, nil)
         while !level.isEmpty, cancel?.isCancelled != true {
