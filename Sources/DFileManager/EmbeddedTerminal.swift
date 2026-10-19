@@ -312,14 +312,14 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             // New, reconnect, restored: a locked server asks first (ServerLock); learned meanwhile, for production's marks.
             guard ServerLock.needsUnlock(t) else {
                 Task { await ServerLock.learn([t]) }
-                return login(tab, t)
+                return login(tab, ServerLock.locking(t))   // learned already, if it's a locked server's
             }
             Task {
                 guard await ServerLock.authorize(t) else {
                     tab.view.feed(text: "🔒 \(t.host) stays locked\r\n")
                     return ended(tab, status: -1)
                 }
-                if tabs.contains(where: { $0 === tab }) { login(tab, t) }
+                if tabs.contains(where: { $0 === tab }) { login(tab, ServerLock.locking(t)) }
             }
         }
         onChange?()

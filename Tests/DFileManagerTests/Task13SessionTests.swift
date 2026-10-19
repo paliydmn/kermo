@@ -198,7 +198,7 @@ extension ServerLockTests {
     defer { rootPanel.shutdown() }
     rootPanel.openCursor(intoPackage: false)
     await waitUntil { rootPanel.remote != nil }
-    #expect(rootPanel.remote?.target == root && rootPanel.remote?.target.sudo == true)
+    #expect(rootPanel.remote?.target == root.persisting(60) && rootPanel.remote?.target.sudo == true, "a locked server's linger (D-081)")
 }
 
 /// Enable Touch ID for sudo: asks, then writes sudo_local from the template with pam_tid uncommented — the command is

@@ -8,7 +8,7 @@ public struct SFTPTarget: Sendable, Hashable, Codable {
     public let identity: String?   // private key file; nil = ssh's own choice (agent, ~/.ssh/config, defaults)
     /// Seconds the shared connection outlives its last session (nil = 600). Anyone running as this user can ride
     /// on it without logging in, so a locked server keeps it short.
-    public let persist: Int?
+    public private(set) var persist: Int?
     /// A root panel's: the server's sftp-server run through its `sudo` (`SudoServer`), on the same connection.
     /// Never decoded either: whatever is pasted, dropped or restored opens a server as its user, never as root.
     public private(set) var sudo = false
@@ -17,6 +17,10 @@ public struct SFTPTarget: Sendable, Hashable, Codable {
     /// Tests only, never decoded: the stand-in `sudo` a root `.local()` target runs, and whether it says SELinux is on.
     private(set) var localSudo: String? = nil
     private(set) var localSELinux = false
+    /// Tests only, never decoded: who is root to a root `.local()` target (its stand-in sudo runs as this Mac's user).
+    private(set) var localRootUID: UInt32? = nil
+    /// Root's uid where a root session lands: 0 on a server.
+    var rootUID: UInt32 { localServer == nil ? 0 : localRootUID ?? getuid() }
     private enum CodingKeys: String, CodingKey { case host, port, identity, persist }
 
     public init(host: String, port: Int? = nil, identity: String? = nil, persist: Int? = nil) {
@@ -28,12 +32,20 @@ public struct SFTPTarget: Sendable, Hashable, Codable {
 
     /// `sudo`: a stand-in for the server's sudo (a script), which makes it a root target.
     public static func local(server: String = "/usr/libexec/sftp-server", persist: Int? = nil, sudo: String? = nil,
-                             selinux: Bool = false) -> SFTPTarget {
+                             selinux: Bool = false, rootUID: UInt32? = nil) -> SFTPTarget {
         var t = SFTPTarget(host: "localhost", persist: persist)
+        t.localRootUID = rootUID
         t.localServer = server
         t.localSudo = sudo
         t.sudo = sudo != nil
         t.localSELinux = selinux
+        return t
+    }
+
+    /// The same target with its shared connection lingering `seconds` (nil: 600) after its last session.
+    public func persisting(_ seconds: Int?) -> SFTPTarget {
+        var t = self
+        t.persist = seconds
         return t
     }
 

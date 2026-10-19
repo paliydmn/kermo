@@ -10,6 +10,7 @@ F5 / F6, ⌘C / ⌘V and drag and drop copy and move files in every direction: s
 
 - They run in the operations queue like local copies: progress with speed and ETA, pause, cancel, the overwrite / skip / keep both dialog, and **Retry**, which continues a large file where a dropped connection left it.
 - Within one server a move is a rename. A copy happens on the server when its `sftp-server` supports it (OpenSSH 9.0 and later); otherwise the data goes through this Mac.
+- **Overwrite** of a folder with a file, or of a file with a folder, copies the new one under a hidden `.dfm-new-…` name next to it first. The old one goes only when the new one is whole, so a failed or stopped copy leaves it as it was. A move that fails midway keeps what it moved in that hidden folder, and the summary names it.
 - Operations on different servers and on this Mac run side by side. Ones on the same server wait their turn (**▶︎▶︎ Start Now** runs a queued one at once).
 
 ## Open and edit

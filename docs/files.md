@@ -44,8 +44,8 @@ A dialog asks. For files it shows size and date of both (**← newer** marks the
 ## Trash and delete
 
 - F8 (⌥8, ⌘⌫, ⌦) **Move to Trash** asks nothing. ⌫ alone goes up a folder.
-- In the Trash folder the same keys, and **File ▸ Put Back**, return items to where Kermo took them from. Missing folders are made and nothing is overwritten. Items Kermo didn't trash stay: use Finder.
-- ⇧F8 (⌥⇧8, ⌥⌘⌫, ⇧⌦) **Delete Permanently…** asks, then deletes without the Trash.
+- In the Trash folder the same keys, and **File ▸ Put Back**, return items to where Kermo took them from. Missing folders are made and nothing is overwritten. Items Kermo didn't trash stay: use Finder. So does an item that Finder put in the Trash later under a name Kermo's item had there.
+- ⇧F8 (⌥⇧8, ⌥⌘⌫, ⇧⌦) **Delete Permanently…** asks, then deletes without the Trash. It stops at a volume mounted inside the folder (a share, a disk image), as `rm -r --one-file-system` does: what's on it stays, and the summary names it. F6 to another volume stops there too.
 
 > [!WARNING]
 > **Delete Permanently…** and **Overwrite** can't be undone: the old file is gone.
@@ -57,6 +57,7 @@ A dialog asks. For files it shows size and date of both (**← newer** marks the
 - **Covered:** move, **Move to Trash**, **Put Back**, copy (the copies go to the Trash), **Rename…**, **Multi-Rename…** (one step), **New Folder…**, **New File…** and links (the new item goes to the Trash).
 - **Not covered:** **Delete Permanently…**, Admin operations, permissions and owner, tags, extract and compress, split and combine, and everything on a server.
 - Items that merged into or overwrote something aren't undone. Undo never overwrites: if the old name is taken again, it stops with an error.
+- Undo of a copy or a new item moves only that item to the Trash: if it was renamed (in Finder, say) and something else now has its name, that other item stays, and Kermo says so. Undo of a move goes by name and never overwrites.
 
 ## Preview
 
@@ -91,7 +92,7 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 
 - Inside, ⌫ goes up, ↩ on a file extracts it to a temporary folder and opens it, and F3 views it. What ↩ opens is quarantined, so Gatekeeper checks it first: with the archive's own quarantine if it has one, as Archive Utility does, else as a download from Kermo. The copy is read-only, as the status line says: it's in a temporary folder that goes a day later, so the app says it's locked and offers to duplicate it; to keep changes, Extract it (⌥F9) first. Delete, rename, paste and drops are refused.
 - **Extract…** (⌥F9, and F5 inside an archive) unpacks the marked entries (or the cursor's) into the folder you confirm, by default the other panel's. On an archive file in a normal folder F5 copies the file; ⌥F9 extracts all of it.
-- Names that already exist ask **Keep Existing** (folders merge), **Overwrite** or **Cancel**. Then the archive unpacks into a hidden `.kermo-extract-…` folder there and moves out once it's all done: if it fails or you stop it, nothing of it lands and your files stay as they were.
+- Names that already exist ask **Keep Existing** (folders merge), **Overwrite** or **Cancel**. Then the archive unpacks into a hidden `.kermo-extract-…` folder there and moves out once it's all done: if it fails or you stop it, nothing of it lands, your files stay as they were, and the output window says so under tar's error.
 - What a quarantined archive (a download) unpacks is quarantined too, as Archive Utility does; a clean archive's isn't.
 - All of a tar (`.tar.gz`, `.tar.xz` and the like) isn't read once first just for its names: into an empty or new folder it unpacks straight in. Into a folder with things in it, it unpacks into a hidden `.kermo-extract-…` folder there; when tar is done, names that exist ask the question, and **Cancel** removes what was unpacked. If tar fails or you stop it, nothing of it lands. Where the archive has a file and the folder a folder of that name, or (with Keep Existing) the archive a folder and the folder a file or link, yours stays, and you're told.
 - ↩ or F3 on one file inside a tar stops reading the archive at that file.

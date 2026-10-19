@@ -215,6 +215,9 @@ import Testing
     }
     answer = true
     #expect(await ServerLock.authorize(SFTPTarget(host: "s02prod")) && !ServerLock.needsUnlock(prod.target), "unlocked by its alias")
+    // D-081: connected by its alias, its shared connection lingers 60 s as the saved one's; the address stays as typed
+    #expect(ServerLock.locking(SFTPTarget(host: "s02prod")) == SFTPTarget(host: "s02prod", persist: 60))
+    #expect(ServerLock.locking(SFTPTarget(host: "admin@192.0.2.10")).persist == nil, "another account: as it was")
 }
 
 /// The main thread never waits for ssh -G: before an address is learned, the lock and production compare it as written.
@@ -291,7 +294,7 @@ private final class Locked<T>: @unchecked Sendable {
 
 extension ServerLockTests {
 /// A locked server's address stays out of the recents; others go first in line.
-@Test func lockedServerIsNotRemembered() {
+@Test func lockedServerIsNotRemembered() async {
     var locked = SavedServer(address: "me@dfm-locked.invalid")!
     locked.locked = true
     ServerLock.servers = { [locked] }
@@ -302,6 +305,7 @@ extension ServerLockTests {
     app.remember("me@dfm-locked.invalid:/etc")
     app.remember("me@dfm-locked.invalid:22")   // a path that looks like a port: same server
     app.remember("me@nas")
+    await AppDelegate.remembering?.value   // after each is learned (D-081), in order
     #expect(UserDefaults.standard.stringArray(forKey: "recentServers") == ["me@nas", "old"])
 }
 }

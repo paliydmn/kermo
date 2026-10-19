@@ -250,10 +250,19 @@ enum ServerLock {
         servers().first { $0.locked && same($0.target, t) }
     }
 
+    /// `t` as a locked server's connections go, however its address was written (an alias, `ROOT@…`): its shared
+    /// connection lingers as briefly as the saved one's (D-081). Only the linger changes: the address — and with it
+    /// the Keychain's password — stays as typed. After `learn`; nothing else, as is.
+    static func locking(_ t: SFTPTarget) -> SFTPTarget {
+        guard t.persist == nil, let s = server(for: t) else { return t }
+        return t.persisting(s.target.persist)
+    }
+
+    static func isLearned(_ t: SFTPTarget) -> Bool { identities[spelling(t)] != nil }
+
     /// Also while `t` or a locked server isn't learned yet: `authorize` finds out.
     static func needsUnlock(_ t: SFTPTarget) -> Bool {
-        let learned = { identities[spelling($0)] != nil }
-        if servers().contains(where: { $0.locked && !(learned($0.target) && learned(t)) }) { return true }
+        if servers().contains(where: { $0.locked && !(isLearned($0.target) && isLearned(t)) }) { return true }
         return server(for: t).map { (unlockedUntil[$0.id] ?? .distantPast) < Date() } ?? false
     }
 
@@ -504,7 +513,9 @@ final class Tunnels {
                 states[key]?.server = s
             } else if st.listener == nil {
                 stop(key)
-            } else if ServerRow.key(s.target) != ServerRow.key(st.server.target) && Self.locked(s, among: servers) {
+            } else if ServerRow.key(s.target) != ServerRow.key(st.server.target)
+                        && (Self.locked(s, among: servers) || servers.contains(where: \.locked) && !ServerLock.isLearned(s.target)) {
+                // a new address not learned yet may be a locked server's other spelling (D-081): off until Turn On asks
                 states.removeValue(forKey: key).map(hold)
                 changed()
                 say("“\(t.title)” turned off: “\(s.title)” is locked — Turn On asks for Touch ID", false)

@@ -1183,6 +1183,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// Lists `dir` (or the login folder if nil) on the server. A server that can't be reached is reported in an
     /// alert; other errors run `onFailure` instead of being reported, if given (so does ⎋).
     func loadRemote(_ target: SFTPTarget, dir: String?, select: String?, keep: TabMarks? = nil, onFailure: ((Error) -> Void)? = nil) {
+        // The server shown here already, typed as it was before `ServerLock.locking` shortened its linger: the same.
+        let target = remote.map { $0.target.persisting(target.persist) == target ? $0.target : target } ?? target
         loadGen += 1
         let gen = loadGen
         let flag = CancelFlag()
@@ -1202,6 +1204,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 busyMessage = busyOps.last?.message
                 flash("🔒 \(target.host) stays locked")
                 return
+            }
+            // A locked server reached by another spelling: its connection lingers as the saved one's (just unlocked:
+            // asked again, it doesn't ask).
+            if opening, ServerLock.locking(target) != target {
+                guard let self, gen == loadGen else { return }
+                return loadRemote(ServerLock.locking(target), dir: dir, select: select, keep: keep, onFailure: onFailure)
             }
             let result = await Blocking.run(.userInitiated) { () -> Result<(String, [FileItem], [FileItem], [String: (String, String)], [String: (target: String, error: Int32)], Int64?), Error> in
                 Result {

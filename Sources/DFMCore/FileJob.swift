@@ -55,6 +55,9 @@ public final class FileJob: @unchecked Sendable {
     public var expected: [String: FileItem?] = [:]
     /// The same for a pair's destination: a map of its own, as a server's path may be spelled like one on this Mac.
     public var expectedTarget: [String: FileItem?] = [:]
+    /// Synchronize: when Compare began (seconds since 1970). A delete on a server keeps what's newer below the folders
+    /// it deletes (F-11): Compare saw a folder only on one side as one row, never what's in it.
+    public var comparedAt: Double?
 
     let lock = NSLock()
     private var _progress = Progress()
@@ -93,6 +96,8 @@ public final class FileJob: @unchecked Sendable {
     /// The same across a server (SFTP has no inodes): each path this job wrote, compared as a case- and
     /// normalization-insensitive volume would. On a case-sensitive server that may ask once too often, never too little.
     var createdAcross = Set<String>()
+    /// A root session's `destDir` that someone else on the server can change: no folder is written into it (S-03).
+    var barredParent: String?
     /// Each folder's files and bytes as `measure` counted them: what Skip adds to the progress, without a second walk.
     var measured: [String: (files: Int, bytes: Int64)] = [:]
     static func foldedPath(_ p: String) -> String { p.precomposedStringWithCanonicalMapping.lowercased() }
@@ -102,6 +107,9 @@ public final class FileJob: @unchecked Sendable {
     var countWhileCopying: Bool?
     /// Tests: runs on the counting thread before it counts.
     var beforeCounting: @Sendable () -> Void = {}
+    /// Whether going into folder `path` (`mount`: as its listing said) leaves the walk's volume (`dev`). Tests stand
+    /// a folder in for a mount point: mounting one asks for Touch ID.
+    var crossesVolume: @Sendable (_ path: String, _ mount: Bool?, _ dev: dev_t) -> Bool = DirLister.crosses
     /// Fired by `cancel()`: a transfer over SFTP drops its connections, so a stalled server can't hold it up.
     let cancelFlag = CancelFlag()
 
@@ -247,17 +255,30 @@ public final class FileJob: @unchecked Sendable {
     /// Deletes bottom-up and keeps going past what can't go, each failure under its own path. (removeItem stops
     /// at the first one: half the tree gone, and the error names only the top folder.) Never follows symlinks.
     /// `isDir`: as the folder's listing said (nil: look).
+    /// Stops at a volume mounted inside, as `rm -r --one-file-system` (F-13): ⇧F8 on ~/mnt doesn't empty the share
+    /// mounted in it. `device`: the top's volume.
     @discardableResult
-    private func remove(_ path: String, isDir: Bool? = nil) -> Bool {
-        guard isDir ?? (Self.lstat(path).map { $0.st_mode & S_IFMT == S_IFDIR } ?? false) else {
+    private func remove(_ path: String, isDir: Bool? = nil, device: dev_t? = nil) -> Bool {
+        let st = device == nil ? Self.lstat(path) : nil
+        guard isDir ?? (st.map { $0.st_mode & S_IFMT == S_IFDIR } ?? false) else {
             return attempt(path) { try Self.check(unlink(path)) }
         }
+        let device = device ?? st?.st_dev ?? 0
+        var children: [(item: FileItem, mount: Bool?)] = []
+        try? DirLister.each(path, .walk) { children.append(($0, $1)) }
         var ok = true
-        for child in (try? DirLister.list(path)) ?? [] {
+        for (child, mount) in children {
             guard !isCancelled else { return false }
-            ok = remove((path as NSString).appendingPathComponent(child.name), isDir: child.kind == .dir) && ok
+            let p = (path as NSString).appendingPathComponent(child.name)
+            if child.kind == .dir && crossesVolume(p, mount, device) { otherVolume(p); ok = false; continue }
+            ok = remove(p, isDir: child.kind == .dir, device: device) && ok
         }
         return ok && attempt(path) { try Self.check(rmdir(path)) }   // a folder with leftovers stays, already reported
+    }
+
+    /// Named in the summary, not asked: what's on it stays.
+    private func otherVolume(_ path: String) {
+        update { $0.errors.append("\(path): another volume is mounted here — skipped") }
     }
 
     /// Size (files only: a folder's is 0 in a listing) and mtime against `expected` (`dst`: `expectedTarget`), each
@@ -284,7 +305,8 @@ public final class FileJob: @unchecked Sendable {
     /// the destination is a folder this job made or merged into, and symlinks are copied, never followed.
     /// `into`: what the caller knows of the destination's folder (nil: a top item, looked at when needed).
     @discardableResult
-    private func transfer(_ src: String, _ dstIn: String, move: Bool, top: Bool = false, into: Into? = nil) -> String? {
+    /// `srcDev`: the volume the top source is on (nil: this is the top).
+    private func transfer(_ src: String, _ dstIn: String, move: Bool, top: Bool = false, into: Into? = nil, srcDev: dev_t? = nil) -> String? {
         waitWhilePaused()   // APFS clones never call the copyfile progress callback, so pause takes effect here
         guard !isCancelled else { return nil }
         var dst = dstIn
@@ -363,20 +385,22 @@ public final class FileJob: @unchecked Sendable {
                 dstDev = noteCreated(dst)
                 createdHere = true
             }
-            var children: [FileItem] = []
+            var children: [(item: FileItem, mount: Bool?)] = []
             // Unreadable (mode 000, TCC, a pulled drive): an error to retry or skip, not an empty folder.
-            guard attempt(src, { children = try DirLister.list(src) }) else { return nil }
+            guard attempt(src, { children = []; try DirLister.each(src) { children.append(($0, $1)) } }) else { return nil }
             if !DirLister.hasNativeXattrs(src) {
                 // "._name" holds name's xattrs: copyfile carries them along with name, and unlinking name removes
                 // its "._" too. Copied on its own it would be junk on the Mac — or vanish mid-move (F3).
-                let names = Set(children.map(\.name))
-                children.removeAll { $0.name.hasPrefix("._") && names.contains(String($0.name.dropFirst(2))) }
+                let names = Set(children.map(\.item.name))
+                children.removeAll { $0.item.name.hasPrefix("._") && names.contains(String($0.item.name.dropFirst(2))) }
             }
-            let here = dstDev.map { Into(dev: $0, created: createdHere) }
-            for child in children {
+            let here = dstDev.map { Into(dev: $0, created: createdHere) }, srcDev = srcDev ?? s.st_dev
+            for (child, mount) in children {
                 guard !isCancelled else { return nil }
-                transfer((src as NSString).appendingPathComponent(child.name),
-                         (dst as NSString).appendingPathComponent(child.name), move: move, into: here)
+                let from = (src as NSString).appendingPathComponent(child.name)
+                // A move stops at a volume mounted inside (F-13): moving it would empty that volume, a share say.
+                if move && child.kind == .dir && crossesVolume(from, mount, srcDev) { otherVolume(from); continue }
+                transfer(from, (dst as NSString).appendingPathComponent(child.name), move: move, into: here, srcDev: srcDev)
             }
             // Permissions, xattrs, ACLs and dates last, so a read-only source dir doesn't block its own copy.
             // Not on a folder merged into: that one keeps its own (a FAT folder must not make ~/.ssh 0777).

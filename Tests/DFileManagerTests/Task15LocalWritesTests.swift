@@ -51,6 +51,12 @@ private func run(_ tool: String, _ args: [String], in dir: String) throws {
         try Data("old-a".utf8).write(to: URL(fileURLWithPath: dest + "/a.txt"))
         try Data("old-b".utf8).write(to: URL(fileURLWithPath: dest + "/b.txt"))
         await app.extract(dir + "/" + zip, nil, to: dest)
+        // the output window says so under tar's own error
+        let window = NSApp.windows.last { $0.title.hasPrefix("Extract “\(zip)”") && $0.isVisible }
+        let said = ((window?.contentView as? NSScrollView)?.documentView as? NSTextView)?.string ?? ""
+        #expect(said.hasSuffix(ok ? "" : AppDelegate.nothingExtracted((dest as NSString).abbreviatingWithTildeInPath) + "\n") && window != nil, "\(zip): \(said)")
+        #expect(ok != said.contains("Nothing was extracted"), "\(zip)")
+        window?.close()
         #expect(read(dest + "/a.txt") == (ok ? String(repeating: "NEW-A", count: 1000) : "old-a"), "\(zip)")
         #expect(read(dest + "/b.txt") == (ok ? String(repeating: "NEW-B", count: 1000) : "old-b"), "\(zip)")
         #expect(try FileManager.default.contentsOfDirectory(atPath: dest).sorted() == ["a.txt", "b.txt"], "\(zip): no staging folder")
@@ -107,7 +113,7 @@ private func run(_ tool: String, _ args: [String], in dir: String) throws {
 
     let (loaded, problem) = Config.loadEach("servers.json", as: SavedServer.self, in: dir)
     #expect(loaded.map(\.name) == ["web", "cache"])
-    #expect(problem == "servers.json: 1 of 3 entries couldn't be read and are left out — the file as it was is kept as servers.json.broken")
+    #expect(problem == "servers.json: an entry of 3 couldn't be read and is left out — the file as it was is kept as servers.json.broken")
     #expect(FileManager.default.contents(atPath: dir + "/servers.json.broken") == text)
     #expect(FileManager.default.contents(atPath: dir + "/servers.json") == text, "copied, not moved")
 
@@ -138,7 +144,7 @@ private func run(_ tool: String, _ args: [String], in dir: String) throws {
     let other = Data(#"["~/a", 5, "~/b"]"#.utf8)
     try other.write(to: URL(fileURLWithPath: file))
     let (some, said) = Config.loadEach("bookmarks.json", as: String.self, in: dir)
-    #expect(some == ["~/a", "~/b"] && said?.contains("1 of 3 entries") == true && said?.contains("bookmarks.json.broken-") == true)
+    #expect(some == ["~/a", "~/b"] && said?.contains("an entry of 3") == true && said?.contains("bookmarks.json.broken-") == true)
     #expect(FileManager.default.contents(atPath: file + ".broken") == broken, "the first copy stays")
     let dated = try FileManager.default.contentsOfDirectory(atPath: dir).filter { $0.hasPrefix("bookmarks.json.broken-") }
     #expect(dated.count == 1 && FileManager.default.contents(atPath: dir + "/" + (dated.first ?? "")) == other)
@@ -147,4 +153,40 @@ private func run(_ tool: String, _ args: [String], in dir: String) throws {
     let (frecency, why) = Config.loadKeeping("frecency.json", as: Frecency.self, in: dir)
     #expect(frecency == nil && why?.hasSuffix("kept as frecency.json.broken") == true)
     #expect(FileManager.default.contents(atPath: dir + "/frecency.json.broken") == Data("{".utf8))
+}
+
+/// F-12: what Put Back and Undo of a copy act on is the item recorded, by inode: one renamed away in Finder, with
+/// another item given its name, is left alone; the same item (renamed into the Trash, which keeps the inode) or one
+/// gone (the move says so) goes on. trash.json an older version wrote (path alone) still reads, by name as before.
+@Test func putBackAndUndoGoByTheItemNotTheName() throws {
+    let dir = try folder()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let a = dir + "/a.txt", b = dir + "/b.txt", gone = dir + "/gone.txt"
+    try Data("a".utf8).write(to: URL(fileURLWithPath: a))
+    try Data("b".utf8).write(to: URL(fileURLWithPath: b))
+    let recorded = [TrashEntry(origin: "/x/a.txt", at: a), TrashEntry(origin: "/x/b.txt", at: b), TrashEntry(origin: "/x/gone", ino: 7)]
+    #expect(recorded[0].ino != nil && recorded[0].ino != recorded[1].ino)
+    #expect(rename(b, dir + "/b-renamed.txt") == 0)
+    try Data("another".utf8).write(to: URL(fileURLWithPath: b))   // Finder: something else under that name now
+    let (pairs, others) = TrashEntry.same(zip([a, b, gone], recorded).map { ($0, $1) })
+    #expect(pairs.map(\.from) == [a, gone] && pairs.map(\.to) == ["/x/a.txt", "/x/gone"])
+    #expect(others == [b])
+
+    let old = try JSONDecoder().decode([String: TrashEntry].self, from: Data(#"{"/t/a": "/x/a"}"#.utf8))
+    #expect(old == ["/t/a": TrashEntry(origin: "/x/a", ino: nil)])
+    let again = try JSONDecoder().decode([String: TrashEntry].self, from: JSONEncoder().encode(["/t/a": recorded[0]]))
+    #expect(again == ["/t/a": recorded[0]])
+}
+
+/// F-04 in the F6 dialog: "foo" typed for the folder "Foo" on a case-insensitive disk is that folder itself, so it's a
+/// rename — before, it was taken for an existing folder to move into ("Cannot move a folder into itself"). Another
+/// folder, or the same spelling, isn't.
+@Test func typingTheSameNameInAnotherCaseIsARename() throws {
+    let dir = try folder()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    try FileManager.default.createDirectory(atPath: dir + "/Foo", withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(atPath: dir + "/Bar", withIntermediateDirectories: true)
+    try #require(FileManager.default.fileExists(atPath: dir + "/foo"), "a case-sensitive volume: nothing to test")
+    #expect(AppDelegate.isRespelling(dir + "/Foo", dir + "/foo"))
+    #expect(!AppDelegate.isRespelling(dir + "/Foo", dir + "/Foo") && !AppDelegate.isRespelling(dir + "/Foo", dir + "/Bar"))
 }

@@ -46,8 +46,9 @@ import Testing
 
 @Test func undoKeepsTrashLogInStep() {
     let t = NSHomeDirectory() + "/.Trash/a.txt"
-    let log = [t: "/x/a.txt", "/other": "/y"]
-    #expect(AppDelegate.trashLog(log, after: [(from: t, to: "/x/a.txt")]) == ["/other": "/y"])   // undo of Move to Trash
-    #expect(AppDelegate.trashLog(["/other": "/y"], after: [(from: "/x/a.txt", to: t)]) == log)  // redo, or undo of Put Back
-    #expect(AppDelegate.trashLog(log, after: [(from: "/x/b", to: "/x/c")]) == log)              // plain rename
+    let log = [t: TrashEntry(origin: "/x/a.txt", ino: nil), "/other": TrashEntry(origin: "/y", ino: nil)]
+    let other = ["/other": TrashEntry(origin: "/y", ino: nil)]
+    #expect(AppDelegate.trashLog(log, after: [(from: t, to: "/x/a.txt")]) == other)   // undo of Move to Trash
+    #expect(AppDelegate.trashLog(other, after: [(from: "/x/a.txt", to: t)]) == log)   // redo, or undo of Put Back
+    #expect(AppDelegate.trashLog(log, after: [(from: "/x/b", to: "/x/c")]) == log)    // plain rename
 }

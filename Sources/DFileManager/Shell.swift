@@ -7,9 +7,10 @@ import DFMCore
 enum Shell {
     /// Login shell, so PATH matches what the user has in their terminal (Homebrew etc.).
     /// `onExit` gets the exit status.
-    /// `title`: what it does, for the window, in place of the command line.
-    static func run(_ command: String, in dir: String, diff: Bool = false, title: String? = nil, onExit: @escaping @MainActor (Int32) -> Void = { _ in }) {
-        OutputWindow.start(command, in: dir, on: nil, diff: diff, title: title, onExit: onExit)
+    /// `title`: what it does, for the window, in place of the command line. `failed`: said under it if it fails.
+    static func run(_ command: String, in dir: String, diff: Bool = false, title: String? = nil, failed: String? = nil,
+                    onExit: @escaping @MainActor (Int32) -> Void = { _ in }) {
+        OutputWindow.start(command, in: dir, on: nil, diff: diff, title: title, failed: failed, onExit: onExit)
     }
 
     /// On a server, in its folder `dir`, over the panel's ssh connection (the login shell there runs it). `follow`: a
@@ -171,8 +172,8 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
     private let over = CancelFlag()
 
     static func start(_ command: String, in dir: String, on server: SFTPTarget?, diff: Bool, follow: Bool = false, title: String?,
-                      onExit: @escaping @MainActor (Int32) -> Void) {
-        let w = OutputWindow(command, dir, server, diff, follow, onExit)
+                      failed: String? = nil, onExit: @escaping @MainActor (Int32) -> Void) {
+        let w = OutputWindow(command, dir, server, diff, follow, failed, onExit)
         if let title { w.window?.title = title.bidiVisible }
         open.append(w)
         w.showWindow(nil)
@@ -206,7 +207,8 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
     /// A follow's stdin, held open while its ssh runs and never written (`SSHCommand.endsWithSSH`).
     private var held: FileHandle?
 
-    private init(_ command: String, _ dir: String, _ server: SFTPTarget?, _ diff: Bool, _ follow: Bool, _ onExit: @escaping @MainActor (Int32) -> Void) {
+    private init(_ command: String, _ dir: String, _ server: SFTPTarget?, _ diff: Bool, _ follow: Bool, _ failed: String?,
+                 _ onExit: @escaping @MainActor (Int32) -> Void) {
         let place = server.map { "🌐 \($0.host):\(dir)" } ?? (dir as NSString).abbreviatingWithTildeInPath
         let (w, tv) = Self.window()
         w.title = (server.map { "\($0.host) $ " } ?? "$ ") + command.bidiVisible
@@ -259,6 +261,7 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
                 if self.status == 0 { self.append(Data("Files are identical.\n".utf8), false, in: tv) }
             } else if self.status != 0 {
                 self.append(Data("\n[exit \(self.status)]\n".utf8), true, in: tv)
+                if let failed { self.append(Data((failed + "\n").utf8), false, in: tv) }
             }
             onExit(self.status)
         }
