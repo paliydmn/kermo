@@ -148,3 +148,26 @@ private func run(_ tool: String, _ args: [String], in dir: String) throws {
     #expect(frecency == nil && why?.hasSuffix("kept as frecency.json.broken") == true)
     #expect(FileManager.default.contents(atPath: dir + "/frecency.json.broken") == Data("{".utf8))
 }
+
+/// F-12: what Put Back and Undo of a copy act on is the item recorded, by inode: one renamed away in Finder, with
+/// another item given its name, is left alone; the same item (renamed into the Trash, which keeps the inode) or one
+/// gone (the move says so) goes on. trash.json an older version wrote (path alone) still reads, by name as before.
+@Test func putBackAndUndoGoByTheItemNotTheName() throws {
+    let dir = try folder()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let a = dir + "/a.txt", b = dir + "/b.txt", gone = dir + "/gone.txt"
+    try Data("a".utf8).write(to: URL(fileURLWithPath: a))
+    try Data("b".utf8).write(to: URL(fileURLWithPath: b))
+    let recorded = [TrashEntry(origin: "/x/a.txt", at: a), TrashEntry(origin: "/x/b.txt", at: b), TrashEntry(origin: "/x/gone", ino: 7)]
+    #expect(recorded[0].ino != nil && recorded[0].ino != recorded[1].ino)
+    #expect(rename(b, dir + "/b-renamed.txt") == 0)
+    try Data("another".utf8).write(to: URL(fileURLWithPath: b))   // Finder: something else under that name now
+    let (pairs, others) = TrashEntry.same(zip([a, b, gone], recorded).map { ($0, $1) })
+    #expect(pairs.map(\.from) == [a, gone] && pairs.map(\.to) == ["/x/a.txt", "/x/gone"])
+    #expect(others == [b])
+
+    let old = try JSONDecoder().decode([String: TrashEntry].self, from: Data(#"{"/t/a": "/x/a"}"#.utf8))
+    #expect(old == ["/t/a": TrashEntry(origin: "/x/a", ino: nil)])
+    let again = try JSONDecoder().decode([String: TrashEntry].self, from: JSONEncoder().encode(["/t/a": recorded[0]]))
+    #expect(again == ["/t/a": recorded[0]])
+}

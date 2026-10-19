@@ -2662,8 +2662,8 @@ extension AppDelegate {
     /// so a missing Full Disk Access grant (EPERM) doesn't wipe the record.
     /// Read, changed and saved on `trashLogQueue`: each entry is an lstat (a Trash on a share that doesn't answer
     /// never returns), and one queue keeps the changes in order — none lost to another read at the same time.
-    nonisolated private static func changeTrashLog<T>(_ change: (inout [String: String]) -> T) -> T {
-        let (loaded, problem) = Config.loadKeeping("trash.json", as: [String: String].self)
+    nonisolated private static func changeTrashLog<T>(_ change: (inout [String: TrashEntry]) -> T) -> T {
+        let (loaded, problem) = Config.loadKeeping("trash.json", as: [String: TrashEntry].self)
         if let problem { Task { @MainActor in (NSApp.delegate as? AppDelegate)?.active.flash(problem, error: true) } }   // read off launch: said now
         let saved = loaded ?? [:]
         var log = saved.filter { var s = stat(); return lstat($0.key, &s) == 0 || errno != ENOENT }
@@ -2675,16 +2675,16 @@ extension AppDelegate {
 
     func recordTrash(_ pairs: [(from: String, to: String)]) {
         guard !pairs.isEmpty else { return }
-        Self.trashLogQueue.async { Self.changeTrashLog { log in for p in pairs { log[p.to] = p.from } } }
+        Self.trashLogQueue.async { Self.changeTrashLog { log in for p in pairs { log[p.to] = TrashEntry(origin: p.from, at: p.to) } } }
     }
 
     /// Keeps the log in step with undo/redo: an item leaving the Trash loses its entry (so a later item Finder
     /// trashes under the same name isn't put back there), one moved into the Trash gets one.
-    nonisolated static func trashLog(_ log: [String: String], after pairs: [(from: String, to: String)]) -> [String: String] {
+    nonisolated static func trashLog(_ log: [String: TrashEntry], after pairs: [(from: String, to: String)]) -> [String: TrashEntry] {
         var log = log
         for p in pairs {
             log[p.from] = nil
-            if p.to.hasPrefix(NSHomeDirectory() + "/.Trash/") || p.to.contains("/.Trashes/") { log[p.to] = p.from }
+            if p.to.hasPrefix(NSHomeDirectory() + "/.Trash/") || p.to.contains("/.Trashes/") { log[p.to] = TrashEntry(origin: p.from, at: p.to) }
         }
         return log
     }
@@ -2693,16 +2693,24 @@ extension AppDelegate {
         let urls = active.targetURLs
         Task {
             let log = await withCheckedContinuation { c in Self.trashLogQueue.async { c.resume(returning: Self.changeTrashLog { $0 }) } }
-            let pairs = urls.compactMap { u in log[u.path].map { (from: u.path, to: $0) } }
-            guard !pairs.isEmpty else { return active.flash("Only what Kermo moved to the Trash can be put back here — use Finder for the rest") }
-            let moved = await Blocking.run(.userInitiated) { () -> Result<Void, Error> in   // off the main thread: a share that stopped answering
+            let logged = urls.compactMap { u in log[u.path].map { (from: u.path, entry: $0) } }
+            guard !logged.isEmpty else { return active.flash("Only what Kermo moved to the Trash can be put back here — use Finder for the rest") }
+            // off the main thread: a share that stopped answering
+            let (pairs, others, moved) = await Blocking.run(.userInitiated) { () -> ([(from: String, to: String)], [String], Result<Void, Error>) in
+                // Only the item Kermo put there (F-12): one Finder trashed later under a name that came free isn't moved
+                // to where the old one was.
+                let (pairs, others) = TrashEntry.same(logged)
                 for p in pairs { try? FileManager.default.createDirectory(atPath: (p.to as NSString).deletingLastPathComponent, withIntermediateDirectories: true) }
-                return Result { try BatchRename.run(pairs) }   // never overwrites
+                return (pairs, others, Result { try BatchRename.run(pairs) })   // never overwrites
             }
+            if !others.isEmpty {
+                showError(JobErrorMessage("Not put back — the Trash holds another item under this name now:\n" + others.map { ($0 as NSString).lastPathComponent }.joined(separator: "\n")))
+            }
+            guard !pairs.isEmpty else { return }
             if case .failure(let error) = moved { return showError(JobErrorMessage("Put Back: \(error.localizedDescription)")) }
             registerMoves("Put Back", pairs)
             Self.trashLogQueue.async { Self.changeTrashLog { log in for p in pairs { log[p.from] = nil } } }
-            if pairs.count < urls.count { active.flash("Put back \(pairs.count) of \(urls.count) — the rest weren't trashed by Kermo") }
+            if pairs.count + others.count < urls.count { active.flash("Put back \(pairs.count) of \(urls.count) — the rest weren't trashed by Kermo") }
             active.unmarkAll()
             panels.forEach { $0.reload() }
         }
@@ -2761,14 +2769,23 @@ extension AppDelegate {
         return renames + jobs.flatMap { $0.results.map { (from: $0.src, to: $0.dst) } }
     }
 
-    /// Undo of something created = move it to the Trash (redo = put it back).
+    /// Undo of something created = move it to the Trash (redo = put it back). Only the items made then (F-12): one
+    /// renamed in Finder since, with another in its place, leaves that other one where it is.
     func registerCreated(_ title: String, _ paths: [String]) {
         guard !paths.isEmpty, let um = window.undoManager else { return }
+        let made = Made()
+        Task { made.inodes = await Blocking.run(.utility) { paths.map(TrashEntry.inode) } }   // read off the main thread, once
         um.registerUndo(withTarget: self) { app in
             MainActor.assumeIsolated {
                 let record = app.registerPendingMoves(title)
+                let inodes = made.inodes
                 app.afterUndoWork {
-                    let r = await Blocking.run(.userInitiated) { Self.trash(paths) }
+                    let r = await Blocking.run(.userInitiated) { () -> (trashed: [(from: String, to: String)], errors: [String]) in
+                        let (same, others) = TrashEntry.same(inodes.map { zip(paths, $0).map { (from: $0, entry: TrashEntry(origin: "", ino: $1)) } }
+                                                             ?? paths.map { (from: $0, entry: TrashEntry(origin: "", ino: nil)) })
+                        let r = Self.trash(same.map(\.from))
+                        return (r.trashed, r.errors + others.map { "“\(($0 as NSString).lastPathComponent)”: another item has this name now — left as it is" })
+                    }
                     let (trashed, errors) = (r.trashed, r.errors)
                     app.fill(record, trashed, [])
                     app.recordTrash(trashed)
@@ -2780,6 +2797,9 @@ extension AppDelegate {
         }
         um.setActionName(title)
     }
+
+    /// What an undoable creation made, by inode: nil until read.
+    @MainActor private final class Made { var inodes: [UInt64?]? }
 
     /// Moves each path to the Trash: where each one went, and a line for each that couldn't go.
     nonisolated static func trash(_ paths: [String]) -> (trashed: [(from: String, to: String)], errors: [String]) {
@@ -2892,4 +2912,36 @@ struct JobErrorMessage: LocalizedError {
     let message: String
     init(_ message: String) { self.message = message }
     var errorDescription: String? { message }
+}
+
+/// A trash.json entry: where an item Kermo moved to the Trash came from, and which item it is (its inode, which the
+/// move into the Trash keeps). Put Back then never takes another item that has that name in the Trash now (F-12).
+/// Entries an older version wrote are the path alone: those go by name, as before. ponytail: an older Kermo can't
+/// read the new form (its trash.json then starts empty, copied aside).
+struct TrashEntry: Codable, Equatable {
+    var origin: String
+    var ino: UInt64?
+
+    init(origin: String, ino: UInt64?) { (self.origin, self.ino) = (origin, ino) }
+    init(origin: String, at trashed: String) { self.init(origin: origin, ino: Self.inode(trashed)) }
+    init(from decoder: Decoder) throws {
+        if let path = try? decoder.singleValueContainer().decode(String.self) { self.init(origin: path, ino: nil); return }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(origin: try c.decode(String.self, forKey: .origin), ino: try c.decodeIfPresent(UInt64.self, forKey: .ino))
+    }
+
+    static func inode(_ path: String) -> UInt64? {
+        var st = stat()
+        return lstat(path, &st) == 0 ? UInt64(st.st_ino) : nil
+    }
+
+    /// The items still the ones recorded (or recorded without an inode, or gone: the move then says so), each to
+    /// where it came from (`origin`); and the paths where another item is now. Looks at the disk: off the main thread.
+    static func same(_ items: [(from: String, entry: TrashEntry)]) -> (pairs: [(from: String, to: String)], others: [String]) {
+        var pairs: [(from: String, to: String)] = [], others: [String] = []
+        for (path, e) in items {
+            if let ino = e.ino, let now = inode(path), now != ino { others.append(path) } else { pairs.append((path, e.origin)) }
+        }
+        return (pairs, others)
+    }
 }

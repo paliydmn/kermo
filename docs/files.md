@@ -44,7 +44,7 @@ A dialog asks. For files it shows size and date of both (**← newer** marks the
 ## Trash and delete
 
 - F8 (⌥8, ⌘⌫, ⌦) **Move to Trash** asks nothing. ⌫ alone goes up a folder.
-- In the Trash folder the same keys, and **File ▸ Put Back**, return items to where Kermo took them from. Missing folders are made and nothing is overwritten. Items Kermo didn't trash stay: use Finder.
+- In the Trash folder the same keys, and **File ▸ Put Back**, return items to where Kermo took them from. Missing folders are made and nothing is overwritten. Items Kermo didn't trash stay: use Finder. So does an item that Finder put in the Trash later under a name Kermo's item had there.
 - ⇧F8 (⌥⇧8, ⌥⌘⌫, ⇧⌦) **Delete Permanently…** asks, then deletes without the Trash. It stops at a volume mounted inside the folder (a share, a disk image), as `rm -r --one-file-system` does: what's on it stays, and the summary names it. F6 to another volume stops there too.
 
 > [!WARNING]
@@ -57,6 +57,7 @@ A dialog asks. For files it shows size and date of both (**← newer** marks the
 - **Covered:** move, **Move to Trash**, **Put Back**, copy (the copies go to the Trash), **Rename…**, **Multi-Rename…** (one step), **New Folder…**, **New File…** and links (the new item goes to the Trash).
 - **Not covered:** **Delete Permanently…**, Admin operations, permissions and owner, tags, extract and compress, split and combine, and everything on a server.
 - Items that merged into or overwrote something aren't undone. Undo never overwrites: if the old name is taken again, it stops with an error.
+- Undo of a copy or a new item moves only that item to the Trash: if it was renamed (in Finder, say) and something else now has its name, that other item stays, and Kermo says so. Undo of a move goes by name and never overwrites.
 
 ## Preview
 
