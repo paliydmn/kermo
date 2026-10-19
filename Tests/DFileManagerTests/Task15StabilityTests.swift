@@ -80,3 +80,38 @@ private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
     #expect(!alive(p[1]), "and its deadline the second")
     #expect(field.string == "s")
 }
+
+/// T-10: reads not shown yet piled up without end while the main thread was busy. Past the limit the oldest go and
+/// the window is told (its "only the last 4 MB kept"); an EOF is never dropped.
+@Test func theOutputInboxKeepsItsLimit() {
+    let inbox = Inbox()
+    #expect(inbox.put(Data(repeating: 1, count: 1000), 1))
+    for _ in 0..<320 { _ = inbox.put(Data(repeating: 0x78, count: 1 << 16), 0) }   // 20 MB, nobody taking
+    _ = inbox.put(Data(), 1)
+    #expect(inbox.peak <= Inbox.limit)
+    let (parts, cut) = inbox.take()
+    #expect(cut)
+    #expect(parts.map(\.data.count).reduce(0, +) <= Inbox.limit)
+    #expect(parts.last?.stream == 1 && parts.last?.data.isEmpty == true, "stderr's EOF kept")
+    #expect(parts.first?.stream == 0, "the oldest went: stderr's first read")
+    #expect(inbox.put(Data("x".utf8), 0), "taken: the next read asks the main thread again")
+    #expect(inbox.take().cut == false)
+}
+
+/// T-10: 30 MB printed while the main thread is held (a sheet up, a Keychain read) stays within the inbox's limit,
+/// and all of it to the end is read with POSIX read (no `availableData`, which raises on a read error).
+@MainActor @Test func aFirehoseWhileTheMainThreadIsBusyStaysBounded() async throws {
+    _ = NSApplication.shared
+    let tag = "dfm-t10-" + UUID().uuidString.prefix(8)
+    var status: Int32?
+    Shell.run("echo \(tag) >/dev/null; head -c 30000000 /dev/zero | tr '\\0' x | fold -w 99; echo END", in: NSTemporaryDirectory()) { status = $0 }
+    let w = try #require(NSApp.windows.first { $0.title.contains(tag) })
+    defer { w.close() }
+    let shell = try #require(w.delegate as? OutputWindow)
+    usleep(1_000_000)   // the main thread busy: nothing drains
+    await waitUntil(60) { status != nil }
+    #expect(shell.inbox.peak <= Inbox.limit, "\(shell.inbox.peak)")
+    let text = try #require((w.contentView as? NSScrollView)?.documentView as? NSTextView).string
+    #expect(status == 0 && text.hasSuffix("xEND\n"), "\(String(describing: status)) \(text.suffix(80).debugDescription)")
+    #expect(w.subtitle.contains("only the last 4 MB kept"), "\(w.subtitle)")
+}

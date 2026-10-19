@@ -110,25 +110,39 @@ func utf8Chunk(_ data: Data, rest: inout Data) -> String {
 
 /// Output read off the pipes and not shown yet, per stream (stdout, stderr): a chatty command hops to the main thread
 /// once per batch, not once per read.
-private final class Inbox: @unchecked Sendable {
+final class Inbox: @unchecked Sendable {
     private let lock = NSLock()
     /// In the order read — an error line stays next to the output around it. Empty data: that stream's EOF.
     private var parts: [(stream: Int, data: Data)] = [], scheduled = false
+    /// While the main thread is busy (a sheet, a slow Keychain) a firehose (`cat /dev/urandom | base64`) piled up
+    /// here without end. Past `limit` the oldest pieces go, as the window drops its oldest lines anyway (`trimmed`).
+    static let limit = 8 << 20
+    private var bytes = 0, cut = false
+    private(set) var peak = 0
 
     /// Adds a read (empty: EOF); true if the main thread has to be asked to take it.
     func put(_ d: Data, _ stream: Int) -> Bool {
         lock.withLock {
-            if !d.isEmpty, let last = parts.last, last.stream == stream, !last.data.isEmpty { parts[parts.count - 1].data.append(d) }
-            else { parts.append((stream, d)) }
+            // Pieces of up to 1 MB: the oldest go whole, nothing is copied to cut one.
+            if !d.isEmpty, let last = parts.last, last.stream == stream, !last.data.isEmpty, last.data.count < 1 << 20 {
+                parts[parts.count - 1].data.append(d)
+            } else { parts.append((stream, d)) }
+            bytes += d.count
+            while bytes > Self.limit, let i = parts.firstIndex(where: { !$0.data.isEmpty }) {   // an EOF stays
+                bytes -= parts.remove(at: i).data.count
+                cut = true
+            }
+            peak = max(peak, bytes)
             defer { scheduled = true }
             return !scheduled
         }
     }
 
-    func take() -> [(stream: Int, data: Data)] {
+    /// What's there, and whether some of it went (`limit`).
+    func take() -> (parts: [(stream: Int, data: Data)], cut: Bool) {
         lock.withLock {
-            defer { parts = []; scheduled = false }
-            return parts
+            defer { parts = []; bytes = 0; cut = false; scheduled = false }
+            return (parts, cut)
         }
     }
 }
@@ -162,7 +176,7 @@ private final class LineInbox: @unchecked Sendable {
 }
 
 @MainActor
-private final class OutputWindow: NSWindowController, NSWindowDelegate {
+final class OutputWindow: NSWindowController, NSWindowDelegate {
     private static var open: [OutputWindow] = []
     private let process = Process()
     private let started = Date()
@@ -238,12 +252,21 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
         process.standardError = err
         let inbox = inbox
         for (pipe, stream) in [(out, 0), (err, 1)] {
-            pipe.fileHandleForReading.readabilityHandler = { [weak self] h in
-                let data = h.availableData
-                if data.isEmpty { h.readabilityHandler = nil }
-                guard inbox.put(data, stream) else { return }   // a hop is on its way already: it takes this too
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.drain(in: tv) } }
-            }
+            let h = pipe.fileHandleForReading
+            // POSIX read: FileHandle.availableData raises (an uncatchable ObjC exception) on some read errors.
+            Thread { [weak self] in
+                var buf = [UInt8](repeating: 0, count: 1 << 16)
+                while true {
+                    let n = Darwin.read(h.fileDescriptor, &buf, buf.count)
+                    if n < 0 && errno == EINTR { continue }
+                    // Empty: EOF, or a read error — the stream's end either way.
+                    if inbox.put(n > 0 ? Data(buf[0..<n]) : Data(), stream) {   // else a hop is on its way: it takes this too
+                        DispatchQueue.main.async { MainActor.assumeIsolated { self?.drain(in: tv) } }
+                    }
+                    if n <= 0 { break }
+                }
+                try? h.close()
+            }.start()
         }
         process.terminationHandler = { [weak self] p in
             let status = p.terminationStatus
@@ -335,11 +358,13 @@ private final class OutputWindow: NSWindowController, NSWindowDelegate {
     /// What the window keeps (UTF-16 units): the oldest lines go — a `tail -f` left for a day would grow without end.
     static let limit = 4 << 20
     private var trimmed = false
-    private let inbox = Inbox()
+    let inbox = Inbox()
 
     /// Shows what the pipes gave since the last hop; at EOF, a character cut by the last read too.
     private func drain(in tv: NSTextView) {
-        for (stream, data) in inbox.take() {
+        let (parts, cut) = inbox.take()
+        if cut { trimmed = true }
+        for (stream, data) in parts {
             append(data, stream == 1, in: tv)   // empty at EOF: flushes a character a read cut
             if data.isEmpty { ended() }
         }
