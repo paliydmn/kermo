@@ -45,7 +45,7 @@ A dialog asks. For files it shows size and date of both (**← newer** marks the
 
 - F8 (⌥8, ⌘⌫, ⌦) **Move to Trash** asks nothing. ⌫ alone goes up a folder.
 - In the Trash folder the same keys, and **File ▸ Put Back**, return items to where Kermo took them from. Missing folders are made and nothing is overwritten. Items Kermo didn't trash stay: use Finder.
-- ⇧F8 (⌥⇧8, ⌥⌘⌫, ⇧⌦) **Delete Permanently…** asks, then deletes without the Trash.
+- ⇧F8 (⌥⇧8, ⌥⌘⌫, ⇧⌦) **Delete Permanently…** asks, then deletes without the Trash. It stops at a volume mounted inside the folder (a share, a disk image), as `rm -r --one-file-system` does: what's on it stays, and the summary names it. F6 to another volume stops there too.
 
 > [!WARNING]
 > **Delete Permanently…** and **Overwrite** can't be undone: the old file is gone.

@@ -99,3 +99,36 @@ private func exists(_ p: String) -> Bool { FileJob.lstat(p) != nil }
     #expect(FileJob.lstat(d + "/dst/file").map { $0.st_mode & S_IFMT == S_IFREG } == true && exists(d + "/dst/dir/b"))
     #expect(names() == ["dir", "file"])
 }
+
+/// F-13: ⇧F8 stops at a volume mounted inside the tree, as `rm -r --one-file-system` does: what's on it stays, so
+/// does the folder it's mounted in and the ones above, and the summary names it. (A folder stands in for the mount
+/// point: mounting one in a test asks for Touch ID.)
+@Test func deleteStopsAtAMountPoint() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    sh("mkdir -p top/mnt top/sub && echo x > top/mnt/x && echo y > top/sub/y && echo a > top/a.txt", in: d)
+    let job = FileJob(.delete, sources: [d + "/top"])
+    job.crossesVolume = { p, m, dev in p.hasSuffix("/top/mnt") || DirLister.crosses(p, m, dev) }
+    job.resolveError = { p, m in Issue.record("asked: \(p): \(m)"); return (.skip, false) }
+    job.run()
+    #expect(exists(d + "/top/mnt/x") && !exists(d + "/top/sub") && !exists(d + "/top/a.txt"))
+    #expect(job.progress.errors == [d + "/top/mnt: another volume is mounted here — skipped"])
+}
+
+/// F-13: F6 to another volume copies and deletes item by item; it stops at a volume mounted inside too (moving it
+/// would empty it). The rest moves, the folders that hold it stay. This Mac's disk → the RAM disk test.sh makes.
+@Test(.enabled(if: FileManager.default.isWritableFile(atPath: "/Volumes/KermoRAM")))
+func aMoveToAnotherVolumeStopsAtAMountPoint() throws {
+    let src = Foundation.NSTemporaryDirectory() + "k15mnt-" + UUID().uuidString   // this Mac's volume, a few bytes
+    let dst = "/Volumes/KermoRAM/k15mnt-" + UUID().uuidString
+    defer { try? FileManager.default.removeItem(atPath: src); try? FileManager.default.removeItem(atPath: dst) }
+    try FileManager.default.createDirectory(atPath: src, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(atPath: dst, withIntermediateDirectories: true)
+    sh("mkdir -p t/mnt t/sub && echo x > t/mnt/x && echo y > t/sub/y", in: src)
+    let job = FileJob(.move, sources: [src + "/t"], destDir: dst)
+    job.crossesVolume = { p, m, dev in p.hasSuffix("/t/mnt") || DirLister.crosses(p, m, dev) }
+    job.run()
+    #expect(exists(dst + "/t/sub/y") && !exists(dst + "/t/mnt") && !exists(src + "/t/sub"))
+    #expect(exists(src + "/t/mnt/x"), "what's on it stays where it is")
+    #expect(job.progress.errors == [src + "/t/mnt: another volume is mounted here — skipped"])
+}
