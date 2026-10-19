@@ -156,6 +156,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var searchWhat = ""
     /// The server folder ⌘L ⇥ last listed, while the path is typed.
     private var completions: (dir: String, items: [FileItem])?
+    private var completing: CancelFlag?   // the ⇥ still listing
     private var searching = false
     /// Browsing inside an archive (read-only). `path` stays the folder that contains the archive file.
     private(set) var archive: (index: ArchiveIndex, inner: String)?
@@ -639,6 +640,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         watcher = nil
         statTimer?.invalidate()
         searchFlag?.cancel()
+        completing?.cancel()
         sizeWalk?.cancel()
         stopPreview()
     }
@@ -1960,6 +1962,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func controlTextDidEndEditing(_ obj: Notification) {
         if obj.object as? NSTextField === pathField {
+            completing?.cancel()
             showPath()
         } else if filter == nil {
             filterField.isHidden = true
@@ -2031,13 +2034,20 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let listed = server.map { r in ((dir.hasPrefix("/") ? dir : (r.dir as NSString).appendingPathComponent(dir)) as NSString).standardizingPath }
             ?? resolve(dir)
         let hidden = showHidden, cached = completions?.dir == listed ? completions?.items : nil
+        // A server that took the connection and stopped answering (its sftp-server stuck on NFS) held a thread a ⇥:
+        // the next ⇥, leaving the field or a few seconds end it, and then ⇥ does nothing — no beep, nothing kept.
+        completing?.cancel()
+        let flag = CancelFlag()
+        completing = flag
+        if server != nil, cached == nil { Timeouts.queue.asyncAfter(deadline: .now() + 5) { flag.cancel() } }
         Task { [weak self] in
             // Off the main thread: a share that stopped answering, a far server. A server's folder is listed once while typing.
             let items = if let cached { cached } else {
                 await Blocking.run(.userInitiated) {
-                    server.map { (try? SFTP.list($0.target, listed, env: SSHAskpass.env)) ?? [] } ?? (try? DirLister.list(listed)) ?? []
+                    server.map { (try? SFTP.list($0.target, listed, env: SSHAskpass.env, cancel: flag)) ?? [] } ?? (try? DirLister.list(listed)) ?? []
                 }
             }
+            guard !flag.isCancelled else { return }
             if server != nil, cached == nil { self?.completions = (listed, items) }
             let names = items.filter { ($0.kind == .dir || $0.kind == .link) && $0.name.lowercased().hasPrefix(prefix.lowercased()) && (hidden || !$0.isHidden) }
                 .map(\.name)

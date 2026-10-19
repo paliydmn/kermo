@@ -48,6 +48,7 @@ Release:
 - The history of saved server files always stays out of Time Machine. Before, only a history folder this version created was left out; one from an older version was backed up, server secrets included.
 - A damaged folder sort setting (`defaults write … folderSort` with an empty value) no longer crashes Kermo every time that folder opens: it sorts by name.
 - A hostile or broken SFTP server can no longer crash Kermo by reporting huge file sizes: the size of a folder (⌥Space), the scan before a copy and the status line's total stop at the largest size instead of overflowing. Nor can it fill memory with answers to requests Kermo never made (or answers sent twice): they're dropped, and a server holding back more than 64 MB of answers ends the connection with a protocol error.
+- ⌘L ⇥ on a server that took the connection and stopped answering no longer holds a connection and a thread for every ⇥: the next ⇥, leaving the path field or five seconds end it, quietly.
 
 ## [1.2.1] - 2026-10-17
 
