@@ -266,17 +266,21 @@ public enum SFTP {
 
     /// Ends the shared connection, which otherwise outlives its last session by ControlPersist (anyone running as
     /// this user could ride it meanwhile). `now`: at once, with whatever still runs on it (quitting); else it takes
-    /// no new sessions and goes when the last one (a transfer, a follow) ends. Blocks briefly.
-    public static func stopMaster(_ t: SFTPTarget, now: Bool) {
+    /// no new sessions and goes when the last one (a transfer, a follow) ends. Blocks briefly: some 20 ms on a LAN, and
+    /// never past `stopWait` — a master that stopped answering (stuck, or its process stopped) held `-O exit`, and
+    /// Quit, for good. `ssh`: tests stand in for it.
+    public static func stopMaster(_ t: SFTPTarget, now: Bool, ssh: String = "/usr/bin/ssh") {
         guard t.localServer == nil, mastersLock.withLock({ masters.remove(t) }) != nil else { return }
         unlink(masterLog(t))   // first: a master started right after this one goes begins a file of its own
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        p.executableURL = URL(fileURLWithPath: ssh)
         p.arguments = connectionOptions(t) + ["-O", now ? "exit" : "stop"] + t.arguments()
         p.standardInput = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return }
+        Timeouts.queue.asyncAfter(deadline: .now() + stopWait) { if p.isRunning { p.terminate() } }
         p.waitUntilExit()
     }
+    public static let stopWait = 2.5
 
     /// A saved password for the target, if any (the app's Keychain). Set once at launch; called off the main thread,
     /// only when ssh asks for it: a read may bring up the Keychain's own dialog (an app whose signature changed).

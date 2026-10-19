@@ -155,3 +155,21 @@ private func chattyServer(in dir: String) -> String {
     #expect(AdminCommand.check([d + "/a.txt", d + "/Work"], to: d + "/to", move: false) == (nil, ["a.txt"]))
     #expect(AdminCommand.check(work, to: d + "/elsewhere/new", move: false) == (nil, []))
 }
+
+/// T-08: `ssh -O exit` to a master that stopped answering waited for good — and Quit with it. A stand-in ssh that
+/// hangs is cut off after `stopWait`.
+@Test func stoppingAHungMasterReturns() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    let ssh = d + "/ssh"
+    try Data("#!/bin/sh\necho \"$*\" > '\(d)/args'\nexec sleep 60\n".utf8).write(to: URL(fileURLWithPath: ssh))
+    chmod(ssh, 0o755)
+    let t = SFTPTarget(host: "me@dfm-hung-\(UUID().uuidString.prefix(8)).invalid")
+    SFTP.noteMaster(t)
+    let start = Date()
+    SFTP.stopMaster(t, now: true, ssh: ssh)
+    let took = Date().timeIntervalSince(start)
+    #expect(took >= SFTP.stopWait - 0.5 && took < SFTP.stopWait + 2, "\(took)")
+    #expect(try String(contentsOfFile: d + "/args", encoding: .utf8).contains("-O exit"))
+    #expect(!SFTP.masterTargets.contains(t))
+}

@@ -208,7 +208,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         saveSession()   // the cursors, the active panel, the dividers: none of them saves it as it changes
         Config.save("frecency.json", frecency)
         tunnels.stopAll()   // first: a client connecting now would start a login
-        for t in SFTP.masterTargets { SFTP.stopMaster(t, now: true) }   // no logged-in connection outlives the app
+        // No logged-in connection outlives the app. All at once: each may take up to `SFTP.stopWait`.
+        let masters = Array(SFTP.masterTargets)
+        DispatchQueue.concurrentPerform(iterations: masters.count) { SFTP.stopMaster(masters[$0], now: true) }
         Shell.terminateAll()   // nor does a `tail -f` in an output window
         ServerCopies.quit()   // the server files' copies on the server go; the others are kept
         TempCopies.remove(TextCopies.dir)
