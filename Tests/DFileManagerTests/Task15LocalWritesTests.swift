@@ -51,6 +51,12 @@ private func run(_ tool: String, _ args: [String], in dir: String) throws {
         try Data("old-a".utf8).write(to: URL(fileURLWithPath: dest + "/a.txt"))
         try Data("old-b".utf8).write(to: URL(fileURLWithPath: dest + "/b.txt"))
         await app.extract(dir + "/" + zip, nil, to: dest)
+        // the output window says so under tar's own error
+        let window = NSApp.windows.last { $0.title.hasPrefix("Extract “\(zip)”") && $0.isVisible }
+        let said = ((window?.contentView as? NSScrollView)?.documentView as? NSTextView)?.string ?? ""
+        #expect(said.hasSuffix(ok ? "" : AppDelegate.nothingExtracted((dest as NSString).abbreviatingWithTildeInPath) + "\n") && window != nil, "\(zip): \(said)")
+        #expect(ok != said.contains("Nothing was extracted"), "\(zip)")
+        window?.close()
         #expect(read(dest + "/a.txt") == (ok ? String(repeating: "NEW-A", count: 1000) : "old-a"), "\(zip)")
         #expect(read(dest + "/b.txt") == (ok ? String(repeating: "NEW-B", count: 1000) : "old-b"), "\(zip)")
         #expect(try FileManager.default.contentsOfDirectory(atPath: dest).sorted() == ["a.txt", "b.txt"], "\(zip): no staging folder")

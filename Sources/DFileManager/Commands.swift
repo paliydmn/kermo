@@ -1773,10 +1773,14 @@ extension AppDelegate {
         let args = index?.extractArguments(sel?.names ?? [], from: sel?.inner ?? "", to: into) ?? ["-x", "-f", file, "-C", into]
         let status = await withCheckedContinuation { done in
             Shell.run("/usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dest,
-                      title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)") { done.resume(returning: $0) }
+                      title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)",
+                      failed: staging.map { _ in Self.nothingExtracted(shown) }) { done.resume(returning: $0) }
         }
         if let staging { await moveOut(staging, to: dest, keep: status == 0 ? keep : nil) } else { panels.forEach { $0.reload() } }
     }
+
+    /// Under a failed or stopped tar that unpacked into a staging folder: none of it lands.
+    static func nothingExtracted(_ dest: String) -> String { "Nothing was extracted — what was in \(dest) is as it was." }
 
     /// The end of an extract through a staging folder: what's in it moves into `dest` (`keep`: what's there stays),
     /// or with nil (stopped, failed, cancelled) none of it lands there. The window already says what tar said.
@@ -1811,7 +1815,8 @@ extension AppDelegate {
             let shown = (dest as NSString).abbreviatingWithTildeInPath
             let args = ["-x", "-f", file, "-C", staging ?? dest]
             Shell.run("/usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dest,
-                      title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)") { [self] status in
+                      title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)",
+                      failed: staging.map { _ in Self.nothingExtracted(shown) }) { [self] status in
                 guard let staging else { return panels.forEach { $0.reload() } }
                 Task {
                     // stopped (⎋) or failed: half an archive doesn't land in `dest`
