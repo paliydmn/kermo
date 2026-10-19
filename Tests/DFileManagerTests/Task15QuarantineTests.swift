@@ -49,6 +49,16 @@ import Testing
         #expect(opened.first?.mark?.wholeMatch(of: Self.kermos) != nil, "\(String(describing: opened.first?.mark))")
     }
 
+    /// ⌘Y, ⌃Q and Compare Files' copy: Quick Look's Open with hands it to another app too.
+    @Test func aServerFilesPreviewIsQuarantined() throws {
+        let dir = try folder(["run.command"])
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let got = try #require(try ServerCopies.download(.local(), dir + "/run.command", look: true, limit: 1 << 20, env: [:], cancel: CancelFlag()))
+        defer { TempCopies.remove(got.url.deletingLastPathComponent().path) }
+        let mark = FileInfo.xattrString(got.url.path, "com.apple.quarantine")
+        #expect(mark?.wholeMatch(of: Self.kermos) != nil, "\(String(describing: mark))")
+    }
+
     /// A clean archive's file gets Kermo's mark; a quarantined archive's keeps the archive's own (bsdtar copies it, with
     /// the archive's event id, as Archive Utility does).
     @Test func anArchivesFileOpenedInItsAppIsQuarantined() async throws {

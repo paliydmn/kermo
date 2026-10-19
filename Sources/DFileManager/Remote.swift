@@ -716,6 +716,7 @@ enum TempCopies {
                 return try c.download(path, to: local.path)
             }
             guard let attrs, !cancel.isCancelled else { TempCopies.remove(tmp); return nil }
+            FileInfo.quarantine(local.path)   // Quick Look's Open with hands it to another app, as ↩ does
             return (local, attrs)
         } catch {
             TempCopies.remove(tmp)
