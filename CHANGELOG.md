@@ -19,6 +19,10 @@ Release:
 - A file from a server or from inside an archive that ↩ (or Quick Look's **Open with**) opens in another app is now quarantined first, so Gatekeeper checks it: a `.command` script from a server no longer runs in Terminal at once. A file from a quarantined archive keeps the archive's own quarantine.
 - **Save as Administrator** no longer writes from a file that something else running as you could change while macOS asks for the password: the text goes to root in the command itself (a text over about 500 KB goes through a file root checks against your text). It never leaves the file empty when the disk is full, and a change made to the file while the password dialog was up now asks "changed on disk" instead of being overwritten.
 
+### Changed
+
+- ↩ on a file inside an archive opens a read-only copy, and the status line says so: the copy lives in a temporary folder that goes a day later, so edits made to it in another app were lost. The app now says it's locked and offers to duplicate it; Extract (⌥F9) keeps a copy of your own.
+
 ### Fixed
 
 - Opening an archive with a very deeply nested path (a tiny zip with one file 2000 folders down) no longer crashes Kermo.

@@ -1707,7 +1707,12 @@ extension AppDelegate {
             guard let url = await extractToTemp(sel)?.first else { return }
             if view { Viewer.show(url) { TempCopies.remove(url.deletingLastPathComponent().path) } } else {
                 FileInfo.quarantine(url.path)   // the archive's own if it has one, else Kermo's
+                // Read-only: edits there would go with the temp folder (a day on), so the app says "locked" and offers
+                // Duplicate. After the quarantine: setxattr on a read-only file fails (EACCES).
+                var st = stat()
+                if Darwin.lstat(url.path, &st) == 0, st.st_mode & S_IFMT == S_IFREG { chmod(url.path, st.st_mode & 0o7555) }
                 Self.openInApp(url)
+                active.flash("A temporary copy, read-only: Extract (⌥F9) to keep your changes")
             }
         }
     }

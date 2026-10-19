@@ -24,15 +24,20 @@ import Testing
         p.waitUntilExit()
     }
 
-    /// What `openInApp` was handed, with its quarantine at that moment.
-    func opening(_ run: () -> Void) async -> [(url: URL, mark: String?)] {
-        var opened: [(url: URL, mark: String?)] = []
+    /// What `openInApp` was handed, with its quarantine and mode at that moment. Its temp folder is removed after,
+    /// as Kermo does: `gone` says it went.
+    func opening(_ run: () -> Void) async -> [(url: URL, mark: String?, mode: mode_t?, gone: Bool)] {
+        var opened: [(url: URL, mark: String?, mode: mode_t?, gone: Bool)] = []
         let was = AppDelegate.openInApp
-        AppDelegate.openInApp = { opened.append(($0, FileInfo.xattrString($0.path, "com.apple.quarantine"))) }
+        AppDelegate.openInApp = { opened.append(($0, FileInfo.xattrString($0.path, "com.apple.quarantine"), FileJob.lstat($0.path)?.st_mode, false)) }
         defer { AppDelegate.openInApp = was }
         run()
         for _ in 0..<250 where opened.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
-        for o in opened { TempCopies.remove(o.url.deletingLastPathComponent().path) }
+        for i in opened.indices {
+            let folder = opened[i].url.deletingLastPathComponent().path
+            TempCopies.remove(folder)
+            opened[i].gone = FileJob.lstat(folder) == nil
+        }
         return opened
     }
 
@@ -81,6 +86,10 @@ import Testing
             let opened = await opening { app.openFromArchive(view: false) }
             #expect(opened.count == 1, "\(archive)")
             marks.append(opened.first?.mark)
+            // F-09: read-only, so edits in that app don't vanish with the temp folder; the panel says how to keep them
+            #expect(opened.first?.mode.map { $0 & 0o222 } == 0, "\(archive): \(String(describing: opened.first?.mode))")
+            #expect(panel.statusText == "A temporary copy, read-only: Extract (⌥F9) to keep your changes")
+            #expect(opened.first?.gone == true, "a read-only copy is removed too")
             panel.navigate(to: dir)
             for _ in 0..<250 where panel.listedItems.count != 3 { try? await Task.sleep(for: .milliseconds(20)) }
         }
