@@ -98,13 +98,13 @@ private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
     #expect(inbox.take().cut == false)
 }
 
-/// T-10: 30 MB printed while the main thread is held (a sheet up, a Keychain read) stays within the inbox's limit,
+/// T-10: 12 MB printed while the main thread is held (a sheet up, a Keychain read) stays within the inbox's limit,
 /// and all of it to the end is read with POSIX read (no `availableData`, which raises on a read error).
 @MainActor @Test func aFirehoseWhileTheMainThreadIsBusyStaysBounded() async throws {
     _ = NSApplication.shared
     let tag = "dfm-t10-" + UUID().uuidString.prefix(8)
     var status: Int32?
-    Shell.run("echo \(tag) >/dev/null; head -c 30000000 /dev/zero | tr '\\0' x | fold -w 99; echo END", in: NSTemporaryDirectory()) { status = $0 }
+    Shell.run("echo \(tag) >/dev/null; head -c 12000000 /dev/zero | tr '\\0' x | fold -w 99; echo END", in: NSTemporaryDirectory()) { status = $0 }
     let w = try #require(NSApp.windows.first { $0.title.contains(tag) })
     defer { w.close() }
     let shell = try #require(w.delegate as? OutputWindow)

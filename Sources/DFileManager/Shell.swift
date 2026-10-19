@@ -252,12 +252,12 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         process.standardError = err
         let inbox = inbox
         for (pipe, stream) in [(out, 0), (err, 1)] {
-            let h = pipe.fileHandleForReading
+            let h = pipe.fileHandleForReading, fd = h.fileDescriptor   // fileDescriptor raises once the handle is closed
             // POSIX read: FileHandle.availableData raises (an uncatchable ObjC exception) on some read errors.
             Thread { [weak self] in
                 var buf = [UInt8](repeating: 0, count: 1 << 16)
                 while true {
-                    let n = Darwin.read(h.fileDescriptor, &buf, buf.count)
+                    let n = Darwin.read(fd, &buf, buf.count)
                     if n < 0 && errno == EINTR { continue }
                     // Empty: EOF, or a read error — the stream's end either way.
                     if inbox.put(n > 0 ? Data(buf[0..<n]) : Data(), stream) {   // else a hop is on its way: it takes this too
