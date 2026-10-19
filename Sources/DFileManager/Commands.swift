@@ -2320,6 +2320,8 @@ extension AppDelegate {
                 var isDir: ObjCBool = false
                 let exists = FileManager.default.fileExists(atPath: dest, isDirectory: &isDir)
                 guard (exists && isDir.boolValue) || intoDir else { return false }
+                // The item itself in another case (Foo → foo on a disk that ignores case): a rename, not a move into it.
+                if !intoDir && Self.isRespelling(srcs[0].path, dest) { return false }
                 if !exists { try FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true) }
                 return true
             }
@@ -2333,6 +2335,13 @@ extension AppDelegate {
             }
             panel.unmarkAll()
         }
+    }
+
+    /// `dest` is `src` itself, written in another case (F-04): the same file system object, a name equal but for case.
+    nonisolated static func isRespelling(_ src: String, _ dest: String) -> Bool {
+        var a = stat(), b = stat()
+        return src != dest && src.caseInsensitiveCompare(dest) == .orderedSame
+            && lstat(src, &a) == 0 && lstat(dest, &b) == 0 && a.st_dev == b.st_dev && a.st_ino == b.st_ino
     }
 
     /// F5/F6 when either panel (or both) is on a server. The same rules as between local folders: an existing

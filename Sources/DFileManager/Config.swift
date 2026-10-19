@@ -32,7 +32,8 @@ enum Config {
         let good = (all ?? []).compactMap(\.value)
         guard let all, good.count < all.count else { return (good, problem) }
         let path = (dir as NSString).appendingPathComponent(name)
-        return (good, "\(name): \(all.count - good.count) of \(all.count) entries couldn't be read and are left out"
+        let bad = all.count - good.count
+        return (good, "\(name): \(bad == 1 ? "an entry" : "\(bad) entries") of \(all.count) couldn't be read and \(bad == 1 ? "is" : "are") left out"
                     + keepAside(FileManager.default.contents(atPath: path) ?? Data(), path))
     }
 

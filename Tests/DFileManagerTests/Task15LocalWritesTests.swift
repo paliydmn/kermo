@@ -107,7 +107,7 @@ private func run(_ tool: String, _ args: [String], in dir: String) throws {
 
     let (loaded, problem) = Config.loadEach("servers.json", as: SavedServer.self, in: dir)
     #expect(loaded.map(\.name) == ["web", "cache"])
-    #expect(problem == "servers.json: 1 of 3 entries couldn't be read and are left out — the file as it was is kept as servers.json.broken")
+    #expect(problem == "servers.json: an entry of 3 couldn't be read and is left out — the file as it was is kept as servers.json.broken")
     #expect(FileManager.default.contents(atPath: dir + "/servers.json.broken") == text)
     #expect(FileManager.default.contents(atPath: dir + "/servers.json") == text, "copied, not moved")
 
@@ -138,7 +138,7 @@ private func run(_ tool: String, _ args: [String], in dir: String) throws {
     let other = Data(#"["~/a", 5, "~/b"]"#.utf8)
     try other.write(to: URL(fileURLWithPath: file))
     let (some, said) = Config.loadEach("bookmarks.json", as: String.self, in: dir)
-    #expect(some == ["~/a", "~/b"] && said?.contains("1 of 3 entries") == true && said?.contains("bookmarks.json.broken-") == true)
+    #expect(some == ["~/a", "~/b"] && said?.contains("an entry of 3") == true && said?.contains("bookmarks.json.broken-") == true)
     #expect(FileManager.default.contents(atPath: file + ".broken") == broken, "the first copy stays")
     let dated = try FileManager.default.contentsOfDirectory(atPath: dir).filter { $0.hasPrefix("bookmarks.json.broken-") }
     #expect(dated.count == 1 && FileManager.default.contents(atPath: dir + "/" + (dated.first ?? "")) == other)
@@ -170,4 +170,17 @@ private func run(_ tool: String, _ args: [String], in dir: String) throws {
     #expect(old == ["/t/a": TrashEntry(origin: "/x/a", ino: nil)])
     let again = try JSONDecoder().decode([String: TrashEntry].self, from: JSONEncoder().encode(["/t/a": recorded[0]]))
     #expect(again == ["/t/a": recorded[0]])
+}
+
+/// F-04 in the F6 dialog: "foo" typed for the folder "Foo" on a case-insensitive disk is that folder itself, so it's a
+/// rename — before, it was taken for an existing folder to move into ("Cannot move a folder into itself"). Another
+/// folder, or the same spelling, isn't.
+@Test func typingTheSameNameInAnotherCaseIsARename() throws {
+    let dir = try folder()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    try FileManager.default.createDirectory(atPath: dir + "/Foo", withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(atPath: dir + "/Bar", withIntermediateDirectories: true)
+    try #require(FileManager.default.fileExists(atPath: dir + "/foo"), "a case-sensitive volume: nothing to test")
+    #expect(AppDelegate.isRespelling(dir + "/Foo", dir + "/foo"))
+    #expect(!AppDelegate.isRespelling(dir + "/Foo", dir + "/Foo") && !AppDelegate.isRespelling(dir + "/Foo", dir + "/Bar"))
 }
