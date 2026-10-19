@@ -192,7 +192,7 @@ extension ServerLockTests {
     answer = true
     panel.loadRemote(root, dir: dir, select: nil)
     await settle()
-    #expect(asked == 2 && panel.remote?.target == root)
+    #expect(asked == 2 && panel.remote?.target == root.persisting(60), "a locked server's linger (D-081)")
 }
 }
 

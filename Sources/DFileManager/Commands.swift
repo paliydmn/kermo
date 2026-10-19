@@ -914,13 +914,24 @@ extension AppDelegate {
     }
 
     /// Not a locked server's: neither a refused attempt nor where it's been is anyone's business (a pin keeps its place).
+    /// Once its address is learned, so an alias of a locked server isn't remembered either (D-081).
     func remember(_ input: String) {
-        if case let .sftp(t, _)? = ServerAddress.parse(input), ServerLock.server(for: t) != nil { return }
-        var recents = defaults.stringArray(forKey: "recentServers") ?? []
-        recents.removeAll { $0 == input }
-        recents.insert(input, at: 0)
-        defaults.set(Array(recents.prefix(30)), forKey: "recentServers")   // the sidebar finds 5 different servers in them
+        let before = Self.remembering
+        Self.remembering = Task {
+            await before?.value   // in the order asked, whichever address is learned first
+            if case let .sftp(t, _)? = ServerAddress.parse(input) {
+                await ServerLock.learn([t])
+                if ServerLock.server(for: t) != nil { return }
+            }
+            var recents = defaults.stringArray(forKey: "recentServers") ?? []
+            recents.removeAll { $0 == input }
+            recents.insert(input, at: 0)
+            defaults.set(Array(recents.prefix(30)), forKey: "recentServers")   // the sidebar finds 5 different servers in them
+            refreshSidebar()
+        }
     }
+
+    static var remembering: Task<Void, Never>?
 
     /// A new SSH tab in the terminal workspace (shown if hidden). A path in the address is ignored.
     func openSSH(_ input: String) {

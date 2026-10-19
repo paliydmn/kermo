@@ -89,6 +89,28 @@ private func freePorts(_ n: Int) throws -> [Int] {
         return s
     }
 
+    /// D-081: an edit moves a tunnel's server to an address not learned yet (`ssh -G` runs after the edit) while a
+    /// locked server is saved: it may be that one's other spelling, so it's off until Turn On asks; once the address
+    /// is learned as another server, an edit there listens anew as before.
+    @Test func aTunnelMovedToAnAddressNotLearnedYetWaitsForTouchID() async throws {
+        let p = try freePorts(2)
+        var db = server("db1", [Tunnel(localPort: p[0], port: 5432)])
+        let vault = server("vault", locked: true, [])
+        defer { tunnels.stopAll() }
+        tunnels.start(db.tunnels[0], of: db)
+        db.host = "s5-not-learned-\(UUID().uuidString.prefix(8)).invalid"
+        tunnels.sync([db, vault])
+        #expect(!tunnels.isListening(db.tunnels[0], of: db))
+        #expect(said.lines.last == "“\(db.tunnels[0].title)” turned off: “db1” is locked — Turn On asks for Touch ID")
+
+        var web = server("web1", [Tunnel(localPort: p[1], port: 80)])
+        tunnels.start(web.tunnels[0], of: web)
+        web.host = "s5-learned-\(UUID().uuidString.prefix(8)).invalid"
+        await ServerLock.learn([web.target])   // learned: another server than the vault
+        tunnels.sync([web, vault])
+        #expect(tunnels.isListening(web.tunnels[0], of: web))
+    }
+
     /// At launch the tunnels that were on listen — not a locked server's, nor one at a locked server's address — without
     /// connecting; one that can't is named in a single status line with the next free port. Listening keeps its
     /// server in use (its connection stays up when its last panel closes).

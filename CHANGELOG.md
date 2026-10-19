@@ -15,6 +15,7 @@ Release:
 
 ### Security
 
+- A locked server reached by an `~/.ssh/config` alias or another spelling now gets a locked server's 60-second connection linger, not 10 minutes, and isn't added to the recents. A tunnel edited to a new address while a locked server is saved stays off until **Turn On** asks.
 - A root panel no longer goes into a folder that someone else on the server can change (not root's, or writable by its group or others without the sticky bit) when it deletes, copies or moves a tree. Such a folder's owner could swap what's in it for a link to `/` between two steps, and root would delete or write there. Such folders are left as they are and named in the summary.
 - A locked server's Touch ID and a production server's purple mark, questions and log now go with the server, not with how its address is written: an `~/.ssh/config` alias of it, `ROOT@host`, a trailing dot or a left-out user no longer get past them.
 - A file from a server or from inside an archive that ↩ (or Quick Look's **Open with**) opens in another app is now quarantined first, so Gatekeeper checks it: a `.command` script from a server no longer runs in Terminal at once. A file from a quarantined archive keeps the archive's own quarantine.

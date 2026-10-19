@@ -105,7 +105,7 @@ A locked server asks for Touch ID or the Mac password before you connect, edit, 
 
 The lock goes with the server, not with how it's written: an `~/.ssh/config` alias of it, `ROOT@host`, `host.` with a trailing dot, or no user where ssh would log in as that user anyway all ask too. Kermo asks `ssh -G` where an address leads (user, `HostName` or `HostKeyAlias`, port). Another port or user is another server, and so are an IP and its DNS name.
 
-Open sessions stay open. A locked server isn't added to the recents, and its shared connection idles out after 60 seconds instead of 10 minutes. See [tunnels](tunnels.md#locked-servers) for how a lock affects them.
+Open sessions stay open. A locked server isn't added to the recents, and its shared connection idles out after 60 seconds instead of 10 minutes; both hold when you reach it by an alias or another spelling too (a panel or an SSH tab, once Touch ID has passed). An edit that moves a tunnel's server to a new address turns the tunnel off while a locked server is saved, until Kermo knows the address isn't that server's: **Turn On** asks. See [tunnels](tunnels.md#locked-servers) for how a lock affects them.
 
 ## Mark a server as production
 

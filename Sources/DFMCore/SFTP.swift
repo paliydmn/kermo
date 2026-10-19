@@ -8,7 +8,7 @@ public struct SFTPTarget: Sendable, Hashable, Codable {
     public let identity: String?   // private key file; nil = ssh's own choice (agent, ~/.ssh/config, defaults)
     /// Seconds the shared connection outlives its last session (nil = 600). Anyone running as this user can ride
     /// on it without logging in, so a locked server keeps it short.
-    public let persist: Int?
+    public private(set) var persist: Int?
     /// A root panel's: the server's sftp-server run through its `sudo` (`SudoServer`), on the same connection.
     /// Never decoded either: whatever is pasted, dropped or restored opens a server as its user, never as root.
     public private(set) var sudo = false
@@ -39,6 +39,13 @@ public struct SFTPTarget: Sendable, Hashable, Codable {
         t.localSudo = sudo
         t.sudo = sudo != nil
         t.localSELinux = selinux
+        return t
+    }
+
+    /// The same target with its shared connection lingering `seconds` (nil: 600) after its last session.
+    public func persisting(_ seconds: Int?) -> SFTPTarget {
+        var t = self
+        t.persist = seconds
         return t
     }
 
