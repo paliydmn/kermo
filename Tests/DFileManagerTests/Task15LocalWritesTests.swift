@@ -22,6 +22,8 @@ private func run(_ tool: String, _ args: [String], in dir: String) throws {
     p.waitUntilExit()
 }
 
+extension ServerLockTests {   // swaps `AppDelegate.answering`, as the other tests that do it there
+
 /// F-05: a zip extracted with Overwrite over files that are there unpacks into a staging folder first. Its second
 /// member is broken (bad CRC): bsdtar has replaced the first by then, and writes the broken one under its name — after
 /// the fix neither lands, both old files stay as they were. A good zip replaces both, and leaves no staging folder.
@@ -62,6 +64,7 @@ private func run(_ tool: String, _ args: [String], in dir: String) throws {
         #expect(try FileManager.default.contentsOfDirectory(atPath: dest).sorted() == ["a.txt", "b.txt"], "\(zip): no staging folder")
     }
     #expect(asked == Array(repeating: "2 items already exist in \((dest as NSString).abbreviatingWithTildeInPath)", count: 2), "once each, before")
+}
 }
 
 /// F-02: a hard-linked file is saved in place (a rename would split its links). A shorter text leaves exactly the new

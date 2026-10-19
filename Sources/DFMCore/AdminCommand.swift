@@ -11,6 +11,31 @@ public enum AdminCommand {
             .joined(separator: " && ")
     }
 
+    /// What a copy or move as root must not do, looked at before the password is asked (a plain F5/F6 checks the
+    /// same): a folder into itself or below it (ditto recursed until the disk was full), through a link at
+    /// destDir/<name> (root would write where it points), an item onto itself. `existing`: names there already,
+    /// which ditto replaces. `destDir` needn't be there yet: ditto makes it, so its nearest folder that is counts.
+    // ponytail: a link put at destDir/<name> between this look and ditto is still followed — the same race as D-080,
+    // closed only by a root helper that opens with O_NOFOLLOW.
+    public static func check(_ sources: [String], to destDir: String, move: Bool) -> (refusal: String?, existing: [String]) {
+        var there = destDir
+        while access(there, F_OK) != 0, there != "/", !there.isEmpty { there = (there as NSString).deletingLastPathComponent }
+        var existing: [String] = []
+        for src in sources {
+            let name = (src as NSString).lastPathComponent, target = (destDir as NSString).appendingPathComponent(name)
+            var s = stat(), t = stat()
+            guard lstat(src, &s) == 0 else { continue }   // gone: ditto or mv says so
+            if s.st_mode & S_IFMT == S_IFDIR, FileJob.isInside(there, s) {
+                return ("Cannot \(move ? "move" : "copy") a folder into itself", [])
+            }
+            guard lstat(target, &t) == 0 else { continue }
+            if t.st_mode & S_IFMT == S_IFLNK { return ("“\(name)” in \(destDir) is a link — not followed as root", []) }
+            if t.st_dev == s.st_dev && t.st_ino == s.st_ino { return ("“\(name)” is in \(destDir) already", []) }
+            existing.append(name)
+        }
+        return (nil, existing)
+    }
+
     /// -n: never overwrite something already there.
     public static func move(_ sources: [String], to destDir: String) -> String {
         "/bin/mv -n " + sources.map(q).joined(separator: " ") + " " + q(destDir + "/")

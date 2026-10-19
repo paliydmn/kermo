@@ -1650,7 +1650,7 @@ extension AppDelegate {
     // MARK: - Administrator operations
 
     func runAdmin(_ title: String, _ command: String) async {
-        switch await Admin.run(command) {
+        switch await Self.runAsAdmin(command) {
         case .ok: active.flash("\(title): done")
         case .cancelled: break
         case .failed(let msg): showError(JobErrorMessage("\(title) failed: \(msg)"))
@@ -1666,13 +1666,25 @@ extension AppDelegate {
         Task {
             guard let input = await prompt("\(verb) \(srcs.count == 1 ? "“\(srcs[0].lastPathComponent)”" : "\(srcs.count) items") as administrator to:",
                                            value: ((other.path + "/") as NSString).abbreviatingWithTildeInPath, ok: verb,
-                                           info: move ? "Existing items are never overwritten (mv -n)." : "ditto keeps owner, mode, ACLs and xattrs; existing files are replaced.")
+                                           info: move ? "Existing items are never overwritten (mv -n)." : "ditto keeps owner, mode, ACLs and xattrs; it asks before replacing what's there.")
             else { return }
-            let dest = resolve(input)
-            let paths = srcs.map(\.path)
-            await runAdmin("\(verb) as administrator", move ? AdminCommand.move(paths, to: dest) : AdminCommand.copy(paths, to: dest))
-            active.unmarkAll()
+            await adminTransfer(srcs.map(\.path), to: resolve(input), move: move)
         }
+    }
+
+    /// After the prompt: what F5/F6 would refuse is refused here too, before the password is asked (`AdminCommand.check`,
+    /// off the main thread: the destination may be a share); what a copy would replace is asked about first.
+    func adminTransfer(_ paths: [String], to dest: String, move: Bool) async {
+        let verb = move ? "Move" : "Copy", panel = active
+        let (refusal, existing) = await Blocking.run(.userInitiated) { AdminCommand.check(paths, to: dest, move: move) }
+        if let refusal { return panel.flash("\(verb) as administrator: \(refusal)", error: true) }
+        if !move, !existing.isEmpty {
+            let what = existing.count == 1 ? "“\(existing[0])” is" : "\(existing.count) items are"
+            guard await choose("\(what) in \((dest as NSString).abbreviatingWithTildeInPath) already. Replace as administrator?",
+                               info: existing.prefix(5).joined(separator: "\n"), ["Replace", "Cancel"]) == 0 else { return }
+        }
+        await runAdmin("\(verb) as administrator", move ? AdminCommand.move(paths, to: dest) : AdminCommand.copy(paths, to: dest))
+        panel.unmarkAll()
     }
 
     func adminMkdir() {

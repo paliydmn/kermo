@@ -115,3 +115,41 @@ private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
     #expect(status == 0 && text.hasSuffix("xEND\n"), "\(String(describing: status)) \(text.suffix(80).debugDescription)")
     #expect(w.subtitle.contains("only the last 4 MB kept"), "\(w.subtitle)")
 }
+
+extension ServerLockTests {   // they swap `AppDelegate.runAsAdmin` and `answering`, as Enable Touch ID for sudo's test does
+    /// S-05: a refused copy says why on the panel and never gets to the password (nothing runs as root); one that
+    /// would replace what's there asks first, and Cancel runs nothing.
+    @Test func adminCopyRefusesBeforeThePassword() async throws {
+        let d = tempDir()
+        defer { try? FileManager.default.removeItem(atPath: d) }
+        let fm = FileManager.default
+        try fm.createDirectory(atPath: d + "/Work/backup", withIntermediateDirectories: true)
+        try fm.createDirectory(atPath: d + "/shared", withIntermediateDirectories: true)
+        try fm.createDirectory(atPath: d + "/to/Work", withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: d + "/shared/Work", withDestinationPath: "/etc")
+        var ran: [String] = [], asked: [(String, [String])] = []
+        let admin = AppDelegate.runAsAdmin
+        AppDelegate.runAsAdmin = { ran.append($0); return .ok }
+        defer { AppDelegate.runAsAdmin = admin; AppDelegate.answering = nil }
+        let app = AppDelegate()
+        app.panels = [PanelViewController(tabs: [d], index: 0, showHidden: false), PanelViewController(tabs: [d], index: 0, showHidden: false)]
+        app.panels.forEach { $0.loadViewIfNeeded() }
+        defer { app.panels.forEach { $0.shutdown() } }
+        AppDelegate.answering = { m, b, _ in asked.append((m, b)); return 1 }   // Cancel
+
+        await app.adminTransfer([d + "/Work"], to: d + "/Work/backup", move: false)
+        #expect(app.panels[0].statusText.contains("Copy as administrator: Cannot copy a folder into itself"), "\(app.panels[0].statusText)")
+        await app.adminTransfer([d + "/Work"], to: d + "/shared", move: true)
+        #expect(app.panels[0].statusText.contains("is a link — not followed as root"), "\(app.panels[0].statusText)")
+        #expect(ran.isEmpty && asked.isEmpty)
+
+        await app.adminTransfer([d + "/Work"], to: d + "/to", move: false)
+        #expect(asked.map(\.0) == ["“Work” is in \((d as NSString).abbreviatingWithTildeInPath)/to already. Replace as administrator?"])
+        #expect(asked.first?.1 == ["Replace", "Cancel"] && ran.isEmpty)
+        AppDelegate.answering = { m, b, _ in asked.append((m, b)); return 0 }   // Replace
+        await app.adminTransfer([d + "/Work"], to: d + "/to", move: false)
+        #expect(ran == [AdminCommand.copy([d + "/Work"], to: d + "/to")])
+        await app.adminTransfer([d + "/Work"], to: d + "/to", move: true)   // mv -n never replaces: no question
+        #expect(asked.count == 2 && ran.count == 2)
+    }
+}

@@ -134,3 +134,24 @@ private func chattyServer(in dir: String) -> String {
     #expect(!fm.fileExists(atPath: random.dir))
     #expect(fm.fileExists(atPath: d + "/ours"))
 }
+
+/// S-05: Copy/Move as Administrator ran ditto/mv as root without what F5/F6 look at first.
+@Test func adminCopyChecksWhatF5Checks() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    try fm.createDirectory(atPath: d + "/Work/backup", withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: d + "/shared", withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: d + "/to", withIntermediateDirectories: true)
+    fm.createFile(atPath: d + "/a.txt", contents: Data("a".utf8))
+    fm.createFile(atPath: d + "/to/a.txt", contents: Data("old".utf8))
+    try fm.createSymbolicLink(atPath: d + "/shared/Work", withDestinationPath: "/etc")
+    let work = [d + "/Work"]
+    for dest in [d + "/Work", d + "/Work/backup", d + "/Work/backup/new/deeper", d + "/WORK/backup"] {
+        #expect(AdminCommand.check(work, to: dest, move: false).refusal == "Cannot copy a folder into itself", "\(dest)")
+    }
+    #expect(AdminCommand.check(work, to: d + "/Work/backup", move: true).refusal == "Cannot move a folder into itself")
+    #expect(AdminCommand.check(work, to: d + "/shared", move: false).refusal == "“Work” in \(d)/shared is a link — not followed as root")
+    #expect(AdminCommand.check([d + "/a.txt"], to: d, move: false).refusal == "“a.txt” is in \(d) already")
+    #expect(AdminCommand.check([d + "/a.txt", d + "/Work"], to: d + "/to", move: false) == (nil, ["a.txt"]))
+    #expect(AdminCommand.check(work, to: d + "/elsewhere/new", move: false) == (nil, []))
+}
