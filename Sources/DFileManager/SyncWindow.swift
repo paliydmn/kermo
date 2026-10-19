@@ -13,6 +13,7 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
     private let enqueue: ([(job: FileJob, label: String)]) async -> Bool   // false: nothing queued (locked, Cancel)
     private var compared: [DirSync.Item] = []   // as compared (two-way defaults)
     private var items: [DirSync.Item] = []      // with the chosen mode and the user's edits
+    private var comparedAt: Double?                // when the Compare that `compared` holds began
     private var shown: [Int] = []   // indices into items
     private var flag: CancelFlag?
 
@@ -125,6 +126,7 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
         let flag = CancelFlag()
         self.flag = flag
         summary.stringValue = "Comparing…"
+        let began = Date().timeIntervalSince1970
         syncButton.isEnabled = false
         let (l, r, sides, byContent, hidden) = (left, right, sides, contentBox.isEnabled && contentBox.state == .on, hiddenBox.state == .on)
         Task { [weak self] in
@@ -137,6 +139,7 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
             }
             guard let self, !flag.isCancelled else { return }
             compared = result
+            comparedAt = began
             applyMode()
         }
     }
@@ -205,7 +208,7 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
     /// The window (and its edited plan) stays if the jobs weren't queued: a server stayed locked, or Cancel.
     @objc private func synchronize() {
         syncButton.isEnabled = false
-        let jobs = DirSync.jobs(items, left: left, right: right, sides: sides, env: SSHAskpass.env)
+        let jobs = DirSync.jobs(items, left: left, right: right, sides: sides, env: SSHAskpass.env, comparedAt: comparedAt)
         Task { [weak self] in
             if await self?.enqueue(jobs) == true { self?.window?.close() } else { self?.syncButton.isEnabled = true }
         }

@@ -62,7 +62,7 @@ The **Synchronize Folders** window lists every difference below both folders. No
 - **Compare contents (slow)** also reads files with equal size and date and flags a difference as a conflict. It is available only when both folders are on this Mac.
 - **Include hidden** is off by default. **Show equal** adds the identical files to the list.
 - Select rows, then **→ Right**, **← Left**, **Trash** or **Skip**, or click a row's arrow to cycle its action. Choose the mode and the checkboxes first: changing the mode, **Compare contents** or **Include hidden** recomputes the list and drops the directions you set by hand.
-- Trash runs first, then the copies, in the queue above the key bar. Each job skips an item that changed since the comparison.
+- Trash runs first, then the copies, in the queue above the key bar. Each job skips an item that changed since the comparison. A folder deleted on a server keeps whatever was put in it since the comparison began (a file written then, a folder moved in), with the folders above it, and the summary names each. Kermo goes by this Mac's clock here, so on a server whose clock runs behind, such a change may still go.
 - A name that is a file on one side and a folder on the other, a folder that can't be read, and names that differ only in case are always skipped (≠ or "can't read"), in every mode: a mirror isn't an exact copy there.
 
 > [!WARNING]

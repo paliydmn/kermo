@@ -55,6 +55,9 @@ public final class FileJob: @unchecked Sendable {
     public var expected: [String: FileItem?] = [:]
     /// The same for a pair's destination: a map of its own, as a server's path may be spelled like one on this Mac.
     public var expectedTarget: [String: FileItem?] = [:]
+    /// Synchronize: when Compare began (seconds since 1970). A delete on a server keeps what's newer below the folders
+    /// it deletes (F-11): Compare saw a folder only on one side as one row, never what's in it.
+    public var comparedAt: Double?
 
     let lock = NSLock()
     private var _progress = Progress()

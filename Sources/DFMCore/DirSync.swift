@@ -183,8 +183,9 @@ public enum DirSync {
     /// The queued work for a reviewed plan, each job with its label: trash first, then a copy job per direction.
     /// Every job knows what Compare saw at its paths, so it skips whatever changed since (`FileJob.expected`).
     /// A side on a server (`sides`) has no Trash: what goes there is deleted.
+    /// `comparedAt`: when Compare began; a delete on a server keeps what's newer (`FileJob.comparedAt`).
     public static func jobs(_ items: [Item], left: String, right: String, sides: (left: Endpoint, right: Endpoint) = (.local, .local),
-                            env: [String: String] = [:]) -> [(job: FileJob, label: String)] {
+                            env: [String: String] = [:], comparedAt: Double? = nil) -> [(job: FileJob, label: String)] {
         func full(_ it: Item, onRight: Bool) -> String {
             onRight ? (right as NSString).appendingPathComponent(it.rightPath ?? it.path) : (left as NSString).appendingPathComponent(it.path)
         }
@@ -203,7 +204,10 @@ public enum DirSync {
             let e = onRight ? sides.right : sides.left
             if let j = make(a, from: onRight, { xs in
                 let paths = xs.map { full($0, onRight: onRight) }
-                return e == .local ? FileJob(.trash, sources: paths) : FileJob(.delete, sources: paths, from: e, to: e, destDir: nil, sshEnv: env)
+                guard e != .local else { return FileJob(.trash, sources: paths) }   // the Trash: nothing lost
+                let job = FileJob(.delete, sources: paths, from: e, to: e, destDir: nil, sshEnv: env)
+                job.comparedAt = comparedAt
+                return job
             }) {
                 out.append((j, "Sync: \(j.sources.count) only on the \(side) → " + (e == .local ? "Trash" : "deleted (\(place(e, onRight ? right : left)))")))
             }

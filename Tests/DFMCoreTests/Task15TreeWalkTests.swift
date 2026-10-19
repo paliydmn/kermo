@@ -132,3 +132,32 @@ func aMoveToAnotherVolumeStopsAtAMountPoint() throws {
     #expect(exists(src + "/t/mnt/x"), "what's on it stays where it is")
     #expect(job.progress.errors == [src + "/t/mnt: another volume is mounted here — skipped"])
 }
+
+/// F-11: Synchronize deletes a folder found on one side only. Compare saw it as one row, so what was put in it after
+/// stays: a file written since (its date), a folder moved in since (its own date — `mv` keeps the file's old one),
+/// with the folders above; the rest goes. The summary names each. A plain delete (no Compare) takes it all.
+@Test func syncKeepsWhatAppearedInAFolderAfterCompare() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let old = "202001010000"
+    func tree() {
+        sh("rm -rf dir && mkdir -p dir/oldsub dir/sub dir/moved && echo o > dir/old.txt && echo x > dir/oldsub/x && echo n > dir/sub/new.txt"
+           + " && echo m > dir/moved/m && touch -t \(old) dir/old.txt dir/oldsub/x dir/oldsub dir/sub dir/moved/m dir", in: d)
+    }
+    tree()
+    let server = Endpoint.sftp(.local())
+    let plan = [DirSync.Item(path: "dir", left: nil, right: try DirLister.list(d).first { $0.name == "dir" }, action: .trashRight, isConflict: false)]
+    let jobs = DirSync.jobs(plan, left: d + "/L", right: d, sides: (.local, server), comparedAt: Date().timeIntervalSince1970 - 600)
+    let job = try #require(jobs.first?.job)
+    #expect(jobs.count == 1 && job.kind == .delete && job.comparedAt != nil)
+    job.resolveError = { p, m in Issue.record("asked: \(p): \(m)"); return (.skip, false) }
+    job.run()
+    #expect(!exists(d + "/dir/old.txt") && !exists(d + "/dir/oldsub"))
+    #expect(exists(d + "/dir/sub/new.txt") && exists(d + "/dir/moved/m"))
+    #expect(job.progress.errors.sorted() == [d + "/dir/moved: newer than Compare — kept", d + "/dir/sub/new.txt: newer than Compare — kept"])
+
+    tree()
+    let plain = FileJob(.delete, sources: [d + "/dir"], from: server, to: server, destDir: nil)
+    plain.run()
+    #expect(!exists(d + "/dir") && plain.progress.errors.isEmpty)
+}
