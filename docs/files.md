@@ -16,7 +16,7 @@ Operations act on the marked items, or on the cursor item when nothing is marked
 
 Press F5 (⌥5) for **Copy To…** and F6 (⌥6) for **Move To…**. The dialog proposes the other panel's folder (with three or four panels, the one you used before this). Edit the path: `~` works, and a relative path starts in the active folder.
 
-- A path ending in `/`, or several items, means "into this folder", made if missing. One item and a path that isn't a folder means "under this name".
+- A path ending in `/`, or several items, means "into this folder", made if missing. One item and a path that isn't a folder means "under this name". F6 to the same name in another case (`Foo` → `foo`) renames it, as ⇧F6 does.
 - ⌘C copies the marked files, ⌘V pastes them (files copied in Finder too) and ⌥⌘V (**Move Here**) moves them. Pasting into their own folder duplicates them as `name 2`.
 - With a server on either side, see [Files on a server](server-files.md).
 
@@ -89,9 +89,9 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 
 ↩ on an archive opens it as a read-only folder: zip, jar, war, ear, apk, ipa, tar, tgz, tbz, tbz2, txz, tzst, 7z, rar, iso, cpio, xar, and `.tar.gz`, `.tar.bz2`, `.tar.xz`, `.tar.zst`, `.tar.lz4`. Kermo lists every entry first, so a big archive takes a moment. Zip names saved in a Windows code page (Cyrillic CP866 or CP1251) are detected and shown correctly.
 
-- Inside, ⌫ goes up, ↩ on a file extracts it to a temporary folder and opens it, and F3 views it. What ↩ opens is quarantined, so Gatekeeper checks it first: with the archive's own quarantine if it has one, as Archive Utility does, else as a download from Kermo. Delete, rename, paste and drops are refused.
+- Inside, ⌫ goes up, ↩ on a file extracts it to a temporary folder and opens it, and F3 views it. What ↩ opens is quarantined, so Gatekeeper checks it first: with the archive's own quarantine if it has one, as Archive Utility does, else as a download from Kermo. The copy is read-only, as the status line says: it's in a temporary folder that goes a day later, so the app says it's locked and offers to duplicate it; to keep changes, Extract it (⌥F9) first. Delete, rename, paste and drops are refused.
 - **Extract…** (⌥F9, and F5 inside an archive) unpacks the marked entries (or the cursor's) into the folder you confirm, by default the other panel's. On an archive file in a normal folder F5 copies the file; ⌥F9 extracts all of it.
-- Names that already exist ask **Keep Existing** (folders merge), **Overwrite** or **Cancel**.
+- Names that already exist ask **Keep Existing** (folders merge), **Overwrite** or **Cancel**. Then the archive unpacks into a hidden `.kermo-extract-…` folder there and moves out once it's all done: if it fails or you stop it, nothing of it lands and your files stay as they were.
 - What a quarantined archive (a download) unpacks is quarantined too, as Archive Utility does; a clean archive's isn't.
 - All of a tar (`.tar.gz`, `.tar.xz` and the like) isn't read once first just for its names: into an empty or new folder it unpacks straight in. Into a folder with things in it, it unpacks into a hidden `.kermo-extract-…` folder there; when tar is done, names that exist ask the question, and **Cancel** removes what was unpacked. If tar fails or you stop it, nothing of it lands. Where the archive has a file and the folder a folder of that name, or (with Keep Existing) the archive a folder and the folder a file or link, yours stays, and you're told.
 - ↩ or F3 on one file inside a tar stops reading the archive at that file.
@@ -100,7 +100,7 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 
 ## Split and combine
 
-**File ▸ Split File…** cuts the cursor file into `name.000`, `name.001` … next to it. The size is bytes or with K, M or G (`650M`; it starts at `1G`, then keeps your last). **Combine Parts…** with the cursor on any part joins the set (starting at `.000` or `.001`, no gaps) into the name you confirm and never overwrites.
+**File ▸ Split File…** cuts the cursor file into `name.000`, `name.001` … next to it. The size is bytes or with K, M or G (`650M`; it starts at `1G`, then keeps your last). Split refuses while any part of that name is there already (not only `.000`). **Combine Parts…** with the cursor on any part joins the set (starting at `.000` or `.001`, no gaps) into the name you confirm and never overwrites. Every part but the last must be the size of the first, and the last no bigger: otherwise they're parts of two splits, and Combine names the one that doesn't fit and joins nothing.
 
 ## Sizes, hidden files and sort
 

@@ -48,6 +48,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// Tests: runs between checking the file and opening it for an in-place rewrite (off the main thread). This
     /// window's own: tests run side by side, and a save no longer holds the main thread while it writes.
     var willRewriteInPlace: @Sendable (String) -> Void = { _ in }
+    /// Tests: writes the text into the file an in-place save opened (to fail it midway).
+    var rewriteInPlace: @Sendable (FileHandle, Data) throws -> Void = { try $0.write(contentsOf: $1) }
     /// A lossy or Windows-1251 file was asked about before its first save.
     private var encodingAsked = false
     /// The file as we last loaded or saved it; a save over anything else asks first.
@@ -313,10 +315,14 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     }
 
     /// Writes all of `data` to `fd`, makes it reach the disk itself (plain fsync where F_FULLFSYNC isn't supported) and closes it.
-    nonisolated private static func write(_ data: Data, to fd: Int32) throws {
+    /// From the start over what's there, and only then cut to length: a file written into in place is never shorter
+    /// than the old text or the new one, even if the write stops midway (a full disk, a crash).
+    nonisolated private static func write(_ data: Data, to fd: Int32,
+                                          writing: (FileHandle, Data) throws -> Void = { try $0.write(contentsOf: $1) }) throws {
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        try h.write(contentsOf: data)
+        try writing(h, data)
+        if ftruncate(fd, off_t(data.count)) != 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         if fcntl(fd, F_FULLFSYNC) != 0 { fsync(fd) }
         try h.close()
     }
@@ -357,8 +363,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
             saving = false
             textView.isEditable = true
         }
-        let path = realPath, name = url.lastPathComponent, base = force ? nil : (stamp, digest), hook = willRewriteInPlace
-        switch await Blocking.run(.userInitiated, { Self.write(data, to: path, name: name, unlessChangedFrom: base, hook: hook) }) {
+        let path = realPath, name = url.lastPathComponent, base = force ? nil : (stamp, digest), hook = willRewriteInPlace, rewrite = rewriteInPlace
+        switch await Blocking.run(.userInitiated, { Self.write(data, to: path, name: name, unlessChangedFrom: base, hook: hook, rewrite: rewrite) }) {
         case .changed(let now):
             askOverwrite(now)
             return false
@@ -382,7 +388,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// Overwrite), writes it, and says what's on disk then.
     nonisolated private static func write(_ data: Data, to path: String, name: String,
                                           unlessChangedFrom base: (stamp: Stamp?, digest: SHA256.Digest?)?,
-                                          hook: (String) -> Void) -> Written {
+                                          hook: (String) -> Void, rewrite: (FileHandle, Data) throws -> Void) -> Written {
         if let base, let now = changed(path, from: base.stamp, base.digest) { return .changed(now) }
         let fm = FileManager.default
         let dir = (path as NSString).deletingLastPathComponent
@@ -412,7 +418,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
                 }
             } else {
                 // Not through a symlink, and only the file just checked: in a shared folder its owner could swap it
-                // for a link to one of ours meanwhile. Truncated only after that check.
+                // for a link to one of ours meanwhile. Never emptied first: written over, then cut to length.
                 hook(path)
                 let fd = Darwin.open(path, O_WRONLY | O_NOFOLLOW)
                 var now = stat()
@@ -420,12 +426,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
                     Darwin.close(fd)
                     throw JobErrorMessage("“\(name)” was replaced while saving — nothing was written.")
                 }
-                if fd >= 0, ftruncate(fd, 0) != 0 {
-                    let err = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-                    Darwin.close(fd)
-                    throw err
-                }
-                try Self.write(data, to: fd)
+                try Self.write(data, to: fd, writing: rewrite)
             }
         } catch {
             let fm = FileManager.default

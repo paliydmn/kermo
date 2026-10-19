@@ -1707,7 +1707,12 @@ extension AppDelegate {
             guard let url = await extractToTemp(sel)?.first else { return }
             if view { Viewer.show(url) { TempCopies.remove(url.deletingLastPathComponent().path) } } else {
                 FileInfo.quarantine(url.path)   // the archive's own if it has one, else Kermo's
+                // Read-only: edits there would go with the temp folder (a day on), so the app says "locked" and offers
+                // Duplicate. After the quarantine: setxattr on a read-only file fails (EACCES).
+                var st = stat()
+                if Darwin.lstat(url.path, &st) == 0, st.st_mode & S_IFMT == S_IFREG { chmod(url.path, st.st_mode & 0o7555) }
                 Self.openInApp(url)
+                active.flash("A temporary copy, read-only: Extract (⌥F9) to keep your changes")
             }
         }
     }
@@ -1724,19 +1729,54 @@ extension AppDelegate {
             else { return }
             let dest = resolve(input)
             if sel == nil && ArchiveIndex.isTar(file) { return extractWholeTar(file, to: dest) }
-            // What lands at the top of `dest`; bsdtar would silently replace any of it that's there already.
-            let (index, clashes) = await Blocking.run { () -> (ArchiveIndex?, [String]) in
-                let index = sel?.index ?? (try? ArchiveIndex.read(file))
-                let top = sel?.names ?? (index?.list("") ?? []).map(\.name)
-                return (index, top.filter { var st = stat(); return Darwin.lstat((dest as NSString).appendingPathComponent($0), &st) == 0 })
+            await extract(file, sel, to: dest)
+        }
+    }
+
+    /// Extract once `dest` is known (all of a zip, 7z…, or a selection inside any archive). Over what's there it
+    /// unpacks into a hidden folder first, as a whole tar does: bsdtar removes a file and writes the new one under its
+    /// name, so ⎋, a full disk, a bad member or a quit midway would leave one gone and the other cut short. Returns
+    /// once it's all done.
+    func extract(_ file: String, _ sel: (index: ArchiveIndex, inner: String, names: [String])?, to dest: String) async {
+        // What lands at the top of `dest`; bsdtar would silently replace any of it that's there already.
+        let (index, clashes) = await Blocking.run { () -> (ArchiveIndex?, [String]) in
+            let index = sel?.index ?? (try? ArchiveIndex.read(file))
+            let top = sel?.names ?? (index?.list("") ?? []).map(\.name)
+            return (index, top.filter { var st = stat(); return Darwin.lstat((dest as NSString).appendingPathComponent($0), &st) == 0 })
+        }
+        let shown = (dest as NSString).abbreviatingWithTildeInPath
+        guard let keep = await keepExisting(clashes, in: shown) else { return }
+        let staging: String?
+        do {
+            staging = try await Blocking.run { () throws -> String? in
+                try FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true)
+                guard !clashes.isEmpty else { return nil }   // nothing there to lose: only what's new can be cut short
+                let staging = ArchiveIndex.stagingFolder(in: dest)
+                try FileManager.default.createDirectory(atPath: staging, withIntermediateDirectories: false)
+                return staging
             }
-            guard let keep = await keepExisting(clashes, in: (dest as NSString).abbreviatingWithTildeInPath) else { return }
-            do { try await Blocking.run { try FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true) } } catch {
-                return showError(error)
-            }
-            var args = index?.extractArguments(sel?.names ?? [], from: sel?.inner ?? "", to: dest) ?? ["-x", "-f", file, "-C", dest]
-            if keep { args.insert("-k", at: 1) }
-            Shell.run("/usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dest) { _ in self.panels.forEach { $0.reload() } }
+        } catch {
+            return showError(error)
+        }
+        let into = staging ?? dest
+        let args = index?.extractArguments(sel?.names ?? [], from: sel?.inner ?? "", to: into) ?? ["-x", "-f", file, "-C", into]
+        let status = await withCheckedContinuation { done in
+            Shell.run("/usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dest,
+                      title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)") { done.resume(returning: $0) }
+        }
+        if let staging { await moveOut(staging, to: dest, keep: status == 0 ? keep : nil) } else { panels.forEach { $0.reload() } }
+    }
+
+    /// The end of an extract through a staging folder: what's in it moves into `dest` (`keep`: what's there stays),
+    /// or with nil (stopped, failed, cancelled) none of it lands there. The window already says what tar said.
+    private func moveOut(_ staging: String, to dest: String, keep: Bool?) async {
+        let errors = await Blocking.run {
+            guard let keep else { ArchiveIndex.discardStaging(staging); return [String]() }
+            return ArchiveIndex.moveExtracted(staging, to: dest, keep: keep)
+        }
+        panels.forEach { $0.reload() }
+        if !errors.isEmpty {
+            showError(JobErrorMessage(errors.prefix(8).joined(separator: "\n") + (errors.count > 8 ? "\n…" : "")))
         }
     }
 
@@ -1763,17 +1803,9 @@ extension AppDelegate {
                       title: "Extract “\((file as NSString).lastPathComponent)” → \(shown)") { [self] status in
                 guard let staging else { return panels.forEach { $0.reload() } }
                 Task {
-                    // stopped (⎋) or failed: half an archive doesn't land in `dest`; the window says what tar said
+                    // stopped (⎋) or failed: half an archive doesn't land in `dest`
                     let clashes = await Blocking.run { status == 0 ? ArchiveIndex.clashes(staging, dest) : [] }
-                    let keep = status == 0 ? await self.keepExisting(clashes, in: shown) : nil
-                    let errors = await Blocking.run {
-                        guard let keep else { ArchiveIndex.discardStaging(staging); return [String]() }
-                        return ArchiveIndex.moveExtracted(staging, to: dest, keep: keep)
-                    }
-                    self.panels.forEach { $0.reload() }
-                    if !errors.isEmpty {
-                        self.showError(JobErrorMessage(errors.prefix(8).joined(separator: "\n") + (errors.count > 8 ? "\n…" : "")))
-                    }
+                    await self.moveOut(staging, to: dest, keep: status == 0 ? await self.keepExisting(clashes, in: shown) : nil)
                 }
             }
         }
@@ -1870,8 +1902,14 @@ extension AppDelegate {
             guard size.range(of: #"^\d+[KkMmGg]?$"#, options: .regularExpression) != nil else {
                 return showError(JobErrorMessage("“\(size)” isn't a size like 650M or 4G."))
             }
-            guard !FileManager.default.fileExists(atPath: url.path + ".000") else {
-                return showError(JobErrorMessage("“\(name).000” already exists."))
+            // Any part there already, not just .000: split writes over the first ones and leaves the rest, and Combine
+            // would join both splits.
+            let parts = await Blocking.run(.userInitiated) {
+                SplitParts.parts(of: name, in: ((try? DirLister.list(dir)) ?? []).map(\.name))
+            }
+            guard parts.isEmpty else {
+                let shown = parts.prefix(3).map { "“\($0)”" }.joined(separator: ", ") + (parts.count > 3 ? " and \(parts.count - 3) more" : "")
+                return showError(JobErrorMessage("\(shown) \(parts.count == 1 ? "is" : "are") there already: combine or remove \(parts.count == 1 ? "it" : "them") first."))
             }
             defaults.set(size, forKey: "splitSize")
             let q = ShellContext.quoteName
@@ -1885,11 +1923,16 @@ extension AppDelegate {
     func combineDialog() {
         guard let url = active.cursorURL else { return NSSound.beep() }
         let dir = url.deletingLastPathComponent().path
-        let names = ((try? DirLister.list(dir)) ?? []).map(\.name)   // all of them, not just what the filter shows
-        guard let seq = SplitParts.sequence(for: url.lastPathComponent, in: names) else {
-            return active.flash("Put the cursor on a part (name.000 / name.001) — and make sure none is missing")
-        }
         Task {
+            let items = await Blocking.run(.userInitiated) { (try? DirLister.list(dir)) ?? [] }   // all of them, not just what the filter shows
+            guard let seq = SplitParts.sequence(for: url.lastPathComponent, in: items.map(\.name)) else {
+                return active.flash("Put the cursor on a part (name.000 / name.001) — and make sure none is missing")
+            }
+            let sizes = Dictionary(items.map { ($0.name, $0.size) }) { a, _ in a }
+            if let odd = SplitParts.misfit(seq.parts, sizes: sizes) {
+                let size = { ByteCountFormatter.string(fromByteCount: sizes[$0] ?? 0, countStyle: .file) }
+                return showError(JobErrorMessage("“\(odd)” is \(size(odd)), “\(seq.parts[0])” \(size(seq.parts[0])): these look like parts of two different splits. Nothing was combined."))
+            }
             guard let target = await prompt("Combine \(seq.parts.count) parts (\(seq.parts.first!) … \(seq.parts.last!)) into:",
                                             value: seq.base, ok: "Combine"), !target.isEmpty else { return }
             let q = ShellContext.quoteName
@@ -2620,7 +2663,9 @@ extension AppDelegate {
     /// Read, changed and saved on `trashLogQueue`: each entry is an lstat (a Trash on a share that doesn't answer
     /// never returns), and one queue keeps the changes in order — none lost to another read at the same time.
     nonisolated private static func changeTrashLog<T>(_ change: (inout [String: String]) -> T) -> T {
-        let saved = (try? Config.load("trash.json", as: [String: String].self)) ?? [:]
+        let (loaded, problem) = Config.loadKeeping("trash.json", as: [String: String].self)
+        if let problem { Task { @MainActor in (NSApp.delegate as? AppDelegate)?.active.flash(problem, error: true) } }   // read off launch: said now
+        let saved = loaded ?? [:]
         var log = saved.filter { var s = stat(); return lstat($0.key, &s) == 0 || errno != ENOENT }
         let result = change(&log)
         if log != saved { Config.save("trash.json", log) }

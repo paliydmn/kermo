@@ -42,7 +42,7 @@ Press F4 (⌥4) on a file. It opens text files up to 32 MB; a binary or larger f
 - Line numbers show in the margin.
 - Syntax colors cover shell, Python, JSON, YAML, INI-style files (`.ini`, `.toml`, `.cfg`, `.properties`, `.service`), `.conf`, XML (plist, HTML, SVG), Dockerfile, Makefile and C-style languages (Swift, C, C++, JavaScript, TypeScript, Go, Rust, Java and others). The file name or a `#!` line picks the language. A text over 2 MB gets no colors. The viewer colors files by name the same way.
 - ⌘F opens the find bar, which also replaces. ⌘G finds the next match.
-- ⌘S (**File ▸ Save**) saves. Mode, owner, extended attributes, a UTF-8 BOM and CRLF line ends stay as they were.
+- ⌘S (**File ▸ Save**) saves. Mode, owner, extended attributes, a UTF-8 BOM and CRLF line ends stay as they were. The new text goes into a temporary file that then replaces the old one whole. A hard-linked file, or someone else's in a folder you can write, is written into instead (so its links and owner stay): over the old text, cut to length only at the end, so a full disk never leaves it empty.
 
 > [!WARNING]
 > A file with some invalid UTF-8 bytes shows them as �, and saving writes � in their place. A file that is not UTF-8 is read and saved as Windows-1251; if it is really UTF-8, what you type will not read back correctly. The first save of either asks **Save** or **Cancel**.

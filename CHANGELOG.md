@@ -19,6 +19,10 @@ Release:
 - A file from a server or from inside an archive that ↩ (or Quick Look's **Open with**) opens in another app is now quarantined first, so Gatekeeper checks it: a `.command` script from a server no longer runs in Terminal at once. A file from a quarantined archive keeps the archive's own quarantine.
 - **Save as Administrator** no longer writes from a file that something else running as you could change while macOS asks for the password: the text goes to root in the command itself (a text over about 500 KB goes through a file root checks against your text). It never leaves the file empty when the disk is full, and a change made to the file while the password dialog was up now asks "changed on disk" instead of being overwritten.
 
+### Changed
+
+- ↩ on a file inside an archive opens a read-only copy, and the status line says so: the copy lives in a temporary folder that goes a day later, so edits made to it in another app were lost. The app now says it's locked and offers to duplicate it; Extract (⌥F9) keeps a copy of your own.
+
 ### Fixed
 
 - Opening an archive with a very deeply nested path (a tiny zip with one file 2000 folders down) no longer crashes Kermo.
@@ -28,6 +32,12 @@ Release:
 - If a save that writes into the server's file fails on the way, the old text is put back when the connection still works. The message says whether the file on the server was put back or may be cut short, and names the partial file there that has your full text. Before, it said only that the upload failed.
 - Temporary files a crash left behind are cleared: partial files of server saves (at a later save in that folder, once a day old), the local editor's save files, and those of **Save as Administrator** and a config check's put-back. **Save as Administrator**'s temporary copy of the text is now readable only by you.
 - On a server with SELinux, saving a file from any panel keeps its SELinux label. Before, only a root panel did; a login as root or as yourself gave the saved file its folder's label (`/etc/shadow` losing `shadow_t`, a page in `~/public_html` answering 403).
+- Extracting a zip, 7z or other archive, or entries from inside any archive, over files that are already there can no longer leave one of them gone and the new one cut short when you stop it, the disk fills up or the archive is broken midway: it unpacks into a hidden folder first, as all of a tar already did, and nothing lands unless it all worked.
+- Saving a hard-linked file, or someone else's file in a folder you can write, in the editor can no longer leave it empty when the disk fills up or the write fails midway: the text is written over the old one and the file is cut to length only at the end.
+- **Split File…** no longer writes over parts of an earlier split when `.000` is gone but later parts are there, and **Combine Parts…** refuses parts of different sizes (two splits mixed) instead of joining them into garbage. Both now read the folder off the main thread.
+- **Move To…** (F6) to the same name in another case (`Foo` → `foo`) renames the item. Before, it asked whether to merge it with itself and then left the name as it was.
+- One entry in `servers.json` that can't be read (a hand edit such as `"port": "22"`) no longer empties the list of saved servers: only that entry is left out. Kermo says at launch what it left out and where the file as it was is kept (`servers.json.broken`, copied, not moved).
+- A broken `bookmarks.json`, `server-pins.json`, `frecency.json` or `trash.json` is no longer quietly replaced with an empty one at the next save: it's copied to `name.broken` first and Kermo says so. In bookmarks and pins only the entries that can't be read are left out.
 - Logged in to a server as `root` (not through a root panel), saving someone else's file now replaces it whole and gives it back its owner, as a root panel does. Before, it was written into in place.
 - The history of saved server files always stays out of Time Machine. Before, only a history folder this version created was left out; one from an older version was backed up, server secrets included.
 
