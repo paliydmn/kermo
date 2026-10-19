@@ -64,10 +64,13 @@ private func ends(_ fd: Int32) -> Bool {
 }
 
 /// Ports nobody listens on now (the kernel's picks).
+/// Not from the kernel (port 0): that's the ephemeral range, which hands the same number to any outgoing connection on
+/// this Mac between our close and the test's own listen — a tunnel then couldn't listen, now and then.
 private func freePorts(_ n: Int) throws -> [Int] {
-    let ls = try (0..<n).map { _ in try TunnelListener(port: 0, child: { _ in .init(executable: "/bin/cat") }, onEvent: { _ in }) }
-    defer { ls.forEach { $0.stop() } }
-    return ls.map(\.port)
+    var ports: [Int] = []
+    for p in stride(from: Int.random(in: 20000..<39000), to: 40000, by: 10) where ports.count < n && TunnelListener.isFree(p) { ports.append(p) }
+    try #require(ports.count == n)
+    return ports
 }
 
 /// Each `AppDelegate` keeps its own `Tunnels`; these make their own, with `cat` in ssh's place. They run processes and
