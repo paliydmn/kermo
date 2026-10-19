@@ -57,3 +57,60 @@ private final class HugeSizes: TransferFS, @unchecked Sendable {
     #expect(job.progress.totalFiles == 6 && job.progress.totalBytes == .max)
     #expect(job.progress.doneBytes == .max, "\(job.progress.errors)")
 }
+
+/// The sftp-server behind a proxy that sends each of its answers twice, and after each an answer to a request
+/// never made.
+private func chattyServer(in dir: String) -> String {
+    let path = dir + "/sftp-chatty"
+    try! """
+    #!/usr/bin/perl
+    use strict; use warnings; use IPC::Open2; use IO::Select;
+    my $pid = open2(my $out, my $in, '/usr/libexec/sftp-server');
+    binmode($_) for \\*STDIN, \\*STDOUT, $out, $in;
+    my ($fromServer, $first, $k) = ('', 1, 0);
+    sub put { my ($fh, $d) = @_; while (length $d) { my $n = syswrite($fh, $d); die unless defined $n; substr($d, 0, $n) = '' } }
+    my $sel = IO::Select->new(\\*STDIN, $out);
+    while (my @ready = $sel->can_read) {
+        for my $fh (@ready) {
+            my $n = sysread($fh, my $chunk, 1 << 16);
+            exit 0 unless $n;
+            if ($fh != $out) { put($in, $chunk); next }
+            $fromServer .= $chunk;
+            while (length $fromServer >= 4 && length $fromServer >= 4 + unpack('N', $fromServer)) {
+                my $p = substr($fromServer, 0, 4 + unpack('N', $fromServer), '');
+                put(\\*STDOUT, $p);
+                if ($first) { $first = 0; next }
+                put(\\*STDOUT, $p . pack('N C N N N N', 17, 101, 0x7f000000 + $k++, 0, 0, 0));
+            }
+        }
+    }
+    """.write(toFile: path, atomically: true, encoding: .utf8)
+    chmod(path, 0o755)
+    return path
+}
+
+/// T-06: an answer to a request never made, or one answered already, stayed in the session's `responses` for
+/// good (up to 1 MiB each, a session lives on). They're dropped now; the session goes on working.
+@Test func answersNobodyAskedForArentKept() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    let c = try SFTPClient(.local(sudo: try fakeSudo(d, #"[ "$1" = -n ] || exit 2; exec \#(chattyServer(in: d))"#), selinux: true))
+    defer { c.close() }
+    for _ in 0..<20 { #expect(try c.lstat(d)?.kind == .dir) }
+    #expect(try c.list(d).map(\.name).contains("sftp-chatty"))
+    #expect(c.heldAnswers == 0)
+}
+
+/// T-06: answers piling up past `heldLimit` (a hostile server holding 1 MiB an answer for every request in flight)
+/// end the session with a protocol error, as other breaches do; the next call throws instead of waiting.
+@Test func answersPilingUpEndTheSession() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    for i in 0..<50 { fm.createFile(atPath: d + "/file-with-a-longish-name-\(i)", contents: nil) }
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    c.heldLimit = 100
+    let e = #expect(throws: SFTPError.self) { try c.list(d) }
+    #expect(e?.message.contains("protocol error") == true, "\(e?.message ?? "")")
+    #expect(throws: SFTPError.self) { try c.lstat(d) }
+}

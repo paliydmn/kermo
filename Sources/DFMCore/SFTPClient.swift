@@ -48,7 +48,15 @@ public final class SFTPClient: @unchecked Sendable {
     private let writeFD: Int32, readFD: Int32   // FileHandle.fileDescriptor raises once closed
     private let cond = NSCondition()
     private var responses: [UInt32: (type: UInt8, body: Data)] = [:]
-    private var ignored = Set<UInt32>()   // answers nobody waits for any more (an abandoned pipeline)
+    /// Requests sent and not answered yet, not forgotten (an abandoned pipeline): only their answers are kept. One a
+    /// server sends unasked, or twice, would stay in `responses` for the session's life.
+    private var pending = Set<UInt32>()
+    /// Bytes of answers that arrived and weren't taken yet. Past `heldLimit` the server is talking past what was
+    /// asked: a protocol error. What's in flight at most — 64 folders × 8 READDIRs of some 100 names (~20 KB each
+    /// from OpenSSH), or 64 READs of 32 KB — is some 10 MB; a hostile server could hold 1 MiB an answer.
+    private var held = 0
+    var heldLimit = 64 << 20   // a test makes it small (before its first request)
+    var heldAnswers: Int { cond.withLock { responses.count } }
     private var lostReason: String?
     private var answers = 0   // packets heard so far: whether the server is still at work (`closeWhenQuiet`)
     private var nextID: UInt32 = 1
@@ -764,6 +772,7 @@ public final class SFTPClient: @unchecked Sendable {
         var p = p
         let id: UInt32 = cond.withLock {
             defer { nextID &+= 1; if nextID == 0 { nextID = 1 } }
+            pending.insert(p.type == Self.INIT ? 0 : nextID)   // VERSION has no id
             return nextID
         }
         if p.type != Self.INIT { p.setID(id) }
@@ -792,7 +801,7 @@ public final class SFTPClient: @unchecked Sendable {
         if id > waveEnd { roundTrips += 1; waveEnd = lastSent }
         let r = cond.withLock { () -> (type: UInt8, body: Data)? in
             while true {
-                if let r = responses.removeValue(forKey: id) { return r }
+                if let r = responses.removeValue(forKey: id) { held -= r.body.count; return r }
                 if lostReason != nil { return nil }
                 cond.wait()
             }
@@ -803,7 +812,9 @@ public final class SFTPClient: @unchecked Sendable {
 
     func forget(_ ids: [UInt32]) {
         cond.withLock {
-            for id in ids where responses.removeValue(forKey: id) == nil { ignored.insert(id) }
+            for id in ids {
+                if let r = responses.removeValue(forKey: id) { held -= r.body.count } else { pending.remove(id) }
+            }
         }
     }
 
@@ -837,10 +848,18 @@ public final class SFTPClient: @unchecked Sendable {
             let id: UInt32 = type == Self.VERSION ? 0
                 : body.count >= 5 ? body.subdata(in: body.startIndex + 1 ..< body.startIndex + 5).withUnsafeBytes { UInt32(bigEndian: $0.loadUnaligned(as: UInt32.self)) } : 0
             let rest = body.subdata(in: body.startIndex + (type == Self.VERSION ? 1 : min(5, body.count)) ..< body.endIndex)
-            cond.withLock {
+            let over = cond.withLock { () -> Bool in
                 answers += 1
-                if ignored.remove(id) == nil { responses[id] = (type, rest) }
+                guard pending.remove(id) != nil else { return false }   // unasked, or asked and answered: dropped
+                responses[id] = (type, rest)
+                held += rest.count
                 cond.broadcast()
+                return held > heldLimit
+            }
+            if over {
+                lost(protocolError("more than \(heldLimit) bytes of answers held").message)
+                if process.isRunning { process.terminate() }
+                break
             }
         }
         process.waitUntilExit()
