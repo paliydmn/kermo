@@ -57,3 +57,37 @@ private func run(_ tool: String, _ args: [String], in dir: String) throws {
     }
     #expect(asked == Array(repeating: "2 items already exist in \((dest as NSString).abbreviatingWithTildeInPath)", count: 2), "once each, before")
 }
+
+/// F-02: a hard-linked file is saved in place (a rename would split its links). A shorter text leaves exactly the new
+/// length, the same inode, the link whole. A write that stops midway (a full disk) leaves the file no shorter than the
+/// old text or the new one — before, it was emptied first — and says so, the text still unsaved in the window.
+@MainActor @Test func aSaveInPlaceNeverEmptiesTheFile() async throws {
+    _ = NSApplication.shared
+    let dir = try folder()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let a = dir + "/a.conf", b = dir + "/b.conf"
+    let old = String(repeating: "old line\n", count: 1000)
+    try Data(old.utf8).write(to: URL(fileURLWithPath: a))
+    #expect(link(a, b) == 0)
+    let inode = FileJob.lstat(a)?.st_ino
+
+    let e = try Editor(URL(fileURLWithPath: a))
+    defer { e.close() }
+    e.textView.insertText("short\n", replacementRange: NSRange(location: 0, length: (old as NSString).length))
+    #expect(await e.save())
+    #expect(read(a) == "short\n" && read(b) == "short\n" && FileJob.lstat(a)?.st_ino == inode)
+
+    try Data(old.utf8).write(to: URL(fileURLWithPath: a))
+    let new = String(repeating: "new text\n", count: 2000)
+    e.textView.insertText(new, replacementRange: NSRange(location: 0, length: (e.textView.string as NSString).length))
+    e.rewriteInPlace = { h, data in   // the disk fills up after 4 KB
+        try h.write(contentsOf: data.prefix(4096))
+        throw POSIXError(.ENOSPC)
+    }
+    #expect(await !e.save(force: true))
+    let now = try #require(read(a))
+    #expect(now.utf8.count >= min(old.utf8.count, new.utf8.count), "\(now.utf8.count) bytes")
+    #expect(now.hasPrefix(String(new.prefix(4096))) && read(b) == now && FileJob.lstat(a)?.st_ino == inode)
+    #expect(e.window?.attachedSheet != nil, "says it couldn't save")
+    #expect(e.window?.isDocumentEdited == true && e.textView.string == new, "the text stays, unsaved")
+}
