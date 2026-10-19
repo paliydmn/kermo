@@ -100,7 +100,7 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 
 ## Split and combine
 
-**File ▸ Split File…** cuts the cursor file into `name.000`, `name.001` … next to it. The size is bytes or with K, M or G (`650M`; it starts at `1G`, then keeps your last). **Combine Parts…** with the cursor on any part joins the set (starting at `.000` or `.001`, no gaps) into the name you confirm and never overwrites.
+**File ▸ Split File…** cuts the cursor file into `name.000`, `name.001` … next to it. The size is bytes or with K, M or G (`650M`; it starts at `1G`, then keeps your last). Split refuses while any part of that name is there already (not only `.000`). **Combine Parts…** with the cursor on any part joins the set (starting at `.000` or `.001`, no gaps) into the name you confirm and never overwrites. Every part but the last must be the size of the first, and the last no bigger: otherwise they're parts of two splits, and Combine names the one that doesn't fit and joins nothing.
 
 ## Sizes, hidden files and sort
 

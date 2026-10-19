@@ -1897,8 +1897,14 @@ extension AppDelegate {
             guard size.range(of: #"^\d+[KkMmGg]?$"#, options: .regularExpression) != nil else {
                 return showError(JobErrorMessage("“\(size)” isn't a size like 650M or 4G."))
             }
-            guard !FileManager.default.fileExists(atPath: url.path + ".000") else {
-                return showError(JobErrorMessage("“\(name).000” already exists."))
+            // Any part there already, not just .000: split writes over the first ones and leaves the rest, and Combine
+            // would join both splits.
+            let parts = await Blocking.run(.userInitiated) {
+                SplitParts.parts(of: name, in: ((try? DirLister.list(dir)) ?? []).map(\.name))
+            }
+            guard parts.isEmpty else {
+                let shown = parts.prefix(3).map { "“\($0)”" }.joined(separator: ", ") + (parts.count > 3 ? " and \(parts.count - 3) more" : "")
+                return showError(JobErrorMessage("\(shown) \(parts.count == 1 ? "is" : "are") there already: combine or remove \(parts.count == 1 ? "it" : "them") first."))
             }
             defaults.set(size, forKey: "splitSize")
             let q = ShellContext.quoteName
@@ -1912,11 +1918,16 @@ extension AppDelegate {
     func combineDialog() {
         guard let url = active.cursorURL else { return NSSound.beep() }
         let dir = url.deletingLastPathComponent().path
-        let names = ((try? DirLister.list(dir)) ?? []).map(\.name)   // all of them, not just what the filter shows
-        guard let seq = SplitParts.sequence(for: url.lastPathComponent, in: names) else {
-            return active.flash("Put the cursor on a part (name.000 / name.001) — and make sure none is missing")
-        }
         Task {
+            let items = await Blocking.run(.userInitiated) { (try? DirLister.list(dir)) ?? [] }   // all of them, not just what the filter shows
+            guard let seq = SplitParts.sequence(for: url.lastPathComponent, in: items.map(\.name)) else {
+                return active.flash("Put the cursor on a part (name.000 / name.001) — and make sure none is missing")
+            }
+            let sizes = Dictionary(items.map { ($0.name, $0.size) }) { a, _ in a }
+            if let odd = SplitParts.misfit(seq.parts, sizes: sizes) {
+                let size = { ByteCountFormatter.string(fromByteCount: sizes[$0] ?? 0, countStyle: .file) }
+                return showError(JobErrorMessage("“\(odd)” is \(size(odd)), “\(seq.parts[0])” \(size(seq.parts[0])): these look like parts of two different splits. Nothing was combined."))
+            }
             guard let target = await prompt("Combine \(seq.parts.count) parts (\(seq.parts.first!) … \(seq.parts.last!)) into:",
                                             value: seq.base, ok: "Combine"), !target.isEmpty else { return }
             let q = ShellContext.quoteName

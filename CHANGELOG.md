@@ -30,6 +30,7 @@ Release:
 - On a server with SELinux, saving a file from any panel keeps its SELinux label. Before, only a root panel did; a login as root or as yourself gave the saved file its folder's label (`/etc/shadow` losing `shadow_t`, a page in `~/public_html` answering 403).
 - Extracting a zip, 7z or other archive, or entries from inside any archive, over files that are already there can no longer leave one of them gone and the new one cut short when you stop it, the disk fills up or the archive is broken midway: it unpacks into a hidden folder first, as all of a tar already did, and nothing lands unless it all worked.
 - Saving a hard-linked file, or someone else's file in a folder you can write, in the editor can no longer leave it empty when the disk fills up or the write fails midway: the text is written over the old one and the file is cut to length only at the end.
+- **Split File…** no longer writes over parts of an earlier split when `.000` is gone but later parts are there, and **Combine Parts…** refuses parts of different sizes (two splits mixed) instead of joining them into garbage. Both now read the folder off the main thread.
 - Logged in to a server as `root` (not through a root panel), saving someone else's file now replaces it whole and gives it back its owner, as a root panel does. Before, it was written into in place.
 - The history of saved server files always stays out of Time Machine. Before, only a history folder this version created was left out; one from an older version was backed up, server secrets included.
 
