@@ -69,3 +69,33 @@ private func exists(_ p: String) -> Bool { FileJob.lstat(p) != nil }
     job = ask(FileJob(.delete, sources: [d + "/top"], from: .sftp(.local()), to: .sftp(.local()), destDir: nil))
     #expect(!exists(d + "/top") && job.progress.errors.isEmpty)
 }
+
+/// F-10: on a server a file replacing a folder (or a folder a file) is copied whole under a temporary name first;
+/// the old one goes only then. A copy that fails (an unreadable source) leaves the old one as it was — before, the
+/// folder was deleted first, so neither was left — and no temporary copy behind.
+@Test func replacingAFolderWithAFileOnAServerKeepsItUntilTheNewOneIsWhole() throws {
+    let d = tempDir()
+    defer { sh("chmod -R u+rw .", in: d); try? FileManager.default.removeItem(atPath: d) }
+    func copy(_ name: String) -> FileJob {
+        let job = FileJob(.copy, sources: [d + "/src/" + name], from: .local, to: .sftp(.local()), destDir: d + "/dst")
+        job.resolveConflict = { _ in (.overwrite, true) }
+        job.resolveError = { _, _ in (.skip, false) }
+        job.run()
+        return job
+    }
+    func names() -> [String] { (try? FileManager.default.contentsOfDirectory(atPath: d + "/dst").sorted()) ?? [] }
+    sh("mkdir -p src/dir dst/file dst/dir && echo new > src/file && echo old > dst/file/a && echo new > src/dir/b && echo old > dst/dir2", in: d)
+    sh("rmdir dst/dir && mv dst/dir2 dst/dir", in: d)   // dst: file/ is a folder, dir is a file
+
+    sh("chmod 000 src/file", in: d)
+    #expect(!copy("file").progress.errors.isEmpty)
+    #expect(exists(d + "/dst/file/a") && names() == ["dir", "file"], "the old folder stays, nothing left beside it")
+    sh("chmod 644 src/file && echo bad > src/dir/c && chmod 000 src/dir/c", in: d)
+    #expect(!copy("dir").progress.errors.isEmpty)
+    #expect(FileJob.lstat(d + "/dst/dir").map { $0.st_mode & S_IFMT == S_IFREG } == true && names() == ["dir", "file"], "the old file stays")
+
+    sh("chmod 644 src/dir/c && rm src/dir/c", in: d)
+    #expect(copy("file").progress.errors.isEmpty && copy("dir").progress.errors.isEmpty)
+    #expect(FileJob.lstat(d + "/dst/file").map { $0.st_mode & S_IFMT == S_IFREG } == true && exists(d + "/dst/dir/b"))
+    #expect(names() == ["dir", "file"])
+}

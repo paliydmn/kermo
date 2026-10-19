@@ -583,6 +583,8 @@ extension FileJob {
             case .overwrite, .overwriteIfNewer:
                 if conflict.bothDirs {
                     merge = true
+                } else if s.kind == .dir || d.kind == .dir {
+                    return replaceAcross(sfs, src, s, dfs, dst, d, move: move, root: root, depth: depth, maxDepth: maxDepth)
                 } else if s.kind != .file || d.kind != .file {
                     // Anything but file over file (that one is replaced atomically below): clear the way first.
                     // A symlink is removed itself, never what it points at.
@@ -667,6 +669,32 @@ extension FileJob {
         case .other:
             fail(src, "Not a regular file — not copied")
         }
+    }
+
+    /// A folder replacing a file or a link, or the other way round (F-10): the new one first, whole, under a temporary
+    /// name beside it; only then the old one goes (to the Trash on this Mac) and the new one takes its name. A copy
+    /// that fails or is stopped midway leaves the old one as it was and takes its own half copy away; a move's half
+    /// is kept (its source is partly gone), and the summary names where.
+    private func replaceAcross(_ sfs: TransferFS, _ src: String, _ s: SFTPClient.Attrs, _ dfs: TransferFS, _ dst: String,
+                               _ d: SFTPClient.Attrs, move: Bool, root: String?, depth: Int, maxDepth: Int) {
+        let temp = (dst as NSString).deletingLastPathComponent + "/.dfm-new-" + UUID().uuidString   // never swept: a move's may be all there is
+        let before = progress.errors.count
+        transferAcross(sfs, src, dfs, temp, move: move, root: root, depth: depth, maxDepth: maxDepth, seen: (s, .some(nil)))
+        guard !isCancelled, progress.errors.count == before, ((try? dfs.lstat(temp)) ?? nil) != nil else {
+            guard ((try? dfs.lstat(temp)) ?? nil) != nil else { return }
+            if move { update { $0.errors.append("\(dst): kept as it was; what was moved so far is in \(temp)") } }
+            else if let t = (try? dfs.lstat(temp)) ?? nil { try? removeTree(dfs, temp, t) }
+            return
+        }
+        guard attempt(dst, {
+            // On this Mac a replaced folder goes to the Trash (a server has none). A symlink is removed itself.
+            if dfs is LocalFS && d.kind == .dir { try FileManager.default.trashItem(at: URL(fileURLWithPath: dst), resultingItemURL: nil) }
+            else if (try dfs.lstat(dst)) != nil { try removeTree(dfs, dst, d) }
+            try dfs.rename(temp, dst, replace: false)
+        }) else {
+            return update { $0.errors.append("\(dst): the new one is in \(temp)") }
+        }
+        noteAcross(dst)
     }
 
     private func noteAcross(_ path: String) { createdAcross.insert(Self.foldedPath(path)) }
