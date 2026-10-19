@@ -310,7 +310,12 @@ public final class FileJob: @unchecked Sendable {
         var createdHere = into?.created ?? false   // dst, when it's a folder this job made (or is inside one)
         var dstDev: dev_t?
 
-        if let d = Self.lstat(dst) {
+        // The item itself under another spelling (Foo → foo on a case-insensitive volume): a move renames it, as F2
+        // does, instead of asking to merge it into itself and leaving the name. Not one of two hard links: a rename
+        // between those does nothing.
+        let respelled = move && src.caseInsensitiveCompare(dst) == .orderedSame
+            && Self.lstat(dst).map { $0.st_dev == s.st_dev && $0.st_ino == s.st_ino } == true
+        if !respelled, let d = Self.lstat(dst) {
             createsNew = false
             let dstIsDir = d.st_mode & S_IFMT == S_IFDIR
             createdHere = into.map { $0.created || created.contains(Self.key(d)) } ?? isCreated(dst)

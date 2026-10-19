@@ -16,7 +16,7 @@ Operations act on the marked items, or on the cursor item when nothing is marked
 
 Press F5 (⌥5) for **Copy To…** and F6 (⌥6) for **Move To…**. The dialog proposes the other panel's folder (with three or four panels, the one you used before this). Edit the path: `~` works, and a relative path starts in the active folder.
 
-- A path ending in `/`, or several items, means "into this folder", made if missing. One item and a path that isn't a folder means "under this name".
+- A path ending in `/`, or several items, means "into this folder", made if missing. One item and a path that isn't a folder means "under this name". F6 to the same name in another case (`Foo` → `foo`) renames it, as ⇧F6 does.
 - ⌘C copies the marked files, ⌘V pastes them (files copied in Finder too) and ⌥⌘V (**Move Here**) moves them. Pasting into their own folder duplicates them as `name 2`.
 - With a server on either side, see [Files on a server](server-files.md).
 

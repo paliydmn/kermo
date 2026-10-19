@@ -557,3 +557,31 @@ private struct Sandbox {
     #expect(job.progress.state == .done)
     #expect(s.read("dst/a.txt")?.utf8.count == 4 << 20)
 }
+
+/// F-04: F6 to the same name in other case (Foo → foo) on a case-insensitive volume (the tests' one: APFS as macOS
+/// formats it) renames, asking nothing; before, it asked to merge the item into itself and left the name.
+@Test func aMoveToAnotherCaseRenames() throws {
+    let s = Sandbox()
+    defer { try? FileManager.default.removeItem(atPath: s.root) }
+    s.write("src/Foo/x.txt", "x")
+    s.write("src/Bar.txt", "bar")
+    try #require(s.exists("src/foo"), "a case-sensitive volume: nothing to test")
+    for (from, to) in [("Foo", "foo"), ("Bar.txt", "bar.txt")] {
+        let job = FileJob(.move, sources: [s.p("src/" + from)], destDir: s.src, targetName: to)
+        job.resolveConflict = { c in Issue.record("asked about \(c.dst)"); return (.skip, false) }
+        job.run()
+        #expect(job.progress.errors.isEmpty)
+        #expect(job.results.map(\.dst) == [s.p("src/" + to)], "undo knows it")
+    }
+    #expect(try FileManager.default.contentsOfDirectory(atPath: s.src).sorted() == ["bar.txt", "foo"])
+    #expect(s.read("src/foo/x.txt") == "x" && s.read("src/bar.txt") == "bar")
+
+    // two hard links of one file are two items: the question stays
+    s.write("src/a.txt", "a")
+    #expect(link(s.p("src/a.txt"), s.p("src/b.txt")) == 0)
+    nonisolated(unsafe) var asked = 0
+    let job = FileJob(.move, sources: [s.p("src/a.txt")], destDir: s.src, targetName: "b.txt")
+    job.resolveConflict = { _ in asked += 1; return (.skip, false) }
+    job.run()
+    #expect(asked == 1)
+}
