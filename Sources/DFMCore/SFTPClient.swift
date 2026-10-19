@@ -1136,6 +1136,8 @@ extension SFTPClient {
             if !inPlace, let cur, cur.uid == nil || cur.uid != mine?.uid || cur.gid != mine?.gid {
                 // Root gives the partial file the file's owner, then renames it over: never a moment as root's file.
                 // Not allowed (NFS's root_squash), or anyone else's session: copied into the file, which keeps its own.
+                // ponytail: SFTP v3 has no link count, so a hard-linked file is split (D-079); an `ssh stat -c %h` per
+                // save would tell, and then go in place like SELinux does.
                 if target.sudo, let uid = cur.uid, let gid = cur.gid {
                     do {
                         try setAttrs(partial, mtime: nil, mode: nil, owner: (uid, gid))

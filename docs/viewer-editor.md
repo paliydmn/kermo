@@ -63,7 +63,12 @@ defaults write com.dmn.dfilemanager editorFinalNewline -bool true
 
 ### Save as Administrator
 
-When a save fails because the file or its folder is not yours to write, the editor asks **Save as Administrator**. It shows the macOS password dialog and writes the text as root, keeping the owner, mode and hard links. It checks the file again right before writing, so a change made meanwhile asks first.
+When a save fails because the file or its folder is not yours to write, the editor asks **Save as Administrator**. It shows the macOS password dialog and writes the text as root, keeping the owner, mode and hard links.
+
+- The file is checked before the password dialog, and once more as root right before writing: if it changed while the dialog was up (another size, date or file), nothing is written and the editor asks "changed on disk" as for any change.
+- The text goes to root in the command itself, so nothing else running as you can change it while macOS asks for the password. A text over about 500 KB, or one that isn't UTF-8, goes through a temporary file only you can read; root copies it and writes only if the copy is exactly your text.
+- Root writes over the old text and then cuts the file to length, so a full disk never leaves it empty.
+- Root refuses a file that is a symlink. One swapped in between that check and the write would still be followed (that takes a signed helper to close).
 
 ### External editor and server files
 
