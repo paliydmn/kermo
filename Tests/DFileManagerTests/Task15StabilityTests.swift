@@ -281,3 +281,23 @@ extension ServerCopiesTests {
     chmod(d + "/servers.json", 0o000)
     #expect(throws: (any Error).self) { try Config.contents(d + "/servers.json") }
 }
+
+/// E-06: a reload (the file changed on disk, nothing unsaved) kept the old text's undo steps: ⌘Z then applied them to
+/// the new text — garbled, or out of range — and a save wrote that over the change.
+@MainActor @Test func aReloadForgetsTheOldTextsUndo() async throws {
+    _ = NSApplication.shared
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let url = URL(fileURLWithPath: d + "/a.txt")
+    try Data("first version\n".utf8).write(to: url)
+    let e = try Editor(url)
+    defer { e.close() }
+    e.textView.setSelectedRange(NSRange(location: 0, length: 0))
+    e.textView.insertText("typed ", replacementRange: e.textView.selectedRange())
+    #expect(e.textView.undoManager?.canUndo == true)
+    #expect(await e.save())
+    try Data("x\n".utf8).write(to: url)   // a git pull
+    #expect(await e.reload())
+    #expect(e.textView.string == "x\n")
+    #expect(e.textView.undoManager?.canUndo != true)
+}

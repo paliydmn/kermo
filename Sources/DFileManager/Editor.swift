@@ -617,6 +617,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         self.digest = digest
         let sel = textView.selectedRange()
         textView.string = text
+        textView.undoManager?.removeAllActions()   // the old text's edits: ⌘Z would apply them to the new one
         ruler.invalidate()
         highlight(after: 0)
         textView.setSelectedRange(NSRange(location: min(sel.location, (text as NSString).length), length: 0))
