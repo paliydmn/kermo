@@ -353,6 +353,15 @@ extension FileJob {
         let along = tops.filter { inFolder($0.path) }.count
         tops.removeAll { inFolder($0.path) }
         update { $0.doneFiles += along }
+        // A root session: the folders the tops are in, one look for all (D-082). In one others can change, a top
+        // swapped for a link to / between its look and its listing would send root's delete there.
+        if (fs as? RemoteFS)?.rootUID != nil {
+            let parents = Array(Set(tops.map { ($0.path as NSString).deletingLastPathComponent }))
+            let barred = Set(zip(parents, fs.lstat(parents)).filter { _, a in (a.value ?? nil).map { othersCanChange(fs, $0) } ?? false }.map(\.0))
+            for t in tops where barred.contains((t.path as NSString).deletingLastPathComponent) { notEntered((t.path as NSString).deletingLastPathComponent) }
+            update { $0.doneFiles += tops.filter { barred.contains(($0.path as NSString).deletingLastPathComponent) }.count }
+            tops.removeAll { barred.contains(($0.path as NSString).deletingLastPathComponent) }
+        }
         removeAcross(fs, tops)
         finish()
     }
@@ -514,7 +523,6 @@ extension FileJob {
         return uid != root || mode & 0o022 != 0 && mode & UInt32(S_ISVTX) == 0
     }
 
-    /// Said once in the summary, not asked: Retry would find the same folder.
     /// The mount points in /proc/self/mounts' text; a field's space, tab, newline and backslash come as \040 \011
     /// \012 \134. Not "/": every path is below that one.
     static func mounts(_ text: String) -> Set<String> {
@@ -564,8 +572,10 @@ extension FileJob {
         update { $0.errors.append("\(path): another volume is mounted here — skipped") }
     }
 
+    /// Said once in the summary, not asked: Retry would find the same folder.
     func notEntered(_ path: String) {
-        update { $0.errors.append("\(path): someone else on the server can change this folder — not entered as root. Do it as its owner, or in a terminal there") }
+        let line = "\(path): someone else on the server can change this folder — not entered as root. Do it as its owner, or in a terminal there"
+        update { if !$0.errors.contains(line) { $0.errors.append(line) } }   // once, however many items it held
     }
 
     /// A name a server sent can be anything: never one that leaves the folder it was listed in.
@@ -676,11 +686,13 @@ extension FileJob {
         }
 
         let root = root ?? dst
+        // Not a file either (D-082): the partial written there as root, then renamed by name — between the two, its
+        // folder's owner can swap what the names lead to.
+        if top, let parent = barredParent, (dst as NSString).deletingLastPathComponent == parent { notEntered(parent); return skip(sfs, src, s) }
         switch s.kind {
         case .dir:
             if othersCanChange(sfs, s) { return notEntered(src) }
             if merge, let d = existing, othersCanChange(dfs, d) { notEntered(dst); return skip(sfs, src, s) }
-            if top, let parent = barredParent, (dst as NSString).deletingLastPathComponent == parent { notEntered(parent); return skip(sfs, src, s) }
             // Listed before the copy exists: a folder that is somehow inside its source isn't copied into itself.
             var children: [(name: String, attrs: SFTPClient.Attrs)] = []
             guard attempt(src, { children = try sfs.list(src) }) else { return }

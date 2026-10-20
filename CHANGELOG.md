@@ -23,6 +23,7 @@ Release:
 - **Copy as Administrator** and **Move as Administrator** now check what F5 and F6 check, before the password is asked. They refuse to copy a folder into itself (`ditto` as root filled the disk with copies of it) and to go through a link that has the item's name in the destination folder (root wrote where it pointed). Copy also asks before it replaces what's there.
 - **Save as Administrator** can no longer be made to write through a link that something running as you swaps in at the last moment: root opens the file without following links and checks it's still the file you edited before it writes.
 - On a production server the question before a command now looks at every command in the line, not only the first word: `cd /srv && rm -rf releases/*`, `ls; rm x`, `… | xargs rm` and `$(…)` ask too. So do `find -delete`, `truncate`, `rsync --delete`, `git clean`, `git reset --hard`, `systemctl disable` and writing over a file with `>`.
+- A root panel no longer deletes an item that is in a folder someone else on the server can change, nor copies a file into such a folder: between two steps there, the folder's owner could swap the item for a link and send root's delete or write anywhere. Such items are named in the summary.
 
 ### Changed
 
