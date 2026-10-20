@@ -79,6 +79,82 @@ public enum Services {
     public static func status(_ u: ServiceUnit) -> String { "systemctl status --no-pager -- " + ShellContext.quote(u.unit) }
     public static func log(_ u: ServiceUnit) -> String { "journalctl -u " + ShellContext.quote(u.unit) + " -n 200 -f --no-pager" }
     public static func restart(_ u: ServiceUnit) -> String { "systemctl restart -- " + ShellContext.quote(u.unit) }
+    public static func start(_ u: ServiceUnit) -> String { "systemctl start -- " + ShellContext.quote(u.unit) }
+
+    /// What changes a service's state: run as root, and its state read again after.
+    public enum Change: String, Sendable {
+        case start, restart
+        public var title: String { rawValue.capitalized }
+        public var busy: String { self == .start ? "Starting…" : "Restarting…" }
+        var done: String { rawValue + "ed" }
+    }
+
+    /// A unit's state as `systemctl show` says it: `active`/`sub` as the list has them, its `Type=` and how its last
+    /// run ended (`Result=`: success, exit-code…).
+    public struct UnitState: Equatable, Sendable {
+        public var active: String, sub: String, type: String, result: String
+        public init(active: String, sub: String, type: String = "simple", result: String = "success") {
+            (self.active, self.sub, self.type, self.result) = (active, sub, type, result)
+        }
+    }
+
+    /// The state of `u` now, as the user (anyone may ask systemd). A second after a change: a service that dies
+    /// at once is failed (or restarting) by then, not "active" yet.
+    // ponytail: one look a second after, not a watch — a service that dies later shows on the next look.
+    public static func state(_ u: ServiceUnit, on t: SFTPTarget, env: [String: String] = [:], cancel: CancelFlag? = nil) throws -> UnitState {
+        let out = try SSHCommand.capture(t, "sleep 1; systemctl show -p ActiveState -p SubState -p Type -p Result -- " + ShellContext.quote(u.unit),
+                                         env: env, cancel: cancel)
+        guard let state = parse(show: out) else { throw SFTPError(message: "systemctl said something Kermo can't read") }
+        return state
+    }
+
+    /// `Key=value` lines; a login script may print others before them.
+    static func parse(show: String) -> UnitState? {
+        var v: [String: String] = [:]
+        for line in show.split(whereSeparator: \.isNewline) {
+            let kv = line.split(separator: "=", maxSplits: 1).map(String.init)
+            if kv.count == 2, ["ActiveState", "SubState", "Type", "Result"].contains(kv[0]) { v[kv[0]] = kv[1] }
+        }
+        guard let active = v["ActiveState"], let sub = v["SubState"] else { return nil }
+        return UnitState(active: active, sub: sub, type: v["Type"] ?? "", result: v["Result"] ?? "")
+    }
+
+    /// How a change ran, before its state is looked at.
+    public enum Ran: Equatable, Sendable {
+        case notRun(String)   // never sent: locked, the question's Cancel
+        case unknown(String)   // the wait stopped (⎋): sent, may have run
+        case couldNotRun(String)   // ssh or sudo failed, no systemctl
+        case failed(exit: Int32, output: String)
+        case passed
+    }
+
+    public enum Outcome: Equatable, Sendable { case ok, warning, failed, notRun }
+
+    /// The line that says how a change of `name` went — which service, where, when — and whether it is what one asked
+    /// for. Exit 0 is the command's word, not the service's: a failed service after it is a warning, and so is a state
+    /// that couldn't be read (both said). An inactive oneshot whose run went well is done, not down.
+    public static func outcome(_ c: Change, of name: String, on server: String, at time: String, ran: Ran,
+                               state: UnitState?, stateError: String? = nil) -> (outcome: Outcome, line: String) {
+        let now = state.map { $0.active == $0.sub ? $0.active : "\($0.active) · \($0.sub)" }
+        switch ran {
+        case .notRun(let why): return (.notRun, "\(name): not \(c.done) — \(why); nothing ran")
+        case .unknown(let why): return (.warning, "⚠ \(name): stopped waiting for the \(c.rawValue) on \(server) at \(time) (\(why)) — it may have run")
+        case .couldNotRun(let why): return (.failed, "✕ \(name): the \(c.rawValue) didn't run on \(server) at \(time): \(why)")
+        case .failed(let exit, let output):
+            let first = output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
+            let why = first.map { $0.count > 160 ? $0.prefix(159) + "…" : $0 } ?? "exit \(exit)"
+            return (.failed, "✕ \(name): the \(c.rawValue) failed on \(server) at \(time): \(why)" + (now.map { " — now \($0)" } ?? ""))
+        case .passed:
+            guard let state, let now else {
+                return (.warning, "⚠ \(name) \(c.done) on \(server) at \(time), but its state couldn't be read" + (stateError.map { ": \($0)" } ?? ""))
+            }
+            let finished = state.type == "oneshot" && state.active == "inactive" && state.result == "success"
+            guard state.active == "active" || finished else {
+                return (.warning, "⚠ \(name): the \(c.rawValue) completed on \(server) at \(time), but the service is \(now)")
+            }
+            return (.ok, "✓ \(name) \(c.done) on \(server) at \(time) — \(finished ? "a oneshot, ran and finished (\(now))" : now)")
+        }
+    }
 
     /// The unit's file on the server (its `FragmentPath`); nil where systemd made it up (a generated unit has none).
     public static func unitFile(_ u: ServiceUnit, on t: SFTPTarget, env: [String: String] = [:], cancel: CancelFlag? = nil) throws -> String? {

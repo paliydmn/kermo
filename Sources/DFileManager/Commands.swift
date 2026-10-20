@@ -1495,33 +1495,53 @@ extension AppDelegate {
     @discardableResult
     func runThere(_ command: String, on target: SFTPTarget, action: String, paths: [String] = [], busy: String, done: String,
                   ask: (message: String, button: String)? = nil, saved: URL? = nil, in panel: PanelViewController) async -> Bool {
+        await sayRan(ranThere(command, on: target, action: action, paths: paths, busy: busy, ask: ask, in: panel),
+                     command, on: target, done: done, saved: saved, in: panel)
+    }
+
+    /// What `ranThere` came to. `notRun`: a locked server stayed locked, or the production question's Cancel.
+    enum RanThere { case notRun(String), ran(Result<ConfigCheck.Outcome, Error>) }
+
+    /// `runThere` but for saying how it went: the lock, the production question (on `askOn`, default the main
+    /// window), the run and its production log line.
+    func ranThere(_ command: String, on target: SFTPTarget, action: String, paths: [String] = [], busy: String,
+                  ask: (message: String, button: String)? = nil, askOn: NSWindow? = nil, in panel: PanelViewController) async -> RanThere {
         // A locked server's Touch ID again if its time ran out since it was looked at (a Picker can stay open).
-        if await !ServerLock.authorize(target, "run “\(command)” on") { return false }
+        if await !ServerLock.authorize(target, "run “\(command)” on") { return .notRun("\(target.host) stays locked") }
         if let ask, let info = Self.prodQuestion(command, on: target) {
-            guard await choose(ask.message, info: info, [ask.button, "Cancel"], default: 1) == 0 else { return false }   // ↩ = Cancel
+            guard await choose(ask.message, info: info, [ask.button, "Cancel"], default: 1, on: askOn) == 0 else { return .notRun("cancelled") }   // ↩ = Cancel
         }
         let env = SSHAskpass.env
         let r = await panel.busy(busy) { flag in try ConfigCheck.run(command, on: target, env: env, cancel: flag) }
         let log = { (exit: Int32?, error: String?) in AuditLog.write(target, action, paths: paths, command: command, exit: exit, error: error) }
         switch r {
+        case .success(.passed): log(0, nil)
+        case .success(.failed(let status, let output)): log(status, output)
+        case .success(.noProgram(let why)): log(127, why)
+        case .success: break
+        case .failure(is CancellationError): log(nil, "cancelled, may have run")   // ⎋ stops the wait, not what was sent
+        case .failure(let e): log(1, e.localizedDescription)
+        }
+        return .ran(r)
+    }
+
+    /// How `ranThere` went, in the status line (and `saved`'s editor), or a failure's output. True: it ran, exit 0.
+    func sayRan(_ ran: RanThere, _ command: String, on target: SFTPTarget, done: String, saved: URL? = nil, in panel: PanelViewController) async -> Bool {
+        guard case .ran(let r) = ran else { return false }
+        switch r {
         case .success(.passed):
-            log(0, nil)
             panel.flash(done)
             if let saved { Editor.flash(saved, done) }
             return true
         case .success(.failed(let status, let output)):
-            log(status, output)
             let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
             _ = await choose("“\(command)” failed on \(target.host)", info: text.isEmpty ? "It exited with \(status)." : String(text.suffix(4000)), ["OK"],
                              on: saved.flatMap(Editor.window(for:)))
         case .success(.noProgram(let why)):
-            log(127, why)
             panel.flash("“\(command)” didn't run on \(target.host): \(why)", error: true)
         case .success: break   // needs root, not run: only checks
-        case .failure(is CancellationError): log(nil, "cancelled, may have run")   // ⎋ stops the wait, not what was sent
-        case .failure(let e):
-            log(1, e.localizedDescription)
-            showError(e)
+        case .failure(is CancellationError): break
+        case .failure(let e): showError(e)
         }
         return false
     }

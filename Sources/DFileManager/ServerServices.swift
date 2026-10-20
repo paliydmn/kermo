@@ -72,35 +72,166 @@ extension AppDelegate {
                 Picker.dismiss()
                 return active.flash("\(s.title): systemd lists no services there")
             }
-            Picker.show(over: window, placeholder: (s.prod ? SavedServer.mark : "") + "\(s.title)'s services — ↩ status · ⌘L log · ⌘E edit unit · ⌘R restart",
+            let key = ServerRow.key(t.asUser), kept = servicesKept[key]
+            Picker.show(over: window, placeholder: (s.prod ? SavedServer.mark : "") + "\(s.title)'s services — ↩ status · ⌘L log · ⌘E edit unit · ⌘R restart · ⌃↩ more",
                         items: units.map { serviceItem($0, on: t, of: s) },
-                        rank: { item, q in Fuzzy.score(q, item.title + " " + item.subtitle + " " + item.detail) })
+                        rank: { item, q in Fuzzy.score(q, item.title + " " + item.subtitle + " " + item.detail) },
+                        query: kept?.query ?? "", select: kept?.id, highlight: .systemGreen,
+                        onClose: { [unowned self] q, id in servicesKept[key] = (q, id) })   // back to it after a look at status or log
         }
     }
 
-    /// "nginx" · "active · running" · its description (S2). ↩ its status, ⌘L its log as it goes, ⌘E its unit file,
-    /// ⌘R a restart (S3) — status and log as the user, the restart as root; one with a name Kermo won't put into a
-    /// command does nothing and says why.
-    func serviceItem(_ u: ServiceUnit, on t: SFTPTarget, of s: SavedServer) -> Picker.Item {
-        let state = u.active == u.sub ? u.active : "\(u.active) · \(u.sub)"
-        guard u.safe else {
-            let no = notInCommands(u.unit)
-            return Picker.Item(title: u.name, subtitle: state, detail: Self.detail(u.description), edit: no,
-                               keys: [Shortcut("cmd+l")!: no, Shortcut("cmd+r")!: no], run: no)
+    /// One service of one server: what a row, its run and its result are found by.
+    static func serviceID(_ u: ServiceUnit, on t: SFTPTarget) -> String { ServerRow.key(t.asUser) + " " + u.unit }
+
+    /// What a service's keys and its menu do — one list, so both act alike on the same row. `why`: it can't now.
+    struct ServiceAction {
+        let title: String, key: Shortcut?, closes: Bool, why: String?
+        let run: @MainActor () -> Void
+    }
+
+    /// Status, its log as it goes and its unit file, then what changes it — as root, a start and a restart waiting
+    /// while one runs on it. One with a name Kermo won't put into a command does nothing and says why.
+    func serviceActions(_ u: ServiceUnit, on t: SFTPTarget, of s: SavedServer) -> [ServiceAction] {
+        let no = u.safe ? nil : "“\(u.unit)” has characters Kermo won't put into a command: nothing runs on it"
+        let busy = serviceRuns[Self.serviceID(u, on: t)].map { "\(u.name) is \($0.lowercased()) wait for it" }
+        return [
+            ServiceAction(title: "Status", key: Shortcut("return"), closes: true, why: no) {
+                Shell.run(Services.status(u), on: t.asUser, in: "/", title: "\(s.title): \(u.name) status")
+            },
+            ServiceAction(title: "Live Logs", key: Shortcut("cmd+l"), closes: true, why: no) {
+                Shell.run(Services.log(u), on: t.asUser, in: "/", follow: true, title: "\(s.title): \(u.name) log")
+            },
+            ServiceAction(title: "Edit Unit File…", key: Shortcut("cmd+e"), closes: true, why: no) { [unowned self] in editUnit(u, on: t) },
+            ServiceAction(title: "Start", key: nil, closes: false, why: no ?? busy) { [unowned self] in change(.start, u, on: t, of: s) },
+            ServiceAction(title: "Restart", key: Shortcut("cmd+r"), closes: false, why: no ?? busy) { [unowned self] in change(.restart, u, on: t, of: s) },
+        ]
+    }
+
+    /// The action called `title` as it is now (a run may have started or ended since the row was made).
+    private func perform(_ title: String, _ u: ServiceUnit, on t: SFTPTarget, of s: SavedServer) {
+        guard let a = serviceActions(u, on: t, of: s).first(where: { $0.title == title }) else { return }
+        if let why = a.why { return active.flash(why, error: true) }
+        guard a.closes, Picker.current != nil else { return a.run() }
+        Picker.dismiss()
+        DispatchQueue.main.async { a.run() }   // after focus is back on the main window
+    }
+
+    /// The menu of a service's row: looks, then changes, each with its key; what can't run now is greyed, saying why.
+    private func serviceMenu(_ u: ServiceUnit, on t: SFTPTarget, of s: SavedServer) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for a in serviceActions(u, on: t, of: s) {
+            if a.title == "Start" { menu.addItem(.separator()) }
+            let item = MenuAction.item(a.title) { [unowned self] in perform(a.title, u, on: t, of: s) }
+            if let key = a.key { (item.keyEquivalent, item.keyEquivalentModifierMask) = (key.menuKey, key.flags) }
+            item.isEnabled = a.why == nil
+            item.toolTip = a.why
+            menu.addItem(item)
         }
-        let log: @MainActor () -> Void = { Shell.run(Services.log(u), on: t.asUser, in: "/", follow: true, title: "\(s.title): \(u.name) log") }
-        let restart: @MainActor () -> Void = { [unowned self] in
-            let panel = panel(for: t)
-            Task {
-                await runThere(Services.restart(u), on: t.asRoot(), action: "restart", busy: "Restarting \(u.name) on \(s.title)…",
-                               done: "Restarted \(u.name) on \(s.title)", ask: ("Restart \(u.name) on \(s.title)?", "Restart"), in: panel)
+        return menu
+    }
+
+    /// "nginx" · "active · running" (failed in red, whatever the highlight) · its description (S2); "Restarting…"
+    /// and a spinner while that runs. ↩ ⌘L ⌘E ⌘R and its menu (⌃↩) as `serviceActions` has them; a start or a restart
+    /// keeps the list open.
+    func serviceItem(_ u: ServiceUnit, on t: SFTPTarget, of s: SavedServer) -> Picker.Item {
+        let running = serviceRuns[Self.serviceID(u, on: t)]
+        func act(_ title: String) -> @MainActor () -> Void { { [unowned self] in perform(title, u, on: t, of: s) } }
+        var item = Picker.Item(title: u.name, subtitle: running ?? (u.active == u.sub ? u.active : "\(u.active) · \(u.sub)"),
+                               detail: Self.detail(u.description), edit: act("Edit Unit File…"),
+                               keys: [Shortcut("cmd+l")!: act("Live Logs"), Shortcut("cmd+r")!: act("Restart")], run: act("Status"))
+        item.id = Self.serviceID(u, on: t)
+        item.subtitleColor = running == nil && u.failed ? .systemRed : nil
+        item.busy = running != nil
+        item.keepsOpen = [Shortcut("cmd+r")!]
+        item.menu = { [unowned self] in serviceMenu(u, on: t, of: s) }
+        return item
+    }
+
+    /// A start or a restart of `u` as root, the list staying open: its row says it runs, the lock, the production
+    /// question and the sudo password ask over the list, then its state is read again — as the user — and the line
+    /// under the list says how it went until the next one. A list closed meanwhile: the status line says it, or a
+    /// failure's alert, as `runThere`'s.
+    func change(_ c: Services.Change, _ u: ServiceUnit, on t: SFTPTarget, of s: SavedServer) {
+        let id = Self.serviceID(u, on: t), panel = panel(for: t), list = Picker.current.flatMap { $0.has(id) ? $0 : nil }
+        serviceRuns[id] = c.busy
+        list?.update(serviceItem(u, on: t, of: s))
+        Task { await changed(c, u, on: t, of: s, from: list, in: panel) }
+    }
+
+    private func changed(_ c: Services.Change, _ u: ServiceUnit, on t: SFTPTarget, of s: SavedServer, from list: Picker?,
+                         in panel: PanelViewController) async {
+        let id = Self.serviceID(u, on: t), command = c == .start ? Services.start(u) : Services.restart(u)
+        let busy = String(c.busy.dropLast()) + " \(u.name) on \(s.title)…"
+        let go: () async -> (RanThere, Result<Services.UnitState, Error>?) = { [unowned self] in
+            let ran = await ranThere(command, on: t.asRoot(), action: c.rawValue, busy: busy,
+                                     ask: ("\(c.title) \(u.name) on \(s.title)?", c.title), askOn: list?.window, in: panel)
+            if case .notRun = ran { return (ran, nil) }
+            let env = SSHAskpass.env, read = Self.unitState, user = t.asUser
+            return (ran, await panel.busy("Looking at \(u.name) on \(s.title)…") { flag in try read(u, user, env, flag) })
+        }
+        let (ran, read) = if let list { await list.holding(go) } else { await go() }
+        let (how, output) = Self.how(ran)
+        var state: Services.UnitState?, stateError: String?
+        switch read {
+        case .success(let now)?: state = now
+        case .failure(let e)?: stateError = e is CancellationError ? "stopped" : e.localizedDescription
+        case nil: break
+        }
+        serviceRuns[id] = nil
+        var now = u
+        if let state { (now.active, now.sub) = (state.active, state.sub) }
+        let said = Services.outcome(c, of: u.name, on: s.title, at: Self.clock.string(from: Date()), ran: how, state: state, stateError: stateError)
+        guard let shown = Picker.current, shown.has(id) else {   // closed (or another list): as runThere says it
+            if case .passed = how { return panel.flash(said.line.replacingOccurrences(of: "✓ ", with: ""), error: said.outcome != .ok) }
+            if case .notRun = how { return }
+            _ = await sayRan(ran, command, on: t.asRoot(), done: said.line, in: panel)
+            return
+        }
+        shown.update(serviceItem(now, on: t, of: s))
+        let full = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let window = shown.window
+        var show: (@MainActor () -> Void)?
+        if !full.isEmpty {
+            show = { [unowned self, weak window] in
+                Task { _ = await choose("“\(command)” on \(s.title)", info: String(full.suffix(4000)), ["OK"], on: window) }
             }
         }
-        return Picker.Item(title: u.name, subtitle: state, detail: Self.detail(u.description), edit: { [unowned self] in editUnit(u, on: t) },
-                           keys: [Shortcut("cmd+l")!: log, Shortcut("cmd+r")!: restart]) {
-            Shell.run(Services.status(u), on: t.asUser, in: "/", title: "\(s.title): \(u.name) status")
+        shown.say(Self.result(said), output: show)
+    }
+
+    /// `ranThere`'s outcome as `Services.outcome` takes it, and a failure's output.
+    private static func how(_ ran: RanThere) -> (Services.Ran, String) {
+        switch ran {
+        case .notRun(let why): (.notRun(why), "")
+        case .ran(.success(.passed)): (.passed, "")
+        case .ran(.success(.failed(let status, let out))): (.failed(exit: status, output: out), out)
+        case .ran(.success(.noProgram(let why))): (.couldNotRun(why), "")
+        case .ran(.success(let other)): (.couldNotRun("\(other)"), "")   // a root target: never needsRoot
+        case .ran(.failure(is CancellationError)): (.unknown("⎋"), "")
+        case .ran(.failure(let e)): (.couldNotRun(e.localizedDescription), "")
         }
     }
+
+    /// The line, its mark (✓ ⚠ ✕) in green, orange or red.
+    private static func result(_ said: (outcome: Services.Outcome, line: String)) -> NSAttributedString {
+        let text = NSMutableAttributedString(string: said.line, attributes: [.foregroundColor: NSColor.labelColor])
+        let mark: [Services.Outcome: NSColor] = [.ok: .systemGreen, .warning: .systemOrange, .failed: .systemRed]
+        if let color = mark[said.outcome] { text.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: 1)) }
+        return text
+    }
+
+    /// Tests: in place of the server's `systemctl show`.
+    nonisolated(unsafe) static var unitState: @Sendable (ServiceUnit, SFTPTarget, [String: String], CancelFlag) throws -> Services.UnitState = {
+        try Services.state($0, on: $1, env: $2, cancel: $3)
+    }
+
+    private static let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
 
     /// ⌘E on a service: its unit file in the editor — as the panel is, root's or the user's — with what any server file
     /// gets there (history, a check and daemon-reload for /etc/systemd/system).

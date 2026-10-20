@@ -180,3 +180,39 @@ extension SudoPasswordTests {
     try held.fileHandleForWriting.close()
 }
 }
+
+/// `systemctl show -p …`: the keys asked for, whatever a login script printed first; no state, no answer.
+@Test func aUnitsStateIsReadFromShow() {
+    #expect(Services.parse(show: "Welcome!\nType=oneshot\nResult=success\nActiveState=inactive\nSubState=dead\n")
+            == Services.UnitState(active: "inactive", sub: "dead", type: "oneshot", result: "success"))
+    #expect(Services.parse(show: "Type=simple\n") == nil)
+    #expect(Services.start(ServiceUnit(unit: "web.service", active: "inactive", sub: "dead")) == "systemctl start -- web.service")
+}
+
+/// A change's line names the service, the server and the time. Exit 0 is the command's word: a service failed (or
+/// down) a second later is a warning, a state that couldn't be read is said with the run; an inactive oneshot that
+/// ran well is done. A failure says its first line; never run is never a success.
+@Test func aChangeSaysHowItWentAndWhatTheServiceIsNow() {
+    func say(_ ran: Services.Ran, _ state: Services.UnitState?, _ c: Services.Change = .restart, error: String? = nil) -> (Services.Outcome, String) {
+        let r = Services.outcome(c, of: "nginx", on: "web-01", at: "22:34:08", ran: ran, state: state, stateError: error)
+        return (r.outcome, r.line)
+    }
+    #expect(say(.passed, .init(active: "active", sub: "running")) == (.ok, "✓ nginx restarted on web-01 at 22:34:08 — active · running"))
+    #expect(say(.passed, .init(active: "failed", sub: "failed"))
+            == (.warning, "⚠ nginx: the restart completed on web-01 at 22:34:08, but the service is failed"))
+    #expect(say(.passed, .init(active: "activating", sub: "auto-restart")).0 == .warning, "dies and comes back")
+    #expect(say(.passed, .init(active: "inactive", sub: "dead", type: "oneshot", result: "success"), .start)
+            == (.ok, "✓ nginx started on web-01 at 22:34:08 — a oneshot, ran and finished (inactive · dead)"))
+    #expect(say(.passed, .init(active: "inactive", sub: "dead", type: "oneshot", result: "exit-code"), .start).0 == .warning)
+    #expect(say(.passed, .init(active: "inactive", sub: "dead")).0 == .warning, "a simple one that's gone")
+    #expect(say(.passed, nil, error: "Connection closed")
+            == (.warning, "⚠ nginx restarted on web-01 at 22:34:08, but its state couldn't be read: Connection closed"))
+    #expect(say(.failed(exit: 1, output: "\nJob for nginx.service failed because the control process exited with error code.\nSee …"),
+                .init(active: "failed", sub: "failed"))
+            == (.failed, "✕ nginx: the restart failed on web-01 at 22:34:08: Job for nginx.service failed because the control process exited with error code. — now failed"))
+    #expect(say(.failed(exit: 4, output: ""), nil) == (.failed, "✕ nginx: the restart failed on web-01 at 22:34:08: exit 4"))
+    #expect(say(.couldNotRun("sudo: a password is required"), nil)
+            == (.failed, "✕ nginx: the restart didn't run on web-01 at 22:34:08: sudo: a password is required"))
+    #expect(say(.notRun("cancelled"), nil) == (.notRun, "nginx: not restarted — cancelled; nothing ran"))
+    #expect(say(.unknown("⎋"), nil).0 == .warning)
+}

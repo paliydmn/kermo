@@ -60,15 +60,29 @@ To run one command on several servers at once, choose **Run on Servers…** in t
 | ↩ | `systemctl status` in an output window |
 | ⌘L | its log as it goes (`journalctl -u … -n 200 -f`) in an output window; ⎋ stops it, ⎋ again closes |
 | ⌘E | its unit file in the editor, with what any server file gets there: history, and for `/etc/systemd/system` a check and `daemon-reload` after saving |
-| ⌘R | restart it, as root |
+| ⌘R | restart it, as root; the list stays open |
+| ⌃↩ (⇧F10, a PC keyboard's Menu key), right-click | its menu: **Status**, **Live Logs**, **Edit Unit File…**, then **Start** and **Restart** |
 
-Status and log run as you. Without the `adm` or `systemd-journal` group the log shows only your own services' lines, and `journalctl` says so. The restart runs as root through the server's `sudo`, the way a [reload after a save](config-checks.md) runs: `sudo -n` where it needs no password, otherwise the sudo password (kept, from the Keychain, or asked). A unit file only root may write opens too, and the editor says to open the panel as root (⌃⌘R) to save it; from a root panel ⌘E opens it as root.
+The highlighted service has a light green background with an outline; a failed one's state stays red even when highlighted. A right-click highlights the row it's on first, and the menu acts on that service; a right-click on an empty spot opens no menu. The menu has the same keys and runs the same actions. What can't run now is greyed out, and its tooltip says why.
+
+**Start** and **Restart** keep the list open, with what you typed, the highlighted service and the scroll as they were. The row says `Restarting…` (or `Starting…`) with a spinner, and the service's start or restart is greyed out until that ends. Status and log still work. Touch ID for a locked server, the production question and the sudo password appear over the list. Once the command ends, Kermo reads the service's state again (a second later, so a service that dies at once shows as failed), updates the row, and a line under the list says how it went: which service, on which server, and when.
+
+```text
+✓ nginx restarted on web-01 at 22:34:08 — active · running
+⚠ nginx: the restart completed on web-01 at 22:34:08, but the service is failed
+✕ nginx: the restart failed on web-01 at 22:34:08: Job for nginx.service failed because …   Output…
+nginx: not restarted — cancelled; nothing ran
+```
+
+Exit 0 is the command's result, not proof that the service works: a service that is failed, inactive or restarting again a second later gets a warning, not a ✓. An `inactive` oneshot whose run went well counts as done. When the command ran but its state couldn't be read, the line says both. A failed command's line shows its first line, and **Output…** shows all of it. The line stays until the next start or restart, or until the list closes; moving around and typing leave it. Closing the list doesn't stop or undo a command that's running: its result shows in the status line, a failure as an alert, and Services… then reads fresh states. Services… opens again with what you typed and highlighted last on that server, for example after a look at a status or a log.
+
+Status and log run as you. Without the `adm` or `systemd-journal` group the log shows only your own services' lines, and `journalctl` says so. A start or a restart runs as root through the server's `sudo`, the way a [reload after a save](config-checks.md) runs: `sudo -n` where it needs no password, otherwise the sudo password (kept, from the Keychain, or asked). A unit file only root may write opens too, and the editor says to open the panel as root (⌃⌘R) to save it; from a root panel ⌘E opens it as root.
 
 **Containers…** asks the server's `docker`, or `podman` where there's no docker, as you: the containers your user may see. A row is the name, its state and status (`running · Up 3 hours`) and its image; running ones first. ↩ shows its log as it goes (`logs --tail 200 -f`), ⌘R restarts it, ⌘C copies its name.
 
 The connection a look logs in with stays for its idle time (10 minutes, 60 seconds for a locked server) even when no panel shows the server, so the next look, ↩ or ⌘R needs no login; **Disconnect** ends it, and a locked server's ends when the screen locks. The same goes for Forward Port… and Run on Servers….
 
-On a production server a restart asks first, ↩ being Cancel, and goes into the [production log](safety.md#production-log). A name goes into a command only if it's made of the characters systemd or docker allow in one; any other name is listed, and its keys only say why nothing runs. A log stopped with ⎋ stops on the server too, not just on this Mac.
+On a production server a start or a restart asks first, ↩ being Cancel, and goes into the [production log](safety.md#production-log). A name goes into a command only if it's made of the characters systemd or docker allow in one; any other name is listed, and its keys only say why nothing runs. A log stopped with ⎋ stops on the server too, not just on this Mac.
 
 ## Copy your SSH key to a server
 

@@ -122,10 +122,12 @@ private func until(_ done: () -> Bool) async {
     app.panels = [panel]
     ServerLock.servers = { [] }
     let user = SFTPTarget.local(sudo: sudo).asRoot(false)   // looked at from a user's panel
+    AppDelegate.unitState = { _, _, _, _ in .init(active: "active", sub: "running") }
+    defer { AppDelegate.unitState = { try Services.state($0, on: $1, env: $2, cancel: $3) } }
     let item = app.serviceItem(ServiceUnit(unit: "web.service", active: "active", sub: "running"), on: user, of: SavedServer(target: user))
     item.keys[Shortcut("cmd+r")!]?()
-    await until { panel.statusText == "Restarted web on localhost" }
-    #expect(panel.statusText == "Restarted web on localhost")
+    await until { panel.statusText.hasPrefix("web restarted") }
+    #expect(panel.statusText.hasPrefix("web restarted on localhost at "), "\(panel.statusText)")
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "restart -- web.service\n")
     #expect((try? String(contentsOfFile: dir + "/sudo.log", encoding: .utf8))?.hasPrefix("-n -- sh -c ") == true)
 }
@@ -159,6 +161,8 @@ private func until(_ done: () -> Bool) async {
     #expect(asked.count == 1 && asked[0].1 == ["Restart", "Cancel"] && asked[0].2 == 1, "↩ is Cancel")
     #expect(!FileManager.default.fileExists(atPath: dir + "/systemctl.log") && !FileManager.default.fileExists(atPath: AuditLog.path))
     AppDelegate.answering = { _, _, _ in 0 }   // Restart
+    AppDelegate.unitState = { _, _, _, _ in .init(active: "active", sub: "running") }
+    defer { AppDelegate.unitState = { try Services.state($0, on: $1, env: $2, cancel: $3) } }
     app.serviceItem(unit, on: t, of: SavedServer(target: t)).keys[Shortcut("cmd+r")!]?()
     await until { FileManager.default.fileExists(atPath: AuditLog.path) }
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "restart -- web.service\n")

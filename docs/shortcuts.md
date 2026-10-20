@@ -117,7 +117,7 @@ In the command line, ↑↓ browse its history. On a local panel ↩ runs the li
 | Viewer: find / wrap / hex / plist and JSON / follow (`tail -f`) / close | ⌘F / `w` / `h` / `p` / `f` / ⎋, F3, F10, `q`, ⌘W |
 | Viewer: show only lines with / without text | `&` |
 | Viewer: errors and warnings, errors only, all lines / line numbers | `e` / `l` |
-| Services…: status / log / edit unit / restart | ↩ / ⌘L / ⌘E / ⌘R |
+| Services…: status / log / edit unit / restart / menu | ↩ / ⌘L / ⌘E / ⌘R / ⌃↩ or ⇧F10 |
 | Containers…: log / restart / copy name | ↩ / ⌘R / ⌘C |
 | Viewer, files over 4 MB: go to (`50%`, `1.5G`, `end`) / start, end / search the whole file, next result | `g` / Home or ⌘↑, End or ⌘↓ / `/`, `n` |
 | Editor: save / find and replace / close | ⌘S / ⌘F / ⎋, ⌘W |
