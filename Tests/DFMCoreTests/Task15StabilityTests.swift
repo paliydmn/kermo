@@ -264,3 +264,30 @@ private func sh(_ command: String) -> (status: Int32, err: String) {
     try fm.removeItem(atPath: d + "/target")
     #expect(write(inode: nil, size: nil).status == 0 && fm.contents(atPath: d + "/target") == Data("NEW TEXT".utf8))
 }
+
+/// S-05's race: a link put at destDir/<name> after the check (a folder of the user's that root copies into) sent
+/// ditto's copy wherever it pointed. New items and replaced files go through a folder of root's own, then rename:
+/// over a link, never through it. A folder already there is merged into, as ditto did. Run here as us.
+@Test func anAdminCopyRenamesOverALinkNeverThroughIt() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    for p in ["/src/dir", "/dest/merge", "/elsewhere", "/src/merge"] { try fm.createDirectory(atPath: d + p, withIntermediateDirectories: true) }
+    fm.createFile(atPath: d + "/src/f", contents: Data("new f".utf8))
+    fm.createFile(atPath: d + "/src/dir/in", contents: Data("in".utf8))
+    fm.createFile(atPath: d + "/src/merge/a", contents: Data("a".utf8))
+    fm.createFile(atPath: d + "/dest/merge/kept", contents: Data("kept".utf8))
+    fm.createFile(atPath: d + "/elsewhere/f", contents: Data("theirs".utf8))
+    try fm.createSymbolicLink(atPath: d + "/dest/f", withDestinationPath: d + "/elsewhere/f")   // swapped in after check
+    try fm.createSymbolicLink(atPath: d + "/dest/dir", withDestinationPath: d + "/elsewhere")
+
+    let r = sh(AdminCommand.copy([d + "/src/f", d + "/src/merge"], to: d + "/dest"))
+    #expect(r.status == 0, "\(r.err)")
+    #expect(fm.contents(atPath: d + "/elsewhere/f") == Data("theirs".utf8), "not written through the link")
+    #expect(fm.contents(atPath: d + "/dest/f") == Data("new f".utf8) && (try? fm.destinationOfSymbolicLink(atPath: d + "/dest/f")) == nil)
+    #expect(fm.contents(atPath: d + "/dest/merge/kept") != nil && fm.contents(atPath: d + "/dest/merge/a") == Data("a".utf8), "merged")
+
+    let dir = sh(AdminCommand.copy([d + "/src/dir"], to: d + "/dest"))
+    #expect(dir.status != 0, "a folder onto a link: refused")
+    #expect(try fm.contentsOfDirectory(atPath: d + "/elsewhere") == ["f"])
+    #expect(try fm.contentsOfDirectory(atPath: d + "/dest").sorted() == ["dir", "f", "merge"], "no root folder left behind")
+}

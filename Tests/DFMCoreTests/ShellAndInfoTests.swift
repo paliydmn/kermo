@@ -45,8 +45,8 @@ import Testing
 }
 
 @Test func adminCommandsQuoteEverything() {
-    #expect(AdminCommand.copy(["/a/My File", "/b/x"], to: "/Library/Dest") ==
-            "/usr/bin/ditto '/a/My File' '/Library/Dest/My File' && /usr/bin/ditto /b/x /Library/Dest/x")
+    #expect(AdminCommand.copy(["/a/My File", "/b/x"], to: "/Library/Dest").hasSuffix(
+            "c '/a/My File' '/Library/Dest/My File' /Library/Dest && c /b/x /Library/Dest/x /Library/Dest"))
     #expect(AdminCommand.move(["/a/it's"], to: "/opt") == "/bin/mv -n '/a/it'\\''s' /opt/")
     #expect(AdminCommand.delete(["/tmp/a b", "/tmp/-rf"]) == "/bin/rm -rf -- '/tmp/a b' /tmp/-rf")
     let write = AdminCommand.writeContents(.file("/tmp/a b"), sha256: "ab", to: "/etc/it's", stamp: "1:2:3.000000004", length: 5)

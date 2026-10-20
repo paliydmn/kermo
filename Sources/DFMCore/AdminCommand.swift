@@ -5,9 +5,18 @@ import Foundation
 public enum AdminCommand {
     private static func q(_ s: String) -> String { ShellContext.quote(s) }
 
-    /// ditto keeps mode, owner, ACLs, xattrs and dates; each item lands as destDir/<name>.
+    /// ditto keeps mode, owner, ACLs, xattrs and dates; each item lands as destDir/<name>. A folder already there is
+    /// merged into (ditto). Anything else goes into a folder of root's own in destDir first (0700: nothing running as
+    /// the user gets in), then is renamed into place: rename(2) never follows a link at the name — a link swapped in
+    /// after `check` is replaced (a file) or refused (a folder), never written through as root.
+    // ponytail: a merge into a folder others (or you) can write still follows links planted inside it, and destDir
+    // itself is taken as typed; what's copied is the user's files anyway, which anything running as them can change.
     public static func copy(_ sources: [String], to destDir: String) -> String {
-        sources.map { "/usr/bin/ditto \(q($0)) \(q((destDir as NSString).appendingPathComponent(($0 as NSString).lastPathComponent)))" }
+        let rename = "/usr/bin/perl -T -e 'my ($a, $b) = map { /\\A(.*)\\z/s; $1 } @ARGV; rename($a, $b) or die \"$b: $!\\n\"'"
+        let one = "c() { if [ -d \"$2\" ] && [ ! -L \"$2\" ]; then /usr/bin/ditto \"$1\" \"$2\"; return; fi; "
+            + "t=$(/usr/bin/mktemp -d \"$3/.kermo-admin.XXXXXX\") || return 1; "
+            + "/usr/bin/ditto \"$1\" \"$t/x\" && \(rename) -- \"$t/x\" \"$2\"; r=$?; /bin/rm -rf \"$t\"; return $r; }; "
+        return one + sources.map { "c \(q($0)) \(q((destDir as NSString).appendingPathComponent(($0 as NSString).lastPathComponent))) \(q(destDir))" }
             .joined(separator: " && ")
     }
 
@@ -15,8 +24,7 @@ public enum AdminCommand {
     /// same): a folder into itself or below it (ditto recursed until the disk was full), through a link at
     /// destDir/<name> (root would write where it points), an item onto itself. `existing`: names there already,
     /// which ditto replaces. `destDir` needn't be there yet: ditto makes it, so its nearest folder that is counts.
-    // ponytail: a link put at destDir/<name> between this look and ditto is still followed — the same race as D-080,
-    // closed only by a root helper that opens with O_NOFOLLOW.
+    // A link put at destDir/<name> after this look: `copy` renames over it, never through it.
     public static func check(_ sources: [String], to destDir: String, move: Bool) -> (refusal: String?, existing: [String]) {
         var there = destDir
         while access(there, F_OK) != 0, there != "/", !there.isEmpty { there = (there as NSString).deletingLastPathComponent }
