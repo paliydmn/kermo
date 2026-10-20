@@ -416,7 +416,7 @@ public final class FileJob: @unchecked Sendable {
             guard let landed = copyFile(src, dst, size: Int64(s.st_size), flags: s.st_flags, new: createsNew) else { return nil }
             dst = landed
             noteCreated(dst)
-            if move { attempt(src) { try Self.check(unlink(src)) } }
+            if move { Self.flush(dst); attempt(src) { try Self.check(unlink(src)) } }
         }
         return createsNew && !merge && !isCancelled && progress.errors.count == errorsBefore ? dst : nil
     }
@@ -593,6 +593,15 @@ public final class FileJob: @unchecked Sendable {
 
     private static func mtime(_ s: stat) -> Double {
         Double(s.st_mtimespec.tv_sec) + Double(s.st_mtimespec.tv_nsec) / 1e9
+    }
+
+    /// Out of the system's buffers onto the disk, before its source goes: a stick pulled (or the power cut) right after
+    /// a move to it lost the moved file — the original deleted, the copy not on the disk yet.
+    static func flush(_ path: String) {
+        let fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)   // a link: nothing to flush
+        guard fd >= 0 else { return }
+        fsync(fd)
+        close(fd)
     }
 
     private static func check(_ result: Int32) throws {

@@ -712,11 +712,11 @@ extension FileJob {
             guard attempt(dst, { try dfs.symlink(target, at: dst) }) else { return }
             noteAcross(dst)
             update { $0.doneFiles += 1; $0.doneBytes = $0.doneBytes.saturatingAdd(s.size) }   // what measure counted for it
-            if move { attempt(src) { try sfs.remove(src) } }
+            if move { if dfs is LocalFS { Self.flush(dst) }; attempt(src) { try sfs.remove(src) } }
         case .file:
             guard copyAcross(sfs, src, s, dfs, dst, replace: existing != nil) else { return }
             noteAcross(dst)
-            if move { attempt(src) { try sfs.remove(src) } }
+            if move { if dfs is LocalFS { Self.flush(dst) }; attempt(src) { try sfs.remove(src) } }
         case .other:
             fail(src, "Not a regular file — not copied")
         }
