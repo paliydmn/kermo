@@ -13,6 +13,8 @@ Release:
 
 ## [Unreleased]
 
+## [1.3] - 2026-10-20
+
 ### Security
 
 - A locked server reached by an `~/.ssh/config` alias or another spelling now gets a locked server's 60-second connection linger, not 10 minutes, and isn't added to the recents. A tunnel edited to a new address while a locked server is saved stays off until **Turn On** asks.
@@ -211,7 +213,8 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.3...HEAD
+[1.3]: https://github.com/paliydmn/kermo/releases/tag/v1.3
 [1.2.1]: https://github.com/paliydmn/kermo/releases/tag/v1.2.1
 [1.2]: https://github.com/paliydmn/kermo/releases/tag/v1.2
 [1.1]: https://github.com/paliydmn/kermo/releases/tag/v1.1
