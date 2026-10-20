@@ -68,6 +68,7 @@ Release:
 - A settings file that's there but can't be read (say `servers.json` owned by root after a `sudo` edit) is no longer taken as missing and replaced at the next save: Kermo says so at launch and leaves it as it is. An unreadable `usermenu.json` or `filters.json` is reported instead of being replaced with the examples.
 - After the editor reloads a file that changed on disk, ⌘Z no longer applies the old text's edits to the new one (which garbled it, and a save then wrote that over the change).
 - **Delete** (F8) on a server skips an item that's something else by now than the panel listed (a file rewritten or replaced, a folder where a file was), and names it: a server's panel isn't refreshed by itself, and a server has no Trash. A folder that is still a folder is deleted as before.
+- **Overwrite** in "changed on the server since you opened it" replaces only the version that question was about. If the file changed again while the question or Compare's diff was up, Kermo asks again instead of writing over a change you never saw.
 
 ## [1.2.1] - 2026-10-17
 

@@ -1360,7 +1360,9 @@ extension AppDelegate {
             while true {   // Compare asks again once the diff is up
                 switch await choose("“\(name)” changed on \(target.host) since you opened it", info: info, ["Overwrite", "Compare", "Cancel"],
                                     default: 2, on: Editor.window(for: saved)) {   // ⌘S ↩ never writes over theirs
-                case 0: return await upload(saved, to: remotePath, on: target, state, force: true, action: action)
+                case 0:   // over what was shown, not whatever's there by now: another change meanwhile asks again
+                    state.baseline = e.attrs
+                    return await upload(saved, to: remotePath, on: target, state, action: action)
                 case 1: await diff(DiffSide(path: saved.path, name: "\(name) (yours)"),
                                    DiffSide(path: remotePath, server: target, size: e.attrs.size, mtime: e.attrs.mtime), in: panel)
                 default: return false

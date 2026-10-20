@@ -323,3 +323,42 @@ extension ServerCopiesTests {
     #expect(!fm.fileExists(atPath: d + "/z") && !fm.fileExists(atPath: d + "/w"))
     #expect(Set(job.progress.errors) == ["\(d)/x: changed since it was listed, skipped", "\(d)/y: changed since it was listed, skipped"])
 }
+
+extension ServerLockTests {   // swaps `AppDelegate.answering`
+    /// S2-03: "changed on the server" → Overwrite wrote over whatever was there by then, unchecked: a change made while
+    /// the question (or Compare's diff) was up went unseen. Overwrite now replaces the version it showed; one newer asks again.
+    @MainActor @Test func overwriteReplacesOnlyTheVersionItShowed() async throws {
+        let d = tempDir()
+        defer { try? FileManager.default.removeItem(atPath: d) }
+        let file = d + "/app.conf", mine = d + "/mine"
+        try Data("v1\n".utf8).write(to: URL(fileURLWithPath: file))
+        let c = try SFTPClient(.local())
+        let state = AppDelegate.RemoteEdit(baseline: try #require(try c.stat(file)))
+        c.close()
+        try await Task.sleep(for: .milliseconds(1100))
+        try Data("v2 from a deploy\n".utf8).write(to: URL(fileURLWithPath: file))
+        try Data("mine\n".utf8).write(to: URL(fileURLWithPath: mine))
+        let app = AppDelegate()
+        app.panels = [PanelViewController(tabs: [d], index: 0, showHidden: false)]
+        app.panels.forEach { $0.loadViewIfNeeded() }
+        defer { app.panels.forEach { $0.shutdown() } }
+        var asked = 0
+        AppDelegate.answering = { _, _, _ in
+            asked += 1
+            if asked == 1 {   // while the question is up, the deploy writes again
+                usleep(1_100_000)
+                try? Data("v3, never seen\n".utf8).write(to: URL(fileURLWithPath: file))
+                return 0   // Overwrite (v2)
+            }
+            return 2   // Cancel
+        }
+        defer { AppDelegate.answering = nil }
+        #expect(await !app.upload(URL(fileURLWithPath: mine), to: file, on: .local(), state))
+        #expect(asked == 2, "asked again about v3")
+        #expect(FileManager.default.contents(atPath: file) == Data("v3, never seen\n".utf8))
+
+        AppDelegate.answering = { _, _, _ in 0 }
+        #expect(await app.upload(URL(fileURLWithPath: mine), to: file, on: .local(), state))   // v3 shown, then overwritten
+        #expect(FileManager.default.contents(atPath: file) == Data("mine\n".utf8))
+    }
+}
