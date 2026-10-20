@@ -263,3 +263,21 @@ extension ServerCopiesTests {
         #expect(FileManager.default.fileExists(atPath: dir + "/" + TempCopies.keptMarker))
     }
 }
+
+/// E-05: a state file that's there but can't be read (root's after a `sudo` edit) read as no file: the list started
+/// empty, unsaid, and the next save replaced the user's file. It's said now and never saved over; a menu file that
+/// can't be read is an error, not a reason to write the examples over it.
+@Test func anUnreadableStateFileIsNeverSavedOver() throws {
+    let d = tempDir()
+    defer { chmod(d + "/servers.json", 0o600); try? FileManager.default.removeItem(atPath: d) }
+    try Data("[{\"host\":\"me@web\"}]".utf8).write(to: URL(fileURLWithPath: d + "/servers.json"))
+    chmod(d + "/servers.json", 0o000)
+    let (value, problem) = Config.loadKeeping("servers.json", as: [String: String].self, in: d)
+    #expect(value == nil && problem?.contains("won't save over it") == true, "\(problem ?? "")")
+    Config.save("servers.json", ["new"], in: d)
+    chmod(d + "/servers.json", 0o600)
+    #expect(FileManager.default.contents(atPath: d + "/servers.json") == Data("[{\"host\":\"me@web\"}]".utf8))
+    #expect(try Config.contents(d + "/missing") == nil)
+    chmod(d + "/servers.json", 0o000)
+    #expect(throws: (any Error).self) { try Config.contents(d + "/servers.json") }
+}

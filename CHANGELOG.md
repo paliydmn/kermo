@@ -65,6 +65,7 @@ Release:
 - What you type into the editor while **Save as Administrator** waits for your password now stays unsaved. Before, the window counted as saved once the root write was done, and closing it lost those lines without a question.
 - Closing the main window while an editor with unsaved text is in the Dock no longer asks the quit question and then never again: the app stays open with the editor, and ⌘Q later asks about the unsaved text as it should.
 - A server file opened in another app (↩) and saved there just before you quit Kermo is no longer lost: the quit question names it, and its copy is kept instead of removed. Before, a save less than two seconds old hadn't reached the server and its copy was deleted.
+- A settings file that's there but can't be read (say `servers.json` owned by root after a `sudo` edit) is no longer taken as missing and replaced at the next save: Kermo says so at launch and leaves it as it is. An unreadable `usermenu.json` or `filters.json` is reported instead of being replaced with the examples.
 
 ## [1.2.1] - 2026-10-17
 
