@@ -10,6 +10,14 @@ macOS 14 or later · Apple Silicon and Intel · [MIT license](LICENSE)
 
 ## Install
 
+Paste this into Terminal and press Return. It installs the latest release, or updates Kermo to it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/paliydmn/kermo/master/install.sh | sh
+```
+
+Or by hand:
+
 1. Download the `.dmg` or `.pkg` from the [latest release](https://github.com/paliydmn/kermo/releases/latest).
 2. Drag **Kermo** to Applications (the `.pkg` installs it for you) and open it.
 3. The first launch is blocked, because Kermo isn't notarized by Apple. On macOS 15 or later click **Open Anyway** in System Settings ▸ Privacy & Security; on macOS 14 Control-click the app and choose **Open**.

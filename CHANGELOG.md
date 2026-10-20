@@ -13,6 +13,10 @@ Release:
 
 ## [Unreleased]
 
+### Added
+
+- One line in Terminal installs or updates Kermo: `curl -fsSL https://raw.githubusercontent.com/paliydmn/kermo/master/install.sh | sh`. No **Open Anyway** needed. See [Install Kermo](docs/install.md).
+
 ## [1.3] - 2026-10-20
 
 ### Security
