@@ -378,3 +378,20 @@ private func sh(_ command: String) -> (status: Int32, err: String) {
     #expect(try SFTP.listIfThere(.local(), d + "/new").isEmpty)
     #expect(throws: SFTPError.self) { try SFTP.listIfThere(.local(), d + "/closed") }
 }
+
+/// A-03: a copy or move that found nothing at its name renamed its file there at the end: a file of that name that
+/// appeared meanwhile (a download into the same folder during a long copy) was replaced unasked. It stays now; the
+/// new one takes the next free name, and the summary says so.
+@Test func aNameThatAppearedMeanwhileIsKept() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    fm.createFile(atPath: d + "/partial", contents: Data("copied".utf8))
+    fm.createFile(atPath: d + "/video.mov", contents: Data("downloaded meanwhile".utf8))
+    let job = FileJob(.copy, sources: [], destDir: d)
+    #expect(try job.renameNew(d + "/partial", d + "/video.mov") == d + "/video 2.mov")
+    #expect(fm.contents(atPath: d + "/video.mov") == Data("downloaded meanwhile".utf8))
+    #expect(fm.contents(atPath: d + "/video 2.mov") == Data("copied".utf8))
+    #expect(job.progress.errors == ["\(d)/video.mov: appeared while this ran — kept; this one is “video 2.mov”"])
+    fm.createFile(atPath: d + "/partial", contents: Data("x".utf8))
+    #expect(try job.renameNew(d + "/partial", d + "/free") == d + "/free")
+}
