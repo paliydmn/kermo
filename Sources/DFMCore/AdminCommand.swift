@@ -15,7 +15,7 @@ public enum AdminCommand {
         guard !sources.isEmpty else { return "" }
         let rename = "/usr/bin/perl -T -e 'my ($a, $b) = map { /\\A(.*)\\z/s; $1 } @ARGV; rename($a, $b) or die \"$b: $!\\n\"'"
         let one = "c() { if [ -d \"$2\" ] && [ ! -L \"$2\" ]; then /usr/bin/ditto \"$1\" \"$2\"; return; fi; "
-            + "t=$(/usr/bin/mktemp -d \"$3/.kermo-admin.XXXXXX\") || return 1; "
+            + "/bin/mkdir -p \"$3\" && t=$(/usr/bin/mktemp -d \"$3/.kermo-admin.XXXXXX\") || return 1; "   // ditto made a new destDir
             + "/usr/bin/ditto \"$1\" \"$t/x\" && \(rename) -- \"$t/x\" \"$2\"; r=$?; /bin/rm -rf \"$t\"; return $r; }; "
         return one + sources.map { "c \(q($0)) \(q((destDir as NSString).appendingPathComponent(($0 as NSString).lastPathComponent))) \(q(destDir))" }
             .joined(separator: " && ")

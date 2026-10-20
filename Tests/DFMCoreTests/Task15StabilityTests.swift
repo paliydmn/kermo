@@ -290,6 +290,9 @@ private func sh(_ command: String) -> (status: Int32, err: String) {
     #expect(dir.status != 0, "a folder onto a link: refused")
     #expect(try fm.contentsOfDirectory(atPath: d + "/elsewhere") == ["f"])
     #expect(try fm.contentsOfDirectory(atPath: d + "/dest").sorted() == ["dir", "f", "merge"], "no root folder left behind")
+
+    let fresh = sh(AdminCommand.copy([d + "/src/f"], to: d + "/dest/new/deeper"))   // a destination not there yet: made, as ditto did
+    #expect(fresh.status == 0 && fm.contents(atPath: d + "/dest/new/deeper/f") == Data("new f".utf8), "\(fresh.err)")
 }
 
 /// D-084: the mount points in /proc/self/mounts, with its octal escapes.
