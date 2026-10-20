@@ -28,6 +28,7 @@ public final class SFTPClient: @unchecked Sendable {
     }
 
     public let target: SFTPTarget
+    private let env: [String: String]   // askpass's: a command over ssh (`linkCount`) logs in as the session did
     /// A server with SELinux: `upload` writes into the file itself, never renames a new one over it — the new one would
     /// have its folder's label, not the file's (`/etc/shadow` losing `shadow_t`, a chcon'd page in ~/public_html). A
     /// root panel's sudo script tells; any other session asks with its first save's look (`upload`).
@@ -71,6 +72,7 @@ public final class SFTPClient: @unchecked Sendable {
 
     public init(_ t: SFTPTarget, env: [String: String] = [:], cancel: CancelFlag? = nil) throws {
         target = t
+        self.env = env
         try SFTP.startMaster(t, env: env, cancel: cancel)
         var sudoPath = "", sudoPassword: String?
         if t.sudo {
@@ -656,6 +658,24 @@ public final class SFTPClient: @unchecked Sendable {
         return over ? Int64.max : Int64(clamping: bytes)
     }
 
+    /// `path`'s SHA-256 hashed on the server (sha256sum, BSD's shasum, then sudo -n); nil if none of them could.
+    func serverSHA256(_ path: String) -> Data? {
+        let f = ShellContext.quote(path)
+        let cmd = "sha256sum -- \(f) 2>/dev/null || shasum -a 256 -- \(f) 2>/dev/null || sudo -n sha256sum -- \(f) 2>/dev/null"
+        guard let out = SSHCommand.output(target, cmd, env: env, timeout: 120) else { return nil }
+        let hex = Array(String(decoding: out, as: UTF8.self).prefix(64).utf8)
+        guard hex.count == 64 else { return nil }
+        return Data((0..<32).compactMap { UInt8(String(decoding: hex[($0 * 2)..<($0 * 2 + 2)], as: UTF8.self), radix: 16) })
+    }
+
+    /// How many names `path` has, by `stat` over ssh (GNU, then sudo -n, then BSD); nil: it couldn't be told. Linux's
+    /// `stat -f` is the file system's: a refused look there reads 255 — written in place, the safe way.
+    func linkCount(_ path: String) -> Int? {
+        let f = ShellContext.quote(path)
+        let cmd = "if stat -c %h -- \(f) 2>/dev/null; then :; elif sudo -n stat -c %h -- \(f) 2>/dev/null; then :; else stat -f %l -- \(f); fi"
+        return SSHCommand.output(target, cmd, env: env, timeout: 10).flatMap { Int(String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
+
     /// Server-side copy (`copy-data`): the bytes never cross the network.
     public var canCopyData: Bool { extensions["copy-data"] != nil }
 
@@ -1049,7 +1069,7 @@ extension SFTPClient {
                 }
             }
         }
-        if a.size <= last ?? a.size && a.size <= Self.hashLimit { a.sha256 = Data(hash.finalize()) }
+        if a.size <= last ?? a.size { a.sha256 = Data(hash.finalize()) }
         return a
     }
 
@@ -1112,13 +1132,15 @@ extension SFTPClient {
         let keep = replaced != nil && cur?.kind == .file && cur!.size <= ServerHistory.fileLimit
         var old: Data?
         // Size + whole-second mtime is all SFTP v3 tells; a same-size change within that second shows in the content.
-        // ponytail: over `hashLimit` it still slips by; a server-side hash (`sha256sum` over ssh) if that ever matters.
+        // Over `hashLimit` it's hashed on the server (`sha256sum` over ssh), not read here; none there: as before.
         if !force, let baseline, let cur {
             var changed = cur.size != baseline.size || cur.mtime != baseline.mtime
-            if !changed, let sum = baseline.sha256 {
+            if !changed, let sum = baseline.sha256, cur.size <= Self.hashLimit {
                 let now = try contents(remote, size: cur.size)
                 changed = Data(SHA256.hash(data: now)) != sum
                 old = now
+            } else if !changed, let sum = baseline.sha256, let there = serverSHA256(real ?? remote) {
+                changed = there != sum
             }
             if changed { throw ChangedOnServer(attrs: cur) }
         }
@@ -1165,14 +1187,18 @@ extension SFTPClient {
                 // Root — a root panel, or a login as root: the partial file we just made is uid 0's — gives the
                 // partial file the file's owner, then renames it over: never a moment as root's file.
                 // Not allowed (NFS's root_squash), or anyone else's session: copied into the file, which keeps its own.
-                // ponytail: SFTP v3 has no link count, so a hard-linked file is split (D-079); an `ssh stat -c %h` per
-                // save would tell, and then go in place like SELinux does.
+                // A hard-linked one would be split — the save's name new, its other names old (D-079): SFTP v3 has no
+                // link count, so ssh's `stat` tells, and such a file is written into in place like under SELinux.
                 if target.sudo || mine?.uid == 0, let uid = cur.uid, let gid = cur.gid {
-                    do {
-                        try setAttrs(partial, mtime: nil, mode: nil, owner: (uid, gid))
-                        // chown drops setuid/setgid
-                        if let m = cur.mode, m & 0o6000 != 0 { try setAttrs(partial, mtime: nil, mode: m) }
-                    } catch let e as SFTPError where !e.connection { inPlace = true }
+                    if linkCount(into) ?? 1 > 1 {
+                        inPlace = true
+                    } else {
+                        do {
+                            try setAttrs(partial, mtime: nil, mode: nil, owner: (uid, gid))
+                            // chown drops setuid/setgid
+                            if let m = cur.mode, m & 0o6000 != 0 { try setAttrs(partial, mtime: nil, mode: m) }
+                        } catch let e as SFTPError where !e.connection { inPlace = true }
+                    }
                 } else {
                     inPlace = true
                 }
@@ -1217,7 +1243,7 @@ extension SFTPClient {
         }
         if let cur, cur.kind == .file { replaced?(cur, keep ? old : nil) }
         var a = try stat(remote)
-        if a.size <= Self.hashLimit { a.sha256 = Data(hash.finalize()) }   // what was sent: the next save's baseline
+        a.sha256 = Data(hash.finalize())   // what was sent: the next save's baseline
         saved.insert((partial as NSString).deletingLastPathComponent)
         return a
     }

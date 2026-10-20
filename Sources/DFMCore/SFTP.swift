@@ -380,6 +380,11 @@ public enum SFTP {
     /// `links` hears where each symlink points and the errno following it gives (0: there). `kept`: as in `home`.
     /// `free` hears the bytes free there, where the server tells (`statvfs@openssh.com`) — asked in the same wave as the
     /// listing: no wait of its own.
+    /// `dir`'s items, or none when there's no such folder (yet); any other failure throws.
+    public static func listIfThere(_ t: SFTPTarget, _ dir: String, env: [String: String] = [:], cancel: CancelFlag? = nil) throws -> [FileItem] {
+        do { return try list(t, dir, env: env, cancel: cancel) } catch let e as SFTPError where e.code == SFTPClient.NO_SUCH_FILE { return [] }
+    }
+
     public static func list(_ t: SFTPTarget, _ dir: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
                             owners: ((_ name: String, _ owner: String, _ group: String) -> Void)? = nil,
                             links: ((_ name: String, _ target: String, _ error: Int32) -> Void)? = nil,

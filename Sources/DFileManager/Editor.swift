@@ -532,9 +532,15 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
             (cmd, tmp) = (command(.file(t)), t)
         }
         defer { if let tmp { unlink(tmp) } }
+        // The text stays editable while macOS asks for the password, but the window's coming back mustn't take our
+        // own write for someone else's (`windowDidBecomeKey`), nor a second ⌘S start another.
+        saving = true
+        defer { saving = false }
         switch await Self.runAsAdmin(cmd) {
         case .ok:
             saved(await Blocking.run(.userInitiated) { Stamp(path) }, hash)
+            dirty = true   // what was typed while the password was asked isn't what was written: still unsaved
+            dirty = changed
             return true
         case .cancelled: return false
         case .failed(let msg) where msg.contains(AdminCommand.changedOnDisk):
@@ -565,7 +571,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         let url = url
         Task {
             guard let now = await Self.stamps.run(url.path, .userInitiated, { Stamp(url.resolvingSymlinksInPath().path) }), url == self.url, window?.isVisible == true,
-                  now != stamp, now != noticed else { return }
+                  now != stamp, now != noticed, !saving else { return }
             guard dirty else {
                 let loaded = await Blocking.run(.userInitiated) { Result { try Self.load(url) } }
                 if url == self.url, !dirty { apply(loaded, onDisk: now) }   // not after a Save As or typing meanwhile
@@ -611,6 +617,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         self.digest = digest
         let sel = textView.selectedRange()
         textView.string = text
+        textView.undoManager?.removeAllActions()   // the old text's edits: ⌘Z would apply them to the new one
         ruler.invalidate()
         highlight(after: 0)
         textView.setSelectedRange(NSRange(location: min(sel.location, (text as NSString).length), length: 0))

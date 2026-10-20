@@ -242,8 +242,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         return rowIndex![name].map { $0 + (hasParent ? 1 : 0) }
     }
     private func url(of item: FileItem) -> URL {
-        URL(fileURLWithPath: (path as NSString).appendingPathComponent(item.name), isDirectory: item.kind == .dir)
+        URL(fileURLWithPath: (itemsDir as NSString).appendingPathComponent(item.name), isDirectory: item.kind == .dir)
     }
+    /// What the rows' names are relative to: the folder, or a search's root — a tag search's is ~ wherever the panel
+    /// is, and its hits' names (`Documents/x.pdf`) went onto `path`: ⇧F8 there deleted another folder's file.
+    var itemsDir: String { searchTitle != nil ? searchRoot ?? path : path }
+    private var searchRoot: String?
     var currentName: String? {
         let r = table.selectedRow
         return r >= 0 && r < table.numberOfRows ? item(at: r)?.name : nil
@@ -1110,7 +1114,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             else { onCommand?("archive.open") }
             return
         }
-        let full = (path as NSString).appendingPathComponent(it.name)
+        let full = (itemsDir as NSString).appendingPathComponent(it.name)
         guard it.kind == .dir || it.kind == .link else { return openItem(it, full, dirLike: false, folder: false) }
         // Off the main thread: a link into a share that stopped answering hangs this, not the app. Dropped if the
         // panel went elsewhere meanwhile.
@@ -1411,8 +1415,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     // MARK: - Search results ("panelize"): fed in batches by the search runner
 
     /// `what` was searched for, `place` where (the title is both; the footer shows `what`).
-    func beginSearch(_ what: String, in place: String? = nil) -> CancelFlag {
+    func beginSearch(_ what: String, in place: String? = nil, root: String? = nil) -> CancelFlag {
         searchFlag?.cancel()
+        searchRoot = root
         let flag = CancelFlag()
         searchFlag = flag
         loadGen += 1   // drop any listing still in flight

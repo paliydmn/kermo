@@ -155,7 +155,10 @@ public struct ServerHistory: Sendable {
 
     private func prune(dir: String, name: String) {
         let mine = Self.versions(in: dir).filter { Self.parse(($0.path as NSString).lastPathComponent)?.name == name }.sorted(by: Self.newer)
-        for v in mine.dropFirst(perFile) { unlink(v.path) }
+        // Each save keeps what it replaced, and an app's autosaves come seconds apart: twenty of them pushed out the file
+        // as it was when the work began — what one reverts to. The first version after an hour's pause stays.
+        let start = zip(mine, mine.dropFirst()).first { $0.date.timeIntervalSince($1.date) > 3600 }?.0 ?? mine.last
+        for v in mine.dropFirst(perFile) where v.path != start?.path { unlink(v.path) }
         // ponytail: walks the whole history on every save; an index file if it ever holds tens of thousands.
         let all = Self.versions(in: root, deep: true)
         var left = all.reduce(0) { $0 + $1.size }

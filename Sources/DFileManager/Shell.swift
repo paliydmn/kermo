@@ -53,18 +53,46 @@ enum Shell {
     /// For the quit confirmation: the output windows whose command (or what it left behind) still runs, or nil.
     static var busy: String? { OutputWindow.busy }
 
-    /// R1: a command that removes, moves, re-owns or stops things, which asks first on a production server: `rm`, `mv`,
-    /// `chmod`, `chown`, `dd` or `systemctl stop|restart` as the first word, behind sudo / doas / env, their options,
-    /// VAR=value and a path (/bin/rm). ponytail: the first word only — `cd x && rm`, `xargs rm`, `find -delete` pass.
+    /// R1: a command that removes, moves, re-owns, truncates or stops things, which asks first on a production server:
+    /// `rm`, `mv`, `chmod`, `chown`, `dd`, `truncate`, `shred`, `unlink`, `find … -delete / -exec`, `rsync --delete`,
+    /// `git clean / reset --hard`, `systemctl stop|restart|disable|mask|kill`, and `> file` — in any command of a list
+    /// or pipeline (`cd x && rm -rf y`, `ls; rm x`, `… | xargs rm`, `$(…)`), behind sudo / doas / env / xargs, their
+    /// options, VAR=value and a path (/bin/rm). Quotes aren't parsed: a separator inside them asks once too often.
     nonisolated static func isDangerous(_ command: String) -> Bool {
+        command.components(separatedBy: CharacterSet(charactersIn: ";&|\n()`")).contains(where: isDangerousOne) || writesOver(command)
+    }
+
+    private nonisolated static func isDangerousOne(_ command: String) -> Bool {
         var words = command.split(whereSeparator: \.isWhitespace).map(String.init)[...]
         let name = { (w: String) in (w as NSString).lastPathComponent }   // /usr/bin/sudo, /bin/rm
-        while let w = words.first, ["sudo", "doas", "env", "nohup", "command", "exec", "time"].contains(name(w)) || w.hasPrefix("-") || w.contains("=") {
-            words = words.dropFirst(["-u", "-g"].contains(w) ? 2 : 1)   // `sudo -u www rm …`
+        var takesValue = ["-u", "-g"]   // `sudo -u www rm …`
+        while let w = words.first, ["sudo", "doas", "env", "nohup", "command", "exec", "time", "xargs"].contains(name(w)) || w.hasPrefix("-") || w.contains("=") {
+            if name(w) == "xargs" { takesValue = ["-I", "-n", "-P", "-L", "-s", "-E"] }   // `xargs -I {} rm {}`
+            words = words.dropFirst(takesValue.contains(w) ? 2 : 1)
         }
         guard let first = words.first.map({ String(name($0).drop(while: { $0 == "\\" })) }) else { return false }   // `\rm`: past the alias
-        if first == "systemctl" { return words.dropFirst().first { !$0.hasPrefix("-") }.map { ["stop", "restart"].contains($0) } == true }
-        return ["rm", "mv", "chmod", "chown", "dd"].contains(first)
+        let rest = words.dropFirst()
+        switch first {
+        case "systemctl": return rest.first { !$0.hasPrefix("-") }.map { ["stop", "restart", "disable", "mask", "kill"].contains($0) } == true
+        case "find": return rest.contains { ["-delete", "-exec", "-execdir", "-ok"].contains($0) }
+        case "rsync": return rest.contains { $0.hasPrefix("--delete") || $0 == "--remove-source-files" }
+        case "git":
+            let sub = rest.first { !$0.hasPrefix("-") }
+            return sub == "clean" || sub == "reset" && rest.contains("--hard")
+        default: return ["rm", "mv", "chmod", "chown", "dd", "truncate", "shred", "unlink"].contains(first)
+        }
+    }
+
+    /// `> file` (not `>>`, `>&2`, nor into /dev/null): the file is emptied before the command even runs.
+    private nonisolated static func writesOver(_ command: String) -> Bool {
+        let c = Array(command)
+        for i in c.indices where c[i] == ">" && (i == 0 || c[i - 1] != ">") {
+            let after = c[(i + 1)...]
+            if after.first == ">" || after.first == "&" { continue }
+            let target = String(after.drop { $0 == " " || $0 == "\t" }.prefix { !$0.isWhitespace && !";&|)".contains($0) })
+            if !target.isEmpty && target != "/dev/null" { return true }
+        }
+        return false
     }
 
     static func runInTerminal(_ command: String, in dir: String, terminalApp: URL) {

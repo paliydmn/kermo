@@ -50,6 +50,18 @@ extension TransferFS {
     func rmdir(_ paths: [String]) -> [(path: String, error: Error)] { paths.compactMap { p in do { try rmdir(p); return nil } catch { return (p, error) } } }
 }
 
+extension TransferFS {
+    /// Where other file systems are mounted (`/proc/self/mounts` on Linux; read through this side, so a server's own),
+    /// as `FileJob.mounts` parses it. None if it can't be read — a BSD or macOS server: no stop there.
+    func mountPoints(_ file: String) -> Set<String> {
+        guard let r = try? reader(file, offset: 0, size: 0) else { return [] }
+        defer { r.close() }
+        var data = Data()
+        while data.count < 4 << 20, let piece = try? r.read() { data.append(piece) }
+        return FileJob.mounts(String(decoding: data, as: UTF8.self))
+    }
+}
+
 extension Result {
     /// The value, or nil for an error. (`try? get()` would flatten an optional value: "nothing there" and "failed" alike.)
     var value: Success? { if case .success(let v) = self { v } else { nil } }
@@ -341,6 +353,15 @@ extension FileJob {
         let along = tops.filter { inFolder($0.path) }.count
         tops.removeAll { inFolder($0.path) }
         update { $0.doneFiles += along }
+        // A root session: the folders the tops are in, one look for all (D-082). In one others can change, a top
+        // swapped for a link to / between its look and its listing would send root's delete there.
+        if (fs as? RemoteFS)?.rootUID != nil {
+            let parents = Array(Set(tops.map { ($0.path as NSString).deletingLastPathComponent }))
+            let barred = Set(zip(parents, fs.lstat(parents)).filter { _, a in (a.value ?? nil).map { othersCanChange(fs, $0) } ?? false }.map(\.0))
+            for t in tops where barred.contains((t.path as NSString).deletingLastPathComponent) { notEntered((t.path as NSString).deletingLastPathComponent) }
+            update { $0.doneFiles += tops.filter { barred.contains(($0.path as NSString).deletingLastPathComponent) }.count }
+            tops.removeAll { barred.contains(($0.path as NSString).deletingLastPathComponent) }
+        }
         removeAcross(fs, tops)
         finish()
     }
@@ -355,8 +376,10 @@ extension FileJob {
         // Synchronize: something put below a folder since Compare (a file written, a folder moved in — which changes
         // the folder's date, not always the file's) stays, and so do the folders above it. A folder newer than that
         // isn't gone into: what changed in it can't be told. A second off for whole-second dates.
-        // ponytail: Compare's moment by this Mac's clock; a server's behind it by more lets a change slip through.
-        let since = comparedAt.map { $0 - 2 }
+        // Compare's moment by this Mac's clock, the dates by the server's: a server running behind showed a change made
+        // after Compare as older, and it went. Its clock is read from a file made where the delete is (deleting there
+        // takes writing there), once.
+        let since = comparedAt.map { $0 - 2 + (tops.first.map { clockOffset(fs, ($0.path as NSString).deletingLastPathComponent) } ?? 0) }
         let barred = tops.filter { othersCanChange(fs, $0.attrs) }
         barred.forEach { notEntered($0.path) }
         update { $0.doneFiles += barred.count }
@@ -398,6 +421,7 @@ extension FileJob {
                     for c in items where Self.isSafeName(c.name) {
                         let p = (dirs[i].path as NSString).appendingPathComponent(c.name)
                         if othersCanChange(fs, c.attrs) { notEntered(p); keep(i) }
+                        else if c.attrs.kind == .dir && mounted(fs).contains(p) { otherVolumeAcross(p); keep(i) }   // read once, at the first folder
                         else if let since, c.attrs.mtime > since { update { $0.errors.append("\(p): newer than Compare — kept") }; keep(i) }
                         else if c.attrs.kind == .dir { dirs.append((p, i, false)) } else { files.append((p, i)) }
                     }
@@ -499,9 +523,59 @@ extension FileJob {
         return uid != root || mode & 0o022 != 0 && mode & UInt32(S_ISVTX) == 0
     }
 
+    /// The mount points in /proc/self/mounts' text; a field's space, tab, newline and backslash come as \040 \011
+    /// \012 \134. Not "/": every path is below that one.
+    static func mounts(_ text: String) -> Set<String> {
+        Set(text.split(separator: "\n").compactMap { line -> String? in
+            let f = line.split(separator: " ")
+            guard f.count > 1 else { return nil }
+            var out = "", s = Substring(f[1])
+            while let i = s.firstIndex(of: "\\") {
+                out += s[..<i]
+                let code = s[s.index(after: i)...].prefix(3)
+                if code.count == 3, let n = UInt8(code, radix: 8) { out.append(Character(Unicode.Scalar(n))); s = s[s.index(i, offsetBy: 4)...] }
+                else { out.append("\\"); s = s[s.index(after: i)...] }
+            }
+            out += s
+            return out == "/" ? nil : out
+        })
+    }
+
+    /// A server's mount points, read once per side and job (D-084): a delete or a move off a server stops at them, as
+    /// ⇧F8 and a move between volumes do on this Mac.
+    func mounted(_ fs: TransferFS) -> Set<String> {
+        if let known = mountCache[ObjectIdentifier(fs)] { return known }
+        let m = fs is LocalFS ? [] : fs.mountPoints(mountsFile)
+        mountCache[ObjectIdentifier(fs)] = m
+        return m
+    }
+
+    /// The server's clock less this Mac's, in whole seconds, from an empty file made in `dir` and removed; 0 if it
+    /// can't be made (or this Mac is the side).
+    func clockOffset(_ fs: TransferFS, _ dir: String) -> Double {
+        guard !(fs is LocalFS) else { return 0 }
+        let probe = (dir as NSString).appendingPathComponent(".dfm-clock-" + UUID().uuidString)
+        guard let w = try? fs.writer(probe, offset: 0) else { return 0 }
+        defer { try? fs.remove(probe) }
+        guard (try? w.finish()) != nil, let a = (try? fs.lstat(probe)) ?? nil else { return 0 }
+        return (a.mtime - Date().timeIntervalSince1970).rounded()
+    }
+
+    /// A folder another volume is mounted on: on this Mac by device (as `FileJob.transfer`), on a server by its list.
+    func isMountPoint(_ fs: TransferFS, _ path: String, in parent: String) -> Bool {
+        guard fs is LocalFS else { return mounted(fs).contains(path) }
+        guard let up = Self.lstat(parent) else { return false }
+        return crossesVolume(path, nil, up.st_dev)
+    }
+
+    func otherVolumeAcross(_ path: String) {
+        update { $0.errors.append("\(path): another volume is mounted here — skipped") }
+    }
+
     /// Said once in the summary, not asked: Retry would find the same folder.
     func notEntered(_ path: String) {
-        update { $0.errors.append("\(path): someone else on the server can change this folder — not entered as root. Do it as its owner, or in a terminal there") }
+        let line = "\(path): someone else on the server can change this folder — not entered as root. Do it as its owner, or in a terminal there"
+        update { if !$0.errors.contains(line) { $0.errors.append(line) } }   // once, however many items it held
     }
 
     /// A name a server sent can be anything: never one that leaves the folder it was listed in.
@@ -589,17 +663,10 @@ extension FileJob {
             case .overwrite, .overwriteIfNewer:
                 if conflict.bothDirs {
                     merge = true
-                } else if s.kind == .dir || d.kind == .dir {
-                    return replaceAcross(sfs, src, s, dfs, dst, d, move: move, root: root, depth: depth, maxDepth: maxDepth)
                 } else if s.kind != .file || d.kind != .file {
-                    // Anything but file over file (that one is replaced atomically below): clear the way first.
-                    // A symlink is removed itself, never what it points at.
-                    guard attempt(dst, {
-                        // On this Mac a replaced folder goes to the Trash (a server has none).
-                        if dfs is LocalFS && d.kind == .dir { try FileManager.default.trashItem(at: URL(fileURLWithPath: dst), resultingItemURL: nil) }
-                        else { try removeTree(dfs, dst, d) }
-                    }) else { return skip(sfs, src, s) }
-                    existing = nil
+                    // Anything but file over file (that one is replaced atomically below): the new one under a temporary
+                    // name first — a link removed before a copy that then failed left neither (a link never goes through it).
+                    return replaceAcross(sfs, src, s, dfs, dst, d, move: move, root: root, depth: depth, maxDepth: maxDepth)
                 }
             }
         }
@@ -619,11 +686,13 @@ extension FileJob {
         }
 
         let root = root ?? dst
+        // Not a file either (D-082): the partial written there as root, then renamed by name — between the two, its
+        // folder's owner can swap what the names lead to.
+        if top, let parent = barredParent, (dst as NSString).deletingLastPathComponent == parent { notEntered(parent); return skip(sfs, src, s) }
         switch s.kind {
         case .dir:
             if othersCanChange(sfs, s) { return notEntered(src) }
             if merge, let d = existing, othersCanChange(dfs, d) { notEntered(dst); return skip(sfs, src, s) }
-            if top, let parent = barredParent, (dst as NSString).deletingLastPathComponent == parent { notEntered(parent); return skip(sfs, src, s) }
             // Listed before the copy exists: a folder that is somehow inside its source isn't copied into itself.
             var children: [(name: String, attrs: SFTPClient.Attrs)] = []
             guard attempt(src, { children = try sfs.list(src) }) else { return }
@@ -648,6 +717,7 @@ extension FileJob {
                     fail(src + "/" + child.name, "Unsafe name from the server — not copied")
                     continue
                 }
+                if move && child.attrs.kind == .dir && isMountPoint(sfs, from, in: src) { otherVolumeAcross(from); continue }
                 // What the listing said of it goes along: a far server's lstat per file was one wait more each. And in
                 // a folder just made on a server nothing is there yet — but for a name an item copied in before has
                 // except for case or composition, taken on a disk that ignores those: looked at, the conflict asks.
@@ -667,11 +737,11 @@ extension FileJob {
             guard attempt(dst, { try dfs.symlink(target, at: dst) }) else { return }
             noteAcross(dst)
             update { $0.doneFiles += 1; $0.doneBytes = $0.doneBytes.saturatingAdd(s.size) }   // what measure counted for it
-            if move { attempt(src) { try sfs.remove(src) } }
+            if move { if dfs is LocalFS { Self.flush(dst) }; attempt(src) { try sfs.remove(src) } }
         case .file:
             guard copyAcross(sfs, src, s, dfs, dst, replace: existing != nil) else { return }
             noteAcross(dst)
-            if move { attempt(src) { try sfs.remove(src) } }
+            if move { if dfs is LocalFS { Self.flush(dst) }; attempt(src) { try sfs.remove(src) } }
         case .other:
             fail(src, "Not a regular file — not copied")
         }
@@ -693,7 +763,9 @@ extension FileJob {
             return
         }
         guard attempt(dst, {
-            // On this Mac a replaced folder goes to the Trash (a server has none). A symlink is removed itself.
+            // Neither a folder: renamed over it in one step (a link is replaced itself, never what it points at).
+            if s.kind != .dir && d.kind != .dir { return try dfs.rename(temp, dst, replace: true) }
+            // On this Mac a replaced folder goes to the Trash (a server has none).
             if dfs is LocalFS && d.kind == .dir { try FileManager.default.trashItem(at: URL(fileURLWithPath: dst), resultingItemURL: nil) }
             else if (try dfs.lstat(dst)) != nil { try removeTree(dfs, dst, d) }
             try dfs.rename(temp, dst, replace: false)
@@ -835,6 +907,7 @@ extension FileJob {
     private func removeTree(_ fs: TransferFS, _ path: String, _ a: SFTPClient.Attrs) throws {
         guard a.kind == .dir else { return try fs.remove(path) }
         if othersCanChange(fs, a) { throw JobError(message: "Someone else on the server can change this folder — not entered as root") }
+        if mounted(fs).contains(path) { throw JobError(message: "Another volume is mounted here — not deleted") }
         for child in try fs.list(path) where Self.isSafeName(child.name) {
             try removeTree(fs, (path as NSString).appendingPathComponent(child.name), child.attrs)
         }

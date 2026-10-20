@@ -69,7 +69,7 @@ Every substituted value is escaped for the shell. A command with `%D` doesn't ru
 | `terminal` | `true` runs it in Terminal (or the app in `terminalBundleID`); on a server panel it opens an SSH tab with the command. |
 | `server` | `true` shows the entry only on a server panel, `false` only on this Mac. Without it the entry shows in both, except that on a server panel it is left out when it calls a Mac-only tool (`xattr`, `open`, `pbcopy` …). |
 
-The four server entries (service status, restart, failed services, and the log of the unit under the cursor) are in the file Kermo writes. If your `usermenu.json` is older and lacks them, Kermo adds them after your entries on a server panel, marked "built in". On a production server, `systemctl stop` and `restart` ask first.
+The four server entries (service status, restart, failed services, and the log of the unit under the cursor) are in the file Kermo writes. If your `usermenu.json` is older and lacks them, Kermo adds them after your entries on a server panel, marked "built in". On a production server, `systemctl stop` and `restart` ask first (see [safety](safety.md) for all that asks).
 
 ## The `fm` command
 

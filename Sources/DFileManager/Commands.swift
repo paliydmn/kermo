@@ -499,8 +499,16 @@ extension AppDelegate {
             return ShellContext(dir: r.dir, otherDir: other.remote?.target.asUser == r.target.asUser ? other.remote?.dir : nil,
                                 cursor: active.remoteCursor?.item.name, targets: active.remoteSelection?.items.map(\.name) ?? [])
         }
-        return ShellContext(dir: active.path, otherDir: other.remote == nil && other.parked == nil ? other.path : nil, cursor: active.cursorURL?.lastPathComponent,
-                            targets: active.targetURLs.map(\.lastPathComponent))
+        let dir = active.itemsDir
+        return ShellContext(dir: dir, otherDir: other.remote == nil && other.parked == nil ? other.path : nil, cursor: active.cursorURL.map { Self.name($0, in: dir) },
+                            targets: active.targetURLs.map { Self.name($0, in: dir) })
+    }
+
+    /// `url` as named from `dir`: a search hit or a Git change is `sub/x.conf` there — its last component alone named
+    /// a file of the same name in `dir` itself, and %s / ⌥F5 acted on that one.
+    static func name(_ url: URL, in dir: String) -> String {
+        let base = dir.hasSuffix("/") ? dir : dir + "/"
+        return url.path.hasPrefix(base) && url.path.count > base.count ? String(url.path.dropFirst(base.count)) : url.lastPathComponent
     }
 
     /// Where ⌘E / F2 run a command on a local panel: the ⌃O shell (↩, F2 entries), an output window (⇧↩), the terminal
@@ -533,11 +541,11 @@ extension AppDelegate {
         switch dest {
         case .terminalApp:
             guard let app = terminalAppURL() else { return NSSound.beep() }
-            Shell.runInTerminal(expanded, in: active.path, terminalApp: app)
+            Shell.runInTerminal(expanded, in: active.itemsDir, terminalApp: app)
         case .window:
-            Shell.run(expanded, in: active.path) { [weak self] _ in self?.panels.forEach { $0.reload() } }
+            Shell.run(expanded, in: active.itemsDir) { [weak self] _ in self?.panels.forEach { $0.reload() } }
         case .shell:   // the panels reload when the terminal hides (toggleTerminal): the shell's command ends when it ends
-            guard let v = terminal.run(expanded, cwd: active.path) else {
+            guard let v = terminal.run(expanded, cwd: active.itemsDir) else {
                 return active.flash("A control character in a name: ⇧↩ runs it in an output window", error: true)
             }
             window.makeFirstResponder(v)
@@ -834,7 +842,7 @@ extension AppDelegate {
         if !q.contains.isEmpty { title += " containing “\(q.contains)”" }
         if !q.tag.isEmpty { title += " tagged “\(q.tag)”" }
         let server = panel.remote?.target, env = SSHAskpass.env   // a server panel searches there
-        let flag = panel.beginSearch(title, in: DirSync.place(server.map(Endpoint.sftp) ?? .local, q.root))
+        let flag = panel.beginSearch(title, in: DirSync.place(server.map(Endpoint.sftp) ?? .local, q.root), root: server == nil ? q.root : nil)
         DispatchQueue.global(qos: .userInitiated).async {
             var batch: [FileItem] = []
             var lastFlush = Date()
@@ -1287,6 +1295,22 @@ extension AppDelegate {
     /// Every save of a server file (F4's ⌘S, another app's, Revert) goes here. The version it replaces goes into the
     /// file history; if it can't, the save goes on and the status line says why.
     func upload(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool = false, action: String = "save") async -> Bool {
+        // One save to a server file at a time, from any editor, copy or revert: two at once each passed the check
+        // against the same version, and the last rename won — the other's text gone, unasked. The later one now
+        // checks against what the earlier wrote, and asks.
+        let key = ServerRow.key(target.asUser) + ":" + remotePath, before = Self.uploads[key]
+        let mine = Task { @MainActor in
+            _ = await before?.value
+            return await uploadNow(saved, to: remotePath, on: target, state, force: force, action: action)
+        }
+        Self.uploads[key] = mine
+        let ok = await mine.value
+        if Self.uploads[key] == mine { Self.uploads[key] = nil }
+        return ok
+    }
+    private static var uploads: [String: Task<Bool, Never>] = [:]
+
+    private func uploadNow(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool, action: String) async -> Bool {
         let name = (remotePath as NSString).lastPathComponent   // the copy's own, but not a version's (Revert)
         let note = state.prodNote(target)
         if !note.isEmpty {
@@ -1352,7 +1376,9 @@ extension AppDelegate {
             while true {   // Compare asks again once the diff is up
                 switch await choose("“\(name)” changed on \(target.host) since you opened it", info: info, ["Overwrite", "Compare", "Cancel"],
                                     default: 2, on: Editor.window(for: saved)) {   // ⌘S ↩ never writes over theirs
-                case 0: return await upload(saved, to: remotePath, on: target, state, force: true, action: action)
+                case 0:   // over what was shown, not whatever's there by now: another change meanwhile asks again
+                    state.baseline = e.attrs
+                    return await uploadNow(saved, to: remotePath, on: target, state, force: false, action: action)
                 case 1: await diff(DiffSide(path: saved.path, name: "\(name) (yours)"),
                                    DiffSide(path: remotePath, server: target, size: e.attrs.size, mtime: e.attrs.mtime), in: panel)
                 default: return false
@@ -1412,10 +1438,12 @@ extension AppDelegate {
                 let revert: @MainActor () -> Void = { [self] in
                     let state = RemoteEdit(baseline: now ?? .nothing)
                     Task {
+                        // Read first: the save keeps a version too, and the history's limit may take this one then.
+                        let data = await Blocking.run(.userInitiated) { try? Data(contentsOf: url) }
                         guard await upload(url, to: path, on: target, state, action: "revert") else { return }
                         panel.flash("“\(name)” on \(target.host) is back to its version of \(when)")
                         // Its editor shows that now, unless it has changes of its own.
-                        if let e = Editor.editing(target, path), let data = await Blocking.run(.userInitiated, { try? Data(contentsOf: url) }) {
+                        if let e = Editor.editing(target, path), let data {
                             _ = await e.reverted(to: data, attrs: state.baseline)
                         }
                     }
@@ -1632,6 +1660,16 @@ extension AppDelegate {
         }
     }
 
+    /// The items as the panel listed them: one that's another thing by now (a file swapped by `mv`, a folder in its
+    /// place — a server panel isn't watched, its listing can be hours old) is skipped, not deleted: there's no Trash.
+    static func serverDelete(_ items: [FileItem], in dir: String, on target: SFTPTarget, env: [String: String]) -> FileJob {
+        let paths = items.map { (dir as NSString).appendingPathComponent($0.name) }
+        let job = FileJob(.delete, sources: paths, from: .sftp(target), to: .sftp(target), destDir: nil, sshEnv: env)
+        job.expected = Dictionary(zip(paths, items.map { Optional($0) }), uniquingKeysWith: { a, _ in a })
+        (job.expectedFrom, job.foldersByKind) = ("it was listed", true)
+        return job
+    }
+
     /// There's no Trash on a server: always asks, then deletes recursively.
     private func remoteDelete() {
         guard let sel = active.remoteSelection else { return NSSound.beep() }
@@ -1640,9 +1678,7 @@ extension AppDelegate {
             guard await confirm("Delete \(what) on \(sel.target.host)?",
                                 info: SavedServer.prodNote([sel.target]) + "Files on a server can't be moved to the Trash. This can't be undone.",
                                 ok: "Delete") else { return }
-            let paths = sel.items.map { (sel.dir as NSString).appendingPathComponent($0.name) }
-            ops.enqueue(FileJob(.delete, sources: paths, from: .sftp(sel.target), to: .sftp(sel.target), destDir: nil, sshEnv: SSHAskpass.env),
-                        title: "Delete \(what) on \(sel.target.host)")
+            ops.enqueue(Self.serverDelete(sel.items, in: sel.dir, on: sel.target, env: SSHAskpass.env), title: "Delete \(what) on \(sel.target.host)")
             active.unmarkAll()
         }
     }
@@ -1767,6 +1803,9 @@ extension AppDelegate {
             let top = sel?.names ?? (index?.list("") ?? []).map(\.name)
             return (index, top.filter { var st = stat(); return Darwin.lstat((dest as NSString).appendingPathComponent($0), &st) == 0 })
         }
+        // Not readable as a whole (a damaged member, a format the reader refuses midway): its names aren't known, and
+        // bsdtar extracts the rest anyway — over what's there, unasked. Unpacked aside first and asked after, as a tar.
+        if index == nil, sel == nil { return extractWholeTar(file, to: dest) }
         let shown = (dest as NSString).abbreviatingWithTildeInPath
         guard let keep = await keepExisting(clashes, in: shown) else { return }
         let staging: String?
@@ -1880,7 +1919,9 @@ extension AppDelegate {
             // What lands at the top of `dest` that's there already: tar and unzip -o would replace it.
             let found = await panel.busy("Reading “\((item.name as NSString).lastPathComponent)”…") { flag in
                 let top = RemoteArchive.topNames(try SSHCommand.capture(target, RemoteArchive.namesCommand(file), env: env, cancel: flag), of: file)
-                let present = Set(((try? SFTP.list(target, dest, env: env, cancel: flag)) ?? []).map(\.name))   // no folder yet: nothing
+                // A refused channel or no permission isn't "nothing there": taken as such, tar -x and unzip -o
+                // replaced what was there unasked.
+                let present = Set(try SFTP.listIfThere(target, dest, env: env, cancel: flag).map(\.name))
                 return top.filter(present.contains)
             }
             guard case .success(let clashes) = found else {
@@ -1912,8 +1953,9 @@ extension AppDelegate {
             let archive = resolve(input)
             let taken = await Blocking.run(.userInitiated) { FileManager.default.fileExists(atPath: archive) }   // a share that doesn't answer
             guard !taken else { return showError(JobErrorMessage("“\(input)” already exists.")) }
-            let args = ArchiveIndex.createArguments(archive, names: srcs.map(\.lastPathComponent), in: active.path)
-            Shell.run("COPYFILE_DISABLE=1 /usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: active.path) { _ in self.panels.forEach { $0.reload() } }
+            let dir = active.itemsDir
+            let args = ArchiveIndex.createArguments(archive, names: srcs.map { Self.name($0, in: dir) }, in: dir)
+            Shell.run("COPYFILE_DISABLE=1 /usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dir) { _ in self.panels.forEach { $0.reload() } }
             active.unmarkAll()
         }
     }
@@ -2684,7 +2726,7 @@ extension AppDelegate {
     func multiRename() {
         let items = active.targetItems
         guard !items.isEmpty else { return NSSound.beep() }
-        let dir = active.path
+        let dir = active.itemsDir
         MultiRename.show(on: window, dir: dir, items: items) { [unowned self] done in
             registerMoves("Rename \(done.count) Items", done)
             active.unmarkAll()

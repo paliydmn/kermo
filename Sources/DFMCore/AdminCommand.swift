@@ -5,9 +5,19 @@ import Foundation
 public enum AdminCommand {
     private static func q(_ s: String) -> String { ShellContext.quote(s) }
 
-    /// ditto keeps mode, owner, ACLs, xattrs and dates; each item lands as destDir/<name>.
+    /// ditto keeps mode, owner, ACLs, xattrs and dates; each item lands as destDir/<name>. A folder already there is
+    /// merged into (ditto). Anything else goes into a folder of root's own in destDir first (0700: nothing running as
+    /// the user gets in), then is renamed into place: rename(2) never follows a link at the name — a link swapped in
+    /// after `check` is replaced (a file) or refused (a folder), never written through as root.
+    // ponytail: a merge into a folder others (or you) can write still follows links planted inside it, and destDir
+    // itself is taken as typed; what's copied is the user's files anyway, which anything running as them can change.
     public static func copy(_ sources: [String], to destDir: String) -> String {
-        sources.map { "/usr/bin/ditto \(q($0)) \(q((destDir as NSString).appendingPathComponent(($0 as NSString).lastPathComponent)))" }
+        guard !sources.isEmpty else { return "" }
+        let rename = "/usr/bin/perl -T -e 'my ($a, $b) = map { /\\A(.*)\\z/s; $1 } @ARGV; rename($a, $b) or die \"$b: $!\\n\"'"
+        let one = "c() { if [ -d \"$2\" ] && [ ! -L \"$2\" ]; then /usr/bin/ditto \"$1\" \"$2\"; return; fi; "
+            + "/bin/mkdir -p \"$3\" && t=$(/usr/bin/mktemp -d \"$3/.kermo-admin.XXXXXX\") || return 1; "   // ditto made a new destDir
+            + "/usr/bin/ditto \"$1\" \"$t/x\" && \(rename) -- \"$t/x\" \"$2\"; r=$?; /bin/rm -rf \"$t\"; return $r; }; "
+        return one + sources.map { "c \(q($0)) \(q((destDir as NSString).appendingPathComponent(($0 as NSString).lastPathComponent))) \(q(destDir))" }
             .joined(separator: " && ")
     }
 
@@ -15,8 +25,7 @@ public enum AdminCommand {
     /// same): a folder into itself or below it (ditto recursed until the disk was full), through a link at
     /// destDir/<name> (root would write where it points), an item onto itself. `existing`: names there already,
     /// which ditto replaces. `destDir` needn't be there yet: ditto makes it, so its nearest folder that is counts.
-    // ponytail: a link put at destDir/<name> between this look and ditto is still followed — the same race as D-080,
-    // closed only by a root helper that opens with O_NOFOLLOW.
+    // A link put at destDir/<name> after this look: `copy` renames over it, never through it.
     public static func check(_ sources: [String], to destDir: String, move: Bool) -> (refusal: String?, existing: [String]) {
         var there = destDir
         while access(there, F_OK) != 0, there != "/", !there.isEmpty { there = (there as NSString).deletingLastPathComponent }
@@ -62,12 +71,10 @@ public enum AdminCommand {
 
     /// Overwrites the file's contents in place, so its owner, mode, ACL and hard links stay as they were. Root copies the
     /// text into a file of its own first and writes only if it hashes to `sha256`: a temp file of the user's could be
-    /// changed by anything running as them while macOS asks for the password. Then nothing is written if the target is
-    /// now a symlink (as root, a link planted in a folder others can write would aim this anywhere) or isn't `stamp`
-    /// ("inode:size:mtime", `stat -f %i:%z:%Fm`; nil: it mustn't exist). Written over without truncating first and cut
-    /// to length after, so a failed write (a full disk) leaves the new text over the old, never an empty file.
-    // ponytail: the symlink check and the write are two calls, a link swapped in between is followed — only an
-    // O_NOFOLLOW open as root closes that (D-080: a root helper, which needs Developer ID signing).
+    /// changed by anything running as them while macOS asks for the password. Then nothing is written if the target
+    /// isn't `stamp` ("inode:size:mtime", `stat -f %i:%z:%Fm`; nil: it mustn't exist) — and the write itself
+    /// (`writeOver`) opens it without following a link and checks that what it opened is still that inode. Written over
+    /// without truncating first and cut to length after: a failed write (a full disk) never leaves an empty file.
     public static func writeContents(_ source: Source, sha256: String, to target: String, stamp: String?, length: Int) -> String {
         let t = q(target)
         let copy = switch source {
@@ -75,12 +82,32 @@ public enum AdminCommand {
         case .file(let path): "/bin/cat \(q(path))"
         }
         let unchanged = stamp.map { "[ \"$(/usr/bin/stat -f %i:%z:%Fm \(t))\" = \(q($0)) ]" } ?? "[ ! -e \(t) ]"
+        let seen = stamp.map { $0.split(separator: ":").prefix(2).map(String.init) }
         return "c=$(/usr/bin/mktemp /tmp/dfm-admin-save.XXXXXX) || exit 1; trap '/bin/rm -f \"$c\"' EXIT; "
             + "\(copy) > \"$c\" || exit 1; "
             + "[ \"$(/usr/bin/shasum -a 256 < \"$c\")\" = '\(sha256)  -' ] || { echo 'The text arrived changed; nothing was written.' >&2; exit 1; }; "
-            + "[ ! -L \(t) ] || { echo 'It is a symlink now; nothing was written.' >&2; exit 1; }; "
+            + "[ ! -L \(t) ] || { echo '\(isLink)' >&2; exit 1; }; "
             + "\(unchanged) || { echo '\(changedOnDisk)' >&2; exit 1; }; "
-            + "umask 022; /bin/dd if=\"$c\" of=\(t) bs=1m conv=notrunc status=none && /bin/dd if=/dev/null of=\(t) bs=1 seek=\(length) status=none"
+            + "umask 022; " + writeOver(target, from: "\"$c\"", inode: seen?.first, size: seen?.dropFirst().first, length: length)
+    }
+    static let isLink = "It is a symlink now; nothing was written."
+
+    /// Run as root: `from` (a shell word) written over `target` from its start, then cut to `length`. The open doesn't
+    /// follow a link at `target` (`O_NOFOLLOW`) and what it opened must be `inode` and `size` (nil: a new file,
+    /// `O_EXCL`): a link or another file swapped in after the shell's checks is refused, never written through as
+    /// root. The system's perl — the shell has no such open, and code of our own would need to be trusted as root
+    /// (signed): /usr/bin is sealed. `-T` ignores PERL5LIB and PERL5OPT.
+    static func writeOver(_ target: String, from: String, inode: String?, size: String?, length: Int) -> String {
+        let perl = """
+        use Fcntl; my ($t, $c, $ino, $size, $len) = map { /\\A(.*)\\z/s; $1 } @ARGV; my $new = $ino eq "-";
+        sysopen(my $f, $t, O_WRONLY | O_NOFOLLOW | ($new ? O_CREAT | O_EXCL : 0), 0644) or do { print STDERR
+        ($!{ELOOP} ? "\(isLink)" : $!{EEXIST} ? "\(changedOnDisk)" : "$t: $!"), "\\n"; exit 1 };
+        my @s = stat($f); if (!$new && ($s[1] != $ino || $s[7] != $size)) { print STDERR "\(changedOnDisk)\\n"; exit 1 }
+        open(my $in, "<", $c) or die "$c: $!\\n"; binmode $in; binmode $f; my $d = do { local $/; <$in> };
+        for (my $o = 0; $o < length $d;) { my $n = syswrite($f, $d, length($d) - $o, $o); defined $n or die "$t: $!\\n"; $o += $n }
+        truncate($f, $len) or die "$t: $!\\n"; close($f) or die "$t: $!\\n";
+        """
+        return "/usr/bin/perl -T -e \(q(perl)) -- \(q(target)) \(from) \(q(inode ?? "-")) \(q(size ?? "-")) \(length)"
     }
 
     /// -h: a symlink's own mode, never its target's (same as chown/chflags below).
