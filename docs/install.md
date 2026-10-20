@@ -6,6 +6,16 @@ Kermo needs macOS 14 or later and runs on Apple Silicon and Intel Macs.
 
 ## Install a release
 
+The quickest way: paste this into Terminal and press Return.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/paliydmn/kermo/master/install.sh | sh
+```
+
+It downloads the latest release, checks its SHA-256, quits Kermo if it's open, puts Kermo in Applications and opens it. The same line updates Kermo. Run it in Terminal, not in Kermo's own terminal, since it quits Kermo. If Kermo came from the `.pkg` (then it belongs to root), it asks for your password. A file `curl` downloads isn't quarantined, so macOS doesn't ask for **Open Anyway**: [the script](../install.sh) is what you trust instead.
+
+By hand:
+
 1. Download the `.dmg` or the `.pkg` from the [latest release](https://github.com/paliydmn/kermo/releases/latest).
 2. Open the DMG and drag **Kermo** to Applications. With the `.pkg`, open it and run the standard macOS installer, which puts Kermo in Applications.
 3. Kermo isn't notarized by Apple, so macOS blocks it the first time: when you open the app from the DMG, or when you open the `.pkg`. Allow it:
@@ -18,7 +28,7 @@ Once a day Kermo asks GitHub for its latest release: one HTTPS request to `api.g
 
 **Kermo ▸ Check for Updates…** (or `update` in ⌘⇧P) checks at once and shows the release notes:
 
-- **Download** opens the release page; replace Kermo in Applications with the new app;
+- **Download** opens the release page; replace Kermo in Applications with the new app, or run the [install line](#install-a-release) again;
 - **Later** keeps it in the menu;
 - **Skip This Version** forgets this one; the next one is announced again.
 
