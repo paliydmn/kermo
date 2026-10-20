@@ -491,3 +491,26 @@ private final class Behind: TransferFS, @unchecked Sendable {
     #expect(fm.fileExists(atPath: d + "/gone/new"), "\(job.progress.errors)")
     #expect(try fm.contentsOfDirectory(atPath: d + "/gone") == ["new"], "the clock's file gone too")
 }
+
+/// A save's check against a change on the server goes by size and whole-second date, and by content up to 1 MiB: a
+/// bigger file changed in place within the second the editor read it (same size) slipped by and was overwritten. Its
+/// content is hashed on the server now.
+@Test func aBigFileChangedWithinTheSecondIsCaught() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    let file = d + "/big.log"
+    try Data(repeating: 0x61, count: 2 << 20).write(to: URL(fileURLWithPath: file))
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    let base = try c.download(file, to: d + "/copy")
+    #expect(base.sha256 != nil)
+    var st = stat()
+    stat(file, &st)
+    var other = Data(repeating: 0x61, count: 2 << 20)
+    other[1000] = 0x62   // someone else's change, same size
+    try other.write(to: URL(fileURLWithPath: file))
+    var times = [timespec(tv_sec: st.st_atimespec.tv_sec, tv_nsec: 0), timespec(tv_sec: st.st_mtimespec.tv_sec, tv_nsec: 0)]
+    utimensat(AT_FDCWD, file, &times, 0)   // within the same second, as SFTP v3 sees it
+    #expect(throws: SFTPClient.ChangedOnServer.self) { try c.upload(d + "/copy", to: file, baseline: base) { _, _ in } }
+    #expect(fm.contents(atPath: file) == other)
+}

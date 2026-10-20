@@ -75,6 +75,7 @@ Release:
 - Two saves of one server file at the same moment (its editor and a copy open in another app, or a revert) no longer both go through with the last one silently winning: the second waits for the first, sees the file changed, and asks.
 - A move to another volume (a USB stick) or from a server to this Mac now has each file on the disk before it deletes the original: a stick pulled or the power cut right after could lose both.
 - **Synchronize Folders** deleting on a server whose clock runs behind this Mac's no longer takes along a file written there after the comparison: it reads the server's clock first.
+- Saving a server file over 1 MB now notices a change made there within the same second you opened it that kept its size: the file is hashed on the server. Before, only files up to 1 MB were compared by content.
 
 ## [1.2.1] - 2026-10-17
 

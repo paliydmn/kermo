@@ -658,6 +658,16 @@ public final class SFTPClient: @unchecked Sendable {
         return over ? Int64.max : Int64(clamping: bytes)
     }
 
+    /// `path`'s SHA-256 hashed on the server (sha256sum, BSD's shasum, then sudo -n); nil if none of them could.
+    func serverSHA256(_ path: String) -> Data? {
+        let f = ShellContext.quote(path)
+        let cmd = "sha256sum -- \(f) 2>/dev/null || shasum -a 256 -- \(f) 2>/dev/null || sudo -n sha256sum -- \(f) 2>/dev/null"
+        guard let out = SSHCommand.output(target, cmd, env: env, timeout: 120) else { return nil }
+        let hex = Array(String(decoding: out, as: UTF8.self).prefix(64).utf8)
+        guard hex.count == 64 else { return nil }
+        return Data((0..<32).compactMap { UInt8(String(decoding: hex[($0 * 2)..<($0 * 2 + 2)], as: UTF8.self), radix: 16) })
+    }
+
     /// How many names `path` has, by `stat` over ssh (GNU, then sudo -n, then BSD); nil: it couldn't be told. Linux's
     /// `stat -f` is the file system's: a refused look there reads 255 — written in place, the safe way.
     func linkCount(_ path: String) -> Int? {
@@ -1059,7 +1069,7 @@ extension SFTPClient {
                 }
             }
         }
-        if a.size <= last ?? a.size && a.size <= Self.hashLimit { a.sha256 = Data(hash.finalize()) }
+        if a.size <= last ?? a.size { a.sha256 = Data(hash.finalize()) }
         return a
     }
 
@@ -1122,13 +1132,15 @@ extension SFTPClient {
         let keep = replaced != nil && cur?.kind == .file && cur!.size <= ServerHistory.fileLimit
         var old: Data?
         // Size + whole-second mtime is all SFTP v3 tells; a same-size change within that second shows in the content.
-        // ponytail: over `hashLimit` it still slips by; a server-side hash (`sha256sum` over ssh) if that ever matters.
+        // Over `hashLimit` it's hashed on the server (`sha256sum` over ssh), not read here; none there: as before.
         if !force, let baseline, let cur {
             var changed = cur.size != baseline.size || cur.mtime != baseline.mtime
-            if !changed, let sum = baseline.sha256 {
+            if !changed, let sum = baseline.sha256, cur.size <= Self.hashLimit {
                 let now = try contents(remote, size: cur.size)
                 changed = Data(SHA256.hash(data: now)) != sum
                 old = now
+            } else if !changed, let sum = baseline.sha256, let there = serverSHA256(real ?? remote) {
+                changed = there != sum
             }
             if changed { throw ChangedOnServer(attrs: cur) }
         }
@@ -1231,7 +1243,7 @@ extension SFTPClient {
         }
         if let cur, cur.kind == .file { replaced?(cur, keep ? old : nil) }
         var a = try stat(remote)
-        if a.size <= Self.hashLimit { a.sha256 = Data(hash.finalize()) }   // what was sent: the next save's baseline
+        a.sha256 = Data(hash.finalize())   // what was sent: the next save's baseline
         saved.insert((partial as NSString).deletingLastPathComponent)
         return a
     }
