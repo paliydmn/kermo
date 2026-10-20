@@ -88,8 +88,17 @@ public enum DirSync {
                                 out.append(Item(path: path, rightPath: rightPath, left: a, right: b, action: .skip, isConflict: true))
                                 continue
                             }
-                            out.append(row(path, a, b, left: left, right: right, byContent: byContent, tolerance: tolerance, rightPath: rightPath,
-                                           isCancelled: isCancelled))
+                            let r = row(path, a, b, left: left, right: right, byContent: byContent, tolerance: tolerance, rightPath: rightPath,
+                                        isCancelled: isCancelled)
+                            // `README` here, `readme` there, not alike: one file renamed on a disk that ignores case, two
+                            // unrelated ones where both sides tell them apart (two servers) — copying the newer over the
+                            // other's name replaced that one. Shown, not synchronized.
+                            if r.action != .equal, a.name.precomposedStringWithCanonicalMapping != b.name.precomposedStringWithCanonicalMapping {
+                                out.append(Item(path: path, rightPath: rightPath, left: a, right: b, action: .skip, isConflict: true,
+                                                unreadable: "names differ in case: \(a.name) here, \(b.name) there"))
+                            } else {
+                                out.append(r)
+                            }
                         case (nil, nil): break
                         }
                     }

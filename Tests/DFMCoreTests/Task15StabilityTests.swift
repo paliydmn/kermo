@@ -395,3 +395,20 @@ private func sh(_ command: String) -> (status: Int32, err: String) {
     fm.createFile(atPath: d + "/partial", contents: Data("x".utf8))
     #expect(try job.renameNew(d + "/partial", d + "/free") == d + "/free")
 }
+
+/// R-03: Synchronize took `README` on one side and `readme` on the other for one file (names are matched ignoring
+/// case) and copied the newer over the other's name — on two servers, two unrelated files, one gone. Such a pair is a
+/// conflict now, named, and left alone.
+@Test func syncDoesntCopyOverANameInAnotherCase() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    try fm.createDirectory(atPath: d + "/l", withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: d + "/r", withIntermediateDirectories: true)
+    fm.createFile(atPath: d + "/l/README", contents: Data("left".utf8))
+    fm.createFile(atPath: d + "/r/readme", contents: Data("right, older".utf8), attributes: [.modificationDate: Date(timeIntervalSinceNow: -3600)])
+    fm.createFile(atPath: d + "/l/same", contents: Data("x".utf8))
+    let rows = DirSync.compare(left: d + "/l", right: d + "/r")
+    let readme = try #require(rows.first { $0.path == "README" })
+    #expect(readme.isConflict && readme.action == .skip && readme.unreadable == "names differ in case: README here, readme there")
+    #expect(rows.first { $0.path == "same" }?.action == .toRight)
+}
