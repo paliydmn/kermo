@@ -90,16 +90,26 @@ public enum SFTP {
     /// Short path: unix socket paths are limited to 104 bytes, and ssh adds 17 while creating one (so not $TMPDIR).
     /// /tmp is shared, and the askpass script and mux sockets live here: use the predictable name only if that
     /// folder is really ours (another user may have made it first), else a fresh random one.
-    public static let controlDir: String = {
-        let dir = "/tmp/dfm-ssh-\(getuid())"
+    public static var controlDir: String { control.dir }
+    static let control = controlDir(predictable: "/tmp/dfm-ssh-\(getuid())")
+
+    /// `random`: the predictable folder wasn't ours, so this one was made for this run alone — nothing finds it again.
+    static func controlDir(predictable dir: String) -> (dir: String, random: Bool) {
         mkdir(dir, 0o700)
         var s = stat()
         // Sticky /tmp: once it's ours, nobody else can rename or replace it.
-        if lstat(dir, &s) == 0, s.st_mode & S_IFMT == S_IFDIR, s.st_uid == getuid(), chmod(dir, 0o700) == 0 { return dir }
+        if lstat(dir, &s) == 0, s.st_mode & S_IFMT == S_IFDIR, s.st_uid == getuid(), chmod(dir, 0o700) == 0 { return (dir, false) }
         var template = Array("/tmp/dfm-ssh-XXXXXXXX".utf8CString)
-        return template.withUnsafeMutableBufferPointer { mkdtemp($0.baseAddress!).map { String(cString: $0) } }
-            ?? NSTemporaryDirectory() + "dfm-ssh-unavailable"   // too long for sockets: ssh fails cleanly
-    }()
+        return template.withUnsafeMutableBufferPointer { mkdtemp($0.baseAddress!).map { (String(cString: $0), true) } }
+            ?? (NSTemporaryDirectory() + "dfm-ssh-unavailable", false)   // too long for sockets: ssh fails cleanly
+    }
+
+    /// At quit, once the masters are stopped: a random `controlDir` was left in /tmp after every run. Never the
+    /// predictable one — the next run (or another Kermo still running) uses it.
+    public static func removeControlDir() { removeControlDir(control) }
+    static func removeControlDir(_ c: (dir: String, random: Bool)) {
+        if c.random { try? FileManager.default.removeItem(atPath: c.dir) }
+    }
 
     /// Shared by SFTP sessions and the SSH tabs: whichever logs in first, the other rides on its connection.
     static func connectionOptions(_ t: SFTPTarget) -> [String] {
@@ -256,17 +266,21 @@ public enum SFTP {
 
     /// Ends the shared connection, which otherwise outlives its last session by ControlPersist (anyone running as
     /// this user could ride it meanwhile). `now`: at once, with whatever still runs on it (quitting); else it takes
-    /// no new sessions and goes when the last one (a transfer, a follow) ends. Blocks briefly.
-    public static func stopMaster(_ t: SFTPTarget, now: Bool) {
+    /// no new sessions and goes when the last one (a transfer, a follow) ends. Blocks briefly: some 20 ms on a LAN, and
+    /// never past `stopWait` — a master that stopped answering (stuck, or its process stopped) held `-O exit`, and
+    /// Quit, for good. `ssh`: tests stand in for it.
+    public static func stopMaster(_ t: SFTPTarget, now: Bool, ssh: String = "/usr/bin/ssh") {
         guard t.localServer == nil, mastersLock.withLock({ masters.remove(t) }) != nil else { return }
         unlink(masterLog(t))   // first: a master started right after this one goes begins a file of its own
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        p.executableURL = URL(fileURLWithPath: ssh)
         p.arguments = connectionOptions(t) + ["-O", now ? "exit" : "stop"] + t.arguments()
         p.standardInput = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return }
+        Timeouts.queue.asyncAfter(deadline: .now() + stopWait) { if p.isRunning { p.terminate() } }
         p.waitUntilExit()
     }
+    public static let stopWait = 2.5
 
     /// A saved password for the target, if any (the app's Keychain). Set once at launch; called off the main thread,
     /// only when ssh asks for it: a read may bring up the Keychain's own dialog (an app whose signature changed).
@@ -366,6 +380,11 @@ public enum SFTP {
     /// `links` hears where each symlink points and the errno following it gives (0: there). `kept`: as in `home`.
     /// `free` hears the bytes free there, where the server tells (`statvfs@openssh.com`) — asked in the same wave as the
     /// listing: no wait of its own.
+    /// `dir`'s items, or none when there's no such folder (yet); any other failure throws.
+    public static func listIfThere(_ t: SFTPTarget, _ dir: String, env: [String: String] = [:], cancel: CancelFlag? = nil) throws -> [FileItem] {
+        do { return try list(t, dir, env: env, cancel: cancel) } catch let e as SFTPError where e.code == SFTPClient.NO_SUCH_FILE { return [] }
+    }
+
     public static func list(_ t: SFTPTarget, _ dir: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
                             owners: ((_ name: String, _ owner: String, _ group: String) -> Void)? = nil,
                             links: ((_ name: String, _ target: String, _ error: Int32) -> Void)? = nil,

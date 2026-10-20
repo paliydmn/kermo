@@ -156,6 +156,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var searchWhat = ""
     /// The server folder ⌘L ⇥ last listed, while the path is typed.
     private var completions: (dir: String, items: [FileItem])?
+    private var completing: CancelFlag?   // the ⇥ still listing
     private var searching = false
     /// Browsing inside an archive (read-only). `path` stays the folder that contains the archive file.
     private(set) var archive: (index: ArchiveIndex, inner: String)?
@@ -241,8 +242,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         return rowIndex![name].map { $0 + (hasParent ? 1 : 0) }
     }
     private func url(of item: FileItem) -> URL {
-        URL(fileURLWithPath: (path as NSString).appendingPathComponent(item.name), isDirectory: item.kind == .dir)
+        URL(fileURLWithPath: (itemsDir as NSString).appendingPathComponent(item.name), isDirectory: item.kind == .dir)
     }
+    /// What the rows' names are relative to: the folder, or a search's root — a tag search's is ~ wherever the panel
+    /// is, and its hits' names (`Documents/x.pdf`) went onto `path`: ⇧F8 there deleted another folder's file.
+    var itemsDir: String { searchTitle != nil ? searchRoot ?? path : path }
+    private var searchRoot: String?
     var currentName: String? {
         let r = table.selectedRow
         return r >= 0 && r < table.numberOfRows ? item(at: r)?.name : nil
@@ -639,6 +644,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         watcher = nil
         statTimer?.invalidate()
         searchFlag?.cancel()
+        completing?.cancel()
         sizeWalk?.cancel()
         stopPreview()
     }
@@ -812,9 +818,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     static func countText(_ n: Int, _ noun: String, _ bytes: Int64) -> String {
         "\(n) \(n == 1 && noun == "items" ? "item" : noun)" + (bytes > 0 ? ", " + sizeFmt.string(fromByteCount: bytes) : "")
     }
-    private func bytes(of items: [FileItem]) -> Int64 {
-        let sizes = dirSizes   // not `self`'s per item (see `applyView`)
-        return items.reduce(0) { $0 + ($1.kind == .dir ? sizes[$1.name] ?? 0 : $1.size) }
+    private func bytes(of items: [FileItem]) -> Int64 { Self.bytes(of: items, dirSizes: dirSizes) }   // not `self`'s per item (see `applyView`)
+    nonisolated static func bytes(of items: [FileItem], dirSizes: [String: Int64]) -> Int64 {
+        items.reduce(0) { $0.saturatingAdd($1.kind == .dir ? dirSizes[$1.name] ?? 0 : $1.size) }
     }
 
     /// The Size column: a folder's measured bytes or <DIR>; a special file's type, which has no size to show.
@@ -1004,8 +1010,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     // MARK: - Sorting (remembered per folder)
 
     private nonisolated static func savedSort(for p: String) -> (key: SortKey, ascending: Bool) {
-        let parts = (UserDefaults.standard.dictionary(forKey: "folderSort")?[p] as? String)?.split(separator: ":")
-        return (parts.flatMap { SortKey(rawValue: String($0[0])) } ?? .name, parts.map { $0.count < 2 || $0[1] == "1" } ?? true)
+        sortOrder(UserDefaults.standard.dictionary(forKey: "folderSort")?[p] as? String)
+    }
+
+    /// `"size:0"` → by size, descending. Anything else (`defaults write`, a damaged plist) → by name, ascending.
+    nonisolated static func sortOrder(_ saved: String?) -> (key: SortKey, ascending: Bool) {
+        let parts = saved?.split(separator: ":") ?? []
+        return (parts.first.flatMap { SortKey(rawValue: String($0)) } ?? .name, parts.count < 2 || parts[1] == "1")
     }
 
     private func loadSort(for p: String) {
@@ -1103,7 +1114,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             else { onCommand?("archive.open") }
             return
         }
-        let full = (path as NSString).appendingPathComponent(it.name)
+        let full = (itemsDir as NSString).appendingPathComponent(it.name)
         guard it.kind == .dir || it.kind == .link else { return openItem(it, full, dirLike: false, folder: false) }
         // Off the main thread: a link into a share that stopped answering hangs this, not the app. Dropped if the
         // panel went elsewhere meanwhile.
@@ -1404,8 +1415,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     // MARK: - Search results ("panelize"): fed in batches by the search runner
 
     /// `what` was searched for, `place` where (the title is both; the footer shows `what`).
-    func beginSearch(_ what: String, in place: String? = nil) -> CancelFlag {
+    func beginSearch(_ what: String, in place: String? = nil, root: String? = nil) -> CancelFlag {
         searchFlag?.cancel()
+        searchRoot = root
         let flag = CancelFlag()
         searchFlag = flag
         loadGen += 1   // drop any listing still in flight
@@ -1878,7 +1890,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         var shown = IndexSet()
         for (name, bytes, partial) in sizes {
             if let r = row(named: name) {
-                totalSize += bytes - (dirSizes[name] ?? 0)   // only what's listed counts, as in `bytes(of: rows)`
+                totalSize = totalSize.saturatingAdd(bytes - (dirSizes[name] ?? 0))   // only what's listed counts, as in `bytes(of: rows)`
                 shown.insert(r)
             }
             dirSizes[name] = bytes
@@ -1955,6 +1967,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func controlTextDidEndEditing(_ obj: Notification) {
         if obj.object as? NSTextField === pathField {
+            completing?.cancel()
             showPath()
         } else if filter == nil {
             filterField.isHidden = true
@@ -2026,13 +2039,20 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let listed = server.map { r in ((dir.hasPrefix("/") ? dir : (r.dir as NSString).appendingPathComponent(dir)) as NSString).standardizingPath }
             ?? resolve(dir)
         let hidden = showHidden, cached = completions?.dir == listed ? completions?.items : nil
+        // A server that took the connection and stopped answering (its sftp-server stuck on NFS) held a thread a ⇥:
+        // the next ⇥, leaving the field or a few seconds end it, and then ⇥ does nothing — no beep, nothing kept.
+        completing?.cancel()
+        let flag = CancelFlag()
+        completing = flag
+        if server != nil, cached == nil { Timeouts.queue.asyncAfter(deadline: .now() + 5) { flag.cancel() } }
         Task { [weak self] in
             // Off the main thread: a share that stopped answering, a far server. A server's folder is listed once while typing.
             let items = if let cached { cached } else {
                 await Blocking.run(.userInitiated) {
-                    server.map { (try? SFTP.list($0.target, listed, env: SSHAskpass.env)) ?? [] } ?? (try? DirLister.list(listed)) ?? []
+                    server.map { (try? SFTP.list($0.target, listed, env: SSHAskpass.env, cancel: flag)) ?? [] } ?? (try? DirLister.list(listed)) ?? []
                 }
             }
+            guard !flag.isCancelled else { return }
             if server != nil, cached == nil { self?.completions = (listed, items) }
             let names = items.filter { ($0.kind == .dir || $0.kind == .link) && $0.name.lowercased().hasPrefix(prefix.lowercased()) && (hidden || !$0.isHidden) }
                 .map(\.name)

@@ -770,14 +770,17 @@ enum TempCopies {
         }
     }
 
-    /// What quitting leaves behind: copies whose last save isn't on the server, and ones still being edited.
-    static var unsynced: [Copy] { copies.filter { !$0.synced } }
+    /// What quitting leaves behind: copies whose last save isn't on the server — or was made since the last look (a
+    /// save takes two looks a second apart to go up: one an app made right before ⌘Q was removed with its copy) —
+    /// and ones still being edited.
+    static var unsynced: [Copy] { copies.filter { !$0.synced || saved(since: $0) } }
+    private static func saved(since c: Copy) -> Bool { c.settling || Editor.Stamp(c.url.path).map { $0 != c.seen } ?? false }
     static var editing: [Copy] { copies.filter { $0.uploaded && $0.synced } }
 
     /// Quitting: the copies on the server go; the others stay, marked kept (the only copy of that text).
     static func quit() {
         watching?.cancel()
-        for c in copies { if c.synced { TempCopies.remove(c.dir) } else { TempCopies.keep(c.dir) } }
+        for c in copies { if c.synced && !saved(since: c) { TempCopies.remove(c.dir) } else { TempCopies.keep(c.dir) } }
         copies.removeAll()
     }
 }

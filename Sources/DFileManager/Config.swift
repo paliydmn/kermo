@@ -6,17 +6,38 @@ enum Config {
 
     static func path(_ name: String) -> String { (dir as NSString).appendingPathComponent(name) }
 
-    /// nil if the file doesn't exist; throws if it exists but can't be parsed.
+    /// nil if the file doesn't exist; throws if it exists but can't be read or parsed.
     static func load<T: Decodable>(_ name: String, as type: T.Type) throws -> T? {
-        guard let data = FileManager.default.contents(atPath: path(name)) else { return nil }
+        guard let data = try contents(path(name)) else { return nil }
         return try JSONDecoder().decode(T.self, from: data)
     }
+
+    /// nil: no such file. One that's there but can't be read (root's after a `sudo` edit, no permission, a link to
+    /// nowhere) throws: taken as missing, it was started afresh and saved over.
+    static func contents(_ path: String) throws -> Data? {
+        if let data = FileManager.default.contents(atPath: path) { return data }
+        var st = stat()
+        guard lstat(path, &st) == 0 else { return nil }
+        let fd = open(path, O_RDONLY)
+        let why = fd < 0 ? String(cString: strerror(errno)) : "it can't be read"
+        if fd >= 0 { close(fd) }
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES), userInfo: [NSLocalizedDescriptionKey: why])
+    }
+
+    /// Files there but unreadable at launch: never saved over this run (the user's file stays as it is).
+    nonisolated(unsafe) private static var held = Set<String>()
+    private static let heldLock = NSLock()
 
     /// A file Kermo writes back itself (saved servers, bookmarks, pins, frecency, the Trash log): one it can't read is
     /// copied aside as it was before anything is saved over it; `problem` says so. nil value: no file, or unreadable.
     static func loadKeeping<T: Decodable>(_ name: String, as type: T.Type, in dir: String = dir) -> (value: T?, problem: String?) {
         let path = (dir as NSString).appendingPathComponent(name)
-        guard let data = FileManager.default.contents(atPath: path) else { return (nil, nil) }
+        let read: Data?
+        do { read = try contents(path) } catch {
+            heldLock.withLock { _ = held.insert(path) }
+            return (nil, "\(name) is there but couldn't be read (\(error.localizedDescription)), so it starts empty — and Kermo won't save over it until it's readable again")
+        }
+        guard let data = read else { return (nil, nil) }
         do { return (try JSONDecoder().decode(T.self, from: data), nil) } catch {
             let why = ((error as? DecodingError).flatMap {
                 guard case .dataCorrupted(let c) = $0 else { return nil }
@@ -69,12 +90,14 @@ enum Config {
     }
 
     /// Owner-only: folder history (frecency) and Trash paths are nobody else's business on a shared Mac.
-    static func save<T: Encodable>(_ name: String, _ value: T) {
+    static func save<T: Encodable>(_ name: String, _ value: T, in dir: String = dir) {
+        let path = (dir as NSString).appendingPathComponent(name)
+        guard !heldLock.withLock({ held.contains(path) }) else { return }   // unreadable at launch: the user's, as it is
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         chmod(dir, 0o700)
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        try? enc.encode(value).write(to: URL(fileURLWithPath: path(name)), options: .atomic)
-        chmod(path(name), 0o600)
+        try? enc.encode(value).write(to: URL(fileURLWithPath: path), options: .atomic)
+        chmod(path, 0o600)
     }
 }

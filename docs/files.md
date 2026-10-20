@@ -119,4 +119,4 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 
 ## Administrator rights
 
-**Admin ▸ Copy as Administrator…**, **Move as Administrator…**, **New Folder as Administrator…** and **Delete as Administrator…** ask for your password in the standard macOS dialog. They skip the queue: no progress, no undo. Copy replaces existing files, Move never overwrites, and Delete runs `rm -rf` after a confirmation.
+**Admin ▸ Copy as Administrator…**, **Move as Administrator…**, **New Folder as Administrator…** and **Delete as Administrator…** ask for your password in the standard macOS dialog. They skip the queue: no progress, no undo. Copy asks before it replaces what's in the destination, Move never overwrites, and Delete runs `rm -rf` after a confirmation. Before the password is asked, Copy and Move refuse what F5 and F6 refuse: a folder into itself or below it, and an item onto itself. They also refuse a destination where a link has the item's name: root would write where the link points.

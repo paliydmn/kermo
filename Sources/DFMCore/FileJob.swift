@@ -55,6 +55,9 @@ public final class FileJob: @unchecked Sendable {
     public var expected: [String: FileItem?] = [:]
     /// The same for a pair's destination: a map of its own, as a server's path may be spelled like one on this Mac.
     public var expectedTarget: [String: FileItem?] = [:]
+    /// What `expected` was taken from, for the note on what changed ("Compare"); `byKind`: a folder is the same while
+    /// it's still a folder (a delete from a listing: a log folder's date changes all the time).
+    public var expectedFrom = "Compare", foldersByKind = false
     /// Synchronize: when Compare began (seconds since 1970). A delete on a server keeps what's newer below the folders
     /// it deletes (F-11): Compare saw a folder only on one side as one row, never what's in it.
     public var comparedAt: Double?
@@ -68,6 +71,9 @@ public final class FileJob: @unchecked Sendable {
     private var conflictPolicy: ConflictChoice?
     private var errorPolicy: ErrorChoice?
     /// A move within one volume: each source is one rename, so progress counts the sources — no tree walks.
+    /// Where a server says what's mounted (`mounted`); tests point it at a file of their own.
+    var mountsFile = "/proc/self/mounts"
+    var mountCache: [ObjectIdentifier: Set<String>] = [:]
     var countsItems = false   // a move that renames: progress counts the items, no walk of their trees
     /// Device and inode of everything this job created (worker thread only): see `Conflict.createdByThisJob`.
     private var created = Set<String>()
@@ -291,9 +297,9 @@ public final class FileJob: @unchecked Sendable {
     func changed(_ path: String, _ saw: [String: FileItem?], _ a: @autoclosure () -> SFTPClient.Attrs?) -> Bool {
         guard let want = saw[path] else { return false }
         let a = a()
-        guard a?.mtime != want?.mtime || a.map({ $0.kind == .dir }) != want.map({ $0.kind == .dir })
+        guard a?.mtime != want?.mtime && !(foldersByKind && want?.kind == .dir) || a.map({ $0.kind == .dir }) != want.map({ $0.kind == .dir })
             || want?.kind == .file && a?.size != want?.size else { return false }
-        update { $0.errors.append("\(path): changed since Compare, skipped") }
+        update { $0.errors.append("\(path): changed since \(expectedFrom), skipped") }
         return true
     }
 
@@ -370,7 +376,7 @@ public final class FileJob: @unchecked Sendable {
 
         // Fast path: same-volume move is a rename (instant, keeps everything).
         if move && !merge && into.map({ $0.dev == s.st_dev }) ?? Self.sameVolume(src, (dst as NSString).deletingLastPathComponent) {
-            guard attempt(src, { try Self.check(Darwin.rename(src, dst)) }) else { return nil }
+            guard attempt(src, { dst = createsNew ? try renameNew(src, dst) : try { try Self.check(Darwin.rename(src, dst)); return dst }() }) else { return nil }
             noteCreated(dst)
             if !countsItems {
                 let (f, b) = DirLister.measure(dst, isCancelled: { isCancelled })
@@ -407,9 +413,10 @@ public final class FileJob: @unchecked Sendable {
             if !merge { _ = copyfile(src, dst, nil, copyfile_flags_t(COPYFILE_METADATA)) }
             if move { _ = rmdir(src) }   // fails harmlessly if something inside was skipped
         } else {
-            guard copyFile(src, dst, size: Int64(s.st_size), flags: s.st_flags) else { return nil }
+            guard let landed = copyFile(src, dst, size: Int64(s.st_size), flags: s.st_flags, new: createsNew) else { return nil }
+            dst = landed
             noteCreated(dst)
-            if move { attempt(src) { try Self.check(unlink(src)) } }
+            if move { Self.flush(dst); attempt(src) { try Self.check(unlink(src)) } }
         }
         return createsNew && !merge && !isCancelled && progress.errors.count == errorsBefore ? dst : nil
     }
@@ -418,7 +425,9 @@ public final class FileJob: @unchecked Sendable {
     /// once whole: a crash or a pulled drive never leaves a cut-off file under the real name.
     /// `flags`: the source's. A file locked in Finder (uchg) or append-only passes that on to the partial, which then
     /// can be neither renamed nor removed: it's unlocked for that, and the copy locked again under its real name.
-    private func copyFile(_ src: String, _ dst: String, size: Int64, flags: UInt32) -> Bool {
+    /// `new`: nothing had `dst` when it was looked at (`renameNew`). Returns where the copy is.
+    private func copyFile(_ src: String, _ dst: String, size: Int64, flags: UInt32, new: Bool) -> String? {
+        var landed = dst
         let target = (dst as NSString).deletingLastPathComponent + "/" + Self.partialName()
         let locked = flags & UInt32(UF_IMMUTABLE | UF_APPEND | SF_IMMUTABLE | SF_APPEND) != 0
         func unlock() { if locked { lchflags(target, 0) } }
@@ -439,14 +448,34 @@ public final class FileJob: @unchecked Sendable {
                 throw POSIXError(POSIXErrorCode(rawValue: err) ?? .EIO)
             }
             unlock()
-            do { try Self.check(Darwin.rename(target, dst)) } catch { unlink(target); throw error }
+            do {
+                if new { landed = try renameNew(target, dst) } else { try Self.check(Darwin.rename(target, dst)) }
+            } catch { unlink(target); throw error }
             // all or nothing: a system flag (schg) takes root, and without it the user's own lock still goes back on
-            if locked && lchflags(dst, flags) != 0 { lchflags(dst, flags & UInt32(UF_SETTABLE)) }
+            if locked && lchflags(landed, flags) != 0 { lchflags(landed, flags & UInt32(UF_SETTABLE)) }
         }
         if ok && !isCancelled {
             update { $0.doneFiles += 1; $0.doneBytes += size }
         }
-        return ok && !isCancelled
+        return ok && !isCancelled ? landed : nil
+    }
+
+    /// rename(2) onto a name nothing had when it was looked at. One that turned up meanwhile — another app, a download
+    /// into the same folder, during a long copy — was replaced unasked: it stays now, this takes the next free name, and
+    /// the summary says so. Where RENAME_EXCL isn't supported (FAT, some shares): looked at right before instead.
+    func renameNew(_ from: String, _ to: String) throws -> String {
+        func exclusive(_ dst: String) -> Int32 {
+            let r = renamex_np(from, dst, UInt32(RENAME_EXCL))
+            guard r != 0, errno == ENOTSUP || errno == EINVAL else { return r }
+            if Self.lstat(dst) != nil { errno = EEXIST; return -1 }
+            return Darwin.rename(from, dst)
+        }
+        if exclusive(to) == 0 { return to }
+        guard errno == EEXIST else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let other = Self.uniqueName(to)
+        try Self.check(exclusive(other))
+        update { $0.errors.append("\(to): appeared while this ran — kept; this one is “\((other as NSString).lastPathComponent)”") }
+        return other
     }
 
     fileprivate func copyProgress(_ copied: Int64) {
@@ -564,6 +593,15 @@ public final class FileJob: @unchecked Sendable {
 
     private static func mtime(_ s: stat) -> Double {
         Double(s.st_mtimespec.tv_sec) + Double(s.st_mtimespec.tv_nsec) / 1e9
+    }
+
+    /// Out of the system's buffers onto the disk, before its source goes: a stick pulled (or the power cut) right after
+    /// a move to it lost the moved file — the original deleted, the copy not on the disk yet.
+    static func flush(_ path: String) {
+        let fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)   // a link: nothing to flush
+        guard fd >= 0 else { return }
+        fsync(fd)
+        close(fd)
     }
 
     private static func check(_ result: Int32) throws {

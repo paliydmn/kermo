@@ -63,10 +63,10 @@ private func tempDir() -> String {
     #expect(throws: SFTPClient.ChangedOnServer.self) { try c.upload(local, to: conf, baseline: base) }
     #expect(fm.contents(atPath: conf) == Data("listen 9090;\n".utf8))
 
-    // Over 1 MB: no content check (size and mtime only).
+    // Over 1 MB: hashed too, and compared on the server (aBigFileChangedWithinTheSecondIsCaught).
     let big = d + "/big.log"
     try Data(repeating: 0x61, count: (1 << 20) + 1).write(to: URL(fileURLWithPath: big))
-    #expect(try c.download(big, to: local).sha256 == nil)
+    #expect(try c.download(big, to: local).sha256 != nil)
 }
 
 /// R2: F3 on a big server log fetches only its tail; the attributes are still the whole file's.

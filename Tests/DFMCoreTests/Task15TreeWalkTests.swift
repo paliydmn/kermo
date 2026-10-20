@@ -53,17 +53,17 @@ private func exists(_ p: String) -> Bool { FileJob.lstat(p) != nil }
     #expect(!exists(d + "/out/top/open") && !exists(d + "/out/top/group"))
     #expect(job.progress.errors.sorted() == [said(d + "/top/group"), said(d + "/top/open")])
 
-    // into a folder its owner (or anyone) can change: no folder, a file still goes (partial, then rename)
+    // into a folder its owner (or anyone) can change: neither a folder nor a file (D-082: the partial's rename by name)
     sh("mkdir shared && chmod 777 shared && echo y > one.txt", in: d)
     job = ask(FileJob(.copy, sources: [d + "/top/ok", d + "/one.txt"], from: .local, to: .sftp(root), destDir: d + "/shared"))
-    #expect(!exists(d + "/shared/ok") && exists(d + "/shared/one.txt"))
+    #expect(!exists(d + "/shared/ok") && !exists(d + "/shared/one.txt"))
     #expect(job.progress.errors == [said(d + "/shared")])
 
     // owned by someone else: not root's, so not even the top is gone into
     tree()
     let real = SFTPTarget.local(sudo: try fakeSudo(d), rootUID: 0)
     job = ask(FileJob(.delete, sources: [d + "/top"], from: .sftp(real), to: .sftp(real), destDir: nil))
-    #expect(exists(d + "/top/ok/f") && job.progress.errors == [said(d + "/top")])
+    #expect(exists(d + "/top/ok/f") && job.progress.errors == [said(d)], "the folder it's in isn't root's either (D-082)")
 
     // the user's own session goes everywhere, as before
     job = ask(FileJob(.delete, sources: [d + "/top"], from: .sftp(.local()), to: .sftp(.local()), destDir: nil))
@@ -160,4 +160,20 @@ func aMoveToAnotherVolumeStopsAtAMountPoint() throws {
     let plain = FileJob(.delete, sources: [d + "/dir"], from: server, to: server, destDir: nil)
     plain.run()
     #expect(!exists(d + "/dir") && plain.progress.errors.isEmpty)
+}
+
+/// D-082: a root panel's delete looked at its tops but not at the folders they're in: a top in a folder its owner can
+/// change, swapped for a link to / between its look and its listing, sent root's delete there. Such tops stay now.
+@Test func aRootDeleteLooksAtTheFolderItsItemsAreIn() throws {
+    let d = tempDir()
+    defer { sh("chmod -R u+w .", in: d); try? FileManager.default.removeItem(atPath: d) }
+    sh("mkdir -p open/a safe/b && echo x > open/f && echo x > safe/g && chmod 777 open", in: d)
+    let root = SFTPTarget.local(sudo: try fakeSudo(d))
+    let job = FileJob(.delete, sources: [d + "/open/a", d + "/open/f", d + "/safe/b", d + "/safe/g"], from: .sftp(root), to: .sftp(root), destDir: nil)
+    job.resolveError = { p, m in Issue.record("asked: \(p): \(m)"); return (.skip, false) }
+    job.run()
+    #expect(exists(d + "/open/a") && exists(d + "/open/f"))
+    #expect(!exists(d + "/safe/b") && !exists(d + "/safe/g"))
+    #expect(job.progress.errors == ["\(d)/open: someone else on the server can change this folder — not entered as root. Do it as its owner, or in a terminal there"])
+    #expect(job.progress.doneFiles == 4)
 }

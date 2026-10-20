@@ -208,10 +208,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         saveSession()   // the cursors, the active panel, the dividers: none of them saves it as it changes
         Config.save("frecency.json", frecency)
         tunnels.stopAll()   // first: a client connecting now would start a login
-        for t in SFTP.masterTargets { SFTP.stopMaster(t, now: true) }   // no logged-in connection outlives the app
+        // No logged-in connection outlives the app. All at once: each may take up to `SFTP.stopWait`.
+        let masters = Array(SFTP.masterTargets)
+        DispatchQueue.concurrentPerform(iterations: masters.count) { SFTP.stopMaster(masters[$0], now: true) }
         Shell.terminateAll()   // nor does a `tail -f` in an output window
+        ArchiveIndex.discardLiveStaging()   // after tar is gone: an extract cut short leaves no hidden copy behind
         ServerCopies.quit()   // the server files' copies on the server go; the others are kept
         TempCopies.remove(TextCopies.dir)
+        SFTP.removeControlDir()   // after the masters and tunnels: their sockets and the askpass script are in it
     }
 
     /// What quitting would lose — unsaved editors, running copies, SSH sessions, programs in shells: one
@@ -222,7 +226,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Another window (viewer, editor) keeps the app alive: the main window just hides and sessions go on.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        NSApp.windows.contains { $0 !== sender && $0.isVisible && $0.canBecomeMain } || confirmQuit()
+        NSApp.windows.contains { Self.keepsAlive($0, besides: sender) } || confirmQuit()
+    }
+    /// One in the Dock counts too: it isn't visible, the app lives on with it — and the quit question, answered here
+    /// for nothing, was never asked again: ⌘Q later lost its unsaved text unasked.
+    static func keepsAlive(_ w: NSWindow, besides sender: NSWindow) -> Bool {
+        w !== sender && (w.isVisible || w.isMiniaturized) && w.canBecomeMain
     }
 
     private var quitConfirmed = false
