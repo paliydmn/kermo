@@ -18,6 +18,10 @@ Release:
 - **Install and Relaunch** in the update window: Kermo downloads the new version, checks it's signed with the same certificate as the running one, puts it in place and opens it again. A Kermo installed from the `.pkg` asks for your password first. Works from this version on, for releases that carry a `.zip`.
 - One line in Terminal installs or updates Kermo: `curl -fsSL https://raw.githubusercontent.com/paliydmn/kermo/master/install.sh | sh`. No **Open Anyway** needed. See [Install Kermo](docs/install.md).
 
+### Fixed
+
+- The `.pkg` always puts Kermo in Applications. Before, if another copy of Kermo was on the Mac (an old one in Downloads), the installer updated that copy instead.
+
 ## [1.3] - 2026-10-20
 
 ### Security
