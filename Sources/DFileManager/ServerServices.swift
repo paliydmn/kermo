@@ -191,11 +191,11 @@ extension AppDelegate {
         }
         shown.update(serviceItem(now, on: t, of: s))
         let full = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        let window = shown.window
         var show: (@MainActor () -> Void)?
         if !full.isEmpty {
-            show = { [unowned self, weak window] in
-                Task { _ = await choose("“\(command)” on \(s.title)", info: String(full.suffix(4000)), ["OK"], on: window) }
+            show = { [unowned self, weak shown] in
+                guard let shown else { return }
+                Task { await shown.holding { _ = await choose("“\(command)” on \(s.title)", info: String(full.suffix(4000)), ["OK"], on: shown.window) } }
             }
         }
         shown.say(Self.result(said), output: show)

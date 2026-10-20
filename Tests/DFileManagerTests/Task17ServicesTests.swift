@@ -67,6 +67,14 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     #expect(cmdR())
     await until { list.said.hasPrefix("✕") }
     #expect(list.said.hasPrefix("✕ web: the restart failed on localhost at ") && list.said.hasSuffix(": Job for web.service failed. — now failed"), "\(list.said)")
+    func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? NSButton).map { [$0] } ?? buttons($0) } }
+    let output = try #require(buttons(list.panel.contentView!).first { $0.title == "Output…" && !$0.isHidden })
+    var asked: (String, Bool)?
+    AppDelegate.answering = { m, _, _ in asked = (m, Picker.current?.isHolding == true); return 0 }
+    defer { AppDelegate.answering = nil }
+    output.performClick(nil)
+    await until { asked != nil }
+    #expect(asked?.0 == "“systemctl restart -- web.service” on localhost" && asked?.1 == true, "its sheet holds the list open")
     try FileManager.default.removeItem(atPath: dir + "/fail")
     list.highlighted?.menu?()?.items.first { $0.title == "Start" }.map { item in _ = (item.target as? NSObject)?.perform(item.action) }
     await until { list.said.contains("the start") }
