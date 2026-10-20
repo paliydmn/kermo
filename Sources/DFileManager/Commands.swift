@@ -1422,10 +1422,12 @@ extension AppDelegate {
                 let revert: @MainActor () -> Void = { [self] in
                     let state = RemoteEdit(baseline: now ?? .nothing)
                     Task {
+                        // Read first: the save keeps a version too, and the history's limit may take this one then.
+                        let data = await Blocking.run(.userInitiated) { try? Data(contentsOf: url) }
                         guard await upload(url, to: path, on: target, state, action: "revert") else { return }
                         panel.flash("“\(name)” on \(target.host) is back to its version of \(when)")
                         // Its editor shows that now, unless it has changes of its own.
-                        if let e = Editor.editing(target, path), let data = await Blocking.run(.userInitiated, { try? Data(contentsOf: url) }) {
+                        if let e = Editor.editing(target, path), let data {
                             _ = await e.reverted(to: data, attrs: state.baseline)
                         }
                     }

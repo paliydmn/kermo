@@ -70,6 +70,7 @@ Release:
 - **Delete** (F8) on a server skips an item that's something else by now than the panel listed (a file rewritten or replaced, a folder where a file was), and names it: a server's panel isn't refreshed by itself, and a server has no Trash. A folder that is still a folder is deleted as before.
 - **Overwrite** in "changed on the server since you opened it" replaces only the version that question was about. If the file changed again while the question or Compare's diff was up, Kermo asks again instead of writing over a change you never saw.
 - **Synchronize Folders** no longer copies `README` on one side over `readme` on the other as if they were one file: when the two differ, the row is a conflict and both stay. Between two servers they are often unrelated files.
+- A server file's history keeps the version from before a run of saves (an app's autosaves seconds apart no longer push out the file as it was when you began), and reverting to the oldest version kept updates its open editor.
 
 ## [1.2.1] - 2026-10-17
 

@@ -83,7 +83,8 @@ private let when = Calendar.current.date(from: DateComponents(year: 2026, month:
     #expect(h.perFile == 20 && h.total == 200 << 20 && ServerHistory.fileLimit == 5 << 20)
     h.perFile = 3
     for i in 0..<5 { h.keep(Data("v\(i)".utf8), attrs(2), of: web, "/a", at: when.addingTimeInterval(Double(i))) }
-    #expect(h.versions(of: web, "/a").map { FileManager.default.contents(atPath: $0.path) } == ["v4", "v3", "v2"].map { Data($0.utf8) })
+    // One run of saves: its first version (the file as the work began) stays too.
+    #expect(h.versions(of: web, "/a").map { FileManager.default.contents(atPath: $0.path) } == ["v4", "v3", "v2", "v0"].map { Data($0.utf8) })
 
     h.total = 1000
     let block = Data(repeating: 7, count: 300)
@@ -92,7 +93,7 @@ private let when = Calendar.current.date(from: DateComponents(year: 2026, month:
     h.keep(block, attrs(300), of: web, "/new", at: when.addingTimeInterval(20))
     #expect(h.versions(of: web, "/old").count == 1, "906 bytes: all stay")
     h.keep(block, attrs(300), of: web, "/newer", at: when.addingTimeInterval(30))
-    #expect(h.versions(of: web, "/old").isEmpty && h.versions(of: web, "/a").count == 3, "1206: the oldest of all goes")
+    #expect(h.versions(of: web, "/old").isEmpty && h.versions(of: web, "/a").count == 4, "1206: the oldest of all goes")
     h.keep(block, attrs(300), of: web, "/newest", at: when.addingTimeInterval(40))
     #expect(h.versions(of: web, "/a").isEmpty && h.versions(of: SFTPTarget(host: "db"), "/x").isEmpty, "then the next oldest, on any server")
     #expect(["/new", "/newer", "/newest"].allSatisfy { h.versions(of: web, $0).count == 1 })

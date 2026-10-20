@@ -412,3 +412,19 @@ private func sh(_ command: String) -> (status: Int32, err: String) {
     #expect(readme.isConflict && readme.action == .skip && readme.unreadable == "names differ in case: README here, readme there")
     #expect(rows.first { $0.path == "same" }?.action == .toRight)
 }
+
+/// E-04: each save keeps what it replaced, and an app's autosaves come seconds apart: 20 of them pushed out the file as
+/// it was when the work began. The first version after an hour's pause stays; older runs' go as before.
+@Test func theVersionBeforeARunOfSavesStays() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    var h = ServerHistory(root: d)
+    h.perFile = 3
+    let t = SFTPTarget(host: "web"), morning = Date(timeIntervalSince1970: 1_800_000_000)
+    let a = SFTPClient.Attrs(kind: .file, size: 1, mtime: 0, mode: 0o644)
+    h.keep(Data("yesterday".utf8), a, of: t, "/app.conf", at: morning.addingTimeInterval(-86_400))
+    h.keep(Data("before work".utf8), a, of: t, "/app.conf", at: morning)
+    for i in 1...10 { h.keep(Data("autosave \(i)".utf8), a, of: t, "/app.conf", at: morning.addingTimeInterval(Double(i * 5))) }
+    let kept = h.versions(of: t, "/app.conf").compactMap { fm.contents(atPath: $0.path).map { String(decoding: $0, as: UTF8.self) } }
+    #expect(kept == ["autosave 10", "autosave 9", "autosave 8", "before work"])
+}
