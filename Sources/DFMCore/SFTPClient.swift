@@ -28,6 +28,7 @@ public final class SFTPClient: @unchecked Sendable {
     }
 
     public let target: SFTPTarget
+    private let env: [String: String]   // askpass's: a command over ssh (`linkCount`) logs in as the session did
     /// A server with SELinux: `upload` writes into the file itself, never renames a new one over it — the new one would
     /// have its folder's label, not the file's (`/etc/shadow` losing `shadow_t`, a chcon'd page in ~/public_html). A
     /// root panel's sudo script tells; any other session asks with its first save's look (`upload`).
@@ -71,6 +72,7 @@ public final class SFTPClient: @unchecked Sendable {
 
     public init(_ t: SFTPTarget, env: [String: String] = [:], cancel: CancelFlag? = nil) throws {
         target = t
+        self.env = env
         try SFTP.startMaster(t, env: env, cancel: cancel)
         var sudoPath = "", sudoPassword: String?
         if t.sudo {
@@ -656,6 +658,14 @@ public final class SFTPClient: @unchecked Sendable {
         return over ? Int64.max : Int64(clamping: bytes)
     }
 
+    /// How many names `path` has, by `stat` over ssh (GNU, then sudo -n, then BSD); nil: it couldn't be told. Linux's
+    /// `stat -f` is the file system's: a refused look there reads 255 — written in place, the safe way.
+    func linkCount(_ path: String) -> Int? {
+        let f = ShellContext.quote(path)
+        let cmd = "if stat -c %h -- \(f) 2>/dev/null; then :; elif sudo -n stat -c %h -- \(f) 2>/dev/null; then :; else stat -f %l -- \(f); fi"
+        return SSHCommand.output(target, cmd, env: env, timeout: 10).flatMap { Int(String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
+
     /// Server-side copy (`copy-data`): the bytes never cross the network.
     public var canCopyData: Bool { extensions["copy-data"] != nil }
 
@@ -1165,14 +1175,18 @@ extension SFTPClient {
                 // Root — a root panel, or a login as root: the partial file we just made is uid 0's — gives the
                 // partial file the file's owner, then renames it over: never a moment as root's file.
                 // Not allowed (NFS's root_squash), or anyone else's session: copied into the file, which keeps its own.
-                // ponytail: SFTP v3 has no link count, so a hard-linked file is split (D-079); an `ssh stat -c %h` per
-                // save would tell, and then go in place like SELinux does.
+                // A hard-linked one would be split — the save's name new, its other names old (D-079): SFTP v3 has no
+                // link count, so ssh's `stat` tells, and such a file is written into in place like under SELinux.
                 if target.sudo || mine?.uid == 0, let uid = cur.uid, let gid = cur.gid {
-                    do {
-                        try setAttrs(partial, mtime: nil, mode: nil, owner: (uid, gid))
-                        // chown drops setuid/setgid
-                        if let m = cur.mode, m & 0o6000 != 0 { try setAttrs(partial, mtime: nil, mode: m) }
-                    } catch let e as SFTPError where !e.connection { inPlace = true }
+                    if linkCount(into) ?? 1 > 1 {
+                        inPlace = true
+                    } else {
+                        do {
+                            try setAttrs(partial, mtime: nil, mode: nil, owner: (uid, gid))
+                            // chown drops setuid/setgid
+                            if let m = cur.mode, m & 0o6000 != 0 { try setAttrs(partial, mtime: nil, mode: m) }
+                        } catch let e as SFTPError where !e.connection { inPlace = true }
+                    }
                 } else {
                     inPlace = true
                 }

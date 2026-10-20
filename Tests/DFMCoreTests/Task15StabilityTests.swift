@@ -330,3 +330,38 @@ private func sh(_ command: String) -> (status: Int32, err: String) {
     #expect(fm.fileExists(atPath: d + "/up/tree/mnt/precious") && !fm.fileExists(atPath: d + "/to/tree/mnt"))
     #expect(fm.fileExists(atPath: d + "/to/tree/g") && !fm.fileExists(atPath: d + "/up/tree/g"))
 }
+
+/// D-079: a root panel's ⌘S on someone else's file renames a partial over it (never a moment as root's) — which split a
+/// hard-linked one: the saved name had the new text, its other names the old. Such a file is written into in place:
+/// same inode, every name the new text, owner and group as they were.
+@Test func aRootSaveKeepsHardLinksWhole() throws {
+    // This Mac's own temp folder: test.sh's RAM disk ignores owners.
+    let d = (Foundation.NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-sss7-" + UUID().uuidString
+    try fm.createDirectory(atPath: d, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(atPath: d) }
+    var st = stat()
+    stat(d, &st)
+    var groups = [gid_t](repeating: 0, count: 64)
+    let n = Int(getgroups(64, &groups))
+    let other = try #require(groups.prefix(max(0, n)).first(where: { $0 != st.st_gid }))
+    let sudo = d + "/sudo"
+    try Data("#!/bin/sh\n[ \"$1\" = -n ] && [ \"$2\" = -- ] || exit 2; shift 2; exec \"$@\"\n".utf8).write(to: URL(fileURLWithPath: sudo))
+    chmod(sudo, 0o755)
+    for linked in [true, false] {
+        let file = d + "/f\(linked)", twin = d + "/twin\(linked)"
+        try Data("old text, longer\n".utf8).write(to: URL(fileURLWithPath: file))
+        chown(file, uid_t.max, other)
+        if linked { #expect(link(file, twin) == 0) }
+        try Data("new text\n".utf8).write(to: URL(fileURLWithPath: d + "/local"))
+        let c = try SFTPClient(.local(sudo: sudo))
+        defer { c.close() }
+        var before = stat()
+        lstat(file, &before)
+        try c.upload(d + "/local", to: file, baseline: try c.stat(file))
+        var now = stat()
+        lstat(file, &now)
+        #expect(fm.contents(atPath: file) == Data("new text\n".utf8) && now.st_gid == other)
+        #expect((now.st_ino == before.st_ino) == linked, linked ? "written in place" : "renamed over")
+        if linked { #expect(fm.contents(atPath: twin) == Data("new text\n".utf8), "the other name too") }
+    }
+}

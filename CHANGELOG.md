@@ -56,6 +56,7 @@ Release:
 - Quitting Kermo no longer hangs on a server connection that stopped answering: closing each takes at most 2.5 seconds, and all of them close at once.
 - Opening an archive with a path tens of thousands of folders deep no longer takes a gigabyte of memory: the list of what's inside is kept folder by folder. And quitting Kermo during an extract removes the hidden folder it was unpacking into instead of leaving a copy of the archive's contents for a day.
 - **Delete Permanently…** (⇧F8) on a server, and **Move To…** (F6) off a server, no longer go into a volume mounted inside the folder (an NFS home, a bind mount): they stop there and the summary names it, as they already did on this Mac. A move from this Mac to a server stops at a mounted volume too.
+- Saving someone else's file with hard links from a root panel no longer splits it: its other names get the new text too.
 
 ## [1.2.1] - 2026-10-17
 
