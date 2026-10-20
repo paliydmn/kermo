@@ -1295,6 +1295,22 @@ extension AppDelegate {
     /// Every save of a server file (F4's ⌘S, another app's, Revert) goes here. The version it replaces goes into the
     /// file history; if it can't, the save goes on and the status line says why.
     func upload(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool = false, action: String = "save") async -> Bool {
+        // One save to a server file at a time, from any editor, copy or revert: two at once each passed the check
+        // against the same version, and the last rename won — the other's text gone, unasked. The later one now
+        // checks against what the earlier wrote, and asks.
+        let key = ServerRow.key(target.asUser) + ":" + remotePath, before = Self.uploads[key]
+        let mine = Task { @MainActor in
+            _ = await before?.value
+            return await uploadNow(saved, to: remotePath, on: target, state, force: force, action: action)
+        }
+        Self.uploads[key] = mine
+        let ok = await mine.value
+        if Self.uploads[key] == mine { Self.uploads[key] = nil }
+        return ok
+    }
+    private static var uploads: [String: Task<Bool, Never>] = [:]
+
+    private func uploadNow(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool, action: String) async -> Bool {
         let name = (remotePath as NSString).lastPathComponent   // the copy's own, but not a version's (Revert)
         let note = state.prodNote(target)
         if !note.isEmpty {
@@ -1362,7 +1378,7 @@ extension AppDelegate {
                                     default: 2, on: Editor.window(for: saved)) {   // ⌘S ↩ never writes over theirs
                 case 0:   // over what was shown, not whatever's there by now: another change meanwhile asks again
                     state.baseline = e.attrs
-                    return await upload(saved, to: remotePath, on: target, state, action: action)
+                    return await uploadNow(saved, to: remotePath, on: target, state, force: false, action: action)
                 case 1: await diff(DiffSide(path: saved.path, name: "\(name) (yours)"),
                                    DiffSide(path: remotePath, server: target, size: e.attrs.size, mtime: e.attrs.mtime), in: panel)
                 default: return false

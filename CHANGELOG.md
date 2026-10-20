@@ -72,6 +72,7 @@ Release:
 - **Synchronize Folders** no longer copies `README` on one side over `readme` on the other as if they were one file: when the two differ, the row is a conflict and both stay. Between two servers they are often unrelated files.
 - A server file's history keeps the version from before a run of saves (an app's autosaves seconds apart no longer push out the file as it was when you began), and reverting to the oldest version kept updates its open editor.
 - Copying a file over a link on a server (or a link over a file) no longer removes the old one before the new one is there: a copy that failed midway left neither. The new one is written under a temporary name and replaces the old one only when it's whole.
+- Two saves of one server file at the same moment (its editor and a copy open in another app, or a revert) no longer both go through with the last one silently winning: the second waits for the first, sees the file changed, and asks.
 
 ## [1.2.1] - 2026-10-17
 

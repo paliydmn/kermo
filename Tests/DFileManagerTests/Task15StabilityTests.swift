@@ -362,3 +362,33 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`
         #expect(FileManager.default.contents(atPath: file) == Data("mine\n".utf8))
     }
 }
+
+extension ServerLockTests {   // swaps `AppDelegate.answering`
+    /// S2-04: one server file saved from two places at once (its editor and its ↩ copy in another app, a revert
+    /// meanwhile) — both were checked against the same version and the last rename won: the other text was gone. The
+    /// second waits for the first, finds the file changed, and asks.
+    @MainActor @Test func twoSavesOfOneServerFileDontBothWin() async throws {
+        let d = tempDir()
+        defer { try? FileManager.default.removeItem(atPath: d) }
+        let file = d + "/app.conf"
+        try Data("v0\n".utf8).write(to: URL(fileURLWithPath: file))
+        try Data("from the editor\n".utf8).write(to: URL(fileURLWithPath: d + "/a"))
+        try Data("from the other app\n".utf8).write(to: URL(fileURLWithPath: d + "/b"))
+        let c = try SFTPClient(.local())
+        let v0 = try #require(try c.stat(file))
+        c.close()
+        let app = AppDelegate()
+        app.panels = [PanelViewController(tabs: [d], index: 0, showHidden: false)]
+        app.panels.forEach { $0.loadViewIfNeeded() }
+        defer { app.panels.forEach { $0.shutdown() } }
+        var asked: [String] = []
+        AppDelegate.answering = { m, _, _ in asked.append(m); return 2 }   // Cancel
+        defer { AppDelegate.answering = nil }
+        async let one = app.upload(URL(fileURLWithPath: d + "/a"), to: file, on: .local(), AppDelegate.RemoteEdit(baseline: v0))
+        async let two = app.upload(URL(fileURLWithPath: d + "/b"), to: file, on: .local(), AppDelegate.RemoteEdit(baseline: v0))
+        let (a, b) = await (one, two)
+        #expect(a != b, "one wrote, one asked")
+        #expect(asked.count == 1 && asked.first?.contains("changed on") == true, "\(asked)")
+        #expect(FileManager.default.contents(atPath: file) == Data((a ? "from the editor\n" : "from the other app\n").utf8))
+    }
+}
