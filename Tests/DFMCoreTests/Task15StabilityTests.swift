@@ -428,3 +428,29 @@ private func sh(_ command: String) -> (status: Int32, err: String) {
     let kept = h.versions(of: t, "/app.conf").compactMap { fm.contents(atPath: $0.path).map { String(decoding: $0, as: UTF8.self) } }
     #expect(kept == ["autosave 10", "autosave 9", "autosave 8", "before work"])
 }
+
+/// S2-02: a file copied over a link on a server (nginx's sites-enabled) removed the link first: a copy that then
+/// failed left neither. The new one goes under a temporary name and is renamed over the link once whole.
+@Test func aFileOverALinkOnAServerKeepsTheLinkUntilItsWhole() throws {
+    let d = tempDir()
+    defer { chmod(d + "/src/site", 0o644); try? fm.removeItem(atPath: d) }
+    for p in ["/src", "/srv/available", "/srv/enabled"] { try fm.createDirectory(atPath: d + p, withIntermediateDirectories: true) }
+    fm.createFile(atPath: d + "/src/site", contents: Data("new".utf8))
+    fm.createFile(atPath: d + "/srv/available/site", contents: Data("old".utf8))
+    try fm.createSymbolicLink(atPath: d + "/srv/enabled/site", withDestinationPath: "../available/site")
+    func copy() -> FileJob {
+        let job = FileJob(.copy, sources: [d + "/src/site"], from: .local, to: .sftp(.local()), destDir: d + "/srv/enabled")
+        job.resolveConflict = { _ in (.overwrite, false) }
+        job.resolveError = { _, _ in (.skip, false) }
+        job.runAcross()
+        return job
+    }
+    chmod(d + "/src/site", 0o000)   // the copy fails
+    _ = copy()
+    #expect((try? fm.destinationOfSymbolicLink(atPath: d + "/srv/enabled/site")) == "../available/site", "the link stays")
+    #expect(try fm.contentsOfDirectory(atPath: d + "/srv/enabled") == ["site"], "nothing left beside it")
+    chmod(d + "/src/site", 0o644)
+    let ok = copy()
+    #expect(ok.progress.errors.isEmpty && fm.contents(atPath: d + "/srv/enabled/site") == Data("new".utf8))
+    #expect((try? fm.destinationOfSymbolicLink(atPath: d + "/srv/enabled/site")) == nil && fm.contents(atPath: d + "/srv/available/site") == Data("old".utf8))
+}

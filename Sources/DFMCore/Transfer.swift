@@ -640,17 +640,10 @@ extension FileJob {
             case .overwrite, .overwriteIfNewer:
                 if conflict.bothDirs {
                     merge = true
-                } else if s.kind == .dir || d.kind == .dir {
-                    return replaceAcross(sfs, src, s, dfs, dst, d, move: move, root: root, depth: depth, maxDepth: maxDepth)
                 } else if s.kind != .file || d.kind != .file {
-                    // Anything but file over file (that one is replaced atomically below): clear the way first.
-                    // A symlink is removed itself, never what it points at.
-                    guard attempt(dst, {
-                        // On this Mac a replaced folder goes to the Trash (a server has none).
-                        if dfs is LocalFS && d.kind == .dir { try FileManager.default.trashItem(at: URL(fileURLWithPath: dst), resultingItemURL: nil) }
-                        else { try removeTree(dfs, dst, d) }
-                    }) else { return skip(sfs, src, s) }
-                    existing = nil
+                    // Anything but file over file (that one is replaced atomically below): the new one under a temporary
+                    // name first — a link removed before a copy that then failed left neither (a link never goes through it).
+                    return replaceAcross(sfs, src, s, dfs, dst, d, move: move, root: root, depth: depth, maxDepth: maxDepth)
                 }
             }
         }
@@ -745,7 +738,9 @@ extension FileJob {
             return
         }
         guard attempt(dst, {
-            // On this Mac a replaced folder goes to the Trash (a server has none). A symlink is removed itself.
+            // Neither a folder: renamed over it in one step (a link is replaced itself, never what it points at).
+            if s.kind != .dir && d.kind != .dir { return try dfs.rename(temp, dst, replace: true) }
+            // On this Mac a replaced folder goes to the Trash (a server has none).
             if dfs is LocalFS && d.kind == .dir { try FileManager.default.trashItem(at: URL(fileURLWithPath: dst), resultingItemURL: nil) }
             else if (try dfs.lstat(dst)) != nil { try removeTree(dfs, dst, d) }
             try dfs.rename(temp, dst, replace: false)

@@ -71,6 +71,7 @@ Release:
 - **Overwrite** in "changed on the server since you opened it" replaces only the version that question was about. If the file changed again while the question or Compare's diff was up, Kermo asks again instead of writing over a change you never saw.
 - **Synchronize Folders** no longer copies `README` on one side over `readme` on the other as if they were one file: when the two differ, the row is a conflict and both stay. Between two servers they are often unrelated files.
 - A server file's history keeps the version from before a run of saves (an app's autosaves seconds apart no longer push out the file as it was when you began), and reverting to the oldest version kept updates its open editor.
+- Copying a file over a link on a server (or a link over a file) no longer removes the old one before the new one is there: a copy that failed midway left neither. The new one is written under a temporary name and replaces the old one only when it's whole.
 
 ## [1.2.1] - 2026-10-17
 
