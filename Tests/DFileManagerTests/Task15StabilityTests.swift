@@ -217,3 +217,18 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`
         #expect(try FileManager.default.contentsOfDirectory(atPath: dest) == ["a.txt"], "no staging folder left")
     }
 }
+
+/// R-04: the production question looked at a command's first word only: `cd /srv && rm -rf releases/*`, `ls; rm x`,
+/// `find . -delete`, `> app.log` ran unasked. Each command of a list or pipeline counts now, and more ways to destroy.
+@Test func dangerousCommandsAreSpottedAnywhereInTheLine() {
+    for c in ["cd /srv/app && rm -rf releases/*", "ls; rm x", "true || rm x", "ls | xargs rm", "ls | xargs -I {} rm {}",
+              "echo $(rm x)", "find . -name '*.log' -delete", "find . -exec rm {} +", "truncate -s0 f", "shred -u key",
+              "rsync -a --delete src/ dst/", "git clean -fdx", "git reset --hard HEAD~1", "> app.log", "echo x > /etc/hosts",
+              "cat a 2> err.log", "systemctl disable nginx", "sudo systemctl mask nginx", "cd x\nrm y"] {
+        #expect(Shell.isDangerous(c), Comment(rawValue: c))
+    }
+    for c in ["ls -la | grep x", "cd /srv && git status", "echo hi >> log", "make 2>&1 | tee", "ls > /dev/null", "ls 2>/dev/null",
+              "find . -name x", "rsync -a src/ dst/", "git reset HEAD x", "git log --oneline", "echo a && echo b"] {
+        #expect(!Shell.isDangerous(c), Comment(rawValue: c))
+    }
+}
