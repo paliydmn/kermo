@@ -63,7 +63,7 @@ To run one command on several servers at once, choose **Run on Servers…** in t
 | ⌘R | restart it, as root; the list stays open |
 | ⌃↩ (⇧F10, a PC keyboard's Menu key), right-click | its menu: **Status**, **Live Logs**, **Edit Unit File…**, then **Start** and **Restart** |
 
-The highlighted service has a light green background with an outline; a failed one's state stays red even when highlighted. A right-click highlights the row it's on first, and the menu acts on that service; a right-click on an empty spot opens no menu. The menu has the same keys and runs the same actions. What can't run now is greyed out, and its tooltip says why.
+The highlighted service has a light green background with an outline; a failed one's state stays red even when highlighted. A right-click highlights the row it's on first, and the menu acts on that service; a right-click on an empty spot opens no menu. The menu runs the same actions as the keys and shows ⌘L, ⌘E and ⌘R next to its items. What can't run now is greyed out, and its tooltip says why.
 
 **Start** and **Restart** keep the list open, with what you typed, the highlighted service and the scroll as they were. The row says `Restarting…` (or `Starting…`) with a spinner, and the service's start or restart is greyed out until that ends. Status and log still work. Touch ID for a locked server, the production question and the sudo password appear over the list. Once the command ends, Kermo reads the service's state again (a second later, so a service that dies at once shows as failed), updates the row, and a line under the list says how it went: which service, on which server, and when.
 
