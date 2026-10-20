@@ -12,6 +12,7 @@ public enum AdminCommand {
     // ponytail: a merge into a folder others (or you) can write still follows links planted inside it, and destDir
     // itself is taken as typed; what's copied is the user's files anyway, which anything running as them can change.
     public static func copy(_ sources: [String], to destDir: String) -> String {
+        guard !sources.isEmpty else { return "" }
         let rename = "/usr/bin/perl -T -e 'my ($a, $b) = map { /\\A(.*)\\z/s; $1 } @ARGV; rename($a, $b) or die \"$b: $!\\n\"'"
         let one = "c() { if [ -d \"$2\" ] && [ ! -L \"$2\" ]; then /usr/bin/ditto \"$1\" \"$2\"; return; fi; "
             + "t=$(/usr/bin/mktemp -d \"$3/.kermo-admin.XXXXXX\") || return 1; "

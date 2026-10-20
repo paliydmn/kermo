@@ -342,8 +342,8 @@ private func makeLevels(_ root: String) throws {
     #expect(!FileManager.default.fileExists(atPath: d + "/t"))
     // The top: open, then its reads with the end (closes aren't waited for); each level of 70: 2 batches of those 2 and 1
     // for the files; the folders: 2 + 2 + 2 + 1.
-    // One at a time: 1265.
-    #expect(c.roundTrips - before == 2 + 3 * 6 + 7, "\(c.roundTrips - before)")
+    // One at a time: 1265. And the server's mount list, at the first folder (here: no such file — 1).
+    #expect(c.roundTrips - before == 2 + 3 * 6 + 7 + 1, "\(c.roundTrips - before)")
 }
 
 /// F8 of many items (or a Mirror's deletions) on a server looked at and deleted each on its own: a file 2 round
@@ -367,7 +367,7 @@ private func makeLevels(_ root: String) throws {
     #expect(try FileManager.default.contentsOfDirectory(atPath: d).isEmpty)
     // 141 looks: 3; the files: 64 + 6; the folders: 2 batches of open, the reads with the end, and their files; their
     // RMDIRs: 2.
-    // One at a time: 631.
+    // One at a time: 631. (No folder below the tops: the server's mount list isn't read.)
     #expect(c.roundTrips - before == 3 + 2 + 6 + 2, "\(c.roundTrips - before)")
 }
 

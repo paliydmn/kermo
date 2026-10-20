@@ -369,7 +369,6 @@ extension FileJob {
         // isn't gone into: what changed in it can't be told. A second off for whole-second dates.
         // ponytail: Compare's moment by this Mac's clock; a server's behind it by more lets a change slip through.
         let since = comparedAt.map { $0 - 2 }
-        let mounts = mounted(fs)
         let barred = tops.filter { othersCanChange(fs, $0.attrs) }
         barred.forEach { notEntered($0.path) }
         update { $0.doneFiles += barred.count }
@@ -411,7 +410,7 @@ extension FileJob {
                     for c in items where Self.isSafeName(c.name) {
                         let p = (dirs[i].path as NSString).appendingPathComponent(c.name)
                         if othersCanChange(fs, c.attrs) { notEntered(p); keep(i) }
-                        else if c.attrs.kind == .dir && mounts.contains(p) { otherVolumeAcross(p); keep(i) }
+                        else if c.attrs.kind == .dir && mounted(fs).contains(p) { otherVolumeAcross(p); keep(i) }   // read once, at the first folder
                         else if let since, c.attrs.mtime > since { update { $0.errors.append("\(p): newer than Compare — kept") }; keep(i) }
                         else if c.attrs.kind == .dir { dirs.append((p, i, false)) } else { files.append((p, i)) }
                     }
