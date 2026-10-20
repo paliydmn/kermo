@@ -50,6 +50,18 @@ extension TransferFS {
     func rmdir(_ paths: [String]) -> [(path: String, error: Error)] { paths.compactMap { p in do { try rmdir(p); return nil } catch { return (p, error) } } }
 }
 
+extension TransferFS {
+    /// Where other file systems are mounted (`/proc/self/mounts` on Linux; read through this side, so a server's own),
+    /// as `FileJob.mounts` parses it. None if it can't be read — a BSD or macOS server: no stop there.
+    func mountPoints(_ file: String) -> Set<String> {
+        guard let r = try? reader(file, offset: 0, size: 0) else { return [] }
+        defer { r.close() }
+        var data = Data()
+        while data.count < 4 << 20, let piece = try? r.read() { data.append(piece) }
+        return FileJob.mounts(String(decoding: data, as: UTF8.self))
+    }
+}
+
 extension Result {
     /// The value, or nil for an error. (`try? get()` would flatten an optional value: "nothing there" and "failed" alike.)
     var value: Success? { if case .success(let v) = self { v } else { nil } }
@@ -357,6 +369,7 @@ extension FileJob {
         // isn't gone into: what changed in it can't be told. A second off for whole-second dates.
         // ponytail: Compare's moment by this Mac's clock; a server's behind it by more lets a change slip through.
         let since = comparedAt.map { $0 - 2 }
+        let mounts = mounted(fs)
         let barred = tops.filter { othersCanChange(fs, $0.attrs) }
         barred.forEach { notEntered($0.path) }
         update { $0.doneFiles += barred.count }
@@ -398,6 +411,7 @@ extension FileJob {
                     for c in items where Self.isSafeName(c.name) {
                         let p = (dirs[i].path as NSString).appendingPathComponent(c.name)
                         if othersCanChange(fs, c.attrs) { notEntered(p); keep(i) }
+                        else if c.attrs.kind == .dir && mounts.contains(p) { otherVolumeAcross(p); keep(i) }
                         else if let since, c.attrs.mtime > since { update { $0.errors.append("\(p): newer than Compare — kept") }; keep(i) }
                         else if c.attrs.kind == .dir { dirs.append((p, i, false)) } else { files.append((p, i)) }
                     }
@@ -500,6 +514,44 @@ extension FileJob {
     }
 
     /// Said once in the summary, not asked: Retry would find the same folder.
+    /// The mount points in /proc/self/mounts' text; a field's space, tab, newline and backslash come as \040 \011
+    /// \012 \134. Not "/": every path is below that one.
+    static func mounts(_ text: String) -> Set<String> {
+        Set(text.split(separator: "\n").compactMap { line -> String? in
+            let f = line.split(separator: " ")
+            guard f.count > 1 else { return nil }
+            var out = "", s = Substring(f[1])
+            while let i = s.firstIndex(of: "\\") {
+                out += s[..<i]
+                let code = s[s.index(after: i)...].prefix(3)
+                if code.count == 3, let n = UInt8(code, radix: 8) { out.append(Character(Unicode.Scalar(n))); s = s[s.index(i, offsetBy: 4)...] }
+                else { out.append("\\"); s = s[s.index(after: i)...] }
+            }
+            out += s
+            return out == "/" ? nil : out
+        })
+    }
+
+    /// A server's mount points, read once per side and job (D-084): a delete or a move off a server stops at them, as
+    /// ⇧F8 and a move between volumes do on this Mac.
+    func mounted(_ fs: TransferFS) -> Set<String> {
+        if let known = mountCache[ObjectIdentifier(fs)] { return known }
+        let m = fs is LocalFS ? [] : fs.mountPoints(mountsFile)
+        mountCache[ObjectIdentifier(fs)] = m
+        return m
+    }
+
+    /// A folder another volume is mounted on: on this Mac by device (as `FileJob.transfer`), on a server by its list.
+    func isMountPoint(_ fs: TransferFS, _ path: String, in parent: String) -> Bool {
+        guard fs is LocalFS else { return mounted(fs).contains(path) }
+        guard let up = Self.lstat(parent) else { return false }
+        return crossesVolume(path, nil, up.st_dev)
+    }
+
+    func otherVolumeAcross(_ path: String) {
+        update { $0.errors.append("\(path): another volume is mounted here — skipped") }
+    }
+
     func notEntered(_ path: String) {
         update { $0.errors.append("\(path): someone else on the server can change this folder — not entered as root. Do it as its owner, or in a terminal there") }
     }
@@ -648,6 +700,7 @@ extension FileJob {
                     fail(src + "/" + child.name, "Unsafe name from the server — not copied")
                     continue
                 }
+                if move && child.attrs.kind == .dir && isMountPoint(sfs, from, in: src) { otherVolumeAcross(from); continue }
                 // What the listing said of it goes along: a far server's lstat per file was one wait more each. And in
                 // a folder just made on a server nothing is there yet — but for a name an item copied in before has
                 // except for case or composition, taken on a disk that ignores those: looked at, the conflict asks.
@@ -835,6 +888,7 @@ extension FileJob {
     private func removeTree(_ fs: TransferFS, _ path: String, _ a: SFTPClient.Attrs) throws {
         guard a.kind == .dir else { return try fs.remove(path) }
         if othersCanChange(fs, a) { throw JobError(message: "Someone else on the server can change this folder — not entered as root") }
+        if mounted(fs).contains(path) { throw JobError(message: "Another volume is mounted here — not deleted") }
         for child in try fs.list(path) where Self.isSafeName(child.name) {
             try removeTree(fs, (path as NSString).appendingPathComponent(child.name), child.attrs)
         }

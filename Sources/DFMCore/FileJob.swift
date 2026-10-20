@@ -68,6 +68,9 @@ public final class FileJob: @unchecked Sendable {
     private var conflictPolicy: ConflictChoice?
     private var errorPolicy: ErrorChoice?
     /// A move within one volume: each source is one rename, so progress counts the sources — no tree walks.
+    /// Where a server says what's mounted (`mounted`); tests point it at a file of their own.
+    var mountsFile = "/proc/self/mounts"
+    var mountCache: [ObjectIdentifier: Set<String>] = [:]
     var countsItems = false   // a move that renames: progress counts the items, no walk of their trees
     /// Device and inode of everything this job created (worker thread only): see `Conflict.createdByThisJob`.
     private var created = Set<String>()

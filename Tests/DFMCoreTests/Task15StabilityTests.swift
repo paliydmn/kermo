@@ -291,3 +291,42 @@ private func sh(_ command: String) -> (status: Int32, err: String) {
     #expect(try fm.contentsOfDirectory(atPath: d + "/elsewhere") == ["f"])
     #expect(try fm.contentsOfDirectory(atPath: d + "/dest").sorted() == ["dir", "f", "merge"], "no root folder left behind")
 }
+
+/// D-084: the mount points in /proc/self/mounts, with its octal escapes.
+@Test func serverMountPointsAreRead() {
+    let text = "/dev/sda1 / ext4 rw 0 0\nnas:/v /mnt/my\\040share nfs4 rw 0 0\ntmpfs /run/a\\134b tmpfs rw 0 0\n\n"
+    #expect(FileJob.mounts(text) == ["/mnt/my share", "/run/a\\b"])
+}
+
+/// D-084: ⇧F8 on a server walked into a share mounted inside the folder (an NFS home, a bind mount) and emptied it;
+/// a move off a server deleted it after copying it. Both stop there now, as on this Mac, and say so. A move from
+/// this Mac to a server too. The server here is this Mac's sftp-server; its mount list a file of the test's.
+@Test func serverDeletesAndMovesStopAtMountPoints() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    for p in ["/srv/tree/mnt", "/srv/tree/sub", "/mac", "/up/tree/mnt"] { try fm.createDirectory(atPath: d + p, withIntermediateDirectories: true) }
+    for p in ["/srv/tree/mnt/precious", "/srv/tree/sub/f", "/srv/tree/g", "/up/tree/mnt/precious", "/up/tree/g"] { fm.createFile(atPath: d + p, contents: Data("x".utf8)) }
+    try Data("nas:/v \(d)/srv/tree/mnt nfs4 rw 0 0\n".utf8).write(to: URL(fileURLWithPath: d + "/mounts"))
+
+    let del = FileJob(.delete, sources: [d + "/srv/tree"], from: .sftp(.local()), to: .sftp(.local()), destDir: nil)
+    del.mountsFile = d + "/mounts"
+    del.runAcross()
+    #expect(fm.fileExists(atPath: d + "/srv/tree/mnt/precious"))
+    #expect(!fm.fileExists(atPath: d + "/srv/tree/sub") && !fm.fileExists(atPath: d + "/srv/tree/g"))
+    #expect(del.progress.errors == ["\(d)/srv/tree/mnt: another volume is mounted here — skipped"])
+
+    fm.createFile(atPath: d + "/srv/tree/g", contents: Data("x".utf8))
+    let down = FileJob(.move, sources: [d + "/srv/tree"], from: .sftp(.local()), to: .local, destDir: d + "/mac")
+    down.mountsFile = d + "/mounts"
+    down.runAcross()
+    #expect(fm.fileExists(atPath: d + "/srv/tree/mnt/precious") && !fm.fileExists(atPath: d + "/mac/tree/mnt"))
+    #expect(fm.fileExists(atPath: d + "/mac/tree/g") && !fm.fileExists(atPath: d + "/srv/tree/g"))
+    #expect(down.progress.errors == ["\(d)/srv/tree/mnt: another volume is mounted here — skipped"])
+
+    try fm.createDirectory(atPath: d + "/to", withIntermediateDirectories: true)
+    let up = FileJob(.move, sources: [d + "/up/tree"], from: .local, to: .sftp(.local()), destDir: d + "/to")
+    up.crossesVolume = { p, _, _ in p.hasSuffix("/mnt") }
+    up.runAcross()
+    #expect(fm.fileExists(atPath: d + "/up/tree/mnt/precious") && !fm.fileExists(atPath: d + "/to/tree/mnt"))
+    #expect(fm.fileExists(atPath: d + "/to/tree/g") && !fm.fileExists(atPath: d + "/up/tree/g"))
+}
