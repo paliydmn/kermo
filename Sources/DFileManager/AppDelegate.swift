@@ -212,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let masters = Array(SFTP.masterTargets)
         DispatchQueue.concurrentPerform(iterations: masters.count) { SFTP.stopMaster(masters[$0], now: true) }
         Shell.terminateAll()   // nor does a `tail -f` in an output window
+        ArchiveIndex.discardLiveStaging()   // after tar is gone: an extract cut short leaves no hidden copy behind
         ServerCopies.quit()   // the server files' copies on the server go; the others are kept
         TempCopies.remove(TextCopies.dir)
         SFTP.removeControlDir()   // after the masters and tunnels: their sockets and the askpass script are in it

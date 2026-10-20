@@ -53,6 +53,7 @@ Release:
 - The output window (⌘E, F2) no longer grows without end in memory when a command prints a flood (`cat /dev/urandom | base64`) while Kermo is busy with a sheet: past 8 MB the oldest output not shown yet goes, as the window keeps only the last 4 MB anyway. A read error on the command's output ends it instead of crashing Kermo.
 - When `/tmp/dfm-ssh-<uid>` belongs to someone else, the random folder Kermo uses for its ssh connections instead is removed at quit; one was left in `/tmp` after every run.
 - Quitting Kermo no longer hangs on a server connection that stopped answering: closing each takes at most 2.5 seconds, and all of them close at once.
+- Opening an archive with a path tens of thousands of folders deep no longer takes a gigabyte of memory: the list of what's inside is kept folder by folder. And quitting Kermo during an extract removes the hidden folder it was unpacking into instead of leaving a copy of the archive's contents for a day.
 
 ## [1.2.1] - 2026-10-17
 

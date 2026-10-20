@@ -6,7 +6,10 @@ import Foundation
 public struct ArchiveIndex: Sendable {
     public let file: String
     public let format: String
-    private let tree: [String: [FileItem]]   // folder inside the archive ("" = root) → its children
+    /// Folders inside the archive by component, not by full path: a name `a/a/…/x` 30 000 folders deep (60 KB in a
+    /// zip, any length in a pax tar) kept n²/2 bytes of keys that way — 1 GB. Node 0 is the top.
+    private let children: [[FileItem]]
+    private let subfolders: [[String: Int]]
     private let entryPrefix: String           // "./" or "/" if entries are stored that way (`tar -cf x.tar .`, `tar -P`)
     let charset: String?                      // zip names stored without the UTF-8 flag: "CP866" or "CP1251"; nil = UTF-8
     var repeated: Set<String> = []            // paths stored more than once (`tar -r`): the listing shows the last one
@@ -21,7 +24,14 @@ public struct ArchiveIndex: Sendable {
     }
 
     /// Children of a folder inside the archive ("" = top level); nil if there is no such folder.
-    public func list(_ inner: String) -> [FileItem]? { tree[inner] }
+    public func list(_ inner: String) -> [FileItem]? {
+        var node = 0
+        for c in inner.split(separator: "/") {
+            guard let next = subfolders[node][String(c)] else { return nil }
+            node = next
+        }
+        return children[node]
+    }
 
     public static func read(_ file: String) throws -> ArchiveIndex { try read(file, charset: nil) }
 
@@ -34,33 +44,29 @@ public struct ArchiveIndex: Sendable {
         guard archive_read_open_filename(a, file, 1 << 16) == ARCHIVE_OK else {
             throw ArchiveError(archive_error_string(a).map { String(cString: $0) } ?? "can't open archive")
         }
-        var folders: [String: [String: FileItem]] = ["": [:]]
+        var items: [[String: FileItem]] = [[:]], subs: [[String: Int]] = [[:]]   // node → its children; its folders' nodes
         var explicit = Set<String>(), repeated = Set<String>()
         var entryPrefix = ""
         var legacy: [UInt8] = []   // names that aren't UTF-8 (a Windows zip): their bytes, to tell the code page
 
         func add(_ path: String, _ item: FileItem, isExplicit: Bool) {
-            let parent = (path as NSString).deletingLastPathComponent
-            // Many zips have no entries for folders; make them up from the file paths. In a loop, not a call per folder:
-            // a name 2000 folders deep (8 KB of zip) overran the 512 KB stack of the GCD thread the panel reads on.
-            // ponytail: the tree is keyed by full paths, so a chain of n folders keeps n²/2 bytes of keys (30000: ~1 GB);
-            // a tree by components if a pax tar with a megabytes-long name ever turns up.
-            var missing: [String] = []
-            var up = parent
-            while !up.isEmpty && !explicit.contains(up) && folders[up] == nil {
-                missing.append(up)
-                up = (up as NSString).deletingLastPathComponent
+            // Many zips have no entries for folders; make them up from the file paths, walking down from the top (a
+            // call per folder overran the 512 KB stack of the GCD thread the panel reads on: 2000 folders, 8 KB of zip).
+            let comps = path.split(separator: "/").map(String.init)
+            var node = 0
+            for name in comps.dropLast() {
+                if let next = subs[node][name] { node = next; continue }
+                if items[node][name] == nil { items[node][name] = FileItem(name: name, kind: .dir, size: 0, mtime: item.mtime, mode: 0, flags: 0) }
+                subs[node][name] = items.count
+                node = items.count
+                items.append([:]); subs.append([:])
             }
-            for dir in missing.reversed() {
-                let above = (dir as NSString).deletingLastPathComponent, name = (dir as NSString).lastPathComponent
-                if folders[above]?[name] == nil {
-                    folders[above, default: [:]][name] = FileItem(name: name, kind: .dir, size: 0, mtime: item.mtime, mode: 0, flags: 0)
-                }
-                folders[dir] = [:]
-            }
-            if isExplicit || folders[parent]?[item.name] == nil { folders[parent, default: [:]][item.name] = item }
+            if isExplicit || items[node][item.name] == nil { items[node][item.name] = item }
             if isExplicit && !explicit.insert(path).inserted { repeated.insert(path) }
-            if item.kind == .dir { folders[path, default: [:]] = folders[path] ?? [:] }
+            if item.kind == .dir, subs[node][item.name] == nil {
+                subs[node][item.name] = items.count
+                items.append([:]); subs.append([:])
+            }
         }
 
         var entry: OpaquePointer?
@@ -88,8 +94,8 @@ public struct ArchiveIndex: Sendable {
         }
         let format = archive_format_name(a).map { String(cString: $0) } ?? "archive"
         if !legacy.isEmpty && format.hasPrefix("ZIP") { return try read(file, charset: legacyCharset(legacy)) }
-        return ArchiveIndex(file: file, format: format, tree: folders.mapValues { Array($0.values) }, entryPrefix: entryPrefix,
-                            charset: charset, repeated: repeated)
+        return ArchiveIndex(file: file, format: format, children: items.map { Array($0.values) }, subfolders: subs,
+                            entryPrefix: entryPrefix, charset: charset, repeated: repeated)
     }
 
     /// Windows zips keep names in the DOS code page (CP866 for Cyrillic), some tools in CP1251: the one whose
@@ -139,7 +145,7 @@ public struct ArchiveIndex: Sendable {
         let dir = inner.isEmpty ? "" : inner + "/"
         // One file: stop at it (-q) instead of reading the rest of the archive. Not a folder (its contents follow it),
         // nor a name stored twice (-q takes the first; the listing shows, and a full read leaves, the last).
-        if names.count == 1, tree[inner]?.first(where: { $0.name == names[0] }).map({ $0.kind != .dir }) == true,
+        if names.count == 1, list(inner)?.first(where: { $0.name == names[0] }).map({ $0.kind != .dir }) == true,
            !repeated.contains(dir + names[0]) {
             args.insert("-q", at: 1)
         }
@@ -176,9 +182,18 @@ public struct ArchiveIndex: Sendable {
         for item in (try? DirLister.list(dest)) ?? [] where item.kind == .dir && item.name.hasPrefix(stagingPrefix) && item.mtime < old {
             discardStaging((dest as NSString).appendingPathComponent(item.name))
         }
-        return (dest as NSString).appendingPathComponent(stagingPrefix + UUID().uuidString)
+        let staging = (dest as NSString).appendingPathComponent(stagingPrefix + UUID().uuidString)
+        liveLock.withLock { _ = live.insert(staging) }
+        return staging
     }
     static let stagingPrefix = ".kermo-extract-"
+    /// Staging folders of extracts still running or asking: a quit removes them (`discardLiveStaging`) — they hold only
+    /// what the archive still has, and could be big.
+    nonisolated(unsafe) private static var live = Set<String>()
+    private static let liveLock = NSLock()
+    public static func discardLiveStaging(under root: String = "/") {
+        liveLock.withLock { live }.filter { $0.hasPrefix(root) }.forEach(discardStaging)
+    }
 
     /// What's at the top of `staging` that `dest` has already.
     public static func clashes(_ staging: String, _ dest: String) -> [String] {
@@ -219,6 +234,7 @@ public struct ArchiveIndex: Sendable {
     public static func discardStaging(_ staging: String) {
         _ = unlockFolders(staging)
         try? FileManager.default.removeItem(atPath: staging)
+        liveLock.withLock { _ = live.remove(staging) }
     }
 
     /// Folders tar made read-only (0555) can't be moved to another folder (rename updates their "..") nor emptied:

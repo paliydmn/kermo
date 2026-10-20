@@ -173,3 +173,45 @@ private func chattyServer(in dir: String) -> String {
     #expect(try String(contentsOfFile: d + "/args", encoding: .utf8).contains("-O exit"))
     #expect(!SFTP.masterTargets.contains(t))
 }
+
+/// D-063: an extract cut short by Quit (tar stopped, its question open) left its hidden staging folder — as big as the
+/// archive — until a later extract there a day on. A quit removes those still in use; one already done isn't touched.
+@Test func aQuitRemovesStagingFoldersInUse() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    let running = ArchiveIndex.stagingFolder(in: d), done = ArchiveIndex.stagingFolder(in: d)
+    for s in [running, done] { try fm.createDirectory(atPath: s + "/ro", withIntermediateDirectories: true) }
+    fm.createFile(atPath: running + "/ro/big", contents: Data(count: 1000))
+    chmod(running + "/ro", 0o555)   // tar makes such folders
+    ArchiveIndex.discardStaging(done)
+    try fm.createDirectory(atPath: done, withIntermediateDirectories: true)   // a name a later run might reuse: not ours now
+    ArchiveIndex.discardLiveStaging(under: d)
+    #expect(!fm.fileExists(atPath: running))
+    #expect(fm.fileExists(atPath: done))
+}
+
+private func footprint() -> Int64 {
+    var info = task_vm_info_data_t(), count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+    let r = withUnsafeMutablePointer(to: &info) { $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) } }
+    return r == KERN_SUCCESS ? Int64(info.phys_footprint) : 0
+}
+
+/// sss-1's tail: a zip's one name 20 000 folders deep (40 KB) kept every folder's full path as a key — n²/2 bytes,
+/// some 400 MB (a pax tar's name can be any length). By component it's a few MB, and every folder still lists.
+@Test func aDeepArchiveTakesLittleMemory() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+    p.arguments = ["-I", "-c", "import zipfile; zipfile.ZipFile('d.zip', 'w').writestr('a/' * 20000 + 'x.txt', 'X')"]
+    p.currentDirectoryURL = URL(fileURLWithPath: d)
+    try p.run()
+    p.waitUntilExit()
+    let before = footprint()
+    let idx = try ArchiveIndex.read(d + "/d.zip")
+    let grew = footprint() - before
+    #expect(grew < 100 << 20, "\(grew >> 20) MB")
+    let inner = Array(repeating: "a", count: 20000).joined(separator: "/")
+    #expect(idx.list(inner)?.map(\.name) == ["x.txt"])
+    #expect(idx.list("a/a")?.map(\.name) == ["a"] && idx.list("a/b") == nil && idx.list("")?.first?.kind == .dir)
+}
