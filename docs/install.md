@@ -12,7 +12,7 @@ The quickest way: paste this into Terminal and press Return.
 curl -fsSL https://raw.githubusercontent.com/paliydmn/kermo/master/install.sh | sh
 ```
 
-It downloads the latest release, checks its SHA-256, quits Kermo if it's open, puts Kermo in Applications and opens it. The same line updates Kermo. Run it in Terminal, not in Kermo's own terminal, since it quits Kermo. If Kermo came from the `.pkg` (then it belongs to root), it asks for your password. A file `curl` downloads isn't quarantined, so macOS doesn't ask for **Open Anyway**: [the script](../install.sh) is what you trust instead.
+It downloads the latest release's `.pkg`, checks its SHA-256, takes Kermo out of it (nothing is mounted or run as an installer), quits Kermo if it's open, puts Kermo in Applications and opens it. The same line updates Kermo. Run it in Terminal, not in Kermo's own terminal, since it quits Kermo. If Kermo came from the `.pkg` (then it belongs to root), it asks for your password. A file `curl` downloads isn't quarantined, so macOS doesn't ask for **Open Anyway**: [the script](../install.sh) is what you trust instead.
 
 By hand:
 
