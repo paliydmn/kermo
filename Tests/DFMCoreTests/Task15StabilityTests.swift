@@ -454,3 +454,40 @@ private func sh(_ command: String) -> (status: Int32, err: String) {
     #expect(ok.progress.errors.isEmpty && fm.contents(atPath: d + "/srv/enabled/site") == Data("new".utf8))
     #expect((try? fm.destinationOfSymbolicLink(atPath: d + "/srv/enabled/site")) == nil && fm.contents(atPath: d + "/srv/available/site") == Data("old".utf8))
 }
+
+/// A server whose clock runs 100 s behind this Mac's (its listings' dates).
+private final class Behind: TransferFS, @unchecked Sendable {
+    let fs = LocalFS()
+    func late(_ a: SFTPClient.Attrs) -> SFTPClient.Attrs { var a = a; a.mtime -= 100; return a }
+    func lstat(_ path: String) throws -> SFTPClient.Attrs? { try fs.lstat(path).map(late) }
+    func list(_ dir: String) throws -> [(name: String, attrs: SFTPClient.Attrs)] { try fs.list(dir).map { ($0.name, late($0.attrs)) } }
+    func mkdir(_ path: String) throws { try fs.mkdir(path) }
+    func remove(_ path: String) throws { try fs.remove(path) }
+    func rmdir(_ path: String) throws { try fs.rmdir(path) }
+    func rename(_ from: String, _ to: String, replace: Bool) throws { try fs.rename(from, to, replace: replace) }
+    func readlink(_ path: String) throws -> String { try fs.readlink(path) }
+    func realpath(_ path: String) throws -> String { try fs.realpath(path) }
+    func symlink(_ destination: String, at link: String) throws { try fs.symlink(destination, at: link) }
+    func setAttrs(_ path: String, mtime: Double?, mode: UInt32?) throws { try fs.setAttrs(path, mtime: mtime, mode: mode) }
+    func reader(_ path: String, offset: Int64, size: Int64) throws -> PieceReader { try fs.reader(path, offset: offset, size: size) }
+    func writer(_ path: String, offset: Int64) throws -> PieceWriter { try fs.writer(path, offset: offset) }
+    func close() {}
+}
+
+/// D-083: Synchronize keeps what's newer than Compare below a folder it deletes on a server — by this Mac's clock
+/// against the server's dates. A server 100 s behind showed a file written after Compare as older, and it went. The
+/// job reads the server's clock first.
+@Test func syncDeletesGoByTheServersClock() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    try fm.createDirectory(atPath: d + "/gone", withIntermediateDirectories: true)
+    fm.createFile(atPath: d + "/gone/old", contents: nil, attributes: [.modificationDate: Date(timeIntervalSinceNow: -3600)])
+    fm.createFile(atPath: d + "/gone/new", contents: nil)   // written after Compare
+    let server = Behind()
+    let job = FileJob(.delete, sources: [], from: .sftp(.local()), to: .sftp(.local()), destDir: nil)
+    job.comparedAt = Date().timeIntervalSince1970 - 10
+    job.removeAcross(server, [(d + "/gone", try #require(try server.lstat(d + "/gone")))])
+    #expect(!fm.fileExists(atPath: d + "/gone/old"))
+    #expect(fm.fileExists(atPath: d + "/gone/new"), "\(job.progress.errors)")
+    #expect(try fm.contentsOfDirectory(atPath: d + "/gone") == ["new"], "the clock's file gone too")
+}

@@ -367,8 +367,10 @@ extension FileJob {
         // Synchronize: something put below a folder since Compare (a file written, a folder moved in — which changes
         // the folder's date, not always the file's) stays, and so do the folders above it. A folder newer than that
         // isn't gone into: what changed in it can't be told. A second off for whole-second dates.
-        // ponytail: Compare's moment by this Mac's clock; a server's behind it by more lets a change slip through.
-        let since = comparedAt.map { $0 - 2 }
+        // Compare's moment by this Mac's clock, the dates by the server's: a server running behind showed a change made
+        // after Compare as older, and it went. Its clock is read from a file made where the delete is (deleting there
+        // takes writing there), once.
+        let since = comparedAt.map { $0 - 2 + (tops.first.map { clockOffset(fs, ($0.path as NSString).deletingLastPathComponent) } ?? 0) }
         let barred = tops.filter { othersCanChange(fs, $0.attrs) }
         barred.forEach { notEntered($0.path) }
         update { $0.doneFiles += barred.count }
@@ -538,6 +540,17 @@ extension FileJob {
         let m = fs is LocalFS ? [] : fs.mountPoints(mountsFile)
         mountCache[ObjectIdentifier(fs)] = m
         return m
+    }
+
+    /// The server's clock less this Mac's, in whole seconds, from an empty file made in `dir` and removed; 0 if it
+    /// can't be made (or this Mac is the side).
+    func clockOffset(_ fs: TransferFS, _ dir: String) -> Double {
+        guard !(fs is LocalFS) else { return 0 }
+        let probe = (dir as NSString).appendingPathComponent(".dfm-clock-" + UUID().uuidString)
+        guard let w = try? fs.writer(probe, offset: 0) else { return 0 }
+        defer { try? fs.remove(probe) }
+        guard (try? w.finish()) != nil, let a = (try? fs.lstat(probe)) ?? nil else { return 0 }
+        return (a.mtime - Date().timeIntervalSince1970).rounded()
     }
 
     /// A folder another volume is mounted on: on this Mac by device (as `FileJob.transfer`), on a server by its list.

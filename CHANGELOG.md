@@ -74,6 +74,7 @@ Release:
 - Copying a file over a link on a server (or a link over a file) no longer removes the old one before the new one is there: a copy that failed midway left neither. The new one is written under a temporary name and replaces the old one only when it's whole.
 - Two saves of one server file at the same moment (its editor and a copy open in another app, or a revert) no longer both go through with the last one silently winning: the second waits for the first, sees the file changed, and asks.
 - A move to another volume (a USB stick) or from a server to this Mac now has each file on the disk before it deletes the original: a stick pulled or the power cut right after could lose both.
+- **Synchronize Folders** deleting on a server whose clock runs behind this Mac's no longer takes along a file written there after the comparison: it reads the server's clock first.
 
 ## [1.2.1] - 2026-10-17
 
