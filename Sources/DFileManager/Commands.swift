@@ -499,8 +499,16 @@ extension AppDelegate {
             return ShellContext(dir: r.dir, otherDir: other.remote?.target.asUser == r.target.asUser ? other.remote?.dir : nil,
                                 cursor: active.remoteCursor?.item.name, targets: active.remoteSelection?.items.map(\.name) ?? [])
         }
-        return ShellContext(dir: active.path, otherDir: other.remote == nil && other.parked == nil ? other.path : nil, cursor: active.cursorURL?.lastPathComponent,
-                            targets: active.targetURLs.map(\.lastPathComponent))
+        let dir = active.itemsDir
+        return ShellContext(dir: dir, otherDir: other.remote == nil && other.parked == nil ? other.path : nil, cursor: active.cursorURL.map { Self.name($0, in: dir) },
+                            targets: active.targetURLs.map { Self.name($0, in: dir) })
+    }
+
+    /// `url` as named from `dir`: a search hit or a Git change is `sub/x.conf` there — its last component alone named
+    /// a file of the same name in `dir` itself, and %s / ⌥F5 acted on that one.
+    static func name(_ url: URL, in dir: String) -> String {
+        let base = dir.hasSuffix("/") ? dir : dir + "/"
+        return url.path.hasPrefix(base) && url.path.count > base.count ? String(url.path.dropFirst(base.count)) : url.lastPathComponent
     }
 
     /// Where ⌘E / F2 run a command on a local panel: the ⌃O shell (↩, F2 entries), an output window (⇧↩), the terminal
@@ -533,11 +541,11 @@ extension AppDelegate {
         switch dest {
         case .terminalApp:
             guard let app = terminalAppURL() else { return NSSound.beep() }
-            Shell.runInTerminal(expanded, in: active.path, terminalApp: app)
+            Shell.runInTerminal(expanded, in: active.itemsDir, terminalApp: app)
         case .window:
-            Shell.run(expanded, in: active.path) { [weak self] _ in self?.panels.forEach { $0.reload() } }
+            Shell.run(expanded, in: active.itemsDir) { [weak self] _ in self?.panels.forEach { $0.reload() } }
         case .shell:   // the panels reload when the terminal hides (toggleTerminal): the shell's command ends when it ends
-            guard let v = terminal.run(expanded, cwd: active.path) else {
+            guard let v = terminal.run(expanded, cwd: active.itemsDir) else {
                 return active.flash("A control character in a name: ⇧↩ runs it in an output window", error: true)
             }
             window.makeFirstResponder(v)
@@ -834,7 +842,7 @@ extension AppDelegate {
         if !q.contains.isEmpty { title += " containing “\(q.contains)”" }
         if !q.tag.isEmpty { title += " tagged “\(q.tag)”" }
         let server = panel.remote?.target, env = SSHAskpass.env   // a server panel searches there
-        let flag = panel.beginSearch(title, in: DirSync.place(server.map(Endpoint.sftp) ?? .local, q.root))
+        let flag = panel.beginSearch(title, in: DirSync.place(server.map(Endpoint.sftp) ?? .local, q.root), root: server == nil ? q.root : nil)
         DispatchQueue.global(qos: .userInitiated).async {
             var batch: [FileItem] = []
             var lastFlush = Date()
@@ -1912,8 +1920,9 @@ extension AppDelegate {
             let archive = resolve(input)
             let taken = await Blocking.run(.userInitiated) { FileManager.default.fileExists(atPath: archive) }   // a share that doesn't answer
             guard !taken else { return showError(JobErrorMessage("“\(input)” already exists.")) }
-            let args = ArchiveIndex.createArguments(archive, names: srcs.map(\.lastPathComponent), in: active.path)
-            Shell.run("COPYFILE_DISABLE=1 /usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: active.path) { _ in self.panels.forEach { $0.reload() } }
+            let dir = active.itemsDir
+            let args = ArchiveIndex.createArguments(archive, names: srcs.map { Self.name($0, in: dir) }, in: dir)
+            Shell.run("COPYFILE_DISABLE=1 /usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dir) { _ in self.panels.forEach { $0.reload() } }
             active.unmarkAll()
         }
     }
@@ -2684,7 +2693,7 @@ extension AppDelegate {
     func multiRename() {
         let items = active.targetItems
         guard !items.isEmpty else { return NSSound.beep() }
-        let dir = active.path
+        let dir = active.itemsDir
         MultiRename.show(on: window, dir: dir, items: items) { [unowned self] done in
             registerMoves("Rename \(done.count) Items", done)
             active.unmarkAll()

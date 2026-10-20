@@ -153,3 +153,25 @@ extension ServerLockTests {   // they swap `AppDelegate.runAsAdmin` and `answeri
         #expect(asked.count == 2 && ran.count == 2)
     }
 }
+
+/// A tag search's hits are named from ~ (`Documents/x.pdf`) wherever the panel is: F8, ⇧F8, F5, ↩ took them from the
+/// panel's folder — another folder's file of that name, or a backup's. And %s / ⌥F5 in any search's results named the
+/// hit by its last component in the search's root: `rm %s` on `build/old/config.yml` meant `./config.yml`.
+@MainActor @Test func searchHitsAreActedOnWhereTheyAre() throws {
+    let d = tempDir(), elsewhere = tempDir()
+    defer { for p in [d, elsewhere] { try? FileManager.default.removeItem(atPath: p) } }
+    let app = AppDelegate()
+    app.panels = [PanelViewController(tabs: [elsewhere], index: 0, showHidden: false), PanelViewController(tabs: [elsewhere], index: 0, showHidden: false)]
+    app.panels.forEach { $0.loadViewIfNeeded() }
+    defer { app.panels.forEach { $0.shutdown() } }
+    let panel = app.panels[0]
+    let flag = panel.beginSearch("tagged “Red”", in: d, root: d)
+    panel.addSearchResults([FileItem(name: "sub/x.pdf", kind: .file, size: 1, mtime: 0, mode: 0o644, flags: 0)], from: flag)
+    panel.finishSearch(flag)
+    panel.moveCursor(toName: "sub/x.pdf")
+    #expect(panel.targetURLs.map(\.path) == [d + "/sub/x.pdf"], "not \(elsewhere)/sub/x.pdf")
+    let context = app.shellContext
+    #expect(context.dir == d && context.targets == ["sub/x.pdf"] && context.cursor == "sub/x.pdf")
+    #expect(AppDelegate.name(URL(fileURLWithPath: "/a/b/c"), in: "/a") == "b/c" && AppDelegate.name(URL(fileURLWithPath: "/x/y"), in: "/") == "x/y")
+    #expect(AppDelegate.name(URL(fileURLWithPath: "/a"), in: "/a") == "a", "the folder itself: its name, as before")
+}

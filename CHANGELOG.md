@@ -57,6 +57,7 @@ Release:
 - Opening an archive with a path tens of thousands of folders deep no longer takes a gigabyte of memory: the list of what's inside is kept folder by folder. And quitting Kermo during an extract removes the hidden folder it was unpacking into instead of leaving a copy of the archive's contents for a day.
 - **Delete Permanently…** (⇧F8) on a server, and **Move To…** (F6) off a server, no longer go into a volume mounted inside the folder (an NFS home, a bind mount): they stop there and the summary names it, as they already did on this Mac. A move from this Mac to a server stops at a mounted volume too.
 - Saving someone else's file with hard links from a root panel no longer splits it: its other names get the new text too.
+- In the results of a tag search (a tag in the sidebar), F8, ⇧F8, F5, F6 and ↩ act on the files found. Before, when the panel was in another folder than your home, they acted on files with the same relative names in that folder: ⇧F8 could delete a backup's copy and leave the tagged file. In any search's results and in Git changes, the user menu's %s and %f and **Compress** (⌥F5) take the file found, not one of the same name at the top of the search.
 
 ## [1.2.1] - 2026-10-17
 
