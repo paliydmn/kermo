@@ -175,3 +175,45 @@ extension ServerLockTests {   // they swap `AppDelegate.runAsAdmin` and `answeri
     #expect(AppDelegate.name(URL(fileURLWithPath: "/a/b/c"), in: "/a") == "b/c" && AppDelegate.name(URL(fileURLWithPath: "/x/y"), in: "/") == "x/y")
     #expect(AppDelegate.name(URL(fileURLWithPath: "/a"), in: "/a") == "a", "the folder itself: its name, as before")
 }
+
+extension ServerLockTests {   // swaps `AppDelegate.answering`
+    /// A zip the index can't read through (its second member's header is damaged) had no names to ask about, so ⌥F9
+    /// extracted straight into the folder — bsdtar writes the members it can, over the files there, unasked. It goes
+    /// through a staging folder now, as a tar: tar fails on the bad member, and nothing lands.
+    @MainActor @Test func anArchiveTheIndexCantReadIsntExtractedOverFiles() async throws {
+        _ = NSApplication.shared
+        let dir = tempDir(), dest = dir + "/dest"
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        try FileManager.default.createDirectory(atPath: dest, withIntermediateDirectories: true)
+        try Data(String(repeating: "NEW-A", count: 100).utf8).write(to: URL(fileURLWithPath: dir + "/a.txt"))
+        try Data(String(repeating: "NEW-B", count: 100).utf8).write(to: URL(fileURLWithPath: dir + "/b.txt"))
+        let zip = Process()
+        zip.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+        zip.arguments = ["-q", "-0", "u.zip", "a.txt", "b.txt"]
+        zip.currentDirectoryURL = URL(fileURLWithPath: dir)
+        try zip.run()
+        zip.waitUntilExit()
+        var bytes = try Data(contentsOf: URL(fileURLWithPath: dir + "/u.zip"))
+        let second = try #require(bytes.range(of: Data("PK\u{3}\u{4}".utf8), in: 4..<bytes.count))
+        bytes[second.lowerBound + 2] = 9   // b's local header: no longer a header
+        try bytes.write(to: URL(fileURLWithPath: dir + "/u.zip"))
+        #expect((try? ArchiveIndex.read(dir + "/u.zip")) == nil, "the index can't read it")
+        try Data("old-a".utf8).write(to: URL(fileURLWithPath: dest + "/a.txt"))
+
+        let panel = PanelViewController(tabs: [dest], index: 0, showHidden: true)
+        panel.loadViewIfNeeded()
+        defer { panel.shutdown() }
+        let app = AppDelegate()
+        app.panels = [panel]
+        AppDelegate.answering = { _, _, _ in 1 }   // Overwrite, if asked
+        defer { AppDelegate.answering = nil }
+        await app.extract(dir + "/u.zip", nil, to: dest)
+        func window() -> NSWindow? { NSApp.windows.last { $0.title.hasPrefix("Extract “u.zip”") } }
+        func said() -> String { ((window()?.contentView as? NSScrollView)?.documentView as? NSTextView)?.string ?? "" }
+        await waitUntil { said().contains("[exit") && (try? FileManager.default.contentsOfDirectory(atPath: dest))?.count == 1 }
+        window()?.close()
+        #expect(said().contains("[exit"), "tar failed on the bad member: \(said())")
+        #expect(FileManager.default.contents(atPath: dest + "/a.txt") == Data("old-a".utf8))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dest) == ["a.txt"], "no staging folder left")
+    }
+}

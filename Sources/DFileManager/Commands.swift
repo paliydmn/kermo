@@ -1775,6 +1775,9 @@ extension AppDelegate {
             let top = sel?.names ?? (index?.list("") ?? []).map(\.name)
             return (index, top.filter { var st = stat(); return Darwin.lstat((dest as NSString).appendingPathComponent($0), &st) == 0 })
         }
+        // Not readable as a whole (a damaged member, a format the reader refuses midway): its names aren't known, and
+        // bsdtar extracts the rest anyway — over what's there, unasked. Unpacked aside first and asked after, as a tar.
+        if index == nil, sel == nil { return extractWholeTar(file, to: dest) }
         let shown = (dest as NSString).abbreviatingWithTildeInPath
         guard let keep = await keepExisting(clashes, in: shown) else { return }
         let staging: String?
