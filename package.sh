@@ -11,7 +11,8 @@ DMG=dist/Kermo-${VERSION}-universal.dmg
 PKG=dist/Kermo-${VERSION}-universal.pkg
 ZIP=dist/Kermo-${VERSION}-universal.zip
 STAGE=$(mktemp -d)
-trap 'rm -rf $STAGE' EXIT
+PLIST=$(mktemp)
+trap 'rm -rf $STAGE $PLIST' EXIT
 
 mkdir -p dist
 rm -f $DMG $DMG.sha256 $PKG $PKG.sha256 $ZIP
@@ -29,7 +30,11 @@ else
 fi
 # What Install and Relaunch downloads: an update needn't mount a disk image (that asks for a password).
 ditto -c -k --keepParent $STAGE/Kermo.app $ZIP
-pkgbuild --quiet --component $STAGE/Kermo.app --install-location /Applications $PKG
+# Not relocatable: Installer would otherwise update whatever copy of Kermo it finds (an old one in Downloads, a build
+# folder) instead of putting it in Applications. $STAGE holds only Kermo.app at this point.
+pkgbuild --quiet --analyze --root $STAGE $PLIST
+plutil -replace 0.BundleIsRelocatable -bool NO $PLIST
+pkgbuild --quiet --root $STAGE --component-plist $PLIST --identifier com.dmn.dfilemanager --version $VERSION --install-location /Applications $PKG
 ln -s /Applications $STAGE/Applications
 cat > $STAGE/INSTALL.txt <<'EOF'
 Kermo requires macOS 14 or later.
