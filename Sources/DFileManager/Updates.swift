@@ -187,13 +187,13 @@ extension AppDelegate {
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
             try FileManager.default.moveItem(at: file, to: tmp.appendingPathComponent("Kermo.zip"))
             let unzip = try await Blocking.run { () throws -> Int32 in
-                let p = try Process.run(URL(fileURLWithPath: "/usr/bin/ditto"), arguments: ["-x", "-k", tmp.appendingPathComponent("Kermo.zip").path, tmp.path])
+                let p = try Process.run(URL(fileURLWithPath: "/usr/bin/ditto"), arguments: ["-x", "-k", "--noqtn", tmp.appendingPathComponent("Kermo.zip").path, tmp.path])
                 p.waitUntilExit()
                 return p.terminationStatus
             }
             guard unzip == 0 else { throw CocoaError(.fileReadCorruptFile) }
         } catch {
-            return await byHand("The download failed: \(error.localizedDescription)")
+            return await byHand("The download failed: \(error.localizedDescription.trimmingCharacters(in: CharacterSet(charactersIn: "."))).")
         }
         let got = Bundle(url: new)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         guard got == version, Updates.isSigned(new, as: requirement) else {

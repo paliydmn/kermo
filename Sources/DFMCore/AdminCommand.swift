@@ -52,7 +52,7 @@ public enum AdminCommand {
     public static func replaceApp(_ new: String, at app: String, requirement: String) -> String {
         let a = q(app), parent = q((app as NSString).deletingLastPathComponent)
         return "t=$(/usr/bin/mktemp -d \(parent)/.kermo-update.XXXXXX) || exit 1; trap '/bin/rm -rf \"$t\"' EXIT; "
-            + "/usr/bin/ditto \(q(new)) \"$t/new.app\" && /usr/sbin/chown -R \"$(/usr/bin/stat -f %u:%g \(a))\" \"$t/new.app\" || exit 1; "
+            + "/usr/bin/ditto --noqtn \(q(new)) \"$t/new.app\" && /usr/sbin/chown -R \"$(/usr/bin/stat -f %u:%g \(a))\" \"$t/new.app\" || exit 1; "
             + "/usr/bin/codesign --verify --strict -R \(q("=" + requirement)) \"$t/new.app\" "
             + "|| { echo 'The download isn’t signed as Kermo is; nothing was replaced.' >&2; exit 1; }; "
             + "/bin/mv \(a) \"$t/old.app\" || exit 1; /bin/mv \"$t/new.app\" \(a) || { /bin/mv \"$t/old.app\" \(a); exit 1; }"
