@@ -188,7 +188,7 @@ private let when = Calendar.current.date(from: DateComponents(year: 2026, month:
     try put("/m", 48 * SFTPClient.chunk, 1)
     let m = try c.download(d + "/m", to: d + "/lm")
     try put("/lm", 48 * SFTPClient.chunk, 2)
-    #expect(m.sha256 == nil)
+    #expect(m.sha256 != nil, "hashed on the way in; compared on the server, not read here")
     #expect(try save("m", m) == 6 + 2, "1.5 MB: open, one wave of 48 reads with the end")
     try put("/m4", 128 * SFTPClient.chunk, 1)
     let m4 = try c.download(d + "/m4", to: d + "/lm4")
