@@ -124,7 +124,8 @@ extension AppDelegate {
         for a in serviceActions(u, on: t, of: s) {
             if a.title == "Start" { menu.addItem(.separator()) }
             let item = MenuAction.item(a.title) { [unowned self] in perform(a.title, u, on: t, of: s) }
-            if let key = a.key { (item.keyEquivalent, item.keyEquivalentModifierMask) = (key.menuKey, key.flags) }
+            // Not ↩: in an open menu it would run Status, not the highlighted item.
+            if let key = a.key, !key.flags.isEmpty { (item.keyEquivalent, item.keyEquivalentModifierMask) = (key.menuKey, key.flags) }
             item.isEnabled = a.why == nil
             item.toolTip = a.why
             menu.addItem(item)

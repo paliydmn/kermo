@@ -53,6 +53,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     #expect(menu.items.map(\.title) == ["Status", "Live Logs", "Edit Unit File…", "", "Start", "Restart"])
     #expect(menu.items.filter(\.isEnabled).map(\.title) == ["Status", "Live Logs", "Edit Unit File…"], "no other change while one runs")
     #expect(menu.items.last?.keyEquivalent == "r" && menu.items.last?.toolTip == "web is restarting… wait for it")
+    #expect(menu.items.first?.keyEquivalent == "", "↩ in an open menu runs the highlighted item, not Status")
     #expect(cmdR())
     #expect(panel.statusText == "web is restarting… wait for it")
     await until { !list.said.isEmpty }
