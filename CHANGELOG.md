@@ -8,13 +8,14 @@ Every user-visible change adds a line under [Unreleased]: Added, Changed, Fixed,
 Release:
 1. Set CFBundleShortVersionString in build.sh to the new version.
 2. Rename [Unreleased] to [X.Y] - YYYY-MM-DD, start a new empty [Unreleased], and add the link at the bottom.
-3. Commit, `git tag vX.Y`, `./package.sh` (it signs with “Kermo Release Signing”, made once by `./cert.sh "Kermo Release Signing"`; keep its backup), then attach dist/*.dmg, *.pkg and their .sha256 to the GitHub release with that section as its notes.
+3. Commit, `git tag vX.Y`, `./package.sh` (it signs with “Kermo Release Signing”, made once by `./cert.sh "Kermo Release Signing"`; keep its backup), then attach dist/*.dmg, *.pkg, their .sha256 and the .zip (Install and Relaunch takes it) to the GitHub release with that section as its notes.
 -->
 
 ## [Unreleased]
 
 ### Added
 
+- **Install and Relaunch** in the update window: Kermo downloads the new version, checks it's signed with the same certificate as the running one, puts it in place and opens it again. A Kermo installed from the `.pkg` asks for your password first. Works from this version on, for releases that carry a `.zip`.
 - One line in Terminal installs or updates Kermo: `curl -fsSL https://raw.githubusercontent.com/paliydmn/kermo/master/install.sh | sh`. No **Open Anyway** needed. See [Install Kermo](docs/install.md).
 
 ## [1.3] - 2026-10-20

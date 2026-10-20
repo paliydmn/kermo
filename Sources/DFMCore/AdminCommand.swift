@@ -45,6 +45,19 @@ public enum AdminCommand {
         return (nil, existing)
     }
 
+    /// Puts the app at `new` in place of `app` (an update), run as the user or as root. It's copied into a folder of the
+    /// runner's own beside `app` first (0700) and checked there: `codesign` must find it signed to satisfy `requirement`
+    /// (the running Kermo's designated requirement), so nothing swapped in at `new` after Kermo's own check gets
+    /// installed. It keeps the old app's owner, and if the second rename fails the old app is put back.
+    public static func replaceApp(_ new: String, at app: String, requirement: String) -> String {
+        let a = q(app), parent = q((app as NSString).deletingLastPathComponent)
+        return "t=$(/usr/bin/mktemp -d \(parent)/.kermo-update.XXXXXX) || exit 1; trap '/bin/rm -rf \"$t\"' EXIT; "
+            + "/usr/bin/ditto \(q(new)) \"$t/new.app\" && /usr/sbin/chown -R \"$(/usr/bin/stat -f %u:%g \(a))\" \"$t/new.app\" || exit 1; "
+            + "/usr/bin/codesign --verify --strict -R \(q("=" + requirement)) \"$t/new.app\" "
+            + "|| { echo 'The download isn’t signed as Kermo is; nothing was replaced.' >&2; exit 1; }; "
+            + "/bin/mv \(a) \"$t/old.app\" || exit 1; /bin/mv \"$t/new.app\" \(a) || { /bin/mv \"$t/old.app\" \(a); exit 1; }"
+    }
+
     /// -n: never overwrite something already there.
     public static func move(_ sources: [String], to destDir: String) -> String {
         "/bin/mv -n " + sources.map(q).joined(separator: " ") + " " + q(destDir + "/")
