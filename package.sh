@@ -15,7 +15,17 @@ trap 'rm -rf $STAGE' EXIT
 mkdir -p dist
 rm -f $DMG $DMG.sha256 $PKG $PKG.sha256
 ditto --noextattr --noacl $APP $STAGE/Kermo.app
-codesign --force --options runtime --sign - $STAGE/Kermo.app
+# One certificate for every release: macOS keeps Full Disk Access and other grants across updates (ad hoc, each
+# build is a new app to it). Not notarized all the same: the first launch still needs Open Anyway.
+ID="Kermo Release Signing"
+if security find-identity -p codesigning | grep -q "\"$ID\""; then
+  codesign --force --options runtime --sign "$ID" $STAGE/Kermo.app
+elif [[ ${DFM_ADHOC:-0} == 1 ]]; then
+  codesign --force --options runtime --sign - $STAGE/Kermo.app
+else
+  echo "No “$ID” in the keychain: restore it from its backup, or for a build that isn't a release run DFM_ADHOC=1 ./package.sh" >&2
+  exit 1
+fi
 pkgbuild --quiet --component $STAGE/Kermo.app --install-location /Applications $PKG
 ln -s /Applications $STAGE/Applications
 cat > $STAGE/INSTALL.txt <<'EOF'

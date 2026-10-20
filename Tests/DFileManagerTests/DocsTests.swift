@@ -34,6 +34,7 @@ private let keptByTheApp: Set<String> = [
     "folderSort", "lastMask", "panelPaths", "panelSession", "panelTabIndex", "panelTabs", "recentFilters", "recentServers", "recentTags",
     "runOnServers", "runOnServersCommand", "searchCase", "searchHidden", "searchName", "searchRecent", "searchSpotlight",
     "searchTag", "searchText", "showHidden", "showPerms", "sidebarFolded", "sidebarVisible", "splitSize", "sshTabs", "theme",
+    "updateChecked", "updateLatest", "updateSkipped",
     "viewerLineNumbers",
 ]
 

@@ -8,7 +8,7 @@ Every user-visible change adds a line under [Unreleased]: Added, Changed, Fixed,
 Release:
 1. Set CFBundleShortVersionString in build.sh to the new version.
 2. Rename [Unreleased] to [X.Y] - YYYY-MM-DD, start a new empty [Unreleased], and add the link at the bottom.
-3. Commit, `git tag vX.Y`, `./package.sh`, then attach dist/*.dmg, *.pkg and their .sha256 to the GitHub release with that section as its notes.
+3. Commit, `git tag vX.Y`, `./package.sh` (it signs with “Kermo Release Signing”, made once by `./cert.sh "Kermo Release Signing"`; keep its backup), then attach dist/*.dmg, *.pkg and their .sha256 to the GitHub release with that section as its notes.
 -->
 
 ## [Unreleased]
@@ -25,8 +25,13 @@ Release:
 - On a production server the question before a command now looks at every command in the line, not only the first word: `cd /srv && rm -rf releases/*`, `ls; rm x`, `… | xargs rm` and `$(…)` ask too. So do `find -delete`, `truncate`, `rsync --delete`, `git clean`, `git reset --hard`, `systemctl disable` and writing over a file with `>`.
 - A root panel no longer deletes an item that is in a folder someone else on the server can change, nor copies a file into such a folder: between two steps there, the folder's owner could swap the item for a link and send root's delete or write anywhere. Such items are named in the summary.
 
+### Added
+
+- Kermo tells you when a new version is out. Once a day it asks GitHub for the latest release, and if it is newer the status line says so once and the Kermo menu shows **Kermo X.Y Available…**. **Kermo ▸ Check for Updates…** checks at once and shows the release notes with **Download**. Turn the daily check off with **Kermo ▸ Check for Updates Automatically**.
+
 ### Changed
 
+- Releases are signed with Kermo's own certificate instead of ad hoc, so macOS keeps Full Disk Access and other permissions after an update. Updating to this version asks for them once more. Releases still aren't notarized: the first launch still needs **Open Anyway**.
 - ↩ on a file inside an archive opens a read-only copy, and the status line says so: the copy lives in a temporary folder that goes a day later, so edits made to it in another app were lost. The app now says it's locked and offers to duplicate it; Extract (⌥F9) keeps a copy of your own.
 
 ### Fixed

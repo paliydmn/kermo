@@ -2,9 +2,11 @@
 # One-time: creates a self-signed code-signing identity in the login keychain. build.sh then signs with it
 # instead of ad-hoc, so the designated requirement ("certificate leaf = H…") is the same for every build and
 # TCC grants such as Full Disk Access survive rebuilds. No Apple Developer account; nothing trusts this cert.
+# Releases: ./cert.sh "Kermo Release Signing" makes the one package.sh signs with; keep a backup of it (Keychain Access ▸
+# Export), since a new one makes every Mac ask for Full Disk Access again once.
 # Remove: Keychain Access ▸ login ▸ My Certificates ▸ "DFileManager Local Signing" ▸ Delete.
 set -e
-NAME="DFileManager Local Signing"
+NAME=${1:-"DFileManager Local Signing"}
 if security find-identity -p codesigning | grep -q "\"$NAME\""; then echo "“$NAME” already exists"; exit 0; fi
 T=$(mktemp -d)
 trap 'rm -rf $T' EXIT
@@ -26,4 +28,4 @@ P=$(openssl rand -hex 16)
 openssl pkcs12 -export -legacy -inkey $T/key.pem -in $T/cert.pem -out $T/id.p12 -passout pass:$P -name "$NAME" 2>/dev/null \
   || openssl pkcs12 -export -inkey $T/key.pem -in $T/cert.pem -out $T/id.p12 -passout pass:$P -name "$NAME"
 security import $T/id.p12 -k ~/Library/Keychains/login.keychain-db -P $P -T /usr/bin/codesign
-echo "Created “$NAME”. Rebuild with ./build.sh and grant Full Disk Access once more — from now on it survives rebuilds."
+echo "Created “$NAME”. Rebuild and grant Full Disk Access once more — from now on it survives rebuilds."
