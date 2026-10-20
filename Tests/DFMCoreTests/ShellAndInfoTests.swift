@@ -50,7 +50,7 @@ import Testing
     #expect(AdminCommand.move(["/a/it's"], to: "/opt") == "/bin/mv -n '/a/it'\\''s' /opt/")
     #expect(AdminCommand.delete(["/tmp/a b", "/tmp/-rf"]) == "/bin/rm -rf -- '/tmp/a b' /tmp/-rf")
     let write = AdminCommand.writeContents(.file("/tmp/a b"), sha256: "ab", to: "/etc/it's", stamp: "1:2:3.000000004", length: 5)
-    #expect(write.contains("/bin/cat '/tmp/a b' > \"$c\"") && write.contains("of='/etc/it'\\''s' bs=1 seek=5 ")
+    #expect(write.contains("/bin/cat '/tmp/a b' > \"$c\"") && write.hasSuffix(" -- '/etc/it'\\''s' \"$c\" 1 2 5")
             && write.contains("[ ! -L '/etc/it'\\''s' ]") && write.contains("= 1:2:3.000000004 ]"))
     #expect(AdminCommand.chown("root:wheel", "/x") == "/usr/sbin/chown -h root:wheel /x")
 }

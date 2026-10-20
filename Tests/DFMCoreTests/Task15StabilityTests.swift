@@ -215,3 +215,52 @@ private func footprint() -> Int64 {
     #expect(idx.list(inner)?.map(\.name) == ["x.txt"])
     #expect(idx.list("a/a")?.map(\.name) == ["a"] && idx.list("a/b") == nil && idx.list("")?.first?.kind == .dir)
 }
+
+private func sh(_ command: String) -> (status: Int32, err: String) {
+    let p = Process(), err = Pipe()
+    p.executableURL = URL(fileURLWithPath: "/bin/sh")
+    p.arguments = ["-c", command]
+    p.standardError = err
+    try? p.run()
+    p.waitUntilExit()
+    return (p.terminationStatus, String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+}
+
+/// D-080: root's write in Save as Administrator came after a shell check for a link, two steps apart: a link (or
+/// another file) swapped in between was written through as root. The write itself now opens without following a
+/// link and checks the inode it opened. Run here as us, each case right at the write.
+@Test func theRootWriteNeverFollowsALinkSwappedIn() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    try Data("NEW TEXT".utf8).write(to: URL(fileURLWithPath: d + "/new"))
+    try Data("old text, longer\n".utf8).write(to: URL(fileURLWithPath: d + "/target"))
+    try Data("someone else's\n".utf8).write(to: URL(fileURLWithPath: d + "/elsewhere"))
+    var st = stat()
+    lstat(d + "/target", &st)
+    let (ino, size) = ("\(st.st_ino)", "\(st.st_size)")
+    func write(inode: String?, size: String?) -> (status: Int32, err: String) {
+        sh(AdminCommand.writeOver(d + "/target", from: ShellContext.quote(d + "/new"), inode: inode, size: size, length: 8))
+    }
+
+    #expect(write(inode: ino, size: size).status == 0)
+    #expect(fm.contents(atPath: d + "/target") == Data("NEW TEXT".utf8), "written over, cut to length")
+
+    try Data("old text, longer\n".utf8).write(to: URL(fileURLWithPath: d + "/target"))
+    lstat(d + "/target", &st)
+    try fm.removeItem(atPath: d + "/target")
+    try fm.createSymbolicLink(atPath: d + "/target", withDestinationPath: d + "/elsewhere")   // swapped in
+    let link = write(inode: "\(st.st_ino)", size: "\(st.st_size)")
+    #expect(link.status != 0 && link.err.contains(AdminCommand.isLink), "\(link)")
+    #expect(fm.contents(atPath: d + "/elsewhere") == Data("someone else's\n".utf8))
+
+    try fm.removeItem(atPath: d + "/target")
+    try fm.linkItem(atPath: d + "/elsewhere", toPath: d + "/target")   // another file under the name, a hard link
+    let other = write(inode: "\(st.st_ino)", size: "\(st.st_size)")
+    #expect(other.status != 0 && other.err.contains(AdminCommand.changedOnDisk), "\(other)")
+    #expect(fm.contents(atPath: d + "/elsewhere") == Data("someone else's\n".utf8))
+
+    let made = write(inode: nil, size: nil)   // "a new file" while one is there: never written over
+    #expect(made.status != 0 && made.err.contains(AdminCommand.changedOnDisk), "\(made)")
+    try fm.removeItem(atPath: d + "/target")
+    #expect(write(inode: nil, size: nil).status == 0 && fm.contents(atPath: d + "/target") == Data("NEW TEXT".utf8))
+}

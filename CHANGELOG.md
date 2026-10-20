@@ -21,6 +21,7 @@ Release:
 - A file from a server or from inside an archive that ↩ (or Quick Look's **Open with**) opens in another app is now quarantined first, so Gatekeeper checks it: a `.command` script from a server no longer runs in Terminal at once. A file from a quarantined archive keeps the archive's own quarantine.
 - **Save as Administrator** no longer writes from a file that something else running as you could change while macOS asks for the password: the text goes to root in the command itself (a text over about 500 KB goes through a file root checks against your text). It never leaves the file empty when the disk is full, and a change made to the file while the password dialog was up now asks "changed on disk" instead of being overwritten.
 - **Copy as Administrator** and **Move as Administrator** now check what F5 and F6 check, before the password is asked. They refuse to copy a folder into itself (`ditto` as root filled the disk with copies of it) and to go through a link that has the item's name in the destination folder (root wrote where it pointed). Copy also asks before it replaces what's there.
+- **Save as Administrator** can no longer be made to write through a link that something running as you swaps in at the last moment: root opens the file without following links and checks it's still the file you edited before it writes.
 
 ### Changed
 
