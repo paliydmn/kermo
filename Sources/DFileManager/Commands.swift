@@ -1891,7 +1891,9 @@ extension AppDelegate {
             // What lands at the top of `dest` that's there already: tar and unzip -o would replace it.
             let found = await panel.busy("Reading “\((item.name as NSString).lastPathComponent)”…") { flag in
                 let top = RemoteArchive.topNames(try SSHCommand.capture(target, RemoteArchive.namesCommand(file), env: env, cancel: flag), of: file)
-                let present = Set(((try? SFTP.list(target, dest, env: env, cancel: flag)) ?? []).map(\.name))   // no folder yet: nothing
+                // A refused channel or no permission isn't "nothing there": taken as such, tar -x and unzip -o
+                // replaced what was there unasked.
+                let present = Set(try SFTP.listIfThere(target, dest, env: env, cancel: flag).map(\.name))
                 return top.filter(present.contains)
             }
             guard case .success(let clashes) = found else {

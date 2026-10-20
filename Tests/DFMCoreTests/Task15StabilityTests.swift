@@ -365,3 +365,16 @@ private func sh(_ command: String) -> (status: Int32, err: String) {
         if linked { #expect(fm.contents(atPath: twin) == Data("new text\n".utf8), "the other name too") }
     }
 }
+
+/// S2-01: extracting on a server looked at what's in the way with a listing whose every failure counted as an empty
+/// folder — a refused channel or no permission, and tar -x / unzip -o replaced what was there unasked. Only "no such
+/// folder" is nothing now.
+@Test func onlyAMissingFolderListsAsEmpty() throws {
+    let d = tempDir()
+    defer { chmod(d + "/closed", 0o755); try? fm.removeItem(atPath: d) }
+    try fm.createDirectory(atPath: d + "/closed", withIntermediateDirectories: true)
+    fm.createFile(atPath: d + "/closed/a", contents: nil)
+    chmod(d + "/closed", 0o000)
+    #expect(try SFTP.listIfThere(.local(), d + "/new").isEmpty)
+    #expect(throws: SFTPError.self) { try SFTP.listIfThere(.local(), d + "/closed") }
+}

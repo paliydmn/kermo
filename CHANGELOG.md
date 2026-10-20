@@ -59,6 +59,7 @@ Release:
 - Saving someone else's file with hard links from a root panel no longer splits it: its other names get the new text too.
 - In the results of a tag search (a tag in the sidebar), F8, ⇧F8, F5, F6 and ↩ act on the files found. Before, when the panel was in another folder than your home, they acted on files with the same relative names in that folder: ⇧F8 could delete a backup's copy and leave the tagged file. In any search's results and in Git changes, the user menu's %s and %f and **Compress** (⌥F5) take the file found, not one of the same name at the top of the search.
 - Extracting a whole archive that can't be read through to the end (a damaged member) into a folder with files in it no longer overwrites them without asking: it unpacks into a hidden folder first, and nothing lands if the archive is broken.
+- Extracting an archive on a server no longer overwrites files in the destination without asking when the destination couldn't be listed (no permission, a refused connection): it says so instead.
 
 ## [1.2.1] - 2026-10-17
 
