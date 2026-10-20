@@ -25,7 +25,8 @@ EOF
 openssl req -x509 -newkey rsa:2048 -nodes -keyout $T/key.pem -out $T/cert.pem -days 7300 -config $T/cnf 2>/dev/null
 P=$(openssl rand -hex 16)
 # Keychain only reads the legacy PKCS#12 encryption; LibreSSL writes it by default, OpenSSL 3 needs -legacy.
-openssl pkcs12 -export -legacy -inkey $T/key.pem -in $T/cert.pem -out $T/id.p12 -passout pass:$P -name "$NAME" 2>/dev/null \
-  || openssl pkcs12 -export -inkey $T/key.pem -in $T/cert.pem -out $T/id.p12 -passout pass:$P -name "$NAME"
-security import $T/id.p12 -k ~/Library/Keychains/login.keychain-db -P $P -T /usr/bin/codesign
+# The file name (not -name) is what the keychain shows when codesign first asks for the key: "codesign wants to access key …".
+openssl pkcs12 -export -legacy -inkey $T/key.pem -in $T/cert.pem -out "$T/$NAME.p12" -passout pass:$P -name "$NAME" 2>/dev/null \
+  || openssl pkcs12 -export -inkey $T/key.pem -in $T/cert.pem -out "$T/$NAME.p12" -passout pass:$P -name "$NAME"
+security import "$T/$NAME.p12" -k ~/Library/Keychains/login.keychain-db -P $P -T /usr/bin/codesign
 echo "Created “$NAME”. Rebuild and grant Full Disk Access once more — from now on it survives rebuilds."
