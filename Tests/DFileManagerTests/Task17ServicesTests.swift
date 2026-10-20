@@ -73,7 +73,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     var asked: (String, Bool)?
     AppDelegate.answering = { m, _, _ in asked = (m, Picker.current?.isHolding == true); return 0 }
     defer { AppDelegate.answering = nil }
-    output.performClick(nil)
+    _ = (output.target as? NSObject)?.perform(output.action)   // not performClick: in a test run it ended the run (the main loop stopped)
     await until { asked != nil }
     #expect(asked?.0 == "“systemctl restart -- web.service” on localhost" && asked?.1 == true, "its sheet holds the list open")
     try FileManager.default.removeItem(atPath: dir + "/fail")
