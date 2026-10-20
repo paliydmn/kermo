@@ -9,11 +9,12 @@ APP=build/Kermo.app
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' $APP/Contents/Info.plist)
 DMG=dist/Kermo-${VERSION}-universal.dmg
 PKG=dist/Kermo-${VERSION}-universal.pkg
+ZIP=dist/Kermo-${VERSION}-universal.zip
 STAGE=$(mktemp -d)
 trap 'rm -rf $STAGE' EXIT
 
 mkdir -p dist
-rm -f $DMG $DMG.sha256 $PKG $PKG.sha256
+rm -f $DMG $DMG.sha256 $PKG $PKG.sha256 $ZIP
 ditto --noextattr --noacl $APP $STAGE/Kermo.app
 # One certificate for every release: macOS keeps Full Disk Access and other grants across updates (ad hoc, each
 # build is a new app to it). Not notarized all the same: the first launch still needs Open Anyway.
@@ -26,6 +27,8 @@ else
   echo "No “$ID” in the keychain: restore it from its backup, or for a build that isn't a release run DFM_ADHOC=1 ./package.sh" >&2
   exit 1
 fi
+# What Install and Relaunch downloads: an update needn't mount a disk image (that asks for a password).
+ditto -c -k --keepParent $STAGE/Kermo.app $ZIP
 pkgbuild --quiet --component $STAGE/Kermo.app --install-location /Applications $PKG
 ln -s /Applications $STAGE/Applications
 cat > $STAGE/INSTALL.txt <<'EOF'
@@ -46,3 +49,4 @@ hdiutil verify $DMG >/dev/null
 
 echo "→ $PKG"
 echo "→ $DMG"
+echo "→ $ZIP"

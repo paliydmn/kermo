@@ -28,7 +28,7 @@ Once a day Kermo asks GitHub for its latest release: one HTTPS request to `api.g
 
 **Kermo ▸ Check for Updates…** (or `update` in ⌘⇧P) checks at once and shows the release notes:
 
-- **Download** opens the release page; replace Kermo in Applications with the new app, or run the [install line](#install-a-release) again;
+- **Install and Relaunch** downloads the new version, checks that it's signed with the same certificate as this Kermo (nothing else is trusted: a changed file or another signer is refused), puts it in place of this one and opens it. If Kermo belongs to root (installed from the `.pkg`), macOS asks for your password first. A Kermo run from the disk image, or a build of your own, can't be updated this way and offers the release page instead. Releases without a `.zip` (1.3 and older) offer **Download**: it opens the release page; replace Kermo in Applications with the new app, or run the [install line](#install-a-release) again;
 - **Later** keeps it in the menu;
 - **Skip This Version** forgets this one; the next one is announced again.
 
