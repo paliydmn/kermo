@@ -62,6 +62,7 @@ Release:
 - Extracting a whole archive that can't be read through to the end (a damaged member) into a folder with files in it no longer overwrites them without asking: it unpacks into a hidden folder first, and nothing lands if the archive is broken.
 - Extracting an archive on a server no longer overwrites files in the destination without asking when the destination couldn't be listed (no permission, a refused connection): it says so instead.
 - A copy or move on this Mac no longer replaces a file that appeared under the same name while it ran (a download into the same folder during a long copy): that file stays, the new one takes the next free name, and the summary says so.
+- What you type into the editor while **Save as Administrator** waits for your password now stays unsaved. Before, the window counted as saved once the root write was done, and closing it lost those lines without a question.
 
 ## [1.2.1] - 2026-10-17
 

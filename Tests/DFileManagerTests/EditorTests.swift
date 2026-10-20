@@ -199,6 +199,33 @@ private func tempDir() throws -> String {
 
 /// They swap the one `Editor.runAsAdmin`: one at a time.
 @Suite(.serialized) @MainActor struct AdminSaveTests {
+    /// E-01: the text can be typed into while macOS asks for the password; once the root write was done the whole window
+    /// counted as saved, so what was typed meanwhile closed without a question. It's still unsaved now.
+    @Test func whatWasTypedDuringThePasswordStaysUnsaved() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let path = dir + "/hosts"
+        try Data("v1\n".utf8).write(to: URL(fileURLWithPath: path))
+        let e = try Editor(URL(fileURLWithPath: path))
+        defer { e.close() }
+        e.textView.string = "v2\n"
+        e.textView.didChangeText()
+        let real = Editor.runAsAdmin
+        defer { Editor.runAsAdmin = real }
+        Editor.runAsAdmin = { cmd in
+            e.textView.string = "v2\nmore\n"   // typed while the dialog is up
+            e.textView.didChangeText()
+            return runAsUs(cmd)
+        }
+        #expect(await e.adminSave(Data("v2\n".utf8), force: false))
+        #expect(FileManager.default.contents(atPath: path) == Data("v2\n".utf8))
+        #expect(e.changed, "the line typed meanwhile isn't saved")
+        Editor.runAsAdmin = runAsUs
+        #expect(await e.adminSave(Data("v2\nmore\n".utf8), force: false))
+        #expect(!e.changed)
+    }
+
     /// Save as Administrator checks the disk again right before the root write: a change made while the
     /// "is protected" sheet was up isn't overwritten. Overwrite (force) still goes through as root.
     @Test func adminSaveRechecksTheDiskBeforeWriting() async throws {
