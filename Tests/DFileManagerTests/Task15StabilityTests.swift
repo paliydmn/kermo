@@ -242,3 +242,24 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`
     #expect(AppDelegate.keepsAlive(editor, besides: main))
     #expect(!AppDelegate.keepsAlive(main, besides: main))
 }
+
+extension ServerCopiesTests {
+    /// E-03: a server file's copy saved in another app goes up once two looks a second apart see it settled. Saved
+    /// right before ⌘Q, it was still "on the server": the quit question didn't name it and quitting removed it.
+    @Test func aCopySavedJustBeforeQuitIsKept() throws {
+        let d = tempDir()
+        defer { try? FileManager.default.removeItem(atPath: d) }
+        let dir = d + "/dfm-sftp-test"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let url = URL(fileURLWithPath: dir + "/app.conf")
+        try Data("old".utf8).write(to: url)
+        let c = ServerCopies.Copy(url, .local(), d + "/app.conf", listed: (3, 0), baseline: SFTPClient.Attrs(kind: .file, size: 3, mtime: 0, mode: 0o644), preview: false)
+        ServerCopies.add(c)
+        #expect(ServerCopies.unsynced.isEmpty)
+        try Data("new text".utf8).write(to: url)   // the other app's ⌘S, then ⌘Q here at once
+        #expect(ServerCopies.unsynced.map(\.url) == [url])
+        ServerCopies.quit()
+        #expect(FileManager.default.contents(atPath: url.path) == Data("new text".utf8), "kept, with its marker")
+        #expect(FileManager.default.fileExists(atPath: dir + "/" + TempCopies.keptMarker))
+    }
+}
