@@ -67,6 +67,7 @@ Set an option with `defaults write com.dmn.dfilemanager <key> <value>`. Remove i
 | `editorFinalNewline` | `-bool` | config files only | Whether new editor windows end saved text with a newline; **File ▸ Ensure Final Newline** overrides it per window |
 | `diffCommand` | command | built-in diff | Tool for [comparing files](search-compare.md), for example `'code --diff %1 %2'` (a server's file comes as its local copy) |
 | `serverHistory` | `-bool` | `true` | `false` keeps no [versions of server files](server-files.md#file-history) |
+| `updateCheckOff` | `-bool` | `false` | `true`: Kermo doesn't [check for updates](install.md#updates) by itself (**Kermo ▸ Check for Updates Automatically** sets it) |
 | `auditLog` | `-bool` | `true` | `false` writes no [production log](safety.md#production-log) |
 
 Kermo also keeps window sizes, the last folders, recent servers and the like in the same defaults domain. Leave those to the app.

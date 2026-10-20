@@ -133,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             await ServerLock.learn()
             tunnels.startSaved(savedServers)
         }
+        startUpdateChecks()
         NSApp.activate()
         // The terminal eats control keys, so its commands (⌃O, ⌘T, ⌘W, ⌃⇥ …) are picked off here first.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [unowned self] e in
@@ -939,6 +940,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard item.action == #selector(menuCommand(_:)), let id = item.representedObject as? String else { return true }
         if id == "view.hidden" { item.state = defaults.bool(forKey: "showHidden") ? .on : .off }
         if id == "view.perms" { item.state = defaults.bool(forKey: "showPerms") ? .on : .off }
+        if id == "app.update" { item.title = updateOffered.map { "Kermo \($0) Available…" } ?? "Check for Updates…" }
+        if id == "app.update.auto" { item.state = defaults.bool(forKey: "updateCheckOff") ? .off : .on }
         if id == "tab.close" {
             let closes = Self.windowToClose(key: NSApp.keyWindow, main: window) != nil
             item.title = closes ? "Close Window" : commands.first { $0.id == id }?.title ?? item.title

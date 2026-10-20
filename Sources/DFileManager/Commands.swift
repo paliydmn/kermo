@@ -73,6 +73,10 @@ extension AppDelegate {
             NSApp.activate()
             NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
         },
+        cmd("app.update", "Check for Updates…", [], menu: "Kermo", aliases: "update upgrade new version release") { app in
+            Task { await app.checkForUpdates(byHand: true) }
+        },
+        cmd("app.update.auto", "Check for Updates Automatically", [], menu: "Kermo", aliases: "update daily") { $0.toggleUpdateChecks() },
         cmd("help.keys", "Keyboard Shortcuts", ["f1", "opt+1"], menu: "Kermo", short: "Keys", aliases: "help shortcuts cheat sheet") {
             KeyHelp.show(over: $0.window, commands: $0.commands)
         },
