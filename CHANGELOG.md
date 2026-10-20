@@ -67,6 +67,7 @@ Release:
 - A server file opened in another app (↩) and saved there just before you quit Kermo is no longer lost: the quit question names it, and its copy is kept instead of removed. Before, a save less than two seconds old hadn't reached the server and its copy was deleted.
 - A settings file that's there but can't be read (say `servers.json` owned by root after a `sudo` edit) is no longer taken as missing and replaced at the next save: Kermo says so at launch and leaves it as it is. An unreadable `usermenu.json` or `filters.json` is reported instead of being replaced with the examples.
 - After the editor reloads a file that changed on disk, ⌘Z no longer applies the old text's edits to the new one (which garbled it, and a save then wrote that over the change).
+- **Delete** (F8) on a server skips an item that's something else by now than the panel listed (a file rewritten or replaced, a folder where a file was), and names it: a server's panel isn't refreshed by itself, and a server has no Trash. A folder that is still a folder is deleted as before.
 
 ## [1.2.1] - 2026-10-17
 

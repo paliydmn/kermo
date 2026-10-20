@@ -301,3 +301,25 @@ extension ServerCopiesTests {
     #expect(e.textView.string == "x\n")
     #expect(e.textView.undoManager?.canUndo != true)
 }
+
+/// S2-05: F8 on a server deleted what's at each name now, whatever the panel had listed — a server panel isn't watched,
+/// its listing can be hours old, and there's no Trash. What's another thing since (a file rewritten, a folder in a
+/// file's place) is skipped and named; a folder that's still a folder goes, whatever was added to it.
+@MainActor @Test func aServerDeleteSkipsWhatChangedSinceItWasListed() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let fm = FileManager.default
+    for f in ["x", "y", "z"] { fm.createFile(atPath: d + "/" + f, contents: Data("1".utf8)) }
+    try fm.createDirectory(atPath: d + "/w", withIntermediateDirectories: true)
+    let listed = try SFTP.list(.local(), d)
+    Thread.sleep(forTimeInterval: 1.1)   // whole-second dates
+    fm.createFile(atPath: d + "/x", contents: Data("rewritten".utf8))
+    try fm.removeItem(atPath: d + "/y")
+    try fm.createDirectory(atPath: d + "/y", withIntermediateDirectories: true)
+    fm.createFile(atPath: d + "/w/new", contents: nil)
+    let job = AppDelegate.serverDelete(listed, in: d, on: .local(), env: [:])
+    job.runAcross()
+    #expect(fm.fileExists(atPath: d + "/x") && fm.fileExists(atPath: d + "/y"))
+    #expect(!fm.fileExists(atPath: d + "/z") && !fm.fileExists(atPath: d + "/w"))
+    #expect(Set(job.progress.errors) == ["\(d)/x: changed since it was listed, skipped", "\(d)/y: changed since it was listed, skipped"])
+}

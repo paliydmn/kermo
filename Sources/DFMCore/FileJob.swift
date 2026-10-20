@@ -55,6 +55,9 @@ public final class FileJob: @unchecked Sendable {
     public var expected: [String: FileItem?] = [:]
     /// The same for a pair's destination: a map of its own, as a server's path may be spelled like one on this Mac.
     public var expectedTarget: [String: FileItem?] = [:]
+    /// What `expected` was taken from, for the note on what changed ("Compare"); `byKind`: a folder is the same while
+    /// it's still a folder (a delete from a listing: a log folder's date changes all the time).
+    public var expectedFrom = "Compare", foldersByKind = false
     /// Synchronize: when Compare began (seconds since 1970). A delete on a server keeps what's newer below the folders
     /// it deletes (F-11): Compare saw a folder only on one side as one row, never what's in it.
     public var comparedAt: Double?
@@ -294,9 +297,9 @@ public final class FileJob: @unchecked Sendable {
     func changed(_ path: String, _ saw: [String: FileItem?], _ a: @autoclosure () -> SFTPClient.Attrs?) -> Bool {
         guard let want = saw[path] else { return false }
         let a = a()
-        guard a?.mtime != want?.mtime || a.map({ $0.kind == .dir }) != want.map({ $0.kind == .dir })
+        guard a?.mtime != want?.mtime && !(foldersByKind && want?.kind == .dir) || a.map({ $0.kind == .dir }) != want.map({ $0.kind == .dir })
             || want?.kind == .file && a?.size != want?.size else { return false }
-        update { $0.errors.append("\(path): changed since Compare, skipped") }
+        update { $0.errors.append("\(path): changed since \(expectedFrom), skipped") }
         return true
     }
 

@@ -1640,6 +1640,16 @@ extension AppDelegate {
         }
     }
 
+    /// The items as the panel listed them: one that's another thing by now (a file swapped by `mv`, a folder in its
+    /// place — a server panel isn't watched, its listing can be hours old) is skipped, not deleted: there's no Trash.
+    static func serverDelete(_ items: [FileItem], in dir: String, on target: SFTPTarget, env: [String: String]) -> FileJob {
+        let paths = items.map { (dir as NSString).appendingPathComponent($0.name) }
+        let job = FileJob(.delete, sources: paths, from: .sftp(target), to: .sftp(target), destDir: nil, sshEnv: env)
+        job.expected = Dictionary(zip(paths, items.map { Optional($0) }), uniquingKeysWith: { a, _ in a })
+        (job.expectedFrom, job.foldersByKind) = ("it was listed", true)
+        return job
+    }
+
     /// There's no Trash on a server: always asks, then deletes recursively.
     private func remoteDelete() {
         guard let sel = active.remoteSelection else { return NSSound.beep() }
@@ -1648,9 +1658,7 @@ extension AppDelegate {
             guard await confirm("Delete \(what) on \(sel.target.host)?",
                                 info: SavedServer.prodNote([sel.target]) + "Files on a server can't be moved to the Trash. This can't be undone.",
                                 ok: "Delete") else { return }
-            let paths = sel.items.map { (sel.dir as NSString).appendingPathComponent($0.name) }
-            ops.enqueue(FileJob(.delete, sources: paths, from: .sftp(sel.target), to: .sftp(sel.target), destDir: nil, sshEnv: SSHAskpass.env),
-                        title: "Delete \(what) on \(sel.target.host)")
+            ops.enqueue(Self.serverDelete(sel.items, in: sel.dir, on: sel.target, env: SSHAskpass.env), title: "Delete \(what) on \(sel.target.host)")
             active.unmarkAll()
         }
     }
