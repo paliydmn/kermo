@@ -41,8 +41,8 @@ EOF
 
 hdiutil create -quiet -volname Kermo -srcfolder $STAGE -ov -format UDZO $DMG
 hdiutil verify $DMG >/dev/null
-shasum -a 256 $PKG > $PKG.sha256
-shasum -a 256 $DMG > $DMG.sha256
+# Bare names, so `shasum -c` works in the folder the files were downloaded to.
+(cd dist && shasum -a 256 ${PKG:t} > ${PKG:t}.sha256 && shasum -a 256 ${DMG:t} > ${DMG:t}.sha256)
 
 echo "→ $PKG"
 echo "→ $DMG"
