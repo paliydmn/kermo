@@ -232,3 +232,13 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`
         #expect(!Shell.isDangerous(c), Comment(rawValue: c))
     }
 }
+
+/// E-02: closing the main window with an editor in the Dock asked the quit question (it counted visible windows only),
+/// the app lived on with the editor, and the answer stuck: a later ⌘Q quit with its unsaved text unasked.
+@MainActor @Test func aWindowInTheDockKeepsTheAppAlive() {
+    final class Docked: NSWindow { override var isMiniaturized: Bool { true }; override var canBecomeMain: Bool { true } }
+    let main = NSWindow(), editor = Docked(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: true)
+    #expect(!editor.isVisible)
+    #expect(AppDelegate.keepsAlive(editor, besides: main))
+    #expect(!AppDelegate.keepsAlive(main, besides: main))
+}
