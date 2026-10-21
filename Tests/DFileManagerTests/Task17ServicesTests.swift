@@ -30,7 +30,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
 /// the row has the state read again, and the line under the list says which service, where, when — until the next.
 @MainActor @Test func aRestartKeepsTheListAndSaysHowItWent() async throws {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-svc-" + UUID().uuidString
-    defer { try? FileManager.default.removeItem(atPath: dir); AppDelegate.unitState = { try Services.state($0, on: $1, env: $2, cancel: $3) } }
+    defer { try? FileManager.default.removeItem(atPath: dir); AppDelegate.unitState = { try Services.state($0, on: $1, wait: $2, env: $3, cancel: $4) } }
     let t = try standIns(dir, slow: true)
     let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
@@ -39,7 +39,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     app.panels = [panel]
     ServerLock.servers = { [] }
     nonisolated(unsafe) var now = Services.UnitState(active: "active", sub: "running")
-    AppDelegate.unitState = { _, _, _, _ in now }
+    AppDelegate.unitState = { _, _, _, _, _ in now }
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
     let s = SavedServer(target: t)
     let units = [ServiceUnit(unit: "db.service", active: "active", sub: "running"), ServiceUnit(unit: "web.service", active: "failed", sub: "failed")]
@@ -48,11 +48,16 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     #expect(list.highlighted?.title == "web" && list.highlighted?.subtitleColor == .systemRed, "failed shows red, highlighted or not")
     let cmdR = { list.panel.performKeyEquivalent(with: key(15, "r", .command, window: list.panel.windowNumber)) }
     #expect(cmdR() && Picker.current === list, "stays open")
+    #expect(cmdR() && panel.statusText == "web: one change at a time — another is being asked", "a second ⌘R before the first runs")
+    await until { list.highlighted?.busy == true }
     #expect(list.highlighted?.subtitle == "Restarting…" && list.highlighted?.busy == true)
     let menu = try #require(list.highlighted?.menu?())
-    #expect(menu.items.map(\.title) == ["Status", "Live Logs", "Edit Unit File…", "", "Start", "Restart"])
-    #expect(menu.items.filter(\.isEnabled).map(\.title) == ["Status", "Live Logs", "Edit Unit File…"], "no other change while one runs")
-    #expect(menu.items.last?.keyEquivalent == "r" && menu.items.last?.toolTip == "web is restarting… wait for it")
+    #expect(menu.items.map(\.title) == ["Status", "Live Logs", "Edit Unit File…", "Refresh Status", "Copy Service Name", "",
+                                        "Start", "Stop…", "Restart", "Reload", "", "Enable at Boot", "Disable at Boot", "", "Reset Failed State"])
+    #expect(menu.items.filter(\.isEnabled).map(\.title) == ["Status", "Live Logs", "Edit Unit File…", "Refresh Status", "Copy Service Name"],
+            "no other change while one runs")
+    let restartItem = try #require(menu.items.first { $0.title == "Restart" })
+    #expect(restartItem.keyEquivalent == "r" && restartItem.toolTip == "web is restarting… wait for it")
     #expect(menu.items.first?.keyEquivalent == "", "↩ in an open menu runs the highlighted item, not Status")
     #expect(cmdR())
     #expect(panel.statusText == "web is restarting… wait for it")
@@ -78,6 +83,8 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     #expect(asked?.0 == "“systemctl restart -- web.service” on localhost" && asked?.1 == true, "its sheet holds the list open")
     try FileManager.default.removeItem(atPath: dir + "/fail")
     list.highlighted?.menu?()?.items.first { $0.title == "Start" }.map { item in _ = (item.target as? NSObject)?.perform(item.action) }
+    await until { list.highlighted?.subtitle == "Starting…" }
+    #expect(list.highlighted?.subtitle == "Starting…")
     await until { list.said.contains("the start") }
     #expect(list.said.hasPrefix("⚠ web: the start completed on localhost at ") && list.said.hasSuffix(", but the service is failed"), "\(list.said)")
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8))?.hasSuffix("start -- web.service\n") == true)
@@ -89,7 +96,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-svc-" + UUID().uuidString
     defer {
         try? FileManager.default.removeItem(atPath: dir)
-        AppDelegate.unitState = { try Services.state($0, on: $1, env: $2, cancel: $3) }
+        AppDelegate.unitState = { try Services.state($0, on: $1, wait: $2, env: $3, cancel: $4) }
         AppDelegate.answering = nil
         ServerLock.servers = { [] }
     }
@@ -99,17 +106,19 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     defer { panel.shutdown() }
     let app = AppDelegate()
     app.panels = [panel]
-    AppDelegate.unitState = { _, _, _, _ in .init(active: "active", sub: "running") }
+    AppDelegate.unitState = { _, _, _, _, _ in .init(active: "active", sub: "running") }
     var prod = SavedServer(address: "localhost")!
     prod.prod = true
     ServerLock.servers = { [prod] }
-    AppDelegate.answering = { _, _, d in d ?? 0 }   // ↩: Cancel
+    var whileAsked: String?
+    AppDelegate.answering = { _, _, d in whileAsked = Picker.current?.highlighted?.subtitle; return d ?? 0 }   // ↩: Cancel
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
     let unit = ServiceUnit(unit: "web.service", active: "active", sub: "running")
     let list = Picker.show(over: window, placeholder: "", items: [app.serviceItem(unit, on: t, of: SavedServer(target: t))])
     #expect(list.panel.performKeyEquivalent(with: key(15, "r", .command, window: list.panel.windowNumber)))
     await until { !list.said.isEmpty }
     #expect(list.said == "web: not restarted — cancelled; nothing ran" && Picker.current === list)
+    #expect(whileAsked == "active · running", "nothing says Restarting… before it's asked")
     #expect(list.highlighted?.subtitle == "active · running" && !FileManager.default.fileExists(atPath: dir + "/systemctl.log"))
     Picker.dismiss()
 
@@ -164,11 +173,107 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     }
     #expect(list.highlighted?.title == "a")
     let menu = rightClick(table.rect(ofRow: 1).midY)
-    #expect(menu?.items.count == 6 && list.highlighted?.title == "b", "the clicked row is what it acts on")
+    #expect(menu?.items.count == 15 && list.highlighted?.title == "b", "the clicked row is what it acts on")
     #expect(rightClick(table.rect(ofRow: 2).maxY + 200) == nil && list.highlighted?.title == "b", "an empty spot: no menu")
     let odd = rightClick(table.rect(ofRow: 2).midY)
-    #expect(odd?.items.allSatisfy { !$0.isEnabled } == true)
+    #expect(odd?.items.filter(\.isEnabled).map(\.title) == ["Copy Service Name"], "only its name copied")
     #expect(odd?.items.first?.toolTip == "“x;reboot.service” has characters Kermo won't put into a command: nothing runs on it")
     #expect(Picker.menuKeys.contains(Shortcut("ctrl+return")!) && Picker.menuKeys.contains(Shortcut("shift+f10")!))
+}
+
+/// What doesn't apply is greyed, saying why: a reload without ExecReload, enable on an enabled unit, disable and
+/// enable on a static one, a reset of one not failed, a stop of one not running. ⌘C copies the unit's whole name.
+@MainActor @Test func whatDoesntApplyIsGreyedAndTheNameIsCopied() throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    let app = AppDelegate()
+    app.panels = [panel]
+    let s = SavedServer(target: .local())
+    let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString))   // not the user's clipboard
+    defer { pb.releaseGlobally() }
+    func why(_ u: ServiceUnit) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: app.serviceActions(u, on: .local(), of: s, pasteboard: pb).compactMap { a in a.why.map { (a.title, $0) } })
+    }
+    var u = ServiceUnit(unit: "cron.service", active: "active", sub: "running")
+    (u.canReload, u.unitFile) = (false, "enabled")
+    #expect(why(u) == ["Reload": "cron can't reload: it has no ExecReload (Restart is the other way)",
+                       "Enable at Boot": "cron is enabled at boot already", "Reset Failed State": "cron isn't failed"])
+    (u.active, u.sub, u.unitFile, u.canReload) = ("inactive", "dead", "static", nil)
+    #expect(why(u)["Stop…"] == "cron isn't running" && why(u)["Disable at Boot"] == "cron is static (its unit has no [Install] section): nothing to change at boot")
+    (u.active, u.unitFile) = ("failed", nil)
+    #expect(why(u).isEmpty, "what systemctl didn't say: let systemctl say it")
+    app.serviceItem(u, on: .local(), of: s, pasteboard: pb).keys[Shortcut("cmd+c")!]?()
+    #expect(pb.string(forType: .string) == "cron.service" && panel.statusText == "Copied “cron.service”")
+}
+
+/// Stop asks first on any server, saying what it means (↩ = Cancel); Refresh Status reads it again and runs nothing.
+@MainActor @Test func stopAsksEverywhereAndRefreshRunsNothing() async throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-svc-" + UUID().uuidString
+    defer {
+        try? FileManager.default.removeItem(atPath: dir)
+        AppDelegate.unitState = { try Services.state($0, on: $1, wait: $2, env: $3, cancel: $4) }
+        AppDelegate.answering = nil
+    }
+    let t = try standIns(dir)
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    let app = AppDelegate()
+    app.panels = [panel]
+    ServerLock.servers = { [] }
+    nonisolated(unsafe) var waited: [Bool] = []
+    AppDelegate.unitState = { _, _, wait, _, _ in waited.append(wait); return .init(active: "inactive", sub: "dead", unitFile: "enabled") }
+    var asked: [(String, [String], Int?)] = []
+    AppDelegate.answering = { m, b, d in asked.append((m, b, d)); return asked.count == 1 ? d ?? 0 : 0 }   // Cancel, then Stop
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+    var unit = ServiceUnit(unit: "web.service", active: "active", sub: "running")
+    unit.unitFile = "enabled"
+    let list = Picker.show(over: window, placeholder: "", items: [app.serviceItem(unit, on: t, of: SavedServer(target: t))])
+    defer { Picker.dismiss() }
+    func press(_ title: String) {
+        list.highlighted?.menu?()?.items.first { $0.title == title }.map { item in _ = (item.target as? NSObject)?.perform(item.action) }
+    }
+    press("Stop…")
+    await until { !list.said.isEmpty }
+    #expect(asked.first?.0 == "Stop web on localhost?" && asked.first?.1 == ["Stop", "Cancel"] && asked.first?.2 == 1)
+    #expect(list.said == "web: not stopped — cancelled; nothing ran" && !FileManager.default.fileExists(atPath: dir + "/systemctl.log"))
+    press("Stop…")
+    await until { list.said.hasPrefix("✓") }
+    #expect(list.said.hasPrefix("✓ web stopped on localhost at ") && list.highlighted?.subtitle == "inactive · dead", "\(list.said)")
+    #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "stop -- web.service\n" && waited == [true])
+    press("Refresh Status")
+    await until { list.said.hasPrefix("↻") }
+    #expect(list.said.hasPrefix("↻ web on localhost at ") && list.said.hasSuffix(" — inactive · dead, enabled at boot") && waited == [true, false])
+    #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "stop -- web.service\n", "nothing ran")
+}
+
+/// ⌘R in Containers… keeps the list too: the row says it runs, then the container's state, and the line says how it went.
+@MainActor @Test func aContainersRestartKeepsTheList() async throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-ctr-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir); AppDelegate.containerState = { try Containers.state($0, tool: $1, on: $2, env: $3, cancel: $4) } }
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    let app = AppDelegate()
+    app.panels = [panel]
+    ServerLock.servers = { [] }
+    AppDelegate.containerState = { _, _, _, _, _ in Thread.sleep(forTimeInterval: 0.3); return "exited" }
+    let tool = dir + "/podman"   // a stand-in: the command's first word
+    try Data("#!/bin/sh\necho \"$*\" >> \(dir)/podman.log\n".utf8).write(to: URL(fileURLWithPath: tool))
+    chmod(tool, 0o755)
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+    let c = ContainerInfo(name: "api", state: "running", status: "Up 5 minutes", image: "api:2")
+    let list = Picker.show(over: window, placeholder: "", items: [app.containerItem(c, tool: tool, on: .local(), of: SavedServer(target: .local()))])
+    defer { Picker.dismiss() }
+    #expect(list.panel.performKeyEquivalent(with: key(15, "r", .command, window: list.panel.windowNumber)) && Picker.current === list)
+    await until { list.highlighted?.busy == true }
+    #expect(list.highlighted?.subtitle == "Restarting…")
+    await until { !list.said.isEmpty }
+    #expect(list.said.hasPrefix("⚠ api: the restart completed on localhost at ") && list.said.hasSuffix(", but the container is exited"), "\(list.said)")
+    #expect(list.highlighted?.subtitle == "exited" && list.highlighted?.busy == false)
+    #expect((try? String(contentsOfFile: dir + "/podman.log", encoding: .utf8)) == "restart -- api\n")
 }
 }

@@ -107,12 +107,16 @@ extension SudoPasswordTests {
     }
     let env = ["PATH": d + ":/usr/bin:/bin"]
     try fake("systemctl", """
+        [ "$*" = "show -p Id -p CanReload -p UnitFileState *.service" ] && { printf 'Id=web.service\\nUnitFileState=enabled\\nCanReload=yes\\n\\nId=cron.service\\nCanReload=no\\nUnitFileState=static\\n'; exit 0; }
         [ "$*" = "list-units --type=service --all --output=json --no-pager" ] || { echo "wrong: $*" >&2; exit 9; }
         cat <<'END'
         \(unitsJSON)
         END
         """)
-    #expect(try Services.read(on: .local(), server: "web1", env: env).map(\.name) == ["backup", "Alpha", "cron", "getty@tty1", "web"])
+    let read = try Services.read(on: .local(), server: "web1", env: env)
+    #expect(read.map(\.name) == ["backup", "Alpha", "cron", "getty@tty1", "web"])
+    #expect(read.map { "\($0.canReload.map(String.init) ?? "-")/\($0.unitFile ?? "-")" } == ["-/-", "-/-", "false/static", "-/-", "true/enabled"],
+            "systemctl show's CanReload and UnitFileState, where it said them")
     try fake("systemctl", """
         case "$*" in
         *--plain*) [ "$*" = "list-units --type=service --all --plain --no-legend --no-pager" ] || exit 9; cat <<'END'
@@ -216,3 +220,33 @@ extension SudoPasswordTests {
     #expect(say(.notRun("cancelled"), nil) == (.notRun, "nginx: not restarted — cancelled; nothing ran"))
     #expect(say(.unknown("⎋"), nil).0 == .warning)
 }
+
+/// Each change's command, and its verdict by what it's for: a stop wants it inactive, a reload active, enable and
+/// disable the unit file's state, a reset "not failed". A static unit enabled says so. A container's line as a service's.
+@Test func everyChangeIsJudgedByWhatItIsFor() {
+    let u = ServiceUnit(unit: "nginx.service", active: "active", sub: "running")
+    #expect(Services.Change.allCases.map { $0.command(u) } == ["start", "stop", "restart", "reload", "enable", "disable", "reset-failed"]
+        .map { "systemctl \($0) -- nginx.service" })
+    #expect(Services.Change.allCases.filter(\.waits) == [.start, .stop, .restart, .reload])
+    func say(_ c: Services.Change, _ state: Services.UnitState) -> (Services.Outcome, String) {
+        let r = Services.outcome(c, of: "nginx", on: "web-01", at: "22:34:08", ran: .passed, state: state)
+        return (r.outcome, r.line)
+    }
+    #expect(say(.stop, .init(active: "inactive", sub: "dead")) == (.ok, "✓ nginx stopped on web-01 at 22:34:08 — inactive · dead"))
+    #expect(say(.stop, .init(active: "failed", sub: "failed")).0 == .warning)
+    #expect(say(.reload, .init(active: "active", sub: "running")) == (.ok, "✓ nginx reloaded on web-01 at 22:34:08 — active · running"))
+    #expect(say(.enable, .init(active: "inactive", sub: "dead", unitFile: "enabled"))
+            == (.ok, "✓ nginx enabled at boot on web-01 at 22:34:08 — enabled"))
+    #expect(say(.enable, .init(active: "active", sub: "running", unitFile: "static"))
+            == (.warning, "⚠ nginx: the enable completed on web-01 at 22:34:08, but the service's unit file is static"))
+    #expect(say(.disable, .init(active: "active", sub: "running", unitFile: "disabled")).0 == .ok, "running now is fine: only boot changed")
+    #expect(say(.resetFailed, .init(active: "inactive", sub: "dead")) == (.ok, "✓ nginx reset from failed on web-01 at 22:34:08 — inactive · dead"))
+    #expect(say(.resetFailed, .init(active: "failed", sub: "failed")).0 == .warning)
+    #expect(Services.outcome(.stop, of: "nginx", on: "web-01", at: "22:34:08", ran: .notRun("cancelled"), state: nil).line == "nginx: not stopped — cancelled; nothing ran")
+    #expect(Services.line("restart", "restarted", of: "api", "the container", on: "web-01", at: "22:34:08", ran: .passed, now: "exited",
+                          healthy: false, stateError: nil) == (.warning, "⚠ api: the restart completed on web-01 at 22:34:08, but the container is exited"))
+    #expect(Services.parse(show: "ActiveState=active\nSubState=running\nUnitFileState=enabled\nCanReload=no\n")
+            == .init(active: "active", sub: "running", type: "", result: "", unitFile: "enabled", canReload: false))
+    #expect(u.applying(.init(active: "inactive", sub: "dead", unitFile: "disabled")).unitFile == "disabled")
+}
+

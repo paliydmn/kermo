@@ -1503,15 +1503,17 @@ extension AppDelegate {
     enum RanThere { case notRun(String), ran(Result<ConfigCheck.Outcome, Error>) }
 
     /// `runThere` but for saying how it went: the lock, the production question (on `askOn`, default the main
-    /// window), the run and its production log line.
+    /// window), the run and its production log line. `running`: once it's asked and about to run.
     func ranThere(_ command: String, on target: SFTPTarget, action: String, paths: [String] = [], busy: String,
-                  ask: (message: String, button: String)? = nil, askOn: NSWindow? = nil, in panel: PanelViewController) async -> RanThere {
+                  ask: (message: String, button: String)? = nil, askOn: NSWindow? = nil, in panel: PanelViewController,
+                  running: (@MainActor () -> Void)? = nil) async -> RanThere {
         // A locked server's Touch ID again if its time ran out since it was looked at (a Picker can stay open).
         if await !ServerLock.authorize(target, "run “\(command)” on") { return .notRun("\(target.host) stays locked") }
         if let ask, let info = Self.prodQuestion(command, on: target) {
             guard await choose(ask.message, info: info, [ask.button, "Cancel"], default: 1, on: askOn) == 0 else { return .notRun("cancelled") }   // ↩ = Cancel
         }
         let env = SSHAskpass.env
+        running?()
         let r = await panel.busy(busy) { flag in try ConfigCheck.run(command, on: target, env: env, cancel: flag) }
         let log = { (exit: Int32?, error: String?) in AuditLog.write(target, action, paths: paths, command: command, exit: exit, error: error) }
         switch r {
