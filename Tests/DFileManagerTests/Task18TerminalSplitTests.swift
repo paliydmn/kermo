@@ -101,5 +101,20 @@ private let a = SFTPTarget(host: "a@dfm-18.invalid"), b = SFTPTarget(host: "b@df
     for t in g.panes {   // the view fills its pane under the header; the panes share the width
         #expect(header > 10 && abs(t.view.frame.height - (split.height - header)) < 2, "\(t.view.frame) in \(split)")
         #expect(abs(t.box.frame.width - (split.width - g.split.dividerThickness) / 2) < 2)
+        #expect(t.header.frame.width == t.box.frame.width && t.header.subviews.first?.frame.width ?? 0 > t.box.frame.width - 10, "the header spans its pane")
     }
+}
+
+/// A joined tab's panes are the same size, even where four don't fit `minPane` (a 400 pt tall tab): the ones just
+/// added aren't held where they were put.
+@MainActor @Test func joinedPanesShareTheHeight() {
+    let term = terminal()
+    term.restore([.init(vertical: false, panes: [a, b]), .init(vertical: false, panes: [c, a])])
+    _ = term.show()
+    let g = term.groups[0]
+    g.split.window!.contentView!.layoutSubtreeIfNeeded()
+    term.join(term.groups[1])
+    g.split.window!.contentView!.layoutSubtreeIfNeeded()
+    let heights = g.panes.map(\.box.frame.height)
+    #expect(heights.count == 4 && heights.max()! - heights.min()! < 2, "\(heights)")
 }

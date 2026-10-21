@@ -31,6 +31,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             box.spacing = 0
             box.addArrangedSubview(header)
             box.addArrangedSubview(view)
+            for v in [header, view] { v.widthAnchor.constraint(equalTo: box.widthAnchor).isActive = true }   // `.width` alone sizes them to each other
             header.isHidden = true
             view.acceptsLocalPaths = kind == .shell
             // Lines pasted by a right-click into a production server, or as root, ask first.
@@ -397,11 +398,14 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         guard total > 0 else { return }
         g.needsEqualSizes = false
         let each = (total - s.dividerThickness * (n - 1)) / n
+        equalizing = true   // the panes just added are still empty: `minPane` would hold the dividers where they are
+        defer { equalizing = false }
         for i in 0..<g.panes.count - 1 { s.setPosition(each * CGFloat(i + 1) + s.dividerThickness * CGFloat(i), ofDividerAt: i) }
     }
+    private var equalizing = false
 
-    func splitView(_ s: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { p + Self.minPane }
-    func splitView(_ s: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { p - Self.minPane }
+    func splitView(_ s: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { equalizing ? p : p + Self.minPane }
+    func splitView(_ s: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { equalizing ? p : p - Self.minPane }
 
     private func makeView() -> DropTerminalView {
         let t = DropTerminalView(frame: host.bounds)
@@ -623,7 +627,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         return true
     }
 
-    /// The pane goes; the focus to the one before it. Its tab goes with its last pane.
+    /// The pane goes; the focus to the one taking its place (the one before it, for the last). Its tab goes with its last pane.
     private func remove(_ tab: Tab) {
         guard let gi = groups.firstIndex(where: { $0.panes.contains { $0 === tab } }) else { return }
         let g = groups[gi], pi = g.panes.firstIndex { $0 === tab }!
