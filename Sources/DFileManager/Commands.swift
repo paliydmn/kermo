@@ -763,6 +763,7 @@ extension AppDelegate {
 
     /// Built-in editor, unless `defaults write com.dmn.dfilemanager editorBundleID <id>` picks an external app.
     func openInEditor(_ url: URL) {
+        Config.flush()   // a config file just saved (keymap.json's first one) is there for the editor
         let ws = NSWorkspace.shared
         if let app = defaults.string(forKey: "editorBundleID").flatMap(ws.urlForApplication(withBundleIdentifier:)) {
             ws.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())

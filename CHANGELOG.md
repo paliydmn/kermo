@@ -23,6 +23,7 @@ Release:
 
 ### Changed
 
+- Kermo writes its settings files and the production log in the background, in order, so a home folder on a network share or a slow disk no longer pauses the window. Everything is written before Kermo quits.
 - ⌘R in Services… keeps the list open. Once a production server's question is answered, the row shows `Restarting…` while it runs. After the command, Kermo reads the service's state again, and a line under the list says which service on which server, when, and how it went. A service that is failed a second after a successful restart gets a warning, not a ✓. A failure shows its first line and **Output…**. The line stays until the next action or until the list closes.
 - The highlighted service in Services… has a light green background with an outline, and a failed service's state shows in red. Services… opens again with the search text and service you left it on.
 - ⌘R in Containers… keeps the list open too: the row shows `Restarting…`, Kermo reads the container's state again a second later, and a line under the list says how it went. Containers… has the same green highlight and opens again where you left it.

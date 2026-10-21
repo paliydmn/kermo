@@ -221,6 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ServerCopies.quit()   // the server files' copies on the server go; the others are kept
         TempCopies.remove(TextCopies.dir)
         SFTP.removeControlDir()   // after the masters and tunnels: their sockets and the askpass script are in it
+        Config.flush()   // the session, frecency and the last production lines are on disk before the app goes
     }
 
     /// What quitting would lose — unsaved editors, running copies, SSH sessions, programs in shells: one

@@ -89,15 +89,24 @@ enum Config {
         return loaded.value
     }
 
-    /// Owner-only: folder history (frecency) and Trash paths are nobody else's business on a shared Mac.
+    /// Writes to ~/.config (`save`, the production log), one after another and off the main thread: a home on a
+    /// network share or a slow disk doesn't stall the app. `flush` waits for them.
+    static let writes = DispatchQueue(label: "kermo.config.writes", qos: .utility)
+    static func flush() { writes.sync {} }
+
+    /// Owner-only: folder history (frecency) and Trash paths are nobody else's business on a shared Mac. Encoded
+    /// here (what it is now), written in `writes`.
     static func save<T: Encodable>(_ name: String, _ value: T, in dir: String = dir) {
         let path = (dir as NSString).appendingPathComponent(name)
         guard !heldLock.withLock({ held.contains(path) }) else { return }   // unreadable at launch: the user's, as it is
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        chmod(dir, 0o700)
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        try? enc.encode(value).write(to: URL(fileURLWithPath: path), options: .atomic)
-        chmod(path, 0o600)
+        guard let data = try? enc.encode(value) else { return }
+        writes.async {
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            chmod(dir, 0o700)
+            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+            chmod(path, 0o600)
+        }
     }
 }
