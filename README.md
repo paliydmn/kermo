@@ -22,7 +22,7 @@ Or by hand:
 2. Drag **Kermo** to Applications (the `.pkg` installs it for you) and open it.
 3. The first launch is blocked, because Kermo isn't notarized by Apple. On macOS 15 or later click **Open Anyway** in System Settings ▸ Privacy & Security; on macOS 14 Control-click the app and choose **Open**.
 
-Updating, uninstalling and building from source: [Install Kermo](docs/install.md), [Contributing](CONTRIBUTING.md). New here? Start with [Getting started](docs/getting-started.md).
+Kermo checks for a new version once a day and installs it with **Install and Relaunch** (**Kermo ▸ Check for Updates…**). Updating, uninstalling and building from source: [Install Kermo](docs/install.md), [Contributing](CONTRIBUTING.md). New here? Start with [Getting started](docs/getting-started.md).
 
 ## What it does
 
@@ -32,9 +32,10 @@ Updating, uninstalling and building from source: [Install Kermo](docs/install.md
 - **View and edit.** A viewer for multi-gigabyte files with hex and `tail -f`; an editor with syntax highlighting. → [Viewer and editor](docs/viewer-editor.md)
 - **Git.** Status column, branch, diff, log, blame, stage; switch branches, commit and sync from the sidebar. → [Git](docs/git.md)
 - **Servers.** SFTP panels and SSH sessions through the system OpenSSH, saved servers with Touch ID locks, your SSH key copied to a server in one step, copy between this Mac and servers. → [Servers and SSH](docs/servers.md), [Files on a server](docs/server-files.md)
+- **Services and containers.** A server's systemd services in a searchable list with a menu for each (status, live logs, start, restart, stop, reload, enable at boot), and its docker or podman containers with their logs and restart. → [Services and containers](docs/servers.md#services-and-containers)
 - **Safe server edits.** Open files as root through the server's own `sudo`, check a config with the server's tool before it is saved, reload the service, and get earlier versions back. → [Server files as root](docs/root-panel.md), [Checks on save](docs/config-checks.md)
 - **Tunnels.** Forward a server's database or web admin to `localhost`, or pick from the ports it listens on. → [SSH tunnels](docs/tunnels.md)
-- **Terminal.** A shell in the window whose panel follows `cd`; SSH tabs; a user menu, one command on several servers at once, and the `fm` command. → [Terminal](docs/terminal.md), [Commands](docs/commands.md)
+- **Terminal.** A shell in the window whose panel follows `cd`; SSH tabs, each split into up to four sessions side by side; Claude Code and other programs that use the mouse scroll and copy; a user menu, one command on several servers at once, and the `fm` command. → [Terminal](docs/terminal.md), [Commands](docs/commands.md)
 - **Production safety.** A production server is purple, asks before changes and logs what you did. → [Safety on servers](docs/safety.md)
 
 ## Keyboard at a glance
@@ -50,6 +51,7 @@ Updating, uninstalling and building from source: [Install Kermo](docs/install.md
 | ⌘P | Jump to a bookmarked or frequent folder |
 | ⌃⌘K / ⌘K | Server files / SSH shell |
 | ⌃O | Terminal |
+| ⌘\\ | Split the terminal: a second session beside this one |
 
 Mac function keys control media by default: ⌥ plus the digit does the same (⌥5 is F5). The full list is in [Keyboard shortcuts](docs/shortcuts.md).
 
@@ -65,7 +67,7 @@ Mac function keys control media by default: ⌥ plus the digit does the same (�
 - [Search, compare and synchronize](docs/search-compare.md): filter, find, compare folders, diff.
 - [Viewer and editor](docs/viewer-editor.md): large files, hex, follow, syntax highlighting.
 - [Git](docs/git.md): status, diff, log, blame, stage, branches, commit, sync.
-- [Terminal and SSH sessions](docs/terminal.md): the ⌃O terminal and shell integration.
+- [Terminal and SSH sessions](docs/terminal.md): the ⌃O terminal, sessions side by side, shell integration.
 - [Commands, user menu and `fm`](docs/commands.md): ⌘E, F2, placeholders, the `fm` launcher.
 
 **Servers and administration**
