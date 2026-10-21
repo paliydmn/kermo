@@ -51,7 +51,7 @@ To run one command on several servers at once, choose **Run on Servers…** in t
 
 **Services…** and **Containers…** (⌘⇧P, a server's sidebar menu) list what a server runs, in the same search window as Forward Port…: on the server of the active panel or SSH tab, otherwise you pick one. A locked server asks for Touch ID first; ⎋ stops the look.
 
-**Services…** asks the server's `systemctl` (systemd's JSON where it has it, its table on an old one). A row is the service's name, its state (`active · running`, `failed`) and its description; failed ones come first, then by name, and typing searches all three. Services systemd only knows by name (`not-found`) are left out.
+**Services…** asks the server's `systemctl` (systemd's JSON where it has it, its table on an old one), and in the same command whether each service can reload and whether it starts at boot. A row is the service's name, its state (`active · running`, `failed`) and its description; failed ones come first, then by name, and typing searches all three. Services systemd only knows by name (`not-found`) are left out.
 
 ![Services… on web-01: a failed worker first, then each service with its state and description](images/services.png)
 
@@ -61,11 +61,19 @@ To run one command on several servers at once, choose **Run on Servers…** in t
 | ⌘L | its log as it goes (`journalctl -u … -n 200 -f`) in an output window; ⎋ stops it, ⎋ again closes |
 | ⌘E | its unit file in the editor, with what any server file gets there: history, and for `/etc/systemd/system` a check and `daemon-reload` after saving |
 | ⌘R | restart it, as root; the list stays open |
-| ⌃↩ (⇧F10, a PC keyboard's Menu key), right-click | its menu: **Status**, **Live Logs**, **Edit Unit File…**, then **Start** and **Restart** |
+| ⌘C | copy its whole name (`nginx.service`) |
+| ⌃↩ (⇧F10, a PC keyboard's Menu key), right-click | its menu, below |
 
-The highlighted service has a light green background with an outline; a failed one's state stays red even when highlighted. A right-click highlights the row it's on first, and the menu acts on that service; a right-click on an empty spot opens no menu. The menu runs the same actions as the keys and shows ⌘L, ⌘E and ⌘R next to its items. What can't run now is greyed out, and its tooltip says why.
+The menu has:
 
-**Start** and **Restart** keep the list open, with what you typed, the highlighted service and the scroll as they were. The row says `Restarting…` (or `Starting…`) with a spinner, and the service's start or restart is greyed out until that ends. Status and log still work. Touch ID for a locked server, the production question and the sudo password appear over the list. Once the command ends, Kermo reads the service's state again (a second later, so a service that dies at once shows as failed), updates the row, and a line under the list says how it went: which service, on which server, and when.
+- **Status**, **Live Logs**, **Edit Unit File…**, **Refresh Status** (reads its state again, runs nothing), **Copy Service Name**;
+- **Start**, **Stop…**, **Restart**, **Reload**: Reload only for a service that has an `ExecReload`, never a restart in its place;
+- **Enable at Boot**, **Disable at Boot**: only whether it starts at boot (no `--now`), greyed out for a service that's already so, or static, masked or generated;
+- **Reset Failed State**: clears the failed mark (`systemctl reset-failed`), for a failed service only. It doesn't start or fix anything.
+
+The highlighted service has a light green background with an outline; a failed one's state stays red even when highlighted. A right-click highlights the row it's on first, and the menu acts on that service; a right-click on an empty spot opens no menu. The menu runs the same actions as the keys and shows ⌘L, ⌘E and ⌘R next to its items. What can't run now or doesn't apply is greyed out, and its tooltip says why.
+
+Every change keeps the list open, with what you typed, the highlighted service and the scroll as they were. Touch ID for a locked server, the questions and the sudo password appear over the list. **Stop…** always asks first and says what it means (the service stays stopped until started again, or until the server starts if it's enabled at boot; services that need it may stop too); on a production server every change asks. Once it's asked, the row says `Restarting…` (or `Stopping…` and so on) with a spinner, and the service's other changes are greyed out until that ends. Status and log still work. Once the command ends, Kermo reads the service's state again (a second later after a start, stop, restart or reload, so a service that dies at once shows as failed), updates the row, and a line under the list says how it went: which service, on which server, and when.
 
 ```text
 ✓ nginx restarted on web-01 at 22:34:08 — active · running
@@ -74,15 +82,15 @@ The highlighted service has a light green background with an outline; a failed o
 nginx: not restarted — cancelled; nothing ran
 ```
 
-Exit 0 is the command's result, not proof that the service works: a service that is failed, inactive or restarting again a second later gets a warning, not a ✓. An `inactive` oneshot whose run went well counts as done. When the command ran but its state couldn't be read, the line says both. A failed command's line shows its first line, and **Output…** shows all of it. The line stays until the next start or restart, or until the list closes; moving around and typing leave it. Closing the list doesn't stop or undo a command that's running: its result shows in the status line, a failure as an alert, and Services… then reads fresh states. Services… opens again with what you typed and highlighted last on that server, for example after a look at a status or a log.
+Exit 0 is the command's result, not proof that the service works. Each change is judged by what it's for: after a start, restart or reload, a service that is failed, inactive or restarting again a second later gets a warning, not a ✓. After a stop it should be inactive. After enabling or disabling at boot, its unit file should say so (a static unit has no `[Install]` section, so enabling it changes nothing). After a reset it should no longer be failed. An `inactive` oneshot whose run went well counts as done. When the command ran but its state couldn't be read, the line says both. A failed command's line shows its first line, and **Output…** shows all of it. **Refresh Status** writes the service's state in that line too (`↻`). The line stays until the next action, or until the list closes; moving around and typing leave it. Closing the list doesn't stop or undo a command that's running: its result shows in the status line, a failure as an alert, and Services… then reads fresh states. Services… opens again with what you typed and highlighted last on that server, for example after a look at a status or a log.
 
-Status and log run as you. Without the `adm` or `systemd-journal` group the log shows only your own services' lines, and `journalctl` says so. A start or a restart runs as root through the server's `sudo`, the way a [reload after a save](config-checks.md) runs: `sudo -n` where it needs no password, otherwise the sudo password (kept, from the Keychain, or asked). A unit file only root may write opens too, and the editor says to open the panel as root (⌃⌘R) to save it; from a root panel ⌘E opens it as root.
+Status and log run as you. Without the `adm` or `systemd-journal` group the log shows only your own services' lines, and `journalctl` says so. Every change runs as root through the server's `sudo`, the way a [reload after a save](config-checks.md) runs: `sudo -n` where it needs no password, otherwise the sudo password (kept, from the Keychain, or asked). A unit file only root may write opens too, and the editor says to open the panel as root (⌃⌘R) to save it; from a root panel ⌘E opens it as root.
 
-**Containers…** asks the server's `docker`, or `podman` where there's no docker, as you: the containers your user may see. A row is the name, its state and status (`running · Up 3 hours`) and its image; running ones first. ↩ shows its log as it goes (`logs --tail 200 -f`), ⌘R restarts it, ⌘C copies its name.
+**Containers…** asks the server's `docker`, or `podman` where there's no docker, as you: the containers your user may see. A row is the name, its state and status (`running · Up 3 hours`) and its image; running ones first. ↩ shows its log as it goes (`logs --tail 200 -f`), ⌘C copies its name, and ⌘R restarts it with the list staying open, as in Services…: the row says `Restarting…`, then Kermo reads the container's state again a second later, and the line under the list says how it went (`⚠ … but the container is exited` when it didn't stay up). The same green highlight applies, and the list opens again where you left it.
 
 The connection a look logs in with stays for its idle time (10 minutes, 60 seconds for a locked server) even when no panel shows the server, so the next look, ↩ or ⌘R needs no login; **Disconnect** ends it, and a locked server's ends when the screen locks. The same goes for Forward Port… and Run on Servers….
 
-On a production server a start or a restart asks first, ↩ being Cancel, and goes into the [production log](safety.md#production-log). A name goes into a command only if it's made of the characters systemd or docker allow in one; any other name is listed, and its keys only say why nothing runs. A log stopped with ⎋ stops on the server too, not just on this Mac.
+On a production server a change of a service or a restart of a container asks first, ↩ being Cancel, and goes into the [production log](safety.md#production-log). A name goes into a command only if it's made of the characters systemd or docker allow in one; any other name is listed, and its keys only say why nothing runs. A log stopped with ⎋ stops on the server too, not just on this Mac.
 
 ## Copy your SSH key to a server
 
