@@ -112,3 +112,17 @@ import Testing
     #expect(ANSI.bytes(cp1251, units: 2, singleByte: true) == 6 && ANSI.units(cp1251, singleByte: true) == 3)
     #expect(ANSI.parse("a\u{1B}(\nb").text == "a\nb", "the line count after it stays right")
 }
+
+/// D-086: `café` in NFC and in NFD are one String to Swift but two files on Linux: the marks keep them apart, so
+/// marking one marks only it (F8 then deletes only it).
+@Test func marksTellNamesAlikeInUnicodeApart() {
+    let nfc = "caf\u{E9}", nfd = "cafe\u{301}"
+    #expect(nfc == nfd && Set([nfc, nfd]).count == 1, "what Swift does")
+    var marks = ExactNames()
+    marks.insert(nfc)
+    #expect(marks.contains(nfc) && !marks.contains(nfd) && marks.count == 1)
+    #expect(marks.insert(nfd).inserted && marks.count == 2)
+    marks.remove(nfc)
+    #expect(marks.names.map { Array($0.utf8) } == [Array(nfd.utf8)])
+    #expect(marks.intersection([nfc, "x"]).isEmpty && marks.complement(in: [nfc, nfd]).names.map { Array($0.utf8) } == [Array(nfc.utf8)])
+}
