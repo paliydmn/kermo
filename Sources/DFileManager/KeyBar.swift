@@ -25,7 +25,8 @@ enum KeyBarModel {
     static func layers(_ commands: [Command]) -> [(mods: NSEvent.ModifierFlags, slots: [KeySlot])] {
         var slots: [UInt: [(f: Int, slot: KeySlot)]] = [:]
         var hinted = Set<UInt>()
-        for c in commands {
+        // The terminal's pane arrows stay out too: the bar is the panels' (the terminal shows only ⌃O there).
+        for c in commands where !c.id.hasPrefix("term.pane.") && !c.id.hasPrefix("term.resize.") {
             for k in c.keys {
                 let m = k.flags, f = fNumber(k.name)
                 if m.isEmpty && f == nil { continue }

@@ -19,6 +19,7 @@ Release:
 
 ### Added
 
+- Terminal tabs split, as in VS Code: **⌘\\** puts a second session beside the current one, **⇧⌘\\** below it, up to four in a tab. On a server the new pane is another SSH session over the open connection, in the same folder. **⌥⌘** arrows move between panes and **⌃⌘** arrows resize them. **Join Tab…** and **Move Pane to New Tab** combine and separate tabs. SSH panes come back in their tabs after a restart. See [Sessions side by side](docs/terminal.md#sessions-side-by-side).
 - **Install and Relaunch** in the update window: Kermo downloads the new version, checks it's signed with the same certificate as the running one, puts it in place and opens it again. A Kermo installed from the `.pkg` asks for your password first. Works from this version on, for releases that carry a `.zip`.
 - One line in Terminal installs or updates Kermo: `curl -fsSL https://raw.githubusercontent.com/paliydmn/kermo/master/install.sh | sh`. No **Open Anyway** needed. See [Install Kermo](docs/install.md).
 - Services… has a menu for each service (right-click, ⌃-click, ⌃↩ or ⇧F10) with Status, Live Logs, Edit Unit File…, Start and Restart. What can't run now is greyed out, with the reason.
