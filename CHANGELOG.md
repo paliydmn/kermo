@@ -13,6 +13,8 @@ Release:
 
 ## [Unreleased]
 
+## [1.4] - 2026-10-21
+
 ### Security
 
 - A login as root in a user's panel (`root@host`, or an alias whose user is root) now keeps out of folders that someone else on the server can change, as a root panel does. Kermo asks the server `id -u` once per server and account.
@@ -244,7 +246,8 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.3...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.4...HEAD
+[1.4]: https://github.com/paliydmn/kermo/releases/tag/v1.4
 [1.3]: https://github.com/paliydmn/kermo/releases/tag/v1.3
 [1.2.1]: https://github.com/paliydmn/kermo/releases/tag/v1.2.1
 [1.2]: https://github.com/paliydmn/kermo/releases/tag/v1.2
