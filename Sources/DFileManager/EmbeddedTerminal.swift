@@ -660,9 +660,10 @@ final class DropTerminalView: LocalProcessTerminalView {
     }
 
     /// OSC 52 (Claude Code's, tmux's, vim's copy): the program's text into the clipboard, a server's too. SwiftTerm
-    /// drops it on the Mac. A read (`?`) would hand the clipboard to the program: never answered.
+    /// drops it on the Mac. A read (`?`) would hand the clipboard to the program: never answered. Nor does a tab you
+    /// aren't looking at write it.
     func osc52(_ data: ArraySlice<UInt8>) {
-        guard let semi = data.firstIndex(of: UInt8(ascii: ";")), data[(semi + 1)...].first != UInt8(ascii: "?"),
+        guard !isHiddenOrHasHiddenAncestor, let semi = data.firstIndex(of: UInt8(ascii: ";")), data[(semi + 1)...].first != UInt8(ascii: "?"),
               let bytes = Data(base64Encoded: Data(data[(semi + 1)...]), options: .ignoreUnknownCharacters),
               let text = String(data: bytes, encoding: .utf8), !text.isEmpty else { return }
         pasteboard.clearContents()

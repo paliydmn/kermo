@@ -72,6 +72,12 @@ extension ServerLockTests {
     #expect(pb.string(forType: .string) == "no target", "an empty target, ST-ended")
     v.feed(text: "\u{1b}]52;c;?\u{7}")
     #expect(pb.string(forType: .string) == "no target")
+    let long = String(repeating: "довга відповідь Claude\n", count: 1500)   // ~60 KB of base64
+    v.feed(text: "\u{1b}]52;c;" + Data(long.utf8).base64EncodedString() + "\u{7}")
+    #expect(pb.string(forType: .string) == long)
+    v.isHidden = true
+    v.feed(text: "\u{1b}]52;c;" + Data("hidden".utf8).base64EncodedString() + "\u{7}")
+    #expect(pb.string(forType: .string) == long, "a tab not in front")
 }
 
 /// The wheel goes to a program that reads the mouse; otherwise it's SwiftTerm's (scrollback).
