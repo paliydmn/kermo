@@ -27,6 +27,7 @@ Release:
 
 ### Changed
 
+- The tab in front, in a panel and in the terminal, has a bold title and a line in the accent color under it. The other tabs' titles are grey. A connected SSH tab's ● is green.
 - Kermo writes its settings files and the production log in the background, in order, so a home folder on a network share or a slow disk no longer pauses the window. Everything is written before Kermo quits.
 - ⌘R in Services… keeps the list open. Once a production server's question is answered, the row shows `Restarting…` while it runs. After the command, Kermo reads the service's state again, and a line under the list says which service on which server, when, and how it went. A service that is failed a second after a successful restart gets a warning, not a ✓. A failure shows its first line and **Output…**. The line stays until the next action or until the list closes.
 - The highlighted service in Services… has a light green background with an outline, and a failed service's state shows in red. Services… opens again with the search text and service you left it on.

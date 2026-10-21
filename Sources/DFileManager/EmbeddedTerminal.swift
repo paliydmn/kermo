@@ -479,9 +479,9 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         tabBar.isHidden = tabs.count < 2 && current?.kind == .shell
         tabBar.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (i, t) in tabs.enumerated() {
-            let dot = t.host == nil ? "" : t.isRunning ? "● " : "○ "
+            let dot = t.host == nil ? nil : t.isRunning ? ("●", NSColor.systemGreen) : ("○", NSColor.secondaryLabelColor)
             let tip = t.host.map { h in t.isRunning ? "ssh \(h)" : "ssh \(h) — disconnected" } ?? "Shell"
-            tabBar.addArrangedSubview(PanelViewController.tabButton(dot + t.label, tip: tip, index: i, current: i == index,
+            tabBar.addArrangedSubview(PanelViewController.tabButton(t.label, dot: dot, tip: tip, index: i, current: i == index,
                                                                     target: self, action: #selector(tabClicked(_:)), close: #selector(closeClicked(_:))))
         }
         for (i, t) in tabs.enumerated() { t.view.isHidden = i != index }
