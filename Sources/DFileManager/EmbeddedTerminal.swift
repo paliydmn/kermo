@@ -98,6 +98,15 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         container.addArrangedSubview(content)
         tabBar.widthAnchor.constraint(equalTo: container.widthAnchor, constant: -12).isActive = true
         content.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        // SwiftTerm's scrollWheel and mouseDown aren't open: the current tab sees these first.
+        NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown, .leftMouseUp]) { [weak self] e in
+            guard let v = self?.current?.view else { return e }
+            if e.type == .leftMouseUp { v.mouseReleased(); return e }
+            guard e.window === v.window, !v.isHiddenOrHasHiddenAncestor, v.bounds.contains(v.convert(e.locationInWindow, from: nil)) else { return e }
+            if e.type == .scrollWheel { return v.wheel(e) ? nil : e }
+            v.shiftDown(e)
+            return e
+        }
     }
 
     private func attach() {
@@ -650,9 +659,56 @@ final class DropTerminalView: LocalProcessTerminalView {
         }
     }
 
+    /// OSC 52 (Claude Code's, tmux's, vim's copy): the program's text into the clipboard, a server's too. SwiftTerm
+    /// drops it on the Mac. A read (`?`) would hand the clipboard to the program: never answered.
+    func osc52(_ data: ArraySlice<UInt8>) {
+        guard let semi = data.firstIndex(of: UInt8(ascii: ";")), data[(semi + 1)...].first != UInt8(ascii: "?"),
+              let bytes = Data(base64Encoded: Data(data[(semi + 1)...]), options: .ignoreUnknownCharacters),
+              let text = String(data: bytes, encoding: .utf8), !text.isEmpty else { return }
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
+    private var wheelRest: CGFloat = 0   // a trackpad's fractions of a line, till they make one
+    /// The wheel in a program that reads the mouse (Claude Code, htop, vim's mouse=a) is its wheel, as in Terminal.app:
+    /// SwiftTerm only scrolls its own scrollback, and a full-screen program has none. False: SwiftTerm's.
+    func wheel(_ e: NSEvent) -> Bool {
+        let t = getTerminal()
+        guard allowMouseReporting, t.mouseMode != .off else { return false }
+        wheelRest += e.deltaY
+        let n = Int(wheelRest)
+        wheelRest -= CGFloat(n)
+        guard n != 0, bounds.width > 0, bounds.height > 0 else { return true }
+        // ponytail: the cell from the view's size (SwiftTerm's cell size isn't public); off by the scroller's width at most
+        let p = convert(e.locationInWindow, from: nil)
+        let col = min(t.cols - 1, max(0, Int(p.x / bounds.width * CGFloat(t.cols))))
+        let row = min(t.rows - 1, max(0, Int((bounds.height - p.y) / bounds.height * CGFloat(t.rows))))
+        let f = e.modifierFlags
+        let flags = t.encodeButton(button: n > 0 ? 4 : 5, release: false, shift: f.contains(.shift), meta: f.contains(.option), control: f.contains(.control))
+        for _ in 0..<abs(n) { t.sendEvent(buttonFlags: flags, x: col, y: row) }
+        return true
+    }
+
+    private var shiftSelecting = false
+    /// ⇧-drag (xterm's) or ⌥-drag (iTerm's) in a program that reads the mouse selects here instead: the program gets no
+    /// mouse till the button is up. Its next redraw clears the selection, so it's copied then (`mouseReleased`).
+    func shiftDown(_ e: NSEvent) {
+        guard !e.modifierFlags.isDisjoint(with: [.shift, .option]), allowMouseReporting, getTerminal().mouseMode != .off else { return }
+        allowMouseReporting = false
+        shiftSelecting = true
+    }
+
+    func mouseReleased() {
+        guard shiftSelecting else { return }
+        shiftSelecting = false
+        copySelection()
+        DispatchQueue.main.async { MainActor.assumeIsolated { self.allowMouseReporting = true } }   // after SwiftTerm's mouseUp: no release without a press
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         registerForDraggedTypes([.fileURL])
+        getTerminal().registerOscHandler(code: 52) { [weak self] d in MainActor.assumeIsolated { self?.osc52(d) } }
     }
 
     required init?(coder: NSCoder) { fatalError("not from a nib") }

@@ -34,6 +34,9 @@ Release:
 
 ### Fixed
 
+- In the terminal, a program that reads the mouse itself (Claude Code, htop, vim with `mouse=a`) now scrolls with the wheel and the trackpad. Before, they did nothing there.
+- Text a terminal program copies (Claude Code when you select its text, tmux, vim) now goes to the clipboard (OSC 52), in local and SSH tabs. A program can't read the clipboard this way.
+- ⇧-drag and ⌥-drag select text in a program that reads the mouse itself, and the selection is copied. Before, the drag went to the program.
 - A terminal tab opened at the very moment a tunnel started listening or took a connection could keep that port, or the connection, open for as long as its shell ran: the tunnel then said "Port … is in use on this Mac" for its own port.
 - Two files whose names differ only in how Unicode writes a letter (`café` written two ways, side by side on a Linux server) are marked one at a time. Before, marking one marked both, and F8 deleted both.
 - A text file over 4 MB now shows terminal colors in its window instead of escape codes such as `[31m`, as smaller files do.
