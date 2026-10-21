@@ -604,11 +604,13 @@ final class DropTerminalView: LocalProcessTerminalView {
     // PuTTY's mouse. A selection goes to the clipboard as it's made (`terminalCopyOnSelect`); a right-click pastes
     // (`terminalRightClickPaste`) — in a program that reads the mouse itself (mc, htop, vim's mouse=a), ⇧-right-click.
     static func on(_ key: String) -> Bool { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
+    /// The mouse's left button is down now (a drag under way). Tests: not the real mouse, which someone may be pressing.
+    static var leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 }
 
     override func selectionChanged(source: Terminal) {
         super.selectionChanged(source: source)
         guard Self.on("terminalCopyOnSelect") else { return }
-        guard NSEvent.pressedMouseButtons & 1 != 0 else { return copySelection() }   // ⌘A, or made at once
+        guard Self.leftButtonDown() else { return copySelection() }   // ⌘A, or made at once
         guard upMonitor == nil else { return }   // dragging: once, when it ends — not on every move
         upMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] e in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.dragEnded() } }   // after the view's own mouseUp
