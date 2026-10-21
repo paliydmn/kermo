@@ -273,6 +273,13 @@ public final class TunnelListener: @unchecked Sendable {
         if !keepConnections { live.forEach { $0.terminate() } }
     }
 
+    /// A terminal's shell starts by a fork (SwiftTerm's `forkpty`), and every descriptor open then that isn't
+    /// close-on-exec yet goes with it: a socket caught between `socket()` (or `accept()`) and its FD_CLOEXEC stayed
+    /// open in that shell — its port taken, its connection held — for as long as the shell ran (D-090). Those two steps
+    /// and a fork (`forking`) never overlap.
+    private static let halfMade = NSLock()
+    public static func forking<T>(_ fork: () throws -> T) rethrows -> T { try halfMade.withLock(fork) }
+
     /// Nobody listens on `port` here (as `init` sees it), without listening on it.
     public static func isFree(_ port: Int) -> Bool {
         for (family, host) in [(AF_INET, "0.0.0.0"), (AF_INET6, "::"), (AF_INET, "127.0.0.1"), (AF_INET6, "::1")] {
@@ -292,9 +299,12 @@ public final class TunnelListener: @unchecked Sendable {
     /// TIME_WAIT), close-on-exec (a child — an ssh master that outlives the tunnel, a terminal's shell — must never keep
     /// the port); IPv6 for itself alone.
     private static func bound(_ family: Int32, _ host: String, _ port: Int) -> (fd: Int32, error: Int32) {
-        let fd = socket(family, SOCK_STREAM, 0)
-        guard fd >= 0 else { return (-1, errno) }
-        _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
+        let (fd, e) = halfMade.withLock { () -> (Int32, Int32) in
+            let fd = socket(family, SOCK_STREAM, 0), e = errno
+            if fd >= 0 { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
+            return (fd, e)
+        }
+        guard fd >= 0 else { return (-1, e) }
         var on: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
         let r: Int32
@@ -321,13 +331,16 @@ public final class TunnelListener: @unchecked Sendable {
 
     private func acceptAll(_ fd: Int32) {
         while true {
-            let c = accept(fd, nil, nil)
+            let (c, e) = Self.halfMade.withLock { () -> (Int32, Int32) in
+                let c = accept(fd, nil, nil), e = errno
+                if c >= 0 { _ = fcntl(c, F_SETFD, FD_CLOEXEC) }   // another connection's child mustn't hold this one open
+                return (c, e)
+            }
             if c < 0 {
-                if errno == EINTR || errno == ECONNABORTED { continue }
-                if errno == EMFILE || errno == ENFILE { usleep(100_000) }   // out of files: not a busy loop meanwhile
+                if e == EINTR || e == ECONNABORTED { continue }
+                if e == EMFILE || e == ENFILE { usleep(100_000) }   // out of files: not a busy loop meanwhile
                 return   // EAGAIN: none left
             }
-            _ = fcntl(c, F_SETFD, FD_CLOEXEC)   // another connection's child mustn't hold this one open
             _ = fcntl(c, F_SETFL, fcntl(c, F_GETFL) & ~O_NONBLOCK)   // BSD hands the listener's O_NONBLOCK on: not for the child
             onEvent(.opened)
             lock.withLock { count += 1 }

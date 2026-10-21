@@ -362,7 +362,9 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     /// Starts the tab's process and watches for its end itself: SwiftTerm drops the exit when it reads the pty's
     /// end first (`exit`, a dropped connection). Whoever reaps the process first has its status; `finished` once.
     func launch(_ tab: Tab, _ executable: String, _ args: [String], execName: String? = nil, cwd: String?) {
-        tab.view.startProcess(executable: executable, args: args, environment: Self.environment, execName: execName, currentDirectory: cwd)
+        TunnelListener.forking {   // a tunnel's socket half made now would go with the shell, its port held while it runs
+            tab.view.startProcess(executable: executable, args: args, environment: Self.environment, execName: execName, currentDirectory: cwd)
+        }
         guard let p = tab.view.process, p.running, p.shellPid > 0 else { return }
         let pid = p.shellPid
         // Each process's watch lives (its handler holds it) until that process is gone and reaped, whatever became of
