@@ -63,6 +63,19 @@ private func ends(_ fd: Int32) -> Bool {
     return read(fd, &b, 1) == 0
 }
 
+/// Who has TCP `port` open on this Mac (`lsof`): said when a tunnel's port is unexpectedly in use.
+private func holders(_ port: Int) -> String {
+    let p = Process(), out = Pipe()
+    p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+    p.arguments = ["-nP", "-iTCP:\(port)"]
+    p.standardOutput = out
+    p.standardError = FileHandle.nullDevice
+    guard (try? p.run()) != nil else { return "" }
+    let d = out.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    return String(decoding: d, as: UTF8.self)
+}
+
 /// Ports nobody listens on now (the kernel's picks).
 /// Not from the kernel (port 0): that's the ephemeral range, which hands the same number to any outgoing connection on
 /// this Mac between our close and the test's own listen — a tunnel then couldn't listen, now and then.
@@ -111,7 +124,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         web.host = "s5-learned-\(UUID().uuidString.prefix(8)).invalid"
         await ServerLock.learn([web.target])   // learned: another server than the vault
         tunnels.sync([web, vault])
-        #expect(tunnels.isListening(web.tunnels[0], of: web))
+        #expect(tunnels.isListening(web.tunnels[0], of: web), "\(tunnels.state(web.tunnels[0], of: web)?.error ?? "no state") \(tunnels.isListening(web.tunnels[0], of: web) ? "" : holders(p[1]))")
     }
 
     /// At launch the tunnels that were on listen — not a locked server's, nor one at a locked server's address — without
@@ -145,7 +158,8 @@ private func freePorts(_ n: Int) throws -> [Int] {
         } }
         let db = server("db1", [Tunnel(localPort: try freePorts(1)[0], port: 5432)])
         defer { tunnels.stopAll() }
-        #expect(tunnels.start(db.tunnels[0], of: db) == nil)
+        let why = tunnels.start(db.tunnels[0], of: db)
+        #expect(why == nil, "\(why ?? "") \(why == nil ? "" : holders(db.tunnels[0].localPort))")
         var changes = 0
         tunnels.changed = { changes += 1 }
         func connect(_ line: String) async {
@@ -338,7 +352,8 @@ private func freePorts(_ n: Int) throws -> [Int] {
         let db = server("db1", []), web = SavedServer(address: "me@web.invalid")!   // web: not saved
         let t = Tunnel(localPort: p[0], port: 5432), u = Tunnel(localPort: p[1], port: 80)
         defer { tunnels.stopAll() }
-        #expect(tunnels.start(t, of: db, temporary: true) == nil && tunnels.start(u, of: web, temporary: true) == nil)
+        let why = [tunnels.start(t, of: db, temporary: true), tunnels.start(u, of: web, temporary: true)]
+        #expect(why == [nil, nil], "\(why) \(why == [nil, nil] ? "" : holders(p[0]) + holders(p[1]))")
         let token = tunnels.state(t, of: db)?.token
         tunnels.sync([db])   // servers.json saved: no tunnel of theirs in it
         tunnels.sync([])
@@ -431,7 +446,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         let web = SavedServer(target: SFTPTarget(host: "me@web.invalid", port: 2222))   // not saved
         #expect(web.target == SFTPTarget(host: "me@web.invalid", port: 2222) && web.title == "me@web.invalid")
         app.forward(ListeningPort(port: 8080, addresses: ["192.0.2.10"]), of: web, .none)
-        let w = try #require(app.tunnels.temporaries(server: ServerRow.key(web.target)).first?.tunnel)
+        let w = try #require(app.tunnels.temporaries(server: ServerRow.key(web.target)).first?.tunnel, "\(said.lines.last ?? "")")
         #expect(w.host == "192.0.2.10" && said.lines.last == "192.0.2.10:8080: localhost:\(w.localPort) → me@web.invalid → 192.0.2.10:8080"
                 + (w.localPort == 8080 ? "" : " (8080 is taken here)") + " · listening")
         #expect(app.tunnelItem(w, of: web).submenu?.items.map(\.title) == ["Turn Off", "Open in Browser", "Copy Address"], "Save: not until it's saved")

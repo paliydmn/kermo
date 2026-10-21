@@ -34,6 +34,7 @@ Release:
 
 ### Fixed
 
+- A terminal tab opened at the very moment a tunnel started listening or took a connection could keep that port, or the connection, open for as long as its shell ran: the tunnel then said "Port … is in use on this Mac" for its own port.
 - Two files whose names differ only in how Unicode writes a letter (`café` written two ways, side by side on a Linux server) are marked one at a time. Before, marking one marked both, and F8 deleted both.
 - A text file over 4 MB now shows terminal colors in its window instead of escape codes such as `[31m`, as smaller files do.
 - The `.pkg` always puts Kermo in Applications. Before, if another copy of Kermo was on the Mac (an old one in Downloads), the installer updated that copy instead.

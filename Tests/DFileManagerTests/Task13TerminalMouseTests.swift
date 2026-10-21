@@ -9,7 +9,8 @@ import Testing
 /// A selection goes to the clipboard as it's made (here: ⌘A, made at once); `terminalCopyOnSelect` false: it doesn't.
 @MainActor @Test func aSelectionInTheTerminalIsCopied() {
     let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString))
-    defer { pb.releaseGlobally() }
+    defer { pb.releaseGlobally(); DropTerminalView.leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 } }
+    DropTerminalView.leftButtonDown = { false }   // the real mouse may be held by whoever works on this Mac meanwhile
     let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
     v.pasteboard = pb
     v.feed(text: "hello world")

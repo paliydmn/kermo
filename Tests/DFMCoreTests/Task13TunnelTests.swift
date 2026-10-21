@@ -433,3 +433,21 @@ extension SudoPasswordTests {
 }
 
 }
+
+/// D-090: a shell forked (`forkpty`, as the terminal starts one) while a tunnel made a socket — between `socket()` and
+/// its FD_CLOEXEC — took the socket along and held its port while it ran (a full test run: now and then "Port … is in
+/// use" for a tunnel's own port; 20 of 400 forks in a loop took one). A fork through `TunnelListener.forking` and the
+/// making of a socket never overlap: one waits for the other.
+@Test func aForkAndAHalfMadeSocketNeverOverlap() {
+    let forking = DispatchSemaphore(value: 0)
+    DispatchQueue.global().async {
+        TunnelListener.forking {
+            forking.signal()
+            usleep(300_000)   // the fork, held long
+        }
+    }
+    forking.wait()
+    let start = Date()
+    _ = TunnelListener.isFree(Int.random(in: 41000..<42000))   // makes sockets
+    #expect(Date().timeIntervalSince(start) > 0.2, "the socket waited for the fork")
+}
