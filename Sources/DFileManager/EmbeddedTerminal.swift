@@ -3,10 +3,11 @@ import DFMCore
 import SwiftTerm
 
 /// ⌃O (MC's subshell): a terminal workspace that covers the panels, with tabs — local login shells and
-/// SSH sessions (system OpenSSH, one PTY and one `ssh` process per tab). For the current tab when it's a
-/// local shell: toggling back moves the active panel to its folder; showing it again `cd`s it to the panel's.
+/// SSH sessions (system OpenSSH, one PTY and one `ssh` process per session). A tab holds up to four of them side by
+/// side (`Group`, VS Code's split); `Tab` is one session, a pane. For the current pane when it's a local shell:
+/// toggling back moves the active panel to its folder; showing it again `cd`s it to the panel's.
 @MainActor
-final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalViewDelegate {
+final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalViewDelegate, NSSplitViewDelegate {
     enum Kind: Equatable { case shell, ssh(SFTPTarget) }
 
     @MainActor
@@ -19,9 +20,17 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         var reconnect: NSButton?
         var command: String?      // SSH: what to run instead of a login shell, once
         var cwd: String?          // the folder its shell last told (OSC 7); SSH: on the server
+        let box = NSStackView()   // the pane: its header (while the tab has several) over the view
+        let header = NSView()
         init(kind: Kind, view: DropTerminalView) {
             self.kind = kind
             self.view = view
+            box.orientation = .vertical
+            box.alignment = .width
+            box.spacing = 0
+            box.addArrangedSubview(header)
+            box.addArrangedSubview(view)
+            header.isHidden = true
             view.acceptsLocalPaths = kind == .shell
             // Lines pasted by a right-click into a production server, or as root, ask first.
             if case .ssh(let t) = kind {
@@ -64,11 +73,41 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         }
     }
 
+    /// One tab's panes, side by side or one above another (⌘\\ / ⌘⇧\\): the first split picks the way, later ones
+    /// follow it. One way only, as VS Code's.
+    @MainActor
+    final class Group {
+        var panes: [Tab]
+        var focused = 0             // the pane keys go to
+        var vertical = true         // side by side (NSSplitView's word); false: one above another
+        var needsEqualSizes = true  // restored or just split: equal sizes once it's laid out
+        let split = PaneSplitView()
+        init(_ panes: [Tab]) { self.panes = panes }
+        var pane: Tab { panes[min(focused, panes.count - 1)] }
+        var title: String { panes.map(\.label).joined(separator: " │ ") }
+    }
+    nonisolated static let maxPanes = 4   // as many as file panels; past that a 13" screen has no room
+    private static let minPane: CGFloat = 120
+
+    /// What comes back after a restart: each tab's SSH sessions, disconnected, and its way. Local shells don't.
+    struct SavedGroup: Codable, Equatable {
+        var vertical: Bool
+        var panes: [SFTPTarget]
+    }
+    var saved: [SavedGroup] {
+        groups.compactMap { g in
+            let p = g.panes.compactMap(\.target)
+            return p.isEmpty ? nil : SavedGroup(vertical: g.vertical, panes: p)
+        }
+    }
+
     /// "/Users/me/src/a b" → "a b", the home folder → "~", "/" → "/".
     nonisolated static func folderName(_ path: String) -> String { ((path as NSString).abbreviatingWithTildeInPath as NSString).lastPathComponent }
 
-    private(set) var tabs: [Tab] = []
-    private var index = 0
+    private(set) var groups: [Group] = []
+    /// Every session, tab by tab, pane by pane.
+    var tabs: [Tab] { groups.flatMap(\.panes) }
+    private var index = 0   // the current group
     private var closing: [Tab] = []   // killed, waiting for the process to go
     private let container = NSStackView()
     private let tabBar = NSStackView()
@@ -82,7 +121,9 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     private var hiddenAt = -TimeInterval.infinity   // uptime; ⌃O ⌃O
 
     var isShown: Bool { container.superview != nil && !container.isHidden }
-    var current: Tab? { tabs.indices.contains(index) ? tabs[index] : nil }
+    private var group: Group? { groups.indices.contains(index) ? groups[index] : nil }
+    /// The current tab's focused pane: what keys, ⌃↩, ⌘R and the like act on.
+    var current: Tab? { group?.pane }
     var hasFocus: Bool { isShown && (container.window?.firstResponder as? NSView)?.isDescendant(of: container) == true }
 
     init(covering host: NSView) {
@@ -98,14 +139,22 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         container.addArrangedSubview(content)
         tabBar.widthAnchor.constraint(equalTo: container.widthAnchor, constant: -12).isActive = true
         content.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
-        // SwiftTerm's scrollWheel and mouseDown aren't open: the current tab sees these first.
+        // SwiftTerm's scrollWheel and mouseDown aren't open: the pane under the mouse sees these first.
         NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown, .leftMouseUp]) { [weak self] e in
-            guard let v = self?.current?.view else { return e }
-            if e.type == .leftMouseUp { v.mouseReleased(); return e }
-            guard e.window === v.window, !v.isHiddenOrHasHiddenAncestor, v.bounds.contains(v.convert(e.locationInWindow, from: nil)) else { return e }
+            guard let self else { return e }
+            if e.type == .leftMouseUp { tabs.forEach { $0.view.mouseReleased() }; return e }
+            guard let g = group, let i = paneIndex(under: e, in: g) else { return e }
+            let v = g.panes[i].view
             if e.type == .scrollWheel { return v.wheel(e) ? nil : e }
+            if i != g.focused { g.focused = i; render() }   // the click makes its view first responder itself
             v.shiftDown(e)
             return e
+        }
+    }
+
+    func paneIndex(under e: NSEvent, in g: Group) -> Int? {
+        g.panes.firstIndex { t in
+            e.window === t.view.window && !t.view.isHiddenOrHasHiddenAncestor && t.view.bounds.contains(t.view.convert(e.locationInWindow, from: nil))
         }
     }
 
@@ -128,7 +177,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     func show(cwd: String) -> NSView {
         let shells = tabs.filter { $0.kind == .shell && $0.isRunning }
         if let t = shells.first(where: { $0 === current }) ?? shells.first {
-            index = tabs.firstIndex { $0 === t }!
+            reveal(t)
             if t.isAtPrompt, t.shellCwd != cwd, let line = ShellContext.typedCd(cwd) { t.view.send(txt: line) }
         } else {
             newShell(cwd: cwd)
@@ -186,7 +235,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         guard ShellContext.isTypeable(line), let cd = ShellContext.typedCd(cwd) else { return nil }
         let shells = tabs.filter { $0.kind == .shell && $0.isRunning && $0.isAtPrompt }
         if let t = shells.first(where: { $0 === current }) ?? shells.first {
-            index = tabs.firstIndex { $0 === t }!
+            reveal(t)
             // ^U first (typedCd carries its own): a half-typed line would otherwise take the command as its tail.
             t.view.send(txt: (t.shellCwd != cwd ? cd : "\u{15}") + line + "\r")
         } else {
@@ -221,25 +270,137 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         return add(tab, cwd: nil)
     }
 
-    /// After a restart: SSH tabs come back disconnected; ↩ / Reconnect connects them.
-    func restore(_ targets: [SFTPTarget]) {
-        for t in targets {
-            let tab = Tab(kind: .ssh(t), view: makeView())
-            tabs.append(tab)
-            pin(tab.view)
-            ended(tab, status: -1)
+    /// After a restart: SSH tabs come back disconnected, in their tabs; ↩ / Reconnect connects each.
+    func restore(_ saved: [SavedGroup]) {
+        for s in saved where !s.panes.isEmpty {
+            let g = Group(s.panes.prefix(Self.maxPanes).map { Tab(kind: .ssh($0), view: makeView()) })
+            g.vertical = s.vertical
+            groups.append(g)
+            install(g)
+            g.panes.forEach { ended($0, status: -1) }
         }
         index = 0
     }
 
+    /// Each in a tab of its own (what 1.3 and earlier saved: `sshTabs`).
+    func restore(_ targets: [SFTPTarget]) { restore(targets.map { SavedGroup(vertical: true, panes: [$0]) }) }
+
     private func add(_ tab: Tab, cwd: String?) -> NSView {
-        tabs.insert(tab, at: tabs.isEmpty ? 0 : index + 1)
-        index = tabs.firstIndex { $0 === tab }!
-        pin(tab.view)
+        let g = Group([tab])
+        groups.insert(g, at: groups.isEmpty ? 0 : index + 1)
+        index = groups.firstIndex { $0 === g }!
+        install(g)
         start(tab, cwd: cwd)
         focus()
         return tab.view
     }
+
+    /// Makes `t` the current tab's focused pane.
+    private func reveal(_ t: Tab) {
+        guard let gi = groups.firstIndex(where: { $0.panes.contains { $0 === t } }) else { return }
+        index = gi
+        groups[gi].focused = groups[gi].panes.firstIndex { $0 === t }!
+    }
+
+    // MARK: - Split
+
+    /// ⌘\\ / ⌘⇧\\ (VS Code's Split Terminal): a new pane after the current one — beside it or under it; a tab that has
+    /// several already keeps its way. An SSH pane: another session on that server, over its shared connection (no new
+    /// login), in the folder its shell told (OSC 7), else home; a local one: a shell in the same folder.
+    func split(vertical: Bool) {
+        guard isShown, let g = group, let t = current, g.panes.count < Self.maxPanes else { return NSSound.beep() }
+        if g.panes.count == 1 { g.vertical = vertical }
+        let new = Tab(kind: t.kind, view: makeView())
+        if t.host != nil { new.command = t.cwd.map { SSHCommand.shell(in: $0) } }
+        g.panes.insert(new, at: g.focused + 1)
+        g.focused += 1
+        arrange(g)
+        start(new, cwd: t.host == nil ? t.folder ?? NSHomeDirectory() : nil)
+        focus()
+    }
+
+    /// ⌥⌘← → in a tab side by side, ↑ ↓ in one above another: the pane before or after.
+    func focusPane(by d: Int, vertical: Bool) {
+        guard isShown, let g = group, g.panes.count > 1, g.vertical == vertical, g.panes.indices.contains(g.focused + d) else { return NSSound.beep() }
+        g.focused += d
+        focus()
+    }
+
+    /// ⌃⌘ arrows: the current pane's divider moves that way by a twentieth of the tab — its right (lower) one, the last
+    /// pane's left (upper) one. Never closer than `minPane` to another divider.
+    func resizePane(by d: Int, vertical: Bool) {
+        guard isShown, let g = group, g.panes.count > 1, g.vertical == vertical else { return NSSound.beep() }
+        let s = g.split, i = min(g.focused, g.panes.count - 2)
+        let (a, b) = (g.panes[i].box.frame, g.panes[i + 1].box.frame)
+        let lo = (vertical ? a.minX : a.minY) + Self.minPane, hi = (vertical ? b.maxX : b.maxY) - Self.minPane - s.dividerThickness
+        let step = (vertical ? s.bounds.width : s.bounds.height) / 20
+        s.setPosition(min(max((vertical ? a.maxX : a.maxY) + CGFloat(d) * step, lo), hi), ofDividerAt: i)
+    }
+
+    /// The tabs Join Tab… offers: all but the current one, while there's room for their panes.
+    var joinable: [Group] {
+        guard let g = group else { return [] }
+        return groups.filter { $0 !== g && $0.panes.count + g.panes.count <= Self.maxPanes }
+    }
+
+    /// Join Tab…: another tab's panes go after the current tab's (up to `maxPanes`), the first of them focused; that tab goes.
+    func join(_ other: Group) {
+        guard let g = group, joinable.contains(where: { $0 === other }) else { return NSSound.beep() }
+        other.split.removeFromSuperview()
+        groups.removeAll { $0 === other }
+        index = groups.firstIndex { $0 === g }!
+        g.focused = g.panes.count
+        g.panes += other.panes
+        arrange(g)
+        focus()
+    }
+
+    /// Move Pane to New Tab (VS Code's Unsplit): the current pane alone, in a tab after this one.
+    func unsplit() {
+        guard isShown, let g = group, g.panes.count > 1, let t = current else { return NSSound.beep() }
+        g.panes.remove(at: g.focused)
+        g.focused = max(g.focused - 1, 0)
+        arrange(g)
+        let n = Group([t])
+        groups.insert(n, at: index + 1)
+        index += 1
+        install(n)
+        focus()
+    }
+
+    /// The group's panes into its split view, in order, its way; equal sizes once it's laid out.
+    private func arrange(_ g: Group) {
+        g.split.isVertical = g.vertical
+        for v in g.split.arrangedSubviews where !g.panes.contains(where: { $0.box === v }) { v.removeFromSuperview() }
+        for (i, t) in g.panes.enumerated() where g.split.arrangedSubviews.firstIndex(of: t.box) != i {
+            t.box.removeFromSuperview()
+            g.split.insertArrangedSubview(t.box, at: i)
+        }
+        g.needsEqualSizes = true
+    }
+
+    private func install(_ g: Group) {
+        g.split.dividerStyle = .thin
+        g.split.delegate = self
+        g.split.onDoubleClick = { [weak self, weak g] in g.map { self?.equalize($0) } }
+        pin(g.split)
+        arrange(g)
+    }
+
+    /// A double-click on a divider, a split, a restored tab shown: every pane the same size.
+    private func equalize(_ g: Group) {
+        let s = g.split, n = CGFloat(g.panes.count)
+        guard n > 1 else { return }
+        container.layoutSubtreeIfNeeded()
+        let total = s.isVertical ? s.bounds.width : s.bounds.height
+        guard total > 0 else { return }
+        g.needsEqualSizes = false
+        let each = (total - s.dividerThickness * (n - 1)) / n
+        for i in 0..<g.panes.count - 1 { s.setPosition(each * CGFloat(i + 1) + s.dividerThickness * CGFloat(i), ofDividerAt: i) }
+    }
+
+    func splitView(_ s: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { p + Self.minPane }
+    func splitView(_ s: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { p - Self.minPane }
 
     private func makeView() -> DropTerminalView {
         let t = DropTerminalView(frame: host.bounds)
@@ -391,19 +552,40 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         watch.activate()
     }
 
+    /// A session's sidebar row: its tab, that pane focused.
     func select(_ id: UUID) {
-        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
-        index = i
+        guard let t = tabs.first(where: { $0.id == id }) else { return }
+        reveal(t)
         focus()
     }
 
     func switchTab(by delta: Int) {
-        guard tabs.count > 1 else { return }
-        index = (index + delta + tabs.count) % tabs.count
+        guard groups.count > 1 else { return }
+        index = (index + delta + groups.count) % groups.count
         focus()
     }
 
-    /// ⌘W / ×: a finished tab closes at once; a live SSH session asks first. Then SIGHUP, and SIGKILL to the
+    /// × on a tab of several panes: one question for all that would end, then each goes as `close` does.
+    @discardableResult
+    func close(group g: Group) -> Bool {
+        guard g.panes.count > 1 else { return close(g.panes[0].id) }
+        let busy = g.panes.compactMap(\.busyWith)
+        if !busy.isEmpty {
+            let a = NSAlert()
+            a.messageText = "Close \(g.panes.count) sessions?"
+            a.informativeText = busy.joined(separator: "\n") + "\nand anything running in them will end."
+            a.addButton(withTitle: "Close")
+            a.addButton(withTitle: "Cancel")
+            guard a.runModal() == .alertFirstButtonReturn else { return false }
+        }
+        for t in g.panes {
+            if hangUp(t) { closing.append(t) }
+            remove(t)
+        }
+        return true
+    }
+
+    /// ⌘W / × on a pane (or a tab of one): a finished session closes at once; a live SSH session asks first. Then SIGHUP, and SIGKILL to the
     /// whole process group if it's still there after 2 s. False if the user kept it.
     @discardableResult
     func close(_ id: UUID? = nil, confirm: Bool = true) -> Bool {
@@ -440,12 +622,20 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         return true
     }
 
+    /// The pane goes; the focus to the one before it. Its tab goes with its last pane.
     private func remove(_ tab: Tab) {
-        guard let i = tabs.firstIndex(where: { $0 === tab }) else { return }
-        tab.view.removeFromSuperview()
-        tabs.remove(at: i)
-        if i < index || index >= tabs.count { index = max(index - 1, 0) }
-        if tabs.isEmpty {
+        guard let gi = groups.firstIndex(where: { $0.panes.contains { $0 === tab } }) else { return }
+        let g = groups[gi], pi = g.panes.firstIndex { $0 === tab }!
+        g.panes.remove(at: pi)
+        if pi < g.focused || g.focused >= g.panes.count { g.focused = max(g.focused - 1, 0) }
+        if g.panes.isEmpty {
+            g.split.removeFromSuperview()
+            groups.remove(at: gi)
+            if gi < index || index >= groups.count { index = max(index - 1, 0) }
+        } else {
+            arrange(g)
+        }
+        if groups.isEmpty {
             container.isHidden = true
             host.isHidden = false
             onChange?()
@@ -485,16 +675,56 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     }
 
     private func render() {
-        tabBar.isHidden = tabs.count < 2 && current?.kind == .shell
+        tabBar.isHidden = groups.count < 2 && group?.panes.count == 1 && current?.kind == .shell
         tabBar.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for (i, t) in tabs.enumerated() {
-            let dot = t.host == nil ? nil : t.isRunning ? ("●", NSColor.systemGreen) : ("○", NSColor.secondaryLabelColor)
-            let tip = t.host.map { h in t.isRunning ? "ssh \(h)" : "ssh \(h) — disconnected" } ?? "Shell"
-            tabBar.addArrangedSubview(PanelViewController.tabButton(t.label, dot: dot, tip: tip, index: i, current: i == index,
-                                                                    target: self, action: #selector(tabClicked(_:)), close: #selector(closeClicked(_:))))
+        for (i, g) in groups.enumerated() {
+            let b = PanelViewController.tabButton(g.panes.map { (Self.dot($0), $0.label) }, tint: g.panes.count == 1 ? Self.tint(g.pane) : nil,
+                                                  tip: g.panes.map(Self.tip).joined(separator: "\n"), index: i, current: i == index,
+                                                  target: self, action: #selector(tabClicked(_:)), close: #selector(closeClicked(_:)))
+            if i != index {
+                b.menu = NSMenu()
+                b.menu!.addItem(withTitle: "Join with Current Tab", action: #selector(joinClicked(_:)), keyEquivalent: "").tag = i
+                b.menu!.items.forEach { $0.target = self }
+            }
+            tabBar.addArrangedSubview(b)
         }
-        for (i, t) in tabs.enumerated() { t.view.isHidden = i != index }
+        for (i, g) in groups.enumerated() {
+            g.split.isHidden = i != index
+            for (j, t) in g.panes.enumerated() { header(t, index: j, focused: j == g.focused, shown: g.panes.count > 1) }
+        }
+        if isShown, let g = group, g.needsEqualSizes { equalize(g) }
         onChange?()
+    }
+
+    private static func dot(_ t: Tab) -> (String, NSColor)? { t.host == nil ? nil : t.isRunning ? ("●", .systemGreen) : ("○", .secondaryLabelColor) }
+    private static func tip(_ t: Tab) -> String { t.host.map { h in t.isRunning ? "ssh \(h)" : "ssh \(h) — disconnected" } ?? "Shell" }
+    /// A production server's pane in purple, a root login's in orange — as a root panel's header.
+    private static func tint(_ t: Tab) -> NSColor? {
+        guard let target = t.target else { return nil }
+        return SavedServer.isProd(target) ? SavedServer.color : target.host.hasPrefix("root@") ? .systemOrange : nil
+    }
+
+    /// A pane's header while its tab has several: which server, which folder, whether keys go there (bold, the line).
+    private func header(_ t: Tab, index j: Int, focused: Bool, shown: Bool) {
+        t.header.subviews.forEach { $0.removeFromSuperview() }
+        t.header.isHidden = !shown
+        guard shown else { return }
+        var title = t.label
+        if t.host != nil, let dir = t.cwd, !title.contains(EmbeddedTerminal.folderName(dir)) { title += " · " + EmbeddedTerminal.folderName(dir) }
+        let b = PanelViewController.tabButton(title, dot: Self.dot(t), tint: Self.tint(t), tip: Self.tip(t), index: j, current: focused,
+                                              target: self, action: #selector(paneClicked(_:)), close: #selector(paneCloseClicked(_:)), closeTip: "Close Pane  ⌘W")
+        b.menu = NSMenu()
+        for (title, action) in [("Move Pane to New Tab", #selector(unsplitClicked(_:))), ("Close Pane", #selector(paneCloseClicked(_:)))] {
+            let item = b.menu!.addItem(withTitle: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.tag = j
+        }
+        b.translatesAutoresizingMaskIntoConstraints = false
+        t.header.addSubview(b)
+        NSLayoutConstraint.activate([
+            b.leadingAnchor.constraint(equalTo: t.header.leadingAnchor, constant: 4), b.trailingAnchor.constraint(equalTo: t.header.trailingAnchor, constant: -4),
+            b.topAnchor.constraint(equalTo: t.header.topAnchor, constant: 2), b.bottomAnchor.constraint(equalTo: t.header.bottomAnchor, constant: -2),
+        ])
     }
 
     /// After the current tab changed.
@@ -504,13 +734,35 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     }
 
     @objc private func tabClicked(_ sender: NSButton) {
-        guard tabs.indices.contains(sender.tag) else { return }
+        guard groups.indices.contains(sender.tag) else { return }
         index = sender.tag
         focus()
     }
 
     @objc private func closeClicked(_ sender: NSButton) {
-        if tabs.indices.contains(sender.tag) { close(tabs[sender.tag].id) }
+        if groups.indices.contains(sender.tag) { close(group: groups[sender.tag]) }
+    }
+
+    @objc private func joinClicked(_ sender: NSMenuItem) {
+        if groups.indices.contains(sender.tag) { join(groups[sender.tag]) }
+    }
+
+    // A header's: the current tab's panes (only its headers show).
+    @objc private func paneClicked(_ sender: NSButton) {
+        guard let g = group, g.panes.indices.contains(sender.tag) else { return }
+        g.focused = sender.tag
+        focus()
+    }
+
+    @objc private func paneCloseClicked(_ sender: Any) {   // the ×, or the header's menu
+        let tag = (sender as? NSMenuItem)?.tag ?? (sender as? NSControl)?.tag ?? -1
+        if let g = group, g.panes.indices.contains(tag) { close(g.panes[tag].id) }
+    }
+
+    @objc private func unsplitClicked(_ sender: NSMenuItem) {
+        guard let g = group, g.panes.indices.contains(sender.tag) else { return }
+        g.focused = sender.tag
+        unsplit()
     }
 
     @objc private func reconnectClicked(_ sender: NSButton) {
@@ -555,7 +807,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
                 && t.shellCwd.map({ cwd in realpath(dir, nil).map { p in defer { free(p) }; return String(cString: p) } == cwd }) == true
         else { return }
         t.cwd = dir
-        if t.host == nil { render() }   // the tab is named after its folder
+        render()   // a local tab is named after its folder; a pane's header shows it
         if t === current, isShown { onDirectory?(t) }
     }
 
@@ -591,6 +843,12 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         ended(tab, status: status)
         render()
     }
+}
+
+/// A tab's panes; a double-click on a divider makes them the same size.
+final class PaneSplitView: NSSplitView {
+    var onDoubleClick: (() -> Void)?
+    override func mouseDown(with e: NSEvent) { e.clickCount == 2 ? onDoubleClick?() : super.mouseDown(with: e) }
 }
 
 /// A tab's view that takes files dropped on it (from Finder or a panel) and types their quoted paths into the shell,

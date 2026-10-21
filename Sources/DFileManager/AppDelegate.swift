@@ -851,9 +851,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     @objc private func sidebarButton() { run("view.sidebar") }
 
     /// What works while the terminal covers the panels; `tab.*` act on its tabs then.
+    /// Join Tab…: which tab's panes go beside the current tab's.
+    func joinTerminalTab() {
+        let tabs = terminal.joinable
+        guard terminal.isShown, !tabs.isEmpty else { return NSSound.beep() }
+        Picker.show(over: window, placeholder: "Show which tab beside this one?", items: tabs.map { g in
+            Picker.Item(title: g.title, subtitle: g.panes.count > 1 ? "\(g.panes.count) panes" : "") { [unowned self] in
+                terminal.join(g)
+                terminal.current.map { window.makeFirstResponder($0.view) }
+            }
+        })
+    }
+
     static let terminalCommands: Set<String> = ["view.terminal", "tab.new", "tab.close", "tab.next", "tab.prev", "ssh.new", "ssh.reconnect",
                                                 "server.disconnect", "go.connect", "view.sidebar", "term.bigger", "term.smaller",
-                                                "cmdline.insert", "cmdline.insertPaths"]
+                                                "cmdline.insert", "cmdline.insertPaths", "term.split.right", "term.split.down", "term.join",
+                                                "term.unsplit", "term.pane.left", "term.pane.right", "term.pane.up", "term.pane.down",
+                                                "term.resize.left", "term.resize.right", "term.resize.up", "term.resize.down"]
 
     func toggleTerminal() {
         if terminal.isShown {
@@ -987,13 +1001,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ])
         terminal = EmbeddedTerminal(covering: split)
         terminal.onExit = { [unowned self] in window.makeFirstResponder(active.table) }
-        // SSH tabs come back after a restart as disconnected placeholders: no connection without a click.
-        if let data = defaults.data(forKey: "sshTabs"), let saved = try? JSONDecoder().decode([SFTPTarget].self, from: data) {
+        // SSH tabs come back after a restart as disconnected placeholders, in their tabs: no connection without a click.
+        if let data = defaults.data(forKey: "terminalGroups"), let saved = try? JSONDecoder().decode([EmbeddedTerminal.SavedGroup].self, from: data) {
             terminal.restore(saved)
+        } else if let data = defaults.data(forKey: "sshTabs"), let saved = try? JSONDecoder().decode([SFTPTarget].self, from: data) {
+            terminal.restore(saved)   // 1.3's, one session a tab
         }
         terminal.onChange = { [unowned self] in
-            let ssh = terminal.tabs.compactMap { t -> SFTPTarget? in if case .ssh(let target) = t.kind { target } else { nil } }
-            defaults.set(try? JSONEncoder().encode(ssh), forKey: "sshTabs")
+            defaults.set(try? JSONEncoder().encode(terminal.saved), forKey: "terminalGroups")
+            defaults.removeObject(forKey: "sshTabs")
             refreshSidebar()
             releaseIdleServers()
             updatePrompt()

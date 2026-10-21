@@ -1722,7 +1722,15 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// A tab: `action` on click, `close` on its × (both get the button with `tag` = index). The terminal's tabs use it too.
     /// The current tab: bold title and an accent line under it; the others' titles are dimmed. `dot`: a state mark before the title.
-    static func tabButton(_ title: String, dot: (String, NSColor)? = nil, tip: String, index i: Int, current: Bool, target: AnyObject, action: Selector, close: Selector) -> NSButton {
+    static func tabButton(_ title: String, dot: (String, NSColor)? = nil, tint: NSColor? = nil, tip: String, index i: Int, current: Bool,
+                          target: AnyObject, action: Selector, close: Selector, closeTip: String = "Close Tab  ⌘W") -> NSButton {
+        tabButton([(dot, title)], tint: tint, tip: tip, index: i, current: current, target: target, action: action, close: close, closeTip: closeTip)
+    }
+
+    /// A tab of several terminal panes: their titles side by side, each with its mark. `tint`: the title's color and the
+    /// line's (production's, root's) instead of the accent.
+    static func tabButton(_ parts: [((String, NSColor)?, String)], tint: NSColor? = nil, tip: String, index i: Int, current: Bool,
+                          target: AnyObject, action: Selector, close: Selector, closeTip: String = "Close Tab  ⌘W") -> NSButton {
         let b = NSButton(title: "", target: target, action: action)
         b.setButtonType(.pushOnPushOff)
         b.bezelStyle = .accessoryBarAction
@@ -1732,10 +1740,14 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         style.alignment = .center
         style.lineBreakMode = .byTruncatingMiddle
         let text = NSMutableAttributedString(string: "     ")   // padding keeps the title clear of the ×
-        if let (d, c) = dot { text.append(NSAttributedString(string: d + " ", attributes: [.foregroundColor: c])) }
-        text.append(NSAttributedString(string: title + "     ", attributes: [
-            .font: current ? NSFont.boldSystemFont(ofSize: size) : NSFont.systemFont(ofSize: size),
-            .foregroundColor: current ? NSColor.labelColor : NSColor.secondaryLabelColor]))
+        let font = current ? NSFont.boldSystemFont(ofSize: size) : NSFont.systemFont(ofSize: size)
+        for (n, (dot, title)) in parts.enumerated() {
+            if n > 0 { text.append(NSAttributedString(string: "  │  ", attributes: [.foregroundColor: NSColor.tertiaryLabelColor])) }
+            if let (d, c) = dot { text.append(NSAttributedString(string: d + " ", attributes: [.foregroundColor: c])) }
+            text.append(NSAttributedString(string: title, attributes: [.font: font,
+                .foregroundColor: tint ?? (current ? NSColor.labelColor : NSColor.secondaryLabelColor)]))
+        }
+        text.append(NSAttributedString(string: "     "))
         text.addAttributes([.paragraphStyle: style], range: NSRange(location: 0, length: text.length))
         text.addAttribute(.font, value: NSFont.systemFont(ofSize: size), range: NSRange(location: 0, length: 5))
         b.attributedTitle = text
@@ -1750,7 +1762,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         x.refusesFirstResponder = true
         x.contentTintColor = .secondaryLabelColor
         x.tag = i
-        x.toolTip = "Close Tab  ⌘W"
+        x.toolTip = closeTip
         x.translatesAutoresizingMaskIntoConstraints = false
         b.addSubview(x)
         NSLayoutConstraint.activate([
@@ -1761,7 +1773,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             let line = NSBox()
             line.boxType = .custom
             line.borderWidth = 0
-            line.fillColor = .controlAccentColor
+            line.fillColor = tint ?? .controlAccentColor
             line.translatesAutoresizingMaskIntoConstraints = false
             b.addSubview(line)
             NSLayoutConstraint.activate([
