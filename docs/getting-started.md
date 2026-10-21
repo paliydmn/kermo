@@ -30,7 +30,7 @@ More in [Files and folders](files.md) and [Search, compare and synchronize](sear
 
 ## Use a terminal
 
-Press **⌃O** to swap the panels for a terminal. The panel follows `cd`. Press ⌃O again to come back. More in [Terminal and SSH sessions](terminal.md).
+Press **⌃O** to swap the panels for a terminal. The panel follows `cd`. Press ⌃O again to come back. **⌘\\** splits the terminal, so a log can run beside your commands. More in [Terminal and SSH sessions](terminal.md).
 
 ## Next
 

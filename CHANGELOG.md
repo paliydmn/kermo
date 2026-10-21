@@ -13,40 +13,9 @@ Release:
 
 ## [Unreleased]
 
-## [1.4] - 2026-10-21
+## [1.4.1] - 2026-10-21
 
-### Security
-
-- A login as root in a user's panel (`root@host`, or an alias whose user is root) now keeps out of folders that someone else on the server can change, as a root panel does. Kermo asks the server `id -u` once per server and account.
-
-### Added
-
-- Terminal tabs split, as in VS Code: **⌘\\** puts a second session beside the current one, **⇧⌘\\** below it, up to four in a tab. On a server the new pane is another SSH session over the open connection, in the same folder. **⌥⌘** arrows move between panes and **⌃⌘** arrows resize them. **Join Tab…** and **Move Pane to New Tab** combine and separate tabs. SSH panes come back in their tabs after a restart. See [Sessions side by side](docs/terminal.md#sessions-side-by-side).
-- **Install and Relaunch** in the update window: Kermo downloads the new version, checks it's signed with the same certificate as the running one, puts it in place and opens it again. A Kermo installed from the `.pkg` asks for your password first. Works from this version on, for releases that carry a `.zip`.
-- One line in Terminal installs or updates Kermo: `curl -fsSL https://raw.githubusercontent.com/paliydmn/kermo/master/install.sh | sh`. No **Open Anyway** needed. See [Install Kermo](docs/install.md).
-- Services… has a menu for each service (right-click, ⌃-click, ⌃↩ or ⇧F10) with Status, Live Logs, Edit Unit File…, Start and Restart. What can't run now is greyed out, with the reason.
-- **Start** in Services… starts a service as root, the way ⌘R restarts one.
-- More in the Services… menu: **Stop…** (always asks first, saying what it means), **Reload** (only for a service that has an `ExecReload`), **Enable at Boot** and **Disable at Boot** (only at boot, no `--now`), **Reset Failed State**, **Refresh Status** (reads the state again, runs nothing) and **Copy Service Name** (⌘C). Each change is judged by what it's for: a stop wants the service inactive, enable and disable check the unit file's state at boot.
-
-### Changed
-
-- The tab in front, in a panel and in the terminal, has a bold title and a line in the accent color under it. The other tabs' titles are grey. A connected SSH tab's ● is green.
-- Kermo writes its settings files and the production log in the background, in order, so a home folder on a network share or a slow disk no longer pauses the window. Everything is written before Kermo quits.
-- ⌘R in Services… keeps the list open. Once a production server's question is answered, the row shows `Restarting…` while it runs. After the command, Kermo reads the service's state again, and a line under the list says which service on which server, when, and how it went. A service that is failed a second after a successful restart gets a warning, not a ✓. A failure shows its first line and **Output…**. The line stays until the next action or until the list closes.
-- The highlighted service in Services… has a light green background with an outline, and a failed service's state shows in red. Services… opens again with the search text and service you left it on.
-- ⌘R in Containers… keeps the list open too: the row shows `Restarting…`, Kermo reads the container's state again a second later, and a line under the list says how it went. Containers… has the same green highlight and opens again where you left it.
-
-### Fixed
-
-- In the terminal, a program that reads the mouse itself (Claude Code, htop, vim with `mouse=a`) now scrolls with the wheel and the trackpad. Before, they did nothing there.
-- Text a terminal program copies (Claude Code when you select its text, tmux, vim) now goes to the clipboard (OSC 52), in local and SSH tabs. A program can't read the clipboard this way.
-- ⇧-drag and ⌥-drag select text in a program that reads the mouse itself, and the selection is copied. Before, the drag went to the program.
-- A terminal tab opened at the very moment a tunnel started listening or took a connection could keep that port, or the connection, open for as long as its shell ran: the tunnel then said "Port … is in use on this Mac" for its own port.
-- Two files whose names differ only in how Unicode writes a letter (`café` written two ways, side by side on a Linux server) are marked one at a time. Before, marking one marked both, and F8 deleted both.
-- A text file over 4 MB now shows terminal colors in its window instead of escape codes such as `[31m`, as smaller files do.
-- The `.pkg` always puts Kermo in Applications. Before, if another copy of Kermo was on the Mac (an old one in Downloads), the installer updated that copy instead.
-
-## [1.3] - 2026-10-20
+Everything since 1.2.1. It includes what was released as 1.3 and 1.4 on 2026-10-20 and 2026-10-21; their downloads were withdrawn in favor of this one.
 
 ### Security
 
@@ -59,18 +28,36 @@ Release:
 - **Save as Administrator** can no longer be made to write through a link that something running as you swaps in at the last moment: root opens the file without following links and checks it's still the file you edited before it writes.
 - On a production server the question before a command now looks at every command in the line, not only the first word: `cd /srv && rm -rf releases/*`, `ls; rm x`, `… | xargs rm` and `$(…)` ask too. So do `find -delete`, `truncate`, `rsync --delete`, `git clean`, `git reset --hard`, `systemctl disable` and writing over a file with `>`.
 - A root panel no longer deletes an item that is in a folder someone else on the server can change, nor copies a file into such a folder: between two steps there, the folder's owner could swap the item for a link and send root's delete or write anywhere. Such items are named in the summary.
+- A login as root in a user's panel (`root@host`, or an alias whose user is root) now keeps out of folders that someone else on the server can change, as a root panel does. Kermo asks the server `id -u` once per server and account.
 
 ### Added
 
-- Kermo tells you when a new version is out. Once a day it asks GitHub for the latest release, and if it is newer the status line says so once and the Kermo menu shows **Kermo X.Y Available…**. **Kermo ▸ Check for Updates…** checks at once and shows the release notes with **Download**. Turn the daily check off with **Kermo ▸ Check for Updates Automatically**.
+- Terminal tabs split, as in VS Code: **⌘\\** puts a second session beside the current one, **⇧⌘\\** below it, up to four in a tab. On a server the new pane is another SSH session over the open connection, in the same folder. **⌥⌘** arrows move between panes and **⌃⌘** arrows resize them. **Join Tab…** and **Move Pane to New Tab** combine and separate tabs. SSH panes come back in their tabs after a restart. See [Sessions side by side](docs/terminal.md#sessions-side-by-side).
+- Kermo tells you when a new version is out. Once a day it asks GitHub for the latest release, and if it is newer the status line says so once and the Kermo menu shows **Kermo X.Y Available…**. **Kermo ▸ Check for Updates…** checks at once and shows the release notes with **Install and Relaunch**: Kermo downloads the new version, checks it's signed with the same certificate as the running one, puts it in place and opens it again. A Kermo installed from the `.pkg` asks for your password first. Turn the daily check off with **Kermo ▸ Check for Updates Automatically**.
+- One line in Terminal installs or updates Kermo: `curl -fsSL https://raw.githubusercontent.com/paliydmn/kermo/master/install.sh | sh`. No **Open Anyway** needed. See [Install Kermo](docs/install.md).
+- Services… has a menu for each service (right-click, ⌃-click, ⌃↩ or ⇧F10) with Status, Live Logs, Edit Unit File…, Start and Restart. What can't run now is greyed out, with the reason.
+- **Start** in Services… starts a service as root, the way ⌘R restarts one.
+- More in the Services… menu: **Stop…** (always asks first, saying what it means), **Reload** (only for a service that has an `ExecReload`), **Enable at Boot** and **Disable at Boot** (only at boot, no `--now`), **Reset Failed State**, **Refresh Status** (reads the state again, runs nothing) and **Copy Service Name** (⌘C). Each change is judged by what it's for: a stop wants the service inactive, enable and disable check the unit file's state at boot.
 
 ### Changed
 
-- Releases are signed with Kermo's own certificate instead of ad hoc, so macOS keeps Full Disk Access and other permissions after an update. Updating to this version asks for them once more. Releases still aren't notarized: the first launch still needs **Open Anyway**.
+- Releases are signed with Kermo's own certificate instead of ad hoc, so macOS keeps Full Disk Access and other permissions after an update. Updating to this version asks for them once more. Releases still aren't notarized: the first launch still needs **Open Anyway**, unless you install with the one-line install.
+- The tab in front, in a panel and in the terminal, has a bold title and a line in the accent color under it. The other tabs' titles are grey. A connected SSH tab's ● is green.
+- Kermo writes its settings files and the production log in the background, in order, so a home folder on a network share or a slow disk no longer pauses the window. Everything is written before Kermo quits.
+- ⌘R in Services… keeps the list open. Once a production server's question is answered, the row shows `Restarting…` while it runs. After the command, Kermo reads the service's state again, and a line under the list says which service on which server, when, and how it went. A service that is failed a second after a successful restart gets a warning, not a ✓. A failure shows its first line and **Output…**. The line stays until the next action or until the list closes.
+- The highlighted service in Services… has a light green background with an outline, and a failed service's state shows in red. Services… opens again with the search text and service you left it on.
+- ⌘R in Containers… keeps the list open too: the row shows `Restarting…`, Kermo reads the container's state again a second later, and a line under the list says how it went. Containers… has the same green highlight and opens again where you left it.
 - ↩ on a file inside an archive opens a read-only copy, and the status line says so: the copy lives in a temporary folder that goes a day later, so edits made to it in another app were lost. The app now says it's locked and offers to duplicate it; Extract (⌥F9) keeps a copy of your own.
 
 ### Fixed
 
+- In the terminal, a program that reads the mouse itself (Claude Code, htop, vim with `mouse=a`) now scrolls with the wheel and the trackpad. Before, they did nothing there.
+- Text a terminal program copies (Claude Code when you select its text, tmux, vim) now goes to the clipboard (OSC 52), in local and SSH tabs. A program can't read the clipboard this way.
+- ⇧-drag and ⌥-drag select text in a program that reads the mouse itself, and the selection is copied. Before, the drag went to the program.
+- A terminal tab opened at the very moment a tunnel started listening or took a connection could keep that port, or the connection, open for as long as its shell ran: the tunnel then said "Port … is in use on this Mac" for its own port.
+- Two files whose names differ only in how Unicode writes a letter (`café` written two ways, side by side on a Linux server) are marked one at a time. Before, marking one marked both, and F8 deleted both.
+- A text file over 4 MB now shows terminal colors in its window instead of escape codes such as `[31m`, as smaller files do.
+- The `.pkg` always puts Kermo in Applications. Before, if another copy of Kermo was on the Mac (an old one in Downloads), the installer updated that copy instead.
 - Opening an archive with a very deeply nested path (a tiny zip with one file 2000 folders down) no longer crashes Kermo.
 - Copying a file locked in Finder works: the copy is locked too, as Finder's is. Before, it failed with "Operation not permitted" and left a hidden, locked partial file in the destination; such leftovers are now cleared after a day like the others.
 - **Save As…** of a server file's editor makes it an ordinary local file: a later revert from that server file's history no longer writes the old version into the file you saved.
@@ -117,7 +104,6 @@ Release:
 - A move to another volume (a USB stick) or from a server to this Mac now has each file on the disk before it deletes the original: a stick pulled or the power cut right after could lose both.
 - **Synchronize Folders** deleting on a server whose clock runs behind this Mac's no longer takes along a file written there after the comparison: it reads the server's clock first.
 - Saving a server file over 1 MB now notices a change made there within the same second you opened it that kept its size: the file is hashed on the server. Before, only files up to 1 MB were compared by content.
-
 ## [1.2.1] - 2026-10-17
 
 ### Changed
@@ -246,9 +232,8 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.4...HEAD
-[1.4]: https://github.com/paliydmn/kermo/releases/tag/v1.4
-[1.3]: https://github.com/paliydmn/kermo/releases/tag/v1.3
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/paliydmn/kermo/releases/tag/v1.4.1
 [1.2.1]: https://github.com/paliydmn/kermo/releases/tag/v1.2.1
 [1.2]: https://github.com/paliydmn/kermo/releases/tag/v1.2
 [1.1]: https://github.com/paliydmn/kermo/releases/tag/v1.1
