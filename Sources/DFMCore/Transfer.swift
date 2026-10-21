@@ -109,8 +109,27 @@ final class RemoteFS: TransferFS, @unchecked Sendable {
         return c
     }
 
-    /// Root's uid when this is a root session (a root panel), else nil.
-    var rootUID: UInt32? { target.sudo ? target.rootUID : nil }
+    /// Root's uid when this is a root session — a root panel, or a login as root itself (`root@host`, an alias whose
+    /// user is root: D-088) — else nil.
+    var rootUID: UInt32? { target.sudo || Self.loginUID(target, env: env) == target.rootUID ? target.rootUID : nil }
+
+    /// The uid a login has: `id -u` there, once per server and account while the app runs. nil: it couldn't tell (an
+    /// SFTP-only account runs no command), and counts as not root, as before.
+    // ponytail: one that failed on a dropped connection is remembered too; the next launch asks again.
+    static func loginUID(_ t: SFTPTarget, env: [String: String]) -> UInt32? {
+        let key = "\(t.host):\(t.port ?? 22):\(t.localServer ?? "")"
+        if let known = uidLock.withLock({ uids[key] }) { return known }
+        let uid = askUID(t, env)
+        uidLock.withLock { uids[key] = .some(uid) }
+        return uid
+    }
+    nonisolated(unsafe) static var uids: [String: UInt32?] = [:]
+    private static let uidLock = NSLock()
+    /// Tests: in place of `id -u` there (a test target's own session is its user's, as ever).
+    nonisolated(unsafe) static var askUID: @Sendable (SFTPTarget, [String: String]) -> UInt32? = { t, env in
+        guard t.localServer == nil, let out = try? SSHCommand.capture(t, "id -u", env: env) else { return nil }
+        return out.split(whereSeparator: \.isNewline).last.flatMap { UInt32($0.trimmingCharacters(in: .whitespaces)) }   // a login script may print first
+    }
 
     func close() { lock.withLock { client }?.close() }
     func closeWhenQuiet() { lock.withLock { client }?.closeWhenQuiet() }
@@ -510,13 +529,13 @@ extension FileJob {
         return t
     }
 
-    /// S-03: a root session (a root panel) doesn't go into a folder someone else on the server can change — one that
+    /// S-03: a root session (a root panel, a login as root) doesn't go into a folder someone else on the server can change — one that
     /// isn't root's, or that its group or others may write to without the sticky bit. Between the listing that found
     /// it and the next step in it (SFTP has no openat) they could swap what's there for a link to `/`, and root would
     /// delete, read or write there. Its owner and mode come with that listing: no round trip more. One that doesn't
     /// say (no owner or mode sent) counts as theirs.
     /// ponytail: a top item's own folder isn't looked at (the top swapped between its look and its listing still
-    /// races), nor is a login as root that isn't a root panel; root-side helpers (`rm -r --one-file-system`) if it bites.
+    /// races); root-side helpers (`rm -r --one-file-system`) if it bites.
     func othersCanChange(_ fs: TransferFS, _ a: SFTPClient.Attrs) -> Bool {
         guard a.kind == .dir, let root = (fs as? RemoteFS)?.rootUID else { return false }
         guard let uid = a.uid, let mode = a.mode else { return true }

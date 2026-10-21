@@ -70,6 +70,33 @@ private func exists(_ p: String) -> Bool { FileJob.lstat(p) != nil }
     #expect(!exists(d + "/top") && job.progress.errors.isEmpty)
 }
 
+/// D-088: a login as root in a user's panel (`root@host`, an alias whose user is root) is a root session to that
+/// rule too: `id -u` says 0 — asked once per server and account. One that can't tell (an SFTP-only account) stays the
+/// user's, as before.
+@Test func aLoginAsRootIsARootSessionToo() throws {
+    let d = tempDir()
+    sh("ln -s /usr/libexec/sftp-server server", in: d)   // a target of its own: the hook and the memory touch no other test's
+    let login = SFTPTarget.local(server: d + "/server"), key = "\(login.host):22:\(d)/server"
+    let was = RemoteFS.askUID
+    nonisolated(unsafe) var asked = 0
+    defer { sh("chmod -R u+w .", in: d); try? FileManager.default.removeItem(atPath: d); RemoteFS.askUID = was }
+    RemoteFS.askUID = { t, env in
+        guard t.localServer == login.localServer else { return was(t, env) }
+        asked += 1
+        return getuid()   // this Mac's user stands for root here, as with the stand-in sudo
+    }
+    sh("mkdir -p top/ok top/open && echo x > top/ok/f && echo x > top/open/f && chmod 777 top/open", in: d)
+    let job = FileJob(.delete, sources: [d + "/top"], from: .sftp(login), to: .sftp(login), destDir: nil)
+    job.resolveError = { p, m in Issue.record("asked: \(p): \(m)"); return (.skip, false) }
+    job.run()
+    #expect(!exists(d + "/top/ok") && exists(d + "/top/open/f"), "the folder others can change is kept")
+    #expect(job.progress.errors == ["\(d)/top/open: someone else on the server can change this folder — not entered as root. Do it as its owner, or in a terminal there"])
+    #expect(RemoteFS.loginUID(login, env: [:]) == getuid() && asked == 1, "asked once")
+    RemoteFS.uids[key] = nil
+    RemoteFS.askUID = { t, env in t.localServer == login.localServer ? nil : was(t, env) }   // an SFTP-only account: can't tell
+    #expect(RemoteFS.loginUID(login, env: [:]) == nil)
+}
+
 /// F-10: on a server a file replacing a folder (or a folder a file) is copied whole under a temporary name first;
 /// the old one goes only then. A copy that fails (an unreadable source) leaves the old one as it was — before, the
 /// folder was deleted first, so neither was left — and no temporary copy behind.
