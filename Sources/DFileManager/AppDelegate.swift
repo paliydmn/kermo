@@ -8,6 +8,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Servers a look (Services…, Containers…, Forward Port…, Run on Servers) logged in to, by key, until when their
     /// connection is kept for the next look though nothing shows them: its ControlPersist, as plain ssh keeps it.
     var looked: [String: Date] = [:]
+    /// Services… (ServerServices.swift): what runs on a service now ("Restarting…"), by `serviceID` — its row says so,
+    /// and its other changes wait — and what each server's list had typed and highlighted when it closed.
+    var serviceRuns: [String: String] = [:]
+    var servicesKept: [String: (query: String, id: String?)] = [:]
     private(set) var ops: OpsController!
     /// Move jobs an undo/redo started (across volumes): their own undo is registered already.
     var replayJobs: [FileJob] = []
@@ -1264,7 +1268,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         alert.accessoryView = stack
         alert.window.initialFirstResponder = field
         if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }
-        let over: NSWindow = NSApp.keyWindow.flatMap { $0 is NSPanel ? nil : $0 } ?? window
+        // On a Picker that stays open while it asks (a restart from Services…), else not on a panel that closes then.
+        let over: NSWindow = Picker.current.flatMap { $0.isHolding ? $0.window : nil } ?? NSApp.keyWindow.flatMap { $0 is NSPanel ? nil : $0 } ?? window
         let response: NSApplication.ModalResponse = await withCheckedContinuation { cont in
             alert.beginSheetModal(for: over) { cont.resume(returning: $0) }
         }

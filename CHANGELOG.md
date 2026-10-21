@@ -17,6 +17,15 @@ Release:
 
 - **Install and Relaunch** in the update window: Kermo downloads the new version, checks it's signed with the same certificate as the running one, puts it in place and opens it again. A Kermo installed from the `.pkg` asks for your password first. Works from this version on, for releases that carry a `.zip`.
 - One line in Terminal installs or updates Kermo: `curl -fsSL https://raw.githubusercontent.com/paliydmn/kermo/master/install.sh | sh`. No **Open Anyway** needed. See [Install Kermo](docs/install.md).
+- Services… has a menu for each service (right-click, ⌃-click, ⌃↩ or ⇧F10) with Status, Live Logs, Edit Unit File…, Start and Restart. What can't run now is greyed out, with the reason.
+- **Start** in Services… starts a service as root, the way ⌘R restarts one.
+- More in the Services… menu: **Stop…** (always asks first, saying what it means), **Reload** (only for a service that has an `ExecReload`), **Enable at Boot** and **Disable at Boot** (only at boot, no `--now`), **Reset Failed State**, **Refresh Status** (reads the state again, runs nothing) and **Copy Service Name** (⌘C). Each change is judged by what it's for: a stop wants the service inactive, enable and disable check the unit file's state at boot.
+
+### Changed
+
+- ⌘R in Services… keeps the list open. Once a production server's question is answered, the row shows `Restarting…` while it runs. After the command, Kermo reads the service's state again, and a line under the list says which service on which server, when, and how it went. A service that is failed a second after a successful restart gets a warning, not a ✓. A failure shows its first line and **Output…**. The line stays until the next action or until the list closes.
+- The highlighted service in Services… has a light green background with an outline, and a failed service's state shows in red. Services… opens again with the search text and service you left it on.
+- ⌘R in Containers… keeps the list open too: the row shows `Restarting…`, Kermo reads the container's state again a second later, and a line under the list says how it went. Containers… has the same green highlight and opens again where you left it.
 
 ### Fixed
 

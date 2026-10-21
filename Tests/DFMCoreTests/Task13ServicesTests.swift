@@ -107,12 +107,16 @@ extension SudoPasswordTests {
     }
     let env = ["PATH": d + ":/usr/bin:/bin"]
     try fake("systemctl", """
+        [ "$*" = "show -p Id -p CanReload -p UnitFileState *.service" ] && { printf 'Id=web.service\\nUnitFileState=enabled\\nCanReload=yes\\n\\nId=cron.service\\nCanReload=no\\nUnitFileState=static\\n'; exit 0; }
         [ "$*" = "list-units --type=service --all --output=json --no-pager" ] || { echo "wrong: $*" >&2; exit 9; }
         cat <<'END'
         \(unitsJSON)
         END
         """)
-    #expect(try Services.read(on: .local(), server: "web1", env: env).map(\.name) == ["backup", "Alpha", "cron", "getty@tty1", "web"])
+    let read = try Services.read(on: .local(), server: "web1", env: env)
+    #expect(read.map(\.name) == ["backup", "Alpha", "cron", "getty@tty1", "web"])
+    #expect(read.map { "\($0.canReload.map(String.init) ?? "-")/\($0.unitFile ?? "-")" } == ["-/-", "-/-", "false/static", "-/-", "true/enabled"],
+            "systemctl show's CanReload and UnitFileState, where it said them")
     try fake("systemctl", """
         case "$*" in
         *--plain*) [ "$*" = "list-units --type=service --all --plain --no-legend --no-pager" ] || exit 9; cat <<'END'
@@ -180,3 +184,69 @@ extension SudoPasswordTests {
     try held.fileHandleForWriting.close()
 }
 }
+
+/// `systemctl show -p …`: the keys asked for, whatever a login script printed first; no state, no answer.
+@Test func aUnitsStateIsReadFromShow() {
+    #expect(Services.parse(show: "Welcome!\nType=oneshot\nResult=success\nActiveState=inactive\nSubState=dead\n")
+            == Services.UnitState(active: "inactive", sub: "dead", type: "oneshot", result: "success"))
+    #expect(Services.parse(show: "Type=simple\n") == nil)
+    #expect(Services.start(ServiceUnit(unit: "web.service", active: "inactive", sub: "dead")) == "systemctl start -- web.service")
+}
+
+/// A change's line names the service, the server and the time. Exit 0 is the command's word: a service failed (or
+/// down) a second later is a warning, a state that couldn't be read is said with the run; an inactive oneshot that
+/// ran well is done. A failure says its first line; never run is never a success.
+@Test func aChangeSaysHowItWentAndWhatTheServiceIsNow() {
+    func say(_ ran: Services.Ran, _ state: Services.UnitState?, _ c: Services.Change = .restart, error: String? = nil) -> (Services.Outcome, String) {
+        let r = Services.outcome(c, of: "nginx", on: "web-01", at: "22:34:08", ran: ran, state: state, stateError: error)
+        return (r.outcome, r.line)
+    }
+    #expect(say(.passed, .init(active: "active", sub: "running")) == (.ok, "✓ nginx restarted on web-01 at 22:34:08 — active · running"))
+    #expect(say(.passed, .init(active: "failed", sub: "failed"))
+            == (.warning, "⚠ nginx: the restart completed on web-01 at 22:34:08, but the service is failed"))
+    #expect(say(.passed, .init(active: "activating", sub: "auto-restart")).0 == .warning, "dies and comes back")
+    #expect(say(.passed, .init(active: "inactive", sub: "dead", type: "oneshot", result: "success"), .start)
+            == (.ok, "✓ nginx started on web-01 at 22:34:08 — a oneshot, ran and finished (inactive · dead)"))
+    #expect(say(.passed, .init(active: "inactive", sub: "dead", type: "oneshot", result: "exit-code"), .start).0 == .warning)
+    #expect(say(.passed, .init(active: "inactive", sub: "dead")).0 == .warning, "a simple one that's gone")
+    #expect(say(.passed, nil, error: "Connection closed")
+            == (.warning, "⚠ nginx restarted on web-01 at 22:34:08, but its state couldn't be read: Connection closed"))
+    #expect(say(.failed(exit: 1, output: "\nJob for nginx.service failed because the control process exited with error code.\nSee …"),
+                .init(active: "failed", sub: "failed"))
+            == (.failed, "✕ nginx: the restart failed on web-01 at 22:34:08: Job for nginx.service failed because the control process exited with error code. — now failed"))
+    #expect(say(.failed(exit: 4, output: ""), nil) == (.failed, "✕ nginx: the restart failed on web-01 at 22:34:08: exit 4"))
+    #expect(say(.couldNotRun("sudo: a password is required"), nil)
+            == (.failed, "✕ nginx: the restart didn't run on web-01 at 22:34:08: sudo: a password is required"))
+    #expect(say(.notRun("cancelled"), nil) == (.notRun, "nginx: not restarted — cancelled; nothing ran"))
+    #expect(say(.unknown("⎋"), nil).0 == .warning)
+}
+
+/// Each change's command, and its verdict by what it's for: a stop wants it inactive, a reload active, enable and
+/// disable the unit file's state, a reset "not failed". A static unit enabled says so. A container's line as a service's.
+@Test func everyChangeIsJudgedByWhatItIsFor() {
+    let u = ServiceUnit(unit: "nginx.service", active: "active", sub: "running")
+    #expect(Services.Change.allCases.map { $0.command(u) } == ["start", "stop", "restart", "reload", "enable", "disable", "reset-failed"]
+        .map { "systemctl \($0) -- nginx.service" })
+    #expect(Services.Change.allCases.filter(\.waits) == [.start, .stop, .restart, .reload])
+    func say(_ c: Services.Change, _ state: Services.UnitState) -> (Services.Outcome, String) {
+        let r = Services.outcome(c, of: "nginx", on: "web-01", at: "22:34:08", ran: .passed, state: state)
+        return (r.outcome, r.line)
+    }
+    #expect(say(.stop, .init(active: "inactive", sub: "dead")) == (.ok, "✓ nginx stopped on web-01 at 22:34:08 — inactive · dead"))
+    #expect(say(.stop, .init(active: "failed", sub: "failed")).0 == .warning)
+    #expect(say(.reload, .init(active: "active", sub: "running")) == (.ok, "✓ nginx reloaded on web-01 at 22:34:08 — active · running"))
+    #expect(say(.enable, .init(active: "inactive", sub: "dead", unitFile: "enabled"))
+            == (.ok, "✓ nginx enabled at boot on web-01 at 22:34:08 — enabled"))
+    #expect(say(.enable, .init(active: "active", sub: "running", unitFile: "static"))
+            == (.warning, "⚠ nginx: the enable completed on web-01 at 22:34:08, but the service's unit file is static"))
+    #expect(say(.disable, .init(active: "active", sub: "running", unitFile: "disabled")).0 == .ok, "running now is fine: only boot changed")
+    #expect(say(.resetFailed, .init(active: "inactive", sub: "dead")) == (.ok, "✓ nginx reset from failed on web-01 at 22:34:08 — inactive · dead"))
+    #expect(say(.resetFailed, .init(active: "failed", sub: "failed")).0 == .warning)
+    #expect(Services.outcome(.stop, of: "nginx", on: "web-01", at: "22:34:08", ran: .notRun("cancelled"), state: nil).line == "nginx: not stopped — cancelled; nothing ran")
+    #expect(Services.line("restart", "restarted", of: "api", "the container", on: "web-01", at: "22:34:08", ran: .passed, now: "exited",
+                          healthy: false, stateError: nil) == (.warning, "⚠ api: the restart completed on web-01 at 22:34:08, but the container is exited"))
+    #expect(Services.parse(show: "ActiveState=active\nSubState=running\nUnitFileState=enabled\nCanReload=no\n")
+            == .init(active: "active", sub: "running", type: "", result: "", unitFile: "enabled", canReload: false))
+    #expect(u.applying(.init(active: "inactive", sub: "dead", unitFile: "disabled")).unitFile == "disabled")
+}
+
