@@ -92,7 +92,37 @@ import Testing
 @Test func utf8BytesCountsSourceBytes() {
     let d = Data("aб".utf8) + [0xff] + Data("😀".utf8) + [0xe2, 0x82] + Data("z".utf8)
     #expect(String(decoding: d, as: UTF8.self).utf16.count == 7)
-    #expect([0, 1, 2, 3, 5, 6, 7].map { BigFile.utf8Bytes(d, from: 0, units: $0) } == [0, 1, 3, 4, 8, 10, 11])
-    #expect(BigFile.utf8Bytes(d, from: 3, units: 2) == 5)   // from the bad byte: it and the emoji
-    #expect(BigFile.utf8Bytes(d, from: 0, units: 100) == d.count)
+    #expect([0, 1, 2, 3, 5, 6, 7].map { ANSI.bytes(d, units: $0, singleByte: false) } == [0, 1, 3, 4, 8, 10, 11])
+    #expect(ANSI.bytes(d.subdata(in: 3..<d.count), units: 2, singleByte: false) == 5)   // from the bad byte: it and the emoji
+    #expect(ANSI.bytes(d, units: 100, singleByte: false) == d.count)
+    #expect(ANSI.units(d, singleByte: false) == 7)
+}
+
+/// D-069: a big file's window shows colors, not escape codes — and a place in a line maps back to the file's bytes
+/// past them, both ways: where the top line is kept while sliding. A sequence cut by the window's end shows as the
+/// rest of `parse` does (only its ESC goes). A charset choice followed by a line end keeps the line end.
+@Test func aWindowsPlacesMapPastEscapeCodes() {
+    let line = Data("\u{1B}[31mERROR\u{1B}[0m: x".utf8)   // shows "ERROR: x"
+    #expect(ANSI.parse(String(decoding: line, as: UTF8.self)).text == "ERROR: x")
+    #expect([0, 1, 5, 6, 8].map { ANSI.bytes(line, units: $0, singleByte: false) } == [0, 6, 10, 15, 17])
+    #expect([0, 6, 10, 15, 17].map { ANSI.units(line.prefix($0), singleByte: false) } == [0, 1, 5, 6, 8])
+    let cut = Data("ok \u{1B}[3".utf8)   // a sequence cut: only its ESC goes
+    #expect(ANSI.units(cut, singleByte: false) == ANSI.parse(String(decoding: cut, as: UTF8.self)).text.utf16.count)
+    let cp1251 = Data([0x1B, 0x5B, 0x31, 0x6D, 0xCF, 0xF0, 0x1B, 0x5B, 0x30, 0x6D, 0xE8])   // bold "Пр", plain "и"
+    #expect(ANSI.bytes(cp1251, units: 2, singleByte: true) == 6 && ANSI.units(cp1251, singleByte: true) == 3)
+    #expect(ANSI.parse("a\u{1B}(\nb").text == "a\nb", "the line count after it stays right")
+}
+
+/// D-086: `café` in NFC and in NFD are one String to Swift but two files on Linux: the marks keep them apart, so
+/// marking one marks only it (F8 then deletes only it).
+@Test func marksTellNamesAlikeInUnicodeApart() {
+    let nfc = "caf\u{E9}", nfd = "cafe\u{301}"
+    #expect(nfc == nfd && Set([nfc, nfd]).count == 1, "what Swift does")
+    var marks = ExactNames()
+    marks.insert(nfc)
+    #expect(marks.contains(nfc) && !marks.contains(nfd) && marks.count == 1)
+    #expect(marks.insert(nfd).inserted && marks.count == 2)
+    marks.remove(nfc)
+    #expect(marks.names.map { Array($0.utf8) } == [Array(nfd.utf8)])
+    #expect(marks.intersection([nfc, "x"]).isEmpty && marks.complement(in: [nfc, nfd]).names.map { Array($0.utf8) } == [Array(nfc.utf8)])
 }

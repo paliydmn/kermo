@@ -80,6 +80,56 @@ public struct ANSI: Sendable {
         return (String(out), runs)
     }
 
+    /// Which of `s` the text `parse` returns leaves out (its escape sequences, as `feed(end: true)` finds them): so
+    /// a place in that text maps back to `s`.
+    static func hidden(_ s: [Unicode.Scalar]) -> [Bool] {
+        var h = [Bool](repeating: false, count: s.count), i = 0
+        while i < s.count {
+            guard s[i] == "\u{1B}" else { i += 1; continue }
+            let n = sequence(s, at: i) ?? 1   // never ended: only the ESC goes
+            for k in i..<min(i + n, s.count) { h[k] = true }
+            i += n
+        }
+        return h
+    }
+
+    /// `bytes` decoded (UTF-8, or a byte a character: Windows-1251), each character with its bytes and whether
+    /// `parse` hides it.
+    private static func shown(_ bytes: Data, singleByte: Bool) -> [(units: Int, bytes: Int, hidden: Bool)] {
+        var scalars: [Unicode.Scalar] = [], widths: [Int] = []
+        if singleByte {
+            for b in bytes { scalars.append(Unicode.Scalar(b)); widths.append(1) }
+        } else {
+            var it = bytes.makeIterator(), parser = Unicode.UTF8.ForwardParser()
+            loop: while true {
+                switch parser.parseScalar(from: &it) {
+                case .valid(let c): scalars.append(Unicode.UTF8.decode(c)); widths.append(c.count)
+                case .error(let len): scalars.append("\u{FFFD}"); widths.append(len)
+                case .emptyInput: break loop
+                }
+            }
+        }
+        let h = hidden(scalars)
+        return scalars.indices.map { (singleByte ? 1 : UTF16.width(scalars[$0]), widths[$0], h[$0]) }
+    }
+
+    /// How many of `line`'s bytes (a line from its start, as a file has it) the first `units` UTF-16 units of its text
+    /// as shown take — escape sequences hidden: where a place on screen is in the file.
+    public static func bytes(_ line: Data, units: Int, singleByte: Bool) -> Int {
+        var n = 0, bytes = 0
+        for c in shown(line, singleByte: singleByte) {
+            if n >= units { break }
+            bytes += c.bytes
+            if !c.hidden { n += c.units }
+        }
+        return bytes
+    }
+
+    /// The other way: the UTF-16 units `prefix` (a line's start up to a place in it) shows, its sequences hidden.
+    public static func units(_ prefix: Data, singleByte: Bool) -> Int {
+        shown(prefix, singleByte: singleByte).reduce(0) { $0 + ($1.hidden ? 0 : $1.units) }
+    }
+
     /// The length of the escape sequence at `i` (an ESC), or nil if it's cut off by the end. CSI: ESC [ parameters
     /// final; OSC: ESC ] … BEL or ESC \ (a line end or another control ends a broken one, and stays); a charset
     /// choice: ESC ( B; else ESC and one more printable (anything else stays).
@@ -103,7 +153,7 @@ public struct ANSI: Sendable {
                 j += 1
             }
             return nil
-        case "(", ")", "*", "+": return i + 2 < s.count ? 3 : nil
+        case "(", ")", "*", "+": return i + 2 < s.count ? (s[i + 2].value < 0x20 ? 2 : 3) : nil   // a line end after it stays
         default: return (0x20...0x7E).contains(s[i + 1].value) ? 2 : 1
         }
     }

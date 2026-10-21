@@ -203,3 +203,35 @@ struct NameKey {
         return (a.count - i) == (b.count - j) ? 0 : (a.count - i < b.count - j ? -1 : 1)
     }
 }
+
+/// Names compared byte for byte, not as Swift compares strings (canonical equivalence): `café` written two ways
+/// (NFC and NFD, side by side in a Linux folder rsynced from a Mac) are two files, and two names here. A panel's marks:
+/// marking one marks only it.
+public struct ExactNames: Equatable, Sendable {
+    private var bytes = Set<Data>()
+
+    public init() {}
+    public init<S: Sequence>(_ names: S) where S.Element == String { bytes = Set(names.map { Data($0.utf8) }) }
+
+    public var isEmpty: Bool { bytes.isEmpty }
+    public var count: Int { bytes.count }
+    public var names: [String] { bytes.map { String(decoding: $0, as: UTF8.self) } }
+    public func contains(_ name: String) -> Bool { bytes.contains(Data(name.utf8)) }
+    @discardableResult public mutating func insert(_ name: String) -> (inserted: Bool, memberAfterInsert: String) {
+        (bytes.insert(Data(name.utf8)).inserted, name)
+    }
+    public mutating func remove(_ name: String) { bytes.remove(Data(name.utf8)) }
+    public mutating func removeAll() { bytes.removeAll() }
+    public mutating func formIntersection<S: Sequence>(_ names: S) where S.Element == String { bytes.formIntersection(names.map { Data($0.utf8) }) }
+    public func intersection<S: Sequence>(_ names: S) -> ExactNames where S.Element == String {
+        var n = self
+        n.formIntersection(names)
+        return n
+    }
+    /// `names` but these.
+    public func complement<S: Sequence>(in names: S) -> ExactNames where S.Element == String {
+        var n = ExactNames(names)
+        n.bytes.subtract(bytes)
+        return n
+    }
+}

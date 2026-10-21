@@ -588,9 +588,8 @@ extension Viewer {
         return (copy, unpackedInfo(z, ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)))
     }
 
-    /// Laid out in full before scrolling so positions are exact; 256 KB lays out in ~70 ms (1 MB: ~280 ms).
-    /// ponytail: a window shows escape sequences as they are — positions in it map back to the file's bytes, which a
-    /// hidden sequence would shift; colors there would need that map to skip them.
+    /// Laid out in full before scrolling so positions are exact; 256 KB lays out in ~70 ms (1 MB: ~280 ms). Its
+    /// escape sequences are colors, not text: a place in a line maps back to the file's bytes past them (`ANSI.bytes`).
     fileprivate static let windowSize = 256 << 10
 
     /// Maps the file (once) and shows the window around `offset` (`.max`: the end).
@@ -648,15 +647,16 @@ extension Viewer {
         let gen = loadGen
         let size = Self.windowSize
         Task { [weak self] in
-            let (w, text, enc, levels, line, inLine) = await Blocking.run(.userInitiated) {
-                () -> (Range<Int>, String, String, [(range: NSRange, level: TextFormat.Level)], Int, Int) in
+            let (w, text, enc, levels, line, inLine, runs) = await Blocking.run(.userInitiated) {
+                () -> (Range<Int>, String, String, [(range: NSRange, level: TextFormat.Level)], Int, Int, [ANSI.Run]) in
                 let w = BigFile.window(big, around: offset, size: size)
-                let (text, enc) = TextFormat.decode(big.subdata(in: w))
+                let (decoded, enc) = TextFormat.decode(big.subdata(in: w))
+                let (text, runs) = ANSI.parse(decoded)   // colors, not escape sequences
                 // `top` as a line of the window and characters into it (it can be deep inside a long line)
                 let t = min(max(top, w.lowerBound), w.upperBound), line = BigFile.newlines(big, w.lowerBound..<t)
                 let from = BigFile.lineOffset(big, from: w.lowerBound, line: line)
-                let inLine = enc == "Windows-1251" ? t - from : String(decoding: big[from..<t], as: UTF8.self).utf16.count
-                return (w, text, enc, TextFormat.logLevels(in: text), line, inLine)
+                let inLine = ANSI.units(big.subdata(in: from..<t), singleByte: enc == "Windows-1251")
+                return (w, text, enc, ANSIColors.uncolored(TextFormat.logLevels(in: text), runs), line, inLine, runs)
             }
             guard let self, gen == loadGen else { return }
             spinner.stopAnimation(nil)
@@ -664,6 +664,7 @@ extension Viewer {
             winEncoding = enc
             textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: [.font: Self.font, .foregroundColor: NSColor.textColor]))
             Self.tint(textView.textStorage!, levels, offset: 0)
+            ANSIColors.apply(runs, to: textView.textStorage!, font: Self.font)
             let ns = textView.string as NSString, ch = min(charIndex(ofLine: line) + inLine, ns.length)
             scroll(toChar: ch, delta: delta, dx: dx)
             var shown = NSRange(location: ch, length: 0)
@@ -743,7 +744,8 @@ extension Viewer {
         let ch = lm.characterIndexForGlyph(at: g), rect = lm.lineFragmentRect(forGlyphAt: g, effectiveRange: nil)
         let line = textView.string.utf16.prefix(ch).reduce(0) { $1 == 10 ? $0 + 1 : $0 }
         let from = BigFile.lineOffset(big, from: win.lowerBound, line: line), units = ch - charIndex(ofLine: line)
-        return (from + (winEncoding == "Windows-1251" ? units : BigFile.utf8Bytes(big, from: from, units: units)), b.minY - o.y - rect.minY,
+        let end = big[from..<max(from, win.upperBound)].firstIndex(of: 10) ?? max(from, win.upperBound)   // its line, as the window has it
+        return (from + ANSI.bytes(big.subdata(in: from..<end), units: units, singleByte: winEncoding == "Windows-1251"), b.minY - o.y - rect.minY,
                 b.minX - o.x - rect.minX - lm.location(forGlyphAt: g).x)
     }
 

@@ -275,6 +275,7 @@ extension ServerCopiesTests {
     let (value, problem) = Config.loadKeeping("servers.json", as: [String: String].self, in: d)
     #expect(value == nil && problem?.contains("won't save over it") == true, "\(problem ?? "")")
     Config.save("servers.json", ["new"], in: d)
+    Config.flush()
     chmod(d + "/servers.json", 0o600)
     #expect(FileManager.default.contents(atPath: d + "/servers.json") == Data("[{\"host\":\"me@web\"}]".utf8))
     #expect(try Config.contents(d + "/missing") == nil)

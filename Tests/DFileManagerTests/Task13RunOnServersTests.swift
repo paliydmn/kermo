@@ -171,6 +171,7 @@ extension ServerLockTests {
     let w = try #require(NSApp.windows.first { $0.title.hasPrefix(title) })
     defer { w.close() }
     for _ in 0..<500 where !FileManager.default.fileExists(atPath: AuditLog.path) { try await Task.sleep(for: .milliseconds(10)) }
+    Config.flush()   // the line itself, not only the file
     let line = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: AuditLog.path))) as? [String: Any])
     #expect(line["action"] as? String == "command" && line["exit"] as? Int == 4 && (line["command"] as? String)?.hasSuffix("; exit 4") == true)
     #expect(line["server"] as? String == "localhost" && line["paths"] as? [String] == [])

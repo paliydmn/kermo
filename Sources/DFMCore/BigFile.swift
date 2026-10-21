@@ -43,22 +43,6 @@ public enum BigFile {
         }
     }
 
-    /// Bytes from `from` that decode to `units` UTF-16 units the way the viewer decodes them (String(decoding:as:)):
-    /// a damaged sequence is one U+FFFD however many bytes it has. Up to the end of the data.
-    public static func utf8Bytes(_ d: Data, from: Int, units: Int) -> Int {
-        d.withUnsafeBytes { b in
-            var it = b[min(max(from, 0), b.count)...].makeIterator(), parser = Unicode.UTF8.ForwardParser(), n = 0, bytes = 0
-            while n < units {
-                switch parser.parseScalar(from: &it) {
-                case .valid(let c): bytes += c.count; n += UTF16.width(Unicode.UTF8.decode(c))
-                case .error(let len): bytes += len; n += 1
-                case .emptyInput: return bytes
-                }
-            }
-            return bytes
-        }
-    }
-
     /// Number of "\n" bytes in `r`.
     public static func newlines(_ d: Data, _ r: Range<Int>) -> Int {
         var n = 0, i = r.lowerBound

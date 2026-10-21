@@ -91,7 +91,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var rows: [FileItem] = [] { didSet { rowIndex = nil } }   // filtered + sorted; ".." is not stored here
     /// `rows`' names to their place, built on the first lookup after they change: a folder's size coming in was a scan of them.
     private var rowIndex: [String: Int]?
-    private var marked = Set<String>()
+    private var marked = ExactNames()   // byte for byte: two names alike in Unicode are two files
     private var filter: Mask?
     private(set) var dirSizes: [String: Int64] = [:]
     /// Server folders du couldn't read all of: their size is "at least".
@@ -197,7 +197,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         var forward: [String] = []
         var remote: (target: SFTPTarget, dir: String)? = nil
         var parked: (target: SFTPTarget, dir: String)? = nil   // a server tab restored, not connected
-        var marked = Set<String>()
+        var marked = ExactNames()
         var filter = ""
     }
     private var tabs: [Tab]
@@ -499,7 +499,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     enum History { case push, back, forward, none }
 
     /// A tab's own marks and filter, put back once its listing is on screen (not before: they'd act on the old rows).
-    typealias TabMarks = (marked: Set<String>, filter: String)
+    typealias TabMarks = (marked: ExactNames, filter: String)
 
     /// `keep`: a tab switch brings back that tab's marks and filter instead of starting clean.
     func navigate(to newPath: String, select: String? = nil, history: History = .push, keep: TabMarks? = nil) {
@@ -1625,7 +1625,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         tabs[tabIndex].remote = remote
         // Marks in an archive or in search results name entries there, not the files of `path`: they aren't kept.
         let real = archive == nil && searchTitle == nil
-        tabs[tabIndex].marked = real ? marked : []
+        tabs[tabIndex].marked = real ? marked : ExactNames()
         tabs[tabIndex].filter = real && filter != nil ? filterField.stringValue : ""
     }
 
@@ -1770,17 +1770,17 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// Visible items (after hidden/filter), for cross-panel features like Compare Folders.
     var listedItems: [FileItem] { rows }
-    var markedNames: Set<String> { marked }
+    var markedNames: Set<String> { Set(marked.names) }
     var headerText: String { pathField.stringValue }
     var statusText: String { statusLabel.stringValue }
 
     /// How many got marked: only what's shown can be (a filter, hidden files).
     @discardableResult
-    func setMarks(_ names: Set<String>) -> Int { marked = names.intersection(rows.map(\.name)); refreshMarks(); return marked.count }
+    func setMarks(_ names: Set<String>) -> Int { marked = ExactNames(names).intersection(rows.map(\.name)); refreshMarks(); return marked.count }
 
-    func markAll() { marked = Set(rows.map(\.name)); refreshMarks() }
+    func markAll() { marked = ExactNames(rows.map(\.name)); refreshMarks() }
     func unmarkAll() { marked.removeAll(); refreshMarks() }
-    func invertMarks() { marked = Set(rows.map(\.name)).subtracting(marked); refreshMarks() }
+    func invertMarks() { marked = marked.complement(in: rows.map(\.name)); refreshMarks() }
 
     /// "+" / "-" (MC/TC): (un)mark files — not folders — whose names match the mask.
     func mark(matching mask: Mask, _ on: Bool) {

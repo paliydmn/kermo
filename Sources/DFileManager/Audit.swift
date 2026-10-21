@@ -26,18 +26,24 @@ import Foundation
                           action: action, paths: paths, to: to, command: command, exit: exit, error: error)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        guard var line = try? encoder.encode(entry) else { return }
-        line.append(0x0a)
-        try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-        let fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        var error = fd < 0 ? String(cString: strerror(errno)) : nil
-        if fd >= 0 {
-            fchmod(fd, 0o600)   // made looser by hand: owner-only again
-            if line.withUnsafeBytes({ Darwin.write(fd, $0.baseAddress, $0.count) }) != line.count { error = String(cString: strerror(errno)) }
-            close(fd)
+        guard let line = try? encoder.encode(entry) + [0x0a] else { return }
+        let path = path
+        Config.writes.async {   // in order with the config's own writes, off the main thread
+            try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            let fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            var error = fd < 0 ? String(cString: strerror(errno)) : nil
+            if fd >= 0 {
+                fchmod(fd, 0o600)   // made looser by hand: owner-only again
+                if line.withUnsafeBytes({ Darwin.write(fd, $0.baseAddress, $0.count) }) != line.count { error = String(cString: strerror(errno)) }
+                close(fd)
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    if let error, !failing { failed?("Production log not written (\((path as NSString).abbreviatingWithTildeInPath)): \(error)") }
+                    failing = error != nil
+                }
+            }
         }
-        if let error, !failing { failed?("Production log not written (\((path as NSString).abbreviatingWithTildeInPath)): \(error)") }
-        failing = error != nil
     }
 
     /// A finished copy, move or delete (F5, F6, F8, Synchronize): a line for each production server it changed files on

@@ -159,12 +159,14 @@ private func until(_ done: () -> Bool) async {
     #expect(await app.runThere(Services.restart(unit), on: t.asRoot(), action: "restart", busy: "…", done: "Restarted",
                                ask: ("Restart web on localhost?", "Restart"), in: panel) == false)
     #expect(asked.count == 1 && asked[0].1 == ["Restart", "Cancel"] && asked[0].2 == 1, "↩ is Cancel")
+    Config.flush()
     #expect(!FileManager.default.fileExists(atPath: dir + "/systemctl.log") && !FileManager.default.fileExists(atPath: AuditLog.path))
     AppDelegate.answering = { _, _, _ in 0 }   // Restart
     AppDelegate.unitState = { _, _, _, _, _ in .init(active: "active", sub: "running") }
     defer { AppDelegate.unitState = { try Services.state($0, on: $1, wait: $2, env: $3, cancel: $4) } }
     app.serviceItem(unit, on: t, of: SavedServer(target: t)).keys[Shortcut("cmd+r")!]?()
     await until { FileManager.default.fileExists(atPath: AuditLog.path) }
+    Config.flush()
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "restart -- web.service\n")
     #expect((try? String(contentsOfFile: AuditLog.path, encoding: .utf8))?.contains(#""action":"restart""#) == true)
 }

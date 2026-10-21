@@ -97,7 +97,7 @@ extension ServerLockTests {
 extension ServerLockTests {
 /// The production log: a JSON line per action on a production server (none for any other, none once `auditLog` is
 /// off), appended; the file is owner-only, put back to that if loosened by hand. Root says so.
-@Test func productionLogLines() throws {
+@Test func productionLogLines() async throws {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-audit-" + UUID().uuidString
     let was = AuditLog.path
     AuditLog.path = dir + "/audit.jsonl"
@@ -111,6 +111,7 @@ extension ServerLockTests {
     AuditLog.write(web, "command", paths: ["/srv/app"], command: "systemctl restart app", exit: 0)
     AuditLog.write(SFTPTarget(host: "me@test"), "save", paths: ["/etc/hosts"], exit: 0)
     AuditLog.write(web.asRoot(), "save", paths: ["/etc/nginx/nginx.conf"], exit: 1, error: "“nginx” failed. Put back.")
+    Config.flush()   // written off the main thread, in order
     let lines = try String(contentsOfFile: AuditLog.path, encoding: .utf8).split(separator: "\n").map(String.init)
     #expect(lines.count == 2, "not a production server: no line")
     let first = try #require(try JSONSerialization.jsonObject(with: Data(lines[0].utf8)) as? [String: Any])
@@ -123,22 +124,30 @@ extension ServerLockTests {
     chmod(AuditLog.path, 0o644)
     UserDefaults.standard.set(false, forKey: "auditLog")
     AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
+    Config.flush()
     #expect((try String(contentsOfFile: AuditLog.path, encoding: .utf8)).split(separator: "\n").count == 2, "off: nothing")
     UserDefaults.standard.removeObject(forKey: "auditLog")
     AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
+    Config.flush()
     #expect((try String(contentsOfFile: AuditLog.path, encoding: .utf8)).split(separator: "\n").count == 3 && mode() == 0o600)
     // A line that can't be written is said once, until one is again.
     var said: [String] = []
+    func written() async {   // the writes done, and what they said handed back to the main thread
+        Config.flush()
+        try? await Task.sleep(for: .milliseconds(50))
+    }
     AuditLog.failed = { said.append($0) }
     defer { AuditLog.failed = nil }
     AuditLog.path = "/dev/null/kermo/audit.jsonl"
     AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
     AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
+    await written()
     #expect(said.count == 1 && said[0].hasPrefix("Production log not written (/dev/null/kermo/audit.jsonl): "), "\(said)")
     AuditLog.path = dir + "/audit.jsonl"
     AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
     AuditLog.path = "/dev/null/kermo/audit.jsonl"
     AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
+    await written()
     #expect(said.count == 2, "written once in between: said again")
     // Show Production Log is in ⌘⇧P and the Admin menu.
     let c = AppDelegate().makeCommands().first { $0.id == "admin.auditLog" }
@@ -160,7 +169,8 @@ extension ServerLockTests {
     ServerLock.servers = { [prod] }
     defer { AuditLog.path = was; AppDelegate.validatorsPath = validators; ServerLock.servers = { [] }; try? FileManager.default.removeItem(atPath: dir) }
     func log() -> [[String: Any]] {
-        ((try? String(contentsOfFile: AuditLog.path, encoding: .utf8)) ?? "").split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+        Config.flush()
+        return ((try? String(contentsOfFile: AuditLog.path, encoding: .utf8)) ?? "").split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
     }
     func wait(_ n: Int) async { for _ in 0..<250 where log().count < n { try? await Task.sleep(for: .milliseconds(20)) } }
     let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
