@@ -21,7 +21,7 @@ Press F3 (⌥3) on a file. Close it with ⎋, `q` or ⌘W, or with F3 or F10 its
 
 While following, scrolling up keeps the text still as lines come in and the subtitle says `paused — End resumes`.
 
-In a log or other plain text, lines with words like error or denied show red, and lines with warn or deprecated show orange. Terminal colors in the text (`journalctl`, `docker logs`, a log written with them) show as colors instead of escape codes, and such a line keeps its own colors instead of red or orange. Over 4 MB the window shows the escape codes as they are. A `.gz`, `.bz2`, `.xz` or `.zst` log (`.zst` needs the `zstd` program) shows unpacked, the first 32 MB; if that is over 4 MB it behaves like a file over 4 MB, however small it is on disk.
+In a log or other plain text, lines with words like error or denied show red, and lines with warn or deprecated show orange. Terminal colors in the text (`journalctl`, `docker logs`, a log written with them) show as colors instead of escape codes, and such a line keeps its own colors instead of red or orange. Over 4 MB the window shows the colors too. A `.gz`, `.bz2`, `.xz` or `.zst` log (`.zst` needs the `zstd` program) shows unpacked, the first 32 MB; if that is over 4 MB it behaves like a file over 4 MB, however small it is on disk.
 
 On a server panel F3 downloads the file. A log over 4 MB shows only its last 4 MB; `f` follows it with `tail -F` on the server and `&` filters the whole log with `grep` there.
 
@@ -31,7 +31,7 @@ Kermo maps the file and shows a 256 KB window; scrolling past an edge slides it.
 
 - `g`: ask for a position: `50%`, `1.5G`, a byte count such as `4096`, or `end`.
 - Home or ⌘↑ go to the start. End or ⌘↓ go to the end, including text added since you opened the file.
-- `/`: search the whole file, ignoring case, downward from the line at the top of the view. `n` finds the next hit after the last one. The search does not wrap around; a miss beeps.
+- `/`: search the whole file, ignoring case, downward from the line at the top of the view. `n` finds the next hit after the last one. The search does not wrap around; a miss beeps. It reads the file as it is, so a text that color codes split (a red `ERROR` followed by `: x`) isn't found as one.
 
 These keys work in text mode only (`g` also in hex mode), and stop while `f` follows the file or an `&` filter is on. A filter on a huge file scans all of it and shows the first 4 MB of matching lines.
 

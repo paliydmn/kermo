@@ -29,6 +29,7 @@ Release:
 
 ### Fixed
 
+- A text file over 4 MB now shows terminal colors in its window instead of escape codes such as `[31m`, as smaller files do.
 - The `.pkg` always puts Kermo in Applications. Before, if another copy of Kermo was on the Mac (an old one in Downloads), the installer updated that copy instead.
 
 ## [1.3] - 2026-10-20
