@@ -97,4 +97,9 @@ private let a = SFTPTarget(host: "a@dfm-18.invalid"), b = SFTPTarget(host: "b@df
     let e = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: p, modifierFlags: [], timestamp: 0, windowNumber: v.window!.windowNumber,
                                            context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
     #expect(g.focused == 0 && term.paneIndex(under: e, in: g) == 1)
+    let split = g.split.bounds, header = g.panes[0].header.frame.height
+    for t in g.panes {   // the view fills its pane under the header; the panes share the width
+        #expect(header > 10 && abs(t.view.frame.height - (split.height - header)) < 2, "\(t.view.frame) in \(split)")
+        #expect(abs(t.box.frame.width - (split.width - g.split.dividerThickness) / 2) < 2)
+    }
 }

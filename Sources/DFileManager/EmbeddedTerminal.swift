@@ -27,6 +27,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             self.view = view
             box.orientation = .vertical
             box.alignment = .width
+            box.distribution = .fill   // the header at its height, the view the rest
             box.spacing = 0
             box.addArrangedSubview(header)
             box.addArrangedSubview(view)

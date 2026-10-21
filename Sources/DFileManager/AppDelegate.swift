@@ -1009,7 +1009,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         terminal.onChange = { [unowned self] in
             defaults.set(try? JSONEncoder().encode(terminal.saved), forKey: "terminalGroups")
-            defaults.removeObject(forKey: "sshTabs")
+            defaults.set(try? JSONEncoder().encode(terminal.saved.flatMap(\.panes)), forKey: "sshTabs")   // for a build before 1.4: one a tab
             refreshSidebar()
             releaseIdleServers()
             updatePrompt()
