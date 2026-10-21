@@ -1721,13 +1721,24 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     /// A tab: `action` on click, `close` on its × (both get the button with `tag` = index). The terminal's tabs use it too.
-    static func tabButton(_ title: String, tip: String, index i: Int, current: Bool, target: AnyObject, action: Selector, close: Selector) -> NSButton {
-        let b = NSButton(title: "     \(title)     ", target: target, action: action)   // padding keeps the title clear of the ×
+    /// The current tab: bold title and an accent line under it; the others' titles are dimmed. `dot`: a state mark before the title.
+    static func tabButton(_ title: String, dot: (String, NSColor)? = nil, tip: String, index i: Int, current: Bool, target: AnyObject, action: Selector, close: Selector) -> NSButton {
+        let b = NSButton(title: "", target: target, action: action)
         b.setButtonType(.pushOnPushOff)
         b.bezelStyle = .accessoryBarAction
         b.controlSize = .small
-        b.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        b.lineBreakMode = .byTruncatingMiddle
+        let size = NSFont.smallSystemFontSize
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        style.lineBreakMode = .byTruncatingMiddle
+        let text = NSMutableAttributedString(string: "     ")   // padding keeps the title clear of the ×
+        if let (d, c) = dot { text.append(NSAttributedString(string: d + " ", attributes: [.foregroundColor: c])) }
+        text.append(NSAttributedString(string: title + "     ", attributes: [
+            .font: current ? NSFont.boldSystemFont(ofSize: size) : NSFont.systemFont(ofSize: size),
+            .foregroundColor: current ? NSColor.labelColor : NSColor.secondaryLabelColor]))
+        text.addAttributes([.paragraphStyle: style], range: NSRange(location: 0, length: text.length))
+        text.addAttribute(.font, value: NSFont.systemFont(ofSize: size), range: NSRange(location: 0, length: 5))
+        b.attributedTitle = text
         b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         b.refusesFirstResponder = true
         b.state = current ? .on : .off
@@ -1746,6 +1757,20 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             x.trailingAnchor.constraint(equalTo: b.trailingAnchor, constant: -6),
             x.centerYAnchor.constraint(equalTo: b.centerYAnchor),
         ])
+        if current {
+            let line = NSBox()
+            line.boxType = .custom
+            line.borderWidth = 0
+            line.fillColor = .controlAccentColor
+            line.translatesAutoresizingMaskIntoConstraints = false
+            b.addSubview(line)
+            NSLayoutConstraint.activate([
+                line.leadingAnchor.constraint(equalTo: b.leadingAnchor, constant: 4),
+                line.trailingAnchor.constraint(equalTo: b.trailingAnchor, constant: -4),
+                line.bottomAnchor.constraint(equalTo: b.bottomAnchor),
+                line.heightAnchor.constraint(equalToConstant: 2),
+            ])
+        }
         return b
     }
 

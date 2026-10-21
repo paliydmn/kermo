@@ -8,7 +8,7 @@ How the Kermo window is laid out, and the three ways to reach anything: the key 
 
 ## Panels and tabs
 
-The window shows two to four panels side by side, each with its own tabs. Tab moves between panels. With three or four panels, F5 and F6 target the panel that was active before this one. A panel can show a folder on this Mac, a [server](servers.md), an archive, a Git list or search results.
+The window shows two to four panels side by side, each with its own tabs. The tab in front has a bold title with a line in the accent color under it; the other tabs' titles are grey. The terminal's tabs look the same, and an SSH tab's ● is green while it's connected, ○ grey when it isn't. Tab moves between panels. With three or four panels, F5 and F6 target the panel that was active before this one. A panel can show a folder on this Mac, a [server](servers.md), an archive, a Git list or search results.
 
 ### After a restart
 
