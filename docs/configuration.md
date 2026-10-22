@@ -20,7 +20,7 @@ Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`
 | `audit.jsonl` | The [production log](safety.md#production-log) | **Admin ▸ Show Production Log** |
 | `history.noindex/` | [Versions of server files](server-files.md#file-history) | Kermo writes it |
 
-Kermo also writes `server-pins.json` (the order of pinned servers) and `trash.json` (where trashed items came from, for Put Back).
+Kermo also writes `server-pins.json` (the order of pinned servers), `trash.json` (where trashed items came from, for Put Back) and `activity.json` (the last 100 finished jobs in [Activity](files.md#activity)).
 
 A file Kermo writes back itself (`servers.json`, `bookmarks.json`, `server-pins.json`, `frecency.json`, `trash.json`) that it can't read is copied as it is to `name.broken` before anything is saved over it, and Kermo says so at launch (`trash.json`: when it's next read). In a list (servers, bookmarks, pins) only the entries that can't be read are left out; the rest load. A file that doesn't parse at all starts empty. When a `name.broken` with something else in it is there already, the new copy is `name.broken-<date>-<time>`.
 

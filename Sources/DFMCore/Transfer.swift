@@ -617,13 +617,17 @@ extension FileJob {
         let top = root == nil
         waitWhilePaused()
         guard !isCancelled else { return }
+        let outer = pair
+        pair = (src, dstIn)
+        defer { pair = outer }
+        if top { update { $0.topsBegun += 1 } }
         var dst = dstIn
         var found = seen.src
         guard found != nil || attempt(src, {
             found = try sfs.lstat(src)
             if found == nil { throw JobError(message: "No such file or directory") }
         }), let s = found else { return }
-        update { $0.current = (src as NSString).lastPathComponent }
+        update { $0.current = (src as NSString).lastPathComponent; $0.currentSize = 0 }
         // Deeper than the source went before the job began: a folder this job made, so the copy is inside its
         // source, however that was reached (an alias, this Mac and localhost, another case, no marker allowed).
         // ponytail: a listing that failed while measuring counts as no subfolders, so a network blip then can
@@ -755,7 +759,7 @@ extension FileJob {
             if existing != nil { guard attempt(dst, { try dfs.remove(dst) }) else { return } }
             guard attempt(dst, { try dfs.symlink(target, at: dst) }) else { return }
             noteAcross(dst)
-            update { $0.doneFiles += 1; $0.doneBytes = $0.doneBytes.saturatingAdd(s.size) }   // what measure counted for it
+            fileDone(src, s.size)   // what measure counted for it
             if move { if dfs is LocalFS { Self.flush(dst) }; attempt(src) { try sfs.remove(src) } }
         case .file:
             guard copyAcross(sfs, src, s, dfs, dst, replace: existing != nil) else { return }
@@ -815,6 +819,7 @@ extension FileJob {
         var kept: Int64 = 0  // how far the partial holds it without a gap (writes sent after a failed one may have landed)
         var retrying = false
         var attrsSent = false, attrsError: Error?   // mode and date went along with the close (a server's writer)
+        update { $0.currentSize = source.size }
         let ok = attempt(src) {
             defer { retrying = true }
             // A retry goes on from what the partial holds; the first try's partial is a fresh name: nothing to ask.
@@ -871,7 +876,7 @@ extension FileJob {
             try? dfs.remove(partial)
             return false
         }
-        update { $0.doneFiles += 1; $0.doneBytes = $0.doneBytes.saturatingAdd(s.size) }
+        fileDone(src, s.size)
         return true
     }
 

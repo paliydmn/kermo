@@ -13,6 +13,14 @@ Release:
 
 ## [Unreleased]
 
+### Added
+- **Activity** (toolbar button, ⌥⌘J): the running, queued and last 100 finished copies, moves and deletes, kept across restarts. Each opens to its files; a finished one lists the files that failed and why, with **Retry Failed**, **Retry** per file, **Show** and **Copy Errors**.
+- **▸** on a row above the key bar opens that job's files: the last ones done, the current one, those that failed and the items still to come.
+- **Apply to all remaining folders** when a folder is there already: Merge, Skip or Keep Both once for all of them. Files that clash inside are still asked about one by one.
+
+### Changed
+- A job that finishes with errors no longer stops the window with an alert. Its row stays in red with **Show** and **Retry Failed**, and the Activity button gets a red dot. A finished copy or move shows **✓** for a moment.
+
 ## [1.4.1] - 2026-10-21
 
 Everything since 1.2.1. It includes what was released as 1.3 and 1.4 on 2026-10-20 and 2026-10-21; their downloads were withdrawn in favor of this one.

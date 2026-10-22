@@ -28,6 +28,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Next panel / panel N | Tab / ⌘1…⌘4 |
 | Add / close a panel (2–4; F5 and F6 target the previously active one) | ⌥⌘N / ⌥⌘W |
 | Show / hide the Places sidebar | ⌃⌘S |
+| Activity: running, queued and finished copies, moves and deletes | ⌥⌘J |
 | Keyboard focus to the sidebar (↑↓ choose, ↩ open, ⎋ back to the panel) | ⌃⇧S |
 | New tab / close tab (or click its ×) | ⌘T / ⌘W |
 | Next / previous tab | ⌃⇥, ⇧⌘] / ⌃⇧⇥, ⇧⌘[ |
