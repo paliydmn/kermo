@@ -122,6 +122,8 @@ extension AppDelegate {
             if let r = app.active.remote { app.other.loadRemote(r.target, dir: r.dir, select: nil) } else { app.other.navigate(to: app.active.path) }
         },
         cmd("view.sidebar", "Show/Hide Sidebar", ["ctrl+cmd+s"], menu: "View", short: "Sidebar", aliases: "places favorites") { $0.toggleSidebar() },
+        cmd("view.activity", "Activity", ["cmd+opt+j"], menu: "View", short: "Activity",
+            aliases: "copies transfers operations queue progress history retry failed") { $0.ops.toggleActivity() },
         cmd("view.sidebarFocus", "Focus Sidebar", ["ctrl+shift+s"], menu: "View", aliases: "places keyboard") { $0.focusSidebar() },
         cmd("view.hidden", "Show Hidden Files", ["cmd+shift+."], menu: "View", short: "Hidden", aliases: "dotfiles show hidden files") { $0.toggleHidden() },
         cmd("view.perms", "Show Permissions & Owner", [], menu: "View", short: "Perms", aliases: "mode rwx owner group columns") {
@@ -2515,6 +2517,44 @@ extension AppDelegate {
         }
         ops.enqueue(FileJob(move ? .move : .copy, sources: sources, from: from, to: side, destDir: dir, targetName: name, sshEnv: SSHAskpass.env),
                     title: title)
+    }
+
+    /// Retry Failed in the Activity list: what `e` left out (`only`: these), again into the folders it was going
+    /// into — as F5/F6 would, so a locked server asks for Touch ID and a production one asks to go ahead, once for
+    /// all of them. One job per destination folder; one server's go one after another.
+    func retryFailed(_ e: ActivityEntry, _ only: [FileJob.Failure]?) {
+        let failures = (only ?? e.failed).filter { $0.dst != nil }
+        guard !failures.isEmpty else { return NSSound.beep() }
+        let move = e.kind == .move
+        Task {
+            guard await unlock([e.from, e.to]) else { return }
+            let prod = SavedServer.prodNote(Self.changed(from: e.from, to: e.to, move: move))
+            if !prod.isEmpty {
+                let unchecked = Self.uncheckedNote(e.to == .local ? [] : failures.compactMap(\.dst),
+                                                   rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules)
+                let what = failures.count == 1 ? "“\((failures[0].src as NSString).lastPathComponent)”" : "\(failures.count) items"
+                guard await confirm("Retry \(move ? "moving" : "copying") \(what)?".bidiVisible,
+                                    info: prod + "Files there may be overwritten" + (move ? " or removed." : ".") + unchecked, ok: "Retry") else { return }
+            }
+            for g in ActivityEntry.retryGroups(failures) {
+                enqueueTransfer(g.sources, from: e.from, to: g.dir, on: e.to, name: g.name, move: move, prodAsked: true)
+            }
+            if only == nil { ops.history.change(e.id) { $0.retried = true } }
+            ops.changed()
+        }
+    }
+
+    /// Show in the Activity list: `dir` in the active panel with `select` picked; a server's opens like its Favorite.
+    func showItem(on side: Endpoint, in dir: String, select: String?) {
+        if terminal.isShown { toggleTerminal() }
+        switch side {
+        case .local:
+            guard FileManager.default.fileExists(atPath: dir) else { return active.flash("No such folder: \(dir)", error: true) }
+            active.navigate(to: dir, select: select)
+            window.makeFirstResponder(active.table)
+        case .sftp(let t):
+            openBookmark((t, dir))
+        }
     }
 
     /// Touch ID first for each locked server among `ends`, as listing one of its folders asks; false (and said so)

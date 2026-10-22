@@ -617,6 +617,10 @@ extension FileJob {
         let top = root == nil
         waitWhilePaused()
         guard !isCancelled else { return }
+        let outer = pair
+        pair = (src, dstIn)
+        defer { pair = outer }
+        if top { update { $0.topsBegun += 1 } }
         var dst = dstIn
         var found = seen.src
         guard found != nil || attempt(src, {
@@ -755,7 +759,7 @@ extension FileJob {
             if existing != nil { guard attempt(dst, { try dfs.remove(dst) }) else { return } }
             guard attempt(dst, { try dfs.symlink(target, at: dst) }) else { return }
             noteAcross(dst)
-            update { $0.doneFiles += 1; $0.doneBytes = $0.doneBytes.saturatingAdd(s.size) }   // what measure counted for it
+            fileDone(src, s.size)   // what measure counted for it
             if move { if dfs is LocalFS { Self.flush(dst) }; attempt(src) { try sfs.remove(src) } }
         case .file:
             guard copyAcross(sfs, src, s, dfs, dst, replace: existing != nil) else { return }
@@ -871,7 +875,7 @@ extension FileJob {
             try? dfs.remove(partial)
             return false
         }
-        update { $0.doneFiles += 1; $0.doneBytes = $0.doneBytes.saturatingAdd(s.size) }
+        fileDone(src, s.size)
         return true
     }
 

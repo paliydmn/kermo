@@ -4,7 +4,7 @@ import Foundation
 /// Swift cooperative pool); the UI polls `progress` and answers questions via the
 /// synchronous `resolve*` callbacks, which may block the worker until the user decides.
 public final class FileJob: @unchecked Sendable {
-    public enum Kind: Sendable { case copy, move, trash, delete }
+    public enum Kind: String, Sendable, Codable { case copy, move, trash, delete }
 
     public enum ConflictChoice: Sendable { case overwrite, skip, keepBoth, overwriteIfNewer, cancel }
     public enum ErrorChoice: Sendable { case retry, skip, abort }
@@ -28,8 +28,25 @@ public final class FileJob: @unchecked Sendable {
         public var totalFiles = 0, doneFiles = 0
         public var current = ""
         public var errors: [String] = []
+        /// What Skip or Abort left out, with the item the job was on then (`errors` has these lines too, and the
+        /// notes: "kept", "mode and date not kept" …).
+        public var failed: [Failure] = []
+        /// The last few files done, newest last: what the Activity list shows of a running job.
+        public var recent: [String] = []
+        /// How many of the items picked (`sources`, `pairs`) the job has begun: the rest are still to come.
+        public var topsBegun = 0
         /// Copying already, while the totals are still being counted.
         public var counting = false
+    }
+
+    /// One item left out. `src`/`dst`: the item `transfer` was on (a folder, if its listing failed) — `path` may be
+    /// either, or a source a trash or delete was on (`dst` nil).
+    public struct Failure: Sendable, Codable, Equatable {
+        public let path: String, message: String
+        public let src: String, dst: String?
+        public init(path: String, message: String, src: String, dst: String?) {
+            self.path = path; self.message = message; self.src = src; self.dst = dst
+        }
     }
 
     public let kind: Kind
@@ -171,6 +188,19 @@ public final class FileJob: @unchecked Sendable {
     }
 
     func update(_ f: (inout Progress) -> Void) { lock.withLock { f(&_progress) } }
+
+    /// The item `transfer` is on (worker thread only): what a failure is filed under.
+    var pair: (src: String, dst: String)?
+
+    /// A file copied whole: the counts, and the list of recent ones.
+    func fileDone(_ path: String, _ size: Int64) {
+        update {
+            $0.doneFiles += 1
+            $0.doneBytes = $0.doneBytes.saturatingAdd(size)
+            $0.recent.append(path)
+            if $0.recent.count > 5 { $0.recent.removeFirst() }
+        }
+    }
 
     // MARK: - Running
 
@@ -315,6 +345,10 @@ public final class FileJob: @unchecked Sendable {
     private func transfer(_ src: String, _ dstIn: String, move: Bool, top: Bool = false, into: Into? = nil, srcDev: dev_t? = nil) -> String? {
         waitWhilePaused()   // APFS clones never call the copyfile progress callback, so pause takes effect here
         guard !isCancelled else { return nil }
+        let outer = pair
+        pair = (src, dstIn)
+        defer { pair = outer }
+        if top { update { $0.topsBegun += 1 } }
         var dst = dstIn
         guard let s = Self.lstat(src) else {
             fail(src, "No such file or directory")
@@ -454,9 +488,7 @@ public final class FileJob: @unchecked Sendable {
             // all or nothing: a system flag (schg) takes root, and without it the user's own lock still goes back on
             if locked && lchflags(landed, flags) != 0 { lchflags(landed, flags & UInt32(UF_SETTABLE)) }
         }
-        if ok && !isCancelled {
-            update { $0.doneFiles += 1; $0.doneBytes += size }
-        }
+        if ok && !isCancelled { fileDone(src, size) }
         return ok && !isCancelled ? landed : nil
     }
 
@@ -514,16 +546,20 @@ public final class FileJob: @unchecked Sendable {
                 switch choice {
                 case .retry: continue
                 case .skip:
-                    update { $0.errors.append("\(path): \(message)") }
+                    update { $0.errors.append("\(path): \(message)"); $0.failed.append(failure(path, message)) }
                     return false
                 case .abort:
-                    update { $0.errors.append("\(path): \(message)"); $0.state = .failed }
+                    update { $0.errors.append("\(path): \(message)"); $0.failed.append(failure(path, message)); $0.state = .failed }
                     cancel()
                     return false
                 }
             }
         }
         return false
+    }
+
+    private func failure(_ path: String, _ message: String) -> Failure {
+        Failure(path: path, message: message, src: pair?.src ?? path, dst: pair?.dst)
     }
 
     func fail(_ path: String, _ message: String) {

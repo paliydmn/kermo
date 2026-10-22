@@ -28,6 +28,8 @@ Every copy, move, Trash and delete gets a row above the key bar: files done of t
 
 - **Pause** (copies and moves) and **Cancel** sit on the row. Cancel stops at once: finished items stay, a half-written file is removed.
 - Jobs on this Mac run one at a time and wait as **Queued**. **Start Now** (▶▶) runs one next to the others.
+- **▸** at the start of a row opens its files: the last few done, the one being copied, any that failed, and the picked items not begun yet.
+- When a copy or move is done, its row shows **✓** for a moment. One that finished with errors keeps its row in red, with **Show** and **Retry Failed**, until you close it with ×; nothing stops the window.
 - A move inside one volume is a rename: instant. To another volume it copies, then removes each original.
 - A copy inside one APFS volume is cloned where possible, and Pause then lands between files.
 - Copies keep permissions, extended attributes, ACLs and dates, and copy a symbolic link as a link. Each file is written under a hidden name and renamed when whole, so a pulled drive never leaves a cut-off file under the real name. A hidden `.dfm-partial-…` file can stay behind; the next copy into that folder removes it once it is a day old.
@@ -39,7 +41,16 @@ A dialog asks. For files it shows size and date of both (**← newer** marks the
 - Files: **Overwrite**, **Skip**, **Keep Both** (the new one becomes `name 2.ext`), **Overwrite if Newer**, **Cancel**. **Apply to all remaining conflicts** answers the rest the same way.
 - Folders: **Merge** (keeps existing files, asks about each clash inside), **Skip**, **Keep Both**, **Cancel**.
 - A file onto a folder: **Skip**, **Keep Both**, **Replace Folder** (the folder goes to the Trash), **Cancel**. Asked every time.
-- An error asks **Skip**, **Retry** or **Abort**; **Skip all further errors** stops the questions, and a list of what was skipped follows. On "Permission denied" see [Administrator rights](#administrator-rights).
+- An error asks **Skip**, **Retry** or **Abort**; **Skip all further errors** stops the questions. What was skipped is kept in [Activity](#activity). On "Permission denied" see [Administrator rights](#administrator-rights).
+
+### Activity
+
+The **Activity** button in the toolbar (a ring that fills as the jobs go) or **View ▸ Activity** (⌥⌘J) lists the jobs running, the ones queued and the last 100 finished, newest first. A red dot on the button means one finished with errors you haven't looked at.
+
+- Click **▸** on a job to see its files. A finished one shows what it did, how long it took, and each file that failed with the reason.
+- **Retry Failed** copies or moves the failed files again, into the folders they were going to. **Retry** next to a file does just that one. A locked server asks for Touch ID and a production server asks first, as F5 does. A retried file starts over: only **Retry** in the error dialog, while the job runs, continues a big file where it stopped.
+- **Show** goes to the failed file. **Show in Panel** goes to where the job put things. **Copy Errors** puts the list on the clipboard.
+- The list is kept across restarts, in `activity.json` in Kermo's settings folder (only the first 50 failed files of each job). **Clear** empties it; × removes one entry.
 
 ## Trash and delete
 

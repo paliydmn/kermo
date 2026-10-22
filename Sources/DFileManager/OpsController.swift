@@ -5,6 +5,8 @@ import DFMCore
 /// this Mac, or a server — and lanes run side by side, so a slow upload never holds up a local copy (or the other
 /// way round). Start Now runs a queued job right away, next to whatever is running.
 /// Workers block on our sheets for conflicts/errors via `ask`.
+/// A finished job goes to `history` (the Activity list, ⌥⌘J): a copy or move shows "✓" in its row for a moment, one
+/// with errors keeps a row saying so — Show, Retry Failed — until it's dismissed. Nothing blocks the window.
 @MainActor
 final class OpsController {
     let view = NSStackView()
@@ -12,18 +14,38 @@ final class OpsController {
     private var rows: [JobRow] = []
     /// Running and queued jobs.
     var pending: Int { rows.count }
+    var jobRows: [JobRow] { rows }
+    let history: ActivityHistory
+    /// Retry Failed (`only`: these failures; nil: all of them) and Show: what they take is the app's (locks, the
+    /// production question, the panels).
+    var onRetry: (ActivityEntry, [FileJob.Failure]?) -> Void = { _, _ in }
+    var onShow: (_ on: Endpoint, _ dir: String, _ select: String?) -> Void = { _, _, _ in }
+    /// The toolbar's Activity button.
+    let toolbarItem = NSToolbarItem(itemIdentifier: OpsController.toolbarID)
+    static let toolbarID = NSToolbarItem.Identifier("activity")
+    private lazy var activity = ActivityPopover(ops: self)
+    /// Rows of finished jobs: "✓" for a moment, errors until dismissed.
+    private var results: [(id: UUID, view: NSView)] = []
     private var running: [FileJob] = []
     private var timer: Timer?
+    private var buttonKey = ""
     private let onFinished: (FileJob) -> Void
 
-    init(window: NSWindow, onFinished: @escaping (FileJob) -> Void) {
+    /// `historyDir`: where activity.json is (nil: this run only — tests).
+    init(window: NSWindow, historyDir: String? = nil, onFinished: @escaping (FileJob) -> Void) {
         self.window = window
         self.onFinished = onFinished
+        history = ActivityHistory(dir: historyDir)
         view.orientation = .vertical
         view.spacing = 4
         view.setHuggingPriority(.defaultHigh, for: .vertical)   // as tall as its rows: the panels take the rest
         view.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 2, right: 8)
         view.isHidden = true
+        toolbarItem.label = "Activity"
+        toolbarItem.isBordered = true
+        toolbarItem.target = self
+        toolbarItem.action = #selector(toolbarButton)
+        updateButton()
     }
 
     func enqueue(_ job: FileJob, title: String) {
@@ -44,10 +66,10 @@ final class OpsController {
         let row = JobRow(job: job, title: title, onCancel: { [weak self] in self?.cancel(job) },
                          onStartNow: { [weak self] in self?.start(job) })
         rows.append(row)
-        view.addArrangedSubview(row.view)
+        view.insertArrangedSubview(row.view, at: rows.count - 1)   // above the finished ones
         row.view.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -16).isActive = true
-        view.isHidden = false
         startNext()
+        changed()
     }
 
     /// The server a job talks to (its source's, server to server), or this Mac.
@@ -63,31 +85,38 @@ final class OpsController {
     private func start(_ job: FileJob) {
         guard !running.contains(where: { $0 === job }), job.progress.state == .queued else { return }
         running.append(job)
+        rows.first { $0.job === job }?.started = Date()
         job.start()
         if timer == nil {
             timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.rows.forEach { $0.update() } }
+                MainActor.assumeIsolated { self?.tick() }
             }
         }
+    }
+
+    private func tick() {
+        rows.forEach { $0.update() }
+        if activity.isShown { activity.refresh() }
+        updateButton()
     }
 
     private func cancel(_ job: FileJob) {
         job.cancel()
         if !running.contains(where: { $0 === job }) { remove(job) }   // queued, never started
+        changed()
     }
 
     private func finished(_ job: FileJob) {
         running.removeAll { $0 === job }
-        let errors = job.progress.errors
+        let row = rows.first { $0.job === job }
+        var entry = ActivityEntry(job, title: row?.title ?? "", started: row?.started ?? Date())
+        if activity.isShown { entry.seen = true }
         remove(job)
         onFinished(job)
-        if !errors.isEmpty, let window {
-            let alert = NSAlert()
-            alert.messageText = "Finished with \(errors.count) error\(errors.count == 1 ? "" : "s")"
-            alert.informativeText = errors.prefix(10).joined(separator: "\n").bidiVisible + (errors.count > 10 ? "\n…" : "")
-            alert.beginSheetModal(for: window)
-        }
+        history.add(entry)
+        showResult(entry)
         startNext()
+        changed()
     }
 
     private func remove(_ job: FileJob) {
@@ -95,10 +124,105 @@ final class OpsController {
         guard let i = rows.firstIndex(where: { $0.job === job }) else { return }
         rows.remove(at: i).view.removeFromSuperview()
         if rows.isEmpty {
-            view.isHidden = true
             timer?.invalidate()
             timer = nil
         }
+    }
+
+    /// Something came, went or changed: the rows, the button, the open list.
+    func changed() {
+        view.isHidden = rows.isEmpty && results.isEmpty
+        updateButton()
+        if activity.isShown { activity.refresh() }
+    }
+
+    // MARK: - Finished rows
+
+    private func showResult(_ e: ActivityEntry) {
+        let line: NSStackView
+        switch e.result {
+        case .done:
+            guard e.kind == .copy || e.kind == .move else { return }   // a Trash or a delete is done at once: no row
+            let mark = Activity.label("✓  " + e.title, size: 12, weight: .semibold, color: .systemGreen)
+            line = NSStackView(views: [mark, Activity.label(e.summary, color: .secondaryLabelColor), NSView()])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.dismiss(e.id) }
+        case .errors:
+            let n = e.errorCount
+            let mark = Activity.label("⚠  \(e.title) — finished with \(n) error\(n == 1 ? "" : "s")", size: 12, weight: .semibold, color: .systemRed)
+            var views: [NSView] = [mark, NSView(), Activity.button("Show") { [unowned self] in dismiss(e.id); showActivity(entry: e.id) }]
+            if e.canRetry { views.append(Activity.button("Retry Failed") { [unowned self] in dismiss(e.id); retry(e, nil) }) }
+            views.append(Activity.icon("xmark", "Dismiss") { [unowned self] in
+                history.change(e.id) { $0.seen = true }
+                dismiss(e.id)
+            })
+            line = NSStackView(views: views)
+        case .cancelled: return
+        }
+        line.spacing = 8
+        results.append((e.id, line))
+        view.addArrangedSubview(line)
+        line.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -16).isActive = true
+    }
+
+    private func dismiss(_ id: UUID) {
+        guard let i = results.firstIndex(where: { $0.id == id }) else { return }
+        results.remove(at: i).view.removeFromSuperview()
+        changed()
+    }
+
+    // MARK: - Activity
+
+    func retry(_ e: ActivityEntry, _ only: [FileJob.Failure]?) {
+        activity.popover.close()
+        onRetry(e, only)
+    }
+
+    /// Where the entry put things (`f` nil: its destination), or where the item that failed is.
+    func showPlace(_ e: ActivityEntry, _ f: FileJob.Failure?) {
+        activity.popover.close()
+        if let f {
+            let p = f.dst == nil ? f.path : f.src   // a failed copy isn't at its destination: its source is
+            onShow(e.from, (p as NSString).deletingLastPathComponent, (p as NSString).lastPathComponent)
+        } else if let dir = e.destDir {
+            onShow(e.to, dir, e.targetName ?? e.sources.first.map { ($0 as NSString).lastPathComponent })
+        }
+    }
+
+    @objc private func toolbarButton() { toggleActivity() }
+
+    /// ⌥⌘J.
+    func toggleActivity() {
+        if activity.isShown { activity.popover.close() } else { showActivity(entry: nil) }
+    }
+
+    /// From the toolbar button; with the toolbar hidden, from the top of the window.
+    func showActivity(entry: UUID?) {
+        activity.prepare(entry: entry)
+        if let toolbar = window?.toolbar, toolbar.isVisible, toolbar.items.contains(where: { $0 === toolbarItem }) {
+            activity.popover.show(relativeTo: toolbarItem)
+        } else if let content = window?.contentView {
+            activity.popover.show(relativeTo: NSRect(x: content.bounds.maxX - 60, y: content.bounds.maxY - 4, width: 1, height: 1),
+                                  of: content, preferredEdge: .minY)
+        }
+        history.markSeen()
+        changed()
+    }
+
+    private func updateButton() {
+        var total: Int64 = 0, done: Int64 = 0
+        for r in rows {
+            let p = r.job.progress
+            if p.totalBytes > 0 { total += p.totalBytes; done += min(p.doneBytes, p.totalBytes) }
+        }
+        let fraction = rows.isEmpty ? nil : total > 0 ? Double(done) / Double(total) : 0
+        let unseen = history.unseen > 0
+        let key = "\(fraction.map { Int($0 * 60) } ?? -1) \(rows.count) \(unseen)"
+        guard key != buttonKey else { return }
+        buttonKey = key
+        toolbarItem.image = Activity.image(fraction: fraction, count: rows.count, alert: unseen)
+        let going = rows.filter { $0.job.progress.state != .queued }.count
+        toolbarItem.toolTip = "Activity  ⌥⌘J — " + (rows.isEmpty ? "nothing running" : "\(going) running, \(rows.count - going) queued")
+            + (unseen ? " · finished with errors" : "")
     }
 
     // MARK: - Questions from the worker thread
@@ -184,15 +308,21 @@ private final class Box<T>: @unchecked Sendable {
     init(_ value: T) { self.value = value }
 }
 
-/// One job's progress line: title · bar · details · start now (queued) · pause · cancel.
+/// One job's progress line: ▸ · title · bar · details · start now (queued) · pause · cancel. ▸ opens the job's files
+/// under it (`Activity.files`).
 @MainActor
 final class JobRow {   // internal for tests
     let job: FileJob
+    let title: String
     let view: NSStackView
+    var started: Date?
     private let detail = NSTextField(labelWithString: "Queued")
-    private let bar = NSProgressIndicator()
+    let bar = NSProgressIndicator()
     let pause: NSButton   // internal for tests
     private let startNow: NSButton
+    private let disclose: NSButton
+    let files = NSTextField(wrappingLabelWithString: "")   // internal for tests
+    private(set) var detailText = "Queued"
     private var lastBytes: Int64 = 0
     private var lastTime = Date()
     private var speed = 0.0
@@ -201,6 +331,7 @@ final class JobRow {   // internal for tests
 
     init(job: FileJob, title: String, onCancel: @escaping () -> Void, onStartNow: @escaping () -> Void) {
         self.job = job
+        self.title = title
         self.onCancel = onCancel
         self.onStartNow = onStartNow
         let titleLabel = NSTextField(labelWithString: title)
@@ -219,23 +350,59 @@ final class JobRow {   // internal for tests
         pause = NSButton(image: NSImage(systemSymbolName: "pause.fill", accessibilityDescription: "Pause")!, target: nil, action: nil)
         let cancel = NSButton(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Cancel")!, target: nil, action: nil)
         startNow = NSButton(image: NSImage(systemSymbolName: "forward.fill", accessibilityDescription: "Start Now")!, target: nil, action: nil)
+        disclose = NSButton(image: NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Show the files")!, target: nil, action: nil)
+        disclose.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
         startNow.toolTip = "Start Now — run alongside the jobs already running"
         pause.toolTip = "Pause"
         cancel.toolTip = "Cancel"
-        for b in [startNow, pause, cancel] {
+        disclose.toolTip = "Show the files"
+        for b in [disclose, startNow, pause, cancel] {
             b.bezelStyle = .accessoryBarAction
             b.isBordered = false
             b.refusesFirstResponder = true
         }
-        view = NSStackView(views: [titleLabel, bar, detail, startNow, pause, cancel])
-        view.orientation = .horizontal
-        view.spacing = 8
+        let line = NSStackView(views: [disclose, titleLabel, bar, detail, startNow, pause, cancel])
+        line.orientation = .horizontal
+        line.spacing = 8
+        files.isSelectable = true
+        files.isHidden = true
+        files.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)   // wraps: never widens the window
+        view = NSStackView(views: [line, files])
+        view.orientation = .vertical
+        view.alignment = .leading
+        view.spacing = 2
+        line.widthAnchor.constraint(equalTo: view.widthAnchor).isActive = true
+        files.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 28).isActive = true
+        files.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor).isActive = true
         pause.target = self
         pause.action = #selector(togglePause)
         cancel.target = self
         cancel.action = #selector(cancelTapped)
         startNow.target = self
         startNow.action = #selector(startNowTapped)
+        disclose.target = self
+        disclose.action = #selector(toggleFiles)
+    }
+
+    /// The same buttons for the Activity list: Start Now (queued), Pause or Resume, Cancel.
+    func controls() -> [NSButton] {
+        var b: [NSButton] = []
+        let state = job.progress.state
+        if state == .queued { b.append(Activity.icon("forward.fill", "Start Now — run alongside the jobs already running") { [unowned self] in startNowTapped() }) }
+        if state != .queued && (job.kind == .copy || job.kind == .move) {
+            b.append(job.isPaused ? Activity.icon("play.fill", "Resume") { [unowned self] in togglePause() }
+                                  : Activity.icon("pause.fill", "Pause") { [unowned self] in togglePause() })
+        }
+        b.append(Activity.icon("xmark", "Cancel") { [unowned self] in cancelTapped() })
+        return b
+    }
+
+    @objc func toggleFiles() {
+        files.isHidden.toggle()
+        let (symbol, tip) = files.isHidden ? ("chevron.right", "Show the files") : ("chevron.down", "Hide the files")
+        disclose.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+        disclose.toolTip = tip
+        update()
     }
 
     @objc private func startNowTapped() { onStartNow(); update() }
@@ -254,13 +421,14 @@ final class JobRow {   // internal for tests
         let p = job.progress
         let fmt = ByteCountFormatter()
         startNow.isHidden = p.state != .queued
+        if !files.isHidden { files.attributedStringValue = Activity.files(job) }
         switch p.state {
         case .queued:
-            detail.stringValue = "Queued"
+            detailText = "Queued"
         case .scanning:
             bar.isIndeterminate = true
             bar.startAnimation(nil)
-            detail.stringValue = "Scanning…"
+            detailText = "Scanning…"
         default:
             bar.isIndeterminate = p.counting   // copying already, the totals still being counted
             if p.counting { bar.startAnimation(nil) } else { bar.stopAnimation(nil) }
@@ -289,7 +457,8 @@ final class JobRow {   // internal for tests
             }
             if job.isPaused { s += " · paused" }
             if !p.current.isEmpty { s += " · \(p.current)" }
-            detail.stringValue = s
+            detailText = s
         }
+        detail.stringValue = detailText
     }
 }
