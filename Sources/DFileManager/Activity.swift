@@ -129,7 +129,7 @@ struct ActivityEntry: Codable, Equatable {
             let track = NSBezierPath()
             track.appendArc(withCenter: c, radius: r, startAngle: 0, endAngle: 360)
             track.lineWidth = 1.8
-            (fraction == nil ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor).setStroke()
+            (fraction == nil ? NSColor.secondaryLabelColor : NSColor.secondaryLabelColor.withAlphaComponent(0.45)).setStroke()
             track.stroke()
             if let fraction, fraction > 0 {
                 let arc = NSBezierPath()
@@ -210,18 +210,22 @@ struct ActivityEntry: Codable, Equatable {
 
     /// "web-01:/var/log → ~/Downloads", a production server's name in its color. nil: no one folder to name (a
     /// Synchronize's pairs).
-    static func route(_ kind: FileJob.Kind, from: Endpoint, to: Endpoint, sources: [String], destDir: String?) -> NSAttributedString? {
+    /// `short`: a long folder as its last two names ("…/gui19/dst"); the tooltip has it whole.
+    static func route(_ kind: FileJob.Kind, from: Endpoint, to: Endpoint, sources: [String], destDir: String?, short: Bool = true) -> NSAttributedString? {
         guard let first = sources.first else { return nil }
         let out = NSMutableAttributedString()
         let plain: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
-        func place(_ e: Endpoint, _ path: String) {
+        func place(_ e: Endpoint, _ whole: String) {
+            var path = e == .local ? (whole as NSString).abbreviatingWithTildeInPath : whole
+            let names = path.split(separator: "/")
+            if short, path.count > 28, names.count > 2 { path = "…/" + names.suffix(2).joined(separator: "/") }
             if case .sftp(let t) = e {
                 let prod = SavedServer.isProd(t)
                 out.append(NSAttributedString(string: t.host.bidiVisible, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: prod ? .semibold : .regular),
                                                                                       .foregroundColor: prod ? SavedServer.color : NSColor.labelColor]))
                 out.append(NSAttributedString(string: ":" + path.bidiVisible, attributes: plain))
             } else {
-                out.append(NSAttributedString(string: (path as NSString).abbreviatingWithTildeInPath.bidiVisible, attributes: plain))
+                out.append(NSAttributedString(string: path.bidiVisible, attributes: plain))
             }
         }
         let parent = (first as NSString).deletingLastPathComponent
@@ -452,12 +456,13 @@ final class ClosureButton: NSButton {
 
     /// ▸ · badge · name over the route · buttons; a click anywhere on it but a button opens it.
     private func header(_ isOpen: Bool, toggle: @escaping () -> Void, badge: NSView, name: String, route: NSAttributedString?,
-                        buttons: [NSView]) -> NSView {
+                        whole: String?, buttons: [NSView]) -> NSView {
         let title = Activity.label(name, size: 13, weight: .semibold)
         var lines: [NSView] = [title]
         if let route {
             let r = NSTextField(labelWithAttributedString: route)
             r.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            r.toolTip = whole
             lines.append(r)
         }
         let text = NSStackView(views: lines)
@@ -478,8 +483,10 @@ final class ClosureButton: NSButton {
             refresh()
         }
         let route = Activity.route(job.kind, from: job.from, to: job.to, sources: job.sources, destDir: job.destDir)
+        let whole = Activity.route(job.kind, from: job.from, to: job.to, sources: job.sources, destDir: job.destDir, short: false)?.string
         let head = header(isOpen, toggle: toggle, badge: Activity.badge(job.kind, from: job.from, to: job.to),
-                          name: route == nil ? row.title : Activity.name(job.sources, count: job.sources.count), route: route, buttons: row.controls())
+                          name: route == nil ? row.title : Activity.name(job.sources, count: job.sources.count), route: route, whole: whole,
+                          buttons: row.controls())
         let bar = NSProgressIndicator()
         bar.style = .bar
         bar.isIndeterminate = false
@@ -510,8 +517,9 @@ final class ClosureButton: NSButton {
         let remove = Activity.icon("xmark", "Remove from the list") { [unowned self] in ops.history.remove(e.id); ops.changed() }
         remove.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
         let route = Activity.route(e.kind, from: e.from, to: e.to, sources: e.sources, destDir: e.destDir)
+        let whole = Activity.route(e.kind, from: e.from, to: e.to, sources: e.sources, destDir: e.destDir, short: false)?.string
         let head = header(isOpen, toggle: toggle, badge: Activity.badge(e.kind, from: e.from, to: e.to, result: e.result),
-                          name: route == nil ? e.title : Activity.name(e.sources, count: e.sourceCount), route: route, buttons: [remove])
+                          name: route == nil ? e.title : Activity.name(e.sources, count: e.sourceCount), route: route, whole: whole, buttons: [remove])
         let detail = Activity.label(e.summary, color: e.result == .errors ? .systemRed : .secondaryLabelColor)
         var views: [NSView] = [head, detail], indent: [NSView] = [detail]
         func add(_ v: NSView) { views.append(v); indent.append(v) }
