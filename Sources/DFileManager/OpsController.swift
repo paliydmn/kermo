@@ -192,7 +192,8 @@ final class OpsController {
 
     /// ⌥⌘J.
     func toggleActivity() {
-        if activity.isShown { activity.popover.close() } else { showActivity(entry: nil) }
+        if activity.isShown { return activity.popover.close() }
+        if Date().timeIntervalSince(activity.closedAt) > 0.3 { showActivity(entry: nil) }   // not the button's own click closing it
     }
 
     /// From the toolbar button; with the toolbar hidden, from the top of the window.

@@ -49,7 +49,7 @@ The **Activity** button in the toolbar (a ring that fills as the jobs go) or **V
 
 - Click **▸** on a job to see its files. A finished one shows what it did, how long it took, and each file that failed with the reason.
 - **Retry Failed** copies or moves the failed files again, into the folders they were going to. **Retry** next to a file does just that one. A locked server asks for Touch ID and a production server asks first, as F5 does. A retried file starts over: only **Retry** in the error dialog, while the job runs, continues a big file where it stopped.
-- **Show** goes to the failed file. **Show in Panel** goes to where the job put things. **Copy Errors** puts the list on the clipboard.
+- **Show** goes to the failed file (on a server: to its folder). **Show in Panel** goes to where the job put things. **Copy Errors** puts the list on the clipboard.
 - The list is kept across restarts, in `activity.json` in Kermo's settings folder (only the first 50 failed files of each job). **Clear** empties it; × removes one entry.
 
 ## Trash and delete

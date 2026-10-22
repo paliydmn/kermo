@@ -27,7 +27,7 @@ Kermo checks for a new version once a day and installs it with **Install and Rel
 ## What it does
 
 - **Panels and keys.** Two to four panels with tabs, a Places sidebar, a key bar that shows the shortcuts for the modifier you hold, and one search for commands, folders and files. → [Panels, sidebar and search](docs/window.md)
-- **Files.** Copy and move in a queue with progress, pause and undo; marking in Midnight Commander style; archives, batch rename, Finder tags. → [Files and folders](docs/files.md)
+- **Files.** Copy and move in a queue with progress, pause and undo, and an Activity list with Retry Failed; marking in Midnight Commander style; archives, batch rename, Finder tags. → [Files and folders](docs/files.md)
 - **Find and compare.** Search by name, content or Spotlight; compare and synchronize folders, also with a server; diff files. → [Search, compare and synchronize](docs/search-compare.md)
 - **View and edit.** A viewer for multi-gigabyte files with hex and `tail -f`; an editor with syntax highlighting. → [Viewer and editor](docs/viewer-editor.md)
 - **Git.** Status column, branch, diff, log, blame, stage; switch branches, commit and sync from the sidebar. → [Git](docs/git.md)

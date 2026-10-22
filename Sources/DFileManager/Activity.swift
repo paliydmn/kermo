@@ -179,7 +179,7 @@ struct ActivityEntry: Codable, Equatable {
         if !p.current.isEmpty { line("▸", .controlAccentColor, p.current) }
         for f in p.failed.suffix(5) { line("✕", .systemRed, "\((f.path as NSString).lastPathComponent) — \(f.message)") }
         if p.failed.count > 5 { line("✕", .systemRed, "\(p.failed.count - 5) more failed", .secondaryLabelColor) }
-        let left = job.sources.dropFirst(p.topsBegun)
+        let left = job.sources.dropFirst(job.kind == .trash || job.kind == .delete ? p.doneFiles : p.topsBegun)   // those count items
         if p.state != .queued, !left.isEmpty {
             let names = left.prefix(3).map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")
             line("○", .tertiaryLabelColor, "\(left.count) more to go: \(names)\(left.count > 3 ? ", …" : "")", .secondaryLabelColor)
@@ -250,6 +250,9 @@ final class ClosureButton: NSButton {
     private var open = Set<ObjectIdentifier>(), openEntries = Set<UUID>()
     private var shape = ""
     private var cards: [(row: JobRow, bar: NSProgressIndicator, detail: NSTextField, files: NSTextField?)] = []
+    /// A click on the toolbar button closes a transient popover on mouse-down, before the button's action: that
+    /// click meant "close", not "open again".
+    private(set) var closedAt = Date.distantPast
 
     init(ops: OpsController) {
         self.ops = ops
@@ -287,7 +290,10 @@ final class ClosureButton: NSButton {
         refresh()
     }
 
-    func popoverDidClose(_ notification: Notification) { cards = [] }
+    func popoverDidClose(_ notification: Notification) {
+        cards = []
+        closedAt = Date()
+    }
 
     /// The list again when something came, went or opened; otherwise each running job's bar and lines.
     func refresh() {
