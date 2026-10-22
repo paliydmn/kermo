@@ -627,7 +627,7 @@ extension FileJob {
             found = try sfs.lstat(src)
             if found == nil { throw JobError(message: "No such file or directory") }
         }), let s = found else { return }
-        update { $0.current = (src as NSString).lastPathComponent }
+        update { $0.current = (src as NSString).lastPathComponent; $0.currentSize = 0 }
         // Deeper than the source went before the job began: a folder this job made, so the copy is inside its
         // source, however that was reached (an alias, this Mac and localhost, another case, no marker allowed).
         // ponytail: a listing that failed while measuring counts as no subfolders, so a network blip then can
@@ -819,6 +819,7 @@ extension FileJob {
         var kept: Int64 = 0  // how far the partial holds it without a gap (writes sent after a failed one may have landed)
         var retrying = false
         var attrsSent = false, attrsError: Error?   // mode and date went along with the close (a server's writer)
+        update { $0.currentSize = source.size }
         let ok = attempt(src) {
             defer { retrying = true }
             // A retry goes on from what the partial holds; the first try's partial is a fresh name: nothing to ask.

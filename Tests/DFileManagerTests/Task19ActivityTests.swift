@@ -34,7 +34,7 @@ private func write(_ path: String, _ text: String = "x") {
     job.run()
     let p = job.progress
     #expect(p.failed == [FileJob.Failure(path: d + "/src/d/sub/bad.txt", message: "Permission denied", src: d + "/src/d/sub/bad.txt", dst: d + "/dst/d/sub/bad.txt")])
-    #expect(p.recent.count == 2 && p.recent.allSatisfy { $0.hasSuffix("a.txt") || $0.hasSuffix("b.txt") })
+    #expect(p.recent.count == 2 && p.recent.allSatisfy { $0.path.hasSuffix("a.txt") || $0.path.hasSuffix("b.txt") } && p.recent.allSatisfy { $0.size == 1 })
     #expect(p.topsBegun == 1)
 
     let entry = ActivityEntry(job, title: "Copy “d” → dst", started: Date())
@@ -144,14 +144,15 @@ private func write(_ path: String, _ text: String = "x") {
 @MainActor @Test func aRowOpensToItsFiles() {
     _ = NSApplication.shared
     let job = FileJob(.copy, sources: ["/a/one", "/a/two", "/a/three"], destDir: "/tmp")
-    job.update { $0.state = .running; $0.doneFiles = 7; $0.recent = ["/a/one/x.txt", "/a/one/y.txt"]; $0.current = "z.txt"; $0.topsBegun = 1 }
+    job.update { $0.state = .running; $0.doneFiles = 7; $0.recent = [.init(path: "/a/one/x.txt", size: 4_800_000), .init(path: "/a/one/y.txt", size: 12)]; $0.currentSize = 3_400_000; $0.currentDone = 1_428_000; $0.current = "z.txt"; $0.topsBegun = 1 }
     let row = JobRow(job: job, title: "Copy", onCancel: {}, onStartNow: {})
     #expect(row.files.isHidden)
     row.toggleFiles()
     let text = row.files.stringValue
     #expect(!row.files.isHidden)
     #expect(text.contains("5 more done") && text.contains("x.txt") && text.contains("y.txt") && text.contains("z.txt"))
-    #expect(text.contains("2 more to go: two, three"))
+    #expect(text.contains("two") && text.contains("three"), "the picked items not begun")
+    #expect(text.contains("4,8 MB") || text.contains("4.8 MB"), "a done file's size")
 }
 
 /// ⌥⌘J in the View menu (and ⌘⇧P), and the toolbar's button.
@@ -162,3 +163,27 @@ private func write(_ path: String, _ text: String = "x") {
     #expect(c?.keys == [Shortcut("cmd+opt+j")!] && c?.menu == "View")
     #expect(app.toolbarDefaultItemIdentifiers(NSToolbar()).contains(OpsController.toolbarID))
 }
+
+/// Many folders that are there already: Merge with "Apply to all remaining folders" merges the rest unasked — but each
+/// file that clashes inside is still asked about (a folders' Merge must never overwrite files on its own).
+@Test func mergeForAllFoldersStillAsksAboutFiles() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    for f in ["a", "b", "c"] {
+        write(d + "/src/\(f)/new.txt", "new")
+        write(d + "/src/\(f)/same.txt", "new")
+        write(d + "/dst/\(f)/same.txt", "old")
+    }
+    let job = FileJob(.copy, sources: ["a", "b", "c"].map { d + "/src/" + $0 }, destDir: d + "/dst")
+    let asked = NSLock(), box = Box()
+    job.resolveConflict = { c in
+        asked.withLock { c.bothDirs ? (box.folders += 1) : (box.files += 1) }
+        return c.bothDirs ? (.overwrite, true) : (.skip, false)
+    }
+    job.run()
+    #expect(box.folders == 1, "Merge for all: asked once")
+    #expect(box.files == 3, "each file inside still asked")
+    #expect(FileManager.default.contents(atPath: d + "/dst/c/new.txt") == Data("new".utf8))
+    #expect(FileManager.default.contents(atPath: d + "/dst/c/same.txt") == Data("old".utf8))
+}
+private final class Box: @unchecked Sendable { var folders = 0, files = 0 }

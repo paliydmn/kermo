@@ -39,7 +39,7 @@ Every copy, move, Trash and delete gets a row above the key bar: files done of t
 A dialog asks. For files it shows size and date of both (**← newer** marks the new file when it is the newer one).
 
 - Files: **Overwrite**, **Skip**, **Keep Both** (the new one becomes `name 2.ext`), **Overwrite if Newer**, **Cancel**. **Apply to all remaining conflicts** answers the rest the same way.
-- Folders: **Merge** (keeps existing files, asks about each clash inside), **Skip**, **Keep Both**, **Cancel**.
+- Folders: **Merge** (keeps existing files, asks about each clash inside), **Skip**, **Keep Both**, **Cancel**. **Apply to all remaining folders** answers the other folders the same way; a file that clashes inside is still asked about.
 - A file onto a folder: **Skip**, **Keep Both**, **Replace Folder** (the folder goes to the Trash), **Cancel**. Asked every time.
 - An error asks **Skip**, **Retry** or **Abort**; **Skip all further errors** stops the questions. What was skipped is kept in [Activity](#activity). On "Permission denied" see [Administrator rights](#administrator-rights).
 

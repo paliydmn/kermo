@@ -32,11 +32,17 @@ public final class FileJob: @unchecked Sendable {
         /// notes: "kept", "mode and date not kept" …).
         public var failed: [Failure] = []
         /// The last few files done, newest last: what the Activity list shows of a running job.
-        public var recent: [String] = []
+        public var recent: [Done] = []
+        /// The file being copied: its size (0: none, or a folder) and how much of it is there.
+        public var currentSize: Int64 = 0, currentDone: Int64 = 0
         /// How many of the items picked (`sources`, `pairs`) the job has begun: the rest are still to come.
         public var topsBegun = 0
         /// Copying already, while the totals are still being counted.
         public var counting = false
+    }
+
+    public struct Done: Sendable, Equatable {
+        public let path: String, size: Int64
     }
 
     /// One item left out. `src`/`dst`: the item `transfer` was on (a folder, if its listing failed) — `path` may be
@@ -86,6 +92,9 @@ public final class FileJob: @unchecked Sendable {
     var currentFileBytes: Int64 = 0
     private var _results: [(src: String, dst: String)] = []
     private var conflictPolicy: ConflictChoice?
+    /// Two folders' "apply to all" (Merge all, say): only for folders, so the files inside are still asked about. A
+    /// file's "apply to all" answers folders too, as it always did.
+    private var folderPolicy: ConflictChoice?
     private var errorPolicy: ErrorChoice?
     /// A move within one volume: each source is one rename, so progress counts the sources — no tree walks.
     /// Where a server says what's mounted (`mounted`); tests point it at a file of their own.
@@ -170,6 +179,7 @@ public final class FileJob: @unchecked Sendable {
         lock.withLock {
             var p = _progress
             p.doneBytes += currentFileBytes
+            p.currentDone = currentFileBytes
             return p
         }
     }
@@ -197,7 +207,8 @@ public final class FileJob: @unchecked Sendable {
         update {
             $0.doneFiles += 1
             $0.doneBytes = $0.doneBytes.saturatingAdd(size)
-            $0.recent.append(path)
+            $0.recent.append(Done(path: path, size: size))
+            $0.currentSize = 0
             if $0.recent.count > 5 { $0.recent.removeFirst() }
         }
     }
@@ -265,7 +276,7 @@ public final class FileJob: @unchecked Sendable {
             update { $0.totalFiles = sources.count; $0.state = .running }
             for src in sources {
                 guard !isCancelled else { break }
-                update { $0.current = (src as NSString).lastPathComponent }
+                update { $0.current = (src as NSString).lastPathComponent; $0.currentSize = 0 }
                 if changedSinceCompare(LocalFS(), src) { update { $0.doneFiles += 1 }; continue }
                 var trashed: NSURL?
                 if kind == .trash {
@@ -356,7 +367,7 @@ public final class FileJob: @unchecked Sendable {
         }
         let errorsBefore = progress.errors.count
         let srcIsDir = s.st_mode & S_IFMT == S_IFDIR
-        update { $0.current = (src as NSString).lastPathComponent }
+        update { $0.current = (src as NSString).lastPathComponent; $0.currentSize = 0 }
 
         if src == dst {
             // Copy onto itself = duplicate (Finder behaviour); move onto itself = no-op.
@@ -466,6 +477,7 @@ public final class FileJob: @unchecked Sendable {
         let locked = flags & UInt32(UF_IMMUTABLE | UF_APPEND | SF_IMMUTABLE | SF_APPEND) != 0
         func unlock() { if locked { lchflags(target, 0) } }
 
+        update { $0.currentSize = size }
         let ok = attempt(src) {
             let state = copyfile_state_alloc()
             defer { copyfile_state_free(state) }
@@ -523,9 +535,9 @@ public final class FileJob: @unchecked Sendable {
 
     func askConflict(_ c: Conflict) -> ConflictChoice {
         if c.replacesFolder || c.createdByThisJob { return resolveConflict(c).0 }
-        if let p = lock.withLock({ conflictPolicy }) { return p }
+        if let p = lock.withLock({ c.bothDirs ? folderPolicy ?? conflictPolicy : conflictPolicy }) { return p }
         let (choice, all) = resolveConflict(c)
-        if all { lock.withLock { conflictPolicy = choice } }
+        if all { lock.withLock { if c.bothDirs { folderPolicy = choice } else { conflictPolicy = choice } } }
         return choice
     }
 

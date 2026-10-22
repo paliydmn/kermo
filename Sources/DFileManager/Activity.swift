@@ -166,27 +166,111 @@ struct ActivityEntry: Codable, Equatable {
     }
 
     /// A running job's files: the last few done, the one going now, what failed, and the picked items not begun.
-    static func files(_ job: FileJob) -> NSAttributedString {
+    /// `sizesAt`: a right tab there puts the sizes in a column (the popover); nil: after the name (the rows).
+    static func files(_ job: FileJob, sizesAt: CGFloat? = nil) -> NSAttributedString {
         let p = job.progress
         let out = NSMutableAttributedString()
-        func line(_ mark: String, _ color: NSColor, _ text: String, _ textColor: NSColor = .labelColor) {
+        let para = NSMutableParagraphStyle()
+        if let sizesAt { para.tabStops = [NSTextTab(textAlignment: .right, location: sizesAt)] }
+        para.lineBreakMode = .byTruncatingMiddle
+        func line(_ mark: String, _ color: NSColor, _ text: String, _ textColor: NSColor = .labelColor, size: String? = nil) {
             if out.length > 0 { out.append(NSAttributedString(string: "\n")) }
-            out.append(NSAttributedString(string: mark + "  ", attributes: [.foregroundColor: color, .font: font]))
-            out.append(NSAttributedString(string: text.bidiVisible, attributes: [.foregroundColor: textColor, .font: font]))
+            out.append(NSAttributedString(string: mark + "  ", attributes: [.foregroundColor: color, .font: font, .paragraphStyle: para]))
+            out.append(NSAttributedString(string: text.bidiVisible, attributes: [.foregroundColor: textColor, .font: font, .paragraphStyle: para]))
+            if let size {
+                out.append(NSAttributedString(string: (sizesAt == nil ? "  " : "\t") + size,
+                                              attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: sizeFont, .paragraphStyle: para]))
+            }
         }
+        let bytes = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
         if p.doneFiles > p.recent.count { line("✓", .systemGreen, "\(p.doneFiles - p.recent.count) more done", .secondaryLabelColor) }
-        for f in p.recent { line("✓", .systemGreen, (f as NSString).lastPathComponent) }
+        for f in p.recent { line("✓", .systemGreen, (f.path as NSString).lastPathComponent, size: bytes(f.size)) }
         // between two files (paused, say) `current` is still the one just done
-        if !p.current.isEmpty, p.current != p.recent.last.map({ ($0 as NSString).lastPathComponent }) { line("▸", .controlAccentColor, p.current) }
+        if !p.current.isEmpty, p.current != p.recent.last.map({ ($0.path as NSString).lastPathComponent }) {
+            let pct = p.currentSize > 0 ? "\(Int(Double(min(p.currentDone, p.currentSize)) / Double(p.currentSize) * 100))% of \(bytes(p.currentSize))" : nil
+            line("▸", .controlAccentColor, p.current, size: pct)
+        }
         for f in p.failed.suffix(5) { line("✕", .systemRed, "\((f.path as NSString).lastPathComponent) — \(f.message)") }
         if p.failed.count > 5 { line("✕", .systemRed, "\(p.failed.count - 5) more failed", .secondaryLabelColor) }
-        let left = job.sources.dropFirst(job.kind == .trash || job.kind == .delete ? p.doneFiles : p.topsBegun)   // those count items
+        let left = Array(job.sources.dropFirst(job.kind == .trash || job.kind == .delete ? p.doneFiles : p.topsBegun))   // those count items
         if p.state != .queued, !left.isEmpty {
-            let names = left.prefix(3).map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")
-            line("○", .tertiaryLabelColor, "\(left.count) more to go: \(names)\(left.count > 3 ? ", …" : "")", .secondaryLabelColor)
+            for f in left.prefix(3) { line("○", .tertiaryLabelColor, (f as NSString).lastPathComponent, .secondaryLabelColor) }
+            if left.count > 3 { line("○", .tertiaryLabelColor, "\(left.count - 3) more to go", .secondaryLabelColor) }
         }
         if out.length == 0 { line("○", .tertiaryLabelColor, p.state == .queued ? "Waits for its turn" : "Looking at the items…", .secondaryLabelColor) }
         return out
+    }
+
+    static let sizeFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+
+    /// What a card calls the job: the item's name, or "4 items".
+    static func name(_ sources: [String], count: Int) -> String {
+        count == 1 ? (sources.first.map { ($0 as NSString).lastPathComponent } ?? "") : "\(count) items"
+    }
+
+    /// "web-01:/var/log → ~/Downloads", a production server's name in its color. nil: no one folder to name (a
+    /// Synchronize's pairs).
+    static func route(_ kind: FileJob.Kind, from: Endpoint, to: Endpoint, sources: [String], destDir: String?) -> NSAttributedString? {
+        guard let first = sources.first else { return nil }
+        let out = NSMutableAttributedString()
+        let plain: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
+        func place(_ e: Endpoint, _ path: String) {
+            if case .sftp(let t) = e {
+                let prod = SavedServer.isProd(t)
+                out.append(NSAttributedString(string: t.host.bidiVisible, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: prod ? .semibold : .regular),
+                                                                                      .foregroundColor: prod ? SavedServer.color : NSColor.labelColor]))
+                out.append(NSAttributedString(string: ":" + path.bidiVisible, attributes: plain))
+            } else {
+                out.append(NSAttributedString(string: (path as NSString).abbreviatingWithTildeInPath.bidiVisible, attributes: plain))
+            }
+        }
+        let parent = (first as NSString).deletingLastPathComponent
+        switch kind {
+        case .trash:
+            place(from, parent)
+            out.append(NSAttributedString(string: " → Trash", attributes: plain))
+        case .delete:
+            out.append(NSAttributedString(string: "from ", attributes: plain))
+            place(from, parent)
+        case .copy, .move:
+            guard let destDir else { return nil }
+            place(from, parent)
+            out.append(NSAttributedString(string: " → ", attributes: plain))
+            place(to, destDir)
+        }
+        let para = NSMutableParagraphStyle()
+        para.lineBreakMode = .byTruncatingMiddle
+        out.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: out.length))
+        return out
+    }
+
+    /// The kind of job, in a tinted square: ↓ from a server, ↑ to one, a copy, a move, the Trash; a finished one by its
+    /// result instead.
+    static func badge(_ kind: FileJob.Kind, from: Endpoint, to: Endpoint, result: ActivityEntry.Result? = nil) -> NSView {
+        let (symbol, tint): (String, NSColor) = switch result {
+        case .done?: ("checkmark", .systemGreen)
+        case .errors?: ("exclamationmark.triangle.fill", .systemRed)
+        case .cancelled?: ("xmark", .secondaryLabelColor)
+        case nil:
+            switch kind {
+            case .trash, .delete: ("trash", .controlAccentColor)
+            case .copy, .move:
+                from != .local && to == .local ? ("arrow.down", .controlAccentColor)
+                    : from == .local && to != .local ? ("arrow.up", .controlAccentColor)
+                    : kind == .move ? ("arrow.right", .controlAccentColor) : ("doc.on.doc", .controlAccentColor)
+            }
+        }
+        let box = Tile(fill: tint.withAlphaComponent(0.15), radius: 6)
+        let image = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: result?.rawValue ?? kind.rawValue)!)
+        image.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
+        image.contentTintColor = tint
+        image.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(image)
+        NSLayoutConstraint.activate([
+            box.widthAnchor.constraint(equalToConstant: 26), box.heightAnchor.constraint(equalToConstant: 26),
+            image.centerXAnchor.constraint(equalTo: box.centerXAnchor), image.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+        ])
+        return box
     }
 
     static let font = NSFont.systemFont(ofSize: 11)
@@ -240,7 +324,7 @@ final class ClosureButton: NSButton {
     @objc private func fire() { run() }
 }
 
-/// ⌥⌘J, the toolbar's Activity button: running, queued and finished operations. A row opens to its files; a finished
+/// ⌥⌘J, the toolbar's Activity button: running, queued and finished operations. A card opens to its files; a finished
 /// one with errors shows them with Retry and Show.
 @MainActor final class ActivityPopover: NSObject, NSPopoverDelegate {
     let popover = NSPopover()
@@ -254,6 +338,9 @@ final class ClosureButton: NSButton {
     /// A click on the toolbar button closes a transient popover on mouse-down, before the button's action: that
     /// click meant "close", not "open again".
     private(set) var closedAt = Date.distantPast
+    static let width: CGFloat = 460
+    /// Where a card's text starts (after ▸ and the badge), and the right tab of the files' sizes.
+    private static let indent: CGFloat = 52, sizesAt = width - 52 - 40
 
     init(ops: OpsController) {
         self.ops = ops
@@ -261,7 +348,7 @@ final class ClosureButton: NSButton {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 2
-        stack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        stack.edgeInsets = NSEdgeInsets(top: 10, left: 8, bottom: 8, right: 8)
         stack.translatesAutoresizingMaskIntoConstraints = false
         let doc = FlippedView()
         doc.translatesAutoresizingMaskIntoConstraints = false
@@ -311,19 +398,24 @@ final class ClosureButton: NSButton {
             if c.bar.isIndeterminate { c.bar.startAnimation(nil) }
             c.bar.doubleValue = c.row.bar.doubleValue
             c.detail.stringValue = c.row.detailText
-            c.files?.attributedStringValue = Activity.files(c.row.job)
+            c.files?.attributedStringValue = Activity.files(c.row.job, sizesAt: Self.sizesAt)
         }
         let height = min(560, max(36, stack.fittingSize.height))
-        if abs(popover.contentSize.height - height) > 1 { popover.contentSize = NSSize(width: 460, height: height) }
+        if abs(popover.contentSize.height - height) > 1 { popover.contentSize = NSSize(width: Self.width, height: height) }
     }
 
     private func rebuild(_ rows: [JobRow], _ entries: [ActivityEntry]) {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         cards = []
+        let title = Activity.label("Activity", size: 13, weight: .bold)
+        let keys = Activity.label("⌥⌘J", size: 11, color: .secondaryLabelColor)
+        let head = NSStackView(views: [title, keys, NSView()])
+        head.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 2, right: 4)
+        add(head)
         let running = rows.filter { $0.job.progress.state != .queued }, queued = rows.filter { $0.job.progress.state == .queued }
         if rows.isEmpty && entries.isEmpty {
             let l = Activity.label("No operations yet. Copies, moves and deletes show up here.", size: 12, color: .secondaryLabelColor)
-            add(l)
+            add(NSStackView(views: [l]))
             return
         }
         for (name, list) in [("RUNNING", running), ("QUEUED", queued)] where !list.isEmpty {
@@ -346,27 +438,48 @@ final class ClosureButton: NSButton {
     private func section(_ title: String, _ accessory: NSView? = nil) -> NSView {
         let l = Activity.label(title, size: 10.5, weight: .semibold, color: .secondaryLabelColor)
         let row = NSStackView(views: [l, NSView()] + (accessory.map { [$0] } ?? []))
-        row.edgeInsets = NSEdgeInsets(top: 8, left: 2, bottom: 0, right: 2)
+        row.edgeInsets = NSEdgeInsets(top: 8, left: 4, bottom: 0, right: 4)
         return row
     }
 
     private func disclosure(_ isOpen: Bool, _ toggle: @escaping () -> Void) -> NSButton {
         let b = Activity.icon(isOpen ? "chevron.down" : "chevron.right", isOpen ? "Hide the files" : "Show the files", toggle)
-        b.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
+        b.symbolConfiguration = .init(pointSize: 10, weight: .bold)
+        b.contentTintColor = .labelColor
+        b.widthAnchor.constraint(equalToConstant: 14).isActive = true
         return b
     }
 
+    /// ▸ · badge · name over the route · buttons; a click anywhere on it but a button opens it.
+    private func header(_ isOpen: Bool, toggle: @escaping () -> Void, badge: NSView, name: String, route: NSAttributedString?,
+                        buttons: [NSView]) -> NSView {
+        let title = Activity.label(name, size: 13, weight: .semibold)
+        var lines: [NSView] = [title]
+        if let route {
+            let r = NSTextField(labelWithAttributedString: route)
+            r.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            lines.append(r)
+        }
+        let text = NSStackView(views: lines)
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 1
+        let controls = NSStackView(views: buttons)
+        controls.spacing = 2
+        let h = ClickStack(views: [disclosure(isOpen, toggle), badge, text, NSView(), controls], onClick: toggle)
+        h.spacing = 8
+        return h
+    }
+
     private func card(_ row: JobRow) -> NSView {
-        let id = ObjectIdentifier(row.job), isOpen = open.contains(id)
-        let toggle = disclosure(isOpen) { [unowned self] in
+        let job = row.job, id = ObjectIdentifier(job), isOpen = open.contains(id)
+        let toggle = { [unowned self] in
             if open.contains(id) { open.remove(id) } else { open.insert(id) }
             refresh()
         }
-        let title = Activity.label(row.title, size: 12, weight: .semibold)
-        let controls = NSStackView(views: row.controls())
-        controls.spacing = 2
-        let head = NSStackView(views: [toggle, title, NSView(), controls])
-        head.spacing = 6
+        let route = Activity.route(job.kind, from: job.from, to: job.to, sources: job.sources, destDir: job.destDir)
+        let head = header(isOpen, toggle: toggle, badge: Activity.badge(job.kind, from: job.from, to: job.to),
+                          name: route == nil ? row.title : Activity.name(job.sources, count: job.sources.count), route: route, buttons: row.controls())
         let bar = NSProgressIndicator()
         bar.style = .bar
         bar.isIndeterminate = false
@@ -385,58 +498,39 @@ final class ClosureButton: NSButton {
             views.append(f)
         }
         cards.append((row, bar, detail, files))
-        return box(views, indent: [bar, detail] + (files.map { [$0] } ?? []))
+        return box(views, indent: [bar, detail] + (files.map { [$0] } ?? []), highlighted: isOpen)
     }
 
     private func card(_ e: ActivityEntry) -> NSView {
         let isOpen = openEntries.contains(e.id)
-        let toggle = disclosure(isOpen) { [unowned self] in
+        let toggle = { [unowned self] in
             if openEntries.contains(e.id) { openEntries.remove(e.id) } else { openEntries.insert(e.id) }
             refresh()
         }
-        let (symbol, color): (String, NSColor) = switch e.result {
-        case .done: ("checkmark.circle.fill", .systemGreen)
-        case .errors: ("exclamationmark.triangle.fill", .systemRed)
-        case .cancelled: ("xmark.circle", .secondaryLabelColor)
-        }
-        let mark = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: e.result.rawValue)!)
-        mark.contentTintColor = color
-        let title = Activity.label(e.title, size: 12, weight: .semibold)
         let remove = Activity.icon("xmark", "Remove from the list") { [unowned self] in ops.history.remove(e.id); ops.changed() }
         remove.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
-        let head = NSStackView(views: [toggle, mark, title, NSView(), remove])
-        head.spacing = 6
+        let route = Activity.route(e.kind, from: e.from, to: e.to, sources: e.sources, destDir: e.destDir)
+        let head = header(isOpen, toggle: toggle, badge: Activity.badge(e.kind, from: e.from, to: e.to, result: e.result),
+                          name: route == nil ? e.title : Activity.name(e.sources, count: e.sourceCount), route: route, buttons: [remove])
         let detail = Activity.label(e.summary, color: e.result == .errors ? .systemRed : .secondaryLabelColor)
         var views: [NSView] = [head, detail], indent: [NSView] = [detail]
+        func add(_ v: NSView) { views.append(v); indent.append(v) }
         if isOpen || e.result == .errors {
-            for f in e.failed.prefix(isOpen ? ActivityEntry.failedLimit : 3) {
-                let line = failedLine(e, f)
-                views.append(line)
-                indent.append(line)
-            }
+            for f in e.failed.prefix(isOpen ? ActivityEntry.failedLimit : 3) { add(failedLine(e, f)) }
             let shown = isOpen ? e.failed.count : min(3, e.failed.count)
-            var more = e.errorCount - shown - (isOpen ? e.notes.count : 0)
             if isOpen {
-                for n in e.notes {
-                    let l = Activity.label("•  " + n, color: .secondaryLabelColor)
-                    l.lineBreakMode = .byTruncatingMiddle
-                    views.append(l)
-                    indent.append(l)
+                for n in e.notes { add(Activity.label("•  " + n, color: .secondaryLabelColor)) }
+                let done = NSMutableAttributedString()
+                for s in e.sources.prefix(5) {
+                    if done.length > 0 { done.append(NSAttributedString(string: "\n")) }
+                    done.append(NSAttributedString(string: "✓  ", attributes: [.foregroundColor: NSColor.systemGreen, .font: Activity.font]))
+                    done.append(NSAttributedString(string: (s as NSString).lastPathComponent.bidiVisible, attributes: [.font: Activity.font, .foregroundColor: NSColor.labelColor]))
                 }
-                if e.result != .errors {
-                    let what = Activity.label("\(e.sourceCount) item\(e.sourceCount == 1 ? "" : "s"): "
-                        + e.sources.prefix(5).map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")
-                        + (e.sourceCount > 5 ? ", …" : ""), color: .secondaryLabelColor)
-                    views.append(what)
-                    indent.append(what)
-                }
+                if e.sourceCount > 5 { done.append(NSAttributedString(string: "\n✓  \(e.sourceCount - 5) more", attributes: [.font: Activity.font, .foregroundColor: NSColor.secondaryLabelColor])) }
+                if e.result != .errors, done.length > 0 { add(NSTextField(labelWithAttributedString: done)) }
             }
-            more = max(0, more)
-            if more > 0 {
-                let l = Activity.label("\(more) more — open to see\(isOpen ? " (only the first \(ActivityEntry.failedLimit) are kept)" : "")", color: .secondaryLabelColor)
-                views.append(l)
-                indent.append(l)
-            }
+            let more = max(0, e.errorCount - shown - (isOpen ? e.notes.count : 0))
+            if more > 0 { add(Activity.label("\(more) more — open to see\(isOpen ? " (only the first \(ActivityEntry.failedLimit) are kept)" : "")", color: .secondaryLabelColor)) }
             var acts: [NSView] = []
             if e.canRetry && !e.retried {
                 let r = Activity.button("Retry Failed (\(e.failed.filter { $0.dst != nil }.count))") { [unowned self] in ops.retry(e, nil) }
@@ -454,11 +548,10 @@ final class ClosureButton: NSButton {
             if !acts.isEmpty {
                 let line = NSStackView(views: acts)
                 line.spacing = 6
-                views.append(line)
-                indent.append(line)
+                add(line)
             }
         }
-        return box(views, indent: indent)
+        return box(views, indent: indent, highlighted: isOpen)
     }
 
     private func failedLine(_ e: ActivityEntry, _ f: FileJob.Failure) -> NSView {
@@ -480,18 +573,57 @@ final class ClosureButton: NSButton {
         return row
     }
 
-    private func box(_ views: [NSView], indent: [NSView]) -> NSView {
+    /// A card: its lines under the header, from where the name starts; a soft background while it's open.
+    private func box(_ views: [NSView], indent: [NSView], highlighted: Bool) -> NSView {
         let v = NSStackView(views: views)
         v.orientation = .vertical
         v.alignment = .leading
-        v.spacing = 3
-        v.edgeInsets = NSEdgeInsets(top: 6, left: 4, bottom: 6, right: 4)
+        v.spacing = 4
+        v.edgeInsets = NSEdgeInsets(top: 7, left: 6, bottom: 7, right: 6)
         for sub in views {
-            let inset: CGFloat = indent.contains(where: { $0 === sub }) ? 22 : 0
-            sub.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 4 + inset).isActive = true
-            sub.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -4).isActive = true
+            let inset: CGFloat = indent.contains(where: { $0 === sub }) ? Self.indent - 6 : 0
+            sub.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 6 + inset).isActive = true
+            sub.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -6).isActive = true
         }
-        return v
+        let card = Tile(fill: highlighted ? Self.openFill : nil, radius: 8)
+        v.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.topAnchor.constraint(equalTo: card.topAnchor), v.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            v.leadingAnchor.constraint(equalTo: card.leadingAnchor), v.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+        ])
+        return card
+    }
+
+    private static let openFill = NSColor(name: nil) { a in
+        a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.07) : NSColor(white: 0, alpha: 0.045)
+    }
+}
+
+/// A row that takes a click on itself (not on a button in it) as `onClick`: a card's header opens the card.
+private final class ClickStack: NSStackView {
+    private var onClick: () -> Void = {}
+    convenience init(views: [NSView], onClick: @escaping () -> Void) {
+        self.init(views: views)
+        self.onClick = onClick
+    }
+    override func mouseDown(with event: NSEvent) { onClick() }
+}
+
+/// A rounded, filled background (`fill` nil: none) behind what's in it, sized by their constraints.
+final class Tile: NSView {
+    private let fill: NSColor?, radius: CGFloat
+    init(fill: NSColor?, radius: CGFloat) {
+        self.fill = fill
+        self.radius = radius
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func draw(_ dirtyRect: NSRect) {
+        guard let fill else { return }
+        fill.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
     }
 }
 

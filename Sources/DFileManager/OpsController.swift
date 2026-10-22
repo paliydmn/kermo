@@ -262,6 +262,8 @@ final class OpsController {
         } else if c.bothDirs {
             alert.informativeText = "Both are folders. Merge keeps existing files and asks about each clash inside."
             choices = [("Merge", .overwrite), ("Skip", .skip), ("Keep Both", .keepBoth), ("Cancel", .cancel)]
+            alert.showsSuppressionButton = true   // folders only: a clash of files inside is still asked
+            alert.suppressionButton?.title = "Apply to all remaining folders"
         } else {
             let newer = c.srcMtime > c.dstMtime ? "  ← newer" : ""
             alert.informativeText = "New:       \(describe(c.srcSize, c.srcMtime))\(newer)\nExisting:  \(describe(c.dstSize, c.dstMtime))"
