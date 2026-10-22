@@ -113,14 +113,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         window.isReleasedWhenClosed = false   // closed while a viewer keeps the app alive: `window` must not dangle
         window.undoManager?.levelsOfUndo = 100   // each step holds its paths (and a move's jobs): not a whole day's worth
         window.title = "Kermo"
-        let toolbar = NSToolbar(identifier: "Main")
+        ops = OpsController(window: window, historyDir: Config.dir) { [unowned self] in jobFinished($0) }
+        ops.onRetry = { [unowned self] in retryFailed($0, $1) }
+        ops.onShow = { [unowned self] in showItem(on: $0, in: $1, select: $2) }
+        let toolbar = NSToolbar(identifier: "Main")   // after `ops`: it asks for the Activity button at once
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         window.toolbar = toolbar
         window.toolbarStyle = .unifiedCompact   // one row: the title bar's height, plus room for the controls
-        ops = OpsController(window: window, historyDir: Config.dir) { [unowned self] in jobFinished($0) }
-        ops.onRetry = { [unowned self] in retryFailed($0, $1) }
-        ops.onShow = { [unowned self] in showItem(on: $0, in: $1, select: $2) }
         window.contentView = makeContent()
         applyTheme()
         window.setContentSize(NSSize(width: 1200, height: 750))

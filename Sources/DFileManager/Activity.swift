@@ -176,7 +176,8 @@ struct ActivityEntry: Codable, Equatable {
         }
         if p.doneFiles > p.recent.count { line("✓", .systemGreen, "\(p.doneFiles - p.recent.count) more done", .secondaryLabelColor) }
         for f in p.recent { line("✓", .systemGreen, (f as NSString).lastPathComponent) }
-        if !p.current.isEmpty { line("▸", .controlAccentColor, p.current) }
+        // between two files (paused, say) `current` is still the one just done
+        if !p.current.isEmpty, p.current != p.recent.last.map({ ($0 as NSString).lastPathComponent }) { line("▸", .controlAccentColor, p.current) }
         for f in p.failed.suffix(5) { line("✕", .systemRed, "\((f.path as NSString).lastPathComponent) — \(f.message)") }
         if p.failed.count > 5 { line("✕", .systemRed, "\(p.failed.count - 5) more failed", .secondaryLabelColor) }
         let left = job.sources.dropFirst(job.kind == .trash || job.kind == .delete ? p.doneFiles : p.topsBegun)   // those count items
@@ -312,7 +313,7 @@ final class ClosureButton: NSButton {
             c.detail.stringValue = c.row.detailText
             c.files?.attributedStringValue = Activity.files(c.row.job)
         }
-        let height = min(560, max(80, stack.fittingSize.height))
+        let height = min(560, max(36, stack.fittingSize.height))
         if abs(popover.contentSize.height - height) > 1 { popover.contentSize = NSSize(width: 460, height: height) }
     }
 
