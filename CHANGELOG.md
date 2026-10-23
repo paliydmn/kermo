@@ -13,6 +13,8 @@ Release:
 
 ## [Unreleased]
 
+## [1.5] - 2026-10-23
+
 ### Added
 - **Activity** (toolbar button, ⌥⌘J): the running, queued and last 100 finished copies, moves and deletes, kept across restarts. Each opens to its files; a finished one lists the files that failed and why, with **Retry Failed**, **Retry** per file, **Show** and **Copy Errors**.
 - **▸** on a row above the key bar opens that job's files: the last ones done, the current one, those that failed and the items still to come.
@@ -240,7 +242,8 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.5...HEAD
+[1.5]: https://github.com/paliydmn/kermo/releases/tag/v1.5
 [1.4.1]: https://github.com/paliydmn/kermo/releases/tag/v1.4.1
 [1.2.1]: https://github.com/paliydmn/kermo/releases/tag/v1.2.1
 [1.2]: https://github.com/paliydmn/kermo/releases/tag/v1.2
