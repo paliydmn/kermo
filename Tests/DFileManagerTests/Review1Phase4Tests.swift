@@ -457,7 +457,7 @@ extension ServerLockTests {   // `PanelViewController.quickTab` is the session's
     // No work tree: no Git tab; Preview is the first.
     #expect(there.gitShown == nil)
     there.preview(PanelViewController.Peek(name: "a.txt", local: URL(fileURLWithPath: dir + "/a.txt"), inRepo: true, git: " M"), tab: .git)
-    #expect(there.quickTabShown == .git && there.gitShown?.state == "Git: modified")
+    #expect(there.quickTabShown == .git && there.gitShown?.state == "Git: modified" && there.quickTabLabels == ["Preview", "Info", "Git"])
     #expect(there.gitShown?.keys.map(\.id) == ["git.diff", "git.log", "git.stage", "git.unstage"] && there.gitShown?.keys.map(\.key) == ["⌃D", "⌃L", "⌃⇧A", "⌃⇧U"])
     there.preview(PanelViewController.Peek(name: "app.log", server: srv, inRepo: true, git: "??"), tab: .git)
     #expect(there.gitShown?.state == "Git: untracked" && there.gitShown?.keys.isEmpty == true, "on a server: its state alone")

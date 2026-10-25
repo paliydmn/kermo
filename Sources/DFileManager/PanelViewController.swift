@@ -1741,6 +1741,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// A tab chosen: the app asks the other panel again (Preview fetches a server's file).
     var onQuickTab: (() -> Void)?
     var quickTabShown: QuickTab? { quickBox == nil ? nil : QuickTab(rawValue: quickTabs.selectedSegment) }   // tests
+    var quickTabLabels: [String] { (0..<quickTabs.segmentCount).map { quickTabs.label(forSegment: $0) ?? "" } }   // tests
     var infoRows: [(String, String)] { infoView?.rows ?? [] }   // tests
     var gitShown: (state: String, keys: [KeySlot])? { gitBox?.isHidden == false ? (gitState.stringValue, gitKeys.list ?? []) : nil }   // tests
 
@@ -1772,6 +1773,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             quickTitle.font = .systemFont(ofSize: 12.5, weight: .semibold)
             quickTitle.lineBreakMode = .byTruncatingMiddle
             quickTitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            quickTitle.setContentHuggingPriority(.init(1), for: .horizontal)   // the switch at the bar's right end
             quickTabs.controlSize = .small
             quickTabs.target = self
             quickTabs.action = #selector(quickTabClicked)
@@ -1827,6 +1829,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         peekShown = p
         quickTitle.stringValue = p.name.bidiVisible
         quickTabs.segmentCount = p.inRepo ? 3 : 2
+        if p.inRepo { quickTabs.setLabel("Git", forSegment: 2) }   // a segment taken away and back comes without its word
         let want = chosen ?? Self.quickTab
         let tab = want == .git && !p.inRepo ? .info : want
         quickTabs.selectedSegment = tab.rawValue
