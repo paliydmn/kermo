@@ -2531,7 +2531,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         let v = PanelRowView()
-        v.cursor = theme.cursor
+        (v.cursor, v.outline) = (theme.cursor, theme.outline)
         return v
     }
 

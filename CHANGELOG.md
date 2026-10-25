@@ -29,7 +29,7 @@ Release:
 - The Activity button at rest is a clock going round instead of a download arrow.
 - An executable file has Finder's executable icon, so it stands out in the System theme too.
 - The active panel has a 2 pt line under its path bar instead of a frame and a filled path bar: the accent color on this Mac, purple on a production server (a root panel there too, and a production server's panel is purple now even when it isn't root), orange in a root panel. Its path is in full contrast, the others' dimmed.
-- In the System theme the cursor of a panel that isn't focused is an outline, not a grey fill.
+- The cursor of a panel that isn't focused is an outline, not a grey or dimmed fill, in every theme.
 - A server's panel tabs show its PROD and ROOT chips before the title, and the tab in front is underlined in purple or orange, as the terminal's tabs.
 - With three or four panels the panel F5 and F6 go to says **→ F5** at the end of its path bar, and the mark moves with Tab or a click.
 - F5 and F6 in the key bar say where they go when it isn't plain: `Copy → web-01` to a server (a production one's name in purple and bold), `Copy → site` with three or four panels.

@@ -8,7 +8,7 @@ How the Kermo window is laid out, and the three ways to reach anything: the key 
 
 ## Panels and tabs
 
-The window shows two to four panels side by side, each with its own tabs. Tab moves between panels. The active panel has a 2 pt line under its path bar in the color of where it is: the accent color on this Mac (a theme with a background has its own, cyan in Midnight Commander and Far Manager), purple on a production server, orange in a [root panel](root-panel.md), purple again when that's on a production server. Its path is in full contrast, the other panels' paths are dimmed, and in the System theme their cursor is an outline. A panel can show a folder on this Mac, a [server](servers.md), an archive, a Git list or search results.
+The window shows two to four panels side by side, each with its own tabs. Tab moves between panels. The active panel has a 2 pt line under its path bar in the color of where it is: the accent color on this Mac (a theme with a background has its own, cyan in Midnight Commander and Far Manager), purple on a production server, orange in a [root panel](root-panel.md), purple again when that's on a production server. Its path is in full contrast, the other panels' paths are dimmed, and their cursor is an outline (in a theme's dimmed text color). A panel can show a folder on this Mac, a [server](servers.md), an archive, a Git list or search results.
 
 The tab in front has a bold title with a line under it, in the accent color or the server's purple or orange; the other tabs' titles are grey. A server's tab has its chips before its title: PROD for a production server, ROOT for a root panel. The terminal's tabs look the same, and an SSH tab's dot is green while it's connected, grey when it isn't; a root login's tab has ROOT.
 

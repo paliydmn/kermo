@@ -17,6 +17,16 @@ import Testing
     #expect(theme("Dracula").accent == theme("Dracula").dir)
 }
 
+/// An unfocused panel's cursor is an outline in every theme, in the theme's dimmed text: on the theme's background it
+/// is at least as plain as System's own outline (the tertiary label color, ~1.9:1 on white).
+@Test func theOutlineCursorShowsInEveryTheme() {
+    for t in Theme.all {
+        guard let bg = t.background else { #expect(t.outline == .tertiaryLabelColor); continue }
+        let ratio = Theme.contrast(t.outline, bg)
+        #expect(t.outline == t.hidden && ratio >= 2, "\(t.name): \(ratio)")
+    }
+}
+
 /// With 3–4 panels F5/F6 go to the panel active before, while it's there; else the next one to the right. Only that
 /// panel says "→ F5", and the mark moves with the target: click a panel, then another.
 @MainActor @Test func theTargetPanelSaysF5() {

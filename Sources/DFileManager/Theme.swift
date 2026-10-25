@@ -47,6 +47,8 @@ struct Theme {
         background.flatMap { NSAppearance(named: Self.contrast($0, .white) > Self.contrast($0, .black) ? .darkAqua : .aqua) }
     }
 
+    /// The cursor of a panel that isn't focused, an outline: the system's quietest label color, a theme's dimmed text.
+    var outline: NSColor { background == nil ? .tertiaryLabelColor : hidden }
     /// The line under the active panel's path bar on this Mac: MC's and Far's cyan, else the theme's folder color.
     var accent: NSColor { background == nil ? Palette.accent : grid ?? dir }
 
@@ -75,19 +77,20 @@ struct Theme {
     }
 }
 
-/// Draws the cursor row in the theme's color, dimmed while the panel isn't focused. nil (System): the system's
-/// selection, and an outline while the panel isn't focused — a grey fill read as one more selection.
+/// Draws the cursor row in the theme's color (nil, System: the system's selection) while the panel is focused, and an
+/// outline in `outline` while it isn't — a dimmed fill read as one more selection.
 final class PanelRowView: NSTableRowView {
     var cursor: NSColor?
+    var outline: NSColor = .tertiaryLabelColor
     override func drawSelection(in dirtyRect: NSRect) {
-        guard let cursor else {
-            if isEmphasized { return super.drawSelection(in: dirtyRect) }
-            NSColor.tertiaryLabelColor.setStroke()
-            let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.75, dy: 0.75), xRadius: 4, yRadius: 4)
-            outline.lineWidth = 1.5
-            return outline.stroke()
+        guard isEmphasized else {
+            outline.setStroke()
+            let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.75, dy: 0.75), xRadius: 4, yRadius: 4)
+            path.lineWidth = 1.5
+            return path.stroke()
         }
-        (isEmphasized ? cursor : cursor.withAlphaComponent(0.45)).setFill()
+        guard let cursor else { return super.drawSelection(in: dirtyRect) }
+        cursor.setFill()
         bounds.fill()
     }
     override var interiorBackgroundStyle: NSView.BackgroundStyle { cursor == nil ? super.interiorBackgroundStyle : .normal }   // a theme keeps its text colors
