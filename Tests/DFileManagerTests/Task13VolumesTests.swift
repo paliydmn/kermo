@@ -9,37 +9,40 @@ import Testing
     try #require(c.outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .volume(v))) as? NSStackView)
 }
 
-/// V1: "110 GB / 350 GB" right of the name — used red, free green — giving way to the name in a narrow column;
-/// white on a focused selection's accent. No figures, no label.
-@MainActor @Test func aVolumeRowShowsUsedRedAndFreeGreen() throws {
-    let r = try volumeRow(VolumeRow(path: "/Volumes/USB", name: "USB", used: "110 GB", free: "350 GB", total: "460 GB", ejectable: true))
-    let f = try #require(r.arrangedSubviews.compactMap { $0 as? VolumeFigures }.first)
+/// V1: "350 GB free" over a bar of how full the volume is, right of the name, giving way to it in a narrow column;
+/// white on a focused selection's accent. No figures, no gauge.
+@MainActor @Test func aVolumeRowShowsFreeOverABar() throws {
+    let r = try volumeRow(VolumeRow(path: "/Volumes/USB", name: "USB", used: "110 GB", free: "350 GB", total: "460 GB", fraction: 0.24, ejectable: true))
+    let g = try #require(r.arrangedSubviews.compactMap { $0 as? VolumeGauge }.first)
     let name = try #require(r.arrangedSubviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == "USB" })
-    let s = f.attributedStringValue
-    #expect(s.string == "110 GB / 350 GB")
-    func color(_ at: Int) -> NSColor? { s.attribute(.foregroundColor, at: at, effectiveRange: nil) as? NSColor }
-    #expect(color(0) == .systemRed && color(s.length - 1) == .systemGreen)
-    #expect(f.contentCompressionResistancePriority(for: .horizontal) < name.contentCompressionResistancePriority(for: .horizontal))
-    #expect(f.lineBreakMode == .byTruncatingTail && f.maximumNumberOfLines == 1 && f.cell?.wraps == false)
-    // Room for "110 GB /…": drawn, cut with "…"; less: nothing, not a "1" that reads as a number.
-    f.frame.size.width = f.intrinsicContentSize.width
-    #expect(f.shown)
-    f.frame.size.width = 60
-    #expect(f.shown)
-    f.frame.size.width = 15
-    #expect(!f.shown)
+    #expect(g.text.string == "350 GB free" && g.accessibilityLabel() == "350 GB free" && g.accessibilityValue() as? Int == 24)
+    func color() -> NSColor? { g.text.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor }
+    #expect(color() == Palette.secondary)
+    #expect(g.contentCompressionResistancePriority(for: .horizontal) < name.contentCompressionResistancePriority(for: .horizontal))
+    g.frame.size.width = g.intrinsicContentSize.width
+    #expect(g.shown)
+    g.frame.size.width = 15
+    #expect(!g.shown, "all of the text or nothing")
     #expect(r.toolTip == "/Volumes/USB · 110 GB used of 460 GB · 350 GB free")
 
     let row = HoverRowView()
     row.addSubview(r)
     row.isEmphasized = true
     row.isSelected = true
-    #expect(color(0) != f.attributedStringValue.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor, "white on the accent")
+    #expect(color() == .alternateSelectedControlTextColor, "white on the accent")
     row.isSelected = false
-    #expect(f.attributedStringValue.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .systemRed)
+    #expect(color() == Palette.secondary)
 
     let none = try volumeRow(VolumeRow(path: "/Volumes/S", name: "S", ejectable: true))
-    #expect(!none.arrangedSubviews.contains { $0 is VolumeFigures } && none.toolTip == "/Volumes/S")
+    #expect(!none.arrangedSubviews.contains { $0 is VolumeGauge } && none.toolTip == "/Volumes/S")
+}
+
+/// The bar turns amber at 85 % full and red at 95 %: red only once it's trouble.
+@Test func aVolumeBarTurnsAmberThenRed() {
+    #expect(VolumeGauge.tone(0) == nil && VolumeGauge.tone(0.849) == nil)
+    #expect(VolumeGauge.tone(0.85) == Palette.warn && VolumeGauge.tone(0.949) == Palette.warn)
+    #expect(VolumeGauge.tone(0.95) == Palette.fail && VolumeGauge.tone(1) == Palette.fail)
+    #expect(SidebarModel.row(Volume(path: "/", name: "HD", free: 30, total: 200, ejectable: false)).fraction == 0.85)
 }
 
 /// V3: a disk's volume that isn't mounted comes after the mounted ones, gray, no path to open, no eject; one the

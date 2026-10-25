@@ -163,6 +163,7 @@ struct VolumeRow: Equatable {
     let path: String
     let name: String
     var used = "", free = "", total = ""
+    var fraction: Double? = nil   // how full, 0…1
     let ejectable: Bool
     var disk: Disk? = nil
     var busy = false   // being mounted, unmounted or ejected
@@ -212,8 +213,9 @@ enum SidebarModel {
     static func row(_ v: Volume, disks: [Disk] = []) -> VolumeRow {
         let disk = disks.first { $0.mountPath == v.path || "/dev/" + $0.bsd == v.device }
         guard let free = v.free, let total = v.total, total > 0 else { return VolumeRow(path: v.path, name: v.name, ejectable: v.ejectable, disk: disk) }
-        return VolumeRow(path: v.path, name: v.name, used: sizes.string(fromByteCount: max(0, total - free)),
-                         free: sizes.string(fromByteCount: free), total: sizes.string(fromByteCount: total), ejectable: v.ejectable, disk: disk)
+        let used = max(0, total - free)
+        return VolumeRow(path: v.path, name: v.name, used: sizes.string(fromByteCount: used), free: sizes.string(fromByteCount: free),
+                         total: sizes.string(fromByteCount: total), fraction: Double(used) / Double(total), ejectable: v.ejectable, disk: disk)
     }
 
     /// Mounted volumes, then the disks' volumes that aren't (not one the kernel has mounted already, which
@@ -384,48 +386,52 @@ class HoverRowView: NSTableRowView {
             if v is ServerToolbar { v.isHidden = !hovering }
             else if v is ServerChips { v.isHidden = hovering }
             else if let name = v as? ServerName { name.lineBreakMode = hovering ? .byTruncatingTail : .byTruncatingMiddle }
-            else if let f = v as? VolumeFigures { f.onAccent = isSelected && isEmphasized }
+            else if let g = v as? VolumeGauge { g.onAccent = isSelected && isEmphasized }
             else { v.subviews.forEach(walk) }
         }
         walk(self)
     }
 }
 
-/// A volume's "110 GB / 350 GB": used in red, free in green, in what room the name leaves — cut from the end with
-/// "…", or gone in a narrow column (the tooltip has them): never a bare "1" of "110 GB" that reads as a number.
-/// White on the accent of a focused selection, where red and green don't read.
-final class VolumeFigures: NSTextField {
-    private let used: String, free: String
-    var onAccent = false { didSet { if onAccent != oldValue { paint() } } }
+/// A volume's "350 GB free" over a bar of how full it is — neutral, amber from 85 %, red from 95 % (`tone`): red only
+/// once it's trouble. In what room the name leaves, else gone (the tooltip has the figures); white on the accent of a
+/// focused selection.
+final class VolumeGauge: NSView {
+    private let free: String, fraction: Double
+    var onAccent = false { didSet { if onAccent != oldValue { needsDisplay = true } } }
 
-    init(used: String, free: String) {
-        (self.used, self.free) = (used, free)
+    init(free: String, fraction: Double) {
+        (self.free, self.fraction) = (free, min(max(fraction, 0), 1))
         super.init(frame: .zero)
-        (isEditable, isSelectable, isBordered, drawsBackground) = (false, false, false, false)
-        lineBreakMode = .byTruncatingTail
-        (usesSingleLineMode, maximumNumberOfLines) = (true, 1)   // a cut with "…", not a wrap out of sight
-        cell?.wraps = false
         setContentCompressionResistancePriority(.init(200), for: .horizontal)   // below the name's: the name keeps its room
-        paint()
+        setAccessibilityElement(true)
+        setAccessibilityRole(.levelIndicator)
+        setAccessibilityLabel("\(free) free")
+        setAccessibilityValue(Int((self.fraction * 100).rounded()))
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    private func paint() {
-        let style = NSMutableParagraphStyle()
-        style.lineBreakMode = .byTruncatingTail
-        func part(_ s: String, _ c: NSColor) -> NSAttributedString {
-            NSAttributedString(string: s, attributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: onAccent ? .alternateSelectedControlTextColor : c, .paragraphStyle: style])
-        }
-        let s = NSMutableAttributedString(attributedString: part(used, Palette.fail))
-        s.append(part(" / ", .secondaryLabelColor))
-        s.append(part(free, Palette.ok))
-        attributedStringValue = s
+    /// The bar's color at `fraction` full; nil: neutral.
+    static func tone(_ fraction: Double) -> NSColor? { fraction >= 0.95 ? Palette.fail : fraction >= 0.85 ? Palette.warn : nil }
+
+    var text: NSAttributedString {
+        NSAttributedString(string: free + " free", attributes: [.font: NSFont.systemFont(ofSize: 10),
+                                                                .foregroundColor: onAccent ? NSColor.alternateSelectedControlTextColor : Palette.secondary])
     }
+    override var intrinsicContentSize: NSSize { NSSize(width: ceil(text.size().width), height: 18) }
+    /// All of the text, or nothing.
+    var shown: Bool { bounds.width >= intrinsicContentSize.width }
 
-    /// The whole used figure and "/…" at least.
-    var shown: Bool { bounds.width >= ceil(NSAttributedString(string: used + " /…", attributes: [.font: NSFont.systemFont(ofSize: 10)]).size().width) }
-
-    override func draw(_ dirtyRect: NSRect) { if shown { super.draw(dirtyRect) } }
+    override func draw(_ dirtyRect: NSRect) {
+        guard shown else { return }
+        let t = text, h = ceil(t.size().height)
+        let bar = NSRect(x: 0, y: (bounds.height - h - 5) / 2, width: bounds.width, height: 3)
+        t.draw(at: NSPoint(x: bounds.width - t.size().width, y: bar.maxY + 2))
+        (onAccent ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.35) : NSColor.quaternaryLabelColor).setFill()
+        NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()
+        (onAccent ? NSColor.alternateSelectedControlTextColor : Self.tone(fraction) ?? .secondaryLabelColor).setFill()
+        NSBezierPath(roundedRect: NSRect(x: bar.minX, y: bar.minY, width: max(3, bar.width * fraction), height: bar.height), xRadius: 1.5, yRadius: 1.5).fill()
+    }
 }
 
 /// The Git section's row, outside the outline: a click (not on one of its buttons) and a right-click of its own.
@@ -692,7 +698,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
             let (name, ejectable) = (v.name, v.ejectable)
             let r = placeRow(ejectable ? .externalDisk : .internalDisk, name, v.tip, dim: !v.mounted)
             r.addArrangedSubview(spacer())   // the buttons in one column at the right, figures or not
-            if !v.used.isEmpty { r.addArrangedSubview(VolumeFigures(used: v.used, free: v.free)) }
+            if let f = v.fraction { r.addArrangedSubview(VolumeGauge(free: v.free, fraction: f)) }
             func button(_ symbol: Symbol, _ action: VolumeAction) {
                 let b = NSButton(image: symbol.image(action.rawValue), target: self, action: #selector(volumeButton(_:)))
                 b.isBordered = false
