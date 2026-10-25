@@ -4,7 +4,8 @@ import AppKit
 /// Type to filter, ⎋ closes. The key bar's "+N" opens it on one modifier layer.
 @MainActor
 final class KeyHelp: NSObject, NSSearchFieldDelegate {
-    static let groups = ["File", "Edit", "Mark", "View", "Go", "Admin", "Kermo"]
+    /// The menus in menu bar order, the app's last: its only key is F1 itself.
+    static let groups = Array(AppDelegate.menus.dropFirst() + AppDelegate.menus.prefix(1))
 
     /// Menu groups in `groups` order (keyboard-only commands last), each command with its keys.
     /// `layer`: only keys with exactly these modifiers. `query`: substring of title, aliases or keys.
@@ -12,7 +13,7 @@ final class KeyHelp: NSObject, NSSearchFieldDelegate {
         let q = query.trimmingCharacters(in: .whitespaces)
         var out: [(String, [(String, String)])] = []
         for g in groups + [nil] {
-            let rows = commands.filter { $0.menu == g }.compactMap { c -> (String, String)? in
+            let rows = commands.filter { $0.menu == g && !$0.hidden }.compactMap { c -> (String, String)? in
                 let keys = c.keys.filter { layer == nil || $0.flags == layer }.map(\.display).joined(separator: "  ")
                 guard !keys.isEmpty, q.isEmpty || "\(c.title) \(c.aliases) \(keys)".localizedCaseInsensitiveContains(q) else { return nil }
                 return (c.title, keys)

@@ -1086,6 +1086,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         terminal.applyTheme()
     }
 
+    /// The registry's menus (`Command.menu`), in menu bar order; Window follows. F1 lists them too (`KeyHelp.groups`).
+    static let menus = ["Kermo", "File", "Edit", "Mark", "Admin", "View", "Go", "Git"]
+
     func makeMenu() -> NSMenu {
         let main = NSMenu()
         @discardableResult func submenu(_ title: String, _ items: [NSMenuItem], trailing: [NSMenuItem] = []) -> NSMenu {
@@ -1110,30 +1113,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             it.tag = tag
             return it
         }
-        submenu("Kermo", [], trailing: [
-            .separator(),
-            item("Hide Kermo", #selector(NSApplication.hide(_:)), "h"),
-            item("Quit Kermo", #selector(NSApplication.terminate(_:)), "q"),
-        ])
-        submenu("File", [item("Save", #selector(Editor.saveDocument(_:)), "s"),
-                         item("Ensure Final Newline", #selector(Editor.toggleFinalNewline(_:)), ""), .separator()])
-        // Standard responder-chain items: text fields handle them as text; panels as files.
-        submenu("Edit", [
-            item("Undo", Selector(("undo:")), "z"),
-            item("Redo", Selector(("redo:")), "z", [.command, .shift]),
-            .separator(),
-            item("Copy", #selector(NSText.copy(_:)), "c"),
-            item("Paste", #selector(NSText.paste(_:)), "v"),
-            item("Select All", #selector(NSResponder.selectAll(_:)), "a"),
-            item("Find…", #selector(NSResponder.performTextFinderAction(_:)), "f", tag: NSTextFinder.Action.showFindInterface.rawValue),
-            item("Find Next", #selector(NSResponder.performTextFinderAction(_:)), "g", tag: NSTextFinder.Action.nextMatch.rawValue),
-            .separator(),
-        ])
-        submenu("Mark", [])
-        submenu("Admin", [])
-        submenu("View", [])
-        submenu("Go", [], trailing: [.separator(), goTunnelsItem()])
-        submenu("Git", [])
+        let head: [String: [NSMenuItem]] = [
+            "File": [item("Save", #selector(Editor.saveDocument(_:)), "s"),
+                     item("Ensure Final Newline", #selector(Editor.toggleFinalNewline(_:)), ""), .separator()],
+            // Standard responder-chain items: text fields handle them as text; panels as files.
+            "Edit": [
+                item("Undo", Selector(("undo:")), "z"),
+                item("Redo", Selector(("redo:")), "z", [.command, .shift]),
+                .separator(),
+                item("Copy", #selector(NSText.copy(_:)), "c"),
+                item("Paste", #selector(NSText.paste(_:)), "v"),
+                item("Select All", #selector(NSResponder.selectAll(_:)), "a"),
+                item("Find…", #selector(NSResponder.performTextFinderAction(_:)), "f", tag: NSTextFinder.Action.showFindInterface.rawValue),
+                item("Find Next", #selector(NSResponder.performTextFinderAction(_:)), "g", tag: NSTextFinder.Action.nextMatch.rawValue),
+                .separator(),
+            ],
+        ]
+        let tail: [String: [NSMenuItem]] = [
+            "Kermo": [.separator(), item("Hide Kermo", #selector(NSApplication.hide(_:)), "h"), item("Quit Kermo", #selector(NSApplication.terminate(_:)), "q")],
+            "Go": [.separator(), goTunnelsItem()],
+        ]
+        for title in Self.menus { submenu(title, head[title] ?? [], trailing: tail[title] ?? []) }
         // AppKit lists the open windows below.
         NSApp.windowsMenu = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),

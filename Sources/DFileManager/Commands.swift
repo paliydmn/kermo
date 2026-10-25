@@ -10,16 +10,17 @@ struct Command {
     let menu: String?                     // menu to list it in; nil = keyboard only
     var short: String                     // key bar label; "" = title
     let aliases: String                   // extra words the search matches ("zip" → Compress)
+    var hidden = false                    // run by a panel itself (↩ on a server's file): not in ⇧⌘P or F1
     let run: @MainActor (AppDelegate) -> Void
 }
 
-private func cmd(_ id: String, _ title: String, _ keys: [String], menu: String? = nil,
-                 short: String = "", aliases: String = "", _ run: @escaping @MainActor (AppDelegate) -> Void) -> Command {
+private func cmd(_ id: String, _ title: String, _ keys: [String], menu: String? = nil, short: String = "", aliases: String = "",
+                 hidden: Bool = false, _ run: @escaping @MainActor (AppDelegate) -> Void) -> Command {
     let parsed = keys.map { spec in
         guard let s = Shortcut(spec) else { preconditionFailure("bad shortcut spec \(spec) for \(id)") }
         return s
     }
-    return Command(id: id, title: title, keys: parsed, menu: menu, short: short, aliases: aliases, run: run)
+    return Command(id: id, title: title, keys: parsed, menu: menu, short: short, aliases: aliases, hidden: hidden, run: run)
 }
 
 extension AppDelegate {
@@ -58,8 +59,8 @@ extension AppDelegate {
             let t = app.terminal.isShown ? app.terminal.current?.target : app.active.remote?.target
             if let t { app.disconnect(t) } else { NSSound.beep() }
         },
-        cmd("remote.open", "Open Remote File", []) { $0.remoteOpen(.open) },
-        cmd("remote.archive", "List Remote Archive", []) { $0.remoteArchiveList() },
+        cmd("remote.open", "Open Remote File", [], hidden: true) { $0.remoteOpen(.open) },
+        cmd("remote.archive", "List Remote Archive", [], hidden: true) { $0.remoteArchiveList() },
         cmd("go.bookmark", "Bookmark This Folder", ["cmd+d"], menu: "Go", short: "Bookmark", aliases: "favorite star pin") { $0.toggleBookmark() },
         cmd("go.linktarget", "Go to Link Target", ["cmd+j"], menu: "Go", short: "Link target") { $0.goToLinkTarget() },
         cmd("go.volumes", "Volumes…", ["cmd+shift+v", "opt+f1"], menu: "Go", short: "Volumes", aliases: "disks drives mounts") { $0.showVolumes() },
@@ -178,7 +179,7 @@ extension AppDelegate {
 
         // File operations
         cmd("file.view", "View", ["f3", "opt+3"], menu: "File", short: "View", aliases: "viewer read log") { $0.viewFile() },
-        cmd("archive.open", "Open from Archive", []) { $0.openFromArchive(view: false) },
+        cmd("archive.open", "Open from Archive", [], hidden: true) { $0.openFromArchive(view: false) },
         cmd("file.compress", "Compress…", ["opt+f5"], menu: "File", short: "Compress", aliases: "zip tar archive pack") { $0.compressDialog() },
         cmd("file.extract", "Extract…", ["opt+f9"], menu: "File", short: "Extract", aliases: "unzip untar unpack archive") { $0.extractDialog() },
         cmd("file.edit", "Edit", ["f4", "opt+4"], menu: "File", short: "Edit", aliases: "editor") { $0.editFile() },
