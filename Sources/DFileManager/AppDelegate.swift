@@ -1252,6 +1252,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         cmdField.placeholderString = Self.commandHint(root: root?.target)
         sidebar.highlight(sidebarKey)
         keyBar.server = (active.remote ?? active.parked) != nil
+        let to = other.remote ?? other.parked
+        keyBar.target = KeyBarModel.target(server: to.map { (SavedServer.name(for: $0.target), SavedServer.isProd($0.target)) }, folder: other.path, panels: panels.count)
         updateGitRow()
         window?.title = root.map { "\($0.target.shown):\($0.dir)" }?.bidiVisible ?? path.bidiVisible   // what the panel's header says
         guard remote == nil else { window?.representedURL = nil; return }

@@ -40,6 +40,28 @@ import Testing
     #expect(marks() == [false, false], "two panels: no mark")
 }
 
+/// F5 and F6 say where they go when it isn't plain: a server by its name (production's in purple, bold), or a folder's
+/// name with 3–4 panels. Two panels here: nothing more, as before.
+@MainActor @Test func copyAndMoveSayWhere() {
+    #expect(KeyBarModel.target(server: nil, folder: "/Users/me/site", panels: 2) == nil)
+    #expect(KeyBarModel.target(server: ("web-01", true), folder: "/Users/me", panels: 2) == .init(name: "web-01", prod: true))
+    #expect(KeyBarModel.target(server: ("db-01", false), folder: "/Users/me", panels: 4)?.text == "→ db-01")
+    #expect(KeyBarModel.target(server: nil, folder: "/Users/me/site", panels: 3) == .init(name: "site") && KeyBarModel.target(server: nil, folder: "/", panels: 3)?.text == "→ /")
+    let bar = KeyBarView()
+    bar.reload(AppDelegate().makeCommands())
+    func title(_ id: String) -> NSAttributedString? {
+        func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? NSButton).map { [$0] } ?? buttons($0) } }
+        return buttons(bar).first { $0.identifier?.rawValue == id }?.attributedTitle
+    }
+    #expect(title("file.copy")?.string == "F5 Copy")
+    bar.target = .init(name: "web-01", prod: true)
+    for id in ["file.copy", "file.move"] {
+        let t = title(id)
+        #expect(t?.string.hasSuffix(" → web-01") == true && t?.attribute(.foregroundColor, at: t!.length - 1, effectiveRange: nil) as? NSColor == Palette.prod)
+    }
+    #expect(title("file.view")?.string == "F3 View", "other keys go nowhere")
+}
+
 extension ServerLockTests {
 /// The active panel has a line under its path bar in its place's color — the theme's accent here, purple on a
 /// production server, orange on a root panel, purple on a production root panel; an inactive one has none.
