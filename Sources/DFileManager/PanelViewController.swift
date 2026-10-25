@@ -883,7 +883,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     /// The Size column as wide as its widest text in this Mac's locale ("999.99 GB", "≥ 999.9 MB"), the Modified
-    /// column as its widest date ("Yesterday 23:59", "Sep 30 23:59", "2026-12-31 23:59").
+    /// column as its widest date ("Yesterday 23:59", "Sep 28 23:59", "2026-12-31 23:59").
     private static func widths(font: NSFont) -> (size: CGFloat, date: CGFloat) {
         func w(_ s: String) -> CGFloat { ceil(NSAttributedString(string: s, attributes: [.font: font]).size().width) + 10 }
         let sizes = [999, 999_900, 999_990_000, 999_990_000_000].map { "≥ " + size($0) }
@@ -2836,8 +2836,8 @@ final class PanelCell: NSTableCellView {
     }
 }
 
-/// The Modified column: "Today 13:33", "Yesterday 09:10", this year's "Oct 14 13:32", older "2024-03-01" — day, month
-/// and time in this Mac's locale, the two words in the app's English. `iso` (defaults `isoDates`): always
+/// The Modified column: "Today 13:33", "Yesterday 09:10", this year's "Oct 14 13:32", older "2024-03-01" — one
+/// format whatever the Mac's locale, in English as the rest of the app, 24-hour. `iso` (defaults `isoDates`): always
 /// "2024-03-01 13:33". The day's and year's bounds are taken once, when it's made, not per row.
 struct DateColumn: Equatable {
     let iso: Bool
@@ -2860,13 +2860,14 @@ struct DateColumn: Equatable {
         return Self.isoDay.string(from: d)
     }
 
-    private static func fmt(_ format: String? = nil, template: String? = nil) -> DateFormatter {
+    private static func fmt(_ format: String) -> DateFormatter {
         let f = DateFormatter()
-        if let format { f.dateFormat = format } else { f.setLocalizedDateFormatFromTemplate(template!) }
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = format
         return f
     }
     nonisolated(unsafe) private static let isoFull = fmt("yyyy-MM-dd HH:mm"), isoDay = fmt("yyyy-MM-dd"),
-                                            time = fmt(template: "jjmm"), monthDay = fmt(template: "MMMd jjmm")
+                                            time = fmt("HH:mm"), monthDay = fmt("MMM d HH:mm")
 }
 
 /// A row of views on a color of its own (the active panel's path bar), drawn each time so it follows light and dark.
