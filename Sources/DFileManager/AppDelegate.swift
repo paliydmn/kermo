@@ -809,7 +809,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         } else {
             items += saveItems(r.address)
         }
-        return [.separator()] + items.compactMap { $0 }
+        return items.compactMap { $0 }
     }
 
     /// Production: its color in the sidebar and the panel headers; delete, overwrite and move there ask first.

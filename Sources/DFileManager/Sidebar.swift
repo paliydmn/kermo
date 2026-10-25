@@ -892,7 +892,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
 
     /// ⋯: the row's whole menu, as a right-click shows it; ⇄: its Tunnels submenu — the same items either way.
     private func popMenu(_ r: ServerRow, tunnels: Bool, from button: NSButton) {
-        let items = Array((serverMenu?(.server(r)) ?? []).drop { $0.isSeparatorItem })
+        let items = serverMenu?(.server(r)) ?? []
         let menu: NSMenu
         if tunnels, let it = items.first(where: { $0.title == "Tunnels" }), let sub = it.submenu {
             it.submenu = nil   // a menu pops up on its own, not as another item's submenu
@@ -1047,14 +1047,24 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         guard let node = outline.item(atRow: outline.clickedRow) as? Node else { return }
         if let s = node.section { return sectionMenu?(s.id).forEach(menu.addItem) ?? () }
         guard let place = node.place else { return }
-        if roots.first?.children.contains(where: { $0 === node }) == true, let p = place.bookmark {
-            menu.addItem(withTitle: "Remove from Favorites", action: #selector(removeFavorite(_:)), keyEquivalent: "").representedObject = p
+        contextItems(place, favorite: roots.first?.children.contains { $0 === node } == true).forEach(menu.addItem)
+    }
+
+    /// A row's right-click menu: Remove from Favorites, a volume's actions, then a server's — after a line if there's
+    /// anything above it.
+    func contextItems(_ place: Place, favorite: Bool) -> [NSMenuItem] {   // internal for tests
+        var items: [NSMenuItem] = []
+        if favorite, let p = place.bookmark {
+            let it = NSMenuItem(title: "Remove from Favorites", action: #selector(removeFavorite(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = p
+            items.append(it)
         }
-        menu.items.forEach { $0.target = self }
         if case .volume(let v) = place {
-            for a in v.actions { menu.addItem(MenuAction.item(a.rawValue) { [weak self] in self?.onVolume?(v, a) }) }
+            items += v.actions.map { a in MenuAction.item(a.rawValue) { [weak self] in self?.onVolume?(v, a) } }
         }
-        serverMenu?(place).forEach(menu.addItem)
+        let server = serverMenu?(place) ?? []
+        return items + (items.isEmpty || server.isEmpty ? [] : [.separator()]) + server
     }
 
     var places: [Place] { roots.flatMap(\.children).compactMap(\.place) }

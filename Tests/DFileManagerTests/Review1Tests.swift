@@ -43,3 +43,15 @@ import Testing
     #expect(problems("file.diff", ["cmd+opt+d"]).first?.contains("macOS takes it first") == true)
     #expect(problems("file.copy", ["f5"]).isEmpty)
 }
+
+/// P-8: a server row's right-click menu starts with its first item, not a line; a favorite's ends with its own.
+@MainActor @Test func aServerRowsMenuStartsWithAnItem() {
+    let app = AppDelegate(), sidebar = SidebarController()
+    sidebar.serverMenu = { app.serverMenu($0) }
+    let row = ServerRow(target: SFTPTarget(host: "me@web.invalid"), saved: nil, title: "web")
+    let server = sidebar.contextItems(.server(row), favorite: false)
+    #expect(server.first?.title == "Open SSH Session" && server.last?.isSeparatorItem == false)
+    #expect(zip(server, server.dropFirst()).allSatisfy { !($0.isSeparatorItem && $1.isSeparatorItem) }, "no two lines in a row")
+    #expect(sidebar.contextItems(.serverFolder("me@web.invalid:/srv"), favorite: true).map(\.title) == ["Remove from Favorites"])
+    #expect(sidebar.contextItems(.folder("/tmp"), favorite: false).isEmpty)
+}
