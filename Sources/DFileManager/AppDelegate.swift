@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private let promptLabel = NSTextField(labelWithString: "")
     private let cmdField = NSTextField(string: "")
     private var historyIndex = 0
-    private(set) var commands: [Command] = []
+    var commands: [Command] = []   // set in tests
     private var keymap: [Shortcut: Command] = [:]
     let keyBar = KeyBarView()
     /// Narrowest main window: two 360 pt panels, and the key bar's six file actions plus "+N" (U4).
@@ -167,9 +167,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
             return e
         }
-        // Focus moving into a text field (or the terminal) enables / disables the bar's slots.
+        // Focus moving into a text field (or the terminal) enables / disables the bar's slots and the menu's keys.
         responderObservation = window.observe(\.firstResponder) { [keyBar] _, _ in
-            MainActor.assumeIsolated { keyBar.render() }
+            MainActor.assumeIsolated {
+                keyBar.render()
+                (NSApp.delegate as? AppDelegate)?.updateMenuKeys()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.updateMenuKeys() }   // a viewer in front: F3 is its key
         }
         if !configProblems.isEmpty { showError(JobErrorMessage(configProblems.joined(separator: "\n"))) }
         show(pendingOpen)
@@ -340,6 +346,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         refreshSidebar()   // section headers show keys
         let menu = makeMenu()
         NSApp.mainMenu = menu
+        updateMenuKeys(menu)
         let fixed = Self.fixedKeys(menu)
         problems += overrides.flatMap { Self.keymapProblems($0.id, $0.keys, was: $0.was, fixed: fixed) }
         configProblems = Config.unreadable + problems   // the state files' once, at launch
@@ -379,7 +386,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         for m in menu.items.compactMap(\.submenu) {
             let rows = m.items.compactMap { it -> (String, String)? in
                 guard it.action == #selector(menuCommand(_:)) else { return Shortcut(menuItem: it).map { (it.title, $0.display) } }
-                guard !it.keyEquivalent.isEmpty, validateMenuItem(it), let id = it.representedObject as? String else { return nil }
+                guard validateMenuItem(it), let id = it.representedObject as? String else { return nil }
                 return commands.first { $0.id == id }?.keys.first.map { (it.title, $0.display) }   // the one key the menu has
             }
             if !rows.isEmpty { out.append((m.title, rows)) }
@@ -1021,6 +1028,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// The app's own items, not the panels': from a viewer, an editor or over the terminal too.
     static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto"]
+
+    /// A disabled menu item still takes its key: AppKit says it handled it and runs nothing, so F3 never reached a viewer
+    /// (D-101); by the same path ⌘↑ or ⌃B could miss an editor or a text field. A command's item keeps its key only while
+    /// it works where keys go now: on every change of the key window and of the main window's focus. Not before the
+    /// window's content (launch).
+    func updateMenuKeys(_ menu: NSMenu? = NSApp.mainMenu) {
+        guard terminal != nil, let menu else { return }
+        let byID = Dictionary(commands.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for it in menu.items.compactMap(\.submenu).flatMap(\.items) where it.action == #selector(menuCommand(_:)) {
+            let key = (it.representedObject as? String).flatMap { byID[$0]?.keys.first }
+            let on = key != nil && validateMenuItem(it)
+            it.keyEquivalent = on ? key!.menuKey : ""
+            it.keyEquivalentModifierMask = on ? key!.flags : []
+        }
+    }
 
     /// ⌘W (Close Tab) in a viewer, editor or other document window closes that window, through its delegate, so
     /// the editor still asks about unsaved changes. In the main window, or a sheet / picker over it, it closes a tab.

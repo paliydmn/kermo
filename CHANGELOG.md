@@ -21,6 +21,7 @@ Release:
 - **About Kermo** and **Check for Updates…** work while a viewer, an editor or the terminal is in front; they were greyed out.
 - On a server's panel **F8** says **Delete…**, in red in the key bar, and in the File menu and a file's right-click menu: it deletes for good after asking, since a server has no Trash. A server tab that isn't connected yet says so too.
 - **Edit ▸ Cut** (⌘X): cutting text works in the path bar, the command line and dialogs.
+- **F3** and **F10** close the viewer: a menu command that doesn't work in a window no longer takes its key there.
 - Holding **⇧⌥** shows the keys there, `⌥⇧4 5 6 8 = ⇧F4 5 6 8`, instead of "No commands".
 - ⇧⌘P no longer offers Open Remote File, Open from Archive and List Remote Archive: a panel runs them by itself.
 - A server's right-click menu in the sidebar no longer starts with a line.

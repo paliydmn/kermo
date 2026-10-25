@@ -98,3 +98,30 @@ import Testing
     #expect(edit.items.firstIndex(of: cut).map { edit.items[$0 + 1].title } == "Copy")
     #expect(!app.makeCommands().contains { $0.keys.contains(Shortcut("cmd+x")!) })
 }
+
+/// D-101: a command's menu item keeps its key only while the command works where keys go. A disabled item took its key
+/// and ran nothing (AppKit), so F3 and F10 never closed a viewer.
+@MainActor @Test func disabledCommandsLeaveTheirKeys() {
+    _ = NSApplication.shared
+    let app = AppDelegate()
+    app.commands = app.makeCommands()
+    let menu = app.makeMenu()
+    func item(_ id: String) -> NSMenuItem? { menu.items.compactMap(\.submenu).flatMap(\.items).first { $0.representedObject as? String == id } }
+    #expect(item("file.view")?.keyEquivalent == Shortcut("f3")!.menuKey, "as built")
+    let parent = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400)), panels = NSView(frame: parent.bounds)
+    parent.addSubview(panels)
+    let term = EmbeddedTerminal(covering: panels)
+    app.terminal = term
+
+    app.window = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: true)   // not key: say a viewer is
+    app.updateMenuKeys(menu)
+    for id in ["file.view", "go.tree", "go.up", "git.switch"] { #expect(item(id)?.keyEquivalent == "", "\(id) over another window") }
+
+    // In tests no window is key: with none of its own the app takes itself for key. The terminal is up: ⌃O works, F3 doesn't.
+    app.window = nil
+    term.restore([SFTPTarget(host: "me@dfm-d101.invalid")])   // a tab without a process
+    _ = term.show()
+    app.updateMenuKeys(menu)
+    #expect(item("view.terminal")?.keyEquivalent == "o" && item("view.terminal")?.keyEquivalentModifierMask == .control)
+    #expect(item("file.view")?.keyEquivalent == "")
+}
