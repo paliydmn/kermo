@@ -43,10 +43,15 @@ Release:
 - A look at a server's services, containers or ports that fails says why in the picker, which stays open, instead of closing it.
 - Hints read one way everywhere: the key as a symbol, then a verb — **⎋ Close**, **⎋ Stop**, **⌘R Run Again** — not "Esc close", "Esc closes" or "⌘R again".
 - The user menu (F2) and Filter Presets (⌘/) end with the row that edits their file.
+- The viewer, the editor and output windows are titled by the file's name (or the command), with where it is under it — `web-01 · /var/log/nginx` on a server, by its saved name — and say what they show in a status line at the bottom instead of the title bar: size, encoding, a filter in words, `following`, `running…`, the exit status. A save's note shows there too.
+- Those windows have the key bar along the bottom: their own keys first (`& Filter`, `w Wrap`, `⎋ Close`; `⎋ Stop` while a command runs, `⌘R Run Again` after Run on Servers), then the menu keys that work there; a click does what the key does. F1 over them lists the same keys, the app's menu last, and no longer lists keys that do nothing there (Save in the viewer, Paste where nothing can be typed).
+- The viewer has a toolbar: **Text | Hex | Readable**, **Wrap**, **Lines** and **Follow** switches that show their state, a **Filter lines** field (`&` goes there) and **All | Warnings | Errors**. The editor's has **Final Newline** and, for a server's file, **Server File History…**.
+- A git diff's output window is titled `git diff config.yaml`, not with git's whole command line.
 
 ### Fixed
 - A new SSH tab shows its green dot as soon as ssh starts; it was grey until the next redraw.
 - ⌥⌘E in Volumes… ejects the highlighted volume, as the row said; it did nothing there.
+- F1 over the editor no longer lists the system's Start Dictation and Emoji & Symbols as "D" and "E".
 - Two saved servers on one address with different ports no longer share the sidebar's "connecting" and "failed" marks.
 - **F1** lists the Git menu's keys (⌃B, ⌃⇧C, ⌃G …); they were missing there and under the key bar's **+N**. Its sections follow the menu bar's order.
 - **About Kermo** and **Check for Updates…** work while a viewer, an editor or the terminal is in front; they were greyed out.
