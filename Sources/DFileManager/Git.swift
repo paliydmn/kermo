@@ -59,7 +59,7 @@ extension AppDelegate {
             guard case .success(let found) = await panel.busy("Branches…", after: 0.3, { _ in GitStatus.refs(st.root) }) else { return }
             guard let refs = found else { return panel.flash("Git didn't list the branches", error: true) }
             let current = st.detached ? "HEAD" : st.branch
-            let items = [Picker.Item(title: "＋ New Branch…", subtitle: "from \(current), or type its name above") { [unowned self] in newBranch(from: nil) }]
+            let items = [Picker.Item(title: "New Branch…", subtitle: "from \(current), or type its name above", badges: [Symbol.add.image("New")]) { [unowned self] in newBranch(from: nil) }]
                 + refs.map { ref in branchItem(ref, root: st.root) }
             Picker.show(over: window, placeholder: "Switch branch — or type a new name · ⌘N branch from the highlighted · ⌘⌫ delete merged",
                         items: items, freeText: { [unowned self] q in

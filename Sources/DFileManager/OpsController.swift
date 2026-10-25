@@ -5,7 +5,7 @@ import DFMCore
 /// this Mac, or a server — and lanes run side by side, so a slow upload never holds up a local copy (or the other
 /// way round). Start Now runs a queued job right away, next to whatever is running.
 /// Workers block on our sheets for conflicts/errors via `ask`.
-/// A finished job goes to `history` (the Activity list, ⌥⌘J): a copy or move shows "✓" in its row for a moment, one
+/// A finished job goes to `history` (the Activity list, ⌥⌘J): a copy or move shows a check in its row for a moment, one
 /// with errors keeps a row saying so — Show, Retry Failed — until it's dismissed. Nothing blocks the window.
 @MainActor
 final class OpsController {
@@ -24,7 +24,7 @@ final class OpsController {
     let toolbarItem = NSToolbarItem(itemIdentifier: OpsController.toolbarID)
     static let toolbarID = NSToolbarItem.Identifier("activity")
     private lazy var activity = ActivityPopover(ops: self)
-    /// Rows of finished jobs: "✓" for a moment, errors until dismissed.
+    /// Rows of finished jobs: a check for a moment, errors until dismissed.
     private var results: [(id: UUID, view: NSView)] = []
     private var running: [FileJob] = []
     private var timer: Timer?
@@ -143,12 +143,12 @@ final class OpsController {
         switch e.result {
         case .done:
             guard e.kind == .copy || e.kind == .move else { return }   // a Trash or a delete is done at once: no row
-            let mark = Activity.label("✓  " + e.title, size: 12, weight: .semibold, color: Palette.ok)
+            let mark = Activity.label(e.title, size: 12, weight: .semibold, color: Palette.ok, mark: .check)
             line = NSStackView(views: [mark, Activity.label(e.summary, color: .secondaryLabelColor), NSView()])
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.dismiss(e.id) }
         case .errors:
             let n = e.errorCount
-            let mark = Activity.label("⚠  \(e.title) — finished with \(n) error\(n == 1 ? "" : "s")", size: 12, weight: .semibold, color: Palette.fail)
+            let mark = Activity.label("\(e.title) — finished with \(n) error\(n == 1 ? "" : "s")", size: 12, weight: .semibold, color: Palette.fail, mark: .warn)
             var views: [NSView] = [mark, NSView(), Activity.button("Show") { [unowned self] in dismiss(e.id); showActivity(entry: e.id) }]
             if e.canRetry { views.append(Activity.button("Retry Failed") { [unowned self] in dismiss(e.id); retry(e, nil) }) }
             views.append(Activity.icon(.close, "Dismiss") { [unowned self] in

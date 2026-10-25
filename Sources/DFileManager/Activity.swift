@@ -173,9 +173,10 @@ struct ActivityEntry: Codable, Equatable {
         let para = NSMutableParagraphStyle()
         if let sizesAt { para.tabStops = [NSTextTab(textAlignment: .right, location: sizesAt)] }
         para.lineBreakMode = .byTruncatingMiddle
-        func line(_ mark: String, _ color: NSColor, _ text: String, _ textColor: NSColor = .labelColor, size: String? = nil) {
+        func line(_ mark: Symbol, _ color: NSColor, _ text: String, _ textColor: NSColor = .labelColor, size: String? = nil) {
             if out.length > 0 { out.append(NSAttributedString(string: "\n")) }
-            out.append(NSAttributedString(string: mark + "  ", attributes: [.foregroundColor: color, .font: font, .paragraphStyle: para]))
+            out.append(mark.text(color, font: font))
+            out.append(NSAttributedString(string: "  ", attributes: [.font: font, .paragraphStyle: para]))
             out.append(NSAttributedString(string: text.bidiVisible, attributes: [.foregroundColor: textColor, .font: font, .paragraphStyle: para]))
             if let size {
                 out.append(NSAttributedString(string: (sizesAt == nil ? "  " : "\t") + size,
@@ -183,21 +184,21 @@ struct ActivityEntry: Codable, Equatable {
             }
         }
         let bytes = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
-        if p.doneFiles > p.recent.count { line("✓", Palette.ok, "\(p.doneFiles - p.recent.count) more done", .secondaryLabelColor) }
-        for f in p.recent { line("✓", Palette.ok, (f.path as NSString).lastPathComponent, size: bytes(f.size)) }
+        if p.doneFiles > p.recent.count { line(.check, Palette.ok, "\(p.doneFiles - p.recent.count) more done", .secondaryLabelColor) }
+        for f in p.recent { line(.check, Palette.ok, (f.path as NSString).lastPathComponent, size: bytes(f.size)) }
         // between two files (paused, say) `current` is still the one just done
         if !p.current.isEmpty, p.current != p.recent.last.map({ ($0.path as NSString).lastPathComponent }) {
             let pct = p.currentSize > 0 ? "\(Int(Double(min(p.currentDone, p.currentSize)) / Double(p.currentSize) * 100))% of \(bytes(p.currentSize))" : nil
-            line("▸", Palette.accent, p.current, size: pct)
+            line(.expand, Palette.accent, p.current, size: pct)
         }
-        for f in p.failed.suffix(5) { line("✕", Palette.fail, "\((f.path as NSString).lastPathComponent) — \(f.message)") }
-        if p.failed.count > 5 { line("✕", Palette.fail, "\(p.failed.count - 5) more failed", .secondaryLabelColor) }
+        for f in p.failed.suffix(5) { line(.failed, Palette.fail, "\((f.path as NSString).lastPathComponent) — \(f.message)") }
+        if p.failed.count > 5 { line(.failed, Palette.fail, "\(p.failed.count - 5) more failed", .secondaryLabelColor) }
         let left = Array(job.sources.dropFirst(job.kind == .trash || job.kind == .delete ? p.doneFiles : p.topsBegun))   // those count items
         if p.state != .queued, !left.isEmpty {
-            for f in left.prefix(3) { line("○", .tertiaryLabelColor, (f as NSString).lastPathComponent, .secondaryLabelColor) }
-            if left.count > 3 { line("○", .tertiaryLabelColor, "\(left.count - 3) more to go", .secondaryLabelColor) }
+            for f in left.prefix(3) { line(.pending, .tertiaryLabelColor, (f as NSString).lastPathComponent, .secondaryLabelColor) }
+            if left.count > 3 { line(.pending, .tertiaryLabelColor, "\(left.count - 3) more to go", .secondaryLabelColor) }
         }
-        if out.length == 0 { line("○", .tertiaryLabelColor, p.state == .queued ? "Waits for its turn" : "Looking at the items…", .secondaryLabelColor) }
+        if out.length == 0 { line(.pending, .tertiaryLabelColor, p.state == .queued ? "Waits for its turn" : "Looking at the items…", .secondaryLabelColor) }
         return out
     }
 
@@ -278,10 +279,16 @@ struct ActivityEntry: Codable, Equatable {
 
     static let font = NSFont.systemFont(ofSize: 11)
 
-    static func label(_ s: String = "", size: CGFloat = 11, weight: NSFont.Weight = .regular, color: NSColor = .labelColor) -> NSTextField {
+    /// `mark`: a symbol before the text, in its color.
+    static func label(_ s: String = "", size: CGFloat = 11, weight: NSFont.Weight = .regular, color: NSColor = .labelColor, mark: Symbol? = nil) -> NSTextField {
         let l = NSTextField(labelWithString: s.bidiVisible)
         l.font = .systemFont(ofSize: size, weight: weight)
         l.textColor = color
+        if let mark {
+            let t = NSMutableAttributedString(attributedString: mark.text(color, font: l.font!))
+            t.append(NSAttributedString(string: "  " + s.bidiVisible, attributes: [.font: l.font!, .foregroundColor: color]))
+            l.attributedStringValue = t
+        }
         l.lineBreakMode = .byTruncatingMiddle
         l.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return l
@@ -530,10 +537,15 @@ final class ClosureButton: NSButton {
                 let done = NSMutableAttributedString()
                 for s in e.sources.prefix(5) {
                     if done.length > 0 { done.append(NSAttributedString(string: "\n")) }
-                    done.append(NSAttributedString(string: "✓  ", attributes: [.foregroundColor: Palette.ok, .font: Activity.font]))
+                    done.append(Symbol.check.text(Palette.ok, font: Activity.font))
+                    done.append(NSAttributedString(string: "  ", attributes: [.font: Activity.font]))
                     done.append(NSAttributedString(string: (s as NSString).lastPathComponent.bidiVisible, attributes: [.font: Activity.font, .foregroundColor: NSColor.labelColor]))
                 }
-                if e.sourceCount > 5 { done.append(NSAttributedString(string: "\n✓  \(e.sourceCount - 5) more", attributes: [.font: Activity.font, .foregroundColor: NSColor.secondaryLabelColor])) }
+                if e.sourceCount > 5 {
+                    done.append(NSAttributedString(string: "\n"))
+                    done.append(Symbol.check.text(.secondaryLabelColor, font: Activity.font))
+                    done.append(NSAttributedString(string: "  \(e.sourceCount - 5) more", attributes: [.font: Activity.font, .foregroundColor: NSColor.secondaryLabelColor]))
+                }
                 if e.result != .errors, done.length > 0 { add(NSTextField(labelWithAttributedString: done)) }
             }
             let more = max(0, e.errorCount - shown - (isOpen ? e.notes.count : 0))
@@ -562,7 +574,7 @@ final class ClosureButton: NSButton {
     }
 
     private func failedLine(_ e: ActivityEntry, _ f: FileJob.Failure) -> NSView {
-        let mark = Activity.label("✕", color: Palette.fail)
+        let mark = NSImageView(image: Symbol.failed.image("failed", color: Palette.fail, size: 11))
         let name = Activity.label(((f.dst ?? f.path) as NSString).lastPathComponent)
         let why = Activity.label(f.message, size: 10.5, color: Palette.fail)
         why.lineBreakMode = .byTruncatingTail

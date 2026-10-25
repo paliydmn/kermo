@@ -555,7 +555,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     private func setUpSearch() {
         search.results = { [unowned self] q, flag in
-            let fav = bookmarks.map { SearchHit(title: Bookmark.title($0), subtitle: ($0 as NSString).abbreviatingWithTildeInPath, detail: "★", target: .folder($0)) }
+            let fav = bookmarks.map { SearchHit(title: Bookmark.title($0), subtitle: ($0 as NSString).abbreviatingWithTildeInPath, detail: "favorite", target: .folder($0)) }
             let freq = frecency.ranked().filter { !bookmarks.contains($0) }.prefix(300).map {
                 SearchHit(title: Self.folderName($0), subtitle: ($0 as NSString).abbreviatingWithTildeInPath, target: .folder($0))
             }

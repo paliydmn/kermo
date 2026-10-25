@@ -240,7 +240,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     #expect(asked.first?.0 == "Stop web on localhost?" && asked.first?.1 == ["Stop", "Cancel"] && asked.first?.2 == 1)
     #expect(list.said == "web: not stopped — cancelled; nothing ran" && !FileManager.default.fileExists(atPath: dir + "/systemctl.log"))
     press("Stop…")
-    await until { list.said.hasPrefix("✓") }
+    await until { list.said.hasPrefix("\u{FFFC} web stopped") }
     #expect(list.said.hasPrefix("\u{FFFC} web stopped on localhost at ") && list.highlighted?.subtitle == "inactive · dead", "\(list.said)")
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "stop -- web.service\n" && waited == [true])
     press("Refresh Status")

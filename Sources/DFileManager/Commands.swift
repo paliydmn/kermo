@@ -582,15 +582,16 @@ extension AppDelegate {
 
     // MARK: - Jump, bookmarks
 
+    private static let star = Symbol.star.image("Favorite")
+
     /// Bookmarks first, then folders by frecency. Typing an existing path offers to go there directly.
     func showJump() {
         func item(_ p: String, star: Bool) -> Picker.Item {
-            let title = (star ? "★ " : "") + Bookmark.title(p)
-            return Picker.Item(title: title, subtitle: (p as NSString).abbreviatingWithTildeInPath) { [unowned self] in jump(to: p) }
+            Picker.Item(title: Bookmark.title(p), subtitle: (p as NSString).abbreviatingWithTildeInPath, badges: star ? [Self.star] : []) { [unowned self] in jump(to: p) }
         }
         let items = bookmarks.map { item($0, star: true) }
             + frecency.ranked().filter { !bookmarks.contains($0) && $0 != active.path }.prefix(500).map { item($0, star: false) }
-        Picker.show(over: window, placeholder: "Jump to folder (fuzzy; bookmarks ★ first)…", items: items) { it, q in
+        Picker.show(over: window, placeholder: "Jump to folder (fuzzy; bookmarks first)…", items: items) { it, q in
             // Prefer hits in the folder name itself over hits spread across the path.
             guard let s = Fuzzy.score(q, it.subtitle) else { return nil }
             return s + (Fuzzy.score(q, it.title) != nil ? 500 : 0)
@@ -653,10 +654,10 @@ extension AppDelegate {
         let p = (active.remote ?? active.parked).map { Bookmark.entry($0.target, $0.dir) } ?? active.path   // what the header says
         if let i = bookmarks.firstIndex(of: p) {
             bookmarks.remove(at: i)
-            active.flash("☆ Removed bookmark")
+            active.flash("Removed bookmark")
         } else {
             bookmarks.append(p)
-            active.flash("★ Bookmarked — ⌘P to jump")
+            active.flash("Bookmarked — ⌘P to jump")
         }
         Config.save("bookmarks.json", bookmarks)
         refreshSidebar()
@@ -697,7 +698,7 @@ extension AppDelegate {
             applyTheme()
         }
         let items = Theme.all.map { t in
-            Picker.Item(title: t.name, detail: t.name == was ? "✓" : "", preview: { use(t.name) }) { use(t.name) }
+            Picker.Item(title: t.name, detail: t.name == was ? "current" : "", preview: { use(t.name) }) { use(t.name) }
         }
         Picker.show(over: window, placeholder: "Theme…", items: items, selected: Theme.all.firstIndex { $0.name == was } ?? 0) { use(was) }
     }
@@ -913,7 +914,7 @@ extension AppDelegate {
             return listed.insert(k).inserted
         }
         let go: @MainActor (String) -> Void = { [unowned self] in ssh ? openSSH($0) : connect($0) }
-        let items = [Picker.Item(title: "＋ New Server…", subtitle: "user, port, key, password, lock") { [unowned self] in
+        let items = [Picker.Item(title: "New Server…", subtitle: "user, port, key, password, lock", badges: [Symbol.add.image("New")]) { [unowned self] in
                 editServer(SavedServer(), title: "New Server", connect: kind)
             }]
             + savedServers.map { s in
@@ -2110,7 +2111,7 @@ extension AppDelegate {
                 }
             }
             let items = rows.map { r in
-                Picker.Item(title: r.title, subtitle: r.subtitle, detail: r.eject ? "⏏ ⌘⌥E" : "") { [unowned self] in active.navigate(to: r.path) }
+                Picker.Item(title: r.title, subtitle: r.subtitle, detail: r.eject ? "Eject ⌘⌥E" : "") { [unowned self] in active.navigate(to: r.path) }
             } + SidebarModel.locations([], disks).compactMap { v in
                 v.disk.map { d in Picker.Item(title: d.name, subtitle: v.tip, detail: "↩ Mount") { [unowned self] in mountVolume(d) { [unowned self] in active.navigate(to: $0) } } }
             }
