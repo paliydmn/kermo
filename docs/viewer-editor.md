@@ -23,7 +23,7 @@ While following, scrolling up keeps the text still as lines come in and the subt
 
 In a log or other plain text, lines with words like error or denied show red, and lines with warn or deprecated show amber. Terminal colors in the text (`journalctl`, `docker logs`, a log written with them) show as colors instead of escape codes, and such a line keeps its own colors instead of red or amber. Over 4 MB the window shows the colors too. A `.gz`, `.bz2`, `.xz` or `.zst` log (`.zst` needs the `zstd` program) shows unpacked, the first 32 MB; if that is over 4 MB it behaves like a file over 4 MB, however small it is on disk.
 
-On a server panel F3 downloads the file. A log over 4 MB shows only its last 4 MB; `f` follows it with `tail -F` on the server and `&` filters the whole log with `grep` there.
+On a server panel F3 downloads the file. Its title says `host:/path` (`root@host:/path` from a [root panel](root-panel.md)) with the server's chips at the end of the title bar, PROD, ROOT or LOCKED, as the editor's does. A log over 4 MB shows only its last 4 MB; `f` follows it with `tail -F` on the server and `&` filters the whole log with `grep` there.
 
 ### Files over 4 MB
 

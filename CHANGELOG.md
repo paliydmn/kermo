@@ -28,8 +28,16 @@ Release:
 - The Modified column says `Today 13:33`, `Yesterday 09:10`, `Oct 14 13:32` this year and `2024-03-01` before.
 - The Activity button at rest is a clock going round instead of a download arrow.
 - An executable file has Finder's executable icon, so it stands out in the System theme too.
+- The active panel has a 2 pt line under its path bar instead of a frame and a filled path bar: the accent color on this Mac, purple on a production server (a root panel there too, and a production server's panel is purple now even when it isn't root), orange in a root panel. Its path is in full contrast, the others' dimmed.
+- In the System theme the cursor of a panel that isn't focused is an outline, not a grey fill.
+- A server's panel tabs show its PROD and ROOT chips before the title, and the tab in front is underlined in purple or orange, as the terminal's tabs.
+- With three or four panels the panel F5 and F6 go to says **→ F5** at the end of its path bar, and the mark moves with Tab or a click.
+- F5 and F6 in the key bar say where they go when it isn't plain: `Copy → web-01` to a server (a production one's name in purple and bold), `Copy → site` with three or four panels.
+- The viewer titles a server's file as the editor does, `web:/var/log/app.log` (`root@web:` from a root panel), with the server's PROD, ROOT or LOCKED chip in the title bar.
+- A server's SFTP mark in the sidebar is orange while a root panel is open there, and its tooltip says "open as root".
 
 ### Fixed
+- A new SSH tab shows its green dot as soon as ssh starts; it was grey until the next redraw.
 - Two saved servers on one address with different ports no longer share the sidebar's "connecting" and "failed" marks.
 - **F1** lists the Git menu's keys (⌃B, ⌃⇧C, ⌃G …); they were missing there and under the key bar's **+N**. Its sections follow the menu bar's order.
 - **About Kermo** and **Check for Updates…** work while a viewer, an editor or the terminal is in front; they were greyed out.

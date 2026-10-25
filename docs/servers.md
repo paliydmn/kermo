@@ -115,7 +115,7 @@ If a server's host key no longer matches the one in `known_hosts`, Kermo won't c
 
 A row shows what is open on the server:
 
-- a terminal for SSH and a folder for SFTP, in green (with a count from 2);
+- a terminal for SSH and a folder for SFTP, in green (with a count from 2); the folder is orange while a [root panel](root-panel.md) is open there;
 - `⇄` for tunnels that are listening, in green (red when one failed);
 - a lock on the icon for a locked server, a red ◆ when the last connection failed (its tooltip says why), a purple icon and the PROD chip for a production server (in a narrow sidebar the chip gives way to the name).
 
@@ -131,7 +131,7 @@ Open sessions stay open. A locked server isn't added to the recents, and its sha
 
 ## Mark a server as production
 
-Production is a flag on a saved server for the servers where a mistake is expensive. It gives the server a purple PROD chip wherever it shows and makes Kermo ask before risky changes and log what you do there. [Safety](safety.md) lists what changes. As with a lock, an alias or another way of writing the same server counts as that server; typed for the first time, its purple can show a moment after the panel opens.
+Production is a flag on a saved server for the servers where a mistake is expensive. It gives the server a purple PROD chip wherever it shows, purples the line under an active panel there, and makes Kermo ask before risky changes and log what you do there. [Safety](safety.md) lists where it shows and what changes. As with a lock, an alias or another way of writing the same server counts as that server; typed for the first time, its purple can show a moment after the panel opens.
 
 - **Mark as Production** is in the server row's menu. A locked server asks for Touch ID first.
 - **Save as Production…** (on a recent or `~/.ssh/config` row) opens the save sheet with the flag already set.
