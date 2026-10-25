@@ -154,6 +154,22 @@ private final class CountingPreview: QLPreviewPanel {
     #expect(PanelViewController.gitCell("•").2 == "changes inside")
 }
 
+/// The git column takes no color that means something else: modified amber, added green, untracked and deleted grey,
+/// a conflict red with a warning sign; never production's purple or root's orange. Staged is told by bold.
+@MainActor @Test func gitLettersKeepToTheirColors() {
+    let cells = [" M", "M ", "A ", " D", "R ", "UU", "??", "•"].map(PanelViewController.gitCell)
+    #expect(cells.map(\.letter) == ["M", "M", "A", "D", "R", "U", "?", "•"])
+    #expect(cells.map(\.color) == [Palette.warn, Palette.warn, Palette.ok, .secondaryLabelColor, Palette.warn, Palette.fail, .secondaryLabelColor, Palette.warn])
+    #expect(cells.map(\.staged) == [false, true, true, false, true, false, false, false])
+    func weight(_ s: NSAttributedString) -> CGFloat? {
+        ((s.attribute(.font, at: s.length - 1, effectiveRange: nil) as? NSFont)?.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any])?[.weight] as? CGFloat
+    }
+    let text = cells.map { PanelViewController.gitText($0, size: 12) }
+    #expect(weight(text[1])! > weight(text[0])!, "staged in bold")
+    #expect(text[3].attribute(.strikethroughStyle, at: 0, effectiveRange: nil) as? Int == NSUnderlineStyle.single.rawValue, "deleted, struck through")
+    #expect(text[5].string == "\u{FFFC}U" && text[5].attribute(.attachment, at: 0, effectiveRange: nil) != nil, "a conflict after its sign")
+}
+
 /// P18: the git cell of an untracked file carries "untracked" (and a file without a mark carries nothing).
 @MainActor @Test(.enabled(if: GitStatus.available)) func gitCellsCarryTheirWord() async throws {
     _ = NSApplication.shared

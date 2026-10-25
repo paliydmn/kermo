@@ -1018,17 +1018,31 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         updateStatus()
     }
 
-    /// "M" red = changed, green = staged, "?" grey = untracked, "U" purple = conflict, "•" = changes inside.
-    /// The letter, its color, and what they say in words (VoiceOver reads neither).
-    static func gitCell(_ code: String) -> (String, NSColor, String) {   // internal for tests
-        if code == "•" { return ("•", .systemOrange, "changes inside") }
-        if code == "??" { return ("?", .secondaryLabelColor, "untracked") }
-        if code == "!!" { return ("!", .tertiaryLabelColor, "ignored") }
-        if GitStatus.isConflict(code) { return ("U", .systemPurple, "conflict") }
-        let x = code.first ?? " ", y = code.last ?? " "
-        let letter = x != " " ? x : y
+    /// The git column's mark: "M" (and R, C, T) amber, "A" green, "?" untracked and "D" grey, "U" — a conflict — red,
+    /// "•" changes inside amber; staged in bold. The letter, its color, what they say in words (VoiceOver reads neither).
+    static func gitCell(_ code: String) -> (letter: String, color: NSColor, word: String, staged: Bool) {   // internal for tests
+        if code == "•" { return ("•", Palette.warn, "changes inside", false) }
+        if code == "??" { return ("?", .secondaryLabelColor, "untracked", false) }
+        if code == "!!" { return ("!", .tertiaryLabelColor, "ignored", false) }
+        if GitStatus.isConflict(code) { return ("U", Palette.fail, "conflict", false) }
+        let x = code.first ?? " ", y = code.last ?? " ", staged = x != " "
+        let letter = staged ? x : y
         let word = ["M": "modified", "A": "added", "D": "deleted", "R": "renamed", "C": "copied", "T": "type changed"][String(letter)] ?? "changed"
-        return x != " " ? (String(x), Palette.ok, word + ", staged") : (String(y), Palette.fail, word)
+        let color = letter == "A" ? Palette.ok : letter == "D" ? .secondaryLabelColor : Palette.warn
+        return (String(letter), color, word + (staged ? ", staged" : ""), staged)
+    }
+
+    /// The mark as drawn: bold when staged, "D" struck through, a conflict after a warning sign.
+    static func gitText(_ mark: (letter: String, color: NSColor, word: String, staged: Bool), size: CGFloat) -> NSAttributedString {
+        let font = NSFont.monospacedSystemFont(ofSize: size, weight: mark.staged ? .heavy : .regular)
+        let s = NSMutableAttributedString()
+        if mark.word == "conflict" { s.append(Symbol.warnFill.text(mark.color, font: font)) }
+        s.append(NSAttributedString(string: mark.letter, attributes: [.font: font, .foregroundColor: mark.color,
+                                                                    .strikethroughStyle: mark.letter == "D" ? NSUnderlineStyle.single.rawValue : 0]))
+        let center = NSMutableParagraphStyle()
+        center.alignment = .center
+        s.addAttribute(.paragraphStyle, value: center, range: NSRange(location: 0, length: s.length))
+        return s
     }
 
     // MARK: - Sorting (remembered per folder)
@@ -2402,11 +2416,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             tf.setAccessibilityLabel(isMarked ? "marked" : nil)
         case "git":
             let mark = it.flatMap { git?.marks[$0.name] }.map(Self.gitCell)
-            tf.stringValue = mark?.0 ?? ""
             tf.alignment = .center
-            cell.text = nil
-            cell.color = mark?.1 ?? .labelColor
-            tf.setAccessibilityLabel(mark?.2)
+            tf.stringValue = ""
+            cell.text = mark.map { Self.gitText($0, size: NSFont.systemFontSize - 1) }
+            tf.setAccessibilityLabel(mark?.word)
             return cell
         case "size":
             tf.stringValue = it.map { Self.sizeText($0, measured: dirSizes[$0.name], partial: partialSizes.contains($0.name)) } ?? ""
