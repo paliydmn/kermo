@@ -35,9 +35,18 @@ Release:
 - F5 and F6 in the key bar say where they go when it isn't plain: `Copy → web-01` to a server (a production one's name in purple and bold), `Copy → site` with three or four panels.
 - The viewer titles a server's file as the editor does, `web:/var/log/app.log` (`root@web:` from a root panel), with the server's PROD, ROOT or LOCKED chip in the title bar.
 - A server's SFTP mark in the sidebar is orange while a root panel is open there, and its tooltip says "open as root".
+- The key bar's slots are flat — the key in a small capsule, then its word — with a light fill under the mouse; the ⇧ ⌥ ⌘ ⌃ chips on its left replace **Hold — ▾**: they light up while held, and a click keeps that layer shown until ⎋, a second click or the next command.
+- Key bar labels are the words of their menu items: **F1 Shortcuts**, **F2 User Menu**, **F7 New Folder**, **F9 Search**, **Permissions**, **Previous Tab**, **Command Line**… (not Keys, Menu, MkDir, Commands, Perms, Prev tab, Cmd line). **Menu** is the context menu's (⇧F10) alone.
+- The key bar shows the terminal's keys while the terminal is up (⌃O Panels, tabs, splits, panes), and the command line's while it has the focus (↩ Run in Shell, ⇧↩ Output Window, ⌘↩ Run in Terminal, ↑↓ History, ⎋ Back to Panel).
+- Pickers keep their keys on an action bar along the bottom instead of in the field's placeholder, where they went with the first letter typed: what ↩ does on the highlighted row, its own keys, **⌃↩ Actions** where it has a menu, **⎋ Close**, each a click away. A chip before the field says where the list is (**web-01 ›**, purple on a production server), a line above the rows what's known about the list (`52 units · 1 failed`), and an empty list says so in the middle. The field only asks what to type.
+- Services and Containers highlight a row in the system's blue, as every list does, not in green; a failed service keeps its red ◆.
+- A look at a server's services, containers or ports that fails says why in the picker, which stays open, instead of closing it.
+- Hints read one way everywhere: the key as a symbol, then a verb — **⎋ Close**, **⎋ Stop**, **⌘R Run Again** — not "Esc close", "Esc closes" or "⌘R again".
+- The user menu (F2) and Filter Presets (⌘/) end with the row that edits their file.
 
 ### Fixed
 - A new SSH tab shows its green dot as soon as ssh starts; it was grey until the next redraw.
+- ⌥⌘E in Volumes… ejects the highlighted volume, as the row said; it did nothing there.
 - Two saved servers on one address with different ports no longer share the sidebar's "connecting" and "failed" marks.
 - **F1** lists the Git menu's keys (⌃B, ⌃⇧C, ⌃G …); they were missing there and under the key bar's **+N**. Its sections follow the menu bar's order.
 - **About Kermo** and **Check for Updates…** work while a viewer, an editor or the terminal is in front; they were greyed out.

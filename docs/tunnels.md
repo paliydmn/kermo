@@ -8,7 +8,7 @@ Reach ports on this Mac that lead to a saved server, or past it: a database that
 
 - A saved server's sidebar menu ▸ **Tunnels**.
 - **Go ▸ Tunnels** lists every server's tunnels.
-- ⇧⌘P: **Tunnels…** (↩ turns one on or off, ⌘E edits it, ⌘C copies its address, ⌘O opens it in the browser, ⌘S saves a temporary one, ⌘⌫ deletes it), **New Tunnel…** (on the server the panel is on, or pick one) and **Forward Port…**.
+- ⇧⌘P: **Tunnels…** (↩ turns one on or off, ⌘E edits it, ⌘C copies its address, ⌘O opens it in the browser, ⌘S saves a temporary one, ⌘⌫ deletes it; the action bar under the list shows the highlighted tunnel's keys), **New Tunnel…** (on the server the panel is on, or pick one) and **Forward Port…**.
 
 ## Add a tunnel
 
