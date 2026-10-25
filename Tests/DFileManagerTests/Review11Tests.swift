@@ -18,10 +18,10 @@ private func file(_ name: String) -> FileItem { FileItem(name: name, kind: .file
     panel.addSearchResults([file("b"), file("c")], from: flag)
     panel.addSearchResults([file("a")], from: flag)
     #expect(names(panel) == ["b", "c", "a"])
-    #expect(panel.statusText.hasPrefix("🔍 *.txt containing “needle”: searching… 3 found · "), "\(panel.statusText)")
+    #expect(panel.statusText.hasPrefix("*.txt containing “needle”: searching… 3 found · "), "\(panel.statusText)")
     panel.finishSearch(flag)
     #expect(names(panel) == ["a", "b", "c"])
-    #expect(panel.statusText.hasPrefix("🔍 *.txt containing “needle”: 3 found · ⌫ back · "), "\(panel.statusText)")
+    #expect(panel.statusText.hasPrefix("*.txt containing “needle”: 3 found · ⌫ back · "), "\(panel.statusText)")
 }
 
 /// By the clock: in the full suite the main actor is so busy at first that 500 sleeps of 10 ms took over 10 s.

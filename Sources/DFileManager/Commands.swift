@@ -917,7 +917,7 @@ extension AppDelegate {
                 editServer(SavedServer(), title: "New Server", connect: kind)
             }]
             + savedServers.map { s in
-                Picker.Item(title: s.pickerTitle, subtitle: ServerRow.address(s.target), detail: "✎ ⌘E   " + label,
+                Picker.Item(title: s.title, subtitle: ServerRow.address(s.target), detail: "⌘E Edit   " + label,
                             edit: { [unowned self] in editServer(s, title: "Edit “\(s.title)”") }) { [unowned self] in
                     openServer(ServerRow(target: s.target, saved: s, title: s.title), kind)
                 }
@@ -984,7 +984,7 @@ extension AppDelegate {
         let panel = panel ?? active
         Task {   // a locked one asks before the new tab, not after (loadRemote would leave it behind)
             if newTab {
-                guard await ServerLock.authorize(t) else { return panel.flash("🔒 \(title) stays locked") }
+                guard await ServerLock.authorize(t) else { return panel.flash("\(title) stays locked") }
                 panel.newTab()
             }
             panel.loadRemote(t, dir: dir, select: nil)
@@ -1039,7 +1039,7 @@ extension AppDelegate {
         // Password: dots, or as text behind the eye.
         let pwField = inputs[5], shown = NSTextField(string: "")
         if hasPassword { pwField.toolTip = "Saved in Keychain — type to replace" }
-        let eye = NSButton(image: NSImage(systemSymbolName: "eye", accessibilityDescription: "Show the password")!, target: nil, action: nil)
+        let eye = NSButton(image: Symbol.show.image("Show the password"), target: nil, action: nil)
         eye.bezelStyle = .accessoryBarAction
         eye.toolTip = "Show the password (a saved one asks for Touch ID or the Mac password)"
         pwField.constraints.forEach { if $0.firstAttribute == .width { $0.constant = 300 - eye.fittingSize.width - 6 } }
@@ -1051,7 +1051,7 @@ extension AppDelegate {
         let revealed = NSMutableString()   // the saved one, once shown
         let show = { (on: Bool) in
             (pwField.isHidden, shown.isHidden) = (on, !on)
-            eye.image = NSImage(systemSymbolName: on ? "eye.slash" : "eye", accessibilityDescription: on ? "Hide the password" : "Show the password")
+            eye.image = (on ? Symbol.hide : .show).image(on ? "Hide the password" : "Show the password")
             pwRow.window?.makeFirstResponder(on ? shown : pwField)
         }
         let revealer = MenuAction.attach(to: eye) {
@@ -2511,7 +2511,7 @@ extension AppDelegate {
         let prod = prodAsked ? "" : SavedServer.prodNote(Self.changed(from: from, to: side, move: move))
         if !locked.isEmpty || !prod.isEmpty {
             Task {
-                for t in locked where await !ServerLock.authorize(t) { return active.flash("🔒 \(t.host) stays locked") }
+                for t in locked where await !ServerLock.authorize(t) { return active.flash("\(t.host) stays locked") }
                 let landing = side == .local ? [] : sources.map { (dir as NSString).appendingPathComponent(name ?? ($0 as NSString).lastPathComponent) }
                 let unchecked = Self.uncheckedNote(landing, rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules)
                 if !prod.isEmpty, await !confirm(title + "?", info: prod + "Files there may be overwritten" + (move ? " or removed." : ".") + unchecked,
@@ -2566,7 +2566,7 @@ extension AppDelegate {
     /// if one stays locked. For what walks a whole tree there: compare, sync, search.
     func unlock(_ ends: [Endpoint]) async -> Bool {
         for case .sftp(let t) in ends where ServerLock.needsUnlock(t) {
-            guard await ServerLock.authorize(t) else { active.flash("🔒 \(t.host) stays locked"); return false }
+            guard await ServerLock.authorize(t) else { active.flash("\(t.host) stays locked"); return false }
         }
         return true
     }

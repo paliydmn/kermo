@@ -8,7 +8,7 @@ extension AppDelegate {
     func copyKey() {
         if let here = terminal.isShown ? terminal.current?.target : active.remote?.target { return copyKey(to: here.asUser) }
         let items = serverChoices().map { c in
-            Picker.Item(title: c.saved?.pickerTitle ?? c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config") { [unowned self] in
+            Picker.Item(title: c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config", badges: (c.saved?.chips ?? []).map(\.image)) { [unowned self] in
                 copyKey(to: c.target)
             }
         }
@@ -68,7 +68,7 @@ extension AppDelegate {
                 return panel.flash("“\((pub as NSString).abbreviatingWithTildeInPath)” isn't a public key", error: true)
             }
             if await !ServerLock.authorize(t, "copy your SSH key to") {
-                return panel.flash("🔒 \(s.title) stays locked")
+                return panel.flash("\(s.title) stays locked")
             }
             if SavedServer.isProd(t), await choose("\(s.title) is a production server. Add your key to its authorized_keys?",
                                                    info: "\(name) goes into ~/.ssh/authorized_keys of \(t.host).",

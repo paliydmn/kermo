@@ -22,12 +22,12 @@ import Testing
     let lines = storage.string.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     #expect(lines.filter { $0.hasPrefix("web1 │ ") }.sorted() == ["web1 │ hi", "web1 │ no"] && lines.filter { $0.hasPrefix("db   │ ") }.count == 2,
             "\(lines)")
-    #expect(lines.suffix(2) == ["✗ 2 (web1: exit 3, db: exit 3)  🔒 1 skipped (vault)", ""], "\(lines)")
+    #expect(lines.suffix(2) == ["✗ 2 (web1: exit 3, db: exit 3)  1 locked, skipped (vault)", ""], "\(lines)")
     let err = (storage.string as NSString).range(of: "│ no")
     #expect(storage.attribute(.foregroundColor, at: err.location + 2, effectiveRange: nil) as? NSColor == .systemRed)
     let x = (storage.string as NSString).range(of: "✗")
     #expect(storage.attribute(.foregroundColor, at: x.location, effectiveRange: nil) as? NSColor == .systemRed)
-    #expect(storage.attribute(.foregroundColor, at: (storage.string as NSString).range(of: "🔒").location, effectiveRange: nil) as? NSColor == .textColor)
+    #expect(storage.attribute(.foregroundColor, at: (storage.string as NSString).range(of: "1 locked").location, effectiveRange: nil) as? NSColor == .textColor)
     #expect(w.subtitle.hasPrefix("3 servers · done · ") && w.subtitle.hasSuffix(" · Esc closes"))
     w.close()
 
@@ -107,8 +107,9 @@ extension ServerLockTests {
     let sheet = try #require(RunOnServersSheet.current)
     defer { sheet.close() }
     #expect((sheet.window?.firstResponder as? NSTextView)?.delegate === sheet.command, "typing goes to the command")
-    #expect(sheet.boxes.map(\.title) == ["web1   me@web1.invalid", "🔒 me@vault.invalid", "web2   ~/.ssh/config"])
-    #expect(sheet.boxes[0].attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == SavedServer.color)
+    #expect(sheet.boxes.map(\.title) == ["\u{FFFC} web1   me@web1.invalid", "\u{FFFC} me@vault.invalid", "web2   ~/.ssh/config"])
+    func chip(_ b: NSButton) -> String? { (b.attributedTitle.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment)?.image?.accessibilityDescription }
+    #expect(chip(sheet.boxes[0]) == "production" && chip(sheet.boxes[1]) == "locked", "production and locked as chips")
     #expect(sheet.boxes.map(\.state) == [.on, .off, .off])
     #expect(sheet.runButton.title == "Run on 1 Server" && !sheet.runButton.isEnabled, "no command yet")
     sheet.command.stringValue = "uptime"

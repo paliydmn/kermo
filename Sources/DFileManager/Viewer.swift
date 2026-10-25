@@ -396,7 +396,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         guard !levels.isEmpty else { return }
         storage.beginEditing()
         for (range, level) in levels {
-            storage.addAttribute(.foregroundColor, value: level == .error ? NSColor.systemRed : NSColor.systemOrange,
+            storage.addAttribute(.foregroundColor, value: level == .error ? Palette.fail : Palette.warn,
                                  range: NSRange(location: range.location + offset, length: range.length))
         }
         storage.endEditing()

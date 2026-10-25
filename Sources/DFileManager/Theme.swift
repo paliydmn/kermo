@@ -8,7 +8,7 @@ struct Theme {
     var dir: NSColor = .labelColor
     var exec: NSColor = .labelColor
     var hidden: NSColor = .secondaryLabelColor
-    var marked: NSColor = .systemRed
+    var marked: NSColor = Palette.fail
     var cursor: NSColor? = nil       // nil: system selection
     var grid: NSColor? = nil         // column separators
     var mono = false
@@ -48,7 +48,7 @@ struct Theme {
     }
 
     /// The active panel's frame and path bar: MC's and Far's cyan, else the theme's folder color.
-    var accent: NSColor { background == nil ? .controlAccentColor : grid ?? dir }
+    var accent: NSColor { background == nil ? Palette.accent : grid ?? dir }
     /// Text on `accent`: whichever of white and black reads better.
     var onAccent: NSColor { background == nil || Self.contrast(accent, .white) > Self.contrast(accent, .black) ? .white : .black }
 

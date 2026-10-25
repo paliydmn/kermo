@@ -76,7 +76,7 @@ public enum MultiRun {
         name + String(repeating: " ", count: max(0, width - name.count)) + " │ "
     }
 
-    /// "✓ 5  ✗ 1 (db2: exit 1)  🔒 1 skipped (vault)  ⎋ 2 stopped" — what's there of it.
+    /// "✓ 5  ✗ 1 (db2: exit 1)  1 locked, skipped (vault)  ⎋ 2 stopped" — what's there of it.
     public static func summary(_ results: [(name: String, outcome: Outcome)]) -> String {
         var ok = 0, failed: [String] = [], skipped: [String] = [], stopped = 0
         for (name, outcome) in results {
@@ -90,7 +90,7 @@ public enum MultiRun {
         }
         return [ok > 0 ? "✓ \(ok)" : nil,
                 failed.isEmpty ? nil : "✗ \(failed.count) (\(failed.joined(separator: ", ")))",
-                skipped.isEmpty ? nil : "🔒 \(skipped.count) skipped (\(skipped.joined(separator: ", ")))",
+                skipped.isEmpty ? nil : "\(skipped.count) locked, skipped (\(skipped.joined(separator: ", ")))",
                 stopped > 0 ? "⎋ \(stopped) stopped" : nil].compactMap { $0 }.joined(separator: "  ")
     }
 }

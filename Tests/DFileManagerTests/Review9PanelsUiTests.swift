@@ -75,11 +75,11 @@ private func pathCommand(_ panel: PanelViewController, _ text: String, _ sel: Se
     defer { panel.shutdown(); window.close() }
 
     _ = panel.beginSearch("*.log in \(dir)")
-    #expect(panel.headerText == "🔍 *.log in \(dir)")
+    #expect(panel.headerText == "*.log in \(dir)")
     panel.beginPathEditing()
     #expect(panel.headerText == dir + "/")
     pathCommand(panel, dir + "/", #selector(NSResponder.cancelOperation(_:)))
-    #expect(panel.headerText == "🔍 *.log in \(dir)")
+    #expect(panel.headerText == "*.log in \(dir)")
     panel.goUp()   // leaves the results
     await waitUntil { panel.searchTitle == nil && panel.listedItems.count == 1 }
 
@@ -91,10 +91,10 @@ private func pathCommand(_ panel: PanelViewController, _ text: String, _ sel: Se
     tar.waitUntilExit()
     panel.enterArchive(dir + "/a.tar")
     await waitUntil { panel.archive != nil }
-    #expect(panel.headerText == "📦 \(dir)/a.tar")
+    #expect(panel.headerText == "\(dir)/a.tar")
     panel.beginPathEditing()
     pathCommand(panel, dir + "/", #selector(NSResponder.cancelOperation(_:)))
-    #expect(panel.headerText == "📦 \(dir)/a.tar")
+    #expect(panel.headerText == "\(dir)/a.tar")
 }
 
 // MARK: - P10: control characters in a name

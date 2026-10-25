@@ -72,7 +72,7 @@ private func scratchDefaults() -> (UserDefaults, String) {
     try? await Task.sleep(for: .milliseconds(300))   // whatever would list or connect has started by now
     #expect(panel.parked?.target == web && panel.parked?.dir == "/etc/nginx")
     #expect(panel.remote == nil && panel.connecting == nil && panel.busyMessage == nil && panel.remoteTabs.isEmpty)
-    #expect(panel.headerText == "🌐 k13@web1.invalid:/etc/nginx")
+    #expect(panel.headerText == "k13@web1.invalid:/etc/nginx" && panel.headerChips.isEmpty)
     #expect(panel.table.numberOfRows == 1 && panel.item(at: 0) == nil && panel.listedItems.isEmpty)
     #expect(panel.parkedHint == "Not connected — ↩ connects to k13@web1.invalid" && panel.statusText.contains("not connected"))
     #expect(panel.sessionTabs == saved, "saved again as it came")
@@ -115,7 +115,7 @@ private func scratchDefaults() -> (UserDefaults, String) {
                                     index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    #expect(panel.parked?.target.sudo == true && panel.headerText.hasSuffix(":/etc #") && panel.statusText.hasPrefix("#"))
+    #expect(panel.parked?.target.sudo == true && panel.headerText.hasSuffix(":/etc") && panel.headerChips == [.root] && panel.statusText.hasPrefix("sftp · root@"))
     #expect(panel.sessionTabs.first?.root == true)
 }
 

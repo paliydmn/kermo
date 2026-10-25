@@ -78,7 +78,7 @@ extension AppDelegate {
                 runGit([["branch", "-d", ref.name]], in: root, "Deleting “\(ref.name)”…") { _ in "Deleted branch “\(ref.name)”" }
             }
         }
-        return Picker.Item(title: (ref.kind == .tag ? "🏷 " : "") + ref.name, subtitle: "\(ref.hash)  \(ref.subject)", detail: detail, keys: keys) { [unowned self] in
+        return Picker.Item(title: ref.name, subtitle: "\(ref.hash)  \(ref.subject)", badges: ref.kind == .tag ? [Symbol.tag.image("Tag")] : [], detail: detail, keys: keys) { [unowned self] in
             guard !ref.current else { return active.flash("Already on “\(ref.name)”") }
             let args: [String] = switch ref.kind {
             case .local: ["switch", ref.name]

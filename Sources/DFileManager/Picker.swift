@@ -8,6 +8,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     struct Item {
         var title: String
         var subtitle = ""
+        var badges: [NSImage] = []   // before the title: a server's chips (`Chip`), a symbol (a tag, a favorite)
         var detail = ""
         var edit: (@MainActor () -> Void)? = nil   // ⌘E on the highlighted row
         var keys: [Shortcut: @MainActor () -> Void] = [:]   // more keys on the highlighted row (F3, ⌘⇧D…); the picker closes first
@@ -309,7 +310,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
         let cell = tableView.makeView(withIdentifier: .init("cell"), owner: nil) as? PickerCell ?? PickerCell()
         let it = shown[row]
-        cell.show(title: it.title, subtitle: it.subtitle, detail: it.detail, subtitleColor: it.subtitleColor, busy: it.busy)
+        cell.show(title: it.title, subtitle: it.subtitle, detail: it.detail, subtitleColor: it.subtitleColor, busy: it.busy, badges: it.badges)
         return cell
     }
 
@@ -361,9 +362,10 @@ final class KeyPanel: NSPanel {
     }
 }
 
-/// Title, dimmed subtitle, right-aligned detail (keys). Also the toolbar search's rows.
+/// Badges, title, dimmed subtitle, right-aligned detail (keys). Also the toolbar search's rows.
 final class PickerCell: NSTableCellView {
     let title = NSTextField(labelWithString: "")
+    private let lead = NSStackView()   // the badges, then the title
     let detail = NSTextField(labelWithString: "")
     let remove = NSButton()   // hidden unless the row can be taken out of a list (the search's Recent)
     let spinner = NSProgressIndicator()   // hidden unless something runs on the row
@@ -376,7 +378,7 @@ final class PickerCell: NSTableCellView {
         detail.textColor = .secondaryLabelColor
         detail.font = .systemFont(ofSize: 12)
         detail.setContentHuggingPriority(.required, for: .horizontal)
-        remove.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Remove")
+        remove.image = Symbol.remove.image("Remove")
         remove.isBordered = false
         remove.contentTintColor = .tertiaryLabelColor
         remove.isHidden = true
@@ -385,21 +387,25 @@ final class PickerCell: NSTableCellView {
         spinner.isDisplayedWhenStopped = false
         let end = NSStackView(views: [spinner, detail, remove])   // a hidden ✕ takes no room
         end.spacing = 6
-        for v in [title, end] {
+        lead.spacing = 4
+        lead.addArrangedSubview(title)
+        for v in [lead, end] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
         NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            title.centerYAnchor.constraint(equalTo: centerYAnchor),
-            end.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 12),
+            lead.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            lead.centerYAnchor.constraint(equalTo: centerYAnchor),
+            end.leadingAnchor.constraint(greaterThanOrEqualTo: lead.trailingAnchor, constant: 12),
             end.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             end.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func show(title t: String, subtitle: String, detail d: String, subtitleColor: NSColor? = nil, busy: Bool = false) {
+    func show(title t: String, subtitle: String, detail d: String, subtitleColor: NSColor? = nil, busy: Bool = false, badges: [NSImage] = []) {
+        lead.arrangedSubviews.dropLast().forEach { $0.removeFromSuperview() }
+        for (i, b) in badges.enumerated() { lead.insertArrangedSubview(NSImageView(image: b), at: i) }
         let s = NSMutableAttributedString(string: t, attributes: [.font: NSFont.systemFont(ofSize: 13)])
         if !subtitle.isEmpty {
             s.append(NSAttributedString(string: "   " + subtitle, attributes: [

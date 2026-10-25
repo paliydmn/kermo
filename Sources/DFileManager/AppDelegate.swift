@@ -893,7 +893,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if id == OpsController.toolbarID { return ops.toolbarItem }
         guard id == Self.sidebarButtonID else { return nil }
         let item = NSToolbarItem(itemIdentifier: id)
-        item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Sidebar")
+        item.image = Symbol.sidebar.image("Sidebar")
         item.label = "Sidebar"
         item.toolTip = "Show/Hide Sidebar  ⌃⌘S"
         item.isBordered = true
@@ -1242,7 +1242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if terminal?.isShown == true, let t = terminal.current { remote = t.host.map { ($0, t.cwd) }; local = t.folder ?? local }
         else { remote = (active.remote ?? active.parked).map { ($0.target.host, $0.dir) } }
         let path = remote.map { r in r.dir.map { "\(r.host):\($0)" } ?? r.host } ?? (local as NSString).abbreviatingWithTildeInPath
-        promptLabel.stringValue = (remote != nil ? "🌐 " : "") + path + " $"   // ⌘E runs as the user, on a root panel too
+        promptLabel.stringValue = path + " $"   // ⌘E runs as the user, on a root panel too
         let root = terminal?.isShown == true ? nil : (active.remote ?? active.parked).flatMap { $0.target.sudo ? $0 : nil }
         cmdField.placeholderString = Self.commandHint(root: root?.target)
         sidebar.highlight(sidebarKey)

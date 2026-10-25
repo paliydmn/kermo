@@ -55,11 +55,6 @@ struct SavedServer: Codable, Equatable {
         tunnels = try c.decodeIfPresent([Tunnel].self, forKey: .tunnels) ?? []
     }
 
-    /// Production's mark wherever it shows (sidebar, menus, a root panel's header, titles): purple, as red says something
-    /// failed and orange is root's.
-    static var color: NSColor { .systemPurple }
-    static let mark = "🟣 PROD "
-
     /// A saved server's name for `t`, else its address: what questions and hints call it.
     @MainActor static func name(for t: SFTPTarget) -> String {
         ServerLock.servers().first { !$0.name.isEmpty && ServerLock.same($0.target, t) }?.name ?? t.shown
@@ -67,9 +62,9 @@ struct SavedServer: Codable, Equatable {
     /// A saved server that is the same server (`ServerLock.same`) is tagged production.
     @MainActor static func isProd(_ t: SFTPTarget) -> Bool { ServerLock.servers().contains { $0.prod && ServerLock.same($0.target, t) } }
 
-    /// A server file's editor title: "web:/etc/nginx/nginx.conf", "🟣 PROD web:/…" on a production server, "root@web:/… #"
-    /// from a root panel.
-    @MainActor static func title(_ t: SFTPTarget, _ path: String) -> String { (isProd(t) ? mark : "") + "\(t.shown):\(path)" + (t.sudo ? " #" : "") }
+    /// A server file's editor title: "web:/etc/nginx/nginx.conf", "root@web:/…" from a root panel; production and root
+    /// are its chips (`Chip.of`).
+    static func title(_ t: SFTPTarget, _ path: String) -> String { "\(t.shown):\(path)" }
 
     /// Said before what a change on production servers asks: "“h” is a production server. ", or "".
     @MainActor static func prodNote(_ targets: [SFTPTarget]) -> String {
@@ -84,8 +79,8 @@ struct SavedServer: Codable, Equatable {
         SFTPTarget(host: user.map { "\($0)@\(host)" } ?? host, port: port, identity: identityFile, persist: locked ? 60 : nil)
     }
     var title: String { name.isEmpty ? target.host : name }
-    /// As a server picker lists it: locked and production said up front.
-    var pickerTitle: String { (locked ? "🔒 " : "") + (prod ? Self.mark : "") + title }
+    /// Production and locked, as `Chip.of` says them for its target.
+    var chips: [Chip] { [prod ? .prod : nil, locked ? .locked : nil].compactMap { $0 } }
 
     /// Why ssh can't take it, or nil. A leading "-" would make ssh read it as an option (-oProxyCommand=…).
     var problem: String? {

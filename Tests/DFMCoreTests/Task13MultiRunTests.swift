@@ -7,7 +7,7 @@ import Testing
 @Test func multiRunLabelsAndSummary() {
     #expect(MultiRun.label("web1", width: 6) == "web1   │ " && MultiRun.label("db-main", width: 6) == "db-main │ ")
     #expect(MultiRun.summary([("a", .exit(0)), ("b", .exit(0)), ("db2", .exit(1)), ("c", .exit(0)), ("vault", .skipped), ("d", .notRun("refused"))])
-            == "✓ 3  ✗ 2 (db2: exit 1, d: not run)  🔒 1 skipped (vault)")
+            == "✓ 3  ✗ 2 (db2: exit 1, d: not run)  1 locked, skipped (vault)")
     #expect(MultiRun.summary([("a", .stopped), ("b", .exit(0)), ("c", .stopped)]) == "✓ 1  ⎋ 2 stopped")
     #expect(MultiRun.summary([("a", .exit(255))]) == "✗ 1 (a: exit 255)")
     #expect(MultiRun.summary([]) == "")

@@ -69,20 +69,20 @@ extension ServerLockTests {
         for _ in 0..<250 where panel.remote?.target != t || panel.busyMessage != nil { try? await Task.sleep(for: .milliseconds(20)) }
     }
     await open(root)
-    #expect(panel.headerText == "root@localhost:\(dir) #")
-    #expect(panel.statusText.hasPrefix("# sftp · root@localhost · "), "\(panel.statusText)")
-    #expect(SavedServer.title(root, "/etc/hosts") == "root@localhost:/etc/hosts #", "its editor's title")
+    #expect(panel.headerText == "root@localhost:\(dir)" && panel.headerChips == [.root])
+    #expect(panel.statusText.hasPrefix("sftp · root@localhost · "), "\(panel.statusText)")
+    #expect(SavedServer.title(root, "/etc/hosts") == "root@localhost:/etc/hosts" && Chip.of(root) == [.root], "its editor's title")
     var prod = SavedServer(address: "localhost")!
     prod.prod = true
     ServerLock.servers = { [prod] }
     defer { ServerLock.servers = { [] } }
     panel.showPath()
-    #expect(panel.headerText == "🟣 PROD root@localhost:\(dir) #")
+    #expect(panel.headerText == "root@localhost:\(dir)" && panel.headerChips == [.prod, .root])
     await open(root.asRoot(false))
-    #expect(panel.headerText == "🟣 PROD localhost:\(dir)")
+    #expect(panel.headerText == "localhost:\(dir)" && panel.headerChips == [.prod])
     ServerLock.servers = { [] }
     panel.showPath()
-    #expect(panel.headerText == "🌐 localhost:\(dir)")
+    #expect(panel.headerText == "localhost:\(dir)" && panel.headerChips.isEmpty)
 }
 
 /// A sudo password sudo took is kept for the server's next sessions (root or not: one user@host:port), not asked again;

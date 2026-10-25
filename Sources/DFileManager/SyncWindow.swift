@@ -237,7 +237,7 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
         switch column?.identifier.rawValue {
         case "path":
             tf.stringValue = it.path + ((it.left ?? it.right)?.kind == .dir ? "/" : "") + (it.unreadable.map { "  — can't read: \($0)" } ?? "")
-            if it.isConflict { tf.textColor = .systemOrange }
+            if it.isConflict { tf.textColor = Palette.warn }
         case "left": tf.stringValue = side(it.left)
         case "right": tf.stringValue = side(it.right)
         default:
@@ -245,11 +245,11 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
             tf.font = .boldSystemFont(ofSize: 14)
             switch it.action {
             case .toRight: tf.stringValue = "→"; tf.textColor = .systemBlue
-            case .toLeft: tf.stringValue = "←"; tf.textColor = .systemGreen
-            case .skip: tf.stringValue = it.isConflict ? "≠" : "·"; tf.textColor = it.isConflict ? .systemOrange : .secondaryLabelColor
+            case .toLeft: tf.stringValue = "←"; tf.textColor = Palette.ok
+            case .skip: tf.stringValue = it.isConflict ? "≠" : "·"; tf.textColor = it.isConflict ? Palette.warn : .secondaryLabelColor
             case .equal: tf.stringValue = "="; tf.textColor = .secondaryLabelColor
-            case .trashLeft: tf.stringValue = "✕ ·"; tf.textColor = .systemRed
-            case .trashRight: tf.stringValue = "· ✕"; tf.textColor = .systemRed
+            case .trashLeft: tf.stringValue = "✕ ·"; tf.textColor = Palette.fail
+            case .trashRight: tf.stringValue = "· ✕"; tf.textColor = Palette.fail
             }
         }
         return tf

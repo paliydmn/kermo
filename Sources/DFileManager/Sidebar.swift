@@ -416,9 +416,9 @@ final class VolumeFigures: NSTextField {
         func part(_ s: String, _ c: NSColor) -> NSAttributedString {
             NSAttributedString(string: s, attributes: [.font: NSFont.systemFont(ofSize: 10), .foregroundColor: onAccent ? .alternateSelectedControlTextColor : c, .paragraphStyle: style])
         }
-        let s = NSMutableAttributedString(attributedString: part(used, .systemRed))
+        let s = NSMutableAttributedString(attributedString: part(used, Palette.fail))
         s.append(part(" / ", .secondaryLabelColor))
-        s.append(part(free, .systemGreen))
+        s.append(part(free, Palette.ok))
         attributedStringValue = s
     }
 
@@ -654,7 +654,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
 
     private static let chevronID = NSUserInterfaceItemIdentifier("chevron")
     private static func chevron(expanded: Bool) -> NSImage {
-        NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right", accessibilityDescription: expanded ? "Collapse" : "Expand")!
+        (expanded ? Symbol.collapse : .expand).image(expanded ? "Collapse" : "Expand")
             .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))!
     }
 
@@ -684,36 +684,36 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         switch node.place! {
         case .folder(let p):
             let favorite = roots.first?.children.contains { $0 === node } == true
-            return placeRow(favorite ? "folder" : "clock", p == "/" ? "/" : (p as NSString).lastPathComponent, (p as NSString).abbreviatingWithTildeInPath)
+            return placeRow(favorite ? .folder : .recent, p == "/" ? "/" : (p as NSString).lastPathComponent, (p as NSString).abbreviatingWithTildeInPath)
         case .serverFolder(let e):
-            return placeRow("server.rack", Bookmark.title(e), e + "  ·  ⌘-click: in a new tab, ⌥-click: in the other panel",
+            return placeRow(.server, Bookmark.title(e), e + "  ·  ⌘-click: in a new tab, ⌥-click: in the other panel",
                             detail: Bookmark.remote(e)?.target.host ?? "")
         case .volume(let v):
             let (name, ejectable) = (v.name, v.ejectable)
-            let r = placeRow(ejectable ? "externaldrive" : "internaldrive", name, v.tip, dim: !v.mounted)
+            let r = placeRow(ejectable ? .externalDisk : .internalDisk, name, v.tip, dim: !v.mounted)
             r.addArrangedSubview(spacer())   // the buttons in one column at the right, figures or not
             if !v.used.isEmpty { r.addArrangedSubview(VolumeFigures(used: v.used, free: v.free)) }
-            func button(_ symbol: String, _ action: VolumeAction) {
-                let b = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: action.rawValue)!, target: self, action: #selector(volumeButton(_:)))
+            func button(_ symbol: Symbol, _ action: VolumeAction) {
+                let b = NSButton(image: symbol.image(action.rawValue), target: self, action: #selector(volumeButton(_:)))
                 b.isBordered = false
                 b.identifier = .init("\(action.rawValue) \(v.key)")
                 b.toolTip = "\(action.rawValue) “\(name)”"
                 r.addArrangedSubview(b)
             }
             if v.busy { r.addArrangedSubview(Self.spinner()) }   // in the button's place: one thing at a time
-            else if !v.mounted { button("plus.circle", .mount) }
-            else if ejectable { button("eject.fill", .eject) }
+            else if !v.mounted { button(.add, .mount) }
+            else if ejectable { button(.eject, .eject) }
             return r
         case .server(let server):
             return serverRow(server)
         case .connect:
-            return placeRow("plus.circle", "Connect…", "Every server, or a new one: \(keyFor("ssh.new")) SSH, \(keyFor("go.connect")) SFTP")
+            return placeRow(.add, "Connect…", "Every server, or a new one: \(keyFor("ssh.new")) SSH, \(keyFor("go.connect")) SFTP")
         case .tag(let name):
-            return placeRow("tag", name, "Every file tagged “\(name)”")
+            return placeRow(.tag, name, "Every file tagged “\(name)”")
         case .tagColors:
             let names = NSWorkspace.shared.fileLabels, colors = NSWorkspace.shared.fileLabelColors
             let dots = SidebarModel.tagColors.map { c -> NSView in
-                let dot = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: names[c])!
+                let dot = Symbol.dot.image(names[c])
                     .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))!
                 let b = NSButton(image: dot, target: self, action: #selector(tagDot(_:)))
                 b.isBordered = false
@@ -742,9 +742,9 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
     }
 
     /// `dim`: a volume not mounted, in gray.
-    private func placeRow(_ symbol: String, _ title: String, _ tip: String, detail: String = "", dim: Bool = false) -> NSStackView {
-        let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!)
-        icon.contentTintColor = dim ? .tertiaryLabelColor : theme.background == nil ? .controlAccentColor : theme.dir
+    private func placeRow(_ symbol: Symbol, _ title: String, _ tip: String, detail: String = "", dim: Bool = false) -> NSStackView {
+        let icon = NSImageView(image: symbol.image())
+        icon.contentTintColor = dim ? .tertiaryLabelColor : theme.background == nil ? Palette.accent : theme.dir
         let label = NSTextField(labelWithString: title)
         label.textColor = dim ? .secondaryLabelColor : theme.text
         label.lineBreakMode = .byTruncatingMiddle
@@ -768,11 +768,11 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         if server.status == .connecting {
             icon = Self.spinner()
         } else {
-            let tint = prod ? SavedServer.color : theme.background == nil ? .controlAccentColor : theme.dir
+            let tint = prod ? Palette.prod : theme.background == nil ? Palette.accent : theme.dir
             icon = NSImageView(image: Self.serverIcon(tint, locked: locked, failed: failed != nil))
         }
         let name = ServerName(labelWithString: server.title)
-        name.textColor = prod ? SavedServer.color : theme.text
+        name.textColor = prod ? Palette.prod : theme.text
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         name.setContentHuggingPriority(.init(1), for: .horizontal)   // it takes the room, not a spacer and its gap
@@ -780,10 +780,10 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         let ssh = server.ssh.filter(\.running).count, sftp = server.sftp.count   // an SSH tab whose ssh ended (`exit`, Disconnect) isn't open
         let open = [ssh > 0 ? "SSH \(ssh)" : nil, sftp > 0 ? "SFTP \(sftp)" : nil].compactMap { $0 }.joined(separator: ", ")
         let tunnels = (server.tunnels.isEmpty ? [] : ["Tunnels listening: " + server.tunnels.joined(separator: ", ")]) + server.failedTunnels
-        let tunnelColor: NSColor = !server.failedTunnels.isEmpty ? .systemRed : server.tunnels.isEmpty ? .secondaryLabelColor : .systemGreen
+        let tunnelColor: NSColor = !server.failedTunnels.isEmpty ? Palette.fail : server.tunnels.isEmpty ? .secondaryLabelColor : Palette.ok
         /// An action is a pill; a state just its icon and count, so it takes less of the name's width.
-        func pill(_ symbol: String, _ count: Int, _ color: NSColor, _ action: String, _ label: String, _ tip: String, state: Bool = false) -> NSButton {
-            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))!
+        func pill(_ symbol: Symbol, _ count: Int, _ color: NSColor, _ action: String, _ label: String, _ tip: String, state: Bool = false) -> NSButton {
+            let image = symbol.image().withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))!
             let b = state ? NSButton(title: count > 1 ? "\(count)" : "", image: image, target: self, action: #selector(serverButton(_:)))
                 : PillButton(title: count > 1 ? "\(count)" : "", image: image, target: self, action: #selector(serverButton(_:)))
             b.imagePosition = count > 1 ? .imageLeading : .imageOnly
@@ -797,25 +797,25 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
             return b
         }
         let chips = ServerChips(views: [
-            ssh == 0 ? nil : pill("terminal", ssh, .systemGreen, "ssh", "\(ssh) SSH session\(ssh == 1 ? "" : "s") open", "\(ssh) SSH session\(ssh == 1 ? "" : "s") open", state: true),
-            sftp == 0 ? nil : pill("folder", sftp, .systemGreen, "sftp", "\(sftp) SFTP panel\(sftp == 1 ? "" : "s") open", "\(sftp) SFTP panel\(sftp == 1 ? "" : "s") open", state: true),
-            tunnels.isEmpty ? nil : pill("arrow.left.arrow.right", server.tunnels.count, tunnelColor, "tunnels",
+            ssh == 0 ? nil : pill(.ssh, ssh, Palette.ok, "ssh", "\(ssh) SSH session\(ssh == 1 ? "" : "s") open", "\(ssh) SSH session\(ssh == 1 ? "" : "s") open", state: true),
+            sftp == 0 ? nil : pill(.folder, sftp, Palette.ok, "sftp", "\(sftp) SFTP panel\(sftp == 1 ? "" : "s") open", "\(sftp) SFTP panel\(sftp == 1 ? "" : "s") open", state: true),
+            tunnels.isEmpty ? nil : pill(.tunnel, server.tunnels.count, tunnelColor, "tunnels",
                                          "\(server.tunnels.count) tunnel\(server.tunnels.count == 1 ? "" : "s") listening" + (server.failedTunnels.isEmpty ? "" : ", one failed"),
                                          tunnels.joined(separator: "\n"), state: true),
         ].compactMap { $0 })
-        let more = PillButton(image: NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Server menu")!
+        let more = PillButton(image: Symbol.more.image("Server menu")
             .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))!, target: self, action: #selector(serverButton(_:)))
         more.isBordered = false
         more.contentTintColor = .secondaryLabelColor
         more.identifier = .init("menu \(server.key)")
         more.toolTip = "Everything for “\(server.title)”: Edit, Pin, Tunnels, Disconnect…"
         let toolbar = ServerToolbar(views: [
-            pill("terminal", ssh, ssh > 0 ? .systemGreen : .secondaryLabelColor, "ssh", "SSH",
+            pill(.ssh, ssh, ssh > 0 ? Palette.ok : .secondaryLabelColor, "ssh", "SSH",
                  ssh > 0 ? "\(ssh) open — click to go there  ·  ⌘-click: another one" : "Open an SSH session  ·  ⌘-click: another one"),
-            pill("folder", sftp, sftp > 0 ? .systemGreen : .secondaryLabelColor, "sftp", "SFTP",
+            pill(.folder, sftp, sftp > 0 ? Palette.ok : .secondaryLabelColor, "sftp", "SFTP",
                  sftp > 0 ? "\(sftp) open — click to go there  ·  ⌘-click: another one" : "Open over SFTP  ·  ⌘-click: in a new tab, ⌥-click: in the other panel"),
         ] + (server.saved?.tunnels.isEmpty == false || !server.tunnels.isEmpty || !server.failedTunnels.isEmpty
-             ? [pill("arrow.left.arrow.right", server.tunnels.count, tunnelColor, "tunnels", "Tunnels", (tunnels + ["Click: its tunnels"]).joined(separator: "\n"))] : [])
+             ? [pill(.tunnel, server.tunnels.count, tunnelColor, "tunnels", "Tunnels", (tunnels + ["Click: its tunnels"]).joined(separator: "\n"))] : [])
           + [more])
         chips.spacing = 4
         toolbar.spacing = 2
@@ -843,8 +843,8 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
     /// out of it, so they read over any background, the selection's included — within its size: no width taken from
     /// the name.
     static func serverIcon(_ tint: NSColor, locked: Bool, failed: Bool) -> NSImage {
-        let rack = NSImage(systemSymbolName: "server.rack", accessibilityDescription: nil)!.withSymbolConfiguration(.init(paletteColors: [tint]))!
-        let lock = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: nil)!
+        let rack = Symbol.server.image().withSymbolConfiguration(.init(paletteColors: [tint]))!
+        let lock = Symbol.lock.image()
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 7, weight: .bold).applying(.init(paletteColors: [.labelColor])))!
         let size = rack.size
         let image = NSImage(size: size, flipped: false) { _ in
@@ -865,7 +865,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
             if failed {
                 let dot = NSRect(x: size.width - 5.5, y: size.height - 5.5, width: 5.5, height: 5.5)
                 badge(dot) {
-                    NSColor.systemRed.setFill()
+                    Palette.fail.setFill()
                     NSBezierPath(ovalIn: dot).fill()
                 }
             }
@@ -951,16 +951,16 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
     /// only ⋯. A click switches branch. As the server row: the row never reflows, a narrow column cuts the name.
     func gitView(_ r: GitRow) -> GitRowView {
         let st = r.status, local = r.server == nil
-        let icon = NSImageView(image: NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Branch")!)
-        icon.contentTintColor = theme.background == nil ? .controlAccentColor : theme.dir
+        let icon = NSImageView(image: Symbol.branch.image("Branch"))
+        icon.contentTintColor = theme.background == nil ? Palette.accent : theme.dir
         let name = ServerName(labelWithString: st.branch)
         name.textColor = theme.text
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         name.setContentHuggingPriority(.init(1), for: .horizontal)
 
-        func chip(_ symbol: String?, _ title: String, _ color: NSColor, _ id: String?, _ label: String) -> NSButton {
-            let image = symbol.map { NSImage(systemSymbolName: $0, accessibilityDescription: nil)!.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))! }
+        func chip(_ symbol: Symbol?, _ title: String, _ color: NSColor, _ id: String?, _ label: String) -> NSButton {
+            let image = symbol.map { $0.image().withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))! }
             let b = id == nil ? NSButton(title: title, target: nil, action: nil) : PillButton(title: title, target: self, action: #selector(gitButton(_:)))
             b.image = image
             b.imagePosition = image == nil ? .noImage : title.isEmpty ? .imageOnly : .imageLeading
@@ -974,25 +974,25 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
             return b
         }
         let conflicts = st.conflicts > 0, n = r.changed
-        let changeSymbol = conflicts ? "exclamationmark.triangle.fill" : "plusminus", changeColor: NSColor = conflicts ? .systemRed : .secondaryLabelColor
+        let changeSymbol: Symbol = conflicts ? .warnFill : .changes, changeColor: NSColor = conflicts ? Palette.fail : .secondaryLabelColor
         let changeLabel = conflicts ? "\(n) file\(n == 1 ? "" : "s") in conflict" : "\(n) change\(n == 1 ? "" : "s")"
         let chips = ServerChips(views: [
             n == 0 ? nil : chip(changeSymbol, "\(n)", changeColor, nil, changeLabel),
             r.arrows.isEmpty ? nil : chip(nil, r.arrows, .secondaryLabelColor, nil, "\(st.behind) to pull, \(st.ahead) to push"),
-            r.publishes ? chip("icloud.and.arrow.up", "", .secondaryLabelColor, nil, "Not on a remote yet") : nil,
+            r.publishes ? chip(.notPublished, "", .secondaryLabelColor, nil, "Not on a remote yet") : nil,
         ].compactMap { $0 })
-        let more = PillButton(image: NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "Git menu")!
+        let more = PillButton(image: Symbol.more.image("Git menu")
             .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))!, target: self, action: #selector(gitButton(_:)))
         more.isBordered = false
         more.contentTintColor = .secondaryLabelColor
         more.identifier = .init("git.menu")
         more.toolTip = "Everything Git: Switch Branch, Commit, Pull, Push, Fetch…"
         let sync = st.detached || st.gone ? nil : r.publishes
-            ? chip("icloud.and.arrow.up", "", .secondaryLabelColor, "git.publish", "Publish Branch: push it to origin")
-            : chip("arrow.triangle.2.circlepath", r.arrows, .secondaryLabelColor, "git.sync", "Sync: pull (fast-forward only), then push")
+            ? chip(.notPublished, "", .secondaryLabelColor, "git.publish", "Publish Branch: push it to origin")
+            : chip(.sync, r.arrows, .secondaryLabelColor, "git.sync", "Sync: pull (fast-forward only), then push")
         let toolbar = ServerToolbar(views: !local ? [more] : [
             n == 0 ? nil : chip(changeSymbol, "\(n)", changeColor, "git.changes", "Git Changes"),
-            st.changes.isEmpty || conflicts ? nil : chip("checkmark", "", .secondaryLabelColor, "git.commit", "Commit…"),
+            st.changes.isEmpty || conflicts ? nil : chip(.check, "", .secondaryLabelColor, "git.commit", "Commit…"),
             sync, more,
         ].compactMap { $0 })
         chips.spacing = 4

@@ -251,7 +251,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
 
     private init(_ command: String, _ dir: String, _ server: SFTPTarget?, _ diff: Bool, _ follow: Bool, _ failed: String?,
                  _ onExit: @escaping @MainActor (Int32) -> Void) {
-        let place = server.map { "🌐 \($0.host):\(dir)" } ?? (dir as NSString).abbreviatingWithTildeInPath
+        let place = server.map { "\($0.host):\(dir)" } ?? (dir as NSString).abbreviatingWithTildeInPath
         let (w, tv) = Self.window()
         w.title = (server.map { "\($0.host) $ " } ?? "$ ") + command.bidiVisible
         w.subtitle = place + " · running… · Esc stops"
@@ -354,7 +354,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
                     let all = text.string as NSString, x = all.range(of: "✗")
                     if x.location != NSNotFound {   // the failures in red, with their names
                         let next = all.range(of: "  ", range: NSRange(location: x.location, length: all.length - x.location)).location
-                        text.addAttribute(.foregroundColor, value: NSColor.systemRed,
+                        text.addAttribute(.foregroundColor, value: Palette.fail,
                                           range: NSRange(location: x.location, length: (next == NSNotFound ? all.length - 1 : next) - x.location))
                     }
                     tv.textStorage?.append(text)
@@ -375,7 +375,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         for l in lines {
             let (text, runs) = ANSI.parse(l.text)   // ponytail: a color left on at a line's end doesn't go on into that server's next one
             batch.append(NSAttributedString(string: MultiRun.label(names[l.server], width: width), attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
-            let line = NSMutableAttributedString(string: text + "\n", attributes: [.font: font, .foregroundColor: l.error ? NSColor.systemRed : NSColor.textColor])
+            let line = NSMutableAttributedString(string: text + "\n", attributes: [.font: font, .foregroundColor: l.error ? Palette.fail : NSColor.textColor])
             if !l.error { for r in runs { line.addAttributes(ANSIColors.attributes(r.style, font: font), range: r.range) } }   // stderr: red wins
             batch.append(line)
         }
@@ -420,7 +420,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     private func append(_ data: Data, _ isErr: Bool, in tv: NSTextView) {
         guard let storage = tv.textStorage else { return }
         let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        let base: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: isErr ? NSColor.systemRed : NSColor.textColor]
+        let base: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: isErr ? Palette.fail : NSColor.textColor]
         let (s, runs) = ansi[isErr ? 1 : 0].feed(utf8Chunk(data, rest: &rest[isErr ? 1 : 0]), end: data.isEmpty)
         // In pieces of one style each: a CR in any of them redraws the line, whatever its colors.
         let text = s as NSString
@@ -453,7 +453,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         text.enumerateSubstrings(in: NSRange(location: 0, length: text.length), options: .byLines) { line, range, _, _ in
             guard let line else { return }
             let color: NSColor? = line.hasPrefix("+++") || line.hasPrefix("---") ? .secondaryLabelColor
-                : line.hasPrefix("+") ? .systemGreen : line.hasPrefix("-") ? .systemRed : line.hasPrefix("@@") ? .systemPurple : nil
+                : line.hasPrefix("+") ? .systemGreen : line.hasPrefix("-") ? .systemRed : line.hasPrefix("@@") ? Palette.secondary : nil
             if let color { storage.addAttribute(.foregroundColor, value: color, range: range) }
         }
         storage.endEditing()

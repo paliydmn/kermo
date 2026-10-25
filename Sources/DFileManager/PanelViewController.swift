@@ -17,11 +17,25 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var isTarget = false { didSet { styleHeader() } }
 
     /// The active panel: framed, its path bar filled, both in the theme's accent. A root panel's in orange instead (production's
-    /// color on a production server), its path in that color while inactive too.
+    /// color on a production server), its path in that color while inactive too. Before the path: what kind of place it
+    /// is (a server, an archive, search results) and a server's chips.
     private func styleHeader() {
-        let root = (remote ?? parked).map { $0.target.sudo ? SavedServer.isProd($0.target) ? SavedServer.color : .systemOrange : nil } ?? nil
+        let place = remote ?? parked
+        let root = place.map { $0.target.sudo ? SavedServer.isProd($0.target) ? Palette.prod : Palette.root : nil } ?? nil
         let tint = root ?? theme.accent
+        pathBar.fillColor = isActive ? tint : .clear
         pathField.backgroundColor = isActive ? tint : .clear
+        let kind: (Symbol, String)? = searchTitle != nil ? (.search, "Search results") : archive != nil ? (.archive, "Archive") : place != nil ? (.server, "Server") : nil
+        placeIcon.image = kind.map { $0.0.image($0.1) }
+        placeIcon.isHidden = kind == nil
+        placeIcon.contentTintColor = isActive ? theme.onAccent : theme.hidden
+        let chips = searchTitle == nil && archive == nil ? place.map { Chip.of($0.target) } ?? [] : []
+        if chips != headerChips {
+            headerChips = chips
+            chipRow.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            chips.forEach { chipRow.addArrangedSubview(NSImageView(image: $0.image)) }
+        }
+        chipRow.isHidden = chips.isEmpty
         pathField.textColor = isActive ? theme.onAccent : isTarget || root != nil ? tint : theme.hidden
         viewIfLoaded?.layer?.borderWidth = isActive ? Self.frameWidth : 0
         viewIfLoaded?.layer?.borderColor = tint.cgColor
@@ -47,13 +61,17 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     private let tabBar = NSStackView()   // one button per tab, each with a close ×
     private let pathField = NSTextField(string: "")
+    private let placeIcon = NSImageView()   // before the path: a server, an archive, search results
+    private let chipRow = NSStackView()   // then a server's chips
+    private let pathBar = NSBox()   // the three, filled in the active panel
+    private(set) var headerChips: [Chip] = []
     let filterField = NSTextField(string: "")   // internal: tests type into it
     private let statusLabel = NSTextField(labelWithString: "")
-    private let errorIcon = NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Error")!)
+    private let errorIcon = NSImageView(image: Symbol.warnFill.image("Error"))
     /// The status line says what failed: red behind a warning sign, in an inactive panel too. The next status clears it.
     private(set) var statusError = false {
         didSet {
-            statusLabel.textColor = statusError ? .systemRed : theme.hidden
+            statusLabel.textColor = statusError ? Palette.fail : theme.hidden
             errorIcon.isHidden = !statusError
         }
     }
@@ -64,7 +82,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         b.isBordered = false
         b.minSide = 0   // the status line keeps its height
         b.font = .systemFont(ofSize: 11, weight: .medium)
-        b.contentTintColor = .systemRed
+        b.contentTintColor = Palette.secondary   // not a failure, nor for good
         b.toolTip = "⎋ cancels too"
         b.isHidden = true
         return b
@@ -206,7 +224,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private static let folderIcon = NSWorkspace.shared.icon(for: .folder)
     private static let fileIcon = NSWorkspace.shared.icon(for: .data)
     private static let linkIcon = NSWorkspace.shared.icon(for: .symbolicLink)
-    private static let serverIcon = NSImage(systemSymbolName: "network", accessibilityDescription: "Server")
+    private static let serverIcon = Symbol.network.image("Server")
     private static let sizeFmt = ByteCountFormatter()
     private static let dateFmt: DateFormatter = {
         let f = DateFormatter()
@@ -383,11 +401,19 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
 
-        let header = Self.column([tabBar, pathField])
+        placeIcon.symbolConfiguration = .init(pointSize: 11, weight: .medium)
+        chipRow.spacing = 3
+        let pathRow = NSStackView(views: [placeIcon, chipRow, pathField])
+        pathRow.spacing = 4
+        pathRow.edgeInsets = NSEdgeInsets(top: 0, left: 3, bottom: 0, right: 0)
+        pathField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        (pathBar.boxType, pathBar.borderWidth, pathBar.contentViewMargins, pathBar.titlePosition) = (.custom, 0, .zero, .noTitle)
+        pathBar.contentView = pathRow
+        let header = Self.column([tabBar, pathBar])
         spinner.style = .spinning
         spinner.controlSize = .small
         spinner.isHidden = true
-        errorIcon.contentTintColor = .systemRed
+        errorIcon.contentTintColor = Palette.fail
         errorIcon.symbolConfiguration = .init(pointSize: 11, weight: .regular)
         errorIcon.isHidden = true
         let footer = Self.column([filterField, NSStackView(views: [spinner, errorIcon, statusLabel, cancelButton])])
@@ -430,7 +456,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         scroll.verticalScroller?.needsDisplay = true
         filterField.backgroundColor = theme.cursor ?? .controlBackgroundColor
         filterField.textColor = theme.text
-        statusLabel.textColor = statusError ? .systemRed : theme.hidden
+        statusLabel.textColor = statusError ? Palette.fail : theme.hidden
         styleHeader()
         let r = table.selectedRow
         table.reloadData()   // drops the selection: the cursor stays where it was
@@ -587,9 +613,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                     if select == nil, old.hasPrefix(newPath == "/" ? "/" : newPath + "/") {
                         select = String(old.dropFirst(newPath == "/" ? 1 : newPath.count + 1).split(separator: "/").first ?? "")
                     }
-                    if view.window?.firstResponder !== pathField.currentEditor() {
-                        pathField.stringValue = (newPath as NSString).abbreviatingWithTildeInPath
-                    }
+                    if view.window?.firstResponder !== pathField.currentEditor() { showPath() } else { styleHeader() }
                     loadSort(for: newPath)
                     watch()
                     updateTabBar()
@@ -798,16 +822,16 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         if let busyMessage { return statusLabel.stringValue = cancellable ? String(busyMessage.dropLast(" ⎋ cancels".count)) : busyMessage }
         // A message just flashed stays its time through a re-list, a git status or a folder size coming in.
         if let f = flashed, f.until > Date() { statusError = f.error; return statusLabel.stringValue = f.text }
-        if let p = parked { return statusLabel.stringValue = "\(p.target.sudo ? "#" : "🌐") sftp · \(p.target.shown) · not connected".bidiVisible }
+        if let p = parked { return statusLabel.stringValue = "sftp · \(p.target.shown) · not connected".bidiVisible }
         var s = Self.countText(rows.count, "items", totalSize) + " · \(freeSpace) free"
         if let r = remote {   // marks: below, as anywhere
-            s = "\(r.target.sudo ? "#" : "🌐") sftp · \(r.target.shown) · " + Self.countText(rows.count, "items", 0) + (remoteFree.map { " · \($0) free" } ?? "")
+            s = "sftp · \(r.target.shown) · " + Self.countText(rows.count, "items", 0) + (remoteFree.map { " · \($0) free" } ?? "")
         }
         if let g = git {
             s += " · ⎇ \(g.branch)" + (g.ahead > 0 ? " ↑\(g.ahead)" : "") + (g.behind > 0 ? " ↓\(g.behind)" : "")
         }
-        if let a = archive { s = "📦 \(a.index.format) · read-only · F5 extracts · " + s }
-        if searchTitle != nil { s = "🔍 \(searchWhat): " + (searching ? "searching… \(all.count) found" : "\(all.count) found · ⌫ back") + " · " + s }
+        if let a = archive { s = "\(a.index.format) · read-only · F5 extracts · " + s }
+        if searchTitle != nil { s = "\(searchWhat): " + (searching ? "searching… \(all.count) found" : "\(all.count) found · ⌫ back") + " · " + s }
         if filter != nil { s = "filtered: \(rows.count) of \(all.count) · " + s }
         if gitOnly && git != nil { s = "git changes: \(rows.count) of \(all.count) · " + s }
         if !marked.isEmpty { s = Self.countText(marked.count, "marked", bytes(of: rows.filter { marked.contains($0.name) })) + " · " + s }
@@ -1004,7 +1028,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let x = code.first ?? " ", y = code.last ?? " "
         let letter = x != " " ? x : y
         let word = ["M": "modified", "A": "added", "D": "deleted", "R": "renamed", "C": "copied", "T": "type changed"][String(letter)] ?? "changed"
-        return x != " " ? (String(x), .systemGreen, word + ", staged") : (String(y), .systemRed, word)
+        return x != " " ? (String(x), Palette.ok, word + ", staged") : (String(y), Palette.fail, word)
     }
 
     // MARK: - Sorting (remembered per folder)
@@ -1213,7 +1237,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 remoteFlag = nil
                 connecting = nil
                 busyMessage = busyOps.last?.message
-                flash("🔒 \(target.host) stays locked")
+                flash("\(target.host) stays locked")
                 return
             }
             // A locked server reached by another spelling: its connection lingers as the saved one's (just unlocked:
@@ -1722,14 +1746,14 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// A tab: `action` on click, `close` on its × (both get the button with `tag` = index). The terminal's tabs use it too.
     /// The current tab: bold title and an accent line under it; the others' titles are dimmed. `dot`: a state mark before the title.
-    static func tabButton(_ title: String, dot: (String, NSColor)? = nil, tint: NSColor? = nil, tip: String, index i: Int, current: Bool,
+    static func tabButton(_ title: String, lead: NSAttributedString? = nil, tint: NSColor? = nil, tip: String, index i: Int, current: Bool,
                           target: AnyObject, action: Selector, close: Selector, closeTip: String = "Close Tab  ⌘W") -> NSButton {
-        tabButton([(dot, title)], tint: tint, tip: tip, index: i, current: current, target: target, action: action, close: close, closeTip: closeTip)
+        tabButton([(lead, title)], tint: tint, tip: tip, index: i, current: current, target: target, action: action, close: close, closeTip: closeTip)
     }
 
-    /// A tab of several terminal panes: their titles side by side, each with its mark. `tint`: the title's color and the
-    /// line's (production's, root's) instead of the accent.
-    static func tabButton(_ parts: [((String, NSColor)?, String)], tint: NSColor? = nil, tip: String, index i: Int, current: Bool,
+    /// A tab of several terminal panes: their titles side by side, each after its `lead` (its state, its chips). `tint`:
+    /// the line's color (production's, root's) instead of the accent.
+    static func tabButton(_ parts: [(NSAttributedString?, String)], tint: NSColor? = nil, tip: String, index i: Int, current: Bool,
                           target: AnyObject, action: Selector, close: Selector, closeTip: String = "Close Tab  ⌘W") -> NSButton {
         let b = NSButton(title: "", target: target, action: action)
         b.setButtonType(.pushOnPushOff)
@@ -1741,11 +1765,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         style.lineBreakMode = .byTruncatingMiddle
         let text = NSMutableAttributedString(string: "     ")   // padding keeps the title clear of the ×
         let font = current ? NSFont.boldSystemFont(ofSize: size) : NSFont.systemFont(ofSize: size)
-        for (n, (dot, title)) in parts.enumerated() {
+        for (n, (lead, title)) in parts.enumerated() {
             if n > 0 { text.append(NSAttributedString(string: "  │  ", attributes: [.foregroundColor: NSColor.tertiaryLabelColor])) }
-            if let (d, c) = dot { text.append(NSAttributedString(string: d + " ", attributes: [.foregroundColor: c])) }
-            text.append(NSAttributedString(string: title, attributes: [.font: font,
-                .foregroundColor: tint ?? (current ? NSColor.labelColor : NSColor.secondaryLabelColor)]))
+            if let lead { text.append(lead); text.append(NSAttributedString(string: " ")) }
+            text.append(NSAttributedString(string: title, attributes: [.font: font, .foregroundColor: current ? NSColor.labelColor : NSColor.secondaryLabelColor]))
         }
         text.append(NSAttributedString(string: "     "))
         text.addAttributes([.paragraphStyle: style], range: NSRange(location: 0, length: text.length))
@@ -1756,7 +1779,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         b.state = current ? .on : .off
         b.tag = i
         b.toolTip = tip
-        let x = NSButton(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Tab")!
+        let x = NSButton(image: Symbol.close.image("Close Tab")
             .withSymbolConfiguration(.init(pointSize: 8, weight: .bold))!, target: target, action: close)
         x.isBordered = false
         x.refusesFirstResponder = true
@@ -1773,7 +1796,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             let line = NSBox()
             line.boxType = .custom
             line.borderWidth = 0
-            line.fillColor = tint ?? .controlAccentColor
+            line.fillColor = tint ?? Palette.accent
             line.translatesAutoresizingMaskIntoConstraints = false
             b.addSubview(line)
             NSLayoutConstraint.activate([
@@ -1948,12 +1971,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     // MARK: - Path field (⌘L) and quick filter (/)
 
-    /// The header: "🔍 title" on search results, "📦 archive/inner", "🌐 host:/dir" on a server ("🟣 PROD host:/dir" on
-    /// a production one), "root@host:/dir #" on a root panel, else the local folder. Also what ⎋ in the path field brings back.
+    /// The header: search results' title, "archive/inner", "host:/dir" on a server ("root@host:/dir" on a root panel), else the
+    /// local folder — after a symbol of the place and its chips (`styleHeader`). Also what ⎋ in the path field brings back.
     func showPath() {
-        pathField.stringValue = if let t = searchTitle { "🔍 " + t }
-            else if let a = archive { "📦 " + (a.index.file as NSString).abbreviatingWithTildeInPath + (a.inner.isEmpty ? "" : "/" + a.inner) }
-            else if let r = remote ?? parked { (SavedServer.isProd(r.target) ? SavedServer.mark : r.target.sudo ? "" : "🌐 ") + "\(r.target.shown):\(r.dir)" + (r.target.sudo ? " #" : "") }
+        pathField.stringValue = if let t = searchTitle { t }
+            else if let a = archive { (a.index.file as NSString).abbreviatingWithTildeInPath + (a.inner.isEmpty ? "" : "/" + a.inner) }
+            else if let r = remote ?? parked { "\(r.target.shown):\(r.dir)" }
             else { (path as NSString).abbreviatingWithTildeInPath }
         styleHeader()
     }
@@ -2394,7 +2417,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         default:
             tf.stringValue = it.map { Self.dateFmt.string(from: Date(timeIntervalSince1970: $0.mtime)) } ?? ""
         }
-        tf.textColor = parked != nil ? theme.hidden : isMarked ? theme.marked : (link?.error ?? 0) != 0 ? .systemRed : it?.isHidden == true ? theme.hidden
+        tf.textColor = parked != nil ? theme.hidden : isMarked ? theme.marked : (link?.error ?? 0) != 0 ? Palette.fail : it?.isHidden == true ? theme.hidden
             : it == nil || it?.kind == .dir || it?.linkDir == true ? theme.dir : it!.kind == .file && it!.mode & 0o111 != 0 ? theme.exec : theme.text
         if column.identifier.rawValue == "name", let it, it.label != 0 || link != nil {   // Finder tag color, a link's target
             let base: [NSAttributedString.Key: Any] = [.font: tf.font!, .foregroundColor: tf.textColor!]

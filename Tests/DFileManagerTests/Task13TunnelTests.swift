@@ -289,22 +289,22 @@ private func freePorts(_ n: Int) throws -> [Int] {
         await waitUntil { app.tunnels.connections(db.tunnels[0], of: db) == 1 }
 
         let pg = app.tunnelItem(db.tunnels[0], of: db)
-        #expect(pg.title == "Postgres → \(p[0]) · 1" && pg.image?.accessibilityDescription == "listening")
+        #expect(pg.title == "PROD Postgres → \(p[0]) · 1" && pg.image?.accessibilityDescription == "listening")
         #expect(pg.toolTip == "localhost:\(p[0]) → db1 → localhost:5432")
-        #expect(pg.attributedTitle?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == SavedServer.color, "production")
+        #expect(pg.attributedTitle?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == Palette.prod, "production: its chip's word, in its color")
         #expect(pg.submenu?.items.map(\.title) == ["Turn Off", "Copy Address", "", "Edit…", "Delete…"], "no URL for a database")
         let grafana = app.tunnelItem(db.tunnels[1], of: db)
-        #expect(grafana.title == "Grafana → \(p[1])" && grafana.image?.accessibilityDescription == "off")
+        #expect(grafana.title == "PROD Grafana → \(p[1])" && grafana.image?.accessibilityDescription == "off")
         #expect(grafana.submenu?.items.map(\.title) == ["Turn On", "Open in Browser", "Copy Address", "", "Edit…", "Delete…"])
         let bad = app.tunnelItem(web.tunnels[0], of: web)
         #expect(bad.image?.accessibilityDescription == "failed" && bad.toolTip == "“-x” isn't a host name." && bad.attributedTitle == nil)
 
         #expect(app.tunnelsItem(for: db, at: db.target).submenu?.items.map(\.title)
-                == ["Postgres → \(p[0]) · 1", "Grafana → \(p[1])", "", "New Tunnel…", "Forward Port…"])
+                == ["PROD Postgres → \(p[0]) · 1", "PROD Grafana → \(p[1])", "", "New Tunnel…", "Forward Port…"])
         #expect(app.tunnelsItem(for: server("none", []), at: server("none", []).target).submenu?.items.map(\.title) == ["New Tunnel…", "Forward Port…"])
         let go = try #require(app.goTunnelsItem().submenu)
         go.delegate?.menuNeedsUpdate?(go)
-        #expect(go.items.map(\.title) == ["db1", "Postgres → \(p[0]) · 1", "Grafana → \(p[1])", "web", "-x:80 → 1", "", "New Tunnel…", "Forward Port…"])
+        #expect(go.items.map(\.title) == ["PROD db1", "PROD Postgres → \(p[0]) · 1", "PROD Grafana → \(p[1])", "web", "-x:80 → 1", "", "New Tunnel…", "Forward Port…"])
         #expect(go.items[0].isSectionHeader && go.items[3].isSectionHeader)
     }
 
@@ -317,7 +317,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(titles.firstIndex(of: "Forward Port…").map { titles[$0 + 1] } == "Tunnels", "\(titles)")
         var s = server("vault", locked: true, [])
         s.prod = true
-        #expect(s.pickerTitle == "🔒 " + SavedServer.mark + "vault" && server("db1", []).pickerTitle == "db1")
+        #expect(s.chips == [.prod, .locked] && server("db1", []).chips.isEmpty)
     }
 
     /// U14: back with a taken port, ↩ takes "Use N", not the taken port again; ⎋ stays Cancel's.

@@ -75,12 +75,13 @@ extension ServerLockTests {
 }
 
 /// R9 + R23: the editor of a file on a production server says so in its title, as the panel header does.
-@Test func prodServerFileEditorTitleSaysProd() {
+@Test func prodServerFileEditorTitleSaysProd() {   // in its chips: the title is the place
     var prod = SavedServer(address: "root@db")!
     prod.prod = true
     ServerLock.servers = { [prod] }
     defer { ServerLock.servers = { [] } }
-    #expect(SavedServer.title(SFTPTarget(host: "root@db"), "/etc/my.cnf") == "🟣 PROD root@db:/etc/my.cnf")
+    #expect(SavedServer.title(SFTPTarget(host: "root@db"), "/etc/my.cnf") == "root@db:/etc/my.cnf" && Chip.of(SFTPTarget(host: "root@db")) == [.prod])
+    #expect(Chip.of(SFTPTarget(host: "root@db").asRoot(true)) == [.prod, .root] && Chip.of(SFTPTarget(host: "web")).isEmpty)
     #expect(SavedServer.title(SFTPTarget(host: "web"), "/etc/nginx/nginx.conf") == "web:/etc/nginx/nginx.conf")
 }
 
@@ -283,7 +284,7 @@ extension ServerLockTests {
                         tunnels: ["Postgres", "Redis"], failedTunnels: ["Redis: db can't resolve cache"])
     let view = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(row))) as? NSStackView)
     let name = try #require(view.arrangedSubviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == "db" })
-    #expect(name.textColor == SavedServer.color && SavedServer.color != .systemRed)
+    #expect(name.textColor == Palette.prod && Palette.prod != .systemRed)
     #expect((view.arrangedSubviews.first as? NSImageView)?.image?.accessibilityDescription == "Server, locked")
     let chips = try #require(view.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)
     let toolbar = try #require(view.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView)
