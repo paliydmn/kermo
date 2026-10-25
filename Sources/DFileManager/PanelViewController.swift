@@ -57,7 +57,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var peeked: URL?   // the file `textPeek` shows: shown again (a re-list), it keeps its scroll
     var peekedText: String? { textPeek?.isHidden == false ? textPeek?.textView.string : nil }   // tests
 
-    private let tabBar = NSStackView()   // one button per tab, each with a close ×
+    let tabBar = NSStackView()   // one button per tab, each with a close × (internal: tests read it)
     private let pathField = NSTextField(string: "")
     private let placeIcon = NSImageView()   // before the path: a server, an archive, search results
     private let chipRow = NSStackView()   // then a server's chips
@@ -1767,9 +1767,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         tabBar.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (i, t) in tabs.enumerated() {
             if let r = i == tabIndex ? remote ?? parked : t.remote ?? t.parked {
-                let name = r.dir == "/" ? "/" : (r.dir as NSString).lastPathComponent.bidiVisible
-                tabBar.addArrangedSubview(Self.tabButton("SFTP · \(r.target.shown) · \(name)", tip: "\(r.target.shown):\(r.dir)", index: i, current: i == tabIndex,
-                                                         target: self, action: #selector(tabClicked(_:)), close: #selector(closeTabClicked(_:))))
+                let name = r.dir == "/" ? "/" : (r.dir as NSString).lastPathComponent.bidiVisible, chips = Chip.of(r.target)
+                tabBar.addArrangedSubview(Self.tabButton("SFTP · \(r.target.shown) · \(name)", lead: Chip.text(chips), tint: Chip.tint(chips), tip: "\(r.target.shown):\(r.dir)",
+                                                         index: i, current: i == tabIndex, target: self, action: #selector(tabClicked(_:)), close: #selector(closeTabClicked(_:))))
                 continue
             }
             let p = i == tabIndex ? path : t.path

@@ -121,6 +121,14 @@ enum Chip: String, CaseIterable {
         return NSAttributedString(attachment: a)
     }
 
+    /// Several inline, a space apart: a tab title's lead. nil for none.
+    static func text(_ chips: [Chip]) -> NSAttributedString? {
+        guard !chips.isEmpty else { return nil }
+        let s = NSMutableAttributedString()
+        for c in chips { if s.length > 0 { s.append(NSAttributedString(string: " ")) }; s.append(c.text) }
+        return s
+    }
+
     /// For a menu item, which takes no picture in its title: the word in the chip's color, then the title.
     func menuTitle(_ title: String, size: CGFloat = 0) -> NSAttributedString {
         let s = NSMutableAttributedString(string: word + " ", attributes: [.foregroundColor: color, .font: NSFont.menuFont(ofSize: size).bold])

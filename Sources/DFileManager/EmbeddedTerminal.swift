@@ -706,7 +706,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         guard t.host != nil else { return nil }
         let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         let s = NSMutableAttributedString(attributedString: t.isRunning ? StateMark.on.text("connected", font: font) : StateMark.off.text("disconnected", font: font))
-        for chip in chips(t) { s.append(NSAttributedString(string: " ")); s.append(chip.text) }
+        if let c = Chip.text(chips(t)) { s.append(NSAttributedString(string: " ")); s.append(c) }
         return s
     }
     private static func chips(_ t: Tab) -> [Chip] { t.target.map { Chip.of($0, root: $0.host.hasPrefix("root@")) } ?? [] }

@@ -39,4 +39,26 @@ extension ServerLockTests {
     #expect(line(Session.Tab(path: d, server: db, root: true, dir: "/"), active: true) == Palette.root)
     #expect(line(Session.Tab(path: d, server: prod.target, root: true, dir: "/"), active: true) == Palette.prod)
 }
+
+/// A server tab shows production and root by its chips, as the terminal's tabs do: an inactive production tab doesn't
+/// look like one on this Mac.
+@Test func serverTabsCarryTheirChips() {
+    var prod = SavedServer(address: "me@web.invalid")!
+    prod.prod = true
+    ServerLock.servers = { [prod] }
+    defer { ServerLock.servers = { [] } }
+    let d = NSTemporaryDirectory()
+    let panel = PanelViewController(session: [Session.Tab(path: d), Session.Tab(path: d, server: prod.target, dir: "/"),
+                                              Session.Tab(path: d, server: SFTPTarget(host: "me@db.invalid"), root: true, dir: "/")], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    let said = panel.tabBar.arrangedSubviews.compactMap { ($0 as? NSButton)?.attributedTitle }.map { t in
+        var chips: [String] = []
+        t.enumerateAttribute(.attachment, in: NSRange(location: 0, length: t.length)) { a, _, _ in
+            if let d = (a as? NSTextAttachment)?.image?.accessibilityDescription { chips.append(d) }
+        }
+        return chips
+    }
+    #expect(said == [[], ["production"], ["root"]])
+}
 }
