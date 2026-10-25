@@ -55,7 +55,7 @@ private func waitListed(_ panel: PanelViewController, _ count: Int) async {
     let v = Viewer(url, remote: (SFTPTarget(host: "web"), "/var/log/syslog", from))
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
-    for _ in 0..<500 where v.window?.subtitle.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(10)) }
+    for _ in 0..<500 where v.window?.statusText.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(10)) }
     press(tv, "h", 4)
     for _ in 0..<500 where !tv.string.hasPrefix(at) { try await Task.sleep(for: .milliseconds(10)) }   // the hex load is off main
     #expect(tv.string.hasPrefix(at), "\(tv.string.prefix(20))")

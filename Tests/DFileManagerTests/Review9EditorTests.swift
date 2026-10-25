@@ -35,7 +35,7 @@ private func disk(_ path: String) -> [UInt8] { [UInt8](FileManager.default.conte
     let d = try Editor(URL(fileURLWithPath: damaged))
     defer { d.close() }
     #expect(d.textView.string == "привіт\n\u{FFFD}")
-    #expect(d.window?.subtitle.contains("UTF-8 (damaged)") == true)
+    #expect(d.window?.statusText.contains("UTF-8 (damaged)") == true)
     #expect(await d.save(force: true))
     #expect(disk(damaged) == [0xEF, 0xBB, 0xBF] + Array("привіт\r\n\u{FFFD}".utf8))
 

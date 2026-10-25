@@ -124,7 +124,8 @@ extension AppDelegate {
                 Picker.Item(title: path, detail: code == "??" ? "new" : GitStatus.isConflict(code) ? "conflict" : (code.first != " " ? "staged · " : "") + code.trimmingCharacters(in: .whitespaces),
                             verb: "Diff") {
                     let abs = root + "/" + path
-                    Shell.run(GitStatus.diffCommand(tracked: code == "??" ? [] : [abs], untracked: code == "??" ? [abs] : []), in: root, diff: true)
+                    Shell.run(GitStatus.diffCommand(tracked: code == "??" ? [] : [abs], untracked: code == "??" ? [abs] : []), in: root, diff: true,
+                              title: Self.gitDiffTitle([abs]))
                 }
             }
             Picker.show(over: window, placeholder: "Commit message", scope: (st.branch, []), header: "\(staged) of \(total) change\(total == 1 ? "" : "s") staged",

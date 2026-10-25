@@ -87,7 +87,7 @@ import Testing
         Shell.run(late, in: NSTemporaryDirectory()) { cont.resume(returning: $0) }
     }
     let lateWindow = try #require(NSApp.windows.first { $0.isVisible && $0.title.hasSuffix(late) })
-    let text = try #require(((lateWindow.contentView as? NSScrollView)?.documentView as? NSTextView)?.string)
+    let text = try #require((lateWindow.docFrame?.scroll.documentView as? NSTextView)?.string)
     lateWindow.close()
     #expect(status == 3 && text == "last\n\n[exit 3]\n", Comment(rawValue: text))
 

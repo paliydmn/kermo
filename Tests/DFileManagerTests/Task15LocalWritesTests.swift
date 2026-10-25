@@ -55,7 +55,7 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`, as the other tes
         await app.extract(dir + "/" + zip, nil, to: dest)
         // the output window says so under tar's own error
         let window = NSApp.windows.last { $0.title.hasPrefix("Extract “\(zip)”") && $0.isVisible }
-        let said = ((window?.contentView as? NSScrollView)?.documentView as? NSTextView)?.string ?? ""
+        let said = (window?.docFrame?.scroll.documentView as? NSTextView)?.string ?? ""
         #expect(said.hasSuffix(ok ? "" : AppDelegate.nothingExtracted((dest as NSString).abbreviatingWithTildeInPath) + "\n") && window != nil, "\(zip): \(said)")
         #expect(ok != said.contains("Nothing was extracted"), "\(zip)")
         window?.close()

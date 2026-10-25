@@ -218,10 +218,10 @@ private func tempDir() -> String {
     for _ in 0..<6000 where status == nil { try await Task.sleep(for: .milliseconds(10)) }
     let w = try #require(NSApp.windows.first { $0.title.contains(tag) })
     defer { w.close() }
-    let text = try #require((w.contentView as? NSScrollView)?.documentView as? NSTextView).string
+    let text = try #require(w.docFrame?.scroll.documentView as? NSTextView).string
     #expect(status == 0 && text.hasSuffix("xEND\n"), "\(String(describing: status)) \(text.suffix(80).debugDescription)")
     #expect(text.utf16.count <= 4 << 20, "\(text.utf16.count)")
-    #expect(w.subtitle.contains("only the last 4 MB kept"), "\(w.subtitle)")
+    #expect(w.statusText.contains("only the last 4 MB kept"), "\(w.statusText)")
 }
 
 /// N11: follow on a server went on saying FOLLOWING after its `tail -F` there ended (a dropped connection, sshd
@@ -234,11 +234,11 @@ private func tempDir() -> String {
     try Data("line\n".utf8).write(to: url)
     let v = Viewer(url, remote: (SFTPTarget(host: "dfm-no-such-host.invalid"), "/var/log/app.log", 0))
     defer { v.close() }
-    for _ in 0..<500 where v.window?.subtitle.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(10)) }
+    for _ in 0..<500 where v.window?.statusText.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(10)) }
     v.setFollow(true)
-    await waitUntil { v.window?.subtitle.contains("FOLLOW STOPPED · f to resume") == true }   // ssh can't even resolve it
-    #expect(v.window?.subtitle.contains("FOLLOW STOPPED · f to resume") == true, "\(v.window?.subtitle ?? "")")
-    #expect(v.window?.subtitle.contains("FOLLOWING") == false)
+    await waitUntil { v.window?.statusText.contains("follow stopped — f resumes") == true }   // ssh can't even resolve it
+    #expect(v.window?.statusText.contains("follow stopped — f resumes") == true, "\(v.window?.statusText ?? "")")
+    #expect(v.window?.statusText.contains("following") == false)
 }
 
 /// N8: a panel in a folder of a disk that went away kept its rows: it went up one level, and that was gone too.
@@ -308,11 +308,11 @@ private func tempDir() -> String {
     try Data("a 77777\nb\n".utf8).write(to: url)
     let v = Viewer(url, remote: (SFTPTarget(host: "dfm-no-such-host.invalid"), "/var/log/lines.log", 10_700_000))   // no grep there
     defer { v.close() }
-    for _ in 0..<500 where v.window?.subtitle.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(10)) }
+    for _ in 0..<500 where v.window?.statusText.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(10)) }
     v.setLineFilter(LineFilter("77777"))
     let fmt = ByteCountFormatter.short(10)
-    await waitUntil { v.window?.subtitle.contains("LINES WITH “77777”") == true }
-    #expect(v.window?.subtitle.contains("LINES WITH “77777” IN THE LAST \(fmt) ONLY") == true, "\(v.window?.subtitle ?? "")")
+    await waitUntil { v.window?.statusText.contains("lines with “77777”") == true }
+    #expect(v.window?.statusText.contains("lines with “77777” in the last \(fmt) only") == true, "\(v.window?.statusText ?? "")")
 }
 
 /// N4 (decided): on this Mac too, a link to a folder sorts with the folders and, as a folder, has no size till measured.
@@ -346,7 +346,7 @@ private func tempDir() -> String {
     v.setLineFilter(LineFilter("77777"))
     await waitUntil { tv.string.hasPrefix("early") }
     #expect(tv.string == "early 77777\nlate 77777\n")
-    #expect(v.window?.subtitle.contains("LINES WITH “77777” IN THE WHOLE FILE (grep on the server)") == true, "\(v.window?.subtitle ?? "")")
+    #expect(v.window?.statusText.contains("lines with “77777” in the whole file (grep on the server)") == true, "\(v.window?.statusText ?? "")")
     v.setLineFilter(LineFilter("!77777"))
     await waitUntil { tv.string.hasPrefix("middle") }
     #expect(tv.string == "middle\nend\n")
@@ -533,15 +533,15 @@ private func tempDir() -> String {
     try Data("line\n".utf8).write(to: url)
     let v = Viewer(url, remote: (SFTPTarget(host: "dfm-no-such-host.invalid"), "/var/log/app.log", 0))
     defer { v.close() }
-    for _ in 0..<500 where v.window?.subtitle.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(10)) }
+    for _ in 0..<500 where v.window?.statusText.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(10)) }
     v.setFollow(true)
-    await waitUntil { v.window?.subtitle.contains("FOLLOW STOPPED") == true }
-    #expect(v.window?.subtitle.contains("FOLLOW STOPPED · f to resume") == true && v.window?.subtitle.contains("FOLLOWING") == false)
+    await waitUntil { v.window?.statusText.contains("follow stopped") == true }
+    #expect(v.window?.statusText.contains("follow stopped — f resumes") == true && v.window?.statusText.contains("following") == false)
     v.setFollow(true)   // f: on again (and, the server still out of reach, stopped again)
-    #expect(v.window?.subtitle.contains("FOLLOWING") == true)
-    await waitUntil { v.window?.subtitle.contains("FOLLOW STOPPED") == true }
+    #expect(v.window?.statusText.contains("following") == true)
+    await waitUntil { v.window?.statusText.contains("follow stopped") == true }
     v.setFollow(false)  // f while on: off, no note
-    #expect(v.window?.subtitle.contains("FOLLOW") == false)
+    #expect(v.window?.statusText.contains("follow") == false)
 }
 
 /// View ▸ Theme…: the picker opens on the theme in use, shows each highlighted one at once, and ⎋ goes back (↩ keeps it).

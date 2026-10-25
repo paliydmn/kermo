@@ -2,12 +2,12 @@ import AppKit
 import DFMCore
 import UniformTypeIdentifiers
 
-/// F3 viewer. Keys: & filter lines (!text: without it) · e errors and warnings, errors only, all · h hex · p readable plist/JSON ·
-/// f follow (tail -f) · l line numbers · w wrap · ⌘F find · Esc/q/F3 close.
+/// F3 viewer. Keys (`keys`, on its key bar and toolbar too): & filter lines (!text: without it), e errors and warnings,
+/// errors only, all, h hex, p readable plist/JSON, f follow (tail -f), l line numbers, w wrap, ⌘F find, ⎋/q/F3 close.
 /// Text ≤ 4 MB loads whole. Bigger files (and rotated logs unpacking past 4 MB, via a temp copy) are memory-mapped and shown through a sliding 256 KB window:
 /// scrolling past either edge slides it; g goes to a position, / and n search the whole file. Error/warning lines are tinted.
 @MainActor
-final class Viewer: NSWindowController, NSWindowDelegate {
+final class Viewer: NSWindowController, NSWindowDelegate, NSToolbarDelegate, NSSearchFieldDelegate {
     enum Mode { case text, hex, pretty }
 
     private static var open: [Viewer] = []
@@ -81,15 +81,12 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         return text ? remoteLimit : nil
     }
 
-    /// A server's file is titled and marked as in the editor: "web:/var/log/app.log" with its server's chips.
+    /// Titled as the editor is: the file's name, where it is under it ("web-01 · /var/log"), a server's chips.
     @discardableResult
     static func show(_ url: URL, remote: (target: SFTPTarget, path: String, from: Int64)? = nil, onClose: (@MainActor () -> Void)? = nil) -> Viewer {
         let v = Viewer(url, remote: remote)
         v.onClose = onClose
-        if let remote {
-            v.window?.title = SavedServer.title(remote.target, remote.path).bidiVisible
-            v.window?.showChips(Chip.of(remote.target))
-        }
+        if let remote { v.window?.showChips(Chip.of(remote.target)) }
         open.append(v)
         v.showWindow(nil)
         return v
@@ -106,8 +103,9 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         }
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 720),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        w.title = url.lastPathComponent.bidiVisible
-        w.subtitle = "Loading…"
+        let name = (remote?.path ?? url.path) as NSString
+        w.title = name.lastPathComponent.bidiVisible
+        w.subtitle = DocFrame.place(name.deletingLastPathComponent, host: remote.map { SavedServer.name(for: $0.target) })
         w.isReleasedWhenClosed = false
         super.init(window: w)
         w.delegate = self
@@ -128,7 +126,23 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         textView.onKey = { [unowned self] in handleKey($0) }
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
-        w.contentView = scroll
+        w.contentView = DocFrame(scroll, size: w.contentRect(forFrameRect: w.frame).size)
+        w.docFrame?.text = "Loading…"
+        let bar = NSToolbar(identifier: "Viewer")
+        bar.delegate = self
+        bar.displayMode = .iconOnly
+        w.toolbar = bar
+        w.toolbarStyle = .unified
+        for (c, action) in [(modes, #selector(modePicked(_:))), (switches, #selector(switched(_:))), (levels, #selector(levelPicked(_:)))] {
+            c.target = self
+            c.action = action
+        }
+        filterField.placeholderString = "Filter lines"
+        filterField.sendsWholeSearchString = true   // on ↩: a big log is read again for each
+        filterField.target = self
+        filterField.action = #selector(filtered(_:))
+        filterField.delegate = self
+        filterField.widthAnchor.constraint(equalToConstant: 170).isActive = true
         spinner.style = .spinning
         spinner.isDisplayedWhenStopped = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
@@ -181,6 +195,8 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         ANSIColors.apply(p.runs, to: storage, font: font)
     }
 
+    func windowDidBecomeKey(_ notification: Notification) { window?.docFrame?.showKeys() }   // the menu's keys work by the key window
+
     func windowWillClose(_ notification: Notification) {
         followTask?.cancel()
         remoteTail?.terminate()
@@ -190,60 +206,76 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         if let unpacked { try? FileManager.default.removeItem(at: unpacked) }
     }
 
+    /// A key of the viewer's: what `handleKey` runs, and what its key bar, its toolbar and F1 over it show. No label:
+    /// it works without a slot (F3, F10 and q close too; a huge file's Home and End).
+    struct Key {
+        let key: String, label: String, code: UInt16
+        var mods: NSEvent.ModifierFlags = []
+        let run: @MainActor () -> Void
+    }
+
+    /// Its keys for what it shows now.
+    var keys: [Key] {
+        var k: [Key] = []
+        if big != nil, mode == .text, followTask == nil, lineFilter == nil {   // a huge file: whole-file navigation
+            let top: @MainActor () -> Void = { [unowned self] in showWindow(around: 0, top: 0) }
+            let end: @MainActor () -> Void = { [unowned self] in big = nil; openBig(around: .max) }   // remapped: it may have grown
+            k += [Key(key: "g", label: "Go To", code: 5) { [unowned self] in goToDialog() },
+                  Key(key: "/", label: "Find in File", code: 44) { [unowned self] in findDialog() },
+                  Key(key: "n", label: "Find Next", code: 45) { [unowned self] in find(from: (lastMatch ?? visibleTop()?.offset ?? 0) + 1) },
+                  Key(key: "↖", label: "", code: 115, run: top), Key(key: "⌘↑", label: "", code: 126, mods: .command, run: top),
+                  Key(key: "↘", label: "", code: 119, run: end), Key(key: "⌘↓", label: "", code: 125, mods: .command, run: end)]
+        } else if mode == .hex, isHuge {
+            k.append(Key(key: "g", label: "Go To", code: 5) { [unowned self] in goToDialog() })
+        }
+        k += [Key(key: "&", label: "Filter", code: 26, mods: .shift) { [unowned self] in focusFilter() },   // ⇧7, as in less
+              Key(key: "e", label: "Errors", code: 14) { [unowned self] in cycleLevels() }]
+        if canPretty { k.append(Key(key: "p", label: "Readable", code: 35) { [unowned self] in load(mode == .pretty ? .text : .pretty) }) }
+        k += [Key(key: "h", label: "Hex", code: 4) { [unowned self] in
+                  if mode == .hex { asText = true } else if mode == .text, lineFilter == nil, let top = visibleTop() { hexOffset = UInt64(top.offset) & ~15 }   // huge file: hex from here
+                  load(mode == .hex ? .text : .hex)
+              },
+              Key(key: "f", label: "Follow", code: 3) { [unowned self] in setFollow(followTask == nil) },
+              Key(key: "l", label: "Lines", code: 37) { [unowned self] in setNumbers(!numbersOn) },
+              Key(key: "w", label: "Wrap", code: 13) { [unowned self] in setWrap(!wrap) },
+              Key(key: "⌘F", label: "Find", code: 3, mods: .command) { [unowned self] in   // the menu's key: a click here
+                  let find = NSMenuItem()
+                  find.tag = NSTextFinder.Action.showFindInterface.rawValue
+                  textView.performTextFinderAction(find)
+              },
+              Key(key: "⎋", label: "Close", code: 53) { [unowned self] in window?.performClose(nil) }]
+        return k + [99, 109, 12].map { Key(key: "", label: "", code: $0) { [unowned self] in window?.performClose(nil) } }   // F3, F10, q
+    }
+
     private func handleKey(_ e: NSEvent) -> Bool {
         let mods = e.modifierFlags.intersection([.command, .option, .control, .shift])
-        if big != nil, mode == .text, followTask == nil, lineFilter == nil {   // huge file: whole-file navigation
-            switch (e.keyCode, mods) {
-            case (115, []), (126, .command): showWindow(around: 0, top: 0); return true                       // Home, ⌘↑
-            case (119, []), (125, .command): self.big = nil; openBig(around: .max); return true               // End, ⌘↓ (remapped: it may have grown)
-            case (5, []): goToDialog(); return true                                                            // g
-            case (44, []): findDialog(); return true                                                           // /
-            case (45, []): find(from: (lastMatch ?? visibleTop()?.offset ?? 0) + 1); return true               // n
-            default: break
-            }
-        }
-        if mode == .hex, isHuge, e.keyCode == 5, mods.isEmpty { goToDialog(); return true }
-        if e.keyCode == 26, mods == .shift { filterDialog(); return true }   // & (⇧7), like less
-        guard mods.isEmpty else { return false }
-        switch e.keyCode {
-        case 53, 99, 109, 12: window?.performClose(nil)          // Esc, F3, F10, q
-        case 13: setWrap(!wrap)                                   // w
-        case 4:                                                   // h
-            if mode == .hex { asText = true } else if mode == .text, lineFilter == nil, let top = visibleTop() { hexOffset = UInt64(top.offset) & ~15 }   // huge file: hex from here
-            load(mode == .hex ? .text : .hex)
-        case 35: load(mode == .pretty ? .text : .pretty)          // p
-        case 3: setFollow(followTask == nil)                     // f
-        case 14: cycleLevels()                                    // e
-        case 37: setNumbers(!numbersOn)                           // l
-        default: return false
-        }
+        guard let k = keys.first(where: { $0.code == e.keyCode && $0.mods == mods }) else { return false }
+        k.run()
         return true
     }
 
-    /// Its keys for what it shows now, as the subtitle names them; F1 over it lists them too.
-    var keyHints: [(key: String, label: String)] {
-        var keys = [("&", "Filter"), ("e", "Errors"), ("h", "Hex"), ("f", "Follow"), ("l", "Lines"), ("w", "Wrap"), ("⌘F", "Find"), ("⎋", "Close")]
-        if canPretty { keys.insert(("p", "Readable"), at: 2) }
-        if big != nil && mode == .text && lineFilter == nil { keys.insert(contentsOf: [("g", "Go To"), ("/ n", "Find in File")], at: 0) }
-        if isHuge && mode == .hex { keys.insert(("g", "Go To"), at: 0) }
-        return keys
-    }
+    var wraps: Bool { wrap }   // tests
 
-    static func keyHelp(of window: NSWindow?) -> KeyHelp.Section? {
+    /// The keys its key bar and F1 show.
+    var keyHints: [(key: String, label: String)] { keys.filter { !$0.label.isEmpty }.map { ($0.key, $0.label) } }
+
+    static func keys(of window: NSWindow?) -> [AppDelegate.KeyRow]? {
         open.first { $0.window === window && window != nil }.map { v in
-            ("Viewer", v.keyHints.map { ($0.label, $0.key) })
+            v.keys.filter { !$0.label.isEmpty }.map { AppDelegate.KeyRow(section: "Viewer", title: $0.label, key: $0.key, run: $0.run) }
         }
     }
 
-    private func updateSubtitle() {
-        let keys = keyHints.map { "\($0.key) \($0.label)" }
+    /// The status line says what it shows — size, encoding, a filter, following — in words; the toolbar its switches.
+    private func updateStatus() {
         let filtered = mode == .hex ? nil : lineFilter.map { f in
-            [f.text.isEmpty ? nil : "LINES \(f.exclude ? "WITHOUT" : "WITH") “\(f.text)”",
-             f.level.map { $0 == .error ? "ERRORS ONLY" : "ERRORS + WARNINGS" }].compactMap { $0 }.joined(separator: " · ")
-                + (serverFiltered ? " IN THE WHOLE FILE (grep on the server)" : tail.map { " IN THE LAST \($0) ONLY" } ?? "")
+            [f.text.isEmpty ? nil : "lines \(f.exclude ? "without" : "with") “\(f.text)”",
+             f.level.map { $0 == .error ? "errors only" : "errors and warnings" }].compactMap { $0 }.joined(separator: ", ")
+                + (serverFiltered ? " in the whole file (grep on the server)" : tail.map { " in the last \($0) only" } ?? "")
         }
-        let follow = followTask != nil ? [followPaused ? "FOLLOWING · paused — End resumes" : "FOLLOWING"] : followStopped ? ["FOLLOW STOPPED · f to resume"] : []
-        window?.subtitle = ([info] + [filtered, showNumbers()].compactMap { $0 } + follow + keys).joined(separator: " · ")
+        let follow = followTask != nil ? [followPaused ? "following, paused — End resumes" : "following"] : followStopped ? ["follow stopped — f resumes"] : []
+        window?.docFrame?.text = ([info] + [filtered, showNumbers()].compactMap { $0 } + follow).filter { !$0.isEmpty }.joined(separator: " · ")
+        showSwitches()
+        window?.docFrame?.showKeys()
     }
 
     /// The gutter on or off as `l` and the text allow; what to say where it can't be: numbers count from the file's
@@ -266,13 +298,85 @@ final class Viewer: NSWindowController, NSWindowDelegate {
     /// `l`: line numbers on or off, here and in viewers to come.
     func setNumbers(_ on: Bool) {   // internal for tests
         defaults.set(on, forKey: "viewerLineNumbers")
-        updateSubtitle()
+        updateStatus()
     }
 
     /// `e`: all lines → errors and warnings → errors only → all, together with an `&` filter.
     func cycleLevels() {   // internal for tests
         let next: TextFormat.Level? = switch lineFilter?.level { case nil: .warning; case .warning?: .error; case .error?: nil }
-        setLineFilter(Self.filter(lineFilter?.spec ?? "", level: next))
+        setLevel(next)
+    }
+
+    /// Only lines of this level and worse (nil: all), with the `&` text kept: `e`, and the toolbar's All | Warnings | Errors.
+    private func setLevel(_ level: TextFormat.Level?) { setLineFilter(Self.filter(lineFilter?.spec ?? "", level: level)) }
+
+    // MARK: - Toolbar: how it shows the file, its switches and filters — each control doing what its key does
+
+    private static let modeID = NSToolbarItem.Identifier("mode"), switchesID = NSToolbarItem.Identifier("switches"),
+                       filterID = NSToolbarItem.Identifier("filter"), levelID = NSToolbarItem.Identifier("level")
+    private let modes = NSSegmentedControl(labels: ["Text", "Hex", "Readable"], trackingMode: .selectOne, target: nil, action: nil)
+    private let switches = NSSegmentedControl(labels: ["Wrap", "Lines", "Follow"], trackingMode: .selectAny, target: nil, action: nil)
+    private let levels = NSSegmentedControl(labels: ["All", "Warnings", "Errors"], trackingMode: .selectOne, target: nil, action: nil)
+    let filterField = NSSearchField()
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, Self.modeID, Self.switchesID, Self.filterID, Self.levelID]
+    }
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarDefaultItemIdentifiers(toolbar) }
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        let item = NSToolbarItem(itemIdentifier: id)
+        (item.view, item.label) = switch id {
+        case Self.modeID: (modes, "Show As")
+        case Self.switchesID: (switches, "Wrap, Lines, Follow")
+        case Self.filterID: (filterField, "Filter")
+        default: (levels, "Levels")
+        }
+        return item
+    }
+
+    private func key(_ k: String) -> Key? { keys.first { $0.key == k } }
+
+    @objc private func modePicked(_ s: NSSegmentedControl) {
+        let to = [Mode.text, .hex, .pretty][s.selectedSegment]
+        guard to != mode else { return }
+        key(to == .pretty || mode == .pretty && to == .text ? "p" : "h")?.run()
+    }
+
+    @objc private func switched(_ s: NSSegmentedControl) {
+        for (i, (k, on)) in [("w", wrap), ("l", numbersOn), ("f", followTask != nil)].enumerated() where s.isSelected(forSegment: i) != on { key(k)?.run() }
+        showSwitches()
+    }
+
+    @objc private func levelPicked(_ s: NSSegmentedControl) { setLevel([nil, .warning, .error][s.selectedSegment]) }
+
+    /// ↩ in the toolbar's field: what `&`'s question did with its answer.
+    @objc private func filtered(_ f: NSSearchField) {
+        setLineFilter(Self.filter(f.stringValue, level: lineFilter?.level))
+        window?.makeFirstResponder(textView)
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+        guard sel == #selector(NSResponder.cancelOperation(_:)) else { return false }
+        showSwitches()   // what's typed goes; the filter in use stays
+        window?.makeFirstResponder(self.textView)
+        return true
+    }
+
+    /// `&`: into the toolbar's field — or, with the field in the toolbar's overflow or the toolbar hidden, the question.
+    private func focusFilter() {
+        if filterField.window != nil, !filterField.isHiddenOrHasHiddenAncestor { window?.makeFirstResponder(filterField) } else { filterDialog() }
+    }
+
+    /// The toolbar's controls as things are now.
+    private func showSwitches() {
+        if (modes.segmentCount == 3) != canPretty {
+            modes.segmentCount = canPretty ? 3 : 2
+            if canPretty { modes.setLabel("Readable", forSegment: 2) }
+        }
+        modes.selectedSegment = mode == .hex ? 1 : mode == .pretty ? 2 : 0
+        for (i, on) in [wrap, numbersOn, followTask != nil].enumerated() { switches.setSelected(on, forSegment: i) }
+        levels.selectedSegment = switch lineFilter?.level { case nil: 0; case .warning?: 1; case .error?: 2 }
+        if filterField.currentEditor() == nil { filterField.stringValue = lineFilter?.spec ?? "" }
     }
 
     // MARK: - Loading (off main thread)
@@ -333,7 +437,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
             Self.show(Painted(text: text, levels: levels, syntax: syntax, runs: runs), in: textView)
             dropped = 0
             textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
-            updateSubtitle()
+            updateStatus()
         }
     }
 
@@ -429,7 +533,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
                 }
             }
         }
-        updateSubtitle()
+        updateStatus()
     }
 
     /// The lines of the server's `path` that `f` keeps, by `grep -F` there (ASCII case folded), up to `hugeLimit` of
@@ -483,7 +587,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         guard followTask != nil else { return }
         setFollow(false)
         followStopped = true
-        updateSubtitle()
+        updateStatus()
     }
 
     private static func tail(_ t: SFTPTarget, _ path: String, from: Int64, into copy: URL,
@@ -580,6 +684,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
             tc.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         }
         if let keep { scroll(toChar: keep, delta: 0, dx: -tc.lineFragmentPadding - textView.textContainerOrigin.x) }
+        showSwitches()
     }
 }
 
@@ -596,7 +701,7 @@ extension Viewer {
             && !(CompressedFile.matches(path) && CompressedFile.read(path, limit: 0) != nil)
     }
     /// A rotated log that unpacks to over 4 MB of text, unpacked (up to 32 MB) to a temp file the window then maps,
-    /// with what its subtitle says about the original. nil for a smaller or binary one: `read` shows those whole.
+    /// with what its status line says about the original. nil for a smaller or binary one: `read` shows those whole.
     nonisolated static func unpackHuge(_ url: URL, asText: Bool) -> (url: URL, label: String)? {   // internal for tests
         guard let z = CompressedFile.read(url.path, limit: 32 << 20), z.data.count > hugeLimit,
               asText || !TextFormat.looksBinary(z.data) else { return nil }
@@ -694,7 +799,7 @@ extension Viewer {
             let fmt = { (n: Int) in ByteCountFormatter.short(Int64(n)) }
             info = (truncated ? "file truncated · " : "") + "\(label ?? fmt(big.count)) · \(enc) · showing \(fmt(w.lowerBound))–\(fmt(w.upperBound)) (\(w.lowerBound * 100 / max(big.count, 1))%)"
             truncated = false
-            updateSubtitle()
+            updateStatus()
             sliding = false
         }
     }
@@ -724,7 +829,7 @@ extension Viewer {
             if followTask != nil { textView.scrollToEndOfDocument(nil) } else { textView.scrollRangeToVisible(NSRange(location: 0, length: 0)) }
             let fmt = { (n: Int) in ByteCountFormatter.short(Int64(n)) }
             info = "\(label ?? fmt(d.count)) · \(enc)" + (more ? " · first \(fmt(Self.hugeLimit)) of matching lines" : "")
-            updateSubtitle()
+            updateStatus()
             sliding = false
         }
     }
@@ -734,9 +839,9 @@ extension Viewer {
     /// and column 0 of several rows is where the next row starts, not the window's start: going back takes pulling
     /// past the edge (a trackpad's overscroll), or Home / g. A resize's own scrolling slides nothing.
     @objc fileprivate func scrolled() {
-        if followTask != nil {   // L4: scrolled up, it stays put while lines come in — the subtitle says so
+        if followTask != nil {   // L4: scrolled up, it stays put while lines come in — the status line says so
             let paused = scroll.contentView.bounds.maxY < textView.frame.height - 20
-            if paused != followPaused { followPaused = paused; updateSubtitle() }
+            if paused != followPaused { followPaused = paused; updateStatus() }
         }
         guard let big, !sliding, !scroll.inLiveResize, mode == .text, followTask == nil, lineFilter == nil, let lm = textView.layoutManager, let tc = textView.textContainer else { return }
         let b = scroll.contentView.bounds, f = textView.frame, used = lm.usedRect(for: tc).height
@@ -865,14 +970,14 @@ extension Viewer {
         guard !findNeedle.isEmpty else { return findDialog() }
         guard let file = bigFile else { return }
         let needle = Array(findNeedle.utf8), shown = findNeedle
-        window?.subtitle = "Searching for “\(shown)”…"
+        window?.docFrame?.text = "Searching for “\(shown)”…"
         Task { [weak self] in
             // Through the mapped file's descriptor, not the mapping: a truncate during a scan of seconds would be SIGBUS.
             let hit = await Blocking.run(.userInitiated) { BigFile.find(needle, in: file, from: start, caseSensitive: false) }
             guard let self else { return }
             guard let hit else {
                 NSSound.beep()
-                window?.subtitle = "“\(shown)” not found below this point"
+                window?.docFrame?.text = "“\(shown)” not found below this point"
                 return
             }
             lastMatch = hit

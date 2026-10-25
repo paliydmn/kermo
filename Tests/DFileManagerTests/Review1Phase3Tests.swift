@@ -225,3 +225,67 @@ extension ServerLockTests {
     #expect(look.emptySaid == "" && look.said.hasPrefix("ssh:") && Picker.current === look)
 }
 }
+
+// MARK: - 3b: document windows
+
+/// R-46, Р9: a document window says its name in the title, where it is under it — "web-01 · /etc/nginx" on a server, by
+/// its saved name; "~/…" here; nothing for a temporary copy — and what it shows now in a status line at the bottom.
+@MainActor @Test func documentWindowsSayNamePlaceAndStatus() async throws {
+    _ = NSApplication.shared
+    #expect(DocFrame.place(Foundation.NSTemporaryDirectory() + "dfm-arch-1", host: nil) == "", "an archive's entry, git's output")
+    #expect(DocFrame.place(NSHomeDirectory() + "/site", host: nil) == "~/site" && DocFrame.place("/etc", host: "web-01") == "web-01 · /etc")
+
+    let dir = NSTemporaryDirectory() + "dfm-r1p3-" + UUID().uuidString   // the tests' own, on the test disk: not the app's temp folder
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    try Data("GET /a 200\nERROR boom\n".utf8).write(to: URL(fileURLWithPath: dir + "/app.log"))
+    let v = Viewer.show(URL(fileURLWithPath: dir + "/app.log"))
+    defer { v.window?.close() }
+    for _ in 0..<500 where v.window?.statusText.hasPrefix("Loading") != false { try await Task.sleep(for: .milliseconds(10)) }
+    let w = try #require(v.window)
+    #expect(w.title == "app.log" && w.subtitle == (dir as NSString).abbreviatingWithTildeInPath && w.statusText == "22 B · UTF-8", "\(w.subtitle) | \(w.statusText)")
+    v.cycleLevels()
+    for _ in 0..<500 where !w.statusText.contains("errors") { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(w.statusText.hasSuffix("errors and warnings") && !w.subtitle.contains("errors"), "state in words, in the status line: \(w.statusText)")
+
+    let e = try Editor(URL(fileURLWithPath: dir + "/app.log"), remote: "web-01:/var/log/app.log")
+    defer { e.close() }
+    #expect(e.window?.title == "app.log" && e.window?.subtitle == "web-01 · /var/log" && e.window?.statusText == "UTF-8")
+
+    let title = "dfm out " + UUID().uuidString.prefix(6)
+    Shell.run("echo hi; sleep 0.3", in: dir, title: title)
+    let o = try #require(NSApp.windows.first { $0.title == title })
+    defer { o.close() }
+    #expect(o.subtitle == (dir as NSString).abbreviatingWithTildeInPath && o.statusText == "running…")
+    for _ in 0..<300 where !o.statusText.hasPrefix("exit") { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(o.statusText.hasPrefix("exit 0 · "), "\(o.statusText)")
+}
+
+/// R-46, Р9, step 8: a document window's key bar is F1 over it — its own keys, then the menu bar's that work there,
+/// each key once — and a click on a slot does what the key does: "w" wraps, and the toolbar's Wrap shows it.
+@MainActor @Test func aWindowsKeyBarIsItsF1AndClicksAreKeys() async throws {
+    _ = NSApplication.shared
+    let app = AppDelegate(), menu = app.makeMenu()
+    DocFrame.rows = { app.keyRows(over: $0, menu: menu) }
+    defer { DocFrame.rows = { _ in [] } }
+    let dir = NSTemporaryDirectory() + "dfm-r1p3k-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    try Data("one\ntwo\n".utf8).write(to: URL(fileURLWithPath: dir + "/a.log"))
+    let v = Viewer.show(URL(fileURLWithPath: dir + "/a.log"))
+    defer { v.window?.close() }
+    let w = try #require(v.window), frame = try #require(w.docFrame)
+    for _ in 0..<500 where w.statusText.hasPrefix("Loading") { try await Task.sleep(for: .milliseconds(10)) }
+    frame.showKeys()
+    var once: Set<String> = []
+    let f1 = app.keySections(over: w, menu: menu).flatMap(\.rows).filter { once.insert($0.keys).inserted }
+    #expect(frame.keys.list?.map { "\($0.key) \($0.label)" } == f1.map { "\($0.keys) \($0.title.replacingOccurrences(of: "…", with: ""))" })
+    #expect(frame.keys.list?.prefix(8).map(\.key) == ["&", "e", "h", "f", "l", "w", "⌘F", "⎋"])
+
+    func views(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(views) }
+    let wrap = try #require(views(frame.keys).compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "w, Wrap" })
+    #expect(!v.wraps)
+    _ = (wrap.target as? NSObject)?.perform(wrap.action, with: wrap)
+    let switches = views(w.toolbar?.items.compactMap(\.view).first { ($0 as? NSSegmentedControl)?.label(forSegment: 0) == "Wrap" } ?? NSView())
+    #expect(v.wraps && (switches.first as? NSSegmentedControl)?.isSelected(forSegment: 0) == true, "the slot is the key; the toolbar follows")
+}

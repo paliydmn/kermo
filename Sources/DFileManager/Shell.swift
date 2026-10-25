@@ -240,7 +240,8 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         tv.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         tv.textContainerInset = NSSize(width: 4, height: 4)
         tv.usesFindBar = true
-        w.contentView = scroll
+        w.contentView = DocFrame(scroll, size: w.contentRect(forFrameRect: w.frame).size)
+        w.docFrame?.text = "running…"
         w.center()
         w.setFrameAutosaveName("Output")
         return (w, tv)
@@ -251,10 +252,9 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
 
     private init(_ command: String, _ dir: String, _ server: SFTPTarget?, _ diff: Bool, _ follow: Bool, _ failed: String?,
                  _ onExit: @escaping @MainActor (Int32) -> Void) {
-        let place = server.map { "\($0.host):\(dir)" } ?? (dir as NSString).abbreviatingWithTildeInPath
         let (w, tv) = Self.window()
-        w.title = (server.map { "\($0.host) $ " } ?? "$ ") + command.bidiVisible
-        w.subtitle = place + " · running… · ⎋ Stop"
+        w.title = command.bidiVisible
+        w.subtitle = DocFrame.place(dir, host: server.map { SavedServer.name(for: $0) })
         super.init(window: w)
         w.delegate = self
 
@@ -305,7 +305,8 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         report = { [weak self] in
             guard let self else { return }
             let secs = String(format: "%.1fs", Date().timeIntervalSince(self.started))
-            self.window?.subtitle = place + " · exit \(self.status) · \(secs)" + (self.trimmed ? " · only the last 4 MB kept" : "") + " · ⎋ Close"
+            self.window?.docFrame?.text = "exit \(self.status) · \(secs)" + (self.trimmed ? " · only the last 4 MB kept" : "")
+            self.window?.docFrame?.showKeys()
             if diff {
                 // diff exits 1 when files differ — that's the normal case, not an error.
                 Self.colorizeDiff(tv)
@@ -324,14 +325,15 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
                  again: (@MainActor (NSWindow?) async -> Bool)?, ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
         let (w, tv) = Self.window()
         let count = list.count + skipped.count
-        w.subtitle = "\(count) server\(count == 1 ? "" : "s") · running… · ⎋ Stop"
+        w.subtitle = "\(count) server\(count == 1 ? "" : "s")"
         let cancel = CancelFlag()
         servers = cancel
+        self.again = again
         super.init(window: w)
         w.delegate = self
         w.onKey = { [weak self] e in   // ⌘R: again, once it's over (before the main menu's Refresh)
-            guard let self, Shortcut(event: e) == Shortcut("cmd+r"), let again else { return false }
-            if alive { NSSound.beep() } else { Task { if await again(self.window) { self.window?.close() } } }
+            guard let self, Shortcut(event: e) == Shortcut("cmd+r"), self.again != nil else { return false }
+            runAgain()
             return true
         }
         let names = list.map(\.name), width = names.map(\.count).max() ?? 0   // the skipped have no lines
@@ -359,13 +361,31 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
                     }
                     tv.textStorage?.append(text)
                     self.kept(in: tv)
-                    self.window?.subtitle = "\(count) server\(count == 1 ? "" : "s") · " + (cancel.isCancelled ? "stopped" : "done")
-                        + " · " + String(format: "%.1fs", Date().timeIntervalSince(self.started)) + " · ⎋ Close" + (again == nil ? "" : " · ⌘R Run Again")
+                    self.window?.docFrame?.text = (cancel.isCancelled ? "stopped" : "done") + " · " + String(format: "%.1fs", Date().timeIntervalSince(self.started))
+                    self.window?.docFrame?.showKeys()
                 }
             }
         }.start()
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Run on Servers': the same command on the same servers, once it's over (⌘R, or its slot).
+    private var again: (@MainActor (NSWindow?) async -> Bool)?
+    private func runAgain() {
+        guard let again else { return }
+        if alive { NSSound.beep() } else { Task { if await again(window) { window?.close() } } }
+    }
+
+    /// Its keys, on its key bar and F1 over it: ⎋ stops what runs, then closes; ⌘R runs it again where it can.
+    static func keys(of window: NSWindow?) -> [AppDelegate.KeyRow]? {
+        open.first { $0.window === window && window != nil }.map { o in
+            let running = !o.stopAsked && o.alive
+            return [AppDelegate.KeyRow(section: "Output", title: running ? "Stop" : "Close", key: "⎋") { o.cancelOperation(nil) }]
+                + (o.again == nil || running ? [] : [AppDelegate.KeyRow(section: "Output", title: "Run Again", key: "⌘R") { o.runAgain() }])
+        }
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) { window?.docFrame?.showKeys() }   // the menu's keys work by the key window
 
     /// Several servers' lines: "web1 │ " dimmed, then the line, red from stderr.
     private func show(_ lines: [(server: Int, text: String, error: Bool)], _ names: [String], _ width: Int, in tv: NSTextView) {
@@ -465,7 +485,8 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     override func cancelOperation(_ sender: Any?) {
         if !stopAsked, stop() {
             stopAsked = true
-            window?.subtitle = "stopping… · ⎋ Close"
+            window?.docFrame?.text = "stopping…"
+            window?.docFrame?.showKeys()
         } else {
             window?.performClose(nil)
         }

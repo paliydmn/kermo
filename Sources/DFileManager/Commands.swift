@@ -2287,6 +2287,11 @@ extension AppDelegate {
         }
     }
 
+    /// An output window's title for git's diff: what it's of, not git's options and full paths.
+    static func gitDiffTitle(_ paths: [String]) -> String {
+        "git diff " + (paths.count == 1 ? (paths[0] as NSString).lastPathComponent.bidiVisible : "\(paths.count) files")
+    }
+
     /// `diff -u`; `labels` in place of the paths (a server file's "host:/path", not its copy's temp path).
     nonisolated static func diffCommand(_ a: String, _ b: String, labels: (String, String)?) -> String {
         let q = ShellContext.quote
@@ -2346,7 +2351,7 @@ extension AppDelegate {
             }
             let untracked = targets.filter { $0.code == "??" }.map(\.url.path)
             let tracked = targets.filter { $0.code != "??" }.map(\.url.path)
-            Shell.run(GitStatus.diffCommand(tracked: tracked, untracked: untracked), in: dir, diff: true)
+            Shell.run(GitStatus.diffCommand(tracked: tracked, untracked: untracked), in: dir, diff: true, title: Self.gitDiffTitle(tracked + untracked))
         }
     }
 
