@@ -121,32 +121,30 @@ struct ActivityEntry: Codable, Equatable {
         return h > 0 ? "\(h):\(String(format: "%02d", m)):\(String(format: "%02d", s % 60))" : "\(m):\(String(format: "%02d", s % 60))"
     }
 
-    /// The toolbar button's picture: a ring of all the work done so far (nil: nothing running), how many jobs when
-    /// there's more than one, and a red dot for a finished one with errors not looked at yet.
+    /// The toolbar button's picture: at rest a clock going round (what was done — not a download); while jobs run, a
+    /// ring of all the work done so far, and how many jobs when there's more than one; a red ◆ for a finished one with
+    /// errors not looked at yet.
     static func image(fraction: Double?, count: Int, alert: Bool) -> NSImage {
+        let idle = Symbol.activity.image(nil, color: .labelColor, size: 13)
         let img = NSImage(size: NSSize(width: 22, height: 18), flipped: false) { _ in
             let c = NSPoint(x: 9, y: 9), r: CGFloat = 7
-            let track = NSBezierPath()
-            track.appendArc(withCenter: c, radius: r, startAngle: 0, endAngle: 360)
-            track.lineWidth = 1.8
-            (fraction == nil ? NSColor.secondaryLabelColor : NSColor.secondaryLabelColor.withAlphaComponent(0.45)).setStroke()
-            track.stroke()
-            if let fraction, fraction > 0 {
-                let arc = NSBezierPath()
-                arc.appendArc(withCenter: c, radius: r, startAngle: 90, endAngle: 90 - 360 * CGFloat(min(fraction, 1)), clockwise: true)
-                arc.lineWidth = 2.2
-                arc.lineCapStyle = .round
-                Palette.accent.setStroke()
-                arc.stroke()
+            if let fraction {
+                let track = NSBezierPath()
+                track.appendArc(withCenter: c, radius: r, startAngle: 0, endAngle: 360)
+                track.lineWidth = 1.8
+                NSColor.secondaryLabelColor.withAlphaComponent(0.45).setStroke()
+                track.stroke()
+                if fraction > 0 {
+                    let arc = NSBezierPath()
+                    arc.appendArc(withCenter: c, radius: r, startAngle: 90, endAngle: 90 - 360 * CGFloat(min(fraction, 1)), clockwise: true)
+                    arc.lineWidth = 2.2
+                    arc.lineCapStyle = .round
+                    Palette.accent.setStroke()
+                    arc.stroke()
+                }
+            } else {
+                idle.draw(in: NSRect(x: c.x - idle.size.width / 2, y: c.y - idle.size.height / 2, width: idle.size.width, height: idle.size.height))
             }
-            let arrow = NSBezierPath()   // ↓
-            arrow.move(to: NSPoint(x: 9, y: 12.5)); arrow.line(to: NSPoint(x: 9, y: 5.5))
-            arrow.move(to: NSPoint(x: 6.3, y: 8.2)); arrow.line(to: NSPoint(x: 9, y: 5.5)); arrow.line(to: NSPoint(x: 11.7, y: 8.2))
-            arrow.lineWidth = 1.4
-            arrow.lineCapStyle = .round
-            arrow.lineJoinStyle = .round
-            NSColor.labelColor.setStroke()
-            arrow.stroke()
             if count > 1 {
                 let s = "\(count)" as NSString
                 let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 8, weight: .bold), .foregroundColor: NSColor.white]
@@ -156,8 +154,11 @@ struct ActivityEntry: Codable, Equatable {
                 NSBezierPath(roundedRect: badge, xRadius: 5, yRadius: 5).fill()
                 s.draw(at: NSPoint(x: badge.midX - s.size(withAttributes: attrs).width / 2, y: badge.minY), withAttributes: attrs)
             } else if alert {
+                let d = NSBezierPath()
+                d.move(to: NSPoint(x: 18, y: 17)); d.line(to: NSPoint(x: 21.5, y: 13.5)); d.line(to: NSPoint(x: 18, y: 10)); d.line(to: NSPoint(x: 14.5, y: 13.5))
+                d.close()
                 Palette.fail.setFill()
-                NSBezierPath(ovalIn: NSRect(x: 15, y: 11, width: 6, height: 6)).fill()
+                d.fill()
             }
             return true
         }
