@@ -2380,7 +2380,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
         guard let column else { return nil }
-        let cell = tableView.makeView(withIdentifier: column.identifier, owner: nil) as? NSTableCellView
+        let cell = tableView.makeView(withIdentifier: column.identifier, owner: nil) as? PanelCell
             ?? makeCell(column.identifier)
         let it = item(at: row)
         let tf = cell.textField!
@@ -2398,12 +2398,14 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             tf.font = theme.mono ? .monospacedSystemFont(ofSize: 12, weight: isMarked ? .bold : .regular)
                 : isMarked ? .boldSystemFont(ofSize: NSFont.systemFontSize) : .systemFont(ofSize: NSFont.systemFontSize)
             cell.toolTip = link.map { Self.linkNote($0.target, $0.error) }
-            tf.setAccessibilityLabel(isMarked ? "marked" : nil)   // a mark is a color otherwise
+            cell.check.isHidden = !isMarked   // a mark is a shape too, not only a color
+            tf.setAccessibilityLabel(isMarked ? "marked" : nil)
         case "git":
             let mark = it.flatMap { git?.marks[$0.name] }.map(Self.gitCell)
             tf.stringValue = mark?.0 ?? ""
             tf.alignment = .center
-            tf.textColor = mark?.1 ?? .labelColor
+            cell.text = nil
+            cell.color = mark?.1 ?? .labelColor
             tf.setAccessibilityLabel(mark?.2)
             return cell
         case "size":
@@ -2417,23 +2419,27 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         default:
             tf.stringValue = it.map { Self.dateFmt.string(from: Date(timeIntervalSince1970: $0.mtime)) } ?? ""
         }
-        tf.textColor = parked != nil ? theme.hidden : isMarked ? theme.marked : (link?.error ?? 0) != 0 ? Palette.fail : it?.isHidden == true ? theme.hidden
+        cell.text = nil
+        cell.color = parked != nil ? theme.hidden : isMarked ? theme.marked : (link?.error ?? 0) != 0 ? Palette.fail : it?.isHidden == true ? theme.hidden
             : it == nil || it?.kind == .dir || it?.linkDir == true ? theme.dir : it!.kind == .file && it!.mode & 0o111 != 0 ? theme.exec : theme.text
         if column.identifier.rawValue == "name", let it, it.label != 0 || link != nil {   // Finder tag color, a link's target
-            let base: [NSAttributedString.Key: Any] = [.font: tf.font!, .foregroundColor: tf.textColor!]
+            let base: [NSAttributedString.Key: Any] = [.font: tf.font!, .foregroundColor: cell.color]
             let s = NSMutableAttributedString(string: it.displayName, attributes: base)
             if let link {   // dimmed, and only if it fits beside the name (26 pt: icon and margins)
                 let note = NSAttributedString(string: "  " + Self.linkNote(link.target, link.error), attributes: [.font: tf.font!, .foregroundColor: theme.hidden])
                 if s.size().width + note.size().width <= column.width - 26 { s.append(note) }
             }
-            if it.label != 0 { s.append(NSAttributedString(string: " ●", attributes: [.foregroundColor: NSWorkspace.shared.fileLabelColors[Int(it.label)]])) }
-            tf.attributedStringValue = s
+            if it.label != 0 {
+                s.append(NSAttributedString(string: " "))
+                s.append(Symbol.dot.text(NSWorkspace.shared.fileLabelColors[Int(it.label)], font: tf.font!, label: NSWorkspace.shared.fileLabels[Int(it.label)]))
+            }
+            cell.text = s
         }
         return cell
     }
 
-    private func makeCell(_ id: NSUserInterfaceItemIdentifier) -> NSTableCellView {
-        let cell = NSTableCellView()
+    private func makeCell(_ id: NSUserInterfaceItemIdentifier) -> PanelCell {
+        let cell = PanelCell()
         cell.identifier = id
         let tf = NSTextField(labelWithString: "")
         tf.translatesAutoresizingMaskIntoConstraints = false
@@ -2447,7 +2453,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             iv.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(iv)
             cell.imageView = iv
-            c += [iv.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+            cell.check.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(cell.check)
+            c += [cell.check.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 1),
+                  cell.check.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                  cell.check.widthAnchor.constraint(equalToConstant: 10),
+                  iv.leadingAnchor.constraint(equalTo: cell.check.trailingAnchor, constant: 2),
                   iv.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                   iv.widthAnchor.constraint(equalToConstant: 16),
                   iv.heightAnchor.constraint(equalToConstant: 16),
@@ -2753,5 +2764,32 @@ final class Once: @unchecked Sendable {
     func run(_ body: () -> Void) {
         guard lock.withLock({ () -> Bool in defer { done = true }; return !done }) else { return }
         body()
+    }
+}
+
+/// A panel's cell, its text in `color` (or `text`, attributed): on the cursor of the focused panel in the System theme
+/// (the system's selection, in the accent) text and mark go white, as the system's labels do — a marked name in the
+/// accent would vanish there. A name's cell has the mark's ✓ in a gutter of its own.
+final class PanelCell: NSTableCellView {
+    let check = NSImageView(image: Symbol.check.image())
+    var color: NSColor = .labelColor { didSet { paint() } }
+    var text: NSAttributedString? { didSet { paint() } }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        check.symbolConfiguration = .init(pointSize: 9, weight: .bold)
+        check.isHidden = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var backgroundStyle: NSView.BackgroundStyle { didSet { paint() } }
+
+    private func paint() {
+        let c = backgroundStyle == .emphasized ? NSColor.alternateSelectedControlTextColor : color
+        check.contentTintColor = c
+        guard let text else { textField?.textColor = c; return }
+        let s = NSMutableAttributedString(attributedString: text)
+        if backgroundStyle == .emphasized { s.addAttribute(.foregroundColor, value: c, range: NSRange(location: 0, length: s.length)) }
+        textField?.attributedStringValue = s
     }
 }

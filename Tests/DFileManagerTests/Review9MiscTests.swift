@@ -120,6 +120,27 @@ private final class CountingPreview: QLPreviewPanel {
     #expect((cell(panel, "name", "a.txt")?.textField?.accessibilityLabel() ?? "").isEmpty)
 }
 
+/// A mark is a shape too: a ✓ in the name's gutter, in the mark's color — the accent in the System theme, white on the
+/// focused cursor (the system's selection is the accent too).
+@MainActor @Test func markedRowsHaveACheck() async throws {
+    _ = NSApplication.shared
+    let dir = try tempDir(["a.txt", "b.txt"])
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    defer { panel.shutdown() }
+    panel.loadViewIfNeeded()
+    await waitListed(panel, 2)
+    panel.setMarks(["a.txt"])
+    let a = try #require(cell(panel, "name", "a.txt") as? PanelCell), b = try #require(cell(panel, "name", "b.txt") as? PanelCell)
+    #expect(!a.check.isHidden && b.check.isHidden)
+    #expect(a.check.contentTintColor == a.textField?.textColor && Theme.all[0].marked == Palette.accent)
+    let marked = a.textField?.textColor
+    a.backgroundStyle = .emphasized
+    #expect(a.textField?.textColor == .alternateSelectedControlTextColor && a.check.contentTintColor == .alternateSelectedControlTextColor)
+    a.backgroundStyle = .normal
+    #expect(a.textField?.textColor == marked)
+}
+
 /// P18: the git column's letters have words for VoiceOver, green (staged) and red told apart as well.
 @MainActor @Test func gitLettersHaveWords() {
     #expect(PanelViewController.gitCell(" M").2 == "modified")

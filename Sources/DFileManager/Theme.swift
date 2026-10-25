@@ -8,7 +8,7 @@ struct Theme {
     var dir: NSColor = .labelColor
     var exec: NSColor = .labelColor
     var hidden: NSColor = .secondaryLabelColor
-    var marked: NSColor = Palette.fail
+    var marked: NSColor = Palette.accent   // with bold and a ✓: themes keep their own
     var cursor: NSColor? = nil       // nil: system selection
     var grid: NSColor? = nil         // column separators
     var mono = false
