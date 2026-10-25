@@ -62,6 +62,24 @@ import Testing
     #expect(title("file.view")?.string == "F3 View", "other keys go nowhere")
 }
 
+/// A server's row shows a root panel there: its SFTP mark in root's orange, saying so, at rest and under the mouse; a
+/// user's panel keeps green.
+@MainActor @Test func aRootSessionIsOrangeInTheSidebar() throws {
+    let t = SFTPTarget(host: "me@web.invalid")
+    func sftp(_ sessions: [SFTPTarget]) throws -> [NSButton] {
+        let row = ServerRow(target: t, title: "web", sessions: sessions.map { ServerSession(id: UUID(), kind: .sftp, target: $0, dir: "/") })
+        let view = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(row))) as? NSStackView)
+        return view.arrangedSubviews.filter { $0 is ServerChips || $0 is ServerToolbar }.flatMap { ($0 as! NSStackView).arrangedSubviews }
+            .compactMap { $0 as? NSButton }.filter { $0.identifier?.rawValue.hasPrefix("sftp ") == true }
+    }
+    let root = try sftp([t.asRoot()])
+    #expect(root.count == 2 && root.allSatisfy { $0.contentTintColor == Palette.root })
+    #expect(root.map(\.toolTip) == ["1 SFTP panel open as root", "1 open as root — click to go there  ·  ⌘-click: another one"])
+    let both = try sftp([t, t.asRoot()])
+    #expect(both.first?.contentTintColor == Palette.root && both.first?.toolTip == "2 SFTP panels open, 1 as root")
+    #expect(try sftp([t]).allSatisfy { $0.contentTintColor == Palette.ok })
+}
+
 extension ServerLockTests {
 /// The active panel has a line under its path bar in its place's color — the theme's accent here, purple on a
 /// production server, orange on a root panel, purple on a production root panel; an inactive one has none.
