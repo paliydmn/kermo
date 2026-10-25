@@ -28,6 +28,8 @@ The bottom row shows F1–F10. Hold ⇧, ⌥, ⌘ or ⌃ (or a combination such 
 
 - **Click** a slot to run it, as if you pressed the key. A pressed shortcut highlights its slot.
 - **Hold** pins a layer for mouse use until you press ⎋ or run a command. **+N** opens the cheat sheet filtered to that layer.
+- ⌥ plus a digit does what its F-key does, so those layers sum them up in one slot: `⌥1…0 = F1…F10`, `⌥⇧4 5 6 8 = ⇧F4 5 6 8`.
+- On a server's panel F8 says **Delete…** in red: it deletes for good after asking, because a server has no Trash.
 - The delay is 120 ms. Change it with `defaults write com.dmn.dfilemanager keyBarHoldDelay 0.2`.
 
 ## Places sidebar
@@ -70,4 +72,4 @@ Press ⇧⌘P (or F9, ⌥9) to open the toolbar search. It finds:
 
 ## Cheat sheet
 
-F1 lists every shortcut, grouped by menu, with a filter field. It is generated from the current keymap, so your remapped keys appear in it.
+F1 lists every shortcut, grouped by menu, with a filter field. It is generated from the current keymap, so your remapped keys appear in it. Over a viewer or an editor, F1 lists that window's keys and the menu keys that work there.

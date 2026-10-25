@@ -54,7 +54,7 @@ The **Activity** button in the toolbar (a ring that fills as the jobs go) or **V
 
 ## Trash and delete
 
-- F8 (⌥8, ⌘⌫, ⌦) **Move to Trash** asks nothing. ⌫ alone goes up a folder.
+- F8 (⌥8, ⌘⌫, ⌦) **Move to Trash** asks nothing. ⌫ alone goes up a folder. On a server's panel the same keys are **Delete…**: Kermo asks, then deletes for good (a server has no Trash).
 - In the Trash folder the same keys, and **File ▸ Put Back**, return items to where Kermo took them from. Missing folders are made and nothing is overwritten. Items Kermo didn't trash stay: use Finder. So does an item that Finder put in the Trash later under a name Kermo's item had there.
 - ⇧F8 (⌥⇧8, ⌥⌘⌫, ⇧⌦) **Delete Permanently…** asks, then deletes without the Trash. It stops at a volume mounted inside the folder (a share, a disk image), as `rm -r --one-file-system` does: what's on it stays, and the summary names it. F6 to another volume stops there too.
 
@@ -78,7 +78,7 @@ The **Activity** button in the toolbar (a ring that fills as the jobs go) or **V
 
 ## Context menu
 
-Right-click an item for its menu: Open, Open With, Quick Look, View, Edit, Get Info, Reveal in Finder, Open in Terminal, Copy Path and Copy Name, then New File…, Rename…, Copy Here As…, Copy To…, Move To… and Move to Trash. Clicking an item outside the marked ones acts on it alone.
+Right-click an item for its menu: Open, Open With, Quick Look, View, Edit, Get Info, Reveal in Finder, Open in Terminal, Copy Path and Copy Name, then New File…, Rename…, Copy Here As…, Copy To…, Move To… and Move to Trash (Delete… on a server). Clicking an item outside the marked ones acts on it alone.
 
 Right-click empty space or `..` for the folder's menu: New File…, New Folder…, Paste; Open in Terminal; Copy Path, Reveal in Finder and Get Info of the folder (not inside an archive; on a server, Copy Path only); Show Hidden Files, **Sort By** (Name, Size, Modified, Reverse) and Calculate Folder Sizes; Git Changes in a repository.
 

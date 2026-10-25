@@ -4,15 +4,18 @@ import AppKit
 /// Type to filter, ⎋ closes. The key bar's "+N" opens it on one modifier layer.
 @MainActor
 final class KeyHelp: NSObject, NSSearchFieldDelegate {
-    static let groups = ["File", "Edit", "Mark", "View", "Go", "Admin", "Kermo"]
+    typealias Section = (title: String, rows: [(title: String, keys: String)])
+
+    /// The menus in menu bar order, the app's last: its only key is F1 itself.
+    static let groups = Array(AppDelegate.menus.dropFirst() + AppDelegate.menus.prefix(1))
 
     /// Menu groups in `groups` order (keyboard-only commands last), each command with its keys.
     /// `layer`: only keys with exactly these modifiers. `query`: substring of title, aliases or keys.
-    static func sections(_ commands: [Command], query: String = "", layer: NSEvent.ModifierFlags? = nil) -> [(title: String, rows: [(title: String, keys: String)])] {
+    static func sections(_ commands: [Command], query: String = "", layer: NSEvent.ModifierFlags? = nil) -> [Section] {
         let q = query.trimmingCharacters(in: .whitespaces)
         var out: [(String, [(String, String)])] = []
         for g in groups + [nil] {
-            let rows = commands.filter { $0.menu == g }.compactMap { c -> (String, String)? in
+            let rows = commands.filter { $0.menu == g && !$0.hidden }.compactMap { c -> (String, String)? in
                 let keys = c.keys.filter { layer == nil || $0.flags == layer }.map(\.display).joined(separator: "  ")
                 guard !keys.isEmpty, q.isEmpty || "\(c.title) \(c.aliases) \(keys)".localizedCaseInsensitiveContains(q) else { return nil }
                 return (c.title, keys)
@@ -22,26 +25,35 @@ final class KeyHelp: NSObject, NSSearchFieldDelegate {
         return out
     }
 
+    /// `sections`' rows whose title or keys contain `query`.
+    static func filter(_ sections: [Section], _ query: String) -> [Section] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        return sections.map { s in (s.title, s.rows.filter { q.isEmpty || "\($0.title) \($0.keys)".localizedCaseInsensitiveContains(q) }) }
+            .filter { !$0.rows.isEmpty }
+    }
+
     private static var current: KeyHelp?
     private let sheet = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 560), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
     private let field = NSSearchField()
     private let text = NSTextView()
     private let commands: [Command]
     private let layer: NSEvent.ModifierFlags?
+    private let fixed: [Section]?   // over a viewer or an editor: its keys, not the registry's
     private weak var parent: NSWindow?
 
-    static func show(over window: NSWindow, commands: [Command], layer: NSEvent.ModifierFlags? = nil) {
+    static func show(over window: NSWindow, commands: [Command], layer: NSEvent.ModifierFlags? = nil, fixed: [Section]? = nil) {
         current?.close()
-        let h = KeyHelp(parent: window, commands: commands, layer: layer)
+        let h = KeyHelp(parent: window, commands: commands, layer: layer, fixed: fixed)
         current = h
         window.beginSheet(h.sheet)
         h.sheet.makeFirstResponder(h.field)
     }
 
-    private init(parent: NSWindow, commands: [Command], layer: NSEvent.ModifierFlags?) {
+    private init(parent: NSWindow, commands: [Command], layer: NSEvent.ModifierFlags?, fixed: [Section]?) {
         self.parent = parent
         self.commands = commands
         self.layer = layer
+        self.fixed = fixed
         super.init()
         field.placeholderString = layer.map { "Filter \(KeyBarModel.symbol($0)) keys… ⎋ closes" } ?? "Filter keys… ⎋ closes"
         field.delegate = self
@@ -85,7 +97,7 @@ final class KeyHelp: NSObject, NSSearchFieldDelegate {
                                                    .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: para]
         let head: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
         let s = NSMutableAttributedString()
-        let sections = Self.sections(commands, query: field.stringValue, layer: layer)
+        let sections = fixed.map { Self.filter($0, field.stringValue) } ?? Self.sections(commands, query: field.stringValue, layer: layer)
         for (i, sec) in sections.enumerated() {
             s.append(NSAttributedString(string: (i == 0 ? "" : "\n") + sec.title.uppercased() + "\n", attributes: head))
             for r in sec.rows {

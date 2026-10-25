@@ -3,7 +3,7 @@ import DFMCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSTextFieldDelegate, NSWindowDelegate, NSToolbarDelegate {
-    private(set) var window: NSWindow!
+    var window: NSWindow!   // set in tests
     var panels: [PanelViewController] = []   // set at launch (tests: their own)
     /// Servers a look (Services…, Containers…, Forward Port…, Run on Servers) logged in to, by key, until when their
     /// connection is kept for the next look though nothing shows them: its ControlPersist, as plain ssh keeps it.
@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private let promptLabel = NSTextField(labelWithString: "")
     private let cmdField = NSTextField(string: "")
     private var historyIndex = 0
-    private(set) var commands: [Command] = []
+    var commands: [Command] = []   // set in tests
     private var keymap: [Shortcut: Command] = [:]
     let keyBar = KeyBarView()
     /// Narrowest main window: two 360 pt panels, and the key bar's six file actions plus "+N" (U4).
@@ -167,9 +167,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
             return e
         }
-        // Focus moving into a text field (or the terminal) enables / disables the bar's slots.
+        // Focus moving into a text field (or the terminal) enables / disables the bar's slots and the menu's keys.
         responderObservation = window.observe(\.firstResponder) { [keyBar] _, _ in
-            MainActor.assumeIsolated { keyBar.render() }
+            MainActor.assumeIsolated {
+                keyBar.render()
+                (NSApp.delegate as? AppDelegate)?.updateMenuKeys()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.updateMenuKeys() }   // a viewer in front: F3 is its key
         }
         if !configProblems.isEmpty { showError(JobErrorMessage(configProblems.joined(separator: "\n"))) }
         show(pendingOpen)
@@ -310,15 +316,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         var cmds = makeCommands()
         var problems: [String] = []
         var overridden = Set<String>()
+        var overrides: [(id: String, keys: [Shortcut], was: [Shortcut])] = []
         do {
             for (id, specs) in try Config.load("keymap.json", as: [String: [String]].self) ?? [:] {
                 guard let i = cmds.firstIndex(where: { $0.id == id }) else { problems.append("keymap.json: unknown command “\(id)”"); continue }
+                let was = cmds[i].keys
                 cmds[i].keys = specs.compactMap { spec in
                     guard let k = Shortcut(spec) else { problems.append("keymap.json: \(id): bad key “\(spec)”"); return nil }
-                    // Edit Keymap… once wrote every default into the file, ⌘⌥D and ⌘M among them: those never fire.
-                    if let what = k.takenByMacOS { problems.append("keymap.json: \(id): \(k.display) never arrives — macOS takes it first (\(what))") }
                     return k
                 }
+                overrides.append((id, cmds[i].keys, was))
                 overridden.insert(id)
             }
         } catch {
@@ -337,12 +344,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         keymap = map
         keyBar.reload(cmds)
         refreshSidebar()   // section headers show keys
-        NSApp.mainMenu = makeMenu()
+        let menu = makeMenu()
+        NSApp.mainMenu = menu
+        updateMenuKeys(menu)
+        let fixed = Self.fixedKeys(menu)
+        problems += overrides.flatMap { Self.keymapProblems($0.id, $0.keys, was: $0.was, fixed: fixed) }
         configProblems = Config.unreadable + problems   // the state files' once, at launch
         Config.unreadable = []
         if reportProblems {
             if problems.isEmpty { active.flash("Config reloaded") } else { showError(JobErrorMessage(problems.joined(separator: "\n"))) }
         }
+    }
+
+    /// What's wrong with keymap.json's keys for one command (`was`: its defaults). Edit Keymap… once wrote every default
+    /// into the file, ⌘⌥D and ⌘M among them: those never fire. Nor does a key of the menu bar's own items (`fixed`): the
+    /// menu takes it first, also where the item is disabled (AppKit then runs nothing). ⌘A and ⌘F there do Mark All and
+    /// Search Files in a panel, so taking them from those two doesn't move them either.
+    static func keymapProblems(_ id: String, _ keys: [Shortcut], was: [Shortcut], fixed: [Shortcut: String]) -> [String] {
+        keys.compactMap { k in k.takenByMacOS.map { "keymap.json: \(id): \(k.display) never arrives — macOS takes it first (\($0))" } }
+            + fixed.filter { keys.contains($0.key) != was.contains($0.key) }.map { "keymap.json: \(id): \($0.key.display) stays \($0.value)" }.sorted()
+    }
+
+    /// The menu bar's own keys (Edit ▸ Copy ⌘C, Window ▸ Main Window ⌘0 …), not the registry's or those macOS takes, as
+    /// keymapProblems words them: "Edit ▸ Select All's, which in a panel does Mark All".
+    static func fixedKeys(_ menu: NSMenu) -> [Shortcut: String] {
+        let inPanel = [#selector(NSResponder.selectAll(_:)): "Mark All", #selector(NSResponder.performTextFinderAction(_:)): "Search Files"]
+        var out: [Shortcut: String] = [:]
+        for m in menu.items.compactMap(\.submenu) {
+            for it in m.items where it.action != #selector(menuCommand(_:)) {
+                guard let k = Shortcut(menuItem: it), k.takenByMacOS == nil else { continue }
+                out[k] = "\(m.title) ▸ \(it.title)'s" + (it.action.flatMap { inPanel[$0] }.map { ", which in a panel does \($0)" } ?? "")
+            }
+        }
+        return out
+    }
+
+    /// F1 over a viewer, an editor or an output window: its own keys, then the menu bar's that work there (Edit ▸ Copy ⌘C,
+    /// Close Window ⌘W …), menu by menu.
+    func keySections(over w: NSWindow, menu: NSMenu) -> [KeyHelp.Section] {
+        var out = [Viewer.keyHelp(of: w) ?? Editor.keyHelp(of: w)].compactMap { $0 }
+        for m in menu.items.compactMap(\.submenu) {
+            let rows = m.items.compactMap { it -> (String, String)? in
+                guard it.action == #selector(menuCommand(_:)) else { return Shortcut(menuItem: it).map { (it.title, $0.display) } }
+                guard validateMenuItem(it), let id = it.representedObject as? String else { return nil }
+                return commands.first { $0.id == id }?.keys.first.map { (it.title, $0.display) }   // the one key the menu has
+            }
+            if !rows.isEmpty { out.append((m.title, rows)) }
+        }
+        return out
     }
 
     private func saveSession() { session.save(defaults) }
@@ -800,7 +849,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         } else {
             items += saveItems(r.address)
         }
-        return [.separator()] + items.compactMap { $0 }
+        return items.compactMap { $0 }
     }
 
     /// Production: its color in the sidebar and the panel headers; delete, overwrite and move there ask first.
@@ -966,13 +1015,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if id == "view.perms" { item.state = defaults.bool(forKey: "showPerms") ? .on : .off }
         if id == "app.update" { item.title = updateOffered.map { "Kermo \($0) Available…" } ?? "Check for Updates…" }
         if id == "app.update.auto" { item.state = defaults.bool(forKey: "updateCheckOff") ? .off : .on }
+        if id == "file.trash" { item.title = panels.indices.contains(activeIndex) && (active.remote ?? active.parked) != nil ? "Delete…" : commands.first { $0.id == id }?.title ?? item.title }   // no Trash on a server
         if id == "tab.close" {
             let closes = Self.windowToClose(key: NSApp.keyWindow, main: window) != nil
             item.title = closes ? "Close Window" : commands.first { $0.id == id }?.title ?? item.title
             if closes { return true }
         }
         if id == "server.history", Editor.server(of: NSApp.keyWindow) != nil { return true }   // its editor's file
-        return NSApp.keyWindow === window && canRun(id)
+        if id == "help.keys", Self.windowToClose(key: NSApp.keyWindow, main: window) != nil { return true }   // that window's keys
+        return Self.appWide.contains(id) || NSApp.keyWindow === window && canRun(id)
+    }
+
+    /// The app's own items, not the panels': from a viewer, an editor or over the terminal too.
+    static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto"]
+
+    /// A disabled menu item still takes its key: AppKit says it handled it and runs nothing, so F3 never reached a viewer
+    /// (D-101); by the same path ⌘↑ or ⌃B could miss an editor or a text field. A command's item keeps its key only while
+    /// it works where keys go now: on every change of the key window and of the main window's focus. Not before the
+    /// window's content (launch).
+    func updateMenuKeys(_ menu: NSMenu? = NSApp.mainMenu) {
+        guard terminal != nil, let menu else { return }
+        let byID = Dictionary(commands.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for it in menu.items.compactMap(\.submenu).flatMap(\.items) where it.action == #selector(menuCommand(_:)) {
+            let key = (it.representedObject as? String).flatMap { byID[$0]?.keys.first }
+            let on = key != nil && validateMenuItem(it)
+            it.keyEquivalent = on ? key!.menuKey : ""
+            it.keyEquivalentModifierMask = on ? key!.flags : []
+        }
     }
 
     /// ⌘W (Close Tab) in a viewer, editor or other document window closes that window, through its delegate, so
@@ -1086,6 +1155,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         terminal.applyTheme()
     }
 
+    /// The registry's menus (`Command.menu`), in menu bar order; Window follows. F1 lists them too (`KeyHelp.groups`).
+    static let menus = ["Kermo", "File", "Edit", "Mark", "Admin", "View", "Go", "Git"]
+
     func makeMenu() -> NSMenu {
         let main = NSMenu()
         @discardableResult func submenu(_ title: String, _ items: [NSMenuItem], trailing: [NSMenuItem] = []) -> NSMenu {
@@ -1110,30 +1182,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             it.tag = tag
             return it
         }
-        submenu("Kermo", [], trailing: [
-            .separator(),
-            item("Hide Kermo", #selector(NSApplication.hide(_:)), "h"),
-            item("Quit Kermo", #selector(NSApplication.terminate(_:)), "q"),
-        ])
-        submenu("File", [item("Save", #selector(Editor.saveDocument(_:)), "s"),
-                         item("Ensure Final Newline", #selector(Editor.toggleFinalNewline(_:)), ""), .separator()])
-        // Standard responder-chain items: text fields handle them as text; panels as files.
-        submenu("Edit", [
-            item("Undo", Selector(("undo:")), "z"),
-            item("Redo", Selector(("redo:")), "z", [.command, .shift]),
-            .separator(),
-            item("Copy", #selector(NSText.copy(_:)), "c"),
-            item("Paste", #selector(NSText.paste(_:)), "v"),
-            item("Select All", #selector(NSResponder.selectAll(_:)), "a"),
-            item("Find…", #selector(NSResponder.performTextFinderAction(_:)), "f", tag: NSTextFinder.Action.showFindInterface.rawValue),
-            item("Find Next", #selector(NSResponder.performTextFinderAction(_:)), "g", tag: NSTextFinder.Action.nextMatch.rawValue),
-            .separator(),
-        ])
-        submenu("Mark", [])
-        submenu("Admin", [])
-        submenu("View", [])
-        submenu("Go", [], trailing: [.separator(), goTunnelsItem()])
-        submenu("Git", [])
+        let head: [String: [NSMenuItem]] = [
+            "File": [item("Save", #selector(Editor.saveDocument(_:)), "s"),
+                     item("Ensure Final Newline", #selector(Editor.toggleFinalNewline(_:)), ""), .separator()],
+            // Standard responder-chain items: text fields handle them as text; panels as files.
+            "Edit": [
+                item("Undo", Selector(("undo:")), "z"),
+                item("Redo", Selector(("redo:")), "z", [.command, .shift]),
+                .separator(),
+                item("Cut", #selector(NSText.cut(_:)), "x"),   // text only: a panel moves files with ⌥⌘V
+                item("Copy", #selector(NSText.copy(_:)), "c"),
+                item("Paste", #selector(NSText.paste(_:)), "v"),
+                item("Select All", #selector(NSResponder.selectAll(_:)), "a"),
+                item("Find…", #selector(NSResponder.performTextFinderAction(_:)), "f", tag: NSTextFinder.Action.showFindInterface.rawValue),
+                item("Find Next", #selector(NSResponder.performTextFinderAction(_:)), "g", tag: NSTextFinder.Action.nextMatch.rawValue),
+                .separator(),
+            ],
+        ]
+        let tail: [String: [NSMenuItem]] = [
+            "Kermo": [.separator(), item("Hide Kermo", #selector(NSApplication.hide(_:)), "h"), item("Quit Kermo", #selector(NSApplication.terminate(_:)), "q")],
+            "Go": [.separator(), goTunnelsItem()],
+        ]
+        for title in Self.menus { submenu(title, head[title] ?? [], trailing: tail[title] ?? []) }
         // AppKit lists the open windows below.
         NSApp.windowsMenu = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
@@ -1176,6 +1246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let root = terminal?.isShown == true ? nil : (active.remote ?? active.parked).flatMap { $0.target.sudo ? $0 : nil }
         cmdField.placeholderString = Self.commandHint(root: root?.target)
         sidebar.highlight(sidebarKey)
+        keyBar.server = (active.remote ?? active.parked) != nil
         updateGitRow()
         window?.title = root.map { "\($0.target.shown):\($0.dir) #" }?.bidiVisible ?? path.bidiVisible   // what the panel's header says
         guard remote == nil else { window?.representedURL = nil; return }

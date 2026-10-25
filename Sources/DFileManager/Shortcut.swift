@@ -54,6 +54,14 @@ struct Shortcut: Hashable {
         name = keyName
     }
 
+    /// A menu item's letter or digit key ("c" with ⌘: cmd+c); nil for none, or another key.
+    init?(menuItem it: NSMenuItem) {
+        let m = it.keyEquivalentModifierMask
+        let mods = [(NSEvent.ModifierFlags.control, "ctrl"), (.option, "opt"), (.shift, "shift"), (.command, "cmd")].filter { m.contains($0.0) }.map(\.1)
+        guard !it.keyEquivalent.isEmpty else { return nil }
+        self.init((mods + [it.keyEquivalent.lowercased()]).joined(separator: "+"))
+    }
+
     init(event: NSEvent) {
         let code = event.keyCode == 10 ? 50 : event.keyCode   // ISO keyboards: § (top left) does what ANSI ` does; macOS reports the two swapped on some of them
         keyCode = code

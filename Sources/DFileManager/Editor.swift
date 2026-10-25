@@ -19,6 +19,10 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     static func server(of window: NSWindow?) -> (target: SFTPTarget, path: String)? {
         open.first { $0.window === window && window != nil }?.server.map { ($0.target, $0.path) }
     }
+    /// F1 over an editor: its own key; Save, Find and the rest are the menu bar's.
+    static func keyHelp(of window: NSWindow?) -> KeyHelp.Section? {
+        open.contains { $0.window === window && window != nil } ? (title: "Editor", rows: [(title: "Close", keys: "⎋")]) : nil
+    }
     /// The open editor of that server's file, if any.
     static func editing(_ t: SFTPTarget, _ path: String) -> Editor? { open.first { $0.server?.target == t && $0.server?.path == path } }
     /// The root write behind Save as Administrator (tests swap it: the real one shows the password dialog).

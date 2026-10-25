@@ -51,7 +51,7 @@ enum HeaderSearchModel {
     static func results(_ query: String, commands: [Command], folders: [SearchHit], files: [String], recent: [String],
                         cancel: CancelFlag? = nil) -> [(group: String, hits: [SearchHit])] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        let cmds = commands.filter { $0.id != "app.palette" }
+        let cmds = commands.filter { $0.id != "app.palette" && !$0.hidden }
         func hit(_ c: Command) -> SearchHit {
             SearchHit(title: c.title, subtitle: c.menu ?? "", detail: c.keys.map(\.display).joined(separator: "  "), target: .command(c.id))
         }

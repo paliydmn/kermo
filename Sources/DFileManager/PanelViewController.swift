@@ -2290,7 +2290,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         add("Copy Here As…", "file.copyAs")
         add("Copy To…", "file.copy")
         add("Move To…", "file.move")
-        add("Move to Trash", "file.trash")
+        add(remote != nil ? "Delete…" : "Move to Trash", "file.trash")
     }
 
     private func fillFolderMenu(_ menu: NSMenu) {
