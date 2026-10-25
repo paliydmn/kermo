@@ -58,7 +58,7 @@ The bottom row shows the keys of what has the focus. Each slot is the key, then 
 - **Panels:** F1–F10. Hold ⇧, ⌥, ⌘ or ⌃ (or a combination such as ⇧⌘ or ⌃⌘) for a moment and it shows every shortcut that uses those modifiers.
 - **The chips ⇧ ⌥ ⌘ ⌃** on the left light up while you hold them. Click one to keep its layer shown for the mouse (it's outlined then; click two for a combination such as ⇧⌘); a second click, ⎋ or running a command lets go.
 - **+N** stands for the slots that don't fit the window: the cheat sheet filtered to that layer.
-- **Terminal:** while the terminal is up, the bar shows its keys: **⌃O Panels**, new and closed tabs, splits, panes, text size.
+- **Terminal:** while the keys are in the [terminal](terminal.md) (its drawer, or over the panels with ⌃⇧O), the bar shows its keys: **⌃O Hide Terminal**, **⌃⇧O Maximize**, new and closed tabs, splits, panes, text size, ⌘1–⌘4 back to a panel. A click in a panel brings the panels' bar back with the drawer still open.
 - **Viewer, editor, output windows** have a key bar of their own, the same component: see [Viewer and editor](viewer-editor.md).
 - **Command line:** under the panels, at rest one quiet line: where it runs (`~/Projects/site $`, on a server `web-01:/var/www $`), **Type a command** and **⌘E** at the end (click it to go there). While it has the focus, the bar shows its keys: **↩ Run in Shell**, **⇧↩ Output Window**, **⌘↩ Run in Terminal**, **↑↓ History**, **⎋ Back to Panel**, and what `%f %s %d %D` stand for; on a [root panel](root-panel.md) one more says **Runs as deploy, not root**.
 - **Quick filter:** while it has the focus, **↩ Keep**, **↓ Back to List**, **⎋ Clear**.
@@ -84,7 +84,7 @@ How to use it:
 
 - **Click** opens a place in the active panel, **⌥-click** in the other panel, **⌘-click** in a new tab. Files dropped on a place are copied or moved there by Finder's rules.
 - **⌃⇧S** moves the keyboard focus to the sidebar: ↑↓ choose a place, ↩ opens it (⌥↩ and ⌘↩ as with clicks), ⎋ goes back to the panel. Clicking the sidebar never takes the keys from the panels.
-- While the ⌃O terminal is open, clicking a local place runs `cd` there in the shell.
+- While the keys are in the ⌃O terminal, clicking a local place runs `cd` there in the shell.
 - Click a section's header to fold it (the Git section doesn't fold). The sidebar hides itself when panels get narrower than 360 pt each and returns from 400 pt, unless you hid it yourself.
 
 ### Volumes

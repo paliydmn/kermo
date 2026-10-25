@@ -6,16 +6,19 @@ A shell inside Kermo, local or on a server, that stays in step with the panels.
 
 ## Open the terminal
 
-- **⌃O** replaces the panels with a terminal: your login shell on a local panel, the server's SSH session on a server panel. Press it again to get the panels back. A local panel follows `cd`.
-- Press **⌃O twice quickly** to send ⌃O to the program in the terminal.
-- While the terminal is up, the [key bar](window.md#key-bar) shows the terminal's keys: **⌃O Panels**, **⌘T New Tab**, **⌘W Close Tab**, the splits, **⌃⇥** for the next tab and the rest; holding ⌥⌘ shows the pane keys, ⌃⌘ the divider keys.
+- **⌃O** opens the terminal as a drawer under the panels: your login shell on a local panel, the server's SSH session on a server panel. The panels stay in view, and the active one follows the shell's `cd`. Drag the line above the drawer to change its height; Kermo keeps it, also after a restart.
+- **⌃⇧O** (**View ▸ Maximize Terminal**) gives the terminal the panels' room too, as ⌃O did before the drawer; press it again to put the terminal back in its drawer. A command that needs the panels (Connect to a folder, Show in Activity, a tag in the sidebar) puts it back too.
+- **The focus decides where keys go.** Click in the terminal (or press ⌃O from a panel while the drawer is open) and keys go to it: the key bar shows the terminal's keys and the panels' commands rest. Click a panel (or press ⌘1–⌘4) and the panels work as without a terminal, with their key bar and the command line. Clicking the sidebar or the search field in between changes nothing.
+- **⌃O** with the keys in the terminal hides it; the active panel goes to the shell's folder. Press **⌃O twice quickly** to send ⌃O to the program in the terminal.
+- The drawer's top row has its tabs and three buttons: **Split** (⌘\\), **Maximize** (⌃⇧O; **Restore** while maximized) and **Hide** (⌃O).
+- While the keys are in the terminal, the [key bar](window.md#key-bar) shows its keys: **⌃O Hide Terminal**, **⌃⇧O Maximize**, **⌘T New Tab**, **⌘W Close Tab**, the splits, **⌃⇥** for the next tab, **⌘1**–**⌘4** back to a panel and the rest; holding ⌥⌘ shows the pane keys, ⌃⌘ the divider keys.
 - **⌘K** opens a shell on a server in a new tab ([Servers and SSH](servers.md)). Inside the terminal, ⌘K clears it.
 - **⌘+** and **⌘−** change the text size.
 
-While the terminal is open:
+While the keys are in the terminal:
 
 - Clicking a local place in the sidebar runs `cd` there in the shell.
-- **⌃↩** types the cursor's name and **⌃⇧↩** the marked items' full paths into the shell.
+- **⌃↩** types the active panel's cursor name and **⌃⇧↩** its marked items' full paths into the shell (from a panel they go into the command line).
 - Files dropped on the terminal are typed into its shell as quoted paths (a local shell only: a server can't see this Mac's files).
 
 ### Copy and paste with the mouse
