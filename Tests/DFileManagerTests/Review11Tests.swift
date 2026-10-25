@@ -26,7 +26,7 @@ private func file(_ name: String) -> FileItem { FileItem(name: name, kind: .file
 
 /// By the clock: in the full suite the main actor is so busy at first that 500 sleeps of 10 ms took over 10 s.
 @MainActor private func waitUntil(_ done: () -> Bool) async {
-    let end = Date().addingTimeInterval(20)
+    let end = Date().addingTimeInterval(60)   // utility QoS (a link's target) starves for long in a loaded full run (D-097)
     while !done(), Date() < end { try? await Task.sleep(for: .milliseconds(10)) }
 }
 private func tempDir() -> String {
@@ -326,7 +326,7 @@ private func tempDir() -> String {
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
     await waitUntil { names(panel) == ["bin", "zdir", "a.txt"] }
-    #expect(names(panel) == ["bin", "zdir", "a.txt"])
+    try #require(names(panel) == ["bin", "zdir", "a.txt"])   // else `item(at: 1)` reads past the rows: the whole run would crash
     let link = try #require(panel.item(at: 1))
     #expect(link.linkDir && PanelViewController.sizeText(link, measured: nil) == "")
 }

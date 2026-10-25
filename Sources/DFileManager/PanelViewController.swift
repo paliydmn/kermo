@@ -951,9 +951,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private func updateEmpty() {
         let e = empty
         emptyView.show(e, theme: theme)
-        // The middle's spinner waits a moment: asked again once it's due.
-        if e == nil, rows.isEmpty, busyMessage != nil, let since = busySince {
-            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, Self.busyShows - Date().timeIntervalSince(since)) + 0.01) { [weak self] in
+        // The middle's spinner waits a moment: asked again once it's due (once: past it, nil means nothing to say).
+        if e == nil, rows.isEmpty, busyMessage != nil, let since = busySince, Date().timeIntervalSince(since) < Self.busyShows {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.busyShows - Date().timeIntervalSince(since) + 0.01) { [weak self] in
                 MainActor.assumeIsolated { self?.updateEmpty() }
             }
         }
