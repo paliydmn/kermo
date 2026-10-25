@@ -272,7 +272,7 @@ extension ServerLockTests {
 
 /// A server row at rest says what's open — SSH, SFTP and tunnels listening in green with a count from 2 (tunnels red
 /// when one failed) — and under the mouse offers SSH, SFTP, Tunnels ▸ (a server with tunnels) and ⋯ instead.
-/// Production is in its color, not red; a locked server's icon says so; the tooltip says all of it.
+/// Production is its chip and its icon's color, not red; a locked server's icon says so; the tooltip says all of it.
 @MainActor @Test func serverRowSaysItsStateAndOffersItsActions() throws {
     var s = SavedServer(address: "root@db:2222")!
     s.prod = true
@@ -284,7 +284,8 @@ extension ServerLockTests {
                         tunnels: ["Postgres", "Redis"], failedTunnels: ["Redis: db can't resolve cache"])
     let view = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(row))) as? NSStackView)
     let name = try #require(view.arrangedSubviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == "db" })
-    #expect(name.textColor == Palette.prod && Palette.prod != .systemRed)
+    #expect(name.textColor != Palette.prod && Palette.prod != .systemRed)
+    #expect(view.arrangedSubviews.contains { ($0 as? NSImageView)?.image?.accessibilityDescription == "production" }, "its chip")
     #expect((view.arrangedSubviews.first as? NSImageView)?.image?.accessibilityDescription == "Server, locked")
     let chips = try #require(view.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)
     let toolbar = try #require(view.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView)
@@ -314,10 +315,13 @@ extension ServerLockTests {
 
     let plain = ServerRow(target: SFTPTarget(host: "web"), title: "web", status: .failed("Connection refused"))
     let quiet = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(plain))) as? NSStackView)
-    #expect((quiet.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)?.arrangedSubviews.isEmpty == true, "nothing open, nothing shown")
+    let failed = try #require((quiet.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)?.arrangedSubviews)
+    #expect(failed.count == 1 && (failed.first as? NSImageView)?.image?.accessibilityDescription == "Its last connection failed",
+            "nothing open: only the failure, a red ◆")
+    #expect(failed.first?.toolTip == "Last connection failed: Connection refused")
     #expect((quiet.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView)?.arrangedSubviews.map { $0.accessibilityLabel() } == ["SSH", "SFTP", "Server menu"],
             "no tunnels: no Tunnels button")
-    #expect((quiet.arrangedSubviews.first as? NSImageView)?.image?.accessibilityDescription == "Server, its last connection failed")
+    #expect((quiet.arrangedSubviews.first as? NSImageView)?.image?.accessibilityDescription == "Server")
     #expect(quiet.toolTip?.hasPrefix("web\nConnection refused\n") == true)
 
     // Tunnels listening, none failed: green, as what's open. The actions take clicks around their icons, as tall as a

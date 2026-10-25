@@ -178,6 +178,7 @@ extension AppDelegate {
                                run: act("Status"))
         item.id = Self.serviceID(u, on: t)
         item.subtitleColor = running == nil && u.failed ? Palette.fail : nil
+        item.badges = running == nil && u.failed ? [StateMark.failed.image("failed", size: 9)] : []   // a shape, not only red
         item.busy = running != nil
         item.keepsOpen = [Shortcut("cmd+r")!, Shortcut("cmd+c")!]
         item.menu = { [unowned self] in serviceMenu(actions) }

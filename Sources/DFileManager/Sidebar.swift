@@ -713,7 +713,9 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         case .server(let server):
             return serverRow(server)
         case .connect:
-            return placeRow(.add, "Connect…", "Every server, or a new one: \(keyFor("ssh.new")) SSH, \(keyFor("go.connect")) SFTP")
+            let r = placeRow(.add, "Connect…", "Every server, or a new one: \(keyFor("ssh.new")) SSH, \(keyFor("go.connect")) SFTP")
+            (r.arrangedSubviews.first as? NSImageView)?.contentTintColor = theme.background == nil ? Palette.accent : theme.dir   // an action, not a place
+            return r
         case .tag(let name):
             return placeRow(.tag, name, "Every file tagged “\(name)”")
         case .tagColors:
@@ -747,10 +749,11 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         return s
     }
 
-    /// `dim`: a volume not mounted, in gray.
+    /// `dim`: a volume not mounted, in gray. Places' icons are quiet (secondary): color is for state — the theme's own
+    /// folder color in a theme.
     private func placeRow(_ symbol: Symbol, _ title: String, _ tip: String, detail: String = "", dim: Bool = false) -> NSStackView {
         let icon = NSImageView(image: symbol.image())
-        icon.contentTintColor = dim ? .tertiaryLabelColor : theme.background == nil ? Palette.accent : theme.dir
+        icon.contentTintColor = dim ? .tertiaryLabelColor : theme.background == nil ? Palette.secondary : theme.dir
         let label = NSTextField(labelWithString: title)
         label.textColor = dim ? .secondaryLabelColor : theme.text
         label.lineBreakMode = .byTruncatingMiddle
@@ -763,9 +766,9 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         return r
     }
 
-    /// Icon (production's color; a lock and a red dot — its last connection failed — cut into its corners; a spinner
-    /// while connecting) and name, then what's open: SSH, SFTP and tunnels listening (green, a count from 2; tunnels red
-    /// when one failed). Under the mouse that gives way to SSH, SFTP, Tunnels ▸ and ⋯ (the row's whole menu); the tooltip
+    /// Icon (production's color; a lock cut into its corner; a spinner while connecting), name and production's chip,
+    /// then a red ◆ when its last connection failed (its tooltip says why) and what's open: SSH, SFTP and tunnels
+    /// listening (green, a count from 2; tunnels red when one failed). Under the mouse that gives way to SSH, SFTP, Tunnels ▸ and ⋯ (the row's whole menu); the tooltip
     /// says all of it. A narrow column cuts the name, never the icons.
     private func serverRow(_ server: ServerRow) -> NSStackView {
         let prod = server.saved?.prod == true, locked = server.saved?.locked == true
@@ -774,11 +777,11 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         if server.status == .connecting {
             icon = Self.spinner()
         } else {
-            let tint = prod ? Palette.prod : theme.background == nil ? Palette.accent : theme.dir
-            icon = NSImageView(image: Self.serverIcon(tint, locked: locked, failed: failed != nil))
+            let tint = prod ? Palette.prod : theme.background == nil ? Palette.secondary : theme.dir
+            icon = NSImageView(image: Self.serverIcon(tint, locked: locked))
         }
         let name = ServerName(labelWithString: server.title)
-        name.textColor = prod ? Palette.prod : theme.text
+        name.textColor = theme.text
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         name.setContentHuggingPriority(.init(1), for: .horizontal)   // it takes the room, not a spacer and its gap
@@ -802,7 +805,13 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
             b.setAccessibilityLabel(label)
             return b
         }
+        let failedMark = failed.map { why -> NSView in
+            let v = NSImageView(image: StateMark.failed.image("Its last connection failed", size: 9))
+            v.toolTip = "Last connection failed: " + why
+            return v
+        }
         let chips = ServerChips(views: [
+            failedMark,
             ssh == 0 ? nil : pill(.ssh, ssh, Palette.ok, "ssh", "\(ssh) SSH session\(ssh == 1 ? "" : "s") open", "\(ssh) SSH session\(ssh == 1 ? "" : "s") open", state: true),
             sftp == 0 ? nil : pill(.folder, sftp, Palette.ok, "sftp", "\(sftp) SFTP panel\(sftp == 1 ? "" : "s") open", "\(sftp) SFTP panel\(sftp == 1 ? "" : "s") open", state: true),
             tunnels.isEmpty ? nil : pill(.tunnel, server.tunnels.count, tunnelColor, "tunnels",
@@ -827,7 +836,9 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         toolbar.spacing = 2
         toolbar.isHidden = true
 
-        let r = row([icon, name, chips, toolbar])
+        let chip = prod ? NSImageView(image: Chip.prod.image) : nil
+        chip?.setContentCompressionResistancePriority(.required, for: .horizontal)   // the name gives way, not the chip
+        let r = row([icon, name, chip, chips, toolbar].compactMap { $0 })
         r.spacing = 4
         let port = server.target.port.map { ":\($0)" } ?? ""
         let about = ["\(server.target.host)\(port)", locked ? "locked" : nil, prod ? "production" : nil, open.isEmpty ? nil : open + " open"]
@@ -845,10 +856,9 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         return spin
     }
 
-    /// The server's rack in `tint`, with a lock (locked) and a red dot (its last connection failed) in its corners — cut
-    /// out of it, so they read over any background, the selection's included — within its size: no width taken from
-    /// the name.
-    static func serverIcon(_ tint: NSColor, locked: Bool, failed: Bool) -> NSImage {
+    /// The server's rack in `tint`, with a lock (locked) in its corner — cut out of it, so it reads over any background,
+    /// the selection's included — within its size: no width taken from the name.
+    static func serverIcon(_ tint: NSColor, locked: Bool) -> NSImage {
         let rack = Symbol.server.image().withSymbolConfiguration(.init(paletteColors: [tint]))!
         let lock = Symbol.lock.image()
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 7, weight: .bold).applying(.init(paletteColors: [.labelColor])))!
@@ -868,17 +878,10 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
                     lock.draw(in: NSRect(x: size.width - lock.size.width, y: 0, width: lock.size.width, height: lock.size.height))
                 }
             }
-            if failed {
-                let dot = NSRect(x: size.width - 5.5, y: size.height - 5.5, width: 5.5, height: 5.5)
-                badge(dot) {
-                    Palette.fail.setFill()
-                    NSBezierPath(ovalIn: dot).fill()
-                }
-            }
             cg.endTransparencyLayer()
             return true
         }
-        image.accessibilityDescription = "Server" + (locked ? ", locked" : "") + (failed ? ", its last connection failed" : "")
+        image.accessibilityDescription = "Server" + (locked ? ", locked" : "")
         return image
     }
 
@@ -958,7 +961,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
     func gitView(_ r: GitRow) -> GitRowView {
         let st = r.status, local = r.server == nil
         let icon = NSImageView(image: Symbol.branch.image("Branch"))
-        icon.contentTintColor = theme.background == nil ? Palette.accent : theme.dir
+        icon.contentTintColor = theme.background == nil ? Palette.secondary : theme.dir
         let name = ServerName(labelWithString: st.branch)
         name.textColor = theme.text
         name.lineBreakMode = .byTruncatingMiddle
