@@ -64,8 +64,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     var active: PanelViewController { panels[activeIndex] }
     var other: PanelViewController {
-        if let t = target, t !== active, panels.contains(where: { $0 === t }) { return t }
-        return panels[(activeIndex + 1) % panels.count]
+        panels[Self.targetIndex(active: activeIndex, previous: target.flatMap { t in panels.firstIndex { $0 === t } }, count: panels.count)]
+    }
+    /// Where F5/F6 go: the panel active before (`previous`) while it's there and isn't the active one, else the next to
+    /// the right — with 2 panels, simply the other.
+    static func targetIndex(active: Int, previous: Int?, count: Int) -> Int {
+        if let p = previous, p != active { return p }
+        return (active + 1) % count
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -448,7 +453,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    private func activate(_ panel: PanelViewController) {
+    func activate(_ panel: PanelViewController) {
         guard let i = panels.firstIndex(where: { $0 === panel }), i != activeIndex else { return }
         if quickViewOn {   // the preview panel can't become the active one
             quickViewOn = false

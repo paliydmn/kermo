@@ -13,7 +13,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var gitOnly = false { didSet { applyView(select: currentName) } }
     var inGitRepo: Bool { git != nil }
     var isActive = false { didSet { styleHeader() } }
-    /// With 3+ panels: this is where F5/F6 from the active panel go.
+    /// With 3–4 panels: where F5/F6 from the active panel go — its path bar says "→ F5".
     var isTarget = false { didSet { styleHeader() } }
 
     /// The active panel: a line under its path bar in its place's color (`placeTint`), its path in full contrast; the
@@ -34,6 +34,24 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         chipRow.isHidden = chips.isEmpty
         pathField.textColor = isActive ? theme.text : theme.hidden
         pathBar.line = isActive ? placeTint : nil
+        targetMark.isHidden = !isTarget
+        if isTarget { targetMark.image = Self.targetMark(placeTint) }
+    }
+    var targetMarkShown: Bool { !targetMark.isHidden }   // tests
+
+    /// "→ F5" outlined in `color`: drawn each time it shows, so it follows light and dark.
+    private static func targetMark(_ color: NSColor) -> NSImage {
+        let font = NSFont.systemFont(ofSize: 10.5, weight: .bold)
+        let text = NSAttributedString(string: "→ F5", attributes: [.font: font, .foregroundColor: color])
+        let image = NSImage(size: NSSize(width: ceil(text.size().width + 10), height: 15), flipped: false) { r in
+            color.setStroke()
+            NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4).stroke()
+            text.draw(at: NSPoint(x: 5, y: (r.height - font.capHeight) / 2 + font.descender))
+            return true
+        }
+        image.cacheMode = .never
+        image.accessibilityDescription = "F5 and F6 go here"
+        return image
     }
     /// Where the panel is, by color: production's purple, a root panel's orange (a production one's purple), else the
     /// theme's accent.
@@ -61,7 +79,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private let pathField = NSTextField(string: "")
     private let placeIcon = NSImageView()   // before the path: a server, an archive, search results
     private let chipRow = NSStackView()   // then a server's chips
-    private let pathBar = LinedStack()   // the three, over the active panel's line
+    /// With 3–4 panels, at the end of the path bar of the one F5/F6 go to (`isTarget`).
+    private let targetMark = NSImageView()
+    private let pathBar = LinedStack()   // the four, over the active panel's line
     private(set) var headerChips: [Chip] = []
     let filterField = NSTextField(string: "")   // internal: tests type into it
     private let statusLabel = NSTextField(labelWithString: "")
@@ -401,7 +421,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
         placeIcon.symbolConfiguration = .init(pointSize: 11, weight: .medium)
         chipRow.spacing = 3
-        [placeIcon, chipRow, pathField].forEach(pathBar.addArrangedSubview)
+        targetMark.toolTip = "F5 / F6 copy and move here"
+        targetMark.setContentCompressionResistancePriority(.required, for: .horizontal)
+        [placeIcon, chipRow, pathField, targetMark].forEach(pathBar.addArrangedSubview)
         pathBar.spacing = 4
         pathBar.edgeInsets = NSEdgeInsets(top: 0, left: 3, bottom: 4, right: 0)   // the line's room
         pathField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

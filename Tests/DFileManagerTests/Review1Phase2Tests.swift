@@ -17,6 +17,29 @@ import Testing
     #expect(theme("Dracula").accent == theme("Dracula").dir)
 }
 
+/// With 3–4 panels F5/F6 go to the panel active before, while it's there; else the next one to the right. Only that
+/// panel says "→ F5", and the mark moves with the target: click a panel, then another.
+@MainActor @Test func theTargetPanelSaysF5() {
+    #expect(AppDelegate.targetIndex(active: 0, previous: nil, count: 2) == 1 && AppDelegate.targetIndex(active: 1, previous: 0, count: 2) == 0)
+    #expect(AppDelegate.targetIndex(active: 1, previous: 0, count: 3) == 0 && AppDelegate.targetIndex(active: 0, previous: 2, count: 4) == 2)
+    #expect(AppDelegate.targetIndex(active: 2, previous: nil, count: 3) == 0 && AppDelegate.targetIndex(active: 1, previous: 1, count: 3) == 2, "none before: the next")
+    let app = AppDelegate(), host = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+    app.terminal = EmbeddedTerminal(covering: host)
+    app.panels = (0..<3).map { _ in PanelViewController(tabs: [NSTemporaryDirectory()], index: 0, showHidden: false) }
+    app.panels.forEach { $0.loadViewIfNeeded() }
+    defer { app.panels.forEach { $0.shutdown() } }
+    func marks() -> [Bool] { app.panels.map(\.targetMarkShown) }
+    app.activate(app.panels[1])
+    #expect(marks() == [true, false, false] && app.other === app.panels[0])
+    app.activate(app.panels[2])
+    #expect(marks() == [false, true, false] && app.other === app.panels[1])
+    app.activate(app.panels[0])
+    #expect(marks() == [false, false, true], "back to the first: the last is where F5 goes")
+    app.panels.removeLast()
+    app.activate(app.panels[1])
+    #expect(marks() == [false, false], "two panels: no mark")
+}
+
 extension ServerLockTests {
 /// The active panel has a line under its path bar in its place's color — the theme's accent here, purple on a
 /// production server, orange on a root panel, purple on a production root panel; an inactive one has none.
