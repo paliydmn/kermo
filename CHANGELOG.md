@@ -16,6 +16,7 @@ Release:
 ### Added
 - **F1** over a viewer or an editor lists that window's keys and the menu keys that work there; it was greyed out.
 - `isoDates`: `defaults write com.dmn.dfilemanager isoDates -bool true` keeps the Modified column at `2024-03-01 13:33`.
+- `terminalDrawerHeight`: the terminal drawer's height, saved as you drag the line above it.
 
 ### Changed
 - Marked files are bold in the accent color with a ✓ before the icon, not red: red now means only that something failed or can't be undone. Themes keep their own mark color, and get the ✓ too; GitHub Light and Solarized Light mark in pink and magenta instead of red.
