@@ -3,41 +3,40 @@ import CryptoKit
 import DFMCore
 import UniformTypeIdentifiers
 
-/// ⌘I: everything an admin wants about one file, plus quick fixes
-/// (chmod, chown, hidden/locked flags, quarantine removal, checksums, code signature).
+/// ⌘I — Quick View's Info tab (R-48, Р9): everything an admin wants about one file, in rows "name — value", and its
+/// quick fixes (chmod, chown, hidden/locked flags, quarantine removal, checksums, code signature). A server's file says
+/// what its folder's listing knew; its fix is Permissions & Owner…, which works there. What's on its way (a folder's
+/// size, a hash, a quarantine walk) stops when the file shown changes or Quick View closes.
 @MainActor
-final class InfoWindow: NSWindowController, NSWindowDelegate {
-    private static var open: [InfoWindow] = []
-    private let path: String
+final class InfoView: NSView {
+    private(set) var path: String?
     private let textView: NSTextView
+    private let scroll: NSScrollView
     private let modeField = NSTextField(string: "")
     private let ownerField = NSTextField(string: "")
     private let hiddenBox = NSButton(checkboxWithTitle: "Hidden", target: nil, action: nil)
     private let lockedBox = NSButton(checkboxWithTitle: "Locked (uchg)", target: nil, action: nil)
-    private var extra: [String] = []   // lines filled in asynchronously (sizes, hashes, signature)
-    private let cancel = CancelFlag()   // set on close: stops a quarantine walk
+    private let localControls = NSStackView()
+    private let serverControls = NSStackView()
+    private var extra: [(String, String)] = []   // rows filled in later (hashes, signature, quarantine)
+    private var cancel = CancelFlag()   // the file shown changed, or Quick View closed: stops a walk, a hash
     private var shown: Snapshot?
+    private var server: [(String, String)]?
     private var contents: String?   // a folder's, once measured
     private var reads = 0
+    /// Runs a command of the app's (a server file's Permissions & Owner…).
+    var onCommand: ((String) -> Void)?
+    /// What it says now, row by row (tests).
+    private(set) var rows: [(String, String)] = []
 
-    static func show(_ url: URL) {
-        let w = InfoWindow(url.path)
-        open.append(w)
-        w.showWindow(nil)
-    }
-
-    private init(_ path: String) {
-        self.path = path
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 560),
-                         styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        w.title = "Info — " + (path as NSString).lastPathComponent.bidiVisible
-        w.isReleasedWhenClosed = false
-        let scroll = NSTextView.scrollableTextView()
+    init() {
+        scroll = NSTextView.scrollableTextView()
         textView = scroll.documentView as! NSTextView
-        super.init(window: w)
-        w.delegate = self
+        super.init(frame: .zero)
         textView.isEditable = false
-        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.drawsBackground = false
+        scroll.drawsBackground = false
+        textView.textContainerInset = NSSize(width: 6, height: 6)
 
         func button(_ title: String, _ action: Selector) -> NSButton {
             let b = NSButton(title: title, target: self, action: action)
@@ -49,9 +48,9 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
         modeField.widthAnchor.constraint(equalToConstant: 60).isActive = true
         ownerField.placeholderString = "user:group"
         ownerField.widthAnchor.constraint(equalToConstant: 150).isActive = true
-        for f in [modeField, ownerField] { f.font = .monospacedSystemFont(ofSize: 12, weight: .regular) }
+        for f in [modeField, ownerField] { f.font = .monospacedSystemFont(ofSize: 12, weight: .regular); f.controlSize = .small }
         // Off until the file is read: a click on a box showing "off" for a locked file would unlock it.
-        for c in [hiddenBox, lockedBox] as [NSControl] { c.isEnabled = false }
+        for c in [hiddenBox, lockedBox] as [NSControl] { c.isEnabled = false; c.controlSize = .small }
         hiddenBox.target = self
         hiddenBox.action = #selector(toggleFlags)
         lockedBox.target = self
@@ -63,54 +62,128 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
                                        button("Code Signature", #selector(signature))])
         let row3 = NSStackView(views: [NSTextField(labelWithString: "Checksum"), button("MD5", #selector(md5)),
                                        button("SHA-1", #selector(sha1)), button("SHA-256", #selector(sha256))])
-        let controls = NSStackView(views: [row1, row2, row3])
-        controls.orientation = .vertical
-        controls.alignment = .leading
-        controls.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 10, right: 10)
-
-        let root = NSView()
-        for v in [scroll, controls] as [NSView] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            root.addSubview(v)
+        for r in [row1, row2, row3] { r.spacing = 6; localControls.addArrangedSubview(r) }
+        localControls.orientation = .vertical
+        localControls.alignment = .leading
+        serverControls.addArrangedSubview(button("Permissions & Owner…", #selector(serverAttributes)))
+        for v in [localControls, serverControls] {
+            v.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 8, right: 8)
+            v.setHuggingPriority(.required, for: .vertical)
         }
+        let stack = NSStackView(views: [scroll, localControls, serverControls])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 0
+        stack.distribution = .fill
+        scroll.setContentHuggingPriority(.init(1), for: .vertical)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
         NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: root.topAnchor),
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            controls.topAnchor.constraint(equalTo: scroll.bottomAnchor),
-            controls.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            controls.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            controls.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
-        w.contentView = root
-        w.center()
-        textView.string = path + "\n\nReading…"
+        serverControls.isHidden = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// A file (or folder) on this Mac: read off the main thread (⌘I on a share that stopped answering hung the app); a
+    /// folder's contents counted once the cursor has rested on it a moment.
+    func show(local path: String) {
+        guard path != self.path || server != nil else { return }
+        stop()
+        self.path = path
+        server = nil
+        localControls.isHidden = false
+        serverControls.isHidden = true
+        hiddenBox.isEnabled = false
+        lockedBox.isEnabled = false
+        rows = [("Path", path), ("", "Reading…")]
+        draw()
         reload { [weak self] s in
             guard let self, s.isDir else { return }
-            contents = "Contents:   calculating…"
-            render()
-            let cancel = cancel   // closing the window stops the walk
+            let cancel = cancel
             Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(300))   // passing over folders: none is walked
+                guard let self, !cancel.isCancelled else { return }
+                contents = "calculating…"
+                render()
                 let (files, bytes) = await Blocking.run(.utility) { DirLister.measure(path, isCancelled: { cancel.isCancelled }) }
-                guard let self else { return }
-                contents = "Contents:   \(files) files, \(Self.bytes(bytes))"
+                guard !cancel.isCancelled else { return }
+                contents = "\(files) files, \(Self.bytes(bytes))"
                 render()
             }
         }
     }
-    required init?(coder: NSCoder) { fatalError() }
 
-    func windowWillClose(_ notification: Notification) {
-        cancel.cancel()
-        Self.open.removeAll { $0 === self }
+    /// A server's file, as its folder's listing knew it: nothing is asked of the server for it.
+    func show(server rows: [(String, String)]) {
+        stop()
+        path = nil
+        server = rows
+        localControls.isHidden = true
+        serverControls.isHidden = false
+        self.rows = rows
+        draw()
     }
-    override func cancelOperation(_ sender: Any?) { window?.performClose(nil) }
+
+    /// Quick View closed, or the file went: what's on its way stops.
+    func stop() {
+        cancel.cancel()
+        cancel = CancelFlag()
+        reads += 1
+        shown = nil
+        contents = nil
+        extra = []
+        digests = nil
+        path = nil
+    }
+
+    /// What a server's file's Info says, from its folder's listing: where, what, how big, when, whose, which mode.
+    static func serverRows(server: String, path: String, item: FileItem, owner: (String, String)?, link: String?) -> [(String, String)] {
+        let kind = switch item.kind {
+        case .dir: "Folder"
+        case .link: "Symbolic link" + (link.map { " → \($0)" } ?? "")
+        case .other: PanelViewController.specialKind(item) ?? "Special file"
+        case .file: "File"
+        }
+        var rows = [("Server", server), ("Path", path), ("Kind", kind)]
+        if item.kind != .dir { rows.append(("Size", bytes(item.size))) }
+        rows.append(("Modified", date(Date(timeIntervalSince1970: item.mtime))))
+        if let owner { rows.append(("Owner", "\(owner.0) : \(owner.1)")) }
+        rows.append(("Mode", "\(Perms.string(item.mode))  (\(String(item.mode & 0o7777, radix: 8)))"))
+        return rows
+    }
+
+    nonisolated static func date(_ d: Date) -> String {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return df.string(from: d)
+    }
+
+    /// The rows as text: each name in a column of its own, its value beside it, a long one wrapping under itself.
+    private func draw() {
+        let para = NSMutableParagraphStyle()
+        para.tabStops = [NSTextTab(textAlignment: .left, location: 96)]
+        para.headIndent = 96
+        para.paragraphSpacing = 2
+        let label: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11.5), .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: para]
+        let value: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular), .foregroundColor: NSColor.labelColor,
+                                                    .paragraphStyle: para]
+        let s = NSMutableAttributedString()
+        for (i, (name, v)) in rows.enumerated() {
+            s.append(NSAttributedString(string: (i == 0 ? "" : "\n") + name + "\t", attributes: label))
+            s.append(NSAttributedString(string: v.replacingOccurrences(of: "\n", with: "\u{2028}"), attributes: value))
+        }
+        textView.textStorage?.setAttributedString(s)
+    }
 
     // MARK: - Content
 
-    /// What the window shows of the file: read off the main thread (⌘I on a share that stopped answering hung the app).
+    /// What Info shows of a file here: read off the main thread.
     struct Snapshot: Sendable {
-        var lines: [String]
+        var rows: [(String, String)]
         var ok = false, isDir = false
         var mode = "", owner = "", hidden = false, locked = false
     }
@@ -118,7 +191,8 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
     /// Reads the file again, off the main thread, then shows it; `then` sees what was read.
     private func reload(then: (@MainActor (Snapshot) -> Void)? = nil) {
         reads += 1
-        let n = reads, path = path
+        guard let path else { return }
+        let n = reads
         Task { [weak self] in
             let s = await Blocking.run(.userInitiated) { Self.snapshot(path) }
             guard let self, n == reads else { return }
@@ -128,11 +202,11 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// The last snapshot and the lines filled in since.
+    /// The last snapshot, a folder's contents and the rows filled in since.
     private func render() {
         guard let s = shown else { return }
-        textView.string = (s.lines + [""] + [contents].compactMap { $0 } + extra).joined(separator: "\n")
-        textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        rows = s.rows + [contents.map { ("Contents", $0) }].compactMap { $0 } + extra
+        draw()
         hiddenBox.isEnabled = s.ok
         lockedBox.isEnabled = s.ok
         guard s.ok else { return }
@@ -144,45 +218,39 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
 
     nonisolated static func snapshot(_ path: String) -> Snapshot {
         var s = stat()
-        guard lstat(path, &s) == 0 else { return Snapshot(lines: [path, "", String(cString: strerror(errno))]) }
+        guard lstat(path, &s) == 0 else { return Snapshot(rows: [("Path", path), ("Error", String(cString: strerror(errno)))]) }
         let url = URL(fileURLWithPath: path)
         let rv = try? url.resourceValues(forKeys: [.contentTypeKey, .addedToDirectoryDateKey, .localizedTypeDescriptionKey])
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        func date(_ t: timespec) -> String { df.string(from: Date(timeIntervalSince1970: Double(t.tv_sec))) }
+        func date(_ t: timespec) -> String { Self.date(Date(timeIntervalSince1970: Double(t.tv_sec))) }
 
         var kind = rv?.localizedTypeDescription ?? "?"
         if s.st_mode & S_IFMT == S_IFLNK {
             kind = "Symbolic link → " + ((try? FileManager.default.destinationOfSymbolicLink(atPath: path)) ?? "?")
         }
-        var lines = [
-            "Path:       \(path)",
-            "Kind:       \(kind)" + (rv?.contentType.map { "  (\($0.identifier))" } ?? ""),
-            "Size:       \(Self.bytes(Int64(s.st_size)))  ·  on disk \(Self.bytes(Int64(s.st_blocks) * 512))",
-            "Owner:      \(FileInfo.userName(s.st_uid)) (\(s.st_uid)) : \(FileInfo.groupName(s.st_gid)) (\(s.st_gid))",
-            "Mode:       \(FileInfo.modeString(s.st_mode))  (\(FileInfo.octal(s.st_mode)))",
-            "Flags:      \(FileInfo.flagNames(s.st_flags).joined(separator: ", ").nilIfEmpty ?? "none")",
-            "Created:    \(date(s.st_birthtimespec))",
-            "Modified:   \(date(s.st_mtimespec))",
-            "Changed:    \(date(s.st_ctimespec))   (inode)",
-            "Accessed:   \(date(s.st_atimespec))",
+        var rows = [
+            ("Path", path),
+            ("Kind", kind + (rv?.contentType.map { "  (\($0.identifier))" } ?? "")),
+            ("Size", "\(Self.bytes(Int64(s.st_size)))  ·  on disk \(Self.bytes(Int64(s.st_blocks) * 512))"),
+            ("Owner", "\(FileInfo.userName(s.st_uid)) (\(s.st_uid)) : \(FileInfo.groupName(s.st_gid)) (\(s.st_gid))"),
+            ("Mode", "\(FileInfo.modeString(s.st_mode))  (\(FileInfo.octal(s.st_mode)))"),
+            ("Flags", FileInfo.flagNames(s.st_flags).joined(separator: ", ").nilIfEmpty ?? "none"),
+            ("Created", date(s.st_birthtimespec)),
+            ("Modified", date(s.st_mtimespec)),
+            ("Changed", date(s.st_ctimespec) + "   (inode)"),
+            ("Accessed", date(s.st_atimespec)),
         ]
-        if let added = rv?.addedToDirectoryDate { lines.append("Added:      \(df.string(from: added))") }
-        lines.append("Inode:      \(s.st_ino)   Links: \(s.st_nlink)   Device: \((s.st_dev >> 24) & 0xff),\(s.st_dev & 0xffffff)")   // major,minor
+        if let added = rv?.addedToDirectoryDate { rows.append(("Added", Self.date(added))) }
+        rows.append(("Inode", "\(s.st_ino)   Links: \(s.st_nlink)   Device: \((s.st_dev >> 24) & 0xff),\(s.st_dev & 0xffffff)"))   // major,minor
         let xattrs = FileInfo.xattrs(path)
-        lines.append("Xattrs:     " + (xattrs.isEmpty ? "none" : xattrs.map { "\($0.name) (\($0.size) B)" }.joined(separator: "\n            ")))
-        if let q = FileInfo.xattrString(path, "com.apple.quarantine") {
-            lines.append("Quarantine: \(q)")
-        }
-        if let acl = FileInfo.acl(path) {
-            lines.append("ACL:        " + acl.replacingOccurrences(of: "\n", with: "\n            "))
-        }
-        return Snapshot(lines: lines, ok: true, isDir: s.st_mode & S_IFMT == S_IFDIR, mode: FileInfo.octal(s.st_mode),
+        rows.append(("Xattrs", xattrs.isEmpty ? "none" : xattrs.map { "\($0.name) (\($0.size) B)" }.joined(separator: "\n")))
+        if let q = FileInfo.xattrString(path, "com.apple.quarantine") { rows.append(("Quarantine", q)) }
+        if let acl = FileInfo.acl(path) { rows.append(("ACL", acl)) }
+        return Snapshot(rows: rows, ok: true, isDir: s.st_mode & S_IFMT == S_IFDIR, mode: FileInfo.octal(s.st_mode),
                         owner: "\(FileInfo.userName(s.st_uid)):\(FileInfo.groupName(s.st_gid))",
                         hidden: s.st_flags & UInt32(UF_HIDDEN) != 0, locked: s.st_flags & UInt32(UF_IMMUTABLE) != 0)
     }
 
-    nonisolated private static func bytes(_ n: Int64) -> String {
+    nonisolated static func bytes(_ n: Int64) -> String {
         n < 1000 ? "\(n) bytes" : "\(n.formatted()) bytes (\(ByteCountFormatter.short(n)))"   // the exact count, then the short one
     }
 
@@ -191,10 +259,11 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
         let alert = NSAlert()
         alert.messageText = "\(what) failed"
         alert.informativeText = String(cString: strerror(code))
-        guard code == EPERM || code == EACCES else { return alert.beginSheetModal(for: window!) }
+        guard let window else { return }
+        guard code == EPERM || code == EACCES else { return alert.beginSheetModal(for: window) }
         alert.addButton(withTitle: "Try as Administrator")
         alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: window!) { [weak self] r in
+        alert.beginSheetModal(for: window) { [weak self] r in
             guard r == .alertFirstButtonReturn else { return }
             Task {
                 if case .failed(let msg) = await Admin.run(adminCommand) {
@@ -212,8 +281,7 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
 
     // The changes go off the main thread, as the reads do: a share that stopped answering.
     @objc private func applyMode() {
-        guard let mode = mode_t(modeField.stringValue, radix: 8), mode <= 0o7777 else { return NSSound.beep() }
-        let path = path
+        guard let path, let mode = mode_t(modeField.stringValue, radix: 8), mode <= 0o7777 else { return NSSound.beep() }
         Task {
             let code = await Blocking.run(.userInitiated) { FileInfo.setMode(path, mode) ? 0 : errno }
             if code != 0 { fail("chmod", code, adminCommand: AdminCommand.chmod(String(mode, radix: 8), path)) }
@@ -223,13 +291,13 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
 
     @objc private func applyOwner() {
         let parts = ownerField.stringValue.split(separator: ":").map(String.init)
-        guard let user = parts.first, let pw = getpwnam(user) else { return NSSound.beep() }
+        guard let path, let user = parts.first, let pw = getpwnam(user) else { return NSSound.beep() }
         var gid = gid_t.max   // -1: leave group unchanged
         if parts.count > 1 {
             guard let gr = getgrnam(parts[1]) else { return NSSound.beep() }
             gid = gr.pointee.gr_gid
         }
-        let path = path, uid = pw.pointee.pw_uid, group = gid, owner = ownerField.stringValue
+        let uid = pw.pointee.pw_uid, group = gid, owner = ownerField.stringValue
         Task {
             let code = await Blocking.run(.userInitiated) { lchown(path, uid, group) == 0 ? 0 : errno }
             if code != 0 { fail("chown", code, adminCommand: AdminCommand.chown(owner, path)) }
@@ -238,7 +306,8 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func toggleFlags() {
-        let path = path, hidden = hiddenBox.state == .on, locked = lockedBox.state == .on
+        guard let path else { return }
+        let hidden = hiddenBox.state == .on, locked = lockedBox.state == .on
         Task {
             let code = await Blocking.run(.userInitiated) { () -> Int32? in
                 var s = stat()
@@ -258,26 +327,27 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// Off the main thread: a big tree (an Xcode download) takes a while. Closing the window stops it.
+    /// Off the main thread: a big tree (an Xcode download) takes a while. Another file shown, or Quick View closed, stops it.
     @objc private func removeQuarantine(_ sender: NSButton) {
+        guard let path else { return }
         sender.isEnabled = false
-        extra.append("Quarantine: removing…")
+        extra.append(("Quarantine", "removing…"))
         render()
-        let i = extra.count - 1
-        let path = path, cancel = cancel
+        let i = extra.count - 1, cancel = cancel
         Task { [weak self] in
             let removed = await Blocking.run(.userInitiated) { FileInfo.removeQuarantine(path, cancel: cancel) }
-            guard let self else { return }
             sender.isEnabled = true
-            extra[i] = "Quarantine removed from \(removed) item\(removed == 1 ? "" : "s")."
+            guard let self, !cancel.isCancelled, extra.indices.contains(i) else { return }
+            extra[i] = ("Quarantine", "removed from \(removed) item\(removed == 1 ? "" : "s")")
             reload()
         }
     }
 
     @objc private func signature() {
-        extra.append("Code signature: checking…")
-        let i = extra.count - 1
-        let path = path
+        guard let path else { return }
+        extra.append(("Code signature", "checking…"))
+        render()
+        let i = extra.count - 1, cancel = cancel
         Task { [weak self] in
             let out = await Blocking.run { () -> String in
                 let p = Process()
@@ -291,11 +361,13 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
                 p.waitUntilExit()
                 return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            guard let self else { return }
-            extra[i] = "Code signature:\n  " + out.replacingOccurrences(of: "\n", with: "\n  ")
+            guard let self, !cancel.isCancelled, extra.indices.contains(i) else { return }
+            extra[i] = ("Code signature", out)
             render()
         }
     }
+
+    @objc private func serverAttributes() { onCommand?("file.attrs") }   // ⌘⌥A's: works on a server too
 
     @objc private func md5() { checksum("MD5") }
     @objc private func sha1() { checksum("SHA-1") }
@@ -307,15 +379,16 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
     struct DigestFailure: Error { let text: String }
 
     private func checksum(_ name: String) {
-        extra.append("\(name): computing…")
-        let i = extra.count - 1
-        let path = path, cancel = cancel   // closing the window stops it
+        guard let path else { return }
+        extra.append((name, "computing…"))
+        render()
+        let i = extra.count - 1, cancel = cancel   // another file shown, or Quick View closed, stops it
         Task { [weak self] in
             let file = await Blocking.run(.userInitiated) { () -> String in
                 var st = stat()
                 return stat(path, &st) == 0 ? "\(st.st_ino) \(st.st_size) \(st.st_mtimespec.tv_sec).\(st.st_mtimespec.tv_nsec)" : ""
             }
-            guard let self else { return }
+            guard let self, !cancel.isCancelled else { return }
             let pass: Task<Result<[String: String], DigestFailure>, Never>
             if let d = digests, d.file == file {
                 pass = d.pass
@@ -329,7 +402,8 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
             case .success(let all): all[name] ?? ""
             case .failure(let f): f.text
             }
-            extra[i] = "\(name):".padding(toLength: 12, withPad: " ", startingAt: 0) + text
+            guard !cancel.isCancelled, extra.indices.contains(i) else { return }
+            extra[i] = (name, text)
             render()
         }
     }

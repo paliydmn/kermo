@@ -31,7 +31,7 @@ private func mode(_ path: String) -> mode_t {
     #expect(mode(d + "/key") == 0o644)
 }
 
-/// P16: Remove Quarantine walks the tree off the main thread (InfoWindow runs this in `Blocking.run`) and stops when
+/// P16: Remove Quarantine walks the tree off the main thread (Info runs this in `Blocking.run`) and stops when
 /// the window closes.
 @Test func removeQuarantineWalksTheTreeAndStopsOnCancel() {
     let d = tempDir()

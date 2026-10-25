@@ -410,3 +410,61 @@ private func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? N
     parent2.addSubview(panels2)
     #expect(EmbeddedTerminal(covering: panels2, heightKey: key).drawer?.height == 310, "after a restart")
 }
+
+extension ServerLockTests {   // `PanelViewController.quickTab` is the session's, one for all: these run one at a time
+/// R-48, Р9: Quick View has Preview · Info · Git (Git only in a work tree); ⌘I opens it on Info. Info says in rows what
+/// the Info window said, for a file here (its chmod, chown, flags, checksums as buttons) or on a server (what its
+/// listing knew; Permissions & Owner… its fix, as ⌘⌥A). Git says the file's state in words, its keys the Git menu's,
+/// a click running them on the other panel's item.
+@MainActor @Test func quickViewHasInfoAndGit() async throws {
+    _ = NSApplication.shared
+    let dir = try tempDir(["a.txt"])
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let app = AppDelegate()
+    app.commands = app.makeCommands()
+    app.terminal = EmbeddedTerminal(covering: NSView())
+    app.panels = [PanelViewController(tabs: [dir], index: 0, showHidden: false), PanelViewController(tabs: [dir], index: 0, showHidden: false)]
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 500), styleMask: [.titled], backing: .buffered, defer: true)
+    let host = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 500))
+    w.contentView = host
+    for (i, p) in app.panels.enumerated() { p.view.frame = NSRect(x: CGFloat(i) * 450, y: 0, width: 450, height: 500); host.addSubview(p.view) }
+    defer { app.panels.forEach { $0.shutdown() } }
+    let (here, there) = (app.panels[0], app.panels[1])
+    var ran: [String] = []
+    there.onCommand = { ran.append($0) }
+    there.onQuickTab = { app.showQuickView() }
+    await until { here.listedItems.count == 1 }
+    here.moveCursor(toName: "a.txt")
+    PanelViewController.quickTab = .preview
+    defer { PanelViewController.quickTab = .preview }
+
+    app.showInfo()   // ⌘I
+    #expect(app.quickViewOn && there.quickTabShown == .info && PanelViewController.quickTab == .info)
+    await until { there.infoRows.contains { $0.0 == "Mode" } }
+    let rows = there.infoRows.map(\.0)
+    #expect(Array(rows.prefix(5)) == ["Path", "Kind", "Size", "Owner", "Mode"] && rows.contains("Modified") && there.infoRows[0].1 == dir + "/a.txt")
+    #expect(!AppDelegate.localOnly.contains("file.info"), "⌘I on a server panel too")
+
+    // A server's file: what the listing knew, nothing asked of the server.
+    let item = FileItem(name: "app.log", kind: .file, size: 1536, mtime: 0, mode: 0o640, flags: 0)
+    let srv = InfoView.serverRows(server: "web-01", path: "/var/log/app.log", item: item, owner: ("deploy", "adm"), link: nil)
+    #expect(srv.map(\.0) == ["Server", "Path", "Kind", "Size", "Modified", "Owner", "Mode"])
+    #expect(srv[3].1 == "\(Int64(1536).formatted()) bytes (\(ByteCountFormatter.short(1536)))", "the exact count, then the short one: \(srv[3].1)")
+    #expect(srv[5].1 == "deploy : adm" && srv[6].1 == "rw-r-----  (640)")
+    there.preview(PanelViewController.Peek(name: "app.log", server: srv), tab: .info)
+    #expect(there.infoRows.map(\.0) == srv.map(\.0))
+
+    // No work tree: no Git tab; Preview is the first.
+    #expect(there.gitShown == nil)
+    there.preview(PanelViewController.Peek(name: "a.txt", local: URL(fileURLWithPath: dir + "/a.txt"), inRepo: true, git: " M"), tab: .git)
+    #expect(there.quickTabShown == .git && there.gitShown?.state == "Git: modified")
+    #expect(there.gitShown?.keys.map(\.id) == ["git.diff", "git.log", "git.stage", "git.unstage"] && there.gitShown?.keys.map(\.key) == ["⌃D", "⌃L", "⌃⇧A", "⌃⇧U"])
+    there.preview(PanelViewController.Peek(name: "app.log", server: srv, inRepo: true, git: "??"), tab: .git)
+    #expect(there.gitShown?.state == "Git: untracked" && there.gitShown?.keys.isEmpty == true, "on a server: its state alone")
+    there.preview(PanelViewController.Peek(name: "a.txt", local: URL(fileURLWithPath: dir + "/a.txt")), tab: .git)
+    #expect(there.quickTabShown == .info, "no work tree: no Git tab")
+
+    app.toggleQuickView()   // ⌃Q: off
+    #expect(!app.quickViewOn && there.quickTabShown == nil)
+}
+}

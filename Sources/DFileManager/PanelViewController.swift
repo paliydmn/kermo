@@ -930,7 +930,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var empty: Empty? {
         func slot(_ id: String, _ label: String, _ key: String) -> KeySlot { KeySlot(key: keyFor?(id) ?? key, label: label, id: id) }
         let cancel = KeySlot(key: "⎋", label: "Cancel", id: "cancel")
-        guard quickView == nil, rows.isEmpty else { return nil }
+        guard quickBox == nil, rows.isEmpty else { return nil }
         if let b = busyMessage, let since = busySince, Date().timeIntervalSince(since) >= Self.busyShows {
             let cancellable = b.hasSuffix(" ⎋ cancels")
             return Empty(title: cancellable ? String(b.dropLast(" ⎋ cancels".count)) : b, keys: cancellable ? [cancel] : [])
@@ -1697,39 +1697,170 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
 
-    // MARK: - Quick View (⌃Q): this panel previews the other panel's cursor item
+    // MARK: - Quick View (⌃Q): this panel shows the other panel's cursor item — Preview, Info, Git (R-48)
+
+    enum QuickTab: Int { case preview, info, git }
+    /// The tab chosen last, for the session (⌘I chooses Info).
+    static var quickTab = QuickTab.preview
+
+    /// What Quick View shows of the other panel's cursor item: its name, the file Quick Look previews, and for Info a
+    /// file here (or the folder, on ".."), or a server's file as its listing knew it; for Git, its state there.
+    struct Peek {
+        var name = ""
+        var preview: URL?
+        var local: URL?
+        var server: [(String, String)]?
+        var inRepo = false
+        var git: String?   // the Git column's code; nil: unchanged
+    }
+
+    /// The cursor's item for Quick View next door. `fetch`: Preview shows it, so a server's file is fetched first.
+    func peek(fetch: Bool) -> Peek {
+        var p = Peek(inRepo: git != nil, git: currentName.flatMap { git?.marks[$0] })
+        if let (target, dir, it) = remoteCursor {
+            p.name = it.name
+            p.preview = fetch ? previewURL() : nil
+            p.server = InfoView.serverRows(server: SavedServer.name(for: target), path: (dir as NSString).appendingPathComponent(it.name), item: it,
+                                           owner: remoteOwners[it.name], link: links[it.name]?.target)
+        } else if remote == nil {
+            p.preview = previewURL()
+            p.local = infoURL   // the cursor's, or the folder on ".."; inside an archive, the archive
+            p.name = p.local.map { $0.lastPathComponent.isEmpty ? $0.path : $0.lastPathComponent } ?? ""
+        }
+        return p
+    }
+
+    private var quickBox: NSStackView?
+    private let quickTitle = NSTextField(labelWithString: "")
+    private let quickTabs = NSSegmentedControl(labels: ["Preview", "Info", "Git"], trackingMode: .selectOne, target: nil, action: nil)
+    private var infoView: InfoView?
+    private let gitState = NSTextField(wrappingLabelWithString: "")
+    private let gitKeys = KeyBarView(chips: false)
+    private var gitBox: NSStackView?
+    private var peekShown = Peek()
+    /// A tab chosen: the app asks the other panel again (Preview fetches a server's file).
+    var onQuickTab: (() -> Void)?
+    var quickTabShown: QuickTab? { quickBox == nil ? nil : QuickTab(rawValue: quickTabs.selectedSegment) }   // tests
+    var infoRows: [(String, String)] { infoView?.rows ?? [] }   // tests
+    var gitShown: (state: String, keys: [KeySlot])? { gitBox?.isHidden == false ? (gitState.stringValue, gitKeys.list ?? []) : nil }   // tests
 
     func setQuickView(_ on: Bool) {
         if on, quickView == nil, let qv = QLPreviewView(frame: scroll.frame, style: .normal) {
-            let peek = TextPeek()
+            let peek = TextPeek(), info = InfoView()
             peek.isHidden = true
-            for v in [qv, peek] as [NSView] {
+            info.isHidden = true
+            info.onCommand = { [unowned self] in onCommand?($0) }
+            gitKeys.onRun = { [unowned self] in onCommand?($0) }   // as the key, on the other panel's item
+            let git = NSStackView(views: [gitState, gitKeys])
+            git.orientation = .vertical
+            git.alignment = .leading
+            git.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+            gitKeys.heightAnchor.constraint(equalToConstant: 30).isActive = true
+            gitKeys.widthAnchor.constraint(equalTo: git.widthAnchor, constant: -20).isActive = true
+            gitState.font = .systemFont(ofSize: 13)
+            git.isHidden = true
+            let body = NSView()
+            for v in [qv, peek, info, git] as [NSView] {
                 v.translatesAutoresizingMaskIntoConstraints = false
-                view.addSubview(v)
+                body.addSubview(v)
                 NSLayoutConstraint.activate([
-                    v.topAnchor.constraint(equalTo: scroll.topAnchor),
-                    v.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
-                    v.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
-                    v.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
+                    v.leadingAnchor.constraint(equalTo: body.leadingAnchor), v.trailingAnchor.constraint(equalTo: body.trailingAnchor),
+                    v.topAnchor.constraint(equalTo: body.topAnchor),
+                    v === git ? v.bottomAnchor.constraint(lessThanOrEqualTo: body.bottomAnchor) : v.bottomAnchor.constraint(equalTo: body.bottomAnchor),
                 ])
             }
+            quickTitle.font = .systemFont(ofSize: 12.5, weight: .semibold)
+            quickTitle.lineBreakMode = .byTruncatingMiddle
+            quickTitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            quickTabs.controlSize = .small
+            quickTabs.target = self
+            quickTabs.action = #selector(quickTabClicked)
+            let bar = NSStackView(views: [quickTitle, quickTabs])
+            bar.edgeInsets = NSEdgeInsets(top: 2, left: 6, bottom: 4, right: 6)
+            let box = NSStackView(views: [bar, body])
+            box.orientation = .vertical
+            box.spacing = 0
+            box.distribution = .fill
+            bar.setHuggingPriority(.required, for: .vertical)
+            body.setContentHuggingPriority(.init(1), for: .vertical)
+            box.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(box)
+            NSLayoutConstraint.activate([
+                box.topAnchor.constraint(equalTo: scroll.topAnchor), box.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
+                box.leadingAnchor.constraint(equalTo: scroll.leadingAnchor), box.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
+                bar.widthAnchor.constraint(equalTo: box.widthAnchor), body.widthAnchor.constraint(equalTo: box.widthAnchor),
+            ])
             scroll.isHidden = true
             quickView = qv
             textPeek = peek
+            infoView = info
+            gitBox = git
+            quickBox = box
+            updateEmpty()
         } else if !on, let qv = quickView {
             peekGen += 1
             qv.close()
-            qv.removeFromSuperview()
-            textPeek?.removeFromSuperview()
+            infoView?.stop()   // a folder's size, a hash on its way
+            quickBox?.removeFromSuperview()
             quickView = nil
             textPeek = nil
+            infoView = nil
+            gitBox = nil
+            quickBox = nil
             scroll.isHidden = false
+            updateEmpty()
         }
+    }
+
+    @objc private func quickTabClicked() {
+        Self.quickTab = QuickTab(rawValue: quickTabs.selectedSegment) ?? .preview
+        if let onQuickTab { onQuickTab() } else { preview(peekShown) }
+    }
+
+    /// As before the tabs: a file to preview, here, on the Preview tab whatever was chosen (tests).
+    func preview(_ url: URL?) { preview(Peek(name: url?.lastPathComponent ?? "", preview: url, local: url), tab: .preview) }
+
+    /// Shows `p` on the tab chosen (`quickTab`, unless `tab`): Preview, Info, or Git where the item is in a work tree
+    /// (else there's no Git tab).
+    func preview(_ p: Peek, tab chosen: QuickTab? = nil) {
+        guard quickView != nil else { return }
+        peekShown = p
+        quickTitle.stringValue = p.name.bidiVisible
+        quickTabs.segmentCount = p.inRepo ? 3 : 2
+        let want = chosen ?? Self.quickTab
+        let tab = want == .git && !p.inRepo ? .info : want
+        quickTabs.selectedSegment = tab.rawValue
+        infoView?.isHidden = tab != .info
+        gitBox?.isHidden = tab != .git
+        switch tab {
+        case .preview:
+            showPreview(p.preview)
+        case .info:
+            hidePreview()
+            if let rows = p.server { infoView?.show(server: rows) }
+            else if let u = p.local { infoView?.show(local: u.path) }
+            else { infoView?.show(server: []) }   // ".." on a server: nothing to say
+        case .git:
+            hidePreview()
+            gitState.stringValue = "Git: " + (p.git.map { Self.gitCell($0).word } ?? "unchanged")
+            gitState.textColor = theme.text
+            // Its actions are this Mac's only (`localOnly`): on a server, its state alone.
+            gitKeys.list = p.server != nil ? [] : [("git.diff", "Git Diff", "⌃D"), ("git.log", "Git Log", "⌃L"), ("git.stage", "Stage", "⌃⇧A"),
+                                                   ("git.unstage", "Unstage", "⌃⇧U")].map { KeySlot(key: keyFor?($0.0) ?? $0.2, label: $0.1, id: $0.0) }
+            gitKeys.isHidden = p.server != nil
+        }
+    }
+
+    private func hidePreview() {
+        peekGen += 1
+        textPeek?.isHidden = true
+        quickView?.isHidden = true
+        quickView?.previewItem = nil   // a video there doesn't play on behind it
     }
 
     /// Quick Look's preview, or our own of a text it would show as an icon (read off the main thread; the one shown
     /// stays till the next is ready, so passing over files doesn't flicker).
-    func preview(_ url: URL?) {
+    private func showPreview(_ url: URL?) {
         guard let quickView, let textPeek else { return }
         peekGen += 1
         func quickLook() {

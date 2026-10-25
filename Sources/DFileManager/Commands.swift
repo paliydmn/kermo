@@ -220,8 +220,7 @@ extension AppDelegate {
         cmd("file.eject", "Eject Volume", ["cmd+opt+e"], menu: "File", short: "Eject", aliases: "unmount disk") { $0.ejectVolume() },
         cmd("file.unmount", "Unmount Volume", [], menu: "File", short: "Unmount", aliases: "disk eject") { $0.ejectVolume(unmount: true) },
         cmd("file.info", "Get Info", ["cmd+i"], menu: "File", short: "Info", aliases: "get info permissions chmod chown owner hash checksum xattr quarantine") {
-            guard let url = $0.active.infoURL else { return $0.active.flash("Get Info is for this Mac's files — on a server, ⌘⌥A sets permissions and owner") }
-            InfoWindow.show(url)
+            $0.showInfo()
         },
 
         // Git: the work tree of the active panel (the sidebar's Git section)
@@ -2399,7 +2398,16 @@ extension AppDelegate {
     func toggleQuickView() {
         quickViewOn.toggle()
         other.setQuickView(quickViewOn)
-        if quickViewOn { other.preview(active.previewURL()) }
+        if quickViewOn { showQuickView() }
+    }
+
+    /// Quick View next door, on the active panel's cursor item, on the tab chosen.
+    func showQuickView() { other.preview(active.peek(fetch: PanelViewController.quickTab == .preview)) }
+
+    /// ⌘I: Quick View next door, on its Info tab (R-48) — a file here or on a server.
+    func showInfo() {
+        PanelViewController.quickTab = .info
+        if quickViewOn { showQuickView() } else { toggleQuickView() }
     }
 
     func openTerminal() {
