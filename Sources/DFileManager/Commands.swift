@@ -75,6 +75,7 @@ extension AppDelegate {
             NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
         },
         cmd("app.update", "Check for Updates…", [], menu: "Kermo", aliases: "update upgrade new version release") { app in
+            app.showMainWindow(nil)   // its answer is a sheet there, also when a viewer is in front
             Task { await app.checkForUpdates(byHand: true) }
         },
         cmd("app.update.auto", "Check for Updates Automatically", [], menu: "Kermo", aliases: "update daily") { $0.toggleUpdateChecks() },

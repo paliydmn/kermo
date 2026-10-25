@@ -3,7 +3,7 @@ import DFMCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSTextFieldDelegate, NSWindowDelegate, NSToolbarDelegate {
-    private(set) var window: NSWindow!
+    var window: NSWindow!   // set in tests
     var panels: [PanelViewController] = []   // set at launch (tests: their own)
     /// Servers a look (Services…, Containers…, Forward Port…, Run on Servers) logged in to, by key, until when their
     /// connection is kept for the next look though nothing shows them: its ControlPersist, as plain ssh keeps it.
@@ -972,8 +972,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if closes { return true }
         }
         if id == "server.history", Editor.server(of: NSApp.keyWindow) != nil { return true }   // its editor's file
-        return NSApp.keyWindow === window && canRun(id)
+        return Self.appWide.contains(id) || NSApp.keyWindow === window && canRun(id)
     }
+
+    /// The app's own items, not the panels': from a viewer, an editor or over the terminal too.
+    static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto"]
 
     /// ⌘W (Close Tab) in a viewer, editor or other document window closes that window, through its delegate, so
     /// the editor still asks about unsaved changes. In the main window, or a sheet / picker over it, it closes a tab.
