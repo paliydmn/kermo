@@ -44,6 +44,7 @@ final class PathBar: LinedStack {
         super.init(frame: .zero)
         spacing = 4
         edgeInsets = NSEdgeInsets(top: 0, left: 3, bottom: 4, right: 0)   // the line's room
+        heightAnchor.constraint(equalToConstant: 24).isActive = true   // the crumbs' height, the field's too: the list doesn't jump
         placeIcon.symbolConfiguration = .init(pointSize: 11, weight: .medium)
         placeName.font = .systemFont(ofSize: 12, weight: .semibold)
         placeName.setContentCompressionResistancePriority(.init(700), for: .horizontal)
