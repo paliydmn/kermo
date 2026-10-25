@@ -8,7 +8,8 @@ import Testing
     let app = AppDelegate()
     let menu = app.makeMenu()
     let window = try #require(menu.items.compactMap(\.submenu).first { $0.title == "Window" })
-    #expect(NSApp.windowsMenu === window, "AppKit lists the open windows there")
+    // By title: `NSApp.windowsMenu` is global, and a test running beside this one may have made its own menu (D-108).
+    #expect(NSApp.windowsMenu?.title == window.title && NSApp.windowsMenu?.items.contains { $0.title == "Main Window" } == true, "AppKit lists the open windows there")
     let main = try #require(window.items.first { $0.title == "Main Window" })
     #expect(main.action == #selector(AppDelegate.showMainWindow(_:)))
     #expect(main.keyEquivalent == "0" && main.keyEquivalentModifierMask == .command)
