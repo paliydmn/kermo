@@ -15,7 +15,7 @@ import Testing
 }
 
 @Test @MainActor func searchGroupsFoldersAndFilesAndOffersDiskSearch() {
-    let folders = [SearchHit(title: "logs", subtitle: "/var/log", detail: "★", target: .folder("/var/log")),
+    let folders = [SearchHit(title: "logs", subtitle: "/var/log", detail: "favorite", target: .folder("/var/log")),
                    SearchHit(title: "logs", subtitle: "~/x/logs", target: .folder("/x/logs"))]
     let r = search("logs", folders: folders, files: ["old-logs.txt", "README.md"])
     #expect(r.map(\.group) == ["Commands", "Folders", "In This Panel", ""].filter { g in r.contains { $0.group == g } })
@@ -25,7 +25,7 @@ import Testing
 }
 
 @Test @MainActor func emptySearchShowsRecentChoicesAndFavorites() {
-    let fav = SearchHit(title: "a", detail: "★", target: .folder("/a"))
+    let fav = SearchHit(title: "a", detail: "favorite", target: .folder("/a"))
     let b = SearchHit(title: "b", target: .folder("/b")), srv = SearchHit(title: "h:/x", detail: "server", target: .server("h:/x"))
     var r = search("", folders: [fav, b, srv], recent: ["file.copy", "gone.command", "command:file.move", "folder:/b", "folder:/gone", "server:h:/x", "disk:inv"])
     #expect(r.map(\.group) == ["Recent", "Favorites"])

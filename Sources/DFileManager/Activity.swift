@@ -50,7 +50,7 @@ struct ActivityEntry: Codable, Equatable {
 
     /// "Copied 300 files · 3.1 GB · took 1:42 · 12:04"; "2 failed · 46 files done · 12:04".
     var summary: String {
-        let size = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        let size = ByteCountFormatter.short(bytes)
         let time = DateFormatter.localizedString(from: finished, dateStyle: Calendar.current.isDateInToday(finished) ? .none : .short, timeStyle: .short)
         let n = "\(files) file\(files == 1 ? "" : "s")"
         switch result {
@@ -121,43 +121,44 @@ struct ActivityEntry: Codable, Equatable {
         return h > 0 ? "\(h):\(String(format: "%02d", m)):\(String(format: "%02d", s % 60))" : "\(m):\(String(format: "%02d", s % 60))"
     }
 
-    /// The toolbar button's picture: a ring of all the work done so far (nil: nothing running), how many jobs when
-    /// there's more than one, and a red dot for a finished one with errors not looked at yet.
+    /// The toolbar button's picture: at rest a clock going round (what was done — not a download); while jobs run, a
+    /// ring of all the work done so far, and how many jobs when there's more than one; a red ◆ for a finished one with
+    /// errors not looked at yet.
     static func image(fraction: Double?, count: Int, alert: Bool) -> NSImage {
+        let idle = Symbol.activity.image(nil, color: .labelColor, size: 13)
         let img = NSImage(size: NSSize(width: 22, height: 18), flipped: false) { _ in
             let c = NSPoint(x: 9, y: 9), r: CGFloat = 7
-            let track = NSBezierPath()
-            track.appendArc(withCenter: c, radius: r, startAngle: 0, endAngle: 360)
-            track.lineWidth = 1.8
-            (fraction == nil ? NSColor.secondaryLabelColor : NSColor.secondaryLabelColor.withAlphaComponent(0.45)).setStroke()
-            track.stroke()
-            if let fraction, fraction > 0 {
-                let arc = NSBezierPath()
-                arc.appendArc(withCenter: c, radius: r, startAngle: 90, endAngle: 90 - 360 * CGFloat(min(fraction, 1)), clockwise: true)
-                arc.lineWidth = 2.2
-                arc.lineCapStyle = .round
-                NSColor.controlAccentColor.setStroke()
-                arc.stroke()
+            if let fraction {
+                let track = NSBezierPath()
+                track.appendArc(withCenter: c, radius: r, startAngle: 0, endAngle: 360)
+                track.lineWidth = 1.8
+                NSColor.secondaryLabelColor.withAlphaComponent(0.45).setStroke()
+                track.stroke()
+                if fraction > 0 {
+                    let arc = NSBezierPath()
+                    arc.appendArc(withCenter: c, radius: r, startAngle: 90, endAngle: 90 - 360 * CGFloat(min(fraction, 1)), clockwise: true)
+                    arc.lineWidth = 2.2
+                    arc.lineCapStyle = .round
+                    Palette.accent.setStroke()
+                    arc.stroke()
+                }
+            } else {
+                idle.draw(in: NSRect(x: c.x - idle.size.width / 2, y: c.y - idle.size.height / 2, width: idle.size.width, height: idle.size.height))
             }
-            let arrow = NSBezierPath()   // ↓
-            arrow.move(to: NSPoint(x: 9, y: 12.5)); arrow.line(to: NSPoint(x: 9, y: 5.5))
-            arrow.move(to: NSPoint(x: 6.3, y: 8.2)); arrow.line(to: NSPoint(x: 9, y: 5.5)); arrow.line(to: NSPoint(x: 11.7, y: 8.2))
-            arrow.lineWidth = 1.4
-            arrow.lineCapStyle = .round
-            arrow.lineJoinStyle = .round
-            NSColor.labelColor.setStroke()
-            arrow.stroke()
             if count > 1 {
                 let s = "\(count)" as NSString
                 let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 8, weight: .bold), .foregroundColor: NSColor.white]
                 let w = max(10, s.size(withAttributes: attrs).width + 4)
                 let badge = NSRect(x: 22 - w, y: 18 - 10, width: w, height: 10)
-                NSColor.controlAccentColor.setFill()
+                Palette.accent.setFill()
                 NSBezierPath(roundedRect: badge, xRadius: 5, yRadius: 5).fill()
                 s.draw(at: NSPoint(x: badge.midX - s.size(withAttributes: attrs).width / 2, y: badge.minY), withAttributes: attrs)
             } else if alert {
-                NSColor.systemRed.setFill()
-                NSBezierPath(ovalIn: NSRect(x: 15, y: 11, width: 6, height: 6)).fill()
+                let d = NSBezierPath()
+                d.move(to: NSPoint(x: 18, y: 17)); d.line(to: NSPoint(x: 21.5, y: 13.5)); d.line(to: NSPoint(x: 18, y: 10)); d.line(to: NSPoint(x: 14.5, y: 13.5))
+                d.close()
+                Palette.fail.setFill()
+                d.fill()
             }
             return true
         }
@@ -173,31 +174,32 @@ struct ActivityEntry: Codable, Equatable {
         let para = NSMutableParagraphStyle()
         if let sizesAt { para.tabStops = [NSTextTab(textAlignment: .right, location: sizesAt)] }
         para.lineBreakMode = .byTruncatingMiddle
-        func line(_ mark: String, _ color: NSColor, _ text: String, _ textColor: NSColor = .labelColor, size: String? = nil) {
+        func line(_ mark: Symbol, _ color: NSColor, _ text: String, _ textColor: NSColor = .labelColor, size: String? = nil) {
             if out.length > 0 { out.append(NSAttributedString(string: "\n")) }
-            out.append(NSAttributedString(string: mark + "  ", attributes: [.foregroundColor: color, .font: font, .paragraphStyle: para]))
+            out.append(mark.text(color, font: font))
+            out.append(NSAttributedString(string: "  ", attributes: [.font: font, .paragraphStyle: para]))
             out.append(NSAttributedString(string: text.bidiVisible, attributes: [.foregroundColor: textColor, .font: font, .paragraphStyle: para]))
             if let size {
                 out.append(NSAttributedString(string: (sizesAt == nil ? "  " : "\t") + size,
                                               attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: sizeFont, .paragraphStyle: para]))
             }
         }
-        let bytes = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
-        if p.doneFiles > p.recent.count { line("✓", .systemGreen, "\(p.doneFiles - p.recent.count) more done", .secondaryLabelColor) }
-        for f in p.recent { line("✓", .systemGreen, (f.path as NSString).lastPathComponent, size: bytes(f.size)) }
+        let bytes = { ByteCountFormatter.short($0) }
+        if p.doneFiles > p.recent.count { line(.check, Palette.ok, "\(p.doneFiles - p.recent.count) more done", .secondaryLabelColor) }
+        for f in p.recent { line(.check, Palette.ok, (f.path as NSString).lastPathComponent, size: bytes(f.size)) }
         // between two files (paused, say) `current` is still the one just done
         if !p.current.isEmpty, p.current != p.recent.last.map({ ($0.path as NSString).lastPathComponent }) {
             let pct = p.currentSize > 0 ? "\(Int(Double(min(p.currentDone, p.currentSize)) / Double(p.currentSize) * 100))% of \(bytes(p.currentSize))" : nil
-            line("▸", .controlAccentColor, p.current, size: pct)
+            line(.expand, Palette.accent, p.current, size: pct)
         }
-        for f in p.failed.suffix(5) { line("✕", .systemRed, "\((f.path as NSString).lastPathComponent) — \(f.message)") }
-        if p.failed.count > 5 { line("✕", .systemRed, "\(p.failed.count - 5) more failed", .secondaryLabelColor) }
+        for f in p.failed.suffix(5) { line(.failed, Palette.fail, "\((f.path as NSString).lastPathComponent) — \(f.message)") }
+        if p.failed.count > 5 { line(.failed, Palette.fail, "\(p.failed.count - 5) more failed", .secondaryLabelColor) }
         let left = Array(job.sources.dropFirst(job.kind == .trash || job.kind == .delete ? p.doneFiles : p.topsBegun))   // those count items
         if p.state != .queued, !left.isEmpty {
-            for f in left.prefix(3) { line("○", .tertiaryLabelColor, (f as NSString).lastPathComponent, .secondaryLabelColor) }
-            if left.count > 3 { line("○", .tertiaryLabelColor, "\(left.count - 3) more to go", .secondaryLabelColor) }
+            for f in left.prefix(3) { line(.pending, .tertiaryLabelColor, (f as NSString).lastPathComponent, .secondaryLabelColor) }
+            if left.count > 3 { line(.pending, .tertiaryLabelColor, "\(left.count - 3) more to go", .secondaryLabelColor) }
         }
-        if out.length == 0 { line("○", .tertiaryLabelColor, p.state == .queued ? "Waits for its turn" : "Looking at the items…", .secondaryLabelColor) }
+        if out.length == 0 { line(.pending, .tertiaryLabelColor, p.state == .queued ? "Waits for its turn" : "Looking at the items…", .secondaryLabelColor) }
         return out
     }
 
@@ -208,7 +210,7 @@ struct ActivityEntry: Codable, Equatable {
         count == 1 ? (sources.first.map { ($0 as NSString).lastPathComponent } ?? "") : "\(count) items"
     }
 
-    /// "web-01:/var/log → ~/Downloads", a production server's name in its color. nil: no one folder to name (a
+    /// "web-01:/var/log → ~/Downloads", a production server's name after its chip. nil: no one folder to name (a
     /// Synchronize's pairs).
     /// `short`: a long folder as its last two names ("…/gui19/dst"); the tooltip has it whole.
     static func route(_ kind: FileJob.Kind, from: Endpoint, to: Endpoint, sources: [String], destDir: String?, short: Bool = true) -> NSAttributedString? {
@@ -220,9 +222,8 @@ struct ActivityEntry: Codable, Equatable {
             let names = path.split(separator: "/")
             if short, path.count > 28, names.count > 2 { path = "…/" + names.suffix(2).joined(separator: "/") }
             if case .sftp(let t) = e {
-                let prod = SavedServer.isProd(t)
-                out.append(NSAttributedString(string: t.host.bidiVisible, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: prod ? .semibold : .regular),
-                                                                                      .foregroundColor: prod ? SavedServer.color : NSColor.labelColor]))
+                if SavedServer.isProd(t) { out.append(Chip.prod.text); out.append(NSAttributedString(string: " ", attributes: plain)) }
+                out.append(NSAttributedString(string: t.host.bidiVisible, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor]))
                 out.append(NSAttributedString(string: ":" + path.bidiVisible, attributes: plain))
             } else {
                 out.append(NSAttributedString(string: path.bidiVisible, attributes: plain))
@@ -251,21 +252,21 @@ struct ActivityEntry: Codable, Equatable {
     /// The kind of job, in a tinted square: ↓ from a server, ↑ to one, a copy, a move, the Trash; a finished one by its
     /// result instead.
     static func badge(_ kind: FileJob.Kind, from: Endpoint, to: Endpoint, result: ActivityEntry.Result? = nil) -> NSView {
-        let (symbol, tint): (String, NSColor) = switch result {
-        case .done?: ("checkmark", .systemGreen)
-        case .errors?: ("exclamationmark.triangle.fill", .systemRed)
-        case .cancelled?: ("xmark", .secondaryLabelColor)
+        let (symbol, tint): (Symbol, NSColor) = switch result {
+        case .done?: (.check, Palette.ok)
+        case .errors?: (.warnFill, Palette.fail)
+        case .cancelled?: (.close, .secondaryLabelColor)
         case nil:
             switch kind {
-            case .trash, .delete: ("trash", .controlAccentColor)
+            case .trash, .delete: (.trash, Palette.accent)
             case .copy, .move:
-                from != .local && to == .local ? ("arrow.down", .controlAccentColor)
-                    : from == .local && to != .local ? ("arrow.up", .controlAccentColor)
-                    : kind == .move ? ("arrow.right", .controlAccentColor) : ("doc.on.doc", .controlAccentColor)
+                from != .local && to == .local ? (.down, Palette.accent)
+                    : from == .local && to != .local ? (.up, Palette.accent)
+                    : kind == .move ? (.right, Palette.accent) : (.copy, Palette.accent)
             }
         }
         let box = Tile(fill: tint.withAlphaComponent(0.15), radius: 6)
-        let image = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: result?.rawValue ?? kind.rawValue)!)
+        let image = NSImageView(image: symbol.image(result?.rawValue ?? kind.rawValue))
         image.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
         image.contentTintColor = tint
         image.translatesAutoresizingMaskIntoConstraints = false
@@ -279,10 +280,16 @@ struct ActivityEntry: Codable, Equatable {
 
     static let font = NSFont.systemFont(ofSize: 11)
 
-    static func label(_ s: String = "", size: CGFloat = 11, weight: NSFont.Weight = .regular, color: NSColor = .labelColor) -> NSTextField {
+    /// `mark`: a symbol before the text, in its color.
+    static func label(_ s: String = "", size: CGFloat = 11, weight: NSFont.Weight = .regular, color: NSColor = .labelColor, mark: Symbol? = nil) -> NSTextField {
         let l = NSTextField(labelWithString: s.bidiVisible)
         l.font = .systemFont(ofSize: size, weight: weight)
         l.textColor = color
+        if let mark {
+            let t = NSMutableAttributedString(attributedString: mark.text(color, font: l.font!))
+            t.append(NSAttributedString(string: "  " + s.bidiVisible, attributes: [.font: l.font!, .foregroundColor: color]))
+            l.attributedStringValue = t
+        }
         l.lineBreakMode = .byTruncatingMiddle
         l.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return l
@@ -296,8 +303,8 @@ struct ActivityEntry: Codable, Equatable {
         return b
     }
 
-    static func icon(_ symbol: String, _ tip: String, _ action: @escaping () -> Void) -> NSButton {
-        let b = ClosureButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tip)!, action: action)
+    static func icon(_ symbol: Symbol, _ tip: String, _ action: @escaping () -> Void) -> NSButton {
+        let b = ClosureButton(image: symbol.image(tip), action: action)
         b.bezelStyle = .accessoryBarAction
         b.isBordered = false
         b.refusesFirstResponder = true
@@ -429,7 +436,7 @@ final class ClosureButton: NSButton {
         guard !entries.isEmpty else { return }
         let clear = Activity.button("Clear") { [unowned self] in ops.history.remove(nil); ops.changed() }
         clear.isBordered = false
-        clear.contentTintColor = .controlAccentColor
+        clear.contentTintColor = Palette.accent
         add(section("FINISHED", clear))
         entries.forEach { add(card($0)) }
     }
@@ -447,7 +454,7 @@ final class ClosureButton: NSButton {
     }
 
     private func disclosure(_ isOpen: Bool, _ toggle: @escaping () -> Void) -> NSButton {
-        let b = Activity.icon(isOpen ? "chevron.down" : "chevron.right", isOpen ? "Hide the files" : "Show the files", toggle)
+        let b = Activity.icon(isOpen ? .collapse : .expand, isOpen ? "Hide the files" : "Show the files", toggle)
         b.symbolConfiguration = .init(pointSize: 10, weight: .bold)
         b.contentTintColor = .labelColor
         b.widthAnchor.constraint(equalToConstant: 14).isActive = true
@@ -514,13 +521,13 @@ final class ClosureButton: NSButton {
             if openEntries.contains(e.id) { openEntries.remove(e.id) } else { openEntries.insert(e.id) }
             refresh()
         }
-        let remove = Activity.icon("xmark", "Remove from the list") { [unowned self] in ops.history.remove(e.id); ops.changed() }
+        let remove = Activity.icon(.close, "Remove from the list") { [unowned self] in ops.history.remove(e.id); ops.changed() }
         remove.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
         let route = Activity.route(e.kind, from: e.from, to: e.to, sources: e.sources, destDir: e.destDir)
         let whole = Activity.route(e.kind, from: e.from, to: e.to, sources: e.sources, destDir: e.destDir, short: false)?.string
         let head = header(isOpen, toggle: toggle, badge: Activity.badge(e.kind, from: e.from, to: e.to, result: e.result),
                           name: route == nil ? e.title : Activity.name(e.sources, count: e.sourceCount), route: route, whole: whole, buttons: [remove])
-        let detail = Activity.label(e.summary, color: e.result == .errors ? .systemRed : .secondaryLabelColor)
+        let detail = Activity.label(e.summary, color: e.result == .errors ? Palette.fail : .secondaryLabelColor)
         var views: [NSView] = [head, detail], indent: [NSView] = [detail]
         func add(_ v: NSView) { views.append(v); indent.append(v) }
         if isOpen || e.result == .errors {
@@ -531,10 +538,15 @@ final class ClosureButton: NSButton {
                 let done = NSMutableAttributedString()
                 for s in e.sources.prefix(5) {
                     if done.length > 0 { done.append(NSAttributedString(string: "\n")) }
-                    done.append(NSAttributedString(string: "✓  ", attributes: [.foregroundColor: NSColor.systemGreen, .font: Activity.font]))
+                    done.append(Symbol.check.text(Palette.ok, font: Activity.font))
+                    done.append(NSAttributedString(string: "  ", attributes: [.font: Activity.font]))
                     done.append(NSAttributedString(string: (s as NSString).lastPathComponent.bidiVisible, attributes: [.font: Activity.font, .foregroundColor: NSColor.labelColor]))
                 }
-                if e.sourceCount > 5 { done.append(NSAttributedString(string: "\n✓  \(e.sourceCount - 5) more", attributes: [.font: Activity.font, .foregroundColor: NSColor.secondaryLabelColor])) }
+                if e.sourceCount > 5 {
+                    done.append(NSAttributedString(string: "\n"))
+                    done.append(Symbol.check.text(.secondaryLabelColor, font: Activity.font))
+                    done.append(NSAttributedString(string: "  \(e.sourceCount - 5) more", attributes: [.font: Activity.font, .foregroundColor: NSColor.secondaryLabelColor]))
+                }
                 if e.result != .errors, done.length > 0 { add(NSTextField(labelWithAttributedString: done)) }
             }
             let more = max(0, e.errorCount - shown - (isOpen ? e.notes.count : 0))
@@ -542,7 +554,7 @@ final class ClosureButton: NSButton {
             var acts: [NSView] = []
             if e.canRetry && !e.retried {
                 let r = Activity.button("Retry Failed (\(e.failed.filter { $0.dst != nil }.count))") { [unowned self] in ops.retry(e, nil) }
-                r.bezelColor = .controlAccentColor
+                r.bezelColor = Palette.accent
                 acts.append(r)
             }
             if e.destDir != nil { acts.append(Activity.button("Show in Panel") { [unowned self] in ops.showPlace(e, nil) }) }
@@ -563,9 +575,9 @@ final class ClosureButton: NSButton {
     }
 
     private func failedLine(_ e: ActivityEntry, _ f: FileJob.Failure) -> NSView {
-        let mark = Activity.label("✕", color: .systemRed)
+        let mark = NSImageView(image: Symbol.failed.image("failed", color: Palette.fail, size: 11))
         let name = Activity.label(((f.dst ?? f.path) as NSString).lastPathComponent)
-        let why = Activity.label(f.message, size: 10.5, color: .systemRed)
+        let why = Activity.label(f.message, size: 10.5, color: Palette.fail)
         why.lineBreakMode = .byTruncatingTail
         why.toolTip = "\(f.path): \(f.message)".bidiVisible
         let text = NSStackView(views: [name, why])

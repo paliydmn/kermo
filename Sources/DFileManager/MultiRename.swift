@@ -83,7 +83,7 @@ final class MultiRename: NSWindowController, NSTextFieldDelegate, NSTableViewDat
         scroll.documentView = table
         scroll.hasVerticalScroller = true
 
-        message.textColor = .systemRed
+        message.textColor = Palette.fail
         message.lineBreakMode = .byTruncatingTail
         message.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelSheet))
@@ -149,7 +149,7 @@ final class MultiRename: NSWindowController, NSTextFieldDelegate, NSTableViewDat
             bad = BatchRename.conflicts(pairs) { taken.contains(($0 as NSString).lastPathComponent.lowercased()) }.union(zip(pairs, newNames).filter { !BatchRename.isValidName($1) }.map(\.0.from))
             let changed = zip(items, newNames).filter { $0.name != $1 }.count
             message.stringValue = bad.isEmpty ? "" : "\(bad.count) name\(bad.count == 1 ? "" : "s") invalid or already taken"
-            message.textColor = .systemRed
+            message.textColor = Palette.fail
             renameButton.title = "Rename \(changed)"
             renameButton.isEnabled = bad.isEmpty && changed > 0
         } catch {
@@ -178,7 +178,7 @@ final class MultiRename: NSWindowController, NSTextFieldDelegate, NSTableViewDat
                 close(with: todo)
             } catch {
                 message.stringValue = error.localizedDescription
-                message.textColor = .systemRed
+                message.textColor = Palette.fail
             }
         }
     }
@@ -204,7 +204,7 @@ final class MultiRename: NSWindowController, NSTextFieldDelegate, NSTableViewDat
         let name = items[row].name
         tf.stringValue = isNew ? newNames[row] : name
         let src = (dir as NSString).appendingPathComponent(name)
-        tf.textColor = isNew && bad.contains(src) ? .systemRed : isNew && newNames[row] != name ? .controlAccentColor : .labelColor
+        tf.textColor = isNew && bad.contains(src) ? Palette.fail : isNew && newNames[row] != name ? Palette.accent : .labelColor
         return tf
     }
 }

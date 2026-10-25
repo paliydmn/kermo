@@ -7,7 +7,7 @@ Connect to a server, save it, lock it and mark it as production. Kermo uses the 
 ## Connect
 
 - **⌃⌘K** opens a server's files in the active panel (SFTP). **⌘K** opens a shell on a server in the terminal (SSH); inside the terminal, ⌘K clears it.
-- Both open a picker. Type `user@host:/path`, `user@host:2222/path` or `sftp://host:2222/path`, or choose a saved server (🔒 locked, 🟣 PROD production), a recent one or a host from `~/.ssh/config`. ⌃⌘K also takes `smb://`, `nfs://` and `afp://` addresses and mounts them.
+- Both open a picker. Type `user@host:/path`, `user@host:2222/path` or `sftp://host:2222/path`, or choose a saved server (its LOCKED and PROD chips say which), a recent one or a host from `~/.ssh/config`. ⌃⌘K also takes `smb://`, `nfs://` and `afp://` addresses and mounts them.
 - A panel keeps one connection to its server while it shows it, so opening a folder doesn't start ssh again. After sleep or a network change the next folder connects again.
 - If an SSH tab's session ends, **Go ▸ Reconnect SSH Session** (or the tab's **Reconnect** button, ↩) starts it again. **Go ▸ Disconnect Server** ends the server's shared connection: its SSH sessions end, its file tabs go back, its tunnels turn off, and a remembered sudo password is forgotten. It asks first while an SSH session is running or a tunnel is listening.
 
@@ -115,9 +115,9 @@ If a server's host key no longer matches the one in `known_hosts`, Kermo won't c
 
 A row shows what is open on the server:
 
-- `>_` for SSH and a folder for SFTP, in green (with a count from 2);
+- a terminal for SSH and a folder for SFTP, in green (with a count from 2);
 - `⇄` for tunnels that are listening, in green (red when one failed);
-- a lock on the icon for a locked server, a red dot when the last connection failed, purple for a production server.
+- a lock on the icon for a locked server, a red ◆ when the last connection failed (its tooltip says why), a purple icon and the PROD chip for a production server (in a narrow sidebar the chip gives way to the name).
 
 Under the mouse the row shows **SSH**, **SFTP**, **Tunnels** (for a saved server that has tunnels, or a server with [temporary ones](tunnels.md#forward-a-port-the-server-listens-on)) and **⋯**. A click goes to the server's open session. With nothing open, a double-click connects with SSH, so a single click on an idle server does nothing. The tooltip says all of it.
 
@@ -131,7 +131,7 @@ Open sessions stay open. A locked server isn't added to the recents, and its sha
 
 ## Mark a server as production
 
-Production is a flag on a saved server for the servers where a mistake is expensive. It turns the server purple (🟣 PROD in titles) and makes Kermo ask before risky changes and log what you do there. [Safety](safety.md) lists what changes. As with a lock, an alias or another way of writing the same server counts as that server; typed for the first time, its purple can show a moment after the panel opens.
+Production is a flag on a saved server for the servers where a mistake is expensive. It gives the server a purple PROD chip wherever it shows and makes Kermo ask before risky changes and log what you do there. [Safety](safety.md) lists what changes. As with a lock, an alias or another way of writing the same server counts as that server; typed for the first time, its purple can show a moment after the panel opens.
 
 - **Mark as Production** is in the server row's menu. A locked server asks for Touch ID first.
 - **Save as Production…** (on a recent or `~/.ssh/config` row) opens the save sheet with the flag already set.

@@ -8,7 +8,7 @@ extension AppDelegate {
     func onServer(_ what: String, _ then: @escaping @MainActor (SFTPTarget) -> Void) {
         if let here = terminal.isShown ? terminal.current?.target : active.remote?.target { return then(here) }
         let items = serverChoices().map { c in
-            Picker.Item(title: c.saved?.pickerTitle ?? c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config") { then(c.target) }
+            Picker.Item(title: c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config", badges: (c.saved?.chips ?? []).map(\.image)) { then(c.target) }
         }
         Picker.show(over: window, placeholder: "\(what) which server? — or type user@host", items: items, freeText: { q in
             guard case let .sftp(t, _)? = ServerAddress.parse(q) else { return [] }
@@ -26,7 +26,7 @@ extension AppDelegate {
         let t = s.target.asRoot(t.sudo)   // a saved server's: its key and connection time, whatever was typed
         Task {
             if await !ServerLock.authorize(s.target, "look at the \(what) of") {
-                return say("🔒 \(s.title) stays locked", false)
+                return say("\(s.title) stays locked", false)
             }
             let env = SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For “\(command)” on \(s.title)"]) { $1 }
             let login = await Blocking.run { Result { try SFTP.startMaster(t, env: env) } }
@@ -80,9 +80,9 @@ extension AppDelegate {
     /// again where it was left (what was typed and highlighted) — after a look at a status or a log, say.
     private func showList(_ what: String, on t: SFTPTarget, of s: SavedServer, keys: String, items: [Picker.Item]) {
         let key = what + " " + ServerRow.key(t.asUser), kept = servicesKept[key]
-        Picker.show(over: window, placeholder: (s.prod ? SavedServer.mark : "") + "\(s.title)'s \(what) — " + keys, items: items,
+        Picker.show(over: window, placeholder: (s.prod ? "PROD · " : "") + "\(s.title)'s \(what) — " + keys, items: items,
                     rank: { item, q in Fuzzy.score(q, item.title + " " + item.subtitle + " " + item.detail) },
-                    query: kept?.query ?? "", select: kept?.id, highlight: .systemGreen,
+                    query: kept?.query ?? "", select: kept?.id, highlight: Palette.ok,
                     onClose: { [unowned self] q, id in servicesKept[key] = (q, id) })
     }
 
@@ -177,7 +177,8 @@ extension AppDelegate {
                                keys: [Shortcut("cmd+l")!: act("Live Logs"), Shortcut("cmd+r")!: act("Restart"), Shortcut("cmd+c")!: act("Copy Service Name")],
                                run: act("Status"))
         item.id = Self.serviceID(u, on: t)
-        item.subtitleColor = running == nil && u.failed ? .systemRed : nil
+        item.subtitleColor = running == nil && u.failed ? Palette.fail : nil
+        item.badges = running == nil && u.failed ? [StateMark.failed.image("failed", size: 9)] : []   // a shape, not only red
         item.busy = running != nil
         item.keepsOpen = [Shortcut("cmd+r")!, Shortcut("cmd+c")!]
         item.menu = { [unowned self] in serviceMenu(actions) }
@@ -217,9 +218,9 @@ extension AppDelegate {
             switch r {
             case .success(let state):
                 shown.update(serviceItem(u.applying(state), on: t, of: s))
-                shown.say(Self.result((.notRun, "↻ \(u.name) on \(s.title) at \(time) — \(state.said)" + (state.unitFile.map { ", \($0) at boot" } ?? ""))))
+                shown.say(Self.result((.notRun, "\(u.name) on \(s.title) at \(time) — \(state.said)" + (state.unitFile.map { ", \($0) at boot" } ?? "")), mark: .refresh))
             case .failure(is CancellationError): break
-            case .failure(let e): shown.say(Self.result((.failed, "✕ \(u.name): its state couldn't be read on \(s.title) at \(time): \(e.localizedDescription)")))
+            case .failure(let e): shown.say(Self.result((.failed, "\(u.name): its state couldn't be read on \(s.title) at \(time): \(e.localizedDescription)")))
             }
         }
     }
@@ -260,7 +261,7 @@ extension AppDelegate {
         serviceRuns[id] = nil
         let said = say(how, state, stateError, Self.clock.string(from: Date()))
         guard let shown = Picker.current, shown.has(id) else {   // closed (or another list): as runThere says it
-            if case .passed = how { return panel.flash(said.line.replacingOccurrences(of: "✓ ", with: ""), error: said.outcome != .ok) }
+            if case .passed = how { return panel.flash(said.line, error: said.outcome != .ok) }
             if case .notRun = how { return }
             _ = await sayRan(ran, command, on: target, done: said.line, in: panel)
             return
@@ -290,11 +291,17 @@ extension AppDelegate {
         }
     }
 
-    /// The line, its mark (✓ ⚠ ✕) in green, orange or red.
-    private static func result(_ said: (outcome: Services.Outcome, line: String)) -> NSAttributedString {
-        let text = NSMutableAttributedString(string: said.line, attributes: [.foregroundColor: NSColor.labelColor])
-        let mark: [Services.Outcome: NSColor] = [.ok: .systemGreen, .warning: .systemOrange, .failed: .systemRed]
-        if let color = mark[said.outcome] { text.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: 1)) }
+    /// The line after its mark: done, done but look, failed — or `mark` (Refresh Status's).
+    private static func result(_ said: (outcome: Services.Outcome, line: String), mark: Symbol? = nil) -> NSAttributedString {
+        let font = NSFont.systemFont(ofSize: 12)
+        let marks: [Services.Outcome: (Symbol, NSColor, String)] = [.ok: (.check, Palette.ok, "done"), .warning: (.warn, Palette.warn, "look"),
+                                                                    .failed: (.failed, Palette.fail, "failed")]
+        let text = NSMutableAttributedString()
+        if let (symbol, color, word) = marks[said.outcome] ?? mark.map({ ($0, Palette.secondary, "") }) {
+            text.append(symbol.text(color, font: font, label: word))
+            text.append(NSAttributedString(string: " "))
+        }
+        text.append(NSAttributedString(string: said.line, attributes: [.foregroundColor: NSColor.labelColor, .font: font]))
         return text
     }
 

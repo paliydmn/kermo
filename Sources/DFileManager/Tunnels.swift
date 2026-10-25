@@ -7,7 +7,7 @@ extension AppDelegate {
     /// and `then` runs. A production server's doesn't ask: a tunnel changes nothing there by itself.
     func turnOn(_ t: Tunnel, of s: SavedServer, then: (@MainActor () -> Void)? = nil) {
         Task {
-            guard await ServerLock.authorize(s, "open a tunnel to") else { return tunnels.say("🔒 \(s.title) stays locked", false) }
+            guard await ServerLock.authorize(s, "open a tunnel to") else { return tunnels.say("\(s.title) stays locked", false) }
             if let why = tunnels.start(t, of: s) { return tunnels.say("“\(t.title)”: \(why)", true) }
             saveTunnel(t, of: s, on: true)
             tunnels.say("\(t.title): " + (t.host == "localhost" ? "\(t.address) → \(s.title):\(t.port)" : t.route(via: s.title)) + " · listening", false)
@@ -43,19 +43,17 @@ extension AppDelegate {
 }
 
 extension AppDelegate {
-    /// A tunnel's item (U3): "Postgres → 15432 · 3" with a ● — green listening, grey off, red when its last connection
-    /// failed (the tooltip says why) — and what to do with it in a submenu, so a stray click never cuts a client off.
-    /// In production's color on a production server, as the server is.
+    /// A tunnel's item (U3): "Postgres → 15432 · 3" with its state (`StateMark`: on listening, off, failed when its last
+    /// connection failed — the tooltip says why) and what to do with it in a submenu, so a stray click never cuts a
+    /// client off. "PROD" in front on a production server, as the server's chip.
     /// A temporary one (U5): "· temporary", and Turn Off, Open in Browser, Copy Address, Save (once its server is saved).
     func tunnelItem(_ t: Tunnel, of s: SavedServer) -> NSMenuItem {
         let st = tunnels.state(t, of: s), on = st?.listener != nil, n = tunnels.connections(t, of: s), temporary = st?.temporary == true
         let it = NSMenuItem(title: "\(t.title) → \(t.localPort)" + (n > 0 ? " · \(n)" : "") + (temporary ? " · temporary" : ""), action: nil, keyEquivalent: "")
         let failed = st?.error != nil
-        let color: NSColor = failed ? .systemRed : on ? .systemGreen : .tertiaryLabelColor
-        it.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: failed ? "failed" : on ? "listening" : "off")?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .regular).applying(.init(paletteColors: [color])))
+        it.image = failed ? StateMark.failed.image("failed") : on ? StateMark.on.image("listening") : StateMark.off.image("off")
         it.toolTip = st?.error ?? t.route(via: s.title)
-        if s.prod { it.attributedTitle = NSAttributedString(string: it.title, attributes: [.foregroundColor: SavedServer.color, .font: NSFont.menuFont(ofSize: 0)]) }
+        if s.prod { it.attributedTitle = Chip.prod.menuTitle(it.title) }
         let menu = NSMenu()
         if temporary {
             [MenuAction.item("Turn Off") { [unowned self] in turnOff(t, of: s) },
@@ -99,7 +97,7 @@ extension AppDelegate {
             var items: [NSMenuItem] = []
             func header(_ title: String, prod: Bool) -> NSMenuItem {
                 let h = NSMenuItem.sectionHeader(title: title)
-                if prod { h.attributedTitle = NSAttributedString(string: title, attributes: [.foregroundColor: SavedServer.color, .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize)]) }
+                if prod { h.attributedTitle = Chip.prod.menuTitle(title, size: NSFont.smallSystemFontSize) }
                 return h
             }
             var temporaries = tunnels.temporaries()
@@ -141,7 +139,7 @@ extension AppDelegate {
             var keys: [Shortcut: @MainActor () -> Void] = [Shortcut("cmd+c")!: { [unowned self] in copyAddress(t) }]
             if let url = t.link { keys[Shortcut("cmd+o")!] = { [unowned self] in openTunnel(t, of: s, url) } }
             if savedServer(at: s.target) != nil { keys[Shortcut("cmd+s")!] = { [unowned self] in saveTemporary(t, of: s) } }
-            items.append(Picker.Item(title: "\(t.title) → \(t.localPort)", subtitle: (SavedServer.isProd(s.target) ? "🟣 PROD · " : "") + (st.error ?? t.route(via: s.title)),
+            items.append(Picker.Item(title: "\(t.title) → \(t.localPort)", subtitle: st.error ?? t.route(via: s.title), badges: Chip.of(s.target).map(\.image),
                                      detail: (st.error != nil ? "failed" : n > 0 ? "listening · \(n) open" : "listening") + " · temporary",
                                      keys: keys) { [unowned self] in turnOff(t, of: s) })
         }
@@ -151,7 +149,7 @@ extension AppDelegate {
                 var keys: [Shortcut: @MainActor () -> Void] = [Shortcut("cmd+c")!: { [unowned self] in copyAddress(t) },
                                                                Shortcut("cmd+backspace")!: { [unowned self] in deleteTunnel(t, of: s) }]
                 if let url = t.link { keys[Shortcut("cmd+o")!] = { [unowned self] in openTunnel(t, of: s, url) } }
-                items.append(Picker.Item(title: "\(t.title) → \(t.localPort)", subtitle: (s.prod ? "🟣 PROD · " : "") + (st?.error ?? t.route(via: s.title)),
+                items.append(Picker.Item(title: "\(t.title) → \(t.localPort)", subtitle: st?.error ?? t.route(via: s.title), badges: s.chips.map(\.image),
                                          detail: st?.error != nil ? "failed" : st?.listener == nil ? "off" : n > 0 ? "listening · \(n) open" : "listening",
                                          edit: { [unowned self] in editTunnel(t, of: s) }, keys: keys) { [unowned self] in
                     if tunnels.isListening(t, of: s) { turnOff(t, of: s) } else { turnOn(t, of: s) }
@@ -216,9 +214,9 @@ extension AppDelegate {
             nameField.placeholderString = read.map(\.title) ?? "the port's own: Postgres, Redis, Grafana…"
             urlField.placeholderString = read?.link?.absoluteString ?? "none — a web page's, if it is one: http://localhost:…"
             if case .failure(let p) = draft.reading(forwardField.stringValue), !forwardField.stringValue.isEmpty || said != nil {
-                (hint.stringValue, hint.textColor) = (said ?? p.message, .systemRed)
+                (hint.stringValue, hint.textColor) = (said ?? p.message, Palette.fail)
             } else {
-                (hint.stringValue, hint.textColor) = (said ?? read?.route(via: server.title) ?? "As ssh -L: local port, then host and port as “\(server.title)” sees them", said == nil ? .secondaryLabelColor : .systemRed)
+                (hint.stringValue, hint.textColor) = (said ?? read?.route(via: server.title) ?? "As ssh -L: local port, then host and port as “\(server.title)” sees them", said == nil ? .secondaryLabelColor : Palette.fail)
             }
         }
         update(said: problem)
@@ -318,7 +316,7 @@ extension AppDelegate {
             Picker.dismiss()
             return tunnels.say("\(s.title): nothing listens on TCP", false)
         }
-        Picker.show(over: window, placeholder: (s.prod ? SavedServer.mark : "") + "\(s.title)'s ports — ↩ forward · ⌘O browser · ⌘C copy · ⌘S save",
+        Picker.show(over: window, placeholder: (s.prod ? "PROD · " : "") + "\(s.title)'s ports — ↩ forward · ⌘O browser · ⌘C copy · ⌘S save",
                     items: portItems(ports, of: s))
     }
 

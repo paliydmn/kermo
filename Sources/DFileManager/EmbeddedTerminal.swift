@@ -491,7 +491,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             }
             Task {
                 guard await ServerLock.authorize(t) else {
-                    tab.view.feed(text: "🔒 \(t.host) stays locked\r\n")
+                    tab.view.feed(text: "\(t.host) stays locked\r\n")
                     return ended(tab, status: -1)
                 }
                 if tabs.contains(where: { $0 === tab }) { login(tab, ServerLock.locking(t)) }
@@ -683,7 +683,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         tabBar.isHidden = groups.count < 2 && group?.panes.count == 1 && current?.kind == .shell
         tabBar.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (i, g) in groups.enumerated() {
-            let b = PanelViewController.tabButton(g.panes.map { (Self.dot($0), $0.label) }, tint: g.panes.count == 1 ? Self.tint(g.pane) : nil,
+            let b = PanelViewController.tabButton(g.panes.map { (Self.lead($0), $0.label) }, tint: g.panes.count == 1 ? Self.tint(g.pane) : nil,
                                                   tip: g.panes.map(Self.tip).joined(separator: "\n"), index: i, current: i == index,
                                                   target: self, action: #selector(tabClicked(_:)), close: #selector(closeClicked(_:)))
             if i != index {
@@ -701,12 +701,19 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         onChange?()
     }
 
-    private static func dot(_ t: Tab) -> (String, NSColor)? { t.host == nil ? nil : t.isRunning ? ("●", .systemGreen) : ("○", .secondaryLabelColor) }
+    /// An SSH pane's state (on while ssh runs, off once it ended) and its server's chips — root for a root login.
+    private static func lead(_ t: Tab) -> NSAttributedString? {
+        guard t.host != nil else { return nil }
+        let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        let s = NSMutableAttributedString(attributedString: t.isRunning ? StateMark.on.text("connected", font: font) : StateMark.off.text("disconnected", font: font))
+        for chip in t.target.map({ Chip.of($0, root: $0.host.hasPrefix("root@")) }) ?? [] { s.append(NSAttributedString(string: " ")); s.append(chip.text) }
+        return s
+    }
     private static func tip(_ t: Tab) -> String { t.host.map { h in t.isRunning ? "ssh \(h)" : "ssh \(h) — disconnected" } ?? "Shell" }
-    /// A production server's pane in purple, a root login's in orange — as a root panel's header.
+    /// A production server's pane underlined in purple, a root login's in orange — as a root panel's header.
     private static func tint(_ t: Tab) -> NSColor? {
         guard let target = t.target else { return nil }
-        return SavedServer.isProd(target) ? SavedServer.color : target.host.hasPrefix("root@") ? .systemOrange : nil
+        return SavedServer.isProd(target) ? Palette.prod : target.host.hasPrefix("root@") ? Palette.root : nil
     }
 
     /// A pane's header while its tab has several: which server, which folder, whether keys go there (bold, the line).
@@ -716,7 +723,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         guard shown else { return }
         var title = t.label
         if t.host != nil, let dir = t.cwd, !title.contains(EmbeddedTerminal.folderName(dir)) { title += " · " + EmbeddedTerminal.folderName(dir) }
-        let b = PanelViewController.tabButton(title, dot: Self.dot(t), tint: Self.tint(t), tip: Self.tip(t), index: j, current: focused,
+        let b = PanelViewController.tabButton(title, lead: Self.lead(t), tint: Self.tint(t), tip: Self.tip(t), index: j, current: focused,
                                               target: self, action: #selector(paneClicked(_:)), close: #selector(paneCloseClicked(_:)), closeTip: "Close Pane  ⌘W")
         b.menu = NSMenu()
         for (title, action) in [("Move Pane to New Tab", #selector(unsplitClicked(_:))), ("Close Pane", #selector(paneCloseClicked(_:)))] {

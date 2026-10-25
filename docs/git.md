@@ -8,7 +8,7 @@ All of these are in the **Git** menu and in search (⇧⌘P).
 
 ## In the panel
 
-In a Git repository the panel shows a **status column**, and the status bar shows the branch and ↑↓ for commits ahead of and behind its upstream.
+In a Git repository the panel shows a **status column**, and the status bar shows the branch and ↑↓ for commits ahead of and behind its upstream. In the column, `M` (modified, also `R` renamed, `C` copied, `T` type changed) is amber, `A` (added) green, `?` (untracked) and `D` (deleted, struck through) grey, and `U` with ⚠ is a conflict, in red. A bold letter is staged. `•` on a folder means changes inside.
 
 | Action | Keys |
 |---|---|

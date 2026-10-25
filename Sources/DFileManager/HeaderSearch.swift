@@ -65,7 +65,7 @@ enum HeaderSearchModel {
                 default: folders.first { $0.target == t }
                 }
             }.prefix(recentMax).map { var h = $0; h.removable = true; return h }
-            let fav = folders.filter { f in f.detail == "★" && !r.contains { $0.target == f.target } }
+            let fav = folders.filter { f in f.detail == "favorite" && !r.contains { $0.target == f.target } }
             return [("Recent", Array(r)), ("Favorites", fav)].filter { !$0.1.isEmpty }
         }
         func ranked<T>(_ items: [T], _ score: (T) -> Int?) -> [T] {

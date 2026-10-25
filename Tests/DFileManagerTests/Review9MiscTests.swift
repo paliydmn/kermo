@@ -120,6 +120,46 @@ private final class CountingPreview: QLPreviewPanel {
     #expect((cell(panel, "name", "a.txt")?.textField?.accessibilityLabel() ?? "").isEmpty)
 }
 
+/// A mark is a shape too: a ✓ in the name's gutter, in the mark's color — the accent in the System theme, white on the
+/// focused cursor (the system's selection is the accent too).
+@MainActor @Test func markedRowsHaveACheck() async throws {
+    _ = NSApplication.shared
+    let dir = try tempDir(["a.txt", "b.txt"])
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    defer { panel.shutdown() }
+    panel.loadViewIfNeeded()
+    await waitListed(panel, 2)
+    panel.setMarks(["a.txt"])
+    let a = try #require(cell(panel, "name", "a.txt") as? PanelCell), b = try #require(cell(panel, "name", "b.txt") as? PanelCell)
+    #expect(!a.check.isHidden && b.check.isHidden)
+    #expect(a.check.contentTintColor == a.textField?.textColor && Theme.all[0].marked == Palette.accent)
+    for t in Theme.all where t.background != nil {   // no theme marks in red (hue within 12° of it), which says failed
+        let hue = (t.marked.usingColorSpace(.sRGB)?.hueComponent ?? 0) * 360
+        #expect(hue > 12 && hue < 348, "\(t.name): \(hue)")
+    }
+    let marked = a.textField?.textColor
+    a.backgroundStyle = .emphasized
+    #expect(a.textField?.textColor == .alternateSelectedControlTextColor && a.check.contentTintColor == .alternateSelectedControlTextColor)
+    a.backgroundStyle = .normal
+    #expect(a.textField?.textColor == marked)
+}
+
+/// An executable is told by its icon, as in Finder — the System theme gives it no color of its own.
+@MainActor @Test func executablesHaveTheirIcon() async throws {
+    _ = NSApplication.shared
+    let dir = try tempDir(["run.sh", "notes.txt"])
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    chmod(dir + "/run.sh", 0o755)
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    defer { panel.shutdown() }
+    panel.loadViewIfNeeded()
+    await waitListed(panel, 2)
+    let exec = cell(panel, "name", "run.sh")?.imageView?.image, plain = cell(panel, "name", "notes.txt")?.imageView?.image
+    #expect(exec != nil && exec?.tiffRepresentation == NSWorkspace.shared.icon(for: .unixExecutable).tiffRepresentation)
+    #expect(plain != nil && plain?.tiffRepresentation != exec?.tiffRepresentation)
+}
+
 /// P18: the git column's letters have words for VoiceOver, green (staged) and red told apart as well.
 @MainActor @Test func gitLettersHaveWords() {
     #expect(PanelViewController.gitCell(" M").2 == "modified")
@@ -131,6 +171,22 @@ private final class CountingPreview: QLPreviewPanel {
     #expect(PanelViewController.gitCell("??").2 == "untracked")
     #expect(PanelViewController.gitCell("!!").2 == "ignored")
     #expect(PanelViewController.gitCell("•").2 == "changes inside")
+}
+
+/// The git column takes no color that means something else: modified amber, added green, untracked and deleted grey,
+/// a conflict red with a warning sign; never production's purple or root's orange. Staged is told by bold.
+@MainActor @Test func gitLettersKeepToTheirColors() {
+    let cells = [" M", "M ", "A ", " D", "R ", "UU", "??", "•"].map(PanelViewController.gitCell)
+    #expect(cells.map(\.letter) == ["M", "M", "A", "D", "R", "U", "?", "•"])
+    #expect(cells.map(\.color) == [Palette.warn, Palette.warn, Palette.ok, .secondaryLabelColor, Palette.warn, Palette.fail, .secondaryLabelColor, Palette.warn])
+    #expect(cells.map(\.staged) == [false, true, true, false, true, false, false, false])
+    func weight(_ s: NSAttributedString) -> CGFloat? {
+        ((s.attribute(.font, at: s.length - 1, effectiveRange: nil) as? NSFont)?.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any])?[.weight] as? CGFloat
+    }
+    let text = cells.map { PanelViewController.gitText($0, size: 12) }
+    #expect(weight(text[1])! > weight(text[0])!, "staged in bold")
+    #expect(text[3].attribute(.strikethroughStyle, at: 0, effectiveRange: nil) as? Int == NSUnderlineStyle.single.rawValue, "deleted, struck through")
+    #expect(text[5].string == "\u{FFFC}U" && text[5].attribute(.attachment, at: 0, effectiveRange: nil) != nil, "a conflict after its sign")
 }
 
 /// P18: the git cell of an untracked file carries "untracked" (and a file without a mark carries nothing).

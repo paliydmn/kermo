@@ -21,7 +21,7 @@ On this Mac, ↩ works as Midnight Commander's subshell does: your aliases and f
 
 **Run on Servers…** (⇧⌘P, the **Admin** menu, or the sidebar's **Servers** header menu) runs one command on several servers at once, the way the command line runs one on a server panel: in each server's login shell, over its ssh connection, without a terminal. So use `sudo -n`, which works where sudo needs no password and otherwise says "a password is required"; plain `sudo` that wants a password stops with "a terminal is required". You see what sudo said. No placeholders: `%f` and `%d` mean nothing across servers.
 
-1. Type the command. The sheet lists your saved servers and the hosts in `~/.ssh/config`, as the Connect picker does; production ones are purple, locked ones have 🔒.
+1. Type the command. The sheet lists your saved servers and the hosts in `~/.ssh/config`, as the Connect picker does; production and locked ones carry their PROD and LOCKED chips.
 2. Tick the servers. The filter narrows the list by name or address; in the filter ⌘A ticks all it shows, ⇧⌘A unticks them. What runs is what's ticked and shown.
 3. Click **Run on 5 Servers** (↩). The last choice and command come back next time.
 
@@ -34,7 +34,7 @@ db2  │ sudo: a password is required
 
 ![Run on Servers: three servers' lines under their names, an error in red, and the summary](images/run-on-servers.png)
 
-At the end a summary names what didn't go well: `✓ 5  ✗ 1 (db2: exit 1)  🔒 1 skipped (vault)`. ⎋ stops them all and keeps the window for the summary; ⎋ again closes it. Once it's over, **⌘R** runs the same command on the same servers again, without the sheet: production servers ask again, a locked one asks for Touch ID if its 5 minutes are up, and the new window takes the old one's place. Stopping ends the ssh connections; without a terminal, a command on the server that writes nothing (a `sleep`) may run on to its end there.
+At the end a summary names what didn't go well: `✓ 5  ✗ 1 (db2: exit 1)  1 locked, skipped (vault)`. ⎋ stops them all and keeps the window for the summary; ⎋ again closes it. Once it's over, **⌘R** runs the same command on the same servers again, without the sheet: production servers ask again, a locked one asks for Touch ID if its 5 minutes are up, and the new window takes the old one's place. Stopping ends the ssh connections; without a terminal, a command on the server that writes nothing (a `sleep`) may run on to its end there.
 
 On [production servers](safety.md#production-servers) a command that removes, moves or stops things asks once, naming them all, with ↩ on **Cancel**; each run is a line in the production log. A [locked server](servers.md#lock-a-server) asks for Touch ID before anything runs; refuse, and only that one is skipped.
 

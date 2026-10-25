@@ -26,7 +26,7 @@ extension AppDelegate {
            await choose(q.message, info: q.info, ["Run", "Cancel"], default: 1, on: sheetWindow) != 0 { return false }
         let (run, skipped) = await Self.unlocked(chosen)
         guard !run.isEmpty else {
-            active.flash("🔒 Nothing ran: the servers stayed locked")
+            active.flash("Nothing ran: the servers stayed locked")
             return false
         }
         let env = SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For “Run on Servers”"]) { $1 }
@@ -74,8 +74,7 @@ extension AppDelegate {
     }
 }
 
-/// Run on Servers…' sheet: the command (focused), a filter, the servers with check boxes — production in its color,
-/// locked with 🔒 — and "Run on N Servers", the default button, off with no server or no command. What runs is what's
+/// Run on Servers…' sheet: the command (focused), a filter, the servers with check boxes — production and locked as chips — and "Run on N Servers", the default button, off with no server or no command. What runs is what's
 /// ticked and shown: the filter hides the rest. ⌘A in the filter ticks all shown, ⇧⌘A unticks them.
 @MainActor
 final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearchFieldDelegate {
@@ -122,8 +121,9 @@ final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearch
         list.spacing = 4
         for c in choices {
             let b = NSButton(checkboxWithTitle: "", target: self, action: #selector(update))
-            let name = NSMutableAttributedString(string: (c.saved?.locked == true ? "🔒 " : "") + c.title,
-                                                 attributes: [.foregroundColor: c.saved?.prod == true ? SavedServer.color : NSColor.labelColor])
+            let name = NSMutableAttributedString()
+            for chip in c.saved?.chips ?? [] { name.append(chip.text); name.append(NSAttributedString(string: " ")) }
+            name.append(NSAttributedString(string: c.title, attributes: [.foregroundColor: NSColor.labelColor]))
             let host = c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config"
             if host != c.title {
                 name.append(NSAttributedString(string: "   " + host, attributes: [.foregroundColor: NSColor.secondaryLabelColor,

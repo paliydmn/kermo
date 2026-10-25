@@ -18,10 +18,10 @@ private func file(_ name: String) -> FileItem { FileItem(name: name, kind: .file
     panel.addSearchResults([file("b"), file("c")], from: flag)
     panel.addSearchResults([file("a")], from: flag)
     #expect(names(panel) == ["b", "c", "a"])
-    #expect(panel.statusText.hasPrefix("🔍 *.txt containing “needle”: searching… 3 found · "), "\(panel.statusText)")
+    #expect(panel.statusText.hasPrefix("*.txt containing “needle”: searching… 3 found · "), "\(panel.statusText)")
     panel.finishSearch(flag)
     #expect(names(panel) == ["a", "b", "c"])
-    #expect(panel.statusText.hasPrefix("🔍 *.txt containing “needle”: 3 found · ⌫ back · "), "\(panel.statusText)")
+    #expect(panel.statusText.hasPrefix("*.txt containing “needle”: 3 found · ⌫ back · "), "\(panel.statusText)")
 }
 
 /// By the clock: in the full suite the main actor is so busy at first that 500 sleeps of 10 ms took over 10 s.
@@ -310,12 +310,12 @@ private func tempDir() -> String {
     defer { v.close() }
     for _ in 0..<500 where v.window?.subtitle.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(10)) }
     v.setLineFilter(LineFilter("77777"))
-    let fmt = ByteCountFormatter.string(fromByteCount: 10, countStyle: .file)
+    let fmt = ByteCountFormatter.short(10)
     await waitUntil { v.window?.subtitle.contains("LINES WITH “77777”") == true }
     #expect(v.window?.subtitle.contains("LINES WITH “77777” IN THE LAST \(fmt) ONLY") == true, "\(v.window?.subtitle ?? "")")
 }
 
-/// N4 (decided): on this Mac too, a link to a folder sorts with the folders and reads <DIR> once its target is known.
+/// N4 (decided): on this Mac too, a link to a folder sorts with the folders and, as a folder, has no size till measured.
 @MainActor @Test func localLinksToFoldersSortWithFolders() async throws {
     let d = tempDir()
     defer { try? FileManager.default.removeItem(atPath: d) }
@@ -327,7 +327,8 @@ private func tempDir() -> String {
     defer { panel.shutdown() }
     await waitUntil { names(panel) == ["bin", "zdir", "a.txt"] }
     #expect(names(panel) == ["bin", "zdir", "a.txt"])
-    #expect(PanelViewController.sizeText(try #require(panel.item(at: 1)), measured: nil) == "<DIR>")
+    let link = try #require(panel.item(at: 1))
+    #expect(link.linkDir && PanelViewController.sizeText(link, measured: nil) == "")
 }
 
 /// N12 (decided): & on a big server log's tail runs grep -F there, over the whole log — not only the 4 MB fetched.
@@ -395,7 +396,7 @@ private func tempDir() -> String {
 /// N7: an empty FAT32 or exFAT stick read "Zero KB free": the "important usage" figure is 0 there (fskit), the
 /// plain one is right. That one is taken when the first says nothing.
 @Test func freeSpaceFallsBackWhereImportantUsageIsZero() {
-    let fmt = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+    let fmt = { ByteCountFormatter.short($0) }
     #expect(PanelViewController.freeText(important: 0, available: 628_000_000) == fmt(628_000_000))
     #expect(PanelViewController.freeText(important: nil, available: 628_000_000) == fmt(628_000_000))
     #expect(PanelViewController.freeText(important: 5_000_000_000, available: 4_000_000_000) == fmt(5_000_000_000), "APFS: purgeable counts")

@@ -30,7 +30,7 @@ import Testing
     #expect(s[0].places == [.folder("/a"), .folder("/b")])
     #expect(s[1].places == ["/c", "/d", "/e", "/f", "/g"].map(Place.folder), "top 5, favorites left out")
     let size = SidebarModel.sizes.string(fromByteCount:)
-    #expect(s[2].places == [.volume(VolumeRow(path: "/", name: "Macintosh HD", used: size(2_000_000_000), free: size(1_000_000_000), total: size(3_000_000_000), ejectable: false)),
+    #expect(s[2].places == [.volume(VolumeRow(path: "/", name: "Macintosh HD", used: size(2_000_000_000), free: size(1_000_000_000), total: size(3_000_000_000), fraction: 2.0 / 3, ejectable: false)),
                             .volume(VolumeRow(path: "/Volumes/USB", name: "USB", ejectable: true))])
     #expect(s[3].places == [.connect])
     #expect(s[4].places == [.tagColors, .tag("work"), .tag("home")])

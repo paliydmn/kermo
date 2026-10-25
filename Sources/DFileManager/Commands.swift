@@ -582,15 +582,16 @@ extension AppDelegate {
 
     // MARK: - Jump, bookmarks
 
+    private static let star = Symbol.star.image("Favorite")
+
     /// Bookmarks first, then folders by frecency. Typing an existing path offers to go there directly.
     func showJump() {
         func item(_ p: String, star: Bool) -> Picker.Item {
-            let title = (star ? "★ " : "") + Bookmark.title(p)
-            return Picker.Item(title: title, subtitle: (p as NSString).abbreviatingWithTildeInPath) { [unowned self] in jump(to: p) }
+            Picker.Item(title: Bookmark.title(p), subtitle: (p as NSString).abbreviatingWithTildeInPath, badges: star ? [Self.star] : []) { [unowned self] in jump(to: p) }
         }
         let items = bookmarks.map { item($0, star: true) }
             + frecency.ranked().filter { !bookmarks.contains($0) && $0 != active.path }.prefix(500).map { item($0, star: false) }
-        Picker.show(over: window, placeholder: "Jump to folder (fuzzy; bookmarks ★ first)…", items: items) { it, q in
+        Picker.show(over: window, placeholder: "Jump to folder (fuzzy; bookmarks first)…", items: items) { it, q in
             // Prefer hits in the folder name itself over hits spread across the path.
             guard let s = Fuzzy.score(q, it.subtitle) else { return nil }
             return s + (Fuzzy.score(q, it.title) != nil ? 500 : 0)
@@ -653,10 +654,10 @@ extension AppDelegate {
         let p = (active.remote ?? active.parked).map { Bookmark.entry($0.target, $0.dir) } ?? active.path   // what the header says
         if let i = bookmarks.firstIndex(of: p) {
             bookmarks.remove(at: i)
-            active.flash("☆ Removed bookmark")
+            active.flash("Removed bookmark")
         } else {
             bookmarks.append(p)
-            active.flash("★ Bookmarked — ⌘P to jump")
+            active.flash("Bookmarked — ⌘P to jump")
         }
         Config.save("bookmarks.json", bookmarks)
         refreshSidebar()
@@ -697,7 +698,7 @@ extension AppDelegate {
             applyTheme()
         }
         let items = Theme.all.map { t in
-            Picker.Item(title: t.name, detail: t.name == was ? "✓" : "", preview: { use(t.name) }) { use(t.name) }
+            Picker.Item(title: t.name, detail: t.name == was ? "current" : "", preview: { use(t.name) }) { use(t.name) }
         }
         Picker.show(over: window, placeholder: "Theme…", items: items, selected: Theme.all.firstIndex { $0.name == was } ?? 0) { use(was) }
     }
@@ -913,11 +914,11 @@ extension AppDelegate {
             return listed.insert(k).inserted
         }
         let go: @MainActor (String) -> Void = { [unowned self] in ssh ? openSSH($0) : connect($0) }
-        let items = [Picker.Item(title: "＋ New Server…", subtitle: "user, port, key, password, lock") { [unowned self] in
+        let items = [Picker.Item(title: "New Server…", subtitle: "user, port, key, password, lock", badges: [Symbol.add.image("New")]) { [unowned self] in
                 editServer(SavedServer(), title: "New Server", connect: kind)
             }]
             + savedServers.map { s in
-                Picker.Item(title: s.pickerTitle, subtitle: ServerRow.address(s.target), detail: "✎ ⌘E   " + label,
+                Picker.Item(title: s.title, subtitle: ServerRow.address(s.target), badges: s.chips.map(\.image), detail: "⌘E Edit   " + label,
                             edit: { [unowned self] in editServer(s, title: "Edit “\(s.title)”") }) { [unowned self] in
                     openServer(ServerRow(target: s.target, saved: s, title: s.title), kind)
                 }
@@ -984,7 +985,7 @@ extension AppDelegate {
         let panel = panel ?? active
         Task {   // a locked one asks before the new tab, not after (loadRemote would leave it behind)
             if newTab {
-                guard await ServerLock.authorize(t) else { return panel.flash("🔒 \(title) stays locked") }
+                guard await ServerLock.authorize(t) else { return panel.flash("\(title) stays locked") }
                 panel.newTab()
             }
             panel.loadRemote(t, dir: dir, select: nil)
@@ -1039,7 +1040,7 @@ extension AppDelegate {
         // Password: dots, or as text behind the eye.
         let pwField = inputs[5], shown = NSTextField(string: "")
         if hasPassword { pwField.toolTip = "Saved in Keychain — type to replace" }
-        let eye = NSButton(image: NSImage(systemSymbolName: "eye", accessibilityDescription: "Show the password")!, target: nil, action: nil)
+        let eye = NSButton(image: Symbol.show.image("Show the password"), target: nil, action: nil)
         eye.bezelStyle = .accessoryBarAction
         eye.toolTip = "Show the password (a saved one asks for Touch ID or the Mac password)"
         pwField.constraints.forEach { if $0.firstAttribute == .width { $0.constant = 300 - eye.fittingSize.width - 6 } }
@@ -1051,7 +1052,7 @@ extension AppDelegate {
         let revealed = NSMutableString()   // the saved one, once shown
         let show = { (on: Bool) in
             (pwField.isHidden, shown.isHidden) = (on, !on)
-            eye.image = NSImage(systemSymbolName: on ? "eye.slash" : "eye", accessibilityDescription: on ? "Hide the password" : "Show the password")
+            eye.image = (on ? Symbol.hide : .show).image(on ? "Hide the password" : "Show the password")
             pwRow.window?.makeFirstResponder(on ? shown : pwField)
         }
         let revealer = MenuAction.attach(to: eye) {
@@ -1396,7 +1397,7 @@ extension AppDelegate {
             let fmt = DateFormatter()
             fmt.dateFormat = "HH:mm:ss"
             let when = fmt.string(from: Date(timeIntervalSince1970: e.attrs.mtime))
-            let info = "Someone or something wrote it at \(when) (\(ByteCountFormatter.string(fromByteCount: e.attrs.size, countStyle: .file))). "
+            let info = "Someone or something wrote it at \(when) (\(ByteCountFormatter.short(e.attrs.size))). "
                 + "Overwriting replaces their changes with yours. Compare shows the differences first; Cancel keeps your text \(keeps)."
             while true {   // Compare asks again once the diff is up
                 switch await choose("“\(name)” changed on \(target.host) since you opened it", info: info, ["Overwrite", "Compare", "Cancel"],
@@ -1473,7 +1474,7 @@ extension AppDelegate {
                         }
                     }
                 }
-                return Picker.Item(title: when, subtitle: ByteCountFormatter.string(fromByteCount: v.size, countStyle: .file),
+                return Picker.Item(title: when, subtitle: ByteCountFormatter.short(v.size),
                                    keys: [Shortcut("f3")!: view, Shortcut("cmd+shift+d")!: diff, Shortcut("cmd+d")!: diffBefore, Shortcut("cmd+r")!: revert],
                                    run: view)
             }
@@ -2047,7 +2048,7 @@ extension AppDelegate {
             }
             let sizes = Dictionary(items.map { ($0.name, $0.size) }) { a, _ in a }
             if let odd = SplitParts.misfit(seq.parts, sizes: sizes) {
-                let size = { ByteCountFormatter.string(fromByteCount: sizes[$0] ?? 0, countStyle: .file) }
+                let size = { ByteCountFormatter.short(sizes[$0] ?? 0) }
                 return showError(JobErrorMessage("“\(odd)” is \(size(odd)), “\(seq.parts[0])” \(size(seq.parts[0])): these look like parts of two different splits. Nothing was combined."))
             }
             guard let target = await prompt("Combine \(seq.parts.count) parts (\(seq.parts.first!) … \(seq.parts.last!)) into:",
@@ -2100,17 +2101,16 @@ extension AppDelegate {
         Task { [self] in
             // Off the main thread: a stick that stopped answering. A network share keeps to the kernel's figures.
             let rows = await Blocking.run(.userInitiated) { () -> [(path: String, title: String, subtitle: String, eject: Bool)] in
-                let fmt = ByteCountFormatter()
                 return SidebarModel.mounts().map { m in
                     let v = m.local ? try? URL(fileURLWithPath: m.path).resourceValues(forKeys: keys) : nil
-                    let free = m.local ? v?.volumeAvailableCapacityForImportantUsage.map { fmt.string(fromByteCount: $0) } ?? "?" : fmt.string(fromByteCount: m.free)
-                    let total = m.local ? v?.volumeTotalCapacity.map { fmt.string(fromByteCount: Int64($0)) } ?? "?" : fmt.string(fromByteCount: m.total)
+                    let free = m.local ? v?.volumeAvailableCapacityForImportantUsage.map { ByteCountFormatter.short($0) } ?? "?" : ByteCountFormatter.short(m.free)
+                    let total = m.local ? v?.volumeTotalCapacity.map { ByteCountFormatter.short(Int64($0)) } ?? "?" : ByteCountFormatter.short(m.total)
                     return (m.path, v?.volumeName ?? (m.path as NSString).lastPathComponent,
                             "\(m.path) · \(free) free of \(total) · \(v?.volumeLocalizedFormatDescription ?? m.type)", v?.volumeIsEjectable == true || !m.local)
                 }
             }
             let items = rows.map { r in
-                Picker.Item(title: r.title, subtitle: r.subtitle, detail: r.eject ? "⏏ ⌘⌥E" : "") { [unowned self] in active.navigate(to: r.path) }
+                Picker.Item(title: r.title, subtitle: r.subtitle, detail: r.eject ? "Eject ⌘⌥E" : "") { [unowned self] in active.navigate(to: r.path) }
             } + SidebarModel.locations([], disks).compactMap { v in
                 v.disk.map { d in Picker.Item(title: d.name, subtitle: v.tip, detail: "↩ Mount") { [unowned self] in mountVolume(d) { [unowned self] in active.navigate(to: $0) } } }
             }
@@ -2511,7 +2511,7 @@ extension AppDelegate {
         let prod = prodAsked ? "" : SavedServer.prodNote(Self.changed(from: from, to: side, move: move))
         if !locked.isEmpty || !prod.isEmpty {
             Task {
-                for t in locked where await !ServerLock.authorize(t) { return active.flash("🔒 \(t.host) stays locked") }
+                for t in locked where await !ServerLock.authorize(t) { return active.flash("\(t.host) stays locked") }
                 let landing = side == .local ? [] : sources.map { (dir as NSString).appendingPathComponent(name ?? ($0 as NSString).lastPathComponent) }
                 let unchecked = Self.uncheckedNote(landing, rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules)
                 if !prod.isEmpty, await !confirm(title + "?", info: prod + "Files there may be overwritten" + (move ? " or removed." : ".") + unchecked,
@@ -2566,7 +2566,7 @@ extension AppDelegate {
     /// if one stays locked. For what walks a whole tree there: compare, sync, search.
     func unlock(_ ends: [Endpoint]) async -> Bool {
         for case .sftp(let t) in ends where ServerLock.needsUnlock(t) {
-            guard await ServerLock.authorize(t) else { active.flash("🔒 \(t.host) stays locked"); return false }
+            guard await ServerLock.authorize(t) else { active.flash("\(t.host) stays locked"); return false }
         }
         return true
     }

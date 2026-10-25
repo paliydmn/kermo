@@ -187,7 +187,7 @@ final class KeyBarView: NSView {
         }
         let (shown, more) = KeyBarModel.fit(slots, capacity: capacity)
         for s in shown {
-            let b = slotButton(s.key, s.label, #selector(slotClicked(_:)), color: server && s.id == "file.trash" ? .systemRed : .labelColor)   // gone for good
+            let b = slotButton(s.key, s.label, #selector(slotClicked(_:)), color: server && s.id == "file.trash" ? Palette.fail : .labelColor)   // gone for good
             b.identifier = s.id.map { .init($0) }
             b.isEnabled = s.id.map(canRun) ?? false
             row.addArrangedSubview(b)

@@ -75,11 +75,11 @@ private func pathCommand(_ panel: PanelViewController, _ text: String, _ sel: Se
     defer { panel.shutdown(); window.close() }
 
     _ = panel.beginSearch("*.log in \(dir)")
-    #expect(panel.headerText == "🔍 *.log in \(dir)")
+    #expect(panel.headerText == "*.log in \(dir)")
     panel.beginPathEditing()
     #expect(panel.headerText == dir + "/")
     pathCommand(panel, dir + "/", #selector(NSResponder.cancelOperation(_:)))
-    #expect(panel.headerText == "🔍 *.log in \(dir)")
+    #expect(panel.headerText == "*.log in \(dir)")
     panel.goUp()   // leaves the results
     await waitUntil { panel.searchTitle == nil && panel.listedItems.count == 1 }
 
@@ -91,10 +91,10 @@ private func pathCommand(_ panel: PanelViewController, _ text: String, _ sel: Se
     tar.waitUntilExit()
     panel.enterArchive(dir + "/a.tar")
     await waitUntil { panel.archive != nil }
-    #expect(panel.headerText == "📦 \(dir)/a.tar")
+    #expect(panel.headerText == "\(dir)/a.tar")
     panel.beginPathEditing()
     pathCommand(panel, dir + "/", #selector(NSResponder.cancelOperation(_:)))
-    #expect(panel.headerText == "📦 \(dir)/a.tar")
+    #expect(panel.headerText == "\(dir)/a.tar")
 }
 
 // MARK: - P10: control characters in a name
@@ -124,13 +124,21 @@ private func cell(_ panel: PanelViewController, _ column: String, row: Int) -> N
 
 // MARK: - P11: symlinks and special files
 
+/// A special file and a folder not measured leave the Size column empty — no DOS "<DIR>" — and the special file's kind
+/// goes to the row's tooltip; bytes are "B", as short as the other units.
 @MainActor @Test func sizeColumnNamesSpecialFilesAndLinkNotesSayWhy() {
-    func item(_ kind: FileItem.Kind, mode: UInt32 = 0) -> FileItem { FileItem(name: "x", kind: kind, size: 0, mtime: 0, mode: mode, flags: 0) }
-    #expect(PanelViewController.sizeText(item(.other, mode: UInt32(S_IFIFO) | 0o644), measured: nil) == "<FIFO>")
-    #expect(PanelViewController.sizeText(item(.other, mode: UInt32(S_IFSOCK)), measured: nil) == "<SOCKET>")
-    #expect(PanelViewController.sizeText(item(.other, mode: UInt32(S_IFCHR) | 0o666), measured: nil) == "<DEVICE>")
-    #expect(PanelViewController.sizeText(item(.dir), measured: nil) == "<DIR>")
+    func item(_ kind: FileItem.Kind, mode: UInt32 = 0, size: Int64 = 0) -> FileItem { FileItem(name: "x", kind: kind, size: size, mtime: 0, mode: mode, flags: 0) }
+    let fifo = item(.other, mode: UInt32(S_IFIFO) | 0o644)
+    #expect(PanelViewController.sizeText(fifo, measured: nil) == "" && PanelViewController.specialKind(fifo) == "Named pipe (FIFO)")
+    #expect(PanelViewController.specialKind(item(.other, mode: UInt32(S_IFSOCK))) == "Socket")
+    #expect(PanelViewController.specialKind(item(.other, mode: UInt32(S_IFCHR) | 0o666)) == "Character device")
+    #expect(PanelViewController.specialKind(item(.file)) == nil)
+    #expect(PanelViewController.sizeText(item(.dir), measured: nil) == "")
     #expect(PanelViewController.sizeText(item(.dir), measured: 2048) == ByteCountFormatter().string(fromByteCount: 2048))
+    #expect(PanelViewController.sizeText(item(.dir), measured: 2048, partial: true) == "≥ " + ByteCountFormatter().string(fromByteCount: 2048))
+    #expect(PanelViewController.sizeText(item(.file, size: 310), measured: nil) == "310 B" && ByteCountFormatter.short(0) == "0 B")
+    #expect(ByteCountFormatter.short(999) == "999 B" && ByteCountFormatter.short(1000) == ByteCountFormatter().string(fromByteCount: 1000))
+    #expect(PanelViewController.countText(7, "items", 310) == "7 items, 310 B")
     #expect(PanelViewController.linkNote("/etc/hosts", 0) == "→ /etc/hosts")
     #expect(PanelViewController.linkNote("gone", ENOENT) == "→ gone (dangling)")
     #expect(PanelViewController.linkNote("b", ELOOP) == "→ b (loop)")
@@ -138,7 +146,7 @@ private func cell(_ panel: PanelViewController, _ column: String, row: Int) -> N
     try? FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(atPath: d) }
     mkfifo(d + "/fifo", 0o644)
-    #expect((try? SFTP.list(.local(), d))?.first.map { PanelViewController.sizeText($0, measured: nil) } == "<FIFO>", "a server's FIFO too")
+    #expect((try? SFTP.list(.local(), d))?.first.flatMap(PanelViewController.specialKind) == "Named pipe (FIFO)", "a server's FIFO too")
 }
 
 /// Links show where they point (tooltip, and after the name when the column has room); a dangling one and a loop
@@ -173,8 +181,8 @@ private func cell(_ panel: PanelViewController, _ column: String, row: Int) -> N
 
     let pipe = try #require(panel.listedItems.first { $0.name == "pipe" })
     #expect(pipe.kind == .other && mode_t(truncatingIfNeeded: pipe.mode) & S_IFMT == S_IFIFO)
-    #expect(cell(panel, "size", row: row("pipe")).textField?.stringValue == "<FIFO>")
-    #expect(cell(panel, "size", row: row("f")).textField?.stringValue == "Zero KB")
+    #expect(cell(panel, "size", row: row("pipe")).textField?.stringValue == "" && name("pipe").toolTip == "Named pipe (FIFO)")
+    #expect(cell(panel, "size", row: row("f")).textField?.stringValue == "0 B")
 
     // Search results (like archives and servers) are not the folder's entries: a result named like its link wears nothing.
     let flag = panel.beginSearch("x")

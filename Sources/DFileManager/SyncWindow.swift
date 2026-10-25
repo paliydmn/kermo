@@ -41,7 +41,7 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 640),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         w.title = "Synchronize Folders"
-        w.subtitle = DirSync.place(sides.left, left) + "  ⇄  " + DirSync.place(sides.right, right)
+        w.subtitle = DirSync.place(sides.left, left) + "  ↔  " + DirSync.place(sides.right, right)
         w.isReleasedWhenClosed = false
         super.init(window: w)
         w.delegate = self
@@ -157,7 +157,6 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
     }
 
     private func updateSummary() {
-        let fmt = ByteCountFormatter()
         func total(_ a: DirSync.Action, _ side: (DirSync.Item) -> FileItem?) -> (Int, Int64) {
             let xs = items.filter { $0.action == a }
             return (xs.count, xs.reduce(0) { $0 + (side($1)?.size ?? 0) })
@@ -174,8 +173,8 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
             return "to Trash: \(n)   "
         }
         summary.stringValue = items.isEmpty && flag?.isCancelled == false ? "Folders are identical."
-            : "→ \(nr) (\(fmt.string(fromByteCount: br)))   ← \(nl) (\(fmt.string(fromByteCount: bl)))   "
-            + gone(.trashLeft, sides.left) + gone(.trashRight, sides.right) + "conflicts skipped: \(conflicts)   equal: \(equal)   · click ⇄ to change a row"
+            : "→ \(nr) (\(ByteCountFormatter.short(br)))   ← \(nl) (\(ByteCountFormatter.short(bl)))   "
+            + gone(.trashLeft, sides.left) + gone(.trashRight, sides.right) + "conflicts skipped: \(conflicts)   equal: \(equal)   · click a row's arrow to change it"
         syncButton.isEnabled = nr + nl + trash > 0
     }
 
@@ -197,7 +196,7 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
     @objc private func setSkip() { setAction(.skip, rows: table.selectedRowIndexes) }
     @objc private func setTrash() { setAction(.trashLeft, rows: table.selectedRowIndexes) }
 
-    /// Clicking the ⇄ column cycles through what the row can do.
+    /// Clicking the arrows' column cycles through what the row can do.
     @objc private func rowClicked() {
         guard table.clickedColumn == 2, shown.indices.contains(table.clickedRow) else { return }
         let it = items[shown[table.clickedRow]]
@@ -229,7 +228,7 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
         let df = Self.dateFormat
         func side(_ f: FileItem?) -> String {
             guard let f else { return "—" }
-            return f.kind == .dir ? "folder" : "\(ByteCountFormatter.string(fromByteCount: f.size, countStyle: .file)) · \(df.string(from: Date(timeIntervalSince1970: f.mtime)))"
+            return f.kind == .dir ? "folder" : "\(ByteCountFormatter.short(f.size)) · \(df.string(from: Date(timeIntervalSince1970: f.mtime)))"
         }
         tf.alignment = .left
         tf.font = .systemFont(ofSize: NSFont.systemFontSize)
@@ -237,20 +236,27 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
         switch column?.identifier.rawValue {
         case "path":
             tf.stringValue = it.path + ((it.left ?? it.right)?.kind == .dir ? "/" : "") + (it.unreadable.map { "  — can't read: \($0)" } ?? "")
-            if it.isConflict { tf.textColor = .systemOrange }
+            if it.isConflict { tf.textColor = Palette.warn }
         case "left": tf.stringValue = side(it.left)
         case "right": tf.stringValue = side(it.right)
         default:
             tf.alignment = .center
             tf.font = .boldSystemFont(ofSize: 14)
-            switch it.action {
-            case .toRight: tf.stringValue = "→"; tf.textColor = .systemBlue
-            case .toLeft: tf.stringValue = "←"; tf.textColor = .systemGreen
-            case .skip: tf.stringValue = it.isConflict ? "≠" : "·"; tf.textColor = it.isConflict ? .systemOrange : .secondaryLabelColor
-            case .equal: tf.stringValue = "="; tf.textColor = .secondaryLabelColor
-            case .trashLeft: tf.stringValue = "✕ ·"; tf.textColor = .systemRed
-            case .trashRight: tf.stringValue = "· ✕"; tf.textColor = .systemRed
+            let font = tf.font!, dot = NSAttributedString(string: " · ", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor])
+            let center = NSMutableParagraphStyle()
+            center.alignment = .center
+            let mark = NSMutableAttributedString()
+            switch it.action {   // which way, in the text's color; a conflict amber, the Trash red: it deletes
+            case .toRight: mark.append(Symbol.right.text(.labelColor, font: font, label: "copy to the right"))
+            case .toLeft: mark.append(Symbol.left.text(.labelColor, font: font, label: "copy to the left"))
+            case .skip where it.isConflict: mark.append(Symbol.warn.text(Palette.warn, font: font, label: "conflict, skipped"))
+            case .skip: mark.append(NSAttributedString(string: "·", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
+            case .equal: mark.append(NSAttributedString(string: "=", attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]))
+            case .trashLeft: mark.append(Symbol.trash.text(Palette.fail, font: font, label: "to the Trash on the left")); mark.append(dot)
+            case .trashRight: mark.append(dot); mark.append(Symbol.trash.text(Palette.fail, font: font, label: "to the Trash on the right"))
             }
+            mark.addAttribute(.paragraphStyle, value: center, range: NSRange(location: 0, length: mark.length))
+            tf.attributedStringValue = mark
         }
         return tf
     }

@@ -217,7 +217,7 @@ public enum Services {
             case .resetFailed: healthy = state.active != "failed"
             }
             if healthy == true, state.type == "oneshot", state.active == "inactive", c == .start || c == .restart {
-                return (.ok, "✓ \(name) \(c.done) on \(server) at \(time) — a oneshot, ran and finished (\(now!))")
+                return (.ok, "\(name) \(c.done) on \(server) at \(time) — a oneshot, ran and finished (\(now!))")
             }
         }
         return line(c.noun, c.done, of: name, "the service" + (atBoot ? "'s unit file" : ""), on: server, at: time, ran: ran,
@@ -230,18 +230,18 @@ public enum Services {
                             ran: Ran, now: String?, healthy: Bool?, stateError: String?) -> (outcome: Outcome, line: String) {
         switch ran {
         case .notRun(let why): return (.notRun, "\(name): not \(done) — \(why); nothing ran")
-        case .unknown(let why): return (.warning, "⚠ \(name): stopped waiting for the \(noun) on \(server) at \(time) (\(why)) — it may have run")
-        case .couldNotRun(let why): return (.failed, "✕ \(name): the \(noun) didn't run on \(server) at \(time): \(why)")
+        case .unknown(let why): return (.warning, "\(name): stopped waiting for the \(noun) on \(server) at \(time) (\(why)) — it may have run")
+        case .couldNotRun(let why): return (.failed, "\(name): the \(noun) didn't run on \(server) at \(time): \(why)")
         case .failed(let exit, let output):
             let first = output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
             let why = first.map { $0.count > 160 ? $0.prefix(159) + "…" : $0 } ?? "exit \(exit)"
-            return (.failed, "✕ \(name): the \(noun) failed on \(server) at \(time): \(why)" + (now.map { " — now \($0)" } ?? ""))
+            return (.failed, "\(name): the \(noun) failed on \(server) at \(time): \(why)" + (now.map { " — now \($0)" } ?? ""))
         case .passed:
             guard let now, let healthy else {
-                return (.warning, "⚠ \(name) \(done) on \(server) at \(time), but its state couldn't be read" + (stateError.map { ": \($0)" } ?? ""))
+                return (.warning, "\(name) \(done) on \(server) at \(time), but its state couldn't be read" + (stateError.map { ": \($0)" } ?? ""))
             }
-            guard healthy else { return (.warning, "⚠ \(name): the \(noun) completed on \(server) at \(time), but \(what) is \(now)") }
-            return (.ok, "✓ \(name) \(done) on \(server) at \(time) — \(now)")
+            guard healthy else { return (.warning, "\(name): the \(noun) completed on \(server) at \(time), but \(what) is \(now)") }
+            return (.ok, "\(name) \(done) on \(server) at \(time) — \(now)")
         }
     }
 

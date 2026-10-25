@@ -62,7 +62,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     #expect(cmdR())
     #expect(panel.statusText == "web is restarting… wait for it")
     await until { !list.said.isEmpty }
-    #expect(list.said.hasPrefix("✓ web restarted on localhost at ") && list.said.hasSuffix(" — active · running"), "\(list.said)")
+    #expect(list.said.hasPrefix("\u{FFFC} web restarted on localhost at ") && list.said.hasSuffix(" — active · running"), "\(list.said)")
     #expect(list.highlighted?.subtitle == "active · running" && list.highlighted?.subtitleColor == nil && list.highlighted?.busy == false)
     #expect(list.rows.map(\.title) == ["web"] && Picker.current === list, "what's typed stays")
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "restart -- web.service\n", "once")
@@ -72,7 +72,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     try Data().write(to: URL(fileURLWithPath: dir + "/fail"))
     #expect(cmdR())
     await until { list.said.hasPrefix("✕") }
-    #expect(list.said.hasPrefix("✕ web: the restart failed on localhost at ") && list.said.hasSuffix(": Job for web.service failed. — now failed"), "\(list.said)")
+    #expect(list.said.hasPrefix("\u{FFFC} web: the restart failed on localhost at ") && list.said.hasSuffix(": Job for web.service failed. — now failed"), "\(list.said)")
     func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? NSButton).map { [$0] } ?? buttons($0) } }
     let output = try #require(buttons(list.panel.contentView!).first { $0.title == "Output…" && !$0.isHidden })
     var asked: (String, Bool)?
@@ -86,7 +86,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     await until { list.highlighted?.subtitle == "Starting…" }
     #expect(list.highlighted?.subtitle == "Starting…")
     await until { list.said.contains("the start") }
-    #expect(list.said.hasPrefix("⚠ web: the start completed on localhost at ") && list.said.hasSuffix(", but the service is failed"), "\(list.said)")
+    #expect(list.said.hasPrefix("\u{FFFC} web: the start completed on localhost at ") && list.said.hasSuffix(", but the service is failed"), "\(list.said)")
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8))?.hasSuffix("start -- web.service\n") == true)
 }
 
@@ -240,12 +240,12 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     #expect(asked.first?.0 == "Stop web on localhost?" && asked.first?.1 == ["Stop", "Cancel"] && asked.first?.2 == 1)
     #expect(list.said == "web: not stopped — cancelled; nothing ran" && !FileManager.default.fileExists(atPath: dir + "/systemctl.log"))
     press("Stop…")
-    await until { list.said.hasPrefix("✓") }
-    #expect(list.said.hasPrefix("✓ web stopped on localhost at ") && list.highlighted?.subtitle == "inactive · dead", "\(list.said)")
+    await until { list.said.hasPrefix("\u{FFFC} web stopped") }
+    #expect(list.said.hasPrefix("\u{FFFC} web stopped on localhost at ") && list.highlighted?.subtitle == "inactive · dead", "\(list.said)")
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "stop -- web.service\n" && waited == [true])
     press("Refresh Status")
     await until { list.said.hasPrefix("↻") }
-    #expect(list.said.hasPrefix("↻ web on localhost at ") && list.said.hasSuffix(" — inactive · dead, enabled at boot") && waited == [true, false])
+    #expect(list.said.hasPrefix("\u{FFFC} web on localhost at ") && list.said.hasSuffix(" — inactive · dead, enabled at boot") && waited == [true, false])
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "stop -- web.service\n", "nothing ran")
 }
 
@@ -272,7 +272,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     await until { list.highlighted?.busy == true }
     #expect(list.highlighted?.subtitle == "Restarting…")
     await until { !list.said.isEmpty }
-    #expect(list.said.hasPrefix("⚠ api: the restart completed on localhost at ") && list.said.hasSuffix(", but the container is exited"), "\(list.said)")
+    #expect(list.said.hasPrefix("\u{FFFC} api: the restart completed on localhost at ") && list.said.hasSuffix(", but the container is exited"), "\(list.said)")
     #expect(list.highlighted?.subtitle == "exited" && list.highlighted?.busy == false)
     #expect((try? String(contentsOfFile: dir + "/podman.log", encoding: .utf8)) == "restart -- api\n")
 }

@@ -57,6 +57,7 @@ Set an option with `defaults write com.dmn.dfilemanager <key> <value>`. Remove i
 
 | Key | Value | Default | Effect |
 |---|---|---|---|
+| `isoDates` | `-bool` | `false` | `true`: the Modified column always shows `2026-10-25 13:33`, not "Today 13:33", "Oct 14 13:32" or "2024-03-01" ([Modified column](files.md#sizes-hidden-files-and-sort)) |
 | `keyBarHoldDelay` | seconds | 0.12 | How long to hold a modifier before the [key bar](window.md#key-bar) shows its shortcuts |
 | `terminalFont` | font name | SF Mono | Font of the [terminal](terminal.md#options) |
 | `terminalFontSize` | points | 13 | Its size, 9–36 (⌘+ / ⌘− save it) |

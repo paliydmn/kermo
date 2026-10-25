@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     var diskWatch: DiskWatch?
     var volumeBusy: Set<String> = []   // mounting, unmounting, ejecting: mount points, and BSD names of those not mounted
     private var configHosts: [String] = []   // ~/.ssh/config aliases
-    private var sftpErrors: [String: String] = [:]   // host → its last failure, until any panel gets through
+    private var sftpErrors: [String: String] = [:]   // ServerRow.key → its last failure, until any panel gets through
     private var sidebarRefresh: Task<Void, Never>?
     private var activeIndex = 0
     private var restoredDividers: [Double] = []   // the session's, till the panels are first laid out
@@ -431,8 +431,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         panel.onGone = { [unowned self] in forgetGone([$0]) }
         panel.onGitChange = { [unowned self, unowned panel] in if panel === active { updateGitRow() } }
         panel.onRemoteResult = { [unowned self] target, error in
-            guard sftpErrors[target.host] != error else { return }
-            sftpErrors[target.host] = error
+            guard sftpErrors[ServerRow.key(target)] != error else { return }
+            sftpErrors[ServerRow.key(target)] = error
             refreshSidebar()
         }
         panel.onPathChange = { [unowned self, unowned panel] in
@@ -555,7 +555,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     private func setUpSearch() {
         search.results = { [unowned self] q, flag in
-            let fav = bookmarks.map { SearchHit(title: Bookmark.title($0), subtitle: ($0 as NSString).abbreviatingWithTildeInPath, detail: "★", target: .folder($0)) }
+            let fav = bookmarks.map { SearchHit(title: Bookmark.title($0), subtitle: ($0 as NSString).abbreviatingWithTildeInPath, detail: "favorite", target: .folder($0)) }
             let freq = frecency.ranked().filter { !bookmarks.contains($0) }.prefix(300).map {
                 SearchHit(title: Self.folderName($0), subtitle: ($0 as NSString).abbreviatingWithTildeInPath, target: .folder($0))
             }
@@ -671,7 +671,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         servers.sessions = terminal.tabs.compactMap { t in
             if case .ssh(let target) = t.kind { ServerSession(id: t.id, kind: .ssh, target: target, running: t.isRunning) } else { nil }
         } + panels.flatMap(\.remoteTabs).map { ServerSession(id: $0.id, kind: .sftp, target: $0.target, dir: $0.dir) }
-        servers.connecting = Set(panels.compactMap(\.connecting?.host))
+        servers.connecting = Set(panels.compactMap { $0.connecting.map(ServerRow.key) })
         servers.errors = sftpErrors
         for s in savedServers {
             let key = ServerRow.key(s.target), on = tunnels.listening(s).map(\.title)
@@ -893,7 +893,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if id == OpsController.toolbarID { return ops.toolbarItem }
         guard id == Self.sidebarButtonID else { return nil }
         let item = NSToolbarItem(itemIdentifier: id)
-        item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Sidebar")
+        item.image = Symbol.sidebar.image("Sidebar")
         item.label = "Sidebar"
         item.toolTip = "Show/Hide Sidebar  ⌃⌘S"
         item.isBordered = true
@@ -1242,13 +1242,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if terminal?.isShown == true, let t = terminal.current { remote = t.host.map { ($0, t.cwd) }; local = t.folder ?? local }
         else { remote = (active.remote ?? active.parked).map { ($0.target.host, $0.dir) } }
         let path = remote.map { r in r.dir.map { "\(r.host):\($0)" } ?? r.host } ?? (local as NSString).abbreviatingWithTildeInPath
-        promptLabel.stringValue = (remote != nil ? "🌐 " : "") + path + " $"   // ⌘E runs as the user, on a root panel too
+        promptLabel.stringValue = path + " $"   // ⌘E runs as the user, on a root panel too
         let root = terminal?.isShown == true ? nil : (active.remote ?? active.parked).flatMap { $0.target.sudo ? $0 : nil }
         cmdField.placeholderString = Self.commandHint(root: root?.target)
         sidebar.highlight(sidebarKey)
         keyBar.server = (active.remote ?? active.parked) != nil
         updateGitRow()
-        window?.title = root.map { "\($0.target.shown):\($0.dir) #" }?.bidiVisible ?? path.bidiVisible   // what the panel's header says
+        window?.title = root.map { "\($0.target.shown):\($0.dir)" }?.bidiVisible ?? path.bidiVisible   // what the panel's header says
         guard remote == nil else { window?.representedURL = nil; return }
         let dir = active.path   // proxy icon, once the folder is known to be there (asked off the main thread)
         Task {

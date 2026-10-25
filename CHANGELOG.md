@@ -15,8 +15,22 @@ Release:
 
 ### Added
 - **F1** over a viewer or an editor lists that window's keys and the menu keys that work there; it was greyed out.
+- `isoDates`: `defaults write com.dmn.dfilemanager isoDates -bool true` keeps the Modified column at `2024-03-01 13:33`.
+
+### Changed
+- Marked files are bold in the accent color with a ✓ before the icon, not red: red now means only that something failed or can't be undone. Themes keep their own mark color, and get the ✓ too; GitHub Light and Solarized Light mark in pink and magenta instead of red.
+- The Git column: `M` is amber, `A` green, `?` and `D` grey (`D` struck through), a conflict `U` red with ⚠; a staged letter is bold. No purple or orange there.
+- A volume in the sidebar has a bar of how full it is under its name, with `350 GB free`: grey, amber from 85 %, red from 95 %. It was used in red and free in green.
+- Production, root and locked are one chip everywhere — PROD, ROOT, LOCKED — in the path bar, server pickers, terminal tabs, tunnels, Run on Servers, Activity and the editor's title bar, instead of 🟣 PROD, 🔒, `#` and purple names.
+- Symbols instead of emoji and text marks: the path bar shows a server rack, an archive box or a magnifier before the path; the status line, the command line and output windows lose 🌐 📦 🔍; Activity, the Sync window, Services and the pickers use one set of signs, one for "failed".
+- Sidebar icons are grey, not blue: color is for state. A server whose last connection failed shows a red ◆ that says why when you point at it; a failed service has one too.
+- The Size column is empty for a folder not counted yet and for a special file (its kind is in the tooltip), not `<DIR>` or `<FIFO>`. Bytes read `310 B` everywhere — the status line, operation rows, Activity, the viewer and the editor — not "310 bytes" or "Zero KB".
+- The Modified column says `Today 13:33`, `Yesterday 09:10`, `Oct 14 13:32` this year and `2024-03-01` before.
+- The Activity button at rest is a clock going round instead of a download arrow.
+- An executable file has Finder's executable icon, so it stands out in the System theme too.
 
 ### Fixed
+- Two saved servers on one address with different ports no longer share the sidebar's "connecting" and "failed" marks.
 - **F1** lists the Git menu's keys (⌃B, ⌃⇧C, ⌃G …); they were missing there and under the key bar's **+N**. Its sections follow the menu bar's order.
 - **About Kermo** and **Check for Updates…** work while a viewer, an editor or the terminal is in front; they were greyed out.
 - On a server's panel **F8** says **Delete…**, in red in the key bar, and in the File menu and a file's right-click menu: it deletes for good after asking, since a server has no Trash. A server tab that isn't connected yet says so too.
