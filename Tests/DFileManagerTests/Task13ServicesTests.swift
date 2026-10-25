@@ -76,7 +76,7 @@ import Testing
         await until { Editor.window(for: url) != nil }
         let w = try #require(Editor.window(for: url))
         defer { w.close() }
-        #expect(w.subtitle == "“k.service” is root's")
+        #expect(w.statusText == "“k.service” is root's")
     }
 
     /// A follow's remote command ends with ssh; anything else runs as it did.

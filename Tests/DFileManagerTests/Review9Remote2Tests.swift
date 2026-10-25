@@ -15,8 +15,8 @@ import Testing
     try Data(repeating: 0x61, count: 2048).write(to: url)
     let fmt = { ByteCountFormatter.short($0) }
     func loaded(_ v: Viewer) async throws -> String {
-        for _ in 0..<1000 where v.window?.subtitle.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(20)) }
-        return v.window?.subtitle ?? ""
+        for _ in 0..<1000 where v.window?.statusText.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(20)) }
+        return v.window?.statusText ?? ""
     }
 
     let tail = Viewer(url, remote: (SFTPTarget(host: "web"), "/var/log/syslog", 5_000_000_000))

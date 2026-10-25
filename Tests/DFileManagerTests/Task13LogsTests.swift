@@ -3,7 +3,7 @@ import AppKit
 import Testing
 @testable import DFileManager
 
-@MainActor private func text(_ w: NSWindow) -> NSTextStorage? { ((w.contentView as? NSScrollView)?.documentView as? NSTextView)?.textStorage }
+@MainActor private func text(_ w: NSWindow) -> NSTextStorage? { (w.docFrame?.scroll.documentView as? NSTextView)?.textStorage }
 
 @MainActor private func color(_ s: NSTextStorage, of word: String) -> NSColor? {
     let r = (s.string as NSString).range(of: word)
@@ -98,25 +98,25 @@ private func tempDir() throws -> String {
     let tv = try #require(v.scroll.documentView as? NSTextView)
     func until(_ what: String, _ ok: () -> Bool) async throws {
         for _ in 0..<500 where !ok() { try await Task.sleep(for: .milliseconds(10)) }
-        #expect(ok(), "\(what): \(tv.string) · \(v.window?.subtitle ?? "")")
+        #expect(ok(), "\(what): \(tv.string) · \(v.window?.statusText ?? "")")
     }
     try await until("loaded") { tv.string.hasPrefix("GET / 200") }
     v.cycleLevels()
     try await until("errors and warnings") { tv.string == "warning: slow\nGET /x error 500\n" }
-    #expect(v.window?.subtitle.contains("ERRORS + WARNINGS") == true)
+    #expect(v.window?.statusText.contains("errors and warnings") == true)
     v.cycleLevels()
-    try await until("errors") { tv.string == "GET /x error 500\n" && v.window?.subtitle.contains("ERRORS ONLY") == true }
+    try await until("errors") { tv.string == "GET /x error 500\n" && v.window?.statusText.contains("errors only") == true }
     v.setLineFilter(Viewer.filter("post", level: v.lineFilter?.level))   // what & does
     try await until("both") { tv.string == "" }
     v.cycleLevels()
-    try await until("all levels, still POST") { tv.string == "POST / 200\n" && v.window?.subtitle.contains("ERRORS") == false }
+    try await until("all levels, still POST") { tv.string == "POST / 200\n" && v.window?.statusText.contains("ERRORS") == false }
     v.setLineFilter(nil)
     try await until("all") { tv.string.hasPrefix("GET / 200\nwarning") }
 
     v.setNumbers(true)
     #expect(v.scroll.rulersVisible && defaults.bool(forKey: "viewerLineNumbers"))
     v.cycleLevels()
-    try await until("filtered") { v.window?.subtitle.contains("line numbers: not while filtered") == true }
+    try await until("filtered") { v.window?.statusText.contains("line numbers: not while filtered") == true }
     #expect(!v.scroll.rulersVisible)
     v.cycleLevels(); v.cycleLevels()
     try await until("back") { v.lineFilter == nil && v.scroll.rulersVisible }
@@ -145,11 +145,11 @@ private func tempDir() throws -> String {
     let tv = try #require(v.scroll.documentView as? NSTextView)
     for _ in 0..<500 where !tv.string.hasPrefix("line 1\n") { try await Task.sleep(for: .milliseconds(10)) }
     v.setFollow(true)
-    #expect(v.window?.subtitle.contains("FOLLOWING · paused") == false)
+    #expect(v.window?.statusText.contains("FOLLOWING · paused") == false)
     tv.scrollRangeToVisible(NSRange(location: 0, length: 0))
-    for _ in 0..<100 where v.window?.subtitle.contains("paused — End resumes") != true { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(v.window?.subtitle.contains("FOLLOWING · paused — End resumes") == true)
+    for _ in 0..<100 where v.window?.statusText.contains("paused — End resumes") != true { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(v.window?.statusText.contains("following, paused — End resumes") == true)
     tv.scrollToEndOfDocument(nil)
-    for _ in 0..<100 where v.window?.subtitle.contains("paused") == true { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(v.window?.subtitle.contains("FOLLOWING") == true && v.window?.subtitle.contains("paused") == false)
+    for _ in 0..<100 where v.window?.statusText.contains("paused") == true { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(v.window?.statusText.contains("following") == true && v.window?.statusText.contains("paused") == false)
 }

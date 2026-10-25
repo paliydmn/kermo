@@ -64,7 +64,7 @@ private func append(_ path: String, _ s: String) throws {
     try await waitUntil("loaded") { tv.string.hasPrefix("start") }
     v.setLineFilter(LineFilter("get"))
     try await waitUntil("filtered") { tv.string == "GET /a 200\nGET /b 500 error\n" }
-    #expect(v.window?.subtitle.contains("LINES WITH “get”") == true)
+    #expect(v.window?.statusText.contains("lines with “get”") == true)
     v.setLineFilter(LineFilter("!get"))
     try await waitUntil("excluded") { tv.string == "start\nPOST /c 200\n" }
 

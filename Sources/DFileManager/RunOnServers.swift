@@ -91,6 +91,8 @@ final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearch
     let runButton = NSButton(title: "", target: nil, action: nil)
     private let onRun: (String, [Choice]) -> Void
     private var keys: Any?
+    private let bar = KeyBarView(chips: false)
+    private var focus: NSKeyValueObservation?
     private(set) static var current: RunOnServersSheet?
 
     static func show(on parent: NSWindow, choices: [Choice], ticked: Set<String>, command: String, onRun: @escaping (String, [Choice]) -> Void) {
@@ -109,7 +111,7 @@ final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearch
         command.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         command.placeholderString = "uptime · df -h / · systemctl is-active nginx"
         command.delegate = self
-        filter.placeholderString = "Filter by name or host — ⌘A ticks all shown, ⇧⌘A none"
+        filter.placeholderString = "Filter by name or host"
         filter.delegate = self
         let note = NSTextField(wrappingLabelWithString: "Runs in each server's login shell, as F2 does: no terminal, so sudo only with -n.")
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -152,7 +154,7 @@ final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearch
 
         let root = NSView()
         let label = NSTextField(labelWithString: "Command:")
-        for v in [label, command, note, filter, scroll, buttons] as [NSView] {
+        for v in [label, command, note, filter, scroll, buttons, bar] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
         }
@@ -181,11 +183,16 @@ final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearch
             list.bottomAnchor.constraint(equalTo: page.bottomAnchor, constant: -6),
             buttons.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 14),
             buttons.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
-            buttons.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -14),
+            bar.topAnchor.constraint(equalTo: buttons.bottomAnchor, constant: 8),
+            bar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            bar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
         window!.title = "Run on Servers"
         window!.contentView = root
         window!.autorecalculatesKeyViewLoop = true   // Tab: command, filter, the boxes (with keyboard navigation on), the buttons
+        // After the hop: the field editor gets its field (delegate) after it becomes the first responder.
+        focus = window!.observe(\.firstResponder) { [weak self] _, _ in Task { @MainActor in self?.showKeys() } }
         update()
         keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             let ticked = MainActor.assumeIsolated { () -> Bool in
@@ -199,6 +206,20 @@ final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearch
         }
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Its keys, along the bottom: ⌘A and ⇧⌘A only while the filter has the focus — in the command, ⌘A selects its text.
+    var sheetKeys: [AppDelegate.KeyRow] {
+        func key(_ k: String, _ title: String, _ run: @escaping @MainActor () -> Void) -> AppDelegate.KeyRow {
+            AppDelegate.KeyRow(section: "Run on Servers", title: title, key: k, run: run)
+        }
+        let inFilter = (window?.firstResponder as? NSTextView)?.delegate === filter
+        return [key("↩", "Run") { [unowned self] in run() }]
+            + (inFilter ? [key("⌘A", "Tick All") { [unowned self] in tickShown(true) }, key("⇧⌘A", "Untick All") { [unowned self] in tickShown(false) }] : [])
+            + [key("⎋", "Cancel") { [unowned self] in cancelSheet() }]
+    }
+
+    private func showKeys() { bar.show(sheetKeys) }
+    var barShown: [KeySlot] { bar.list ?? [] }   // tests
 
     /// What runs: ticked and shown.
     var chosen: [Choice] { zip(choices, boxes).filter { $1.state == .on && !$1.isHidden }.map(\.0) }
@@ -240,6 +261,7 @@ final class RunOnServersSheet: NSWindowController, NSTextFieldDelegate, NSSearch
     override func close() {
         keys.map(NSEvent.removeMonitor)
         keys = nil
+        focus = nil
         if let w = window, let parent = w.sheetParent { parent.endSheet(w) }
         Self.current = nil
     }

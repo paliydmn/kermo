@@ -157,7 +157,7 @@ extension ServerCopiesTests {
 }
 
 /// A save's "no history: …" went only to the panels' status line, which sits behind the editor that saved: the editor
-/// says it too, in place of its subtitle for a few seconds.
+/// says it too, in its status line for a few seconds.
 @MainActor @Test func editorSaysWhatASaveDidntKeep() throws {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-enote-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -165,10 +165,9 @@ extension ServerCopiesTests {
     try Data("x\n".utf8).write(to: URL(fileURLWithPath: dir + "/app.conf"))
     let e = try Editor(URL(fileURLWithPath: dir + "/app.conf"), remote: "web:/etc/app.conf")
     defer { e.close() }
-    let usual = e.window?.subtitle
-    #expect(usual?.contains("⌘S Save") == true)
+    #expect(e.window?.statusText == "UTF-8")
     e.flash("Saved “app.conf” to web · no history: file over 5 MB")
-    #expect(e.window?.subtitle == "Saved “app.conf” to web · no history: file over 5 MB")
+    #expect(e.window?.statusText == "Saved “app.conf” to web · no history: file over 5 MB")
 }
 
 /// Revert put a version on the server, but its open editor still showed the old text, and its next ⌘S asked "changed

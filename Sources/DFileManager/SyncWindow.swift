@@ -24,6 +24,7 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
     private let modePopup = NSPopUpButton(title: "", target: nil, action: nil)
     private let summary = NSTextField(labelWithString: "")
     private let syncButton = NSButton(title: "Synchronize", target: nil, action: nil)
+    private let keys = KeyBarView(chips: false)
 
     static func show(left: String, right: String, sides: (left: Endpoint, right: Endpoint),
                      enqueue: @escaping ([(job: FileJob, label: String)]) async -> Bool) {
@@ -86,19 +87,20 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
         let bottom = NSStackView(views: [summary, syncButton])
 
         let root = NSView()
-        for v in [top, scroll, bottom] as [NSView] {
+        for v in [top, scroll, bottom, keys] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(v)
             NSLayoutConstraint.activate([
-                v.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
-                v.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+                v.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: v === keys ? 0 : 12),
+                v.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: v === keys ? 0 : -12),
             ])
         }
         NSLayoutConstraint.activate([
             top.topAnchor.constraint(equalTo: root.topAnchor, constant: 10),
             scroll.topAnchor.constraint(equalTo: top.bottomAnchor, constant: 8),
             bottom.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 8),
-            bottom.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -10),
+            keys.topAnchor.constraint(equalTo: bottom.bottomAnchor, constant: 4),
+            keys.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
         w.contentView = root
         w.center()
@@ -113,6 +115,18 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
     }()
 
     override func cancelOperation(_ sender: Any?) { window?.performClose(nil) }   // ⎋: closes, and so stops Comparing…
+
+    /// Its own keys, first on its key bar (then the menu bar's that work there, as F1 over it lists them).
+    static func keys(of window: NSWindow?) -> [AppDelegate.KeyRow]? {
+        open.first { $0.window === window && window != nil }.map { s in
+            [AppDelegate.KeyRow(section: "Synchronize", title: "Synchronize", key: "↩") { if s.syncButton.isEnabled { s.synchronize() } },
+             AppDelegate.KeyRow(section: "Synchronize", title: "Close", key: "⎋") { s.cancelOperation(nil) }]
+        }
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {   // the menu's keys work by the key window
+        if let w = window { keys.show(DocFrame.rows(w)) }
+    }
 
     func windowWillClose(_ notification: Notification) {
         flag?.cancel()

@@ -36,6 +36,7 @@ The bottom row shows the keys of what has the focus. Each slot is the key, then 
 - **The chips ⇧ ⌥ ⌘ ⌃** on the left light up while you hold them. Click one to keep its layer shown for the mouse (it's outlined then; click two for a combination such as ⇧⌘); a second click, ⎋ or running a command lets go.
 - **+N** stands for the slots that don't fit the window: the cheat sheet filtered to that layer.
 - **Terminal:** while the terminal is up, the bar shows its keys: **⌃O Panels**, new and closed tabs, splits, panes, text size.
+- **Viewer, editor, output windows** have a key bar of their own, the same component: see [Viewer and editor](viewer-editor.md).
 - **Command line:** while ⌘E has the focus, the bar shows its keys: **↩ Run in Shell**, **⇧↩ Output Window**, **⌘↩ Run in Terminal**, **↑↓ History**, **⎋ Back to Panel**, and what `%f %s %d %D` stand for.
 - ⌥ plus a digit does what its F-key does, so those layers sum them up in one slot: `⌥1…0 = F1…F10`, `⌥⇧4 5 6 8 = ⇧F4 5 6 8`.
 - On a server's panel F8 says **Delete…** in red: it deletes for good after asking, because a server has no Trash.

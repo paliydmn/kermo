@@ -56,7 +56,7 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let e = try Editor(URL(fileURLWithPath: path))
     defer { e.close() }
     #expect(e.textView.string == "# Налаштування\nname = \u{FFFD} сервер\n")
-    #expect(e.window?.subtitle.contains("UTF-8 (damaged)") == true)
+    #expect(e.window?.statusText.contains("UTF-8 (damaged)") == true)
     e.textView.string += "мітка = так\n"
     #expect(await !e.save())
     try await answer(e.window, .alertSecondButtonReturn)   // Cancel
@@ -189,11 +189,11 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     #expect(v.visibleTop() == nil)   // touched nothing past the new end
     try await waitUntil("remapped") { v.big?.count == 1 << 20 && !v.win.isEmpty && !v.sliding }
     #expect(v.win.upperBound <= 1 << 20)
-    let subtitle = v.window?.subtitle ?? ""
+    let subtitle = v.window?.statusText ?? ""
     #expect(subtitle.hasPrefix("file truncated · 1 MB"), "\(subtitle)")
     v.showWindow(around: 0, top: 0)
     try await waitUntil("start") { v.win.lowerBound == 0 && !v.sliding }
-    #expect(v.window?.subtitle.contains("truncated") == false)
+    #expect(v.window?.statusText.contains("truncated") == false)
 }
 
 /// V5 follow-up: a big log behind an 8 GB sparse hole (copytruncate) opens as text without reading through the hole,
@@ -249,7 +249,7 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let tv = try #require(v.scroll.documentView as? NSTextView)
     try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     #expect(v.big == data && v.win.count <= 256 << 10)
-    let subtitle = v.window?.subtitle ?? ""
+    let subtitle = v.window?.statusText ?? ""
     #expect(subtitle.contains("· gzip, ") && subtitle.contains(" unpacked · UTF-8 · showing"), "\(subtitle)")
     press(tv, "", 119)   // End
     try await waitUntil("last window") { v.win.upperBound == data.count && !v.sliding }
@@ -271,7 +271,7 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
     try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
-    #expect(v.window?.subtitle.contains("p readable") == false)
+    #expect(v.window?.statusText.contains("p readable") == false)
     press(tv, "p", 35)
     try await Task.sleep(for: .milliseconds(200))
     #expect(v.big != nil && tv.string.utf16.count <= 256 << 10)

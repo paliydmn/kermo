@@ -55,25 +55,27 @@ import Testing
     for c in commands { for k in c.keys where fixed[k] != nil { #expect(["mark.all ⌘A", "search ⌘F"].contains("\(c.id) \(k.display)")) } }
 }
 
-/// F1 over a viewer or an editor: its own keys, then the menu bar's (the registry's only where they work there).
+/// F1 over a viewer or an editor: its own keys, then the menu bar's that work there — someone in that window takes
+/// them and they aren't greyed (no Paste where nothing can be typed) — menu by menu, the app's last.
 @MainActor @Test func keyHelpOverAViewer() async throws {
     _ = NSApplication.shared
-    let app = AppDelegate()
-    let s = app.keySections(over: NSWindow(), menu: app.makeMenu())
-    #expect(s.map(\.title) == ["Kermo", "File", "Edit", "Window"], "no Viewer or Editor section for another window")
-    #expect(s.first { $0.title == "Edit" }?.rows.map(\.keys) == ["⌘Z", "⇧⌘Z", "⌘X", "⌘C", "⌘V", "⌘A", "⌘F", "⌘G"])
-    #expect(s.first { $0.title == "Window" }?.rows.contains { $0.title == "Main Window" && $0.keys == "⌘0" } == true)
+    let app = AppDelegate(), menu = app.makeMenu()
+    let plain = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: true)
+    let s = app.keySections(over: plain, menu: menu)
+    #expect(!s.contains { $0.title == "Viewer" || $0.title == "Editor" || $0.title == "Edit" }, "no own keys, nothing to copy or paste: \(s)")
+    #expect(s.first { $0.title == "Window" }?.rows.contains { $0.title == "Minimize" && $0.keys == "⌘M" } == true && s.last?.title == "Kermo", "\(s)")
 
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-r1-keys-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(atPath: dir) }
     try Data("start\nGET /a 200\n".utf8).write(to: URL(fileURLWithPath: dir + "/app.log"))
-    let v = Viewer(URL(fileURLWithPath: dir + "/app.log"))
-    defer { v.close() }
-    for _ in 0..<500 where v.window?.subtitle.contains("⎋ Close") != true { try await Task.sleep(for: .milliseconds(10)) }
-    let subtitle = try #require(v.window?.subtitle)
-    #expect(v.keyHints.allSatisfy { subtitle.contains("\($0.key) \($0.label)") }, "F1 and the subtitle say the same")
-    #expect(v.keyHints.contains { $0 == ("&", "Filter") } && v.keyHints.last! == ("⎋", "Close"))
+    let v = Viewer.show(URL(fileURLWithPath: dir + "/app.log"))
+    defer { v.window?.close() }
+    for _ in 0..<500 where v.window?.statusText.hasPrefix("Loading") != false { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(v.keyHints.map(\.key) == ["&", "e", "h", "f", "l", "w", "⌘F", "⎋"] && v.keyHints.last! == ("⎋", "Close"))
+    let over = app.keySections(over: try #require(v.window), menu: menu)
+    #expect(over.first?.title == "Viewer" && over.first?.rows.map(\.keys) == v.keyHints.map(\.key) && over.last?.title == "Kermo")
+    #expect(over.first { $0.title == "Edit" }?.rows.contains { $0.keys == "⌘V" } != true, "the viewer's text can't be typed in")
 }
 
 /// P-8: a server row's right-click menu starts with its first item, not a line; a favorite's ends with its own.
