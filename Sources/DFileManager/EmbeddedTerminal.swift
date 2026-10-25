@@ -132,6 +132,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     /// A command's key, as the keymap has it: the buttons' tooltips.
     var keyFor: ((String) -> String?)?
     private let maximize = NSButton(title: "", target: nil, action: nil)
+    private let rowSpace = NSView()   // with one shell and no tabs shown: the buttons at the row's right end still
     var onExit: (() -> Void)?          // last tab closed: panels come back
     var onChange: (() -> Void)?        // tabs / states changed (sidebar, saved session)
     var onDirectory: ((Tab) -> Void)?  // the current tab's shell told its folder (`cwd`)
@@ -161,6 +162,8 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         tabBar.spacing = 2
         topRow.spacing = 6
         topRow.addArrangedSubview(tabBar)
+        rowSpace.setContentHuggingPriority(.init(1), for: .horizontal)
+        topRow.addArrangedSubview(rowSpace)
         for (symbol, label, id) in [(Symbol.splitRight, "Split Terminal Right", "term.split.right"), (.maximize, "Maximize Terminal", "view.terminalFull"),
                                     (.collapse, "Hide Terminal", "view.terminal")] {
             let b = symbol == .maximize ? maximize : NSButton(title: "", target: nil, action: nil)
@@ -773,6 +776,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
 
     private func render() {
         tabBar.isHidden = groups.count < 2 && group?.panes.count == 1 && current?.kind == .shell
+        rowSpace.isHidden = !tabBar.isHidden
         for b in topRow.arrangedSubviews.compactMap({ $0 as? NSButton }) {   // the row's buttons say their keys
             guard let id = b.identifier?.rawValue else { continue }
             let what = id == "view.terminal" ? "Hide Terminal" : id == "view.terminalFull" ? (isFull ? "Restore Terminal" : "Maximize Terminal") : "Split Terminal Right"
