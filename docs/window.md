@@ -30,10 +30,13 @@ SSH tabs in the terminal come back the same way: ↩ reconnects them ([Terminal]
 
 ## Key bar
 
-The bottom row shows F1–F10. Hold ⇧, ⌥, ⌘ or ⌃ (or a combination such as ⇧⌘ or ⌃⌘) for a moment and it shows every shortcut that uses those modifiers.
+The bottom row shows the keys of what has the focus. Each slot is the key, then what it does in the words of its menu item (**F7 New Folder**, **F9 Search**); click it to run it, as if you pressed the key. A pressed shortcut highlights its slot.
 
-- **Click** a slot to run it, as if you pressed the key. A pressed shortcut highlights its slot.
-- **Hold** pins a layer for mouse use until you press ⎋ or run a command. **+N** opens the cheat sheet filtered to that layer.
+- **Panels:** F1–F10. Hold ⇧, ⌥, ⌘ or ⌃ (or a combination such as ⇧⌘ or ⌃⌘) for a moment and it shows every shortcut that uses those modifiers.
+- **The chips ⇧ ⌥ ⌘ ⌃** on the left light up while you hold them. Click one to keep its layer shown for the mouse (it's outlined then; click two for a combination such as ⇧⌘); a second click, ⎋ or running a command lets go.
+- **+N** stands for the slots that don't fit the window: the cheat sheet filtered to that layer.
+- **Terminal:** while the terminal is up, the bar shows its keys: **⌃O Panels**, new and closed tabs, splits, panes, text size.
+- **Command line:** while ⌘E has the focus, the bar shows its keys: **↩ Run in Shell**, **⇧↩ Output Window**, **⌘↩ Run in Terminal**, **↑↓ History**, **⎋ Back to Panel**, and what `%f %s %d %D` stand for.
 - ⌥ plus a digit does what its F-key does, so those layers sum them up in one slot: `⌥1…0 = F1…F10`, `⌥⇧4 5 6 8 = ⇧F4 5 6 8`.
 - On a server's panel F8 says **Delete…** in red: it deletes for good after asking, because a server has no Trash.
 - F5 and F6 say where they go when it isn't plain: `Copy → web-01` when the other panel is on a server (a production server's name in purple and bold), `Copy → site` with three or four panels. With two panels on this Mac they say **Copy** and **Move**.
@@ -76,6 +79,16 @@ Press ⇧⌘P (or F9, ⌥9) to open the toolbar search. It finds:
 - **files** in the active panel.
 
 ↑↓ choose, ↩ runs or opens, ⌘↩ opens a folder in the other panel, ⎋ returns to the panel. The last row searches the disk (⌘F). When it is focused and empty, it lists the last 10 things you chose (commands, folders, servers, disk searches) above Favorites; ✕ or ⌘⌫ removes one.
+
+## Pickers
+
+The lists that ask you to choose — Connect (⌃⌘K, ⌘K), Jump to Folder (⌘P), Volumes, the user menu (F2), Switch Branch (⌃B), Services, Tunnels and the rest — have one shape:
+
+- A chip before the field says where the list is: **web-01 ›** for a server's services or ports (purple with PROD on a production server), **main ›** for a commit. The field only filters, or takes what you type.
+- A line above the rows says what's known about the whole list where there's something to say (`52 units · 1 failed`, `2 of 5 changes staged`).
+- A line under the rows says how the last action went, and stays until the next one; a look at a server that failed says why there.
+- The **action bar** along the bottom shows what ↩ does on the highlighted row (**↩ Connect**, **↩ Status**, **↩ Turn Off**), that row's own keys (**⌘E Edit**, **⌘R Restart**), **⌃↩ Actions** where the row has a menu, and **⎋ Close**. Click a slot to do what its key does; **+N** lists the slots that don't fit.
+- An empty list says so in the middle: the list's own words (`Nothing listens on TCP there`), or **No matches** when what you typed hides every row.
 
 ## Cheat sheet
 

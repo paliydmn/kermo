@@ -59,26 +59,27 @@ extension AppDelegate {
             guard case .success(let found) = await panel.busy("Branches…", after: 0.3, { _ in GitStatus.refs(st.root) }) else { return }
             guard let refs = found else { return panel.flash("Git didn't list the branches", error: true) }
             let current = st.detached ? "HEAD" : st.branch
-            let items = [Picker.Item(title: "New Branch…", subtitle: "from \(current), or type its name above", badges: [Symbol.add.image("New")]) { [unowned self] in newBranch(from: nil) }]
+            let items = [Picker.Item(title: "New Branch…", subtitle: "from \(current), or type its name above", badges: [Symbol.add.image("New")],
+                                     verb: "New Branch") { [unowned self] in newBranch(from: nil) }]
                 + refs.map { ref in branchItem(ref, root: st.root) }
-            Picker.show(over: window, placeholder: "Switch branch — or type a new name · ⌘N branch from the highlighted · ⌘⌫ delete merged",
-                        items: items, freeText: { [unowned self] q in
+            Picker.show(over: window, placeholder: "Branch, or a new branch name", items: items, freeText: { [unowned self] q in
                 let name = q.replacingOccurrences(of: #"\s+"#, with: "-", options: .regularExpression)   // as VS Code: "ports multi" → ports-multi
                 guard !name.isEmpty, !refs.contains(where: { $0.kind == .local && $0.name == name }) else { return [] }
-                return [Picker.Item(title: "Create branch “\(name)”", subtitle: "from \(current)", detail: "↩") { [unowned self] in createBranch(name, from: nil, in: st.root) }]
+                return [Picker.Item(title: "Create branch “\(name)”", subtitle: "from \(current)", verb: "Create") { [unowned self] in createBranch(name, from: nil, in: st.root) }]
             }, freeTextLast: true, selected: refs.firstIndex { !$0.current }.map { $0 + 1 } ?? 0)   // the newest other branch
         }
     }
 
     private func branchItem(_ ref: GitStatus.Ref, root: String) -> Picker.Item {
         let detail = ref.current ? "current" : ref.kind == .tag ? "tag · \(ref.age)" : ref.age + (ref.gone ? " · remote gone" : "")
-        var keys: [Shortcut: @MainActor () -> Void] = [Shortcut("cmd+n")!: { [unowned self] in newBranch(from: ref.name) }]
-        if ref.kind == .local, !ref.current {
-            keys[Shortcut("cmd+backspace")!] = { [unowned self] in
+        var actions: [Picker.Item.Action] = [.init(key: Shortcut("cmd+n")!, label: "New Branch from Here") { [unowned self] in newBranch(from: ref.name) }]
+        if ref.kind == .local, !ref.current {   // -d: git keeps an unmerged one, and says so
+            actions.append(.init(key: Shortcut("cmd+backspace")!, label: "Delete") { [unowned self] in
                 runGit([["branch", "-d", ref.name]], in: root, "Deleting “\(ref.name)”…") { _ in "Deleted branch “\(ref.name)”" }
-            }
+            })
         }
-        return Picker.Item(title: ref.name, subtitle: "\(ref.hash)  \(ref.subject)", badges: ref.kind == .tag ? [Symbol.tag.image("Tag")] : [], detail: detail, keys: keys) { [unowned self] in
+        return Picker.Item(title: ref.name, subtitle: "\(ref.hash)  \(ref.subject)", badges: ref.kind == .tag ? [Symbol.tag.image("Tag")] : [], detail: detail,
+                           actions: actions, verb: ref.current ? "Open" : "Switch") { [unowned self] in
             guard !ref.current else { return active.flash("Already on “\(ref.name)”") }
             let args: [String] = switch ref.kind {
             case .local: ["switch", ref.name]
@@ -93,9 +94,9 @@ extension AppDelegate {
     func newBranch(from base: String?) {
         guard let (_, st) = gitHere() else { return }
         let from = base ?? (st.detached ? "HEAD" : st.branch)
-        Picker.show(over: window, placeholder: "New branch from \(from) — its name", items: [], freeText: { [unowned self] q in
+        Picker.show(over: window, placeholder: "New branch name", scope: (from, []), empty: "Type the new branch's name", items: [], freeText: { [unowned self] q in
             let name = q.replacingOccurrences(of: #"\s+"#, with: "-", options: .regularExpression)
-            return name.isEmpty ? [] : [Picker.Item(title: "Create branch “\(name)”", subtitle: "from \(from)", detail: "↩") { [unowned self] in
+            return name.isEmpty ? [] : [Picker.Item(title: "Create branch “\(name)”", subtitle: "from \(from)", verb: "Create") { [unowned self] in
                 createBranch(name, from: base, in: st.root)
             }]
         })
@@ -120,27 +121,30 @@ extension AppDelegate {
             let amend = !st.detached && (st.upstream == nil || st.ahead > 0)   // not pushed yet, as far as this Mac knows
             guard total > 0 || amend else { return panel.flash("Nothing to commit on “\(st.branch)”") }
             let files = st.changes.sorted { $0.key < $1.key }.map { path, code in
-                Picker.Item(title: path, detail: code == "??" ? "new" : GitStatus.isConflict(code) ? "conflict" : (code.first != " " ? "staged · " : "") + code.trimmingCharacters(in: .whitespaces)) {
+                Picker.Item(title: path, detail: code == "??" ? "new" : GitStatus.isConflict(code) ? "conflict" : (code.first != " " ? "staged · " : "") + code.trimmingCharacters(in: .whitespaces),
+                            verb: "Diff") {
                     let abs = root + "/" + path
                     Shell.run(GitStatus.diffCommand(tracked: code == "??" ? [] : [abs], untracked: code == "??" ? [abs] : []), in: root, diff: true)
                 }
             }
-            Picker.show(over: window, placeholder: "Commit message — \(staged) of \(total) change\(total == 1 ? "" : "s") staged on \(st.branch)",
-                        items: files, rank: { _, _ in nil }, freeText: { [unowned self] msg in
+            Picker.show(over: window, placeholder: "Commit message", scope: (st.branch, []), header: "\(staged) of \(total) change\(total == 1 ? "" : "s") staged",
+                        empty: "Nothing changed: type a message to amend the last commit", items: files, rank: { _, _ in nil }, freeText: { [unowned self] msg in
                 guard !msg.isEmpty else { return [] }
                 if st.conflicts > 0 {
-                    return [Picker.Item(title: "\(st.conflicts) file\(st.conflicts == 1 ? "" : "s") in conflict: resolve them first", subtitle: "Git Changes lists them") { [unowned self] in
+                    return [Picker.Item(title: "\(st.conflicts) file\(st.conflicts == 1 ? "" : "s") in conflict: resolve them first", subtitle: "Git Changes lists them",
+                                        verb: "Git Changes") { [unowned self] in
                         active.showGitChanges()
                     }]
                 }
-                return (staged == 0 ? [] : [Picker.Item(title: "Commit \(staged) staged file\(staged == 1 ? "" : "s")", subtitle: "“\(msg)”", detail: "↩") { [unowned self] in
+                return (staged == 0 ? [] : [Picker.Item(title: "Commit \(staged) staged file\(staged == 1 ? "" : "s")", subtitle: "“\(msg)”", verb: "Commit") { [unowned self] in
                         runGit([["commit", "-m", msg]], in: root, "Committing…", done: Self.committed)
                     }])
                     + (total == staged ? [] : [Picker.Item(title: "Commit all \(total) change\(total == 1 ? "" : "s")",
-                                                           subtitle: staged == 0 ? "stages them first" : "stages the other \(total - staged) first") { [unowned self] in
+                                                           subtitle: staged == 0 ? "stages them first" : "stages the other \(total - staged) first", verb: "Commit") { [unowned self] in
                         runGit([["add", "-A"], ["commit", "-m", msg]], in: root, "Committing…", done: Self.committed)
                     }])
-                    + (!amend ? [] : [Picker.Item(title: "Amend the last commit", subtitle: "with this message\(staged > 0 ? " and the staged files" : "") — it isn't pushed yet") { [unowned self] in
+                    + (!amend ? [] : [Picker.Item(title: "Amend the last commit", subtitle: "with this message\(staged > 0 ? " and the staged files" : "") — it isn't pushed yet",
+                                                  verb: "Amend") { [unowned self] in
                         runGit([["commit", "--amend", "-m", msg]], in: root, "Amending…", done: Self.committed)
                     }])
             })
@@ -194,7 +198,7 @@ extension AppDelegate {
         guard panel.remote == nil, panel.archive == nil, panel.searchTitle == nil else { return panel.flash("Git works in this Mac's folders") }
         let dir = panel.path
         Picker.show(over: window, placeholder: "Initialize a Git repository?", items: [
-            Picker.Item(title: "Initialize a Git repository in “\(Self.folderTitle(dir))”", subtitle: (dir as NSString).abbreviatingWithTildeInPath, detail: "↩") { [unowned self] in
+            Picker.Item(title: "Initialize a Git repository in “\(Self.folderTitle(dir))”", subtitle: (dir as NSString).abbreviatingWithTildeInPath, verb: "Initialize") { [unowned self] in
                 Task {
                     let r = await panel.busy("git init…") { _ in GitStatus.initialize(dir) }
                     panel.reload()

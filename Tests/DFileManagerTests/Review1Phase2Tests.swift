@@ -59,17 +59,19 @@ import Testing
     #expect(KeyBarModel.target(server: nil, folder: "/Users/me/site", panels: 3) == .init(name: "site") && KeyBarModel.target(server: nil, folder: "/", panels: 3)?.text == "→ /")
     let bar = KeyBarView()
     bar.reload(AppDelegate().makeCommands())
-    func title(_ id: String) -> NSAttributedString? {
+    func button(_ id: String) -> NSButton? {
         func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? NSButton).map { [$0] } ?? buttons($0) } }
-        return buttons(bar).first { $0.identifier?.rawValue == id }?.attributedTitle
+        return buttons(bar).first { $0.identifier?.rawValue == id }
     }
-    #expect(title("file.copy")?.string == "F5 Copy")
+    func title(_ id: String) -> NSAttributedString? { button(id)?.attributedTitle }
+    #expect(button("file.copy")?.accessibilityLabel() == "F5, Copy")
     bar.target = .init(name: "web-01", prod: true)
     for id in ["file.copy", "file.move"] {
         let t = title(id)
         #expect(t?.string.hasSuffix(" → web-01") == true && t?.attribute(.foregroundColor, at: t!.length - 1, effectiveRange: nil) as? NSColor == Palette.prod)
     }
-    #expect(title("file.view")?.string == "F3 View", "other keys go nowhere")
+    #expect(button("file.copy")?.accessibilityLabel() == "F5, Copy to web-01, a production server")
+    #expect(button("file.view")?.accessibilityLabel() == "F3, View", "other keys go nowhere")
 }
 
 /// A server's row shows a root panel there: its SFTP mark in root's orange, saying so, at rest and under the mouse; a

@@ -49,7 +49,7 @@ import Testing
     term.restore([SFTPTarget(host: "dfm-t4.invalid")])
     let tab = try #require(term.current)
     _ = term.show()
-    #expect(text(tab).contains("↩ reconnect · ⎋ close"))
+    #expect(text(tab).contains("↩ Reconnect   ⎋ Close"))
     #expect(!term.handleKey(key(53, "\u{1b}", .shift)), "⇧⎋ is not ⎋")
     #expect(term.handleKey(key(53, "\u{1b}")))
     #expect(term.tabs.isEmpty && exited)

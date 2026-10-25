@@ -316,7 +316,7 @@ extension ServerLockTests {
     var ran: [String] = []
     Picker.show(over: window, placeholder: "", items: [
         Picker.Item(title: "plain") { ran.append("run plain") },
-        Picker.Item(title: "mine", edit: { ran.append("edit mine") }) { ran.append("run mine") },
+        Picker.Item(title: "mine", actions: [.init(key: Shortcut("cmd+e")!, label: "Edit") { ran.append("edit mine") }]) { ran.append("run mine") },
     ])
     let panel = Picker.current!.panel
     func cmdE() -> Bool {

@@ -254,7 +254,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         let place = server.map { "\($0.host):\(dir)" } ?? (dir as NSString).abbreviatingWithTildeInPath
         let (w, tv) = Self.window()
         w.title = (server.map { "\($0.host) $ " } ?? "$ ") + command.bidiVisible
-        w.subtitle = place + " · running… · Esc stops"
+        w.subtitle = place + " · running… · ⎋ Stop"
         super.init(window: w)
         w.delegate = self
 
@@ -305,7 +305,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         report = { [weak self] in
             guard let self else { return }
             let secs = String(format: "%.1fs", Date().timeIntervalSince(self.started))
-            self.window?.subtitle = place + " · exit \(self.status) · \(secs)" + (self.trimmed ? " · only the last 4 MB kept" : "") + " · Esc closes"
+            self.window?.subtitle = place + " · exit \(self.status) · \(secs)" + (self.trimmed ? " · only the last 4 MB kept" : "") + " · ⎋ Close"
             if diff {
                 // diff exits 1 when files differ — that's the normal case, not an error.
                 Self.colorizeDiff(tv)
@@ -324,7 +324,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
                  again: (@MainActor (NSWindow?) async -> Bool)?, ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
         let (w, tv) = Self.window()
         let count = list.count + skipped.count
-        w.subtitle = "\(count) server\(count == 1 ? "" : "s") · running… · Esc stops all"
+        w.subtitle = "\(count) server\(count == 1 ? "" : "s") · running… · ⎋ Stop"
         let cancel = CancelFlag()
         servers = cancel
         super.init(window: w)
@@ -360,7 +360,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
                     tv.textStorage?.append(text)
                     self.kept(in: tv)
                     self.window?.subtitle = "\(count) server\(count == 1 ? "" : "s") · " + (cancel.isCancelled ? "stopped" : "done")
-                        + " · " + String(format: "%.1fs", Date().timeIntervalSince(self.started)) + " · Esc closes" + (again == nil ? "" : " · ⌘R again")
+                        + " · " + String(format: "%.1fs", Date().timeIntervalSince(self.started)) + " · ⎋ Close" + (again == nil ? "" : " · ⌘R Run Again")
                 }
             }
         }.start()
@@ -465,7 +465,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     override func cancelOperation(_ sender: Any?) {
         if !stopAsked, stop() {
             stopAsked = true
-            window?.subtitle = "stopping… · Esc again closes"
+            window?.subtitle = "stopping… · ⎋ Close"
         } else {
             window?.performClose(nil)
         }

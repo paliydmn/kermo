@@ -123,7 +123,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     Picker.dismiss()
 
     AppDelegate.answering = { _, _, _ in 0 }   // Restart
-    app.serviceItem(unit, on: t, of: SavedServer(target: t)).keys[Shortcut("cmd+r")!]?()
+    app.serviceItem(unit, on: t, of: SavedServer(target: t)).actions.first { $0.key == Shortcut("cmd+r") }?.run()
     await until { panel.statusText.hasPrefix("web restarted") }
     #expect(panel.statusText.hasPrefix("web restarted on localhost at ") && panel.statusText.hasSuffix(" — active · running"), "\(panel.statusText)")
 }
@@ -204,7 +204,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     #expect(why(u)["Stop…"] == "cron isn't running" && why(u)["Disable at Boot"] == "cron is static (its unit has no [Install] section): nothing to change at boot")
     (u.active, u.unitFile) = ("failed", nil)
     #expect(why(u).isEmpty, "what systemctl didn't say: let systemctl say it")
-    app.serviceItem(u, on: .local(), of: s, pasteboard: pb).keys[Shortcut("cmd+c")!]?()
+    app.serviceItem(u, on: .local(), of: s, pasteboard: pb).actions.first { $0.key == Shortcut("cmd+c") }?.run()
     #expect(pb.string(forType: .string) == "cron.service" && panel.statusText == "Copied “cron.service”")
 }
 

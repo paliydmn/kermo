@@ -423,7 +423,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(rows.map(\.title) == [":\(p[0])", ":5432 Postgres", ":6379 Redis"])
         #expect(rows.map(\.subtitle) == ["nginx · all addresses", "localhost only", "redis-server · localhost only"])
         #expect(rows.map(\.detail) == ["", "", ""], "Main isn't listening")
-        #expect(rows[0].keys.keys.map(\.display).sorted() == ["⌘C", "⌘O", "⌘S"])
+        #expect(rows[0].actions.map { "\($0.key.display) \($0.label)" } == ["⌘O Open in Browser", "⌘C Copy Address", "⌘S Save as Tunnel"] && rows[0].verb == "Forward")
 
         rows[0].run()
         let next = try #require(app.tunnels.temporaries().first?.tunnel)

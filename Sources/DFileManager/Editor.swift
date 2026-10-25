@@ -164,7 +164,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     private func retitle() {
         window?.title = (remote ?? url.lastPathComponent).bidiVisible
         window?.subtitle = (remote == nil ? (url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath + " · " : "")
-            + "\(encodingName) · ⌘S save · ⌘F find/replace · Esc close"
+            + "\(encodingName) · ⌘S Save · ⌘F Find · ⎋ Close"
         window?.representedURL = remote == nil ? url : nil
     }
 

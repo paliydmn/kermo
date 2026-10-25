@@ -9,7 +9,7 @@ import Testing
 
 @Test @MainActor func baseLayerIsExactlyF1ToF10() {
     #expect(layers()([])!.map(\.key) == (1...10).map { "F\($0)" })
-    #expect(layers()([])!.map(\.label) == ["Keys", "Menu", "View", "Edit", "Copy", "Move", "MkDir", "Trash", "Commands", "Tree"])
+    #expect(layers()([])!.map(\.label) == ["Shortcuts", "User Menu", "View", "Edit", "Copy", "Move", "New Folder", "Trash", "Search", "Tree"])
 }
 
 @Test @MainActor func optionDigitDuplicatesCollapseIntoAHint() {

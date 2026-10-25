@@ -21,8 +21,8 @@ import Testing
         app.panels = [panel]
         let s = SavedServer(target: .local())
         let web = app.serviceItem(ServiceUnit(unit: "web.service", active: "active", sub: "running", description: "Web server"), on: .local(), of: s)
-        #expect(web.title == "web" && web.subtitle == "active · running" && web.detail == "Web server" && web.edit != nil)
-        #expect(web.keys.keys.map(\.display).sorted() == ["⌘C", "⌘L", "⌘R"])
+        #expect(web.title == "web" && web.subtitle == "active · running" && web.detail == "Web server" && web.verb == "Status")
+        #expect(web.actions.map(\.key.display) == ["⌘L", "⌘R", "⌘E", "⌘C"])
         let failed = app.serviceItem(ServiceUnit(unit: "backup.service", active: "failed", sub: "failed",
                                                  description: "A description that goes on for much longer than a row has room for"), on: .local(), of: s)
         #expect(failed.subtitle == "failed" && failed.detail == "A description that goes on for much lon…")
@@ -31,18 +31,18 @@ import Testing
         evil.run()
         #expect(panel.statusText == "“x;reboot.service” has characters Kermo won't put into a command: nothing runs on it")
         panel.flash("")
-        evil.keys[Shortcut("cmd+r")!]?()
+        evil.actions.first { $0.key == Shortcut("cmd+r") }?.run()
         #expect(panel.statusText.hasPrefix("“x;reboot.service” has"))
 
         let box = app.containerItem(ContainerInfo(name: "api", state: "running", status: "Up 5 minutes", image: "registry.example.com/api:2"),
                                     tool: "podman", on: .local(), of: s)
         #expect(box.title == "api" && box.subtitle == "running · Up 5 minutes" && box.detail == "registry.example.com/api:2")
-        #expect(box.keys.keys.map(\.display).sorted() == ["⌘C", "⌘R"])
+        #expect(box.actions.map(\.key.display) == ["⌘R", "⌘C"] && box.verb == "Live Logs")
         let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString))   // not the user's clipboard
         defer { pb.releaseGlobally() }
         let odd = app.containerItem(ContainerInfo(name: "-x", state: "exited", status: "", image: "busybox"), tool: "docker", on: .local(), of: s, pasteboard: pb)
         #expect(odd.subtitle == "exited")
-        odd.keys[Shortcut("cmd+c")!]?()
+        odd.actions.first { $0.key == Shortcut("cmd+c") }?.run()
         #expect(pb.string(forType: .string) == "-x", "copying the name is fine")
         odd.run()
         #expect(panel.statusText.hasPrefix("“-x” has characters"))
@@ -125,7 +125,7 @@ private func until(_ done: () -> Bool) async {
     AppDelegate.unitState = { _, _, _, _, _ in .init(active: "active", sub: "running") }
     defer { AppDelegate.unitState = { try Services.state($0, on: $1, wait: $2, env: $3, cancel: $4) } }
     let item = app.serviceItem(ServiceUnit(unit: "web.service", active: "active", sub: "running"), on: user, of: SavedServer(target: user))
-    item.keys[Shortcut("cmd+r")!]?()
+    item.actions.first { $0.key == Shortcut("cmd+r") }?.run()
     await until { panel.statusText.hasPrefix("web restarted") }
     #expect(panel.statusText.hasPrefix("web restarted on localhost at "), "\(panel.statusText)")
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "restart -- web.service\n")
@@ -164,7 +164,7 @@ private func until(_ done: () -> Bool) async {
     AppDelegate.answering = { _, _, _ in 0 }   // Restart
     AppDelegate.unitState = { _, _, _, _, _ in .init(active: "active", sub: "running") }
     defer { AppDelegate.unitState = { try Services.state($0, on: $1, wait: $2, env: $3, cancel: $4) } }
-    app.serviceItem(unit, on: t, of: SavedServer(target: t)).keys[Shortcut("cmd+r")!]?()
+    app.serviceItem(unit, on: t, of: SavedServer(target: t)).actions.first { $0.key == Shortcut("cmd+r") }?.run()
     await until { FileManager.default.fileExists(atPath: AuditLog.path) }
     Config.flush()
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "restart -- web.service\n")

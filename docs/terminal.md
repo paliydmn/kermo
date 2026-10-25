@@ -8,6 +8,7 @@ A shell inside Kermo, local or on a server, that stays in step with the panels.
 
 - **⌃O** replaces the panels with a terminal: your login shell on a local panel, the server's SSH session on a server panel. Press it again to get the panels back. A local panel follows `cd`.
 - Press **⌃O twice quickly** to send ⌃O to the program in the terminal.
+- While the terminal is up, the [key bar](window.md#key-bar) shows the terminal's keys: **⌃O Panels**, **⌘T New Tab**, **⌘W Close Tab**, the splits, **⌃⇥** for the next tab and the rest; holding ⌥⌘ shows the pane keys, ⌃⌘ the divider keys.
 - **⌘K** opens a shell on a server in a new tab ([Servers and SSH](servers.md)). Inside the terminal, ⌘K clears it.
 - **⌘+** and **⌘−** change the text size.
 

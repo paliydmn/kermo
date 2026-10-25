@@ -8,13 +8,14 @@ extension AppDelegate {
     func copyKey() {
         if let here = terminal.isShown ? terminal.current?.target : active.remote?.target { return copyKey(to: here.asUser) }
         let items = serverChoices().map { c in
-            Picker.Item(title: c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config", badges: (c.saved?.chips ?? []).map(\.image)) { [unowned self] in
+            Picker.Item(title: c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config", badges: (c.saved?.chips ?? []).map(\.image),
+                        verb: "Copy Key") { [unowned self] in
                 copyKey(to: c.target)
             }
         }
-        Picker.show(over: window, placeholder: "Copy your SSH key to which server? — or type user@host", items: items, freeText: { q in
+        Picker.show(over: window, placeholder: "Server or user@host", scope: ("Copy SSH Key", []), items: items, freeText: { q in
             guard case let .sftp(t, _)? = ServerAddress.parse(q) else { return [] }
-            return [Picker.Item(title: "Copy your key to “\(q)”", detail: "↩") { [self] in copyKey(to: t) }]
+            return [Picker.Item(title: "Copy your key to “\(q)”", verb: "Copy Key") { [self] in copyKey(to: t) }]
         }, freeTextLast: true)
     }
 
@@ -24,9 +25,9 @@ extension AppDelegate {
         let keys = Self.publicKeys(identity: s.identityFile)
         guard !keys.isEmpty else { return noKeyYet(s.identityFile) }
         if keys.count == 1 { return copyKey(keys[0], to: s) }
-        Picker.show(over: window, placeholder: "Which key goes to \(s.title)?", items: keys.map { pub in
+        Picker.show(over: window, placeholder: "SSH key", scope: (s.title, Chip.of(s.target)), header: "Which key goes to \(s.title)?", items: keys.map { pub in
             let comment = (try? String(contentsOfFile: pub, encoding: .utf8)).flatMap(SSHKeyCopy.line)?.split(separator: " ").dropFirst(2).joined(separator: " ")
-            return Picker.Item(title: (pub as NSString).lastPathComponent, subtitle: comment ?? "") { [unowned self] in copyKey(pub, to: s) }
+            return Picker.Item(title: (pub as NSString).lastPathComponent, subtitle: comment ?? "", verb: "Copy Key") { [unowned self] in copyKey(pub, to: s) }
         })
     }
 

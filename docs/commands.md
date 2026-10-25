@@ -6,7 +6,7 @@ Run a shell command on the files in front of you, keep your own commands in a me
 
 ## Command line
 
-**⌘E** opens the command line for the active panel's folder. ↑↓ browse its history (kept per server and for this Mac).
+**⌘E** opens the command line for the active panel's folder. ↑↓ browse its history (kept per server and for this Mac). While it has the focus the [key bar](window.md#key-bar) shows its keys, and ⎋ goes back to the panel. ⌃↩ and ⌃⇧↩, which insert the name under the cursor and the marked paths, work from the panel: in a text field macOS takes ⌃↩ for its context menu.
 
 | Panel | ↩ | ⇧↩ | ⌘↩ |
 |---|---|---|---|
@@ -54,7 +54,7 @@ Every substituted value is escaped for the shell. A command with `%D` doesn't ru
 
 ## User menu
 
-**F2** (⌥2) opens your menu of commands for the files under the cursor. An entry runs as the command line does (table above): ↩, ⇧↩ and ⌘↩ choose where. **Kermo ▸ Edit User Menu…** opens `usermenu.json`, writing fourteen examples on first use (ten for this Mac, four for servers):
+**F2** (⌥2) opens your menu of commands for the files under the cursor. An entry runs as the command line does (table above): ↩, ⇧↩ and ⌘↩ choose where. **Edit User Menu…**, the menu's last row (also in the **Kermo** menu), opens `usermenu.json`, writing fourteen examples on first use (ten for this Mac, four for servers):
 
 ```json
 [
