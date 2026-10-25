@@ -6,7 +6,7 @@ import DFMCore
 extension AppDelegate {
     /// ⌘⇧P: on the server the active panel or SSH tab is on (as its user); else pick one, as Forward Port does.
     func copyKey() {
-        if let here = terminal.isShown ? terminal.current?.target : active.remote?.target { return copyKey(to: here.asUser) }
+        if let here = terminalActive ? terminal.current?.target : active.remote?.target { return copyKey(to: here.asUser) }
         let items = serverChoices().map { c in
             Picker.Item(title: c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config", badges: (c.saved?.chips ?? []).map(\.image),
                         verb: "Copy Key") { [unowned self] in

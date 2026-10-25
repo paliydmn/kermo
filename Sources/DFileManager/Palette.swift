@@ -41,6 +41,7 @@ enum Symbol: String, CaseIterable {
     case close = "xmark", remove = "xmark.circle.fill", more = "ellipsis.circle", expand = "chevron.right",
          collapse = "chevron.down", pause = "pause.fill", resume = "play.fill", startNow = "forward.fill", show = "eye",
          hide = "eye.slash", sidebar = "sidebar.left", copy = "doc.on.doc", trash, down = "arrow.down", up = "arrow.up",
+         splitRight = "rectangle.split.2x1", maximize = "arrow.up.left.and.arrow.down.right", restore = "arrow.down.right.and.arrow.up.left",
          right = "arrow.right", left = "arrow.left"
 
     /// `label`: what VoiceOver says for it.

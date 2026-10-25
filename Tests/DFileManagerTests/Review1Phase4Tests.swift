@@ -312,3 +312,69 @@ private func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? N
     panel.filterKey("filter.clear")
     #expect(panel.pathBar.filter == nil)
 }
+
+/// R-09, Р6, §11 decision 4: ⌃O opens the terminal as a drawer under the panels — they stay in view — and the focus
+/// decides: keys in the terminal → its commands and bar; keys in a panel → the panels work as without it, their bar, the
+/// command line shown; ⇧⌃O → over the panels as ⌃O was before, again → back. ⌃O from a panel goes to the drawer, from
+/// the terminal hides it. The drawer keeps its height, and the active panel follows the shell's `cd` with it open.
+@MainActor @Test func theTerminalIsADrawerAndTheFocusDecides() async throws {
+    _ = NSApplication.shared
+    let dir = try tempDir(["a.txt"]), sub = dir + "/sub"
+    try FileManager.default.createDirectory(atPath: sub, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let app = AppDelegate()
+    app.commands = app.makeCommands()
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 640), styleMask: [.titled], backing: .buffered, defer: true)
+    let root = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 640))
+    let host = NSView(frame: NSRect(x: 0, y: 40, width: 900, height: 600))
+    let line = app.makeCommandLine()
+    line.frame = NSRect(x: 0, y: 0, width: 900, height: 40)
+    root.addSubview(host)
+    root.addSubview(line)
+    w.contentView = root
+    app.panels = [PanelViewController(tabs: [dir], index: 0, showHidden: false), PanelViewController(tabs: [dir], index: 0, showHidden: false)]
+    for (i, p) in app.panels.enumerated() {
+        p.view.frame = NSRect(x: CGFloat(i) * 450, y: 0, width: 450, height: 600)
+        host.addSubview(p.view)
+    }
+    defer { app.panels.forEach { $0.shutdown() } }
+    let term = EmbeddedTerminal(covering: host)
+    defer { term.tabs.forEach { term.close($0.id, confirm: false) } }
+    app.terminal = term
+    app.window = w
+    defer { app.window = nil }
+    app.wireKeyBar()
+    app.watchFocus()
+    w.makeFirstResponder(app.panels[0].table)
+    #expect(!app.terminalActive && app.canRun("file.copy"))
+
+    app.toggleTerminal()   // ⌃O
+    #expect(term.isShown && !term.isFull && !host.isHidden && term.drawer.subviews[1].frame.height >= EmbeddedTerminal.minDrawer, "a drawer: the panels in view")
+    #expect(term.hasFocus && app.terminalActive && !app.canRun("file.copy") && app.canRun("tab.new") && app.keyBar.terminalShown())
+
+    w.makeFirstResponder(app.panels[1].table)   // a click in a panel
+    #expect(term.isShown && !app.terminalActive && app.canRun("file.copy") && !app.keyBar.terminalShown() && !app.cmdField.isHidden,
+            "the panels work as without it")
+    app.toggleTerminal()   // ⌃O from the panel: into the drawer
+    #expect(term.isShown && term.hasFocus && app.terminalActive)
+
+    app.toggleTerminalFull()   // ⇧⌃O
+    #expect(term.isFull && host.isHidden && app.terminalActive && !app.canRun("file.copy") && app.cmdField.isHidden, "over the panels, as before")
+    app.toggleTerminalFull()
+    #expect(!term.isFull && !host.isHidden && !app.cmdField.isHidden, "back into the drawer")
+    #expect(app.canRun("panel.focus1"), "⌘1–4: back to a panel from the terminal")
+
+    let drawer = term.drawer, total = drawer.bounds.height
+    drawer.setPosition(total - 200 - drawer.dividerThickness, ofDividerAt: 0)   // dragged
+    #expect(abs(drawer.subviews[1].frame.height - 200) < 1)
+    app.toggleTerminal()   // ⌃O from the terminal: hidden
+    #expect(!term.isShown && !host.isHidden && w.firstResponder === app.panels[0].table, "back to the active panel")
+    app.toggleTerminal()
+    #expect(abs(drawer.subviews[1].frame.height - 200) < 1, "the drawer keeps its height: \(drawer.subviews[1].frame.height)")
+
+    let shell = try #require(term.current)
+    shell.cwd = sub   // the shell told its folder (OSC 7)
+    app.follow(shell)
+    await until { app.active.path == sub }
+    #expect(app.active.path == sub && !host.isHidden, "the active panel follows, in view")
+}

@@ -2,10 +2,11 @@ import AppKit
 import DFMCore
 import SwiftTerm
 
-/// ⌃O (MC's subshell): a terminal workspace that covers the panels, with tabs — local login shells and
-/// SSH sessions (system OpenSSH, one PTY and one `ssh` process per session). A tab holds up to four of them side by
-/// side (`Group`, VS Code's split); `Tab` is one session, a pane. For the current pane when it's a local shell:
-/// toggling back moves the active panel to its folder; showing it again `cd`s it to the panel's.
+/// ⌃O (MC's subshell): a terminal workspace in a drawer under the panels (Р6) — or over all of their room (⌃⇧O,
+/// `isFull`) — with tabs: local login shells and SSH sessions (system OpenSSH, one PTY and one `ssh` process per
+/// session). A tab holds up to four of them side by side (`Group`, VS Code's split); `Tab` is one session, a pane. For
+/// the current pane when it's a local shell: the active panel follows its `cd`, and goes to its folder when it hides;
+/// showing it again `cd`s it to the panel's.
 @MainActor
 final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalViewDelegate, NSSplitViewDelegate {
     enum Kind: Equatable { case shell, ssh(SFTPTarget) }
@@ -113,8 +114,24 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     private var closing: [Tab] = []   // killed, waiting for the process to go
     private let container = NSStackView()
     let tabBar = NSStackView()   // internal: tests read it
+    /// The tabs and, at their right end, Split, Maximize and Hide: each a command (`onCommand`), Hide `onHide`.
+    private let topRow = NSStackView()
     private let content = NSView()
-    private unowned let host: NSView   // the panels; the terminal sits exactly over them
+    private unowned let host: NSView   // the panels; the drawer goes under them
+    /// The panels on top, the terminal under them; with `isFull` the terminal alone. Made around the panels when they
+    /// have a superview (at once in the app).
+    let drawer = NSSplitView()
+    /// ⌃⇧O: the terminal takes the panels' room too, as ⌃O did before the drawer.
+    private(set) var isFull = false
+    /// The drawer's height as last dragged; after a restart, as the split saved it (`autosave`, AppKit's own key).
+    private var drawerHeight: CGFloat?
+    private let autosave: String?
+    static let minDrawer: CGFloat = 80, minPanels: CGFloat = 120
+    var onCommand: ((String) -> Void)?
+    var onHide: (() -> Void)?
+    /// A command's key, as the keymap has it: the buttons' tooltips.
+    var keyFor: ((String) -> String?)?
+    private let maximize = NSButton(title: "", target: nil, action: nil)
     var onExit: (() -> Void)?          // last tab closed: panels come back
     var onChange: (() -> Void)?        // tabs / states changed (sidebar, saved session)
     var onDirectory: ((Tab) -> Void)?  // the current tab's shell told its folder (`cwd`)
@@ -128,19 +145,39 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     var current: Tab? { group?.pane }
     var hasFocus: Bool { isShown && (container.window?.firstResponder as? NSView)?.isDescendant(of: container) == true }
 
-    init(covering host: NSView) {
+    /// `autosave`: the drawer's height is kept under this name (the app's; tests' none).
+    init(covering host: NSView, autosave: String? = nil) {
         self.host = host
+        self.autosave = autosave
         super.init()
         container.orientation = .vertical
         container.spacing = 2
         container.edgeInsets = NSEdgeInsets(top: 2, left: 0, bottom: 0, right: 0)
+        container.distribution = .fill   // the tabs at their height, the panes the rest of the drawer
+        content.setContentHuggingPriority(.init(1), for: .vertical)
+        topRow.setContentHuggingPriority(.defaultHigh, for: .vertical)
         container.isHidden = true
         tabBar.distribution = .fillEqually
         tabBar.spacing = 2
-        container.addArrangedSubview(tabBar)
+        topRow.spacing = 6
+        topRow.addArrangedSubview(tabBar)
+        for (symbol, label, id) in [(Symbol.splitRight, "Split Terminal Right", "term.split.right"), (.maximize, "Maximize Terminal", "view.terminalFull"),
+                                    (.collapse, "Hide Terminal", "view.terminal")] {
+            let b = symbol == .maximize ? maximize : NSButton(title: "", target: nil, action: nil)
+            b.image = symbol.image(label)
+            b.isBordered = false
+            b.refusesFirstResponder = true
+            b.identifier = .init(id)
+            b.target = self
+            b.action = #selector(rowButton(_:))
+            b.setContentHuggingPriority(.required, for: .horizontal)
+            topRow.addArrangedSubview(b)
+        }
+        container.addArrangedSubview(topRow)
         container.addArrangedSubview(content)
-        tabBar.widthAnchor.constraint(equalTo: container.widthAnchor, constant: -12).isActive = true
+        topRow.widthAnchor.constraint(equalTo: container.widthAnchor, constant: -12).isActive = true
         content.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        wrap()
         // SwiftTerm's scrollWheel and mouseDown aren't open: the pane under the mouse sees these first.
         NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown, .leftMouseUp]) { [weak self] e in
             guard let self else { return e }
@@ -160,16 +197,54 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         }
     }
 
-    private func attach() {
-        guard container.superview == nil else { return }
-        container.translatesAutoresizingMaskIntoConstraints = false
-        host.superview!.addSubview(container)
-        NSLayoutConstraint.activate([
-            container.topAnchor.constraint(equalTo: host.topAnchor),
-            container.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-            container.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-        ])
+    /// The panels into the drawer's split, the terminal (hidden) under them, in the panels' place.
+    private func wrap() {
+        guard container.superview == nil, let sup = host.superview else { return }
+        drawer.isVertical = false
+        drawer.dividerStyle = .thin
+        drawer.delegate = self
+        drawer.frame = host.frame
+        drawer.autoresizingMask = [.width, .height]
+        sup.addSubview(drawer, positioned: .above, relativeTo: host)
+        host.removeFromSuperview()
+        host.translatesAutoresizingMaskIntoConstraints = true
+        container.translatesAutoresizingMaskIntoConstraints = true
+        drawer.addSubview(host)
+        drawer.addSubview(container)
+        if let autosave {
+            drawer.autosaveName = autosave   // brings back the frames it saved: the drawer's height, unless it was full then
+            if !host.isHidden, container.frame.height >= Self.minDrawer { drawerHeight = container.frame.height }
+        }
+        host.isHidden = false
+        container.isHidden = true
+    }
+
+    private func attach() { wrap() }
+
+    /// The drawer at its height — as last dragged, else 40 % of the room — between its least and the panels' least.
+    private func layoutDrawer() {
+        let total = drawer.bounds.height, line = drawer.dividerThickness
+        let h = min(max(drawerHeight ?? total * 0.4, Self.minDrawer), total - Self.minPanels - line)
+        drawer.adjustSubviews()
+        guard total > 0, h >= Self.minDrawer else { return }
+        drawer.setPosition(total - h - line, ofDividerAt: 0)
+        drawer.layoutSubtreeIfNeeded()   // the panes at their new size now, not at the next pass (none comes without a window)
+    }
+
+    /// ⌃⇧O: the terminal over the panels' room too, or back into its drawer.
+    func setFull(_ on: Bool) {
+        guard isShown, on != isFull else { return }
+        isFull = on
+        host.isHidden = on
+        on ? drawer.adjustSubviews() : layoutDrawer()
+        drawer.layoutSubtreeIfNeeded()
+        maximize.image = (on ? Symbol.restore : Symbol.maximize).image(on ? "Restore Terminal" : "Maximize Terminal")
+        render()
+    }
+
+    @objc private func rowButton(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        id == "view.terminal" ? onHide?() : onCommand?(id)
     }
 
     // MARK: - Showing
@@ -187,11 +262,13 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         return show()
     }
 
-    /// Shows the workspace on the tab the caller picked.
+    /// Shows the workspace on the tab the caller picked: in its drawer, or over the panels while `isFull`.
     func show() -> NSView {
         attach()
-        host.isHidden = true
+        let opening = container.isHidden
         container.isHidden = false
+        host.isHidden = isFull
+        if opening && !isFull { layoutDrawer() }
         render()
         return current!.view
     }
@@ -202,6 +279,8 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         let cwd = current.flatMap { $0.kind == .shell ? $0.shellCwd : nil }
         container.isHidden = true
         host.isHidden = false
+        isFull = false
+        drawer.adjustSubviews()
         hiddenAt = Self.pressedCtrlO(e) ? e!.timestamp : -.infinity
         return cwd
     }
@@ -404,8 +483,19 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     }
     private var equalizing = false
 
-    func splitView(_ s: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { equalizing ? p : p + Self.minPane }
-    func splitView(_ s: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { equalizing ? p : p - Self.minPane }
+    func splitView(_ s: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
+        s === drawer ? Self.minPanels : equalizing ? p : p + Self.minPane
+    }
+    func splitView(_ s: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
+        s === drawer ? s.bounds.height - Self.minDrawer - s.dividerThickness : equalizing ? p : p - Self.minPane
+    }
+    /// A taller or shorter window: the panels give or take, the drawer keeps its height.
+    func splitView(_ s: NSSplitView, shouldAdjustSizeOfSubview v: NSView) -> Bool { s !== drawer || v === host || host.isHidden }
+    func splitView(_ s: NSSplitView, shouldHideDividerAt i: Int) -> Bool { s === drawer && (container.isHidden || host.isHidden) }
+    func splitViewDidResizeSubviews(_ n: Notification) {
+        guard n.object as? NSSplitView === drawer, !container.isHidden, !host.isHidden, container.frame.height >= Self.minDrawer else { return }
+        drawerHeight = container.frame.height   // dragged, or set: kept for the next ⌃O
+    }
 
     private func makeView() -> DropTerminalView {
         let t = DropTerminalView(frame: host.bounds)
@@ -643,6 +733,8 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         if groups.isEmpty {
             container.isHidden = true
             host.isHidden = false
+            isFull = false
+            drawer.adjustSubviews()
             onChange?()
             onExit?()
         } else {
@@ -681,6 +773,12 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
 
     private func render() {
         tabBar.isHidden = groups.count < 2 && group?.panes.count == 1 && current?.kind == .shell
+        for b in topRow.arrangedSubviews.compactMap({ $0 as? NSButton }) {   // the row's buttons say their keys
+            guard let id = b.identifier?.rawValue else { continue }
+            let what = id == "view.terminal" ? "Hide Terminal" : id == "view.terminalFull" ? (isFull ? "Restore Terminal" : "Maximize Terminal") : "Split Terminal Right"
+            b.toolTip = what + (keyFor?(id).map { "  " + $0 } ?? "")
+            b.setAccessibilityLabel(what)
+        }
         tabBar.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (i, g) in groups.enumerated() {
             let b = PanelViewController.tabButton(g.panes.map { (Self.lead($0), $0.label) }, tint: g.panes.count == 1 ? Self.tint(g.pane) : nil,

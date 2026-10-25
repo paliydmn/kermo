@@ -6,7 +6,7 @@ extension AppDelegate {
     /// The server of the active panel or SSH tab — root if the panel is — else a Picker of servers to choose from.
     /// `what`: "Forward a port of", "Services of".
     func onServer(_ what: String, _ then: @escaping @MainActor (SFTPTarget) -> Void) {
-        if let here = terminal.isShown ? terminal.current?.target : active.remote?.target { return then(here) }
+        if let here = terminalActive ? terminal.current?.target : active.remote?.target { return then(here) }
         let items = serverChoices().map { c in
             Picker.Item(title: c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config", badges: (c.saved?.chips ?? []).map(\.image),
                         verb: "Choose") { then(c.target) }

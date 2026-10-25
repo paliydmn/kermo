@@ -154,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 guard e.window === window else { return false }
                 if terminal.hasFocus {
                     if terminal.handleKey(e) { return true }
-                    if let c = keymap[Shortcut(event: e)], Self.terminalCommands.contains(c.id) {
+                    if let c = keymap[Shortcut(event: e)], Self.terminalCommands.contains(c.id) {   // ⌘1–4 too: back to a panel
                         run(c.id)
                         return true
                     }
@@ -174,22 +174,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
             return e
         }
-        // Focus moving into a text field (or the terminal) enables / disables the bar's slots and the menu's keys.
-        responderObservation = window.observe(\.firstResponder) { [keyBar] _, _ in
-            MainActor.assumeIsolated {
-                let app = NSApp.delegate as? AppDelegate
-                keyBar.list = app?.focusedKeys   // a text field's keys while it has the focus
-                keyBar.render()
-                app?.cmdKey.isHidden = app?.commandLineFocused == true   // there already
-                app?.updateMenuKeys()
-            }
-        }
+        watchFocus()
         NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.updateMenuKeys() }   // a viewer in front: F3 is its key
         }
         if !configProblems.isEmpty { showError(JobErrorMessage(configProblems.joined(separator: "\n"))) }
         show(pendingOpen)
     }
+
+    /// Focus moving into a text field, the terminal or a panel enables / disables the bar's slots and the menu's keys.
+    func watchFocus() {
+        responderObservation = window.observe(\.firstResponder) { w, _ in
+            MainActor.assumeIsolated { ((NSApp.delegate as? AppDelegate) ?? Self.watching.first { $0.window === w })?.focusMoved() }
+        }
+        Self.watching.removeAll { $0.window == nil }
+        Self.watching.append(self)
+    }
+    /// Tests: an app delegate that isn't NSApp's, watched all the same.
+    private static var watching: [AppDelegate] = []
+
+    func focusMoved() {
+        if terminal.hasFocus { terminalFocusedLast = true }
+        else if let v = window.firstResponder as? NSView, v.isDescendant(of: cmdField) || panels.contains(where: { v.isDescendant(of: $0.view) }) {
+            terminalFocusedLast = false   // the sidebar or the search field in between change nothing
+        }
+        keyBar.list = focusedKeys   // a text field's keys while it has the focus
+        keyBar.render()
+        cmdKey.isHidden = commandLineFocused || terminal.isFull   // there already, or none
+        updateMenuKeys()
+    }
+
+    /// Where keys go: the terminal — while it covers the panels (⌃⇧O), or it had the focus last, as the active panel is
+    /// the one that had it — else the panels, with the drawer open under them too.
+    var terminalActive: Bool { terminal?.isShown == true && (terminal.isFull || terminalFocusedLast) }
+    private var terminalFocusedLast = false
 
     // MARK: - Opening paths (`fm`, Finder's Open With)
 
@@ -526,6 +544,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func focusPanel(_ i: Int) {
         guard panels.indices.contains(i) else { return NSSound.beep() }
+        showPanels()   // from the terminal over them (⌃⇧O): back into its drawer
         window.makeFirstResponder(panels[i].table)
     }
 
@@ -714,7 +733,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// The sidebar row of where you are: the terminal's tab, the active panel's server tab, or its folder.
     private var sidebarKey: String? {
-        if terminal.isShown { return terminal.current?.id.uuidString }
+        if terminalActive { return terminal.current?.id.uuidString }
         return active.remoteTabs.first(where: \.isCurrent)?.id.uuidString ?? (active.parked == nil ? active.path : nil)   // parked: no row is it
     }
 
@@ -747,7 +766,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// While ⌃O's shell is up, local places `cd` it instead; servers and tags need the panels.
     private func openPlace(_ place: Place, _ mods: NSEvent.ModifierFlags) {
         if let p = place.path {
-            if terminal.isShown { return terminal.cd(p) ? () : NSSound.beep() }
+            if terminalActive { return terminal.cd(p) ? () : NSSound.beep() }
             if mods.contains(.option) { other.navigate(to: p); return }
             if mods.contains(.command), active.remote == nil { active.newTab() }   // from a server tab it gets one anyway
             active.navigate(to: p)
@@ -761,7 +780,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         case .server(let r): serverAction(r, .row, mods)
         case .connect: showConnect(ssh: true)
         case .tag(let name):
-            if terminal.isShown { toggleTerminal() }
+            showPanels()
             searchTag(name)
         default: break
         }
@@ -779,7 +798,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return
         }
         guard let p = panel(with: s.id) else { return }
-        if terminal.isShown { toggleTerminal() }
+        showPanels()
         window.makeFirstResponder(p.table)
         p.showTab(s.id)
     }
@@ -958,7 +977,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc private func sidebarButton() { run("view.sidebar") }
 
-    /// What works while the terminal covers the panels; `tab.*` act on its tabs then.
     /// Join Tab…: which tab's panes go beside the current tab's.
     func joinTerminalTab() {
         let tabs = terminal.joinable
@@ -971,13 +989,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         })
     }
 
-    /// In the key bar's order there, while the terminal is up.
-    static let terminalCommands = ["view.terminal", "tab.new", "tab.close", "term.split.right", "term.split.down", "tab.next", "tab.prev",
-                                   "ssh.new", "go.connect", "cmdline.insert", "cmdline.insertPaths", "term.bigger", "term.smaller", "view.sidebar",
-                                   "ssh.reconnect", "server.disconnect", "term.join", "term.unsplit", "term.pane.left", "term.pane.right",
-                                   "term.pane.up", "term.pane.down", "term.resize.left", "term.resize.right", "term.resize.up", "term.resize.down"]
+    /// What works while the keys go to the terminal (`terminalActive`), in the key bar's order there; `tab.*` act on
+    /// its tabs then. ⌘1–4 go back to a panel.
+    static let terminalCommands = ["view.terminal", "view.terminalFull", "tab.new", "tab.close", "term.split.right", "term.split.down", "tab.next",
+                                   "tab.prev", "ssh.new", "go.connect", "cmdline.insert", "cmdline.insertPaths", "term.bigger", "term.smaller",
+                                   "view.sidebar", "ssh.reconnect", "server.disconnect", "term.join", "term.unsplit", "term.pane.left",
+                                   "term.pane.right", "term.pane.up", "term.pane.down", "term.resize.left", "term.resize.right", "term.resize.up",
+                                   "term.resize.down"] + (1...4).map { "panel.focus\($0)" }
 
+    /// ⌃O: the drawer under the panels; open with the keys in a panel, the keys go to it (as ⌃` in VS Code); with the
+    /// keys in it (or over the panels, ⌃⇧O), it hides.
     func toggleTerminal() {
+        if terminal.isShown, !terminalActive, let v = terminal.current?.view { window.makeFirstResponder(v); return }
         if terminal.isShown {
             // The active panel follows the shell's folder; the others reload for what ⌘E ↩ or the shell did to theirs (sizes,
             // mtimes; the watchers saw the names). Not both on one panel: a reload right after navigate(to:) supersedes it
@@ -988,6 +1011,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
             window.makeFirstResponder(active.table)
             updatePrompt()
+            focusMoved()
         } else {
             if let v = terminal.showPassingCtrlO(NSApp.currentEvent) { window.makeFirstResponder(v); return }
             // A server panel: its SSH session (or a new one in this folder), never a local shell.
@@ -998,9 +1022,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
+    /// ⌃⇧O: the terminal over the panels' room too (as ⌃O was before the drawer), again: back into its drawer.
+    func toggleTerminalFull() {
+        if !terminal.isShown { toggleTerminal() }
+        guard terminal.isShown else { return }
+        terminal.setFull(!terminal.isFull)
+        terminal.current.map { window.makeFirstResponder($0.view) }
+        updatePrompt()
+        focusMoved()
+    }
+
+    /// The drawer's Hide: as ⌃O with the keys in the terminal, wherever they are.
+    func hideTerminal() {
+        guard terminal.isShown else { return }
+        terminal.current.map { window.makeFirstResponder($0.view) }
+        terminalFocusedLast = true
+        toggleTerminal()
+    }
+
+    /// Commands that need the panels (Connect's SFTP, a tag, Show in Activity…): with the terminal over them (⌃⇧O),
+    /// back into its drawer; the drawer itself stays.
+    func showPanels() {
+        guard terminal.isFull else { return }
+        terminal.setFull(false)
+        window.makeFirstResponder(active.table)
+        updatePrompt()
+        focusMoved()
+    }
+
     /// `cd` in the terminal's current tab (its shell told its folder): a local shell takes the active panel along; an
     /// SSH tab, a panel already showing that server — never a new connection.
-    private func follow(_ tab: EmbeddedTerminal.Tab) {
+    func follow(_ tab: EmbeddedTerminal.Tab) {   // internal: tests
         updatePrompt()
         guard let dir = tab.cwd else { return }
         if let t = tab.target {
@@ -1047,11 +1099,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                                        "admin.move", "file.extract", "file.compress", "file.symlink", "file.hardlink"]
 
     private func perform(_ c: Command) {
-        if !terminal.isShown {
+        if !terminalActive {
             if let hint = active.parkedHint, !Self.runsParked(c.id) { return active.flash(hint) }
             if let hint = other.parkedHint, Self.toOther.contains(c.id) { return active.flash("The other panel: " + hint) }
         }
-        if active.remote != nil, !terminal.isShown, Self.localOnly.contains(c.id) { return active.flash("Not available on a server panel") }
+        if active.remote != nil, !terminalActive, Self.localOnly.contains(c.id) { return active.flash("Not available on a server panel") }
         c.run(self)
         keyBar.commandRan(c.id)
     }
@@ -1069,6 +1121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if id == "view.perms" { item.state = defaults.bool(forKey: "showPerms") ? .on : .off }
         if id == "app.update" { item.title = updateOffered.map { "Kermo \($0) Available…" } ?? "Check for Updates…" }
         if id == "app.update.auto" { item.state = defaults.bool(forKey: "updateCheckOff") ? .off : .on }
+        if id == "view.terminalFull" { item.state = terminal?.isFull == true ? .on : .off }
         if id == "file.trash" { item.title = panels.indices.contains(activeIndex) && (active.remote ?? active.parked) != nil ? "Delete…" : commands.first { $0.id == id }?.title ?? item.title }   // no Trash on a server
         if id == "file.copy" { item.title = panels.indices.contains(activeIndex) && active.archive != nil ? "Extract To…" : commands.first { $0.id == id }?.title ?? item.title }   // F5 in an archive
         if id == "tab.close" {
@@ -1108,8 +1161,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Also the key bar's: a click there makes the window key, so only focus and the terminal matter.
     func canRun(_ id: String) -> Bool {
-        if terminal.isShown { return Self.terminalCommands.contains(id) }   // panel commands would act on hidden panels
-        return !(window.firstResponder is NSText)
+        if terminalActive { return Self.terminalCommands.contains(id) }   // the panels' commands: from a panel
+        return !(window?.firstResponder is NSText)
     }
 
     // MARK: - Window content
@@ -1119,17 +1172,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         split.isVertical = true
         split.dividerStyle = .thin
         for p in panels { split.addArrangedSubview(p.view) }
-        // The terminal (⌃O) covers just the panels, so it needs a plain superview next to them, not a split pane.
+        // The terminal (⌃O) is a drawer under the panels, not a pane beside the sidebar: it wraps them in a split of its own.
         let panelsHost = NSViewController()
         panelsHost.view = NSView()
-        split.translatesAutoresizingMaskIntoConstraints = false
+        split.autoresizingMask = [.width, .height]
         panelsHost.view.addSubview(split)
-        NSLayoutConstraint.activate([
-            split.leadingAnchor.constraint(equalTo: panelsHost.view.leadingAnchor), split.trailingAnchor.constraint(equalTo: panelsHost.view.trailingAnchor),
-            split.topAnchor.constraint(equalTo: panelsHost.view.topAnchor), split.bottomAnchor.constraint(equalTo: panelsHost.view.bottomAnchor),
-        ])
-        terminal = EmbeddedTerminal(covering: split)
-        terminal.onExit = { [unowned self] in window.makeFirstResponder(active.table) }
+        terminal = EmbeddedTerminal(covering: split, autosave: "TerminalDrawer")
+        terminal.onExit = { [unowned self] in
+            window.makeFirstResponder(active.table)
+            updatePrompt()
+            focusMoved()
+        }
+        terminal.onCommand = { [unowned self] in run($0) }
+        terminal.onHide = { [unowned self] in hideTerminal() }
+        terminal.keyFor = { [unowned self] id in commands.first { $0.id == id }?.keys.first?.display }
         // SSH tabs come back after a restart as disconnected placeholders, in their tabs: no connection without a click.
         if let data = defaults.data(forKey: "terminalGroups"), let saved = try? JSONDecoder().decode([EmbeddedTerminal.SavedGroup].self, from: data) {
             terminal.restore(saved)
@@ -1156,18 +1212,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         splitController.addSplitViewItem(NSSplitViewItem(viewController: panelsHost))
         let main = splitController.view
 
+        wireKeyBar()
         let bar = keyBar
-        bar.onRun = { [unowned self] id in
-            if keyBar.list == nil { return run(id) }
-            if let p = panels.first(where: { $0.filterFocused || $0.pathFocused }) { p.fieldKey(id) } else { commandLineKey(id) }
-        }
-        bar.onMore = { [unowned self] m in   // the terminal's keys, at rest all of them: none there is a bare F-key
-            let shown = terminal.isShown ? Self.terminalCommands.compactMap { id in commands.first { $0.id == id } } : commands
-            KeyHelp.show(over: window, commands: shown, layer: terminal.isShown && m.isEmpty ? nil : m)
-        }
-        bar.canRun = { [unowned self] in canRun($0) }
-        bar.terminalShown = { [unowned self] in terminal.isShown }
-
         let cmdBar = makeCommandLine()
 
         let root = NSView()
@@ -1188,6 +1234,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ])
         equalizePanels()
         return root
+    }
+
+    /// The key bar's clicks, its "+N", what it may run, and whose layers it shows: the terminal's while it has the keys.
+    func wireKeyBar() {
+        let bar = keyBar
+        bar.onRun = { [unowned self] id in
+            if keyBar.list == nil { return run(id) }
+            if let p = panels.first(where: { $0.filterFocused || $0.pathFocused }) { p.fieldKey(id) } else { commandLineKey(id) }
+        }
+        bar.onMore = { [unowned self] m in   // the terminal's keys, at rest all of them: none there is a bare F-key
+            let shown = terminalActive ? Self.terminalCommands.compactMap { id in commands.first { $0.id == id } } : commands
+            KeyHelp.show(over: window, commands: shown, layer: terminalActive && m.isEmpty ? nil : m)
+        }
+        bar.canRun = { [unowned self] in canRun($0) }
+        bar.terminalShown = { [unowned self] in terminalActive }
     }
 
     /// The command line at rest (R-30, Р5): where it runs (`~/Projects/site $`), what to type, ⌘E. Its keys are the key
@@ -1311,15 +1372,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     private func updatePrompt() {
         guard panels.indices.contains(activeIndex) else { return }
-        cmdField.isHidden = terminal?.isShown == true   // ⌘E doesn't work under the terminal; the prompt label stays (host:cwd of an SSH tab)
+        cmdField.isHidden = terminal?.isFull == true   // ⌘E doesn't work under the terminal; the prompt label stays (host:cwd of an SSH tab)
         // A tab up front: its shell's folder (an SSH tab's: its server and what the shell told, OSC 7), not the panel's under it.
         let remote: (host: String, dir: String?)?
         var local = active.path
-        if terminal?.isShown == true, let t = terminal.current { remote = t.host.map { ($0, t.cwd) }; local = t.folder ?? local }
+        if terminal?.isFull == true, let t = terminal.current { remote = t.host.map { ($0, t.cwd) }; local = t.folder ?? local }
         else { remote = (active.remote ?? active.parked).map { (SavedServer.name(for: $0.target.asUser), $0.dir) } }   // ⌘E's user, not root
         let path = remote.map { r in r.dir.map { "\(r.host):\($0)" } ?? r.host } ?? (local as NSString).abbreviatingWithTildeInPath   // a place's name, no emoji
         promptLabel.stringValue = path + " $"   // ⌘E runs as the user, on a root panel too (`commandLineKeys(root:)` says so)
-        let root = terminal?.isShown == true ? nil : (active.remote ?? active.parked).flatMap { $0.target.sudo ? $0 : nil }
+        let root = terminal?.isFull == true ? nil : (active.remote ?? active.parked).flatMap { $0.target.sudo ? $0 : nil }
         if commandLineFocused { keyBar.list = focusedKeys }
         sidebar.highlight(sidebarKey)
         keyBar.server = (active.remote ?? active.parked) != nil
@@ -1332,7 +1393,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let dir = active.path   // proxy icon, once the folder is known to be there (asked off the main thread)
         Task {
             let exists = await Self.folderChecks.run(dir) { FileManager.default.fileExists(atPath: dir) }
-            if panels.indices.contains(activeIndex), active.remote == nil, terminal?.isShown != true, active.path == dir { window?.representedURL = exists ? URL(fileURLWithPath: dir) : nil }
+            if panels.indices.contains(activeIndex), active.remote == nil, terminal?.isFull != true, active.path == dir { window?.representedURL = exists ? URL(fileURLWithPath: dir) : nil }
         }
     }
 
@@ -1345,7 +1406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// the ⌘E field, or, while the terminal is up, the shell in its current tab (one on the panel's machine). Focus stays.
     func insertIntoCommandLine(paths: Bool) {
         guard let text = shellContext.expand(paths ? "%S" : "%f"), !text.isEmpty else { return NSSound.beep() }
-        if terminal.isShown {
+        if terminalActive {
             if !terminal.insert(text + " ", on: active.remote?.target) { NSSound.beep() }
         } else {
             let cur = cmdField.stringValue
