@@ -22,7 +22,7 @@ Kermo comes back as you left it: each panel's tabs and the one in front, the act
 
 A server tab comes back **not connected**. Its header says where it was (`web1:/etc/nginx`, with a ROOT chip for a root panel), and its middle says **Not connected**, `web1:/etc/nginx — nothing is sent until you ask`, with **↩ Connect**, **⌃⌘R As Root** and **⌘↑ This Mac** to click. Nothing is sent to any server until you ask, production and locked ones included:
 
-- **↩** or a double-click connects, as Connect does: a locked server asks for Touch ID first, and the cursor goes back to its name. A root tab connects as root; ⌃⌘R / ⌃⇧⌘R choose root or the user instead.
+- **↩** or a click on **↩ Connect** connects, as Connect does: a locked server asks for Touch ID first, and the cursor goes back to its name. A root tab connects as root; ⌃⌘R / ⌃⇧⌘R choose root or the user instead.
 - ⌘↑ or ⌫ goes to the tab's folder on this Mac; the sidebar, ⌘L and the like go where you point, as on a local tab.
 - The F-keys, the command line and anything else that would act on the files say `Not connected — ↩ Connect to web1` and do nothing; so do copies and moves into it from the other panel.
 

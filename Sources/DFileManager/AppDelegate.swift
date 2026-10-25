@@ -353,6 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         commands = cmds
         keymap = map
         keyBar.reload(cmds)
+        showCmdKey()
         refreshSidebar()   // section headers show keys
         let menu = makeMenu()
         NSApp.mainMenu = menu
@@ -1198,14 +1199,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         cmdField.drawsBackground = false
         cmdField.focusRingType = .none
         cmdField.delegate = self
-        let key = commands.first { $0.id == "cmdline.focus" }?.keys.first?.display ?? "⌘E"
         cmdKey.isBordered = false
         cmdKey.refusesFirstResponder = true
-        cmdKey.attributedTitle = KeyCap.text(key, font: .systemFont(ofSize: 12))
         cmdKey.target = self
         cmdKey.action = #selector(cmdKeyClicked)
         cmdKey.toolTip = "Command Line"
-        cmdKey.setAccessibilityLabel("Command Line, " + key)
+        showCmdKey()
         let cmdBar = NSStackView(views: [promptLabel, cmdField, cmdKey])
         cmdBar.spacing = 6
         cmdBar.setHuggingPriority(.defaultHigh, for: .vertical)   // as tall as its line: the panels take the rest (N21)
@@ -1293,6 +1292,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private static let folderChecks = Coalesced<Bool>()
 
     @objc private func cmdKeyClicked() { run("cmdline.focus") }
+
+    /// The command line's key, as the keymap has it now.
+    private func showCmdKey() {
+        let key = commands.first { $0.id == "cmdline.focus" }?.keys.first?.display ?? "⌘E"
+        cmdKey.attributedTitle = KeyCap.text(key, font: .systemFont(ofSize: 12))
+        cmdKey.setAccessibilityLabel("Command Line, " + key)
+    }
 
     /// The sidebar's Git section follows the active panel: its work tree, or none.
     private func updateGitRow() {
