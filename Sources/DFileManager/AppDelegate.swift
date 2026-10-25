@@ -1177,7 +1177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         panelsHost.view = NSView()
         split.autoresizingMask = [.width, .height]
         panelsHost.view.addSubview(split)
-        terminal = EmbeddedTerminal(covering: split, autosave: "TerminalDrawer")
+        terminal = EmbeddedTerminal(covering: split, heightKey: "terminalDrawerHeight")
         terminal.onExit = { [unowned self] in
             window.makeFirstResponder(active.table)
             updatePrompt()

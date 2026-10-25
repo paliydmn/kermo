@@ -120,13 +120,11 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     private unowned let host: NSView   // the panels; the drawer goes under them
     /// The panels on top, the terminal under them; with `isFull` the terminal alone. Made around the panels when they
     /// have a superview (at once in the app).
-    let drawer = NSSplitView()
+    private(set) var drawer: DrawerSplit?
     /// ⌃⇧O: the terminal takes the panels' room too, as ⌃O did before the drawer.
-    private(set) var isFull = false
-    /// The drawer's height as last dragged; after a restart, as the split saved it (`autosave`, AppKit's own key).
-    private var drawerHeight: CGFloat?
-    private let autosave: String?
-    static let minDrawer: CGFloat = 80, minPanels: CGFloat = 120
+    var isFull: Bool { drawer?.bottomOnly ?? false }
+    /// Where the drawer's height is kept, as dragged (the app's `terminalDrawerHeight`; tests' none).
+    private let heightKey: String?
     var onCommand: ((String) -> Void)?
     var onHide: (() -> Void)?
     /// A command's key, as the keymap has it: the buttons' tooltips.
@@ -140,16 +138,16 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     private(set) var fontSize: CGFloat = (UserDefaults.standard.object(forKey: "terminalFontSize") as? Double).map { min(max($0, 9), 36) } ?? 13
     private var hiddenAt = -TimeInterval.infinity   // uptime; ⌃O ⌃O
 
-    var isShown: Bool { container.superview != nil && !container.isHidden }
+    var isShown: Bool { drawer?.showsBottom ?? false }
     private var group: Group? { groups.indices.contains(index) ? groups[index] : nil }
     /// The current tab's focused pane: what keys, ⌃↩, ⌘R and the like act on.
     var current: Tab? { group?.pane }
     var hasFocus: Bool { isShown && (container.window?.firstResponder as? NSView)?.isDescendant(of: container) == true }
 
-    /// `autosave`: the drawer's height is kept under this name (the app's; tests' none).
-    init(covering host: NSView, autosave: String? = nil) {
+    /// `heightKey`: the defaults key the drawer's height is kept in (the app's; tests' none).
+    init(covering host: NSView, heightKey: String? = nil) {
         self.host = host
-        self.autosave = autosave
+        self.heightKey = heightKey
         super.init()
         container.orientation = .vertical
         container.spacing = 2
@@ -200,49 +198,28 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         }
     }
 
-    /// The panels into the drawer's split, the terminal (hidden) under them, in the panels' place.
+    /// The panels and the terminal (hidden) into a `DrawerSplit`, in the panels' place.
     private func wrap() {
-        guard container.superview == nil, let sup = host.superview else { return }
-        drawer.isVertical = false
-        drawer.dividerStyle = .thin
-        drawer.delegate = self
-        drawer.frame = host.frame
-        drawer.autoresizingMask = [.width, .height]
-        sup.addSubview(drawer, positioned: .above, relativeTo: host)
+        guard drawer == nil, let sup = host.superview else { return }
+        let frame = host.frame
         host.removeFromSuperview()
         host.translatesAutoresizingMaskIntoConstraints = true
         container.translatesAutoresizingMaskIntoConstraints = true
-        drawer.addSubview(host)
-        drawer.addSubview(container)
-        if let autosave {
-            drawer.autosaveName = autosave   // brings back the frames it saved: the drawer's height, unless it was full then
-            if !host.isHidden, container.frame.height >= Self.minDrawer { drawerHeight = container.frame.height }
-        }
-        host.isHidden = false
-        container.isHidden = true
+        let d = DrawerSplit(top: host, bottom: container, frame: frame)
+        d.autoresizingMask = [.width, .height]
+        if let heightKey, let h = UserDefaults.standard.object(forKey: heightKey) as? Double { d.height = h }
+        d.onDragged = { [heightKey] h in if let heightKey { UserDefaults.standard.set(Double(h), forKey: heightKey) } }
+        sup.addSubview(d)
+        drawer = d
     }
 
     private func attach() { wrap() }
 
-    /// The drawer at its height — as last dragged, else 40 % of the room — between its least and the panels' least.
-    private func layoutDrawer() {
-        let total = drawer.bounds.height, line = drawer.dividerThickness
-        let h = min(max(drawerHeight ?? total * 0.4, Self.minDrawer), total - Self.minPanels - line)
-        drawer.adjustSubviews()
-        guard total > 0, h >= Self.minDrawer else { return }
-        drawer.setPosition(total - h - line, ofDividerAt: 0)
-        drawer.layoutSubtreeIfNeeded()   // the panes at their new size now, not at the next pass (none comes without a window)
-        drawer.needsDisplay = true
-    }
-
     /// ⌃⇧O: the terminal over the panels' room too, or back into its drawer.
     func setFull(_ on: Bool) {
-        guard isShown, on != isFull else { return }
-        isFull = on
-        host.isHidden = on
-        on ? drawer.adjustSubviews() : layoutDrawer()
-        drawer.layoutSubtreeIfNeeded()
-        drawer.needsDisplay = true   // the divider it drew isn't there any more: else its line stays on screen
+        guard isShown, on != isFull, let drawer else { return }
+        drawer.bottomOnly = on
+        drawer.layoutSubtreeIfNeeded()   // the panes at their new size now, not at the next pass (none comes without a window)
         maximize.image = (on ? Symbol.restore : Symbol.maximize).image(on ? "Restore Terminal" : "Maximize Terminal")
         render()
     }
@@ -270,10 +247,8 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     /// Shows the workspace on the tab the caller picked: in its drawer, or over the panels while `isFull`.
     func show() -> NSView {
         attach()
-        let opening = container.isHidden
-        container.isHidden = false
-        host.isHidden = isFull
-        if opening && !isFull { layoutDrawer() }
+        drawer?.showsBottom = true
+        drawer?.layoutSubtreeIfNeeded()
         render()
         return current!.view
     }
@@ -282,11 +257,9 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     /// pressed ⌃O arms ⌃O ⌃O, not a command that hides the terminal on its way.
     func hide(_ e: NSEvent? = nil) -> String? {
         let cwd = current.flatMap { $0.kind == .shell ? $0.shellCwd : nil }
-        container.isHidden = true
-        host.isHidden = false
-        isFull = false
-        drawer.adjustSubviews()
-        drawer.needsDisplay = true
+        drawer?.showsBottom = false
+        drawer?.bottomOnly = false
+        drawer?.layoutSubtreeIfNeeded()
         hiddenAt = Self.pressedCtrlO(e) ? e!.timestamp : -.infinity
         return cwd
     }
@@ -489,19 +462,8 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     }
     private var equalizing = false
 
-    func splitView(_ s: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
-        s === drawer ? Self.minPanels : equalizing ? p : p + Self.minPane
-    }
-    func splitView(_ s: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
-        s === drawer ? s.bounds.height - Self.minDrawer - s.dividerThickness : equalizing ? p : p - Self.minPane
-    }
-    /// A taller or shorter window: the panels give or take, the drawer keeps its height.
-    func splitView(_ s: NSSplitView, shouldAdjustSizeOfSubview v: NSView) -> Bool { s !== drawer || v === host || host.isHidden }
-    func splitView(_ s: NSSplitView, shouldHideDividerAt i: Int) -> Bool { s === drawer && (container.isHidden || host.isHidden) }
-    func splitViewDidResizeSubviews(_ n: Notification) {
-        guard n.object as? NSSplitView === drawer, !container.isHidden, !host.isHidden, container.frame.height >= Self.minDrawer else { return }
-        drawerHeight = container.frame.height   // dragged, or set: kept for the next ⌃O
-    }
+    func splitView(_ s: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { equalizing ? p : p + Self.minPane }
+    func splitView(_ s: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { equalizing ? p : p - Self.minPane }
 
     private func makeView() -> DropTerminalView {
         let t = DropTerminalView(frame: host.bounds)
@@ -737,11 +699,9 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             arrange(g)
         }
         if groups.isEmpty {
-            container.isHidden = true
-            host.isHidden = false
-            isFull = false
-            drawer.adjustSubviews()
-            drawer.needsDisplay = true
+            drawer?.showsBottom = false
+            drawer?.bottomOnly = false
+            drawer?.layoutSubtreeIfNeeded()
             onChange?()
             onExit?()
         } else {
@@ -1107,3 +1067,72 @@ final class DropTerminalView: LocalProcessTerminalView {
         return ShellContext.isTypeable(line) ? line : nil
     }
 }
+
+/// The panels over the terminal's drawer, a line between them to drag (Р6): either can be alone — the panels while the
+/// terminal is hidden, the terminal over all the room (⌃⇧O). Laid out by hand: a split view kept drawing a hidden
+/// pane's divider, and its autosave kept the collapsed size.
+@MainActor
+final class DrawerSplit: NSView {
+    let top: NSView, bottom: NSView
+    private let handle = DrawerHandle()
+    /// The drawer's height, as last dragged; nil: 40 % of the room.
+    var height: CGFloat? { didSet { needsLayout = true } }
+    var showsBottom = false { didSet { if showsBottom != oldValue { needsLayout = true } } }
+    var bottomOnly = false { didSet { if bottomOnly != oldValue { needsLayout = true } } }
+    /// A drag ended at this height.
+    var onDragged: ((CGFloat) -> Void)?
+    static let minBottom: CGFloat = 80, minTop: CGFloat = 120
+
+    init(top: NSView, bottom: NSView, frame: NSRect) {
+        self.top = top
+        self.bottom = bottom
+        super.init(frame: frame)
+        for v in [top, bottom, handle] { addSubview(v) }   // the handle over both: it reaches 2 pt into each
+        handle.onDrag = { [unowned self] y, done in
+            height = y   // AppKit's y goes up from the bottom: the drawer's height
+            layoutSubtreeIfNeeded()
+            if done, let h = height { onDragged?(shownHeight(h)) }
+        }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// The drawer's height as laid out: between its least and the panels' least.
+    func shownHeight(_ h: CGFloat? = nil) -> CGFloat {
+        min(max(h ?? height ?? bounds.height * 0.4, Self.minBottom), max(bounds.height - Self.minTop - 1, Self.minBottom))
+    }
+
+    override func layout() {
+        super.layout()
+        let b = bounds
+        top.isHidden = showsBottom && bottomOnly
+        bottom.isHidden = !showsBottom
+        handle.isHidden = !showsBottom || bottomOnly
+        if !showsBottom { top.frame = b }
+        else if bottomOnly { bottom.frame = b }
+        else {
+            let h = shownHeight()
+            bottom.frame = NSRect(x: 0, y: 0, width: b.width, height: h)
+            handle.frame = NSRect(x: 0, y: h - 2, width: b.width, height: 5)   // easy to grab; draws 1 pt
+            top.frame = NSRect(x: 0, y: h + 1, width: b.width, height: b.height - h - 1)
+        }
+    }
+}
+
+/// The line over the drawer: a 1 pt separator in a 5 pt strip that takes the drag, with the up-down cursor.
+@MainActor
+final class DrawerHandle: NSView {
+    var onDrag: ((_ y: CGFloat, _ done: Bool) -> Void)?
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.separatorColor.setFill()
+        NSRect(x: 0, y: 2, width: bounds.width, height: 1).fill()
+    }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeUpDown) }
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseDragged(with event: NSEvent) { drag(event, done: false) }
+    override func mouseUp(with event: NSEvent) { drag(event, done: true) }
+    private func drag(_ e: NSEvent, done: Bool) {
+        guard let s = superview else { return }
+        onDrag?(s.convert(e.locationInWindow, from: nil).y, done)
+    }
+}
+

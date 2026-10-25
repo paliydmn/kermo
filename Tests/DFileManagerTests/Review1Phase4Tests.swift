@@ -349,7 +349,8 @@ private func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? N
     #expect(!app.terminalActive && app.canRun("file.copy"))
 
     app.toggleTerminal()   // ⌃O
-    #expect(term.isShown && !term.isFull && !host.isHidden && term.drawer.subviews[1].frame.height >= EmbeddedTerminal.minDrawer, "a drawer: the panels in view")
+    let drawer = try #require(term.drawer)
+    #expect(term.isShown && !term.isFull && !host.isHidden && drawer.bottom.frame.height >= DrawerSplit.minBottom, "a drawer: the panels in view")
     #expect(term.hasFocus && app.terminalActive && !app.canRun("file.copy") && app.canRun("tab.new") && app.keyBar.terminalShown())
 
     w.makeFirstResponder(app.panels[1].table)   // a click in a panel
@@ -364,17 +365,42 @@ private func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? N
     #expect(!term.isFull && !host.isHidden && !app.cmdField.isHidden, "back into the drawer")
     #expect(app.canRun("panel.focus1"), "⌘1–4: back to a panel from the terminal")
 
-    let drawer = term.drawer, total = drawer.bounds.height
-    drawer.setPosition(total - 200 - drawer.dividerThickness, ofDividerAt: 0)   // dragged
-    #expect(abs(drawer.subviews[1].frame.height - 200) < 1)
-    app.toggleTerminal()   // ⌃O from the terminal: hidden
-    #expect(!term.isShown && !host.isHidden && w.firstResponder === app.panels[0].table, "back to the active panel")
+    drawer.height = 200   // dragged
+    drawer.layoutSubtreeIfNeeded()
+    #expect(drawer.bottom.frame.height == 200 && drawer.top.frame.minY == 201)
+    app.toggleTerminalFull()
+    #expect(drawer.bottom.frame == drawer.bounds && drawer.top.isHidden)
+    app.toggleTerminal()   // ⌃O from the terminal, over the panels: hidden
+    #expect(!term.isShown && !host.isHidden && host.frame == drawer.bounds && w.firstResponder === app.panels[0].table, "back to the active panel")
     app.toggleTerminal()
-    #expect(abs(drawer.subviews[1].frame.height - 200) < 1, "the drawer keeps its height: \(drawer.subviews[1].frame.height)")
+    #expect(!term.isFull && drawer.bottom.frame.height == 200, "back in its drawer, at its height: \(drawer.bottom.frame.height)")
 
     let shell = try #require(term.current)
     shell.cwd = sub   // the shell told its folder (OSC 7)
     app.follow(shell)
     await until { app.active.path == sub }
     #expect(app.active.path == sub && !host.isHidden, "the active panel follows, in view")
+}
+
+/// The drawer's height, dragged, is kept in its defaults key and comes back with the next terminal (a restart); it stays
+/// between its least and the panels' least, and a window too low for both gives the drawer its least.
+@MainActor @Test func theDrawersHeightIsKept() {
+    let key = "dfm-r1p4-drawer-" + UUID().uuidString
+    defer { UserDefaults.standard.removeObject(forKey: key) }
+    let split = DrawerSplit(top: NSView(), bottom: NSView(), frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+    split.showsBottom = true
+    split.layoutSubtreeIfNeeded()
+    #expect(split.bottom.frame.height == 240 && split.top.frame.height == 359, "40 % at first")
+    #expect(split.shownHeight(10) == DrawerSplit.minBottom && split.shownHeight(590) == 600 - DrawerSplit.minTop - 1)
+    split.frame.size.height = 150
+    #expect(split.shownHeight(300) == DrawerSplit.minBottom, "too low for both: the drawer's least")
+
+    let parent = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600)), panels = NSView(frame: parent.bounds)
+    parent.addSubview(panels)
+    let term = EmbeddedTerminal(covering: panels, heightKey: key)
+    term.drawer?.onDragged?(310)   // a drag ends
+    #expect(UserDefaults.standard.double(forKey: key) == 310)
+    let parent2 = NSView(frame: parent.bounds), panels2 = NSView(frame: parent.bounds)
+    parent2.addSubview(panels2)
+    #expect(EmbeddedTerminal(covering: panels2, heightKey: key).drawer?.height == 310, "after a restart")
 }
