@@ -155,6 +155,10 @@ private func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? N
     #expect(panel.emptyShown == .init(symbol: .folder, title: "Empty folder", keys: [KeySlot(key: "F7", label: "New Folder", id: "file.mkdir"),
                                                                                 KeySlot(key: "⇧F4", label: "New File", id: "file.new"),
                                                                                 KeySlot(key: "⌘V", label: "Paste", id: "paste")]))
+    panel.view.frame = NSRect(x: 0, y: 0, width: 600, height: 500)
+    panel.view.layoutSubtreeIfNeeded()
+    try await Task.sleep(for: .milliseconds(100))   // the bar places its slots after a layout
+    #expect(panel.emptyKeysShown.count == 3, "all of them in a wide panel, no \"+2\": \(panel.emptyKeysShown)")
     func slots() -> [NSButton] { buttons(panel.view).filter { $0.identifier?.rawValue == "file.mkdir" } }
     let mkdir = try #require(slots().first)
     click(mkdir)

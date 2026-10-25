@@ -336,7 +336,7 @@ final class KeyBarView: NSView {
     }
 
     /// As wide as all its slots side by side: a bar centered on its own (a panel's empty state) is given that much.
-    var naturalWidth: CGFloat { buttons.map(\.fittingSize.width).reduce(12, +) + CGFloat(max(buttons.count - 1, 0)) * row.spacing }
+    var naturalWidth: CGFloat { ceil(buttons.map(\.fittingSize.width).reduce(12, +) + CGFloat(buttons.count) * row.spacing) + 1 }   // as `place` counts
 
     /// Tests: what the chips show — held (lit) and pinned (outlined).
     var chipStates: [(flag: NSEvent.ModifierFlags, held: Bool, pinned: Bool)] { chips.map { ($0.flag, $0.held, $0.pinned) } }

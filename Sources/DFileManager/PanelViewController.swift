@@ -946,6 +946,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     var emptyShown: Empty? { emptyView.shown }   // tests: what the middle shows now
+    var emptyKeysShown: [KeySlot] { emptyView.keys.shownSlots }   // tests: its keys that fit
 
     private func updateEmpty() {
         let e = empty
@@ -3048,6 +3049,9 @@ final class EmptyStateView: NSStackView {
         orientation = .vertical
         alignment = .centerX
         spacing = 6
+        edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
+        wantsLayer = true
+        layer?.cornerRadius = 6
         icon.symbolConfiguration = .init(pointSize: 26, weight: .light)
         spinner.style = .spinning
         spinner.controlSize = .small
@@ -3080,6 +3084,7 @@ final class EmptyStateView: NSStackView {
         shown = e
         isHidden = e == nil
         guard let e else { return spinner.stopAnimation(nil) }
+        layer?.backgroundColor = theme.background?.cgColor   // a theme's grid lines don't cross the words
         icon.image = e.symbol?.image(e.title)
         icon.contentTintColor = theme.hidden
         icon.isHidden = e.symbol == nil
