@@ -36,7 +36,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Swap panels / open the same folder in the other panel | ⌘U / ⌥= |
 | Go to a folder (bookmarks and frequent folders) | ⌘P |
 | Bookmark this folder (again: remove the bookmark) | ⌘D |
-| Path entry with Tab completion | ⌘L, ⇧⌘G |
+| Path entry with Tab completion (or a click on an empty spot of the path bar) | ⌘L, ⇧⌘G |
 | Up / back / forward | ⌫, ⌘↑ / ⌘[ / ⌘] |
 | Home / computer root | ⇧⌘H / ⇧⌘/ |
 | Directory tree (←/→ collapse/expand, ↩ open) | F10, ⌥0, ⌥F10, ⇧⌘T |
