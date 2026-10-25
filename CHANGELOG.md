@@ -18,7 +18,7 @@ Release:
 - `isoDates`: `defaults write com.dmn.dfilemanager isoDates -bool true` keeps the Modified column at `2024-03-01 13:33`.
 
 ### Changed
-- Marked files are bold in the accent color with a ✓ before the icon, not red: red now means only that something failed or can't be undone. Themes keep their own mark color, and get the ✓ too.
+- Marked files are bold in the accent color with a ✓ before the icon, not red: red now means only that something failed or can't be undone. Themes keep their own mark color, and get the ✓ too; GitHub Light and Solarized Light mark in pink and magenta instead of red.
 - The Git column: `M` is amber, `A` green, `?` and `D` grey (`D` struck through), a conflict `U` red with ⚠; a staged letter is bold. No purple or orange there.
 - A volume in the sidebar has a bar of how full it is under its name, with `350 GB free`: grey, amber from 85 %, red from 95 %. It was used in red and free in green.
 - Production, root and locked are one chip everywhere — PROD, ROOT, LOCKED — in the path bar, server pickers, terminal tabs, tunnels, Run on Servers, Activity and the editor's title bar, instead of 🟣 PROD, 🔒, `#` and purple names.

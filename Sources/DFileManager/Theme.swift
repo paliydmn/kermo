@@ -36,9 +36,9 @@ struct Theme {
         Theme(name: "Catppuccin Mocha", background: rgb(0x1E1E2E), text: rgb(0xCDD6F4), dir: rgb(0x89B4FA), exec: rgb(0xA6E3A1),
               hidden: rgb(0x6C7086), marked: rgb(0xF38BA8), cursor: rgb(0x45475A), mono: true),
         Theme(name: "Solarized Light", background: rgb(0xFDF6E3), text: rgb(0x657B83), dir: rgb(0x268BD2), exec: rgb(0x859900),
-              hidden: rgb(0x93A1A1), marked: rgb(0xDC322F), cursor: rgb(0xDDD6C1), mono: true),
+              hidden: rgb(0x93A1A1), marked: rgb(0xD33682), cursor: rgb(0xDDD6C1), mono: true),   // magenta: red says failed
         Theme(name: "GitHub Light", background: .white, text: rgb(0x24292F), dir: rgb(0x0969DA), exec: rgb(0x1A7F37),
-              hidden: rgb(0x8C959F), marked: rgb(0xCF222E), cursor: rgb(0xDDF4FF)),
+              hidden: rgb(0x8C959F), marked: rgb(0xBF3989), cursor: rgb(0xDDF4FF)),   // pink, not red (failed) or blue (folders)
     ]
 
     /// Dark chrome on dark backgrounds; nil (system) for the System theme. Light themes keep light chrome. Dark is

@@ -134,6 +134,10 @@ private final class CountingPreview: QLPreviewPanel {
     let a = try #require(cell(panel, "name", "a.txt") as? PanelCell), b = try #require(cell(panel, "name", "b.txt") as? PanelCell)
     #expect(!a.check.isHidden && b.check.isHidden)
     #expect(a.check.contentTintColor == a.textField?.textColor && Theme.all[0].marked == Palette.accent)
+    for t in Theme.all where t.background != nil {   // no theme marks in red (hue within 12° of it), which says failed
+        let hue = (t.marked.usingColorSpace(.sRGB)?.hueComponent ?? 0) * 360
+        #expect(hue > 12 && hue < 348, "\(t.name): \(hue)")
+    }
     let marked = a.textField?.textColor
     a.backgroundStyle = .emphasized
     #expect(a.textField?.textColor == .alternateSelectedControlTextColor && a.check.contentTintColor == .alternateSelectedControlTextColor)
