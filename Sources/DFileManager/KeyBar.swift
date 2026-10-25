@@ -20,15 +20,24 @@ enum KeyBarModel {
 
     static func fNumber(_ key: String) -> Int? { key.first == "f" ? Int(key.dropFirst()) : nil }
 
+    /// A command's words on the bar: its `short`, else its menu title without "…" and what's said in brackets.
+    static func label(_ c: Command) -> String {
+        guard c.short.isEmpty else { return c.short }
+        let t = c.title.replacingOccurrences(of: "…", with: "")
+        return (t.range(of: " (").map { String(t[..<$0.lowerBound]) } ?? t)
+    }
+
     /// Unmodified keys other than F-keys (↩ ⌫ Space Tab /) stay out — they're on the F1 sheet.
     /// ⌥+digit duplicates of F-keys (⌥5 = F5, ⇧⌥6 = ⇧F6, ⌥0 = F10) collapse into one hint slot naming the digits there.
     /// One slot per command per layer (its first key there). F-keys first by number, then registry order.
     /// `server`: the active panel is a server's, where F8 deletes (after a question): no Trash there.
-    static func layers(_ commands: [Command], server: Bool = false) -> [(mods: NSEvent.ModifierFlags, slots: [KeySlot])] {
+    /// `terminal`: the terminal's own commands, its panes' too; with no F-keys there, each one's first key shows at rest,
+    /// and ⌃O goes back to the panels. Else the panes' keys stay out: the bar is the panels'.
+    static func layers(_ commands: [Command], server: Bool = false, terminal: Bool = false) -> [(mods: NSEvent.ModifierFlags, slots: [KeySlot])] {
         var slots: [UInt: [(f: Int, slot: KeySlot)]] = [:]
         var hinted: [UInt: [Int]] = [:]   // per layer: the F-key numbers its ⌥ digits stand for
-        // The terminal's pane arrows stay out too: the bar is the panels' (the terminal shows only ⌃O there).
-        for c in commands where !c.id.hasPrefix("term.pane.") && !c.id.hasPrefix("term.resize.") {
+        func label(_ c: Command) -> String { server && c.id == "file.trash" ? "Delete…" : terminal && c.id == "view.terminal" ? "Panels" : Self.label(c) }
+        for c in commands where terminal || !c.id.hasPrefix("term.pane.") && !c.id.hasPrefix("term.resize.") {
             for k in c.keys {
                 let m = k.flags, f = fNumber(k.name)
                 if m.isEmpty && f == nil { continue }
@@ -38,9 +47,11 @@ enum KeyBarModel {
                     continue
                 }
                 if slots[m.rawValue]?.contains(where: { $0.slot.id == c.id }) == true { continue }
-                let label = server && c.id == "file.trash" ? "Delete…" : c.short.isEmpty ? c.title : c.short
-                slots[m.rawValue, default: []].append((f ?? 99, KeySlot(key: k.display, label: label, id: c.id)))
+                slots[m.rawValue, default: []].append((f ?? 99, KeySlot(key: k.display, label: label(c), id: c.id)))
             }
+        }
+        if terminal, slots[0] == nil {
+            slots[0] = commands.compactMap { c in c.keys.first.map { (99, KeySlot(key: $0.display, label: label(c), id: c.id)) } }
         }
         let used = Set(slots.keys).union(hinted.keys).map { NSEvent.ModifierFlags(rawValue: $0) }   // ⇧⌥: hints only
         let mods = [[]] + order.dropFirst().filter { used.contains($0) } + used.filter { !order.contains($0) }.sorted { $0.rawValue < $1.rawValue }
@@ -79,16 +90,26 @@ enum KeyBarModel {
         let shown = Set((kept + spare).prefix(capacity - 1))
         return (slots.indices.filter(shown.contains).map { slots[$0] }, slots.count - shown.count)
     }
+
+    /// What VoiceOver says for a slot: "F5, Copy to web-01".
+    static func spoken(_ s: KeySlot, target: Target? = nil) -> String {
+        [s.key, s.label + (target.map { " to \($0.name)" + ($0.prod ? ", a production server" : "") } ?? "")].filter { !$0.isEmpty }.joined(separator: ", ")
+    }
 }
 
-/// Bottom row (replaces the F-key bar): F1–F10 at rest; holding modifiers for a moment shows that layer.
-/// Click a slot = press its key. "Hold ▾" pins a layer for the mouse until ⎋ or the next command.
+/// The keys of what has the focus, along the bottom: the panels' F1–F10, holding a modifier for a moment shows its
+/// layer; the terminal's keys; or a list of its own — the command line's, a Picker's, a window's. Click a slot = press
+/// its key. ⇧ ⌥ ⌘ ⌃ on the left light up while held; a click keeps that layer shown until ⎋, a second click or the
+/// next command.
 @MainActor
 final class KeyBarView: NSView {
     var onRun: ((String) -> Void)?
+    /// "+N" of the registry's layers (the F1 sheet on that layer); a list's opens a menu of the rest.
     var onMore: ((NSEvent.ModifierFlags) -> Void)?
     var canRun: (String) -> Bool = { _ in true }
     var terminalShown: () -> Bool = { false }
+    /// Shown in place of the registry's layers, every slot enabled, no modifier chips: its owner lists what works.
+    var list: [KeySlot]? { didSet { if list != oldValue { render() } } }
     /// The active panel is a server's (F8: Delete…, in red).
     var server = false {
         didSet { if server != oldValue { reload(commands) } }
@@ -98,32 +119,46 @@ final class KeyBarView: NSView {
 
     private var commands: [Command] = []
     private var layers: [(mods: NSEvent.ModifierFlags, slots: [KeySlot])] = []
+    private var terminalLayers: [(mods: NSEvent.ModifierFlags, slots: [KeySlot])] = []
     private var held: NSEvent.ModifierFlags = []
-    private(set) var pinned: NSEvent.ModifierFlags?
+    private(set) var pinned: NSEvent.ModifierFlags = []
     private var holdTask: Task<Void, Never>?
-    private let hold = NSButton(title: "", target: nil, action: nil)
+    private let chips: [ModChip]
+    private let chipRow = NSStackView()
     private let row = NSStackView()
-    private var capacity = 10
+    /// What the layer or list has, each slot's button made once per render: `place` picks what fits the width.
+    private var slots: [KeySlot] = []
+    private var buttons: [SlotButton] = []
+    private var placedWidth: CGFloat = -1
+    private let spacer = NSView()
+    private let separator = NSBox()
 
-    init() {
+    /// `chips`: the modifier chips, for the registry's layers (the main window). A Picker's or a window's bar has none.
+    init(chips: Bool = true) {
+        self.chips = chips ? [(NSEvent.ModifierFlags.shift, "Shift"), (.option, "Option"), (.command, "Command"), (.control, "Control")].map(ModChip.init) : []
         super.init(frame: .zero)
-        hold.target = self
-        hold.action = #selector(showLayerMenu)
-        hold.bezelStyle = .accessoryBarAction
-        hold.refusesFirstResponder = true
-        hold.toolTip = "Hold ⇧ ⌥ ⌘ ⌃ to see their keys, or pick a layer here"
-        hold.setContentHuggingPriority(.required, for: .horizontal)
-        hold.widthAnchor.constraint(equalToConstant: 84).isActive = true
-        row.distribution = .fillEqually
+        for c in self.chips {
+            c.target = self
+            c.action = #selector(chipClicked(_:))
+            chipRow.addArrangedSubview(c)
+        }
+        chipRow.spacing = 2
+        chipRow.setHuggingPriority(.required, for: .horizontal)
+        chipRow.isHidden = !chips
         row.spacing = 2
+        row.distribution = chips ? .fillProportionally : .fill   // the main window's spread over its width; others as wide as their words
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
         row.setHuggingPriority(.defaultLow, for: .horizontal)
         row.setContentHuggingPriority(.init(1), for: .horizontal)
-        let stack = NSStackView(views: [hold, row])
+        let line = separator
+        line.boxType = .separator
+        let stack = NSStackView(views: [chipRow, line, row])
         stack.spacing = 6
         stack.distribution = .fill
-        stack.edgeInsets = NSEdgeInsets(top: 2, left: 4, bottom: 4, right: 4)
+        stack.edgeInsets = NSEdgeInsets(top: 3, left: 6, bottom: 4, right: 6)
         stack.setHuggingPriority(.defaultHigh, for: .vertical)   // as tall as its keys: the panels above take the rest
         stack.translatesAutoresizingMaskIntoConstraints = false
+        line.heightAnchor.constraint(equalToConstant: 16).isActive = true
         addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -135,8 +170,12 @@ final class KeyBarView: NSView {
     func reload(_ commands: [Command]) {
         self.commands = commands
         layers = KeyBarModel.layers(commands, server: server)
+        terminalLayers = KeyBarModel.layers(AppDelegate.terminalCommands.compactMap { id in commands.first { $0.id == id } }, terminal: true)
         render()
     }
+
+    /// The layer showing: a pinned one, else what's held.
+    var mods: NSEvent.ModifierFlags { pinned.isEmpty ? held : pinned }
 
     /// From a .flagsChanged monitor. Showing waits `keyBarHoldDelay` (0.12 s) so ⌘C doesn't flicker the bar;
     /// release, or switching combination while a layer is up, is immediate.
@@ -159,13 +198,13 @@ final class KeyBarView: NSView {
     func reset() {
         holdTask?.cancel()
         held = []
-        pinned = nil
+        pinned = []
         render()
     }
 
     func unpin() -> Bool {
-        guard pinned != nil else { return false }
-        pinned = nil
+        guard !pinned.isEmpty else { return false }
+        pinned = []
         render()
         return true
     }
@@ -183,83 +222,197 @@ final class KeyBarView: NSView {
 
     override func layout() {
         super.layout()
-        let c = max(2, Int((bounds.width - 100) / 86))
-        if c != capacity {
-            capacity = c
-            Task { render() }   // not while AppKit is laying out
+        if bounds.width != placedWidth {
+            placedWidth = bounds.width
+            Task { place() }   // not while AppKit is laying out
         }
     }
 
     func render() {
-        let mods = pinned ?? held
-        hold.title = pinned == nil && !held.isEmpty ? "Holding" : "Hold \(pinned.map(KeyBarModel.symbol) ?? "—") ▾"
+        let mods = mods
+        for c in chips {
+            c.held = pinned.isEmpty && held.contains(c.flag)
+            c.pinned = pinned.contains(c.flag)
+        }
+        chipRow.isHidden = list != nil || chips.isEmpty
+        separator.isHidden = chipRow.isHidden
+        slots = list ?? (terminalShown() ? terminalLayers : layers).first { $0.mods == mods }?.slots ?? []
+        buttons = slots.map(slotButton)
+        place()
+    }
+
+    /// As many slots as fit the width, the rest under "+N" (`KeyBarModel.fit`: F3–F8 stay longest).
+    private func place() {
         row.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let slots = terminalShown() ? [KeySlot(key: "⌃O", label: "Panels", id: "view.terminal")]
-            : layers.first { $0.mods == mods }?.slots ?? []
         guard !slots.isEmpty else {
-            let l = NSTextField(labelWithString: "No commands for \(KeyBarModel.symbol(mods)) · F1 — all keys")
+            let l = NSTextField(labelWithString: "No \(KeyBarModel.symbol(mods)) keys")
             l.textColor = .secondaryLabelColor
             return row.addArrangedSubview(l)
         }
-        let (shown, more) = KeyBarModel.fit(slots, capacity: capacity)
-        for s in shown {
-            let b = slotButton(s.key, s.label, #selector(slotClicked(_:)), color: server && s.id == "file.trash" ? Palette.fail : .labelColor,   // gone for good
-                               target: s.id.map(KeyBarModel.targeted.contains) == true ? target : nil)
-            b.identifier = s.id.map { .init($0) }
-            b.isEnabled = s.id.map(canRun) ?? false
-            row.addArrangedSubview(b)
+        let room = bounds.width - 12 - (chipRow.isHidden ? 0 : chipRow.fittingSize.width + 7 + 6)
+        let widths = buttons.map { $0.fittingSize.width }
+        var (shown, more) = (slots, 0)
+        for capacity in stride(from: slots.count, through: 1, by: -1) {
+            (shown, more) = KeyBarModel.fit(slots, capacity: capacity)
+            let width = shown.compactMap { s in slots.firstIndex(of: s).map { widths[$0] } }.reduce(0, +) + (more > 0 ? 40 : 0)
+            if width + CGFloat(shown.count + (more > 0 ? 1 : 0)) * row.spacing <= room || bounds.width == 0 { break }
         }
+        for s in shown { slots.firstIndex(of: s).map { row.addArrangedSubview(buttons[$0]) } }
         if more > 0 {
-            let b = slotButton("+\(more)", "", #selector(moreClicked))
-            b.toolTip = "All \(KeyBarModel.symbol(mods)) keys"
+            let b = slotButton(KeySlot(key: "+\(more)", label: "", id: nil))
+            b.action = #selector(moreClicked(_:))
+            b.isEnabled = true
+            b.toolTip = list == nil ? "All \(KeyBarModel.symbol(mods)) keys" : "\(more) more"
+            b.setAccessibilityLabel("\(more) more keys")
             row.addArrangedSubview(b)
         }
+        if chips.isEmpty { row.addArrangedSubview(spacer) }
     }
 
-    /// `target`: after the label, quieter — production's in its color, bold; the whole of it in the tooltip, as a
-    /// narrow slot cuts it.
-    private func slotButton(_ key: String, _ label: String, _ action: Selector, color: NSColor = .labelColor, target: KeyBarModel.Target? = nil) -> NSButton {
-        let b = NSButton(title: "", target: self, action: action)
-        let t = NSMutableAttributedString(string: label.isEmpty ? key : key + " ", attributes: [.foregroundColor: NSColor.secondaryLabelColor])
-        t.append(NSAttributedString(string: label, attributes: [.foregroundColor: color]))
+    /// A flat slot: the key in a small capsule, then its word; production's target in its color, bold; F8 on a server
+    /// in red. The whole of it in the tooltip, as a narrow slot cuts it.
+    private func slotButton(_ s: KeySlot) -> SlotButton {
+        let b = SlotButton(title: "", target: self, action: #selector(slotClicked(_:)))
+        let font = NSFont.systemFont(ofSize: 12)
+        let target = list == nil && s.id.map(KeyBarModel.targeted.contains) == true ? target : nil
+        let t = NSMutableAttributedString(attributedString: KeyCap.text(s.key, font: font))
+        if !s.label.isEmpty {
+            let color = list == nil && server && s.id == "file.trash" ? Palette.fail : s.id == nil ? .secondaryLabelColor : .labelColor   // gone for good
+            t.append(NSAttributedString(string: " " + s.label, attributes: [.foregroundColor: color, .font: font]))
+        }
         if let target {
             t.append(NSAttributedString(string: " " + target.text, attributes: target.prod
-                ? [.foregroundColor: Palette.prod, .font: NSFont.boldSystemFont(ofSize: b.font?.pointSize ?? NSFont.systemFontSize)] : [.foregroundColor: NSColor.secondaryLabelColor]))
-            b.toolTip = "\(label) \(target.text)" + (target.prod ? ", a production server" : "")
+                ? [.foregroundColor: Palette.prod, .font: NSFont.boldSystemFont(ofSize: font.pointSize)] : [.foregroundColor: NSColor.secondaryLabelColor, .font: font]))
         }
         b.attributedTitle = t
-        b.bezelStyle = .accessoryBarAction
+        b.toolTip = s.label.isEmpty ? nil : "\(s.key) \(s.label)" + (target.map { " \($0.text)" + ($0.prod ? ", a production server" : "") } ?? "")
+        b.setAccessibilityLabel(KeyBarModel.spoken(s, target: target))
         b.refusesFirstResponder = true
-        b.lineBreakMode = .byTruncatingTail
         b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        b.identifier = s.id.map { .init($0) }
+        b.isEnabled = s.id.map { list != nil || canRun($0) } ?? false
         return b
     }
 
     @objc private func slotClicked(_ sender: NSButton) {
-        guard let id = sender.identifier?.rawValue, canRun(id) else { return NSSound.beep() }
+        guard let id = sender.identifier?.rawValue, list != nil || canRun(id) else { return NSSound.beep() }
         onRun?(id)
     }
 
-    @objc private func moreClicked() { onMore?(pinned ?? held) }
-
-    @objc private func showLayerMenu() {
-        let names: [(NSEvent.ModifierFlags, String)] = [(.control, "Control"), (.option, "Option"), (.shift, "Shift"), (.command, "Command")]
-        let menu = NSMenu()
-        for l in layers where l.slots.contains(where: { $0.id != nil }) {   // not a layer of hints alone
-            let name = l.mods.isEmpty ? "— F-keys" : KeyBarModel.symbol(l.mods) + "  " + names.filter { l.mods.contains($0.0) }.map(\.1).joined(separator: "-")
-            let it = NSMenuItem(title: "\(name)  (\(l.slots.filter { $0.id != nil }.count))", action: #selector(pickLayer(_:)), keyEquivalent: "")
-            it.target = self
-            it.tag = Int(l.mods.rawValue)
-            it.state = l.mods == (pinned ?? []) ? .on : .off
-            menu.addItem(it)
+    /// A list's "+N": a menu of what didn't fit; the layers' — the F1 sheet on that layer.
+    @objc private func moreClicked(_ sender: NSButton) {
+        guard list != nil else {
+            onMore?(mods)
+            return
         }
-        let h = menu.size.height + 4   // open upwards: the bar is at the bottom of the window
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: hold.isFlipped ? -h : hold.bounds.height + h), in: hold)
+        let menu = NSMenu()
+        for s in slots where s.id != nil && !row.arrangedSubviews.contains(where: { $0.identifier?.rawValue == s.id }) {
+            menu.addItem(MenuAction.item("\(s.label)  \(s.key)") { [weak self] in self?.onRun?(s.id!) })
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
     }
 
-    @objc private func pickLayer(_ sender: NSMenuItem) {
-        let m = NSEvent.ModifierFlags(rawValue: UInt(sender.tag))
-        pinned = m.isEmpty ? nil : m
+    @objc private func chipClicked(_ sender: ModChip) {
+        pinned.formSymmetricDifference(sender.flag)
         render()
+    }
+
+    /// Tests: what the chips show — held (lit) and pinned (outlined).
+    var chipStates: [(flag: NSEvent.ModifierFlags, held: Bool, pinned: Bool)] { chips.map { ($0.flag, $0.held, $0.pinned) } }
+    var shownSlots: [KeySlot] { row.arrangedSubviews.compactMap { v in buttons.firstIndex { $0 === v }.map { slots[$0] } } }
+}
+
+/// A slot: no border, a light fill under the mouse (or while it flashes for a command that ran), its title cut at
+/// the end if it must; dimmed while it can't run.
+final class SlotButton: NSButton {
+    private var inside = false { didSet { needsDisplay = true } }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: ceil(attributedTitle.size().width) + 12, height: 23) }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with event: NSEvent) { inside = true }
+    override func mouseExited(with event: NSEvent) { inside = false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if isHighlighted || inside && isEnabled {
+            NSColor.labelColor.withAlphaComponent(isHighlighted ? 0.14 : 0.07).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: 1), xRadius: 5, yRadius: 5).fill()
+        }
+        let t = attributedTitle, h = t.size().height
+        NSGraphicsContext.current?.cgContext.setAlpha(isEnabled ? 1 : 0.45)
+        t.draw(with: NSRect(x: 6, y: (bounds.height - h) / 2, width: bounds.width - 12, height: h),
+               options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+    }
+}
+
+/// A key as the bar draws it: its symbols on a small capsule, in the flow of the text, read out as the key.
+enum KeyCap {
+    static func text(_ key: String, font: NSFont) -> NSAttributedString {
+        let s = NSAttributedString(string: key, attributes: [.font: NSFont.systemFont(ofSize: 10.5, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
+        let size = NSSize(width: max(18, ceil(s.size().width) + 9), height: 17)
+        let image = NSImage(size: size, flipped: false) { r in
+            let p = NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 1), xRadius: 4, yRadius: 4)
+            NSColor.quaternaryLabelColor.withAlphaComponent(0.12).setFill()
+            p.fill()
+            NSColor.separatorColor.setStroke()
+            p.lineWidth = 1
+            p.stroke()
+            s.draw(at: NSPoint(x: (r.width - s.size().width) / 2, y: (r.height - s.size().height) / 2))
+            return true
+        }
+        image.cacheMode = .never   // its colors are dynamic
+        image.accessibilityDescription = key
+        let a = NSTextAttachment()
+        a.image = image
+        a.bounds = NSRect(x: 0, y: (font.capHeight - size.height) / 2, width: size.width, height: size.height)   // centered on the word
+        return NSAttributedString(attachment: a)
+    }
+}
+
+/// ⇧ ⌥ ⌘ ⌃ left of the keys: filled with the accent while held, outlined while a click keeps its layer.
+final class ModChip: NSButton {
+    let flag: NSEvent.ModifierFlags
+    private let name: String
+    var held = false { didSet { if held != oldValue { changed() } } }
+    var pinned = false { didSet { if pinned != oldValue { changed() } } }
+
+    init(_ flag: NSEvent.ModifierFlags, _ name: String) {
+        self.flag = flag
+        self.name = name
+        super.init(frame: .zero)
+        title = KeyBarModel.symbol(flag)
+        isBordered = false
+        refusesFirstResponder = true
+        toolTip = "\(name): hold it to see its keys, or click to keep them shown — ⎋ or another click lets go"
+        widthAnchor.constraint(equalToConstant: 22).isActive = true
+        heightAnchor.constraint(equalToConstant: 21).isActive = true
+        changed()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func changed() {
+        setAccessibilityLabel("\(name) layer" + (pinned ? ", pinned" : held ? ", held" : ""))
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let p = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 5, yRadius: 5)
+        let accent = NSColor.controlAccentColor
+        if held {
+            accent.setFill()
+            p.fill()
+        } else if pinned {
+            accent.setStroke()
+            p.lineWidth = 1.5
+            p.stroke()
+        }
+        let s = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 12.5),
+                                                              .foregroundColor: held ? NSColor.white : pinned ? accent : NSColor.secondaryLabelColor])
+        let size = s.size()
+        s.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
     }
 }

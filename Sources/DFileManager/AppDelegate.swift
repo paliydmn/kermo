@@ -158,11 +158,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     }
                 }
                 // ⌘↩ in the ⌘E field: with ⌘ it's a key equivalent, which the field editor never turns into insertNewline:.
-                if cmdField.currentEditor() === window.firstResponder, Shortcut(event: e) == Shortcut("cmd+return") {
-                    runCommandLine(in: .terminalApp)
+                if commandLineFocused, Shortcut(event: e) == Shortcut("cmd+return") {
+                    commandLineKey("cmdline.terminal")
                     return true
                 }
-                return e.keyCode == 53 && keyBar.unpin()   // ⎋ releases a layer pinned from "Hold ▾"
+                return e.keyCode == 53 && keyBar.unpin()   // ⎋ releases a layer a chip pinned
             }
             return handled ? nil : e
         }
@@ -175,8 +175,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Focus moving into a text field (or the terminal) enables / disables the bar's slots and the menu's keys.
         responderObservation = window.observe(\.firstResponder) { [keyBar] _, _ in
             MainActor.assumeIsolated {
+                let app = NSApp.delegate as? AppDelegate
+                keyBar.list = app?.commandLineFocused == true ? Self.commandLineKeys : nil   // its keys while it has the focus
                 keyBar.render()
-                (NSApp.delegate as? AppDelegate)?.updateMenuKeys()
+                app?.updateMenuKeys()
             }
         }
         NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { _ in
@@ -922,11 +924,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         })
     }
 
-    static let terminalCommands: Set<String> = ["view.terminal", "tab.new", "tab.close", "tab.next", "tab.prev", "ssh.new", "ssh.reconnect",
-                                                "server.disconnect", "go.connect", "view.sidebar", "term.bigger", "term.smaller",
-                                                "cmdline.insert", "cmdline.insertPaths", "term.split.right", "term.split.down", "term.join",
-                                                "term.unsplit", "term.pane.left", "term.pane.right", "term.pane.up", "term.pane.down",
-                                                "term.resize.left", "term.resize.right", "term.resize.up", "term.resize.down"]
+    /// In the key bar's order there, while the terminal is up.
+    static let terminalCommands = ["view.terminal", "tab.new", "tab.close", "term.split.right", "term.split.down", "tab.next", "tab.prev",
+                                   "ssh.new", "go.connect", "cmdline.insert", "cmdline.insertPaths", "term.bigger", "term.smaller", "view.sidebar",
+                                   "ssh.reconnect", "server.disconnect", "term.join", "term.unsplit", "term.pane.left", "term.pane.right",
+                                   "term.pane.up", "term.pane.down", "term.resize.left", "term.resize.right", "term.resize.up", "term.resize.down"]
 
     func toggleTerminal() {
         if terminal.isShown {
@@ -1107,8 +1109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let main = splitController.view
 
         let bar = keyBar
-        bar.onRun = { [unowned self] in run($0) }
-        bar.onMore = { [unowned self] in KeyHelp.show(over: window, commands: commands, layer: $0) }
+        bar.onRun = { [unowned self] in keyBar.list == nil ? run($0) : commandLineKey($0) }
+        bar.onMore = { [unowned self] m in   // the terminal's keys, at rest all of them: none there is a bare F-key
+            let shown = terminal.isShown ? Self.terminalCommands.compactMap { id in commands.first { $0.id == id } } : commands
+            KeyHelp.show(over: window, commands: shown, layer: terminal.isShown && m.isEmpty ? nil : m)
+        }
         bar.canRun = { [unowned self] in canRun($0) }
         bar.terminalShown = { [unowned self] in terminal.isShown }
 
@@ -1229,8 +1234,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// The command line's placeholder. On a root panel it says whose shell ⌘E runs in: the user's, not root's.
     static func commandHint(root: SFTPTarget?) -> String {
         let user = root.map { t in t.host.lastIndex(of: "@").map { String(t.host[..<$0]) } ?? "your user" }
-        return "⌘E: shell command in this folder" + (user.map { " as \($0), not root" } ?? "")
-            + " · %f %s %d %D · ↩ run in the shell · ⇧↩ output window · ⌘↩ in Terminal · ↑↓ history"
+        return "⌘E: shell command in this folder" + (user.map { " as \($0), not root" } ?? "") + " · %f %s %d %D · "
+            + commandLineKeys.filter { !$0.key.hasPrefix("%") }.map { "\($0.key) \($0.label.lowercased())" }.joined(separator: " · ")
     }
 
     /// The sidebar's Git section follows the active panel: its work tree, or none.
@@ -1289,18 +1294,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// "cmdHistory" locally (as before), "cmdHistory.deploy@web:22" on a server.
     nonisolated static func historyKey(_ server: SFTPTarget?) -> String { server.map { "cmdHistory.\($0.host):\($0.port ?? 22)" } ?? "cmdHistory" }
 
+    /// The command line's keys, as `control(_:textView:doCommandBy:)` and the keyDown monitor (⌘↩) take them: the key
+    /// bar while it has the focus, and its placeholder (`commandHint`). A slot's click runs `commandLineKey`, as the key.
+    /// Not ⌃↩ (Insert Name): in a text field macOS takes it for the field's context menu.
+    static let commandLineKeys = [
+        KeySlot(key: "↩", label: "Run in Shell", id: "cmdline.shell"), KeySlot(key: "⇧↩", label: "Output Window", id: "cmdline.window"),
+        KeySlot(key: "⌘↩", label: "Run in Terminal", id: "cmdline.terminal"), KeySlot(key: "↑↓", label: "History", id: nil),
+        KeySlot(key: "⎋", label: "Back to Panel", id: "cmdline.back"), KeySlot(key: "%f %s %d %D", label: "Name, Marked, Here, Other", id: nil),
+    ]
+
+    var commandLineFocused: Bool { cmdField.currentEditor().map { $0 === window.firstResponder } ?? false }
+
+    /// What a key of the command line does — pressed there, or its slot clicked.
+    func commandLineKey(_ id: String) {
+        switch id {
+        case "cmdline.shell": runCommandLine(in: .shell)
+        case "cmdline.window": runCommandLine(in: .window)
+        case "cmdline.terminal": runCommandLine(in: .terminalApp)
+        case "cmdline.back": window.makeFirstResponder(active.table)
+        default: break
+        }
+    }
+
     func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
         guard control === cmdField else { return false }
         switch sel {
         case #selector(NSResponder.insertNewline(_:)):   // ↩ and ⇧↩; ⌘↩ is a key equivalent (the keyDown monitor), ⌃↩ / ⌥↩ other selectors
-            runCommandLine(in: NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? .window : .shell)
+            commandLineKey(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? "cmdline.window" : "cmdline.shell")
         case #selector(NSResponder.moveUp(_:)), #selector(NSResponder.moveDown(_:)):
             guard !history.isEmpty else { return true }
             historyIndex = min(max(historyIndex + (sel == #selector(NSResponder.moveUp(_:)) ? -1 : 1), 0), history.count)
             textView.string = historyIndex < history.count ? history[historyIndex] : ""
             textView.selectedRange = NSRange(location: textView.string.utf16.count, length: 0)
         case #selector(NSResponder.cancelOperation(_:)):
-            window.makeFirstResponder(active.table)
+            commandLineKey("cmdline.back")
         default:
             return false
         }

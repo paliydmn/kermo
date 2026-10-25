@@ -28,13 +28,13 @@ extension AppDelegate {
         // Navigation
         cmd("panel.switch", "Next Panel", ["tab"]) { $0.focusNext() },
         cmd("open", "Open", ["return", "kpenter"]) { $0.active.openCursor(intoPackage: false) },
-        cmd("open.inside", "Open Inside", ["cmd+down"], menu: "Go", short: "Open inside") { $0.active.openCursor(intoPackage: true) },
-        cmd("go.up", "Enclosing Folder", ["cmd+up", "backspace"], menu: "Go", short: "Up") { $0.active.goUp() },
+        cmd("open.inside", "Open Inside", ["cmd+down"], menu: "Go") { $0.active.openCursor(intoPackage: true) },
+        cmd("go.up", "Enclosing Folder", ["cmd+up", "backspace"], menu: "Go") { $0.active.goUp() },
         cmd("go.back", "Back", ["cmd+["], menu: "Go") { $0.active.goBack() },
         cmd("go.forward", "Forward", ["cmd+]"], menu: "Go") { $0.active.goForward() },
-        cmd("go.home", "Home", ["cmd+shift+h"], menu: "Go", short: "Home") { $0.active.navigate(to: NSHomeDirectory()) },
+        cmd("go.home", "Home", ["cmd+shift+h"], menu: "Go") { $0.active.navigate(to: NSHomeDirectory()) },
         cmd("go.root", "Computer Root", ["cmd+shift+/"], menu: "Go", short: "Root") { $0.active.navigate(to: "/") },
-        cmd("go.path", "Go to Path…", ["cmd+l", "cmd+shift+g"], menu: "Go", short: "Go to path", aliases: "path location") { $0.active.beginPathEditing() },
+        cmd("go.path", "Go to Path…", ["cmd+l", "cmd+shift+g"], menu: "Go", aliases: "path location") { $0.active.beginPathEditing() },
         cmd("go.jump", "Jump to Folder…", ["cmd+p"], menu: "Go", short: "Jump", aliases: "go to folder recent frecency") { $0.showJump() },
         cmd("go.tree", "Folder Tree…", ["f10", "opt+0", "opt+f10", "cmd+shift+t"], menu: "Go", short: "Tree", aliases: "folder tree") { app in
             let panel = app.active
@@ -42,16 +42,16 @@ extension AppDelegate {
         },
         cmd("go.connect", "Connect to Server…", ["ctrl+cmd+k"], menu: "Go", short: "Connect", aliases: "sftp ssh smb nfs server remote") { $0.showConnect() },
         cmd("ssh.new", "New SSH Session…", ["cmd+k"], menu: "Go", short: "SSH", aliases: "ssh shell remote terminal server") { $0.showConnect(ssh: true) },
-        cmd("server.new", "New Server…", [], menu: "Go", short: "New server", aliases: "ssh sftp server connection bookmark save") {
+        cmd("server.new", "New Server…", [], menu: "Go", aliases: "ssh sftp server connection bookmark save") {
             $0.editServer(SavedServer(), title: "New Server")
         },
-        cmd("tunnel.list", "Tunnels…", [], short: "Tunnels", aliases: "port forward localhost database -L") { $0.showTunnels() },
-        cmd("tunnel.new", "New Tunnel…", [], short: "New tunnel", aliases: "port forward localhost database -L") { $0.newTunnel() },
-        cmd("tunnel.forward", "Forward Port…", [], short: "Forward port", aliases: "ports listening ss netstat tunnel localhost -L") { $0.forwardPort() },
-        cmd("server.services", "Services…", [], short: "Services", aliases: "systemd systemctl service status restart journal journalctl log unit") { $0.showServices() },
-        cmd("server.containers", "Containers…", [], short: "Containers", aliases: "docker podman container logs restart") { $0.showContainers() },
-        cmd("ssh.copyKey", "Copy SSH Key to Server…", [], short: "Copy SSH key", aliases: "ssh-copy-id authorized_keys public key login password") { $0.copyKey() },
-        cmd("ssh.config", "Edit SSH Config", [], menu: "Go", short: "SSH config", aliases: "ssh config hosts ~/.ssh/config") { $0.editSSHConfig() },
+        cmd("tunnel.list", "Tunnels…", [], aliases: "port forward localhost database -L") { $0.showTunnels() },
+        cmd("tunnel.new", "New Tunnel…", [], aliases: "port forward localhost database -L") { $0.newTunnel() },
+        cmd("tunnel.forward", "Forward Port…", [], aliases: "ports listening ss netstat tunnel localhost -L") { $0.forwardPort() },
+        cmd("server.services", "Services…", [], aliases: "systemd systemctl service status restart journal journalctl log unit") { $0.showServices() },
+        cmd("server.containers", "Containers…", [], aliases: "docker podman container logs restart") { $0.showContainers() },
+        cmd("ssh.copyKey", "Copy SSH Key to Server…", [], short: "Copy SSH Key", aliases: "ssh-copy-id authorized_keys public key login password") { $0.copyKey() },
+        cmd("ssh.config", "Edit SSH Config", [], menu: "Go", aliases: "ssh config hosts ~/.ssh/config") { $0.editSSHConfig() },
         cmd("ssh.reconnect", "Reconnect SSH Session", [], menu: "Go", short: "Reconnect", aliases: "ssh") { app in
             if app.terminal.isShown { app.terminal.reconnect() } else { NSSound.beep() }
         },
@@ -62,8 +62,8 @@ extension AppDelegate {
         cmd("remote.open", "Open Remote File", [], hidden: true) { $0.remoteOpen(.open) },
         cmd("remote.archive", "List Remote Archive", [], hidden: true) { $0.remoteArchiveList() },
         cmd("go.bookmark", "Bookmark This Folder", ["cmd+d"], menu: "Go", short: "Bookmark", aliases: "favorite star pin") { $0.toggleBookmark() },
-        cmd("go.linktarget", "Go to Link Target", ["cmd+j"], menu: "Go", short: "Link target") { $0.goToLinkTarget() },
-        cmd("go.volumes", "Volumes…", ["cmd+shift+v", "opt+f1"], menu: "Go", short: "Volumes", aliases: "disks drives mounts") { $0.showVolumes() },
+        cmd("go.linktarget", "Go to Link Target", ["cmd+j"], menu: "Go", short: "Link Target") { $0.goToLinkTarget() },
+        cmd("go.volumes", "Volumes…", ["cmd+shift+v", "opt+f1"], menu: "Go", aliases: "disks drives mounts") { $0.showVolumes() },
         cmd("app.about", "About Kermo", [], menu: "Kermo", short: "About", aliases: "info version help") { _ in
             // Name, icon, version (build) and copyright come from Info.plist (build.sh); only the description is ours.
             let credits = NSMutableAttributedString(string: "A fast 2–4 panel file manager for macOS, built with Swift and AppKit.\n\n",
@@ -79,27 +79,27 @@ extension AppDelegate {
             Task { await app.checkForUpdates(byHand: true) }
         },
         cmd("app.update.auto", "Check for Updates Automatically", [], menu: "Kermo", aliases: "update daily") { $0.toggleUpdateChecks() },
-        cmd("help.keys", "Keyboard Shortcuts", ["f1", "opt+1"], menu: "Kermo", short: "Keys", aliases: "help shortcuts cheat sheet") { app in
+        cmd("help.keys", "Keyboard Shortcuts", ["f1", "opt+1"], menu: "Kermo", short: "Shortcuts", aliases: "help shortcuts cheat sheet") { app in
             if let w = AppDelegate.windowToClose(key: NSApp.keyWindow, main: app.window), let menu = NSApp.mainMenu {   // a viewer's, an editor's
                 return KeyHelp.show(over: w, commands: [], fixed: app.keySections(over: w, menu: menu))
             }
             KeyHelp.show(over: app.window, commands: app.commands)
         },
-        cmd("app.palette", "Search…", ["cmd+shift+p", "f9", "opt+9"], menu: "Go", short: "Commands", aliases: "palette all commands") { $0.search.focus() },
+        cmd("app.palette", "Search…", ["cmd+shift+p", "f9", "opt+9"], menu: "Go", aliases: "palette all commands") { $0.search.focus() },
 
         // Tabs
         // While the terminal is up (⌃O) these act on its tabs.
-        cmd("tab.new", "New Tab", ["cmd+t"], menu: "View", short: "New tab") { app in
+        cmd("tab.new", "New Tab", ["cmd+t"], menu: "View") { app in
             if app.terminal.isShown { app.terminal.newShell(cwd: app.active.path) } else { app.active.newTab() }
         },
-        cmd("tab.close", "Close Tab", ["cmd+w"], menu: "View", short: "Close tab") { app in
+        cmd("tab.close", "Close Tab", ["cmd+w"], menu: "View") { app in
             if let w = AppDelegate.windowToClose(key: NSApp.keyWindow, main: app.window) { w.performClose(nil) }
             else if app.terminal.isShown { app.terminal.close() } else { app.active.closeTab() }
         },
-        cmd("tab.next", "Next Tab", ["ctrl+tab", "cmd+shift+]"], menu: "View", short: "Next tab") { app in
+        cmd("tab.next", "Next Tab", ["ctrl+tab", "cmd+shift+]"], menu: "View") { app in
             if app.terminal.isShown { app.terminal.switchTab(by: 1) } else { app.active.switchTab(by: 1) }
         },
-        cmd("tab.prev", "Previous Tab", ["ctrl+shift+tab", "cmd+shift+["], menu: "View", short: "Prev tab") { app in
+        cmd("tab.prev", "Previous Tab", ["ctrl+shift+tab", "cmd+shift+["], menu: "View") { app in
             if app.terminal.isShown { app.terminal.switchTab(by: -1) } else { app.active.switchTab(by: -1) }
         },
         // The terminal's panes (as VS Code's split): while it's up.
@@ -118,31 +118,31 @@ extension AppDelegate {
 
         // Panels & view
         cmd("panel.swap", "Swap Panels", ["cmd+u"], menu: "View", short: "Swap", aliases: "swap panels") { $0.swapPanels() },
-        cmd("panel.add", "Add Panel", ["cmd+opt+n"], menu: "View", short: "Add panel", aliases: "panels split") { $0.addPanel() },
-        cmd("panel.close", "Close Panel", ["cmd+opt+w"], menu: "View", short: "Close panel") { $0.closePanel() },
+        cmd("panel.add", "Add Panel", ["cmd+opt+n"], menu: "View", aliases: "panels split") { $0.addPanel() },
+        cmd("panel.close", "Close Panel", ["cmd+opt+w"], menu: "View") { $0.closePanel() },
     ] + (1...4).map { n in
         cmd("panel.focus\(n)", "Go to Panel \(n)", ["cmd+\(n)"], menu: "View", short: "Panel \(n)") { $0.focusPanel(n - 1) }
     } + [
-        cmd("panel.same", "Same Folder in Other Panel", ["opt+="], menu: "View", short: "Same folder") { app in
+        cmd("panel.same", "Same Folder in Other Panel", ["opt+="], menu: "View", short: "Same Folder") { app in
             if let r = app.active.remote { app.other.loadRemote(r.target, dir: r.dir, select: nil) } else { app.other.navigate(to: app.active.path) }
         },
         cmd("view.sidebar", "Show/Hide Sidebar", ["ctrl+cmd+s"], menu: "View", short: "Sidebar", aliases: "places favorites") { $0.toggleSidebar() },
-        cmd("view.activity", "Activity", ["cmd+opt+j"], menu: "View", short: "Activity",
+        cmd("view.activity", "Activity", ["cmd+opt+j"], menu: "View",
             aliases: "copies transfers operations queue progress history retry failed") { $0.ops.toggleActivity() },
         cmd("view.sidebarFocus", "Focus Sidebar", ["ctrl+shift+s"], menu: "View", aliases: "places keyboard") { $0.focusSidebar() },
-        cmd("view.hidden", "Show Hidden Files", ["cmd+shift+."], menu: "View", short: "Hidden", aliases: "dotfiles show hidden files") { $0.toggleHidden() },
-        cmd("view.perms", "Show Permissions & Owner", [], menu: "View", short: "Perms", aliases: "mode rwx owner group columns") {
+        cmd("view.hidden", "Show Hidden Files", ["cmd+shift+."], menu: "View", short: "Hidden Files", aliases: "dotfiles show hidden files") { $0.toggleHidden() },
+        cmd("view.perms", "Show Permissions & Owner", [], menu: "View", short: "Permissions", aliases: "mode rwx owner group columns") {
             $0.togglePerms()
         },
-        cmd("view.refresh", "Refresh", ["cmd+r"], menu: "View", short: "Refresh") { $0.active.reload() },
+        cmd("view.refresh", "Refresh", ["cmd+r"], menu: "View") { $0.active.reload() },
         cmd("view.theme", "Theme…", [], menu: "View", aliases: "colors dark midnight commander solarized") { $0.showThemes() },
         cmd("view.filter", "Quick Filter", ["/"], menu: "View", short: "Filter", aliases: "filter glob regex") { $0.active.beginFilter() },
-        cmd("view.filterPresets", "Filter Presets…", ["cmd+/"], menu: "View", short: "Filter presets", aliases: "filter glob") { $0.showFilterPresets() },
+        cmd("view.filterPresets", "Filter Presets…", ["cmd+/"], menu: "View", aliases: "filter glob") { $0.showFilterPresets() },
         cmd("view.filterPresets.edit", "Edit Filter Presets…", [], menu: "Kermo") {
             _ = $0.filterPresets()   // writes the example file on first use
             $0.openInEditor(URL(fileURLWithPath: Config.path("filters.json")))
         },
-        cmd("view.quickview", "Quick View Panel", ["ctrl+q"], menu: "View", short: "Preview", aliases: "quick view") { $0.toggleQuickView() },
+        cmd("view.quickview", "Quick View Panel", ["ctrl+q"], menu: "View", short: "Quick View", aliases: "quick view") { $0.toggleQuickView() },
         cmd("view.terminal", "Terminal (hide panels)", ["ctrl+o"], menu: "View", short: "Terminal", aliases: "shell console") { $0.toggleTerminal() },
         cmd("term.bigger", "Bigger Terminal Text", ["cmd+=", "cmd+shift+="], menu: "View", aliases: "font size zoom in larger") { app in
             if app.terminal.isShown { app.terminal.zoom(by: 1) } else { NSSound.beep() }
@@ -150,7 +150,7 @@ extension AppDelegate {
         cmd("term.smaller", "Smaller Terminal Text", ["cmd+-"], menu: "View", aliases: "font size zoom out") { app in
             if app.terminal.isShown { app.terminal.zoom(by: -1) } else { NSSound.beep() }
         },
-        cmd("view.dirsizes", "Calculate Folder Sizes", ["opt+space"], menu: "View", short: "Sizes", aliases: "folder size disk usage du") { $0.active.computeAllDirSizes() },
+        cmd("view.dirsizes", "Calculate Folder Sizes", ["opt+space"], menu: "View", short: "Folder Sizes", aliases: "folder size disk usage du") { $0.active.computeAllDirSizes() },
         cmd("view.sort.name", "Sort by Name", [], aliases: "order") { $0.active.sort(by: .name) },
         cmd("view.sort.size", "Sort by Size", [], aliases: "order biggest") { $0.active.sort(by: .size) },
         cmd("view.sort.mtime", "Sort by Modified", [], aliases: "order date time newest") { $0.active.sort(by: .mtime) },
@@ -161,11 +161,11 @@ extension AppDelegate {
         cmd("mark.toggle", "Mark / Unmark", ["space"], menu: "Mark", short: "Mark") { $0.active.toggleMark(move: 1) },
         cmd("mark.down", "Mark and Move Down", ["shift+down"], short: "Mark ↓") { $0.active.toggleMark(move: 1) },
         cmd("mark.up", "Mark and Move Up", ["shift+up"], short: "Mark ↑") { $0.active.toggleMark(move: -1) },
-        cmd("mark.all", "Mark All", ["cmd+a"], menu: "Mark", short: "Mark all") { $0.active.markAll() },
-        cmd("mark.none", "Unmark All", ["cmd+shift+a"], menu: "Mark", short: "Unmark all", aliases: "deselect") { $0.active.unmarkAll() },
+        cmd("mark.all", "Mark All", ["cmd+a"], menu: "Mark") { $0.active.markAll() },
+        cmd("mark.none", "Unmark All", ["cmd+shift+a"], menu: "Mark", aliases: "deselect") { $0.active.unmarkAll() },
         cmd("mark.invert", "Invert Marks", ["shift+8", "kpstar"], menu: "Mark", short: "Invert", aliases: "invert selection marks") { $0.active.invertMarks() },
         cmd("panel.compare", "Compare Folders (mark differences)", ["shift+f2"], menu: "Mark", short: "Compare", aliases: "compare folders difference") { $0.compareFolders() },
-        cmd("panel.sync", "Synchronize Folders…", ["cmd+shift+s"], menu: "File", short: "Sync", aliases: "synchronize mirror folders") { app in
+        cmd("panel.sync", "Synchronize Folders…", ["cmd+shift+s"], menu: "File", short: "Synchronize", aliases: "synchronize mirror folders") { app in
             guard app.active.archive == nil, app.other.archive == nil, app.active.searchTitle == nil, app.other.searchTitle == nil
             else { return app.active.flash("Synchronize works between two folders") }
             let (l, r) = app.panels.firstIndex { $0 === app.active }! < app.panels.firstIndex { $0 === app.other }! ? (app.active, app.other) : (app.other, app.active)
@@ -176,38 +176,38 @@ extension AppDelegate {
         cmd("tag.\(i + 1)", "Tag \(NSWorkspace.shared.fileLabels[color])", ["ctrl+\(i + 1)"], menu: "Mark",
             short: NSWorkspace.shared.fileLabels[color]) { $0.toggleTag(color) }
     } + [
-        cmd("tag.clear", "Remove All Tags", ["ctrl+0"], menu: "Mark", short: "No tags") { $0.applyTags($0.active.targetURLs) { _, _ in [] } },
+        cmd("tag.clear", "Remove All Tags", ["ctrl+0"], menu: "Mark", short: "Remove Tags") { $0.applyTags($0.active.targetURLs) { _, _ in [] } },
         cmd("tag.edit", "Tags…", ["ctrl+t"], menu: "Mark", short: "Tags", aliases: "finder tag label color") { $0.tagsDialog() },
-        cmd("mark.mask", "Mark by Mask…", ["shift+=", "kpplus"], menu: "Mark", short: "Mark mask", aliases: "select glob pattern") { $0.maskDialog(mark: true) },
-        cmd("mark.unmask", "Unmark by Mask…", ["-", "kpminus"], menu: "Mark", short: "Unmark mask") { $0.maskDialog(mark: false) },
+        cmd("mark.mask", "Mark by Mask…", ["shift+=", "kpplus"], menu: "Mark", aliases: "select glob pattern") { $0.maskDialog(mark: true) },
+        cmd("mark.unmask", "Unmark by Mask…", ["-", "kpminus"], menu: "Mark") { $0.maskDialog(mark: false) },
 
         // File operations
-        cmd("file.view", "View", ["f3", "opt+3"], menu: "File", short: "View", aliases: "viewer read log") { $0.viewFile() },
+        cmd("file.view", "View", ["f3", "opt+3"], menu: "File", aliases: "viewer read log") { $0.viewFile() },
         cmd("archive.open", "Open from Archive", [], hidden: true) { $0.openFromArchive(view: false) },
-        cmd("file.compress", "Compress…", ["opt+f5"], menu: "File", short: "Compress", aliases: "zip tar archive pack") { $0.compressDialog() },
-        cmd("file.extract", "Extract…", ["opt+f9"], menu: "File", short: "Extract", aliases: "unzip untar unpack archive") { $0.extractDialog() },
-        cmd("file.edit", "Edit", ["f4", "opt+4"], menu: "File", short: "Edit", aliases: "editor") { $0.editFile() },
+        cmd("file.compress", "Compress…", ["opt+f5"], menu: "File", aliases: "zip tar archive pack") { $0.compressDialog() },
+        cmd("file.extract", "Extract…", ["opt+f9"], menu: "File", aliases: "unzip untar unpack archive") { $0.extractDialog() },
+        cmd("file.edit", "Edit", ["f4", "opt+4"], menu: "File", aliases: "editor") { $0.editFile() },
         cmd("file.copy", "Copy To…", ["f5", "opt+5"], menu: "File", short: "Copy") { $0.transferDialog(move: false) },
         cmd("file.move", "Move To…", ["f6", "opt+6"], menu: "File", short: "Move") { $0.transferDialog(move: true) },
-        cmd("file.rename", "Rename…", ["shift+f6", "shift+opt+6"], menu: "File", short: "Rename") { $0.renameDialog() },
-        cmd("file.copyAs", "Copy Here As…", ["shift+f5", "shift+opt+5"], menu: "File", short: "Copy as", aliases: "duplicate backup bak") { $0.copyAsDialog() },
-        cmd("file.multirename", "Multi-Rename…", ["cmd+shift+m"], menu: "File", short: "Rename many", aliases: "batch multi rename") { $0.multiRename() },   // ⌘M minimizes
-        cmd("file.mkdir", "New Folder…", ["f7", "opt+7", "cmd+shift+n"], menu: "File", short: "MkDir", aliases: "mkdir new folder directory") { $0.mkdirDialog() },
-        cmd("file.new", "New File…", ["shift+f4", "shift+opt+4"], menu: "File", short: "New file") { $0.newFileDialog() },
+        cmd("file.rename", "Rename…", ["shift+f6", "shift+opt+6"], menu: "File") { $0.renameDialog() },
+        cmd("file.copyAs", "Copy Here As…", ["shift+f5", "shift+opt+5"], menu: "File", aliases: "duplicate backup bak") { $0.copyAsDialog() },
+        cmd("file.multirename", "Multi-Rename…", ["cmd+shift+m"], menu: "File", aliases: "batch multi rename") { $0.multiRename() },   // ⌘M minimizes
+        cmd("file.mkdir", "New Folder…", ["f7", "opt+7", "cmd+shift+n"], menu: "File", aliases: "mkdir new folder directory") { $0.mkdirDialog() },
+        cmd("file.new", "New File…", ["shift+f4", "shift+opt+4"], menu: "File") { $0.newFileDialog() },
         cmd("file.trash", "Move to Trash", ["f8", "opt+8", "cmd+backspace", "delete"], menu: "File", short: "Trash", aliases: "delete remove") { $0.trash() },
         cmd("file.putback", "Put Back", [], menu: "File", aliases: "restore undelete trash") { $0.putBack() },
         cmd("file.delete", "Delete Permanently…", ["shift+f8", "shift+opt+8", "cmd+opt+backspace", "shift+delete"], menu: "File", short: "Delete", aliases: "remove rm permanently") {
             $0.deletePermanently()
         },
-        cmd("file.quicklook", "Quick Look", ["cmd+y"], menu: "File", short: "Quick Look", aliases: "preview") { $0.active.toggleQuickLook() },
-        cmd("search", "Search Files…", ["opt+f7", "cmd+f"], menu: "File", short: "Find", aliases: "search files content spotlight") { $0.searchDialog() },
+        cmd("file.quicklook", "Quick Look", ["cmd+y"], menu: "File", aliases: "preview") { $0.active.toggleQuickLook() },
+        cmd("search", "Search Files…", ["opt+f7", "cmd+f"], menu: "File", aliases: "search files content spotlight") { $0.searchDialog() },
         cmd("file.reveal", "Reveal in Finder", ["cmd+shift+r"], menu: "File", short: "Reveal", aliases: "show in finder") {
             NSWorkspace.shared.activateFileViewerSelecting($0.active.targetURLs)
         },
-        cmd("file.terminal", "Open in Terminal", ["cmd+opt+t"], menu: "File", short: "Terminal here", aliases: "shell console") { $0.openTerminal() },
-        cmd("file.symlink", "Create Symbolic Link…", ["cmd+opt+l"], menu: "File", short: "Symlink", aliases: "link ln") { $0.linkDialog(hard: false) },
+        cmd("file.terminal", "Open in Terminal", ["cmd+opt+t"], menu: "File", aliases: "shell console") { $0.openTerminal() },
+        cmd("file.symlink", "Create Symbolic Link…", ["cmd+opt+l"], menu: "File", short: "Symbolic Link", aliases: "link ln") { $0.linkDialog(hard: false) },
         cmd("file.hardlink", "Create Hard Link…", [], menu: "File") { $0.linkDialog(hard: true) },
-        cmd("file.attrs", "Permissions & Owner…", ["cmd+opt+a"], menu: "File", short: "Attributes", aliases: "chmod chown chgrp mode rwx owner group permissions") {
+        cmd("file.attrs", "Permissions & Owner…", ["cmd+opt+a"], menu: "File", short: "Permissions", aliases: "chmod chown chgrp mode rwx owner group permissions") {
             $0.attributesDialog()
         },
         cmd("file.split", "Split File…", [], menu: "File", aliases: "chunks parts") { $0.splitDialog() },
@@ -223,33 +223,33 @@ extension AppDelegate {
 
         // Git: the work tree of the active panel (the sidebar's Git section)
         cmd("git.switch", "Switch Branch…", ["ctrl+b"], menu: "Git", short: "Branch", aliases: "git checkout branch tag create new") { $0.showBranches() },
-        cmd("git.newBranch", "New Branch…", [], menu: "Git", short: "New branch", aliases: "git checkout create branch") { $0.newBranch(from: nil) },
-        cmd("git.commit", "Commit…", ["ctrl+shift+c"], menu: "Git", short: "Commit", aliases: "git commit amend message") { $0.showCommit() },
-        cmd("git.sync", "Sync", [], menu: "Git", short: "Sync", aliases: "git pull push synchronize remote origin") { $0.gitSync() },
+        cmd("git.newBranch", "New Branch…", [], menu: "Git", aliases: "git checkout create branch") { $0.newBranch(from: nil) },
+        cmd("git.commit", "Commit…", ["ctrl+shift+c"], menu: "Git", aliases: "git commit amend message") { $0.showCommit() },
+        cmd("git.sync", "Sync", [], menu: "Git", aliases: "git pull push synchronize remote origin") { $0.gitSync() },
         cmd("git.publish", "Publish Branch", [], menu: "Git", short: "Publish", aliases: "git push upstream origin remote") { $0.gitPublish() },
-        cmd("git.pull", "Pull", [], menu: "Git", short: "Pull", aliases: "git pull fast-forward remote origin") { $0.gitPull() },
-        cmd("git.push", "Push", [], menu: "Git", short: "Push", aliases: "git push remote origin") { $0.gitPush() },
-        cmd("git.fetch", "Fetch", [], menu: "Git", short: "Fetch", aliases: "git fetch prune remote origin") { $0.gitFetch() },
-        cmd("git.changes", "Git Changes", ["ctrl+shift+g"], menu: "Git", short: "Git changes", aliases: "git status dirty edited source control list") {
+        cmd("git.pull", "Pull", [], menu: "Git", aliases: "git pull fast-forward remote origin") { $0.gitPull() },
+        cmd("git.push", "Push", [], menu: "Git", aliases: "git push remote origin") { $0.gitPush() },
+        cmd("git.fetch", "Fetch", [], menu: "Git", aliases: "git fetch prune remote origin") { $0.gitFetch() },
+        cmd("git.changes", "Git Changes", ["ctrl+shift+g"], menu: "Git", aliases: "git status dirty edited source control list") {
             $0.active.showGitChanges()
         },
-        cmd("view.gitOnly", "Show Only Git Changes", ["ctrl+g"], menu: "Git", short: "Git only", aliases: "git status dirty edited filter source control") {
+        cmd("view.gitOnly", "Show Only Git Changes", ["ctrl+g"], menu: "Git", short: "Git Only", aliases: "git status dirty edited filter source control") {
             $0.toggleGitOnly()
         },
-        cmd("git.diff", "Git Diff", ["ctrl+d"], menu: "Git", short: "Git diff", aliases: "git difference changes against head") { $0.gitDiff() },
-        cmd("git.log", "Git Log of File", ["ctrl+l"], menu: "Git", short: "Git log", aliases: "git history commits follow patch") { $0.gitHistory(blame: false) },
-        cmd("git.blame", "Git Blame", ["ctrl+shift+l"], menu: "Git", short: "Git blame", aliases: "git annotate who changed lines") { $0.gitHistory(blame: true) },
+        cmd("git.diff", "Git Diff", ["ctrl+d"], menu: "Git", aliases: "git difference changes against head") { $0.gitDiff() },
+        cmd("git.log", "Git Log of File", ["ctrl+l"], menu: "Git", short: "Git Log", aliases: "git history commits follow patch") { $0.gitHistory(blame: false) },
+        cmd("git.blame", "Git Blame", ["ctrl+shift+l"], menu: "Git", aliases: "git annotate who changed lines") { $0.gitHistory(blame: true) },
         cmd("git.stage", "Git Stage", ["ctrl+shift+a"], menu: "Git", short: "Stage", aliases: "git add index") { $0.gitStage(undo: false) },
         cmd("git.unstage", "Git Unstage", ["ctrl+shift+u"], menu: "Git", short: "Unstage", aliases: "git reset restore staged index") { $0.gitStage(undo: true) },
-        cmd("git.root", "Go to Repository Root", [], menu: "Git", short: "Repo root", aliases: "git top level work tree") { $0.gitRootFolder() },
+        cmd("git.root", "Go to Repository Root", [], menu: "Git", short: "Repository Root", aliases: "git top level work tree") { $0.gitRootFolder() },
         cmd("git.copyBranch", "Copy Branch Name", [], menu: "Git", aliases: "git branch clipboard") { $0.gitCopyBranch() },
         cmd("git.init", "Initialize Git Repository…", [], menu: "Git", aliases: "git init new repository create") { $0.gitInit() },
 
         // Shell
-        cmd("usermenu", "User Menu…", ["f2", "opt+2"], menu: "File", short: "Menu", aliases: "user menu") { $0.showUserMenu() },
-        cmd("cmdline.focus", "Command Line", ["cmd+e"], menu: "Go", short: "Cmd line", aliases: "command line shell") { $0.focusCommandLine() },
-        cmd("cmdline.insert", "Insert Name into Command Line", ["ctrl+return"], short: "Insert name") { $0.insertIntoCommandLine(paths: false) },
-        cmd("cmdline.insertPaths", "Insert Paths into Command Line", ["ctrl+shift+return"], short: "Insert paths", aliases: "marked full paths") {
+        cmd("usermenu", "User Menu…", ["f2", "opt+2"], menu: "File", aliases: "user menu") { $0.showUserMenu() },
+        cmd("cmdline.focus", "Command Line", ["cmd+e"], menu: "Go", aliases: "command line shell") { $0.focusCommandLine() },
+        cmd("cmdline.insert", "Insert Name into Command Line", ["ctrl+return"], short: "Insert Name") { $0.insertIntoCommandLine(paths: false) },
+        cmd("cmdline.insertPaths", "Insert Paths into Command Line", ["ctrl+shift+return"], short: "Insert Paths", aliases: "marked full paths") {
             $0.insertIntoCommandLine(paths: true)
         },
 
@@ -259,22 +259,22 @@ extension AppDelegate {
         cmd("admin.mkdir", "New Folder as Administrator…", [], menu: "Admin", aliases: "root sudo") { $0.adminMkdir() },
         cmd("admin.delete", "Delete as Administrator…", [], menu: "Admin", aliases: "root sudo rm") { $0.adminDelete() },
         cmd("admin.shell", "Root Shell Here (Terminal)", [], menu: "Admin", aliases: "root sudo") { $0.runShell("sudo -s", in: .terminalApp) },
-        cmd("admin.rootPanel", "Reopen Panel as Root", ["ctrl+cmd+r"], menu: "Admin", short: "As root", aliases: "root sudo server etc") { $0.reopenPanel(asRoot: true) },
-        cmd("admin.userPanel", "Reopen Panel as User", ["ctrl+shift+cmd+r"], menu: "Admin", short: "As user", aliases: "root sudo server user") { $0.reopenPanel(asRoot: false) },
+        cmd("admin.rootPanel", "Reopen Panel as Root", ["ctrl+cmd+r"], menu: "Admin", short: "As Root", aliases: "root sudo server etc") { $0.reopenPanel(asRoot: true) },
+        cmd("admin.userPanel", "Reopen Panel as User", ["ctrl+shift+cmd+r"], menu: "Admin", short: "As User", aliases: "root sudo server user") { $0.reopenPanel(asRoot: false) },
         cmd("admin.sudoTouchID", "Enable Touch ID for sudo", [], menu: "Admin", aliases: "touch id fingerprint sudo terminal pam tid password") {
             $0.enableSudoTouchID()
         },
         cmd("admin.auditLog", "Show Production Log", [], menu: "Admin", aliases: "audit journal prod history") { $0.showAuditLog() },
-        cmd("server.runOn", "Run on Servers…", [], menu: "Admin", short: "Run on servers", aliases: "ssh command several many all servers parallel pssh") {
+        cmd("server.runOn", "Run on Servers…", [], menu: "Admin", aliases: "ssh command several many all servers parallel pssh") {
             $0.runOnServers()
         },
 
         // Clipboard
-        cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", short: "Copy path", aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetPaths) },
-        cmd("edit.copyName", "Copy Name", ["cmd+opt+c"], menu: "Edit", short: "Copy name", aliases: "clipboard") {
+        cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetPaths) },
+        cmd("edit.copyName", "Copy Name", ["cmd+opt+c"], menu: "Edit", aliases: "clipboard") {
             $0.copyToPasteboard($0.active.targetPaths.map { ($0 as NSString).lastPathComponent })
         },
-        cmd("edit.pasteMove", "Move Here", ["cmd+opt+v"], menu: "Edit", short: "Move here") { $0.pasteFiles(move: true) },
+        cmd("edit.pasteMove", "Move Here", ["cmd+opt+v"], menu: "Edit") { $0.pasteFiles(move: true) },
 
         // Configuration (~/.config/dfilemanager)
         cmd("app.keymap", "Edit Keymap…", [], menu: "Kermo", aliases: "shortcuts keys rebind") { $0.editKeymap() },

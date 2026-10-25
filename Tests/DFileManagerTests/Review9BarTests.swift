@@ -16,7 +16,7 @@ import Testing
         bar.render()
         bar.layoutSubtreeIfNeeded()
         let all = buttons(bar)
-        #expect(all.contains { $0.attributedTitle.string.hasPrefix("+") }, "\(width): overflow still reachable")
+        #expect(all.contains { $0.accessibilityLabel()?.hasSuffix("more keys") == true }, "\(width): overflow still reachable")
         for id in KeyBarModel.core {
             guard let b = all.first(where: { $0.identifier?.rawValue == id }) else {
                 Issue.record("\(width): \(id) is under +N")
