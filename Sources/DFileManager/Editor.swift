@@ -89,6 +89,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
                 if let t = server?.target { e.window?.showChips(Chip.of(t)) }
                 open.append(e)
                 e.showWindow(nil)
+                e.window?.listInWindowsMenu()
                 if let note { e.flash(note) }
             } catch {
                 onClose?()
@@ -179,6 +180,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         window?.subtitle = DocFrame.place((path as NSString).deletingLastPathComponent, host: host)
         window?.docFrame?.text = encodingName
         window?.representedURL = remote == nil ? url : nil
+        window?.listInWindowsMenu()   // a new title put the plain one back there
         let history = window?.toolbar?.items.contains { $0.itemIdentifier == Self.historyID } == true
         if history != (server != nil) {   // a server's file has its history; Save As makes it this Mac's
             if history { window?.toolbar?.removeItem(at: window!.toolbar!.items.count - 1) } else { window?.toolbar.map { $0.insertItem(withItemIdentifier: Self.historyID, at: $0.items.count) } }

@@ -51,7 +51,7 @@ F5 opens **Copy To…** with the other panel's folder filled in, so the marked i
 
 Press ⇧⌘S (**File ▸ Synchronize Folders…**) to bring two folders in line. Both panels must show folders, on this Mac or on servers. The panel further left is the left side.
 
-The **Synchronize Folders** window lists every difference below both folders. Nothing is copied until you click **Synchronize** (↩). ⎋ closes the window: nothing is queued, and a comparison in progress stops.
+The **Synchronize Folders** window lists every difference below both folders. Nothing is copied until you click **Synchronize** (↩). ⎋ closes the window: nothing is queued, and a comparison in progress stops. Its key bar shows ↩ Synchronize and ⎋ Close, then the menu keys that work there, as in the viewer.
 
 | Mode | Files that differ | Items on one side only |
 |---|---|---|

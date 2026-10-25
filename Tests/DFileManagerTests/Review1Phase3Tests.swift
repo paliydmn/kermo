@@ -130,7 +130,6 @@ private let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
 @Test func placeholdersSayWhatToTypeAndHintsHaveOneGrammar() throws {
     let allowed = [
         "PanelViewController.swift: filter: text, *.glob or re:regex · ↩ keep · ⎋ clear": "the panel's filter field: phase 4 (R-29)",
-        "RunOnServers.swift: Filter by name or host — ⌘A ticks all shown, ⇧⌘A none": "Run on Servers has no key bar yet (R-49, no phase)",
         "HeaderSearch.swift: ⌘F": "the palette (⇧⌘P) lists keys by design until phase 8 (R-43)",
     ]
     let literal = try NSRegularExpression(pattern: #""((?:[^"\\]|\\.)*)""#)
@@ -251,6 +250,8 @@ extension ServerLockTests {
     let e = try Editor(URL(fileURLWithPath: dir + "/app.log"), remote: "web-01:/var/log/app.log")
     defer { e.close() }
     #expect(e.window?.title == "app.log" && e.window?.subtitle == "web-01 · /var/log" && e.window?.statusText == "UTF-8")
+    #expect(e.window?.windowsMenuTitle == "app.log — web-01 · /var/log" && w.windowsMenuTitle == "app.log — " + w.subtitle,
+            "the Window menu has no subtitles: two app.log of two servers read apart there (D-109)")
 
     let title = "dfm out " + UUID().uuidString.prefix(6)
     Shell.run("echo hi; sleep 0.3", in: dir, title: title)
@@ -288,4 +289,37 @@ extension ServerLockTests {
     _ = (wrap.target as? NSObject)?.perform(wrap.action, with: wrap)
     let switches = views(w.toolbar?.items.compactMap(\.view).first { ($0 as? NSSegmentedControl)?.label(forSegment: 0) == "Wrap" } ?? NSView())
     #expect(v.wraps && (switches.first as? NSSegmentedControl)?.isSelected(forSegment: 0) == true, "the slot is the key; the toolbar follows")
+}
+
+/// R-36: Run on Servers' sheet and Synchronize have the key bar too. The sheet's ⌘A / ⇧⌘A tick only while the filter has
+/// the focus — in the command ⌘A selects its text — so the bar says them only then, and the filter's placeholder needn't;
+/// a click is the key.
+@MainActor @Test func runOnServersAndSyncHaveTheirKeys() async throws {
+    _ = NSApplication.shared
+    let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+    RunOnServersSheet.show(on: parent, choices: [RunOnServersSheet.Choice(title: "web1", target: SFTPTarget(host: "me@web1.invalid"), saved: nil)],
+                           ticked: [], command: "uptime") { _, _ in }
+    let sheet = try #require(RunOnServersSheet.current)
+    defer { sheet.close() }
+    #expect(sheet.filter.placeholderString == "Filter by name or host")
+    for _ in 0..<100 where sheet.barShown.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(sheet.barShown.map { "\($0.key) \($0.label)" } == ["↩ Run", "⎋ Cancel"], "the command has the focus")
+    sheet.window?.makeFirstResponder(sheet.filter)
+    for _ in 0..<100 where sheet.barShown.count == 2 { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(sheet.barShown.map { "\($0.key) \($0.label)" } == ["↩ Run", "⌘A Tick All", "⇧⌘A Untick All", "⎋ Cancel"])
+    func views(_ v: NSView) -> [NSView] { [v] + v.subviews.flatMap(views) }
+    let content = try #require(sheet.window?.contentView)
+    let all = try #require(views(content).compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "⌘A, Tick All" })
+    _ = (all.target as? NSObject)?.perform(all.action, with: all)
+    #expect(sheet.boxes.map(\.state) == [.on] && sheet.runButton.title == "Run on 1 Server")
+
+    let dir = NSTemporaryDirectory() + "dfm-r1p3s-" + UUID().uuidString
+    for side in ["a", "b"] { try FileManager.default.createDirectory(atPath: dir + "/" + side, withIntermediateDirectories: true) }
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    SyncWindow.show(left: dir + "/a", right: dir + "/b", sides: (.local, .local)) { _ in false }
+    let sync = try #require(NSApp.windows.first { SyncWindow.keys(of: $0) != nil && $0.subtitle.contains("dfm-r1p3s-") })
+    defer { sync.close() }
+    let app = AppDelegate()
+    #expect(app.keyRows(over: sync, menu: app.makeMenu()).prefix(2).map { "\($0.key) \($0.title)" } == ["↩ Synchronize", "⎋ Close"],
+            "its own keys first on its bar and F1, the menu's after")
 }

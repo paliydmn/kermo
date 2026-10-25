@@ -47,6 +47,8 @@ Release:
 - Those windows have the key bar along the bottom: their own keys first (`& Filter`, `w Wrap`, `⎋ Close`; `⎋ Stop` while a command runs, `⌘R Run Again` after Run on Servers), then the menu keys that work there; a click does what the key does. F1 over them lists the same keys, the app's menu last, and no longer lists keys that do nothing there (Save in the viewer, Paste where nothing can be typed).
 - The viewer has a toolbar: **Text | Hex | Readable**, **Wrap**, **Lines** and **Follow** switches that show their state, a **Filter lines** field (`&` goes there) and **All | Warnings | Errors**. The editor's has **Final Newline** and, for a server's file, **Server File History…**.
 - A git diff's output window is titled `git diff config.yaml`, not with git's whole command line.
+- The Window menu lists a viewer, editor or output window with its place, `app.log — web-01 · /var/log`, so two files of one name from two servers read apart there.
+- The Synchronize Folders window and the Run on Servers sheet have the key bar along the bottom: ↩ Synchronize and ⎋ Close; ↩ Run, ⎋ Cancel and — while the filter has the focus — ⌘A Tick All and ⇧⌘A Untick All. The sheet's filter asks only what to type.
 
 ### Fixed
 - A new SSH tab shows its green dot as soon as ssh starts; it was grey until the next redraw.

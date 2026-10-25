@@ -89,6 +89,7 @@ final class Viewer: NSWindowController, NSWindowDelegate, NSToolbarDelegate, NSS
         if let remote { v.window?.showChips(Chip.of(remote.target)) }
         open.append(v)
         v.showWindow(nil)
+        v.window?.listInWindowsMenu()
         return v
     }
 

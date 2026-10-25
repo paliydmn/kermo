@@ -22,7 +22,7 @@ On this Mac, ↩ works as Midnight Commander's subshell does: your aliases and f
 **Run on Servers…** (⇧⌘P, the **Admin** menu, or the sidebar's **Servers** header menu) runs one command on several servers at once, the way the command line runs one on a server panel: in each server's login shell, over its ssh connection, without a terminal. So use `sudo -n`, which works where sudo needs no password and otherwise says "a password is required"; plain `sudo` that wants a password stops with "a terminal is required". You see what sudo said. No placeholders: `%f` and `%d` mean nothing across servers.
 
 1. Type the command. The sheet lists your saved servers and the hosts in `~/.ssh/config`, as the Connect picker does; production and locked ones carry their PROD and LOCKED chips.
-2. Tick the servers. The filter narrows the list by name or address; in the filter ⌘A ticks all it shows, ⇧⌘A unticks them. What runs is what's ticked and shown.
+2. Tick the servers. The filter narrows the list by name or address; in the filter ⌘A ticks all it shows, ⇧⌘A unticks them — the key bar along the sheet's bottom shows those two while the filter has the focus, with ↩ Run and ⎋ Cancel. What runs is what's ticked and shown.
 3. Click **Run on 5 Servers** (↩). The last choice and command come back next time.
 
 Up to 8 servers run at once. Logins go one at a time, so password dialogs come one after another, each saying it's "For “Run on Servers”". One output window shows the lines as they come, each under its server's name, errors in red:

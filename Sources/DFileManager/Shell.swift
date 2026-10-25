@@ -219,6 +219,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         if let title { w.window?.title = title.bidiVisible }
         open.append(w)
         w.showWindow(nil)
+        w.window?.listInWindowsMenu()
     }
 
     static func start(_ command: String, on servers: [MultiRun.Server], skipped: [String], env: [String: String], title: String,
@@ -227,6 +228,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         w.window?.title = title.bidiVisible
         open.append(w)
         w.showWindow(nil)
+        w.window?.listInWindowsMenu()
     }
 
     /// The window and its text view, empty.

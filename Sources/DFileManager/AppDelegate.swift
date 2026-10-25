@@ -397,7 +397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Over a viewer, an editor or an output window: its own keys, then the menu bar's that work there (Edit ▸ Copy ⌘C,
     /// Close Window ⌘W …), menu by menu, the app's last.
     func keyRows(over w: NSWindow, menu: NSMenu) -> [KeyRow] {
-        var out = Viewer.keys(of: w) ?? Editor.keys(of: w) ?? OutputWindow.keys(of: w) ?? []
+        var out = Viewer.keys(of: w) ?? Editor.keys(of: w) ?? OutputWindow.keys(of: w) ?? SyncWindow.keys(of: w) ?? []
         let menus = menu.items.compactMap(\.submenu)
         for m in menus.dropFirst() + menus.prefix(1) {
             for it in m.items {

@@ -319,6 +319,15 @@ final class KeyBarView: NSView {
         render()
     }
 
+    /// A window's keys (`AppDelegate.KeyRow`), each key once — the first row's, the window's own before the menu's;
+    /// a click runs that row.
+    func show(_ rows: [AppDelegate.KeyRow]) {
+        var seen: Set<String> = []
+        let rows = rows.filter { seen.insert($0.key).inserted }
+        onRun = { id in Int(id).flatMap { rows.indices.contains($0) ? rows[$0] : nil }?.run() }
+        list = rows.enumerated().map { KeySlot(key: $0.element.key, label: $0.element.label, id: "\($0.offset)") }
+    }
+
     /// Tests: what the chips show — held (lit) and pinned (outlined).
     var chipStates: [(flag: NSEvent.ModifierFlags, held: Bool, pinned: Bool)] { chips.map { ($0.flag, $0.held, $0.pinned) } }
     var shownSlots: [KeySlot] { row.arrangedSubviews.compactMap { v in buttons.firstIndex { $0 === v }.map { slots[$0] } } }
@@ -435,7 +444,6 @@ final class DocFrame: NSView {
     static var rows: (NSWindow) -> [AppDelegate.KeyRow] = { w in
         (NSApp.delegate as? AppDelegate).flatMap { app in NSApp.mainMenu.map { app.keyRows(over: w, menu: $0) } } ?? []
     }
-    private var shown: [AppDelegate.KeyRow] = []
 
     init(_ scroll: NSScrollView, size: NSSize) {
         self.scroll = scroll
@@ -454,7 +462,6 @@ final class DocFrame: NSView {
         scroll.frame = NSRect(x: 0, y: bar + line, width: size.width, height: size.height - bar - line)
         scroll.autoresizingMask = [.width, .height]
         for v in [scroll, rule, status, keys] as [NSView] { addSubview(v) }
-        keys.onRun = { [unowned self] id in Int(id).flatMap { shown.indices.contains($0) ? shown[$0] : nil }?.run() }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -489,15 +496,19 @@ final class DocFrame: NSView {
 
     /// Its keys as they are now — on becoming key, and when what works changes (a command ended, hex on).
     func showKeys() {
-        guard let w = window else { return }
-        var seen: Set<String> = []
-        shown = Self.rows(w).filter { seen.insert($0.key).inserted }   // a key once: the window's own first
-        keys.list = shown.enumerated().map { KeySlot(key: $0.element.key, label: $0.element.label, id: "\($0.offset)") }
+        if let w = window { keys.show(Self.rows(w)) }
     }
 }
 
 extension NSWindow {
-    /// A document window's status line (tests, and what F1's neighbours say).
+    /// A document window's status line.
     var statusText: String { (contentView as? DocFrame)?.text ?? "" }
     var docFrame: DocFrame? { contentView as? DocFrame }
+
+    /// Its line in the Window menu: the title and where it is, so two "app.log" of two servers read apart there (the
+    /// menu has no subtitles).
+    var windowsMenuTitle: String { subtitle.isEmpty ? title : "\(title) — \(subtitle)" }
+    func listInWindowsMenu() {
+        if isVisible { NSApp.changeWindowsItem(self, title: windowsMenuTitle, filename: false) }
+    }
 }
