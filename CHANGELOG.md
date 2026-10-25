@@ -27,6 +27,7 @@ Release:
 - The Size column is empty for a folder not counted yet and for a special file (its kind is in the tooltip), not `<DIR>` or `<FIFO>`; bytes read `310 B`.
 - The Modified column says `Today 13:33`, `Yesterday 09:10`, `Oct 14 13:32` this year and `2024-03-01` before.
 - The Activity button at rest is a clock going round instead of a download arrow.
+- An executable file has Finder's executable icon, so it stands out in the System theme too.
 
 ### Fixed
 - **F1** lists the Git menu's keys (⌃B, ⌃⇧C, ⌃G …); they were missing there and under the key bar's **+N**. Its sections follow the menu bar's order.

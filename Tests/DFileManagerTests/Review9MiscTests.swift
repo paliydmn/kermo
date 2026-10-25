@@ -141,6 +141,21 @@ private final class CountingPreview: QLPreviewPanel {
     #expect(a.textField?.textColor == marked)
 }
 
+/// An executable is told by its icon, as in Finder — the System theme gives it no color of its own.
+@MainActor @Test func executablesHaveTheirIcon() async throws {
+    _ = NSApplication.shared
+    let dir = try tempDir(["run.sh", "notes.txt"])
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    chmod(dir + "/run.sh", 0o755)
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    defer { panel.shutdown() }
+    panel.loadViewIfNeeded()
+    await waitListed(panel, 2)
+    let exec = cell(panel, "name", "run.sh")?.imageView?.image, plain = cell(panel, "name", "notes.txt")?.imageView?.image
+    #expect(exec != nil && exec?.tiffRepresentation == NSWorkspace.shared.icon(for: .unixExecutable).tiffRepresentation)
+    #expect(plain != nil && plain?.tiffRepresentation != exec?.tiffRepresentation)
+}
+
 /// P18: the git column's letters have words for VoiceOver, green (staged) and red told apart as well.
 @MainActor @Test func gitLettersHaveWords() {
     #expect(PanelViewController.gitCell(" M").2 == "modified")

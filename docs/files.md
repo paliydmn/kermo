@@ -117,6 +117,7 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 ## Sizes, hidden files and sort
 
 - Space on a folder marks it and counts its size. ⌥Space (**Calculate Folder Sizes**) counts every folder, and ⎋ (or **Cancel** in the status line) stops. It adds up file bytes, not disk blocks, skips volumes mounted inside (`/` counts its data once, through `/Users` and the other firmlinks), and is forgotten when you leave.
+- An executable (a file with the x bit, a script or a program) has Finder's executable icon.
 - **Size** shows a file's size (`310 B`, `4 KB`, `1.2 GB`) and a folder's once counted. A folder not counted yet and a special file (a named pipe, a socket, a device) leave it empty; the row's tooltip says what a special file is.
 - **Modified** reads `Today 13:33`, `Yesterday 09:10`, `Oct 14 13:32` for this year and `2024-03-01` before, 24-hour. "Today" moves on at midnight. To see `2024-03-01 13:33` everywhere: `defaults write com.dmn.dfilemanager isoDates -bool true` ([options](configuration.md#options)).
 - ⇧⌘. (**Show Hidden Files**) shows names starting with `.` and files with the hidden flag, in every panel, and is remembered.

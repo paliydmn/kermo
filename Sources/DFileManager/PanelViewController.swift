@@ -223,6 +223,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     private static let folderIcon = NSWorkspace.shared.icon(for: .folder)
     private static let fileIcon = NSWorkspace.shared.icon(for: .data)
+    private static let execIcon = NSWorkspace.shared.icon(for: .unixExecutable)   // as Finder: told by shape, in any theme
     private static let linkIcon = NSWorkspace.shared.icon(for: .symbolicLink)
     private static let serverIcon = Symbol.network.image("Server")
     private static let sizeFmt = ByteCountFormatter()
@@ -2436,6 +2437,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             case _ where parked != nil: Self.serverIcon
             case nil, .dir: Self.folderIcon
             case .link: Self.linkIcon
+            case .file where it!.mode & 0o111 != 0: Self.execIcon
             default: Self.fileIcon
             }
             tf.font = theme.mono ? .monospacedSystemFont(ofSize: 12, weight: isMarked ? .bold : .regular)
