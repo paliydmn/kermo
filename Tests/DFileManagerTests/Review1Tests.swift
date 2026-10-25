@@ -17,9 +17,9 @@ import Testing
     _ = NSApplication.shared
     let app = AppDelegate()
     let appWide = ["app.about", "app.update", "app.update.auto"]
-    app.window = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: true)   // not key: a viewer is
+    app.window = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: true)   // not key (in tests none is)
     for id in appWide { #expect(app.validateMenuItem(menuItem(id)), "\(id) with another window key") }
-    for id in ["file.copy", "help.keys", "view.terminal"] { #expect(!app.validateMenuItem(menuItem(id)), "\(id) with another window key") }
+    for id in ["file.copy", "view.terminal"] { #expect(!app.validateMenuItem(menuItem(id)), "\(id) with another window key") }
 
     // NSApp.keyWindow is nil here: with no window of its own the app takes itself for key, and the terminal is up.
     app.window = nil
@@ -33,15 +33,47 @@ import Testing
     #expect(!app.validateMenuItem(menuItem("file.copy")) && app.validateMenuItem(menuItem("view.terminal")))
 }
 
-/// P-5: ⌘A and ⌘F stay with Edit ▸ Select All / Find…: keymap.json moving them is reported, as a key macOS takes is.
-@MainActor @Test func keymapMovingCommandAOrFIsReported() {
-    func problems(_ id: String, _ specs: [String]) -> [String] { AppDelegate.keymapProblems(id, specs.map { Shortcut($0)! }) }
+/// P-5: the menu bar's own keys (⌘A, ⌘F, ⌘C, ⌘X, ⌘0 …) stay with their items: keymap.json moving one is reported, as a
+/// key macOS takes is. ⌘A and ⌘F do Mark All and Search Files in a panel; no other default key is one of them.
+@MainActor @Test func keymapMovingAMenuKeyIsReported() {
+    _ = NSApplication.shared
+    let app = AppDelegate()
+    let fixed = AppDelegate.fixedKeys(app.makeMenu()), commands = app.makeCommands()
+    let defaults = Dictionary(uniqueKeysWithValues: commands.map { ($0.id, $0.keys) })
+    func problems(_ id: String, _ specs: [String]) -> [String] {
+        AppDelegate.keymapProblems(id, specs.map { Shortcut($0)! }, was: defaults[id]!, fixed: fixed)
+    }
     #expect(problems("mark.all", ["cmd+a"]).isEmpty && problems("search", ["opt+f7", "cmd+f"]).isEmpty, "Edit Keymap… writes the defaults")
     #expect(problems("mark.all", ["cmd+opt+a"]) == ["keymap.json: mark.all: ⌘A stays Edit ▸ Select All's, which in a panel does Mark All"])
     #expect(problems("search", ["opt+f7"]) == ["keymap.json: search: ⌘F stays Edit ▸ Find…'s, which in a panel does Search Files"])
     #expect(problems("file.copy", ["f5", "cmd+f"]) == ["keymap.json: file.copy: ⌘F stays Edit ▸ Find…'s, which in a panel does Search Files"])
+    #expect(problems("go.home", ["cmd+c", "cmd+x"]) == ["keymap.json: go.home: ⌘C stays Edit ▸ Copy's", "keymap.json: go.home: ⌘X stays Edit ▸ Cut's"])
+    #expect(problems("view.refresh", ["cmd+0"]) == ["keymap.json: view.refresh: ⌘0 stays Window ▸ Main Window's"])
     #expect(problems("file.diff", ["cmd+opt+d"]).first?.contains("macOS takes it first") == true)
+    #expect(problems("go.home", ["cmd+q"]).count == 1, "⌘Q: macOS's, said once")
     #expect(problems("file.copy", ["f5"]).isEmpty)
+    for c in commands { for k in c.keys where fixed[k] != nil { #expect(["mark.all ⌘A", "search ⌘F"].contains("\(c.id) \(k.display)")) } }
+}
+
+/// F1 over a viewer or an editor: its own keys, then the menu bar's (the registry's only where they work there).
+@MainActor @Test func keyHelpOverAViewer() async throws {
+    _ = NSApplication.shared
+    let app = AppDelegate()
+    let s = app.keySections(over: NSWindow(), menu: app.makeMenu())
+    #expect(s.map(\.title) == ["Kermo", "File", "Edit", "Window"], "no Viewer or Editor section for another window")
+    #expect(s.first { $0.title == "Edit" }?.rows.map(\.keys) == ["⌘Z", "⇧⌘Z", "⌘X", "⌘C", "⌘V", "⌘A", "⌘F", "⌘G"])
+    #expect(s.first { $0.title == "Window" }?.rows.contains { $0.title == "Main Window" && $0.keys == "⌘0" } == true)
+
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-r1-keys-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    try Data("start\nGET /a 200\n".utf8).write(to: URL(fileURLWithPath: dir + "/app.log"))
+    let v = Viewer(URL(fileURLWithPath: dir + "/app.log"))
+    defer { v.close() }
+    for _ in 0..<500 where v.window?.subtitle.contains("Esc close") != true { try await Task.sleep(for: .milliseconds(10)) }
+    let subtitle = try #require(v.window?.subtitle)
+    #expect(v.keyHints.allSatisfy { subtitle.contains("\($0.key) \($0.label)") }, "F1 and the subtitle say the same")
+    #expect(v.keyHints.contains { $0 == ("&", "filter") } && v.keyHints.last! == ("Esc", "close"))
 }
 
 /// P-8: a server row's right-click menu starts with its first item, not a line; a favorite's ends with its own.

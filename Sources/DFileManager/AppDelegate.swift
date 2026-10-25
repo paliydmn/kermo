@@ -310,14 +310,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         var cmds = makeCommands()
         var problems: [String] = []
         var overridden = Set<String>()
+        var overrides: [(id: String, keys: [Shortcut], was: [Shortcut])] = []
         do {
             for (id, specs) in try Config.load("keymap.json", as: [String: [String]].self) ?? [:] {
                 guard let i = cmds.firstIndex(where: { $0.id == id }) else { problems.append("keymap.json: unknown command “\(id)”"); continue }
+                let was = cmds[i].keys
                 cmds[i].keys = specs.compactMap { spec in
                     guard let k = Shortcut(spec) else { problems.append("keymap.json: \(id): bad key “\(spec)”"); return nil }
                     return k
                 }
-                problems += Self.keymapProblems(id, cmds[i].keys)
+                overrides.append((id, cmds[i].keys, was))
                 overridden.insert(id)
             }
         } catch {
@@ -336,7 +338,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         keymap = map
         keyBar.reload(cmds)
         refreshSidebar()   // section headers show keys
-        NSApp.mainMenu = makeMenu()
+        let menu = makeMenu()
+        NSApp.mainMenu = menu
+        let fixed = Self.fixedKeys(menu)
+        problems += overrides.flatMap { Self.keymapProblems($0.id, $0.keys, was: $0.was, fixed: fixed) }
         configProblems = Config.unreadable + problems   // the state files' once, at launch
         Config.unreadable = []
         if reportProblems {
@@ -344,14 +349,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// What's wrong with keymap.json's keys for one command. Edit Keymap… once wrote every default into the file, ⌘⌥D and
-    /// ⌘M among them: those never fire. ⌘A and ⌘F stay with Edit ▸ Select All and Find… (text fields need them), which in
-    /// a panel do Mark All and Search Files: given to another command, or taken from those two, they don't follow.
-    static func keymapProblems(_ id: String, _ keys: [Shortcut]) -> [String] {
-        let edit = [(Shortcut("cmd+a")!, "mark.all", "Select All", "Mark All"), (Shortcut("cmd+f")!, "search", "Find…", "Search Files")]
-        return keys.compactMap { k in k.takenByMacOS.map { "keymap.json: \(id): \(k.display) never arrives — macOS takes it first (\($0))" } }
-            + edit.filter { ($0.1 == id) != keys.contains($0.0) }
-                  .map { "keymap.json: \(id): \($0.0.display) stays Edit ▸ \($0.2)'s, which in a panel does \($0.3)" }
+    /// What's wrong with keymap.json's keys for one command (`was`: its defaults). Edit Keymap… once wrote every default
+    /// into the file, ⌘⌥D and ⌘M among them: those never fire. Nor does a key of the menu bar's own items (`fixed`): the
+    /// menu takes it first, also where the item is disabled (AppKit then runs nothing). ⌘A and ⌘F there do Mark All and
+    /// Search Files in a panel, so taking them from those two doesn't move them either.
+    static func keymapProblems(_ id: String, _ keys: [Shortcut], was: [Shortcut], fixed: [Shortcut: String]) -> [String] {
+        keys.compactMap { k in k.takenByMacOS.map { "keymap.json: \(id): \(k.display) never arrives — macOS takes it first (\($0))" } }
+            + fixed.filter { keys.contains($0.key) != was.contains($0.key) }.map { "keymap.json: \(id): \($0.key.display) stays \($0.value)" }.sorted()
+    }
+
+    /// The menu bar's own keys (Edit ▸ Copy ⌘C, Window ▸ Main Window ⌘0 …), not the registry's or those macOS takes, as
+    /// keymapProblems words them: "Edit ▸ Select All's, which in a panel does Mark All".
+    static func fixedKeys(_ menu: NSMenu) -> [Shortcut: String] {
+        let inPanel = [#selector(NSResponder.selectAll(_:)): "Mark All", #selector(NSResponder.performTextFinderAction(_:)): "Search Files"]
+        var out: [Shortcut: String] = [:]
+        for m in menu.items.compactMap(\.submenu) {
+            for it in m.items where it.action != #selector(menuCommand(_:)) {
+                guard let k = Shortcut(menuItem: it), k.takenByMacOS == nil else { continue }
+                out[k] = "\(m.title) ▸ \(it.title)'s" + (it.action.flatMap { inPanel[$0] }.map { ", which in a panel does \($0)" } ?? "")
+            }
+        }
+        return out
+    }
+
+    /// F1 over a viewer, an editor or an output window: its own keys, then the menu bar's that work there (Edit ▸ Copy ⌘C,
+    /// Close Window ⌘W …), menu by menu.
+    func keySections(over w: NSWindow, menu: NSMenu) -> [KeyHelp.Section] {
+        var out = [Viewer.keyHelp(of: w) ?? Editor.keyHelp(of: w)].compactMap { $0 }
+        for m in menu.items.compactMap(\.submenu) {
+            let rows = m.items.compactMap { it -> (String, String)? in
+                guard it.action == #selector(menuCommand(_:)) else { return Shortcut(menuItem: it).map { (it.title, $0.display) } }
+                guard !it.keyEquivalent.isEmpty, validateMenuItem(it), let id = it.representedObject as? String else { return nil }
+                return commands.first { $0.id == id }?.keys.first.map { (it.title, $0.display) }   // the one key the menu has
+            }
+            if !rows.isEmpty { out.append((m.title, rows)) }
+        }
+        return out
     }
 
     private func saveSession() { session.save(defaults) }
@@ -975,13 +1008,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if id == "view.perms" { item.state = defaults.bool(forKey: "showPerms") ? .on : .off }
         if id == "app.update" { item.title = updateOffered.map { "Kermo \($0) Available…" } ?? "Check for Updates…" }
         if id == "app.update.auto" { item.state = defaults.bool(forKey: "updateCheckOff") ? .off : .on }
-        if id == "file.trash" { item.title = panels.indices.contains(activeIndex) && active.remote != nil ? "Delete…" : commands.first { $0.id == id }?.title ?? item.title }   // no Trash on a server
+        if id == "file.trash" { item.title = panels.indices.contains(activeIndex) && (active.remote ?? active.parked) != nil ? "Delete…" : commands.first { $0.id == id }?.title ?? item.title }   // no Trash on a server
         if id == "tab.close" {
             let closes = Self.windowToClose(key: NSApp.keyWindow, main: window) != nil
             item.title = closes ? "Close Window" : commands.first { $0.id == id }?.title ?? item.title
             if closes { return true }
         }
         if id == "server.history", Editor.server(of: NSApp.keyWindow) != nil { return true }   // its editor's file
+        if id == "help.keys", Self.windowToClose(key: NSApp.keyWindow, main: window) != nil { return true }   // that window's keys
         return Self.appWide.contains(id) || NSApp.keyWindow === window && canRun(id)
     }
 
@@ -1190,7 +1224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let root = terminal?.isShown == true ? nil : (active.remote ?? active.parked).flatMap { $0.target.sudo ? $0 : nil }
         cmdField.placeholderString = Self.commandHint(root: root?.target)
         sidebar.highlight(sidebarKey)
-        keyBar.server = active.remote != nil
+        keyBar.server = (active.remote ?? active.parked) != nil
         updateGitRow()
         window?.title = root.map { "\($0.target.shown):\($0.dir) #" }?.bidiVisible ?? path.bidiVisible   // what the panel's header says
         guard remote == nil else { window?.representedURL = nil; return }

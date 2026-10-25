@@ -214,11 +214,23 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         return true
     }
 
+    /// Its keys for what it shows now, as the subtitle names them; F1 over it lists them too.
+    var keyHints: [(key: String, label: String)] {
+        var keys = [("&", "filter"), ("e", "errors"), ("h", "hex"), ("f", "follow"), ("l", "lines"), ("w", "wrap"), ("⌘F", "find"), ("Esc", "close")]
+        if canPretty { keys.insert(("p", "readable"), at: 2) }
+        if big != nil && mode == .text && lineFilter == nil { keys.insert(contentsOf: [("g", "go to"), ("/ n", "find in file")], at: 0) }
+        if isHuge && mode == .hex { keys.insert(("g", "go to"), at: 0) }
+        return keys
+    }
+
+    static func keyHelp(of window: NSWindow?) -> KeyHelp.Section? {
+        open.first { $0.window === window && window != nil }.map { v in
+            ("Viewer", v.keyHints.map { ($0.label.prefix(1).uppercased() + $0.label.dropFirst(), $0.key) })
+        }
+    }
+
     private func updateSubtitle() {
-        var keys = ["& filter", "e errors", "h hex", "f follow", "l lines", "w wrap", "⌘F find", "Esc close"]
-        if canPretty { keys.insert("p readable", at: 2) }
-        if big != nil && mode == .text && lineFilter == nil { keys.insert(contentsOf: ["g go to", "/ n find in file"], at: 0) }
-        if isHuge && mode == .hex { keys.insert("g go to", at: 0) }
+        let keys = keyHints.map { "\($0.key) \($0.label)" }
         let filtered = mode == .hex ? nil : lineFilter.map { f in
             [f.text.isEmpty ? nil : "LINES \(f.exclude ? "WITHOUT" : "WITH") “\(f.text)”",
              f.level.map { $0 == .error ? "ERRORS ONLY" : "ERRORS + WARNINGS" }].compactMap { $0 }.joined(separator: " · ")

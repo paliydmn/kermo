@@ -20,7 +20,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Action | Keys |
 |---|---|
 | Search commands, folders and files | ⇧⌘P, F9, ⌥9 |
-| Keyboard shortcuts cheat sheet | F1, ⌥1 |
+| Keyboard shortcuts cheat sheet (over a viewer or an editor: its keys) | F1, ⌥1 |
 
 ## Panels, tabs and navigation
 

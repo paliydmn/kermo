@@ -79,8 +79,11 @@ extension AppDelegate {
             Task { await app.checkForUpdates(byHand: true) }
         },
         cmd("app.update.auto", "Check for Updates Automatically", [], menu: "Kermo", aliases: "update daily") { $0.toggleUpdateChecks() },
-        cmd("help.keys", "Keyboard Shortcuts", ["f1", "opt+1"], menu: "Kermo", short: "Keys", aliases: "help shortcuts cheat sheet") {
-            KeyHelp.show(over: $0.window, commands: $0.commands)
+        cmd("help.keys", "Keyboard Shortcuts", ["f1", "opt+1"], menu: "Kermo", short: "Keys", aliases: "help shortcuts cheat sheet") { app in
+            if let w = AppDelegate.windowToClose(key: NSApp.keyWindow, main: app.window), let menu = NSApp.mainMenu {   // a viewer's, an editor's
+                return KeyHelp.show(over: w, commands: [], fixed: app.keySections(over: w, menu: menu))
+            }
+            KeyHelp.show(over: app.window, commands: app.commands)
         },
         cmd("app.palette", "Search…", ["cmd+shift+p", "f9", "opt+9"], menu: "Go", short: "Commands", aliases: "palette all commands") { $0.search.focus() },
 

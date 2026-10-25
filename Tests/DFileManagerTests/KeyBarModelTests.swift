@@ -76,4 +76,15 @@ import Testing
     #expect(f8(server: false) == "Trash" && f8(server: true) == "Delete…")
     let cmd = KeyBarModel.layers(commands, server: true).first { $0.mods == .command }?.slots
     #expect(cmd?.first { $0.id == "file.trash" }?.label == "Delete…", "⌘⌫ too")
+    // In red: the files go for good.
+    let bar = KeyBarView()
+    bar.reload(commands)
+    func color() -> NSColor? {
+        func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? NSButton).map { [$0] } ?? buttons($0) } }
+        let t = buttons(bar).first { $0.identifier?.rawValue == "file.trash" }?.attributedTitle
+        return t.flatMap { $0.attribute(.foregroundColor, at: $0.length - 1, effectiveRange: nil) as? NSColor }
+    }
+    #expect(color() == .labelColor)
+    bar.server = true
+    #expect(color() == .systemRed)
 }

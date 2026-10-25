@@ -75,7 +75,7 @@ final class KeyBarView: NSView {
     var onMore: ((NSEvent.ModifierFlags) -> Void)?
     var canRun: (String) -> Bool = { _ in true }
     var terminalShown: () -> Bool = { false }
-    /// The active panel is a server's (F8: Delete…).
+    /// The active panel is a server's (F8: Delete…, in red).
     var server = false {
         didSet { if server != oldValue { reload(commands) } }
     }
@@ -187,7 +187,7 @@ final class KeyBarView: NSView {
         }
         let (shown, more) = KeyBarModel.fit(slots, capacity: capacity)
         for s in shown {
-            let b = slotButton(s.key, s.label, #selector(slotClicked(_:)))
+            let b = slotButton(s.key, s.label, #selector(slotClicked(_:)), color: server && s.id == "file.trash" ? .systemRed : .labelColor)   // gone for good
             b.identifier = s.id.map { .init($0) }
             b.isEnabled = s.id.map(canRun) ?? false
             row.addArrangedSubview(b)
@@ -199,10 +199,10 @@ final class KeyBarView: NSView {
         }
     }
 
-    private func slotButton(_ key: String, _ label: String, _ action: Selector) -> NSButton {
+    private func slotButton(_ key: String, _ label: String, _ action: Selector, color: NSColor = .labelColor) -> NSButton {
         let b = NSButton(title: "", target: self, action: action)
         let t = NSMutableAttributedString(string: label.isEmpty ? key : key + " ", attributes: [.foregroundColor: NSColor.secondaryLabelColor])
-        t.append(NSAttributedString(string: label, attributes: [.foregroundColor: NSColor.labelColor]))
+        t.append(NSAttributedString(string: label, attributes: [.foregroundColor: color]))
         b.attributedTitle = t
         b.bezelStyle = .accessoryBarAction
         b.refusesFirstResponder = true
