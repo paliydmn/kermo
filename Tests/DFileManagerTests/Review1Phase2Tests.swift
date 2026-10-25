@@ -106,4 +106,20 @@ extension ServerLockTests {
     }
     #expect(said == [[], ["production"], ["root"]])
 }
+
+/// A production server's file in the viewer: titled and marked as in the editor — "host:path" and PROD in its title bar.
+@Test func theViewerSaysProduction() throws {
+    var prod = SavedServer(address: "me@web.invalid")!
+    prod.prod = true
+    ServerLock.servers = { [prod] }
+    defer { ServerLock.servers = { [] } }
+    let url = URL(fileURLWithPath: NSTemporaryDirectory() + "dfm-p2-" + UUID().uuidString + ".log")
+    try Data("line\n".utf8).write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let v = Viewer.show(url, remote: (prod.target, "/var/log/app.log", 0))
+    defer { v.window?.close() }
+    #expect(v.window?.title == "me@web.invalid:/var/log/app.log")
+    let chips = v.window?.titlebarAccessoryViewControllers.flatMap { $0.view.subviews.compactMap { ($0 as? NSImageView)?.image?.accessibilityDescription } }
+    #expect(chips == ["production"])
+}
 }

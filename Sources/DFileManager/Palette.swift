@@ -137,6 +137,22 @@ enum Chip: String, CaseIterable {
     }
 }
 
+extension NSWindow {
+    /// A server file's chips (production, root, locked) at the end of its title bar, as its panel's path bar shows
+    /// them: the editor's and the viewer's.
+    func showChips(_ chips: [Chip]) {
+        guard !chips.isEmpty else { return }
+        let stack = NSStackView(views: chips.map { NSImageView(image: $0.image) })
+        stack.spacing = 4
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 10)
+        stack.frame.size = NSSize(width: stack.fittingSize.width, height: 28)
+        let bar = NSTitlebarAccessoryViewController()
+        bar.layoutAttribute = .trailing
+        bar.view = stack
+        addTitlebarAccessoryViewController(bar)
+    }
+}
+
 /// A chip that gives way to a name in a narrow row (the sidebar's): drawn whole or not at all, never squeezed.
 final class ChipView: NSView {
     let chip: Chip
