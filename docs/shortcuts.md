@@ -34,7 +34,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | New tab / close tab (or click its ×) | ⌘T / ⌘W |
 | Next / previous tab | ⌃⇥, ⇧⌘] / ⌃⇧⇥, ⇧⌘[ |
 | Swap panels / open the same folder in the other panel | ⌘U / ⌥= |
-| Go to a folder (bookmarks ★ and frequent folders) | ⌘P |
+| Go to a folder (bookmarks and frequent folders) | ⌘P |
 | Bookmark this folder (again: remove the bookmark) | ⌘D |
 | Path entry with Tab completion | ⌘L, ⇧⌘G |
 | Up / back / forward | ⌫, ⌘↑ / ⌘[ / ⌘] |

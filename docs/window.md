@@ -8,13 +8,15 @@ How the Kermo window is laid out, and the three ways to reach anything: the key 
 
 ## Panels and tabs
 
-The window shows two to four panels side by side, each with its own tabs. The tab in front has a bold title with a line in the accent color under it; the other tabs' titles are grey. The terminal's tabs look the same, and an SSH tab's ● is green while it's connected, ○ grey when it isn't. Tab moves between panels. With three or four panels, F5 and F6 target the panel that was active before this one. A panel can show a folder on this Mac, a [server](servers.md), an archive, a Git list or search results.
+The window shows two to four panels side by side, each with its own tabs. The tab in front has a bold title with a line in the accent color under it; the other tabs' titles are grey. The terminal's tabs look the same, and an SSH tab's dot is green while it's connected, grey when it isn't; a production server's tab has the PROD chip, a root login's ROOT. Tab moves between panels. With three or four panels, F5 and F6 target the panel that was active before this one. A panel can show a folder on this Mac, a [server](servers.md), an archive, a Git list or search results.
+
+Under the tabs, the path bar says where the panel is. On a server, in an archive or in search results a symbol before the path says which (a server rack, a box, a magnifier), and a server's chips follow it: PROD for a production server, ROOT for a [root panel](root-panel.md), LOCKED for a server locked with Touch ID. The path itself is plain text, which ⌘L edits.
 
 ### After a restart
 
 Kermo comes back as you left it: each panel's tabs and the one in front, the active panel, each tab's cursor (on the same name; on the first row if that item is gone) and the dividers between the panels. Filters, Back / Forward history and marks start clean.
 
-A server tab comes back **not connected**. Its header says where it was (`🌐 web1:/etc/nginx`, `#` at the end for a root panel), and its only row says `Not connected — ↩ connects to web1`. Nothing is sent to any server until you ask, production and locked ones included:
+A server tab comes back **not connected**. Its header says where it was (`web1:/etc/nginx`, with a ROOT chip for a root panel), and its only row says `Not connected — ↩ connects to web1`. Nothing is sent to any server until you ask, production and locked ones included:
 
 - **↩** or a double-click connects, as Connect does: a locked server asks for Touch ID first, and the cursor goes back to its name. A root tab connects as root; ⌃⌘R / ⌃⇧⌘R choose root or the user instead.
 - ⌘↑ or ⌫ goes to the tab's folder on this Mac; the sidebar, ⌘L and the like go where you point, as on a local tab.
@@ -52,7 +54,7 @@ How to use it:
 
 ### Volumes
 
-- **Used and free:** right of a volume's name, used in red and free in green (`110 GB / 350 GB`), in whatever room the name leaves: a narrow sidebar cuts them from the end or hides them, and the name is never shortened for them. Widen the sidebar or hover: the tooltip says `/Volumes/USB · 110 GB used of 460 GB · 350 GB free`. Free space is counted as Finder counts it. The figures are read again every 30 seconds while Kermo is in front, after each copy, move or delete, and on mount and unmount. A network share shows the figures the system already has, and none if it has none.
+- **Free space:** under a volume's name, a thin bar of how full it is — grey, amber from 85 % full, red from 95 % — and `350 GB free` beside it. A narrow sidebar shortens that to `350 GB`, then shows the bar alone. Widen the sidebar or hover: the tooltip says `/Volumes/USB · 110 GB used of 460 GB · 350 GB free`. Free space is counted as Finder counts it. The figures are read again every 30 seconds while Kermo is in front, after each copy, move or delete, and on mount and unmount. A network share shows the figures the system already has, and none if it has none.
 - **Eject:** ⏏ on a removable or network volume's row, ⌥⌘E for the active panel's volume.
 - **Mount:** a gray volume's ⊕ mounts it. Clicking its row, or ↩ on it in **Volumes…** (⇧⌘V), mounts it and opens it in the active panel.
 - **Unmount:** the volume goes and its disk stays plugged in, so the row turns gray, ready to mount again. Right-click a volume for **Mount**, **Unmount** or **Eject**. **Unmount Volume** is also in ⇧⌘P, for the active panel's volume.

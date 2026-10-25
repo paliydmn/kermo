@@ -11,7 +11,7 @@ Open a server's files with root rights to edit `/etc` and other protected files,
 
 The panel's SFTP then runs through `sudo` on the same connection. Kermo looks for `sftp-server` in the usual places (Debian/Ubuntu, RHEL/Fedora, Arch/Alpine, openSUSE, BSD/macOS) and runs `sudo -n -- <sftp-server>`.
 
-The header and the window title read `root@host:/path #`. The header is orange, or purple on a production server.
+The header reads `root@host:/path` with a ROOT chip before it (and PROD on a production server), as does an editor's title bar for a file opened there. The header is orange, or purple on a production server.
 
 ## Set up sudo
 

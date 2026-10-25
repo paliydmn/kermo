@@ -6,7 +6,7 @@ Mark, copy, move, delete, rename, link, pack and inspect files on this Mac from 
 
 ## Mark files
 
-Operations act on the marked items, or on the cursor item when nothing is marked. Marked names are bold in the theme's mark color, and the status line counts them with their size (a folder counts once its size is known). Leaving the folder clears the marks. So does finishing F5, F6, F8, ⇧F8, Multi-Rename, Compress, Put Back and the Admin operations.
+Operations act on the marked items, or on the cursor item when nothing is marked. Marked names are bold, in the accent color (in the other themes, the theme's own mark color), with a ✓ left of the icon; on the active panel's cursor they turn white. The status line counts them with their size (a folder counts once its size is known). Leaving the folder clears the marks. So does finishing F5, F6, F8, ⇧F8, Multi-Rename, Compress, Put Back and the Admin operations.
 
 - Space, ⇧↓ and ⇧↑ toggle the mark and move the cursor down, down and up. ⌘-click toggles one item, ⇧-click marks from the cursor to the click.
 - ⌘A marks all, ⇧⌘A unmarks all, `*` inverts. Marking covers only what the panel shows: hidden files (unless ⇧⌘. is on) and names the quick filter hides are never marked, and operations skip them.
@@ -45,7 +45,7 @@ A dialog asks. For files it shows size and date of both (**← newer** marks the
 
 ### Activity
 
-The **Activity** button in the toolbar (a ring that fills as the jobs go) or **View ▸ Activity** (⌥⌘J) lists the jobs running, the ones queued and the last 100 finished, newest first. A red dot on the button means one finished with errors you haven't looked at.
+The **Activity** button in the toolbar (a clock going round; a ring that fills as the jobs go) or **View ▸ Activity** (⌥⌘J) lists the jobs running, the ones queued and the last 100 finished, newest first. A red ◆ on the button means one finished with errors you haven't looked at.
 
 - Click **▸** on a job to see its files. A finished one shows what it did, how long it took, and each file that failed with the reason.
 - **Retry Failed** copies or moves the failed files again, into the folders they were going to. **Retry** next to a file does just that one. A locked server asks for Touch ID and a production server asks first, as F5 does. A retried file starts over: only **Retry** in the error dialog, while the job runs, continues a big file where it stopped.
@@ -117,6 +117,8 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 ## Sizes, hidden files and sort
 
 - Space on a folder marks it and counts its size. ⌥Space (**Calculate Folder Sizes**) counts every folder, and ⎋ (or **Cancel** in the status line) stops. It adds up file bytes, not disk blocks, skips volumes mounted inside (`/` counts its data once, through `/Users` and the other firmlinks), and is forgotten when you leave.
+- **Size** shows a file's size (`310 B`, `4 KB`, `1.2 GB`) and a folder's once counted. A folder not counted yet and a special file (a named pipe, a socket, a device) leave it empty; the row's tooltip says what a special file is.
+- **Modified** reads `Today 13:33`, `Yesterday 09:10`, `Oct 14 13:32` for this year and `2024-03-01` before, with the month and time as your Mac writes them. "Today" moves on at midnight. To see `2024-03-01 13:33` everywhere: `defaults write com.dmn.dfilemanager isoDates -bool true` ([options](configuration.md#options)).
 - ⇧⌘. (**Show Hidden Files**) shows names starting with `.` and files with the hidden flag, in every panel, and is remembered.
 - Click **Name**, **Size** or **Modified** to sort, again to reverse. Folders stay first. Each folder remembers its sort. A folder of more than 5,000 items sorts in the background: the list stays as it was until it's done (`Sorting…` in the status line after a moment), and the cursor stays on its item.
 
