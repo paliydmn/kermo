@@ -55,7 +55,7 @@ func fakeSudo(in dir: String) throws -> String {
 
 extension ServerLockTests {
 /// The header says root: "root@host:/dir #"; on a production server "🟣 PROD" in front, as for its user. Reopened as
-/// the user: as before. The status line says root@host too. (Its colors: by eye.)
+/// the user: as before. The status line says SFTP, the header and the tab where (phase 4, R-28). (Its colors: by eye.)
 @Test func rootPanelHeaderSaysRoot() async throws {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-rhead-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -70,7 +70,7 @@ extension ServerLockTests {
     }
     await open(root)
     #expect(panel.headerText == "root@localhost:\(dir)" && panel.headerChips == [.root])
-    #expect(panel.statusText.hasPrefix("sftp · root@localhost · "), "\(panel.statusText)")
+    #expect(panel.statusText == "1 item" && panel.statusChipWords.last == "SFTP", "\(panel.statusText) \(panel.statusChipWords)")
     #expect(SavedServer.title(root, "/etc/hosts") == "root@localhost:/etc/hosts" && Chip.of(root) == [.root], "its editor's title")
     var prod = SavedServer(address: "localhost")!
     prod.prod = true
@@ -216,11 +216,11 @@ extension ServerLockTests {
     #expect(panel.remote?.target == .local() && calls >= 2 && unused == 0, "\(calls) changes, \(unused) with nothing in use")
 }
 
-/// On a root panel the command line says ⌘E runs as the user (its prompt keeps "user@host $"); elsewhere as before.
+/// On a root panel the command line's keys say ⌘E runs as the user, in one hint more (R-31); elsewhere as before.
 @Test @MainActor func commandLineSaysWhoseShellOnARootPanel() {
-    #expect(AppDelegate.commandHint(root: nil).hasPrefix("⌘E: shell command in this folder · %f"))
-    #expect(AppDelegate.commandHint(root: SFTPTarget(host: "deploy@web").asRoot()).hasPrefix("⌘E: shell command in this folder as deploy, not root · "))
-    #expect(AppDelegate.commandHint(root: SFTPTarget(host: "web").asRoot()).contains(" as your user, not root · "))
+    #expect(AppDelegate.commandLineKeys(root: nil) == AppDelegate.commandLineKeys)
+    #expect(AppDelegate.commandLineKeys(root: SFTPTarget(host: "deploy@web").asRoot()).last == KeySlot(key: "", label: "Runs as deploy, not root", id: nil))
+    #expect(AppDelegate.commandLineKeys(root: SFTPTarget(host: "web").asRoot()).last?.label == "Runs as your user, not root")
 }
 
 /// A save goes over the session of the panel showing that server: from a root panel, no new sudo (where sudo wants a

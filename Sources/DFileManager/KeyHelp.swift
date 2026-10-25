@@ -39,21 +39,31 @@ final class KeyHelp: NSObject, NSSearchFieldDelegate {
     private let commands: [Command]
     private let layer: NSEvent.ModifierFlags?
     private let fixed: [Section]?   // over a viewer or an editor: its keys, not the registry's
+    private let fields: [Section]   // after the registry's: the text fields' own (`fieldKeys`)
     private weak var parent: NSWindow?
 
-    static func show(over window: NSWindow, commands: [Command], layer: NSEvent.ModifierFlags? = nil, fixed: [Section]? = nil) {
+    /// The keys of the main window's text fields, as their key bar shows them while they have the focus (F1 doesn't
+    /// come there: a field takes F1 for itself).
+    static var fieldKeys: [Section] {
+        [("Command Line", AppDelegate.commandLineKeys), ("Quick Filter", PanelViewController.filterKeys)].map { title, slots in
+            (title, slots.map { ($0.label, $0.key) })
+        }
+    }
+
+    static func show(over window: NSWindow, commands: [Command], layer: NSEvent.ModifierFlags? = nil, fixed: [Section]? = nil, fields: [Section] = []) {
         current?.close()
-        let h = KeyHelp(parent: window, commands: commands, layer: layer, fixed: fixed)
+        let h = KeyHelp(parent: window, commands: commands, layer: layer, fixed: fixed, fields: fields)
         current = h
         window.beginSheet(h.sheet)
         h.sheet.makeFirstResponder(h.field)
     }
 
-    private init(parent: NSWindow, commands: [Command], layer: NSEvent.ModifierFlags?, fixed: [Section]?) {
+    private init(parent: NSWindow, commands: [Command], layer: NSEvent.ModifierFlags?, fixed: [Section]?, fields: [Section]) {
         self.parent = parent
         self.commands = commands
         self.layer = layer
         self.fixed = fixed
+        self.fields = fields
         super.init()
         field.placeholderString = layer.map { "Filter \(KeyBarModel.symbol($0)) keys" } ?? "Filter keys"
         field.delegate = self
@@ -97,7 +107,8 @@ final class KeyHelp: NSObject, NSSearchFieldDelegate {
                                                    .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: para]
         let head: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
         let s = NSMutableAttributedString()
-        let sections = fixed.map { Self.filter($0, field.stringValue) } ?? Self.sections(commands, query: field.stringValue, layer: layer)
+        let sections = (fixed.map { Self.filter($0, field.stringValue) } ?? Self.sections(commands, query: field.stringValue, layer: layer))
+            + Self.filter(fields, field.stringValue)
         for (i, sec) in sections.enumerated() {
             s.append(NSAttributedString(string: (i == 0 ? "" : "\n") + sec.title.uppercased() + "\n", attributes: head))
             for r in sec.rows {

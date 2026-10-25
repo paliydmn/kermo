@@ -83,7 +83,7 @@ extension AppDelegate {
             if let w = AppDelegate.windowToClose(key: NSApp.keyWindow, main: app.window), let menu = NSApp.mainMenu {   // a viewer's, an editor's
                 return KeyHelp.show(over: w, commands: [], fixed: app.keySections(over: w, menu: menu))
             }
-            KeyHelp.show(over: app.window, commands: app.commands)
+            KeyHelp.show(over: app.window, commands: app.commands, fields: KeyHelp.fieldKeys)
         },
         cmd("app.palette", "Search…", ["cmd+shift+p", "f9", "opt+9"], menu: "Go", aliases: "palette all commands") { $0.search.focus() },
 
@@ -570,7 +570,7 @@ extension AppDelegate {
             Shell.run(expanded, in: active.itemsDir) { [weak self] _ in self?.panels.forEach { $0.reload() } }
         case .shell:   // the panels reload when the terminal hides (toggleTerminal): the shell's command ends when it ends
             guard let v = terminal.run(expanded, cwd: active.itemsDir) else {
-                return active.flash("A control character in a name: ⇧↩ runs it in an output window", error: true)
+                return active.flash("A control character in a name — ⇧↩ Output Window runs it", error: true)
             }
             window.makeFirstResponder(v)
         }
@@ -657,7 +657,7 @@ extension AppDelegate {
             active.flash("Removed bookmark")
         } else {
             bookmarks.append(p)
-            active.flash("Bookmarked — ⌘P to jump")
+            active.flash("Bookmarked — ⌘P Jump to Folder")
         }
         Config.save("bookmarks.json", bookmarks)
         refreshSidebar()
@@ -676,7 +676,7 @@ extension AppDelegate {
     // MARK: - Implementations
 
     func swapPanels() {
-        if !Self.swap(active, other) { NSSound.beep(); active.flash("⌘U swaps folders — not an archive or search results") }
+        if !Self.swap(active, other) { NSSound.beep(); active.flash("⌘U Swap Panels works on folders — not an archive or search results") }
     }
 
     /// Each panel to where the other is: a server folder too (not the local one hidden behind its tab). False for an
@@ -1823,7 +1823,7 @@ extension AppDelegate {
                 var st = stat()
                 if Darwin.lstat(url.path, &st) == 0, st.st_mode & S_IFMT == S_IFREG { chmod(url.path, st.st_mode & 0o7555) }
                 Self.openInApp(url)
-                active.flash("A temporary copy, read-only: Extract (⌥F9) to keep your changes")
+                active.flash("A temporary copy, read-only — ⌥F9 Extract keeps your changes")
             }
         }
     }
@@ -2618,7 +2618,7 @@ extension AppDelegate {
     }
 
     private func readOnly() {
-        active.flash(active.remote != nil ? "Not available on SFTP" : "Archives are read-only here — F5 extracts")
+        active.flash(active.remote != nil ? "Not available on SFTP" : "Archives are read-only here — F5 Extract")
     }
 
     /// chmod / chown of the marked items (or the cursor's) as "644 me:staff": a part left as shown stays as each

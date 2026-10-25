@@ -58,7 +58,7 @@ private func scratchDefaults() -> (UserDefaults, String) {
     #expect(Session.dividers([0.01], panels: 2) == [0.5] && Session.dividers([0.99], panels: 2) == [0.5], "a panel squeezed to nothing")
 }
 
-/// A server tab comes back parked: its header says where, one row says ↩ connects, and nothing is connected or counted
+/// A server tab comes back parked: its header says where, its middle that ↩ connects, and nothing is connected or counted
 /// as a session. Other tabs are as they were; leaving it goes to its local folder.
 @MainActor @Test func aServerTabComesBackParked() async throws {
     let d = tempDir()
@@ -73,8 +73,9 @@ private func scratchDefaults() -> (UserDefaults, String) {
     #expect(panel.parked?.target == web && panel.parked?.dir == "/etc/nginx")
     #expect(panel.remote == nil && panel.connecting == nil && panel.busyMessage == nil && panel.remoteTabs.isEmpty)
     #expect(panel.headerText == "k13@web1.invalid:/etc/nginx" && panel.headerChips.isEmpty)
-    #expect(panel.table.numberOfRows == 1 && panel.item(at: 0) == nil && panel.listedItems.isEmpty)
-    #expect(panel.parkedHint == "Not connected — ↩ connects to k13@web1.invalid" && panel.statusText.contains("not connected"))
+    #expect(panel.table.numberOfRows == 0 && panel.item(at: 0) == nil && panel.listedItems.isEmpty, "the middle says it (R-26)")
+    #expect(panel.parkedHint == "Not connected — ↩ Connect to k13@web1.invalid" && panel.statusText == "Not connected")
+    #expect(panel.empty?.title == "Not connected" && panel.empty?.keys.first?.id == "open")
     #expect(panel.sessionTabs == saved, "saved again as it came")
     #expect(panel.targetItems.isEmpty && panel.plainFolder == nil)
 
@@ -91,7 +92,7 @@ private func scratchDefaults() -> (UserDefaults, String) {
 
     panel.reload()   // ⌘R: still nothing listed
     try? await Task.sleep(for: .milliseconds(300))
-    #expect(panel.parked != nil && panel.listedItems.isEmpty && panel.table.numberOfRows == 1)
+    #expect(panel.parked != nil && panel.listedItems.isEmpty && panel.table.numberOfRows == 0)
     panel.navigate(to: d + "/gone")   // a way out that fails: it stays parked, the error said
     await waitUntil { panel.statusText.contains("gone") }
     try? await Task.sleep(for: .milliseconds(300))
@@ -115,7 +116,7 @@ private func scratchDefaults() -> (UserDefaults, String) {
                                     index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    #expect(panel.parked?.target.sudo == true && panel.headerText.hasSuffix(":/etc") && panel.headerChips == [.root] && panel.statusText.hasPrefix("sftp · root@"))
+    #expect(panel.parked?.target.sudo == true && panel.headerText.hasSuffix(":/etc") && panel.headerChips == [.root] && panel.statusText == "Not connected")
     #expect(panel.sessionTabs.first?.root == true)
 }
 
@@ -182,7 +183,7 @@ extension ServerLockTests {
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
     func settle() async { for _ in 0..<250 where panel.busyMessage != nil { try? await Task.sleep(for: .milliseconds(20)) } }
-    #expect(panel.parkedHint == "Not connected — ↩ connects to k13 box", "a saved server by its name")
+    #expect(panel.parkedHint == "Not connected — ↩ Connect to k13 box", "a saved server by its name")
     panel.openCursor(intoPackage: false)
     await settle()
     #expect(asked == 1 && panel.remote == nil && panel.parked != nil)

@@ -88,7 +88,7 @@ import Testing
             marks.append(opened.first?.mark)
             // F-09: read-only, so edits in that app don't vanish with the temp folder; the panel says how to keep them
             #expect(opened.first?.mode.map { $0 & 0o222 } == 0, "\(archive): \(String(describing: opened.first?.mode))")
-            #expect(panel.statusText == "A temporary copy, read-only: Extract (⌥F9) to keep your changes")
+            #expect(panel.statusText == "A temporary copy, read-only — ⌥F9 Extract keeps your changes")
             #expect(opened.first?.gone == true, "a read-only copy is removed too")
             panel.navigate(to: dir)
             for _ in 0..<250 where panel.listedItems.count != 3 { try? await Task.sleep(for: .milliseconds(20)) }

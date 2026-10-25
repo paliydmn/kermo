@@ -129,6 +129,29 @@ enum Chip: String, CaseIterable {
         return s
     }
 
+    /// A state that just is, in a status line — `⎇ main ↑1`, `120 GB free`, `SFTP`: grey words on a light capsule,
+    /// none of the colors above. Read out as its words.
+    static func plain(_ words: String, symbol: Symbol? = nil) -> NSAttributedString {
+        let font = NSFont.systemFont(ofSize: 10.5, weight: .semibold)
+        let text = NSAttributedString(string: words, attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor])
+        let mark = symbol?.image(nil, color: .secondaryLabelColor, size: 9, weight: .semibold)
+        let lead: CGFloat = mark.map { 5 + $0.size.width + 3 } ?? 5
+        let size = NSSize(width: ceil(lead + text.size().width + 5), height: 16)
+        let image = NSImage(size: size, flipped: false) { r in
+            NSColor.labelColor.withAlphaComponent(0.07).setFill()
+            NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4).fill()
+            mark?.draw(in: NSRect(x: 5, y: (r.height - mark!.size.height) / 2, width: mark!.size.width, height: mark!.size.height))
+            text.draw(at: NSPoint(x: lead, y: (r.height - text.size().height) / 2))
+            return true
+        }
+        image.cacheMode = .never   // its colors are dynamic
+        image.accessibilityDescription = words
+        let a = NSTextAttachment()
+        a.image = image
+        a.bounds = NSRect(x: 0, y: -4, width: size.width, height: size.height)
+        return NSAttributedString(attachment: a)
+    }
+
     /// For a menu item, which takes no picture in its title: the word in the chip's color, then the title.
     func menuTitle(_ title: String, size: CGFloat = 0) -> NSAttributedString {
         let s = NSMutableAttributedString(string: word + " ", attributes: [.foregroundColor: color, .font: NSFont.menuFont(ofSize: size).bold])

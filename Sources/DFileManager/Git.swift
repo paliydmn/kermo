@@ -161,7 +161,7 @@ extension AppDelegate {
     /// yet is published instead.
     func gitSync() {
         guard let (_, st) = gitHere() else { return }
-        guard !st.detached else { return active.flash("Detached HEAD: switch to a branch first (⌃B)") }
+        guard !st.detached else { return active.flash("Detached HEAD — ⌃B Switch Branch first") }
         guard st.upstream != nil else { return gitPublish() }
         guard !st.gone else { return active.flash("\(st.upstream!) is gone (merged?) — Publish Branch pushes it again", error: true) }
         runGit([["pull", "--ff-only"], ["push"]], in: st.root, "Syncing “\(st.branch)”…", network: true) { _ in "“\(st.branch)” is in sync with \(st.upstream!)" }
@@ -169,7 +169,7 @@ extension AppDelegate {
 
     func gitPublish() {
         guard let (_, st) = gitHere() else { return }
-        guard !st.detached else { return active.flash("Detached HEAD: switch to a branch first (⌃B)") }
+        guard !st.detached else { return active.flash("Detached HEAD — ⌃B Switch Branch first") }
         runGit([["push", "-u", "origin", st.branch]], in: st.root, "Publishing “\(st.branch)”…", network: true) { _ in "Published “\(st.branch)” to origin" }
     }
 
