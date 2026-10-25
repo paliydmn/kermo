@@ -315,10 +315,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 guard let i = cmds.firstIndex(where: { $0.id == id }) else { problems.append("keymap.json: unknown command “\(id)”"); continue }
                 cmds[i].keys = specs.compactMap { spec in
                     guard let k = Shortcut(spec) else { problems.append("keymap.json: \(id): bad key “\(spec)”"); return nil }
-                    // Edit Keymap… once wrote every default into the file, ⌘⌥D and ⌘M among them: those never fire.
-                    if let what = k.takenByMacOS { problems.append("keymap.json: \(id): \(k.display) never arrives — macOS takes it first (\(what))") }
                     return k
                 }
+                problems += Self.keymapProblems(id, cmds[i].keys)
                 overridden.insert(id)
             }
         } catch {
@@ -343,6 +342,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if reportProblems {
             if problems.isEmpty { active.flash("Config reloaded") } else { showError(JobErrorMessage(problems.joined(separator: "\n"))) }
         }
+    }
+
+    /// What's wrong with keymap.json's keys for one command. Edit Keymap… once wrote every default into the file, ⌘⌥D and
+    /// ⌘M among them: those never fire. ⌘A and ⌘F stay with Edit ▸ Select All and Find… (text fields need them), which in
+    /// a panel do Mark All and Search Files: given to another command, or taken from those two, they don't follow.
+    static func keymapProblems(_ id: String, _ keys: [Shortcut]) -> [String] {
+        let edit = [(Shortcut("cmd+a")!, "mark.all", "Select All", "Mark All"), (Shortcut("cmd+f")!, "search", "Find…", "Search Files")]
+        return keys.compactMap { k in k.takenByMacOS.map { "keymap.json: \(id): \(k.display) never arrives — macOS takes it first (\($0))" } }
+            + edit.filter { ($0.1 == id) != keys.contains($0.0) }
+                  .map { "keymap.json: \(id): \($0.0.display) stays Edit ▸ \($0.2)'s, which in a panel does \($0.3)" }
     }
 
     private func saveSession() { session.save(defaults) }

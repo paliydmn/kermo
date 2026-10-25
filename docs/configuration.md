@@ -30,6 +30,7 @@ A file Kermo writes back itself (`servers.json`, `bookmarks.json`, `server-pins.
 
 - **Key names:** modifiers `cmd`, `opt` (or `alt`), `ctrl`, `shift`, joined with `+`, then the key: a letter or digit, a punctuation key (`.`, `,`, `/`, `=` …), `f1`…`f12`, `return`, `tab`, `space`, `backspace`, `delete`, `esc`, `home`, `end`, `pgup`, `pgdn`, `left`, `right`, `up`, `down`, or `kpstar`, `kpplus`, `kpminus`. Examples: `cmd+shift+.`, `opt+5`, `shift+f6`.
 - **Reload Config** reports unknown commands, bad keys and keys that macOS takes before Kermo sees them (⌥⌘D, ⌘M …).
+- ⌘A and ⌘F stay with **Edit ▸ Select All** and **Find…**, so they keep working in text fields; in a panel they do Mark All (`mark.all`) and Search Files (`search`). Giving them to another command, or taking them from these two, doesn't move them, and Reload Config says so.
 - The cheat sheet (F1) shows your keys.
 
 ## Filter presets

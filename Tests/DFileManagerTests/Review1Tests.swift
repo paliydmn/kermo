@@ -32,3 +32,14 @@ import Testing
     for id in appWide { #expect(app.validateMenuItem(menuItem(id)), "\(id) over the terminal") }
     #expect(!app.validateMenuItem(menuItem("file.copy")) && app.validateMenuItem(menuItem("view.terminal")))
 }
+
+/// P-5: ⌘A and ⌘F stay with Edit ▸ Select All / Find…: keymap.json moving them is reported, as a key macOS takes is.
+@MainActor @Test func keymapMovingCommandAOrFIsReported() {
+    func problems(_ id: String, _ specs: [String]) -> [String] { AppDelegate.keymapProblems(id, specs.map { Shortcut($0)! }) }
+    #expect(problems("mark.all", ["cmd+a"]).isEmpty && problems("search", ["opt+f7", "cmd+f"]).isEmpty, "Edit Keymap… writes the defaults")
+    #expect(problems("mark.all", ["cmd+opt+a"]) == ["keymap.json: mark.all: ⌘A stays Edit ▸ Select All's, which in a panel does Mark All"])
+    #expect(problems("search", ["opt+f7"]) == ["keymap.json: search: ⌘F stays Edit ▸ Find…'s, which in a panel does Search Files"])
+    #expect(problems("file.copy", ["f5", "cmd+f"]) == ["keymap.json: file.copy: ⌘F stays Edit ▸ Find…'s, which in a panel does Search Files"])
+    #expect(problems("file.diff", ["cmd+opt+d"]).first?.contains("macOS takes it first") == true)
+    #expect(problems("file.copy", ["f5"]).isEmpty)
+}
