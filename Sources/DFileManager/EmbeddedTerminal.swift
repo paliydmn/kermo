@@ -232,6 +232,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         guard total > 0, h >= Self.minDrawer else { return }
         drawer.setPosition(total - h - line, ofDividerAt: 0)
         drawer.layoutSubtreeIfNeeded()   // the panes at their new size now, not at the next pass (none comes without a window)
+        drawer.needsDisplay = true
     }
 
     /// ⌃⇧O: the terminal over the panels' room too, or back into its drawer.
@@ -241,6 +242,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         host.isHidden = on
         on ? drawer.adjustSubviews() : layoutDrawer()
         drawer.layoutSubtreeIfNeeded()
+        drawer.needsDisplay = true   // the divider it drew isn't there any more: else its line stays on screen
         maximize.image = (on ? Symbol.restore : Symbol.maximize).image(on ? "Restore Terminal" : "Maximize Terminal")
         render()
     }
@@ -284,6 +286,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         host.isHidden = false
         isFull = false
         drawer.adjustSubviews()
+        drawer.needsDisplay = true
         hiddenAt = Self.pressedCtrlO(e) ? e!.timestamp : -.infinity
         return cwd
     }
@@ -738,6 +741,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             host.isHidden = false
             isFull = false
             drawer.adjustSubviews()
+            drawer.needsDisplay = true
             onChange?()
             onExit?()
         } else {
