@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     var diskWatch: DiskWatch?
     var volumeBusy: Set<String> = []   // mounting, unmounting, ejecting: mount points, and BSD names of those not mounted
     private var configHosts: [String] = []   // ~/.ssh/config aliases
-    private var sftpErrors: [String: String] = [:]   // host → its last failure, until any panel gets through
+    private var sftpErrors: [String: String] = [:]   // ServerRow.key → its last failure, until any panel gets through
     private var sidebarRefresh: Task<Void, Never>?
     private var activeIndex = 0
     private var restoredDividers: [Double] = []   // the session's, till the panels are first laid out
@@ -431,8 +431,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         panel.onGone = { [unowned self] in forgetGone([$0]) }
         panel.onGitChange = { [unowned self, unowned panel] in if panel === active { updateGitRow() } }
         panel.onRemoteResult = { [unowned self] target, error in
-            guard sftpErrors[target.host] != error else { return }
-            sftpErrors[target.host] = error
+            guard sftpErrors[ServerRow.key(target)] != error else { return }
+            sftpErrors[ServerRow.key(target)] = error
             refreshSidebar()
         }
         panel.onPathChange = { [unowned self, unowned panel] in
@@ -671,7 +671,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         servers.sessions = terminal.tabs.compactMap { t in
             if case .ssh(let target) = t.kind { ServerSession(id: t.id, kind: .ssh, target: target, running: t.isRunning) } else { nil }
         } + panels.flatMap(\.remoteTabs).map { ServerSession(id: $0.id, kind: .sftp, target: $0.target, dir: $0.dir) }
-        servers.connecting = Set(panels.compactMap(\.connecting?.host))
+        servers.connecting = Set(panels.compactMap { $0.connecting.map(ServerRow.key) })
         servers.errors = sftpErrors
         for s in savedServers {
             let key = ServerRow.key(s.target), on = tunnels.listening(s).map(\.title)

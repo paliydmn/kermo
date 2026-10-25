@@ -79,8 +79,8 @@ struct ServerList: Equatable {
     var config: [String] = []           // ~/.ssh/config aliases
     var pins: [String] = []             // addresses (ServerRow.address), in pin order
     var sessions: [ServerSession] = []
-    var connecting: Set<String> = []    // SFTP hosts
-    var errors: [String: String] = [:]  // SFTP host → last error
+    var connecting: Set<String> = []    // ServerRow.key of servers an SFTP panel connects to
+    var errors: [String: String] = [:]  // ServerRow.key → its last SFTP error: one port's, not every server on that host
     var tunnels: [String: [String]] = [:]   // ServerRow.key → its tunnels listening
     var failedTunnels: [String: [String]] = [:]   // ServerRow.key → "Postgres: why" for each whose last connection failed
     var forwarded: [SFTPTarget] = []    // servers with temporary tunnels (Forward Port): listed, as those with sessions are
@@ -226,9 +226,9 @@ enum SidebarModel {
             + disks.filter { $0.mountPath == nil && !devices.contains("/dev/" + $0.bsd) }.map { VolumeRow(path: "", name: $0.name, ejectable: true, disk: $0) }
     }
 
-    /// SFTP's last attempt at a host: connecting, failed, or neither.
-    static func hostStatus(_ host: String, _ list: ServerList) -> HostStatus {
-        list.connecting.contains(host) ? .connecting : list.errors[host].map(HostStatus.failed) ?? .idle
+    /// SFTP's last attempt at a server (`key`: `ServerRow.key`, host and port): connecting, failed, or neither.
+    static func hostStatus(_ key: String, _ list: ServerList) -> HostStatus {
+        list.connecting.contains(key) ? .connecting : list.errors[key].map(HostStatus.failed) ?? .idle
     }
 
     /// Pinned ones; then the latest used (recents, open sessions), so that the list has 5 rows, or one more than the pins
@@ -250,7 +250,7 @@ enum SidebarModel {
             return ServerRow(target: target, saved: saved, title: saved?.title ?? target.host,
                              pinned: list.pins.contains { parse($0).map(ServerRow.key) == key },
                              sessions: list.sessions.filter { ServerRow.key($0.target) == key },
-                             status: hostStatus(target.host, list), tunnels: list.tunnels[key] ?? [],
+                             status: hostStatus(key, list), tunnels: list.tunnels[key] ?? [],
                              failedTunnels: list.failedTunnels[key] ?? [])
         }
         var rows: [ServerRow] = [], seen = Set<String>()

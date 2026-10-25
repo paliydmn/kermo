@@ -77,3 +77,16 @@ extension ServerLockTests {
     #expect(chips("web") == ["production"] && chips("vault") == ["locked"] && chips("me@plain.invalid") == [])
 }
 }
+
+/// A failed or pending login marks its own server — host and port — not every saved server on that address (two
+/// containers behind port forwards on 127.0.0.1).
+@Test func aFailureMarksOnlyItsPort() {
+    var a = SavedServer(address: "deploy@127.0.0.1:52201")!, b = SavedServer(address: "deploy@127.0.0.1:52203")!
+    (a.name, b.name) = ("web", "staging")
+    var list = ServerList(saved: [a, b])
+    list.errors[ServerRow.key(b.target)] = "Connection refused"
+    list.connecting = [ServerRow.key(a.target)]
+    let rows = SidebarModel.serverRows(list)
+    #expect(rows.first { $0.title == "staging" }?.status == .failed("Connection refused"))
+    #expect(rows.first { $0.title == "web" }?.status == .connecting)
+}

@@ -30,6 +30,7 @@ Release:
 - An executable file has Finder's executable icon, so it stands out in the System theme too.
 
 ### Fixed
+- Two saved servers on one address with different ports no longer share the sidebar's "connecting" and "failed" marks.
 - **F1** lists the Git menu's keys (⌃B, ⌃⇧C, ⌃G …); they were missing there and under the key bar's **+N**. Its sections follow the menu bar's order.
 - **About Kermo** and **Check for Updates…** work while a viewer, an editor or the terminal is in front; they were greyed out.
 - On a server's panel **F8** says **Delete…**, in red in the key bar, and in the File menu and a file's right-click menu: it deletes for good after asking, since a server has no Trash. A server tab that isn't connected yet says so too.
