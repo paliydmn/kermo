@@ -64,7 +64,8 @@ private let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
 }
 
 extension ServerLockTests {
-/// The Connect picker (⌃⌘K, ⌘K) says production and locked by the servers' chips, before their names.
+/// The Connect picker (⌃⌘K, ⌘K) says production and locked by the servers' chips, before their names. It lists this
+/// Mac's ~/.ssh/config hosts after the saved servers too: only read, and found by title, so they don't matter here.
 @MainActor @Test func connectPickerShowsChips() {
     var web = SavedServer(address: "me@web.invalid")!, vault = SavedServer(address: "me@vault.invalid")!
     (web.name, web.prod, vault.name, vault.locked) = ("web", true, "vault", true)
