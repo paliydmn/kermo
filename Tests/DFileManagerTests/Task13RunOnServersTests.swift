@@ -3,7 +3,7 @@ import AppKit
 import Testing
 @testable import DFileManager
 
-@MainActor private func text(_ w: NSWindow) -> NSTextStorage? { ((w.contentView as? NSScrollView)?.documentView as? NSTextView)?.textStorage }
+@MainActor private func text(_ w: NSWindow) -> NSTextStorage? { (w.docFrame?.scroll.documentView as? NSTextView)?.textStorage }
 
 /// Run on Servers' output (`.local()` targets: this Mac's sh): one window, each line under its server's name — names
 /// lined up, stderr in red — then the summary with what failed in red and named, the skipped too. ⎋ stops them all and
@@ -16,7 +16,7 @@ import Testing
     var outcomes: [Int: MultiRun.Outcome] = [:]
     Shell.run("echo hi; echo no >&2; exit 3", on: servers, skipped: ["vault"], env: [:], title: title) { outcomes[$0] = $1 }
     let w = try #require(NSApp.windows.first { $0.title == title })
-    for _ in 0..<500 where !w.subtitle.contains("done") { try await Task.sleep(for: .milliseconds(10)) }
+    for _ in 0..<500 where !w.statusText.contains("done") { try await Task.sleep(for: .milliseconds(10)) }
     #expect(outcomes == [0: .exit(3), 1: .exit(3)], "each server's, as it ended")
     let storage = try #require(text(w))
     let lines = storage.string.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
@@ -28,7 +28,7 @@ import Testing
     let x = (storage.string as NSString).range(of: "✗")
     #expect(storage.attribute(.foregroundColor, at: x.location, effectiveRange: nil) as? NSColor == .systemRed)
     #expect(storage.attribute(.foregroundColor, at: (storage.string as NSString).range(of: "1 locked").location, effectiveRange: nil) as? NSColor == .textColor)
-    #expect(w.subtitle.hasPrefix("3 servers · done · ") && w.subtitle.hasSuffix(" · ⎋ Close"))
+    #expect(w.subtitle == "3 servers" && w.statusText.hasPrefix("done · ") && OutputWindow.keys(of: w)?.map(\.title) == ["Close"])
     w.close()
 
     let slow = "Run on 2 servers: dfm-" + UUID().uuidString.prefix(6)
@@ -38,9 +38,9 @@ import Testing
     defer { s.close() }
     for _ in 0..<300 where text(s)?.string.components(separatedBy: "start").count != 3 { try await Task.sleep(for: .milliseconds(10)) }
     s.windowController?.cancelOperation(nil)
-    for _ in 0..<300 where !s.subtitle.contains("stopped ·") { try await Task.sleep(for: .milliseconds(10)) }
+    for _ in 0..<300 where !s.statusText.contains("stopped ·") { try await Task.sleep(for: .milliseconds(10)) }
     #expect(ended == [0: .stopped, 1: .stopped] && s.isVisible && text(s)?.string.hasSuffix("⎋ 2 stopped\n") == true)
-    #expect(s.subtitle.hasPrefix("2 servers · stopped · "))
+    #expect(s.subtitle == "2 servers" && s.statusText.hasPrefix("stopped · "))
     s.windowController?.cancelOperation(nil)
     #expect(!s.isVisible, "⎋ again closes it")
 }
@@ -59,8 +59,8 @@ import Testing
     let r = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: w.windowNumber,
                                           context: nil, characters: "r", charactersIgnoringModifiers: "r", isARepeat: false, keyCode: 15))
     #expect(w.performKeyEquivalent(with: r) && asked.isEmpty, "not while it runs")
-    for _ in 0..<300 where !(ended && w.subtitle.contains("done")) { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(w.subtitle.hasSuffix("⎋ Close · ⌘R Run Again"), "\(w.subtitle)")
+    for _ in 0..<300 where !(ended && w.statusText.contains("done")) { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(OutputWindow.keys(of: w)?.map { "\($0.key) \($0.title)" } == ["⎋ Close", "⌘R Run Again"], "its key bar and F1")
     #expect(w.performKeyEquivalent(with: r))
     for _ in 0..<100 where asked.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
     #expect(asked.count == 1 && asked[0] === w && w.isVisible, "not started again: it stays")
@@ -78,11 +78,11 @@ import Testing
     Shell.run("echo before; sleep 30", in: NSTemporaryDirectory(), title: title) { status = $0 }
     let w = try #require(NSApp.windows.first { $0.title == title })
     for _ in 0..<300 where text(w)?.string.hasPrefix("before") != true { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(w.subtitle.hasSuffix("running… · ⎋ Stop"))
+    #expect(w.statusText == "running…" && OutputWindow.keys(of: w)?.map { "\($0.key) \($0.title)" } == ["⎋ Stop"])
     w.windowController?.cancelOperation(nil)
     for _ in 0..<300 where status == nil { try await Task.sleep(for: .milliseconds(10)) }
     #expect(status != nil && status != 0 && w.isVisible && text(w)?.string.hasPrefix("before\n") == true, "stopped, still showing it")
-    #expect(w.subtitle.hasSuffix(" · ⎋ Close"), "\(w.subtitle)")
+    #expect(w.statusText.hasPrefix("exit ") && OutputWindow.keys(of: w)?.map(\.title) == ["Close"], "\(w.statusText)")
     w.windowController?.cancelOperation(nil)
     #expect(!w.isVisible)
 }

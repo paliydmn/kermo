@@ -254,8 +254,8 @@ extension ServerLockTests {
     }
 }
 
-/// R23: the editor of a server file is titled host:/path, not its local copy's /var/folders/…/dfm-sftp-UUID/name;
-/// after Save As it's the new local file's.
+/// R23: the editor of a server file is titled by its name there, its server and folder under it — not its local copy's
+/// /var/folders/…/dfm-sftp-UUID; after Save As it's the new local file's.
 @MainActor @Test func remoteEditorIsTitledWithTheServerPath() async throws {
     _ = NSApplication.shared
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-sftp-" + UUID().uuidString
@@ -265,7 +265,7 @@ extension ServerLockTests {
     let e = try Editor(URL(fileURLWithPath: dir + "/nginx.conf"), remote: "web:/etc/nginx/nginx.conf")
     defer { e.close() }
     let w = try #require(e.window)
-    #expect(w.title == "web:/etc/nginx/nginx.conf" && !w.subtitle.contains("dfm-sftp-") && w.representedURL == nil)
+    #expect(w.title == "nginx.conf" && w.subtitle == "web · /etc/nginx" && w.representedURL == nil)
     #expect(await e.saveAs(URL(fileURLWithPath: dir + "/mine.conf")))
     #expect(w.title == "mine.conf" && w.representedURL?.lastPathComponent == "mine.conf")
 }

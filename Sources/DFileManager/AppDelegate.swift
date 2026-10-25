@@ -386,19 +386,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return out
     }
 
-    /// F1 over a viewer, an editor or an output window: its own keys, then the menu bar's that work there (Edit ▸ Copy ⌘C,
-    /// Close Window ⌘W …), menu by menu.
-    func keySections(over w: NSWindow, menu: NSMenu) -> [KeyHelp.Section] {
-        var out = [Viewer.keyHelp(of: w) ?? Editor.keyHelp(of: w)].compactMap { $0 }
-        for m in menu.items.compactMap(\.submenu) {
-            let rows = m.items.compactMap { it -> (String, String)? in
-                guard it.action == #selector(menuCommand(_:)) else { return Shortcut(menuItem: it).map { (it.title, $0.display) } }
-                guard validateMenuItem(it), let id = it.representedObject as? String else { return nil }
-                return commands.first { $0.id == id }?.keys.first.map { (it.title, $0.display) }   // the one key the menu has
+    /// A key of a document window's, with what pressing it does: F1 over the window lists them, its key bar shows and
+    /// runs them.
+    struct KeyRow {
+        let section: String, title: String, key: String
+        let run: @MainActor () -> Void
+        var label: String { title.replacingOccurrences(of: "…", with: "") }   // the bar's word: the menu's, without "…"
+    }
+
+    /// Over a viewer, an editor or an output window: its own keys, then the menu bar's that work there (Edit ▸ Copy ⌘C,
+    /// Close Window ⌘W …), menu by menu, the app's last.
+    func keyRows(over w: NSWindow, menu: NSMenu) -> [KeyRow] {
+        var out = Viewer.keys(of: w) ?? Editor.keys(of: w) ?? OutputWindow.keys(of: w) ?? SyncWindow.keys(of: w) ?? []
+        let menus = menu.items.compactMap(\.submenu)
+        for m in menus.dropFirst() + menus.prefix(1) {
+            for it in m.items {
+                guard it.action == #selector(menuCommand(_:)) else {
+                    // Not the system's fn ones (Start Dictation, Emoji & Symbols): a key here is one Shortcut can say.
+                    if !it.keyEquivalentModifierMask.contains(.function), let k = Shortcut(menuItem: it), let action = it.action, Self.works(it, in: w) {
+                        out.append(KeyRow(section: m.title, title: it.title, key: k.display) { NSApp.sendAction(action, to: it.target, from: it) })
+                    }
+                    continue
+                }
+                guard validateMenuItem(it), let id = it.representedObject as? String, let k = commands.first(where: { $0.id == id })?.keys.first else { continue }
+                out.append(KeyRow(section: m.title, title: it.title, key: k.display) { [unowned self] in run(id) })   // the one key the menu has
             }
-            if !rows.isEmpty { out.append((m.title, rows)) }
         }
         return out
+    }
+
+    /// Whether a menu bar item of AppKit's (Save, Copy, Minimize…) does something in `w`: someone along the window's
+    /// responder chain — then the window, its delegate, the app, the app's delegate — takes it, and doesn't grey it out.
+    /// Save is the editor's, not the viewer's; Paste needs a text that can be typed in.
+    static func works(_ it: NSMenuItem, in w: NSWindow) -> Bool {
+        guard let action = it.action else { return false }
+        var chain: [AnyObject] = it.target.map { [$0] } ?? []
+        if it.target == nil {
+            var r: NSResponder? = w.firstResponder
+            while let x = r { chain.append(x); r = x.nextResponder }
+            chain += [w, w.delegate, NSApp, NSApp.delegate].compactMap { $0 as AnyObject? }
+        }
+        guard let target = chain.first(where: { $0.responds(to: action) }) else { return false }
+        if let v = target as? NSMenuItemValidation { return v.validateMenuItem(it) }
+        if let v = target as? NSUserInterfaceValidations { return v.validateUserInterfaceItem(it) }
+        return true
+    }
+
+    /// F1 over a document window: `keyRows`, by section.
+    func keySections(over w: NSWindow, menu: NSMenu) -> [KeyHelp.Section] {
+        keyRows(over: w, menu: menu).reduce(into: []) { out, r in
+            if out.last?.title == r.section { out[out.count - 1].rows.append((r.title, r.key)) } else { out.append((r.section, [(r.title, r.key)])) }
+        }
     }
 
     private func saveSession() { session.save(defaults) }

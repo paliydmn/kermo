@@ -319,6 +319,15 @@ final class KeyBarView: NSView {
         render()
     }
 
+    /// A window's keys (`AppDelegate.KeyRow`), each key once — the first row's, the window's own before the menu's;
+    /// a click runs that row.
+    func show(_ rows: [AppDelegate.KeyRow]) {
+        var seen: Set<String> = []
+        let rows = rows.filter { seen.insert($0.key).inserted }
+        onRun = { id in Int(id).flatMap { rows.indices.contains($0) ? rows[$0] : nil }?.run() }
+        list = rows.enumerated().map { KeySlot(key: $0.element.key, label: $0.element.label, id: "\($0.offset)") }
+    }
+
     /// Tests: what the chips show — held (lit) and pinned (outlined).
     var chipStates: [(flag: NSEvent.ModifierFlags, held: Bool, pinned: Bool)] { chips.map { ($0.flag, $0.held, $0.pinned) } }
     var shownSlots: [KeySlot] { row.arrangedSubviews.compactMap { v in buttons.firstIndex { $0 === v }.map { slots[$0] } } }
@@ -416,5 +425,90 @@ final class ModChip: NSButton {
                                                               .foregroundColor: held ? NSColor.white : pinned ? accent : NSColor.secondaryLabelColor])
         let size = s.size()
         s.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
+    }
+}
+
+/// A document window's frame (Р9) — the viewer's, the editor's, an output window's: what it shows, a status line under
+/// it, and its keys along the bottom: its own, then the menu bar's that work there, as F1 over it lists them
+/// (`AppDelegate.keyRows`). Laid out by frames, so the scroll view has its size from the start (the viewer sizes its
+/// text from it).
+@MainActor
+final class DocFrame: NSView {
+    let scroll: NSScrollView
+    private let status = NSTextField(labelWithString: "")
+    let keys = KeyBarView(chips: false)
+    private var said = ""
+    private var flashed = 0
+
+    /// What a window's key bar shows (tests set it: there's no app delegate there).
+    static var rows: (NSWindow) -> [AppDelegate.KeyRow] = { w in
+        (NSApp.delegate as? AppDelegate).flatMap { app in NSApp.mainMenu.map { app.keyRows(over: w, menu: $0) } } ?? []
+    }
+
+    init(_ scroll: NSScrollView, size: NSSize) {
+        self.scroll = scroll
+        super.init(frame: NSRect(origin: .zero, size: size))
+        let bar: CGFloat = 30, line: CGFloat = 22
+        keys.frame = NSRect(x: 0, y: 0, width: size.width, height: bar)
+        keys.autoresizingMask = [.width, .maxYMargin]
+        status.font = .systemFont(ofSize: 11.5)
+        status.textColor = .secondaryLabelColor
+        status.lineBreakMode = .byTruncatingTail
+        status.frame = NSRect(x: 10, y: bar + 3, width: size.width - 20, height: line - 6)
+        status.autoresizingMask = [.width, .maxYMargin]
+        let rule = NSBox(frame: NSRect(x: 0, y: bar + line - 1, width: size.width, height: 1))
+        rule.boxType = .separator
+        rule.autoresizingMask = [.width, .maxYMargin]
+        scroll.frame = NSRect(x: 0, y: bar + line, width: size.width, height: size.height - bar - line)
+        scroll.autoresizingMask = [.width, .height]
+        for v in [scroll, rule, status, keys] as [NSView] { addSubview(v) }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// The status line: what the window shows now (its encoding, a filter, "running…"); a `flash` stays a few seconds.
+    var text: String {
+        get { status.stringValue }
+        set {
+            said = newValue
+            if flashed == 0 { status.stringValue = newValue }
+        }
+    }
+
+    /// Where a document window's file or command is, said under its title: "web-01 · /var/log/nginx" on a server (its
+    /// saved name), "~/Projects/site" here; nothing for a temporary copy of something else (an archive's entry, git's
+    /// output), whose folder says nothing.
+    static func place(_ dir: String, host: String?) -> String {
+        if let host { return "\(host) · \(dir)".bidiVisible }
+        let temp = NSTemporaryDirectory(), real = (temp as NSString).resolvingSymlinksInPath
+        return dir.hasPrefix(temp) || dir.hasPrefix(real) ? "" : (dir as NSString).abbreviatingWithTildeInPath.bidiVisible
+    }
+
+    /// Says something in the status line for a few seconds (a save's note: the panels' status line is behind this window).
+    func flash(_ note: String) {
+        flashed += 1
+        status.stringValue = note.bidiVisible
+        Task {
+            try? await Task.sleep(for: .seconds(4))
+            flashed -= 1
+            if flashed == 0 { status.stringValue = said }
+        }
+    }
+
+    /// Its keys as they are now — on becoming key, and when what works changes (a command ended, hex on).
+    func showKeys() {
+        if let w = window { keys.show(Self.rows(w)) }
+    }
+}
+
+extension NSWindow {
+    /// A document window's status line.
+    var statusText: String { (contentView as? DocFrame)?.text ?? "" }
+    var docFrame: DocFrame? { contentView as? DocFrame }
+
+    /// Its line in the Window menu: the title and where it is, so two "app.log" of two servers read apart there (the
+    /// menu has no subtitles).
+    var windowsMenuTitle: String { subtitle.isEmpty ? title : "\(title) — \(subtitle)" }
+    func listInWindowsMenu() {
+        if isVisible { NSApp.changeWindowsItem(self, title: windowsMenuTitle, filename: false) }
     }
 }

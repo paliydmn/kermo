@@ -111,10 +111,10 @@ extension AppDelegate {
                      "transient": "transient"][file].map { "\(u.name) is \($0): nothing to change at boot" }
         return [
             ServiceAction(title: "Status", key: Shortcut("return"), group: 0, closes: true, why: no) {
-                Shell.run(Services.status(u), on: t.asUser, in: "/", title: "\(s.title): \(u.name) status")
+                Shell.run(Services.status(u), on: t.asUser, in: "/", title: "\(u.name) status")   // where: the subtitle
             },
             ServiceAction(title: "Live Logs", key: Shortcut("cmd+l"), group: 0, closes: true, why: no) {
-                Shell.run(Services.log(u), on: t.asUser, in: "/", follow: true, title: "\(s.title): \(u.name) log")
+                Shell.run(Services.log(u), on: t.asUser, in: "/", follow: true, title: "\(u.name) log")
             },
             ServiceAction(title: "Edit Unit File…", key: Shortcut("cmd+e"), group: 0, closes: true, why: no) { [unowned self] in editUnit(u, on: t) },
             ServiceAction(title: "Refresh Status", key: nil, group: 0, closes: false, why: no) { [unowned self] in refresh(u, on: t, of: s) },
@@ -388,7 +388,7 @@ extension AppDelegate {
             item = Picker.Item(title: c.name, subtitle: state, detail: Self.detail(c.image),
                                actions: [.init(key: Shortcut("cmd+r")!, label: "Restart", keepsOpen: true, run: restart),
                                          .init(key: Shortcut("cmd+c")!, label: "Copy Name", keepsOpen: true, run: copy)], verb: "Live Logs") {
-                Shell.run(Containers.logs(c, tool: tool), on: t.asUser, in: "/", follow: true, title: "\(s.title): \(c.name) log")
+                Shell.run(Containers.logs(c, tool: tool), on: t.asUser, in: "/", follow: true, title: "\(c.name) log")
             }
         }
         item.id = id

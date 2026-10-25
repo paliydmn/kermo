@@ -8,6 +8,8 @@ Read a file with the viewer (F3) and change it with the editor (F4); this page c
 
 Press F3 (⌥3) on a file. Close it with ⎋, `q` or ⌘W, or with F3 or F10 itself (⌥3 works only in the panels); ⌘0 (**Window ▸ Main Window**) returns to the panels. Quick Look (⌘Y) is a separate preview.
 
+The window's title is the file's name, with where it is under it: `~/Projects/site`, or on a server its saved name and folder, `web-01 · /var/log/nginx`. The Window menu lists it with both, `app.log — web-01 · /var/log/nginx`, so two files of one name read apart there. Below the text, a status line says what it shows: size and encoding, a filter in words (`lines with “error”, errors only`), `following`. Along the bottom, the key bar shows its keys, then the menu keys that work there; click a slot to do what its key does. The toolbar holds the same switches: **Text | Hex | Readable** (Readable only for the formats below), **Wrap**, **Lines** and **Follow** (lit while on), the **Filter lines** field (`&` goes there; ↩ applies it, ⎋ goes back to the text) and **All | Warnings | Errors**.
+
 ![The viewer on a service log: its colors as the program wrote them, line numbers on, the keys in the title](images/viewer-log.png)
 
 - `h`: switch between hex and text. A file that looks binary opens as hex; `h` shows it as text. Hex shows 1 MB: the first one, or in a huge file the one at the top of the window.
@@ -16,14 +18,14 @@ Press F3 (⌥3) on a file. Close it with ⎋, `q` or ⌘W, or with F3 or F10 its
 - ⌘F: find in the file's text (over 4 MB: only inside the window shown, see below). ⌘G finds the next match.
 - `f`: follow the file like `tail -f`. It checks twice a second and scrolls along only while you are at the end, so you can scroll up and read. It keeps about the last 8 million characters; older lines drop off the top. `h` and `p` stop it. A rotated or truncated file adds a marker line.
 - `&`: keep only the lines that contain the text you enter, ignoring case. `!text` keeps the lines without it; an empty entry drops the text filter. It matches the text as shown, colors aside. Followed lines are filtered too.
-- `e`: errors and warnings only (the subtitle says ERRORS + WARNINGS), then errors only (ERRORS ONLY), then all lines again. It goes by the same words as the colors below, works with `&` and while following, and stays on through a new `&` until you cycle it off.
-- `l`: line numbers, on or off; Kermo remembers. They show for a whole file up to 4 MB; for a bigger file, the last part of a server's log or while `&` or `e` filters, the subtitle says why they don't.
+- `e`: errors and warnings only (the status line says `errors and warnings`), then errors only (`errors only`), then all lines again. It goes by the same words as the colors below, works with `&` and while following, and stays on through a new `&` until you cycle it off.
+- `l`: line numbers, on or off; Kermo remembers. They show for a whole file up to 4 MB; for a bigger file, the last part of a server's log or while `&` or `e` filters, the status line says why they don't.
 
-While following, scrolling up keeps the text still as lines come in and the subtitle says `paused — End resumes`.
+While following, scrolling up keeps the text still as lines come in and the status line says `following, paused — End resumes`.
 
 In a log or other plain text, lines with words like error or denied show red, and lines with warn or deprecated show amber. Terminal colors in the text (`journalctl`, `docker logs`, a log written with them) show as colors instead of escape codes, and such a line keeps its own colors instead of red or amber. Over 4 MB the window shows the colors too. A `.gz`, `.bz2`, `.xz` or `.zst` log (`.zst` needs the `zstd` program) shows unpacked, the first 32 MB; if that is over 4 MB it behaves like a file over 4 MB, however small it is on disk.
 
-On a server panel F3 downloads the file. Its title says `host:/path` (`root@host:/path` from a [root panel](root-panel.md)) with the server's chips at the end of the title bar, PROD, ROOT or LOCKED, as the editor's does. A log over 4 MB shows only its last 4 MB; `f` follows it with `tail -F` on the server and `&` filters the whole log with `grep` there.
+On a server panel F3 downloads the file. Its title says the file's name, with the server and folder under it, and the server's chips at the end of the title bar, PROD, ROOT or LOCKED, as the editor's does. A log over 4 MB shows only its last 4 MB; `f` follows it with `tail -F` on the server and `&` filters the whole log with `grep` there.
 
 ### Files over 4 MB
 
@@ -38,6 +40,8 @@ These keys work in text mode only (`g` also in hex mode), and stop while `f` fol
 ## Editor
 
 Press F4 (⌥4) on a file. It opens text files up to 32 MB; a binary or larger file is refused, and the message points to the viewer.
+
+Its title is the file's name with where it is under it, as the viewer's; the status line says the encoding (and, for a few seconds, a save's note); the key bar shows ⎋ and the menu keys that work there. The toolbar has **Final Newline** (lit while on, as the menu's checkmark) and, for a server's file, **Server File History…**.
 
 - Line numbers show in the margin.
 - Syntax colors cover shell, Python, JSON, YAML, INI-style files (`.ini`, `.toml`, `.cfg`, `.properties`, `.service`), `.conf`, XML (plist, HTML, SVG), Dockerfile, Makefile and C-style languages (Swift, C, C++, JavaScript, TypeScript, Go, Rust, Java and others). The file name or a `#!` line picks the language. A text over 2 MB gets no colors. The viewer colors files by name the same way.
@@ -55,7 +59,7 @@ If the file changed on disk after you opened it, ⌘S asks **Overwrite**, **Relo
 
 ### Ensure Final Newline
 
-**File ▸ Ensure Final Newline** adds a newline at the end of the text on save when it is missing. The checkmark shows the state for the current window. It starts on for config files (crontabs, dotfiles, files under `/etc`, `.conf`, `.ini`, `.yml`, `.toml` and the like) and off for other files. To set one rule for every new window, use `-bool true` (always) or `-bool false` (never):
+**File ▸ Ensure Final Newline**, or **Final Newline** in the toolbar, adds a newline at the end of the text on save when it is missing. The checkmark, and the toolbar's switch, show the state for the current window. It starts on for config files (crontabs, dotfiles, files under `/etc`, `.conf`, `.ini`, `.yml`, `.toml` and the like) and off for other files. To set one rule for every new window, use `-bool true` (always) or `-bool false` (never):
 
 ```sh
 defaults write com.dmn.dfilemanager editorFinalNewline -bool true

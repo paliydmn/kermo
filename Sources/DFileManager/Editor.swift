@@ -8,7 +8,7 @@ import DFMCore
 /// the original, keeping mode, owner, ACL, xattrs, flags and creation date — or rewrites a hard-linked file or
 /// someone else's in place. A UTF-8 BOM and CRLF line ends are kept, new lines included.
 @MainActor
-final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NSMenuItemValidation {
+final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NSMenuItemValidation, NSToolbarDelegate {
     private static var open: [Editor] = []
     /// Names of the files with unsaved changes (asked about at quit).
     static var unsaved: [String] { open.filter(\.changed).map(\.url.lastPathComponent) }
@@ -19,9 +19,9 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     static func server(of window: NSWindow?) -> (target: SFTPTarget, path: String)? {
         open.first { $0.window === window && window != nil }?.server.map { ($0.target, $0.path) }
     }
-    /// F1 over an editor: its own key; Save, Find and the rest are the menu bar's.
-    static func keyHelp(of window: NSWindow?) -> KeyHelp.Section? {
-        open.contains { $0.window === window && window != nil } ? (title: "Editor", rows: [(title: "Close", keys: "⎋")]) : nil
+    /// Its own key, on its key bar and F1 over it; Save, Find and the rest are the menu bar's.
+    static func keys(of window: NSWindow?) -> [AppDelegate.KeyRow]? {
+        open.first { $0.window === window && window != nil }.map { e in [AppDelegate.KeyRow(section: "Editor", title: "Close", key: "⎋") { e.window?.performClose(nil) }] }
     }
     /// The open editor of that server's file, if any.
     static func editing(_ t: SFTPTarget, _ path: String) -> Editor? { open.first { $0.server?.target == t && $0.server?.path == path } }
@@ -31,7 +31,9 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     private(set) var url: URL
     /// "host:/path" of a server's file edited through its local copy: the title, not the copy's temp folder.
     private var remote: String?
-    var server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)?   // its saves go up with `state`
+    var server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)? {   // its saves go up with `state`
+        didSet { if (server == nil) != (oldValue == nil) { retitle() } }
+    }
     let textView = EditorTextView(usingTextLayoutManager: false)   // TextKit 1: the line-number ruler needs it
     private var ruler: LineNumberRuler!
     private var language: Syntax.Language?
@@ -47,7 +49,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     private var bom = false, crlf = false
     /// Saving ends the text with a newline (crontab ignores a last line without one). On for config files
     /// (see `isConfig`) unless the `editorFinalNewline` setting says always or never; File ▸ toggles it per window.
-    var finalNewline: Bool
+    var finalNewline: Bool { didSet { finalNewlineSwitch.setSelected(finalNewline, forSegment: 0) } }
     static var finalNewlineSetting: () -> Bool? = { UserDefaults.standard.object(forKey: "editorFinalNewline") as? Bool }
     /// Tests: runs between checking the file and opening it for an in-place rewrite (off the main thread). This
     /// window's own: tests run side by side, and a save no longer holds the main thread while it writes.
@@ -71,7 +73,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     var onClose: (@MainActor () -> Void)?
 
     /// Reads the file off the main thread (up to 32 MB, or a share that doesn't answer), then opens the window.
-    /// `note`: said in its subtitle once it's open (`flash`).
+    /// `note`: said in its status line once it's open (`flash`).
     static func open(_ url: URL, remote: String? = nil, server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)? = nil,
                      note: String? = nil, onSaved: (@MainActor (URL) -> Void)? = nil, onClose: (@MainActor () -> Void)? = nil) {
         if let existing = open.first(where: { $0.url == url }) { return existing.window!.makeKeyAndOrderFront(nil) }
@@ -87,6 +89,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
                 if let t = server?.target { e.window?.showChips(Chip.of(t)) }
                 open.append(e)
                 e.showWindow(nil)
+                e.window?.listInWindowsMenu()
                 if let note { e.flash(note) }
             } catch {
                 onClose?()
@@ -118,12 +121,19 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         super.init(window: w)
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        w.contentView = DocFrame(scroll, size: w.contentRect(forFrameRect: w.frame).size)
+        finalNewlineSwitch.setSelected(finalNewline, forSegment: 0)
+        finalNewlineSwitch.toolTip = "Saving ends the file with a newline (File ▸ Ensure Final Newline)"
+        let bar = NSToolbar(identifier: "Editor " + UUID().uuidString)   // its own: same-named toolbars share their items
+        bar.delegate = self
+        bar.displayMode = .iconOnly
+        w.toolbar = bar
+        w.toolbarStyle = .unified
         retitle()
         w.delegate = self
 
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        w.contentView = scroll
         textView.frame = NSRect(origin: .zero, size: scroll.contentSize)
         textView.minSize = NSSize(width: 0, height: scroll.contentSize.height)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
@@ -161,12 +171,44 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    /// The file's name, where it is under it ("web-01 · /etc/nginx"), its encoding in the status line.
     private func retitle() {
-        window?.title = (remote ?? url.lastPathComponent).bidiVisible
-        window?.subtitle = (remote == nil ? (url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath + " · " : "")
-            + "\(encodingName) · ⌘S Save · ⌘F Find · ⎋ Close"
+        let (host, path): (String?, String) = if let server { (SavedServer.name(for: server.target), server.path) }
+            else if let r = remote, let c = r.range(of: ":/") { (String(r[..<c.lowerBound]), String(r[r.index(after: c.lowerBound)...])) }   // "host:/path"
+            else { (nil, url.path) }
+        window?.title = (path as NSString).lastPathComponent.bidiVisible
+        window?.subtitle = DocFrame.place((path as NSString).deletingLastPathComponent, host: host)
+        window?.docFrame?.text = encodingName
         window?.representedURL = remote == nil ? url : nil
+        window?.listInWindowsMenu()   // a new title put the plain one back there
+        let history = window?.toolbar?.items.contains { $0.itemIdentifier == Self.historyID } == true
+        if history != (server != nil) {   // a server's file has its history; Save As makes it this Mac's
+            if history { window?.toolbar?.removeItem(at: window!.toolbar!.items.count - 1) } else { window?.toolbar.map { $0.insertItem(withItemIdentifier: Self.historyID, at: $0.items.count) } }
+        }
     }
+
+    // MARK: Toolbar: what there is to switch for this file
+
+    private static let newlineID = NSToolbarItem.Identifier("finalNewline"), historyID = NSToolbarItem.Identifier("history")
+    private let finalNewlineSwitch = NSSegmentedControl(labels: ["Final Newline"], trackingMode: .selectAny, target: nil, action: #selector(toggleFinalNewline(_:)))
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [.flexibleSpace, Self.newlineID] }
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [.flexibleSpace, Self.newlineID, Self.historyID] }
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        let item = NSToolbarItem(itemIdentifier: id)
+        if id == Self.newlineID {
+            finalNewlineSwitch.target = self
+            (item.view, item.label) = (finalNewlineSwitch, "Final Newline")
+        } else {
+            let b = NSButton(title: "Server File History…", target: self, action: #selector(showHistory))
+            b.bezelStyle = .toolbar
+            (item.view, item.label) = (b, "Server File History")
+        }
+        return item
+    }
+
+    /// File ▸ Server File History…, for this window's file.
+    @objc private func showHistory() { (NSApp.delegate as? AppDelegate)?.run("server.history") }
 
     /// A revert put `data` on the server, which now has `attrs`: shown here, and the next save checks against that —
     /// unless this editor has changes of its own, which stay (their save then asks: the server's file changed).
@@ -179,13 +221,10 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         return await reload()
     }
 
-    /// Says something in place of the subtitle for a few seconds (a server save's "no history: …"): the panels'
-    /// status line is behind this window.
+    /// Says something in its status line for a few seconds (a server save's "no history: …"): the panels' status line
+    /// is behind this window.
     static func flash(_ url: URL, _ text: String) { open.first { $0.url == url }?.flash(text) }
-    func flash(_ text: String) {
-        window?.subtitle = text.bidiVisible
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in MainActor.assumeIsolated { self?.retitle() } }
-    }
+    func flash(_ text: String) { window?.docFrame?.flash(text) }
 
     private var encodingName: String { encoding == .utf8 ? lossy ? "UTF-8 (damaged)" : "UTF-8" : "Windows-1251" }
 
@@ -573,6 +612,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     private static let stamps = Coalesced<Stamp?>()
 
     func windowDidBecomeKey(_ notification: Notification) {
+        window?.docFrame?.showKeys()   // the menu's keys work by the key window
         let url = url
         Task {
             guard let now = await Self.stamps.run(url.path, .userInitiated, { Stamp(url.resolvingSymlinksInPath().path) }), url == self.url, window?.isVisible == true,

@@ -111,9 +111,9 @@ private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
     usleep(1_000_000)   // the main thread busy: nothing drains
     await waitUntil(60) { status != nil }
     #expect(shell.inbox.peak <= Inbox.limit, "\(shell.inbox.peak)")
-    let text = try #require((w.contentView as? NSScrollView)?.documentView as? NSTextView).string
+    let text = try #require(w.docFrame?.scroll.documentView as? NSTextView).string
     #expect(status == 0 && text.hasSuffix("xEND\n"), "\(String(describing: status)) \(text.suffix(80).debugDescription)")
-    #expect(w.subtitle.contains("only the last 4 MB kept"), "\(w.subtitle)")
+    #expect(w.statusText.contains("only the last 4 MB kept"), "\(w.statusText)")
 }
 
 extension ServerLockTests {   // they swap `AppDelegate.runAsAdmin` and `answering`, as Enable Touch ID for sudo's test does
@@ -209,7 +209,7 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`
         defer { AppDelegate.answering = nil }
         await app.extract(dir + "/u.zip", nil, to: dest)
         func window() -> NSWindow? { NSApp.windows.last { $0.title.hasPrefix("Extract “u.zip”") } }
-        func said() -> String { ((window()?.contentView as? NSScrollView)?.documentView as? NSTextView)?.string ?? "" }
+        func said() -> String { (window()?.docFrame?.scroll.documentView as? NSTextView)?.string ?? "" }
         await waitUntil { said().contains("[exit") && (try? FileManager.default.contentsOfDirectory(atPath: dest))?.count == 1 }
         window()?.close()
         #expect(said().contains("[exit"), "tar failed on the bad member: \(said())")
