@@ -87,6 +87,10 @@ enum Chip: String, CaseIterable {
         [SavedServer.isProd(t) ? .prod : nil, root ?? t.sudo ? .root : nil, ServerLock.server(for: t)?.locked == true ? .locked : nil].compactMap { $0 }
     }
 
+    /// The color of a place with these chips — the active panel's line, a tab's, the "→ F5" mark: production's (a
+    /// production root panel's too: its chips say both), else root's; nil for anywhere else.
+    static func tint(_ chips: [Chip]) -> NSColor? { chips.contains(.prod) ? Palette.prod : chips.contains(.root) ? Palette.root : nil }
+
     private static var font: NSFont { .systemFont(ofSize: 9.5, weight: .bold) }
 
     /// Drawn each time it shows, so it follows light and dark. ~9.5 pt caps on a 14 pt capsule: white on production's

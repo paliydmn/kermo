@@ -47,10 +47,8 @@ struct Theme {
         background.flatMap { NSAppearance(named: Self.contrast($0, .white) > Self.contrast($0, .black) ? .darkAqua : .aqua) }
     }
 
-    /// The active panel's frame and path bar: MC's and Far's cyan, else the theme's folder color.
+    /// The line under the active panel's path bar on this Mac: MC's and Far's cyan, else the theme's folder color.
     var accent: NSColor { background == nil ? Palette.accent : grid ?? dir }
-    /// Text on `accent`: whichever of white and black reads better.
-    var onAccent: NSColor { background == nil || Self.contrast(accent, .white) > Self.contrast(accent, .black) ? .white : .black }
 
     /// The ⌃O terminal's default text and background: a dark theme's own, with its text only if that reads at 7:1
     /// or better (WCAG AAA); else light gray on dark gray. Light themes get that too: the ANSI palette is for dark.
@@ -77,14 +75,22 @@ struct Theme {
     }
 }
 
-/// Draws the cursor row in the theme's color; dimmed while the panel isn't focused.
+/// Draws the cursor row in the theme's color, dimmed while the panel isn't focused. nil (System): the system's
+/// selection, and an outline while the panel isn't focused — a grey fill read as one more selection.
 final class PanelRowView: NSTableRowView {
-    var cursor: NSColor = .clear
+    var cursor: NSColor?
     override func drawSelection(in dirtyRect: NSRect) {
+        guard let cursor else {
+            if isEmphasized { return super.drawSelection(in: dirtyRect) }
+            NSColor.tertiaryLabelColor.setStroke()
+            let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 1.75, dy: 0.75), xRadius: 4, yRadius: 4)
+            outline.lineWidth = 1.5
+            return outline.stroke()
+        }
         (isEmphasized ? cursor : cursor.withAlphaComponent(0.45)).setFill()
         bounds.fill()
     }
-    override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }   // keep the theme's text colors
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { cursor == nil ? super.interiorBackgroundStyle : .normal }   // a theme keeps its text colors
 }
 
 /// A column title on the theme's background (nil: the system's header).

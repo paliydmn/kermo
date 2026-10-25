@@ -706,15 +706,13 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         guard t.host != nil else { return nil }
         let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         let s = NSMutableAttributedString(attributedString: t.isRunning ? StateMark.on.text("connected", font: font) : StateMark.off.text("disconnected", font: font))
-        for chip in t.target.map({ Chip.of($0, root: $0.host.hasPrefix("root@")) }) ?? [] { s.append(NSAttributedString(string: " ")); s.append(chip.text) }
+        for chip in chips(t) { s.append(NSAttributedString(string: " ")); s.append(chip.text) }
         return s
     }
+    private static func chips(_ t: Tab) -> [Chip] { t.target.map { Chip.of($0, root: $0.host.hasPrefix("root@")) } ?? [] }
     private static func tip(_ t: Tab) -> String { t.host.map { h in t.isRunning ? "ssh \(h)" : "ssh \(h) — disconnected" } ?? "Shell" }
-    /// A production server's pane underlined in purple, a root login's in orange — as a root panel's header.
-    private static func tint(_ t: Tab) -> NSColor? {
-        guard let target = t.target else { return nil }
-        return SavedServer.isProd(target) ? Palette.prod : target.host.hasPrefix("root@") ? Palette.root : nil
-    }
+    /// A production server's pane underlined in purple, a root login's in orange — as a panel's line.
+    private static func tint(_ t: Tab) -> NSColor? { Chip.tint(chips(t)) }
 
     /// A pane's header while its tab has several: which server, which folder, whether keys go there (bold, the line).
     private func header(_ t: Tab, index j: Int, focused: Bool, shown: Bool) {
