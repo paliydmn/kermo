@@ -394,6 +394,12 @@ private func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? N
     #expect(split.shownHeight(10) == DrawerSplit.minBottom && split.shownHeight(590) == 600 - DrawerSplit.minTop - 1)
     split.frame.size.height = 150
     #expect(split.shownHeight(300) == DrawerSplit.minBottom, "too low for both: the drawer's least")
+    split.layoutSubtreeIfNeeded()
+    #expect(split.bottom.frame.height == DrawerSplit.minBottom && split.top.frame.maxY == 150, "a window resized: laid out again")
+    split.showsBottom = false
+    split.frame.size.height = 500
+    split.layoutSubtreeIfNeeded()
+    #expect(split.top.frame == split.bounds, "hidden drawer: the panels take a resized window whole")
 
     let parent = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600)), panels = NSView(frame: parent.bounds)
     parent.addSubview(panels)
