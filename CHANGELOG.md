@@ -14,7 +14,7 @@ Release:
 ## [Unreleased]
 
 ### Fixed
-- **F1** lists the Git menu's keys (⌃B, ⌃⇧C, ⌃G …); they were missing there and under the key bar's **+N**.
+- **F1** lists the Git menu's keys (⌃B, ⌃⇧C, ⌃G …); they were missing there and under the key bar's **+N**. Its sections follow the menu bar's order.
 - **About Kermo** and **Check for Updates…** work while a viewer, an editor or the terminal is in front; they were greyed out.
 - On a server's panel **F8** says **Delete…** in the key bar, the File menu and a file's right-click menu: it deletes for good after asking, since a server has no Trash.
 - **Edit ▸ Cut** (⌘X): cutting text works in the path bar, the command line and dialogs.

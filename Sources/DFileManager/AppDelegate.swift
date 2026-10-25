@@ -975,7 +975,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if id == "view.perms" { item.state = defaults.bool(forKey: "showPerms") ? .on : .off }
         if id == "app.update" { item.title = updateOffered.map { "Kermo \($0) Available…" } ?? "Check for Updates…" }
         if id == "app.update.auto" { item.state = defaults.bool(forKey: "updateCheckOff") ? .off : .on }
-        if id == "file.trash" { item.title = active.remote != nil ? "Delete…" : commands.first { $0.id == id }?.title ?? item.title }   // no Trash on a server
+        if id == "file.trash" { item.title = panels.indices.contains(activeIndex) && active.remote != nil ? "Delete…" : commands.first { $0.id == id }?.title ?? item.title }   // no Trash on a server
         if id == "tab.close" {
             let closes = Self.windowToClose(key: NSApp.keyWindow, main: window) != nil
             item.title = closes ? "Close Window" : commands.first { $0.id == id }?.title ?? item.title
