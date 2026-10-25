@@ -165,7 +165,7 @@ extension ServerCopiesTests {
     let e = try Editor(URL(fileURLWithPath: dir + "/app.conf"), remote: "web:/etc/app.conf")
     defer { e.close() }
     let usual = e.window?.subtitle
-    #expect(usual?.contains("⌘S save") == true)
+    #expect(usual?.contains("⌘S Save") == true)
     e.flash("Saved “app.conf” to web · no history: file over 5 MB")
     #expect(e.window?.subtitle == "Saved “app.conf” to web · no history: file over 5 MB")
 }

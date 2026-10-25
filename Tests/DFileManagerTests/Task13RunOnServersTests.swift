@@ -28,7 +28,7 @@ import Testing
     let x = (storage.string as NSString).range(of: "✗")
     #expect(storage.attribute(.foregroundColor, at: x.location, effectiveRange: nil) as? NSColor == .systemRed)
     #expect(storage.attribute(.foregroundColor, at: (storage.string as NSString).range(of: "1 locked").location, effectiveRange: nil) as? NSColor == .textColor)
-    #expect(w.subtitle.hasPrefix("3 servers · done · ") && w.subtitle.hasSuffix(" · Esc closes"))
+    #expect(w.subtitle.hasPrefix("3 servers · done · ") && w.subtitle.hasSuffix(" · ⎋ Close"))
     w.close()
 
     let slow = "Run on 2 servers: dfm-" + UUID().uuidString.prefix(6)
@@ -60,7 +60,7 @@ import Testing
                                           context: nil, characters: "r", charactersIgnoringModifiers: "r", isARepeat: false, keyCode: 15))
     #expect(w.performKeyEquivalent(with: r) && asked.isEmpty, "not while it runs")
     for _ in 0..<300 where !(ended && w.subtitle.contains("done")) { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(w.subtitle.hasSuffix("Esc closes · ⌘R again"), "\(w.subtitle)")
+    #expect(w.subtitle.hasSuffix("⎋ Close · ⌘R Run Again"), "\(w.subtitle)")
     #expect(w.performKeyEquivalent(with: r))
     for _ in 0..<100 where asked.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
     #expect(asked.count == 1 && asked[0] === w && w.isVisible, "not started again: it stays")
@@ -78,11 +78,11 @@ import Testing
     Shell.run("echo before; sleep 30", in: NSTemporaryDirectory(), title: title) { status = $0 }
     let w = try #require(NSApp.windows.first { $0.title == title })
     for _ in 0..<300 where text(w)?.string.hasPrefix("before") != true { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(w.subtitle.hasSuffix("running… · Esc stops"))
+    #expect(w.subtitle.hasSuffix("running… · ⎋ Stop"))
     w.windowController?.cancelOperation(nil)
     for _ in 0..<300 where status == nil { try await Task.sleep(for: .milliseconds(10)) }
     #expect(status != nil && status != 0 && w.isVisible && text(w)?.string.hasPrefix("before\n") == true, "stopped, still showing it")
-    #expect(w.subtitle.hasSuffix(" · Esc closes"), "\(w.subtitle)")
+    #expect(w.subtitle.hasSuffix(" · ⎋ Close"), "\(w.subtitle)")
     w.windowController?.cancelOperation(nil)
     #expect(!w.isVisible)
 }

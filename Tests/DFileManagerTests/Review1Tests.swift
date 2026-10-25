@@ -70,10 +70,10 @@ import Testing
     try Data("start\nGET /a 200\n".utf8).write(to: URL(fileURLWithPath: dir + "/app.log"))
     let v = Viewer(URL(fileURLWithPath: dir + "/app.log"))
     defer { v.close() }
-    for _ in 0..<500 where v.window?.subtitle.contains("Esc close") != true { try await Task.sleep(for: .milliseconds(10)) }
+    for _ in 0..<500 where v.window?.subtitle.contains("⎋ Close") != true { try await Task.sleep(for: .milliseconds(10)) }
     let subtitle = try #require(v.window?.subtitle)
     #expect(v.keyHints.allSatisfy { subtitle.contains("\($0.key) \($0.label)") }, "F1 and the subtitle say the same")
-    #expect(v.keyHints.contains { $0 == ("&", "filter") } && v.keyHints.last! == ("Esc", "close"))
+    #expect(v.keyHints.contains { $0 == ("&", "Filter") } && v.keyHints.last! == ("⎋", "Close"))
 }
 
 /// P-8: a server row's right-click menu starts with its first item, not a line; a favorite's ends with its own.

@@ -789,7 +789,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         tab.exitStatus = status
         guard let h = tab.host else { return }
         let why = status == -1 ? "Not connected" : SSHCommand.describe(status: status)
-        tab.view.feed(text: "\r\n\u{1b}[2m[\(h): \(why)] ↩ reconnect · ⎋ close\u{1b}[0m\r\n")
+        tab.view.feed(text: "\r\n\u{1b}[2m[\(h): \(why)] ↩ Reconnect   ⎋ Close\u{1b}[0m\r\n")
         let b = NSButton(title: "Reconnect", target: self, action: #selector(reconnectClicked(_:)))
         b.bezelStyle = .rounded
         b.keyEquivalent = ""

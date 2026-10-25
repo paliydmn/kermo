@@ -55,7 +55,7 @@ final class KeyHelp: NSObject, NSSearchFieldDelegate {
         self.layer = layer
         self.fixed = fixed
         super.init()
-        field.placeholderString = layer.map { "Filter \(KeyBarModel.symbol($0)) keys… ⎋ closes" } ?? "Filter keys… ⎋ closes"
+        field.placeholderString = layer.map { "Filter \(KeyBarModel.symbol($0)) keys" } ?? "Filter keys"
         field.delegate = self
         text.isEditable = false
         text.drawsBackground = false

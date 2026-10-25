@@ -222,16 +222,16 @@ final class Viewer: NSWindowController, NSWindowDelegate {
 
     /// Its keys for what it shows now, as the subtitle names them; F1 over it lists them too.
     var keyHints: [(key: String, label: String)] {
-        var keys = [("&", "filter"), ("e", "errors"), ("h", "hex"), ("f", "follow"), ("l", "lines"), ("w", "wrap"), ("⌘F", "find"), ("Esc", "close")]
-        if canPretty { keys.insert(("p", "readable"), at: 2) }
-        if big != nil && mode == .text && lineFilter == nil { keys.insert(contentsOf: [("g", "go to"), ("/ n", "find in file")], at: 0) }
-        if isHuge && mode == .hex { keys.insert(("g", "go to"), at: 0) }
+        var keys = [("&", "Filter"), ("e", "Errors"), ("h", "Hex"), ("f", "Follow"), ("l", "Lines"), ("w", "Wrap"), ("⌘F", "Find"), ("⎋", "Close")]
+        if canPretty { keys.insert(("p", "Readable"), at: 2) }
+        if big != nil && mode == .text && lineFilter == nil { keys.insert(contentsOf: [("g", "Go To"), ("/ n", "Find in File")], at: 0) }
+        if isHuge && mode == .hex { keys.insert(("g", "Go To"), at: 0) }
         return keys
     }
 
     static func keyHelp(of window: NSWindow?) -> KeyHelp.Section? {
         open.first { $0.window === window && window != nil }.map { v in
-            ("Viewer", v.keyHints.map { ($0.label.prefix(1).uppercased() + $0.label.dropFirst(), $0.key) })
+            ("Viewer", v.keyHints.map { ($0.label, $0.key) })
         }
     }
 
