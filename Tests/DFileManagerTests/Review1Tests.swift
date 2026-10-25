@@ -55,3 +55,14 @@ import Testing
     #expect(sidebar.contextItems(.serverFolder("me@web.invalid:/srv"), favorite: true).map(\.title) == ["Remove from Favorites"])
     #expect(sidebar.contextItems(.folder("/tmp"), favorite: false).isEmpty)
 }
+
+/// P-9: Edit ▸ Cut — text fields get ⌘X from the menu, as they get ⌘C and ⌘V. No command takes ⌘X.
+@MainActor @Test func editMenuHasCut() throws {
+    _ = NSApplication.shared
+    let app = AppDelegate()
+    let edit = try #require(app.makeMenu().items.compactMap(\.submenu).first { $0.title == "Edit" })
+    let cut = try #require(edit.items.first { $0.action == #selector(NSText.cut(_:)) })
+    #expect(cut.title == "Cut" && cut.keyEquivalent == "x" && cut.keyEquivalentModifierMask == .command)
+    #expect(edit.items.firstIndex(of: cut).map { edit.items[$0 + 1].title } == "Copy")
+    #expect(!app.makeCommands().contains { $0.keys.contains(Shortcut("cmd+x")!) })
+}

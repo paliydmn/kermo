@@ -1134,6 +1134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 item("Undo", Selector(("undo:")), "z"),
                 item("Redo", Selector(("redo:")), "z", [.command, .shift]),
                 .separator(),
+                item("Cut", #selector(NSText.cut(_:)), "x"),   // text only: a panel moves files with ⌥⌘V
                 item("Copy", #selector(NSText.copy(_:)), "c"),
                 item("Paste", #selector(NSText.paste(_:)), "v"),
                 item("Select All", #selector(NSResponder.selectAll(_:)), "a"),
