@@ -82,10 +82,10 @@ enum KeyBarModel {
     static let core: Set<String> = ["file.view", "file.edit", "file.copy", "file.move", "file.mkdir", "file.trash"]
 
     /// What fits in `capacity` slots: all of them, or capacity−1 plus a "+N" count.
-    /// Slots not in `core` go first, then core ones, each from the end; shown ones stay in order.
-    static func fit(_ slots: [KeySlot], capacity: Int) -> (shown: [KeySlot], more: Int) {
+    /// Slots not in `keep` go first, then kept ones, each from the end; shown ones stay in order.
+    static func fit(_ slots: [KeySlot], capacity: Int, keep: Set<String> = core) -> (shown: [KeySlot], more: Int) {
         guard slots.count > capacity, capacity > 0 else { return (slots, 0) }
-        let kept = slots.indices.filter { slots[$0].id.map(core.contains) == true }
+        let kept = slots.indices.filter { slots[$0].id.map(keep.contains) == true }
         let spare = slots.indices.filter { !kept.contains($0) }
         let shown = Set((kept + spare).prefix(capacity - 1))
         return (slots.indices.filter(shown.contains).map { slots[$0] }, slots.count - shown.count)
@@ -116,6 +116,8 @@ final class KeyBarView: NSView {
     }
     /// Said after F5's and F6's labels (`KeyBarModel.target`).
     var target: KeyBarModel.Target? { didSet { if target != oldValue { render() } } }
+    /// The slots that go under "+N" last (`KeyBarModel.fit`).
+    var keep = KeyBarModel.core
 
     private var commands: [Command] = []
     private var layers: [(mods: NSEvent.ModifierFlags, slots: [KeySlot])] = []
@@ -241,7 +243,7 @@ final class KeyBarView: NSView {
         place()
     }
 
-    /// As many slots as fit the width, the rest under "+N" (`KeyBarModel.fit`: F3–F8 stay longest).
+    /// As many slots as fit the width, the rest under "+N" (`KeyBarModel.fit`: `keep` stays longest).
     private func place() {
         row.arrangedSubviews.forEach { $0.removeFromSuperview() }
         guard !slots.isEmpty else {
@@ -253,7 +255,7 @@ final class KeyBarView: NSView {
         let widths = buttons.map { $0.fittingSize.width }
         var (shown, more) = (slots, 0)
         for capacity in stride(from: slots.count, through: 1, by: -1) {
-            (shown, more) = KeyBarModel.fit(slots, capacity: capacity)
+            (shown, more) = KeyBarModel.fit(slots, capacity: capacity, keep: keep)
             let width = shown.compactMap { s in slots.firstIndex(of: s).map { widths[$0] } }.reduce(0, +) + (more > 0 ? 40 : 0)
             if width + CGFloat(shown.count + (more > 0 ? 1 : 0)) * row.spacing <= room || bounds.width == 0 { break }
         }

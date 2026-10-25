@@ -26,7 +26,7 @@ private func key(_ code: UInt16, _ chars: String, _ mods: NSEvent.ModifierFlags 
 @MainActor @Test func pickerCommandEIsAPhysicalKey() async {
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
     var ran: [String] = []
-    Picker.show(over: window, placeholder: "", items: [Picker.Item(title: "mine", edit: { ran.append("edit") }) { ran.append("run") }])
+    Picker.show(over: window, placeholder: "", items: [Picker.Item(title: "mine", actions: [.init(key: Shortcut("cmd+e")!, label: "Edit") { ran.append("edit") }]) { ran.append("run") }])
     let panel = Picker.current!.panel
     #expect(panel.performKeyEquivalent(with: key(14, "у", .command, window: panel.windowNumber)) && Picker.current == nil, "edits and closes")
     await Task.yield()

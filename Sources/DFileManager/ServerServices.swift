@@ -8,17 +8,20 @@ extension AppDelegate {
     func onServer(_ what: String, _ then: @escaping @MainActor (SFTPTarget) -> Void) {
         if let here = terminal.isShown ? terminal.current?.target : active.remote?.target { return then(here) }
         let items = serverChoices().map { c in
-            Picker.Item(title: c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config", badges: (c.saved?.chips ?? []).map(\.image)) { then(c.target) }
+            Picker.Item(title: c.title, subtitle: c.saved.map { ServerRow.address($0.target) } ?? "~/.ssh/config", badges: (c.saved?.chips ?? []).map(\.image),
+                        verb: "Choose") { then(c.target) }
         }
-        Picker.show(over: window, placeholder: "\(what) which server? — or type user@host", items: items, freeText: { q in
+        let scope = what.hasSuffix(" of") ? String(what.dropLast(3)) : what   // "Services of" → "Services ›"
+        Picker.show(over: window, placeholder: "Server or user@host", scope: (scope, []), items: items, freeText: { q in
             guard case let .sftp(t, _)? = ServerAddress.parse(q) else { return [] }
-            return [Picker.Item(title: "\(what) “\(q)”", detail: "↩") { then(t) }]
+            return [Picker.Item(title: "\(what) “\(q)”", verb: "Choose") { then(t) }]
         }, freeTextLast: true)   // "web db" picks the server, not a host named so
     }
 
     /// A look at `t`'s server: a locked server asks first, then the login, if one is due — before anything shows: its
     /// dialogs take the focus, which closes a Picker. The Picker then says it's looking at `what` — ⎋ there stops the
-    /// look — and gives way to `show`, or closes with why not (`say`). `command`: what asks for the password.
+    /// look — and gives way to `show`, or says why not in its line under the rows (before it shows: `say`). `command`:
+    /// what asks for the password.
     func look<T: Sendable>(at t: SFTPTarget, _ what: String, for command: String, say: @escaping @MainActor (String, Bool) -> Void,
                            _ read: @escaping @Sendable (SFTPTarget, String, [String: String], CancelFlag) throws -> T,
                            show: @escaping @MainActor (T, SavedServer, SFTPTarget) -> Void) {
@@ -36,14 +39,13 @@ extension AppDelegate {
             }
             noteLook(t)   // the next look rides it, though no panel shows the server
             let cancel = CancelFlag()   // set by ⎋ there — and by its giving way, when the look is over anyway
-            Picker.show(over: window, placeholder: "Looking at \(s.title)'s \(what)…", items: [], onDismiss: { cancel.cancel() })
+            Picker.show(over: window, placeholder: "Filter \(what)", scope: (s.title, Chip.of(s.target)), empty: "Looking at \(what)…", items: [],
+                        onDismiss: { cancel.cancel() })
             let title = s.title
             let result = await Blocking.run { Result { try read(t, title, env, cancel) } }
             guard !cancel.isCancelled else { return }
             switch result {
-            case .failure(let e):
-                Picker.dismiss()
-                say(e.localizedDescription, true)
+            case .failure(let e): Picker.current?.say(Self.result((.failed, e.localizedDescription)))   // it stays: ⎋ closes it
             case .success(let found): show(found, s, t)
             }
         }
@@ -68,21 +70,19 @@ extension AppDelegate {
     func showServices(on t: SFTPTarget) {
         look(at: t, "services", for: "Services", say: { [unowned self] in active.flash($0, error: $1) },
              { t, title, env, cancel in try Services.read(on: t.asUser, server: title, env: env, cancel: cancel) }) { [unowned self] units, s, t in
-            guard !units.isEmpty else {
-                Picker.dismiss()
-                return active.flash("\(s.title): systemd lists no services there")
-            }
-            showList("services", on: t, of: s, keys: "↩ status · ⌘L log · ⌘R restart · ⌃↩ menu", items: units.map { serviceItem($0, on: t, of: s) })
+            let failed = units.filter(\.failed).count
+            showList("services", on: t, of: s, header: "\(units.count) unit\(units.count == 1 ? "" : "s")" + (failed > 0 ? " · \(failed) failed" : ""),
+                     empty: "systemd lists no services there", items: units.map { serviceItem($0, on: t, of: s) })
         }
     }
 
-    /// A list of what a server runs, which stays open while its rows change: the highlighted row green, and it opens
-    /// again where it was left (what was typed and highlighted) — after a look at a status or a log, say.
-    private func showList(_ what: String, on t: SFTPTarget, of s: SavedServer, keys: String, items: [Picker.Item]) {
+    /// A list of what a server runs, which stays open while its rows change, and opens again where it was left (what
+    /// was typed and highlighted) — after a look at a status or a log, say.
+    private func showList(_ what: String, on t: SFTPTarget, of s: SavedServer, header: String, empty: String, items: [Picker.Item]) {
         let key = what + " " + ServerRow.key(t.asUser), kept = servicesKept[key]
-        Picker.show(over: window, placeholder: (s.prod ? "PROD · " : "") + "\(s.title)'s \(what) — " + keys, items: items,
-                    rank: { item, q in Fuzzy.score(q, item.title + " " + item.subtitle + " " + item.detail) },
-                    query: kept?.query ?? "", select: kept?.id, highlight: Palette.ok,
+        Picker.show(over: window, placeholder: "Filter \(what)", scope: (s.title, Chip.of(t)), header: items.isEmpty ? nil : header, empty: empty,
+                    items: items, rank: { item, q in Fuzzy.score(q, item.title + " " + item.subtitle + " " + item.detail) },
+                    query: kept?.query ?? "", select: kept?.id,
                     onClose: { [unowned self] q, id in servicesKept[key] = (q, id) })
     }
 
@@ -166,21 +166,23 @@ extension AppDelegate {
     }
 
     /// "nginx" · "active · running" (failed in red, whatever the highlight) · its description (S2); "Restarting…"
-    /// and a spinner while that runs. ↩ ⌘L ⌘E ⌘R ⌘C and its menu (⌃↩) as `serviceActions` has them; a change and a
-    /// copy keep the list open.
+    /// and a spinner while that runs. ↩ ⌘L ⌘E ⌘C ⌘R and its menu (⌃↩) as `serviceActions` has them, named so on the
+    /// action bar; a change and a copy keep the list open.
     func serviceItem(_ u: ServiceUnit, on t: SFTPTarget, of s: SavedServer, pasteboard: NSPasteboard = .general) -> Picker.Item {
         let running = serviceRuns[Self.serviceID(u, on: t)].flatMap { $0.isEmpty ? nil : $0 }   // "": being asked, not running yet
         let actions = { [unowned self] in serviceActions(u, on: t, of: s, pasteboard: pasteboard) }
         func act(_ title: String) -> @MainActor () -> Void { { [unowned self] in perform(title, actions) } }
+        let all = actions().compactMap { a in a.key.flatMap { $0 == Shortcut("return") ? nil : ($0, a) } }
+        let first = { (a: ServiceAction) in a.title == "Live Logs" || a.group > 0 }   // the bar's: the log and the changes, then ⌘E ⌘C
+        let keyed = all.filter { first($0.1) } + all.filter { !first($0.1) }
         var item = Picker.Item(title: u.name, subtitle: running ?? (u.active == u.sub ? u.active : "\(u.active) · \(u.sub)"),
-                               detail: Self.detail(u.description), edit: act("Edit Unit File…"),
-                               keys: [Shortcut("cmd+l")!: act("Live Logs"), Shortcut("cmd+r")!: act("Restart"), Shortcut("cmd+c")!: act("Copy Service Name")],
-                               run: act("Status"))
+                               detail: Self.detail(u.description),
+                               actions: keyed.map { key, a in .init(key: key, label: a.title.replacingOccurrences(of: "…", with: ""), keepsOpen: !a.closes, run: act(a.title)) },
+                               verb: "Status", run: act("Status"))
         item.id = Self.serviceID(u, on: t)
         item.subtitleColor = running == nil && u.failed ? Palette.fail : nil
         item.badges = running == nil && u.failed ? [StateMark.failed.image("failed", size: 9)] : []   // a shape, not only red
         item.busy = running != nil
-        item.keepsOpen = [Shortcut("cmd+r")!, Shortcut("cmd+c")!]
         item.menu = { [unowned self] in serviceMenu(actions) }
         return item
     }
@@ -341,12 +343,9 @@ extension AppDelegate {
     func showContainers(on t: SFTPTarget) {
         look(at: t, "containers", for: "Containers", say: { [unowned self] in active.flash($0, error: $1) },
              { t, title, env, cancel in try Containers.read(on: t.asUser, server: title, env: env, cancel: cancel) }) { [unowned self] found, s, t in
-            guard !found.containers.isEmpty else {
-                Picker.dismiss()
-                return active.flash("\(s.title): \(found.tool) has no containers there")
-            }
-            showList("containers", on: t, of: s, keys: "↩ log · ⌘R restart · ⌘C copy name",
-                     items: found.containers.map { containerItem($0, tool: found.tool, on: t, of: s) })
+            let n = found.containers.count, running = found.containers.filter { $0.state == "running" }.count
+            showList("containers", on: t, of: s, header: "\(n) container\(n == 1 ? "" : "s") · \(running) running",
+                     empty: "\(found.tool) has no containers there", items: found.containers.map { containerItem($0, tool: found.tool, on: t, of: s) })
         }
     }
 
@@ -363,7 +362,9 @@ extension AppDelegate {
         var item: Picker.Item
         if !c.safe {
             let no = notInCommands(c.name)
-            item = Picker.Item(title: c.name, subtitle: state, detail: Self.detail(c.image), keys: [Shortcut("cmd+r")!: no, Shortcut("cmd+c")!: copy], run: no)
+            item = Picker.Item(title: c.name, subtitle: state, detail: Self.detail(c.image),
+                               actions: [.init(key: Shortcut("cmd+c")!, label: "Copy Name", keepsOpen: true, run: copy), .init(key: Shortcut("cmd+r")!, label: "", run: no)],
+                               verb: "Live Logs", run: no)
         } else {
             let user = t.asUser, read = Self.containerState
             let restart: @MainActor () -> Void = { [unowned self] in
@@ -384,13 +385,14 @@ extension AppDelegate {
                                     })
                 }
             }
-            item = Picker.Item(title: c.name, subtitle: state, detail: Self.detail(c.image), keys: [Shortcut("cmd+r")!: restart, Shortcut("cmd+c")!: copy]) {
+            item = Picker.Item(title: c.name, subtitle: state, detail: Self.detail(c.image),
+                               actions: [.init(key: Shortcut("cmd+r")!, label: "Restart", keepsOpen: true, run: restart),
+                                         .init(key: Shortcut("cmd+c")!, label: "Copy Name", keepsOpen: true, run: copy)], verb: "Live Logs") {
                 Shell.run(Containers.logs(c, tool: tool), on: t.asUser, in: "/", follow: true, title: "\(s.title): \(c.name) log")
             }
         }
         item.id = id
         item.busy = running != nil
-        item.keepsOpen = [Shortcut("cmd+r")!, Shortcut("cmd+c")!]
         return item
     }
 }

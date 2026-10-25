@@ -510,11 +510,11 @@ extension AppDelegate {
         let items = Self.userCommands(mine, onServer: active.remote != nil).map { c in
             let builtIn = !mine.contains { $0.command == c.command && $0.title == c.title }   // a server entry the file doesn't have
             return Picker.Item(title: c.title, subtitle: c.command,
-                               detail: ([c.terminal == true ? "Terminal" : nil, builtIn ? "built in" : nil].compactMap { $0 }).joined(separator: " · ")) { [unowned self] in
+                               detail: ([c.terminal == true ? "Terminal" : nil, builtIn ? "built in" : nil].compactMap { $0 }).joined(separator: " · "), verb: "Run") { [unowned self] in
                 runShell(c.command, in: c.terminal == true ? .terminalApp : .shell)
             }
-        }
-        Picker.show(over: window, placeholder: "User menu — %f %s %d %D expand · edit in ~/.config/dfilemanager/usermenu.json", items: items)
+        } + [Picker.Item(title: "Edit User Menu…", subtitle: "~/.config/dfilemanager/usermenu.json", verb: "Edit") { [unowned self] in run("usermenu.edit") }]
+        Picker.show(over: window, placeholder: "Filter commands", hints: [Self.commandLineKeys.last!], items: items)
     }
 
     /// The active panel's folder and names — a server's, on a server panel (never the local folder hidden behind it).
@@ -587,11 +587,11 @@ extension AppDelegate {
     /// Bookmarks first, then folders by frecency. Typing an existing path offers to go there directly.
     func showJump() {
         func item(_ p: String, star: Bool) -> Picker.Item {
-            Picker.Item(title: Bookmark.title(p), subtitle: (p as NSString).abbreviatingWithTildeInPath, badges: star ? [Self.star] : []) { [unowned self] in jump(to: p) }
+            Picker.Item(title: Bookmark.title(p), subtitle: (p as NSString).abbreviatingWithTildeInPath, badges: star ? [Self.star] : [], verb: "Go") { [unowned self] in jump(to: p) }
         }
         let items = bookmarks.map { item($0, star: true) }
             + frecency.ranked().filter { !bookmarks.contains($0) && $0 != active.path }.prefix(500).map { item($0, star: false) }
-        Picker.show(over: window, placeholder: "Jump to folder (fuzzy; bookmarks first)…", items: items) { it, q in
+        Picker.show(over: window, placeholder: "Folder", empty: "No bookmarks or recent folders yet", items: items) { it, q in
             // Prefer hits in the folder name itself over hits spread across the path.
             guard let s = Fuzzy.score(q, it.subtitle) else { return nil }
             return s + (Fuzzy.score(q, it.title) != nil ? 500 : 0)
@@ -698,9 +698,9 @@ extension AppDelegate {
             applyTheme()
         }
         let items = Theme.all.map { t in
-            Picker.Item(title: t.name, detail: t.name == was ? "current" : "", preview: { use(t.name) }) { use(t.name) }
+            Picker.Item(title: t.name, detail: t.name == was ? "current" : "", verb: "Use", preview: { use(t.name) }) { use(t.name) }
         }
-        Picker.show(over: window, placeholder: "Theme…", items: items, selected: Theme.all.firstIndex { $0.name == was } ?? 0) { use(was) }
+        Picker.show(over: window, placeholder: "Theme", items: items, selected: Theme.all.firstIndex { $0.name == was } ?? 0) { use(was) }
     }
 
 
@@ -733,10 +733,11 @@ extension AppDelegate {
         let panel = active
         let saved = filterPresets()
         let recent = (defaults.stringArray(forKey: "recentFilters") ?? []).filter { r in !saved.contains { $0.filter == r } }
-        let items = saved.map { p in Picker.Item(title: p.title, subtitle: p.filter, detail: "preset") { panel.applyFilter(p.filter) } }
-            + recent.map { r in Picker.Item(title: r, detail: "recent") { panel.applyFilter(r) } }
-        Picker.show(over: window, placeholder: "Filter presets — edit in ~/.config/dfilemanager/filters.json", items: items, freeText: { q in
-            q.isEmpty ? [] : [Picker.Item(title: "Filter: \(q)", detail: "↩") { panel.applyFilter(q) }]
+        let items = saved.map { p in Picker.Item(title: p.title, subtitle: p.filter, detail: "preset", verb: "Filter") { panel.applyFilter(p.filter) } }
+            + recent.map { r in Picker.Item(title: r, detail: "recent", verb: "Filter") { panel.applyFilter(r) } }
+            + [Picker.Item(title: "Edit Filter Presets…", subtitle: "~/.config/dfilemanager/filters.json", verb: "Edit") { [unowned self] in run("view.filterPresets.edit") }]
+        Picker.show(over: window, placeholder: "Filter or preset", items: items, freeText: { q in
+            q.isEmpty ? [] : [Picker.Item(title: "Filter: \(q)", verb: "Filter") { panel.applyFilter(q) }]
         })
     }
 
@@ -914,25 +915,25 @@ extension AppDelegate {
             return listed.insert(k).inserted
         }
         let go: @MainActor (String) -> Void = { [unowned self] in ssh ? openSSH($0) : connect($0) }
-        let items = [Picker.Item(title: "New Server…", subtitle: "user, port, key, password, lock", badges: [Symbol.add.image("New")]) { [unowned self] in
+        let items = [Picker.Item(title: "New Server…", subtitle: "user, port, key, password, lock", badges: [Symbol.add.image("New")], verb: "New Server") { [unowned self] in
                 editServer(SavedServer(), title: "New Server", connect: kind)
             }]
             + savedServers.map { s in
-                Picker.Item(title: s.title, subtitle: ServerRow.address(s.target), badges: s.chips.map(\.image), detail: "⌘E Edit   " + label,
-                            edit: { [unowned self] in editServer(s, title: "Edit “\(s.title)”") }) { [unowned self] in
+                Picker.Item(title: s.title, subtitle: ServerRow.address(s.target), badges: s.chips.map(\.image), detail: label,
+                            actions: [.init(key: Shortcut("cmd+e")!, label: "Edit") { [unowned self] in editServer(s, title: "Edit “\(s.title)”") }],
+                            verb: "Connect") { [unowned self] in
                     openServer(ServerRow(target: s.target, saved: s, title: s.title), kind)
                 }
             }
             + hosts.map { h in
                 let detail = (h.user.map { "\($0)@" } ?? "") + (h.hostName ?? h.alias) + (h.port.map { ":\($0)" } ?? "")
-                return Picker.Item(title: h.alias, subtitle: "~/.ssh/config · " + detail, detail: label) { go(h.alias) }
+                return Picker.Item(title: h.alias, subtitle: "~/.ssh/config · " + detail, detail: label, verb: "Connect") { go(h.alias) }
             }
-            + recents.map { r in Picker.Item(title: r, subtitle: "recent", detail: key(r) == nil ? "mount" : label) { go(r) } }
-            + [Picker.Item(title: "Edit SSH Config…", subtitle: "~/.ssh/config") { [unowned self] in editSSHConfig() }]
-        Picker.show(over: window, placeholder: ssh ? "SSH to: a server, user@host, ssh://host:port — ⌘E edits yours"
-                                                   : "SFTP to: a server, user@host:/path, sftp://…, smb://server/share, nfs://… — ⌘E edits yours",
-                    items: items, freeText: { q in
-            q.isEmpty ? [] : [Picker.Item(title: (ssh ? "SSH to" : "Connect to") + " “\(q)”", detail: "↩") { go(q) }]
+            + recents.map { r in Picker.Item(title: r, subtitle: "recent", detail: key(r) == nil ? "mount" : label, verb: key(r) == nil ? "Mount" : "Connect") { go(r) } }
+            + [Picker.Item(title: "Edit SSH Config…", subtitle: "~/.ssh/config", verb: "Edit") { [unowned self] in editSSHConfig() }]
+        Picker.show(over: window, placeholder: ssh ? "Server, user@host or ssh://host:port" : "Server, user@host:/path, sftp://, smb:// or nfs://",
+                    scope: (ssh ? "SSH" : "SFTP", []), items: items, freeText: { q in
+            q.isEmpty ? [] : [Picker.Item(title: (ssh ? "SSH to" : "Connect to") + " “\(q)”", verb: "Connect") { go(q) }]
         })
     }
 
@@ -1475,11 +1476,14 @@ extension AppDelegate {
                     }
                 }
                 return Picker.Item(title: when, subtitle: ByteCountFormatter.short(v.size),
-                                   keys: [Shortcut("f3")!: view, Shortcut("cmd+shift+d")!: diff, Shortcut("cmd+d")!: diffBefore, Shortcut("cmd+r")!: revert],
-                                   run: view)
+                                   actions: [.init(key: Shortcut("f3")!, label: "", run: view),   // as ↩
+                                             .init(key: Shortcut("cmd+shift+d")!, label: "Diff with Server", run: diff),
+                                             .init(key: Shortcut("cmd+d")!, label: "Diff with Previous", run: diffBefore),
+                                             .init(key: Shortcut("cmd+r")!, label: "Revert", run: revert)],
+                                   verb: "View", run: view)
             }
-            Picker.show(over: over, placeholder: "“\(name)” on \(target.host): ↩ F3 view · ⌘⇧D diff with the server's · ⌘D with the one before · ⌘R revert to it",
-                        items: items)
+            Picker.show(over: over, placeholder: "Filter versions", scope: ("\(SavedServer.name(for: target)) › \(name)", Chip.of(target)),
+                        header: "\(versions.count) version\(versions.count == 1 ? "" : "s") kept on this Mac", items: items)
         }
     }
 
@@ -2110,11 +2114,13 @@ extension AppDelegate {
                 }
             }
             let items = rows.map { r in
-                Picker.Item(title: r.title, subtitle: r.subtitle, detail: r.eject ? "Eject ⌘⌥E" : "") { [unowned self] in active.navigate(to: r.path) }
+                Picker.Item(title: r.title, subtitle: r.subtitle,
+                            actions: r.eject ? [.init(key: Shortcut("cmd+opt+e")!, label: "Eject") { [unowned self] in ejectVolume(r.path) }] : [],
+                            verb: "Open") { [unowned self] in active.navigate(to: r.path) }
             } + SidebarModel.locations([], disks).compactMap { v in
-                v.disk.map { d in Picker.Item(title: d.name, subtitle: v.tip, detail: "↩ Mount") { [unowned self] in mountVolume(d) { [unowned self] in active.navigate(to: $0) } } }
+                v.disk.map { d in Picker.Item(title: d.name, subtitle: v.tip, detail: "not mounted", verb: "Mount") { [unowned self] in mountVolume(d) { [unowned self] in active.navigate(to: $0) } } }
             }
-            Picker.show(over: window, placeholder: "Volumes…", items: items)
+            Picker.show(over: window, placeholder: "Volume", items: items)
         }
     }
 

@@ -136,30 +136,30 @@ extension AppDelegate {
         var items: [Picker.Item] = []
         for st in newOnly ? [] : tunnels.temporaries() {   // ↩ turns one off: it goes
             let (t, s) = (st.tunnel, st.server), n = tunnels.connections(t, of: s)
-            var keys: [Shortcut: @MainActor () -> Void] = [Shortcut("cmd+c")!: { [unowned self] in copyAddress(t) }]
-            if let url = t.link { keys[Shortcut("cmd+o")!] = { [unowned self] in openTunnel(t, of: s, url) } }
-            if savedServer(at: s.target) != nil { keys[Shortcut("cmd+s")!] = { [unowned self] in saveTemporary(t, of: s) } }
+            var actions: [Picker.Item.Action] = [.init(key: Shortcut("cmd+c")!, label: "Copy Address") { [unowned self] in copyAddress(t) }]
+            if let url = t.link { actions.append(.init(key: Shortcut("cmd+o")!, label: "Open in Browser") { [unowned self] in openTunnel(t, of: s, url) }) }
+            if savedServer(at: s.target) != nil { actions.append(.init(key: Shortcut("cmd+s")!, label: "Save") { [unowned self] in saveTemporary(t, of: s) }) }
             items.append(Picker.Item(title: "\(t.title) → \(t.localPort)", subtitle: st.error ?? t.route(via: s.title), badges: Chip.of(s.target).map(\.image),
                                      detail: (st.error != nil ? "failed" : n > 0 ? "listening · \(n) open" : "listening") + " · temporary",
-                                     keys: keys) { [unowned self] in turnOff(t, of: s) })
+                                     actions: actions, verb: "Turn Off") { [unowned self] in turnOff(t, of: s) })
         }
         for s in savedServers where !newOnly {
             for t in s.tunnels {
                 let st = tunnels.state(t, of: s), n = tunnels.connections(t, of: s)
-                var keys: [Shortcut: @MainActor () -> Void] = [Shortcut("cmd+c")!: { [unowned self] in copyAddress(t) },
-                                                               Shortcut("cmd+backspace")!: { [unowned self] in deleteTunnel(t, of: s) }]
-                if let url = t.link { keys[Shortcut("cmd+o")!] = { [unowned self] in openTunnel(t, of: s, url) } }
+                var actions: [Picker.Item.Action] = [.init(key: Shortcut("cmd+e")!, label: "Edit") { [unowned self] in editTunnel(t, of: s) },
+                                                     .init(key: Shortcut("cmd+c")!, label: "Copy Address") { [unowned self] in copyAddress(t) }]
+                if let url = t.link { actions.append(.init(key: Shortcut("cmd+o")!, label: "Open in Browser") { [unowned self] in openTunnel(t, of: s, url) }) }
+                actions.append(.init(key: Shortcut("cmd+backspace")!, label: "Delete") { [unowned self] in deleteTunnel(t, of: s) })
                 items.append(Picker.Item(title: "\(t.title) → \(t.localPort)", subtitle: st?.error ?? t.route(via: s.title), badges: s.chips.map(\.image),
                                          detail: st?.error != nil ? "failed" : st?.listener == nil ? "off" : n > 0 ? "listening · \(n) open" : "listening",
-                                         edit: { [unowned self] in editTunnel(t, of: s) }, keys: keys) { [unowned self] in
+                                         actions: actions, verb: tunnels.isListening(t, of: s) ? "Turn Off" : "Turn On") { [unowned self] in
                     if tunnels.isListening(t, of: s) { turnOff(t, of: s) } else { turnOn(t, of: s) }
                 })
             }
         }
-        items += savedServers.map { s in Picker.Item(title: "New Tunnel on “\(s.title)”…", subtitle: s.target.host) { [unowned self] in editTunnel(nil, of: s) } }
+        items += savedServers.map { s in Picker.Item(title: "New Tunnel on “\(s.title)”…", subtitle: s.target.host, verb: "New Tunnel") { [unowned self] in editTunnel(nil, of: s) } }
         guard !items.isEmpty else { return active.flash("Tunnels belong to saved servers: save one first (New Server…), or Forward Port… for now") }
-        Picker.show(over: window, placeholder: newOnly ? "New tunnel on which server?"
-                    : "Tunnels — ↩ on / off · ⌘E edit · ⌘C copy address · ⌘O open in browser · ⌘S save · ⌘⌫ delete", items: items)
+        Picker.show(over: window, placeholder: newOnly ? "Server" : "Filter tunnels", scope: newOnly ? ("New Tunnel", []) : nil, items: items)
     }
 
     /// New Tunnel… (⌘⇧P, Go ▸ Tunnels): on the saved server the active panel or SSH tab is on; else pick one.
@@ -312,24 +312,19 @@ extension AppDelegate {
     /// the server already goes there. ↩ forwards it, ⌘O and opens it in the browser, ⌘C and copies the address, ⌘S and
     /// saves it as the server's tunnel (U4).
     func showPorts(_ ports: [ListeningPort], of s: SavedServer) {
-        guard !ports.isEmpty else {
-            Picker.dismiss()
-            return tunnels.say("\(s.title): nothing listens on TCP", false)
-        }
-        Picker.show(over: window, placeholder: (s.prod ? "PROD · " : "") + "\(s.title)'s ports — ↩ forward · ⌘O browser · ⌘C copy · ⌘S save",
+        Picker.show(over: window, placeholder: "Filter ports", scope: (s.title, Chip.of(s.target)), empty: "Nothing listens on TCP there",
                     items: portItems(ports, of: s))
     }
 
     func portItems(_ ports: [ListeningPort], of s: SavedServer) -> [Picker.Item] {
         ports.map { p -> Picker.Item in
             let to = tunnelTo(p, of: s).flatMap { tunnels.isListening($0.tunnel, of: $0.server) ? $0 : nil }
-            var keys: [Shortcut: @MainActor () -> Void] = [:]
-            for (key, then) in [("cmd+o", PortThen.open), ("cmd+c", .copy), ("cmd+s", .save)] {
-                keys[Shortcut(key)!] = { [unowned self] in forward(p, of: s, then) }
+            let actions = [("cmd+o", "Open in Browser", PortThen.open), ("cmd+c", "Copy Address", .copy), ("cmd+s", "Save as Tunnel", .save)].map { key, label, then in
+                Picker.Item.Action(key: Shortcut(key)!, label: label) { [unowned self] in forward(p, of: s, then) }
             }
             return Picker.Item(title: ":\(p.port)" + (Tunnel.knownNames[p.port].map { " " + $0 } ?? ""),
                                subtitle: ([p.process, p.reach].compactMap { $0 }).joined(separator: " · "),
-                               detail: to.map { "→ \($0.tunnel.address)" + ($0.temporary ? " · temporary" : "") } ?? "", keys: keys) { [unowned self] in
+                               detail: to.map { "→ \($0.tunnel.address)" + ($0.temporary ? " · temporary" : "") } ?? "", actions: actions, verb: "Forward") { [unowned self] in
                 forward(p, of: s, .none)
             }
         }

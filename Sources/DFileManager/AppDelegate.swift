@@ -916,8 +916,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func joinTerminalTab() {
         let tabs = terminal.joinable
         guard terminal.isShown, !tabs.isEmpty else { return NSSound.beep() }
-        Picker.show(over: window, placeholder: "Show which tab beside this one?", items: tabs.map { g in
-            Picker.Item(title: g.title, subtitle: g.panes.count > 1 ? "\(g.panes.count) panes" : "") { [unowned self] in
+        Picker.show(over: window, placeholder: "Tab", header: "Show which tab beside this one?", items: tabs.map { g in
+            Picker.Item(title: g.title, subtitle: g.panes.count > 1 ? "\(g.panes.count) panes" : "", verb: "Join") { [unowned self] in
                 terminal.join(g)
                 terminal.current.map { window.makeFirstResponder($0.view) }
             }

@@ -1,22 +1,31 @@
 import AppKit
 import DFMCore
 
-/// Fuzzy "type to choose" popup (command palette, folder jump, user menu).
+/// Fuzzy "type to choose" popup (folder jump, user menu, a server's services…): the field — after where its list is
+/// ("web-01 ›") — then a line about the list, the rows, a line saying how the last action went, and the highlighted
+/// row's keys along the bottom ("↩ Status  ⌘L Live Logs  ⌃↩ Actions  ⎋ Close"), each a click away.
 /// ↑↓ move, ↩ runs, ⎋ or clicking elsewhere closes.
 @MainActor
 final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     struct Item {
+        /// A key of the highlighted row besides ↩, its word on the action bar beside it (none: it works, without a
+        /// slot — F3 where ↩ views too). The picker closes first, unless it `keepsOpen`.
+        struct Action {
+            let key: Shortcut
+            let label: String
+            var keepsOpen = false
+            let run: @MainActor () -> Void
+        }
         var title: String
         var subtitle = ""
         var badges: [NSImage] = []   // before the title: a server's chips (`Chip`), a symbol (a tag, a favorite)
         var detail = ""
-        var edit: (@MainActor () -> Void)? = nil   // ⌘E on the highlighted row
-        var keys: [Shortcut: @MainActor () -> Void] = [:]   // more keys on the highlighted row (F3, ⌘⇧D…); the picker closes first
+        var actions: [Action] = []   // the action bar's order
+        var verb = "Open"   // what ↩ does, on the action bar
         var preview: (@MainActor () -> Void)? = nil   // the row got highlighted
         var id = ""   // what `update` finds it by, and what stays highlighted when its row changes
         var subtitleColor: NSColor? = nil   // a state that must show whatever the highlight (a failed service: red)
         var busy = false   // a spinner after the subtitle: something runs on it
-        var keepsOpen: Set<Shortcut> = []   // of `keys` (⌘E too): run with the picker staying open
         var menu: (@MainActor () -> NSMenu?)? = nil   // its context menu: right-click, ⌃-click, ⌃↩ or ⇧F10
         var run: @MainActor () -> Void
     }
@@ -40,6 +49,11 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     private let output = NSButton(title: "Output…", target: nil, action: nil)
     private var showOutput: MenuAction?
     private var holds = 0
+    private let header = NSTextField(labelWithString: "")
+    private let emptyLabel = NSTextField(labelWithString: "")
+    private let emptyText: String
+    private let bar = KeyBarView(chips: false)
+    private let hints: [KeySlot]
 
     /// `rank` scores an item against the query (nil = hide); default fuzzy-matches title + subtitle.
     /// Ties keep the given order, so pass items best-first.
@@ -47,16 +61,20 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     /// the matches instead, so ↩ takes a match (Switch Branch: "conf" switches to a branch, not creates "conf").
     /// `selected`: the row highlighted while nothing is typed. `onDismiss`: closed without choosing.
     /// `query` and `select` (an item's `id`): what was typed and highlighted when it was last open; `onClose` gets them
-    /// as it closes, either way. `highlight`: the highlighted row's color, in place of the system's.
+    /// as it closes, either way. `placeholder`: what to type, no keys. `scope`: where the list is, a chip before the
+    /// field ("web-01 ›", in its place's color). `header`: what's known about the whole list ("52 units · 1 failed").
+    /// `empty`: said when there's nothing at all (else "Nothing here"; "No matches" when typing hid every row).
+    /// `hints`: keys to know that aren't a row's (the user menu's %f), on the action bar before ⎋.
     @discardableResult
-    static func show(over window: NSWindow, placeholder: String, items: [Item], rank: ((Item, String) -> Int?)? = nil,
+    static func show(over window: NSWindow, placeholder: String, scope: (name: String, chips: [Chip])? = nil, header: String? = nil,
+                     empty: String = "Nothing here", hints: [KeySlot] = [], items: [Item], rank: ((Item, String) -> Int?)? = nil,
                      freeText: ((String) -> [Item])? = nil, freeTextLast: Bool = false, selected: Int = 0,
-                     query: String = "", select: String? = nil, highlight: NSColor? = nil,
+                     query: String = "", select: String? = nil,
                      onDismiss: (@MainActor () -> Void)? = nil, onClose: (@MainActor (String, String?) -> Void)? = nil) -> Picker {
         current?.close()
-        let p = Picker(parent: window, placeholder: placeholder, items: items,
+        let p = Picker(parent: window, placeholder: placeholder, scope: scope, header: header, empty: empty, hints: hints, items: items,
                        rank: rank ?? { item, q in Fuzzy.score(q, item.title + " " + item.subtitle) }, freeText: freeText,
-                       freeTextLast: freeTextLast, selected: selected, query: query, select: select, highlight: highlight,
+                       freeTextLast: freeTextLast, selected: selected, query: query, select: select,
                        onDismiss: onDismiss, onClose: onClose)
         current = p
         p.present()
@@ -66,9 +84,9 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     /// Closes the one showing, as ⎋ does (its `onDismiss` runs): one shown while something loads, which failed.
     static func dismiss() { current?.close() }
 
-    private init(parent: NSWindow, placeholder: String, items: [Item], rank: @escaping (Item, String) -> Int?,
-                 freeText: ((String) -> [Item])?, freeTextLast: Bool, selected: Int, query: String, select: String?,
-                 highlight: NSColor?, onDismiss: (@MainActor () -> Void)?, onClose: (@MainActor (String, String?) -> Void)?) {
+    private init(parent: NSWindow, placeholder: String, scope: (name: String, chips: [Chip])?, header: String?, empty: String, hints: [KeySlot],
+                 items: [Item], rank: @escaping (Item, String) -> Int?, freeText: ((String) -> [Item])?, freeTextLast: Bool, selected: Int,
+                 query: String, select: String?, onDismiss: (@MainActor () -> Void)?, onClose: (@MainActor (String, String?) -> Void)?) {
         self.parent = parent
         self.items = items
         self.rank = rank
@@ -78,7 +96,8 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         self.selectID = select
         self.onDismiss = onDismiss
         self.onClose = onClose
-        self.highlight = highlight
+        self.emptyText = empty
+        self.hints = hints
         super.init()
 
         panel.titleVisibility = .hidden
@@ -90,15 +109,18 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
             let key = Shortcut(event: e)   // the physical key: ⌘E is "у" on a Ukrainian layout
             guard let row = highlighted else { return false }
             if Self.menuKeys.contains(key), row.menu != nil { return popUpMenu() }
-            guard let run = row.keys[key] ?? (key == Shortcut("cmd+e") ? row.edit : nil) else { return false }
-            if row.keepsOpen.contains(key) {
-                run()
-                return true
-            }
-            self.onDismiss = nil
-            close()
-            DispatchQueue.main.async { run() }
+            guard let a = row.actions.first(where: { $0.key == key }) else { return false }
+            perform(a)
             return true
+        }
+        bar.keep = ["return", "menu", "esc"]   // a narrow picker keeps ↩, ⌃↩ and ⎋ in sight
+        bar.onRun = { [unowned self] id in   // a slot's click: what its key does
+            switch id {
+            case "return": choose()
+            case "esc": close()
+            case "menu": _ = popUpMenu()
+            default: if let i = Int(id), let a = highlighted?.actions, a.indices.contains(i) { perform(a[i]) }
+            }
         }
 
         field.placeholderString = placeholder
@@ -106,6 +128,20 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         field.bezelStyle = .roundedBezel
         field.focusRingType = .none
         field.delegate = self
+        let top = NSStackView(views: (scope.map { [ScopeChip($0.name, chips: $0.chips)] } ?? []) + [field])
+        top.spacing = 6
+        self.header.stringValue = header ?? ""
+        self.header.font = .systemFont(ofSize: 11.5)
+        self.header.textColor = .secondaryLabelColor
+        self.header.isHidden = header == nil
+        self.header.alignment = .left
+        let head = NSStackView(views: [top, self.header])
+        head.orientation = .vertical
+        head.alignment = .leading
+        head.spacing = 6
+        top.widthAnchor.constraint(equalTo: head.widthAnchor).isActive = true
+        emptyLabel.textColor = .secondaryLabelColor
+        emptyLabel.alignment = .center
 
         let col = NSTableColumn(identifier: .init("item"))
         table.addTableColumn(col)
@@ -137,21 +173,27 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         bottom.isHidden = true
         let bg = NSVisualEffectView()
         bg.material = .popover
-        for v in [field, scroll, bottom] as [NSView] {
+        for v in [head, scroll, emptyLabel, bottom, bar] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             bg.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            field.topAnchor.constraint(equalTo: bg.topAnchor, constant: 14),
-            field.leadingAnchor.constraint(equalTo: bg.leadingAnchor, constant: 12),
-            field.trailingAnchor.constraint(equalTo: bg.trailingAnchor, constant: -12),
-            scroll.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 8),
+            head.topAnchor.constraint(equalTo: bg.topAnchor, constant: 14),
+            head.leadingAnchor.constraint(equalTo: bg.leadingAnchor, constant: 12),
+            head.trailingAnchor.constraint(equalTo: bg.trailingAnchor, constant: -12),
+            scroll.topAnchor.constraint(equalTo: head.bottomAnchor, constant: 8),
             scroll.leadingAnchor.constraint(equalTo: bg.leadingAnchor, constant: 4),
             scroll.trailingAnchor.constraint(equalTo: bg.trailingAnchor, constant: -4),
+            emptyLabel.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
+            emptyLabel.widthAnchor.constraint(lessThanOrEqualTo: scroll.widthAnchor, constant: -24),
             bottom.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 6),
             bottom.leadingAnchor.constraint(equalTo: bg.leadingAnchor, constant: 14),
             bottom.trailingAnchor.constraint(lessThanOrEqualTo: bg.trailingAnchor, constant: -12),
-            bottom.bottomAnchor.constraint(equalTo: bg.bottomAnchor, constant: -8),
+            bar.topAnchor.constraint(equalTo: bottom.bottomAnchor, constant: 4),
+            bar.leadingAnchor.constraint(equalTo: bg.leadingAnchor, constant: 2),
+            bar.trailingAnchor.constraint(equalTo: bg.trailingAnchor, constant: -2),
+            bar.bottomAnchor.constraint(equalTo: bg.bottomAnchor, constant: -2),
         ])
         bottomRow = bottom
         panel.contentView = bg
@@ -159,7 +201,6 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         filter()
     }
 
-    private let highlight: NSColor?
     private var bottomRow: NSStackView?
 
     // MARK: - What a picker that stays open does
@@ -174,6 +215,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         guard let r = shown.firstIndex(where: { $0.id == item.id }) else { return }
         shown[r] = item
         table.reloadData(forRowIndexes: [r], columnIndexes: [0])
+        if r == table.selectedRow { updateBar() }   // its keys may have changed (a run started on it)
     }
 
     func has(_ id: String) -> Bool { items.contains { $0.id == id } }
@@ -183,6 +225,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     func say(_ text: NSAttributedString?, output show: (@MainActor () -> Void)? = nil) {
         footer.attributedStringValue = text ?? NSAttributedString()
         bottomRow?.isHidden = text == nil
+        if items.isEmpty { emptyLabel.isHidden = text != nil }   // "Looking at…" gives way to why it didn't
         output.isHidden = show == nil
         showOutput = show.map { MenuAction.attach(to: output, $0) }
         if let text { NSAccessibility.post(element: panel, notification: .announcementRequested,
@@ -190,6 +233,10 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     }
 
     var said: String { bottomRow?.isHidden == false ? footer.stringValue : "" }
+    /// What the action bar offers now, the highlighted row's keys first; and what's said where there are no rows.
+    var actionBar: [KeySlot] { bar.list ?? [] }
+    var panelBarShown: [KeySlot] { bar.shownSlots }   // tests: what fits, the rest under "+N"
+    var emptySaid: String { emptyLabel.isHidden ? "" : emptyLabel.stringValue }
     var rows: [Item] { shown }   // what's listed now, as typing filtered it
     var highlighted: Item? { shown.indices.contains(table.selectedRow) ? shown[table.selectedRow] : nil }
 
@@ -239,6 +286,25 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         return true
     }
 
+    /// A row's key, pressed or its slot clicked.
+    private func perform(_ a: Item.Action) {
+        if a.keepsOpen { return a.run() }
+        onDismiss = nil
+        close()
+        DispatchQueue.main.async { a.run() }
+    }
+
+    /// ↩ and the highlighted row's keys, its menu if it has one, the picker's hints, ⎋.
+    private func updateBar() {
+        var slots: [KeySlot] = []
+        if let row = highlighted {
+            slots.append(KeySlot(key: "↩", label: row.verb, id: "return"))
+            slots += row.actions.enumerated().filter { !$0.element.label.isEmpty }.map { KeySlot(key: $0.element.key.display, label: $0.element.label, id: "\($0.offset)") }
+            if row.menu != nil { slots.append(KeySlot(key: "⌃↩", label: "Actions", id: "menu")) }
+        }
+        bar.list = slots + hints + [KeySlot(key: "⎋", label: "Close", id: "esc")]
+    }
+
     @objc private func choose() {
         let r = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
         guard shown.indices.contains(r) else { return NSSound.beep() }
@@ -270,6 +336,9 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
             table.selectRowIndexes([first], byExtendingSelection: false)
             table.scrollRowToVisible(first)
         }
+        emptyLabel.stringValue = items.isEmpty ? emptyText : "No matches"
+        emptyLabel.isHidden = !shown.isEmpty
+        updateBar()
     }
 
     // MARK: - Delegates
@@ -303,6 +372,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         if shown.indices.contains(table.selectedRow) { shown[table.selectedRow].preview?() }
+        updateBar()
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { shown.count }
@@ -314,9 +384,6 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         return cell
     }
 
-    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        highlight.map { color in tableView.makeView(withIdentifier: .init("row"), owner: nil) as? HighlightRow ?? HighlightRow(color) }
-    }
 }
 
 /// The table of a picker: a row's context menu, after it's highlighted.
@@ -327,27 +394,34 @@ final class PickerTable: NSTableView {
     }
 }
 
-/// A highlighted row in a color of its own: a light fill with an outline — the shape tells it too, not the color
-/// alone — whose text stays as it is (a failed state's red stays red). Stronger with Increase Contrast.
-final class HighlightRow: NSTableRowView {
+/// "web-01 ›" before a Picker's field: where its list is, in that place's color (production's purple, root's orange),
+/// its chips after the name — the word, not the color alone.
+final class ScopeChip: NSView {
+    private let text: NSAttributedString
     private let color: NSColor
-    init(_ color: NSColor) {
-        self.color = color
+
+    init(_ name: String, chips: [Chip]) {
+        color = Chip.tint(chips) ?? .labelColor   // secondary text all but goes on the popover
+        let font = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
+        let t = NSMutableAttributedString(string: name.bidiVisible + " ", attributes: [.font: font, .foregroundColor: color])
+        for c in chips { t.append(c.text); t.append(NSAttributedString(string: " ")) }
+        t.append(NSAttributedString(string: "›", attributes: [.font: font, .foregroundColor: color]))
+        text = t
         super.init(frame: .zero)
-        identifier = .init("row")
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel(([name] + chips.map(\.spoken)).joined(separator: ", "))
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }   // dark text on the light fill
-    override func drawSelection(in dirtyRect: NSRect) {
-        let contrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 1.5), xRadius: 5, yRadius: 5)
-        color.withAlphaComponent(contrast ? 0.35 : dark ? 0.26 : 0.18).setFill()
-        shape.fill()
-        color.withAlphaComponent(contrast ? 1 : 0.7).setStroke()
-        shape.lineWidth = contrast ? 2 : 1
-        shape.stroke()
+    override var intrinsicContentSize: NSSize { NSSize(width: ceil(text.size().width) + 16, height: 24) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        color.withAlphaComponent(0.14).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+        text.draw(at: NSPoint(x: 8, y: (bounds.height - text.size().height) / 2))
     }
 }
 
@@ -406,13 +480,24 @@ final class PickerCell: NSTableCellView {
     func show(title t: String, subtitle: String, detail d: String, subtitleColor: NSColor? = nil, busy: Bool = false, badges: [NSImage] = []) {
         lead.arrangedSubviews.dropLast().forEach { $0.removeFromSuperview() }
         for (i, b) in badges.enumerated() { lead.insertArrangedSubview(NSImageView(image: b), at: i) }
-        let s = NSMutableAttributedString(string: t, attributes: [.font: NSFont.systemFont(ofSize: 13)])
-        if !subtitle.isEmpty {
-            s.append(NSAttributedString(string: "   " + subtitle, attributes: [
-                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: subtitleColor ?? NSColor.secondaryLabelColor]))
-        }
-        title.attributedStringValue = s
+        texts = (t, subtitle, subtitleColor)
+        paint()
         detail.stringValue = d
         if busy { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+    }
+
+    private var texts: (title: String, subtitle: String, color: NSColor?) = ("", "", nil)
+    override var backgroundStyle: NSView.BackgroundStyle { didSet { paint() } }
+
+    /// On the system's highlight all of it in its text color — a failed state's red too (its ◆ still says so).
+    private func paint() {
+        let on = backgroundStyle == .emphasized, white = NSColor.alternateSelectedControlTextColor
+        let s = NSMutableAttributedString(string: texts.title, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: on ? white : .labelColor])
+        if !texts.subtitle.isEmpty {
+            s.append(NSAttributedString(string: "   " + texts.subtitle, attributes: [
+                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: on ? white.withAlphaComponent(0.8) : texts.color ?? NSColor.secondaryLabelColor]))
+        }
+        title.attributedStringValue = s
+        detail.textColor = on ? white.withAlphaComponent(0.8) : .secondaryLabelColor
     }
 }

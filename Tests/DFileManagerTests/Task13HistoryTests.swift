@@ -119,8 +119,9 @@ extension ServerCopiesTests {
     var ran: [String] = [], dismissed = 0
     func show() -> KeyPanel {
         Picker.show(over: window, placeholder: "", items: ["a", "b"].map { n in
-            Picker.Item(title: n, keys: [Shortcut("f3")!: { ran.append("view \(n)") }, Shortcut("cmd+shift+d")!: { ran.append("diff \(n)") },
-                                         Shortcut("cmd+r")!: { ran.append("revert \(n)") }]) { ran.append("run \(n)") }
+            Picker.Item(title: n, actions: [.init(key: Shortcut("f3")!, label: "") { ran.append("view \(n)") },
+                                            .init(key: Shortcut("cmd+shift+d")!, label: "Diff") { ran.append("diff \(n)") },
+                                            .init(key: Shortcut("cmd+r")!, label: "Revert") { ran.append("revert \(n)") }]) { ran.append("run \(n)") }
         }, onDismiss: { dismissed += 1 })
         let panel = Picker.current!.panel
         (panel.contentView?.subviews.compactMap { $0 as? NSScrollView }.first?.documentView as? NSTableView)?.selectRowIndexes([1], byExtendingSelection: false)
