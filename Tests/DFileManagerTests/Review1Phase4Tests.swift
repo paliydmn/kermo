@@ -111,7 +111,7 @@ private func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? N
     defer { panel.shutdown() }
     #expect(panel.filterField.placeholderString == "Filter: text, *.log or re:regex")
     #expect(PanelViewController.filterKeys.map(\.key) == ["↩", "↓", "⎋"] && PanelViewController.filterKeys.map(\.label) == ["Keep", "Back to List", "Clear"])
-    #expect(KeyHelp.fieldKeys.map(\.title) == ["Command Line", "Quick Filter"], "F1 lists them too, in the bar's words")
+    #expect(KeyHelp.fieldKeys.map(\.title) == ["Command Line", "Quick Filter", "Path Bar"], "F1 lists them too, in the bar's words")
     #expect(KeyHelp.fieldKeys[1].rows.map(\.title) == ["Keep", "Back to List", "Clear"] && KeyHelp.fieldKeys[1].rows.map(\.keys) == ["↩", "↓", "⎋"])
     let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: true)
     w.contentView = panel.view
@@ -221,4 +221,94 @@ private func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? N
     defer { failed.shutdown() }
     await until { said != nil }
     #expect(said?.title == "Can't read this folder" && said?.symbol == .warn && said?.keys.map(\.id) == ["view.refresh"])
+}
+
+/// R-22, §11 decision 3: the path bar is crumbs — "/" or "~" first, each part going where it says; in a narrow panel
+/// the middle gives way to "…", never the start.
+@MainActor @Test func thePathBarIsCrumbs() {
+    #expect(PanelViewController.crumbs("/etc/nginx") == [.init(title: "/", path: "/"), .init(title: "etc", path: "/etc"), .init(title: "nginx", path: "/etc/nginx")])
+    #expect(PanelViewController.crumbs("/") == [.init(title: "/", path: "/")])
+    let home = NSHomeDirectory()
+    #expect(PanelViewController.crumbs(home + "/Projects/site", home: true)
+            == [.init(title: "~", path: home), .init(title: "Projects", path: home + "/Projects"), .init(title: "site", path: home + "/Projects/site")])
+    #expect(PanelViewController.crumbs(home + "/x", home: false).first == .init(title: "/", path: "/"), "a server's home is no ~")
+    #expect(PanelViewController.crumbs("a/b", inside: true) == [.init(title: "a", path: "a"), .init(title: "b", path: "a/b")])
+    let six: [CGFloat] = [50, 50, 50, 50, 50, 50]
+    #expect(CrumbRow.fit(six, separator: 10, ellipsis: 10, room: 400) == [0, 1, 2, 3, 4, 5])
+    #expect(CrumbRow.fit(six, separator: 10, ellipsis: 10, room: 200) == [0, nil, 4, 5], "the middle goes, from the start's side")
+    #expect(CrumbRow.fit(six, separator: 10, ellipsis: 10, room: 20) == [0, nil, 5], "the first and the last at least")
+    #expect(CrumbRow.fit([50, 300], separator: 10, ellipsis: 10, room: 100) == [0, 1], "two: the last is cut at its end")
+    #expect(PanelViewController.scpPath(SFTPTarget(host: "deploy@web-01").asRoot(), "/var/www/site") == "deploy@web-01:/var/www/site", "the user's, also from a root panel")
+}
+
+/// A crumb's click goes there, the cursor on the folder you came from; the bar says it in a narrow panel too. A click on
+/// an empty spot is ⌘L — the plain path, all of it selected — and ⎋ brings the crumbs back. Copy copies the full path.
+@MainActor @Test func aCrumbGoesThereAndAnEmptySpotTypesAPath() async throws {
+    _ = NSApplication.shared
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    try FileManager.default.createDirectory(atPath: dir + "/a/b", withIntermediateDirectories: true)
+    let panel = PanelViewController(tabs: [dir + "/a/b"], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    await until { panel.path == dir + "/a/b" && panel.pathBar.crumbs.last?.title == "b" }
+    #expect(panel.pathBar.crumbs.first?.title == "/" && panel.pathBar.crumbs.map(\.title).suffix(2) == ["a", "b"])
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 220, height: 300), styleMask: [.titled], backing: .buffered, defer: true)
+    w.contentView = panel.view
+    panel.view.layoutSubtreeIfNeeded()
+    let shown = panel.pathBar.shownCrumbs
+    #expect(shown.first == "/" && shown.contains("…") && shown.last == "b", "narrow: \(shown)")
+
+    let pb = NSPasteboard(name: .init("dfm-r1p4-" + UUID().uuidString))
+    defer { pb.releaseGlobally() }
+    panel.copyPath(scp: false, to: pb)
+    #expect(pb.string(forType: .string) == dir + "/a/b", "the full path, not ~")
+    panel.pathBar.copied()
+    #expect(panel.pathBar.showsCopied)
+    await until { !panel.pathBar.showsCopied }
+    #expect(!panel.pathBar.showsCopied, "back after a second")
+
+    panel.pathBar.click(panel.pathBar.crumbs.count - 2)   // "a"
+    await until { panel.path == dir + "/a" }
+    #expect(panel.path == dir + "/a" && panel.currentName == "b", "up, the cursor on where it came from")
+
+    let down = try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: w.windowNumber,
+                                               context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    panel.pathBar.mouseDown(with: down)   // an empty spot
+    #expect(panel.pathBar.editing && panel.pathBar.field.stringValue == dir + "/a/" && w.firstResponder === panel.pathBar.field.currentEditor())
+    let app = AppDelegate()
+    app.window = w
+    app.panels = [panel]
+    defer { app.window = nil }
+    #expect(app.focusedKeys == PanelViewController.pathKeys && PanelViewController.pathKeys.map(\.label) == ["Go", "Complete", "Back to Panel"])
+    #expect(panel.control(panel.pathBar.field, textView: NSTextView(), doCommandBy: #selector(NSResponder.cancelOperation(_:))))
+    #expect(!panel.pathBar.editing && w.firstResponder === panel.table, "⎋: the crumbs back")
+    panel.beginPathEditing()   // ⌘L: the same
+    #expect(panel.pathBar.editing)
+}
+
+/// On a server: the crumbs are its folders, Copy gives its path, ⌥ `user@host:path`; a filter kept after ↩ is a chip at
+/// the bar's right end.
+@MainActor @Test func aServersPathBarAndAKeptFilter() async throws {
+    let dir = try tempDir(["x.log", "y.txt"])
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    panel.loadRemote(.local(), dir: dir, select: nil)
+    await until { panel.remote?.dir == dir && panel.listedItems.count == 2 }
+    #expect(panel.pathBar.crumbs.last == .init(title: (dir as NSString).lastPathComponent, path: dir) && panel.headerText == "localhost:\(dir)")
+    let pb = NSPasteboard(name: .init("dfm-r1p4-" + UUID().uuidString))
+    defer { pb.releaseGlobally() }
+    panel.copyPath(scp: false, to: pb)
+    #expect(pb.string(forType: .string) == dir)
+    panel.copyPath(scp: true, to: pb)
+    #expect(pb.string(forType: .string) == "localhost:\(dir)")
+
+    #expect(panel.pathBar.filter == nil)
+    panel.applyFilter("*.log")
+    panel.confirmFilter()
+    #expect(panel.pathBar.filter == "*.log", "kept: a chip")
+    panel.filterKey("filter.clear")
+    #expect(panel.pathBar.filter == nil)
 }

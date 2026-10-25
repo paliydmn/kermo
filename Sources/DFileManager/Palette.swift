@@ -28,12 +28,12 @@ enum Palette {
 /// SF Symbols 4 or older (macOS 13), below Kermo's macOS 14.
 enum Symbol: String, CaseIterable {
     // places
-    case server = "server.rack", ssh = "apple.terminal", folder, recent = "clock", network, archive = "archivebox",
+    case server = "server.rack", mac = "laptopcomputer", ssh = "apple.terminal", folder, recent = "clock", network, archive = "archivebox",
          search = "magnifyingglass", internalDisk = "internaldrive", externalDisk = "externaldrive", tag
     // marks
     case lock = "lock.fill", root = "number", branch = "arrow.triangle.branch", tunnel = "arrow.left.arrow.right",
          notPublished = "icloud.and.arrow.up", sync = "arrow.triangle.2.circlepath", changes = "plusminus",
-         activity = "clock.arrow.circlepath", star, add = "plus.circle", eject, refresh = "arrow.clockwise"
+         activity = "clock.arrow.circlepath", star, add = "plus.circle", eject, refresh = "arrow.clockwise", filter = "line.3.horizontal.decrease"
     // states and results
     case check = "checkmark", warn = "exclamationmark.triangle", warnFill = "exclamationmark.triangle.fill",
          failed = "xmark.circle", dot = "circle.fill", ring = "circle", diamond = "diamond.fill", pending = "circle.dotted"

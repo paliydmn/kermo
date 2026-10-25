@@ -17,27 +17,25 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var isTarget = false { didSet { styleHeader() } }
 
     /// The active panel: a line under its path bar in its place's color (`placeTint`), its path in full contrast; the
-    /// others' path dimmed. Before the path: what kind of place it is (a server, an archive, search results) and a
-    /// server's chips.
+    /// others' path dimmed. Before the path: the place's chip — `Mac`, a server by its name with its chips, an archive,
+    /// search results.
     private func styleHeader() {
         let place = remote ?? parked
-        let kind: (Symbol, String)? = searchTitle != nil ? (.search, "Search results") : archive != nil ? (.archive, "Archive") : place != nil ? (.server, "Server") : nil
-        placeIcon.image = kind.map { $0.0.image($0.1) }
-        placeIcon.isHidden = kind == nil
-        placeIcon.contentTintColor = isActive ? theme.text : theme.hidden
         let chips = searchTitle == nil && archive == nil ? place.map { Chip.of($0.target) } ?? [] : []
-        if chips != headerChips {
-            headerChips = chips
-            chipRow.arrangedSubviews.forEach { $0.removeFromSuperview() }
-            chips.forEach { chipRow.addArrangedSubview(NSImageView(image: $0.image)) }
-        }
-        chipRow.isHidden = chips.isEmpty
-        pathField.textColor = isActive ? theme.text : theme.hidden
+        headerChips = chips
+        if searchTitle != nil { pathBar.showPlace(.search, "", chips: [], scp: nil) }
+        else if archive != nil { pathBar.showPlace(.archive, "", chips: [], scp: nil) }
+        else if let p = place { pathBar.showPlace(.server, SavedServer.name(for: p.target.asUser), chips: chips, scp: Self.scpPath(p.target, p.dir)) }
+        else { pathBar.showPlace(.mac, "Mac", chips: [], scp: nil) }
+        pathBar.style(text: isActive ? theme.text : theme.hidden, mono: theme.mono)
         pathBar.line = isActive ? placeTint : nil
         targetMark.isHidden = !isTarget
         if isTarget { targetMark.image = Self.targetMark(placeTint) }
     }
     var targetMarkShown: Bool { !targetMark.isHidden }   // tests
+
+    /// A server folder as scp and rsync take it: `deploy@web-01:/var/www/site` — the user's, also from a root panel.
+    static func scpPath(_ t: SFTPTarget, _ dir: String) -> String { "\(t.asUser.host):\(dir)" }
 
     /// "→ F5" outlined in `color`: drawn each time it shows, so it follows light and dark.
     private static func targetMark(_ color: NSColor) -> NSImage {
@@ -76,13 +74,15 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var peekedText: String? { textPeek?.isHidden == false ? textPeek?.textView.string : nil }   // tests
 
     let tabBar = NSStackView()   // one button per tab, each with a close × (internal: tests read it)
-    private let pathField = NSTextField(string: "")
-    private let placeIcon = NSImageView()   // before the path: a server, an archive, search results
-    private let chipRow = NSStackView()   // then a server's chips
+    let pathBar = PathBar()   // internal: tests click its crumbs
+    private var pathField: NSTextField { pathBar.field }
     /// With 3–4 panels, at the end of the path bar of the one F5/F6 go to (`isTarget`).
-    private let targetMark = NSImageView()
-    private let pathBar = LinedStack()   // the four, over the active panel's line
+    private var targetMark: NSImageView { pathBar.targetMark }
     private(set) var headerChips: [Chip] = []
+    /// What the path bar says, as one line: "web1:/etc/nginx", "~/Projects/site", search results' title (tests).
+    private(set) var headerText = ""
+    /// ⌥-click on a crumb: that folder in the other panel — here, or on this panel's server.
+    var onOpenInOther: ((String, SFTPTarget?) -> Void)?
     let filterField = NSTextField(string: "")   // internal: tests type into it
     private let statusLabel = NSTextField(labelWithString: "")
     private let errorIcon = NSImageView(image: Symbol.warnFill.image("Error"))
@@ -425,7 +425,6 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             f.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
             f.delegate = self
         }
-        pathField.lineBreakMode = .byTruncatingHead
         filterField.placeholderString = "Filter: text, *.log or re:regex"
         filterField.isHidden = true
         statusLabel.lineBreakMode = .byTruncatingTail
@@ -435,14 +434,21 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         statusChips.lineBreakMode = .byTruncatingHead   // narrow, the chips give way before what's on the left
         statusChips.setContentCompressionResistancePriority(.init(260), for: .horizontal)
 
-        placeIcon.symbolConfiguration = .init(pointSize: 11, weight: .medium)
-        chipRow.spacing = 3
-        targetMark.toolTip = "F5 / F6 copy and move here"
-        targetMark.setContentCompressionResistancePriority(.required, for: .horizontal)
-        [placeIcon, chipRow, pathField, targetMark].forEach(pathBar.addArrangedSubview)
-        pathBar.spacing = 4
-        pathBar.edgeInsets = NSEdgeInsets(top: 0, left: 3, bottom: 4, right: 0)   // the line's room
-        pathField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        pathBar.onEdit = { [unowned self] in beginPathEditing() }
+        pathBar.onCrumb = { [unowned self] in goTo($0, otherPanel: $1.contains(.option)) }
+        pathBar.onCopy = { [unowned self] in copyPath(scp: $0) }
+        pathBar.onFilter = { [unowned self] in beginFilter() }
+        pathBar.validateDrop = { [unowned self] crumb, info in
+            guard archive == nil, parked == nil, searchTitle == nil, let dir = crumb.path, let items = Self.dropped(info) else { return [] }
+            return Self.dragOperation(info, items: items, to: endpoint, target: dir)
+        }
+        pathBar.acceptDrop = { [unowned self] crumb, info in   // as a drop on a folder's row
+            guard archive == nil, parked == nil, searchTitle == nil, let dir = crumb.path, let items = Self.dropped(info) else { return false }
+            let operation = Self.dragOperation(info, items: items, to: endpoint, target: dir)
+            guard !operation.isEmpty else { return false }
+            onTransfer?(items, endpoint, dir, operation == .move)
+            return true
+        }
         let header = Self.column([tabBar, pathBar])
         spinner.style = .spinning
         spinner.controlSize = .small
@@ -647,7 +653,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                     if select == nil, old.hasPrefix(newPath == "/" ? "/" : newPath + "/") {
                         select = String(old.dropFirst(newPath == "/" ? 1 : newPath.count + 1).split(separator: "/").first ?? "")
                     }
-                    if view.window?.firstResponder !== pathField.currentEditor() { showPath() } else { styleHeader() }
+                    if pathField.currentEditor().map({ $0 === view.window?.firstResponder }) == true { styleHeader() } else { showPath() }   // typed in: kept
                     loadSort(for: newPath)
                     watch()
                     updateTabBar()
@@ -870,6 +876,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let cancellable = busyMessage?.hasSuffix(" ⎋ cancels") == true
         cancelButton.isHidden = !cancellable
         backButton.isHidden = searchTitle == nil
+        showFilterChip()
         if let busyMessage { return say(cancellable ? String(busyMessage.dropLast(" ⎋ cancels".count)) : busyMessage) }
         // A message just flashed stays its time through a re-list, a git status or a folder size coming in.
         if let f = flashed, f.until > Date() { statusError = f.error; return say(f.text) }
@@ -1266,6 +1273,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// ↩ or ↓ in the quick filter: back to the list, the cursor on the first match if it was on ".." (MC, TC).
     func confirmFilter() {
         view.window?.makeFirstResponder(table)
+        showFilterChip()
         if !rows.isEmpty, item(at: max(table.selectedRow, 0)) == nil { moveCursor(to: hasParent ? 1 : 0) }
     }
 
@@ -2009,7 +2017,6 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// Visible items (after hidden/filter), for cross-panel features like Compare Folders.
     var listedItems: [FileItem] { rows }
     var markedNames: Set<String> { Set(marked.names) }
-    var headerText: String { pathField.stringValue }
     var statusText: String { statusLabel.stringValue }
     var statusAttributed: NSAttributedString { statusLabel.attributedStringValue }   // tests
 
@@ -2153,16 +2160,64 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// The header: search results' title, "archive/inner", "host:/dir" on a server ("root@host:/dir" on a root panel), else the
     /// local folder — after a symbol of the place and its chips (`styleHeader`). Also what ⎋ in the path field brings back.
     func showPath() {
-        pathField.stringValue = if let t = searchTitle { t }
+        headerText = if let t = searchTitle { t }
             else if let a = archive { (a.index.file as NSString).abbreviatingWithTildeInPath + (a.inner.isEmpty ? "" : "/" + a.inner) }
             else if let r = remote ?? parked { "\(r.target.shown):\(r.dir)" }
             else { (path as NSString).abbreviatingWithTildeInPath }
+        pathBar.crumbs = if let t = searchTitle { [PathBar.Crumb(title: t, path: nil)] }
+            else if let a = archive {   // the archive is its root; the folders inside it after
+                [PathBar.Crumb(title: (a.index.file as NSString).lastPathComponent, path: "")] + Self.crumbs(a.inner, inside: true)
+            } else if let p = parked { Self.crumbs(p.dir).map { PathBar.Crumb(title: $0.title, path: nil) } }   // nothing sent till ↩
+            else { Self.crumbs(remote?.dir ?? path, home: remote == nil) }
+        pathBar.editing = false
         styleHeader()
+    }
+
+    /// A path's crumbs, each with where it goes: "/", "etc", "nginx"; a local one under the home folder from "~".
+    /// `inside`: an archive's inner path, relative ("" its root).
+    static func crumbs(_ path: String, home: Bool = false, inside: Bool = false) -> [PathBar.Crumb] {
+        let tilde = home ? (path as NSString).abbreviatingWithTildeInPath : path
+        var out: [PathBar.Crumb] = []
+        var at = inside ? "" : tilde.hasPrefix("~") ? NSHomeDirectory() : "/"
+        if !inside { out.append(.init(title: tilde.hasPrefix("~") ? "~" : "/", path: at)) }
+        for part in tilde.split(separator: "/").dropFirst(tilde.hasPrefix("~") ? 1 : 0) {
+            at = at.isEmpty ? String(part) : (at as NSString).appendingPathComponent(String(part))
+            out.append(.init(title: String(part), path: at))
+        }
+        return out
+    }
+
+    /// A crumb clicked: that folder here — the cursor on where you came from — or (⌥) in the other panel.
+    func goTo(_ crumb: PathBar.Crumb, otherPanel: Bool) {
+        guard let dir = crumb.path else { return }
+        if otherPanel, archive == nil { return onOpenInOther?(dir, remote?.target) ?? () }
+        onFocus?()
+        func child(of dir: String, in here: String) -> String? {
+            let prefix = dir.isEmpty || dir == "/" ? dir : dir + "/"
+            return here.hasPrefix(prefix) && here != dir ? here.dropFirst(prefix.count).split(separator: "/").first.map(String.init) : nil
+        }
+        if let a = archive {
+            archive!.inner = dir
+            return showArchive(select: child(of: dir, in: a.inner))
+        }
+        if let r = remote { return loadRemote(r.target, dir: dir, select: child(of: dir, in: r.dir)) }
+        navigate(to: dir)   // coming up, it lands on the folder it came from
+    }
+
+    /// Copy at the path bar's end: the folder's full path — here `/Users/…`, not `~`; on a server its path there, or
+    /// (`scp`) `user@host:path`. What ⇧⌘C copies for the folder, one line.
+    func copyPath(scp: Bool, to pasteboard: NSPasteboard = .general) {
+        let text: String
+        if let r = remote, scp { text = Self.scpPath(r.target, r.dir) }
+        else { text = archive?.index.file ?? remote?.dir ?? parked?.dir ?? path }
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 
     func beginPathEditing() {
         completions = nil
         onFocus?()
+        pathBar.editing = true
         view.window?.makeFirstResponder(pathField)
         pathField.stringValue = remote.map { $0.dir == "/" ? "/" : $0.dir + "/" } ?? (path as NSString).abbreviatingWithTildeInPath + (hasParent ? "/" : "")
         pathField.currentEditor()?.selectAll(nil)   // typing replaces the path; End, then a name, goes below it
@@ -2171,7 +2226,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     func beginFilter() {
         filterField.isHidden = false
         view.window?.makeFirstResponder(filterField)
+        showFilterChip()
     }
+
+    /// A filter kept after ↩ is a chip at the path bar's right end; while it's typed, the field says it.
+    private func showFilterChip() { pathBar.filter = filter != nil && !filterFocused ? filterField.stringValue : nil }
 
     /// Applies a filter as if typed and confirmed (Filter Presets).
     func applyFilter(_ text: String) {
@@ -2193,6 +2252,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         filterField.stringValue = ""
         filterField.isHidden = true
         filter = nil
+        showFilterChip()
         if apply { applyView(select: currentName) }
     }
 
@@ -2207,9 +2267,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     func controlTextDidEndEditing(_ obj: Notification) {
         if obj.object as? NSTextField === pathField {
             completing?.cancel()
-            showPath()
+            showPath()   // the crumbs back
         } else if filter == nil {
             filterField.isHidden = true
+        } else {
+            showFilterChip()
         }
     }
 
@@ -2244,14 +2306,38 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             }
             return true
         }
-        switch sel {
-        case #selector(NSResponder.insertNewline(_:)) where remote != nil:   // a path on the server
+        let key: String? = switch sel {
+        case #selector(NSResponder.insertNewline(_:)): "path.go"
+        case #selector(NSResponder.cancelOperation(_:)): "path.back"
+        case #selector(NSResponder.insertTab(_:)): "path.complete"
+        default: nil
+        }
+        guard let key else { return false }
+        pathKey(key, textView)
+        return true
+    }
+
+    /// The path field's keys (⌘L, a click on an empty spot of the path bar), as `control(_:textView:doCommandBy:)` takes
+    /// them: the key bar while it has the focus. A slot's click runs `pathKey`, as the key.
+    static let pathKeys = [KeySlot(key: "↩", label: "Go", id: "path.go"), KeySlot(key: "⇥", label: "Complete", id: "path.complete"),
+                           KeySlot(key: "⎋", label: "Back to Panel", id: "path.back")]
+
+    var pathFocused: Bool { pathField.currentEditor().map { $0 === view.window?.firstResponder } ?? false }
+
+    /// What a key of the quick filter or the path field does — pressed there, or its slot clicked.
+    func fieldKey(_ id: String) {
+        if id.hasPrefix("filter.") { return filterKey(id) }
+        if let tv = pathField.currentEditor() as? NSTextView { pathKey(id, tv) }
+    }
+
+    private func pathKey(_ id: String, _ textView: NSTextView) {
+        switch id {
+        case "path.go" where remote != nil:   // a path on the server
             let r = remote!, typed = textView.string
             let dir = ((typed.hasPrefix("/") ? typed : (r.dir as NSString).appendingPathComponent(typed)) as NSString).standardizingPath
             view.window?.makeFirstResponder(table)
             loadRemote(r.target, dir: dir, select: nil) { [weak self] in self?.flash($0.localizedDescription, error: true) }
-            return true
-        case #selector(NSResponder.insertNewline(_:)):
+        case "path.go":
             let target = resolve(textView.string), gen = moves
             Task { [weak self] in
                 let isDir = await Blocking.run(.userInitiated) { () -> Bool? in   // off the main thread, as ↩ on a link
@@ -2267,15 +2353,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 else { navigate(to: (target as NSString).deletingLastPathComponent, select: (target as NSString).lastPathComponent) }
                 view.window?.makeFirstResponder(table)
             }
-            return true
-        case #selector(NSResponder.cancelOperation(_:)):
-            view.window?.makeFirstResponder(table)
-            return true
-        case #selector(NSResponder.insertTab(_:)):
-            complete(textView)
-            return true
-        default:
-            return false
+        case "path.back": view.window?.makeFirstResponder(table)
+        case "path.complete": complete(textView)
+        default: break
         }
     }
 
@@ -3024,7 +3104,7 @@ struct DateColumn: Equatable {
 
 /// A row of views over a 2 pt line in `line`'s color along its foot (the active panel's path bar), drawn each time so
 /// it follows light and dark.
-final class LinedStack: NSStackView {
+class LinedStack: NSStackView {
     var line: NSColor? { didSet { if line != oldValue { needsDisplay = true } } }
     override func draw(_ dirtyRect: NSRect) {
         line?.setFill()

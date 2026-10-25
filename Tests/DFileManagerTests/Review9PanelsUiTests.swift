@@ -66,7 +66,7 @@ private func pathCommand(_ panel: PanelViewController, _ text: String, _ sel: Se
     #expect(panel.path == dir)
 }
 
-/// ⎋ in the path field brings back the 🔍 / 📦 header, not the folder behind the results.
+/// ⎋ in the path field brings back the search / archive header, not the folder behind the results.
 @MainActor @Test func escapeRestoresTheSearchAndArchiveHeaders() async throws {
     let dir = try tempDir(["f"])
     defer { try? FileManager.default.removeItem(atPath: dir) }
@@ -77,7 +77,7 @@ private func pathCommand(_ panel: PanelViewController, _ text: String, _ sel: Se
     _ = panel.beginSearch("*.log in \(dir)")
     #expect(panel.headerText == "*.log in \(dir)")
     panel.beginPathEditing()
-    #expect(panel.headerText == dir + "/")
+    #expect(panel.pathBar.field.stringValue == dir + "/")
     pathCommand(panel, dir + "/", #selector(NSResponder.cancelOperation(_:)))
     #expect(panel.headerText == "*.log in \(dir)")
     panel.goUp()   // leaves the results

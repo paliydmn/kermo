@@ -465,6 +465,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func wire(_ panel: PanelViewController) {
         panel.showPerms = defaults.bool(forKey: "showPerms")
         panel.keyFor = { [unowned self] id in commands.first { $0.id == id }?.keys.first?.display }
+        panel.onOpenInOther = { [unowned self, unowned panel] dir, server in   // the active panel's other; from another panel, the active one
+            let to = panel === active ? other : active
+            if let server { to.loadRemote(server, dir: dir, select: nil) } else { to.navigate(to: dir) }
+        }
         panel.onFocus = { [unowned self, unowned panel] in activate(panel) }
         panel.onCommandKey = { [unowned self] in runKey($0) }
         panel.onCommand = { [unowned self] in run($0) }
@@ -1155,7 +1159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let bar = keyBar
         bar.onRun = { [unowned self] id in
             if keyBar.list == nil { return run(id) }
-            if let p = panels.first(where: \.filterFocused) { p.filterKey(id) } else { commandLineKey(id) }
+            if let p = panels.first(where: { $0.filterFocused || $0.pathFocused }) { p.fieldKey(id) } else { commandLineKey(id) }
         }
         bar.onMore = { [unowned self] m in   // the terminal's keys, at rest all of them: none there is a bare F-key
             let shown = terminal.isShown ? Self.terminalCommands.compactMap { id in commands.first { $0.id == id } } : commands
@@ -1379,6 +1383,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// nil: the panels' (or the terminal's).
     var focusedKeys: [KeySlot]? {
         if commandLineFocused { return Self.commandLineKeys(root: (active.remote ?? active.parked).flatMap { $0.target.sudo ? $0.target : nil }) }
+        if panels.contains(where: \.pathFocused) { return PanelViewController.pathKeys }
         return panels.contains(where: \.filterFocused) ? PanelViewController.filterKeys : nil
     }
 

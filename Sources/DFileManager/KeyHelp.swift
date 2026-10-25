@@ -45,7 +45,7 @@ final class KeyHelp: NSObject, NSSearchFieldDelegate {
     /// The keys of the main window's text fields, as their key bar shows them while they have the focus (F1 doesn't
     /// come there: a field takes F1 for itself).
     static var fieldKeys: [Section] {
-        [("Command Line", AppDelegate.commandLineKeys), ("Quick Filter", PanelViewController.filterKeys)].map { title, slots in
+        [("Command Line", AppDelegate.commandLineKeys), ("Quick Filter", PanelViewController.filterKeys), ("Path Bar", PanelViewController.pathKeys)].map { title, slots in
             (title, slots.map { ($0.label, $0.key) })
         }
     }
