@@ -45,3 +45,20 @@ private let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
     #expect(StateMark.failed.color == Palette.fail && StateMark.on.color == Palette.ok && StateMark.failed.image("failed").accessibilityDescription == "failed")
 }
 
+
+/// The Modified column: today's and yesterday's by those words — from midnight to midnight — this year's by month and
+/// day, older by the ISO day; `isoDates` keeps the old "2026-10-25 13:33" everywhere.
+@Test func datesSayTodayYesterdayThenTheDay() {
+    let cal = Calendar.current
+    func at(_ m: Int, _ d: Int, _ h: Int, _ min: Int, year: Int = 2026) -> Date { cal.date(from: DateComponents(year: year, month: m, day: d, hour: h, minute: min))! }
+    let c = DateColumn(at(10, 25, 14, 0), iso: false)
+    #expect(c.text(at(10, 25, 0, 0)).hasPrefix("Today ") && c.text(at(10, 25, 23, 59)).hasPrefix("Today "))
+    #expect(c.text(at(10, 24, 0, 0)).hasPrefix("Yesterday ") && c.text(at(10, 24, 23, 59)).hasPrefix("Yesterday "))
+    let before = c.text(at(10, 23, 23, 59))
+    #expect(!before.hasPrefix("Yesterday") && !before.hasPrefix("2026") && before.contains("23"), "\(before)")
+    #expect(!c.text(at(1, 1, 0, 0)).hasPrefix("2026"), "this year's: month and day")
+    #expect(c.text(at(12, 31, 23, 59, year: 2025)) == "2025-12-31" && c.text(at(1, 1, 0, 0, year: 2027)) == "2027-01-01")
+    #expect(!c.text(at(10, 26, 9, 0)).hasPrefix("Today"), "tomorrow (a clock ahead) isn't today")
+    #expect(DateColumn(at(10, 25, 14, 0), iso: true).text(at(10, 25, 13, 33)) == "2026-10-25 13:33")
+    #expect(DateColumn(at(10, 25, 23, 59), iso: false) != DateColumn(at(10, 26, 0, 0), iso: false), "a new day: the column is drawn again")
+}

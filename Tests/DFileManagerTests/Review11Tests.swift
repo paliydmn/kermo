@@ -315,7 +315,7 @@ private func tempDir() -> String {
     #expect(v.window?.subtitle.contains("LINES WITH “77777” IN THE LAST \(fmt) ONLY") == true, "\(v.window?.subtitle ?? "")")
 }
 
-/// N4 (decided): on this Mac too, a link to a folder sorts with the folders and reads <DIR> once its target is known.
+/// N4 (decided): on this Mac too, a link to a folder sorts with the folders and, as a folder, has no size till measured.
 @MainActor @Test func localLinksToFoldersSortWithFolders() async throws {
     let d = tempDir()
     defer { try? FileManager.default.removeItem(atPath: d) }
@@ -327,7 +327,8 @@ private func tempDir() -> String {
     defer { panel.shutdown() }
     await waitUntil { names(panel) == ["bin", "zdir", "a.txt"] }
     #expect(names(panel) == ["bin", "zdir", "a.txt"])
-    #expect(PanelViewController.sizeText(try #require(panel.item(at: 1)), measured: nil) == "<DIR>")
+    let link = try #require(panel.item(at: 1))
+    #expect(link.linkDir && PanelViewController.sizeText(link, measured: nil) == "")
 }
 
 /// N12 (decided): & on a big server log's tail runs grep -F there, over the whole log — not only the 4 MB fetched.

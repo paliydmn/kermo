@@ -226,11 +226,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private static let linkIcon = NSWorkspace.shared.icon(for: .symbolicLink)
     private static let serverIcon = Symbol.network.image("Server")
     private static let sizeFmt = ByteCountFormatter()
-    private static let dateFmt: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:mm"
-        return f
-    }()
+    /// Today and yesterday as of the last listing; the stat timer moves it on at midnight.
+    private var dates = DateColumn()
 
     convenience init(tabs paths: [String], index: Int, showHidden: Bool) {
         self.init(session: paths.map { Session.Tab(path: $0) }, index: index, showHidden: showHidden)
@@ -353,6 +350,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             }
             table.addTableColumn(col)
         }
+        let fit = Self.widths(font: .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize - 1, weight: .regular))
+        table.tableColumn(withIdentifier: .init("size"))?.width = fit.size
+        table.tableColumn(withIdentifier: .init("mtime"))?.width = fit.date
         table.style = .plain
         table.usesAlternatingRowBackgroundColors = true
         table.allowsMultipleSelection = true   // only used transiently for drags; see selectionIndexesForProposedSelection
@@ -515,6 +515,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             MainActor.assumeIsolated {
                 guard let self, self.view.window?.occlusionState.contains(.visible) == true,
                       !self.view.isHiddenOrHasHiddenAncestor else { return }
+                self.rollDates()
                 self.refreshStats()
             }
         }
@@ -716,6 +717,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }.map { sorted[$0] }
         totalSize = bytes(of: rows)
         guard isViewLoaded else { return }
+        dates = DateColumn()
         table.reloadData()   // drops the selection: Quick Look is told once the cursor is back
         let r = name.flatMap(row(named:)) ?? (newFolder ? 0 : max(0, oldRow))
         // Scrolled away from the cursor (to watch a log grow): a re-list that leaves it on the same row doesn't scroll back.
@@ -778,6 +780,15 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// A local folder's files on screen whose size or date changed (or the folder replaced under its path) re-list
     /// it. Off the main thread; never for a server, an archive or search results.
+    /// Past midnight, "Today" is yesterday (and `isoDates` may have changed): the Modified column says so without a re-list.
+    private func rollDates() {
+        let now = DateColumn()
+        guard now != dates else { return }
+        dates = now
+        let col = table.column(withIdentifier: .init("mtime"))
+        if col >= 0 { table.reloadData(forRowIndexes: IndexSet(0..<table.numberOfRows), columnIndexes: [col]) }
+    }
+
     func refreshStats() {
         guard watcher != nil, remote == nil, archive == nil, searchTitle == nil, loadedGen == loadGen,
               statting != path, !reloadScheduled, !scroll.isHidden else { return }
@@ -840,28 +851,48 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// "7 items, 1.2 MB" — or "7 items" with nothing to add up (folders count once measured, on Space): "Zero KB" said nothing.
     static func countText(_ n: Int, _ noun: String, _ bytes: Int64) -> String {
-        "\(n) \(n == 1 && noun == "items" ? "item" : noun)" + (bytes > 0 ? ", " + sizeFmt.string(fromByteCount: bytes) : "")
+        "\(n) \(n == 1 && noun == "items" ? "item" : noun)" + (bytes > 0 ? ", " + size(bytes) : "")
     }
     private func bytes(of items: [FileItem]) -> Int64 { Self.bytes(of: items, dirSizes: dirSizes) }   // not `self`'s per item (see `applyView`)
     nonisolated static func bytes(of items: [FileItem], dirSizes: [String: Int64]) -> Int64 {
         items.reduce(0) { $0.saturatingAdd($1.kind == .dir ? dirSizes[$1.name] ?? 0 : $1.size) }
     }
 
-    /// The Size column: a folder's measured bytes or <DIR>; a special file's type, which has no size to show.
-    /// `partial`: du couldn't read all of the folder — "≥ 1.2 GB".
+    /// "310 B", "4 KB", "1.2 GB": one short unit throughout (the formatter has no short one for bytes).
+    static func size(_ bytes: Int64) -> String { bytes < 1000 ? "\(bytes) B" : sizeFmt.string(fromByteCount: bytes) }
+
+    /// The Size column: a file's size, a folder's once measured; else nothing — a folder not measured, a special file
+    /// (its kind is in the row's tooltip, `specialKind`). `partial`: du couldn't read all of the folder — "≥ 1.2 GB".
     static func sizeText(_ it: FileItem, measured: Int64?, partial: Bool = false) -> String {
         switch it.kind {
-        case .dir: measured.map { (partial ? "≥ " : "") + sizeFmt.string(fromByteCount: $0) } ?? "<DIR>"
-        case .link where it.linkDir: "<DIR>"
-        case .other:
-            switch mode_t(truncatingIfNeeded: it.mode) & S_IFMT {
-            case S_IFIFO: "<FIFO>"
-            case S_IFSOCK: "<SOCKET>"
-            case S_IFCHR, S_IFBLK: "<DEVICE>"
-            default: "<SPECIAL>"
-            }
-        default: sizeFmt.string(fromByteCount: it.size)
+        case .dir: measured.map { (partial ? "≥ " : "") + size($0) } ?? ""
+        case .link where it.linkDir: ""
+        case .other: ""
+        default: size(it.size)
         }
+    }
+
+    /// What a special file is, which the Size column doesn't say.
+    static func specialKind(_ it: FileItem) -> String? {
+        guard it.kind == .other else { return nil }
+        return switch mode_t(truncatingIfNeeded: it.mode) & S_IFMT {
+        case S_IFIFO: "Named pipe (FIFO)"
+        case S_IFSOCK: "Socket"
+        case S_IFCHR: "Character device"
+        case S_IFBLK: "Block device"
+        default: "Special file"
+        }
+    }
+
+    /// The Size column as wide as its widest text in this Mac's locale ("999.99 GB", "≥ 999.9 MB"), the Modified
+    /// column as its widest date ("Yesterday 23:59", "Sep 30 23:59", "2026-12-31 23:59").
+    private static func widths(font: NSFont) -> (size: CGFloat, date: CGFloat) {
+        func w(_ s: String) -> CGFloat { ceil(NSAttributedString(string: s, attributes: [.font: font]).size().width) + 10 }
+        let sizes = [999, 999_900, 999_990_000, 999_990_000_000].map { "≥ " + size($0) }
+        let late = Calendar.current.date(from: DateComponents(year: 2026, month: 12, day: 31, hour: 23, minute: 59))!
+        let months = (1...12).map { Calendar.current.date(from: DateComponents(year: 2026, month: $0, day: 28, hour: 23, minute: 59))! }
+        let dates = months.map { DateColumn(late).text($0) } + [DateColumn(late).text(late.addingTimeInterval(-3600 * 24)), DateColumn(late, iso: true).text(late)]
+        return (sizes.map(w).max()!, dates.map(w).max()!)
     }
 
     /// This Mac's user or group name for an id (the number if it has none), looked up once.
@@ -2411,7 +2442,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             }
             tf.font = theme.mono ? .monospacedSystemFont(ofSize: 12, weight: isMarked ? .bold : .regular)
                 : isMarked ? .boldSystemFont(ofSize: NSFont.systemFontSize) : .systemFont(ofSize: NSFont.systemFontSize)
-            cell.toolTip = link.map { Self.linkNote($0.target, $0.error) }
+            cell.toolTip = link.map { Self.linkNote($0.target, $0.error) } ?? it.flatMap(Self.specialKind)
             cell.check.isHidden = !isMarked   // a mark is a shape too, not only a color
             tf.setAccessibilityLabel(isMarked ? "marked" : nil)
         case "git":
@@ -2430,7 +2461,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             tf.stringValue = remote != nil ? it.flatMap { remoteOwners[$0.name] }.map { owner ? $0.0 : $0.1 } ?? ""
                 : id == FileItem.unknown ? "" : Self.idName(id, user: owner)
         default:
-            tf.stringValue = it.map { Self.dateFmt.string(from: Date(timeIntervalSince1970: $0.mtime)) } ?? ""
+            tf.stringValue = it.map { dates.text(Date(timeIntervalSince1970: $0.mtime)) } ?? ""
         }
         cell.text = nil
         cell.color = parked != nil ? theme.hidden : isMarked ? theme.marked : (link?.error ?? 0) != 0 ? Palette.fail : it?.isHidden == true ? theme.hidden
@@ -2805,4 +2836,37 @@ final class PanelCell: NSTableCellView {
         if backgroundStyle == .emphasized { s.addAttribute(.foregroundColor, value: c, range: NSRange(location: 0, length: s.length)) }
         textField?.attributedStringValue = s
     }
+}
+
+/// The Modified column: "Today 13:33", "Yesterday 09:10", this year's "Oct 14 13:32", older "2024-03-01" — day, month
+/// and time in this Mac's locale, the two words in the app's English. `iso` (defaults `isoDates`): always
+/// "2024-03-01 13:33". The day's and year's bounds are taken once, when it's made, not per row.
+struct DateColumn: Equatable {
+    let iso: Bool
+    private let today: Date, tomorrow: Date, yesterday: Date, year: Date, nextYear: Date
+
+    init(_ now: Date = Date(), iso: Bool = UserDefaults.standard.bool(forKey: "isoDates"), calendar: Calendar = .current) {
+        self.iso = iso
+        today = calendar.startOfDay(for: now)
+        tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
+        yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+        year = calendar.date(from: calendar.dateComponents([.year], from: now))!
+        nextYear = calendar.date(byAdding: .year, value: 1, to: year)!
+    }
+
+    func text(_ d: Date) -> String {
+        if iso { return Self.isoFull.string(from: d) }
+        if d >= today && d < tomorrow { return "Today " + Self.time.string(from: d) }
+        if d >= yesterday && d < today { return "Yesterday " + Self.time.string(from: d) }
+        if d >= year && d < nextYear { return Self.monthDay.string(from: d) }
+        return Self.isoDay.string(from: d)
+    }
+
+    private static func fmt(_ format: String? = nil, template: String? = nil) -> DateFormatter {
+        let f = DateFormatter()
+        if let format { f.dateFormat = format } else { f.setLocalizedDateFormatFromTemplate(template!) }
+        return f
+    }
+    nonisolated(unsafe) private static let isoFull = fmt("yyyy-MM-dd HH:mm"), isoDay = fmt("yyyy-MM-dd"),
+                                            time = fmt(template: "jjmm"), monthDay = fmt(template: "MMMd jjmm")
 }
