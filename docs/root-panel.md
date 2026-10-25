@@ -36,7 +36,7 @@ When sudo refuses, the panel says why: it needs a password; `Defaults requiretty
 
 ## What runs as root
 
-Only the file operations run as root, plus a save's [check and reload](config-checks.md). Search, archives, Git status, the user menu, ⌘E and the terminal run as the user. The command line says so: its prompt stays `user@host:/path $`, and on a root panel it reads "⌘E: shell command in this folder as user, not root".
+Only the file operations run as root, plus a save's [check and reload](config-checks.md). Search, archives, Git status, the user menu, ⌘E and the terminal run as the user. The command line says so: its prompt names the server, not root (`web-01:/etc $`), and while it has the focus the key bar adds **Runs as deploy, not root**.
 
 - Saves go the same way as the user's: [file history](server-files.md#file-history), the production question, "changed on the server since you opened it".
 - Saving someone else's file (`www-data`'s, a user's) keeps its owner and group: the new file gets them before it replaces the old one, so it's never root's, not even for a moment.

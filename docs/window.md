@@ -20,11 +20,26 @@ Under the tabs, the path bar says where the panel is. On a server, in an archive
 
 Kermo comes back as you left it: each panel's tabs and the one in front, the active panel, each tab's cursor (on the same name; on the first row if that item is gone) and the dividers between the panels. Filters, Back / Forward history and marks start clean.
 
-A server tab comes back **not connected**. Its header says where it was (`web1:/etc/nginx`, with a ROOT chip for a root panel), and its only row says `Not connected — ↩ connects to web1`. Nothing is sent to any server until you ask, production and locked ones included:
+A server tab comes back **not connected**. Its header says where it was (`web1:/etc/nginx`, with a ROOT chip for a root panel), and its middle says **Not connected**, `web1:/etc/nginx — nothing is sent until you ask`, with **↩ Connect**, **⌃⌘R As Root** and **⌘↑ This Mac** to click. Nothing is sent to any server until you ask, production and locked ones included:
 
 - **↩** or a double-click connects, as Connect does: a locked server asks for Touch ID first, and the cursor goes back to its name. A root tab connects as root; ⌃⌘R / ⌃⇧⌘R choose root or the user instead.
 - ⌘↑ or ⌫ goes to the tab's folder on this Mac; the sidebar, ⌘L and the like go where you point, as on a local tab.
-- The F-keys, the command line and anything else that would act on the files say `Not connected — ↩ connects to web1` and do nothing; so do copies and moves into it from the other panel.
+- The F-keys, the command line and anything else that would act on the files say `Not connected — ↩ Connect to web1` and do nothing; so do copies and moves into it from the other panel.
+
+### Status line and the panel's middle
+
+Under the list, the status line says on the left what matters while you work: **3 marked · 12.4 MB** in bold, in the marks' color, when something is marked, else **13 items · 24 MB**; then what the list is — `filtered: 4 of 20`, `git changes: 2 of 9`, `*.log: 12 found`. On the right, chips say what just is there: the branch (`main ↑1 ↓2`), the free space (`412 GB free`), **SFTP** on a server, `zip · read-only` in an archive. A message (a copy done, an error in red) takes the left part for a few seconds.
+
+It names no keys. While something can be stopped, **⎋ Cancel** stands beside the message; in search results **⌫ Back** goes back to the folder. Click either to do what its key does.
+
+When there's nothing to list, the panel's middle says why and what comes next, as keys you can click:
+
+- **Empty folder:** **F7 New Folder**, **⇧F4 New File**, **⌘V Paste** (on a server too; inside an archive, nothing: it's read-only). A folder with only hidden files says how many, with **⇧⌘. Show Hidden Files** first.
+- **Not connected:** a server tab after a restart (see above).
+- **Can't read this folder:** the error, and **⌘R Refresh**.
+- **On its way:** after a moment, what's loading or connecting, with **⎋ Cancel** where it can be stopped.
+
+A filter that hides every row says so in the status line, not in the middle.
 
 SSH tabs in the terminal come back the same way: ↩ reconnects them ([Terminal](terminal.md)).
 
@@ -37,9 +52,11 @@ The bottom row shows the keys of what has the focus. Each slot is the key, then 
 - **+N** stands for the slots that don't fit the window: the cheat sheet filtered to that layer.
 - **Terminal:** while the terminal is up, the bar shows its keys: **⌃O Panels**, new and closed tabs, splits, panes, text size.
 - **Viewer, editor, output windows** have a key bar of their own, the same component: see [Viewer and editor](viewer-editor.md).
-- **Command line:** while ⌘E has the focus, the bar shows its keys: **↩ Run in Shell**, **⇧↩ Output Window**, **⌘↩ Run in Terminal**, **↑↓ History**, **⎋ Back to Panel**, and what `%f %s %d %D` stand for.
+- **Command line:** under the panels, at rest one quiet line: where it runs (`~/Projects/site $`, on a server `web-01:/var/www $`), **Type a command** and **⌘E** at the end (click it to go there). While it has the focus, the bar shows its keys: **↩ Run in Shell**, **⇧↩ Output Window**, **⌘↩ Run in Terminal**, **↑↓ History**, **⎋ Back to Panel**, and what `%f %s %d %D` stand for; on a [root panel](root-panel.md) one more says **Runs as deploy, not root**.
+- **Quick filter:** while it has the focus, **↩ Keep**, **↓ Back to List**, **⎋ Clear**.
+- F1 lists the command line's and the quick filter's keys after the menus' (it doesn't open from a text field: the field keeps F1).
 - ⌥ plus a digit does what its F-key does, so those layers sum them up in one slot: `⌥1…0 = F1…F10`, `⌥⇧4 5 6 8 = ⇧F4 5 6 8`.
-- On a server's panel F8 says **Delete…** in red: it deletes for good after asking, because a server has no Trash.
+- On a server's panel F8 says **Delete…** in red: it deletes for good after asking, because a server has no Trash. Inside an archive F5 says **Extract**, and so does its menu item (**Extract To…**).
 - F5 and F6 say where they go when it isn't plain: `Copy → web-01` when the other panel is on a server (a production server's name in purple and bold), `Copy → site` with three or four panels. With two panels on this Mac they say **Copy** and **Move**.
 - The delay is 120 ms. Change it with `defaults write com.dmn.dfilemanager keyBarHoldDelay 0.2`.
 

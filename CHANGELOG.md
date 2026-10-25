@@ -28,6 +28,11 @@ Release:
 - The Modified column says `Today 13:33`, `Yesterday 09:10`, `Oct 14 13:32` this year and `2024-03-01` before.
 - The Activity button at rest is a clock going round instead of a download arrow.
 - An executable file has Finder's executable icon, so it stands out in the System theme too.
+- The command line is one quiet line at rest: the prompt, **Type a command** and **⌘E** at its end (a click goes there). Its keys are the key bar's while it has the focus; on a root panel the bar adds **Runs as deploy, not root**. A server's prompt says its name, not `user@host`.
+- The status line says what matters on the left — **3 marked · 12.4 MB** in bold in the marks' color, else **13 items · 24 MB**, then `filtered: 4 of 20` or `12 found` — and what just is on the right, as chips: the branch, the free space, **SFTP**, an archive's read-only. No keys in it: **⎋ Cancel** and, in search results, **⌫ Back** stand beside it; inside an archive F5 says **Extract** in the key bar and the File menu.
+- The quick filter's field says only what to type (**Filter: text, *.log or re:regex**); its keys — **↩ Keep**, **↓ Back to List**, **⎋ Clear** — are in the key bar while you type, and in F1.
+- A panel with nothing to list says why in its middle, with what comes next as keys to click: **Empty folder** (F7 New Folder, ⇧F4 New File, ⌘V Paste), only hidden files (⇧⌘. Show Hidden Files), **Not connected** for a server tab after a restart (↩ Connect, ⌃⌘R As Root, ⌘↑ This Mac), **Can't read this folder** (⌘R Refresh), and after a moment what's loading or connecting (⎋ Cancel).
+- Messages in the status line name keys the key bar's way: `Not connected — ↩ Connect to web1`, `Detached HEAD — ⌃B Switch Branch first`.
 - The active panel has a 2 pt line under its path bar instead of a frame and a filled path bar: the accent color on this Mac, purple on a production server (a root panel there too, and a production server's panel is purple now even when it isn't root), orange in a root panel. Its path is in full contrast, the others' dimmed.
 - The cursor of a panel that isn't focused is an outline, not a grey or dimmed fill, in every theme.
 - A server's panel tabs show its PROD and ROOT chips before the title, and the tab in front is underlined in purple or orange, as the terminal's tabs.

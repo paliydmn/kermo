@@ -6,7 +6,7 @@ Run a shell command on the files in front of you, keep your own commands in a me
 
 ## Command line
 
-**⌘E** opens the command line for the active panel's folder. ↑↓ browse its history (kept per server and for this Mac). While it has the focus the [key bar](window.md#key-bar) shows its keys, and ⎋ goes back to the panel. ⌃↩ and ⌃⇧↩, which insert the name under the cursor and the marked paths, work from the panel: in a text field macOS takes ⌃↩ for its context menu.
+**⌘E** (or a click on **⌘E** at the end of the line) opens the command line for the active panel's folder. At rest it's one line: the prompt (`~/Projects/site $`; on a server its name and folder, `web-01:/var/www $`) and **Type a command**. ↑↓ browse its history (kept per server and for this Mac). While it has the focus the [key bar](window.md#key-bar) shows its keys, and ⎋ goes back to the panel. On a [root panel](root-panel.md) the bar adds **Runs as deploy, not root**: the command runs as the server's user. ⌃↩ and ⌃⇧↩, which insert the name under the cursor and the marked paths, work from the panel: in a text field macOS takes ⌃↩ for its context menu.
 
 | Panel | ↩ | ⇧↩ | ⌘↩ |
 |---|---|---|---|
