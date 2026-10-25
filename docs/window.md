@@ -28,6 +28,8 @@ The bottom row shows F1–F10. Hold ⇧, ⌥, ⌘ or ⌃ (or a combination such 
 
 - **Click** a slot to run it, as if you pressed the key. A pressed shortcut highlights its slot.
 - **Hold** pins a layer for mouse use until you press ⎋ or run a command. **+N** opens the cheat sheet filtered to that layer.
+- ⌥ plus a digit does what its F-key does, so those layers sum them up in one slot: `⌥1…0 = F1…F10`, `⌥⇧4 5 6 8 = ⇧F4 5 6 8`.
+- On a server's panel F8 says **Delete…**: it deletes for good after asking, because a server has no Trash.
 - The delay is 120 ms. Change it with `defaults write com.dmn.dfilemanager keyBarHoldDelay 0.2`.
 
 ## Places sidebar

@@ -8,6 +8,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 
 - **Find any command** with ⇧⌘P: it is listed with its shortcut. (The viewer and editor keys and mouse marking aren't commands, so search doesn't list them.)
 - **Function keys:** F1–F10 and ⇧F4, ⇧F5, ⇧F6, ⇧F8 also work as ⌥ plus the digit (⌥0 is F10, ⌥⇧6 is ⇧F6), because Mac function keys control media by default. The other F-key shortcuts (⇧F2, ⇧F10, ⌥F1, ⌥F5, ⌥F7, ⌥F9, ⌥F10) have no digit twin: use fn, or remap them.
+- **Text fields** (path entry, the command line, dialogs) take the usual ⌘X, ⌘C, ⌘V, ⌘A and ⌘Z.
 - **Layouts:** shortcuts are bound to physical keys, so they work with any keyboard layout (the ISO § key counts as `` ` ``). Menus show the characters of your current layout, so on a layout that moves Latin letters (Dvorak, AZERTY) a letter shortcut in a menu follows the letter.
 - **Remap:** choose **Kermo ▸ Edit Keymap…**, then **Reload Config** to apply it (see [Configuration](configuration.md#keymap)).
 
@@ -67,7 +68,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Rename / batch rename | ⇧F6, ⌥⇧6 / ⇧⌘M |
 | Copy here under another name (`x.conf.bak`; several marked: a suffix each) | ⇧F5, ⌥⇧5 |
 | New folder / new file | F7, ⌥7, ⇧⌘N / ⇧F4, ⌥⇧4 |
-| Move to Trash | F8, ⌥8, ⌘⌫, ⌦ |
+| Move to Trash (on a server: Delete…, after asking) | F8, ⌥8, ⌘⌫, ⌦ |
 | Delete permanently | ⇧F8, ⌥⇧8, ⌥⌘⌫, ⇧⌦ |
 | Put Back (restore an item Kermo moved to the Trash) | ⌘⌫ or F8 in the Trash |
 | Undo / redo (this Mac's files; not a server's, not permanent delete) | ⌘Z / ⇧⌘Z |
