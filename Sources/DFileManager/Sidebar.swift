@@ -393,9 +393,9 @@ class HoverRowView: NSTableRowView {
     }
 }
 
-/// A volume's "350 GB free" over a bar of how full it is — neutral, amber from 85 %, red from 95 % (`tone`): red only
-/// once it's trouble. In what room the name leaves, else gone (the tooltip has the figures); white on the accent of a
-/// focused selection.
+/// Under a volume's name, a bar of how full it is — neutral, amber from 85 %, red from 95 % (`tone`): red only once
+/// it's trouble — then "350 GB free", or "350 GB" when "free" doesn't fit, or the bar alone in a narrow sidebar (the
+/// tooltip has the figures); white on the accent of a focused selection.
 final class VolumeGauge: NSView {
     private let free: String, fraction: Double
     var onAccent = false { didSet { if onAccent != oldValue { needsDisplay = true } } }
@@ -403,7 +403,6 @@ final class VolumeGauge: NSView {
     init(free: String, fraction: Double) {
         (self.free, self.fraction) = (free, min(max(fraction, 0), 1))
         super.init(frame: .zero)
-        setContentCompressionResistancePriority(.init(200), for: .horizontal)   // below the name's: the name keeps its room
         setAccessibilityElement(true)
         setAccessibilityRole(.levelIndicator)
         setAccessibilityLabel("\(free) free")
@@ -414,19 +413,21 @@ final class VolumeGauge: NSView {
     /// The bar's color at `fraction` full; nil: neutral.
     static func tone(_ fraction: Double) -> NSColor? { fraction >= 0.95 ? Palette.fail : fraction >= 0.85 ? Palette.warn : nil }
 
-    var text: NSAttributedString {
-        NSAttributedString(string: free + " free", attributes: [.font: NSFont.systemFont(ofSize: 10),
-                                                                .foregroundColor: onAccent ? NSColor.alternateSelectedControlTextColor : Palette.secondary])
+    private func label(_ s: String) -> NSAttributedString {
+        NSAttributedString(string: s, attributes: [.font: NSFont.systemFont(ofSize: 10),
+                                                   .foregroundColor: onAccent ? NSColor.alternateSelectedControlTextColor : Palette.secondary])
     }
-    override var intrinsicContentSize: NSSize { NSSize(width: ceil(text.size().width), height: 18) }
-    /// All of the text, or nothing.
-    var shown: Bool { bounds.width >= intrinsicContentSize.width }
+    var text: NSAttributedString { label(free + " free") }
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 12) }
+    /// What fits of the text beside a bar of 24 pt at least: all of it, the figure alone, or nothing.
+    var shown: String {
+        [free + " free", free].first { ceil(label($0).size().width) + 6 + 24 <= bounds.width } ?? ""
+    }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard shown else { return }
-        let t = text, h = ceil(t.size().height)
-        let bar = NSRect(x: 0, y: (bounds.height - h - 5) / 2, width: bounds.width, height: 3)
-        t.draw(at: NSPoint(x: bounds.width - t.size().width, y: bar.maxY + 2))
+        let t = label(shown), w = t.length == 0 ? 0 : ceil(t.size().width) + 6
+        let bar = NSRect(x: 0, y: (bounds.height - 3) / 2, width: bounds.width - w, height: 3)
+        t.draw(at: NSPoint(x: bounds.width - t.size().width, y: (bounds.height - t.size().height) / 2))
         (onAccent ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.35) : NSColor.quaternaryLabelColor).setFill()
         NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()
         (onAccent ? NSColor.alternateSelectedControlTextColor : Self.tone(fraction) ?? .secondaryLabelColor).setFill()
@@ -653,6 +654,11 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
     /// so it's "shown" for the moment of a header click.
     func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool { folding }
     func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? { HoverRowView() }
+    /// A volume with figures has its bar under the name.
+    func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
+        if case .volume(let v)? = (item as? Node)?.place, v.fraction != nil { return 34 }
+        return outlineView.rowHeight
+    }
     // A header's chevron follows its section (folded by a click, or unfolded when the sidebar is rebuilt).
     // Only the image changes: reloading the row from inside these notifications would undo the collapse.
     func outlineViewItemDidExpand(_ notification: Notification) { turnChevron(notification) }
@@ -698,7 +704,6 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
             let (name, ejectable) = (v.name, v.ejectable)
             let r = placeRow(ejectable ? .externalDisk : .internalDisk, name, v.tip, dim: !v.mounted)
             r.addArrangedSubview(spacer())   // the buttons in one column at the right, figures or not
-            if let f = v.fraction { r.addArrangedSubview(VolumeGauge(free: v.free, fraction: f)) }
             func button(_ symbol: Symbol, _ action: VolumeAction) {
                 let b = NSButton(image: symbol.image(action.rawValue), target: self, action: #selector(volumeButton(_:)))
                 b.isBordered = false
@@ -709,7 +714,15 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
             if v.busy { r.addArrangedSubview(Self.spinner()) }   // in the button's place: one thing at a time
             else if !v.mounted { button(.add, .mount) }
             else if ejectable { button(.eject, .eject) }
-            return r
+            guard let f = v.fraction, let label = r.arrangedSubviews.first(where: { $0 is NSTextField }) else { return r }
+            let gauge = VolumeGauge(free: v.free, fraction: f)   // under the name, always room for the bar
+            let both = NSStackView(views: [r, gauge])
+            (both.orientation, both.alignment, both.spacing) = (.vertical, .leading, 1)
+            NSLayoutConstraint.activate([r.widthAnchor.constraint(equalTo: both.widthAnchor),
+                                         gauge.leadingAnchor.constraint(equalTo: label.leadingAnchor),
+                                         gauge.trailingAnchor.constraint(equalTo: both.trailingAnchor, constant: -6)])
+            both.toolTip = r.toolTip
+            return both
         case .server(let server):
             return serverRow(server)
         case .connect:
@@ -836,9 +849,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         toolbar.spacing = 2
         toolbar.isHidden = true
 
-        let chip = prod ? NSImageView(image: Chip.prod.image) : nil
-        chip?.setContentCompressionResistancePriority(.required, for: .horizontal)   // the name gives way, not the chip
-        let r = row([icon, name, chip, chips, toolbar].compactMap { $0 })
+        let r = row([icon, name, prod ? ChipView(.prod) : nil, chips, toolbar].compactMap { $0 })
         r.spacing = 4
         let port = server.target.port.map { ":\($0)" } ?? ""
         let about = ["\(server.target.host)\(port)", locked ? "locked" : nil, prod ? "production" : nil, open.isEmpty ? nil : open + " open"]

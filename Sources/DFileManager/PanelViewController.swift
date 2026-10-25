@@ -23,7 +23,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let place = remote ?? parked
         let root = place.map { $0.target.sudo ? SavedServer.isProd($0.target) ? Palette.prod : Palette.root : nil } ?? nil
         let tint = root ?? theme.accent
-        pathBar.fillColor = isActive ? tint : .clear
+        pathBar.fill = isActive ? tint : .clear
         pathField.backgroundColor = isActive ? tint : .clear
         let kind: (Symbol, String)? = searchTitle != nil ? (.search, "Search results") : archive != nil ? (.archive, "Archive") : place != nil ? (.server, "Server") : nil
         placeIcon.image = kind.map { $0.0.image($0.1) }
@@ -63,7 +63,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private let pathField = NSTextField(string: "")
     private let placeIcon = NSImageView()   // before the path: a server, an archive, search results
     private let chipRow = NSStackView()   // then a server's chips
-    private let pathBar = NSBox()   // the three, filled in the active panel
+    private let pathBar = FilledStack()   // the three, filled in the active panel
     private(set) var headerChips: [Chip] = []
     let filterField = NSTextField(string: "")   // internal: tests type into it
     private let statusLabel = NSTextField(labelWithString: "")
@@ -403,12 +403,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
         placeIcon.symbolConfiguration = .init(pointSize: 11, weight: .medium)
         chipRow.spacing = 3
-        let pathRow = NSStackView(views: [placeIcon, chipRow, pathField])
-        pathRow.spacing = 4
-        pathRow.edgeInsets = NSEdgeInsets(top: 0, left: 3, bottom: 0, right: 0)
+        [placeIcon, chipRow, pathField].forEach(pathBar.addArrangedSubview)
+        pathBar.spacing = 4
+        pathBar.edgeInsets = NSEdgeInsets(top: 0, left: 3, bottom: 0, right: 0)
         pathField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        (pathBar.boxType, pathBar.borderWidth, pathBar.contentViewMargins, pathBar.titlePosition) = (.custom, 0, .zero, .noTitle)
-        pathBar.contentView = pathRow
         let header = Self.column([tabBar, pathBar])
         spinner.style = .spinning
         spinner.controlSize = .small
@@ -1071,7 +1069,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         s.append(NSAttributedString(string: mark.letter, attributes: [.font: font, .foregroundColor: mark.color,
                                                                     .strikethroughStyle: mark.letter == "D" ? NSUnderlineStyle.single.rawValue : 0]))
         let center = NSMutableParagraphStyle()
-        center.alignment = .center
+        (center.alignment, center.lineBreakMode) = (.center, .byClipping)   // one line, the sign and the letter
         s.addAttribute(.paragraphStyle, value: center, range: NSRange(location: 0, length: s.length))
         return s
     }
@@ -2869,4 +2867,13 @@ struct DateColumn: Equatable {
     }
     nonisolated(unsafe) private static let isoFull = fmt("yyyy-MM-dd HH:mm"), isoDay = fmt("yyyy-MM-dd"),
                                             time = fmt(template: "jjmm"), monthDay = fmt(template: "MMMd jjmm")
+}
+
+/// A row of views on a color of its own (the active panel's path bar), drawn each time so it follows light and dark.
+final class FilledStack: NSStackView {
+    var fill: NSColor = .clear { didSet { needsDisplay = true } }
+    override func draw(_ dirtyRect: NSRect) {
+        fill.setFill()
+        bounds.intersection(dirtyRect).fill()   // views don't clip (macOS 14): the dirty rect can reach past them
+    }
 }

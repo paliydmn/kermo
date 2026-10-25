@@ -5,24 +5,32 @@ import Testing
 
 // PR 12b: Locations — used / free, disks not mounted, Mount / Unmount, a spinner and who holds a disk.
 
-@MainActor private func volumeRow(_ v: VolumeRow, in c: SidebarController = SidebarController()) throws -> NSStackView {
+@MainActor private func volumeView(_ v: VolumeRow, in c: SidebarController = SidebarController()) throws -> NSStackView {
     try #require(c.outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .volume(v))) as? NSStackView)
 }
 
-/// V1: "350 GB free" over a bar of how full the volume is, right of the name, giving way to it in a narrow column;
-/// white on a focused selection's accent. No figures, no gauge.
+/// Its line with the name and the buttons; the bar, when there is one, goes under it.
+@MainActor private func volumeRow(_ v: VolumeRow, in c: SidebarController = SidebarController()) throws -> NSStackView {
+    let view = try volumeView(v, in: c)
+    return view.orientation == .vertical ? try #require(view.arrangedSubviews.first as? NSStackView) : view
+}
+
+/// V1: under a volume's name, a bar of how full it is and "350 GB free" — "350 GB", then the bar alone in a narrow
+/// column; white on a focused selection's accent. No figures, no gauge.
 @MainActor @Test func aVolumeRowShowsFreeOverABar() throws {
-    let r = try volumeRow(VolumeRow(path: "/Volumes/USB", name: "USB", used: "110 GB", free: "350 GB", total: "460 GB", fraction: 0.24, ejectable: true))
-    let g = try #require(r.arrangedSubviews.compactMap { $0 as? VolumeGauge }.first)
-    let name = try #require(r.arrangedSubviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == "USB" })
+    let r = try volumeView(VolumeRow(path: "/Volumes/USB", name: "USB", used: "110 GB", free: "350 GB", total: "460 GB", fraction: 0.24, ejectable: true))
+    let g = try #require(r.arrangedSubviews.compactMap { $0 as? VolumeGauge }.first, "under the name")
+    let top = try #require(r.arrangedSubviews.first as? NSStackView)
+    #expect(top.arrangedSubviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue == "USB" })
     #expect(g.text.string == "350 GB free" && g.accessibilityLabel() == "350 GB free" && g.accessibilityValue() as? Int == 24)
     func color() -> NSColor? { g.text.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor }
     #expect(color() == Palette.secondary)
-    #expect(g.contentCompressionResistancePriority(for: .horizontal) < name.contentCompressionResistancePriority(for: .horizontal))
-    g.frame.size.width = g.intrinsicContentSize.width
-    #expect(g.shown)
-    g.frame.size.width = 15
-    #expect(!g.shown, "all of the text or nothing")
+    g.frame.size.width = 140
+    #expect(g.shown == "350 GB free")
+    g.frame.size.width = 70
+    #expect(g.shown == "350 GB", "short of room: the figure")
+    g.frame.size.width = 40
+    #expect(g.shown == "", "less: the bar alone")
     #expect(r.toolTip == "/Volumes/USB · 110 GB used of 460 GB · 350 GB free")
 
     let row = HoverRowView()

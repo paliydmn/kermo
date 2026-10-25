@@ -62,3 +62,19 @@ private let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
     #expect(DateColumn(at(10, 25, 14, 0), iso: true).text(at(10, 25, 13, 33)) == "2026-10-25 13:33")
     #expect(DateColumn(at(10, 25, 23, 59), iso: false) != DateColumn(at(10, 26, 0, 0), iso: false), "a new day: the column is drawn again")
 }
+
+extension ServerLockTests {
+/// The Connect picker (⌃⌘K, ⌘K) says production and locked by the servers' chips, before their names.
+@MainActor @Test func connectPickerShowsChips() {
+    var web = SavedServer(address: "me@web.invalid")!, vault = SavedServer(address: "me@vault.invalid")!
+    (web.name, web.prod, vault.name, vault.locked) = ("web", true, "vault", true)
+    let app = AppDelegate()
+    app.savedServers = [web, vault, SavedServer(address: "me@plain.invalid")!]
+    app.window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: true)
+    defer { Picker.dismiss(); app.window = nil }
+    app.showConnect()
+    let rows = Picker.current?.rows ?? []
+    func chips(_ title: String) -> [String?]? { rows.first { $0.title == title }?.badges.map(\.accessibilityDescription) }
+    #expect(chips("web") == ["production"] && chips("vault") == ["locked"] && chips("me@plain.invalid") == [])
+}
+}

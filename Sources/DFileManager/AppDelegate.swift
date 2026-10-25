@@ -1248,7 +1248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         sidebar.highlight(sidebarKey)
         keyBar.server = (active.remote ?? active.parked) != nil
         updateGitRow()
-        window?.title = root.map { "\($0.target.shown):\($0.dir) #" }?.bidiVisible ?? path.bidiVisible   // what the panel's header says
+        window?.title = root.map { "\($0.target.shown):\($0.dir)" }?.bidiVisible ?? path.bidiVisible   // what the panel's header says
         guard remote == nil else { window?.representedURL = nil; return }
         let dir = active.path   // proxy icon, once the folder is known to be there (asked off the main thread)
         Task {

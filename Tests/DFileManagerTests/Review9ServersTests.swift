@@ -285,7 +285,11 @@ extension ServerLockTests {
     let view = try #require(SidebarController().outlineView(NSOutlineView(), viewFor: nil, item: SidebarController.Node(place: .server(row))) as? NSStackView)
     let name = try #require(view.arrangedSubviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == "db" })
     #expect(name.textColor != Palette.prod && Palette.prod != .systemRed)
-    #expect(view.arrangedSubviews.contains { ($0 as? NSImageView)?.image?.accessibilityDescription == "production" }, "its chip")
+    let chip = try #require(view.arrangedSubviews.compactMap { $0 as? ChipView }.first, "its chip")
+    #expect(chip.accessibilityLabel() == "production" && chip.chip == .prod)
+    #expect(chip.contentCompressionResistancePriority(for: .horizontal) < name.contentCompressionResistancePriority(for: .horizontal), "the name first")
+    chip.frame.size.width = chip.intrinsicContentSize.width - 1
+    #expect(!chip.shown, "whole or not at all")
     #expect((view.arrangedSubviews.first as? NSImageView)?.image?.accessibilityDescription == "Server, locked")
     let chips = try #require(view.arrangedSubviews.first { $0 is ServerChips } as? NSStackView)
     let toolbar = try #require(view.arrangedSubviews.first { $0 is ServerToolbar } as? NSStackView)

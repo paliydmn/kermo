@@ -46,9 +46,11 @@ enum Symbol: String, CaseIterable {
     /// `label`: what VoiceOver says for it.
     func image(_ label: String? = nil) -> NSImage { NSImage(systemSymbolName: rawValue, accessibilityDescription: label)! }
 
-    /// In `color`, `size` points.
+    /// In `color`, `size` points — not a template, so a button's title or a menu draws it in that color, not its own.
     func image(_ label: String? = nil, color: NSColor, size: CGFloat, weight: NSFont.Weight = .regular) -> NSImage {
-        image(label).withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: size, weight: weight).applying(.init(paletteColors: [color])))!
+        let i = image(label).withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: size, weight: weight).applying(.init(paletteColors: [color])))!
+        i.isTemplate = false
+        return i
     }
 
     /// Inline in text — a list's mark, a tab title's state — in `color`, as big as `font`.
@@ -120,6 +122,27 @@ enum Chip: String, CaseIterable {
         let s = NSMutableAttributedString(string: word + " ", attributes: [.foregroundColor: color, .font: NSFont.menuFont(ofSize: size).bold])
         s.append(NSAttributedString(string: title, attributes: [.font: NSFont.menuFont(ofSize: size)]))
         return s
+    }
+}
+
+/// A chip that gives way to a name in a narrow row (the sidebar's): drawn whole or not at all, never squeezed.
+final class ChipView: NSView {
+    let chip: Chip
+    init(_ chip: Chip) {
+        self.chip = chip
+        super.init(frame: .zero)
+        setContentCompressionResistancePriority(.init(240), for: .horizontal)   // below a name's
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel(chip.spoken)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var intrinsicContentSize: NSSize { chip.image.size }
+    var shown: Bool { bounds.width >= intrinsicContentSize.width }
+    override func draw(_ dirtyRect: NSRect) {
+        guard shown else { return }
+        let i = chip.image
+        i.draw(in: NSRect(x: 0, y: (bounds.height - i.size.height) / 2, width: i.size.width, height: i.size.height))
     }
 }
 

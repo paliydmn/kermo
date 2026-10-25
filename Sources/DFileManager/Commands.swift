@@ -918,7 +918,7 @@ extension AppDelegate {
                 editServer(SavedServer(), title: "New Server", connect: kind)
             }]
             + savedServers.map { s in
-                Picker.Item(title: s.title, subtitle: ServerRow.address(s.target), detail: "⌘E Edit   " + label,
+                Picker.Item(title: s.title, subtitle: ServerRow.address(s.target), badges: s.chips.map(\.image), detail: "⌘E Edit   " + label,
                             edit: { [unowned self] in editServer(s, title: "Edit “\(s.title)”") }) { [unowned self] in
                     openServer(ServerRow(target: s.target, saved: s, title: s.title), kind)
                 }
