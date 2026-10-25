@@ -67,3 +67,12 @@ import Testing
     }
     #expect(KeyHelp.sections(commands).contains { $0.title == "Git" && $0.rows.contains { $0.title == "Switch Branch…" && $0.keys == "⌃B" } })
 }
+
+/// P-3 (review 1): on a server's panel F8 deletes, after a question — the bar says so; on this Mac it's the Trash.
+@Test @MainActor func f8SaysDeleteOnAServer() {
+    let commands = AppDelegate().makeCommands()
+    func f8(server: Bool) -> String? { KeyBarModel.layers(commands, server: server).first { $0.mods == [] }?.slots.first { $0.key == "F8" }?.label }
+    #expect(f8(server: false) == "Trash" && f8(server: true) == "Delete…")
+    let cmd = KeyBarModel.layers(commands, server: true).first { $0.mods == .command }?.slots
+    #expect(cmd?.first { $0.id == "file.trash" }?.label == "Delete…", "⌘⌫ too")
+}

@@ -22,7 +22,8 @@ enum KeyBarModel {
     /// Unmodified keys other than F-keys (↩ ⌫ Space Tab /) stay out — they're on the F1 sheet.
     /// ⌥+digit duplicates of F-keys (⌥5 = F5, ⇧⌥6 = ⇧F6, ⌥0 = F10) collapse into one hint slot.
     /// One slot per command per layer (its first key there). F-keys first by number, then registry order.
-    static func layers(_ commands: [Command]) -> [(mods: NSEvent.ModifierFlags, slots: [KeySlot])] {
+    /// `server`: the active panel is a server's, where F8 deletes (after a question): no Trash there.
+    static func layers(_ commands: [Command], server: Bool = false) -> [(mods: NSEvent.ModifierFlags, slots: [KeySlot])] {
         var slots: [UInt: [(f: Int, slot: KeySlot)]] = [:]
         var hinted = Set<UInt>()
         // The terminal's pane arrows stay out too: the bar is the panels' (the terminal shows only ⌃O there).
@@ -36,7 +37,8 @@ enum KeyBarModel {
                     continue
                 }
                 if slots[m.rawValue]?.contains(where: { $0.slot.id == c.id }) == true { continue }
-                slots[m.rawValue, default: []].append((f ?? 99, KeySlot(key: k.display, label: c.short.isEmpty ? c.title : c.short, id: c.id)))
+                let label = server && c.id == "file.trash" ? "Delete…" : c.short.isEmpty ? c.title : c.short
+                slots[m.rawValue, default: []].append((f ?? 99, KeySlot(key: k.display, label: label, id: c.id)))
             }
         }
         let used = slots.keys.map { NSEvent.ModifierFlags(rawValue: $0) }
@@ -72,7 +74,12 @@ final class KeyBarView: NSView {
     var onMore: ((NSEvent.ModifierFlags) -> Void)?
     var canRun: (String) -> Bool = { _ in true }
     var terminalShown: () -> Bool = { false }
+    /// The active panel is a server's (F8: Delete…).
+    var server = false {
+        didSet { if server != oldValue { reload(commands) } }
+    }
 
+    private var commands: [Command] = []
     private var layers: [(mods: NSEvent.ModifierFlags, slots: [KeySlot])] = []
     private var held: NSEvent.ModifierFlags = []
     private(set) var pinned: NSEvent.ModifierFlags?
@@ -109,7 +116,8 @@ final class KeyBarView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func reload(_ commands: [Command]) {
-        layers = KeyBarModel.layers(commands)
+        self.commands = commands
+        layers = KeyBarModel.layers(commands, server: server)
         render()
     }
 
