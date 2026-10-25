@@ -112,7 +112,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     private var index = 0   // the current group
     private var closing: [Tab] = []   // killed, waiting for the process to go
     private let container = NSStackView()
-    private let tabBar = NSStackView()
+    let tabBar = NSStackView()   // internal: tests read it
     private let content = NSView()
     private unowned let host: NSView   // the panels; the terminal sits exactly over them
     var onExit: (() -> Void)?          // last tab closed: panels come back
@@ -521,7 +521,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             SFTP.noteMaster(t)   // ControlMaster=auto: this ssh may become the shared connection
             launch(tab, "/usr/bin/ssh", SSHCommand.arguments(t, command: tab.command), cwd: NSHomeDirectory())
             tab.command = nil
-            onChange?()
+            render()   // its tab was drawn before ssh ran: off till the next redraw (D-104)
             let pid = tab.view.process?.shellPid ?? 0
             Task.detached {   // its login: until the connection is shared, or the ssh is gone
                 var tries = 0
@@ -706,15 +706,13 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         guard t.host != nil else { return nil }
         let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         let s = NSMutableAttributedString(attributedString: t.isRunning ? StateMark.on.text("connected", font: font) : StateMark.off.text("disconnected", font: font))
-        for chip in t.target.map({ Chip.of($0, root: $0.host.hasPrefix("root@")) }) ?? [] { s.append(NSAttributedString(string: " ")); s.append(chip.text) }
+        if let c = Chip.text(chips(t)) { s.append(NSAttributedString(string: " ")); s.append(c) }
         return s
     }
+    private static func chips(_ t: Tab) -> [Chip] { t.target.map { Chip.of($0, root: $0.host.hasPrefix("root@")) } ?? [] }
     private static func tip(_ t: Tab) -> String { t.host.map { h in t.isRunning ? "ssh \(h)" : "ssh \(h) — disconnected" } ?? "Shell" }
-    /// A production server's pane underlined in purple, a root login's in orange — as a root panel's header.
-    private static func tint(_ t: Tab) -> NSColor? {
-        guard let target = t.target else { return nil }
-        return SavedServer.isProd(target) ? Palette.prod : target.host.hasPrefix("root@") ? Palette.root : nil
-    }
+    /// A production server's pane underlined in purple, a root login's in orange — as a panel's line.
+    private static func tint(_ t: Tab) -> NSColor? { Chip.tint(chips(t)) }
 
     /// A pane's header while its tab has several: which server, which folder, whether keys go there (bold, the line).
     private func header(_ t: Tab, index j: Int, focused: Bool, shown: Bool) {

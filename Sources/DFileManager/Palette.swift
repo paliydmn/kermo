@@ -87,6 +87,10 @@ enum Chip: String, CaseIterable {
         [SavedServer.isProd(t) ? .prod : nil, root ?? t.sudo ? .root : nil, ServerLock.server(for: t)?.locked == true ? .locked : nil].compactMap { $0 }
     }
 
+    /// The color of a place with these chips — the active panel's line, a tab's, the "→ F5" mark: production's (a
+    /// production root panel's too: its chips say both), else root's; nil for anywhere else.
+    static func tint(_ chips: [Chip]) -> NSColor? { chips.contains(.prod) ? Palette.prod : chips.contains(.root) ? Palette.root : nil }
+
     private static var font: NSFont { .systemFont(ofSize: 9.5, weight: .bold) }
 
     /// Drawn each time it shows, so it follows light and dark. ~9.5 pt caps on a 14 pt capsule: white on production's
@@ -117,11 +121,35 @@ enum Chip: String, CaseIterable {
         return NSAttributedString(attachment: a)
     }
 
+    /// Several inline, a space apart: a tab title's lead. nil for none.
+    static func text(_ chips: [Chip]) -> NSAttributedString? {
+        guard !chips.isEmpty else { return nil }
+        let s = NSMutableAttributedString()
+        for c in chips { if s.length > 0 { s.append(NSAttributedString(string: " ")) }; s.append(c.text) }
+        return s
+    }
+
     /// For a menu item, which takes no picture in its title: the word in the chip's color, then the title.
     func menuTitle(_ title: String, size: CGFloat = 0) -> NSAttributedString {
         let s = NSMutableAttributedString(string: word + " ", attributes: [.foregroundColor: color, .font: NSFont.menuFont(ofSize: size).bold])
         s.append(NSAttributedString(string: title, attributes: [.font: NSFont.menuFont(ofSize: size)]))
         return s
+    }
+}
+
+extension NSWindow {
+    /// A server file's chips (production, root, locked) at the end of its title bar, as its panel's path bar shows
+    /// them: the editor's and the viewer's.
+    func showChips(_ chips: [Chip]) {
+        guard !chips.isEmpty else { return }
+        let stack = NSStackView(views: chips.map { NSImageView(image: $0.image) })
+        stack.spacing = 4
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 10)
+        stack.frame.size = NSSize(width: stack.fittingSize.width, height: 28)
+        let bar = NSTitlebarAccessoryViewController()
+        bar.layoutAttribute = .trailing
+        bar.view = stack
+        addTitlebarAccessoryViewController(bar)
     }
 }
 

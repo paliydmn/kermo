@@ -8,7 +8,11 @@ How the Kermo window is laid out, and the three ways to reach anything: the key 
 
 ## Panels and tabs
 
-The window shows two to four panels side by side, each with its own tabs. The tab in front has a bold title with a line in the accent color under it; the other tabs' titles are grey. The terminal's tabs look the same, and an SSH tab's dot is green while it's connected, grey when it isn't; a production server's tab has the PROD chip, a root login's ROOT. Tab moves between panels. With three or four panels, F5 and F6 target the panel that was active before this one. A panel can show a folder on this Mac, a [server](servers.md), an archive, a Git list or search results.
+The window shows two to four panels side by side, each with its own tabs. Tab moves between panels. The active panel has a 2 pt line under its path bar in the color of where it is: the accent color on this Mac (a theme with a background has its own, cyan in Midnight Commander and Far Manager), purple on a production server, orange in a [root panel](root-panel.md), purple again when that's on a production server. Its path is in full contrast, the other panels' paths are dimmed, and their cursor is an outline (in a theme's dimmed text color). A panel can show a folder on this Mac, a [server](servers.md), an archive, a Git list or search results.
+
+The tab in front has a bold title with a line under it, in the accent color or the server's purple or orange; the other tabs' titles are grey. A server's tab has its chips before its title: PROD for a production server, ROOT for a root panel. The terminal's tabs look the same, and an SSH tab's dot is green while it's connected, grey when it isn't; a root login's tab has ROOT.
+
+With three or four panels, F5 and F6 target the panel that was active before this one. Its path bar ends with **→ F5** in that panel's color, and the mark moves when Tab or a click makes another panel active.
 
 Under the tabs, the path bar says where the panel is. On a server, in an archive or in search results a symbol before the path says which (a server rack, a box, a magnifier), and a server's chips follow it: PROD for a production server, ROOT for a [root panel](root-panel.md), LOCKED for a server locked with Touch ID. The path itself is plain text, which ⌘L edits.
 
@@ -32,6 +36,7 @@ The bottom row shows F1–F10. Hold ⇧, ⌥, ⌘ or ⌃ (or a combination such 
 - **Hold** pins a layer for mouse use until you press ⎋ or run a command. **+N** opens the cheat sheet filtered to that layer.
 - ⌥ plus a digit does what its F-key does, so those layers sum them up in one slot: `⌥1…0 = F1…F10`, `⌥⇧4 5 6 8 = ⇧F4 5 6 8`.
 - On a server's panel F8 says **Delete…** in red: it deletes for good after asking, because a server has no Trash.
+- F5 and F6 say where they go when it isn't plain: `Copy → web-01` when the other panel is on a server (a production server's name in purple and bold), `Copy → site` with three or four panels. With two panels on this Mac they say **Copy** and **Move**.
 - The delay is 120 ms. Change it with `defaults write com.dmn.dfilemanager keyBarHoldDelay 0.2`.
 
 ## Places sidebar

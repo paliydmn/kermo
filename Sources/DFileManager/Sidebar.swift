@@ -800,6 +800,9 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         name.setContentHuggingPriority(.init(1), for: .horizontal)   // it takes the room, not a spacer and its gap
 
         let ssh = server.ssh.filter(\.running).count, sftp = server.sftp.count   // an SSH tab whose ssh ended (`exit`, Disconnect) isn't open
+        // A root panel's SFTP in root's orange: here the color says who, not the state.
+        let root = server.sftp.filter(\.target.sudo).count, sftpColor = root > 0 ? Palette.root : Palette.ok
+        let asRoot = root == 0 ? "" : root == sftp ? " as root" : ", \(root) as root"
         let open = [ssh > 0 ? "SSH \(ssh)" : nil, sftp > 0 ? "SFTP \(sftp)" : nil].compactMap { $0 }.joined(separator: ", ")
         let tunnels = (server.tunnels.isEmpty ? [] : ["Tunnels listening: " + server.tunnels.joined(separator: ", ")]) + server.failedTunnels
         let tunnelColor: NSColor = !server.failedTunnels.isEmpty ? Palette.fail : server.tunnels.isEmpty ? .secondaryLabelColor : Palette.ok
@@ -826,7 +829,8 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         let chips = ServerChips(views: [
             failedMark,
             ssh == 0 ? nil : pill(.ssh, ssh, Palette.ok, "ssh", "\(ssh) SSH session\(ssh == 1 ? "" : "s") open", "\(ssh) SSH session\(ssh == 1 ? "" : "s") open", state: true),
-            sftp == 0 ? nil : pill(.folder, sftp, Palette.ok, "sftp", "\(sftp) SFTP panel\(sftp == 1 ? "" : "s") open", "\(sftp) SFTP panel\(sftp == 1 ? "" : "s") open", state: true),
+            sftp == 0 ? nil : pill(.folder, sftp, sftpColor, "sftp", "\(sftp) SFTP panel\(sftp == 1 ? "" : "s") open" + asRoot,
+                                   "\(sftp) SFTP panel\(sftp == 1 ? "" : "s") open" + asRoot, state: true),
             tunnels.isEmpty ? nil : pill(.tunnel, server.tunnels.count, tunnelColor, "tunnels",
                                          "\(server.tunnels.count) tunnel\(server.tunnels.count == 1 ? "" : "s") listening" + (server.failedTunnels.isEmpty ? "" : ", one failed"),
                                          tunnels.joined(separator: "\n"), state: true),
@@ -840,8 +844,8 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         let toolbar = ServerToolbar(views: [
             pill(.ssh, ssh, ssh > 0 ? Palette.ok : .secondaryLabelColor, "ssh", "SSH",
                  ssh > 0 ? "\(ssh) open — click to go there  ·  ⌘-click: another one" : "Open an SSH session  ·  ⌘-click: another one"),
-            pill(.folder, sftp, sftp > 0 ? Palette.ok : .secondaryLabelColor, "sftp", "SFTP",
-                 sftp > 0 ? "\(sftp) open — click to go there  ·  ⌘-click: another one" : "Open over SFTP  ·  ⌘-click: in a new tab, ⌥-click: in the other panel"),
+            pill(.folder, sftp, sftp > 0 ? sftpColor : .secondaryLabelColor, "sftp", "SFTP",
+                 sftp > 0 ? "\(sftp) open\(asRoot) — click to go there  ·  ⌘-click: another one" : "Open over SFTP  ·  ⌘-click: in a new tab, ⌥-click: in the other panel"),
         ] + (server.saved?.tunnels.isEmpty == false || !server.tunnels.isEmpty || !server.failedTunnels.isEmpty
              ? [pill(.tunnel, server.tunnels.count, tunnelColor, "tunnels", "Tunnels", (tunnels + ["Click: its tunnels"]).joined(separator: "\n"))] : [])
           + [more])

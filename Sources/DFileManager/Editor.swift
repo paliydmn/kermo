@@ -84,7 +84,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
                 e.onSaved = onSaved
                 e.onClose = onClose
                 e.server = server
-                if let t = server?.target { e.showChips(Chip.of(t)) }
+                if let t = server?.target { e.window?.showChips(Chip.of(t)) }
                 open.append(e)
                 e.showWindow(nil)
                 if let note { e.flash(note) }
@@ -160,19 +160,6 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         w.makeFirstResponder(textView)
     }
     required init?(coder: NSCoder) { fatalError() }
-
-    /// A server file's chips (production, root, locked) at the end of its title bar, as its panel's path bar shows them.
-    private func showChips(_ chips: [Chip]) {
-        guard !chips.isEmpty, let w = window else { return }
-        let stack = NSStackView(views: chips.map { NSImageView(image: $0.image) })
-        stack.spacing = 4
-        stack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 10)
-        stack.frame.size = NSSize(width: stack.fittingSize.width, height: 28)
-        let bar = NSTitlebarAccessoryViewController()
-        bar.layoutAttribute = .trailing
-        bar.view = stack
-        w.addTitlebarAccessoryViewController(bar)
-    }
 
     private func retitle() {
         window?.title = (remote ?? url.lastPathComponent).bidiVisible

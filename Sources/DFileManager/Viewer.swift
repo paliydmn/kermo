@@ -81,12 +81,18 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         return text ? remoteLimit : nil
     }
 
-    static func show(_ url: URL, remote: (target: SFTPTarget, path: String, from: Int64)? = nil, onClose: (@MainActor () -> Void)? = nil) {
+    /// A server's file is titled and marked as in the editor: "web:/var/log/app.log" with its server's chips.
+    @discardableResult
+    static func show(_ url: URL, remote: (target: SFTPTarget, path: String, from: Int64)? = nil, onClose: (@MainActor () -> Void)? = nil) -> Viewer {
         let v = Viewer(url, remote: remote)
         v.onClose = onClose
-        if let remote { v.window?.title = "\(remote.target.host):\(remote.path)".bidiVisible }
+        if let remote {
+            v.window?.title = SavedServer.title(remote.target, remote.path).bidiVisible
+            v.window?.showChips(Chip.of(remote.target))
+        }
         open.append(v)
         v.showWindow(nil)
+        return v
     }
 
     init(_ url: URL, remote: (target: SFTPTarget, path: String, from: Int64)? = nil) {   // internal for tests; use show(_:)

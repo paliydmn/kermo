@@ -13,22 +13,18 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var gitOnly = false { didSet { applyView(select: currentName) } }
     var inGitRepo: Bool { git != nil }
     var isActive = false { didSet { styleHeader() } }
-    /// With 3+ panels: this is where F5/F6 from the active panel go.
+    /// With 3–4 panels: where F5/F6 from the active panel go — its path bar says "→ F5".
     var isTarget = false { didSet { styleHeader() } }
 
-    /// The active panel: framed, its path bar filled, both in the theme's accent. A root panel's in orange instead (production's
-    /// color on a production server), its path in that color while inactive too. Before the path: what kind of place it
-    /// is (a server, an archive, search results) and a server's chips.
+    /// The active panel: a line under its path bar in its place's color (`placeTint`), its path in full contrast; the
+    /// others' path dimmed. Before the path: what kind of place it is (a server, an archive, search results) and a
+    /// server's chips.
     private func styleHeader() {
         let place = remote ?? parked
-        let root = place.map { $0.target.sudo ? SavedServer.isProd($0.target) ? Palette.prod : Palette.root : nil } ?? nil
-        let tint = root ?? theme.accent
-        pathBar.fill = isActive ? tint : .clear
-        pathField.backgroundColor = isActive ? tint : .clear
         let kind: (Symbol, String)? = searchTitle != nil ? (.search, "Search results") : archive != nil ? (.archive, "Archive") : place != nil ? (.server, "Server") : nil
         placeIcon.image = kind.map { $0.0.image($0.1) }
         placeIcon.isHidden = kind == nil
-        placeIcon.contentTintColor = isActive ? theme.onAccent : theme.hidden
+        placeIcon.contentTintColor = isActive ? theme.text : theme.hidden
         let chips = searchTitle == nil && archive == nil ? place.map { Chip.of($0.target) } ?? [] : []
         if chips != headerChips {
             headerChips = chips
@@ -36,11 +32,31 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             chips.forEach { chipRow.addArrangedSubview(NSImageView(image: $0.image)) }
         }
         chipRow.isHidden = chips.isEmpty
-        pathField.textColor = isActive ? theme.onAccent : isTarget || root != nil ? tint : theme.hidden
-        viewIfLoaded?.layer?.borderWidth = isActive ? Self.frameWidth : 0
-        viewIfLoaded?.layer?.borderColor = tint.cgColor
+        pathField.textColor = isActive ? theme.text : theme.hidden
+        pathBar.line = isActive ? placeTint : nil
+        targetMark.isHidden = !isTarget
+        if isTarget { targetMark.image = Self.targetMark(placeTint) }
     }
-    private static let frameWidth: CGFloat = 2
+    var targetMarkShown: Bool { !targetMark.isHidden }   // tests
+
+    /// "→ F5" outlined in `color`: drawn each time it shows, so it follows light and dark.
+    private static func targetMark(_ color: NSColor) -> NSImage {
+        let font = NSFont.systemFont(ofSize: 10.5, weight: .bold)
+        let text = NSAttributedString(string: "→ F5", attributes: [.font: font, .foregroundColor: color])
+        let image = NSImage(size: NSSize(width: ceil(text.size().width + 10), height: 15), flipped: false) { r in
+            color.setStroke()
+            NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4).stroke()
+            text.draw(at: NSPoint(x: 5, y: (r.height - font.capHeight) / 2 + font.descender))
+            return true
+        }
+        image.cacheMode = .never
+        image.accessibilityDescription = "F5 and F6 go here"
+        return image
+    }
+    /// Where the panel is, by color: production's purple, a root panel's orange (a production one's purple), else the
+    /// theme's accent.
+    private var placeTint: NSColor { Chip.tint((remote ?? parked).map { Chip.of($0.target) } ?? []) ?? theme.accent }
+    var headerLine: NSColor? { pathBar.line }   // tests
     var onFocus: (() -> Void)?
     var onCommandKey: ((NSEvent) -> Bool)?
     var onCommand: ((String) -> Void)?
@@ -59,11 +75,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var peeked: URL?   // the file `textPeek` shows: shown again (a re-list), it keeps its scroll
     var peekedText: String? { textPeek?.isHidden == false ? textPeek?.textView.string : nil }   // tests
 
-    private let tabBar = NSStackView()   // one button per tab, each with a close ×
+    let tabBar = NSStackView()   // one button per tab, each with a close × (internal: tests read it)
     private let pathField = NSTextField(string: "")
     private let placeIcon = NSImageView()   // before the path: a server, an archive, search results
     private let chipRow = NSStackView()   // then a server's chips
-    private let pathBar = FilledStack()   // the three, filled in the active panel
+    /// With 3–4 panels, at the end of the path bar of the one F5/F6 go to (`isTarget`).
+    private let targetMark = NSImageView()
+    private let pathBar = LinedStack()   // the four, over the active panel's line
     private(set) var headerChips: [Chip] = []
     let filterField = NSTextField(string: "")   // internal: tests type into it
     private let statusLabel = NSTextField(labelWithString: "")
@@ -182,7 +200,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private(set) var remote: (target: SFTPTarget, dir: String)? {
         didSet {
             if remote != nil { parked = nil }
-            if oldValue?.target.sudo == true || remote?.target.sudo == true { styleHeader() }   // a root panel's colors come and go
+            if oldValue?.target != remote?.target { styleHeader() }   // a server's colors and chips come and go
             if let k = kept, k.target != remote?.target { k.close(); kept = nil }   // left that server (another tab too)
             guard oldValue?.target != remote?.target || oldValue?.dir != remote?.dir else { return }
             stopPreview()
@@ -389,7 +407,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         for f in [pathField, filterField] {
             f.isBordered = false
             f.isBezeled = false
-            f.drawsBackground = true
+            f.drawsBackground = f === filterField
             f.focusRingType = .none
             f.cell?.usesSingleLineMode = true
             f.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
@@ -403,9 +421,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
         placeIcon.symbolConfiguration = .init(pointSize: 11, weight: .medium)
         chipRow.spacing = 3
-        [placeIcon, chipRow, pathField].forEach(pathBar.addArrangedSubview)
+        targetMark.toolTip = "F5 / F6 copy and move here"
+        targetMark.setContentCompressionResistancePriority(.required, for: .horizontal)
+        [placeIcon, chipRow, pathField, targetMark].forEach(pathBar.addArrangedSubview)
         pathBar.spacing = 4
-        pathBar.edgeInsets = NSEdgeInsets(top: 0, left: 3, bottom: 0, right: 0)
+        pathBar.edgeInsets = NSEdgeInsets(top: 0, left: 3, bottom: 4, right: 0)   // the line's room
         pathField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let header = Self.column([tabBar, pathBar])
         spinner.style = .spinning
@@ -416,18 +436,14 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         errorIcon.isHidden = true
         let footer = Self.column([filterField, NSStackView(views: [spinner, errorIcon, statusLabel, cancelButton])])
         let v = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 700))
-        v.wantsLayer = true   // the active panel's frame
         for sub in [header, scroll, footer] as [NSView] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             v.addSubview(sub)
-            NSLayoutConstraint.activate([   // clear of the frame
-                sub.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: Self.frameWidth),
-                sub.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -Self.frameWidth),
-            ])
+            NSLayoutConstraint.activate([sub.leadingAnchor.constraint(equalTo: v.leadingAnchor), sub.trailingAnchor.constraint(equalTo: v.trailingAnchor)])
         }
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: v.topAnchor, constant: 4),
-            scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
+            scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 2),
             footer.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 3),
             footer.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -4),
         ])
@@ -1773,9 +1789,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         tabBar.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (i, t) in tabs.enumerated() {
             if let r = i == tabIndex ? remote ?? parked : t.remote ?? t.parked {
-                let name = r.dir == "/" ? "/" : (r.dir as NSString).lastPathComponent.bidiVisible
-                tabBar.addArrangedSubview(Self.tabButton("SFTP · \(r.target.shown) · \(name)", tip: "\(r.target.shown):\(r.dir)", index: i, current: i == tabIndex,
-                                                         target: self, action: #selector(tabClicked(_:)), close: #selector(closeTabClicked(_:))))
+                let name = r.dir == "/" ? "/" : (r.dir as NSString).lastPathComponent.bidiVisible, chips = Chip.of(r.target)
+                tabBar.addArrangedSubview(Self.tabButton("SFTP · \(r.target.shown) · \(name)", lead: Chip.text(chips), tint: Chip.tint(chips), tip: "\(r.target.shown):\(r.dir)",
+                                                         index: i, current: i == tabIndex, target: self, action: #selector(tabClicked(_:)), close: #selector(closeTabClicked(_:))))
                 continue
             }
             let p = i == tabIndex ? path : t.path
@@ -2514,9 +2530,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        guard let c = theme.cursor else { return nil }
         let v = PanelRowView()
-        v.cursor = c
+        (v.cursor, v.outline) = (theme.cursor, theme.outline)
         return v
     }
 
@@ -2868,12 +2883,13 @@ struct DateColumn: Equatable {
                                             time = fmt("HH:mm"), monthDay = fmt("MMM d HH:mm")
 }
 
-/// A row of views on a color of its own (the active panel's path bar), drawn each time so it follows light and dark.
-final class FilledStack: NSStackView {
-    var fill: NSColor = .clear { didSet { needsDisplay = true } }
+/// A row of views over a 2 pt line in `line`'s color along its foot (the active panel's path bar), drawn each time so
+/// it follows light and dark.
+final class LinedStack: NSStackView {
+    var line: NSColor? { didSet { if line != oldValue { needsDisplay = true } } }
     override func draw(_ dirtyRect: NSRect) {
-        fill.setFill()
-        bounds.intersection(dirtyRect).fill()   // views don't clip (macOS 14): the dirty rect can reach past them
+        line?.setFill()
+        if line != nil { NSRect(x: bounds.minX, y: isFlipped ? bounds.maxY - 2 : bounds.minY, width: bounds.width, height: 2).fill() }
     }
 }
 

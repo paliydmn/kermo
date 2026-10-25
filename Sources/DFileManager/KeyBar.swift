@@ -1,4 +1,5 @@
 import AppKit
+import DFMCore
 
 /// One key in the bar: what to press, what it does, which command it runs (nil = a hint, not clickable).
 struct KeySlot: Equatable {
@@ -53,6 +54,19 @@ enum KeyBarModel {
         }
     }
 
+    /// Where F5 and F6 go, in their slots ("Copy → web-01") when it isn't plain: a server (by its name, production's
+    /// said in its color), or with 3–4 panels a folder (its name). nil with two panels on this Mac.
+    struct Target: Equatable {
+        let name: String
+        var prod = false
+        var text: String { "→ " + name }
+    }
+    static func target(server: (name: String, prod: Bool)?, folder: String, panels: Int) -> Target? {
+        if let server { return Target(name: server.name.bidiVisible, prod: server.prod) }
+        return panels > 2 ? Target(name: folder == "/" ? "/" : (folder as NSString).lastPathComponent.bidiVisible) : nil
+    }
+    static let targeted: Set<String> = ["file.copy", "file.move"]
+
     /// Mouse users' file actions (F3–F8): the last to go under "+N" on a narrow window.
     static let core: Set<String> = ["file.view", "file.edit", "file.copy", "file.move", "file.mkdir", "file.trash"]
 
@@ -79,6 +93,8 @@ final class KeyBarView: NSView {
     var server = false {
         didSet { if server != oldValue { reload(commands) } }
     }
+    /// Said after F5's and F6's labels (`KeyBarModel.target`).
+    var target: KeyBarModel.Target? { didSet { if target != oldValue { render() } } }
 
     private var commands: [Command] = []
     private var layers: [(mods: NSEvent.ModifierFlags, slots: [KeySlot])] = []
@@ -187,7 +203,8 @@ final class KeyBarView: NSView {
         }
         let (shown, more) = KeyBarModel.fit(slots, capacity: capacity)
         for s in shown {
-            let b = slotButton(s.key, s.label, #selector(slotClicked(_:)), color: server && s.id == "file.trash" ? Palette.fail : .labelColor)   // gone for good
+            let b = slotButton(s.key, s.label, #selector(slotClicked(_:)), color: server && s.id == "file.trash" ? Palette.fail : .labelColor,   // gone for good
+                               target: s.id.map(KeyBarModel.targeted.contains) == true ? target : nil)
             b.identifier = s.id.map { .init($0) }
             b.isEnabled = s.id.map(canRun) ?? false
             row.addArrangedSubview(b)
@@ -199,10 +216,17 @@ final class KeyBarView: NSView {
         }
     }
 
-    private func slotButton(_ key: String, _ label: String, _ action: Selector, color: NSColor = .labelColor) -> NSButton {
+    /// `target`: after the label, quieter — production's in its color, bold; the whole of it in the tooltip, as a
+    /// narrow slot cuts it.
+    private func slotButton(_ key: String, _ label: String, _ action: Selector, color: NSColor = .labelColor, target: KeyBarModel.Target? = nil) -> NSButton {
         let b = NSButton(title: "", target: self, action: action)
         let t = NSMutableAttributedString(string: label.isEmpty ? key : key + " ", attributes: [.foregroundColor: NSColor.secondaryLabelColor])
         t.append(NSAttributedString(string: label, attributes: [.foregroundColor: color]))
+        if let target {
+            t.append(NSAttributedString(string: " " + target.text, attributes: target.prod
+                ? [.foregroundColor: Palette.prod, .font: NSFont.boldSystemFont(ofSize: b.font?.pointSize ?? NSFont.systemFontSize)] : [.foregroundColor: NSColor.secondaryLabelColor]))
+            b.toolTip = "\(label) \(target.text)" + (target.prod ? ", a production server" : "")
+        }
         b.attributedTitle = t
         b.bezelStyle = .accessoryBarAction
         b.refusesFirstResponder = true
