@@ -20,12 +20,12 @@ enum KeyBarModel {
     static func fNumber(_ key: String) -> Int? { key.first == "f" ? Int(key.dropFirst()) : nil }
 
     /// Unmodified keys other than F-keys (↩ ⌫ Space Tab /) stay out — they're on the F1 sheet.
-    /// ⌥+digit duplicates of F-keys (⌥5 = F5, ⇧⌥6 = ⇧F6, ⌥0 = F10) collapse into one hint slot.
+    /// ⌥+digit duplicates of F-keys (⌥5 = F5, ⇧⌥6 = ⇧F6, ⌥0 = F10) collapse into one hint slot naming the digits there.
     /// One slot per command per layer (its first key there). F-keys first by number, then registry order.
     /// `server`: the active panel is a server's, where F8 deletes (after a question): no Trash there.
     static func layers(_ commands: [Command], server: Bool = false) -> [(mods: NSEvent.ModifierFlags, slots: [KeySlot])] {
         var slots: [UInt: [(f: Int, slot: KeySlot)]] = [:]
-        var hinted = Set<UInt>()
+        var hinted: [UInt: [Int]] = [:]   // per layer: the F-key numbers its ⌥ digits stand for
         // The terminal's pane arrows stay out too: the bar is the panels' (the terminal shows only ⌃O there).
         for c in commands where !c.id.hasPrefix("term.pane.") && !c.id.hasPrefix("term.resize.") {
             for k in c.keys {
@@ -33,7 +33,7 @@ enum KeyBarModel {
                 if m.isEmpty && f == nil { continue }
                 if m.contains(.option), let d = Int(k.name),
                    c.keys.contains(where: { $0.flags == m.subtracting(.option) && fNumber($0.name) == (d == 0 ? 10 : d) }) {
-                    hinted.insert(m.rawValue)
+                    hinted[m.rawValue, default: []].append(d == 0 ? 10 : d)
                     continue
                 }
                 if slots[m.rawValue]?.contains(where: { $0.slot.id == c.id }) == true { continue }
@@ -41,12 +41,13 @@ enum KeyBarModel {
                 slots[m.rawValue, default: []].append((f ?? 99, KeySlot(key: k.display, label: label, id: c.id)))
             }
         }
-        let used = slots.keys.map { NSEvent.ModifierFlags(rawValue: $0) }
+        let used = Set(slots.keys).union(hinted.keys).map { NSEvent.ModifierFlags(rawValue: $0) }   // ⇧⌥: hints only
         let mods = [[]] + order.dropFirst().filter { used.contains($0) } + used.filter { !order.contains($0) }.sorted { $0.rawValue < $1.rawValue }
         return mods.map { m in
             var s = (slots[m.rawValue] ?? []).enumerated().sorted { ($0.element.f, $0.offset) < ($1.element.f, $1.offset) }.map(\.element.slot)
-            if hinted.contains(m.rawValue) {
-                s.append(KeySlot(key: symbol(m) + "1…0", label: "= \(symbol(m.subtracting(.option)))F1…F10", id: nil))
+            if let f = hinted[m.rawValue]?.sorted() {
+                let (key, fs) = f.count == 10 ? ("1…0", "1…F10") : (f.map { "\($0 % 10)" }.joined(separator: " "), f.map(String.init).joined(separator: " "))
+                s.append(KeySlot(key: symbol(m) + key, label: "= \(symbol(m.subtracting(.option)))F" + fs, id: nil))
             }
             return (m, s)
         }
@@ -220,7 +221,7 @@ final class KeyBarView: NSView {
     @objc private func showLayerMenu() {
         let names: [(NSEvent.ModifierFlags, String)] = [(.control, "Control"), (.option, "Option"), (.shift, "Shift"), (.command, "Command")]
         let menu = NSMenu()
-        for l in layers {
+        for l in layers where l.slots.contains(where: { $0.id != nil }) {   // not a layer of hints alone
             let name = l.mods.isEmpty ? "— F-keys" : KeyBarModel.symbol(l.mods) + "  " + names.filter { l.mods.contains($0.0) }.map(\.1).joined(separator: "-")
             let it = NSMenuItem(title: "\(name)  (\(l.slots.filter { $0.id != nil }.count))", action: #selector(pickLayer(_:)), keyEquivalent: "")
             it.target = self

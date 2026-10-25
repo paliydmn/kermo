@@ -14,7 +14,8 @@ import Testing
 
 @Test @MainActor func optionDigitDuplicatesCollapseIntoAHint() {
     let l = layers()
-    #expect(l([.shift, .option]) == nil, "⇧⌥4/6/8 duplicate ⇧F4/F6/F8")
+    #expect(l([.shift, .option]) == [KeySlot(key: "⌥⇧4 5 6 8", label: "= ⇧F4 5 6 8", id: nil)],
+            "P-6 (review 1): ⇧⌥4/5/6/8 duplicate ⇧F4/F5/F6/F8 — the hint names those, not 1…0")
     let opt = l(.option)!
     #expect(!opt.contains { $0.key == "⌥5" || $0.key == "⌥0" })
     #expect(opt.last == KeySlot(key: "⌥1…0", label: "= F1…F10", id: nil))
