@@ -27,7 +27,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         else if archive != nil { pathBar.showPlace(.archive, "", chips: [], scp: nil) }
         else if let p = place { pathBar.showPlace(.server, SavedServer.name(for: p.target.asUser), chips: chips, scp: Self.scpPath(p.target, p.dir)) }
         else { pathBar.showPlace(.mac, "Mac", chips: [], scp: nil) }
-        pathBar.style(text: isActive ? theme.text : theme.hidden, mono: theme.mono)
+        pathBar.style(text: isActive ? theme.text : theme.hidden, dim: theme.hidden, mono: theme.mono)
         pathBar.line = isActive ? placeTint : nil
         targetMark.isHidden = !isTarget
         if isTarget { targetMark.image = Self.targetMark(placeTint) }

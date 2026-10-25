@@ -101,12 +101,13 @@ final class PathBar: LinedStack {
     /// What the crumbs show now — "…" for those that gave way (tests).
     var shownCrumbs: [String] { crumbRow.shown }
 
-    /// Active: in full contrast; else dimmed. A theme in a monospaced font gets its crumbs so.
-    func style(text: NSColor, mono: Bool) {
+    /// Active: in full contrast; else dimmed. `dim`: the theme's dimmed text, for the "›" between crumbs. A theme in a
+    /// monospaced font gets its crumbs so.
+    func style(text: NSColor, dim: NSColor, mono: Bool) {
         placeIcon.contentTintColor = text
         placeName.textColor = text
         field.textColor = text
-        crumbRow.style(text: text, mono: mono)
+        crumbRow.style(text: text, dim: dim, mono: mono)
     }
 
     /// A filter kept after ↩: its text as a chip (a click goes back to the filter field).
@@ -176,6 +177,7 @@ final class CrumbRow: NSView {
     private let more = NSTextField(labelWithString: "…")
     private(set) var shown: [String] = []
     private var text: NSColor = .labelColor
+    private var dim: NSColor = .secondaryLabelColor
     private var font = NSFont.systemFont(ofSize: 12.5)
     private static let gap: CGFloat = 2
 
@@ -188,8 +190,9 @@ final class CrumbRow: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func style(text: NSColor, mono: Bool) {
+    func style(text: NSColor, dim: NSColor, mono: Bool) {
         self.text = text
+        self.dim = dim
         font = mono ? .monospacedSystemFont(ofSize: 12, weight: .regular) : .systemFont(ofSize: 12.5)
         rebuild()
     }
@@ -207,7 +210,7 @@ final class CrumbRow: NSView {
         separators = crumbs.dropFirst().map { _ in
             let s = NSTextField(labelWithString: "›")
             s.font = font
-            s.textColor = text.withAlphaComponent(0.5)
+            s.textColor = dim
             addSubview(s)
             return s
         }
