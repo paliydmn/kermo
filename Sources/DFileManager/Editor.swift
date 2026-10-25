@@ -457,7 +457,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     private func askOverwrite(_ now: Stamp?) {
         noticed = now
         guard let app = NSApp.delegate as? AppDelegate else { return }
-        let size = ByteCountFormatter.string(fromByteCount: noticed?.size ?? 0, countStyle: .file)
+        let size = ByteCountFormatter.short(noticed?.size ?? 0)
         Task {
             switch await app.choose("“\(url.lastPathComponent)” changed on disk since you opened it",
                                     info: "Something else wrote it (\(size) now). Overwriting replaces those changes with yours. "

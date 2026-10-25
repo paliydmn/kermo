@@ -94,7 +94,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         self.remote = remote
         if let from = remote?.from, from > 0 {
             let shown = Int64((try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0)
-            let fmt = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+            let fmt = { ByteCountFormatter.short($0) }
             label = "last \(fmt(shown)) of \(fmt(from + shown))"
             tail = fmt(shown)
         }
@@ -344,7 +344,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
         defer { try? h.close() }
         let size = (try? h.seekToEnd()) ?? 0
         try? h.seek(toOffset: 0)
-        let sizeText = label ?? ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+        let sizeText = label ?? ByteCountFormatter.short(Int64(size))
         let full: UInt64 = 32 << 20, chunk = 4 << 20
 
         switch mode {
@@ -352,7 +352,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
             let at = min(hexOffset, size)
             try? h.seek(toOffset: at)
             let data = (try? h.read(upToCount: 1 << 20)) ?? Data()
-            let what = size <= 1 << 20 ? "" : at == 0 ? " of first 1 MB" : " · 1 MB at \(ByteCountFormatter.string(fromByteCount: Int64(base + at), countStyle: .file))"
+            let what = size <= 1 << 20 ? "" : at == 0 ? " of first 1 MB" : " · 1 MB at \(ByteCountFormatter.short(Int64(base + at)))"
             return (TextFormat.hexDump(data, base: Int(base + at)), "\(sizeText) · hex" + what, size, false)
         case .pretty:
             let data = (try? h.read(upToCount: Int(min(size, full)))) ?? Data()
@@ -379,7 +379,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
             try? h.seek(toOffset: size - UInt64(chunk))
             let tail = (try? h.read(upToCount: chunk)) ?? Data()
             let (headText, enc) = TextFormat.decode(head)
-            let skipped = ByteCountFormatter.string(fromByteCount: Int64(size) - Int64(2 * chunk), countStyle: .file)
+            let skipped = ByteCountFormatter.short(Int64(size) - Int64(2 * chunk))
             let text = headText + "\n\n··· \(skipped) skipped ···\n\n" + TextFormat.decode(tail).text
             return (text, "\(sizeText) · \(enc) · first and last 4 MB", size, false)
         }
@@ -387,7 +387,7 @@ final class Viewer: NSWindowController, NSWindowDelegate {
 
     /// "3 MB · gzip, 20 MB unpacked" (or "first 32 MB unpacked", "damaged after 6.8 MB").
     nonisolated static func unpackedInfo(_ z: (data: Data, compression: String, truncated: Bool, damaged: Bool), _ sizeText: String) -> String {
-        let unpacked = ByteCountFormatter.string(fromByteCount: Int64(z.data.count), countStyle: .file)
+        let unpacked = ByteCountFormatter.short(Int64(z.data.count))
         return "\(sizeText) · \(z.compression), " + (z.damaged ? z.data.isEmpty ? "damaged, nothing unpacked" : "damaged after \(unpacked)"
                                                    : z.truncated ? "first \(unpacked) unpacked" : "\(unpacked) unpacked")
     }
@@ -597,7 +597,7 @@ extension Viewer {
         let copy = URL(fileURLWithPath: NSTemporaryDirectory() + "dfm-archive-unpacked-" + UUID().uuidString)   // swept if left behind
         guard (try? z.data.write(to: copy)) != nil else { return nil }
         let size = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0)
-        return (copy, unpackedInfo(z, ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)))
+        return (copy, unpackedInfo(z, ByteCountFormatter.short(Int64(size))))
     }
 
     /// Laid out in full before scrolling so positions are exact; 256 KB lays out in ~70 ms (1 MB: ~280 ms). Its
@@ -685,7 +685,7 @@ extension Viewer {
                 if r.location != NSNotFound { shown = r; textView.setSelectedRange(r); textView.showFindIndicator(for: r) }
             }
             if dx == nil { textView.scrollRangeToVisible(shown) }   // without wrap, a long line's place may be off to the side
-            let fmt = { (n: Int) in ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file) }
+            let fmt = { (n: Int) in ByteCountFormatter.short(Int64(n)) }
             info = (truncated ? "file truncated · " : "") + "\(label ?? fmt(big.count)) · \(enc) · showing \(fmt(w.lowerBound))–\(fmt(w.upperBound)) (\(w.lowerBound * 100 / max(big.count, 1))%)"
             truncated = false
             updateSubtitle()
@@ -716,7 +716,7 @@ extension Viewer {
             Self.tint(textView.textStorage!, levels, offset: 0)
             ANSIColors.apply(runs, to: textView.textStorage!, font: Self.font)
             if followTask != nil { textView.scrollToEndOfDocument(nil) } else { textView.scrollRangeToVisible(NSRange(location: 0, length: 0)) }
-            let fmt = { (n: Int) in ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file) }
+            let fmt = { (n: Int) in ByteCountFormatter.short(Int64(n)) }
             info = "\(label ?? fmt(d.count)) · \(enc)" + (more ? " · first \(fmt(Self.hugeLimit)) of matching lines" : "")
             updateSubtitle()
             sliding = false

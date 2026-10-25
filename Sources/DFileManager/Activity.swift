@@ -50,7 +50,7 @@ struct ActivityEntry: Codable, Equatable {
 
     /// "Copied 300 files · 3.1 GB · took 1:42 · 12:04"; "2 failed · 46 files done · 12:04".
     var summary: String {
-        let size = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        let size = ByteCountFormatter.short(bytes)
         let time = DateFormatter.localizedString(from: finished, dateStyle: Calendar.current.isDateInToday(finished) ? .none : .short, timeStyle: .short)
         let n = "\(files) file\(files == 1 ? "" : "s")"
         switch result {
@@ -184,7 +184,7 @@ struct ActivityEntry: Codable, Equatable {
                                               attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: sizeFont, .paragraphStyle: para]))
             }
         }
-        let bytes = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+        let bytes = { ByteCountFormatter.short($0) }
         if p.doneFiles > p.recent.count { line(.check, Palette.ok, "\(p.doneFiles - p.recent.count) more done", .secondaryLabelColor) }
         for f in p.recent { line(.check, Palette.ok, (f.path as NSString).lastPathComponent, size: bytes(f.size)) }
         // between two files (paused, say) `current` is still the one just done

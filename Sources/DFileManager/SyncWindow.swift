@@ -157,7 +157,6 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
     }
 
     private func updateSummary() {
-        let fmt = ByteCountFormatter()
         func total(_ a: DirSync.Action, _ side: (DirSync.Item) -> FileItem?) -> (Int, Int64) {
             let xs = items.filter { $0.action == a }
             return (xs.count, xs.reduce(0) { $0 + (side($1)?.size ?? 0) })
@@ -174,7 +173,7 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
             return "to Trash: \(n)   "
         }
         summary.stringValue = items.isEmpty && flag?.isCancelled == false ? "Folders are identical."
-            : "→ \(nr) (\(fmt.string(fromByteCount: br)))   ← \(nl) (\(fmt.string(fromByteCount: bl)))   "
+            : "→ \(nr) (\(ByteCountFormatter.short(br)))   ← \(nl) (\(ByteCountFormatter.short(bl)))   "
             + gone(.trashLeft, sides.left) + gone(.trashRight, sides.right) + "conflicts skipped: \(conflicts)   equal: \(equal)   · click a row's arrow to change it"
         syncButton.isEnabled = nr + nl + trash > 0
     }
@@ -229,7 +228,7 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
         let df = Self.dateFormat
         func side(_ f: FileItem?) -> String {
             guard let f else { return "—" }
-            return f.kind == .dir ? "folder" : "\(ByteCountFormatter.string(fromByteCount: f.size, countStyle: .file)) · \(df.string(from: Date(timeIntervalSince1970: f.mtime)))"
+            return f.kind == .dir ? "folder" : "\(ByteCountFormatter.short(f.size)) · \(df.string(from: Date(timeIntervalSince1970: f.mtime)))"
         }
         tf.alignment = .left
         tf.font = .systemFont(ofSize: NSFont.systemFontSize)

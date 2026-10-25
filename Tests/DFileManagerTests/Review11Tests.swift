@@ -310,7 +310,7 @@ private func tempDir() -> String {
     defer { v.close() }
     for _ in 0..<500 where v.window?.subtitle.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(10)) }
     v.setLineFilter(LineFilter("77777"))
-    let fmt = ByteCountFormatter.string(fromByteCount: 10, countStyle: .file)
+    let fmt = ByteCountFormatter.short(10)
     await waitUntil { v.window?.subtitle.contains("LINES WITH “77777”") == true }
     #expect(v.window?.subtitle.contains("LINES WITH “77777” IN THE LAST \(fmt) ONLY") == true, "\(v.window?.subtitle ?? "")")
 }
@@ -396,7 +396,7 @@ private func tempDir() -> String {
 /// N7: an empty FAT32 or exFAT stick read "Zero KB free": the "important usage" figure is 0 there (fskit), the
 /// plain one is right. That one is taken when the first says nothing.
 @Test func freeSpaceFallsBackWhereImportantUsageIsZero() {
-    let fmt = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+    let fmt = { ByteCountFormatter.short($0) }
     #expect(PanelViewController.freeText(important: 0, available: 628_000_000) == fmt(628_000_000))
     #expect(PanelViewController.freeText(important: nil, available: 628_000_000) == fmt(628_000_000))
     #expect(PanelViewController.freeText(important: 5_000_000_000, available: 4_000_000_000) == fmt(5_000_000_000), "APFS: purgeable counts")

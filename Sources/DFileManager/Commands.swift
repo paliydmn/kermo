@@ -1397,7 +1397,7 @@ extension AppDelegate {
             let fmt = DateFormatter()
             fmt.dateFormat = "HH:mm:ss"
             let when = fmt.string(from: Date(timeIntervalSince1970: e.attrs.mtime))
-            let info = "Someone or something wrote it at \(when) (\(ByteCountFormatter.string(fromByteCount: e.attrs.size, countStyle: .file))). "
+            let info = "Someone or something wrote it at \(when) (\(ByteCountFormatter.short(e.attrs.size))). "
                 + "Overwriting replaces their changes with yours. Compare shows the differences first; Cancel keeps your text \(keeps)."
             while true {   // Compare asks again once the diff is up
                 switch await choose("“\(name)” changed on \(target.host) since you opened it", info: info, ["Overwrite", "Compare", "Cancel"],
@@ -1474,7 +1474,7 @@ extension AppDelegate {
                         }
                     }
                 }
-                return Picker.Item(title: when, subtitle: ByteCountFormatter.string(fromByteCount: v.size, countStyle: .file),
+                return Picker.Item(title: when, subtitle: ByteCountFormatter.short(v.size),
                                    keys: [Shortcut("f3")!: view, Shortcut("cmd+shift+d")!: diff, Shortcut("cmd+d")!: diffBefore, Shortcut("cmd+r")!: revert],
                                    run: view)
             }
@@ -2048,7 +2048,7 @@ extension AppDelegate {
             }
             let sizes = Dictionary(items.map { ($0.name, $0.size) }) { a, _ in a }
             if let odd = SplitParts.misfit(seq.parts, sizes: sizes) {
-                let size = { ByteCountFormatter.string(fromByteCount: sizes[$0] ?? 0, countStyle: .file) }
+                let size = { ByteCountFormatter.short(sizes[$0] ?? 0) }
                 return showError(JobErrorMessage("“\(odd)” is \(size(odd)), “\(seq.parts[0])” \(size(seq.parts[0])): these look like parts of two different splits. Nothing was combined."))
             }
             guard let target = await prompt("Combine \(seq.parts.count) parts (\(seq.parts.first!) … \(seq.parts.last!)) into:",
@@ -2101,11 +2101,10 @@ extension AppDelegate {
         Task { [self] in
             // Off the main thread: a stick that stopped answering. A network share keeps to the kernel's figures.
             let rows = await Blocking.run(.userInitiated) { () -> [(path: String, title: String, subtitle: String, eject: Bool)] in
-                let fmt = ByteCountFormatter()
                 return SidebarModel.mounts().map { m in
                     let v = m.local ? try? URL(fileURLWithPath: m.path).resourceValues(forKeys: keys) : nil
-                    let free = m.local ? v?.volumeAvailableCapacityForImportantUsage.map { fmt.string(fromByteCount: $0) } ?? "?" : fmt.string(fromByteCount: m.free)
-                    let total = m.local ? v?.volumeTotalCapacity.map { fmt.string(fromByteCount: Int64($0)) } ?? "?" : fmt.string(fromByteCount: m.total)
+                    let free = m.local ? v?.volumeAvailableCapacityForImportantUsage.map { ByteCountFormatter.short($0) } ?? "?" : ByteCountFormatter.short(m.free)
+                    let total = m.local ? v?.volumeTotalCapacity.map { ByteCountFormatter.short(Int64($0)) } ?? "?" : ByteCountFormatter.short(m.total)
                     return (m.path, v?.volumeName ?? (m.path as NSString).lastPathComponent,
                             "\(m.path) · \(free) free of \(total) · \(v?.volumeLocalizedFormatDescription ?? m.type)", v?.volumeIsEjectable == true || !m.local)
                 }

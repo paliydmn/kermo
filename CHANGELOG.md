@@ -24,7 +24,7 @@ Release:
 - Production, root and locked are one chip everywhere — PROD, ROOT, LOCKED — in the path bar, server pickers, terminal tabs, tunnels, Run on Servers, Activity and the editor's title bar, instead of 🟣 PROD, 🔒, `#` and purple names.
 - Symbols instead of emoji and text marks: the path bar shows a server rack, an archive box or a magnifier before the path; the status line, the command line and output windows lose 🌐 📦 🔍; Activity, the Sync window, Services and the pickers use one set of signs, one for "failed".
 - Sidebar icons are grey, not blue: color is for state. A server whose last connection failed shows a red ◆ that says why when you point at it; a failed service has one too.
-- The Size column is empty for a folder not counted yet and for a special file (its kind is in the tooltip), not `<DIR>` or `<FIFO>`; bytes read `310 B`.
+- The Size column is empty for a folder not counted yet and for a special file (its kind is in the tooltip), not `<DIR>` or `<FIFO>`. Bytes read `310 B` everywhere — the status line, operation rows, Activity, the viewer and the editor — not "310 bytes" or "Zero KB".
 - The Modified column says `Today 13:33`, `Yesterday 09:10`, `Oct 14 13:32` this year and `2024-03-01` before.
 - The Activity button at rest is a clock going round instead of a download arrow.
 - An executable file has Finder's executable icon, so it stands out in the System theme too.

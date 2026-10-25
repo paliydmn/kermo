@@ -241,11 +241,10 @@ final class OpsController {
 
     private func askConflict(_ c: FileJob.Conflict, on side: Endpoint, _ done: @escaping @Sendable ((FileJob.ConflictChoice, Bool)) -> Void) {
         guard let window else { return done((.cancel, false)) }
-        let fmt = ByteCountFormatter()
         let date = DateFormatter()
         date.dateFormat = "yyyy-MM-dd HH:mm:ss"
         func describe(_ size: Int64, _ mtime: Double) -> String {
-            "\(fmt.string(fromByteCount: size)), \(date.string(from: Date(timeIntervalSince1970: mtime)))"
+            "\(ByteCountFormatter.short(size)), \(date.string(from: Date(timeIntervalSince1970: mtime)))"
         }
         let alert = NSAlert()
         let name = (c.dst as NSString).lastPathComponent
@@ -422,7 +421,6 @@ final class JobRow {   // internal for tests
 
     func update() {
         let p = job.progress
-        let fmt = ByteCountFormatter()
         startNow.isHidden = p.state != .queued
         if !files.isHidden { files.attributedStringValue = Activity.files(job) }
         switch p.state {
@@ -450,12 +448,12 @@ final class JobRow {   // internal for tests
 
             var s = "\(p.doneFiles)/\(p.totalFiles)"
             if p.counting {
-                s = "\(p.doneFiles) · \(fmt.string(fromByteCount: p.doneBytes)) · counting…"
+                s = "\(p.doneFiles) · \(ByteCountFormatter.short(p.doneBytes)) · counting…"
             } else if p.totalBytes > 0 {
-                s += " · \(fmt.string(fromByteCount: p.doneBytes)) of \(fmt.string(fromByteCount: p.totalBytes))"
+                s += " · \(ByteCountFormatter.short(p.doneBytes)) of \(ByteCountFormatter.short(p.totalBytes))"
                 if speed > 1, !job.isPaused {
                     let eta = Int(Double(max(0, p.totalBytes - p.doneBytes)) / speed)
-                    s += " · \(fmt.string(fromByteCount: Int64(speed)))/s · \(eta / 60):\(String(format: "%02d", eta % 60))"
+                    s += " · \(ByteCountFormatter.short(Int64(speed)))/s · \(eta / 60):\(String(format: "%02d", eta % 60))"
                 }
             }
             if job.isPaused { s += " · paused" }

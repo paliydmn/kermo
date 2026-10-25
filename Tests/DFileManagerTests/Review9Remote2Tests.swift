@@ -13,7 +13,7 @@ import Testing
     defer { try? FileManager.default.removeItem(atPath: d) }
     let url = URL(fileURLWithPath: d + "/syslog")
     try Data(repeating: 0x61, count: 2048).write(to: url)
-    let fmt = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+    let fmt = { ByteCountFormatter.short($0) }
     func loaded(_ v: Viewer) async throws -> String {
         for _ in 0..<1000 where v.window?.subtitle.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(20)) }
         return v.window?.subtitle ?? ""

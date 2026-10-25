@@ -226,7 +226,6 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private static let execIcon = NSWorkspace.shared.icon(for: .unixExecutable)   // as Finder: told by shape, in any theme
     private static let linkIcon = NSWorkspace.shared.icon(for: .symbolicLink)
     private static let serverIcon = Symbol.network.image("Server")
-    private static let sizeFmt = ByteCountFormatter()
     /// Today and yesterday as of the last listing; the stat timer moves it on at midnight.
     private var dates = DateColumn()
 
@@ -690,7 +689,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// "Important usage" counts what APFS would purge; FAT32 and exFAT (fskit) say 0 there: then the plain figure.
     nonisolated static func freeText(important: Int64?, available: Int?) -> String {
         let free = important.flatMap { $0 > 0 ? $0 : nil } ?? available.map(Int64.init)
-        return free.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "?"
+        return free.map { ByteCountFormatter.short($0) } ?? "?"
     }
 
     /// `newFolder`: without `name` the cursor starts on the first row instead of keeping its row number.
@@ -850,24 +849,21 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// "7 items, 1.2 MB" — or "7 items" with nothing to add up (folders count once measured, on Space): "Zero KB" said nothing.
     static func countText(_ n: Int, _ noun: String, _ bytes: Int64) -> String {
-        "\(n) \(n == 1 && noun == "items" ? "item" : noun)" + (bytes > 0 ? ", " + size(bytes) : "")
+        "\(n) \(n == 1 && noun == "items" ? "item" : noun)" + (bytes > 0 ? ", " + ByteCountFormatter.short(bytes) : "")
     }
     private func bytes(of items: [FileItem]) -> Int64 { Self.bytes(of: items, dirSizes: dirSizes) }   // not `self`'s per item (see `applyView`)
     nonisolated static func bytes(of items: [FileItem], dirSizes: [String: Int64]) -> Int64 {
         items.reduce(0) { $0.saturatingAdd($1.kind == .dir ? dirSizes[$1.name] ?? 0 : $1.size) }
     }
 
-    /// "310 B", "4 KB", "1.2 GB": one short unit throughout (the formatter has no short one for bytes).
-    static func size(_ bytes: Int64) -> String { bytes < 1000 ? "\(bytes) B" : sizeFmt.string(fromByteCount: bytes) }
-
     /// The Size column: a file's size, a folder's once measured; else nothing — a folder not measured, a special file
     /// (its kind is in the row's tooltip, `specialKind`). `partial`: du couldn't read all of the folder — "≥ 1.2 GB".
     static func sizeText(_ it: FileItem, measured: Int64?, partial: Bool = false) -> String {
         switch it.kind {
-        case .dir: measured.map { (partial ? "≥ " : "") + size($0) } ?? ""
+        case .dir: measured.map { (partial ? "≥ " : "") + ByteCountFormatter.short($0) } ?? ""
         case .link where it.linkDir: ""
         case .other: ""
-        default: size(it.size)
+        default: ByteCountFormatter.short(it.size)
         }
     }
 
@@ -887,7 +883,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// column as its widest date ("Yesterday 23:59", "Sep 28 23:59", "2026-12-31 23:59").
     private static func widths(font: NSFont) -> (size: CGFloat, date: CGFloat) {
         func w(_ s: String) -> CGFloat { ceil(NSAttributedString(string: s, attributes: [.font: font]).size().width) + 10 }
-        let sizes = [999, 999_900, 999_990_000, 999_990_000_000].map { "≥ " + size($0) }
+        let sizes = [999, 999_900, 999_990_000, 999_990_000_000].map { "≥ " + ByteCountFormatter.short($0) }
         let late = Calendar.current.date(from: DateComponents(year: 2026, month: 12, day: 31, hour: 23, minute: 59))!
         let months = (1...12).map { Calendar.current.date(from: DateComponents(year: 2026, month: $0, day: 28, hour: 23, minute: 59))! }
         let dates = months.map { DateColumn(late).text($0) } + [DateColumn(late).text(late.addingTimeInterval(-3600 * 24)), DateColumn(late, iso: true).text(late)]
@@ -1310,7 +1306,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 onRemoteResult?(target, nil)
                 remoteOwners = owners
                 links = found
-                remoteFree = free.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+                remoteFree = free.map { ByteCountFormatter.short($0) }
                 enterRemote(target, d, items, sorted: (sorted, order), select: select, keep: keep)
                 connecting = nil
             case .failure(let error as SFTPError) where error.connection:
@@ -2879,4 +2875,9 @@ final class FilledStack: NSStackView {
         fill.setFill()
         bounds.intersection(dirtyRect).fill()   // views don't clip (macOS 14): the dirty rect can reach past them
     }
+}
+
+extension ByteCountFormatter {
+    /// "310 B", "4 KB", "1.2 GB": one short unit everywhere (the formatter has no short one for bytes).
+    static func short(_ bytes: Int64) -> String { bytes < 1000 ? "\(bytes) B" : string(fromByteCount: bytes, countStyle: .file) }
 }

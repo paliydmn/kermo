@@ -183,7 +183,7 @@ final class InfoWindow: NSWindowController, NSWindowDelegate {
     }
 
     nonisolated private static func bytes(_ n: Int64) -> String {
-        "\(n.formatted()) bytes (\(ByteCountFormatter.string(fromByteCount: n, countStyle: .file)))"
+        n < 1000 ? "\(n) bytes" : "\(n.formatted()) bytes (\(ByteCountFormatter.short(n)))"   // the exact count, then the short one
     }
 
     /// Reports a failed change (`code`: its errno); for permission errors offers to run `adminCommand` as root instead.
