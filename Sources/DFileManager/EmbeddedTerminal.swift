@@ -112,7 +112,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     private var index = 0   // the current group
     private var closing: [Tab] = []   // killed, waiting for the process to go
     private let container = NSStackView()
-    private let tabBar = NSStackView()
+    let tabBar = NSStackView()   // internal: tests read it
     private let content = NSView()
     private unowned let host: NSView   // the panels; the terminal sits exactly over them
     var onExit: (() -> Void)?          // last tab closed: panels come back
@@ -521,7 +521,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             SFTP.noteMaster(t)   // ControlMaster=auto: this ssh may become the shared connection
             launch(tab, "/usr/bin/ssh", SSHCommand.arguments(t, command: tab.command), cwd: NSHomeDirectory())
             tab.command = nil
-            onChange?()
+            render()   // its tab was drawn before ssh ran: off till the next redraw (D-104)
             let pid = tab.view.process?.shellPid ?? 0
             Task.detached {   // its login: until the connection is shared, or the ssh is gone
                 var tries = 0

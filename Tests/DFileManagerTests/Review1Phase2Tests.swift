@@ -80,6 +80,28 @@ import Testing
     #expect(try sftp([t]).allSatisfy { $0.contentTintColor == Palette.ok })
 }
 
+/// D-104: a new SSH tab is drawn on (connected) as soon as its ssh runs, not off until the next redraw. ssh can't
+/// reach an .invalid host, so it ends soon after: what counts is what its tab said while it ran.
+@MainActor @Test func aNewSSHTabIsOnOnceItsSSHRuns() async {
+    _ = NSApplication.shared
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    let panels = NSView(frame: w.contentView!.bounds)
+    w.contentView!.addSubview(panels)
+    let term = EmbeddedTerminal(covering: panels)
+    defer { term.tabs.forEach { $0.view.process?.terminate() } }
+    var saidOn = false
+    term.onChange = {
+        for case let b as NSButton in term.tabBar.arrangedSubviews {
+            b.attributedTitle.enumerateAttribute(.attachment, in: NSRange(location: 0, length: b.attributedTitle.length)) { a, _, _ in
+                if (a as? NSTextAttachment)?.image?.accessibilityDescription == "connected" { saidOn = true }
+            }
+        }
+    }
+    _ = term.newSSH(SFTPTarget(host: "me@dfm-104.invalid"))
+    for _ in 0..<250 where !saidOn && term.tabs.first?.exitStatus == nil { try? await Task.sleep(for: .milliseconds(20)) }
+    #expect(saidOn)
+}
+
 extension ServerLockTests {
 /// The active panel has a line under its path bar in its place's color — the theme's accent here, purple on a
 /// production server, orange on a root panel, purple on a production root panel; an inactive one has none.
