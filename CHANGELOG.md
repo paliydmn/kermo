@@ -13,6 +13,16 @@ Release:
 
 ## [Unreleased]
 
+### Fixed
+- **F1** lists the Git menu's keys (⌃B, ⌃⇧C, ⌃G …); they were missing there and under the key bar's **+N**.
+- **About Kermo** and **Check for Updates…** work while a viewer, an editor or the terminal is in front; they were greyed out.
+- On a server's panel **F8** says **Delete…** in the key bar, the File menu and a file's right-click menu: it deletes for good after asking, since a server has no Trash.
+- **Edit ▸ Cut** (⌘X): cutting text works in the path bar, the command line and dialogs.
+- Holding **⇧⌥** shows the keys there, `⌥⇧4 5 6 8 = ⇧F4 5 6 8`, instead of "No commands".
+- ⇧⌘P no longer offers Open Remote File, Open from Archive and List Remote Archive: a panel runs them by itself.
+- A server's right-click menu in the sidebar no longer starts with a line.
+- **Reload Config** says when `keymap.json` gives ⌘A or ⌘F to another command, or takes them from Mark All or Search Files: Edit ▸ Select All and Find… keep those keys.
+
 ## [1.5] - 2026-10-23
 
 ### Added
