@@ -170,7 +170,7 @@ private func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? N
     #expect(panel.empty?.keys.first == KeySlot(key: "⇧⌘.", label: "Show Hidden Files", id: "view.hidden"))
     FileManager.default.createFile(atPath: dir + "/shown", contents: nil)
     panel.reload()
-    await until { panel.empty == nil }
+    await until { panel.listedItems.map(\.name) == ["shown"] && panel.busyMessage == nil }   // not just "Loading…" (nil too)
     #expect(panel.empty == nil)
     panel.applyFilter("nothing-matches")
     #expect(panel.empty == nil, "a filter that hides all: the status line says it")
@@ -181,7 +181,7 @@ private func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? N
     try FileManager.default.removeItem(atPath: dir + "/shown")
     try FileManager.default.removeItem(atPath: dir + "/.hidden")
     panel.reload()
-    await until { panel.listedItems.isEmpty }
+    await until { panel.listedItems.isEmpty && panel.busyMessage == nil }
     panel.loadError = "Permission denied"
     #expect(panel.empty == .init(symbol: .warn, title: "Can't read this folder", detail: "Permission denied", keys: [KeySlot(key: "⌘R", label: "Refresh", id: "view.refresh")]))
 
