@@ -14,7 +14,15 @@ The tab in front has a bold title with a line under it, in the accent color or t
 
 With three or four panels, F5 and F6 target the panel that was active before this one. Its path bar ends with **→ F5** in that panel's color, and the mark moves when Tab or a click makes another panel active.
 
-Under the tabs, the path bar says where the panel is. On a server, in an archive or in search results a symbol before the path says which (a server rack, a box, a magnifier), and a server's chips follow it: PROD for a production server, ROOT for a [root panel](root-panel.md), LOCKED for a server locked with Touch ID. The path itself is plain text, which ⌘L edits.
+### Path bar
+
+Under the tabs, the path bar says where the panel is. First a chip for the place: **Mac**, or a server by its saved name with its chips — PROD for a production server, ROOT for a [root panel](root-panel.md), LOCKED for a server locked with Touch ID — or a box for an archive, a magnifier for search results. Then the path as crumbs: `~ › Projects › site`, on a server `/ › var › www › site`.
+
+- **Click a crumb** to go there; the cursor lands on the folder you came from. **⌥-click** opens it in the other panel. Drop files on a crumb to copy or move them there, as on a folder.
+- In a narrow panel the middle crumbs give way to **…**; the first never does, and the folder you're in shows last.
+- **Click an empty spot** of the bar (or press ⌘L) to type a path: the bar becomes a field with the plain path, all of it selected. ↩ goes there, ⇥ completes a folder's name (on a server, the server's), ⎋ or a click elsewhere brings the crumbs back. While you type, the key bar shows **↩ Go**, **⇥ Complete**, **⎋ Back to Panel**.
+- **Copy** at the end copies the folder's full path: `/Users/me/Projects/site` here (not `~`), `/var/www/site` on a server. **⌥-click** on a server copies `deploy@web-01:/var/www/site`, for scp and rsync. It shows ✓ **Copied** for a second.
+- A quick filter you kept with ↩ shows as a chip at the right end (click it to change the filter); with three or four panels, **→ F5** marks where F5 and F6 go.
 
 ### After a restart
 
@@ -23,7 +31,7 @@ Kermo comes back as you left it: each panel's tabs and the one in front, the act
 A server tab comes back **not connected**. Its header says where it was (`web1:/etc/nginx`, with a ROOT chip for a root panel), and its middle says **Not connected**, `web1:/etc/nginx — nothing is sent until you ask`, with **↩ Connect**, **⌃⌘R As Root** and **⌘↑ This Mac** to click. Nothing is sent to any server until you ask, production and locked ones included:
 
 - **↩** or a click on **↩ Connect** connects, as Connect does: a locked server asks for Touch ID first, and the cursor goes back to its name. A root tab connects as root; ⌃⌘R / ⌃⇧⌘R choose root or the user instead.
-- ⌘↑ or ⌫ goes to the tab's folder on this Mac; the sidebar, ⌘L and the like go where you point, as on a local tab.
+- ⌘↑ or ⌫ goes to the tab's folder on this Mac; the sidebar, ⌘L and the like go where you point, as on a local tab. Its crumbs go nowhere: nothing is sent until you connect.
 - The F-keys, the command line and anything else that would act on the files say `Not connected — ↩ Connect to web1` and do nothing; so do copies and moves into it from the other panel.
 
 ### Status line and the panel's middle
@@ -54,7 +62,8 @@ The bottom row shows the keys of what has the focus. Each slot is the key, then 
 - **Viewer, editor, output windows** have a key bar of their own, the same component: see [Viewer and editor](viewer-editor.md).
 - **Command line:** under the panels, at rest one quiet line: where it runs (`~/Projects/site $`, on a server `web-01:/var/www $`), **Type a command** and **⌘E** at the end (click it to go there). While it has the focus, the bar shows its keys: **↩ Run in Shell**, **⇧↩ Output Window**, **⌘↩ Run in Terminal**, **↑↓ History**, **⎋ Back to Panel**, and what `%f %s %d %D` stand for; on a [root panel](root-panel.md) one more says **Runs as deploy, not root**.
 - **Quick filter:** while it has the focus, **↩ Keep**, **↓ Back to List**, **⎋ Clear**.
-- F1 lists the command line's and the quick filter's keys after the menus' (it doesn't open from a text field: the field keeps F1).
+- **Path field** (⌘L, or a click on an empty spot of the path bar): **↩ Go**, **⇥ Complete**, **⎋ Back to Panel**.
+- F1 lists the command line's, the quick filter's and the path field's keys after the menus' (it doesn't open from a text field: the field keeps F1).
 - ⌥ plus a digit does what its F-key does, so those layers sum them up in one slot: `⌥1…0 = F1…F10`, `⌥⇧4 5 6 8 = ⇧F4 5 6 8`.
 - On a server's panel F8 says **Delete…** in red: it deletes for good after asking, because a server has no Trash. Inside an archive F5 says **Extract**, and so does its menu item (**Extract To…**).
 - F5 and F6 say where they go when it isn't plain: `Copy → web-01` when the other panel is on a server (a production server's name in purple and bold), `Copy → site` with three or four panels. With two panels on this Mac they say **Copy** and **Move**.
