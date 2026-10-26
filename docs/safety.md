@@ -9,11 +9,25 @@ What Kermo does to keep a server safe from a slip, and what it keeps on your Mac
 [Mark a server as production](servers.md#mark-a-server-as-production) and Kermo treats everything you do there with more care:
 
 - **Purple, not red.** A production server carries a purple PROD chip wherever it shows: the path bar, panel and terminal tabs, server pickers, tunnels, Run on Servers, Activity and the title bars of the viewer and the editor (menus say PROD in purple). Purple also marks its icon in the sidebar, the line under an active panel's path bar there (a root panel's too), the line under its tab in front, and its name after F5 and F6 in the key bar when they copy or move there. Red is kept for what failed; orange is a [root panel](root-panel.md).
-- **Changes ask first**, and the question starts with "“host” is a production server". That covers saving a file (the first save in an editor; later saves there don't ask again), reverting a version, copying, moving, deleting, renaming, changing permissions, extracting, synchronizing and reloading a service. A new folder is created without a question, but it is logged.
-- **Dangerous commands ask.** A command from ⌘E, F2 or the user menu asks (“Run “…” on host (production)?”) when any command in the line (after `;`, `&&`, `||`, `|`, inside `$(…)`) is `rm`, `mv`, `chmod`, `chown`, `dd`, `truncate`, `shred`, `unlink`, `find` with `-delete` or `-exec`, `rsync --delete`, `git clean`, `git reset --hard` or `systemctl stop` / `restart` / `disable` / `mask` / `kill`, also behind `sudo`, `env`, `xargs` and the like, or when it writes over a file with `>`. Any other command runs without a question, and is logged. [Run on Servers…](commands.md#run-on-several-servers) asks once for all the production servers it runs on, with ↩ on **Cancel**.
-- **Safe defaults.** On the reload question ↩ answers **Cancel**. A copy that lands where a save would be [checked first](config-checks.md#copies-arent-checked) (`sudoers`, `sshd_config` …) says so in its question.
+- **Changes ask first**, in a question with the server's purple PROD strip ([how a question asks](#how-a-question-asks)). That covers saving a file (the first save in an editor; later saves there don't ask again), reverting a version, copying, moving, deleting, renaming, changing permissions, extracting, synchronizing and reloading a service. A new folder is created without a question, but it is logged; the questions for a name (new file, rename, permissions) show the strip over the field.
+- **Dangerous commands ask.** A command from ⌘E, F2 or the user menu asks (“Run this command on web-01?”, the command under it as it will run) when any command in the line (after `;`, `&&`, `||`, `|`, inside `$(…)`) is `rm`, `mv`, `chmod`, `chown`, `dd`, `truncate`, `shred`, `unlink`, `find` with `-delete` or `-exec`, `rsync --delete`, `git clean`, `git reset --hard` or `systemctl stop` / `restart` / `disable` / `mask` / `kill`, also behind `sudo`, `env`, `xargs` and the like, or when it writes over a file with `>`. Any other command runs without a question, and is logged. [Run on Servers…](commands.md#run-on-several-servers) asks once for all the production servers it runs on, with ↩ on **Cancel**.
+- **Safe defaults.** On every production question ↩ answers **Cancel**; the action takes **⌘↩**. A copy that lands where a save would be [checked first](config-checks.md#copies-arent-checked) (`sudoers`, `sshd_config` …) says so in its question.
 - **A log of what you did.** See below.
 - **Opening a tunnel doesn't ask:** a tunnel changes nothing on the server by itself.
+
+## How a question asks
+
+Every question before a change reads the same way, top to bottom:
+
+1. **The title** names the action and where: “Delete 2 items on web-01 permanently?”, “Restart nginx on web-01?”.
+2. **A strip** with the place's chip: purple PROD for a production server, orange ROOT for a [root panel](root-panel.md) or an administrator's command on this Mac. Nowhere else.
+3. **What exactly**: up to five items with their size, as the panel shows it (a folder's once counted), then “and 12 more”.
+4. **The command**, in a mono box, exactly as it will run, when a command runs: a restart, a reload, ⌘E and F2 on a production server, Run on Servers, the administrator's delete. A line over it says how it runs: “Runs on web-01 as root, through the server's sudo.”
+5. **What follows**, in a sentence: “A server has no Trash. This can't be undone.”
+6. **Safe keys.** On a production server, and for what can't be undone (deleting for good, overwriting, deleting a saved server or tunnel), ↩ answers **Cancel** and the action takes **⌘↩**; a line of keys under the question says so. Elsewhere ↩ is the action, as in any dialog. ⎋ is always Cancel.
+7. **The button** says what it does — Delete, Restart, Run, Copy — and is red only for what can't be undone.
+
+Questions about a window are sheets on that window. Only quitting, which is about the whole app, asks in a window of its own.
 
 ## Production log
 

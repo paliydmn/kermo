@@ -55,7 +55,7 @@ Its title is the file's name with where it is under it, as the viewer's; the sta
 
 ⎋ or ⌘W closes the editor. With unsaved changes it asks **Save**, **Cancel** or **Don't Save**, which discards your edits. Typing and then undoing everything counts as no change. Quitting Kermo lists unsaved editors too.
 
-If the file changed on disk after you opened it, ⌘S asks **Overwrite**, **Reload** (drops your edits), **Save As…** (keeps both) or **Cancel**. ↩ picks **Cancel**. When you return to the window, it reloads a changed file silently if you have no edits; otherwise it asks **Keep Mine** or **Reload**.
+If the file changed on disk after you opened it, ⌘S asks **Overwrite**, **Reload** (drops your edits), **Save As…** (keeps both) or **Cancel**. ↩ picks **Cancel**; ⌘↩ overwrites. When you return to the window, it reloads a changed file silently if you have no edits; otherwise it asks **Keep Mine** or **Reload**. Keep Mine loses nothing — the next ⌘S asks before writing over the file — so ↩ and ⎋ keep your text, and ⌘↩ reloads.
 
 ### Ensure Final Newline
 
@@ -67,7 +67,7 @@ defaults write com.dmn.dfilemanager editorFinalNewline -bool true
 
 ### Save as Administrator
 
-When a save fails because the file or its folder is not yours to write, the editor asks **Save as Administrator**. It shows the macOS password dialog and writes the text as root, keeping the owner, mode and hard links.
+When a save fails because the file or its folder is not yours to write, the editor asks **Save as Administrator**, with the orange ROOT strip. It shows the macOS password dialog and writes the text as root, keeping the owner, mode and hard links.
 
 - The file is checked before the password dialog, and once more as root right before writing: if it changed while the dialog was up (another size, date or file), nothing is written and the editor asks "changed on disk" as for any change.
 - The text goes to root in the command itself, so nothing else running as you can change it while macOS asks for the password. A text over about 500 KB, or one that isn't UTF-8, goes through a temporary file only you can read; root copies it and writes only if the copy is exactly your text.

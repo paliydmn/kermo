@@ -59,7 +59,7 @@ extension AppDelegate {
         }
     }
 
-    /// K3: a locked server asks first, a production one too (↩ adds: nothing is lost); the login as anywhere (askpass
+    /// K3: a locked server asks first, a production one too (↩ = Cancel, as every production question); the login as anywhere (askpass
     /// says what for); "Adding …" while it runs, ⎋ stops it. Then a login with the key says whether it took.
     private func copyKey(_ pub: String, to s: SavedServer) {
         let name = ((pub as NSString).lastPathComponent as NSString).deletingPathExtension, identity = String(pub.dropLast(".pub".count))
@@ -71,9 +71,11 @@ extension AppDelegate {
             if await !ServerLock.authorize(t, "copy your SSH key to") {
                 return panel.flash("\(s.title) stays locked")
             }
-            if SavedServer.isProd(t), await choose("\(s.title) is a production server. Add your key to its authorized_keys?",
-                                                   info: "\(name) goes into ~/.ssh/authorized_keys of \(t.host).",
-                                                   ["Add", "Cancel"], default: 0) != 0 { return }
+            if SavedServer.isProd(t) {
+                var c = Confirm("Add \(name) to the authorized keys of \(s.title)?", on: t, action: "Add")
+                c.note = "It goes into ~/.ssh/authorized_keys of \(t.host)."
+                guard await confirm(c) == 0 else { return }
+            }
             let env = SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For “Copy SSH Key” to \(s.title)"]) { $1 }
             let r = await panel.busy("Adding \(name) to \(s.title)…") { flag in
                 let added = try SSHKeyCopy.install(key, on: t, env: env, cancel: flag)

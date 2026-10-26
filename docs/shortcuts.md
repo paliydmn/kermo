@@ -9,6 +9,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 - **Find any command** with ⇧⌘P: it is listed with its shortcut. (The viewer and editor keys and mouse marking aren't commands, so search doesn't list them.)
 - **Function keys:** F1–F10 and ⇧F4, ⇧F5, ⇧F6, ⇧F8 also work as ⌥ plus the digit (⌥0 is F10, ⌥⇧6 is ⇧F6), because Mac function keys control media by default. The other F-key shortcuts (⇧F2, ⇧F10, ⌥F1, ⌥F5, ⌥F7, ⌥F9, ⌥F10) have no digit twin: use fn, or remap them.
 - **Text fields** (path entry, the command line, dialogs) take the usual ⌘X, ⌘C, ⌘V, ⌘A and ⌘Z.
+- **Questions:** ⎋ is Cancel. On a production server and for what can't be undone, ↩ is Cancel too and **⌘↩** does the action; the question's last line says so ([how a question asks](safety.md#how-a-question-asks)).
 - **Layouts:** shortcuts are bound to physical keys, so they work with any keyboard layout (the ISO § key counts as `` ` ``). Menus show the characters of your current layout, so on a layout that moves Latin letters (Dvorak, AZERTY) a letter shortcut in a menu follows the letter.
 - **Remap:** choose **Kermo ▸ Edit Keymap…**, then **Reload Config** to apply it (see [Configuration](configuration.md#keymap)).
 

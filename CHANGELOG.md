@@ -58,6 +58,10 @@ Release:
 - A git diff's output window is titled `git diff config.yaml`, not with git's whole command line.
 - The Window menu lists a viewer, editor or output window with its place, `app.log — web-01 · /var/log`, so two files of one name from two servers read apart there.
 - The Synchronize Folders window and the Run on Servers sheet have the key bar along the bottom: ↩ Synchronize and ⎋ Close; ↩ Run, ⎋ Cancel and — while the filter has the focus — ⌘A Tick All and ⇧⌘A Untick All. The sheet's filter asks only what to type.
+- Every question before a change reads one way: the title names the action and where (“Delete 2 items on web-01 permanently?”), a purple PROD or orange ROOT strip shows the place instead of “is a production server” in the text, then up to five items with their sizes and “and N more”, the command in a mono box exactly as it will run (restarts, reloads, ⌘E and F2 on production, Run on Servers, the administrator's delete), and what follows in a sentence. On a production server and for what can't be undone ↩ is Cancel and ⌘↩ the action, and the question says so; the button is red only for what can't be undone.
+- “Close 3 sessions?”, “Close the shell?” in the terminal, an editor that failed to open, Info's administrator failure and a command that couldn't open in Terminal ask in a sheet on their window, not in a window of their own.
+- “Changed on disk” in the editor offers **Keep Mine** and **Reload** in the usual order — Keep Mine on the left with ↩ and ⎋, since it loses nothing; ⌘↩ reloads.
+- F5 and F6 say what goes — up to five names with their sizes and “and N more” — and, on a production or root server, show its strip over the path.
 
 ### Fixed
 - A new SSH tab shows its green dot as soon as ssh starts; it was grey until the next redraw.

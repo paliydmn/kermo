@@ -325,6 +325,19 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         return r >= 0 && r < table.numberOfRows ? item(at: r).map { [$0] } ?? [] : []
     }
 
+    /// Items as a question lists them: a mark, the name, the size as the Size column shows it (a folder's once counted).
+    func listed(_ items: [FileItem]) -> [Confirm.Item] {
+        items.map { Confirm.Item(name: $0.name, symbol: $0.kind == .dir ? .folder : .doc,
+                                 size: Self.sizeText($0, measured: dirSizes[$0.name], partial: partialSizes.contains($0.name))) }
+    }
+    /// `targetURLs` that way: one this panel lists has its size, any other (the folder itself) only its name.
+    func listed(_ urls: [URL]) -> [Confirm.Item] {
+        urls.map { u in
+            row(named: u.lastPathComponent).flatMap(item(at:)).flatMap { url(of: $0).path == u.path ? listed([$0])[0] : nil }
+                ?? Confirm.Item(name: u.lastPathComponent)
+        }
+    }
+
     /// `targetItems` with the code the git column shows for each (nil: unchanged, or not in a repo).
     var gitTargets: [(url: URL, code: String?)] { targetItems.map { (url(of: $0), git?.marks[$0.name]) } }
 
@@ -1349,15 +1362,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     /// `..` at a server's root asks before it closes the connection (a test answers instead of the alert).
+    /// Not a change on the server: no strip, ↩ Disconnect.
     static var confirmLeaving: @MainActor (SFTPTarget, _ back: String, NSWindow?) async -> Bool = { target, back, window in
-        let a = NSAlert()
-        a.alertStyle = .warning
-        a.messageText = "Disconnect SFTP from \(target.host)?".bidiVisible
-        a.informativeText = "This tab goes back to \((back as NSString).abbreviatingWithTildeInPath).".bidiVisible
-        a.addButton(withTitle: "Disconnect").hasDestructiveAction = true
-        a.addButton(withTitle: "Cancel")
-        guard let window else { return a.runModal() == .alertFirstButtonReturn }
-        return await withCheckedContinuation { cont in a.beginSheetModal(for: window) { cont.resume(returning: $0 == .alertFirstButtonReturn) } }
+        var c = Confirm("Disconnect SFTP from \(SavedServer.name(for: target.asUser))?", action: "Disconnect")
+        c.note = "This tab goes back to \((back as NSString).abbreviatingWithTildeInPath)."
+        guard let window else { return AppDelegate.modal(c.alert()) == 0 }
+        return await AppDelegate.sheet(c.alert(), on: window) == 0
     }
 
     func goUp() {

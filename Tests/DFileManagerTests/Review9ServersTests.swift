@@ -63,15 +63,18 @@ import Testing
 }
 
 extension ServerLockTests {
-/// R9: what a change on a production server asks names it (by user@host:port, like a lock); others add nothing.
-@Test func prodNoteNamesTheProductionServer() {
+/// R9, R-54: what a change on a production server asks names it (by user@host:port, like a lock) in its strip, once;
+/// others have none.
+@Test func aQuestionsStripNamesTheProductionServer() {
     var prod = SavedServer(address: "root@db")!
     prod.prod = true
     ServerLock.servers = { [prod, SavedServer(address: "root@web")!] }
     defer { ServerLock.servers = { [] } }
     #expect(SavedServer.isProd(SFTPTarget(host: "root@db", port: 22)) && !SavedServer.isProd(SFTPTarget(host: "root@web")))
-    #expect(SavedServer.prodNote([SFTPTarget(host: "root@web")]).isEmpty)
-    #expect(SavedServer.prodNote([SFTPTarget(host: "root@db"), SFTPTarget(host: "root@db")]) == "“root@db” is a production server. ")
+    var c = Confirm("?", on: SFTPTarget(host: "root@web"), action: "Go")
+    #expect(c.strip.isEmpty && !c.safe)
+    c.on([SFTPTarget(host: "root@db"), SFTPTarget(host: "root@db")])
+    #expect(c.strip == [.prod] && c.place == "root@db" && c.safe)
 }
 
 /// R9 + R23: the editor of a file on a production server says so in its title, as the panel header does.
@@ -94,10 +97,10 @@ extension ServerLockTests {
     defer { ServerLock.servers = { [] } }
     let attrs = SFTPClient.Attrs(kind: .file, size: 2, mtime: 0, mode: nil)
     let state = AppDelegate.RemoteEdit(baseline: attrs)
-    #expect(state.prodNote(SFTPTarget(host: "root@db")) == "“root@db” is a production server. ")
+    #expect(state.asks(SFTPTarget(host: "root@db")))
     state.prodConfirmed = true
-    #expect(state.prodNote(SFTPTarget(host: "root@db")).isEmpty, "okayed once: later saves go up")
-    #expect(AppDelegate.RemoteEdit(baseline: attrs).prodNote(SFTPTarget(host: "root@web")).isEmpty)
+    #expect(!state.asks(SFTPTarget(host: "root@db")), "okayed once: later saves go up")
+    #expect(!AppDelegate.RemoteEdit(baseline: attrs).asks(SFTPTarget(host: "root@web")))
 }
 }
 

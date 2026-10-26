@@ -28,7 +28,7 @@ As in PuTTY: **selecting text copies it** — a drag, a double-click on a word, 
 - In a program that reads the mouse itself (mc, htop, vim with `mouse=a`, Claude Code), a right-click is the program's: **⇧-right-click** pastes there. **⇧-drag** or **⌥-drag** selects text in the terminal, and the selection is copied when you let go of the button.
 - The wheel and the trackpad scroll such a program, as in Terminal.app.
 - A program can put text into the clipboard itself (OSC 52): Claude Code does when you select its text, and so do tmux and vim. It works in local and SSH tabs, in the tab in front. A program can't read the clipboard this way.
-- A shell that asked for bracketed paste (zsh, bash 5.1 and later) runs nothing pasted until you press ↩. Pasting several lines into a **production** server's SSH tab, or one logged in as `root@`, into a shell that didn't ask for it (`sh`, an old bash), asks first: “Paste 5 lines into web1 (production)?”, with ↩ on Cancel.
+- A shell that asked for bracketed paste (zsh, bash 5.1 and later) runs nothing pasted until you press ↩. Pasting several lines into a **production** server's SSH tab, or one logged in as `root@`, into a shell that didn't ask for it (`sh`, an old bash), asks first: “Paste 5 lines into web1?”, with its PROD or ROOT strip, the lines themselves and ↩ on Cancel.
 - Selecting replaces what the clipboard held. To keep it, turn either part off: `terminalCopyOnSelect`, `terminalRightClickPaste` ([Options](#options)).
 
 ## Sessions side by side
@@ -39,7 +39,7 @@ One tab can show up to four sessions at once: run a command in one and watch a l
 - A new pane on a server is another SSH session to that server. It uses the connection that's already open, so it doesn't log in again. It starts in the folder the server's shell reported ([Shell integration](#shell-integration)), else in your home folder there. A local pane is a shell in the same folder.
 - **⌥⌘←** **→** (side by side) or **⌥⌘↑** **↓** (one above another) move to the next pane, and so does a click. Keys go to the pane with the bold title and the colored line in its header. A production server's header is purple and a `root@` login's is orange.
 - Drag a divider to resize, or press **⌃⌘** with an arrow. A double-click on a divider makes the panes the same size.
-- **⌘W** or the header's × closes one pane. The tab's × closes all its panes and asks once if any of them is still running something.
+- **⌘W** or the header's × closes one pane. The tab's × closes all its panes and asks once if any of them is still running something. The question is a sheet on the window, as for one pane.
 - **View ▸ Join Tab…**, or **Join with Current Tab** in another tab's right-click menu, moves that tab's sessions into the current tab. **Move Pane to New Tab** (in the header's right-click menu, or the View menu) takes a pane out into its own tab.
 - After a restart, SSH sessions come back in the same tabs, in the same order and arrangement, not connected. Panes start at equal sizes.
 

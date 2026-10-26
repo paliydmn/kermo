@@ -172,16 +172,17 @@ private func until(_ done: () -> Bool) async {
 }
 
 /// On a production server a restart asks first (↩ = Cancel) and says what runs, as whom; elsewhere it just runs.
-@Test func aRestartAsksFirstOnProduction() {
-    let web = SFTPTarget(host: "me@web")
-    #expect(AppDelegate.prodQuestion("systemctl restart -- nginx.service", on: web.asRoot()) == nil)
+@Test func aRestartAsksFirstOnProduction() throws {
+    let web = SFTPTarget(host: "me@web"), ask = (message: "Restart nginx on me@web?", button: "Restart")
+    #expect(AppDelegate.prodQuestion("systemctl restart -- nginx.service", on: web.asRoot(), ask) == nil)
     var prod = SavedServer(address: "me@web")!
     prod.prod = true
     ServerLock.servers = { [prod] }
     defer { ServerLock.servers = { [] } }
-    #expect(AppDelegate.prodQuestion("systemctl restart -- nginx.service", on: web.asRoot())
-            == "“me@web” is a production server. Runs “systemctl restart -- nginx.service” on me@web as root.")
-    #expect(AppDelegate.prodQuestion("podman restart -- api", on: web) == "“me@web” is a production server. Runs “podman restart -- api” on me@web.")
+    let q = try #require(AppDelegate.prodQuestion("systemctl restart -- nginx.service", on: web.asRoot(), ask))
+    #expect(q.title == "Restart nginx on me@web?" && q.buttons == ["Restart", "Cancel"] && q.safe && !q.irreversible)
+    #expect(q.strip == [.prod, .root] && q.runs == "Runs on me@web as root, through the server's sudo." && q.command == "systemctl restart -- nginx.service")
+    #expect(AppDelegate.prodQuestion("podman restart -- api", on: web, ask)?.runs == "Runs on me@web.")
 }
 }
 

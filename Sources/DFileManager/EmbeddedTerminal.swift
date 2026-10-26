@@ -37,7 +37,10 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             view.acceptsLocalPaths = kind == .shell
             // Lines pasted by a right-click into a production server, or as root, ask first.
             if case .ssh(let t) = kind {
-                view.pasteRisk = { SavedServer.isProd(t) ? "\(SavedServer.name(for: t)) (production)" : t.host.hasPrefix("root@") ? t.host : nil }
+                view.pasteRisk = {
+                    let chips = Chip.of(t, root: t.host.hasPrefix("root@")).filter { $0 != .locked }
+                    return chips.isEmpty ? nil : (chips, SavedServer.name(for: t))
+                }
             }
         }
 
@@ -628,42 +631,56 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         focus()
     }
 
-    /// × on a tab of several panes: one question for all that would end, then each goes as `close` does.
+    /// × on a tab of several panes: one question for all that would end, then each goes as `close` does. False: not
+    /// closed now — asked (the answer closes it), or nothing to close.
     @discardableResult
     func close(group g: Group) -> Bool {
         guard g.panes.count > 1 else { return close(g.panes[0].id) }
         let busy = g.panes.compactMap(\.busyWith)
-        if !busy.isEmpty {
-            let a = NSAlert()
-            a.messageText = "Close \(g.panes.count) sessions?"
-            a.informativeText = busy.joined(separator: "\n") + "\nand anything running in them will end."
-            a.addButton(withTitle: "Close")
-            a.addButton(withTitle: "Cancel")
-            guard a.runModal() == .alertFirstButtonReturn else { return false }
+        let end: @MainActor () -> Void = { [unowned self] in
+            for t in g.panes {
+                if hangUp(t) { closing.append(t) }
+                remove(t)
+            }
         }
-        for t in g.panes {
-            if hangUp(t) { closing.append(t) }
-            remove(t)
+        guard busy.isEmpty else {
+            var c = Confirm("Close \(g.panes.count) sessions?", action: "Close")
+            (c.items, c.note) = (busy.map { Confirm.Item(name: $0) }, "Anything running in them ends.")
+            ask(c, then: end)
+            return false
         }
+        end()
         return true
     }
 
-    /// ⌘W / × on a pane (or a tab of one): a finished session closes at once; a live SSH session asks first. Then SIGHUP, and SIGKILL to the
-    /// whole process group if it's still there after 2 s. False if the user kept it.
+    /// ⌘W / × on a pane (or a tab of one): a finished session closes at once; a live one asks first (a sheet on the
+    /// window: false then, the answer closes it). Then SIGHUP, and SIGKILL to the whole process group if it's still
+    /// there after 2 s.
     @discardableResult
     func close(_ id: UUID? = nil, confirm: Bool = true) -> Bool {
         guard let tab = id.map({ i in tabs.first { $0.id == i } }) ?? current else { return false }
-        if confirm, let what = tab.busyWith {
-            let a = NSAlert()
-            a.messageText = tab.host != nil ? "Close active SSH session?" : "Close the shell?"
-            a.informativeText = "\(what) and anything running in it will end."
-            a.addButton(withTitle: "Close")
-            a.addButton(withTitle: "Cancel")
-            guard a.runModal() == .alertFirstButtonReturn else { return false }
+        let end: @MainActor () -> Void = { [unowned self] in
+            if hangUp(tab) { closing.append(tab) }
+            remove(tab)
         }
-        if hangUp(tab) { closing.append(tab) }
-        remove(tab)
+        if confirm, let what = tab.busyWith {
+            var c = Confirm(tab.host != nil ? "Close the SSH session to \(SavedServer.name(for: tab.target!))?" : "Close the shell?", action: "Close")
+            (c.chips, c.place) = (Self.chips(tab), tab.target.map(SavedServer.name(for:)) ?? "")
+            (c.items, c.note) = ([Confirm.Item(name: what)], "Anything running in it ends.")
+            ask(c, then: end)
+            return false
+        }
+        end()
         return true
+    }
+
+    /// The question before tabs close: a sheet on the window; `then` on Close (once, whatever happened meanwhile).
+    private func ask(_ c: Confirm, then: @escaping @MainActor () -> Void) {
+        Task {
+            let r = if let answer = AppDelegate.answering { answer(c.title, c.buttons, nil) }
+                else if let w = host.window { await AppDelegate.sheet(c.alert(), on: w) } else { AppDelegate.modal(c.alert()) }
+            if r == 0 { then() }
+        }
     }
 
     /// Ends the running SSH tabs `match` picks (Disconnect); they stay, to reconnect.
@@ -931,15 +948,19 @@ final class PaneSplitView: NSSplitView {
 /// as Terminal does. Only a local tab's: this Mac's paths mean nothing to a server's shell.
 final class DropTerminalView: LocalProcessTerminalView {
     var acceptsLocalPaths = true
-    /// Where several lines pasted by a right-click ask first (`pasteQuestion`): "web1 (production)", "root@web1"; nil:
-    /// nowhere. A shell there that runs each line as it comes, without bracketed paste, would run them all.
-    var pasteRisk: () -> String? = { nil }
-    /// The question (tests answer it): the text, where, the window; true pastes. ↩ is Cancel.
-    static var pasteQuestion: @MainActor (String, String, NSWindow?) async -> Bool = { text, place, window in
+    /// Where several lines pasted by a right-click ask first (`pasteQuestion`): a production server, a root@ login — its
+    /// chips and name; nil: nowhere. A shell there that runs each line as it comes, without bracketed paste, would run
+    /// them all.
+    var pasteRisk: () -> (chips: [Chip], place: String)? = { nil }
+    /// The question (tests answer it): the text — the lines that run, as they run —, where, the window; true pastes.
+    /// ↩ is Cancel.
+    static var pasteQuestion: @MainActor (String, (chips: [Chip], place: String), NSWindow?) async -> Bool = { text, risk, window in
         let lines = text.split(whereSeparator: { $0 == "\n" || $0 == "\r" }).count
-        let a = AppDelegate.alert("Paste \(lines) lines into \(place)?", info: "Its shell runs each line as it arrives.", ["Paste", "Cancel"], default: 1)
-        guard let window else { return a.runModal() == .alertFirstButtonReturn }
-        return await AppDelegate.sheet(a, on: window) == 0
+        var c = Confirm("Paste \(lines) lines into \(risk.place)?", action: "Paste")
+        (c.chips, c.place, c.command, c.returnCancels) = (risk.chips, risk.place, text, true)
+        c.note = "Its shell runs each line as it arrives."
+        guard let window else { return AppDelegate.modal(c.alert()) == 0 }
+        return await AppDelegate.sheet(c.alert(), on: window) == 0
     }
     private var upMonitor: Any?   // a selection being dragged: copied once the button is up
     var pasteboard = NSPasteboard.general   // tests: their own

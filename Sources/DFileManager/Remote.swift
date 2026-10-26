@@ -66,12 +66,6 @@ struct SavedServer: Codable, Equatable {
     /// are its chips (`Chip.of`).
     static func title(_ t: SFTPTarget, _ path: String) -> String { "\(t.shown):\(path)" }
 
-    /// Said before what a change on production servers asks: "“h” is a production server. ", or "".
-    @MainActor static func prodNote(_ targets: [SFTPTarget]) -> String {
-        let hosts = targets.filter(isProd).map(\.host).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-        return hosts.isEmpty ? "" : hosts.map { "“\($0)”" }.joined(separator: " and ") + (hosts.count == 1 ? " is a production server. " : " are production servers. ")
-    }
-
     // ponytail: a locked server's connection lives while a panel shows it (the panel's kept SFTP session rides on it)
     // and lingers 60 s after its last session, not 0: a copy, a preview or a size count right after would log in
     // again. The lock itself is time-based (`ServerLock`). `ssh -O exit` on closing its last tab if 60 s is too long.

@@ -19,7 +19,11 @@ extension AppDelegate {
     func turnOff(_ t: Tunnel, of s: SavedServer) {
         Task {
             let n = tunnels.connections(t, of: s)
-            if n > 0, await !confirm("Turn off “\(t.title)”?", info: n == 1 ? "1 open connection closes." : "\(n) open connections close.", ok: "Turn Off") { return }
+            if n > 0 {
+                var c = Confirm("Turn off “\(t.title)”?", on: s.target, action: "Turn Off")
+                c.note = n == 1 ? "1 open connection closes." : "\(n) open connections close."
+                guard await confirm(c) == 0 else { return }
+            }
             turnOffNow(t, of: s)
         }
     }
@@ -276,7 +280,9 @@ extension AppDelegate {
             guard await ServerLock.authorize(s, "change the tunnels of") else { return }
             let n = tunnels.connections(t, of: s)
             let info = !tunnels.isListening(t, of: s) ? "" : n == 0 ? "It stops listening." : "It stops listening: \(n) open connection\(n == 1 ? " closes" : "s close")."
-            guard await confirm("Delete the tunnel “\(t.title)”?", info: info, ok: "Delete"),
+            var c = Confirm("Delete the tunnel “\(t.title)”?", action: "Delete")
+            (c.note, c.irreversible) = (info.isEmpty ? nil : info, true)
+            guard await confirm(c) == 0,
                   let i = savedServers.firstIndex(where: { $0.id == s.id }) else { return }
             savedServers[i].tunnels.removeAll { $0.localPort == t.localPort }
             Config.save("servers.json", savedServers)

@@ -144,7 +144,7 @@ extension ServerLockTests {   // they swap `AppDelegate.runAsAdmin` and `answeri
         #expect(ran.isEmpty && asked.isEmpty)
 
         await app.adminTransfer([d + "/Work"], to: d + "/to", move: false)
-        #expect(asked.map(\.0) == ["“Work” is in \((d as NSString).abbreviatingWithTildeInPath)/to already. Replace as administrator?"])
+        #expect(asked.map(\.0) == ["Replace “Work” in \((d as NSString).abbreviatingWithTildeInPath)/to as administrator?"])
         #expect(asked.first?.1 == ["Replace", "Cancel"] && ran.isEmpty)
         AppDelegate.answering = { m, b, _ in asked.append((m, b)); return 0 }   // Replace
         await app.adminTransfer([d + "/Work"], to: d + "/to", move: false)

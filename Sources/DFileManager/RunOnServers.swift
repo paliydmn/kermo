@@ -22,8 +22,7 @@ extension AppDelegate {
     /// question on that window). False: nothing started.
     @discardableResult
     func runOnServers(_ command: String, _ chosen: [RunOnServersSheet.Choice], askingOn sheetWindow: NSWindow? = nil) async -> Bool {
-        if let q = Self.runQuestion(command, on: chosen.map(\.target)),
-           await choose(q.message, info: q.info, ["Run", "Cancel"], default: 1, on: sheetWindow) != 0 { return false }
+        if let q = Self.runQuestion(command, on: chosen.map(\.target)), await confirm(q, on: sheetWindow) != 0 { return false }
         let (run, skipped) = await Self.unlocked(chosen)
         guard !run.isEmpty else {
             active.flash("Nothing ran: the servers stayed locked")
@@ -34,12 +33,19 @@ extension AppDelegate {
         return true
     }
 
-    /// The question before a dangerous command on production servers, naming them all; nil: none to ask.
-    static func runQuestion(_ command: String, on targets: [SFTPTarget]) -> (message: String, info: String)? {
-        let prod = SavedServer.prodNote(targets)
+    /// The question before a dangerous command on production servers: the command, the servers (production's strip);
+    /// nil: none to ask. ↩ is Cancel (production).
+    static func runQuestion(_ command: String, on targets: [SFTPTarget]) -> Confirm? {
+        let prod = targets.filter(SavedServer.isProd)
         guard !prod.isEmpty, Shell.isDangerous(command) else { return nil }
-        return ("Run “\(command)” on \(targets.count) server\(targets.count == 1 ? "" : "s")?", targets.count == 1 ? String(prod.dropLast())
-                : prod + "It runs on \(targets.count == 2 ? "both" : "all \(targets.count)") at once.")
+        var c = Confirm("Run this command on \(targets.count == 1 ? SavedServer.name(for: targets[0]) : "\(targets.count) servers")?", action: "Run")
+        c.on(prod)
+        c.command = command
+        if targets.count > 1 {
+            c.items = targets.map { Confirm.Item(name: SavedServer.name(for: $0), symbol: .server) }
+            c.note = "It runs on \(targets.count == 2 ? "both" : "all \(targets.count)") at once."
+        }
+        return c
     }
 
     /// Touch ID for each locked one, one after another, before anything runs: one refused is skipped.

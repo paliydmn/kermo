@@ -156,10 +156,12 @@ extension ServerLockTests {
         try? FileManager.default.removeItem(atPath: dir)
     }
     let q = try #require(AppDelegate.runQuestion("sudo systemctl restart nginx", on: [db.target, web.target, SFTPTarget(host: "test")]))
-    #expect(q.message == "Run “sudo systemctl restart nginx” on 3 servers?")
-    #expect(q.info == "“me@db.invalid” and “localhost” are production servers. It runs on all 3 at once.")
-    #expect(AppDelegate.runQuestion("rm x", on: [db.target])?.info == "“me@db.invalid” is a production server.")
-    #expect(AppDelegate.runQuestion("rm x", on: [db.target, web.target])?.info == "“me@db.invalid” and “localhost” are production servers. It runs on both at once.")
+    #expect(q.title == "Run this command on 3 servers?" && q.command == "sudo systemctl restart nginx" && q.safe && q.action == "Run")
+    #expect(q.strip == [.prod] && q.place == "me@db.invalid and localhost", "the production ones in the strip")
+    #expect(q.items.map(\.name) == ["me@db.invalid", "localhost", "test"] && q.note == "It runs on all 3 at once.")
+    let one = try #require(AppDelegate.runQuestion("rm x", on: [db.target]))
+    #expect(one.title == "Run this command on me@db.invalid?" && one.items.isEmpty && one.note == nil && one.place == "me@db.invalid")
+    #expect(AppDelegate.runQuestion("rm x", on: [db.target, web.target])?.note == "It runs on both at once.")
     #expect(AppDelegate.runQuestion("uptime", on: [db.target]) == nil && AppDelegate.runQuestion("rm -rf /tmp/x", on: [SFTPTarget(host: "test")]) == nil)
 
     let local = RunOnServersSheet.Choice(title: "web", target: .local(), saved: web)   // .local(): localhost, the production one

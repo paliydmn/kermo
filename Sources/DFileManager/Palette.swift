@@ -28,7 +28,7 @@ enum Palette {
 /// SF Symbols 4 or older (macOS 13), below Kermo's macOS 14.
 enum Symbol: String, CaseIterable {
     // places
-    case server = "server.rack", mac = "laptopcomputer", ssh = "apple.terminal", folder, recent = "clock", network, archive = "archivebox",
+    case server = "server.rack", mac = "laptopcomputer", ssh = "apple.terminal", folder, doc, recent = "clock", network, archive = "archivebox",
          search = "magnifyingglass", internalDisk = "internaldrive", externalDisk = "externaldrive", tag
     // marks
     case lock = "lock.fill", root = "number", branch = "arrow.triangle.branch", tunnel = "arrow.left.arrow.right",
