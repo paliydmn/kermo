@@ -117,7 +117,7 @@ A row shows what is open on the server:
 
 - a terminal for SSH and a folder for SFTP, in green (with a count from 2); the folder is orange while a [root panel](root-panel.md) is open there;
 - `⇄` for tunnels that are listening, in green (red when one failed);
-- a lock on the icon for a locked server, a red ◆ when the last connection failed (its tooltip says why), a purple icon and the PROD chip for a production server (in a narrow sidebar the chip gives way to the name).
+- a lock on the icon for a locked server, a red ◆ when the last connection failed (its tooltip says why), a purple icon and the PROD chip for a production server. The chip gives way to the name when the row runs out of room: in a narrow sidebar, or at the default width once an open session's icon stands beside it; the purple icon stays.
 
 Under the mouse the row shows **SSH**, **SFTP**, **Tunnels** (for a saved server that has tunnels, or a server with [temporary ones](tunnels.md#forward-a-port-the-server-listens-on)) and **⋯**. A click goes to the server's open session. With nothing open, a double-click connects with SSH, so a single click on an idle server does nothing. The tooltip says all of it.
 
