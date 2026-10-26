@@ -10,7 +10,7 @@ Press F3 (⌥3) on a file. Close it with ⎋, `q` or ⌘W, or with F3 or F10 its
 
 The window's title is the file's name, with where it is under it: `~/Projects/site`, or on a server its saved name and folder, `web-01 · /var/log/nginx`. The Window menu lists it with both, `app.log — web-01 · /var/log/nginx`, so two files of one name read apart there. Below the text, a status line says what it shows: size and encoding, a filter in words (`lines with “error”, errors only`), `following`. Along the bottom, the key bar shows its keys, then the menu keys that work there; click a slot to do what its key does. The toolbar holds the same switches: **Text | Hex | Readable** (Readable only for the formats below), **Wrap**, **Lines** and **Follow** (lit while on), the **Filter lines** field (`&` goes there; ↩ applies it, ⎋ goes back to the text) and **All | Warnings | Errors**.
 
-![The viewer on a service log: its colors as the program wrote them, line numbers on, the keys in the title](images/viewer-log.png)
+![The viewer on a service log: its colors as the program wrote them, line numbers on, the switches in the toolbar and the keys along the bottom](images/viewer-log.png)
 
 - `h`: switch between hex and text. A file that looks binary opens as hex; `h` shows it as text. Hex shows 1 MB: the first one, or in a huge file the one at the top of the window.
 - `p`: switch between readable and raw. `.plist`, `.json`, `.strings`, `.mobileconfig` and `.entitlements` files open readable (binary plists as XML; JSON is re-indented with its keys sorted). On a file that isn't valid plist or JSON, `p` shows its text as it is; on files over 4 MB it beeps.
