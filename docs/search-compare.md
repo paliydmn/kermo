@@ -6,7 +6,7 @@ Filter a folder's listing, find files below it, and compare or synchronize two f
 
 ## Quick filter
 
-Press / (**View ▸ Quick Filter**) to type a filter under the list. The list shrinks as you type, and the status line shows `filtered: 3 of 40`. Matching ignores case.
+Press / (**View ▸ Quick Filter**) to type a filter under the list: the field says **Filter: text, *.log or re:regex**, and the key bar shows its keys while you type — **↩ Keep**, **↓ Back to List**, **⎋ Clear**. The list shrinks as you type, and the status line shows `filtered: 3 of 40`. Matching ignores case.
 
 - Text matches anywhere in a name: `report`.
 - Glob (text with `*`, `?` or `[`) matches the whole name: `*.log`. Separate globs with `;` (a comma works too). Each part is matched on its own, and a part without `*`, `?` or `[` is wrapped in `*`…`*`, so write `*.log;*notes*`. A name that contains a comma or semicolon can be matched only with a wildcard or a regex.
@@ -29,7 +29,7 @@ Press ⌘F (⌥F7, **File ▸ Search Files…**) to search below the active pane
 - **Include hidden files and folders:** off skips dotfiles and items macOS flags as hidden (such as `~/Library`), and doesn't enter hidden folders. On a server only names starting with a dot are skipped.
 - **Use Spotlight index (fast, skips what Spotlight doesn't index):** finds only what Spotlight has indexed. Without it, the search walks the folder and stays on its volume.
 
-The results replace the panel's listing as they are found, named by their path below the folder. They behave like a listing: mark hits, then view (F3), edit (F4), preview (⌘Y), copy, move or delete them right there. The quick filter narrows them. The status line shows `searching… 12 found`, then `12 found · ⌫ back`.
+The results replace the panel's listing as they are found, named by their path below the folder. They behave like a listing: mark hits, then view (F3), edit (F4), preview (⌘Y), copy, move or delete them right there. The quick filter narrows them. The status line shows `searching… 12 found`, then `12 found`, with **⌫ Back** beside it: ⌫ or a click goes back to the folder.
 
 - ↩ on a file opens its folder with the cursor on it. ↩ on a folder enters it.
 - ⎋ does not stop a running search. ⌫ does, and leaves the results.

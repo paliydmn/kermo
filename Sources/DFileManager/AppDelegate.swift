@@ -41,7 +41,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private weak var target: PanelViewController?
     var quickViewOn = false
     private let promptLabel = NSTextField(labelWithString: "")
-    private let cmdField = NSTextField(string: "")
+    let cmdField = NSTextField(string: "")   // internal: tests
+    /// ⌘E at the command line's right end, at rest: a click is the key.
+    let cmdKey = NSButton(title: "", target: nil, action: nil)
     private var historyIndex = 0
     var commands: [Command] = []   // set in tests
     private var keymap: [Shortcut: Command] = [:]
@@ -176,8 +178,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         responderObservation = window.observe(\.firstResponder) { [keyBar] _, _ in
             MainActor.assumeIsolated {
                 let app = NSApp.delegate as? AppDelegate
-                keyBar.list = app?.commandLineFocused == true ? Self.commandLineKeys : nil   // its keys while it has the focus
+                keyBar.list = app?.focusedKeys   // a text field's keys while it has the focus
                 keyBar.render()
+                app?.cmdKey.isHidden = app?.commandLineFocused == true   // there already
                 app?.updateMenuKeys()
             }
         }
@@ -350,6 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         commands = cmds
         keymap = map
         keyBar.reload(cmds)
+        showCmdKey()
         refreshSidebar()   // section headers show keys
         let menu = makeMenu()
         NSApp.mainMenu = menu
@@ -460,6 +464,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     private func wire(_ panel: PanelViewController) {
         panel.showPerms = defaults.bool(forKey: "showPerms")
+        panel.keyFor = { [unowned self] id in commands.first { $0.id == id }?.keys.first?.display }
         panel.onFocus = { [unowned self, unowned panel] in activate(panel) }
         panel.onCommandKey = { [unowned self] in runKey($0) }
         panel.onCommand = { [unowned self] in run($0) }
@@ -1061,6 +1066,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if id == "app.update" { item.title = updateOffered.map { "Kermo \($0) Available…" } ?? "Check for Updates…" }
         if id == "app.update.auto" { item.state = defaults.bool(forKey: "updateCheckOff") ? .off : .on }
         if id == "file.trash" { item.title = panels.indices.contains(activeIndex) && (active.remote ?? active.parked) != nil ? "Delete…" : commands.first { $0.id == id }?.title ?? item.title }   // no Trash on a server
+        if id == "file.copy" { item.title = panels.indices.contains(activeIndex) && active.archive != nil ? "Extract To…" : commands.first { $0.id == id }?.title ?? item.title }   // F5 in an archive
         if id == "tab.close" {
             let closes = Self.windowToClose(key: NSApp.keyWindow, main: window) != nil
             item.title = closes ? "Close Window" : commands.first { $0.id == id }?.title ?? item.title
@@ -1147,7 +1153,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let main = splitController.view
 
         let bar = keyBar
-        bar.onRun = { [unowned self] in keyBar.list == nil ? run($0) : commandLineKey($0) }
+        bar.onRun = { [unowned self] id in
+            if keyBar.list == nil { return run(id) }
+            if let p = panels.first(where: \.filterFocused) { p.filterKey(id) } else { commandLineKey(id) }
+        }
         bar.onMore = { [unowned self] m in   // the terminal's keys, at rest all of them: none there is a bare F-key
             let shown = terminal.isShown ? Self.terminalCommands.compactMap { id in commands.first { $0.id == id } } : commands
             KeyHelp.show(over: window, commands: shown, layer: terminal.isShown && m.isEmpty ? nil : m)
@@ -1155,20 +1164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         bar.canRun = { [unowned self] in canRun($0) }
         bar.terminalShown = { [unowned self] in terminal.isShown }
 
-        promptLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
-        promptLabel.lineBreakMode = .byTruncatingHead
-        promptLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        promptLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 360).isActive = true
-        cmdField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        cmdField.placeholderString = Self.commandHint(root: nil)
-        cmdField.isBordered = false
-        cmdField.drawsBackground = false
-        cmdField.focusRingType = .none
-        cmdField.delegate = self
-        let cmdBar = NSStackView(views: [promptLabel, cmdField])
-        cmdBar.spacing = 6
-        cmdBar.setHuggingPriority(.defaultHigh, for: .vertical)   // as tall as its line: the panels take the rest (N21)
-        cmdBar.edgeInsets = NSEdgeInsets(top: 4, left: 8, bottom: 2, right: 8)
+        let cmdBar = makeCommandLine()
 
         let root = NSView()
         for v in [main, cmdBar, ops.view, bar] as [NSView] {
@@ -1188,6 +1184,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ])
         equalizePanels()
         return root
+    }
+
+    /// The command line at rest (R-30, Р5): where it runs (`~/Projects/site $`), what to type, ⌘E. Its keys are the key
+    /// bar's while it has the focus.
+    func makeCommandLine() -> NSStackView {
+        promptLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        promptLabel.lineBreakMode = .byTruncatingHead
+        promptLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        promptLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 360).isActive = true
+        cmdField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        cmdField.placeholderString = "Type a command"   // its keys: the key bar's while it has the focus (`commandLineKeys`)
+        cmdField.isBordered = false
+        cmdField.drawsBackground = false
+        cmdField.focusRingType = .none
+        cmdField.delegate = self
+        cmdKey.isBordered = false
+        cmdKey.refusesFirstResponder = true
+        cmdKey.target = self
+        cmdKey.action = #selector(cmdKeyClicked)
+        cmdKey.toolTip = "Command Line"
+        showCmdKey()
+        let cmdBar = NSStackView(views: [promptLabel, cmdField, cmdKey])
+        cmdBar.spacing = 6
+        cmdBar.setHuggingPriority(.defaultHigh, for: .vertical)   // as tall as its line: the panels take the rest (N21)
+        cmdBar.edgeInsets = NSEdgeInsets(top: 4, left: 8, bottom: 2, right: 8)
+        return cmdBar
     }
 
     /// The window (title bar, command line, key bar) and every part that draws its own colors.
@@ -1269,11 +1291,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// One check per folder at a time: on a share that stopped answering, each Tab or tab switch would hold one more thread.
     private static let folderChecks = Coalesced<Bool>()
 
-    /// The command line's placeholder. On a root panel it says whose shell ⌘E runs in: the user's, not root's.
-    static func commandHint(root: SFTPTarget?) -> String {
-        let user = root.map { t in t.host.lastIndex(of: "@").map { String(t.host[..<$0]) } ?? "your user" }
-        return "⌘E: shell command in this folder" + (user.map { " as \($0), not root" } ?? "") + " · %f %s %d %D · "
-            + commandLineKeys.filter { !$0.key.hasPrefix("%") }.map { "\($0.key) \($0.label.lowercased())" }.joined(separator: " · ")
+    @objc private func cmdKeyClicked() { run("cmdline.focus") }
+
+    /// The command line's key, as the keymap has it now.
+    private func showCmdKey() {
+        let key = commands.first { $0.id == "cmdline.focus" }?.keys.first?.display ?? "⌘E"
+        cmdKey.attributedTitle = KeyCap.text(key, font: .systemFont(ofSize: 12))
+        cmdKey.setAccessibilityLabel("Command Line, " + key)
     }
 
     /// The sidebar's Git section follows the active panel: its work tree, or none.
@@ -1288,13 +1312,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let remote: (host: String, dir: String?)?
         var local = active.path
         if terminal?.isShown == true, let t = terminal.current { remote = t.host.map { ($0, t.cwd) }; local = t.folder ?? local }
-        else { remote = (active.remote ?? active.parked).map { ($0.target.host, $0.dir) } }
-        let path = remote.map { r in r.dir.map { "\(r.host):\($0)" } ?? r.host } ?? (local as NSString).abbreviatingWithTildeInPath
-        promptLabel.stringValue = path + " $"   // ⌘E runs as the user, on a root panel too
+        else { remote = (active.remote ?? active.parked).map { (SavedServer.name(for: $0.target.asUser), $0.dir) } }   // ⌘E's user, not root
+        let path = remote.map { r in r.dir.map { "\(r.host):\($0)" } ?? r.host } ?? (local as NSString).abbreviatingWithTildeInPath   // a place's name, no emoji
+        promptLabel.stringValue = path + " $"   // ⌘E runs as the user, on a root panel too (`commandLineKeys(root:)` says so)
         let root = terminal?.isShown == true ? nil : (active.remote ?? active.parked).flatMap { $0.target.sudo ? $0 : nil }
-        cmdField.placeholderString = Self.commandHint(root: root?.target)
+        if commandLineFocused { keyBar.list = focusedKeys }
         sidebar.highlight(sidebarKey)
         keyBar.server = (active.remote ?? active.parked) != nil
+        keyBar.archive = active.archive != nil
         let to = other.remote ?? other.parked
         keyBar.target = KeyBarModel.target(server: to.map { (SavedServer.name(for: $0.target), SavedServer.isProd($0.target)) }, folder: other.path, panels: panels.count)
         updateGitRow()
@@ -1333,15 +1358,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     nonisolated static func historyKey(_ server: SFTPTarget?) -> String { server.map { "cmdHistory.\($0.host):\($0.port ?? 22)" } ?? "cmdHistory" }
 
     /// The command line's keys, as `control(_:textView:doCommandBy:)` and the keyDown monitor (⌘↩) take them: the key
-    /// bar while it has the focus, and its placeholder (`commandHint`). A slot's click runs `commandLineKey`, as the key.
-    /// Not ⌃↩ (Insert Name): in a text field macOS takes it for the field's context menu.
+    /// bar while it has the focus — the line itself only says "Type a command". A slot's click runs `commandLineKey`, as
+    /// the key. Not ⌃↩ (Insert Name): in a text field macOS takes it for the field's context menu.
     static let commandLineKeys = [
         KeySlot(key: "↩", label: "Run in Shell", id: "cmdline.shell"), KeySlot(key: "⇧↩", label: "Output Window", id: "cmdline.window"),
         KeySlot(key: "⌘↩", label: "Run in Terminal", id: "cmdline.terminal"), KeySlot(key: "↑↓", label: "History", id: nil),
         KeySlot(key: "⎋", label: "Back to Panel", id: "cmdline.back"), KeySlot(key: "%f %s %d %D", label: "Name, Marked, Here, Other", id: nil),
     ]
 
+    /// On a root panel, one more: whose shell ⌘E runs in — the server user's, not root's (R-31).
+    static func commandLineKeys(root: SFTPTarget?) -> [KeySlot] {
+        guard let t = root else { return commandLineKeys }
+        let user = t.host.lastIndex(of: "@").map { String(t.host[..<$0]) } ?? "your user"
+        return commandLineKeys + [KeySlot(key: "", label: "Runs as \(user), not root".bidiVisible, id: nil)]
+    }
+
     var commandLineFocused: Bool { cmdField.currentEditor().map { $0 === window.firstResponder } ?? false }
+
+    /// The keys of the text field that has the focus — the command line's, a panel's quick filter's — for the key bar;
+    /// nil: the panels' (or the terminal's).
+    var focusedKeys: [KeySlot]? {
+        if commandLineFocused { return Self.commandLineKeys(root: (active.remote ?? active.parked).flatMap { $0.target.sudo ? $0.target : nil }) }
+        return panels.contains(where: \.filterFocused) ? PanelViewController.filterKeys : nil
+    }
 
     /// What a key of the command line does — pressed there, or its slot clicked.
     func commandLineKey(_ id: String) {

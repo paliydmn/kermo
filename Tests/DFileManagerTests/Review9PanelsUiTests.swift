@@ -138,7 +138,7 @@ private func cell(_ panel: PanelViewController, _ column: String, row: Int) -> N
     #expect(PanelViewController.sizeText(item(.dir), measured: 2048, partial: true) == "≥ " + ByteCountFormatter().string(fromByteCount: 2048))
     #expect(PanelViewController.sizeText(item(.file, size: 310), measured: nil) == "310 B" && ByteCountFormatter.short(0) == "0 B")
     #expect(ByteCountFormatter.short(999) == "999 B" && ByteCountFormatter.short(1000) == ByteCountFormatter().string(fromByteCount: 1000))
-    #expect(PanelViewController.countText(7, "items", 310) == "7 items, 310 B")
+    #expect(PanelViewController.countText(7, "items", 310) == "7 items · 310 B")
     #expect(PanelViewController.linkNote("/etc/hosts", 0) == "→ /etc/hosts")
     #expect(PanelViewController.linkNote("gone", ENOENT) == "→ gone (dangling)")
     #expect(PanelViewController.linkNote("b", ELOOP) == "→ b (loop)")
@@ -263,9 +263,9 @@ private func liveCell(_ panel: PanelViewController, _ column: String, row: Int) 
     for d in ["one", "two"] { try FileManager.default.createDirectory(atPath: dir + "/" + d, withIntermediateDirectories: false) }
     let panel = await loaded(dir, count: 2)
     defer { panel.shutdown() }
-    #expect(panel.statusText.hasPrefix("2 items · "), "\(panel.statusText)")
+    #expect(panel.statusText == "2 items", "\(panel.statusText)")
     panel.setMarks(["one", "two"])
-    #expect(panel.statusText.hasPrefix("2 marked · 2 items · "), "\(panel.statusText)")
+    #expect(panel.statusText == "2 marked", "\(panel.statusText)")
     #expect(PanelViewController.countText(7, "items", 0) == "7 items")
-    #expect(PanelViewController.countText(2, "marked", 1536) == "2 marked, " + ByteCountFormatter().string(fromByteCount: 1536))
+    #expect(PanelViewController.countText(2, "marked", 1536) == "2 marked · " + ByteCountFormatter().string(fromByteCount: 1536))
 }

@@ -95,18 +95,31 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
     private let spinner = NSProgressIndicator()
     /// Next to a busy message that ⎋ cancels: the same for the mouse.
-    lazy var cancelButton: PillButton = {
-        let b = PillButton(title: "Cancel", target: self, action: #selector(cancelClicked))
-        b.isBordered = false
-        b.minSide = 0   // the status line keeps its height
-        b.font = .systemFont(ofSize: 11, weight: .medium)
-        b.contentTintColor = Palette.secondary   // not a failure, nor for good
-        b.toolTip = "⎋ cancels too"
-        b.isHidden = true
-        return b
-    }()
+    lazy var cancelButton = Self.pill("⎋", "Cancel", target: self, action: #selector(cancelClicked))
+    /// Next to search results' count: ⌫'s way back to the folder, for the mouse.
+    lazy var backButton = Self.pill("⌫", "Back", target: self, action: #selector(backClicked))
+    /// The status line's right end: what just is there — the branch, free space, SFTP, an archive's read-only.
+    private let statusChips = NSTextField(labelWithString: "")
+    private(set) var statusChipWords: [String] = []   // tests
+    /// What the panel says in its middle when there's nothing to list (`empty`).
+    private let emptyView = EmptyStateView()
+    /// The keys there: the registry's, as the keymap has them (the app sets it).
+    var keyFor: ((String) -> String?)?
     /// Shown in the status line with a spinner while a listing, connection or download is in flight.
-    var busyMessage: String? { didSet { if busyMessage != oldValue { updateStatus() } } }
+    var busyMessage: String? {
+        didSet {
+            guard busyMessage != oldValue else { return }
+            if oldValue == nil { busySince = Date() } else if busyMessage == nil { busySince = nil }
+            updateStatus()
+        }
+    }
+    /// Since when something is on its way: the middle says so only after a moment, so a quick listing doesn't flash it.
+    private var busySince: Date?
+    static let busyShows: TimeInterval = 0.4
+    /// The place shown couldn't be listed, and nothing of it is: its error, for the middle. Internal: tests.
+    var loadError: String? { didSet { if loadError != oldValue { updateEmpty() } } }
+    /// A listing has landed: before that, no rows doesn't mean an empty folder.
+    private var listedOnce = false
 
     private var all: [FileItem] = [] { didSet { sortedAll = nil; sorting = nil; sortGen += 1; pendingSelect = nil } }   // as listed
     /// `all` in the current sort order, cached: filtering and toggling hidden files reuse it instead of
@@ -213,7 +226,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private(set) var parked: (target: SFTPTarget, dir: String)? { didSet { styleHeader() } }
     /// What a parked panel says to whatever would act on its files: the server by its saved name, else its address.
     var parkedHint: String? {
-        parked.map { "Not connected — ↩ connects to \(SavedServer.name(for: $0.target))".bidiVisible }
+        parked.map { "Not connected — ↩ Connect to \(SavedServer.name(for: $0.target))".bidiVisible }
     }
     /// A server being connected to (first listing still running), for the sidebar.
     private(set) var connecting: SFTPTarget? { didSet { if connecting != oldValue { onSessionsChange?() } } }
@@ -243,7 +256,6 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private static let fileIcon = NSWorkspace.shared.icon(for: .data)
     private static let execIcon = NSWorkspace.shared.icon(for: .unixExecutable)   // as Finder: told by shape, in any theme
     private static let linkIcon = NSWorkspace.shared.icon(for: .symbolicLink)
-    private static let serverIcon = Symbol.network.image("Server")
     /// Today and yesterday as of the last listing; the stat timer moves it on at midnight.
     private var dates = DateColumn()
 
@@ -414,10 +426,14 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             f.delegate = self
         }
         pathField.lineBreakMode = .byTruncatingHead
-        filterField.placeholderString = "filter: text, *.glob or re:regex · ↩ keep · ⎋ clear"
+        filterField.placeholderString = "Filter: text, *.log or re:regex"
         filterField.isHidden = true
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        statusLabel.setContentHuggingPriority(.init(1), for: .horizontal)   // the chips at the right end
+        statusLabel.setContentCompressionResistancePriority(.init(300), for: .horizontal)
+        statusChips.lineBreakMode = .byTruncatingHead   // narrow, the chips give way before what's on the left
+        statusChips.setContentCompressionResistancePriority(.init(260), for: .horizontal)
 
         placeIcon.symbolConfiguration = .init(pointSize: 11, weight: .medium)
         chipRow.spacing = 3
@@ -434,7 +450,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         errorIcon.contentTintColor = Palette.fail
         errorIcon.symbolConfiguration = .init(pointSize: 11, weight: .regular)
         errorIcon.isHidden = true
-        let footer = Self.column([filterField, NSStackView(views: [spinner, errorIcon, statusLabel, cancelButton])])
+        let footer = Self.column([filterField, NSStackView(views: [spinner, errorIcon, statusLabel, cancelButton, backButton, statusChips])])
         let v = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 700))
         for sub in [header, scroll, footer] as [NSView] {
             sub.translatesAutoresizingMaskIntoConstraints = false
@@ -447,6 +463,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             footer.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 3),
             footer.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -4),
         ])
+        emptyView.place(over: scroll, in: v)
+        emptyView.onKey = { [unowned self] in emptyKey($0) }
         view = v
         isActive = false
         updateTabBar()
@@ -470,7 +488,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         scroll.verticalScroller?.needsDisplay = true
         filterField.backgroundColor = theme.cursor ?? .controlBackgroundColor
         filterField.textColor = theme.text
-        statusLabel.textColor = statusError ? Palette.fail : theme.hidden
+        if statusError { statusLabel.textColor = Palette.fail } else { updateStatus() }   // the marks' color, the middle's
         styleHeader()
         let r = table.selectedRow
         table.reloadData()   // drops the selection: the cursor stays where it was
@@ -578,6 +596,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             loadedGen = gen
             busyMessage = busyOps.last?.message
             lastLoadSeconds = Date().timeIntervalSince(started)
+            loadError = nil
             switch result {
             case .success(let (items, free, _, _, tolerance, folder)) where same && newPath == path && watcher != nil:
                 // Nothing changed: the rows, marks, cursor and sort stay; the free space, git status and links may have.
@@ -644,6 +663,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 resolveLinks(items, in: newPath, gen: gen)
             case .failure(let error):
                 NSSound.beep()
+                if newPath == path && all.isEmpty && parked == nil { loadError = error.localizedDescription }   // nothing of it shown: the middle says so too
                 statusLabel.stringValue = "\((newPath as NSString).abbreviatingWithTildeInPath): \(error.localizedDescription)"
                 statusError = true
                 if (error as? POSIXError)?.code == .ENOENT { onGone?(newPath) }
@@ -730,6 +750,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 && (changed?[it.name] != nil || changed == nil)
         }.map { sorted[$0] }
         totalSize = bytes(of: rows)
+        listedOnce = true
         guard isViewLoaded else { return }
         dates = DateColumn()
         table.reloadData()   // drops the selection: Quick Look is told once the cursor is back
@@ -837,35 +858,115 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
 
+    /// The status line (R-28): on the left what matters while you work — the marked ones in the marks' color, else how
+    /// many there are; what the list is (filtered, git changes, found); on the right what just is there, as chips. No
+    /// keys: ⎋ and ⌫ are the pills beside it, F5 in an archive says Extract in the key bar.
     private func updateStatus() {
+        defer { updateEmpty() }
         let busy = busyMessage != nil || searching
         spinner.isHidden = !busy
         busy ? spinner.startAnimation(nil) : spinner.stopAnimation(nil)
         statusError = false
         let cancellable = busyMessage?.hasSuffix(" ⎋ cancels") == true
         cancelButton.isHidden = !cancellable
-        if let busyMessage { return statusLabel.stringValue = cancellable ? String(busyMessage.dropLast(" ⎋ cancels".count)) : busyMessage }
+        backButton.isHidden = searchTitle == nil
+        if let busyMessage { return say(cancellable ? String(busyMessage.dropLast(" ⎋ cancels".count)) : busyMessage) }
         // A message just flashed stays its time through a re-list, a git status or a folder size coming in.
-        if let f = flashed, f.until > Date() { statusError = f.error; return statusLabel.stringValue = f.text }
-        if let p = parked { return statusLabel.stringValue = "sftp · \(p.target.shown) · not connected".bidiVisible }
-        var s = Self.countText(rows.count, "items", totalSize) + " · \(freeSpace) free"
-        if let r = remote {   // marks: below, as anywhere
-            s = "sftp · \(r.target.shown) · " + Self.countText(rows.count, "items", 0) + (remoteFree.map { " · \($0) free" } ?? "")
-        }
-        if let g = git {
-            s += " · ⎇ \(g.branch)" + (g.ahead > 0 ? " ↑\(g.ahead)" : "") + (g.behind > 0 ? " ↓\(g.behind)" : "")
-        }
-        if let a = archive { s = "\(a.index.format) · read-only · F5 extracts · " + s }
-        if searchTitle != nil { s = "\(searchWhat): " + (searching ? "searching… \(all.count) found" : "\(all.count) found · ⌫ back") + " · " + s }
-        if filter != nil { s = "filtered: \(rows.count) of \(all.count) · " + s }
-        if gitOnly && git != nil { s = "git changes: \(rows.count) of \(all.count) · " + s }
-        if !marked.isEmpty { s = Self.countText(marked.count, "marked", bytes(of: rows.filter { marked.contains($0.name) })) + " · " + s }
-        statusLabel.stringValue = s
+        if let f = flashed, f.until > Date() { statusError = f.error; return say(f.text) }
+        if parked != nil { return say("Not connected", chips: [("SFTP", nil)]) }
+        var parts: [String] = []
+        if !marked.isEmpty { parts.append(Self.countText(marked.count, "marked", bytes(of: rows.filter { marked.contains($0.name) }))) }
+        if searchTitle != nil { parts.append("\(searchWhat): " + (searching ? "searching… " : "") + "\(all.count) found") }
+        else if marked.isEmpty { parts.append(Self.countText(rows.count, "items", remote == nil ? totalSize : 0)) }
+        if filter != nil { parts.append("filtered: \(rows.count) of \(all.count)") }
+        if gitOnly && git != nil { parts.append("git changes: \(rows.count) of \(all.count)") }
+        var chips: [(String, Symbol?)] = []
+        if let g = git { chips.append((g.branch + (g.ahead > 0 ? " ↑\(g.ahead)" : "") + (g.behind > 0 ? " ↓\(g.behind)" : ""), .branch)) }
+        if remote == nil { chips.append(("\(freeSpace) free", nil)) } else if let f = remoteFree { chips.append(("\(f) free", nil)) }
+        if remote != nil { chips.append(("SFTP", nil)) }
+        if let a = archive { chips.append(("\(a.index.format) · read-only", nil)) }
+        say(parts.joined(separator: " · "), lead: marked.isEmpty ? 0 : parts[0].count, chips: chips)
     }
 
-    /// "7 items, 1.2 MB" — or "7 items" with nothing to add up (folders count once measured, on Space): "Zero KB" said nothing.
+    /// The status line's words, the first `lead` characters (the marked count) bold in the marks' color, and its chips.
+    private func say(_ text: String, lead: Int = 0, chips: [(words: String, symbol: Symbol?)] = []) {
+        let font = statusLabel.font ?? .systemFont(ofSize: 11)
+        let s = NSMutableAttributedString(string: text, attributes: [.font: font, .foregroundColor: statusError ? Palette.fail : theme.hidden])
+        let bold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        if lead > 0 { s.addAttributes([.font: bold, .foregroundColor: theme.marked], range: NSRange(location: 0, length: (text.prefix(lead) as Substring).utf16.count)) }
+        statusLabel.attributedStringValue = s
+        statusChipWords = chips.map(\.words)
+        let c = NSMutableAttributedString()
+        for (w, symbol) in chips {
+            if c.length > 0 { c.append(NSAttributedString(string: "  ")) }
+            c.append(Chip.plain(w.bidiVisible, symbol: symbol))
+        }
+        statusChips.attributedStringValue = c
+        statusChips.setAccessibilityLabel(statusChipWords.joined(separator: ", "))
+    }
+
+    /// "7 items · 1.2 MB" — or "7 items" with nothing to add up (folders count once measured, on Space): "Zero KB" said nothing.
     static func countText(_ n: Int, _ noun: String, _ bytes: Int64) -> String {
-        "\(n) \(n == 1 && noun == "items" ? "item" : noun)" + (bytes > 0 ? ", " + ByteCountFormatter.short(bytes) : "")
+        "\(n) \(n == 1 && noun == "items" ? "item" : noun)" + (bytes > 0 ? " · " + ByteCountFormatter.short(bytes) : "")
+    }
+
+    // MARK: - The middle, when there's nothing to list (R-26)
+
+    /// What the panel says in its middle, from what it knows already.
+    struct Empty: Equatable {
+        var symbol: Symbol?   // nil: a spinner
+        var title: String
+        var detail = ""
+        var keys: [KeySlot] = []
+    }
+
+    var empty: Empty? {
+        func slot(_ id: String, _ label: String, _ key: String) -> KeySlot { KeySlot(key: keyFor?(id) ?? key, label: label, id: id) }
+        let cancel = KeySlot(key: "⎋", label: "Cancel", id: "cancel")
+        guard quickView == nil, rows.isEmpty else { return nil }
+        if let b = busyMessage, let since = busySince, Date().timeIntervalSince(since) >= Self.busyShows {
+            let cancellable = b.hasSuffix(" ⎋ cancels")
+            return Empty(title: cancellable ? String(b.dropLast(" ⎋ cancels".count)) : b, keys: cancellable ? [cancel] : [])
+        }
+        if let p = parked {
+            return Empty(symbol: .server, title: "Not connected", detail: "\(SavedServer.name(for: p.target)):\(p.dir) — nothing is sent until you ask".bidiVisible,
+                         keys: [slot("open", "Connect", "↩"), slot("admin.rootPanel", "As Root", "⌃⌘R"), slot("go.up", "This Mac", "⌘↑")])
+        }
+        if let e = loadError {
+            let refresh = slot("view.refresh", "Refresh", "⌘R")
+            return Empty(symbol: .warn, title: "Can't read this folder", detail: e, keys: [refresh])
+        }
+        guard listedOnce, busyMessage == nil, sorting == nil, searchTitle == nil, filter == nil, !(gitOnly && git != nil) else { return nil }
+        if archive != nil { return Empty(symbol: .archive, title: "Empty folder", detail: "Archives are read-only here") }
+        let make = [slot("file.mkdir", "New Folder", "F7"), slot("file.new", "New File", "⇧F4"), KeySlot(key: "⌘V", label: "Paste", id: "paste")]
+        guard all.isEmpty else {   // all hidden
+            return Empty(symbol: .hide, title: all.count == 1 ? "1 hidden item" : "\(all.count) hidden items", keys: [slot("view.hidden", "Show Hidden Files", "⇧⌘.")] + make)
+        }
+        return Empty(symbol: .folder, title: "Empty folder", keys: make)
+    }
+
+    var emptyShown: Empty? { emptyView.shown }   // tests: what the middle shows now
+    var emptyKeysShown: [KeySlot] { emptyView.keys.shownSlots }   // tests: its keys that fit
+
+    private func updateEmpty() {
+        let e = empty
+        emptyView.show(e, theme: theme)
+        // The middle's spinner waits a moment: asked again once it's due (once: past it, nil means nothing to say).
+        if e == nil, rows.isEmpty, busyMessage != nil, let since = busySince, Date().timeIntervalSince(since) < Self.busyShows {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.busyShows - Date().timeIntervalSince(since) + 0.01) { [weak self] in
+                MainActor.assumeIsolated { self?.updateEmpty() }
+            }
+        }
+    }
+
+    /// A key of the middle clicked: as pressing it in this panel.
+    private func emptyKey(_ id: String) {
+        view.window?.makeFirstResponder(table)   // this panel, as a click in it
+        switch id {
+        case "paste": paste(nil)
+        case "cancel": cancelBusy()
+        default: onCommand?(id)
+        }
     }
     private func bytes(of items: [FileItem]) -> Int64 { Self.bytes(of: items, dirSizes: dirSizes) }   // not `self`'s per item (see `applyView`)
     nonisolated static func bytes(of items: [FileItem], dirSizes: [String: Int64]) -> Int64 {
@@ -977,6 +1078,22 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     @objc private func cancelClicked() { cancelBusy() }
+    @objc private func backClicked() { goUp() }   // ⌫'s (`go.up`) on results: back to the folder
+
+    /// A key and what it does, beside the status line (phase 3's grammar: the key as a symbol, then a verb).
+    static func pill(_ key: String, _ verb: String, target: AnyObject, action: Selector) -> PillButton {
+        let b = PillButton(title: "", target: target, action: action)
+        b.isBordered = false
+        b.minSide = 0   // the status line keeps its height
+        let font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        let t = NSMutableAttributedString(attributedString: KeyCap.text(key, font: font))
+        t.append(NSAttributedString(string: " " + verb, attributes: [.font: font, .foregroundColor: Palette.secondary]))   // not a failure, nor for good
+        b.attributedTitle = t
+        b.contentTintColor = Palette.secondary
+        b.setAccessibilityLabel("\(verb), \(key)")
+        b.isHidden = true
+        return b
+    }
 
     /// `after`: the message waits that long (⎋ doesn't), so quick work doesn't flash it.
     func busy<T: Sendable>(_ message: String, after: Double = 0, flag: CancelFlag = CancelFlag(),
@@ -1375,6 +1492,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         archive = nil
         remote = nil
         parked = p
+        loadError = nil
         all = []
         (sortedAll, sortedBy) = ([], (sortKey, ascending))
         marked.removeAll()
@@ -1408,6 +1526,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         archive = nil
         if searchTitle != nil { searchFlag?.cancel(); searchTitle = nil; searching = false }
         remote = (target, dir)
+        loadError = nil
         all = items
         (sortedAll, sortedBy) = sorted
         if sameDir {
@@ -1464,8 +1583,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 watcher = nil
                 path = (file as NSString).deletingLastPathComponent
                 archive = (index, "")
+                loadError = nil
                 setGit(nil)
                 showArchive(select: nil)
+                onPathChange?()   // the key bar's F5 extracts now
             case .failure(let error):
                 NSSound.beep()
                 flash("Can't open archive: \(error.localizedDescription)", error: true)
@@ -1507,6 +1628,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         watcher = nil
         searchTitle = place.map { "\(what) in \($0)" } ?? what
         parked = nil   // its ".." goes to the tab's folder
+        loadError = nil
         searchWhat = what
         searching = true
         all = []
@@ -1889,6 +2011,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var markedNames: Set<String> { Set(marked.names) }
     var headerText: String { pathField.stringValue }
     var statusText: String { statusLabel.stringValue }
+    var statusAttributed: NSAttributedString { statusLabel.attributedStringValue }   // tests
 
     /// How many got marked: only what's shown can be (a filter, hidden files).
     @discardableResult
@@ -2090,17 +2213,34 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
 
+    /// The quick filter's keys, as `control(_:textView:doCommandBy:)` takes them: the key bar while it has the focus.
+    /// A slot's click runs `filterKey`, as the key.
+    static let filterKeys = [KeySlot(key: "↩", label: "Keep", id: "filter.keep"), KeySlot(key: "↓", label: "Back to List", id: "filter.list"),
+                             KeySlot(key: "⎋", label: "Clear", id: "filter.clear")]
+
+    var filterFocused: Bool { filterField.currentEditor().map { $0 === view.window?.firstResponder } ?? false }
+
+    /// What a key of the quick filter does — pressed there, or its slot clicked.
+    func filterKey(_ id: String) {
+        switch id {
+        case "filter.keep":
+            Self.rememberFilter(filterField.stringValue)
+            confirmFilter()
+        case "filter.list": confirmFilter()
+        case "filter.clear":
+            clearFilter()
+            view.window?.makeFirstResponder(table)
+        default: break
+        }
+    }
+
     func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
         if control === filterField {
             switch sel {
-            case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.moveDown(_:)):
-                if sel == #selector(NSResponder.insertNewline(_:)) { Self.rememberFilter(filterField.stringValue) }
-                confirmFilter()
-            case #selector(NSResponder.cancelOperation(_:)):
-                clearFilter()
-                view.window?.makeFirstResponder(table)
-            default:
-                return false
+            case #selector(NSResponder.insertNewline(_:)): filterKey("filter.keep")
+            case #selector(NSResponder.moveDown(_:)): filterKey("filter.list")
+            case #selector(NSResponder.cancelOperation(_:)): filterKey("filter.clear")
+            default: return false
             }
             return true
         }
@@ -2432,7 +2572,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     // MARK: - Table data
 
-    func numberOfRows(in tableView: NSTableView) -> Int { parked != nil ? 1 : rows.count + (hasParent ? 1 : 0) }
+    func numberOfRows(in tableView: NSTableView) -> Int { parked != nil ? 0 : rows.count + (hasParent ? 1 : 0) }   // parked: the middle says it
 
     func tableView(_ tableView: NSTableView, viewFor column: NSTableColumn?, row: Int) -> NSView? {
         guard let column else { return nil }
@@ -2444,9 +2584,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let link = it?.kind == .link && archive == nil && searchTitle == nil ? links[it!.name] : nil   // the folder's, here or on the server
         switch column.identifier.rawValue {
         case "name":
-            tf.stringValue = parkedHint ?? it?.displayName ?? ".."
+            tf.stringValue = it?.displayName ?? ".."
             cell.imageView?.image = switch it?.kind {
-            case _ where parked != nil: Self.serverIcon
             case nil, .dir: Self.folderIcon
             case .link: Self.linkIcon
             case .file where it!.mode & 0o111 != 0: Self.execIcon
@@ -2476,7 +2615,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             tf.stringValue = it.map { dates.text(Date(timeIntervalSince1970: $0.mtime)) } ?? ""
         }
         cell.text = nil
-        cell.color = parked != nil ? theme.hidden : isMarked ? theme.marked : (link?.error ?? 0) != 0 ? Palette.fail : it?.isHidden == true ? theme.hidden
+        cell.color = isMarked ? theme.marked : (link?.error ?? 0) != 0 ? Palette.fail : it?.isHidden == true ? theme.hidden
             : it == nil || it?.kind == .dir || it?.linkDir == true ? theme.dir : it!.kind == .file && it!.mode & 0o111 != 0 ? theme.exec : theme.text
         if column.identifier.rawValue == "name", let it, it.label != 0 || link != nil {   // Finder tag color, a link's target
             let base: [NSAttributedString.Key: Any] = [.font: tf.font!, .foregroundColor: cell.color]
@@ -2890,6 +3029,75 @@ final class LinedStack: NSStackView {
     override func draw(_ dirtyRect: NSRect) {
         line?.setFill()
         if line != nil { NSRect(x: bounds.minX, y: isFlipped ? bounds.maxY - 2 : bounds.minY, width: bounds.width, height: 2).fill() }
+    }
+}
+
+/// A panel's middle when it has nothing to list (`PanelViewController.Empty`): a symbol (or a spinner), what's so, a
+/// line on it, and what comes next as keys — the same bar as anywhere, a click doing what the key does.
+final class EmptyStateView: NSStackView {
+    private let icon = NSImageView()
+    private let spinner = NSProgressIndicator()
+    private let title = NSTextField(labelWithString: "")
+    private let detail = NSTextField(wrappingLabelWithString: "")
+    let keys = KeyBarView(chips: false)
+    private var keysWidth: NSLayoutConstraint!
+    var onKey: ((String) -> Void)?
+    private(set) var shown: PanelViewController.Empty?   // tests
+
+    init() {
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .centerX
+        spacing = 6
+        edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        icon.symbolConfiguration = .init(pointSize: 26, weight: .light)
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        detail.font = .systemFont(ofSize: 11.5)
+        detail.alignment = .center
+        detail.preferredMaxLayoutWidth = 320
+        keys.onRun = { [unowned self] in onKey?($0) }
+        keysWidth = keys.widthAnchor.constraint(equalToConstant: 0)
+        keysWidth.priority = .defaultHigh   // a narrow panel: "+N" for the rest
+        keysWidth.isActive = true
+        keys.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        [icon, spinner, title, detail, keys].forEach(addArrangedSubview)
+        setCustomSpacing(10, after: detail)
+        isHidden = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// In the middle of the list, never wider than it.
+    func place(over list: NSView, in host: NSView) {
+        translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(self)
+        NSLayoutConstraint.activate([
+            centerXAnchor.constraint(equalTo: list.centerXAnchor), centerYAnchor.constraint(equalTo: list.centerYAnchor),
+            widthAnchor.constraint(lessThanOrEqualTo: list.widthAnchor, constant: -16),
+        ])
+    }
+
+    func show(_ e: PanelViewController.Empty?, theme: Theme) {
+        shown = e
+        isHidden = e == nil
+        guard let e else { return spinner.stopAnimation(nil) }
+        layer?.backgroundColor = theme.background?.cgColor   // a theme's grid lines don't cross the words
+        icon.image = e.symbol?.image(e.title)
+        icon.contentTintColor = theme.hidden
+        icon.isHidden = e.symbol == nil
+        spinner.isHidden = e.symbol != nil
+        e.symbol == nil ? spinner.startAnimation(nil) : spinner.stopAnimation(nil)
+        title.stringValue = e.title.bidiVisible
+        title.textColor = theme.text
+        detail.stringValue = e.detail
+        detail.textColor = theme.hidden
+        detail.isHidden = e.detail.isEmpty
+        keys.isHidden = e.keys.isEmpty
+        if keys.list != e.keys { keys.list = e.keys }
+        keysWidth.constant = keys.naturalWidth
     }
 }
 

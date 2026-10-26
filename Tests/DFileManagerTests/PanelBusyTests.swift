@@ -68,7 +68,7 @@ import Testing
     #expect(panel.statusText == "Saved · no history: file over 5 MB")
     panel.moveCursor(toName: "f")
     panel.toggleMark(move: 0)
-    #expect(panel.statusText.hasPrefix("1 marked · "), "\(panel.statusText)")
+    #expect(panel.statusText == "1 marked", "\(panel.statusText)")
 }
 
 /// A running wait can say something else midway (a save's check after the file is replaced: "Checking …", no "⎋

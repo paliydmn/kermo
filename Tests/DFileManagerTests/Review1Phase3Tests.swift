@@ -16,9 +16,11 @@ private func words(_ s: String) -> [String] {
     let commands = AppDelegate().makeCommands()
     let exceptions: [String: String] = [
         "file.trash Delete…": "F8 on a server deletes, after a question: no Trash there (the menu item says Delete… then too)",
+        "file.copy Extract": "F5 in an archive extracts (the menu item says Extract To… then too)",
     ]
     let terminal = AppDelegate.terminalCommands.compactMap { id in commands.first { $0.id == id } }
-    let all = KeyBarModel.layers(commands) + KeyBarModel.layers(commands, server: true) + KeyBarModel.layers(terminal, terminal: true)
+    let all = KeyBarModel.layers(commands) + KeyBarModel.layers(commands, server: true) + KeyBarModel.layers(commands, archive: true)
+        + KeyBarModel.layers(terminal, terminal: true)
     var used: Set<String> = []
     for slot in all.flatMap(\.slots) {
         guard let id = slot.id, let c = commands.first(where: { $0.id == id }) else { continue }
@@ -98,13 +100,12 @@ private func words(_ s: String) -> [String] {
     #expect(!KeyBarModel.layers(commands).flatMap(\.slots).contains { $0.id?.hasPrefix("term.pane.") == true }, "not on the panels' bar")
 }
 
-/// R-36: the command line's keys, listed by its key handler, are the bar while it has the focus and its placeholder —
-/// one list. Not ⌃↩: macOS gives it to a text field's context menu, so Insert Name stays the panel's.
+/// R-36: the command line's keys, listed by its key handler, are the bar while it has the focus — one list; the line
+/// itself says only what to type (phase 4, R-30). Not ⌃↩: macOS gives it to a text field's context menu, so Insert
+/// Name stays the panel's.
 @MainActor @Test func theCommandLinesKeysAreOneList() {
     let keys = AppDelegate.commandLineKeys
     #expect(keys.map(\.key) == ["↩", "⇧↩", "⌘↩", "↑↓", "⎋", "%f %s %d %D"])
-    let hint = AppDelegate.commandHint(root: nil)
-    for k in keys { #expect(hint.contains(k.key), "\(k.key)") }
     let commands = AppDelegate().makeCommands()
     let bar = KeyBarView()
     bar.frame = NSRect(x: 0, y: 0, width: 1400, height: 30)
@@ -125,11 +126,9 @@ private let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
 
 /// R-64, R-44: one grammar. A placeholder says what to type — no keys, no "Esc"; a row's detail names no key (the action
 /// bar does); nowhere "Esc close(s)" or "⎋ closes". Read off the sources, as `everySymbolExistsAndComesFromTheRegistry`
-/// is. What's still so is listed here, each with why; the command line's placeholder (phase 4, R-30) is made from its
-/// keys, see `theCommandLinesKeysAreOneList`.
+/// is. What's still so is listed here, each with why.
 @Test func placeholdersSayWhatToTypeAndHintsHaveOneGrammar() throws {
     let allowed = [
-        "PanelViewController.swift: filter: text, *.glob or re:regex · ↩ keep · ⎋ clear": "the panel's filter field: phase 4 (R-29)",
         "HeaderSearch.swift: ⌘F": "the palette (⇧⌘P) lists keys by design until phase 8 (R-43)",
     ]
     let literal = try NSRegularExpression(pattern: #""((?:[^"\\]|\\.)*)""#)

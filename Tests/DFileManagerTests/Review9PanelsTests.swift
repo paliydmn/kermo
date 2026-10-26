@@ -13,8 +13,11 @@ private func tempDir(_ files: [String]) throws -> String {
 
 /// Up to 20 s: a watcher's re-list waits twice as long as the last listing took, seconds while the whole suite runs.
 @MainActor
+/// By the clock, up to a minute: a link's target and a file's new size are read at utility QoS, which a loaded full run
+/// starves for tens of seconds (D-097).
 private func waitListed(_ panel: PanelViewController, _ count: Int) async {
-    for _ in 0..<2000 where panel.listedItems.count != count { try? await Task.sleep(for: .milliseconds(10)) }
+    let end = Date().addingTimeInterval(60)
+    while panel.listedItems.count != count, Date() < end { try? await Task.sleep(for: .milliseconds(10)) }
 }
 
 /// U1: a narrow panel (4 panels at 1200 pt) gives the width to Name; Modified, then Size, make room and come back when it widens.
@@ -75,7 +78,8 @@ private func waitListed(_ panel: PanelViewController, _ count: Int) async {
 
 @MainActor
 private func waitUntil(_ done: () -> Bool) async {
-    for _ in 0..<2000 where !done() { try? await Task.sleep(for: .milliseconds(10)) }
+    let end = Date().addingTimeInterval(60)
+    while !done(), Date() < end { try? await Task.sleep(for: .milliseconds(10)) }
 }
 
 /// U5: while a switched-to tab's listing is still loading, its marks don't land on the folder still on screen.

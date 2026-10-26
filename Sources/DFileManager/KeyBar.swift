@@ -30,13 +30,16 @@ enum KeyBarModel {
     /// Unmodified keys other than F-keys (↩ ⌫ Space Tab /) stay out — they're on the F1 sheet.
     /// ⌥+digit duplicates of F-keys (⌥5 = F5, ⇧⌥6 = ⇧F6, ⌥0 = F10) collapse into one hint slot naming the digits there.
     /// One slot per command per layer (its first key there). F-keys first by number, then registry order.
-    /// `server`: the active panel is a server's, where F8 deletes (after a question): no Trash there.
+    /// `server`: the active panel is a server's, where F8 deletes (after a question): no Trash there. `archive`: it's
+    /// inside an archive, where F5 extracts.
     /// `terminal`: the terminal's own commands, its panes' too; with no F-keys there, each one's first key shows at rest,
     /// and ⌃O goes back to the panels. Else the panes' keys stay out: the bar is the panels'.
-    static func layers(_ commands: [Command], server: Bool = false, terminal: Bool = false) -> [(mods: NSEvent.ModifierFlags, slots: [KeySlot])] {
+    static func layers(_ commands: [Command], server: Bool = false, archive: Bool = false, terminal: Bool = false) -> [(mods: NSEvent.ModifierFlags, slots: [KeySlot])] {
         var slots: [UInt: [(f: Int, slot: KeySlot)]] = [:]
         var hinted: [UInt: [Int]] = [:]   // per layer: the F-key numbers its ⌥ digits stand for
-        func label(_ c: Command) -> String { server && c.id == "file.trash" ? "Delete…" : terminal && c.id == "view.terminal" ? "Panels" : Self.label(c) }
+        func label(_ c: Command) -> String {
+            server && c.id == "file.trash" ? "Delete…" : archive && c.id == "file.copy" ? "Extract" : terminal && c.id == "view.terminal" ? "Panels" : Self.label(c)
+        }
         for c in commands where terminal || !c.id.hasPrefix("term.pane.") && !c.id.hasPrefix("term.resize.") {
             for k in c.keys {
                 let m = k.flags, f = fNumber(k.name)
@@ -114,6 +117,10 @@ final class KeyBarView: NSView {
     var server = false {
         didSet { if server != oldValue { reload(commands) } }
     }
+    /// The active panel is inside an archive (F5: Extract).
+    var archive = false {
+        didSet { if archive != oldValue { reload(commands) } }
+    }
     /// Said after F5's and F6's labels (`KeyBarModel.target`).
     var target: KeyBarModel.Target? { didSet { if target != oldValue { render() } } }
     /// The slots that go under "+N" last (`KeyBarModel.fit`).
@@ -171,7 +178,7 @@ final class KeyBarView: NSView {
 
     func reload(_ commands: [Command]) {
         self.commands = commands
-        layers = KeyBarModel.layers(commands, server: server)
+        layers = KeyBarModel.layers(commands, server: server, archive: archive)
         terminalLayers = KeyBarModel.layers(AppDelegate.terminalCommands.compactMap { id in commands.first { $0.id == id } }, terminal: true)
         render()
     }
@@ -277,10 +284,10 @@ final class KeyBarView: NSView {
         let b = SlotButton(title: "", target: self, action: #selector(slotClicked(_:)))
         let font = NSFont.systemFont(ofSize: 12)
         let target = list == nil && s.id.map(KeyBarModel.targeted.contains) == true ? target : nil
-        let t = NSMutableAttributedString(attributedString: KeyCap.text(s.key, font: font))
+        let t = NSMutableAttributedString(attributedString: s.key.isEmpty ? NSAttributedString() : KeyCap.text(s.key, font: font))   // a hint without a key: words only
         if !s.label.isEmpty {
             let color = list == nil && server && s.id == "file.trash" ? Palette.fail : s.id == nil ? .secondaryLabelColor : .labelColor   // gone for good
-            t.append(NSAttributedString(string: " " + s.label, attributes: [.foregroundColor: color, .font: font]))
+            t.append(NSAttributedString(string: (s.key.isEmpty ? "" : " ") + s.label, attributes: [.foregroundColor: color, .font: font]))
         }
         if let target {
             t.append(NSAttributedString(string: " " + target.text, attributes: target.prod
@@ -327,6 +334,9 @@ final class KeyBarView: NSView {
         onRun = { id in Int(id).flatMap { rows.indices.contains($0) ? rows[$0] : nil }?.run() }
         list = rows.enumerated().map { KeySlot(key: $0.element.key, label: $0.element.label, id: "\($0.offset)") }
     }
+
+    /// As wide as all its slots side by side: a bar centered on its own (a panel's empty state) is given that much.
+    var naturalWidth: CGFloat { ceil(buttons.map(\.fittingSize.width).reduce(12, +) + CGFloat(buttons.count) * row.spacing) + 1 }   // as `place` counts
 
     /// Tests: what the chips show — held (lit) and pinned (outlined).
     var chipStates: [(flag: NSEvent.ModifierFlags, held: Bool, pinned: Bool)] { chips.map { ($0.flag, $0.held, $0.pinned) } }

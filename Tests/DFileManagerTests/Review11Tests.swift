@@ -18,15 +18,15 @@ private func file(_ name: String) -> FileItem { FileItem(name: name, kind: .file
     panel.addSearchResults([file("b"), file("c")], from: flag)
     panel.addSearchResults([file("a")], from: flag)
     #expect(names(panel) == ["b", "c", "a"])
-    #expect(panel.statusText.hasPrefix("*.txt containing “needle”: searching… 3 found · "), "\(panel.statusText)")
+    #expect(panel.statusText == "*.txt containing “needle”: searching… 3 found", "\(panel.statusText)")
     panel.finishSearch(flag)
     #expect(names(panel) == ["a", "b", "c"])
-    #expect(panel.statusText.hasPrefix("*.txt containing “needle”: 3 found · ⌫ back · "), "\(panel.statusText)")
+    #expect(panel.statusText == "*.txt containing “needle”: 3 found" && !panel.backButton.isHidden, "\(panel.statusText)")
 }
 
 /// By the clock: in the full suite the main actor is so busy at first that 500 sleeps of 10 ms took over 10 s.
 @MainActor private func waitUntil(_ done: () -> Bool) async {
-    let end = Date().addingTimeInterval(20)
+    let end = Date().addingTimeInterval(60)   // utility QoS (a link's target) starves for long in a loaded full run (D-097)
     while !done(), Date() < end { try? await Task.sleep(for: .milliseconds(10)) }
 }
 private func tempDir() -> String {
@@ -121,7 +121,7 @@ private func tempDir() -> String {
     await waitUntil { panel.path == repo }
     panel.showGitChanges()
     panel.reload()   // the folder changed meanwhile: a re-list, not the user going elsewhere
-    await waitUntil { panel.searchTitle != nil && panel.statusText.contains("found · ⌫ back") }
+    await waitUntil { panel.searchTitle != nil && panel.statusText.hasSuffix(" found") && !panel.statusText.contains("searching") }
     #expect(panel.searchTitle != nil && names(panel) == ["new.txt"], "\(panel.statusText)")
 }
 
@@ -326,7 +326,7 @@ private func tempDir() -> String {
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
     await waitUntil { names(panel) == ["bin", "zdir", "a.txt"] }
-    #expect(names(panel) == ["bin", "zdir", "a.txt"])
+    try #require(names(panel) == ["bin", "zdir", "a.txt"])   // else `item(at: 1)` reads past the rows: the whole run would crash
     let link = try #require(panel.item(at: 1))
     #expect(link.linkDir && PanelViewController.sizeText(link, measured: nil) == "")
 }
@@ -355,7 +355,7 @@ private func tempDir() -> String {
 /// N3: "1 items" in the footer; N15: an SFTP panel's footer said "2 marked" twice.
 @MainActor @Test func footerCountsReadRight() async throws {
     #expect(PanelViewController.countText(1, "items", 0) == "1 item")
-    #expect(PanelViewController.countText(1, "items", 1536).hasPrefix("1 item, "))
+    #expect(PanelViewController.countText(1, "items", 1536).hasPrefix("1 item · "))
     #expect(PanelViewController.countText(1, "marked", 0) == "1 marked")
     let d = tempDir()
     defer { try? FileManager.default.removeItem(atPath: d) }
@@ -366,8 +366,7 @@ private func tempDir() -> String {
     panel.loadRemote(.local(), dir: d, select: nil)
     await waitUntil { panel.remote?.dir == d && names(panel).count == 3 }
     panel.markAll()
-    #expect(panel.statusText.components(separatedBy: "marked").count == 2, "\(panel.statusText)")
-    #expect(panel.statusText.contains("3 items"))
+    #expect(panel.statusText.components(separatedBy: "marked").count == 2 && panel.statusText.hasPrefix("3 marked"), "\(panel.statusText)")
 }
 
 /// N13 (decided): "… changed on web1 since you opened it" had Overwrite on ↩, so the habitual ⌘S ↩ wrote over
