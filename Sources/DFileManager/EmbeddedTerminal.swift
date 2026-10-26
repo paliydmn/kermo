@@ -2,10 +2,11 @@ import AppKit
 import DFMCore
 import SwiftTerm
 
-/// ⌃O (MC's subshell): a terminal workspace that covers the panels, with tabs — local login shells and
-/// SSH sessions (system OpenSSH, one PTY and one `ssh` process per session). A tab holds up to four of them side by
-/// side (`Group`, VS Code's split); `Tab` is one session, a pane. For the current pane when it's a local shell:
-/// toggling back moves the active panel to its folder; showing it again `cd`s it to the panel's.
+/// ⌃O (MC's subshell): a terminal workspace in a drawer under the panels (Р6) — or over all of their room (⌃⇧O,
+/// `isFull`) — with tabs: local login shells and SSH sessions (system OpenSSH, one PTY and one `ssh` process per
+/// session). A tab holds up to four of them side by side (`Group`, VS Code's split); `Tab` is one session, a pane. For
+/// the current pane when it's a local shell: the active panel follows its `cd`, and goes to its folder when it hides;
+/// showing it again `cd`s it to the panel's.
 @MainActor
 final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalViewDelegate, NSSplitViewDelegate {
     enum Kind: Equatable { case shell, ssh(SFTPTarget) }
@@ -113,8 +114,23 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     private var closing: [Tab] = []   // killed, waiting for the process to go
     private let container = NSStackView()
     let tabBar = NSStackView()   // internal: tests read it
+    /// The tabs and, at their right end, Split, Maximize and Hide: each a command (`onCommand`), Hide `onHide`.
+    private let topRow = NSStackView()
     private let content = NSView()
-    private unowned let host: NSView   // the panels; the terminal sits exactly over them
+    private unowned let host: NSView   // the panels; the drawer goes under them
+    /// The panels on top, the terminal under them; with `isFull` the terminal alone. Made around the panels when they
+    /// have a superview (at once in the app).
+    private(set) var drawer: DrawerSplit?
+    /// ⌃⇧O: the terminal takes the panels' room too, as ⌃O did before the drawer.
+    var isFull: Bool { drawer?.bottomOnly ?? false }
+    /// Where the drawer's height is kept, as dragged (the app's `terminalDrawerHeight`; tests' none).
+    private let heightKey: String?
+    var onCommand: ((String) -> Void)?
+    var onHide: (() -> Void)?
+    /// A command's key, as the keymap has it: the buttons' tooltips.
+    var keyFor: ((String) -> String?)?
+    private let maximize = NSButton(title: "", target: nil, action: nil)
+    private let rowSpace = NSView()   // with one shell and no tabs shown: the buttons at the row's right end still
     var onExit: (() -> Void)?          // last tab closed: panels come back
     var onChange: (() -> Void)?        // tabs / states changed (sidebar, saved session)
     var onDirectory: ((Tab) -> Void)?  // the current tab's shell told its folder (`cwd`)
@@ -122,25 +138,47 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     private(set) var fontSize: CGFloat = (UserDefaults.standard.object(forKey: "terminalFontSize") as? Double).map { min(max($0, 9), 36) } ?? 13
     private var hiddenAt = -TimeInterval.infinity   // uptime; ⌃O ⌃O
 
-    var isShown: Bool { container.superview != nil && !container.isHidden }
+    var isShown: Bool { drawer?.showsBottom ?? false }
     private var group: Group? { groups.indices.contains(index) ? groups[index] : nil }
     /// The current tab's focused pane: what keys, ⌃↩, ⌘R and the like act on.
     var current: Tab? { group?.pane }
     var hasFocus: Bool { isShown && (container.window?.firstResponder as? NSView)?.isDescendant(of: container) == true }
 
-    init(covering host: NSView) {
+    /// `heightKey`: the defaults key the drawer's height is kept in (the app's; tests' none).
+    init(covering host: NSView, heightKey: String? = nil) {
         self.host = host
+        self.heightKey = heightKey
         super.init()
         container.orientation = .vertical
         container.spacing = 2
         container.edgeInsets = NSEdgeInsets(top: 2, left: 0, bottom: 0, right: 0)
+        container.distribution = .fill   // the tabs at their height, the panes the rest of the drawer
+        content.setContentHuggingPriority(.init(1), for: .vertical)
+        topRow.setContentHuggingPriority(.defaultHigh, for: .vertical)
         container.isHidden = true
         tabBar.distribution = .fillEqually
         tabBar.spacing = 2
-        container.addArrangedSubview(tabBar)
+        topRow.spacing = 6
+        topRow.addArrangedSubview(tabBar)
+        rowSpace.setContentHuggingPriority(.init(1), for: .horizontal)
+        topRow.addArrangedSubview(rowSpace)
+        for (symbol, label, id) in [(Symbol.splitRight, "Split Terminal Right", "term.split.right"), (.maximize, "Maximize Terminal", "view.terminalFull"),
+                                    (.collapse, "Hide Terminal", "view.terminal")] {
+            let b = symbol == .maximize ? maximize : NSButton(title: "", target: nil, action: nil)
+            b.image = symbol.image(label)
+            b.isBordered = false
+            b.refusesFirstResponder = true
+            b.identifier = .init(id)
+            b.target = self
+            b.action = #selector(rowButton(_:))
+            b.setContentHuggingPriority(.required, for: .horizontal)
+            topRow.addArrangedSubview(b)
+        }
+        container.addArrangedSubview(topRow)
         container.addArrangedSubview(content)
-        tabBar.widthAnchor.constraint(equalTo: container.widthAnchor, constant: -12).isActive = true
+        topRow.widthAnchor.constraint(equalTo: container.widthAnchor, constant: -12).isActive = true
         content.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        wrap()
         // SwiftTerm's scrollWheel and mouseDown aren't open: the pane under the mouse sees these first.
         NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown, .leftMouseUp]) { [weak self] e in
             guard let self else { return e }
@@ -160,16 +198,35 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         }
     }
 
-    private func attach() {
-        guard container.superview == nil else { return }
-        container.translatesAutoresizingMaskIntoConstraints = false
-        host.superview!.addSubview(container)
-        NSLayoutConstraint.activate([
-            container.topAnchor.constraint(equalTo: host.topAnchor),
-            container.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-            container.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-        ])
+    /// The panels and the terminal (hidden) into a `DrawerSplit`, in the panels' place.
+    private func wrap() {
+        guard drawer == nil, let sup = host.superview else { return }
+        let frame = host.frame
+        host.removeFromSuperview()
+        host.translatesAutoresizingMaskIntoConstraints = true
+        container.translatesAutoresizingMaskIntoConstraints = true
+        let d = DrawerSplit(top: host, bottom: container, frame: frame)
+        d.autoresizingMask = [.width, .height]
+        if let heightKey, let h = UserDefaults.standard.object(forKey: heightKey) as? Double { d.height = h }
+        d.onDragged = { [heightKey] h in if let heightKey { UserDefaults.standard.set(Double(h), forKey: heightKey) } }
+        sup.addSubview(d)
+        drawer = d
+    }
+
+    private func attach() { wrap() }
+
+    /// ⌃⇧O: the terminal over the panels' room too, or back into its drawer.
+    func setFull(_ on: Bool) {
+        guard isShown, on != isFull, let drawer else { return }
+        drawer.bottomOnly = on
+        drawer.layoutSubtreeIfNeeded()   // the panes at their new size now, not at the next pass (none comes without a window)
+        maximize.image = (on ? Symbol.restore : Symbol.maximize).image(on ? "Restore Terminal" : "Maximize Terminal")
+        render()
+    }
+
+    @objc private func rowButton(_ sender: NSButton) {
+        guard let id = sender.identifier?.rawValue else { return }
+        id == "view.terminal" ? onHide?() : onCommand?(id)
     }
 
     // MARK: - Showing
@@ -187,11 +244,11 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         return show()
     }
 
-    /// Shows the workspace on the tab the caller picked.
+    /// Shows the workspace on the tab the caller picked: in its drawer, or over the panels while `isFull`.
     func show() -> NSView {
         attach()
-        host.isHidden = true
-        container.isHidden = false
+        drawer?.showsBottom = true
+        drawer?.layoutSubtreeIfNeeded()
         render()
         return current!.view
     }
@@ -200,8 +257,9 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     /// pressed ⌃O arms ⌃O ⌃O, not a command that hides the terminal on its way.
     func hide(_ e: NSEvent? = nil) -> String? {
         let cwd = current.flatMap { $0.kind == .shell ? $0.shellCwd : nil }
-        container.isHidden = true
-        host.isHidden = false
+        drawer?.showsBottom = false
+        drawer?.bottomOnly = false
+        drawer?.layoutSubtreeIfNeeded()
         hiddenAt = Self.pressedCtrlO(e) ? e!.timestamp : -.infinity
         return cwd
     }
@@ -641,8 +699,9 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             arrange(g)
         }
         if groups.isEmpty {
-            container.isHidden = true
-            host.isHidden = false
+            drawer?.showsBottom = false
+            drawer?.bottomOnly = false
+            drawer?.layoutSubtreeIfNeeded()
             onChange?()
             onExit?()
         } else {
@@ -681,6 +740,13 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
 
     private func render() {
         tabBar.isHidden = groups.count < 2 && group?.panes.count == 1 && current?.kind == .shell
+        rowSpace.isHidden = !tabBar.isHidden
+        for b in topRow.arrangedSubviews.compactMap({ $0 as? NSButton }) {   // the row's buttons say their keys
+            guard let id = b.identifier?.rawValue else { continue }
+            let what = id == "view.terminal" ? "Hide Terminal" : id == "view.terminalFull" ? (isFull ? "Restore Terminal" : "Maximize Terminal") : "Split Terminal Right"
+            b.toolTip = what + (keyFor?(id).map { "  " + $0 } ?? "")
+            b.setAccessibilityLabel(what)
+        }
         tabBar.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (i, g) in groups.enumerated() {
             let b = PanelViewController.tabButton(g.panes.map { (Self.lead($0), $0.label) }, tint: g.panes.count == 1 ? Self.tint(g.pane) : nil,
@@ -1001,3 +1067,72 @@ final class DropTerminalView: LocalProcessTerminalView {
         return ShellContext.isTypeable(line) ? line : nil
     }
 }
+
+/// The panels over the terminal's drawer, a line between them to drag (Р6): either can be alone — the panels while the
+/// terminal is hidden, the terminal over all the room (⌃⇧O). Laid out by hand: a split view kept drawing a hidden
+/// pane's divider, and its autosave kept the collapsed size.
+@MainActor
+final class DrawerSplit: NSView {
+    let top: NSView, bottom: NSView
+    private let handle = DrawerHandle()
+    /// The drawer's height, as last dragged; nil: 40 % of the room.
+    var height: CGFloat? { didSet { needsLayout = true } }
+    var showsBottom = false { didSet { if showsBottom != oldValue { needsLayout = true } } }
+    var bottomOnly = false { didSet { if bottomOnly != oldValue { needsLayout = true } } }
+    /// A drag ended at this height.
+    var onDragged: ((CGFloat) -> Void)?
+    static let minBottom: CGFloat = 80, minTop: CGFloat = 120
+
+    init(top: NSView, bottom: NSView, frame: NSRect) {
+        self.top = top
+        self.bottom = bottom
+        super.init(frame: frame)
+        for v in [top, bottom, handle] { addSubview(v) }   // the handle over both: it reaches 2 pt into each
+        handle.onDrag = { [unowned self] y, done in
+            height = y   // AppKit's y goes up from the bottom: the drawer's height
+            layoutSubtreeIfNeeded()
+            if done, let h = height { onDragged?(shownHeight(h)) }
+        }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// The drawer's height as laid out: between its least and the panels' least.
+    func shownHeight(_ h: CGFloat? = nil) -> CGFloat {
+        min(max(h ?? height ?? bounds.height * 0.4, Self.minBottom), max(bounds.height - Self.minTop - 1, Self.minBottom))
+    }
+
+    override func layout() {
+        super.layout()
+        let b = bounds
+        top.isHidden = showsBottom && bottomOnly
+        bottom.isHidden = !showsBottom
+        handle.isHidden = !showsBottom || bottomOnly
+        if !showsBottom { top.frame = b }
+        else if bottomOnly { bottom.frame = b }
+        else {
+            let h = shownHeight()
+            bottom.frame = NSRect(x: 0, y: 0, width: b.width, height: h)
+            handle.frame = NSRect(x: 0, y: h - 2, width: b.width, height: 5)   // easy to grab; draws 1 pt
+            top.frame = NSRect(x: 0, y: h + 1, width: b.width, height: b.height - h - 1)
+        }
+    }
+}
+
+/// The line over the drawer: a 1 pt separator in a 5 pt strip that takes the drag, with the up-down cursor.
+@MainActor
+final class DrawerHandle: NSView {
+    var onDrag: ((_ y: CGFloat, _ done: Bool) -> Void)?
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.separatorColor.setFill()
+        NSRect(x: 0, y: 2, width: bounds.width, height: 1).fill()
+    }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeUpDown) }
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseDragged(with event: NSEvent) { drag(event, done: false) }
+    override func mouseUp(with event: NSEvent) { drag(event, done: true) }
+    private func drag(_ e: NSEvent, done: Bool) {
+        guard let s = superview else { return }
+        onDrag?(s.convert(e.locationInWindow, from: nil).y, done)
+    }
+}
+

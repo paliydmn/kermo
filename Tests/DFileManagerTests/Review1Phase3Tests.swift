@@ -82,8 +82,8 @@ private func words(_ s: String) -> [String] {
     #expect(chipLabels() == ["Shift layer, pinned", "Option layer", "Command layer", "Control layer"])
 }
 
-/// R-36: with the terminal up the bar shows the terminal's commands from the registry — its panes' too — and ⌃O goes
-/// back to the panels. None of them is a bare F-key: each one's first key shows at rest.
+/// R-36: with the keys in the terminal the bar shows its commands from the registry — its panes' too — and ⌃O hides it
+/// (phase 4: the drawer). None of them is a bare F-key: each one's first key shows at rest.
 @MainActor @Test func theTerminalsKeysComeFromTheRegistry() {
     let commands = AppDelegate().makeCommands()
     let bar = KeyBarView()
@@ -91,7 +91,8 @@ private func words(_ s: String) -> [String] {
     bar.frame = NSRect(x: 0, y: 0, width: 1400, height: 30)
     bar.reload(commands)
     let rest = bar.shownSlots
-    #expect(rest.first == KeySlot(key: "⌃O", label: "Panels", id: "view.terminal"))
+    #expect(rest.first == KeySlot(key: "⌃O", label: "Hide Terminal", id: "view.terminal"))
+    #expect(rest.contains(KeySlot(key: "⌃⇧O", label: "Maximize", id: "view.terminalFull")))
     #expect(rest.contains(KeySlot(key: "⌘T", label: "New Tab", id: "tab.new")) && rest.contains { $0.id == "term.split.right" })
     #expect(rest.compactMap(\.id).allSatisfy(AppDelegate.terminalCommands.contains))
     let terminal = AppDelegate.terminalCommands.compactMap { id in commands.first { $0.id == id } }

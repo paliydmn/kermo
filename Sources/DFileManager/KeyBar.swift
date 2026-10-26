@@ -38,7 +38,7 @@ enum KeyBarModel {
         var slots: [UInt: [(f: Int, slot: KeySlot)]] = [:]
         var hinted: [UInt: [Int]] = [:]   // per layer: the F-key numbers its ⌥ digits stand for
         func label(_ c: Command) -> String {
-            server && c.id == "file.trash" ? "Delete…" : archive && c.id == "file.copy" ? "Extract" : terminal && c.id == "view.terminal" ? "Panels" : Self.label(c)
+            server && c.id == "file.trash" ? "Delete…" : archive && c.id == "file.copy" ? "Extract" : terminal && c.id == "view.terminal" ? "Hide Terminal" : Self.label(c)
         }
         for c in commands where terminal || !c.id.hasPrefix("term.pane.") && !c.id.hasPrefix("term.resize.") {
             for k in c.keys {

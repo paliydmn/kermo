@@ -21,13 +21,15 @@ import Testing
     for id in appWide { #expect(app.validateMenuItem(menuItem(id)), "\(id) with another window key") }
     for id in ["file.copy", "view.terminal"] { #expect(!app.validateMenuItem(menuItem(id)), "\(id) with another window key") }
 
-    // NSApp.keyWindow is nil here: with no window of its own the app takes itself for key, and the terminal is up.
+    // NSApp.keyWindow is nil here: with no window of its own the app takes itself for key, and the terminal is over the
+    // panels (⇧⌃O; in its drawer it would take the keys only once it had the focus).
     app.window = nil
     let parent = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400)), panels = NSView(frame: parent.bounds)
     parent.addSubview(panels)
     let term = EmbeddedTerminal(covering: panels)
     term.restore([SFTPTarget(host: "me@dfm-p2.invalid")])   // a tab without a process
     _ = term.show()
+    term.setFull(true)
     app.terminal = term
     for id in appWide { #expect(app.validateMenuItem(menuItem(id)), "\(id) over the terminal") }
     #expect(!app.validateMenuItem(menuItem("file.copy")) && app.validateMenuItem(menuItem("view.terminal")))
@@ -119,10 +121,12 @@ import Testing
     app.updateMenuKeys(menu)
     for id in ["file.view", "go.tree", "go.up", "git.switch"] { #expect(item(id)?.keyEquivalent == "", "\(id) over another window") }
 
-    // In tests no window is key: with none of its own the app takes itself for key. The terminal is up: ⌃O works, F3 doesn't.
+    // In tests no window is key: with none of its own the app takes itself for key. The terminal is over the panels
+    // (⇧⌃O): ⌃O works, F3 doesn't.
     app.window = nil
     term.restore([SFTPTarget(host: "me@dfm-d101.invalid")])   // a tab without a process
     _ = term.show()
+    term.setFull(true)
     app.updateMenuKeys(menu)
     #expect(item("view.terminal")?.keyEquivalent == "o" && item("view.terminal")?.keyEquivalentModifierMask == .control)
     #expect(item("file.view")?.keyEquivalent == "")

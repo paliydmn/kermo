@@ -56,7 +56,7 @@ extension AppDelegate {
             if app.terminal.isShown { app.terminal.reconnect() } else { NSSound.beep() }
         },
         cmd("server.disconnect", "Disconnect Server", [], menu: "Go", short: "Disconnect", aliases: "logout close connection ssh") { app in
-            let t = app.terminal.isShown ? app.terminal.current?.target : app.active.remote?.target
+            let t = app.terminalActive ? app.terminal.current?.target : app.active.remote?.target
             if let t { app.disconnect(t) } else { NSSound.beep() }
         },
         cmd("remote.open", "Open Remote File", [], hidden: true) { $0.remoteOpen(.open) },
@@ -88,19 +88,19 @@ extension AppDelegate {
         cmd("app.palette", "Search…", ["cmd+shift+p", "f9", "opt+9"], menu: "Go", aliases: "palette all commands") { $0.search.focus() },
 
         // Tabs
-        // While the terminal is up (⌃O) these act on its tabs.
+        // While the keys go to the terminal (⌃O) these act on its tabs.
         cmd("tab.new", "New Tab", ["cmd+t"], menu: "View") { app in
-            if app.terminal.isShown { app.terminal.newShell(cwd: app.active.path) } else { app.active.newTab() }
+            if app.terminalActive { app.terminal.newShell(cwd: app.active.path) } else { app.active.newTab() }
         },
         cmd("tab.close", "Close Tab", ["cmd+w"], menu: "View") { app in
             if let w = AppDelegate.windowToClose(key: NSApp.keyWindow, main: app.window) { w.performClose(nil) }
-            else if app.terminal.isShown { app.terminal.close() } else { app.active.closeTab() }
+            else if app.terminalActive { app.terminal.close() } else { app.active.closeTab() }
         },
         cmd("tab.next", "Next Tab", ["ctrl+tab", "cmd+shift+]"], menu: "View") { app in
-            if app.terminal.isShown { app.terminal.switchTab(by: 1) } else { app.active.switchTab(by: 1) }
+            if app.terminalActive { app.terminal.switchTab(by: 1) } else { app.active.switchTab(by: 1) }
         },
         cmd("tab.prev", "Previous Tab", ["ctrl+shift+tab", "cmd+shift+["], menu: "View") { app in
-            if app.terminal.isShown { app.terminal.switchTab(by: -1) } else { app.active.switchTab(by: -1) }
+            if app.terminalActive { app.terminal.switchTab(by: -1) } else { app.active.switchTab(by: -1) }
         },
         // The terminal's panes (as VS Code's split): while it's up.
         cmd("term.split.right", "Split Terminal Right", ["cmd+\\"], menu: "View", aliases: "pane side by side") { $0.terminal.split(vertical: true) },
@@ -143,7 +143,10 @@ extension AppDelegate {
             $0.openInEditor(URL(fileURLWithPath: Config.path("filters.json")))
         },
         cmd("view.quickview", "Quick View Panel", ["ctrl+q"], menu: "View", short: "Quick View", aliases: "quick view") { $0.toggleQuickView() },
-        cmd("view.terminal", "Terminal (hide panels)", ["ctrl+o"], menu: "View", short: "Terminal", aliases: "shell console") { $0.toggleTerminal() },
+        cmd("view.terminal", "Show/Hide Terminal", ["ctrl+o"], menu: "View", short: "Terminal", aliases: "shell console drawer") { $0.toggleTerminal() },
+        cmd("view.terminalFull", "Maximize Terminal", ["ctrl+shift+o"], menu: "View", short: "Maximize", aliases: "shell console full hide panels") {
+            $0.toggleTerminalFull()
+        },
         cmd("term.bigger", "Bigger Terminal Text", ["cmd+=", "cmd+shift+="], menu: "View", aliases: "font size zoom in larger") { app in
             if app.terminal.isShown { app.terminal.zoom(by: 1) } else { NSSound.beep() }
         },
@@ -977,12 +980,12 @@ extension AppDelegate {
 
     func openSSH(_ target: SFTPTarget, command: String? = nil) {
         let view = terminal.newSSH(target, command: command)
-        window.makeFirstResponder(terminal.isShown ? view : terminal.show())
+        window.makeFirstResponder(terminal.isShown ? view : terminal.show())   // opens the drawer if it was closed
     }
 
     /// A server's files in a panel, from `dir` (nil: the login folder). Remembering it is the caller's business.
     func openSFTP(_ t: SFTPTarget, dir: String?, title: String, newTab: Bool = false, panel: PanelViewController? = nil) {
-        if terminal.isShown { toggleTerminal() }
+        showPanels()
         let panel = panel ?? active
         Task {   // a locked one asks before the new tab, not after (loadRemote would leave it behind)
             if newTab {
@@ -1205,7 +1208,7 @@ extension AppDelegate {
         guard let address = ServerAddress.parse(input) else { return NSSound.beep() }
         remember(input)
         refreshSidebar()
-        if terminal.isShown { toggleTerminal() }   // SFTP lives in the panels
+        showPanels()   // SFTP lives in the panels
         let active = panel ?? self.active
         switch address {
         case let .sftp(target, path):
@@ -2562,7 +2565,7 @@ extension AppDelegate {
 
     /// Show in the Activity list: `dir` in the active panel with `select` picked; a server's opens like its Favorite.
     func showItem(on side: Endpoint, in dir: String, select: String?) {
-        if terminal.isShown { toggleTerminal() }
+        showPanels()
         switch side {
         case .local:
             guard FileManager.default.fileExists(atPath: dir) else { return active.flash("No such folder: \(dir)", error: true) }

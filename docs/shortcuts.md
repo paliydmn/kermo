@@ -102,7 +102,8 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Connect to a server in a file panel (SFTP; `~/.ssh/config`, `user@host:/path`, or `smb://` `nfs://` `afp://`) | ⌃⌘K |
 | New SSH session: a shell on a server in the terminal (inside the terminal, ⌘K clears it) | ⌘K |
 | Server panel as root / as its user again | ⌃⌘R / ⌃⇧⌘R |
-| Replace the panels with the terminal (the panel follows `cd`); press ⌃O twice quickly to send ⌃O to the terminal | ⌃O |
+| The terminal in a drawer under the panels (the active panel follows `cd`): open, go to it from a panel, hide it from the terminal; press ⌃O twice quickly to send ⌃O to the terminal | ⌃O |
+| The terminal over the panels' room too, and back into its drawer | ⌃⇧O |
 | Terminal text bigger / smaller | ⌘+ or ⌘= / ⌘− |
 | Terminal: selecting copies; a right-click pastes (⇧-right-click in mc, htop and the like) | select / right-click |
 | Terminal: split the tab, the new session to the right / below | ⌘\\ / ⇧⌘\\ |

@@ -61,6 +61,7 @@ Set an option with `defaults write com.dmn.dfilemanager <key> <value>`. Remove i
 | `keyBarHoldDelay` | seconds | 0.12 | How long to hold a modifier before the [key bar](window.md#key-bar) shows its shortcuts |
 | `terminalFont` | font name | SF Mono | Font of the [terminal](terminal.md#options) |
 | `terminalFontSize` | points | 13 | Its size, 9–36 (⌘+ / ⌘− save it) |
+| `terminalDrawerHeight` | points | 40 % of the room | The [terminal drawer](terminal.md#open-the-terminal)'s height (dragging its line saves it) |
 | `terminalOptionIsMeta` | `-bool` | `true` | ⌥ is Meta in the terminal; `false` lets ⌥ type your layout's characters |
 | `terminalCopyOnSelect` | `-bool` | `true` | Text selected in the terminal goes to the clipboard at once, as in PuTTY; `false`: only ⌘C copies |
 | `terminalRightClickPaste` | `-bool` | `true` | A right-click in the terminal pastes, as in PuTTY (⇧-right-click in mc, htop and the like); `false`: it doesn't |

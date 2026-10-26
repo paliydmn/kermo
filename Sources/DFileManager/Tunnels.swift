@@ -164,7 +164,7 @@ extension AppDelegate {
 
     /// New Tunnel… (⌘⇧P, Go ▸ Tunnels): on the saved server the active panel or SSH tab is on; else pick one.
     func newTunnel() {
-        let here = terminal.isShown ? terminal.current?.target : active.remote?.target
+        let here = terminalActive ? terminal.current?.target : active.remote?.target
         if let here, let s = savedServers.first(where: { ServerRow.key($0.target) == ServerRow.key(here) }) { return editTunnel(nil, of: s) }
         showTunnels(newOnly: true)
     }
