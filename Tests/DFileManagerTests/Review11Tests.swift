@@ -133,13 +133,13 @@ private func tempDir() -> String {
     FileManager.default.createFile(atPath: dir + "/f", contents: Data("abc".utf8))
     chmod(dir + "/f", 0o640)
     try FileManager.default.createSymbolicLink(atPath: dir + "/l", withDestinationPath: "f")
-    let f = InfoWindow.snapshot(dir + "/f")
-    #expect(f.ok && !f.isDir && f.mode == "640" && f.lines.first == "Path:       \(dir)/f")
-    #expect(f.lines.contains { $0.hasPrefix("Size:       3 bytes") })
-    #expect(InfoWindow.snapshot(dir + "/l").lines.contains { $0.hasPrefix("Kind:       Symbolic link → f") })
-    #expect(InfoWindow.snapshot(dir).isDir)
-    let gone = InfoWindow.snapshot(dir + "/nope")
-    #expect(!gone.ok && gone.lines.last == "No such file or directory")
+    let f = InfoView.snapshot(dir + "/f")
+    #expect(f.ok && !f.isDir && f.mode == "640" && f.rows.first! == ("Path", "\(dir)/f"))
+    #expect(f.rows.contains { $0.0 == "Size" && $0.1.hasPrefix("3 bytes") })
+    #expect(InfoView.snapshot(dir + "/l").rows.contains { $0.0 == "Kind" && $0.1.hasPrefix("Symbolic link → f") })
+    #expect(InfoView.snapshot(dir).isDir)
+    let gone = InfoView.snapshot(dir + "/nope")
+    #expect(!gone.ok && gone.rows.last! == ("Error", "No such file or directory"))
 }
 
 /// A3: validating a drop asked each path's volume on the main thread at every mouse move — over a share that stopped
@@ -463,7 +463,7 @@ private func tempDir() -> String {
     remote.loadRemote(.local(), dir: server, select: nil)
     await waitUntil { local.path == mac && remote.remote?.dir == server }
     #expect(local.plainFolder == mac && remote.plainFolder == nil, "⌘⇧D: no same-named file behind a server tab")
-    #expect(remote.infoURL == nil && local.infoURL?.path == mac)
+    #expect(remote.infoURL == nil && local.infoURL?.path == mac, "a server's file: its listing's Info (Quick View), never the folder behind")
 
     #expect(AppDelegate.swap(local, remote))   // ⌘U: the server folder and the local one change places
     await waitUntil { local.remote?.dir == server && remote.path == mac && remote.remote == nil }

@@ -491,8 +491,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         panel.onCommandKey = { [unowned self] in runKey($0) }
         panel.onCommand = { [unowned self] in run($0) }
         panel.onCursorChange = { [unowned self, unowned panel] in
-            if quickViewOn && panel === active { other.preview(active.previewURL()) }
+            if quickViewOn && panel === active { showQuickView() }
         }
+        panel.onQuickTab = { [unowned self, unowned panel] in if quickViewOn && panel === other { showQuickView() } }
         panel.onTransfer = { [unowned self] items, side, dir, move in
             enqueueTransfer(items.paths, from: items.from, to: dir, on: side, name: nil, move: move)
         }
@@ -1079,7 +1080,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Commands that would act on the local folder hidden behind a server panel (its `path`). Until they learn
     /// servers, they refuse there instead of quietly working on this Mac.
-    static let localOnly: Set<String> = ["file.info", "go.tree", "panel.swap", "file.reveal", "file.symlink",
+    static let localOnly: Set<String> = ["go.tree", "panel.swap", "file.reveal", "file.symlink",
                                          "file.hardlink", "file.split", "file.combine", "git.diff", "file.eject", "file.unmount",
                                          "git.log", "git.blame", "git.stage", "git.unstage", "admin.copy", "admin.move", "admin.mkdir", "admin.delete", "admin.shell",
                                          "git.switch", "git.newBranch", "git.commit", "git.sync", "git.publish", "git.pull", "git.push", "git.fetch", "git.init"]

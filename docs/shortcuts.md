@@ -72,7 +72,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Delete permanently | ⇧F8, ⌥⇧8, ⌥⌘⌫, ⇧⌦ |
 | Put Back (restore an item Kermo moved to the Trash) | ⌘⌫ or F8 in the Trash |
 | Undo / redo (this Mac's files; not a server's, not permanent delete) | ⌘Z / ⇧⌘Z |
-| Info: permissions, owner, xattr, ACL, hashes, signature | ⌘I |
+| Info in Quick View: permissions, owner, xattr, ACL, hashes, signature (a server's file too) | ⌘I |
 | Permissions and owner (chmod, chown; also on a server) | ⌥⌘A |
 | Copy files / paste / move here | ⌘C / ⌘V / ⌥⌘V |
 | Copy path / name | ⇧⌘C / ⌥⌘C |
