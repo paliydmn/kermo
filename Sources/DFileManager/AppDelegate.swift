@@ -1510,7 +1510,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         alert.addButton(withTitle: "Cancel")
         let field = NSTextField(string: value)
         field.frame = NSRect(x: 0, y: 0, width: 420, height: 24)
-        let above = [strip.flatMap { Confirm.strip(Chip.of($0), SavedServer.name(for: $0)) }, items.count > 1 ? Confirm.list(items) : nil].compactMap { $0 }
+        let above = [strip.flatMap { Confirm.strip(Chip.of($0), SavedServer.name(for: $0.asUser)) }, items.count > 1 ? Confirm.list(items) : nil].compactMap { $0 }
         alert.accessoryView = above.isEmpty ? field : Confirm.stack(above + [field], width: 420)
         alert.window.initialFirstResponder = field
         let response: NSApplication.ModalResponse = await withCheckedContinuation { cont in
@@ -1583,18 +1583,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// A Cancel that took ↩ (`alert(default:)`, `Confirm.safe`: the last button, "Keep Mine" too) answers ⎋ too, and
     /// an action on ⌘↩ answers that: caught before AppKit matches keys, so no button's plain ↩ can take it.
     private static func safeKeys(_ alert: NSAlert) -> Any? {
-        let action = alert.buttons.first { $0.keyEquivalent == "\r" && $0.keyEquivalentModifierMask == .command }
-        guard let cancel = alert.buttons.last(where: { $0.keyEquivalent == "\r" && $0.keyEquivalentModifierMask.isEmpty }),
-              cancel.title == "Cancel" || action != nil
-        else { return nil }
+        let (cancel, action) = keyRoles(alert)
+        guard cancel != nil || action != nil else { return nil }
         return NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
             guard e.window === alert.window else { return e }
             let command = e.modifierFlags.intersection([.command, .shift, .option, .control]) == .command
-            if e.keyCode == 53 { cancel.performClick(nil) }   // ⎋
+            if e.keyCode == 53, let cancel { cancel.performClick(nil) }   // ⎋
             else if let action, command, e.keyCode == 36 || e.keyCode == 76 { action.performClick(nil) }   // ⌘↩
             else { return e }
             return nil
         }
+    }
+
+    /// Who answers ⎋ and ⌘↩ in `safeKeys`: the Cancel that took ↩ — titled Cancel, or the last button (Keep Mine)
+    /// where an action took ⌘↩ — and that action. A plain ↩ elsewhere (the server sheet's Save) is no Cancel: ⎋
+    /// stays AppKit's there.
+    static func keyRoles(_ alert: NSAlert) -> (cancel: NSButton?, action: NSButton?) {
+        let action = alert.buttons.first { $0.keyEquivalent == "\r" && $0.keyEquivalentModifierMask == .command }
+        let cancel = alert.buttons.first {
+            $0.keyEquivalent == "\r" && $0.keyEquivalentModifierMask.isEmpty && ($0.title == "Cancel" || ($0 === alert.buttons.last && action != nil))
+        }
+        return (cancel, action)
     }
 
     static func alert(_ message: String, info: String, _ buttons: [String], default: Int? = nil) -> NSAlert {

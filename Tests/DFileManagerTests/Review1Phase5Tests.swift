@@ -57,6 +57,27 @@ import Testing
     #expect(texts(mine.alert()).contains { $0.contains("Keep Mine") && $0.contains("Reload") })
 }
 
+/// ⎋ and ⌘↩ (`AppDelegate.keyRoles`): a Cancel that took ↩ answers ⎋, an action on ⌘↩ answers that; a plain ↩ on
+/// another button — a sheet whose ↩ saves and ⌘↩ saves and connects — leaves ⎋ to its own Cancel.
+@MainActor @Test func escapeAndCommandReturnFindTheirButtons() {
+    var safe = Confirm("q", action: "Delete")
+    safe.irreversible = true
+    let a = safe.alert(), roles = AppDelegate.keyRoles(a)
+    #expect(roles.cancel === a.buttons[1] && roles.action === a.buttons[0])
+    var mine = Confirm("q", action: "Reload")
+    (mine.cancel, mine.irreversible) = ("Keep Mine", true)
+    let m = mine.alert()
+    #expect(AppDelegate.keyRoles(m).cancel?.title == "Keep Mine")
+    let form = NSAlert()
+    ["Save & Connect", "Save", "Cancel"].forEach { form.addButton(withTitle: $0) }
+    form.buttons[1].keyEquivalent = "\r"
+    (form.buttons[0].keyEquivalent, form.buttons[0].keyEquivalentModifierMask) = ("\r", .command)
+    let f = AppDelegate.keyRoles(form)
+    #expect(f.cancel == nil && f.action === form.buttons[0], "⎋ is Cancel's own key there, never Save")
+    let plain = AppDelegate.keyRoles(AppDelegate.alert("q", info: "", ["Save", "Cancel"]))
+    #expect(plain.cancel == nil && plain.action == nil, "an ordinary alert: AppKit's keys")
+}
+
 /// R-53, HIG: as macOS lays an alert out — two buttons in a row, the action right of Cancel (Keep Mine left of
 /// Reload); three or more one under another, the action on top, Cancel at the bottom.
 @MainActor @Test func buttonsSitWhereHIGPutsThem() {
