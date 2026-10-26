@@ -131,13 +131,13 @@ private func sourceLines() throws -> [(file: String, n: Int, text: String)] {
 }
 
 /// R-52, R-54: app-modal only where there's no window or the question is the whole app's — through
-/// `AppDelegate.modal` — and the server sheet's key chooser; production said by the strip, never in words; red and
+/// `AppDelegate.modal`; production said by the strip, never in words; red and
 /// "↩ = Cancel" built in one place, `Confirm` (a form's Delete… button opens one).
 @Test func dialogsGoThroughOneBuilder() throws {
     var found: [String] = []
     for (file, n, line) in try sourceLines() {
         let at = "\(file):\(n)"
-        if line.contains("runModal()"), !["AppDelegate.swift", "Commands.swift"].contains(file) || (file == "Commands.swift" && !line.contains("open.runModal()")) {
+        if line.contains("runModal()"), file != "AppDelegate.swift" {
             found.append("\(at): runModal outside AppDelegate.modal")
         }
         for words in ["prodNote", "is a production server", "are production servers", "(production)"] where line.contains(words) { found.append("\(at): \(words)") }
@@ -200,4 +200,41 @@ extension ServerLockTests {
     #expect(labels.contains { $0.hasPrefix("On web-01 now: a.conf") && !$0.hasSuffix("newer") } && labels.contains { $0.hasPrefix("From this Mac: a.conf") })
     #expect(q.alert.accessoryView.map(all)?.contains { $0.accessibilityLabel() == "production: web-01" } == true, "the strip")
 }
+}
+
+/// R-56: the server sheet in groups — Connection, Sign in, Safety, Open — in that order, Production a switch in it;
+/// the command as ssh gets it (`SSHCommand.line`, port, key, user@host) and never the password; what's wrong under
+/// its field; Edit shows what's saved.
+@MainActor @Test func theServerSheetIsInGroups() throws {
+    let keyFile = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-r1p5-key-" + UUID().uuidString
+    FileManager.default.createFile(atPath: keyFile, contents: Data("k".utf8))
+    defer { try? FileManager.default.removeItem(atPath: keyFile) }
+    let form = ServerForm(SavedServer(), hasPassword: false, hasSudo: false)
+    let words = (0..<form.grid.numberOfRows).compactMap { (form.grid.cell(atColumnIndex: 0, rowIndex: $0).contentView as? NSTextField)?.stringValue }
+        .filter { !$0.isEmpty && !$0.hasPrefix("ssh") }
+    #expect(words == ["Connection", "Host", "User · Port", "Name", "Sign in", "Key", "Password", "Safety", "Production", "Lock", "Open", "Start folder"])
+    #expect(form.preview.stringValue == "ssh …" && form.typed.issue?.field == .host)
+    form.host.stringValue = "web-01.example.net"
+    form.user.stringValue = "deploy"
+    form.port.stringValue = "2222"
+    form.key.stringValue = keyFile
+    form.password.stringValue = "s3cret"
+    form.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+    let t = SFTPTarget(host: "deploy@web-01.example.net", port: 2222, identity: keyFile)
+    #expect(form.preview.stringValue == SSHCommand.line(t) && form.preview.stringValue.contains("-p 2222") && !form.preview.stringValue.contains("s3cret"))
+    #expect(form.typed.issue == nil && form.newPassword == "s3cret")
+    form.port.stringValue = "70000"
+    form.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+    let shown = (0..<form.grid.numberOfRows).filter { !form.grid.row(at: $0).isHidden }
+        .compactMap { (form.grid.cell(atColumnIndex: 1, rowIndex: $0).contentView as? NSTextField)?.stringValue }
+    #expect(form.typed.issue?.field == .port && shown.contains("The port must be 1–65535."), "under the port, not an alert")
+    form.prod.state = .on
+    #expect(form.typed.prod && !form.typed.locked, "the same flag Mark as Production sets")
+
+    var saved = SavedServer(address: "me@db.invalid:2200")!
+    (saved.name, saved.prod, saved.locked, saved.startDir) = ("db", true, true, "/srv")
+    let edit = ServerForm(saved, hasPassword: false, hasSudo: true)
+    #expect([edit.host, edit.user, edit.port, edit.name, edit.start].map(\.stringValue) == ["db.invalid", "me", "2200", "db", "/srv"])
+    #expect(edit.prod.state == .on && edit.lock.state == .on && edit.forgetSudo != nil && edit.forget == nil)
+    #expect(edit.typed.prod && edit.typed.locked && edit.typed.id == saved.id)
 }
