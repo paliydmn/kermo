@@ -128,3 +128,54 @@ private func sourceLines() throws -> [(file: String, n: Int, text: String)] {
     #expect(Set(modal) == ["AppDelegate.swift", "Editor.swift", "EmbeddedTerminal.swift", "PanelViewController.swift"],
             "Quit; an editor that failed to open, a terminal question, Disconnect SFTP and Paste — each only with no window")
 }
+
+/// R-55: a taken name — two cards with the panel's sizes and dates, "Newer" on the newer by date; Replace, Skip, Keep
+/// Both, Cancel answer as Overwrite, Skip, Keep Both and Cancel did; "Only replace older files" makes Replace the old
+/// Overwrite if Newer. Apply to all only where it was; Compare… only file over file, when there's a diff to show.
+@MainActor @Test func aTakenNameShowsTwoCards() throws {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    let c = FileJob.Conflict(src: "/Users/me/Downloads/config.yaml", dst: "/srv/site/config.yaml", srcSize: 185, dstSize: 190,
+                             srcMtime: now.timeIntervalSince1970 - 60, dstMtime: now.timeIntervalSince1970 - 86_400 * 12, bothDirs: false)
+    let q = OpsController.conflictQuestion(c, from: .local, on: .local, compare: true, now: now)
+    #expect(q.alert.messageText == "“config.yaml” is already in site")
+    #expect(q.alert.buttons.map(\.title) == ["Replace", "Skip", "Keep Both", "Cancel"] && q.alert.buttons[0].keyEquivalent == "\r")
+    let cards = q.alert.accessoryView.map(all)?.compactMap { $0.isAccessibilityElement() ? $0.accessibilityLabel() : nil } ?? []
+    let when = DateColumn(now)
+    #expect(cards.contains("In site now: config.yaml, 190 B · \(when.text(Date(timeIntervalSince1970: c.dstMtime)))"), "\(cards)")
+    #expect(cards.contains("From Downloads: config.yaml, 185 B · \(when.text(Date(timeIntervalSince1970: c.srcMtime))), newer"), "\(cards)")
+    #expect(q.choice(0) == .overwrite && q.choice(1) == .skip && q.choice(2) == .keepBoth && q.choice(3) == .cancel)
+    q.older?.state = .on
+    #expect(q.choice(0) == .overwriteIfNewer && q.choice(1) == .skip, "the old Overwrite if Newer, through Replace")
+    #expect(q.alert.showsSuppressionButton && q.alert.suppressionButton?.title == "Apply to all remaining conflicts" && q.link?.title == "Compare…")
+
+    var mine = c
+    mine.createdByThisJob = true
+    #expect(!OpsController.conflictQuestion(mine, from: .local, on: .local, compare: false).alert.showsSuppressionButton)
+    #expect(OpsController.conflictQuestion(mine, from: .local, on: .local, compare: false).link == nil)
+    let dirs = OpsController.conflictQuestion(FileJob.Conflict(src: "/a/x", dst: "/b/x", srcSize: 0, dstSize: 0, srcMtime: 1, dstMtime: 1, bothDirs: true),
+                                              from: .local, on: .local, compare: true)
+    #expect(dirs.alert.buttons.map(\.title) == ["Merge", "Skip", "Keep Both", "Cancel"] && dirs.choice(0) == .overwrite && dirs.older == nil && dirs.link == nil)
+    #expect(dirs.alert.suppressionButton?.title == "Apply to all remaining folders")
+    var folder = c
+    folder.replacesFolder = true
+    let f = OpsController.conflictQuestion(folder, from: .local, on: .local, compare: true)
+    #expect(f.alert.buttons.map(\.title) == ["Skip", "Keep Both", "Replace Folder", "Cancel"] && f.choice(0) == .skip && f.choice(2) == .overwrite)
+    #expect(!f.alert.showsSuppressionButton)
+}
+
+extension ServerLockTests {
+/// R-55 on a production server: its strip and name in the title, the cards named by machine, ↩ Cancel and ⌘↩ Replace.
+@MainActor @Test func aTakenNameOnProductionAsksSafely() {
+    var prod = SavedServer(address: "deploy@web.invalid")!
+    (prod.prod, prod.name) = (true, "web-01")
+    ServerLock.servers = { [prod] }
+    defer { ServerLock.servers = { [] } }
+    let c = FileJob.Conflict(src: "/Users/me/site/a.conf", dst: "/srv/site/a.conf", srcSize: 1, dstSize: 2, srcMtime: 5, dstMtime: 5, bothDirs: false)
+    let q = OpsController.conflictQuestion(c, from: .local, on: .sftp(prod.target), compare: true)
+    #expect(q.alert.messageText == "“a.conf” is already in site on web-01")
+    #expect(q.alert.buttons.map { ($0.keyEquivalentModifierMask == .command ? "⌘" : "") + $0.keyEquivalent } == ["⌘\r", "", "", "\r"])
+    let labels = q.alert.accessoryView.map(all)?.compactMap { $0.isAccessibilityElement() ? $0.accessibilityLabel() : nil } ?? []
+    #expect(labels.contains { $0.hasPrefix("On web-01 now: a.conf") && !$0.hasSuffix("newer") } && labels.contains { $0.hasPrefix("From this Mac: a.conf") })
+    #expect(q.alert.accessoryView.map(all)?.contains { $0.accessibilityLabel() == "production: web-01" } == true, "the strip")
+}
+}

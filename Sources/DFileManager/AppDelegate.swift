@@ -121,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         window.undoManager?.levelsOfUndo = 100   // each step holds its paths (and a move's jobs): not a whole day's worth
         window.title = "Kermo"
         ops = OpsController(window: window, historyDir: Config.dir) { [unowned self] in jobFinished($0) }
+        ops.compare = { [unowned self] new, existing in await diff(new, existing, in: active) }
         ops.onRetry = { [unowned self] in retryFailed($0, $1) }
         ops.onShow = { [unowned self] in showItem(on: $0, in: $1, select: $2) }
         let toolbar = NSToolbar(identifier: "Main")   // after `ops`: it asks for the Activity button at once

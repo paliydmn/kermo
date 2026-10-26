@@ -62,6 +62,7 @@ Release:
 - “Close 3 sessions?”, “Close the shell?” in the terminal, an editor that failed to open, Info's administrator failure and a command that couldn't open in Terminal ask in a sheet on their window, not in a window of their own.
 - “Changed on disk” in the editor offers **Keep Mine** and **Reload** in the usual order — Keep Mine on the left with ↩ and ⎋, since it loses nothing; ⌘↩ reloads.
 - F5 and F6 say what goes — up to five names with their sizes and “and N more” — and, on a production or root server, show its strip over the path.
+- A taken name asks with two cards — what's there now, what comes — each with its size and date as the panel shows them, and **Newer** on the newer one, instead of a line of text; the destination's PROD or ROOT strip over them. **Replace**, **Skip**, **Keep Both**, **Cancel**: Overwrite if Newer is now **Only replace older files** next to Replace. **Compare…** shows the two files in a diff first. On a production server ↩ is Cancel.
 
 ### Fixed
 - A new SSH tab shows its green dot as soon as ssh starts; it was grey until the next redraw.

@@ -36,9 +36,9 @@ Every copy, move, Trash and delete gets a row above the key bar: files done of t
 
 ### When a name is taken
 
-A dialog asks. For files it shows size and date of both (**← newer** marks the new file when it is the newer one).
+A dialog asks — ““config.yaml” is already in site on web-01”, with the server's PROD or ROOT strip. Two cards show what's there now and what comes, each with its size and date as the panel shows them; **Newer** marks the newer one.
 
-- Files: **Overwrite**, **Skip**, **Keep Both** (the new one becomes `name 2.ext`), **Overwrite if Newer**, **Cancel**. **Apply to all remaining conflicts** answers the rest the same way.
+- Files: **Replace**, **Skip**, **Keep Both** (the new one becomes `name 2.ext`), **Cancel**. Tick **Only replace older files** and Replace replaces only what's older, skipping the newer ones (what Overwrite if Newer did). **Compare…** opens the two in a diff (a server's file is fetched first), then asks again. **Apply to all remaining conflicts** answers the rest the same way. ↩ is Replace; on a production server ↩ is Cancel and ⌘↩ Replace.
 - Folders: **Merge** (keeps existing files, asks about each clash inside), **Skip**, **Keep Both**, **Cancel**. **Apply to all remaining folders** answers the other folders the same way; a file that clashes inside is still asked about.
 - A file onto a folder: **Skip**, **Keep Both**, **Replace Folder** (the folder goes to the Trash), **Cancel**. Asked every time.
 - An error asks **Skip**, **Retry** or **Abort**; **Skip all further errors** stops the questions. What was skipped is kept in [Activity](#activity). On "Permission denied" see [Administrator rights](#administrator-rights).
