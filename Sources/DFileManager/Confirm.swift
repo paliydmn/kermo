@@ -14,6 +14,8 @@ struct Confirm {
     }
 
     var title: String
+    /// A red line over everything, for what may be an attack: "someone is intercepting the connection".
+    var alarm: String? = nil
     /// The strip's chips (production, root; a lock isn't shown) and the place they're about: "web-01", "this Mac".
     var chips: [Chip] = []
     var place = ""
@@ -32,13 +34,14 @@ struct Confirm {
     /// The button that does nothing: "Keep Mine" where that's what nothing means.
     var cancel = "Cancel"
     var irreversible = false
-    /// ↩ is Cancel even where nothing says so (a Stop, asked first everywhere).
-    var returnCancels = false
+    /// true: ↩ is Cancel even where nothing says so (a Stop, asked first everywhere); false: never (a password typed
+    /// on a production server); nil: as `safe` says.
+    var returnCancels: Bool? = nil
 
     var buttons: [String] { [action] + others + [cancel] }
     var strip: [Chip] { chips.filter { $0 != .locked } }
     /// ↩ answers Cancel, the action takes ⌘↩: production, or what can't be undone.
-    var safe: Bool { returnCancels || irreversible || strip.contains(.prod) }
+    var safe: Bool { returnCancels ?? (irreversible || strip.contains(.prod)) }
 
     static let width: CGFloat = 360
     /// The button ⌘↩ presses (`AppDelegate.keyRoles`). Not a key equivalent of its own: AppKit draws any button with
@@ -69,7 +72,7 @@ struct Confirm {
         buttons.forEach { a.addButton(withTitle: $0) }
         a.buttons[0].hasDestructiveAction = irreversible
         if safe {
-            a.buttons.forEach { $0.keyEquivalent = "" }
+            a.buttons.forEach { if $0.keyEquivalent == "\r" || $0.keyEquivalent == "\u{1b}" { $0.keyEquivalent = "" } }   // Don't Save keeps ⌘D
             a.buttons.last!.keyEquivalent = "\r"   // ⎋ too: `AppDelegate.sheet`
             a.buttons[0].identifier = Self.commandReturn
         }
@@ -79,6 +82,14 @@ struct Confirm {
 
     @MainActor private func accessory() -> NSView? {
         var views: [NSView] = []
+        if let alarm {
+            let l = NSTextField(wrappingLabelWithString: alarm)
+            l.font = .systemFont(ofSize: 12, weight: .medium)
+            l.preferredMaxLayoutWidth = Self.width - 40
+            let row = NSStackView(views: [NSImageView(image: Symbol.warnFill.image("Warning", color: Palette.fail, size: 13)), l])
+            (row.spacing, row.alignment) = (6, .top)
+            views.append(TintBox(row, fill: Palette.fail.withAlphaComponent(0.13), inset: NSSize(width: 8, height: 6)))
+        }
         if let s = Self.strip(strip, place) { views.append(s) }
         if !items.isEmpty { views.append(Self.list(items)) }
         if let runs { views.append(Self.label(runs, color: .secondaryLabelColor, size: 11)) }

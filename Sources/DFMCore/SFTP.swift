@@ -167,7 +167,9 @@ public enum SFTP {
         defer { login.end() }
         if ssh(["-O", "check"]) == 0 { return }   // the login waited for brought it up
         let log = masterLog(t), errors = freshLog(t)
-        let status = withPassword(t) { ssh(masterArguments(t), stderr: errors, extra: $0) }   // ControlMaster=auto makes it the master
+        // $DFM_ASKPASS_TARGET: whose login it is, for the app's question (its name and chips).
+        let target = ["DFM_ASKPASS_TARGET": t.host + (t.port.map { "\t\($0)" } ?? "")]   // the port after a tab: an IPv6 host has colons
+        let status = withPassword(t) { ssh(masterArguments(t), stderr: errors, extra: $0.merging(target) { $1 }) }   // ControlMaster=auto makes it the master
         try? errors.close()
         // Another listing may have become the master meanwhile; then this one only lost the race.
         let up = status == 0 || ssh(["-O", "check"]) == 0

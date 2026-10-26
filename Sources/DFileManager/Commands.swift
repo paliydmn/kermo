@@ -1512,6 +1512,16 @@ extension AppDelegate {
         return false
     }
 
+    /// What saving a server's `path` does besides writing it, for the unsaved changes' question: its check, the old
+    /// version kept, the production log — only what will happen; nil when nothing.
+    func saveSays(_ t: SFTPTarget, _ path: String) -> String? {
+        let rule = ConfigCheck.rule(for: path, in: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules)
+        let does = [rule?.check.map { "checks it with \(ConfigCheck.program($0))" + (rule?.after == true ? " once it's there (the old text goes back if that fails)" : " first") },
+                    serverHistory == nil ? nil : "keeps the old version on this Mac", SavedServer.isProd(t) ? "goes into the production log" : nil].compactMap { $0 }
+        guard !does.isEmpty else { return nil }
+        return "Saving " + (does.count == 1 ? does[0] : does.dropLast().joined(separator: ", ") + " and " + does.last!) + "."
+    }
+
     /// What `runThere` asks on a production server (nil elsewhere: it just runs): the command, where and as whom.
     static func prodQuestion(_ command: String, on target: SFTPTarget, _ ask: (message: String, button: String)) -> Confirm? {
         guard SavedServer.isProd(target) else { return nil }

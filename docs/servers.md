@@ -2,7 +2,7 @@
 
 # Servers and SSH
 
-Connect to a server, save it, lock it and mark it as production. Kermo uses the system OpenSSH client, so keys, agents and `ProxyJump` from `~/.ssh/config` work exactly as in Terminal. Passwords are asked for in a macOS dialog.
+Connect to a server, save it, lock it and mark it as production. Kermo uses the system OpenSSH client, so keys, agents and `ProxyJump` from `~/.ssh/config` work exactly as in Terminal. Passwords, key passphrases and "continue connecting?" for a server seen the first time are asked in a sheet on Kermo's window: the server's name and its PROD strip, what the answer is for, the field, **Cancel** and **Continue**. Several logins at once ask one after another. If Kermo doesn't take the question within 5 seconds (it's busy), a macOS dialog asks instead, so a login never hangs; the answer goes to ssh and isn't kept anywhere.
 
 ## Connect
 
@@ -106,9 +106,9 @@ On a production server a change of a service or a restart of a container asks fi
 
 ## When the host key changed
 
-If a server's host key no longer matches the one in `known_hosts`, Kermo won't connect and says so plainly: the server was reinstalled, or someone is intercepting the connection. It shows the new key's fingerprint and the file and line of the old one. Nothing is removed by itself.
+If a server's host key no longer matches the one in `known_hosts`, Kermo won't connect and says so plainly, in red: the server was reinstalled, or someone is intercepting the connection. It shows the new key's fingerprint as ssh gave it and the file and line of the old one (ssh doesn't say the old fingerprint). Nothing is removed by itself.
 
-- Opening the server's files, the alert has **Remove Old Key…** (↩ is **Cancel**). It runs `ssh-keygen -R` on that file (the old file is kept as `known_hosts.old`) and connects again; the new key is then asked about as for a server seen the first time. On a production server the alert adds: check the new fingerprint with the server's admin first.
+- Opening the server's files, the question has **Remove Old Key…** (⌘↩; ↩ is **Cancel**). It runs `ssh-keygen -R` on that file (the old file is kept as `known_hosts.old`) and connects again; the new key is then asked about as for a server seen the first time. On a production server the question adds: check the new fingerprint with the server's admin first.
 - Elsewhere (Forward Port…, Run on Servers…, a tunnel's tooltip) the same words show without the button. An SSH tab shows ssh's own message too.
 
 ## Server rows in the sidebar

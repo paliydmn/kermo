@@ -63,6 +63,9 @@ Release:
 - “Changed on disk” in the editor: **Keep Mine** is the default — on the right, with ↩ and ⎋, since it loses nothing; **Reload** (red: your edits go) takes ⌘↩.
 - F5 and F6 say what goes — up to five names with their sizes and “and N more” — and, on a production or root server, show its strip over the path.
 - The server sheet (New Server, Edit, Duplicate, Save…) comes in groups — Connection, Sign in, Safety, Open — shows the ssh command it makes as you type, and says what's wrong under the field instead of in a second alert; Save waits until it's fixed. **Production** is a switch there, next to Lock; ↩ saves and ⌘↩ saves and connects. Edit is titled Edit Server.
+- ssh's questions — a password, a key's passphrase, “continue connecting?” for a new server — and the sudo password ask in a sheet on Kermo's window, in Kermo's style: the server's name and strip, what the answer is for, **Cancel** and **Continue**; not the “Kermo — SSH” AppleScript dialog. Several at once ask one after another; a question whose ssh is gone goes away. If Kermo doesn't take a question within 5 seconds, the old dialog asks instead.
+- A changed host key says so on a red line, with the new key as ssh gave it and where the old one is kept; **Remove Old Key…** is ⌘↩, ↩ Cancel.
+- Unsaved changes ask “Save changes to “nginx.conf” on web-01?” with the server's strip, and say what Save does there besides writing: its check, the old version kept, the production log. “Changed on disk” says when and how big.
 - A taken name asks with two cards — what's there now, what comes — each with its size and date as the panel shows them, and **Newer** on the newer one, instead of a line of text; the destination's PROD or ROOT strip over them. **Replace**, **Skip**, **Keep Both**, **Cancel**: Overwrite if Newer is now **Only replace older files** next to Replace. **Compare…** shows the two files in a diff first. On a production server ↩ is Cancel.
 
 ### Removed

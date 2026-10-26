@@ -24,7 +24,7 @@ me ALL=(root) NOPASSWD: /usr/lib/openssh/sftp-server
 > [!WARNING]
 > `sftp-server` running as root can write any file, `/etc/sudoers` included, so this line is as good as full root for that user.
 
-**With a password:** Kermo asks in a sheet when `sudo -n` refuses for want of one (never otherwise: a sudo that needs no password would pass it on to `sftp-server`).
+**With a password:** Kermo asks in a sheet — “sudo password on web-01”, with the ROOT strip (and PROD on a production server), **Cancel** and **Continue** — when `sudo -n` refuses for want of one (never otherwise: a sudo that needs no password would pass it on to `sftp-server`).
 
 - It tries the password once on its own, with `sudo -S -p '' -k -- <sftp-server>` and nothing after the password, so `sftp-server` ends at once. A wrong password costs a single attempt in the server's log. Then the session gives the password to sudo on stdin, never on a command line or in a file.
 - If sudo takes the password but doesn't allow `sftp-server` to the user, it says so at once.
