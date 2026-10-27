@@ -8,7 +8,7 @@ Five minutes from a fresh install to copying files, connecting to a server and f
 
 1. Open Kermo. You see two panels. **Tab** switches between them, ↑↓ move the cursor, **↩** opens a folder or a file, **⌫** goes up.
 2. Hold ⌘ for a moment. The bar at the bottom shows the shortcuts that use ⌘ alone (hold ⇧⌘ or ⌃⌘ to see those layers). Click a slot to run it.
-3. Press **⇧⌘P** and type a few letters. Search finds commands, folders and files, and shows each command's shortcut. **F1** lists all shortcuts.
+3. Press **⇧⌘P** and type a few letters. Search finds commands, servers, folders and files, and shows each command's shortcut. **F1** lists all shortcuts.
 4. Press **⌘P** to jump to a bookmarked or frequent folder, and **⌘D** to bookmark the current one. **⌃⌘S** shows the Places sidebar.
 
 > [!NOTE]

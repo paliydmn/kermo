@@ -115,8 +115,11 @@ public struct Frecency: Codable, Sendable {
         return e.count * weight
     }
 
-    /// Paths, best first.
+    /// Paths, best first; of two as good, the one visited last.
     public func ranked(now: Double = Date().timeIntervalSince1970) -> [String] {
-        entries.keys.sorted { rank($0, now: now) > rank($1, now: now) }
+        entries.keys.sorted { a, b in
+            let (x, y) = (rank(a, now: now), rank(b, now: now))
+            return x != y ? x > y : entries[a]!.last != entries[b]!.last ? entries[a]!.last > entries[b]!.last : a < b
+        }
     }
 }

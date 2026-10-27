@@ -35,7 +35,7 @@ The results replace the panel's listing as they are found, named by their path b
 - ⎋ does not stop a running search. ⌫ does, and leaves the results.
 - On a server, the search runs there (`find` and `grep`, GNU `find` required) and the tag and Spotlight options are hidden. See [Files on a server](server-files.md#preview-sizes-and-compare).
 
-The toolbar search (**Go ▸ Search…**, ⇧⌘P) finds commands, folders and files in the panel; its last row opens this dialog with your text. See [Panels, sidebar and search](window.md#search).
+Search (**Go ▸ Search…**, ⇧⌘P, or the toolbar's **Search or jump to…**) finds commands, servers, folders and files in the panel; its last row opens this dialog with your text. See [Panels, sidebar and search](window.md#search).
 
 ## Compare folders
 

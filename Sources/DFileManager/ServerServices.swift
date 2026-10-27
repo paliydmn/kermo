@@ -548,8 +548,8 @@ final class ContainerList: ListSource {
 // goes into, in a panel. Opening it asks the server nothing; what it counts is what its lists last read.
 extension AppDelegate {
     /// What a place lists, provider by provider, in this order: its folders, what it runs and its ports and tunnels,
-    /// its file history. Tools add theirs as one more provider.
-    static let placeProviders: [@MainActor (AppDelegate, PlaceSource) -> [Picker.Item]] = [
+    /// its file history. Tools add theirs as one more provider (tests: one of theirs).
+    static var placeProviders: [@MainActor (AppDelegate, PlaceSource) -> [Picker.Item]] = [
         { $0.placeFolders($1) }, { $0.placeLists($1) }, { $0.placeHistory($1) },
     ]
 
@@ -568,15 +568,18 @@ extension AppDelegate {
     /// How many a list of `t`'s counted when it was last read, and how many of them are in trouble (failed, exited).
     func noteCount(_ what: String, on t: SFTPTarget, _ n: Int, problems: Int = 0) { listCounts[ServerRow.key(t.asUser) + " " + what] = (n, problems) }
 
-    /// A place's row: ↩ goes in (in this panel), its menu has Open in Other Panel too.
+    /// A place's row: ↩ goes in (in this panel), its menu has Open in Other Panel too. `into`: a list it is — the panel
+    /// shows it, the palette's ⇥ goes into it; else `open` says what it opens.
     func placeRow(_ title: String, _ p: PlaceSource, state: String = "", about: String, mark: StateMark? = nil,
-                  open: @escaping @MainActor (PanelViewController) -> Void) -> Picker.Item {
+                  into: (@MainActor () -> ListSource)? = nil, open: (@MainActor (PanelViewController) -> Void)? = nil) -> Picker.Item {
+        let open = open ?? { $0.showList(into!()) }
         var it = Picker.Item(title: title, subtitle: state, detail: about) { [unowned self] in open(active) }
         it.id = "place " + title
         it.state = mark
-        it.listActions = { [unowned self] in
-            [ListAction(title: "Open", key: Shortcut("return"), group: 0, closes: false, why: nil) { _ in open(self.active); return nil },
-             ListAction(title: "Open in Other Panel", key: Shortcut("cmd+return"), group: 0, closes: false, why: nil) { _ in
+        it.into = into
+        it.listActions = { [unowned self] in   // they take the palette away: what they open is in a panel
+            [ListAction(title: "Open", key: Shortcut("return"), group: 0, closes: true, why: nil) { _ in open(self.active); return nil },
+             ListAction(title: "Open in Other Panel", key: Shortcut("cmd+return"), group: 0, closes: true, why: nil) { _ in
                  let o = self.other
                  open(o)
                  self.window.makeFirstResponder(o.table)
@@ -599,34 +602,33 @@ extension AppDelegate {
             + [placeRow("Home", p, about: "the login folder", open: files(nil)), placeRow("/", p, about: "the root folder", open: files("/"))]
     }
 
-    /// Services, Containers, Ports — each a list in that panel, read as it opens — and Tunnels (its own picker). Their
-    /// counts: as its lists last read them, while a connection is up; else "—" till the row is opened.
+    /// Services, Containers, Ports — each a list, read as it opens — and Tunnels, this Mac's. Their counts: as its lists
+    /// last read them, while a connection is up; else "—" till the row is opened.
     func placeLists(_ p: PlaceSource) -> [Picker.Item] {
         let s = p.server, t = p.target, up = Self.connected(t)
         func count(_ what: String) -> (n: Int, problems: Int)? { up ? listCounts[ServerRow.key(t) + " " + what] : nil }
-        func list(_ make: @escaping @MainActor () -> ListSource) -> @MainActor (PanelViewController) -> Void { { $0.showList(make()) } }
         let units = count("services"), boxes = count("containers"), ports = count("ports")
         let on = tunnels.listening(s).map(\.title) + tunnels.temporaries(server: ServerRow.key(s.target)).filter { $0.error == nil }.map(\.tunnel.title)
         return [
             placeRow("Services", p, state: units.map { $0.problems > 0 ? "\($0.problems) failed" : "" } ?? "—",
                      about: units.map { "\($0.n) unit\($0.n == 1 ? "" : "s")" } ?? "what systemd runs", mark: units.flatMap { $0.problems > 0 ? .failed : nil },
-                     open: list { [unowned self] in ServiceList(self, s, t) }),
+                     into: { [unowned self] in ServiceList(self, s, t) }),
             placeRow("Containers", p, state: boxes.map { $0.problems > 0 ? "\($0.problems) not running" : "" } ?? "—",
                      about: boxes.map { "\($0.n) container\($0.n == 1 ? "" : "s")" } ?? "docker or podman", mark: boxes.flatMap { $0.problems > 0 ? .attention : nil },
-                     open: list { [unowned self] in ContainerList(self, s, t) }),
+                     into: { [unowned self] in ContainerList(self, s, t) }),
             placeRow("Ports", p, state: ports == nil ? "—" : "", about: ports.map { "\($0.n) listening" } ?? "what it listens on",
-                     open: list { [unowned self] in PortList(self, s) }),
+                     into: { [unowned self] in PortList(self, s) }),
             placeRow("Tunnels", p, state: on.isEmpty ? "none on" : "\(on.count) on", about: on.isEmpty ? "to its ports, from this Mac" : on.joined(separator: ", "),
-                     mark: on.isEmpty ? nil : .on, open: list { [unowned self] in TunnelList(self, s) }),
+                     mark: on.isEmpty ? nil : .on, into: { [unowned self] in TunnelList(self, s) }),
         ]
     }
 
     /// File History: the versions of its files kept on this Mac, in that panel.
     func placeHistory(_ p: PlaceSource) -> [Picker.Item] {
-        [placeRow("File History", p, about: "versions of its files kept on this Mac") { [unowned self] panel in
+        [placeRow("File History", p, about: "versions of its files kept on this Mac", open: { [unowned self] panel in
             window.makeFirstResponder(panel.table)
             showFileHistory(p.target)
-        }]
+        })]
     }
 }
 

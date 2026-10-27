@@ -34,7 +34,7 @@ import Testing
     #expect(r[0].hits.allSatisfy(\.removable) && r[1].hits == [fav])
     r = search("", folders: [fav], recent: ["folder:/a"] + Array(repeating: "file.copy", count: 12))
     #expect(r.map(\.group) == ["Recent"] && r[0].hits.count == HeaderSearchModel.recentMax, "a favorite in Recent isn't listed twice")
-    for t: SearchHit.Target in [.command("file.copy"), .folder("/a:b"), .server("h:/x"), .disk("a:b")] { #expect(SearchHit.Target(key: t.key!) == t) }
+    for t: SearchHit.Target in [.command("file.copy"), .folder("/a:b"), .server("h:/x"), .disk("a:b"), .place(server: "ssh://me@h:2222", row: "File History")] { #expect(SearchHit.Target(key: t.key!) == t) }
     #expect(SearchHit.Target.file("x").key == nil)
 }
 

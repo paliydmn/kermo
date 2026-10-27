@@ -105,7 +105,7 @@ extension AppDelegate {
         cmd("help.issue", "Report an Issue…", [], menu: "Help", group: 2, aliases: "bug feedback github issues") { _ in
             NSWorkspace.shared.open(URL(string: "https://github.com/paliydmn/kermo/issues/new")!)
         },
-        cmd("app.palette", "Search…", ["cmd+shift+p", "f9", "opt+9"], menu: "Go", group: 4, aliases: "palette all commands") { $0.search.focus() },
+        cmd("app.palette", "Search…", ["cmd+shift+p", "f9", "opt+9"], menu: "Go", group: 4, aliases: "palette all commands") { $0.search.focus(over: $0.window) },
 
         // Tabs
         // While the keys go to the terminal (⌃O) these act on its tabs.

@@ -219,45 +219,8 @@ private final class CountingPreview: QLPreviewPanel {
     #expect(row.pause.image?.accessibilityDescription == "Pause" && row.pause.toolTip == "Pause")
 }
 
-/// P19: typing in the toolbar search ranks once typing pauses, for what the field says then — not per keystroke.
-@MainActor @Test func toolbarSearchRanksAfterTypingPauses() async throws {
-    _ = NSApplication.shared
-    let s = HeaderSearch()
-    var asked: [String] = []
-    s.results = { q, _ in asked.append(q); return [("In This Panel", [SearchHit(title: q, target: .file(q))])] }
-    for q in ["a", "ab", "abc"] {
-        s.item.searchField.stringValue = q
-        s.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: s.item.searchField))
-    }
-    #expect(asked.isEmpty, "nothing ranked while typing")
-    for _ in 0..<500 where asked.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
-    try await Task.sleep(for: .milliseconds(200))   // long enough for a second ranking, were one coming
-    #expect(asked == ["abc"], "one ranking, of what the field says now")
-}
-
-/// P19: ↩ before the pause is over ranks what was typed first — the rows still up are the last query's (the recent
-/// commands, "Move to Trash" among them), and those aren't what runs.
-@MainActor @Test func toolbarSearchEnterInsideThePauseRunsTheTypedHit() async throws {
-    _ = NSApplication.shared
-    let s = HeaderSearch()
-    var asked: [String] = [], chosen: [SearchHit] = []
-    s.results = { q, _ in
-        asked.append(q)
-        return q.isEmpty ? [("Recent", [SearchHit(title: "Move to Trash", target: .command("file.trash"))])]
-                         : [("Commands", [SearchHit(title: q, target: .command(q))])]
-    }
-    s.onChoose = { h, _ in chosen.append(h) }
-    s.focus()
-    for _ in 0..<500 where asked.isEmpty { try await Task.sleep(for: .milliseconds(10)) }   // the recents are up
-    for q in ["z", "zi", "zip"] {
-        s.item.searchField.stringValue = q
-        s.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: s.item.searchField))
-    }
-    _ = s.control(s.item.searchField, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:)))
-    for _ in 0..<500 where chosen.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(chosen.map(\.target) == [.command("zip")])
-    #expect(asked == ["", "zip"], "what was typed got ranked, not its prefixes")
-}
+// P19 (the search ranks once typing pauses; ↩ inside the pause runs the typed hit): Review1Phase8Tests, since the
+// search is the palette, a Picker.
 
 /// P18: the sidebar is reachable from the keyboard — Focus Sidebar puts the keys there (a click or Tab never does),
 /// ↩ opens the selected place, ⎋ hands them back. Shortcuts (⌘⌃⌥, F-keys, ⇥) still reach the panels from there; bare

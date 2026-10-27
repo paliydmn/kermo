@@ -32,6 +32,8 @@ Release:
 - **Tunnels in a panel**: a server's overview has its tunnels as a list — on and off, copy, edit, delete, ＋ New Tunnel….
 - In a list: **⌘E** runs on its server (`%f` the row under the cursor), **?** shows its keys, **:** goes to another list of its server by name; a column's sort is kept per server and list, and the overview opens on the list opened there last. **Server ▸ Overview** is ⇧⌘O.
 - **Quick View of a list's row**: ⌃Q next to Services shows the service under the cursor's `systemctl status`, read once the cursor rests, over the connection the list holds; next to Containers or Ports, the row's state, image or who listens.
+- **⇥ in search goes into a server**: its overview, then a list of it — Services, Containers, Ports, Tunnels, read as in a panel — then a row's actions, each with its key; ↩ does it, asking first where it would anyway. Chips before the field say where you are (**web-01 › Services › nginx ›**); ⌫ on an empty field or ⎋ goes back a level; ⌘↩ shows the list in the other panel. A server's every list and action is a few keys away, no menu needed.
+- **Search (⇧⌘P) finds every server**: saved ones, the hosts of `~/.ssh/config` and the ones typed lately, with their PROD, ROOT and locked chips — not only those used lately. ↩ opens one as a double-click on its sidebar row does, ⌘↩ in the other panel. Typed, it finds the rows of saved servers' overviews too (`serv web` → **Services — web-01**), from what's known here: nothing is sent.
 
 ### Changed
 - One click on a server in the sidebar with nothing open shows its overview, which sends nothing; a double-click (or ↩ in the sidebar) opens its files in its start folder instead of an SSH shell — SSH is the row's button, its menu and ⌘K.
@@ -88,6 +90,10 @@ Release:
 - The Admin menu is gone: Copy, Move, New Folder and Delete as Administrator, Root Shell in Terminal and Enable Touch ID for sudo are in **File ▸ As Administrator**; Reopen as Root / as User, Run on Servers… and Production Log in **Server**. Synchronize Folders… and Compare Files moved to Mark, Search Files… to Go, Keyboard Shortcuts to Help, Go ▸ Tunnels to Server ▸ Ports & Tunnels.
 - Menu names: **Sidebar**, **Quick View**, **Terminal**, **Activity**, **Hidden Files**, **Permissions & Owner**, **Show Only Changes**, **Bookmark This Folder** and **Sort By ▸** show ✓ while on; **Mark Differences**, **Compare Files**, **Root Shell in Terminal**, **Edit SSH Config…**; in Git and Server a name doesn't repeat the menu (Git ▸ Diff, Server ▸ Disconnect, Server ▸ File History…). Search (⇧⌘P) still finds the old names and shows each command's menu under it. The key bar keeps its words (Git Diff, Git Blame …) but for ⇧F2 **Differences** and ⇧⌘D **Compare**.
 
+- Search (⇧⌘P) opens over the panels as the other lists to choose from do: its rows in groups (Recent, Commands, Servers, On Servers, Folders, In This Panel), each with an icon and one key — the menu's, F1 lists the rest — and an action bar along the bottom. The toolbar has a **Search or jump to…** button instead of a field.
+- Search's Recent lists what you choose most and lately, not the last ten; those come in.
+- **:** in a list opens search on its server's overview instead of a list of its own.
+
 ### Removed
 - **Save as Production…** in a recent or `~/.ssh/config` row's menu: the save sheet has the Production switch.
 - The Admin menu and Go ▸ Tunnels (moved, see Changed).
@@ -105,6 +111,7 @@ Release:
 - Holding **⇧⌥** shows the keys there, `⌥⇧4 5 6 8 = ⇧F4 5 6 8`, instead of "No commands".
 - ⇧⌘P no longer offers Open Remote File, Open from Archive and List Remote Archive: a panel runs them by itself.
 - A server's right-click menu in the sidebar no longer starts with a line.
+- Lists to choose from (Services…, Forward Port…, Switch Branch…) and the questions over them follow a dark Kermo theme such as Midnight Commander; they stayed light.
 - **Reload Config** says when `keymap.json` gives a key of the menu bar's own items (⌘C, ⌘V, ⌘X, ⌘Z, ⌘A, ⌘F, ⌘G, ⌘S, ⌘0) to a command, or takes ⌘A or ⌘F from Mark All or Search Files: the menu keeps those keys.
 
 ## [1.5] - 2026-10-23

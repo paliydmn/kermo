@@ -29,7 +29,7 @@ enum Palette {
 enum Symbol: String, CaseIterable {
     // places
     case server = "server.rack", mac = "laptopcomputer", ssh = "apple.terminal", folder, doc, recent = "clock", network, archive = "archivebox",
-         search = "magnifyingglass", internalDisk = "internaldrive", externalDisk = "externaldrive", tag
+         search = "magnifyingglass", internalDisk = "internaldrive", externalDisk = "externaldrive", tag, command, list = "list.bullet"
     // marks
     case lock = "lock.fill", root = "number", branch = "arrow.triangle.branch", tunnel = "arrow.left.arrow.right",
          notPublished = "icloud.and.arrow.up", sync = "arrow.triangle.2.circlepath", changes = "plusminus",

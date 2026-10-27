@@ -36,7 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     var disks: [Disk] = []   // DiskArbitration's that Kermo may mount
     var diskWatch: DiskWatch?
     var volumeBusy: Set<String> = []   // mounting, unmounting, ejecting: mount points, and BSD names of those not mounted
-    private var configHosts: [String] = []   // ~/.ssh/config aliases
+    var configHosts: [String] = []   // ~/.ssh/config aliases
     private var sftpErrors: [String: String] = [:]   // ServerRow.key → its last failure, until any panel gets through
     private var sidebarRefresh: Task<Void, Never>?
     private var activeIndex = 0
@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
     var serverPins: [String] = Config.noting(Config.loadEach("server-pins.json", as: String.self))   // addresses, in pin order
     var frecency: Frecency = Config.noting(Config.loadKeeping("frecency.json", as: Frecency.self)) ?? Frecency()
+    lazy var searchFrecency = Self.searchFrecency(defaults)   // what the search's Recent lists
     private var visitsSinceSave = 0
 
     var active: PanelViewController { panels[activeIndex] }
@@ -672,39 +673,112 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func windowDidResize(_ notification: Notification) { applySidebarRule() }
 
-    private func setUpSearch() {
+    func setUpSearch() {   // internal: tests
+        search.listInOther = { [unowned self] source, q, id, rows in openInOther(source, query: q, select: id, rows: rows) }
         search.results = { [unowned self] q, flag in
             let fav = bookmarks.map { SearchHit(title: Bookmark.title($0), subtitle: ($0 as NSString).abbreviatingWithTildeInPath, detail: "favorite", target: .folder($0)) }
             let freq = frecency.ranked().filter { !bookmarks.contains($0) }.prefix(300).map {
                 SearchHit(title: Self.folderName($0), subtitle: ($0 as NSString).abbreviatingWithTildeInPath, target: .folder($0))
             }
             let vols = volumes.map { SearchHit(title: $0.name, subtitle: $0.path, detail: "volume", target: .folder($0.path)) }
-            let servers = (defaults.stringArray(forKey: "recentServers") ?? []).map { SearchHit(title: $0, detail: "server", target: .server($0)) }
-            let commands = commands, folders = fav + freq + vols + servers, files = active.listedItems.map(\.name)
-            let recent = defaults.stringArray(forKey: "searchRecent") ?? []
-            return await Blocking.run(.userInitiated) {
-                HeaderSearchModel.results(q, commands: commands, folders: folders, files: files, recent: recent, cancel: flag)
+            // Every server the sidebar knows — saved, ~/.ssh/config's, typed lately — and each saved one's place: its
+            // rows as known here (nothing is sent), "Services — web-01".
+            let rows = SidebarModel.serverRows(serverList, places: .max)
+            let servers = rows.map { r in
+                SearchHit(title: r.title, subtitle: r.saved == nil && configHosts.contains(r.target.host) ? "~/.ssh/config" : ServerRow.address(r.target),
+                          target: .server(r.address))
             }
-        }
-        search.onCancel = { [unowned self] in window.makeFirstResponder(active.table) }
-        // Compared as targets: a command chosen before folders were kept is stored as its bare id.
-        func forget(_ t: SearchHit.Target) -> [String] { (defaults.stringArray(forKey: "searchRecent") ?? []).filter { SearchHit.Target(key: $0) != t } }
-        search.onRemove = { [unowned self] hit in defaults.set(forget(hit.target), forKey: "searchRecent") }
-        search.onChoose = { [unowned self] hit, otherPanel in
-            window.makeFirstResponder(active.table)
-            if let key = hit.target.key {
-                defaults.set(Array(([key] + forget(hit.target)).prefix(HeaderSearchModel.recentMax)), forKey: "searchRecent")
+            var found: [SearchHit] = [], placeRows: [String: (Picker.Item, SavedServer)] = [:]
+            for s in savedServers {
+                for row in PlaceSource(self, s, s.target.asUser).content?.rows ?? [] {
+                    let h = SearchHit(title: "\(row.title) — \(s.title)", subtitle: row.detail, target: .place(server: ServerRow.address(s.target), row: row.title))
+                    found.append(h)
+                    placeRows[h.target.key!] = (row, s)
+                }
             }
-            switch hit.target {
-            case .command(let id): run(id)
-            case .folder(let p):
-                if let r = Bookmark.remote(p) { openBookmark(r, panel: otherPanel ? other : nil) } else { (otherPanel ? other : active).navigate(to: p) }
-            case .server(let s): connect(s)
-            case .file(let name): active.moveCursor(toName: name)
-            case .disk(let q): searchDialog(name: q)
+            let commands = commands, folders = fav + freq + vols, places = found, files = active.listedItems.map(\.name), recent = searchFrecency.ranked()
+            let groups = await Blocking.run(.userInitiated) {
+                HeaderSearchModel.results(q, commands: commands, folders: folders, servers: servers, places: places, files: files, recent: recent, cancel: flag)
+            }
+            return groups.flatMap { g in
+                g.hits.map { h in searchItem(h, group: g.group, server: rows.first { h.target == .server($0.address) }, place: h.target.key.flatMap { placeRows[$0] }) }
             }
         }
     }
+
+    /// A search hit as the palette shows it: its kind's symbol (a production server's purple, a failed one's red), its
+    /// one key or its server's chips on the right; ↩ runs or opens it, ⌘↩ opens a folder, a server's files or a place's
+    /// row in the other panel. A Recent row goes with ✕ or ⌘⌫.
+    private func searchItem(_ h: SearchHit, group: String, server: ServerRow?, place: (row: Picker.Item, server: SavedServer)?) -> Picker.Item {
+        var it = Picker.Item(title: h.title, subtitle: h.subtitle) { [unowned self] in chose(h, otherPanel: false, server: server, place: place?.row) }
+        it.group = group
+        it.id = h.target.key ?? h.title
+        let symbol: (Symbol, NSColor)
+        switch h.target {
+        case .command: (symbol, it.cap, it.verb) = ((.command, .secondaryLabelColor), h.detail, "Run")
+        case .folder: symbol = (h.detail == "favorite" ? .star : h.detail == "volume" ? .internalDisk : .folder, .secondaryLabelColor)
+        case .server:
+            let chips = server.map { Chip.of($0.target) } ?? []
+            it.chips = chips
+            if let r = server { it.into = { [unowned self] in PlaceSource(self, r.saved ?? SavedServer(target: r.target), r.target.asUser) } }
+            if case .failed? = server?.status { symbol = (.server, Palette.fail) } else { symbol = (.server, Chip.tint(chips) ?? .secondaryLabelColor) }
+        case .place:
+            it.chips = place.map { Chip.of($0.server.target) } ?? []
+            it.into = place?.row.into
+            symbol = (.list, place?.row.state == .failed ? Palette.fail : .secondaryLabelColor)
+        case .file: (symbol, it.verb) = ((.doc, .secondaryLabelColor), "Show")
+        case .disk: (symbol, it.cap, it.verb) = ((.search, .secondaryLabelColor), h.detail, "Search")
+        }
+        it.badges = [symbol.0.image(nil, color: symbol.1, size: 13)]
+        switch h.target {
+        case .folder, .server, .place:
+            it.actions = [.init(key: Shortcut("cmd+return")!, label: "Other Panel") { [unowned self] in chose(h, otherPanel: true, server: server, place: place?.row) }]
+        default: break
+        }
+        if h.removable, let key = h.target.key {
+            it.remove = { [unowned self] in
+                searchFrecency.remove(key)
+                saveSearchFrecency()
+            }
+        }
+        return it
+    }
+
+    /// What a search hit does, and the history counting it once more.
+    private func chose(_ h: SearchHit, otherPanel: Bool, server: ServerRow?, place: Picker.Item?) {
+        if let key = h.target.key {
+            searchFrecency.visit(key)
+            saveSearchFrecency()
+        }
+        switch h.target {
+        case .command(let id): run(id)
+        case .folder(let p):
+            if let r = Bookmark.remote(p) { openBookmark(r, panel: otherPanel ? other : nil) } else { (otherPanel ? other : active).navigate(to: p) }
+        case .server(let s):   // as a double-click on its sidebar row: its session, else its files
+            if let server { serverAction(server, .row, otherPanel ? .option : []) } else { connect(s) }
+        case .place:
+            guard let place else { return NSSound.beep() }
+            if otherPanel, let a = place.listActions?().first(where: { $0.key == Shortcut("cmd+return") }) { _ = a.run(false) } else { place.run() }
+        case .file(let name): active.moveCursor(toName: name)
+        case .disk(let q): searchDialog(name: q)
+        }
+    }
+
+    /// The search's history (`searchFrecency`): how often and how lately each row was chosen. The list it kept before
+    /// (`searchRecent`, the last ten) comes in once, in its order.
+    static func searchFrecency(_ d: UserDefaults, now: Double = Date().timeIntervalSince1970) -> Frecency {
+        if let data = d.data(forKey: "searchFrecency"), let f = try? JSONDecoder().decode(Frecency.self, from: data) { return f }
+        var f = Frecency()
+        guard let old = d.stringArray(forKey: "searchRecent") else { return f }
+        for (i, key) in old.enumerated().reversed() {
+            SearchHit.Target(key: key).key.map { f.visit($0, now: now - Double(i)) }   // a bare id is a command's
+        }
+        d.set(try? JSONEncoder().encode(f), forKey: "searchFrecency")   // kept before the old list goes
+        d.removeObject(forKey: "searchRecent")
+        return f
+    }
+
+    func saveSearchFrecency() { defaults.set(try? JSONEncoder().encode(searchFrecency), forKey: "searchFrecency") }
 
     private static func folderName(_ p: String) -> String { p == "/" ? "/" : (p as NSString).lastPathComponent }
 
@@ -784,8 +858,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return active.remoteTabs.first(where: \.isCurrent)?.id.uuidString ?? (active.parked == nil && active.list == nil ? active.path : nil)   // parked, a place: no row is it
     }
 
-    func refreshSidebar() {
-        guard window != nil else { return }
+    /// What the sidebar's Servers and the search list: saved servers, ~/.ssh/config's, typed lately, with their sessions,
+    /// connections and tunnels.
+    var serverList: ServerList {
         var servers = ServerList(saved: savedServers, recents: defaults.stringArray(forKey: "recentServers") ?? [], config: configHosts,
                                  pins: serverPins)
         servers.sessions = terminal.tabs.compactMap { t in
@@ -805,6 +880,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if let e = st.error { servers.failedTunnels[key, default: []].append("\(st.tunnel.title): \(e)") }
             if !servers.forwarded.contains(where: { ServerRow.key($0) == key }) { servers.forwarded.append(st.server.target) }
         }
+        return servers
+    }
+
+    func refreshSidebar() {
+        guard window != nil else { return }
+        let servers = serverList
         sidebar.show(SidebarModel.sections(bookmarks: bookmarks, frecent: frecency.ranked(), volumes: volumes, disks: disks, busy: volumeBusy, servers: servers,
                                            tags: defaults.stringArray(forKey: "recentTags") ?? []))
         sidebar.highlight(sidebarKey)

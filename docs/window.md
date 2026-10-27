@@ -102,17 +102,23 @@ How to use it:
 
 ## Search
 
-Press ⇧⌘P (or F9, ⌥9) to open the toolbar search. It finds:
+Press ⇧⌘P (or F9, ⌥9), or click **Search or jump to…** in the toolbar. Search opens over the panels and finds, in groups:
 
-- **commands** by name or synonym ("zip" finds Compress), with their shortcuts;
-- **folders:** Favorites, frequent folders, volumes and recently used servers;
+- **commands** by name or synonym ("zip" finds Compress), with the menu each is in and its key on the right (F1 lists every key);
+- **servers:** every saved one, the hosts of `~/.ssh/config` and the addresses you typed lately, with their PROD, ROOT and locked chips;
+- **on servers:** the rows of each saved server's [overview](servers.md#the-server-as-a-place), so `serv web` finds **Services — web-01**. Nothing is sent to a server to find them;
+- **folders:** Favorites, frequent folders and volumes;
 - **files** in the active panel.
 
-↑↓ choose, ↩ runs or opens, ⌘↩ opens a folder in the other panel, ⎋ returns to the panel. The last row searches the disk (⌘F). When it is focused and empty, it lists the last 10 things you chose (commands, folders, servers, disk searches) above Favorites; ✕ or ⌘⌫ removes one.
+↑↓ choose, ↩ runs a command or opens the rest: a folder, a server as a double-click on its sidebar row does (its files), an overview's row in the active panel. ⌘↩ opens a folder, a server's files or an overview's row in the other panel. ⎋ closes. The action bar along the bottom says what the keys do on the highlighted row. The last row searches the disk (⌘F), and says so when nothing else matches.
+
+**⇥ goes into** a row with more behind it (⇥ on its right): a server lists its [overview](servers.md#the-server-as-a-place) — nothing is sent for it — then **Services**, **Containers**, **Ports** or **Tunnels** list what they list, read as the list in a panel reads it (Touch ID first on a locked server, "Looking at services…", ⎋ stops it), and a row there lists its actions: its key on the right, why it can't now under one that can't, red what can't be undone. Chips before the field say where you are: **web-01 › Services › nginx ›**, the server's in its color. ↩ does on each row what ↩ does on it in a panel — an action asks first where it would anyway, over the search, and the line under the rows says how it went; a row's keys (⌘R, ⌘L, ⌘C) work without ⇥. ⌘↩ shows the list you're in in the other panel, as it is, without reading it again. ⌫ on an empty field or ⎋ goes back a level, to what you typed there; ⎋ at the top closes.
+
+Empty, it lists what you choose most and lately (**Recent**: each choice counts, older ones fade), then Favorites and servers; ✕ or ⌘⌫ takes a row out of Recent.
 
 ## Pickers
 
-The lists that ask you to choose — Connect (⌃⌘K, ⌘K), Jump to Folder (⌘P), Volumes, the user menu (F2), Switch Branch (⌃B), Services, Tunnels and the rest — have one shape:
+The lists that ask you to choose — Search (⇧⌘P, its rows under group headers), Connect (⌃⌘K, ⌘K), Jump to Folder (⌘P), Volumes, the user menu (F2), Switch Branch (⌃B), Services, Tunnels and the rest — have one shape:
 
 - A chip before the field says where the list is: **web-01 ›** for a server's services or ports (purple with PROD on a production server), **main ›** for a commit. The field only filters, or takes what you type.
 - A line above the rows says what's known about the whole list where there's something to say (`52 units · 1 failed`, `2 of 5 changes staged`).
