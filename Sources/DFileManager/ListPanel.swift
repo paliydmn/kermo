@@ -406,6 +406,9 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         if col.state, let mark = it.busy ? (Symbol.pending, NSColor.secondaryLabelColor, "busy") : it.state.map({ ($0.symbol, $0.color, "\($0)") }) {
             let s = NSMutableAttributedString(attributedString: mark.0.text(mark.1, font: font, label: mark.2))
             s.append(NSAttributedString(string: " " + words, attributes: [.font: font, .foregroundColor: cell.color]))
+            let one = NSMutableParagraphStyle()
+            one.lineBreakMode = .byTruncatingTail
+            s.addAttribute(.paragraphStyle, value: one, range: NSRange(location: 0, length: s.length))
             cell.text = s
         } else {
             cell.text = nil
@@ -420,6 +423,9 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         let tf = NSTextField(labelWithString: "")
         tf.translatesAutoresizingMaskIntoConstraints = false
         tf.lineBreakMode = .byTruncatingTail
+        tf.maximumNumberOfLines = 1   // a long state: cut, not a second line
+        tf.cell?.usesSingleLineMode = true
+        tf.cell?.truncatesLastVisibleLine = true
         cell.addSubview(tf)
         cell.textField = tf
         var c = [tf.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4), tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor)]
