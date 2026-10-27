@@ -78,8 +78,9 @@ import Testing
     #expect(plain.cancel == nil && plain.action == nil, "an ordinary alert: AppKit's keys")
 }
 
-/// R-53, HIG: as macOS lays an alert out — two buttons in a row, the action right of Cancel (Keep Mine left of
-/// Reload); three or more one under another, the action on top, Cancel at the bottom.
+/// R-53, HIG: as macOS lays an alert out — two buttons in a row, the action right of Cancel; the safe default on the
+/// right where it isn't titled Cancel (Reload · Keep Mine, as seen in the app); three or more one under another, the
+/// action on top, Cancel at the bottom.
 @MainActor @Test func buttonsSitWhereHIGPutsThem() {
     var two = Confirm("q", action: "Delete")
     two.irreversible = true
@@ -87,10 +88,10 @@ import Testing
     a.layout()
     #expect(a.buttons[1].frame.minX < a.buttons[0].frame.minX, "Cancel · Delete")
     var mine = Confirm("q", action: "Reload")
-    mine.cancel = "Keep Mine"
+    (mine.cancel, mine.irreversible) = ("Keep Mine", true)
     let m = mine.alert()
     m.layout()
-    #expect(m.buttons[1].frame.minX < m.buttons[0].frame.minX, "Keep Mine · Reload")
+    #expect(m.buttons[0].frame.minX < m.buttons[1].frame.minX, "Reload · Keep Mine")
     var three = Confirm("q", action: "Reload")
     three.others = ["Compare"]
     let t = three.alert()
