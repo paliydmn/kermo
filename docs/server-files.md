@@ -15,7 +15,7 @@ F5 / F6, ⌘C / ⌘V and drag and drop copy and move files in every direction: s
 
 ## Open and edit
 
-- **F3** views a file, **F4** edits it. The editor uploads the file after every ⌘S, and closing with changes asks first.
+- **F3** views a file, **F4** edits it. The editor uploads the file after every ⌘S, and closing with changes asks first — “Save changes to “nginx.conf” on web-01?”, saying what Save does there: its check, the old version kept on this Mac, the production log.
 - **↩** opens a file in its app (so does Quick Look's **Open with**, except for a config ⌘Y shows through a read-only `.txt` copy). The copy is quarantined as a download is, so macOS checks it with Gatekeeper first: a script or app from a server doesn't just run. F3 and F4 open it in Kermo, without that. Every save there goes up to the server the same way. If someone changed the file there meanwhile, you're asked first (**Compare** shows the differences); on a production server you're asked once as well.
 - An app that autosaves (TextEdit) sends its autosaves too, so on a production server F4 is the safer choice. Quitting names what didn't reach the server; its copy is kept.
 - Saving a server config checks it first: see [Checks on save](config-checks.md).

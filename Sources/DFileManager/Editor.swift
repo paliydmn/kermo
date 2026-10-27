@@ -483,9 +483,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     private func askOverwrite(_ now: Stamp?) {
         noticed = now
         guard let app = NSApp.delegate as? AppDelegate else { return }
-        let size = ByteCountFormatter.short(noticed?.size ?? 0)
         var c = Confirm("“\(url.lastPathComponent)” changed on disk since you opened it", action: "Overwrite")
-        c.note = "Something else wrote it (\(size) now). Overwriting replaces those changes with yours. "
+        c.note = "Something else wrote it" + (now.map { ": " + Self.when($0) } ?? "") + ". Overwriting replaces those changes with yours. "
             + "Reload drops your edits and shows the file as it is now. Save As keeps both. Cancel keeps your text unsaved here."
         (c.others, c.irreversible) = (["Reload", "Save As…"], true)   // ↩: Cancel
         Task {
@@ -501,6 +500,11 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
             default: break
             }
         }
+    }
+
+    /// "Today 13:33, 2 KB now": when it was written, as the panel says dates, and its size.
+    static func when(_ s: Stamp) -> String {
+        DateColumn().text(Date(timeIntervalSince1970: TimeInterval(s.sec))) + ", \(ByteCountFormatter.short(Int64(s.size))) now"
     }
 
     /// Saving would change bytes the user can't see (damaged UTF-8 becomes U+FFFD) or write Windows-1251, which is
@@ -629,7 +633,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         noticed = now
         var c = Confirm("“\(url.lastPathComponent)” changed on disk", action: "Reload")
         (c.cancel, c.irreversible) = ("Keep Mine", true)
-        c.note = "Reload it and lose your unsaved changes, or keep editing your version?"
+        c.note = "Something else wrote it: \(Self.when(now)). Reload it and lose your unsaved changes, or keep editing your version?"
         Task {
             guard await AppDelegate.sheet(c.alert(), on: window!) == 0 else { return }
             await reload()
@@ -676,19 +680,24 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         return SHA256.hash(data: bom ? Data([0xEF, 0xBB, 0xBF]) + text : text) != digest
     }
 
+    /// "Save changes to “nginx.conf” on web-01?", its strip, what Save does there besides (`AppDelegate.saveSays`).
+    /// Save, Don't Save (⌘D), Cancel — one under another, as macOS stacks three; on production ↩ is Cancel.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard changed else { return true }
-        let a = NSAlert()
-        a.messageText = "Save changes to “\(url.lastPathComponent.bidiVisible)”?"
-        a.addButton(withTitle: "Save")
-        a.addButton(withTitle: "Cancel")
-        a.addButton(withTitle: "Don't Save")
-        a.beginSheetModal(for: sender) { [weak self] r in
+        AppDelegate.sheet(unsavedQuestion().alert(), on: sender) { [weak self] r in
             guard let self else { return }
-            if r == .alertFirstButtonReturn { Task { if await self.save(then: { sender.close() }) { sender.close() } } }
-            if r == .alertThirdButtonReturn { dirty = false; sender.close() }
+            if r == 0 { Task { if await self.save(then: { sender.close() }) { sender.close() } } }
+            if r == 1 { dirty = false; sender.close() }
         }
         return false
+    }
+
+    func unsavedQuestion() -> Confirm {
+        var c = Confirm("Save changes to “\(url.lastPathComponent)”" + (server.map { " on \(SavedServer.name(for: $0.target.asUser))" } ?? "") + "?",
+                        on: server?.target, action: "Save")
+        c.others = ["Don't Save"]
+        c.note = server.flatMap { (NSApp.delegate as? AppDelegate)?.saveSays($0.target, $0.path) }
+        return c
     }
 
     func windowWillClose(_ notification: Notification) {

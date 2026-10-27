@@ -53,7 +53,7 @@ Its title is the file's name with where it is under it, as the viewer's; the sta
 
 ### Closing and changes on disk
 
-⎋ or ⌘W closes the editor. With unsaved changes it asks **Save**, **Cancel** or **Don't Save**, which discards your edits. Typing and then undoing everything counts as no change. Quitting Kermo lists unsaved editors too.
+⎋ or ⌘W closes the editor. With unsaved changes it asks “Save changes to “nginx.conf” on web-01?” — **Save**, **Don't Save** (⌘D, discards your edits) or **Cancel**, one under another as macOS lays out three. For a server's file it says what Save does there besides writing: its [check](config-checks.md), the old version kept on this Mac, the production log; on a production server ↩ is Cancel and ⌘↩ saves. Typing and then undoing everything counts as no change. Quitting Kermo lists unsaved editors too.
 
 If the file changed on disk after you opened it, ⌘S asks **Overwrite**, **Reload** (drops your edits), **Save As…** (keeps both) or **Cancel**. ↩ picks **Cancel**; ⌘↩ overwrites. When you return to the window, it reloads a changed file silently if you have no edits; otherwise it asks **Keep Mine** or **Reload**. Keep Mine loses nothing — the next ⌘S asks before writing over the file — so ↩ and ⎋ keep your text, and ⌘↩ reloads.
 

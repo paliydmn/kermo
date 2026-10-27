@@ -25,7 +25,7 @@ On this Mac, ↩ works as Midnight Commander's subshell does: your aliases and f
 2. Tick the servers. The filter narrows the list by name or address; in the filter ⌘A ticks all it shows, ⇧⌘A unticks them — the key bar along the sheet's bottom shows those two while the filter has the focus, with ↩ Run and ⎋ Cancel. What runs is what's ticked and shown.
 3. Click **Run on 5 Servers** (↩). The last choice and command come back next time.
 
-Up to 8 servers run at once. Logins go one at a time, so password dialogs come one after another, each saying it's "For “Run on Servers”". One output window shows the lines as they come, each under its server's name, errors in red:
+Up to 8 servers run at once. Logins go one at a time, so password questions come one after another, each saying it's "For “Run on Servers”". One output window shows the lines as they come, each under its server's name, errors in red:
 
 ```
 web1 │ 14:02:11 up 31 days,  2 users,  load average: 0.08, 0.03, 0.01

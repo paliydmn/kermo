@@ -1463,11 +1463,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             case .failure(let error as SFTPError) where error.connection:
                 onRemoteResult?(target, error.message)
                 if let window = view.window, let change = error.hostKey {
-                    // ↩ is Cancel: the old key goes only when asked, and the next login asks about the new one (askpass).
-                    let check = SavedServer.isProd(target) ? "\n\nCheck the new fingerprint with the server's admin first." : ""
-                    let alert = AppDelegate.alert("Can't connect to \(target.host)", info: error.message + check, ["Cancel", "Remove Old Key…"], default: 0)
                     Task { [weak self] in
-                        guard await AppDelegate.sheet(alert, on: window) == 1 else { return }
+                        guard await AppDelegate.sheet(Self.hostKeyQuestion(change, on: target).alert(), on: window) == 0 else { return }
                         self?.removeOldKey(change, then: { $0.loadRemote(target, dir: dir, select: select, keep: keep, onFailure: onFailure) })
                     }
                 } else if let window = view.window {
@@ -1521,6 +1518,19 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         showPath()
         applyView(select: nil, newFolder: true)
         updateTabBar()
+    }
+
+    /// A changed host key (R-52, mockup hostkey-dlg): a red line on what it may be, the new key as ssh gave it, where the old
+    /// one is kept, on production who to ask first. ↩ is Cancel: the old key goes only when asked (`removeOldKey`), and the
+    /// next login asks about the new one. The old key's fingerprint isn't shown: ssh doesn't say it.
+    static func hostKeyQuestion(_ change: HostKeyChange, on target: SFTPTarget) -> Confirm {
+        var c = Confirm("\(SavedServer.name(for: target.asUser))'s host key has changed", on: target, action: "Remove Old Key…")
+        c.alarm = "Either the server was reinstalled, or someone is intercepting the connection."
+        (c.runs, c.command) = ("Its new \(change.keyType) key:", change.fingerprint)
+        c.note = "The old one is kept in \((change.file as NSString).abbreviatingWithTildeInPath), line \(change.line)."
+            + (SavedServer.isProd(target) ? " Production: check the new fingerprint with the server's admin first." : "")
+        c.returnCancels = true
+        return c
     }
 
     /// "Remove Old Key…": the server's old host key out of known_hosts, then `then` (connect again: ssh asks about the new one).

@@ -51,7 +51,7 @@ The tunnel takes the same port on this Mac when it's free, else the next free on
 
 Kermo listens on `localhost:<port>` itself, on `127.0.0.1` and `::1` as `ssh -L` does. Each connection there goes over the server's shared ssh connection (`ssh -W host:port`): one login with its panels and terminals, `ProxyJump` included.
 
-After sleep or a network change nothing needs restarting: the next connection logs in again, unnoticed with a key or a saved password. A password dialog for a connection in the background says which tunnel it's for. Tunnels that were on listen again at launch, without connecting until a client comes.
+After sleep or a network change nothing needs restarting: the next connection logs in again, unnoticed with a key or a saved password. A password question for a connection in the background says which tunnel it's for. Tunnels that were on listen again at launch, without connecting until a client comes.
 
 ## State
 

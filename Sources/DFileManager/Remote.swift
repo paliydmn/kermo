@@ -567,18 +567,38 @@ final class Tunnels {
     }
 }
 
-/// ssh can't prompt on a terminal we don't have; SSH_ASKPASS makes it ask through a macOS dialog instead
-/// (passwords, key passphrases, "continue connecting (yes/no)?").
+/// ssh can't prompt on a terminal we don't have; SSH_ASKPASS makes it ask through this script instead (passwords, key
+/// passphrases, "continue connecting (yes/no)?"): Kermo itself in a sheet (`Askpass`, `AskpassSheet`), else — Kermo
+/// didn't take it, or isn't the app (the tests) — a macOS dialog.
 enum SSHAskpass {
+    /// This app's askpass socket, found by `$DFM_ASKPASS_SOCKET`: one per process, so two Kermos (a test copy beside
+    /// the real one) each ask in their own window.
+    static let socket = SFTP.controlDir + "/askpass-\(getpid()).sock"
+    /// Kermo's executable — the askpass client (`--askpass`) — when it runs as the app.
+    static let app: String? = Bundle.main.bundlePath.hasSuffix(".app") ? Bundle.main.executablePath : nil
+
     static let env: [String: String] = {
         let path = SFTP.controlDir + "/askpass"
-        let script = """
+        try? script().write(toFile: path, atomically: true, encoding: .utf8)
+        chmod(path, 0o700)
+        return ["SSH_ASKPASS": path, "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": ":0"]
+            .merging(app.map { ["DFM_ASKPASS_SOCKET": socket, "DFM_ASKPASS_APP": $0] } ?? [:]) { $1 }
+    }()
+
+    /// `osascript`: the dialog's program (tests: a stand-in).
+    static func script(osascript: String = "/usr/bin/osascript") -> String {
+        """
             #!/bin/sh
             # Called by ssh with the prompt as $1; prints the answer.
             # A saved password waits in a FIFO, once (SFTP.withPassword); a second ask means it was wrong.
             \(SFTP.askpassSavedPassword)
+            # Kermo asks, in a sheet on its window: 0 answered, 1 cancelled; anything else (it didn't take it) — the dialog.
+            if [ -n "$DFM_ASKPASS_SOCKET" ] && [ -x "$DFM_ASKPASS_APP" ]; then
+                "$DFM_ASKPASS_APP" --askpass "$1"; s=$?
+                [ "$s" -le 1 ] && exit "$s"
+            fi
             # $DFM_ASKPASS_WHY: what the login is for, when nothing on screen says so (a tunnel's client connecting).
-            exec /usr/bin/osascript - "$1" "$DFM_ASKPASS_WHY" <<'APPLESCRIPT'
+            exec \(osascript) - "$1" "$DFM_ASKPASS_WHY" <<'APPLESCRIPT'
             on run argv
                 set p to item 1 of argv
                 if item 2 of argv is not "" then set p to p & return & return & item 2 of argv
@@ -593,10 +613,28 @@ enum SSHAskpass {
             APPLESCRIPT
 
             """
-        try? script.write(toFile: path, atomically: true, encoding: .utf8)
-        chmod(path, 0o700)
-        return ["SSH_ASKPASS": path, "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": ":0"]
-    }()
+    }
+
+    /// Starts this app's side (`AskpassSheet` asks); sockets left by Kermos that are gone go. nil: not the app.
+    static func serve() -> Askpass.Server? {
+        guard app != nil else { return nil }
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: SFTP.controlDir)) ?? [] where name.hasPrefix("askpass-") && name.hasSuffix(".sock") {
+            if let pid = Int32(name.dropFirst("askpass-".count).dropLast(".sock".count)), pid != getpid(), kill(pid, 0) != 0, errno == ESRCH {
+                unlink(SFTP.controlDir + "/" + name)
+            }
+        }
+        return Askpass.Server(path: socket) { request, taken, gone in
+            let answered = DispatchSemaphore(value: 0)
+            nonisolated(unsafe) var answer: String?
+            Task { @MainActor in
+                taken()
+                answer = await AskpassSheet.ask(request, gone: gone)
+                answered.signal()
+            }
+            answered.wait()
+            return answer
+        }
+    }
 }
 
 /// Mounts smb/nfs/afp shares the way Finder does (Keychain, standard sign-in dialog), without opening a Finder window.

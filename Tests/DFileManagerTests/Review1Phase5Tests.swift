@@ -238,3 +238,94 @@ extension ServerLockTests {
     #expect(edit.prod.state == .on && edit.lock.state == .on && edit.forgetSudo != nil && edit.forget == nil)
     #expect(edit.typed.prod && edit.typed.locked && edit.typed.id == saved.id)
 }
+
+/// R-52: the askpass script asks Kermo first — its answer goes to ssh, its Cancel is a Cancel — and only when Kermo
+/// didn't take it (2), or isn't the app, the dialog (here a stand-in, never osascript in a test).
+@Test func theAskpassScriptAsksKermoFirst() throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-r1p5-ap-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let script = dir + "/askpass", app = dir + "/app"
+    try SSHAskpass.script(osascript: "/bin/echo dialog").write(toFile: script, atomically: true, encoding: .utf8)
+    chmod(script, 0o700)
+    func run(_ appSays: String?, socket: Bool = true) -> (Int32, String) {
+        if let appSays { try? "#!/bin/sh\n\(appSays)\n".write(toFile: app, atomically: true, encoding: .utf8); chmod(app, 0o700) }
+        let p = Process(), out = Pipe()
+        p.executableURL = URL(fileURLWithPath: script)
+        p.arguments = ["me@web's password: "]
+        p.environment = ["PATH": "/usr/bin:/bin"].merging(socket ? ["DFM_ASKPASS_SOCKET": dir + "/s.sock", "DFM_ASKPASS_APP": app] : [:]) { $1 }
+        (p.standardOutput, p.standardInput) = (out, FileHandle.nullDevice)
+        try? p.run()
+        p.waitUntilExit()
+        return (p.terminationStatus, String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+    }
+    #expect(run("[ \"$1\" = --askpass ] && echo pw") == (0, "pw\n"))
+    #expect(run("exit 1") == (1, ""), "Cancel: no dialog after it")
+    #expect(run("exit 2").1.hasPrefix("dialog - me@web's password: "), "Kermo didn't take it")
+    #expect(run(nil, socket: false).1.hasPrefix("dialog"), "not the app: the dialog, as before")
+}
+
+extension ServerLockTests {
+/// R-52: ssh's questions in Kermo's style — whose login (its name and strip), what the answer is for, the field;
+/// ↩ Continue for a password even on production, ↩ Cancel for a new host key there.
+@MainActor @Test func sshsQuestionsSayWhoseLoginItIs() {
+    var prod = SavedServer(address: "deploy@web.invalid:2222")!
+    (prod.prod, prod.name) = (true, "web-01")
+    ServerLock.servers = { [prod] }
+    defer { ServerLock.servers = { [] } }
+    let pw = AskpassSheet.question(Askpass.Request(prompt: "deploy@web.invalid's password: ", why: "For “Run on Servers”", target: "deploy@web.invalid\t2222"))
+    #expect(pw.confirm.title == "Password for deploy@web.invalid" && pw.confirm.strip == [.prod] && pw.confirm.place == "web-01")
+    #expect(pw.confirm.note == "It goes to ssh, for web-01, and nowhere else. For “Run on Servers”." && pw.field is NSSecureTextField && !pw.confirm.safe)
+    #expect(pw.confirm.buttons == ["Continue", "Cancel"])
+    let pass = AskpassSheet.question(Askpass.Request(prompt: "Enter passphrase for key '/Users/me/.ssh/id_ed25519': "))
+    #expect(pass.confirm.title == "Passphrase for the key “id_ed25519”" && pass.confirm.strip.isEmpty && pass.field is NSSecureTextField)
+    let known = """
+        The authenticity of host '[web.invalid]:2222 ([192.0.2.7]:2222)' can't be established.
+        ED25519 key fingerprint is SHA256:KKEiekWvluTKax6JzdMGedc4ocvunCpugqUdDJAmUf4.
+        This key is not known by any other names.
+        Are you sure you want to continue connecting (yes/no/[fingerprint])?
+        """
+    let yes = AskpassSheet.question(Askpass.Request(prompt: known, target: "deploy@web.invalid\t2222"))
+    #expect(yes.confirm.title == "Continue connecting to web-01?" && yes.field == nil && yes.confirm.safe, "production: ↩ Cancel")
+    #expect(yes.confirm.command?.contains("SHA256:KKEiekWvluTKax6JzdMGedc4ocvunCpugqUdDJAmUf4") == true)
+    let user = AskpassSheet.question(Askpass.Request(prompt: "Username for 'https://github.com': "))
+    #expect(user.confirm.title == "Username for 'https://github.com'" && user.field != nil && !(user.field is NSSecureTextField))
+    #expect(AskpassSheet.login(in: "(me@web) Password:") == "me@web" && AskpassSheet.target("me@web\t2222") == SFTPTarget(host: "me@web", port: 2222))
+
+    let sudo = AskpassSheet.sudo(prod.target.asRoot(), wrong: true)
+    #expect(sudo.confirm.title == "Sorry, try again: sudo password on web-01" && sudo.confirm.strip == [.prod, .root] && !sudo.confirm.safe)
+    #expect(sudo.save.title == "Save in Keychain" && sudo.confirm.buttons == ["Continue", "Cancel"])
+}
+
+/// R-52: a changed host key — the red line, the new key as ssh gave it, where the old one is, on production who to
+/// ask; ↩ Cancel, Remove Old Key… the action.
+@MainActor @Test func aChangedHostKeySaysWhatItMayBe() throws {
+    var prod = SavedServer(address: "deploy@web.invalid:2222")!
+    (prod.prod, prod.name) = (true, "web-01")
+    ServerLock.servers = { [prod] }
+    defer { ServerLock.servers = { [] } }
+    let change = HostKeyChange(host: "[web.invalid]:2222", file: NSHomeDirectory() + "/.ssh/known_hosts", line: 12, keyType: "ED25519",
+                               fingerprint: "SHA256:KKEiekWvluTKax6JzdMGedc4ocvunCpugqUdDJAmUf4")
+    let c = PanelViewController.hostKeyQuestion(change, on: prod.target)
+    #expect(c.title == "web-01's host key has changed" && c.alarm == "Either the server was reinstalled, or someone is intercepting the connection.")
+    #expect(c.command == change.fingerprint && c.runs == "Its new ED25519 key:" && c.buttons == ["Remove Old Key…", "Cancel"] && c.safe)
+    #expect(c.note == "The old one is kept in ~/.ssh/known_hosts, line 12. Production: check the new fingerprint with the server's admin first.")
+    #expect(PanelViewController.hostKeyQuestion(change, on: SFTPTarget(host: "me@other")).note == "The old one is kept in ~/.ssh/known_hosts, line 12.")
+}
+}
+
+/// R-53, step 8: unsaved changes — Save, Don't Save (⌘D, kept on production too), Cancel; what Save does there, only
+/// what will happen.
+@MainActor @Test func unsavedChangesSayWhatSaveDoes() {
+    var c = Confirm("Save changes to “nginx.conf” on web-01?", action: "Save")
+    c.others = ["Don't Save"]
+    c.chips = [.prod]
+    let a = c.alert()
+    #expect(a.buttons.map(\.title) == ["Save", "Don't Save", "Cancel"])
+    #expect(a.buttons.map { $0.identifier == Confirm.commandReturn ? "⌘↩" : ($0.keyEquivalentModifierMask == .command ? "⌘" : "") + $0.keyEquivalent }
+            == ["⌘↩", "⌘d", "\r"], "production: ↩ Cancel")
+    let app = AppDelegate()
+    let says = app.saveSays(SFTPTarget(host: "me@web"), "/etc/nginx/nginx.conf")
+    #expect(says == "Saving checks it with nginx once it's there (the old text goes back if that fails) and keeps the old version on this Mac.")
+    #expect(app.saveSays(SFTPTarget(host: "me@web"), "/srv/notes.txt") == "Saving keeps the old version on this Mac.")
+}

@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     let syncJobs = NSHashTable<FileJob>.weakObjects()
     /// The last undo/redo's disk work: each waits for the one before (`afterUndoWork`).
     var undoWork: Task<Void, Never>?
+    private var askpass: Askpass.Server?   // ssh's questions, asked in a sheet (`AskpassSheet`)
     var terminal: EmbeddedTerminal!   // set in tests
     private var split: NSSplitView!
     private var sidebarItem: NSSplitViewItem!
@@ -81,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         SFTP.hasPassword = { SSHPasswords.has($0) }
         SFTP.sudoPassword = { SudoPasswords.password($0, wrong: $1) }
         SFTP.sudoPasswordTaken = { SudoPasswords.taken($0, $1) }
+        askpass = SSHAskpass.serve()
         ServerLock.servers = { [unowned self] in savedServers }
         ServerCopies.upload = { [unowned self] c in await upload(c.url, to: c.path, on: c.target, c.state) }
         AuditLog.failed = { [unowned self] in active.flash($0, error: true) }
@@ -250,6 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         saveSession()   // the cursors, the active panel, the dividers: none of them saves it as it changes
         Config.save("frecency.json", frecency)
         tunnels.stopAll()   // first: a client connecting now would start a login
+        askpass?.stop()   // a login still asking falls back to the dialog
         // No logged-in connection outlives the app. All at once: each may take up to `SFTP.stopWait`.
         let masters = Array(SFTP.masterTargets)
         DispatchQueue.concurrentPerform(iterations: masters.count) { SFTP.stopMaster(masters[$0], now: true) }
@@ -1528,28 +1531,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// A root panel's sudo password for `t`'s server: a sheet on the window in front (an editor saving, say), never shown
     /// again or kept anywhere but `SudoPasswords` (and the Keychain, if ticked). `wrong`: sudo refused the one before.
     func askSudoPassword(_ t: SFTPTarget, wrong: Bool) async -> (password: String, save: Bool)? {
-        let alert = NSAlert()
-        alert.messageText = (wrong ? "Sorry, try again: " : "") + "sudo password on \(t.host)"
-        alert.informativeText = "For root there: a root panel, a reload, a restart. It goes to sudo there, through ssh, and nowhere else."
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSSecureTextField(string: "")
-        field.widthAnchor.constraint(equalToConstant: 300).isActive = true
-        let save = NSButton(checkboxWithTitle: "Save in Keychain", target: nil, action: nil)
-        save.toolTip = "Kept as “Kermo sudo” in the login keychain, apart from the ssh password; gone once sudo refuses it, or with the saved server"
-        let stack = NSStackView(views: [field, save])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.frame = NSRect(x: 0, y: 0, width: 300, height: 52)
-        alert.accessoryView = stack
-        alert.window.initialFirstResponder = field
-        if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }
-        // On a Picker that stays open while it asks (a restart from Services…), else not on a panel that closes then.
-        let over: NSWindow = Picker.current.flatMap { $0.isHolding ? $0.window : nil } ?? NSApp.keyWindow.flatMap { $0 is NSPanel ? nil : $0 } ?? window
-        let response: NSApplication.ModalResponse = await withCheckedContinuation { cont in
-            alert.beginSheetModal(for: over) { cont.resume(returning: $0) }
-        }
-        return response == .alertFirstButtonReturn ? (field.stringValue, save.state == .on) : nil
+        let q = AskpassSheet.sudo(t, wrong: wrong), alert = q.confirm.alert()
+        alert.window.initialFirstResponder = q.field
+        return await Self.sheet(alert, on: AskpassSheet.window()) == 0 ? (q.field.stringValue, q.save.state == .on) : nil
     }
 
     /// A sheet with `buttons` (the last one is Cancel / ⎋) on `sheetWindow` (default: the main one); returns the index pressed.
@@ -1565,12 +1549,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// `alert` as a sheet on `window`; the button's index.
     static func sheet(_ alert: NSAlert, on window: NSWindow) async -> Int {
+        await withCheckedContinuation { cont in sheet(alert, on: window) { cont.resume(returning: $0) } }
+    }
+
+    /// The same, the sheet up before this returns (a window's close asks while it stays); `then` gets the index.
+    static func sheet(_ alert: NSAlert, on window: NSWindow, then: @escaping @MainActor (Int) -> Void) {
         let keys = safeKeys(alert)
-        defer { keys.map(NSEvent.removeMonitor) }
-        let response: NSApplication.ModalResponse = await withCheckedContinuation { cont in
-            alert.beginSheetModal(for: window) { cont.resume(returning: $0) }
+        alert.beginSheetModal(for: window) { r in
+            MainActor.assumeIsolated {
+                keys.map(NSEvent.removeMonitor)
+                then(r.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue)
+            }
         }
-        return response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
     }
 
     /// `alert` app-modal, where there's no window to put it on or it's about the whole app (Quit); the button's index.
