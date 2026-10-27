@@ -27,6 +27,11 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         var subtitleColor: NSColor? = nil   // a state that must show whatever the highlight (a failed service: red)
         var busy = false   // a spinner after the subtitle: something runs on it
         var menu: (@MainActor () -> NSMenu?)? = nil   // its context menu: right-click, ⌃-click, ⌃↩ or ⇧F10
+        // In a panel (`ListPanel`), not here: its columns besides title, subtitle and detail; its state as a shape (and
+        // problems first); what its keys and menu do there — the list `actions`, `run` and `menu` are made of.
+        var cells: [String: String] = [:]
+        var state: StateMark? = nil
+        var listActions: (@MainActor () -> [ListAction])? = nil
         var run: @MainActor () -> Void
     }
 
@@ -54,6 +59,8 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     private let emptyText: String
     private let bar = KeyBarView(chips: false)
     private let hints: [KeySlot]
+    /// ⌘↩: the same list in the other panel, with what's typed and highlighted (`show(other:)`).
+    private let other: (@MainActor (_ query: String, _ id: String?) -> Void)?
 
     /// `rank` scores an item against the query (nil = hide); default fuzzy-matches title + subtitle.
     /// Ties keep the given order, so pass items best-first.
@@ -65,17 +72,19 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     /// field ("web-01 ›", in its place's color). `header`: what's known about the whole list ("52 units · 1 failed").
     /// `empty`: said when there's nothing at all (else "Nothing here"; "No matches" when typing hid every row).
     /// `hints`: keys to know that aren't a row's (the user menu's %f), on the action bar before ⎋.
+    /// `other`: ⌘↩ Other Panel — the picker closes (`onClose` first) and the list goes on in the other panel.
     @discardableResult
     static func show(over window: NSWindow, placeholder: String, scope: (name: String, chips: [Chip])? = nil, header: String? = nil,
                      empty: String = "Nothing here", hints: [KeySlot] = [], items: [Item], rank: ((Item, String) -> Int?)? = nil,
                      freeText: ((String) -> [Item])? = nil, freeTextLast: Bool = false, selected: Int = 0,
                      query: String = "", select: String? = nil,
-                     onDismiss: (@MainActor () -> Void)? = nil, onClose: (@MainActor (String, String?) -> Void)? = nil) -> Picker {
+                     onDismiss: (@MainActor () -> Void)? = nil, onClose: (@MainActor (String, String?) -> Void)? = nil,
+                     other: (@MainActor (String, String?) -> Void)? = nil) -> Picker {
         current?.close()
         let p = Picker(parent: window, placeholder: placeholder, scope: scope, header: header, empty: empty, hints: hints, items: items,
                        rank: rank ?? { item, q in Fuzzy.score(q, item.title + " " + item.subtitle) }, freeText: freeText,
                        freeTextLast: freeTextLast, selected: selected, query: query, select: select,
-                       onDismiss: onDismiss, onClose: onClose)
+                       onDismiss: onDismiss, onClose: onClose, other: other)
         current = p
         p.present()
         return p
@@ -86,8 +95,10 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
 
     private init(parent: NSWindow, placeholder: String, scope: (name: String, chips: [Chip])?, header: String?, empty: String, hints: [KeySlot],
                  items: [Item], rank: @escaping (Item, String) -> Int?, freeText: ((String) -> [Item])?, freeTextLast: Bool, selected: Int,
-                 query: String, select: String?, onDismiss: (@MainActor () -> Void)?, onClose: (@MainActor (String, String?) -> Void)?) {
+                 query: String, select: String?, onDismiss: (@MainActor () -> Void)?, onClose: (@MainActor (String, String?) -> Void)?,
+                 other: (@MainActor (String, String?) -> Void)?) {
         self.parent = parent
+        self.other = other
         self.items = items
         self.rank = rank
         self.freeText = freeText
@@ -107,16 +118,18 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         panel.delegate = self
         panel.onKey = { [unowned self] e in
             let key = Shortcut(event: e)   // the physical key: ⌘E is "у" on a Ukrainian layout
+            if key == Shortcut("cmd+return"), other != nil { openOther(); return true }
             guard let row = highlighted else { return false }
             if Self.menuKeys.contains(key), row.menu != nil { return popUpMenu() }
             guard let a = row.actions.first(where: { $0.key == key }) else { return false }
             perform(a)
             return true
         }
-        bar.keep = ["return", "menu", "esc"]   // a narrow picker keeps ↩, ⌃↩ and ⎋ in sight
+        bar.keep = ["return", "other", "menu", "esc"]   // a narrow picker keeps ↩, ⌘↩, ⌃↩ and ⎋ in sight
         bar.onRun = { [unowned self] id in   // a slot's click: what its key does
             switch id {
             case "return": choose()
+            case "other": openOther()
             case "esc": close()
             case "menu": _ = popUpMenu()
             default: if let i = Int(id), let a = highlighted?.actions, a.indices.contains(i) { perform(a[i]) }
@@ -302,7 +315,17 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
             slots += row.actions.enumerated().filter { !$0.element.label.isEmpty }.map { KeySlot(key: $0.element.key.display, label: $0.element.label, id: "\($0.offset)") }
             if row.menu != nil { slots.append(KeySlot(key: "⌃↩", label: "Actions", id: "menu")) }
         }
+        if other != nil { slots.append(KeySlot(key: "⌘↩", label: "Other Panel", id: "other")) }
         bar.list = slots + hints + [KeySlot(key: "⎋", label: "Close", id: "esc")]
+    }
+
+    /// ⌘↩: closes — saying what was typed and highlighted (`onClose`) — then hands that to `other`.
+    private func openOther() {
+        guard let other else { return }
+        let (q, id) = (field.stringValue, highlighted?.id)
+        onDismiss = nil
+        close()
+        DispatchQueue.main.async { other(q, id) }   // after focus is back on the main window
     }
 
     @objc private func choose() {

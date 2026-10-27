@@ -57,7 +57,7 @@ extension AppDelegate {
         cmd("tunnel.forward", "Forward Port…", [], menu: "Server/Ports & Tunnels", group: 2, aliases: "ports listening ss netstat tunnel localhost -L") { $0.forwardPort() },
         cmd("ssh.copyKey", "Copy SSH Key to Server…", [], menu: "Server", group: 4, short: "Copy SSH Key", aliases: "ssh-copy-id authorized_keys public key login password") { $0.copyKey() },
         cmd("server.disconnect", "Disconnect", [], menu: "Server", group: 5, short: "Disconnect", aliases: "logout close connection ssh Disconnect Server") { app in
-            let t = app.terminalActive ? app.terminal.current?.target : app.active.remote?.target
+            let t = app.terminalActive ? app.terminal.current?.target : app.active.remote?.target ?? app.active.list?.source.target
             if let t { app.disconnect(t) } else { NSSound.beep() }
         },
         cmd("ssh.reconnect", "Reconnect SSH Session", [], menu: "Server", group: 5, short: "Reconnect", aliases: "ssh") { app in

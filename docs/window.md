@@ -8,7 +8,7 @@ How the Kermo window is laid out, and the three ways to reach anything: the key 
 
 ## Panels and tabs
 
-The window shows two to four panels side by side, each with its own tabs. Tab moves between panels. The active panel has a 2 pt line under its path bar in the color of where it is: the accent color on this Mac (a theme with a background has its own, cyan in Midnight Commander and Far Manager), purple on a production server, orange in a [root panel](root-panel.md), purple again when that's on a production server. Its path is in full contrast, the other panels' paths are dimmed, and their cursor is an outline (in a theme's dimmed text color). A panel can show a folder on this Mac, a [server](servers.md), an archive, a Git list or search results.
+The window shows two to four panels side by side, each with its own tabs. Tab moves between panels. The active panel has a 2 pt line under its path bar in the color of where it is: the accent color on this Mac (a theme with a background has its own, cyan in Midnight Commander and Far Manager), purple on a production server, orange in a [root panel](root-panel.md), purple again when that's on a production server. Its path is in full contrast, the other panels' paths are dimmed, and their cursor is an outline (in a theme's dimmed text color). A panel can show a folder on this Mac, a [server](servers.md), an archive, a Git list, search results, or a list of what a server runs: its [services or containers](servers.md#in-a-panel), with columns, a filter and marks of its own.
 
 The tab in front has a bold title with a line under it, in the accent color or the server's purple or orange; the other tabs' titles are grey. A server's tab has its chips before its title: PROD for a production server, ROOT for a root panel. The terminal's tabs look the same, and an SSH tab's dot is green while it's connected, grey when it isn't; a root login's tab has ROOT.
 
@@ -114,7 +114,7 @@ The lists that ask you to choose — Connect (⌃⌘K, ⌘K), Jump to Folder (�
 - A chip before the field says where the list is: **web-01 ›** for a server's services or ports (purple with PROD on a production server), **main ›** for a commit. The field only filters, or takes what you type.
 - A line above the rows says what's known about the whole list where there's something to say (`52 units · 1 failed`, `2 of 5 changes staged`).
 - A line under the rows says how the last action went, and stays until the next one; a look at a server that failed says why there.
-- The **action bar** along the bottom shows what ↩ does on the highlighted row (**↩ Connect**, **↩ Status**, **↩ Turn Off**), that row's own keys (**⌘E Edit**, **⌘R Restart**), **⌃↩ Actions** where the row has a menu, and **⎋ Close**. Click a slot to do what its key does; **+N** lists the slots that don't fit.
+- The **action bar** along the bottom shows what ↩ does on the highlighted row (**↩ Connect**, **↩ Status**, **↩ Turn Off**), that row's own keys (**⌘E Edit**, **⌘R Restart**), **⌃↩ Actions** where the row has a menu, **⌘↩ Other Panel** where the list can be a panel (Services, Containers), and **⎋ Close**. Click a slot to do what its key does; **+N** lists the slots that don't fit.
 - An empty list says so in the middle: the list's own words (`Nothing listens on TCP there`), or **No matches** when what you typed hides every row.
 
 ## Menus

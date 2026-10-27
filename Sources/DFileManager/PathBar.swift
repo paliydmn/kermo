@@ -79,8 +79,10 @@ final class PathBar: LinedStack {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    /// The place: its symbol and name, a server's chips. `scp`: on a server, what ⌥-click on Copy gives.
-    func showPlace(_ symbol: Symbol?, _ name: String, chips: [Chip], scp: String?) {
+    /// The place: its symbol and name, a server's chips. `scp`: on a server, what ⌥-click on Copy gives. `copy`: there's
+    /// a path to copy (a list of a server's isn't one: no button).
+    func showPlace(_ symbol: Symbol?, _ name: String, chips: [Chip], scp: String?, copy: Bool = true) {
+        copyButton.isHidden = !copy
         placeIcon.image = symbol?.image(name)
         placeIcon.isHidden = symbol == nil
         placeName.stringValue = name.bidiVisible

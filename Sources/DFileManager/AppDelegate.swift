@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     let cmdKey = NSButton(title: "", target: nil, action: nil)
     private var historyIndex = 0
     var commands: [Command] = []   // set in tests
-    private var keymap: [Shortcut: Command] = [:]
+    private(set) var keymap: [Shortcut: Command] = [:]
     let keyBar = KeyBarView()
     /// Narrowest main window: two 360 pt panels, and the key bar's six file actions plus "+N" (U4).
     static let minWidth: CGFloat = 720
@@ -501,7 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     // MARK: - Panels (2–4)
 
-    private func wire(_ panel: PanelViewController) {
+    func wire(_ panel: PanelViewController) {   // internal: tests wire their panels as the app does
         panel.showPerms = defaults.bool(forKey: "showPerms")
         panel.keyFor = { [unowned self] id in commands.first { $0.id == id }?.keys.first?.display }
         panel.onOpenInOther = { [unowned self, unowned panel] dir, server in   // the active panel's other; from another panel, the active one
@@ -513,6 +513,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         panel.onCommand = { [unowned self] in run($0) }
         panel.onCursorChange = { [unowned self, unowned panel] in
             if quickViewOn && panel === active { showQuickView() }
+            if panel.list != nil && panel === active { keyBar.list = focusedKeys }   // the row's keys
+        }
+        panel.onListKey = { [unowned self, unowned panel] in listKey($0, in: panel) }
+        panel.onListMenu = { [unowned self, unowned panel] menu in panel.list.map { fillListMenu(menu, $0) } }
+        panel.onListChange = { [unowned self, unowned panel] in
+            guard panel === active else { return }
+            updateMenuKeys()   // the keys its rows take leave the menu
+            keyBar.list = focusedKeys
         }
         panel.onQuickTab = { [unowned self, unowned panel] in if quickViewOn && panel === other { showQuickView() } }
         panel.onTransfer = { [unowned self] items, side, dir, move in
@@ -532,7 +540,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         panel.onPathChange = { [unowned self, unowned panel] in
             saveSession()
             updatePrompt()
-            if panel.remote == nil && panel.parked == nil { recordVisit(panel.path) }   // a parked tab's folder isn't on screen
+            updateMenuKeys()   // a list's row keys taken off the menu, or given back
+            if panel.remote == nil && panel.parked == nil && panel.list == nil { recordVisit(panel.path) }   // a parked tab's folder isn't on screen, nor a list's
             // Frequent re-ranks a moment later, so the list doesn't jump while you're browsing.
             sidebarRefresh?.cancel()
             sidebarRefresh = Task { [weak self] in
@@ -552,6 +561,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         activeIndex = i
         updatePanelStates()
         updatePrompt()
+        updateMenuKeys()
     }
 
     private func updatePanelStates() {
@@ -962,7 +972,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// A server's production mark changed (the menu, the server sheet): the panels' headers say it.
     func prodChanged() {
-        panels.filter { $0.remote != nil || $0.parked != nil }.forEach { $0.showPath() }   // not an archive's or search's header
+        panels.filter { $0.server != nil }.forEach { $0.showPath() }   // a server's files, a list of it, a parked tab: not an archive's or search's header
     }
 
     /// A menu item that asks for Touch ID first if the server is locked.
@@ -1041,9 +1051,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         } else {
             if let v = terminal.showPassingCtrlO(NSApp.currentEvent) { window.makeFirstResponder(v); return }
             // A server panel: its SSH session (or a new one in this folder), never a local shell.
-            guard let r = active.remote else { window.makeFirstResponder(terminal.show(cwd: active.path)); return }
-            if let t = terminal.tabs.first(where: { $0.kind == .ssh(r.target.asUser) && $0.isRunning }) { terminal.select(t.id) }
-            else { terminal.newSSH(r.target, command: SSHCommand.shell(in: r.dir)) }
+            guard let t = active.server else { window.makeFirstResponder(terminal.show(cwd: active.path)); return }   // a list's too
+            if let tab = terminal.tabs.first(where: { $0.kind == .ssh(t.asUser) && $0.isRunning }) { terminal.select(tab.id) }
+            else { terminal.newSSH(t, command: active.remote.map { SSHCommand.shell(in: $0.dir) }) }
             window.makeFirstResponder(terminal.show())
         }
     }
@@ -1085,22 +1095,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             guard let p = panels.first(where: { $0.remote.map { ServerRow.key($0.target) } == ServerRow.key(t) }),
                   let r = p.remote, r.dir != dir else { return }
             p.loadRemote(r.target, dir: dir, select: nil) { _ in }   // a folder it can't list: the panel stays, quietly
-        } else if active.remote == nil, dir != active.path {
+        } else if active.remote == nil, active.list == nil, dir != active.path {   // a list isn't a folder to follow
             active.navigate(to: dir)
         }
     }
 
     // MARK: - Command dispatch
 
-    private func runKey(_ event: NSEvent) -> Bool {
-        guard let c = keymap[Shortcut(event: event)] else { return false }
-        perform(c)
+    /// A key the menu didn't take (the panel's, the sidebar's): its command, the key known — a list acts on that key only.
+    func runKey(_ event: NSEvent) -> Bool {
+        let key = Shortcut(event: event)
+        guard let c = keymap[key] else { return false }
+        perform(c, key: key)
         return true
     }
 
-    func run(_ id: String) {
+    /// `key`: the one pressed, if it was (a list's row acts on its own keys only); nil: a click, a menu item, a slot.
+    func run(_ id: String, key: Shortcut? = nil) {
         guard let c = commands.first(where: { $0.id == id }) else { return }
-        perform(c)
+        perform(c, key: key)
     }
 
     /// Commands that would act on the local folder hidden behind a server panel (its `path`). Until they learn
@@ -1124,18 +1137,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     static let toOther: Set<String> = ["file.copy", "file.move", "panel.compare", "panel.sync", "panel.swap", "panel.same", "admin.copy",
                                        "admin.move", "file.extract", "file.compress", "file.symlink", "file.hardlink"]
 
-    private func perform(_ c: Command) {
+    private func perform(_ c: Command, key: Shortcut? = nil) {
         if !terminalActive {
+            if let list = active.list, listRun(c, key: key, in: list) { return keyBar.commandRan(c.id) }
             if let hint = active.parkedHint, !Self.runsParked(c.id) { return active.flash(hint) }
-            if let hint = other.parkedHint, Self.toOther.contains(c.id) { return active.flash("The other panel: " + hint) }
+            if let hint = other.parkedHint ?? other.listHint, Self.toOther.contains(c.id) { return active.flash("The other panel: " + hint) }
         }
         if active.remote != nil, !terminalActive, Self.localOnly.contains(c.id) { return active.flash("Not available on a server panel") }
         c.run(self)
         keyBar.commandRan(c.id)
     }
 
+    /// A menu item: clicked, or its key — then a list's row may take that key (`listRun`).
     @objc private func menuCommand(_ sender: NSMenuItem) {
-        run(sender.representedObject as! String)
+        let id = sender.representedObject as! String
+        let key = NSApp.currentEvent.flatMap { $0.type == .keyDown ? Shortcut(event: $0) : nil }
+        run(id, key: key.flatMap { k in commands.first { $0.id == id }?.keys.contains(k) == true ? k : nil })   // ↩ in an open menu isn't the item's key
     }
 
     /// Commands act on the main window's panels only. While a text field is being edited
@@ -1146,6 +1163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let c = commands.first { $0.id == id }
         if let on = c?.on { item.state = on(self) ? .on : .off }
         if id == "app.update" { item.title = updateOffered.map { "Kermo \($0) Available…" } ?? "Check for Updates…" }
+        if ["file.view", "file.edit", "go.path"].contains(id) { item.title = c?.title ?? item.title }   // a list names them for its rows (below)
         if id == "file.trash" { item.title = (activePanel.map { ($0.remote ?? $0.parked) != nil } ?? false) ? "Delete…" : c?.title ?? item.title }   // no Trash on a server
         if id == "file.copy" { item.title = activePanel?.archive != nil ? "Extract To…" : c?.title ?? item.title }   // F5 in an archive
         if id == "tab.close" {
@@ -1155,6 +1173,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         if id == "server.history", Editor.server(of: NSApp.keyWindow) != nil { return true }   // its editor's file
         if id == "help.keys", Self.windowToClose(key: NSApp.keyWindow, main: window) != nil { return true }   // that window's keys
+        if let list = activePanel?.list, let c, !terminalActive, !Self.appWide.contains(id) {   // a list: its rows' words, no file's commands
+            if let a = Self.titled(c, list.cursor?.listActions?() ?? []) { item.title = a.title }
+            else if !Self.runsInList(id) { return false }
+        }
         return Self.appWide.contains(id) || NSApp.keyWindow === window && canRun(id)
     }
 
@@ -1168,13 +1190,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func updateMenuKeys(_ menu: NSMenu? = NSApp.mainMenu) {
         guard terminal != nil, let menu else { return }
         let byID = Dictionary(commands.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let rowKeys = listRowKeys
         for it in menu.allItems where it.action == #selector(menuCommand(_:)) {
             let key = (it.representedObject as? String).flatMap { byID[$0]?.keys.first }
-            let on = key != nil && validateMenuItem(it)
+            let on = key != nil && !rowKeys.contains(key!) && validateMenuItem(it)
             it.keyEquivalent = on ? key!.menuKey : ""
             it.keyEquivalentModifierMask = on ? key!.flags : []
         }
     }
+
+    /// A list's row keys (⌘R Restart, F8 Stop…): off the menu, they go to the panel, which knows the key — not through
+    /// View ▸ Refresh's ⌘R.
+    var listRowKeys: Set<Shortcut> { Set((terminalActive ? nil : activePanel?.list?.cursor?.listActions?())?.compactMap(\.panelKey) ?? []) }
 
     /// ⌘W (Close Tab) in a viewer, editor or other document window closes that window, through its delegate, so
     /// the editor still asks about unsaved changes. In the main window, or a sheet / picker over it, it closes a tab.
@@ -1264,6 +1291,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func wireKeyBar() {
         let bar = keyBar
         bar.onRun = { [unowned self] id in
+            if id.hasPrefix("list:") { return runListSlot(id) }
             if keyBar.list == nil { return run(id) }
             if let p = panels.first(where: { $0.filterFocused || $0.pathFocused }) { p.fieldKey(id) } else { commandLineKey(id) }
         }
@@ -1456,11 +1484,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let remote: (host: String, dir: String?)?
         var local = active.path
         if terminal?.isFull == true, let t = terminal.current { remote = t.host.map { ($0, t.cwd) }; local = t.folder ?? local }
-        else { remote = (active.remote ?? active.parked).map { (SavedServer.name(for: $0.target.asUser), $0.dir) } }   // ⌘E's user, not root
+        else { remote = (active.remote ?? active.parked).map { (SavedServer.name(for: $0.target.asUser), $0.dir) }   // ⌘E's user, not root
+            ?? active.list.map { (SavedServer.name(for: $0.source.target.asUser), nil) } }
         let path = remote.map { r in r.dir.map { "\(r.host):\($0)" } ?? r.host } ?? (local as NSString).abbreviatingWithTildeInPath   // a place's name, no emoji
         promptLabel.stringValue = path + " $"   // ⌘E runs as the user, on a root panel too (`commandLineKeys(root:)` says so)
         let root = terminal?.isFull == true ? nil : (active.remote ?? active.parked).flatMap { $0.target.sudo ? $0 : nil }
-        if commandLineFocused { keyBar.list = focusedKeys }
+        keyBar.list = focusedKeys   // the command line's, a list's, or nil: the registry's layers
         sidebar.highlight(sidebarKey)
         keyBar.server = (active.remote ?? active.parked) != nil
         keyBar.archive = active.archive != nil
@@ -1524,7 +1553,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     var focusedKeys: [KeySlot]? {
         if commandLineFocused { return Self.commandLineKeys(root: (active.remote ?? active.parked).flatMap { $0.target.sudo ? $0.target : nil }) }
         if panels.contains(where: \.pathFocused) { return PanelViewController.pathKeys }
-        return panels.contains(where: \.filterFocused) ? PanelViewController.filterKeys : nil
+        if panels.contains(where: \.filterFocused) { return PanelViewController.filterKeys }
+        return terminalActive ? nil : activePanel?.list.map(listKeys)   // a list's: its row's keys in its words
     }
 
     /// What a key of the command line does — pressed there, or its slot clicked.
@@ -1560,7 +1590,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func runCommandLine(in dest: ShellWhere) {
         let command = cmdField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !command.isEmpty else { return }
-        if let hint = active.parkedHint { return active.flash(hint) }   // it'd run in the local folder behind it
+        if let hint = active.parkedHint ?? active.listHint { return active.flash(hint) }   // it'd run in the local folder behind it
         var h = history
         h.removeAll { $0 == command }
         h.append(command)

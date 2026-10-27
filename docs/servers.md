@@ -51,7 +51,7 @@ To run one command on several servers at once, choose **Run on Servers…** in t
 
 ## Services and containers
 
-**Services…** and **Containers…** (⌘⇧P, a server's sidebar menu) list what a server runs, in the same search window as Forward Port…: on the server of the active panel or SSH tab, otherwise you pick one. A locked server asks for Touch ID first; ⎋ stops the look.
+**Services…** and **Containers…** (⌘⇧P, a server's sidebar menu) list what a server runs, in the same search window as Forward Port…: on the server of the active panel or SSH tab, otherwise you pick one. A locked server asks for Touch ID first; ⎋ stops the look. ⌘↩ shows the list [in a panel](#in-a-panel) instead.
 
 **Services…** asks the server's `systemctl` (systemd's JSON where it has it, its table on an old one), and in the same command whether each service can reload and whether it starts at boot. A row is the service's name, its state (`active · running`, `failed`) and its description; failed ones come first, then by name, and typing searches all three. Services systemd only knows by name (`not-found`) are left out.
 
@@ -89,6 +89,18 @@ Exit 0 is the command's result, not proof that the service works. Each change is
 Status and log run as you. Without the `adm` or `systemd-journal` group the log shows only your own services' lines, and `journalctl` says so. Every change runs as root through the server's `sudo`, the way a [reload after a save](config-checks.md) runs: `sudo -n` where it needs no password, otherwise the sudo password (kept, from the Keychain, or asked). A unit file only root may write opens too, and the editor says to open the panel as root (⌃⌘R) to save it; from a root panel ⌘E opens it as root.
 
 **Containers…** asks the server's `docker`, or `podman` where there's no docker, as you: the containers your user may see. A row is the name, its state and status (`running · Up 3 hours`) and its image; running ones first. ↩ shows its log as it goes (`logs --tail 200 -f`), ⌘C copies its name, and ⌘R restarts it with the list staying open, as in Services…: the row says `Restarting…`, then Kermo reads the container's state again a second later, and the line under the list says how it went (`⚠ … but the container is exited` when it didn't stay up). Its action bar says **↩ Live Logs**, **⌘R Restart**, **⌘C Copy Name**, and the list opens again where you left it.
+
+### In a panel
+
+**⌘↩ Other Panel** on the list's action bar (or ⌘↩) shows the same rows in the other panel, without asking the server again, with what you typed as the panel's filter and the same row under the cursor. There the list is a panel like a folder: next to the logs it shows, beside a folder of the server, in a tab of its own.
+
+- **Columns:** Unit · State · Boot · Description for services, Name · State · Image for containers. Failed ones come first, then those starting or stopped; a click on a column's title sorts by it, again the other way. The state has its mark — ● running, ◆ failed, ○ needs a look — so it reads without the color.
+- **The path bar** says whose list it is: the server's name with its PROD / ROOT / lock chips, then **Services**. Above the columns, the same line as in the search window (`10 units · 1 failed`); the status line counts the rows.
+- **`/`** filters by name, state and description, as typing does in the search window. **Space** marks a row (✓, bold, in the marks' color); ⌘A and ⇧⌘A mark and unmark all, ⌘-click and ⇧-click as in a folder.
+- **Keys** are the panel's: ↩ Status (containers: Live Logs), ⌘L Live Logs, **F4** Edit Unit File… (⌘E stays the command line), ⌘R Restart, **F8 Stop…** (in red), ⌘C Copy, ⌃↩ or ⇧F10 the row's menu. The key bar shows them in these words, and a click on one does what the key does. Only these keys act on a row: ⌘⌫ and Delete, the Trash's other keys, do nothing here. In the menu bar the File menu's View is off, and the items on these keys take the row's words: **Stop…** in the File menu, **Live Logs** in Go. **View ▸ Refresh** reads the list again, though ⌘R in it restarts. A file's commands (F5, F7, Copy Path…) are off: a list isn't a folder, and F5 into it from the other panel says so.
+- **Several marked:** an action acts on the marked rows, else the cursor's. One question asks for all of them (each command as it runs, the PROD strip, ↩ = Cancel on production; Stop asks everywhere); a row it doesn't apply to is said and left out. They then run one after another, each row saying `Restarting…` and then its state, and a line under the rows says how each went. Lines that say all went well go after a few seconds; a failure stays, with **Output…**, until its ✕.
+- **⌫** goes back to the server folder the list replaced, or to the tab's folder; ⎋ stops a read on its way. **View ▸ Refresh** reads it again; a read that fails says why in the middle, with **Retry**. ⌃O opens SSH on its server.
+- While a panel shows the list, the server's connection stays; **Disconnect** closes the list. A restart brings back what was under it, not the list: nothing is asked of a server before you ask.
 
 The connection a look logs in with stays for its idle time (10 minutes, 60 seconds for a locked server) even when no panel shows the server, so the next look, ↩ or ⌘R needs no login; **Disconnect** ends it, and a locked server's ends when the screen locks. The same goes for Forward Port… and Run on Servers….
 
