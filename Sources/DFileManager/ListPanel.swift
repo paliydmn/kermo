@@ -71,8 +71,13 @@ struct ListAction {
     var command: String? = nil
     var runsOn: SFTPTarget? = nil
     var asks = Asks.never
-    /// Can't be undone: red in its menu and on its slot.
+    /// Can't be undone: red in its menu, on its slot and its question's button.
     var dangerous = false
+    /// What its question says it means, one sentence (a Tools preset's `message`): a Stop's "they stay stopped…".
+    var note: String? = nil
+    /// A log as it goes (a Tools preset's `output: follow`): a Picker opens its window (`run`); a panel follows it next
+    /// door instead, the row under the cursor's (nil `on`: this Mac).
+    var follow: (command: String, on: SFTPTarget?)? = nil
     /// Starts it — at once, so a second press finds it running — and gives back what to wait for, if there's
     /// something (several marked rows run one after another). `asked`: the question was asked already, for several
     /// rows at once: it runs without asking again.
@@ -142,6 +147,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         self.filter = filter
         cursorID = select
         super.init()
+        order = Self.savedOrder(sortKey)
         headerLine.font = .systemFont(ofSize: 11.5)
         headerLine.lineBreakMode = .byTruncatingTail
         headerLine.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -180,6 +186,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.sortDescriptors = []
         (table.dataSource, table.delegate) = (self, self)
+        if let o = order { table.sortDescriptors = [NSSortDescriptor(key: "\(o.column)", ascending: o.ascending)] }   // its header shows the order
         reloadTable()
     }
 
@@ -477,8 +484,22 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
 
     func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
         guard let d = tableView.sortDescriptors.first, let i = d.key.flatMap(Int.init) else { return }
+        guard order?.column != i || order?.ascending != d.ascending else { return apply() }
         order = (i, d.ascending)
+        var all = UserDefaults.standard.dictionary(forKey: "listSort") ?? [:]   // per server and list, as a folder's
+        all[sortKey] = "\(i):\(d.ascending ? 1 : 0)"
+        UserDefaults.standard.set(all, forKey: "listSort")
         apply()
+    }
+
+    /// Where its order is kept: its server and what it lists ("me@web-01:22 Services").
+    private var sortKey: String { ServerRow.key(source.target.asUser) + " " + source.title }
+
+    /// "2:0" → by the third column, descending; nothing, or anything else: problems first, as read.
+    static func savedOrder(_ key: String) -> (column: Int, ascending: Bool)? {
+        let parts = (UserDefaults.standard.dictionary(forKey: "listSort")?[key] as? String)?.split(separator: ":") ?? []
+        guard parts.count == 2, let c = Int(parts[0]) else { return nil }
+        return (c, parts[1] == "1")
     }
 
     /// Typing a name jumps to it, as in a folder.
@@ -493,7 +514,9 @@ extension AppDelegate {
     /// A list's own commands: what they say, done to its rows (⌘R reads it again, / filters it, Space marks a row, ⌃↩
     /// and ⇧F10 its row's menu, ⌫ back).
     static let listOwn: Set<String> = ["open", "go.up", "view.refresh", "view.filter", "mark.toggle", "mark.down", "mark.up", "mark.all", "mark.none",
-                                       "mark.invert", "cmdline.insert", "panel.menu"]
+                                       "mark.invert", "cmdline.insert", "panel.menu", "cmdline.focus", "list.keys", "list.go"]
+    /// Keys only a list has (k9s's): `?` its keys, `:` another list of its server by name.
+    static let listOnly: Set<String> = ["list.keys", "list.go"]
     /// What runs on a list besides: going elsewhere, tabs, panels, the view, the app — as on a parked tab. A file's
     /// commands don't: there's no file.
     static func runsInList(_ id: String) -> Bool {
@@ -587,6 +610,7 @@ extension AppDelegate {
     /// own question, if it has one). Several: a row it can't run on says why and is left out; one question for the
     /// rest — each command as it runs, production's strip, ↩ = Cancel there — then each in turn, a line each.
     func runList(_ a: ListAction, in l: ListPanel) {
+        if a.follow != nil, a.why == nil { return followNextDoor() }   // a log: next door, the cursor's row's
         let rows = l.targets
         guard rows.count > 1 else {
             if let why = a.why { return active.flash(why, error: true) }
@@ -615,6 +639,7 @@ extension AppDelegate {
                 (c.runs, c.command) = (Self.runs(on: runsOn), go.compactMap(\.action.command).joined(separator: "\n"))
                 if go.contains(where: { $0.action.asks == .always || $0.action.dangerous }) { c.returnCancels = true }
                 c.irreversible = go.contains { $0.action.dangerous }
+                c.note = go.compactMap(\.action.note).first
                 guard await confirm(c, on: l.sheetWindow) == 0 else {
                     let line = NSAttributedString(string: "\(verb): cancelled — nothing ran", attributes: [.font: font, .foregroundColor: NSColor.labelColor])
                     return l.said(line, about: "", failed: false, output: nil)
@@ -622,6 +647,47 @@ extension AppDelegate {
             }
             for x in go { await x.action.run(true)?.value }
         }
+    }
+
+    /// ⌘↩: the cursor's folder in the other panel — here or on this panel's server; `..` its parent; a search hit
+    /// its folder, on it. A list's row: its own ⌘↩ (`listRun`), else nothing.
+    func openInOtherPanel() {
+        let p = active, to = other
+        guard p.archive == nil else { return NSSound.beep() }
+        let r = p.table.selectedRow, it = r >= 0 && r < p.table.numberOfRows ? p.item(at: r) : nil
+        let dir = p.remote?.dir ?? p.itemsDir
+        let up = (dir as NSString).deletingLastPathComponent
+        guard let it else { return p.remote.map { to.loadRemote($0.target, dir: up, select: nil) } ?? to.navigate(to: up) }
+        let full = (dir as NSString).appendingPathComponent(it.name)
+        if p.searchTitle != nil, it.kind != .dir {   // a hit: its folder, the cursor on it
+            let (d, n) = ((full as NSString).deletingLastPathComponent, (full as NSString).lastPathComponent)
+            return p.remote.map { to.loadRemote($0.target, dir: d, select: n) } ?? to.navigate(to: d, select: n)
+        }
+        guard it.kind == .dir || it.linkDir else { return NSSound.beep() }
+        if let rem = p.remote { to.loadRemote(rem.target, dir: full, select: nil) } else { to.navigate(to: full) }
+    }
+
+    /// `?` in a list: its keys, as F1 shows the panels' — the row's, then the list's own.
+    func showListKeys() {
+        guard let l = active.list else { return }
+        let rows = listKeys(l).map { (title: $0.label, keys: $0.key) }
+        let own: [(title: String, keys: String)] = [("Back", "⌫"), ("Keys of This List", "?"), ("Go to List…", ":"), ("Refresh", "View ▸ Refresh")]
+        KeyHelp.show(over: window, commands: [], fixed: [(l.source.title, rows), ("List", own)])
+    }
+
+    /// `:` in a list: its server's overview as a picker — type a list's name, ↩ shows it here.
+    func goToList() {
+        guard let l = active.list else { return }
+        let s = savedServer(at: l.source.target) ?? SavedServer(target: l.source.target)
+        let place = PlaceSource(self, s, l.source.target.asUser)
+        Picker.show(over: window, placeholder: "Go to", scope: (s.title, Chip.of(l.source.target)), items: place.content?.rows ?? [])
+    }
+
+    /// ⌘L in a list: the cursor row's log as it goes in the other panel (Quick View), following the cursor; again: back
+    /// to the row's Quick View.
+    func followNextDoor() {
+        quickLog.toggle()
+        if quickViewOn { showQuickView() } else { toggleQuickView() }
     }
 
     /// Who shows row `id` now: a Picker, lists in panels — a change updates it in each and says how it went there.

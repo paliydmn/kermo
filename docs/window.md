@@ -129,8 +129,8 @@ Every command is in the menu bar, in groups, with its first shortcut. Switches h
 - **Edit:** Undo, Cut, Copy, Paste, Find… for text; Copy Path, Copy Name, Move Here for files.
 - **Mark:** marking and masks; Mark Differences, Synchronize Folders…, Compare Files; **Tags ▸**.
 - **View:** Sidebar, Quick View, Terminal, Maximize Terminal, Activity; **Tabs ▸** (with the terminal's splits) and **Panels ▸**; Hidden Files, Permissions & Owner, Quick Filter, Filter Presets…, Calculate Folder Sizes, **Sort By ▸**; Theme… and the terminal's text size; Refresh.
-- **Go:** Back, Forward, Enclosing Folder, Open Inside; Home, Computer Root, Go to Path…, Jump to Folder…, Folder Tree…, Go to Link Target, Volumes…; Bookmark This Folder; Search…, Search Files…, Command Line.
-- **Server:** Connect to Server…, New SSH Session…, New Server…; Overview, Services…, Containers…, **Ports & Tunnels ▸** (its commands, then every tunnel); Reopen as Root / as User; Copy SSH Key to Server…, File History…, Run on Servers…; Disconnect, Reconnect SSH Session, Edit SSH Config…, Production Log. They work on the active panel's server, as they do from search.
+- **Go:** Back, Forward, Enclosing Folder, Open Inside, Open in Other Panel (⌘↩); Home, Computer Root, Go to Path…, Jump to Folder…, Folder Tree…, Go to Link Target, Volumes…; Bookmark This Folder; Search…, Search Files…, Command Line.
+- **Server:** Connect to Server…, New SSH Session…, New Server…; Overview (⇧⌘O), Services…, Containers…, **Ports & Tunnels ▸** (its commands, then every tunnel); Reopen as Root / as User; Copy SSH Key to Server…, File History…, Run on Servers…; Disconnect, Reconnect SSH Session, Edit SSH Config…, Production Log. They work on the active panel's server, as they do from search.
 - **Git:** Switch Branch…, New Branch…, Commit…; Sync, Publish Branch, Pull, Push, Fetch; Changes, Show Only Changes, Diff, Log of File, Blame, Stage, Unstage; Go to Repository Root, Copy Branch Name, Initialize Repository….
 - **Window**, then **Help**: its search field finds any menu item by name (type `services` for **Server ▸ Services…**); Keyboard Shortcuts (F1), Kermo Documentation, Report an Issue….
 

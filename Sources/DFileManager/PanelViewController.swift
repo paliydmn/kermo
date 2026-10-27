@@ -938,7 +938,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         if let l = list {   // the rows, or the marked ones; what the filter left; the connection it's on
             var parts = [l.marked.isEmpty ? Self.countText(l.shown.count, "rows", 0) : Self.countText(l.marked.count, "marked", 0)]
             if !l.filter.isEmpty { parts.append("filtered: \(l.shown.count) of \(l.count)") }
-            return say(parts.joined(separator: " · "), lead: l.marked.isEmpty ? 0 : parts[0].count, chips: [("SSH", nil)])
+            return say(parts.joined(separator: " · "), lead: l.marked.isEmpty ? 0 : parts[0].count,
+                       chips: AppDelegate.connected(l.source.target) ? [("SSH", nil)] : [])   // the connection it's on, when there's one
         }
         var parts: [String] = []
         if !marked.isEmpty { parts.append(Self.countText(marked.count, "marked", bytes(of: rows.filter { marked.contains($0.name) }))) }
@@ -1430,12 +1431,21 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         return await AppDelegate.sheet(c.alert(), on: window) == 0
     }
 
+    /// ⌫ in a server's overview while a connection to it is up: off the server, which may close it (a test answers).
+    static var confirmLeavingPlace: @MainActor (SFTPTarget, _ back: String, NSWindow?) async -> Bool = { target, back, window in
+        var c = Confirm("Leave \(SavedServer.name(for: target.asUser))?", action: "Leave")
+        c.note = "Its connection closes unless something else uses it. This tab goes back to \((back as NSString).abbreviatingWithTildeInPath)."
+        guard let window else { return AppDelegate.modal(c.alert()) == 0 }
+        return await AppDelegate.sheet(c.alert(), on: window) == 0
+    }
+
     func goUp() {
         if parked != nil { return navigate(to: path, history: .none) }
         if let l = list {   // a list: back to its server's place; the place: off the server, asked as from its `/`
             guard isPlace else { return onPlace?(l.source.target, l.source.title) ?? navigate(to: path, history: .none) }
+            guard AppDelegate.connected(l.source.target) else { return navigate(to: path, history: .none) }   // nothing to close: no question
             Task {
-                guard await Self.confirmLeaving(l.source.target, path, view.window), list === l else { return }
+                guard await Self.confirmLeavingPlace(l.source.target, path, view.window), list === l else { return }
                 navigate(to: path, history: .none)
             }
             return
@@ -1980,6 +1990,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             updateEmpty()
         } else if !on, let qv = quickView {
             peekGen += 1
+            stopLog()
             qv.close()
             infoView?.stop()   // a folder's size, a hash on its way
             quickBox?.removeFromSuperview()
@@ -2005,6 +2016,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// (else there's no Git tab).
     func preview(_ p: Peek, tab chosen: QuickTab? = nil) {
         guard quickView != nil else { return }
+        stopLog()
         quickTabs.isHidden = false
         peekShown = p
         quickTitle.stringValue = p.name.bidiVisible
@@ -2040,6 +2052,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         guard quickView != nil else { return }
         hidePreview()
         listPeekFlag?.cancel()
+        stopLog()
         quickTitle.stringValue = title.bidiVisible
         quickTabs.isHidden = true
         gitBox?.isHidden = true
@@ -2064,6 +2077,41 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
     }
     private var listPeekFlag: CancelFlag?
+
+    /// A list row's log as it goes, next door (⌘L in the list): an output window's text, its window never shown;
+    /// started once the cursor rests on the row, the one before stopped at once.
+    func preview(log title: String, command: String, on server: SFTPTarget?) {
+        guard quickView != nil, let body = textPeek?.superview else { return }
+        hidePreview()
+        listPeekFlag?.cancel()
+        stopLog()
+        quickTitle.stringValue = "\(title) — log".bidiVisible
+        quickTabs.isHidden = true
+        gitBox?.isHidden = true
+        infoView?.isHidden = true
+        let gen = peekGen
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.peekRest))   // passing over rows starts nothing
+            guard let self, gen == peekGen, quickView != nil else { return }
+            let w = OutputWindow.embedded(command, on: server, follow: true)
+            guard let text = w.text else { return w.close() }
+            text.removeFromSuperview()
+            text.translatesAutoresizingMaskIntoConstraints = false
+            body.addSubview(text)
+            NSLayoutConstraint.activate([text.leadingAnchor.constraint(equalTo: body.leadingAnchor), text.trailingAnchor.constraint(equalTo: body.trailingAnchor),
+                                         text.topAnchor.constraint(equalTo: body.topAnchor), text.bottomAnchor.constraint(equalTo: body.bottomAnchor)])
+            followed = (w, text)
+        }
+    }
+    private var followed: (window: OutputWindow, text: NSScrollView)?
+    /// The log next door stops: its command as an output window's closing stops it.
+    private func stopLog() {
+        guard let f = followed else { return }
+        followed = nil
+        f.text.removeFromSuperview()
+        f.window.close()
+    }
+    var logShown: String? { (followed?.text.documentView as? NSTextView)?.string }   // tests
     /// How long the cursor rests on a list's row before Quick View asks the server about it (ms).
     static var peekRest = 350
     var quickTitleShown: String? { quickBox == nil ? nil : quickTitle.stringValue }   // tests
@@ -2257,21 +2305,23 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let isCurrent: Bool
     }
 
-    /// A list too (its server's connection stays while it shows); a place isn't a session (`heldServers` holds it).
+    /// The server tabs the sidebar lists as sessions: a server's files.
     var remoteTabs: [RemoteTab] {
         tabs.enumerated().compactMap { i, t in
-            let l = (i == tabIndex ? list : t.list).flatMap { $0.source is PlaceSource ? nil : $0 }
-            return ((i == tabIndex ? remote : t.remote) ?? l.map { (target: $0.source.target, dir: $0.source.title) }).map {
-                RemoteTab(id: t.id, target: $0.target, dir: $0.dir, isCurrent: i == tabIndex)
-            }
+            (i == tabIndex ? remote : t.remote).map { RemoteTab(id: t.id, target: $0.target, dir: $0.dir, isCurrent: i == tabIndex) }
+        }
+    }
+
+    /// Every tab on a server: its files, a list of it, its overview — what Disconnect closes.
+    var serverTabs: [RemoteTab] {
+        remoteTabs + tabs.enumerated().compactMap { i, t in
+            (i == tabIndex ? list : t.list).map { RemoteTab(id: t.id, target: $0.source.target, dir: $0.source.title, isCurrent: i == tabIndex) }
         }
     }
 
     /// The servers whose connection this panel keeps, if one is up: its sessions', and a place's — ↩ there needs no
     /// login again (`AppDelegate.idleServers`).
-    var heldServers: [SFTPTarget] {
-        remoteTabs.map(\.target) + tabs.indices.compactMap { i in ((i == tabIndex ? list : tabs[i].list)?.source as? PlaceSource)?.target }
-    }
+    var heldServers: [SFTPTarget] { serverTabs.map(\.target) }
 
     /// Shows the tab with this id; false if it isn't one of ours.
     @discardableResult

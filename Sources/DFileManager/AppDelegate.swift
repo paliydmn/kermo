@@ -44,6 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Where F5/F6 go: the panel that was active before this one (with 2 panels, simply the other one).
     private weak var target: PanelViewController?
     var quickViewOn = false
+    /// Quick View next to a list follows the cursor row's log (⌘L there), not its status.
+    var quickLog = false
     private let promptLabel = NSTextField(labelWithString: "")
     let cmdField = NSTextField(string: "")   // internal: tests
     /// ⌘E at the command line's right end, at rest: a click is the key.
@@ -548,6 +550,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             saveSession()
             updatePrompt()
             updateMenuKeys()   // a list's row keys taken off the menu, or given back
+            if let l = panel.list, !(l.source is PlaceSource) {   // its server's overview opens on it next time
+                var last = defaults.dictionary(forKey: "placeLastList") ?? [:]
+                last[ServerRow.key(l.source.target.asUser)] = l.source.title
+                defaults.set(last, forKey: "placeLastList")
+            }
             if panel.remote == nil && panel.parked == nil && panel.list == nil { recordVisit(panel.path) }   // a parked tab's folder isn't on screen, nor a list's
             // Frequent re-ranks a moment later, so the list doesn't jump while you're browsing.
             sidebarRefresh?.cancel()
@@ -561,7 +568,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func activate(_ panel: PanelViewController) {
         guard let i = panels.firstIndex(where: { $0 === panel }), i != activeIndex else { return }
         if quickViewOn {   // the preview panel can't become the active one
-            quickViewOn = false
+            (quickViewOn, quickLog) = (false, false)
             panels.forEach { $0.setQuickView(false) }
         }
         target = active
@@ -801,6 +808,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         sidebar.show(SidebarModel.sections(bookmarks: bookmarks, frecent: frecency.ranked(), volumes: volumes, disks: disks, busy: volumeBusy, servers: servers,
                                            tags: defaults.stringArray(forKey: "recentTags") ?? []))
         sidebar.highlight(sidebarKey)
+        refreshPortLists()   // a tunnel added, edited, turned on or off: its list in a panel says so
     }
 
     /// While ⌃O's shell is up, local places `cd` it instead; servers and tags need the panels.
@@ -884,15 +892,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // Its SSH tabs' ssh too: a master stopped after a wake or a network change is no longer known, nor reachable by
         // `-O exit` (its socket is gone), and keeps a session that ran on it.
         terminal?.hangUp { ServerRow.key($0) == key }
-        for p in panels { p.remoteTabs.filter { ServerRow.key($0.target) == key }.forEach { p.closeRemote($0.id) } }
+        for p in panels { p.serverTabs.filter { ServerRow.key($0.target) == key }.forEach { p.closeRemote($0.id) } }   // its lists and overviews too
     }
 
     /// A server row's click or button. SSH / SFTP go to an open session if there is one; ⌘ opens another
-    /// (SFTP: in a new tab), ⌥ SFTP in the other panel. The row itself: any open session, else SSH.
-    private func serverAction(_ r: ServerRow, _ action: ServerAction, _ mods: NSEvent.ModifierFlags) {
+    /// (SFTP: in a new tab), ⌥ SFTP in the other panel. The row itself (a double-click, ↩): any open session, else its files.
+    func serverAction(_ r: ServerRow, _ action: ServerAction, _ mods: NSEvent.ModifierFlags) {   // internal: tests
         let plain = mods.isDisjoint(with: [.command, .option])
         switch action {
-        case .row: if let s = r.sessions.first { showSession(s) } else { openServer(r, .ssh) }
+        case .row: if let s = r.sessions.first { showSession(s) } else { openServer(r, .sftp, panel: mods.contains(.option) ? other : nil) }   // its files: the overview's first row
         case .ssh: if let s = r.ssh.first, plain { showSession(s) } else { openServer(r, .ssh) }
         case .sftp:
             if let s = r.sftp.first, plain { showSession(s) }
@@ -1111,9 +1119,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Command dispatch
 
     /// A key the menu didn't take (the panel's, the sidebar's): its command, the key known — a list acts on that key only.
+    /// A list's own `?` and `:` are type-select's anywhere else.
     func runKey(_ event: NSEvent) -> Bool {
         let key = Shortcut(event: event)
-        guard let c = keymap[key] else { return false }
+        guard let c = keymap[key], !Self.listOnly.contains(c.id) || !terminalActive && activePanel?.list != nil else { return false }
         perform(c, key: key)
         return true
     }
@@ -1533,8 +1542,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// ⌘E history is per host — the local one and each server's — so `rm …` typed on a server isn't offered here (R1).
     private var history: [String] {
-        get { defaults.stringArray(forKey: Self.historyKey(active.remote?.target)) ?? [] }
-        set { defaults.set(newValue, forKey: Self.historyKey(active.remote?.target)) }
+        get { defaults.stringArray(forKey: Self.historyKey(active.remote?.target ?? active.list?.source.target)) ?? [] }
+        set { defaults.set(newValue, forKey: Self.historyKey(active.remote?.target ?? active.list?.source.target)) }
     }
     /// "cmdHistory" locally (as before), "cmdHistory.deploy@web:22" on a server.
     nonisolated static func historyKey(_ server: SFTPTarget?) -> String { server.map { "cmdHistory.\($0.host):\($0.port ?? 22)" } ?? "cmdHistory" }
@@ -1599,7 +1608,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func runCommandLine(in dest: ShellWhere) {
         let command = cmdField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !command.isEmpty else { return }
-        if let hint = active.parkedHint ?? active.listHint { return active.flash(hint) }   // it'd run in the local folder behind it
+        if let hint = active.parkedHint { return active.flash(hint) }   // it'd run in the local folder behind it; a list's: on its server
         var h = history
         h.removeAll { $0 == command }
         h.append(command)

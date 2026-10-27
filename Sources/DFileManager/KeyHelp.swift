@@ -33,7 +33,7 @@ final class KeyHelp: NSObject, NSSearchFieldDelegate {
             .filter { !$0.rows.isEmpty }
     }
 
-    private static var current: KeyHelp?
+    private(set) static var current: KeyHelp?   // tests
     private let sheet = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 560), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
     private let field = NSSearchField()
     private let text = NSTextView()
@@ -121,7 +121,7 @@ final class KeyHelp: NSObject, NSSearchFieldDelegate {
         text.textStorage?.setAttributedString(s)
     }
 
-    @objc private func close() {
+    @objc func close() {   // internal: tests close it
         parent?.endSheet(sheet)
         if Self.current === self { Self.current = nil }
     }

@@ -27,10 +27,14 @@ Release:
 - **Services and containers in a panel**: ⌘↩ in Services… or Containers… shows the same rows in the other panel, not read again — columns (Unit · State · Boot · Description), failed first, a click on a column's title sorts, `/` filters, Space marks. The row's keys are the panel's (↩ Status, ⌘L Live Logs, F4 Edit Unit File…, ⌘R Restart, F8 Stop…, ⌘C Copy), on the key bar in those words; File ▸ and Go ▸ items on those keys take the row's words, View ▸ Refresh reads the list again. An action on several marked rows asks once for all of them, then runs them in turn, a line each under the rows.
 - **Ports in a panel**: ⌘↩ in Forward Port… shows the server's ports in the other panel (Port · Process · Listens on · Tunnel), where a tunnel goes there updated as tunnels turn on and off.
 - **The server as a place**: a server's overview in a panel — Files, Home, `/`, Services, Containers, Ports, Tunnels, File History — rows that ↩ goes into. Opening it sends nothing to the server (no Touch ID, no login); its counts are what its lists last read, while a connection is up. **Server ▸ Overview**, a click on the server's name in the path bar, ⌫ in a server's `/` or in a list of it.
+- **⌘↩ Open in Other Panel** (Go menu): the folder under the cursor in the other panel, here or on the panel's server; on a server's overview, that row there.
+- **A list's log next door**: ⌘L in Services (↩ in Containers) shows the row's log as it goes in the other panel, following the cursor; ⌘L again goes back to its Quick View.
+- **Tunnels in a panel**: a server's overview has its tunnels as a list — on and off, copy, edit, delete, ＋ New Tunnel….
+- In a list: **⌘E** runs on its server (`%f` the row under the cursor), **?** shows its keys, **:** goes to another list of its server by name; a column's sort is kept per server and list, and the overview opens on the list opened there last. **Server ▸ Overview** is ⇧⌘O.
 - **Quick View of a list's row**: ⌃Q next to Services shows the service under the cursor's `systemctl status`, read once the cursor rests, over the connection the list holds; next to Containers or Ports, the row's state, image or who listens.
 
 ### Changed
-- One click on a server in the sidebar with nothing open shows its overview, which sends nothing; a double-click still opens SSH.
+- One click on a server in the sidebar with nothing open shows its overview, which sends nothing; a double-click (or ↩ in the sidebar) opens its files in its start folder instead of an SSH shell — SSH is the row's button, its menu and ⌘K.
 - ⌫ in a server's `/` goes to its overview instead of leaving the server; ⌫ there leaves it, asking as before.
 - Marked files are bold in the accent color with a ✓ before the icon, not red: red now means only that something failed or can't be undone. Themes keep their own mark color, and get the ✓ too; GitHub Light and Solarized Light mark in pink and magenta instead of red.
 - The Git column: `M` is amber, `A` green, `?` and `D` grey (`D` struck through), a conflict `U` red with ⚠; a staged letter is bold. No purple or orange there.

@@ -135,10 +135,12 @@ extension AppDelegate {
     func serviceActions(_ u: ServiceUnit, on t: SFTPTarget, of s: SavedServer, pasteboard: NSPasteboard = .general) -> [ServiceAction] {
         let no = u.safe ? nil : "“\(u.unit)” has characters Kermo won't put into a command: nothing runs on it"
         let busy = serviceRuns[Self.serviceID(u, on: t)].map(Self.waitFor(u.name))
-        // As root, the command shown in a question for several; Stop asks everywhere and is on F8 in a panel (red: dangerous).
+        // As root, the command shown in a question for several. Stop asks everywhere and is on F8 in a panel — not red:
+        // a Start undoes it.
         func changing(_ c: Services.Change, _ title: String? = nil, key: Shortcut? = nil, group: Int, why: String? = nil) -> ServiceAction {
             ServiceAction(title: title ?? c.title, key: key, group: group, closes: false, why: no ?? busy ?? why, listKey: c == .stop ? Shortcut("f8") : nil,
-                          command: c.command(u), runsOn: t.asRoot(), asks: c == .stop ? .always : .prod, dangerous: c == .stop) { [unowned self] asked in
+                          command: c.command(u), runsOn: t.asRoot(), asks: c == .stop ? .always : .prod,
+                          note: c == .stop ? "They stay stopped until they're started again, or the server starts where enabled at boot. Services that need them may stop with them." : nil) { [unowned self] asked in
                 change(c, u, on: t, of: s, asked: asked)
             }
         }
@@ -150,7 +152,8 @@ extension AppDelegate {
                 Shell.run(Services.status(u), on: t.asUser, in: "/", title: "\(u.name) status")   // where: the subtitle
                 return nil
             },
-            ServiceAction(title: "Live Logs", key: Shortcut("cmd+l"), group: 0, closes: true, why: no) { _ in
+            ServiceAction(title: "Live Logs", key: Shortcut("cmd+l"), group: 0, closes: true, why: no,
+                          follow: (Services.log(u), t.asUser)) { _ in   // in a panel: next door
                 Shell.run(Services.log(u), on: t.asUser, in: "/", follow: true, title: "\(u.name) log")
                 return nil
             },
@@ -463,7 +466,8 @@ extension AppDelegate {
         item.state = c.state == "running" ? .on : c.state == "dead" || (exit ?? 0) != 0 ? .failed : .attention
         item.listActions = { [unowned self] in
             let no = c.safe ? nil : "“\(c.name)” has characters Kermo won't put into a command: nothing runs on it"
-            return [ListAction(title: "Live Logs", key: Shortcut("return"), group: 0, closes: true, why: no) { _ in logs(); return nil },
+            return [ListAction(title: "Live Logs", key: Shortcut("return"), group: 0, closes: true, why: no,
+                               follow: (Containers.logs(c, tool: tool), t.asUser)) { _ in logs(); return nil },
                     ListAction(title: "Copy Name", key: Shortcut("cmd+c"), group: 0, closes: false, why: nil) { _ in copy(); return nil },
                     ListAction(title: "Restart", key: Shortcut("cmd+r"), group: 1, closes: false, why: no ?? serviceRuns[id].map(Self.waitFor(c.name)),
                                command: Containers.restart(c, tool: tool), runsOn: user, asks: .prod) { restart($0) }]
@@ -557,7 +561,8 @@ extension AppDelegate {
     func showPlace(_ t: SFTPTarget, in panel: PanelViewController, select: String? = nil) {
         if terminal != nil { showPanels() }   // not at launch: a restored place comes before the terminal
         let s = savedServer(at: t) ?? SavedServer(target: t.asUser)
-        panel.showList(PlaceSource(self, s, t.asUser), select: select.map { "place " + $0 })
+        let last = (defaults.dictionary(forKey: "placeLastList")?[ServerRow.key(t.asUser)] as? String)   // the list opened there last
+        panel.showList(PlaceSource(self, s, t.asUser), select: (select ?? last).map { "place " + $0 })
     }
 
     /// How many a list of `t`'s counted when it was last read, and how many of them are in trouble (failed, exited).
@@ -571,7 +576,7 @@ extension AppDelegate {
         it.state = mark
         it.listActions = { [unowned self] in
             [ListAction(title: "Open", key: Shortcut("return"), group: 0, closes: false, why: nil) { _ in open(self.active); return nil },
-             ListAction(title: "Open in Other Panel", key: nil, group: 0, closes: false, why: nil) { _ in
+             ListAction(title: "Open in Other Panel", key: Shortcut("cmd+return"), group: 0, closes: false, why: nil) { _ in
                  let o = self.other
                  open(o)
                  self.window.makeFirstResponder(o.table)
@@ -612,7 +617,7 @@ extension AppDelegate {
             placeRow("Ports", p, state: ports == nil ? "—" : "", about: ports.map { "\($0.n) listening" } ?? "what it listens on",
                      open: list { [unowned self] in PortList(self, s) }),
             placeRow("Tunnels", p, state: on.isEmpty ? "none on" : "\(on.count) on", about: on.isEmpty ? "to its ports, from this Mac" : on.joined(separator: ", "),
-                     mark: on.isEmpty ? nil : .on) { [unowned self] _ in showTunnels(of: s) },
+                     mark: on.isEmpty ? nil : .on, open: list { [unowned self] in TunnelList(self, s) }),
         ]
     }
 

@@ -37,6 +37,10 @@ extension AppDelegate {
         cmd("go.forward", "Forward", ["cmd+]"], menu: "Go", group: 1) { $0.active.goForward() },
         cmd("go.up", "Enclosing Folder", ["cmd+up", "backspace"], menu: "Go", group: 1) { $0.active.goUp() },
         cmd("open.inside", "Open Inside", ["cmd+down"], menu: "Go", group: 1) { $0.active.openCursor(intoPackage: true) },
+        cmd("open.other", "Open in Other Panel", ["cmd+return"], menu: "Go", group: 1, aliases: "other side folder there") { $0.openInOtherPanel() },
+        // A list's own: its keys (F1 for its rows), another list of its server by name — keys only, inside a list.
+        cmd("list.keys", "Keys of This List", ["shift+/"], aliases: "help list keys ?") { $0.showListKeys() },
+        cmd("list.go", "Go to List…", ["shift+;"], aliases: "services containers ports tunnels overview :") { $0.goToList() },
         cmd("go.home", "Home", ["cmd+shift+h"], menu: "Go", group: 2) { $0.active.navigate(to: NSHomeDirectory()) },
         cmd("go.root", "Computer Root", ["cmd+shift+/"], menu: "Go", group: 2, short: "Root") { $0.active.navigate(to: "/") },
         cmd("go.path", "Go to Path…", ["cmd+l", "cmd+shift+g"], menu: "Go", group: 2, aliases: "path location") { $0.active.beginPathEditing() },
@@ -50,7 +54,7 @@ extension AppDelegate {
         cmd("server.new", "New Server…", [], menu: "Server", group: 1, aliases: "ssh sftp server connection bookmark save") {
             $0.editServer(SavedServer(), title: "New Server")
         },
-        cmd("server.overview", "Overview", [], menu: "Server", group: 2, aliases: "server place home root what runs services containers ports tunnels") { $0.showOverview() },
+        cmd("server.overview", "Overview", ["cmd+shift+o"], menu: "Server", group: 2, aliases: "server place home root what runs services containers ports tunnels") { $0.showOverview() },
         cmd("server.services", "Services…", [], menu: "Server", group: 2, aliases: "systemd systemctl service status restart journal journalctl log unit") { $0.showServices() },
         cmd("server.containers", "Containers…", [], menu: "Server", group: 2, aliases: "docker podman container logs restart") { $0.showContainers() },
         cmd("tunnel.list", "Tunnels…", [], menu: "Server/Ports & Tunnels", group: 2, aliases: "port forward localhost database -L") { $0.showTunnels() },
@@ -546,6 +550,10 @@ extension AppDelegate {
 
     /// The active panel's folder and names — a server's, on a server panel (never the local folder hidden behind it).
     var shellContext: ShellContext {
+        if let l = active.list {   // its server's login folder; %f the cursor's row, %s the marked ones (a service, a container)
+            let rows = l.source is PlaceSource ? [] : l.targets.map(\.title)
+            return ShellContext(dir: ".", otherDir: nil, cursor: l.source is PlaceSource ? nil : l.cursor?.title, targets: rows)
+        }
         if let r = active.remote {
             return ShellContext(dir: r.dir, otherDir: other.remote?.target.asUser == r.target.asUser ? other.remote?.dir : nil,
                                 cursor: active.remoteCursor?.item.name, targets: active.remoteSelection?.items.map(\.name) ?? [])
@@ -570,13 +578,14 @@ extension AppDelegate {
     /// ⌘E and the user menu (F2). On a server panel the command runs on the server, in its folder.
     func runShell(_ command: String, in dest: ShellWhere) {
         guard let expanded = shellContext.expand(command) else { return active.flash("%D: the other panel is on another machine") }
-        if let r = active.remote {
+        // A list of a server's: on that server, in its login folder (".": where its shell starts).
+        if let r = active.remote ?? active.list.map({ (target: $0.source.target.asUser, dir: ".") }) {
             let env = SSHAskpass.env
             Task { [self] in
                 // R1: rm, mv, chmod, chown, dd, systemctl stop/restart on a production server ask first.
                 if SavedServer.isProd(r.target), Shell.isDangerous(expanded) {
                     var c = Confirm("Run this command on \(SavedServer.name(for: r.target))?", on: r.target, action: "Run")
-                    c.runs = "In \(r.dir)" + (r.target.sudo ? ", as the server's user — not root." : ".")
+                    c.runs = (r.dir == "." ? "In its login folder" : "In \(r.dir)") + (r.target.sudo ? ", as the server's user — not root." : ".")
                     c.command = dest == .terminalApp ? SSHCommand.shell(in: r.dir, after: expanded) : Shell.remote(expanded, in: r.dir, follow: false)
                     guard await confirm(c) == 0 else { return }
                 }
@@ -2394,13 +2403,19 @@ extension AppDelegate {
 
     func toggleQuickView() {
         quickViewOn.toggle()
+        if !quickViewOn { quickLog = false }
         other.setQuickView(quickViewOn)
         if quickViewOn { showQuickView() }
     }
 
     /// Quick View next door, on the active panel's cursor item, on the tab chosen.
     func showQuickView() {
-        if let l = active.list { return other.preview(list: l.cursor?.title ?? "", l.cursor.flatMap(l.source.peek)) }   // a row's, its source says what
+        if let l = active.list {   // a row's, its source says what — or its log as it goes (⌘L)
+            if quickLog, let row = l.cursor, let f = row.listActions?().first(where: { $0.follow != nil })?.follow {
+                return other.preview(log: row.title, command: f.command, on: f.on)
+            }
+            return other.preview(list: l.cursor?.title ?? "", l.cursor.flatMap(l.source.peek))
+        }
         other.preview(active.peek(fetch: PanelViewController.quickTab == .preview))
     }
 

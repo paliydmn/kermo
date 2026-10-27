@@ -130,7 +130,10 @@ In the command line, ↑↓ browse its history. On a local panel ↩ runs the li
 | Containers…: log / restart / copy name / in the other panel | ↩ / ⌘R / ⌘C / ⌘↩ |
 | Services in a panel: status / log / edit unit / restart / stop / copy name / mark / filter / menu / back | ↩ / ⌘L / F4 / ⌘R / F8 / ⌘C / Space / `/` / ⌃↩ or ⇧F10 / ⌫ |
 | Containers in a panel: log / restart / copy name | ↩ / ⌘R / ⌘C |
-| A server's overview: open a row / SSH there / its files as root / leave the server; from a server's `/` | ↩ / ⌃O / ⌃⌘R / ⌫; ⌫ |
+| A server's overview: open a row / in the other panel / SSH there / its files as root / leave the server; from a server's `/` | ↩ / ⌘↩ / ⌃O / ⌃⌘R / ⌫; ⌫ |
+| Server ▸ Overview | ⇧⌘O |
+| A folder (or a list's row) in the other panel | ⌘↩ |
+| A list in a panel: its keys / another list of its server / its log next door / a command on its server | ⇧/ (?) / ⇧; (:) / ⌘L / ⌘E |
 | Ports (Forward Port…): forward / copy address / in the other panel; in a panel: forward / copy address / menu | ↩ / ⌘C / ⌘↩; ↩ / ⌘C / ⌃↩ |
 | Viewer, files over 4 MB: go to (`50%`, `1.5G`, `end`) / start, end / search the whole file, next result | `g` / Home or ⌘↑, End or ⌘↓ / `/`, `n` |
 | Editor: save / find and replace / close | ⌘S / ⌘F / ⎋, ⌘W |
