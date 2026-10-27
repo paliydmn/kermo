@@ -1026,7 +1026,7 @@ extension AppDelegate {
         var below = [form.grid as NSView]
         if !saved {   // ↩ Save, as Edit's; ⌘↩ Save & Connect (not ⌃↩: a text field's context menu, D-107)
             alert.buttons[1].keyEquivalent = "\r"
-            (alert.buttons[0].keyEquivalent, alert.buttons[0].keyEquivalentModifierMask) = ("\r", .command)
+            alert.buttons[0].identifier = Confirm.commandReturn
             let font = NSFont.systemFont(ofSize: 11), s = NSMutableAttributedString()
             let word = { (w: String) in NSAttributedString(string: " " + w, attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]) }
             s.append(KeyCap.text("↩", font: font)); s.append(word("Save  ·  "))

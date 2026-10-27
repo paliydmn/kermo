@@ -36,7 +36,7 @@ import DFMCore
         forgetSudo?.toolTip = "The one a root panel saved in the Keychain (“Kermo sudo”); the next root panel asks again"
         for (f, value, hint) in [(host, server.host, "address or ~/.ssh/config host"), (user, server.user ?? "", "ssh's default"),
                                  (port, server.port.map(String.init) ?? "", "22"), (name, server.name, "shown in the sidebar; empty = the address"),
-                                 (key, server.identityFile ?? "", "ssh's own (agent, ~/.ssh/config)"),
+                                 (key, server.identityFile ?? "", "ssh's own: agent, config"),
                                  (password, "", hasPassword ? "••••••••" : "ask each time; saved in the Keychain"),
                                  (start, server.startDir ?? "", "for SFTP; empty = the login folder")] {
             f.stringValue = value
