@@ -59,7 +59,7 @@ If the file changed on disk after you opened it, ⌘S asks **Overwrite**, **Relo
 
 ### Ensure Final Newline
 
-**File ▸ Ensure Final Newline**, or **Final Newline** in the toolbar, adds a newline at the end of the text on save when it is missing. The checkmark, and the toolbar's switch, show the state for the current window. It starts on for config files (crontabs, dotfiles, files under `/etc`, `.conf`, `.ini`, `.yml`, `.toml` and the like) and off for other files. To set one rule for every new window, use `-bool true` (always) or `-bool false` (never):
+**File ▸ Ensure Final Newline**, or **Final Newline** in the toolbar, adds a newline at the end of the text on save when it is missing. The checkmark, and the toolbar's switch, show the state for the current window. It starts on for config files (crontabs, dotfiles, files under `/etc`, `.conf`, `.ini`, `.yml`, `.toml` and the like) and off for other files. To set one rule for every new window, choose **End with a newline** in Settings › Editor & Viewer, or use `-bool true` (always) or `-bool false` (never):
 
 ```sh
 defaults write com.dmn.dfilemanager editorFinalNewline -bool true
@@ -76,6 +76,6 @@ When a save fails because the file or its folder is not yours to write, the edit
 
 ### External editor and server files
 
-`defaults write com.dmn.dfilemanager editorBundleID com.apple.TextEdit` opens that app for F4 on a local file, for ⇧F4 (new file) and for commands such as **Edit Keymap…**. An unknown bundle ID falls back to the built-in editor. Server files always use the built-in editor.
+**Edit files on this Mac with** in Settings › Editor & Viewer, or `defaults write com.dmn.dfilemanager editorBundleID com.apple.TextEdit`, opens that app for F4 on a local file, for ⇧F4 (new file) and for commands such as **Edit Keymap…**. An unknown bundle ID falls back to the built-in editor. Server files always use the built-in editor.
 
 On a server panel, F4 edits a local copy that goes up on every ⌘S; see [server files](server-files.md).

@@ -20,6 +20,8 @@ Release:
 - A **Server** menu: Connect to Server…, New SSH Session…, New Server…; Services…, Containers…, **Ports & Tunnels ▸** (Tunnels…, New Tunnel…, Forward Port…, then every tunnel); Reopen as Root / as User; Copy SSH Key to Server…, File History…, Run on Servers…; Disconnect, Reconnect SSH Session, Edit SSH Config…, Production Log.
 - A **Help** menu: macOS's search there finds any menu item by name; Keyboard Shortcuts (F1), Kermo Documentation and Report an Issue….
 - Every command is in the menu bar now — Services…, Containers…, the tunnels', Copy SSH Key to Server… and Sort By were only in search — but those that are keys by nature (Tab, ↩, ⇧↑ / ⇧↓, the terminal panes' arrows, ⇧F10, ⌃↩).
+- **Settings** (⌘,): General, Appearance, Terminal, Editor & Viewer, Servers & Safety and Advanced — every option that was only a `defaults write`, each with its key at its right, and Edit… for the config files. The terminal's Selecting text copies it and Right-click pastes say what they do with the clipboard.
+- Appearance shows every theme as a preview of a panel in its colors; a click uses it.
 
 ### Changed
 - Marked files are bold in the accent color with a ✓ before the icon, not red: red now means only that something failed or can't be undone. Themes keep their own mark color, and get the ✓ too; GitHub Light and Solarized Light mark in pink and magenta instead of red.

@@ -78,7 +78,7 @@ Press ⇧⌘D (**Mark ▸ Compare Files**) to diff two files. Kermo uses the fir
 
 Folders are never compared. The result opens in a window as `diff -u`: added lines green, removed red, `@@` lines purple, and `Files are identical.` when they match. ⎋ closes it.
 
-To use your own tool, set `diffCommand`. Kermo runs it through zsh with `%1` and `%2` replaced by the quoted paths, and opens no window:
+To use your own tool, set **Compare files with** in Settings › Editor & Viewer (`diffCommand`). Kermo runs it through zsh with `%1` and `%2` replaced by the quoted paths, and opens no window:
 
 ```sh
 defaults write com.dmn.dfilemanager diffCommand 'code --diff %1 %2'

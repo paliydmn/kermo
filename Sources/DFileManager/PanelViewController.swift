@@ -257,7 +257,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private static let execIcon = NSWorkspace.shared.icon(for: .unixExecutable)   // as Finder: told by shape, in any theme
     private static let linkIcon = NSWorkspace.shared.icon(for: .symbolicLink)
     /// Today and yesterday as of the last listing; the stat timer moves it on at midnight.
-    private var dates = DateColumn()
+    private(set) var dates = DateColumn()
 
     convenience init(tabs paths: [String], index: Int, showHidden: Bool) {
         self.init(session: paths.map { Session.Tab(path: $0) }, index: index, showHidden: showHidden)
@@ -835,7 +835,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// A local folder's files on screen whose size or date changed (or the folder replaced under its path) re-list
     /// it. Off the main thread; never for a server, an archive or search results.
     /// Past midnight, "Today" is yesterday (and `isoDates` may have changed): the Modified column says so without a re-list.
-    private func rollDates() {
+    func rollDates() {
         let now = DateColumn()
         guard now != dates else { return }
         dates = now

@@ -22,6 +22,8 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 |---|---|
 | Search commands, folders and files | ⇧⌘P, F9, ⌥9 |
 | Keyboard shortcuts cheat sheet (over a viewer or an editor: its keys) | F1, ⌥1 |
+| Settings | ⌘, |
+| Find a menu command by name | **Help** menu's search field |
 
 ## Panels, tabs and navigation
 

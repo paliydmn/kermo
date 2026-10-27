@@ -80,7 +80,7 @@ Mac function keys control media by default: ⌥ plus the digit does the same (�
 
 **Reference**
 - [Keyboard shortcuts](docs/shortcuts.md): every shortcut, grouped.
-- [Configuration](docs/configuration.md): files, keymap and `defaults` options.
+- [Configuration](docs/configuration.md): Settings (⌘,), files, keymap and `defaults` options.
 - [Troubleshooting](docs/troubleshooting.md): symptoms and fixes.
 
 **Project**

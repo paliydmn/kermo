@@ -67,7 +67,7 @@ The bottom row shows the keys of what has the focus. Each slot is the key, then 
 - ⌥ plus a digit does what its F-key does, so those layers sum them up in one slot: `⌥1…0 = F1…F10`, `⌥⇧4 5 6 8 = ⇧F4 5 6 8`.
 - On a server's panel F8 says **Delete…** in red: it deletes for good after asking, because a server has no Trash. Inside an archive F5 says **Extract**, and so does its menu item (**Extract To…**).
 - F5 and F6 say where they go when it isn't plain: `Copy → web-01` when the other panel is on a server (a production server's name in purple and bold), `Copy → site` with three or four panels. With two panels on this Mac they say **Copy** and **Move**.
-- The delay is 120 ms. Change it with `defaults write com.dmn.dfilemanager keyBarHoldDelay 0.2`.
+- The delay is 120 ms. Change it in Settings › Appearance, or with `defaults write com.dmn.dfilemanager keyBarHoldDelay 0.2`.
 
 ## Places sidebar
 
