@@ -2,7 +2,15 @@ import Foundation
 
 /// JSON files in ~/.config/dfilemanager/ (keymap, bookmarks, frecency, user menu) — dotfile-friendly.
 enum Config {
-    static let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".config/dfilemanager")
+    /// Under tests (SwiftPM's and Xcode's runners) a folder of the run's own, next to the tests' files: no test reads the
+    /// user's servers or writes their production log, frecency or history — whatever path it forgets to point elsewhere.
+    static let dir: String = {
+        guard isTestRun else { return (NSHomeDirectory() as NSString).appendingPathComponent(".config/dfilemanager") }
+        let tmp = ProcessInfo.processInfo.environment["DFM_TEST_TMP"].flatMap { $0.isEmpty ? nil : $0 } ?? NSTemporaryDirectory()
+        return (tmp as NSString).appendingPathComponent("kermo-config-\(getpid())")
+    }()
+
+    static let isTestRun = ["swiftpm-testing-helper", "xctest"].contains(ProcessInfo.processInfo.processName)
 
     static func path(_ name: String) -> String { (dir as NSString).appendingPathComponent(name) }
 

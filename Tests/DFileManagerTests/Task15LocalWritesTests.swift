@@ -193,3 +193,11 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`, as the other tes
     #expect(AppDelegate.isRespelling(dir + "/Foo", dir + "/foo"))
     #expect(!AppDelegate.isRespelling(dir + "/Foo", dir + "/Foo") && !AppDelegate.isRespelling(dir + "/Foo", dir + "/Bar"))
 }
+
+/// D-146: a test run's config is a folder of its own — the production log, file history, keymap, frecency and saved
+/// servers land there, whatever a test forgets to point elsewhere; the user's ~/.config/dfilemanager isn't read or written.
+@Test func aTestRunKeepsAConfigOfItsOwn() {
+    let real = (NSHomeDirectory() as NSString).appendingPathComponent(".config/dfilemanager")
+    #expect(Config.isTestRun && Config.dir != real && !Config.dir.hasPrefix(real), "\(Config.dir)")
+    #expect(Config.path("audit.jsonl").hasPrefix(Config.dir + "/") && Config.dir.hasSuffix("kermo-config-\(getpid())"))
+}
