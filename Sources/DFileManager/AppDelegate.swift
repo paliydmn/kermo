@@ -1596,10 +1596,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// Who answers ⎋ and ⌘↩ in `safeKeys`: the Cancel that took ↩ — titled Cancel, or the last button (Keep Mine)
-    /// where an action took ⌘↩ — and that action. A plain ↩ elsewhere (the server sheet's Save) is no Cancel: ⎋
-    /// stays AppKit's there.
+    /// where an action takes ⌘↩ — and that action (`Confirm.commandReturn`). A plain ↩ elsewhere (the server sheet's
+    /// Save) is no Cancel: ⎋ stays AppKit's there.
     static func keyRoles(_ alert: NSAlert) -> (cancel: NSButton?, action: NSButton?) {
-        let action = alert.buttons.first { $0.keyEquivalent == "\r" && $0.keyEquivalentModifierMask == .command }
+        let action = alert.buttons.first { $0.identifier == Confirm.commandReturn }
         let cancel = alert.buttons.first {
             $0.keyEquivalent == "\r" && $0.keyEquivalentModifierMask.isEmpty && ($0.title == "Cancel" || ($0 === alert.buttons.last && action != nil))
         }

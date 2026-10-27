@@ -41,6 +41,9 @@ struct Confirm {
     var safe: Bool { returnCancels || irreversible || strip.contains(.prod) }
 
     static let width: CGFloat = 360
+    /// The button ⌘↩ presses (`AppDelegate.keyRoles`). Not a key equivalent of its own: AppKit draws any button with
+    /// ↩ as the default one, ⌘ or not — two blue buttons, one of them the action.
+    static let commandReturn = NSUserInterfaceItemIdentifier("kermo.commandReturn")
     static let listed = 5
 
     /// For a server: its chips and the name it goes by.
@@ -68,8 +71,7 @@ struct Confirm {
         if safe {
             a.buttons.forEach { $0.keyEquivalent = "" }
             a.buttons.last!.keyEquivalent = "\r"   // ⎋ too: `AppDelegate.sheet`
-            a.buttons[0].keyEquivalent = "\r"
-            a.buttons[0].keyEquivalentModifierMask = .command
+            a.buttons[0].identifier = Self.commandReturn
         }
         a.accessoryView = accessory()
         return a

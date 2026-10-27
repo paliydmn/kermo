@@ -2567,7 +2567,7 @@ extension AppDelegate {
                 for t in locked where await !ServerLock.authorize(t) { return active.flash("\(t.host) stays locked") }
                 let landing = side == .local ? [] : sources.map { (dir as NSString).appendingPathComponent(name ?? ($0 as NSString).lastPathComponent) }
                 let unchecked = Self.uncheckedNote(landing, rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules)
-                if !prod.isEmpty, await confirm(Self.prodTransfer("\(move ? "Move" : "Copy") \(what) to \(place)?", sources, to: prod, move: move,
+                if !prod.isEmpty, await confirm(Self.prodTransfer("\(move ? "Move" : "Copy") \(sources.count == 1 ? "“\(what)”" : what) to \(place)?", sources, to: prod, move: move,
                                                                    unchecked: unchecked)) != 0 { return }
                 enqueueTransfer(sources, from: from, to: dir, on: side, name: name, move: move, prodAsked: true)
             }

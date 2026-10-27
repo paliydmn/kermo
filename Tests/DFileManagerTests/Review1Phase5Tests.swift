@@ -33,27 +33,27 @@ import Testing
     #expect(Confirm.list((1...5).map { Confirm.Item(name: "\($0)") }).subviews.count == 5, "five: no \"and 0 more\"")
 }
 
-/// R-54 6–7, research §5.8: on production and for what can't be undone ↩ is Cancel and the action ⌘↩ — and a line says
-/// so; elsewhere ↩ is the action and ⎋ Cancel, and no line. Red only for what can't be undone.
+/// R-54 6–7, research §5.8: on production and for what can't be undone ↩ is Cancel and the action ⌘↩ — no key
+/// equivalent of its own, so only Cancel looks like the default — and a line says so; elsewhere ↩ is the action and ⎋ Cancel, and no line. Red only for what can't be undone.
 @MainActor @Test func returnIsCancelWhereItMatters() {
-    func keys(_ a: NSAlert) -> [String] { a.buttons.map { ($0.keyEquivalentModifierMask == .command ? "⌘" : "") + $0.keyEquivalent } }
+    func keys(_ a: NSAlert) -> [String] { a.buttons.map { $0.identifier == Confirm.commandReturn ? "⌘↩" : $0.keyEquivalent } }
     func hint(_ a: NSAlert) -> Bool { texts(a).contains { $0.contains("Cancel") && $0.contains("Delete") } }
     var c = Confirm("Delete the tunnel “db”?", action: "Delete")
     #expect(!c.safe && keys(c.alert()) == ["\r", "\u{1b}"] && !hint(c.alert()) && !c.alert().buttons[0].hasDestructiveAction)
     c.irreversible = true
-    #expect(c.safe && keys(c.alert()) == ["⌘\r", "\r"] && hint(c.alert()) && c.alert().buttons[0].hasDestructiveAction)
+    #expect(c.safe && keys(c.alert()) == ["⌘↩", "\r"] && hint(c.alert()) && c.alert().buttons[0].hasDestructiveAction)
     var prod = Confirm("Restart nginx on web-01?", action: "Restart")
     prod.chips = [.prod]
-    #expect(prod.safe && keys(prod.alert()) == ["⌘\r", "\r"] && !prod.alert().buttons[0].hasDestructiveAction, "production: ↩ Cancel, not red")
+    #expect(prod.safe && keys(prod.alert()) == ["⌘↩", "\r"] && !prod.alert().buttons[0].hasDestructiveAction, "production: ↩ Cancel, not red")
     var root = Confirm("Let sudo in Terminal use Touch ID?", action: "Enable")
     root.chips = [.root]
     #expect(!root.safe, "root alone: the strip, ↩ the action")
     var stop = Confirm("Stop web?", action: "Stop")
     stop.returnCancels = true
-    #expect(stop.safe && keys(stop.alert()) == ["⌘\r", "\r"])
+    #expect(stop.safe && keys(stop.alert()) == ["⌘↩", "\r"])
     var mine = Confirm("“a.txt” changed on disk", action: "Reload")
     (mine.cancel, mine.irreversible) = ("Keep Mine", true)
-    #expect(mine.buttons == ["Reload", "Keep Mine"] && keys(mine.alert()) == ["⌘\r", "\r"], "Keep Mine is the safe one: ↩")
+    #expect(mine.buttons == ["Reload", "Keep Mine"] && keys(mine.alert()) == ["⌘↩", "\r"], "Keep Mine is the safe one: ↩")
     #expect(texts(mine.alert()).contains { $0.contains("Keep Mine") && $0.contains("Reload") })
 }
 
@@ -71,7 +71,7 @@ import Testing
     let form = NSAlert()
     ["Save & Connect", "Save", "Cancel"].forEach { form.addButton(withTitle: $0) }
     form.buttons[1].keyEquivalent = "\r"
-    (form.buttons[0].keyEquivalent, form.buttons[0].keyEquivalentModifierMask) = ("\r", .command)
+    form.buttons[0].identifier = Confirm.commandReturn
     let f = AppDelegate.keyRoles(form)
     #expect(f.cancel == nil && f.action === form.buttons[0], "⎋ is Cancel's own key there, never Save")
     let plain = AppDelegate.keyRoles(AppDelegate.alert("q", info: "", ["Save", "Cancel"]))
@@ -194,7 +194,7 @@ extension ServerLockTests {
     let c = FileJob.Conflict(src: "/Users/me/site/a.conf", dst: "/srv/site/a.conf", srcSize: 1, dstSize: 2, srcMtime: 5, dstMtime: 5, bothDirs: false)
     let q = OpsController.conflictQuestion(c, from: .local, on: .sftp(prod.target), compare: true)
     #expect(q.alert.messageText == "“a.conf” is already in site on web-01")
-    #expect(q.alert.buttons.map { ($0.keyEquivalentModifierMask == .command ? "⌘" : "") + $0.keyEquivalent } == ["⌘\r", "", "", "\r"])
+    #expect(q.alert.buttons.map { $0.identifier == Confirm.commandReturn ? "⌘↩" : $0.keyEquivalent } == ["⌘↩", "", "", "\r"])
     let labels = q.alert.accessoryView.map(all)?.compactMap { $0.isAccessibilityElement() ? $0.accessibilityLabel() : nil } ?? []
     #expect(labels.contains { $0.hasPrefix("On web-01 now: a.conf") && !$0.hasSuffix("newer") } && labels.contains { $0.hasPrefix("From this Mac: a.conf") })
     #expect(q.alert.accessoryView.map(all)?.contains { $0.accessibilityLabel() == "production: web-01" } == true, "the strip")
