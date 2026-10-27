@@ -637,9 +637,9 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         highlight(highlighted)   // the panel decides what's selected, after it navigates
     }
 
-    /// A server with nothing open connects on a double-click only: rows shift as Frequent grows, and one stray click
-    /// must not open a root shell on the wrong (production) server. One click shows its place, which asks the server
-    /// nothing; the double-click's second, SSH as before.
+    /// A server with nothing open connects on a double-click only (its files, the overview's first row): rows shift as
+    /// Frequent grows, and one stray click must not connect to the wrong (production) server. One click shows its
+    /// overview, which asks the server nothing.
     func open(place p: Place, clicks: Int, mods: NSEvent.ModifierFlags) {
         if case .server(let r) = p, r.sessions.isEmpty, clicks < 2 { return onServerPlace?(r, mods) ?? () }
         onOpen?(p, mods)
@@ -865,7 +865,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         let port = server.target.port.map { ":\($0)" } ?? ""
         let about = ["\(server.target.host)\(port)", locked ? "locked" : nil, prod ? "production" : nil, open.isEmpty ? nil : open + " open"]
         r.toolTip = ([about.compactMap { $0 }.joined(separator: " · ")] + (server.status == .connecting ? ["Connecting…"] : [])
-                     + (failed.map { [$0] } ?? []) + tunnels + [(open.isEmpty ? "Click: its overview · double-click: SSH" : "Click: its session") + " · ⋯ or right-click: everything else"])
+                     + (failed.map { [$0] } ?? []) + tunnels + [(open.isEmpty ? "Click: its overview · double-click: its files" : "Click: its session") + " · ⋯ or right-click: everything else"])
             .joined(separator: "\n")
         return r
     }

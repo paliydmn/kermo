@@ -83,9 +83,9 @@ import Testing
     #expect(cell(p, 0, 0) == "worker" && cell(p, 1, 0).hasSuffix(" failed") && cell(p, 2, 0) == "enabled")
     #expect(cell(p, 1, 0).hasPrefix("\u{FFFC}"), "a mark — a shape — before the state")
     #expect(p.list?.headerView.isHidden == false && p.list?.headerView.isDescendant(of: p.view) == true)
-    #expect(p.statusText == "3 rows" && p.statusChipWords == ["SSH"])
+    #expect(p.statusText == "3 rows" && p.statusChipWords.isEmpty, "SSH only while a connection is up")
     #expect(p.headerText == "deploy@web-01.invalid › Services" && p.pathBar.crumbs == [PathBar.Crumb(title: "Services", path: nil)])
-    #expect(p.server == s.target && p.remoteTabs.map(\.target) == [s.target], "it holds its server's connection, as a server tab")
+    #expect(p.server == s.target && p.heldServers == [s.target] && p.remoteTabs.isEmpty, "it holds its server's connection; not a files session in the sidebar")
     #expect(p.item(at: 0) == nil && p.targetItems.isEmpty && p.transferItems == nil, "no file under the cursor")
 
     p.navigate(to: NSTemporaryDirectory())   // elsewhere: the files' columns back, once the folder's listing lands
@@ -96,9 +96,15 @@ import Testing
 
 /// A header click sorts by that column, and again the other way; the cursor stays on its row.
 @MainActor @Test func aHeaderClickSortsTheCursorKeepsItsRow() throws {
-    let s = Stub(rows: [row("cron"), row("nginx", .attention), row("worker", .failed)])
+    // Its own server: the order is kept per server and list, and other tests' lists run meanwhile.
+    let s = Stub(on: SFTPTarget(host: "deploy@header-click.invalid"), rows: [row("cron"), row("nginx", .attention), row("worker", .failed)])
     let p = try panel(s, select: "nginx")
-    defer { p.shutdown() }
+    defer {
+        p.shutdown()
+        var kept = UserDefaults.standard.dictionary(forKey: "listSort") ?? [:]
+        kept["deploy@header-click.invalid:22 Services"] = nil
+        UserDefaults.standard.set(kept, forKey: "listSort")
+    }
     #expect(p.list?.cursor?.title == "nginx")
     p.table.sortDescriptors = [NSSortDescriptor(key: "0", ascending: true)]
     #expect(p.list?.shown.map(\.title) == ["cron", "nginx", "worker"] && p.list?.cursor?.title == "nginx")
@@ -170,13 +176,19 @@ import Testing
     #expect(p.sessionTabs.allSatisfy { $0.server == s.target && $0.place == true && $0.cursor == "Services" }, "a restart brings its server's place, on its row")
 }
 
+/// The apps the tests below make live on: a panel's late work (its git status landing) calls back into its app,
+/// which the app's own `wire` holds unowned — as the real app, which lives till quit.
+@MainActor private var keptApps: [AppDelegate] = []
+
 extension ServerLockTests {
     /// Two wired panels in a window, the registry, its keymap (in a folder of its own) and the menu bar — as the app.
     @MainActor private func app() throws -> (AppDelegate, PanelViewController, PanelViewController, () -> Void) {
         _ = NSApplication.shared
         let dir = try tempDir(), was = AppDelegate.keymapDir
         AppDelegate.keymapDir = dir
+        for k in ["listSort", "placeLastList"] { UserDefaults.standard.removeObject(forKey: k) }   // a test's order or last list isn't the next one's
         let app = AppDelegate()
+        keptApps.append(app)
         app.terminal = EmbeddedTerminal(covering: NSView())
         app.applyConfig(reportProblems: false)
         let a = PanelViewController(tabs: [dir], index: 0, showHidden: false), b = PanelViewController(tabs: [dir], index: 0, showHidden: false)
@@ -188,6 +200,8 @@ extension ServerLockTests {
         for (i, p) in [a, b].enumerated() { p.view.frame = NSRect(x: CGFloat(i) * 500, y: 0, width: 500, height: 600); host.addSubview(p.view) }
         host.layoutSubtreeIfNeeded()
         [a, b].forEach(app.wire)
+        // Not `releaseIdleServers`: it stops every master not in use, another suite's made-up ones too (MastersTests).
+        for p in [a, b] { p.onSessionsChange = { [weak app] in app?.refreshSidebar() } }
         return (app, a, b, {
             Picker.dismiss()
             AppDelegate.answering = nil
@@ -195,6 +209,7 @@ extension ServerLockTests {
             app.window = nil
             AppDelegate.keymapDir = was
             try? FileManager.default.removeItem(atPath: dir)
+            for k in ["listSort", "placeLastList"] { UserDefaults.standard.removeObject(forKey: k) }
         })
     }
 
@@ -207,13 +222,13 @@ extension ServerLockTests {
     /// A service's row with Services…' keys, each run written down.
     @MainActor private func serviceRow(_ title: String, _ ran: Later<[String]>, why: [String: String] = [:], prod: SFTPTarget? = nil) -> Picker.Item {
         func a(_ t: String, _ key: String?, _ group: Int = 0, list: String? = nil, command: String? = nil, asks: ListAction.Asks = .never,
-               dangerous: Bool = false) -> ListAction {
+               dangerous: Bool = false, note: String? = nil) -> ListAction {
             ListAction(title: t, key: key.flatMap(Shortcut.init), group: group, closes: false, why: why[t], listKey: list.flatMap(Shortcut.init),
-                       command: command, runsOn: prod, asks: asks, dangerous: dangerous) { asked in ran.value.append("\(t) \(title)" + (asked ? " (asked)" : "")); return nil }
+                       command: command, runsOn: prod, asks: asks, dangerous: dangerous, note: note) { asked in ran.value.append("\(t) \(title)" + (asked ? " (asked)" : "")); return nil }
         }
         return row(title, actions: {
             [a("Status", "return"), a("Live Logs", "cmd+l"), a("Edit Unit File…", "cmd+e"), a("Copy Service Name", "cmd+c"),
-             a("Stop…", nil, 1, list: "f8", command: "systemctl stop -- \(title).service", asks: .always, dangerous: true),
+             a("Stop…", nil, 1, list: "f8", command: "systemctl stop -- \(title).service", asks: .always, note: "They stay stopped."),
              a("Restart", "cmd+r", 1, command: "systemctl restart -- \(title).service", asks: .prod)]
         })
     }
@@ -263,7 +278,7 @@ extension ServerLockTests {
         // The key bar: the row's keys in its words, ↩ first, Stop… red; then Mark, Filter, Actions. A slot clicked is its key.
         let bar = try #require(app.focusedKeys)
         #expect(bar.map(\.label) == ["Status", "Live Logs", "Edit Unit File…", "Copy Service Name", "Stop…", "Restart", "Mark", "Filter", "Actions"])
-        #expect(bar.map(\.key) == ["↩", "⌘L", "F4", "⌘C", "F8", "⌘R", "Space", "/", "⌃↩"] && bar.filter(\.danger).map(\.label) == ["Stop…"])
+        #expect(bar.map(\.key) == ["↩", "⌘L", "F4", "⌘C", "F8", "⌘R", "Space", "/", "⌃↩"] && bar.filter(\.danger).isEmpty, "Stop… isn't red: a Start undoes it")
         app.keyBar.onRun?(try #require(bar.first { $0.label == "Restart" }?.id))
         #expect(ran.value.last == "Restart nginx")
         app.keyBar.onRun?("list:mark.toggle")
@@ -516,10 +531,10 @@ extension ServerLockTests {
     /// the place asks as leaving a server's `/` does.
     @Test func aPlaceAsksTheServerNothing() async throws {
         let (app, a, _, done) = try app()
-        let was = (AppDelegate.connected, PanelViewController.confirmLeaving, ServerLock.authenticate)
+        let was = (AppDelegate.connected, PanelViewController.confirmLeavingPlace, ServerLock.authenticate)
         defer {
             done()
-            (AppDelegate.connected, PanelViewController.confirmLeaving, ServerLock.authenticate) = was
+            (AppDelegate.connected, PanelViewController.confirmLeavingPlace, ServerLock.authenticate) = was
             ServerLock.servers = { [] }
         }
         var s = SavedServer(address: "deploy@web-01.invalid")!
@@ -535,7 +550,7 @@ extension ServerLockTests {
         #expect(a.list?.shown.map(\.title) == ["Files", "Home", "/", "Services", "Containers", "Ports", "Tunnels", "File History"])
         #expect(a.list?.shown.first?.detail == "/var/www/site — start folder" && a.list?.shown[3].subtitle == "—")
         #expect(a.headerText == "deploy@web-01.invalid › Overview" && a.headerChips == [.prod, .locked] && a.remoteTabs.isEmpty, "not a session")
-        #expect(app.focusedKeys?.map(\.label) == ["Open", "SSH Here", "As Root", "Filter", "Actions"])
+        #expect(app.focusedKeys?.map(\.label) == ["Open", "Open in Other Panel", "SSH Here", "As Root", "Filter", "Actions"])
 
         app.noteCount("services", on: s.target, 10, problems: 1)   // a list read before
         a.readList()
@@ -553,10 +568,15 @@ extension ServerLockTests {
         press(a, 51, "\u{8}")   // ⌫: back to the place, on Services
         #expect(a.isPlace && a.list?.cursor?.title == "Services")
         var leaving: SFTPTarget?
-        PanelViewController.confirmLeaving = { t, _, _ in leaving = t; return false }
+        PanelViewController.confirmLeavingPlace = { t, _, _ in leaving = t; return false }
         press(a, 51, "\u{8}")
         await until { leaving != nil }
-        #expect(leaving == s.target && a.isPlace, "asked, and Cancel stays")
+        #expect(leaving == s.target && a.isPlace, "a connection up: asked, and Cancel stays")
+        AppDelegate.connected = { _ in false }
+        press(a, 51, "\u{8}")   // nothing to close: no question
+        await until { a.list == nil }
+        #expect(a.list == nil && a.remote == nil)
+        app.showPlace(s.target, in: a, select: "Services")
         #expect(a.sessionTabs.first == Session.Tab(path: a.path, cursor: "Services", server: s.target, place: true), "a restart brings the place back")
     }
 
@@ -587,7 +607,9 @@ extension ServerLockTests {
         #expect(a.remote?.dir == FileManager.default.currentDirectoryPath, "the login folder: a stand-in server's is where it runs")
         app.showPlace(.local(), in: a)
         enter("Tunnels")
-        #expect(a.statusText.hasPrefix("Tunnels belong to saved servers"), "none saved here: it says how to have one")
+        await until { a.list?.source is TunnelList }
+        #expect(a.emptyShown?.title.hasPrefix("Tunnels belong to saved servers") == true, "none saved here: it says how to have one")
+        a.goUp()
         let history = AppDelegate.historyRoot
         defer { AppDelegate.historyRoot = history }
         AppDelegate.historyRoot = try tempDir()   // not this Mac's real one
@@ -622,5 +644,124 @@ extension ServerLockTests {
         app.window.makeFirstResponder(a.table)
         app.run("server.overview")
         #expect(a.isPlace && a.list?.source.target == SFTPTarget(host: "deploy@web-01.invalid"))
+    }
+
+    /// ⌘↩: a folder under the cursor in the other panel (here or on the panel's server); on an overview's row, that row
+    /// there. ⌘E on a list runs on its server, in its login folder, %f its cursor's row. `?` and `:` are a list's keys
+    /// only: in a folder they stay type-select's.
+    @Test func commandReturnCommandLineAndAListsOwnKeys() async throws {
+        let (app, a, b, done) = try app()
+        defer { done() }
+        let dir = try tempDir()
+        try FileManager.default.createDirectory(atPath: dir + "/sub", withIntermediateDirectories: true)
+        a.navigate(to: dir)
+        await until { a.listedItems.count == 1 }
+        app.window.makeFirstResponder(a.table)
+        a.moveCursor(toName: "sub")
+        press(a, 36, "\r", .command)   // ⌘↩
+        await until { b.path == dir + "/sub" }
+        #expect(b.path == dir + "/sub" && a.path == dir)
+        let typed = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .shift, timestamp: 0, windowNumber: 0, context: nil,
+                                     characters: "?", charactersIgnoringModifiers: "/", isARepeat: false, keyCode: 44)!
+        #expect(!app.runKey(typed), "? in a folder: type-select's")
+
+        let s = Stub(rows: [row("nginx"), row("cron")])
+        a.showList(s)
+        app.window.makeFirstResponder(a.table)
+        #expect(app.shellContext.dir == "." && app.shellContext.expand("systemctl status %f") == "systemctl status nginx")
+        #expect(AppDelegate.runsInList("cmdline.focus") && app.runKey(typed), "? in a list: its keys")
+        #expect(KeyHelp.current != nil)
+        KeyHelp.current?.close()
+
+        app.showPlace(.local(), in: a)
+        app.window.makeFirstResponder(a.table)
+        a.list?.moveCursor(to: a.list?.shown.firstIndex { $0.title == "/" } ?? -1)
+        press(a, 36, "\r", .command)   // the row's ⌘↩: / in the other panel
+        await until { b.remote?.dir == "/" }
+        #expect(b.remote?.dir == "/" && a.isPlace)
+
+        app.window.makeFirstResponder(a.table)   // ⌘↩ gave the keys to the other panel
+        app.goToList()   // `:`: its overview as a picker — Tunnels, here, from this Mac
+        let picker = try #require(Picker.current)
+        #expect(picker.rows.map(\.title).contains("Services") && picker.rows.map(\.title).contains("Tunnels"))
+        picker.rows.first { $0.title == "Tunnels" }?.run()
+        await until { a.list?.source is TunnelList }
+        #expect(a.headerText == "localhost › Tunnels" && a.emptyShown?.title.hasPrefix("Tunnels belong to saved servers") == true)
+        Picker.dismiss()
+    }
+
+    /// A list's column order is kept per server and list; its server's overview opens on the list opened there last.
+    @Test func sortOrderAndTheLastListAreKeptPerServer() async throws {
+        let (app, a, _, done) = try app()
+        defer { done() }
+        let t = SFTPTarget(host: "deploy@sorted.invalid")   // its own key: other tests' lists run meanwhile
+        let s = Stub(on: t, rows: [row("cron"), row("nginx", .attention), row("worker", .failed)])
+        a.showList(s)
+        #expect(a.list?.shown.map(\.title) == ["worker", "nginx", "cron"])
+        a.table.sortDescriptors = [NSSortDescriptor(key: "0", ascending: true)]
+        a.showList(Stub(on: t, rows: [row("cron"), row("nginx", .attention), row("worker", .failed)]))   // the same list again: as sorted
+        #expect(a.list?.shown.map(\.title) == ["cron", "nginx", "worker"] && a.table.sortDescriptors.first?.key == "0")
+        a.showList(Stub("Containers", on: t, rows: [row("b"), row("a", .failed)]))
+        #expect(a.list?.shown.map(\.title) == ["a", "b"], "another list: its own order")
+        app.showPlace(s.target, in: a)
+        #expect(a.list?.cursor?.title == "Containers", "the list opened there last")
+    }
+
+    /// Tunnels as a list in a panel, from this Mac: saved and temporary ones, ↩ turns one on or off, ⌘C copies its
+    /// address, Edit… on F4 and Delete… on F8 there (red: it's gone for good); ＋ New Tunnel… over the columns.
+    @Test func tunnelsInAPanel() async throws {
+        let (app, a, _, done) = try app()
+        defer { done() }
+        var s = SavedServer(address: "deploy@db-01.invalid")!
+        s.tunnels = [Tunnel(name: "Main", localPort: 41001, port: 5432), Tunnel(localPort: 41002, port: 3000)]
+        app.savedServers = [s]
+        a.showList(TunnelList(app, s))
+        app.window.makeFirstResponder(a.table)
+        let l = try #require(a.list)
+        #expect(l.shown.map(\.title) == ["Main", "Grafana"] && l.shown.allSatisfy { $0.state == .off } && cell(a, 2, 0) == "localhost:41001")
+        #expect(l.content?.header == "2 tunnels · 0 listening" && l.content?.primary?.title == "New Tunnel…")
+        let bar = try #require(app.focusedKeys)
+        #expect(bar.map(\.label) == ["Turn On", "Copy Address", "Edit…", "Delete…", "Mark", "Filter", "Actions"] && bar.map(\.key).prefix(4) == ["↩", "⌘C", "F4", "F8"])
+        #expect(bar.filter(\.danger).map(\.label) == ["Delete…"])
+        a.list?.moveCursor(to: 1)
+        guard case .rows(let peek)? = l.source.peek(try #require(l.cursor)) else { Issue.record("its lines"); return }
+        #expect(peek.map(\.0) == ["Name", "State", "Here", "Goes to", "URL"] && peek.last?.1 == "http://localhost:41002")
+    }
+
+    /// ⌘L in a list: the cursor row's log as it goes next door (an output window's text, its window never shown),
+    /// following the cursor; ⌘L again: the row's Quick View. In a Picker the same action opens its window, as before.
+    @Test func aRowsLogFollowsNextDoor() async throws {
+        let (app, a, b, done) = try app()
+        let rest = PanelViewController.peekRest
+        defer { done(); PanelViewController.peekRest = rest }
+        PanelViewController.peekRest = 50
+        func logged(_ name: String) -> Picker.Item {
+            row(name, actions: {
+                [ListAction(title: "Live Logs", key: Shortcut("cmd+l"), group: 0, closes: true, why: nil,
+                            follow: ("echo log-of-\(name); sleep 30", nil)) { _ in Issue.record("a window, not next door"); return nil }]
+            })
+        }
+        let s = Stub(rows: [logged("api"), logged("worker")])
+        a.showList(s)
+        app.window.makeFirstResponder(a.table)
+        press(a, 37, "l", .command)   // ⌘L
+        await until { b.logShown?.contains("log-of-api") == true }
+        #expect(app.quickViewOn && b.quickTitleShown == "api — log" && b.logShown?.contains("log-of-api") == true)
+        a.list?.moveCursor(to: 1)
+        await until { b.logShown?.contains("log-of-worker") == true }
+        #expect(b.logShown?.contains("log-of-api") == false, "the row before stopped, not appended to")
+        press(a, 37, "l", .command)   // ⌘L again: back to the row's Quick View
+        #expect(b.logShown == nil && b.quickTitleShown == "worker" && !app.quickLog)
+        app.toggleQuickView()
+    }
+
+    /// A double-click (or ↩) on a server row with nothing open: its files, the overview's first row — not a shell.
+    @Test func aServerRowsDoubleClickOpensItsFiles() async throws {
+        let (app, a, _, done) = try app()
+        defer { done() }
+        app.window.makeFirstResponder(a.table)
+        app.serverAction(ServerRow(target: .local(), title: "localhost"), .row, [])
+        await until { a.remote != nil }
+        #expect(a.remote?.target.host == "localhost" && app.terminal.tabs.isEmpty)
     }
 }

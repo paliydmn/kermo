@@ -16,6 +16,8 @@ private let keyboardOnly: [String: String] = [
     "panel.menu": "⇧F10 or the Menu key; the mouse right-clicks",
     "mark.down": "marks while moving the cursor; Mark / Unmark is in the menu", "mark.up": "as Mark and Move Down",
     "cmdline.insert": "types into the command line from a panel", "cmdline.insertPaths": "as Insert Name into Command Line",
+    "list.keys": "? inside a list of a server's only (type-select elsewhere); F1 lists every key",
+    "list.go": ": inside a list of a server's only (type-select elsewhere); the overview's rows are the menu's Server ▸ Overview",
 ]
 
 @MainActor private func app() -> AppDelegate {

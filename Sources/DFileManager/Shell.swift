@@ -222,6 +222,20 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         w.window?.listInWindowsMenu()
     }
 
+    /// The same, its window never shown: a panel shows its text (`text`) — a list row's log next door. Closing the
+    /// window (`close()`) stops it as closing a shown one does. It isn't "a command running in an output window" at quit.
+    static func embedded(_ command: String, on server: SFTPTarget?, follow: Bool) -> OutputWindow {
+        let w = OutputWindow(command, "/", server, false, follow, nil) { _ in }
+        w.embedded = true
+        w.window?.setFrameAutosaveName("")   // the shown ones' size isn't this hidden one's
+        open.append(w)   // `terminateAll` at quit
+        return w
+    }
+
+    /// Embedded: its text, taken out of the window for a panel to show.
+    var text: NSScrollView? { window?.docFrame?.scroll }
+    private var embedded = false
+
     static func start(_ command: String, on servers: [MultiRun.Server], skipped: [String], env: [String: String], title: String,
                       again: (@MainActor (NSWindow?) async -> Bool)?, ended: @escaping @MainActor (Int, MultiRun.Outcome) -> Void) {
         let w = OutputWindow(servers, skipped: skipped, command: command, env: env, again: again, ended: ended)
@@ -537,7 +551,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
 
     /// For the quit confirmation: how many windows' commands quitting would end (a `cat parts > target` stops part way).
     static var busy: String? {
-        let n = open.filter(\.alive).count
+        let n = open.filter { $0.alive && !$0.embedded }.count
         return n > 0 ? "\(n) command\(n == 1 ? "" : "s") running in an output window (a split or combine stops part way)" : nil
     }
 }

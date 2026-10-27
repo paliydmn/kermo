@@ -228,7 +228,7 @@ extension AppDelegate {
             let i = r.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
             let typed = (name: nameField.stringValue.trimmingCharacters(in: .whitespaces), forward: forwardField.stringValue,
                          url: urlField.stringValue.trimmingCharacters(in: .whitespaces))
-            if let old, i == save.count + (free == nil ? 1 : 2) { return deleteTunnel(old, of: server) }
+            if let old, i == save.count + (free == nil ? 1 : 2) { deleteTunnel(old, of: server); return }
             guard i < save.count + (free == nil ? 0 : 1), var t = try? draft.reading(typed.forward).get(),
                   var s = savedServers.first(where: { $0.id == server.id }) else { return }
             let use = free != nil && i == save.count   // "Use N": as the button chosen before it was taken
@@ -270,15 +270,17 @@ extension AppDelegate {
         refreshSidebar()
     }
 
-    func deleteTunnel(_ t: Tunnel, of s: SavedServer) {
+    /// `asked`: a question for several marked in a list was asked already — none here. What to wait for: its run.
+    @discardableResult
+    func deleteTunnel(_ t: Tunnel, of s: SavedServer, asked: Bool = false) -> Task<Void, Never> {
         Task {
             guard await ServerLock.authorize(s, "change the tunnels of") else { return }
             let n = tunnels.connections(t, of: s)
             let info = !tunnels.isListening(t, of: s) ? "" : n == 0 ? "It stops listening." : "It stops listening: \(n) open connection\(n == 1 ? " closes" : "s close")."
             var c = Confirm("Delete the tunnel “\(t.title)”?", action: "Delete")
             (c.note, c.irreversible) = (info.isEmpty ? nil : info, true)
-            guard await confirm(c) == 0,
-                  let i = savedServers.firstIndex(where: { $0.id == s.id }) else { return }
+            if !asked, await confirm(c) != 0 { return }
+            guard let i = savedServers.firstIndex(where: { $0.id == s.id }) else { return }
             savedServers[i].tunnels.removeAll { $0.localPort == t.localPort }
             Config.save("servers.json", savedServers)
             releaseIdleServers()
@@ -346,9 +348,54 @@ extension AppDelegate {
         }
     }
 
-    /// A tunnel turned on or off: the ports' lists in panels say where they go now.
+    /// A tunnel turned on or off, added, edited: the ports' and tunnels' lists in panels say so now.
     func refreshPortLists() {
-        for p in panels { if let l = p.list, let c = (l.source as? PortList)?.content { l.set(c) } }
+        for p in panels { if let l = p.list, let c = (l.source as? PortList)?.content ?? (l.source as? TunnelList)?.content { l.set(c) } }
+    }
+
+    /// A server's tunnels as a list's rows: the saved ones, then the temporary ones on its address; a saved server's
+    /// ＋ New Tunnel… over them.
+    func tunnelContent(_ server: SavedServer) -> ListContent {
+        let saved = savedServer(at: server.target)
+        let all = (saved.map { s in s.tunnels.map { (t: $0, s: s, temporary: false) } } ?? [])
+            + tunnels.temporaries(server: ServerRow.key(server.target)).map { (t: $0.tunnel, s: $0.server, temporary: true) }
+        let on = all.filter { tunnels.isListening($0.t, of: $0.s) }.count
+        let new = saved.map { s in ListAction(title: "New Tunnel…", key: nil, group: 0, closes: false, why: nil) { [unowned self] _ in editTunnel(nil, of: s); return nil } }
+        return ListContent(rows: all.map { tunnelRow($0.t, of: $0.s, temporary: $0.temporary) },
+                           header: "\(all.count) tunnel\(all.count == 1 ? "" : "s") · \(on) listening",
+                           empty: saved == nil ? "Tunnels belong to saved servers: save this one first, or Forward Port… for now" : "No tunnels yet",
+                           primary: new)
+    }
+
+    /// "Postgres" · "listening · 2 open" (● on, ◆ failed, grey off) · localhost:15432 · where it goes. ↩ turns it on
+    /// or off, ⌘C copies its address; Open in Browser, Edit… (F4 in a panel), Delete… (F8 there), a temporary one's Save.
+    func tunnelRow(_ t: Tunnel, of s: SavedServer, temporary: Bool) -> Picker.Item {
+        let st = tunnels.state(t, of: s), on = st?.listener != nil, n = tunnels.connections(t, of: s), failed = st?.error != nil
+        let state = (failed ? "failed" : on ? (n > 0 ? "listening · \(n) open" : "listening") : "off") + (temporary ? " · temporary" : "")
+        var it = Picker.Item(title: t.title, subtitle: state, detail: t.remote) { [unowned self] in if on { turnOff(t, of: s) } else { turnOn(t, of: s) } }
+        it.id = ServerRow.key(s.target) + " tunnel \(t.localPort)"
+        it.cells = ["local": t.address, "url": t.link?.absoluteString ?? ""]
+        it.state = failed ? .failed : on ? .on : .off
+        it.listActions = { [unowned self] in
+            var a = [ListAction(title: on ? "Turn Off" : "Turn On", key: Shortcut("return"), group: 0, closes: false, why: nil) { _ in
+                         if on { self.turnOff(t, of: s) } else { self.turnOn(t, of: s) }
+                         return nil
+                     },
+                     ListAction(title: "Copy Address", key: Shortcut("cmd+c"), group: 0, closes: false, why: nil) { _ in self.copyAddress(t); return nil }]
+            if let url = t.link { a.append(ListAction(title: "Open in Browser", key: Shortcut("cmd+o"), group: 0, closes: false, why: nil) { _ in self.openTunnel(t, of: s, url); return nil }) }
+            if temporary {
+                a.append(ListAction(title: "Save", key: Shortcut("cmd+s"), group: 1, closes: false, why: savedServer(at: s.target) == nil ? "Save the server first (New Server…)" : nil) { _ in
+                    self.saveTemporary(t, of: s)
+                    return nil
+                })
+            } else {
+                a += [ListAction(title: "Edit…", key: Shortcut("cmd+e"), group: 1, closes: false, why: nil) { _ in self.editTunnel(t, of: s); return nil },
+                      ListAction(title: "Delete…", key: Shortcut("cmd+backspace"), group: 1, closes: false, why: nil, listKey: Shortcut("f8"),
+                                 command: nil, asks: .always, dangerous: true) { asked in self.deleteTunnel(t, of: s, asked: asked) }]
+            }
+            return a
+        }
+        return it
     }
 
     enum PortThen { case none, open, copy, save }
@@ -474,5 +521,27 @@ final class PortList: ListSource {
     func peek(_ row: Picker.Item) -> ListPeek? {
         .rows([("Port", row.title), ("Process", row.cells["process"].flatMap { $0.isEmpty ? nil : $0 } ?? "not said (another user's)"),
                ("Listens on", row.cells["reach"] ?? ""), ("Tunnel", row.detail.isEmpty ? "none — ↩ Forward" : row.detail)])
+    }
+}
+
+/// A server's tunnels as a list in a panel (its overview's Tunnels): read again as tunnels change, from this Mac —
+/// nothing goes to the server to list them.
+@MainActor
+final class TunnelList: ListSource {
+    unowned let app: AppDelegate
+    let server: SavedServer
+    let title = "Tunnels"
+    let columns = [ListColumn(title: "Name", field: .title, width: 130), ListColumn(title: "State", field: .subtitle, width: 150, state: true),
+                   ListColumn(title: "Here", field: .cell("local"), width: 130), ListColumn(title: "Goes to", field: .detail, width: 150)]
+    var target: SFTPTarget { server.target.asUser }
+    var content: ListContent? { app.tunnelContent(server) }
+
+    init(_ app: AppDelegate, _ server: SavedServer) { (self.app, self.server) = (app, server) }
+
+    func read(_ cancel: CancelFlag) async throws -> ListContent { content! }
+
+    func peek(_ row: Picker.Item) -> ListPeek? {
+        .rows([("Name", row.title), ("State", row.subtitle), ("Here", row.cells["local"] ?? ""), ("Goes to", row.detail),
+               ("URL", row.cells["url"].flatMap { $0.isEmpty ? nil : $0 } ?? "none")])
     }
 }
