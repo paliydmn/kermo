@@ -34,7 +34,7 @@ Once a day Kermo asks GitHub for its latest release: one HTTPS request to `api.g
 
 Install and Relaunch comes with Kermo 1.4.1. Kermo 1.2.1 and older offer only **Download**: update them once with the [install line](#install-a-release) or by hand.
 
-Turn the daily check off with **Kermo ▸ Check for Updates Automatically**, or `defaults write com.dmn.dfilemanager updateCheckOff -bool true`.
+Turn the daily check off with **Kermo ▸ Configuration ▸ Check for Updates Automatically**, or `defaults write com.dmn.dfilemanager updateCheckOff -bool true`.
 
 Releases after 1.2.1 are all signed with one certificate, so Full Disk Access and other permissions survive an update. Saved passwords in the Keychain may still ask once per update: click **Always Allow**.
 

@@ -29,13 +29,13 @@ func fakeSudo(in dir: String) throws -> String {
     #expect(PanelViewController.dropped(items, from: root.asRoot(false)) == items)
 }
 
-/// Reopen Panel as Root / as User: ⌃⌘R / ⌃⇧⌘R, in the Admin menu and ⌘⇧P (keymap.json can rebind them); "Open SFTP
+/// Reopen as Root / as User: ⌃⌘R / ⌃⇧⌘R, in the Server menu and ⌘⇧P (keymap.json can rebind them); "Open SFTP
 /// as Root" is in a server's sidebar menu.
 @MainActor @Test func rootPanelCommandsAreThere() {
     let commands = AppDelegate().makeCommands()
-    for (id, title, key) in [("admin.rootPanel", "Reopen Panel as Root", "⌃⌘R"), ("admin.userPanel", "Reopen Panel as User", "⌃⇧⌘R")] {
+    for (id, title, key) in [("admin.rootPanel", "Reopen as Root", "⌃⌘R"), ("admin.userPanel", "Reopen as User", "⌃⇧⌘R")] {
         let c = commands.first { $0.id == id }
-        #expect(c?.title == title && c?.menu == "Admin" && c?.keys.map(\.display) == [key])
+        #expect(c?.title == title && c?.menu == "Server" && c?.keys.map(\.display) == [key])
         #expect(commands.filter { $0.keys.contains { $0.display == key } }.count == 1, "\(key) is theirs alone")
         #expect(c?.keys.first?.takenByMacOS == nil)
     }

@@ -66,6 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var visitsSinceSave = 0
 
     var active: PanelViewController { panels[activeIndex] }
+    /// `active`, before the window has panels (a menu's ✓ asked at launch or in tests).
+    var activePanel: PanelViewController? { panels.indices.contains(activeIndex) ? active : nil }
+    var sidebarShown: Bool { sidebarItem?.isCollapsed == false }
     var other: PanelViewController {
         panels[Self.targetIndex(active: activeIndex, previous: target.flatMap { t in panels.firstIndex { $0 === t } }, count: panels.count)]
     }
@@ -401,7 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let inPanel = [#selector(NSResponder.selectAll(_:)): "Mark All", #selector(NSResponder.performTextFinderAction(_:)): "Search Files"]
         var out: [Shortcut: String] = [:]
         for m in menu.items.compactMap(\.submenu) {
-            for it in m.items where it.action != #selector(menuCommand(_:)) {
+            for it in m.allItems where it.action != #selector(menuCommand(_:)) {
                 guard let k = Shortcut(menuItem: it), k.takenByMacOS == nil else { continue }
                 out[k] = "\(m.title) ▸ \(it.title)'s" + (it.action.flatMap { inPanel[$0] }.map { ", which in a panel does \($0)" } ?? "")
             }
@@ -423,7 +426,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         var out = Viewer.keys(of: w) ?? Editor.keys(of: w) ?? OutputWindow.keys(of: w) ?? SyncWindow.keys(of: w) ?? []
         let menus = menu.items.compactMap(\.submenu)
         for m in menus.dropFirst() + menus.prefix(1) {
-            for it in m.items {
+            for it in m.allItems {
                 guard it.action == #selector(menuCommand(_:)) else {
                     // Not the system's fn ones (Start Dictation, Emoji & Symbols): a key here is one Shortcut can say.
                     if !it.keyEquivalentModifierMask.contains(.function), let k = Shortcut(menuItem: it), let action = it.action, Self.works(it, in: w) {
@@ -691,7 +694,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             id != "servers" ? [] : [MenuAction.item("New Server…") { [unowned self] in editServer(SavedServer(), title: "New Server") },
                                     MenuAction.item("Connect…") { [unowned self] in showConnect(ssh: true) },
                                     MenuAction.item("Run on Servers…") { [unowned self] in runOnServers() },
-                                    MenuAction.item("Edit SSH Config") { [unowned self] in editSSHConfig() }]
+                                    MenuAction.item("Edit SSH Config…") { [unowned self] in editSSHConfig() }]
         }
         NotificationCenter.default.addObserver(self, selector: #selector(reloadVolumes), name: NSWindow.didBecomeKeyNotification, object: window)
         let ws = NSWorkspace.shared.notificationCenter
@@ -957,7 +960,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let isConfig = configHosts.contains(address)
         return [.separator(),
                 SavedServer(address: address).map { s in MenuAction.item("Save…") { [unowned self] in editServer(s, title: "Save “\(address)”") } },
-                isConfig ? MenuAction.item("Edit SSH Config") { [unowned self] in editSSHConfig() } : nil]
+                isConfig ? MenuAction.item("Edit SSH Config…") { [unowned self] in editSSHConfig() } : nil]
     }
 
     private static let sidebarButtonID = NSToolbarItem.Identifier("sidebar")
@@ -1123,16 +1126,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// like ⌘↑ or ⌫ keep their normal text-editing meaning.
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         guard item.action == #selector(menuCommand(_:)), let id = item.representedObject as? String else { return true }
-        if id == "view.hidden" { item.state = defaults.bool(forKey: "showHidden") ? .on : .off }
-        if id == "view.perms" { item.state = defaults.bool(forKey: "showPerms") ? .on : .off }
+        let c = commands.first { $0.id == id }
+        if let on = c?.on { item.state = on(self) ? .on : .off }
         if id == "app.update" { item.title = updateOffered.map { "Kermo \($0) Available…" } ?? "Check for Updates…" }
-        if id == "app.update.auto" { item.state = defaults.bool(forKey: "updateCheckOff") ? .off : .on }
-        if id == "view.terminalFull" { item.state = terminal?.isFull == true ? .on : .off }
-        if id == "file.trash" { item.title = panels.indices.contains(activeIndex) && (active.remote ?? active.parked) != nil ? "Delete…" : commands.first { $0.id == id }?.title ?? item.title }   // no Trash on a server
-        if id == "file.copy" { item.title = panels.indices.contains(activeIndex) && active.archive != nil ? "Extract To…" : commands.first { $0.id == id }?.title ?? item.title }   // F5 in an archive
+        if id == "file.trash" { item.title = (activePanel.map { ($0.remote ?? $0.parked) != nil } ?? false) ? "Delete…" : c?.title ?? item.title }   // no Trash on a server
+        if id == "file.copy" { item.title = activePanel?.archive != nil ? "Extract To…" : c?.title ?? item.title }   // F5 in an archive
         if id == "tab.close" {
             let closes = Self.windowToClose(key: NSApp.keyWindow, main: window) != nil
-            item.title = closes ? "Close Window" : commands.first { $0.id == id }?.title ?? item.title
+            item.title = closes ? "Close Window" : c?.title ?? item.title
             if closes { return true }
         }
         if id == "server.history", Editor.server(of: NSApp.keyWindow) != nil { return true }   // its editor's file
@@ -1141,7 +1142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// The app's own items, not the panels': from a viewer, an editor or over the terminal too.
-    static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto"]
+    static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "help.docs", "help.issue"]
 
     /// A disabled menu item still takes its key: AppKit says it handled it and runs nothing, so F3 never reached a viewer
     /// (D-101); by the same path ⌘↑ or ⌃B could miss an editor or a text field. A command's item keeps its key only while
@@ -1150,7 +1151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func updateMenuKeys(_ menu: NSMenu? = NSApp.mainMenu) {
         guard terminal != nil, let menu else { return }
         let byID = Dictionary(commands.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        for it in menu.items.compactMap(\.submenu).flatMap(\.items) where it.action == #selector(menuCommand(_:)) {
+        for it in menu.allItems where it.action == #selector(menuCommand(_:)) {
             let key = (it.representedObject as? String).flatMap { byID[$0]?.keys.first }
             let on = key != nil && validateMenuItem(it)
             it.keyEquivalent = on ? key!.menuKey : ""
@@ -1296,21 +1297,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         terminal.applyTheme()
     }
 
-    /// The registry's menus (`Command.menu`), in menu bar order; Window follows. F1 lists them too (`KeyHelp.groups`).
-    static let menus = ["Kermo", "File", "Edit", "Mark", "Admin", "View", "Go", "Git"]
+    /// The registry's menus (`Command.menu`), in menu bar order; Window goes before Help. F1 lists them too (`KeyHelp.groups`).
+    static let menus = ["Kermo", "File", "Edit", "Mark", "View", "Go", "Server", "Git", "Help"]
+
+    enum MenuNode {
+        case command(Command), submenu(String, [MenuNode]), separator
+    }
+
+    /// The items of the menu at `path` ("View", "View/Sort By"): its commands and its submenus, by `group`, then in the
+    /// registry's order; a submenu stands where its first item would, a separator goes between groups.
+    static func menuItems(_ commands: [Command], in path: String) -> [MenuNode] {
+        let under = commands.enumerated().filter { !$0.element.hidden && $0.element.menu.map { $0 == path || $0.hasPrefix(path + "/") } == true }
+        var slots: [(group: Int, index: Int, node: MenuNode)] = []
+        var subs: [String] = []
+        for (i, c) in under {
+            if c.menu == path { slots.append((c.group, i, .command(c))); continue }
+            let name = String(c.menu!.dropFirst(path.count + 1).prefix { $0 != "/" })
+            if subs.contains(name) { continue }
+            subs.append(name)
+            let sub = path + "/" + name
+            let first = under.filter { $0.element.menu == sub || $0.element.menu!.hasPrefix(sub + "/") }.map { ($0.element.group, $0.offset) }.min { $0 < $1 }!
+            slots.append((first.0, first.1, .submenu(name, menuItems(commands, in: sub))))
+        }
+        slots.sort { ($0.group, $0.index) < ($1.group, $1.index) }
+        return slots.indices.flatMap { i in i > 0 && slots[i - 1].group != slots[i].group ? [.separator, slots[i].node] : [slots[i].node] }
+    }
+
+    /// The registry's commands in the menu bar's order, menu by menu, a submenu's where it stands (F1's order).
+    static func menuOrder(_ commands: [Command]) -> [Command] {
+        func walk(_ nodes: [MenuNode]) -> [Command] {
+            nodes.flatMap { n -> [Command] in
+                switch n {
+                case .command(let c): [c]
+                case .submenu(_, let items): walk(items)
+                case .separator: []
+                }
+            }
+        }
+        return menus.flatMap { walk(menuItems(commands, in: $0)) }
+    }
 
     func makeMenu() -> NSMenu {
         let main = NSMenu()
+        // Not commands: what's live in a menu, after the registry's items there.
+        let live: [String: () -> [NSMenuItem]] = ["Server/Ports & Tunnels": { [unowned self] in tunnelMenuItems() }]
+        func fill(_ menu: NSMenu, _ nodes: [MenuNode], path: String) {
+            for n in nodes {
+                switch n {
+                case .separator: menu.addItem(.separator())
+                case .command(let c):
+                    let it = NSMenuItem(title: c.title, action: #selector(menuCommand(_:)), keyEquivalent: c.keys.first?.menuKey ?? "")
+                    it.keyEquivalentModifierMask = c.keys.first?.flags ?? []
+                    it.target = self
+                    it.representedObject = c.id
+                    menu.addItem(it)
+                case .submenu(let title, let items):
+                    let p = path + "/" + title, sub = live[p].map { LiveMenu(title: title, $0) } ?? NSMenu(title: title)
+                    fill(sub, items, path: p)
+                    (sub as? LiveMenu)?.fixed = sub.items
+                    menu.addItem(withTitle: title, action: nil, keyEquivalent: "").submenu = sub
+                }
+            }
+        }
         @discardableResult func submenu(_ title: String, _ items: [NSMenuItem], trailing: [NSMenuItem] = []) -> NSMenu {
             let menu = NSMenu(title: title)
             items.forEach(menu.addItem)
-            for c in commands where c.menu == title {
-                let it = NSMenuItem(title: c.title, action: #selector(menuCommand(_:)), keyEquivalent: c.keys.first?.menuKey ?? "")
-                it.keyEquivalentModifierMask = c.keys.first?.flags ?? []
-                it.target = self
-                it.representedObject = c.id
-                menu.addItem(it)
-            }
+            fill(menu, Self.menuItems(commands, in: title), path: title)
             trailing.forEach(menu.addItem)
             let holder = NSMenuItem()
             holder.submenu = menu
@@ -1342,18 +1394,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ]
         let tail: [String: [NSMenuItem]] = [
             "Kermo": [.separator(), item("Hide Kermo", #selector(NSApplication.hide(_:)), "h"), item("Quit Kermo", #selector(NSApplication.terminate(_:)), "q")],
-            "Go": [.separator(), goTunnelsItem()],
         ]
-        for title in Self.menus { submenu(title, head[title] ?? [], trailing: tail[title] ?? []) }
-        // AppKit lists the open windows below.
-        NSApp.windowsMenu = submenu("Window", [
-            item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
-            item("Zoom", #selector(NSWindow.performZoom(_:)), ""),
-            .separator(),
-            item("Main Window", #selector(showMainWindow(_:)), "0"),
-            .separator(),
-            item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), ""),
-        ])
+        for title in Self.menus {
+            if title == "Help" {
+                // AppKit lists the open windows below.
+                NSApp.windowsMenu = submenu("Window", [
+                    item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
+                    item("Zoom", #selector(NSWindow.performZoom(_:)), ""),
+                    .separator(),
+                    item("Main Window", #selector(showMainWindow(_:)), "0"),
+                    .separator(),
+                    item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), ""),
+                ])
+            }
+            let menu = submenu(title, head[title] ?? [], trailing: tail[title] ?? [])
+            if title == "Help" { NSApp.helpMenu = menu }   // macOS puts its search there: it finds every menu item
+        }
         return main
     }
 
@@ -1623,4 +1679,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         alert.messageText = alert.messageText.bidiVisible
         alert.beginSheetModal(for: window)
     }
+}
+
+extension NSMenu {
+    /// Its items and its submenus' items, all the way down (File ▸ As Administrator ▸ …).
+    var allItems: [NSMenuItem] { items.flatMap { [$0] + ($0.submenu?.allItems ?? []) } }
 }

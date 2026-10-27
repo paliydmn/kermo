@@ -7,7 +7,7 @@ Reach ports on this Mac that lead to a saved server, or past it: a database that
 ## Open the tunnel list
 
 - A saved server's sidebar menu ▸ **Tunnels**.
-- **Go ▸ Tunnels** lists every server's tunnels.
+- **Server ▸ Ports & Tunnels** lists every server's tunnels under **Tunnels…**, **New Tunnel…** and **Forward Port…**.
 - ⇧⌘P: **Tunnels…** (↩ turns one on or off, ⌘E edits it, ⌘C copies its address, ⌘O opens it in the browser, ⌘S saves a temporary one, ⌘⌫ deletes it; the action bar under the list shows the highlighted tunnel's keys), **New Tunnel…** (on the server the panel is on, or pick one) and **Forward Port…**.
 
 ## Add a tunnel
@@ -30,7 +30,7 @@ A local port that's taken is said at once, with the next free one ("Use 15433").
 
 ## Forward a port the server listens on
 
-**Forward Port…** (⇧⌘P, **Go ▸ Tunnels**, or a server's sidebar menu, also under its **Tunnels**) asks the server what it listens on — its own `ss`, or `netstat` where there's no `ss` (BusyBox included) — on the server the panel or SSH tab is on, or one you pick, saved or not. A locked server asks for Touch ID first, and a password, if one is due, is asked next. While it looks, the picker says so; ⎋ stops it.
+**Forward Port…** (⇧⌘P, **Server ▸ Ports & Tunnels**, or a server's sidebar menu, also under its **Tunnels**) asks the server what it listens on — its own `ss`, or `netstat` where there's no `ss` (BusyBox included) — on the server the panel or SSH tab is on, or one you pick, saved or not. A locked server asks for Touch ID first, and a password, if one is due, is asked next. While it looks, the picker says so; ⎋ stops it.
 
 ![Forward Port… on db-01: its ports with their programs and where they listen; Postgres already goes to localhost:15432](images/forward-port.png)
 

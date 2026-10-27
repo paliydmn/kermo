@@ -2,7 +2,7 @@
 
 # Safety on servers
 
-What Kermo does to keep a server safe from a slip, and what it keeps on your Mac. Kermo has no telemetry. Its network traffic is the ssh connections you open, the `smb://`, `nfs://` or `afp://` shares you mount (macOS does that), and [one request a day to GitHub](install.md#updates) for the latest release, which **Kermo ▸ Check for Updates Automatically** turns off.
+What Kermo does to keep a server safe from a slip, and what it keeps on your Mac. Kermo has no telemetry. Its network traffic is the ssh connections you open, the `smb://`, `nfs://` or `afp://` shares you mount (macOS does that), and [one request a day to GitHub](install.md#updates) for the latest release, which **Kermo ▸ Configuration ▸ Check for Updates Automatically** turns off.
 
 ## Production servers
 
@@ -41,7 +41,7 @@ On a production server, what Kermo does there goes into `~/.config/dfilemanager/
 
 Each line has the time, the server, the paths, the command and its exit status. There is no exit status for a command handed to Terminal, and a reload stopped with ⎋ says it may have run. `"root": true` marks what ran as root from a root panel: saves, copies, moves, deletes, renames, permissions, new folders and reloads. Commands and extracting always run as the user and carry no `root`. If a line can't be written, the status line says so once.
 
-Read the log with `grep` or `jq`, or choose **Admin ▸ Show Production Log** (or search for it).
+Read the log with `grep` or `jq`, or choose **Server ▸ Production Log** (or search for it).
 
 > [!WARNING]
 > A command line may hold a secret (`mysql -pXXX`, a token in a `curl` header). The file is owner-only, but it's a plain file on this Mac. Turn the log off with `defaults write com.dmn.dfilemanager auditLog -bool false`.

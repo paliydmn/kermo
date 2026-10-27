@@ -67,7 +67,7 @@ When a command works, the status bar says so. When git refuses, a sheet shows ev
 
 ## A new repository
 
-**Initialize Git Repository…** runs `git init` in the active panel's folder. It shows the folder's full path first, because a repository in the wrong place, say your home folder, makes every folder under it part of one. It refuses inside a repository.
+**Git ▸ Initialize Repository…** runs `git init` in the active panel's folder. It shows the folder's full path first, because a repository in the wrong place, say your home folder, makes every folder under it part of one. It refuses inside a repository.
 
 ## When there is no Git column
 

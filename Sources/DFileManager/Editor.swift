@@ -207,7 +207,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         return item
     }
 
-    /// File ▸ Server File History…, for this window's file.
+    /// Server ▸ File History…, for this window's file.
     @objc private func showHistory() { (NSApp.delegate as? AppDelegate)?.run("server.history") }
 
     /// A revert put `data` on the server, which now has `attrs`: shown here, and the next save checks against that —

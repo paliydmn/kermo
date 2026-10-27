@@ -39,7 +39,7 @@ F5 / F6, ⌘C / ⌘V and drag and drop copy and move files in every direction: s
 
 Every save of a server file (F4's ⌘S, a save in another app, a revert) first keeps the version it replaces on this Mac, in `~/.config/dfilemanager/history.noindex/<server>/<path there>/<name>@<date>`. It keeps 20 versions a file and 200 MB in all, the oldest going first. A file over 5 MB gets none, and the status line says so.
 
-Choose **Server File History…** from the File menu, or find it with search (⇧⌘P), on a server file or in its editor. It has no shortcut of its own. It lists the versions:
+Choose **Server ▸ File History…**, or find it with search (⇧⌘P), on a server file or in its editor. It has no shortcut of its own. It lists the versions:
 
 - ↩ or F3 views one.
 - ⇧⌘D compares it with the file on the server now, ⌘D with the version before it.

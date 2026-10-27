@@ -49,11 +49,11 @@ import Testing
     #expect(AppDelegate.notUploaded(saved, host: "web", notRun, editorOpen: false)?.hasSuffix("Your text is kept in /tmp/dfm-sftp-x/sudoers.") == true)
 }
 
-/// Edit Validators… is in ⌘⇧P and the Kermo menu. The file it starts is an example that parses — rules of its own,
+/// Edit Validators… is in ⌘⇧P and Kermo ▸ Configuration. The file it starts is an example that parses — rules of its own,
 /// none of the built-in ones (copied there, those would never get Kermo's changes).
 @MainActor @Test func editValidatorsStartsAnExample() throws {
     let c = AppDelegate().makeCommands().first { $0.id == "validators.edit" }
-    #expect(c?.title == "Edit Validators…" && c?.menu == "Kermo")
+    #expect(c?.title == "Edit Validators…" && c?.menu == "Kermo/Configuration")
     let (rules, problem) = ConfigCheck.rules(Data(AppDelegate.validatorsExample.utf8))
     let mine = rules.dropLast(ConfigCheck.builtIn.count)
     #expect(problem == nil && mine.count == 2 && mine.allSatisfy { r in !ConfigCheck.builtIn.contains { $0.match == r.match } })
@@ -151,9 +151,9 @@ extension ServerLockTests {
     AuditLog.write(web, "command", paths: ["/"], command: "ls", exit: 0)
     await written()
     #expect(said.count == 2, "written once in between: said again")
-    // Show Production Log is in ⌘⇧P and the Admin menu.
+    // Production Log is in ⌘⇧P and the Server menu.
     let c = AppDelegate().makeCommands().first { $0.id == "admin.auditLog" }
-    #expect(c?.title == "Show Production Log" && c?.menu == "Admin")
+    #expect(c?.title == "Production Log" && c?.menu == "Server")
 }
 
 /// Every place that asks before changing a production server writes its line once done: ⌘S and Revert, ⇧F6 /

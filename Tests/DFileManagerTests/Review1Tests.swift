@@ -110,7 +110,7 @@ import Testing
     let app = AppDelegate()
     app.commands = app.makeCommands()
     let menu = app.makeMenu()
-    func item(_ id: String) -> NSMenuItem? { menu.items.compactMap(\.submenu).flatMap(\.items).first { $0.representedObject as? String == id } }
+    func item(_ id: String) -> NSMenuItem? { menu.allItems.first { $0.representedObject as? String == id } }
     #expect(item("file.view")?.keyEquivalent == Shortcut("f3")!.menuKey, "as built")
     let parent = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400)), panels = NSView(frame: parent.bounds)
     parent.addSubview(panels)
@@ -119,7 +119,7 @@ import Testing
 
     app.window = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: true)   // not key: say a viewer is
     app.updateMenuKeys(menu)
-    for id in ["file.view", "go.tree", "go.up", "git.switch"] { #expect(item(id)?.keyEquivalent == "", "\(id) over another window") }
+    for id in ["file.view", "go.tree", "go.up", "git.switch", "panel.focus1", "tab.new"] { #expect(item(id)?.keyEquivalent == "", "\(id) over another window") }   // in a submenu too
 
     // In tests no window is key: with none of its own the app takes itself for key. The terminal is over the panels
     // (⇧⌃O): ⌃O works, F3 doesn't.

@@ -16,11 +16,11 @@ Press / (**View ▸ Quick Filter**) to type a filter under the list: the field s
 
 ⌘/ (**View ▸ Filter Presets…**) lists your presets, then up to 20 recent filters you confirmed with ↩. Choose one, or type a filter and press ↩.
 
-**Kermo ▸ Edit Filter Presets…** opens `~/.config/dfilemanager/filters.json` and writes six examples the first time. The file is a JSON array of presets: `[ { "title": "Logs", "filter": "*.log;*.err" } ]`. A file that doesn't parse shows an error and no presets.
+**Kermo ▸ Configuration ▸ Edit Filter Presets…** opens `~/.config/dfilemanager/filters.json` and writes six examples the first time. The file is a JSON array of presets: `[ { "title": "Logs", "filter": "*.log;*.err" } ]`. A file that doesn't parse shows an error and no presets.
 
 ## Find files
 
-Press ⌘F (⌥F7, **File ▸ Search Files…**) to search below the active panel's folder. The dialog remembers your last entries. Everything you fill in must match:
+Press ⌘F (⌥F7, **Go ▸ Search Files…**) to search below the active panel's folder. The dialog remembers your last entries. Everything you fill in must match:
 
 - Name (first field): the quick-filter rules, always ignoring case. Empty matches any name.
 - Text (second field): files whose content holds the text, matched literally as UTF-8. Files saved as UTF-16 or in a legacy code page (cp1251, say) won't match; ignoring case covers Latin, Greek, Cyrillic and Armenian letters. Files not downloaded from iCloud or Dropbox are skipped, and a message says how many.
@@ -39,7 +39,7 @@ The toolbar search (**Go ▸ Search…**, ⇧⌘P) finds commands, folders and f
 
 ## Compare folders
 
-Press ⇧F2 (**Mark ▸ Compare Folders (mark differences)**) to mark what differs between the active panel's folder and the other panel's, subfolders included. It changes no files and replaces the marks you had.
+Press ⇧F2 (**Mark ▸ Mark Differences**) to mark what differs between the active panel's folder and the other panel's, subfolders included. It changes no files and replaces the marks you had.
 
 - A file is marked on the side where it is newer, or where the other side lacks it. The same date with a different size marks it on both sides. Contents are not read.
 - A folder is marked on the side that holds something newer or missing inside it.
@@ -49,7 +49,7 @@ F5 opens **Copy To…** with the other panel's folder filled in, so the marked i
 
 ## Synchronize folders
 
-Press ⇧⌘S (**File ▸ Synchronize Folders…**) to bring two folders in line. Both panels must show folders, on this Mac or on servers. The panel further left is the left side.
+Press ⇧⌘S (**Mark ▸ Synchronize Folders…**) to bring two folders in line. Both panels must show folders, on this Mac or on servers. The panel further left is the left side.
 
 The **Synchronize Folders** window lists every difference below both folders. Nothing is copied until you click **Synchronize** (↩). ⎋ closes the window: nothing is queued, and a comparison in progress stops. Its key bar shows ↩ Synchronize and ⎋ Close, then the menu keys that work there, as in the viewer.
 
@@ -70,7 +70,7 @@ The **Synchronize Folders** window lists every difference below both folders. No
 
 ## Compare files
 
-Press ⇧⌘D (**File ▸ Compare Files (diff)**) to diff two files. Kermo uses the first of these that applies:
+Press ⇧⌘D (**Mark ▸ Compare Files**) to diff two files. Kermo uses the first of these that applies:
 
 1. Two files marked in the active panel.
 2. The cursor's file and the file of the same name in the other panel's folder.

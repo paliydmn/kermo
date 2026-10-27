@@ -53,7 +53,7 @@ enum HeaderSearchModel {
         let q = query.trimmingCharacters(in: .whitespaces)
         let cmds = commands.filter { $0.id != "app.palette" && !$0.hidden }
         func hit(_ c: Command) -> SearchHit {
-            SearchHit(title: c.title, subtitle: c.menu ?? "", detail: c.keys.map(\.display).joined(separator: "  "), target: .command(c.id))
+            SearchHit(title: c.title, subtitle: c.menu?.replacingOccurrences(of: "/", with: " ▸ ") ?? "", detail: c.keys.map(\.display).joined(separator: "  "), target: .command(c.id))
         }
         func disk(_ q: String) -> SearchHit { SearchHit(title: "Search “\(q)” on disk…", detail: "⌘F", target: .disk(q)) }
         if q.isEmpty {
