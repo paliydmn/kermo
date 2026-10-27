@@ -337,7 +337,7 @@ extension ServerLockTests {
         defer { done() }
         let s = Stub(rows: [row("cron"), row("nginx", detail: "web server"), row("worker", .failed)], header: "3 units · 1 failed")
         app.window.makeFirstResponder(a.table)
-        app.showList(s)
+        app.showInSearch(s)
         let picker = try #require(Picker.current)
         #expect(picker.actionBar.contains(KeySlot(key: "⌘↩", label: "Other Panel", id: "other")))
         picker.update(row("worker", .on, subtitle: "active · running"))   // a restart there since it opened
@@ -348,11 +348,11 @@ extension ServerLockTests {
         #expect(Picker.current == nil && b.list?.source === s && s.reads == 0, "the Picker's rows, not read again")
         #expect(b.list?.content?.rows.first { $0.id == "worker" }?.subtitle == "active · running" && b.list?.content?.header == "3 units · 1 failed",
                 "as the Picker had them: the run since shows")
-        #expect(b.list?.cursor?.title == "cron", "what was highlighted: the first row, as the Picker had it")
+        #expect(b.list?.cursor?.title == "worker", "what was highlighted: the first row — failed first, in the search as in a panel")
         #expect(app.active === b && a.list == nil)
 
         app.servicesKept["services " + ServerRow.key(s.target.asUser)] = ("web", "nginx")
-        app.showList(s)   // opens where it was left
+        app.showInSearch(s)   // opens where it was left
         #expect(Picker.current?.rows.map(\.title) == ["nginx"])
         _ = Picker.current?.panel.performKeyEquivalent(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
                                                                               windowNumber: Picker.current?.panel.windowNumber ?? 0, context: nil, characters: "\r",
@@ -467,8 +467,8 @@ extension ServerLockTests {
         #expect(asked?.0 == "Delete Rule 3 firewall on root@fw.invalid?" && asked?.1 == 1 && ran.value.isEmpty, "↩ = Cancel")
         #expect(app.focusedKeys?.first { $0.label == "Delete Rule…" }?.danger == true)
 
-        app.showList(s)   // the same rows in a Picker
-        #expect(Picker.current?.rows.map(\.title) == ["22/tcp", "8080", "443"] && Picker.current?.emptySaid == "")
+        app.showInSearch(s)   // the same rows in the search, failed first as in the panel
+        #expect(Picker.current?.rows.map(\.title) == ["8080", "22/tcp", "443"] && Picker.current?.emptySaid == "")
     }
 
     /// Forward Port…'s ports in a panel: Port · Process · Listens on · Tunnel, ⌘↩ from its Picker, not read again. ↩

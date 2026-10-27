@@ -18,35 +18,6 @@ extension AppDelegate {
         }, freeTextLast: true)   // "web db" picks the server, not a host named so
     }
 
-    /// A look at `t`'s server: a locked server asks first, then the login, if one is due — before anything shows: its
-    /// dialogs take the focus, which closes a Picker. The Picker then says it's looking at `what` — ⎋ there stops the
-    /// look — and gives way to `show`, or says why not in its line under the rows (before it shows: `say`). `command`:
-    /// what asks for the password.
-    func look<T: Sendable>(at t: SFTPTarget, _ what: String, for command: String, say: @escaping @MainActor (String, Bool) -> Void,
-                           _ read: @escaping @Sendable (SFTPTarget, String, [String: String], CancelFlag) throws -> T,
-                           show: @escaping @MainActor (T, SavedServer, SFTPTarget) -> Void) {
-        let asked = t
-        Task {
-            let (s, t, env): (SavedServer, SFTPTarget, [String: String])
-            switch await lookLogin(at: asked, what, for: command) {
-            case .success(let found): (s, t, env) = found
-            case .failure(let e as Locked): return say(e.message, false)
-            case .failure(is CancellationError): return
-            case .failure(let e): return say(e.localizedDescription, true)
-            }
-            let cancel = CancelFlag()   // set by ⎋ there — and by its giving way, when the look is over anyway
-            Picker.show(over: window, placeholder: "Filter \(what)", scope: (s.title, Chip.of(s.target)), empty: "Looking at \(what)…", items: [],
-                        onDismiss: { cancel.cancel() })
-            let title = s.title
-            let result = await Blocking.run { Result { try read(t, title, env, cancel) } }
-            guard !cancel.isCancelled else { return }
-            switch result {
-            case .failure(let e): Picker.current?.say(Self.result((.failed, e.localizedDescription)))   // it stays: ⎋ closes it
-            case .success(let found): show(found, s, t)
-            }
-        }
-    }
-
     /// A locked server stayed locked: said plainly, not as a failure.
     struct Locked: LocalizedError {
         let message: String
@@ -93,24 +64,18 @@ extension AppDelegate {
     /// Services… (⌘⇧P, a server's menu): on the server of the active panel or SSH tab, else picked (S1).
     func showServices() { onServer("Services of") { [unowned self] in showServices(on: $0) } }
 
-    func showServices(on t: SFTPTarget) {
-        look(at: t, "services", for: "Services", say: { [unowned self] in active.flash($0, error: $1) },
-             { t, title, env, cancel in try Services.read(on: t.asUser, server: title, env: env, cancel: cancel) }) { [unowned self] units, s, t in
-            showList(ServiceList(self, s, t, units: units))
-        }
-    }
+    func showServices(on t: SFTPTarget) { showInSearch(ServiceList(self, savedServer(at: t) ?? SavedServer(target: t), t)) }
 
-    /// A list of what a server runs, which stays open while its rows change, and opens again where it was left (what
-    /// was typed and highlighted) — after a look at a status or a log, say. ⌘↩: the same rows in the other panel.
-    func showList(_ source: ListSource) {
-        guard let c = source.content else { return }
-        let what = source.title.lowercased(), key = what + " " + ServerRow.key(source.target.asUser), kept = servicesKept[key]
-        Picker.show(over: window, placeholder: "Filter \(what)", scope: (SavedServer.name(for: source.target.asUser), Chip.of(source.target)),
-                    header: c.rows.isEmpty ? nil : c.header, empty: c.empty,
-                    items: c.rows, rank: { item, q in Fuzzy.score(q, item.title + " " + item.subtitle + " " + item.detail) },
-                    query: kept?.query ?? "", select: kept?.id,
-                    onClose: { [unowned self] q, id in servicesKept[key] = (q, id) },
-                    other: { [unowned self] q, id, rows in openInOther(source, query: q, select: id, rows: rows) })
+    /// A list of what a server runs in the search, on the server's overview — ⌫ goes there, ⇥ into a row's actions:
+    /// read as it opens (a locked server asks first, then the login, "Looking at services…", ⎋ stops it), it stays open
+    /// while its rows change, and opens again where it was left (what was typed and highlighted) — after a look at a
+    /// status or a log, say. ⌘↩: the same rows in the other panel.
+    func showInSearch(_ source: ListSource) {
+        let key = source.title.lowercased() + " " + ServerRow.key(source.target.asUser), kept = servicesKept[key]
+        let s = savedServer(at: source.target) ?? SavedServer(target: source.target.asUser)
+        let p = palette()
+        p.go(into: PlaceSource(self, s, source.target.asUser), select: "place " + source.title)
+        p.go(into: source, query: kept?.query ?? "", select: kept?.id) { [unowned self] q, id in servicesKept[key] = (q, id) }
     }
 
     /// The units' rows, the line about them, what's said when there are none: a Picker's and a panel's.
@@ -402,12 +367,7 @@ extension AppDelegate {
     /// Containers… (⌘⇧P, a server's menu): on the server of the active panel or SSH tab, else picked (S1).
     func showContainers() { onServer("Containers of") { [unowned self] in showContainers(on: $0) } }
 
-    func showContainers(on t: SFTPTarget) {
-        look(at: t, "containers", for: "Containers", say: { [unowned self] in active.flash($0, error: $1) },
-             { t, title, env, cancel in try Containers.read(on: t.asUser, server: title, env: env, cancel: cancel) }) { [unowned self] found, s, t in
-            showList(ContainerList(self, s, t, found: found))
-        }
-    }
+    func showContainers(on t: SFTPTarget) { showInSearch(ContainerList(self, savedServer(at: t) ?? SavedServer(target: t), t)) }
 
     /// The containers' rows, the line about them, what's said when there are none: a Picker's and a panel's.
     func containerContent(_ found: (tool: String, containers: [ContainerInfo]), on t: SFTPTarget, of s: SavedServer) -> ListContent {

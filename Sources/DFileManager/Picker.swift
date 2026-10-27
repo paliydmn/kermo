@@ -87,6 +87,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     private let listInOther: (@MainActor (ListSource, String, String?, [Item]) -> Void)?
     private var source: ListSource?   // this level's list
     private var actionsOf: Item?   // the row whose actions this level lists
+    private var onLeave: ((String, String?) -> Void)?   // this level's: what was typed and highlighted as it goes
     private var reading: CancelFlag?
     private var scopes: [(name: String, chips: [Chip])]
     private let top = NSStackView()
@@ -337,6 +338,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         pending?.cancel()   // a ranking still running mustn't show rows
         ranking?.cancel()
         reading?.cancel()
+        onLeave?(field.stringValue, highlighted?.id)
         panel.delegate = nil
         parent?.removeChildWindow(panel)
         panel.orderOut(nil)
@@ -399,6 +401,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         let other: (@MainActor (String, String?, [Item]) -> Void)?
         let source: ListSource?
         let actionsOf: Item?
+        let onLeave: ((String, String?) -> Void)?
         let query: String
         let select: String?
     }
@@ -415,12 +418,12 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
 
     /// `s`'s rows as the next level — at once if it has them (a place), else read first: "Looking at services…", a locked
     /// server's Touch ID and the login asking over the picker, ⎋ stopping it. Its chip: the server, in its place's
-    /// color, then what it lists.
-    func go(into s: ListSource) {
+    /// color, then what it lists. `query` and `select` (a row's id): as it was left; `onLeave` hears that as it goes.
+    func go(into s: ListSource, query: String = "", select: String? = nil, onLeave: ((String, String?) -> Void)? = nil) {
         let name = SavedServer.name(for: s.target.asUser), chips = Chip.of(s.target)
         let here = source.map { ServerRow.key($0.target) == ServerRow.key(s.target) } == true   // its server's place is the level above
         push(s is PlaceSource ? (name, chips) : here ? (s.title, []) : ("\(name) › \(s.title)", chips), placeholder: "Filter \(s.title.lowercased())")
-        source = s
+        (source, field.stringValue, selectID, self.onLeave) = (s, query, select, onLeave)
         rank = { item, q in Fuzzy.score(q, item.title + " " + item.subtitle + " " + item.detail) }
         let inOther = listInOther   // not self: ⌘↩ runs it after the picker closed and went
         other = { q, id, rows in inOther?(s, q, id, rows) }
@@ -437,7 +440,9 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
 
     private func read(_ s: ListSource) {
         (items, emptyText) = ([], "Looking at \(s.title.lowercased())…")
+        let select = selectID   // for the rows, not for "Looking at…"
         filter()
+        selectID = select
         let flag = CancelFlag(), depth = above.count
         reading = flag
         Task {
@@ -515,10 +520,10 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         ranking?.cancel()
         above.append(Level(placeholder: field.placeholderString ?? "", items: items, rank: rank, results: results, freeText: freeText,
                            header: header.isHidden ? nil : header.stringValue, empty: emptyText, other: other, source: source,
-                           actionsOf: actionsOf, query: field.stringValue, select: highlighted?.id))
+                           actionsOf: actionsOf, onLeave: onLeave, query: field.stringValue, select: highlighted?.id))
         scopes.append(chip)
         showScopes()
-        (results, freeText, other, source, actionsOf) = (nil, nil, nil, nil, nil)
+        (results, freeText, other, source, actionsOf, onLeave) = (nil, nil, nil, nil, nil, nil)
         (field.stringValue, field.placeholderString) = ("", placeholder)
         setHeader(nil)
         say(nil)
@@ -529,9 +534,10 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         guard let l = above.popLast() else { return }
         reading?.cancel()
         reading = nil
+        onLeave?(field.stringValue, highlighted?.id)
         scopes.removeLast()
         showScopes()
-        (items, rank, results, freeText, emptyText, other, source, actionsOf) = (l.items, l.rank, l.results, l.freeText, l.empty, l.other, l.source, l.actionsOf)
+        (items, rank, results, freeText, emptyText, other, source, actionsOf, onLeave) = (l.items, l.rank, l.results, l.freeText, l.empty, l.other, l.source, l.actionsOf, l.onLeave)
         (field.stringValue, field.placeholderString, selectID) = (l.query, l.placeholder, l.select)
         setHeader(l.header)
         filter()

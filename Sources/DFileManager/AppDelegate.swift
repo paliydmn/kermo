@@ -673,8 +673,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func windowDidResize(_ notification: Notification) { applySidebarRule() }
 
+    /// The search (⇧⌘P, F9, the toolbar's button), over the main window.
+    @discardableResult
+    func palette() -> Picker {
+        search.focus(over: window) { [unowned self] source, q, id, rows in openInOther(source, query: q, select: id, rows: rows) }
+    }
+
     func setUpSearch() {   // internal: tests
-        search.listInOther = { [unowned self] source, q, id, rows in openInOther(source, query: q, select: id, rows: rows) }
+        search.onClick = { [unowned self] in run("app.palette") }
         search.results = { [unowned self] q, flag in
             let fav = bookmarks.map { SearchHit(title: Bookmark.title($0), subtitle: ($0 as NSString).abbreviatingWithTildeInPath, detail: "favorite", target: .folder($0)) }
             let freq = frecency.ranked().filter { !bookmarks.contains($0) }.prefix(300).map {

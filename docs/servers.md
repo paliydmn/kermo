@@ -51,7 +51,7 @@ To run one command on several servers at once, choose **Run on Servers…** in t
 
 ## Services and containers
 
-**Services…** and **Containers…** (⌘⇧P, a server's sidebar menu) list what a server runs, in the same search window as Forward Port…: on the server of the active panel or SSH tab, otherwise you pick one. A locked server asks for Touch ID first; ⎋ stops the look. ⌘↩ shows the list [in a panel](#in-a-panel) instead.
+**Services…** and **Containers…** (⌘⇧P, a server's sidebar menu) list what a server runs in [search](window.md#search), on the server's [overview](#the-server-as-a-place) (**web-01 › Services ›**), as Forward Port… does: on the server of the active panel or SSH tab, otherwise you pick one. A locked server asks for Touch ID first; "Looking at services…" while it reads, ⎋ stops it. ⎋ or ⌫ on an empty field goes to the overview, its other lists a ⇥ away; ⇥ on a row lists its actions. It opens again as you left it, what you typed and the highlighted row. ⌘↩ shows the list [in a panel](#in-a-panel) instead.
 
 **Services…** asks the server's `systemctl` (systemd's JSON where it has it, its table on an old one), and in the same command whether each service can reload and whether it starts at boot. A row is the service's name, its state (`active · running`, `failed`) and its description; failed ones come first, then by name, and typing searches all three. Services systemd only knows by name (`not-found`) are left out.
 

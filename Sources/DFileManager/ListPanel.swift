@@ -679,7 +679,7 @@ extension AppDelegate {
     func goToList() {
         guard let l = active.list else { return }
         let s = savedServer(at: l.source.target) ?? SavedServer(target: l.source.target)
-        search.focus(over: window).go(into: PlaceSource(self, s, l.source.target.asUser))
+        palette().go(into: PlaceSource(self, s, l.source.target.asUser))
     }
 
     /// ⌘L in a list: the cursor row's log as it goes in the other panel (Quick View), following the cursor; again: back

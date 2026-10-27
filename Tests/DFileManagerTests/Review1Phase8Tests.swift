@@ -232,7 +232,7 @@ extension ServerLockTests {
 
         recent[1].remove?()
         #expect(!app.searchFrecency.ranked().contains("command:file.copy"))
-        let p = app.search.focus(over: app.window)
+        let p = app.palette()
         await until { !p.rows.isEmpty }
         #expect(p.panel.frame.width == 560 && p.groups.first == "Recent" && p.highlighted?.id == "folder:" + dir)
         press(p, #selector(NSResponder.deleteToBeginningOfLine(_:)))   // ⌘⌫
@@ -266,7 +266,7 @@ extension ServerLockTests {
         var touched = 0
         ServerLock.authenticate = { _ in touched += 1; return false }
         AppDelegate.connected = { _ in false }
-        let p = app.search.focus(over: app.window)
+        let p = app.palette()
         type(p, "web-01")
         await until { p.highlighted?.title == "web-01" }
         #expect(p.actionBar.map(\.key) == ["↩", "⇥", "⌘↩", "⎋"], "\(p.actionBar.map(\.key))")
@@ -300,7 +300,7 @@ extension ServerLockTests {
         let slow = Listed("Services", on: t)
         slow.hold = true
         do {
-            let p = app.search.focus(over: app.window)
+            let p = app.palette()
             p.go(into: slow)
             #expect(p.emptySaid == "Looking at services…" && p.scopeNames == ["deploy@web-01.invalid › Services"])
             await until { slow.reads == 1 }
@@ -340,7 +340,7 @@ extension ServerLockTests {
         let t = web.target, ran = Later<[String]>([]), over = Later<[NSWindow?]>([])
         let s = Listed("Services", on: t, rows: [unit(app, "nginx", on: t, ran: ran, over: over),
                                                  unit(app, "cron", on: t, ran: ran, why: ["Restart": "cron is restarting… wait for it"], over: over)])
-        let p = app.search.focus(over: app.window)
+        let p = app.palette()
         p.go(into: s)
         #expect(p.highlighted?.title == "nginx")
         press(p, #selector(NSResponder.insertTab(_:)))
@@ -412,7 +412,7 @@ extension ServerLockTests {
         AppDelegate.placeProviders.append { app, p in
             [app.placeRow("Deployments (dpl)", p, state: "", about: "dpl", into: { preset })]
         }
-        let p = app.search.focus(over: app.window)
+        let p = app.palette()
         type(p, "deployments")
         await until { p.highlighted?.title == "Deployments (dpl) — web-01" }
         #expect(p.highlighted?.group == "On Servers")
@@ -447,6 +447,29 @@ extension ServerLockTests {
         #expect(p.panel.frame.width == 560 && p.scopeNames == ["deploy@db-01.invalid"] && p.rows.map(\.title).contains("Containers"))
         press(p, #selector(NSResponder.deleteBackward(_:)))
         #expect(p.scopeNames.isEmpty && Picker.current === p)
+    }
+
+    /// D-145: Services… (Containers…, Forward Port…) opens in the search on the server's overview: read as it opens, ⎋
+    /// or ⌫ go to the overview, on Services; what was typed and highlighted is kept for the next time.
+    @Test func servicesOpenInTheSearchOnTheServersOverview() async throws {
+        let (app, _, _, done) = try palette()
+        defer { done() }
+        let t = SFTPTarget(host: "deploy@web-01.invalid"), ran = Later<[String]>([])
+        let s = Listed("Services", on: t)
+        s.next = ListContent(rows: [unit(app, "cron", on: t, ran: ran), unit(app, "nginx", on: t, ran: ran)], header: "2 units")
+        app.showInSearch(s)
+        let p = try #require(Picker.current)
+        await until { !p.rows.isEmpty }
+        #expect(s.reads == 1 && p.scopeNames == ["deploy@web-01.invalid", "Services"] && p.panel.frame.width == 560 && p.headerSaid == "2 units")
+        type(p, "ngi")
+        press(p, #selector(NSResponder.cancelOperation(_:)))   // ⎋: up, to the overview
+        #expect(p.scopeNames == ["deploy@web-01.invalid"] && p.highlighted?.title == "Services")
+        let kept = app.servicesKept["services " + ServerRow.key(t)]
+        #expect(kept?.query == "ngi" && kept?.id == "unit nginx")
+        Picker.dismiss()
+        app.showInSearch(s)   // where it was left
+        let again = try #require(Picker.current)
+        #expect(again.field.stringValue == "ngi" && again.rows.map(\.title) == ["nginx"] && again.highlighted?.title == "nginx")
     }
 
     /// D-120: a Picker takes its window's appearance — a dark Kermo theme's — and so do the questions over it.
