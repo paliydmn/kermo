@@ -4,9 +4,22 @@
 
 Where Kermo keeps its settings, the formats of the files you can edit, and the `defaults` options.
 
+## Settings
+
+**Kermo ▸ Settings…** (⌘,) has the options below and the files to edit in one window. Each option shows its `defaults` key at its right, and takes effect at once unless its line says when (new terminal tabs, new editor windows, the next viewer). The window comes back on the tab you left.
+
+| Tab | What's there |
+|---|---|
+| General | Show hidden files (`showHidden`); Dates: `Today 13:33` or `2026-10-27 13:33` (`isoDates`); Check for updates once a day (`updateCheckOff`); install the `fm` command |
+| Appearance | The themes, each with a preview: a click uses it (`theme`; **View ▸ Theme…** previews them as you move through the list); Permissions & Owner columns (`showPerms`); how long to hold a modifier before the key bar shows its keys (`keyBarHoldDelay`) |
+| Terminal | Font and size (`terminalFont`, `terminalFontSize`); the drawer's height (`terminalDrawerHeight`, by dragging its line); Option is Meta (`terminalOptionIsMeta`); Selecting text copies it and Right-click pastes (`terminalCopyOnSelect`, `terminalRightClickPaste`: both use the clipboard); the app for ⌥⌘T and ⌘↩ (`terminalBundleID`) |
+| Editor & Viewer | The editor for files on this Mac (`editorBundleID`); End with a newline (`editorFinalNewline`); Line numbers (`viewerLineNumbers`); the tool that compares files (`diffCommand`) |
+| Servers & Safety | Keep a production log (`auditLog`) and Show it; Keep earlier versions of saved server files (`serverHistory`); Checks before saving (**Edit…**); **Edit SSH Config…**; how long the sudo password is kept |
+| Advanced | **Edit…** for `keymap.json`, `usermenu.json`, `validators.json` and `filters.json`; **Open** the config folder; **Reload Config** |
+
 ## Files
 
-Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`; files are `0600`). **Kermo ▸ Configuration ▸ Open Config Folder** opens it in the panel, and **Reload Config** (in the same menu) applies a changed `keymap.json` without a restart.
+Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`; files are `0600`). **Kermo ▸ Configuration ▸ Open Config Folder** (or **Open** in Settings › Advanced) opens it in the panel, and **Reload Config** (in the same menu, and there) applies a changed `keymap.json` without a restart.
 
 | File | Holds | Edit with |
 |---|---|---|
@@ -53,7 +66,7 @@ Passwords are not in the file: they are in the Keychain. An entry that can't be 
 
 ## Options
 
-Set an option with `defaults write com.dmn.dfilemanager <key> <value>`. Remove it, back to the default, with `defaults delete com.dmn.dfilemanager <key>`.
+Set an option in [Settings](#settings), or with `defaults write com.dmn.dfilemanager <key> <value>` (for scripts). Remove it, back to the default, with `defaults delete com.dmn.dfilemanager <key>`.
 
 | Key | Value | Default | Effect |
 |---|---|---|---|

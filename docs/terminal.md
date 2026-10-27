@@ -67,7 +67,7 @@ Without it the panel still follows the shell's folder when you hide the terminal
 
 ## Options
 
-Set them with `defaults write com.dmn.dfilemanager <key> <value>`:
+Set them in Settings › Terminal, or with `defaults write com.dmn.dfilemanager <key> <value>`:
 
 | Key | Meaning |
 |---|---|

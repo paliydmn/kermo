@@ -44,7 +44,7 @@ Each line has the time, the server, the paths, the command and its exit status. 
 Read the log with `grep` or `jq`, or choose **Server ▸ Production Log** (or search for it).
 
 > [!WARNING]
-> A command line may hold a secret (`mysql -pXXX`, a token in a `curl` header). The file is owner-only, but it's a plain file on this Mac. Turn the log off with `defaults write com.dmn.dfilemanager auditLog -bool false`.
+> A command line may hold a secret (`mysql -pXXX`, a token in a `curl` header). The file is owner-only, but it's a plain file on this Mac. Turn the log off in Settings › Servers & Safety, or with `defaults write com.dmn.dfilemanager auditLog -bool false`.
 
 ## What stays on this Mac
 

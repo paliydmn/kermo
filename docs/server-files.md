@@ -48,4 +48,4 @@ Choose **Server ▸ File History…**, or find it with search (⇧⌘P), on a se
 The server's sidebar menu has **Show File History**, which opens that folder in the panel. F8 there moves a version to the Trash, ⇧F8 deletes it for good.
 
 > [!WARNING]
-> Versions hold whatever the files did, `.env` files and keys included. The folder is owner-only and kept out of Spotlight and Time Machine. Turn history off with `defaults write com.dmn.dfilemanager serverHistory -bool false`.
+> Versions hold whatever the files did, `.env` files and keys included. The folder is owner-only and kept out of Spotlight and Time Machine. Turn history off in Settings › Servers & Safety, or with `defaults write com.dmn.dfilemanager serverHistory -bool false`.

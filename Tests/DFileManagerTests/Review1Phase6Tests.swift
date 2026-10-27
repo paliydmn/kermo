@@ -145,7 +145,7 @@ private func titles(_ nodes: [AppDelegate.MenuNode]) -> [String] {
 /// F1 groups keys by the new menus, in the menus' order.
 @MainActor @Test func keyHelpFollowsTheMenuBar() {
     let commands = AppDelegate().makeCommands(), s = KeyHelp.sections(commands)
-    #expect(s.map(\.title) == ["File", "Edit", "Mark", "View", "Go", "Server", "Git", "Help", "Keyboard"])
+    #expect(s.map(\.title) == ["File", "Edit", "Mark", "View", "Go", "Server", "Git", "Help", "Kermo", "Keyboard"])
     #expect(s.first { $0.title == "View" }?.rows.prefix(3).map(\.title) == ["Sidebar", "Quick View", "Terminal"])
     #expect(s.first { $0.title == "Server" }?.rows.map(\.title).contains("Reopen as Root") == true)
 }
