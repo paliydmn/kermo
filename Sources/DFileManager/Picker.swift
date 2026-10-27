@@ -364,8 +364,8 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         DispatchQueue.main.async { a.run() }
     }
 
-    /// ↩ and the highlighted row's keys — ⇥ where it goes in — its menu if it has one, ⌘↩, the picker's hints, ⌫ on a
-    /// level, ⎋.
+    /// ↩ and the highlighted row's keys — ⇥ where it goes in — its menu if it has one, ⌘↩, the picker's hints, then ⎋
+    /// Close, or on a level ⌫ ⎋ Back.
     private func updateBar() {
         var slots: [KeySlot] = []
         if let row = highlighted {
@@ -377,7 +377,8 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         if other != nil, highlighted?.actions.contains(where: { $0.key == Self.otherKey }) != true {
             slots.append(KeySlot(key: "⌘↩", label: "Other Panel", id: "other"))
         }
-        bar.list = slots + hints + (above.isEmpty ? [] : [KeySlot(key: "⌫", label: "Back", id: "back")]) + [KeySlot(key: "⎋", label: "Close", id: "esc")]
+        // On a level ⎋ goes up, as ⌫ on an empty field does: one slot says both.
+        bar.list = slots + hints + [above.isEmpty ? KeySlot(key: "⎋", label: "Close", id: "esc") : KeySlot(key: "⌫ ⎋", label: "Back", id: "back")]
     }
 
     // MARK: - Levels: ⇥ goes into a row, ⌫ on an empty field and ⎋ come back (the palette)
@@ -421,7 +422,8 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         push(s is PlaceSource ? (name, chips) : here ? (s.title, []) : ("\(name) › \(s.title)", chips), placeholder: "Filter \(s.title.lowercased())")
         source = s
         rank = { item, q in Fuzzy.score(q, item.title + " " + item.subtitle + " " + item.detail) }
-        other = { [unowned self] q, id, rows in listInOther?(s, q, id, rows) }
+        let inOther = listInOther   // not self: ⌘↩ runs it after the picker closed and went
+        other = { q, id, rows in inOther?(s, q, id, rows) }
         guard let c = s.content else { return read(s) }
         show(c)
     }
@@ -535,11 +537,12 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         filter()
     }
 
-    /// The chips of where the list is, before the field: "web-01 › Services ›".
+    /// The chips of where the list is, before the field: "web-01 › Services ›". The field stays where it is, typing on:
+    /// taken out of the window, it would lose the keys.
     private func showScopes() {
-        top.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for s in scopes { top.addArrangedSubview(ScopeChip(s.name, chips: s.chips)) }
-        top.addArrangedSubview(field)
+        top.arrangedSubviews.filter { $0 !== field }.forEach { $0.removeFromSuperview() }
+        for (i, s) in scopes.enumerated() { top.insertArrangedSubview(ScopeChip(s.name, chips: s.chips), at: i) }
+        if field.superview == nil { top.addArrangedSubview(field) }
     }
 
     private func setHeader(_ text: String?) {

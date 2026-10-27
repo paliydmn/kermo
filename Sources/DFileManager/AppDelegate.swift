@@ -769,9 +769,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     static func searchFrecency(_ d: UserDefaults, now: Double = Date().timeIntervalSince1970) -> Frecency {
         if let data = d.data(forKey: "searchFrecency"), let f = try? JSONDecoder().decode(Frecency.self, from: data) { return f }
         var f = Frecency()
-        for (i, key) in (d.stringArray(forKey: "searchRecent") ?? []).enumerated().reversed() {
+        guard let old = d.stringArray(forKey: "searchRecent") else { return f }
+        for (i, key) in old.enumerated().reversed() {
             SearchHit.Target(key: key).key.map { f.visit($0, now: now - Double(i)) }   // a bare id is a command's
         }
+        d.set(try? JSONEncoder().encode(f), forKey: "searchFrecency")   // kept before the old list goes
         d.removeObject(forKey: "searchRecent")
         return f
     }

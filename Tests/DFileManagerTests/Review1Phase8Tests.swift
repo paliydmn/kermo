@@ -215,6 +215,7 @@ extension ServerLockTests {
         UserDefaults.standard.set(["file.copy", "folder:/gone-p8", "command:file.move"], forKey: "searchRecent")
         #expect(app.searchFrecency.ranked() == ["command:file.copy", "folder:/gone-p8", "command:file.move"], "in its order")
         #expect(UserDefaults.standard.stringArray(forKey: "searchRecent") == nil)
+        #expect(AppDelegate.searchFrecency(UserDefaults.standard).ranked().count == 3, "kept at once, before anything is chosen")
         let dir = try tempDir()
         defer { try? FileManager.default.removeItem(atPath: dir) }
         app.frecency.visit(dir)   // a folder the search lists
@@ -271,7 +272,8 @@ extension ServerLockTests {
         #expect(p.actionBar.map(\.key) == ["↩", "⇥", "⌘↩", "⎋"], "\(p.actionBar.map(\.key))")
         press(p, #selector(NSResponder.insertTab(_:)))
         #expect(p.scopeNames == ["web-01"] && p.rows.map(\.title) == ["Home", "/", "Services", "Containers", "Ports", "Tunnels", "File History"])
-        #expect(touched == 0 && p.actionBar.last?.key == "⎋" && p.actionBar.contains { $0.key == "⌫" })
+        #expect(p.field.currentEditor() != nil && p.panel.firstResponder === p.field.currentEditor(), "the field keeps the keys")
+        #expect(touched == 0 && p.actionBar.last == KeySlot(key: "⌫ ⎋", label: "Back", id: "back") && !p.actionBar.contains { $0.label == "Close" }, "⎋ goes up here")
         press(p, #selector(NSResponder.insertTab(_:)))   // Home: no list behind it
         #expect(p.scopeNames == ["web-01"])
         type(p, "services")
@@ -297,25 +299,33 @@ extension ServerLockTests {
         let t = SFTPTarget(host: "deploy@web-01.invalid"), ran = Later<[String]>([])
         let slow = Listed("Services", on: t)
         slow.hold = true
-        let p = app.search.focus(over: app.window)
-        p.go(into: slow)
-        #expect(p.emptySaid == "Looking at services…" && p.scopeNames == ["deploy@web-01.invalid › Services"])
-        await until { slow.reads == 1 }
-        press(p, #selector(NSResponder.cancelOperation(_:)))
-        await until { slow.stopped }
-        #expect(slow.stopped && p.scopeNames.isEmpty && Picker.current === p)
+        do {
+            let p = app.search.focus(over: app.window)
+            p.go(into: slow)
+            #expect(p.emptySaid == "Looking at services…" && p.scopeNames == ["deploy@web-01.invalid › Services"])
+            await until { slow.reads == 1 }
+            press(p, #selector(NSResponder.cancelOperation(_:)))
+            await until { slow.stopped }
+            #expect(slow.stopped && p.scopeNames.isEmpty && Picker.current === p)
+        }
 
         let s = Listed("Services", on: t)
         s.next = ListContent(rows: [unit(app, "cron", on: t, ran: ran), unit(app, "nginx", on: t, state: "activating", mark: .attention, ran: ran),
                                     unit(app, "worker", on: t, state: "failed", mark: .failed, ran: ran)], header: "3 units · 1 failed")
-        p.go(into: s)
-        await until { !p.rows.isEmpty }
-        #expect(s.reads == 1 && p.rows.map(\.title) == ["worker", "nginx", "cron"] && p.headerSaid == "3 units · 1 failed")
-        #expect(p.actionBar.map(\.label).starts(with: ["Status", "Into", "Live Logs", "Restart"]), "\(p.actionBar.map(\.label))")
-        type(p, "ngi")
-        #expect(key(p, 36, "\r", .command))   // ⌘↩: the list in the other panel, as typed and highlighted
+        weak var closed: Picker?
+        try await {   // nothing here holds the palette once ⌘↩ closed it: the app doesn't either
+            let p = try #require(Picker.current)
+            closed = p
+            p.go(into: s)
+            await until { !p.rows.isEmpty }
+            #expect(s.reads == 1 && p.rows.map(\.title) == ["worker", "nginx", "cron"] && p.headerSaid == "3 units · 1 failed")
+            #expect(p.actionBar.map(\.label).starts(with: ["Status", "Into", "Live Logs", "Restart"]), "\(p.actionBar.map(\.label))")
+            type(p, "ngi")
+            #expect(key(p, 36, "\r", .command))   // ⌘↩: the list in the other panel, as typed and highlighted
+        }()
         await until { b.list?.source === s }
         #expect(b.list?.source === s && s.reads == 1 && b.list?.shown.map(\.title) == ["nginx"] && b.list?.cursor?.title == "nginx" && Picker.current == nil)
+        #expect(closed == nil, "the palette went once closed — what ⌘↩ shows doesn't need it")
     }
 
     /// ⇥ on a row: its actions — its key on the right, why it can't now under it, Stop… red. ↩ runs one as its list
