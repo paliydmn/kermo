@@ -108,7 +108,7 @@ private func write(_ path: String, _ text: String = "x") {
 }
 
 /// A job with errors no longer stops the window with an alert: its row stays, saying so, the entry is unseen (the
-/// toolbar button's dot), and the job itself is let go. A copy without any shows ✓ for a moment, then its row goes.
+/// toolbar button's dot, the Dock's badge), and the job itself is let go. A copy without any shows ✓ for a moment, then its row goes.
 @MainActor @Test func finishedJobsLeaveARowNotASheet() async throws {
     _ = NSApplication.shared
     let d = tempDir()
@@ -123,6 +123,8 @@ private func write(_ path: String, _ text: String = "x") {
     ops.enqueue(job, title: "Copy 2 items → out")
     await waitUntil { window.attachedSheet != nil }   // the error, while it runs: Skip / Retry / Abort, as before
     let sheet = try #require(window.attachedSheet)
+    ops.changed()   // other tests' queues share the Dock: say it again, then look before anything else runs
+    #expect(NSApp.dockTile.contentView != nil, "a bar on the Dock icon while it runs")
     window.endSheet(sheet, returnCode: .alertFirstButtonReturn)   // Skip
     await waitUntil { ops.pending == 0 }
     try await Task.sleep(nanoseconds: 100_000_000)
@@ -130,6 +132,11 @@ private func write(_ path: String, _ text: String = "x") {
     #expect(ops.history.entries.count == 1 && ops.history.unseen == 1 && ops.history.entries[0].failed.count == 1)
     #expect(!ops.view.isHidden && ops.view.arrangedSubviews.count == 1, "the row saying it finished with errors")
     #expect(ops.toolbarItem.toolTip?.contains("finished with errors") == true)
+    ops.changed()
+    #expect(NSApp.dockTile.badgeLabel == "1" && NSApp.dockTile.contentView == nil, "a red 1 on the Dock icon, no bar")
+    ops.history.markSeen()
+    ops.changed()
+    #expect(NSApp.dockTile.badgeLabel == nil, "looked at: the badge goes")
 
     let ok = FileJob(.copy, sources: [d + "/good"], destDir: d + "/out2")
     try FileManager.default.createDirectory(atPath: d + "/out2", withIntermediateDirectories: true)

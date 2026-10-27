@@ -630,6 +630,49 @@ private final class ClickStack: NSStackView {
     override func mouseDown(with event: NSEvent) { onClick() }
 }
 
+/// The Dock icon: while jobs run, a bar of all the work done so far (the toolbar ring's), and the system's red badge
+/// with how many finished with errors not looked at yet. The one place that changes the tile.
+// ponytail: Dock only — Tools PR 5 (no Dock while only watching) moves the progress to the menu bar's item here.
+@MainActor enum DockTile {
+    private static var key = ""
+    private static let bar = Bar()
+
+    static func show(fraction: Double?, errors: Int) {
+        let k = "\(fraction.map { Int($0 * 100) } ?? -1) \(errors)"
+        guard k != key else { return }
+        key = k
+        let tile = NSApplication.shared.dockTile
+        tile.badgeLabel = errors > 0 ? "\(errors)" : nil
+        if let fraction {
+            bar.fraction = fraction
+            bar.frame = NSRect(origin: .zero, size: tile.size)
+            bar.needsDisplay = true
+            tile.contentView = bar
+        } else {
+            tile.contentView = nil
+        }
+        tile.display()
+    }
+
+    private final class Bar: NSView {
+        var fraction = 0.0
+        override func draw(_ dirtyRect: NSRect) {
+            NSApp.applicationIconImage?.draw(in: bounds)
+            let r = NSRect(x: bounds.width * 0.14, y: bounds.height * 0.1, width: bounds.width * 0.72, height: bounds.height * 0.09)
+            let track = NSBezierPath(roundedRect: r, xRadius: r.height / 2, yRadius: r.height / 2)
+            NSColor.white.withAlphaComponent(0.85).setFill()
+            track.fill()
+            NSGraphicsContext.saveGraphicsState()
+            track.addClip()
+            Palette.accent.setFill()
+            NSRect(x: r.minX, y: r.minY, width: r.width * min(fraction, 1), height: r.height).fill()
+            NSGraphicsContext.restoreGraphicsState()
+            NSColor.black.withAlphaComponent(0.3).setStroke()
+            track.stroke()
+        }
+    }
+}
+
 /// A rounded, filled background (`fill` nil: none) behind what's in it, sized by their constraints.
 final class Tile: NSView {
     private let fill: NSColor?, radius: CGFloat

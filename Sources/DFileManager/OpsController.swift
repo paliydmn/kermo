@@ -218,6 +218,7 @@ final class OpsController {
             if p.totalBytes > 0 { total += p.totalBytes; done += min(p.doneBytes, p.totalBytes) }
         }
         let fraction = rows.isEmpty ? nil : total > 0 ? Double(done) / Double(total) : 0
+        DockTile.show(fraction: fraction, errors: history.unseen)
         let unseen = history.unseen > 0
         let key = "\(fraction.map { Int($0 * 60) } ?? -1) \(rows.count) \(unseen)"
         guard key != buttonKey else { return }

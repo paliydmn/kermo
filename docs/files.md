@@ -45,7 +45,7 @@ A dialog asks — ““config.yaml” is already in site on web-01”, with the
 
 ### Activity
 
-The **Activity** button in the toolbar (a clock going round; a ring that fills as the jobs go) or **View ▸ Activity** (⌥⌘J) lists the jobs running, the ones queued and the last 100 finished, newest first. A red ◆ on the button means one finished with errors you haven't looked at.
+The **Activity** button in the toolbar (a clock going round; a ring that fills as the jobs go) or **View ▸ Activity** (⌥⌘J) lists the jobs running, the ones queued and the last 100 finished, newest first. A red ◆ on the button means one finished with errors you haven't looked at. The Dock icon says the same, seen from any app: a bar fills as the jobs go, and a red number counts the jobs that finished with errors you haven't looked at (from the last run too). Opening Activity, or × on the job's row, clears it.
 
 - Click **▸** on a job to see its files. A finished one shows what it did, how long it took, and each file that failed with the reason.
 - **Retry Failed** copies or moves the failed files again, into the folders they were going to. **Retry** next to a file does just that one. A locked server asks for Touch ID and a production server asks first, as F5 does. A retried file starts over: only **Retry** in the error dialog, while the job runs, continues a big file where it stopped.
