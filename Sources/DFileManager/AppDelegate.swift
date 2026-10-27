@@ -343,26 +343,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     private var configProblems: [String] = []
 
-    /// Builds commands with keymap.json overrides applied (user bindings win over defaults) and rebuilds menus.
-    func applyConfig(reportProblems: Bool) {
-        var cmds = makeCommands()
+    /// Where keymap.json is (tests: a folder of their own).
+    static var keymapDir = Config.dir
+    static var keymapPath: String { (keymapDir as NSString).appendingPathComponent("keymap.json") }
+
+    /// keymap.json: a command's id → its keys; empty when there's none. Throws when it's there and can't be read.
+    static func readKeymap() throws -> [String: [String]] {
+        try Config.contents(keymapPath).map { try JSONDecoder().decode([String: [String]].self, from: $0) } ?? [:]
+    }
+
+    /// The registry's commands with keymap.json's keys: an entry replaces all of a command's keys, and a key it gives
+    /// away leaves the command it was a default of. Also every key's command, the entries (with the keys they
+    /// replaced) and what's wrong in them. Reload Config and Settings ▸ Keys both go through here.
+    static func bind(_ defaults: [Command], _ file: [String: [String]])
+        -> (commands: [Command], keymap: [Shortcut: Command], overrides: [(id: String, keys: [Shortcut], was: [Shortcut])], problems: [String]) {
+        var cmds = defaults
         var problems: [String] = []
-        var overridden = Set<String>()
         var overrides: [(id: String, keys: [Shortcut], was: [Shortcut])] = []
-        do {
-            for (id, specs) in try Config.load("keymap.json", as: [String: [String]].self) ?? [:] {
-                guard let i = cmds.firstIndex(where: { $0.id == id }) else { problems.append("keymap.json: unknown command “\(id)”"); continue }
-                let was = cmds[i].keys
-                cmds[i].keys = specs.compactMap { spec in
-                    guard let k = Shortcut(spec) else { problems.append("keymap.json: \(id): bad key “\(spec)”"); return nil }
-                    return k
-                }
-                overrides.append((id, cmds[i].keys, was))
-                overridden.insert(id)
+        for (id, specs) in file.sorted(by: { $0.key < $1.key }) {
+            guard let i = cmds.firstIndex(where: { $0.id == id }) else { problems.append("keymap.json: unknown command “\(id)”"); continue }
+            let was = cmds[i].keys
+            cmds[i].keys = specs.compactMap { spec in
+                guard let k = Shortcut(spec) else { problems.append("keymap.json: \(id): bad key “\(spec)”"); return nil }
+                return k
             }
-        } catch {
-            problems.append("keymap.json: \(error.localizedDescription)")
+            overrides.append((id, cmds[i].keys, was))
         }
+        let overridden = Set(overrides.map(\.id))
         var map: [Shortcut: Command] = [:]
         for c in cmds where !overridden.contains(c.id) {
             for k in c.keys {
@@ -372,8 +379,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         for c in cmds where overridden.contains(c.id) { for k in c.keys { map[k] = c } }
         for i in cmds.indices { cmds[i].keys = cmds[i].keys.filter { map[$0]?.id == cmds[i].id } }
+        return (cmds, map, overrides, problems)
+    }
+
+    /// Builds commands with keymap.json overrides applied (user bindings win over defaults) and rebuilds menus.
+    func applyConfig(reportProblems: Bool) {
+        var file: [String: [String]] = [:], problems: [String] = []
+        do { file = try Self.readKeymap() } catch { problems.append("keymap.json: \(error.localizedDescription)") }
+        let bound = Self.bind(makeCommands(), file)
+        problems += bound.problems
+        let (cmds, overrides) = (bound.commands, bound.overrides)
         commands = cmds
-        keymap = map
+        keymap = bound.keymap
         keyBar.reload(cmds)
         showCmdKey()
         refreshSidebar()   // section headers show keys

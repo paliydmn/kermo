@@ -11,7 +11,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 - **Text fields** (path entry, the command line, dialogs) take the usual ⌘X, ⌘C, ⌘V, ⌘A and ⌘Z.
 - **Questions:** ⎋ is Cancel. On a production server and for what can't be undone, ↩ is Cancel too and **⌘↩** does the action; the question's last line says so ([how a question asks](safety.md#how-a-question-asks)).
 - **Layouts:** shortcuts are bound to physical keys, so they work with any keyboard layout (the ISO § key counts as `` ` ``). Menus show the characters of your current layout, so on a layout that moves Latin letters (Dvorak, AZERTY) a letter shortcut in a menu follows the letter.
-- **Remap:** choose **Kermo ▸ Configuration ▸ Edit Keymap…**, then **Reload Config** to apply it (see [Configuration](configuration.md#keymap)).
+- **Remap:** in **Settings › Keys** (⌘,) click a key and press the new one; or choose **Kermo ▸ Configuration ▸ Edit Keymap…**, then **Reload Config** (see [Configuration](configuration.md#keymap)).
 
 > [!NOTE]
 > Two shortcuts clash with macOS: ⇧⌘/ (computer root) is also the Help menu search, and ⌃1…⌃7 (Finder tags) switch desktops once you have several. Turn them off in System Settings ▸ Keyboard ▸ Keyboard Shortcuts, or remap the command. ⌘M minimizes the window, as everywhere on the Mac.

@@ -12,6 +12,7 @@ Where Kermo keeps its settings, the formats of the files you can edit, and the `
 |---|---|
 | General | Show hidden files (`showHidden`); Dates: `Today 13:33` or `2026-10-27 13:33` (`isoDates`); Check for updates once a day (`updateCheckOff`); install the `fm` command |
 | Appearance | The themes, each with a preview: a click uses it (`theme`; **View ▸ Theme…** previews them as you move through the list); Permissions & Owner columns (`showPerms`); how long to hold a modifier before the key bar shows its keys (`keyBarHoldDelay`) |
+| Keys | Every command with its keys; see [Keymap](#keymap) |
 | Terminal | Font and size (`terminalFont`, `terminalFontSize`); the drawer's height (`terminalDrawerHeight`, by dragging its line); Option is Meta (`terminalOptionIsMeta`); Selecting text copies it and Right-click pastes (`terminalCopyOnSelect`, `terminalRightClickPaste`: both use the clipboard); the app for ⌥⌘T and ⌘↩ (`terminalBundleID`) |
 | Editor & Viewer | The editor for files on this Mac (`editorBundleID`); End with a newline (`editorFinalNewline`); Line numbers (`viewerLineNumbers`); the tool that compares files (`diffCommand`) |
 | Servers & Safety | Keep a production log (`auditLog`) and Show it; Keep earlier versions of saved server files (`serverHistory`); Checks before saving (**Edit…**); **Edit SSH Config…**; how long the sudo password is kept |
@@ -38,6 +39,10 @@ Kermo also writes `server-pins.json` (the order of pinned servers), `trash.json`
 A file Kermo writes back itself (`servers.json`, `bookmarks.json`, `server-pins.json`, `frecency.json`, `trash.json`) that it can't read is copied as it is to `name.broken` before anything is saved over it, and Kermo says so at launch (`trash.json`: when it's next read). In a list (servers, bookmarks, pins) only the entries that can't be read are left out; the rest load. A file that doesn't parse at all starts empty. When a `name.broken` with something else in it is there already, the new copy is `name.broken-<date>-<time>`.
 
 ## Keymap
+
+**Settings › Keys** lists every command with its menu and keys. Type to find one by name, by a word it's known by, or by its key (`⌘D` or `cmd+d`). Click a key, or **＋** after them, and press the new one: **⎋** cancels, **⌫** removes the key you clicked. What can't work is said at once, as Reload Config would say it — a key of the menu bar's own items, one macOS takes first — and nothing changes. A key another command has asks: **Use Here** moves it, **Cancel** leaves both as they were. The arrow after a command's keys gives it Kermo's own back; **Reset All…** does that for every command, after a question.
+
+Keys set there go into `keymap.json`, only for the commands you changed, and work at once. The file stays yours to edit: the tab reads it each time it opens.
 
 `keymap.json` maps a command's id to its keys: `{ "command.id": ["cmd+shift+p", "f9"] }`. **Edit Keymap…** writes every current binding on first use, so you change only what you need. An entry replaces all default keys of that command.
 

@@ -64,7 +64,7 @@ private func keysRead() throws -> Set<String> {
     let monitor = SettingsTab(title: "Monitor", symbol: .general, groups: [("Notifications", [SettingsRow(title: "Alerts", key: "kermoTestKey", control: .toggle(true))])])
     let suite = UserDefaults(suiteName: "kermo-settings-\(UUID().uuidString)")!
     let w = window(app, tabs: app.settingsTabs + [monitor], defaults: suite)
-    #expect(w.tabs.tabViewItems.map(\.label) == ["General", "Appearance", "Terminal", "Editor & Viewer", "Servers & Safety", "Advanced", "Monitor"])
+    #expect(w.tabs.tabViewItems.map(\.label) == ["General", "Appearance", "Keys", "Terminal", "Editor & Viewer", "Servers & Safety", "Advanced", "Monitor"])
     let s = try? #require(control(w, "Alerts", as: NSSwitch.self))
     #expect(s?.state == .on, "its default")
     s?.state = .off

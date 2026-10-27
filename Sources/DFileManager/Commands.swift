@@ -697,10 +697,11 @@ extension AppDelegate {
 
     /// Writes the current bindings to keymap.json (if it doesn't exist yet) and opens it.
     func editKeymap() {
-        let path = Config.path("keymap.json")
+        let path = Self.keymapPath
         if !FileManager.default.fileExists(atPath: path) {
             let all = Dictionary(uniqueKeysWithValues: commands.map { ($0.id, $0.keys.map(\.spec)) })
-            Config.save("keymap.json", all)
+            Config.save("keymap.json", all, in: Self.keymapDir)
+            Config.flush()   // written before the editor opens it
         }
         openInEditor(URL(fileURLWithPath: path))
     }
