@@ -173,6 +173,7 @@ final class OpsController {
     // MARK: - Activity
 
     func retry(_ e: ActivityEntry, _ only: [FileJob.Failure]?) {
+        history.change(e.id) { $0.seen = true }   // from its row: dealt with, so no red count left on the Dock
         activity.popover.close()
         onRetry(e, only)
     }
@@ -218,6 +219,7 @@ final class OpsController {
             if p.totalBytes > 0 { total += p.totalBytes; done += min(p.doneBytes, p.totalBytes) }
         }
         let fraction = rows.isEmpty ? nil : total > 0 ? Double(done) / Double(total) : 0
+        DockTile.show(fraction: fraction, errors: history.unseen)
         let unseen = history.unseen > 0
         let key = "\(fraction.map { Int($0 * 60) } ?? -1) \(rows.count) \(unseen)"
         guard key != buttonKey else { return }
