@@ -913,7 +913,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if let s = r.saved {
             items += [.separator(),
                       unlocked(s.prod ? "Unmark Production" : "Mark as Production", s, "change") { [unowned self] in setProd(s, !s.prod) },
-                      MenuAction.item("Edit…") { [unowned self] in editServer(s, title: "Edit “\(s.title)”") },
+                      MenuAction.item("Edit…") { [unowned self] in editServer(s, title: "Edit Server") },
                       MenuAction.item("Duplicate…") { [unowned self] in
                           var copy = s
                           copy.id = UUID()
@@ -934,6 +934,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         savedServers[i].prod = on
         Config.save("servers.json", savedServers)
         refreshSidebar()
+        prodChanged()
+    }
+
+    /// A server's production mark changed (the menu, the server sheet): the panels' headers say it.
+    func prodChanged() {
         panels.filter { $0.remote != nil || $0.parked != nil }.forEach { $0.showPath() }   // not an archive's or search's header
     }
 
@@ -949,11 +954,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let isConfig = configHosts.contains(address)
         return [.separator(),
                 SavedServer(address: address).map { s in MenuAction.item("Save…") { [unowned self] in editServer(s, title: "Save “\(address)”") } },
-                SavedServer(address: address).map { s in
-                    var s = s
-                    s.prod = true
-                    return MenuAction.item("Save as Production…") { [unowned self] in editServer(s, title: "Save “\(address)” as Production") }
-                },
                 isConfig ? MenuAction.item("Edit SSH Config") { [unowned self] in editSSHConfig() } : nil]
     }
 

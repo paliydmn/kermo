@@ -465,8 +465,8 @@ final class MenuAction: NSObject {
         return i
     }
 
-    /// The same for a button; keep what it returns for as long as the button lives (a button doesn't hold its target).
-    @MainActor static func attach(to button: NSButton, _ run: @escaping @MainActor () -> Void) -> MenuAction {
+    /// The same for a button (a switch); keep what it returns for as long as the button lives (a button doesn't hold its target).
+    @MainActor static func attach(to button: NSControl, _ run: @escaping @MainActor () -> Void) -> MenuAction {
         let a = MenuAction(run)
         button.target = a
         button.action = #selector(fire)

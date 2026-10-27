@@ -16,20 +16,22 @@ Connect to a server, save it, lock it and mark it as production. Kermo uses the 
 A saved server gets a name, a sidebar row, a Touch ID lock if you want one, a production mark and tunnels.
 
 1. Choose **Go ▸ New Server…** (also in search, in the Servers header's right-click menu, and as **＋ New Server…** in the picker).
-2. Fill in the sheet and click **Save** (or **Save & Connect**).
+2. Fill in the sheet and click **Save** (↩) or **Save & Connect** (⌘↩).
 
 To keep a server you already used, right-click its recent or `~/.ssh/config` row in the sidebar and choose **Save…**.
 
+The sheet has four groups — **Connection**, **Sign in**, **Safety**, **Open** — and, under them, the ssh command it makes as you type (`ssh -p 2222 -i … -- deploy@web-01`; the password never shows there). What ssh couldn't take (a port out of range, a key file it can't read) is said under its field, and Save waits until it's fixed.
+
 | Field | Left empty means | Notes |
 |---|---|---|
-| **Name** | the address | Shown in the sidebar. |
 | **Host** | required | An address or a `~/.ssh/config` host. |
-| **User** | ssh's default | |
-| **Port** | 22 | 1–65535. |
-| **Key file** | ssh's own choice (agent, `~/.ssh/config`) | **Choose…** opens `~/.ssh`. |
+| **User · Port** | ssh's default, 22 | Port 1–65535. |
+| **Name** | the address | Shown in the sidebar. |
+| **Key** | ssh's own choice (agent, `~/.ssh/config`) | **Choose…** opens `~/.ssh`, in a sheet over this one. |
 | **Password** | ask every time | Saved in the login Keychain as "Kermo: user@host" (with `:port` for a port other than 22), one per user, host and port. Shown as dots; the eye beside it shows it after Touch ID or the Mac password. Type to replace it. Read only when ssh asks for a password: a server that takes your key never reads it. |
+| **Production** | off | A switch; see [below](#mark-a-server-as-production). |
+| **Lock** | not locked | Touch ID or the Mac password; see below. |
 | **Start folder** | the login folder | Where SFTP opens. |
-| **Lock with Touch ID or the Mac password** | not locked | See below. |
 
 Saved servers live in `~/.config/dfilemanager/servers.json` (see [Configuration](configuration.md#saved-servers)). Passwords are never written there.
 
@@ -37,11 +39,11 @@ Saved servers live in `~/.config/dfilemanager/servers.json` (see [Configuration]
 
 Right-click a server row in the sidebar (or click **⋯** under the mouse):
 
-- **Edit…** opens the sheet again. **Duplicate…** makes a copy named "name copy"; its tunnels are copied but turned off.
+- **Edit…** opens the same sheet, titled Edit Server. **Duplicate…** makes a copy named "name copy"; its tunnels are copied but turned off.
 - **Delete…** removes the server and its saved passwords from the Keychain (unless another saved server has the same address). It offers to delete its [file history](server-files.md#file-history) too. Open sessions stay open and its tunnels turn off.
 - **Pin** keeps the server at the top of the Servers list. **Remove from Recents** drops a recent address.
 - **Open SSH Session**, **Open SFTP**, **Open SFTP in New Tab / in Other Panel**, **Open SFTP as Root** ([root panel](root-panel.md)), **Forward Port…** and **Tunnels** ([tunnels](tunnels.md); both on any server row), **Services…** and **Containers…** ([below](#services-and-containers)), **Copy SSH Command**, **Copy SSH Key to Server…** ([below](#copy-your-ssh-key-to-a-server)) and **Close All Sessions** (the connection closes too, unless a tunnel is on; **Disconnect** also turns tunnels off).
-- **Mark as Production** / **Unmark Production** and **Save as Production…**: see below.
+- **Mark as Production** / **Unmark Production**: see below.
 
 **Go ▸ Edit SSH Config** opens `~/.ssh/config` in the editor and creates it with an example if it doesn't exist.
 
@@ -133,6 +135,6 @@ Open sessions stay open. A locked server isn't added to the recents, and its sha
 
 Production is a flag on a saved server for the servers where a mistake is expensive. It gives the server a purple PROD chip wherever it shows, purples the line under an active panel there, and makes Kermo ask before risky changes and log what you do there. [Safety](safety.md) lists where it shows and what changes. As with a lock, an alias or another way of writing the same server counts as that server; typed for the first time, its purple can show a moment after the panel opens.
 
-- **Mark as Production** is in the server row's menu. A locked server asks for Touch ID first.
-- **Save as Production…** (on a recent or `~/.ssh/config` row) opens the save sheet with the flag already set.
+- **Production** is a switch in the server's sheet (New Server, Edit…, Save… on a recent or `~/.ssh/config` row).
+- **Mark as Production** is in the server row's menu too. A locked server asks for Touch ID first, as for Edit….
 - Or set `"prod": true` for the server in `servers.json`.

@@ -927,7 +927,7 @@ extension AppDelegate {
             }]
             + savedServers.map { s in
                 Picker.Item(title: s.title, subtitle: ServerRow.address(s.target), badges: s.chips.map(\.image), detail: label,
-                            actions: [.init(key: Shortcut("cmd+e")!, label: "Edit") { [unowned self] in editServer(s, title: "Edit “\(s.title)”") }],
+                            actions: [.init(key: Shortcut("cmd+e")!, label: "Edit") { [unowned self] in editServer(s, title: "Edit Server") }],
                             verb: "Connect") { [unowned self] in
                     openServer(ServerRow(target: s.target, saved: s, title: s.title), kind)
                 }
@@ -1010,134 +1010,62 @@ extension AppDelegate {
         }
     }
 
-    /// The saved password shows as dots; the eye shows it after Touch ID or the Mac password, every time. Shown and left
-    /// as it was, it isn't stored again (so it never follows a changed Host; see `storePassword`). A root panel's sudo
-    /// password saved there ("Save in Keychain" in its sheet) can only be forgotten here.
-    private func showServerSheet(_ server: SavedServer, title: String, connect: ServerSession.Kind,
-                                 problem: String = "", password: String = "", forget: Bool = false, forgetSudo: Bool = false) {
+    /// `ServerForm` in a sheet. A server not saved yet: Save & Connect (⌘↩; `connect`: which kind), Save (↩), Cancel; a
+    /// saved one: Save, Delete…, Cancel. Save waits until ssh could take what's typed (`SavedServer.issue`, said under
+    /// its field). A root panel's sudo password saved there ("Save in Keychain" in its sheet) can only be forgotten here.
+    private func showServerSheet(_ server: SavedServer, title: String, connect: ServerSession.Kind) {
         let saved = savedServers.contains { $0.id == server.id }
-        let hasPassword = !server.host.isEmpty && SSHPasswords.has(server.target)
-        let hasSudo = !server.host.isEmpty && SSHPasswords.has(server.target, sudo: true)
-        let fields: [(String, String, String)] = [
-            ("Name", server.name, "shown in the sidebar; empty = the address"),
-            ("Host", server.host, "address or ~/.ssh/config host"),
-            ("User", server.user ?? "", "empty = ssh's default"),
-            ("Port", server.port.map(String.init) ?? "", "22"),
-            ("Key file", server.identityFile ?? "", "empty = ssh's own (agent, ~/.ssh/config)"),
-            ("Password", password, hasPassword ? "••••••••" : "empty = ask each time; saved in Keychain"),
-            ("Start folder", server.startDir ?? "", "for SFTP; empty = the login folder"),
-        ]
-        let inputs = fields.map { label, value, hint in
-            let f = label == "Password" ? NSSecureTextField(string: value) : NSTextField(string: value)
-            f.placeholderString = hint
-            f.widthAnchor.constraint(equalToConstant: 300).isActive = true
-            return f
-        }
-        // Key file: typed, or Choose… in ~/.ssh (hidden, and a pain to type).
-        let keyField = inputs[4], choose = NSButton(title: "Choose…", target: nil, action: nil)
-        keyField.constraints.forEach { if $0.firstAttribute == .width { $0.constant = 300 - choose.fittingSize.width - 6 } }
-        let keyRow = NSStackView(views: [keyField, choose])
-        keyRow.spacing = 6
-        let chooser = MenuAction.attach(to: choose) {
-            let open = NSOpenPanel()
-            open.showsHiddenFiles = true
-            open.directoryURL = URL(fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent(".ssh"))
-            open.message = "The private key (not the .pub one)"
-            if open.runModal() == .OK, let url = open.url { keyField.stringValue = (url.path as NSString).abbreviatingWithTildeInPath }
-        }
-        // Password: dots, or as text behind the eye.
-        let pwField = inputs[5], shown = NSTextField(string: "")
-        if hasPassword { pwField.toolTip = "Saved in Keychain — type to replace" }
-        let eye = NSButton(image: Symbol.show.image("Show the password"), target: nil, action: nil)
-        eye.bezelStyle = .accessoryBarAction
-        eye.toolTip = "Show the password (a saved one asks for Touch ID or the Mac password)"
-        pwField.constraints.forEach { if $0.firstAttribute == .width { $0.constant = 300 - eye.fittingSize.width - 6 } }
-        shown.widthAnchor.constraint(equalToConstant: 300 - eye.fittingSize.width - 6).isActive = true
-        shown.placeholderString = pwField.placeholderString
-        shown.isHidden = true
-        let pwRow = NSStackView(views: [pwField, shown, eye])
-        pwRow.spacing = 6
-        let revealed = NSMutableString()   // the saved one, once shown
-        let show = { (on: Bool) in
-            (pwField.isHidden, shown.isHidden) = (on, !on)
-            eye.image = (on ? Symbol.hide : .show).image(on ? "Hide the password" : "Show the password")
-            pwRow.window?.makeFirstResponder(on ? shown : pwField)
-        }
-        let revealer = MenuAction.attach(to: eye) {
-            guard shown.isHidden else {
-                pwField.stringValue = shown.stringValue
-                return show(false)
-            }
-            guard pwField.stringValue.isEmpty, hasPassword else {
-                shown.stringValue = pwField.stringValue
-                return show(true)
-            }
-            Task {
-                guard await ServerLock.authenticate("show the saved password for “\(server.title)”") else { return }
-                guard let p = SSHPasswords.get(server.target) else { return NSSound.beep() }
-                revealed.setString(p)
-                shown.stringValue = p
-                show(true)
-            }
-        }
-        let lock = NSButton(checkboxWithTitle: "Lock with Touch ID or the Mac password", target: nil, action: nil)
-        lock.toolTip = "Asked before connecting, editing, duplicating or deleting; once per 5 minutes, again after the screen locks"
-        lock.state = server.locked ? .on : .off
-        let forgetBox = NSButton(checkboxWithTitle: "Forget the saved password", target: nil, action: nil)
-        forgetBox.state = forget ? .on : .off
-        let forgetSudoBox = NSButton(checkboxWithTitle: "Forget the saved sudo password", target: nil, action: nil)
-        forgetSudoBox.toolTip = "The one a root panel saved in the Keychain (“Kermo sudo”); the next root panel asks again"
-        forgetSudoBox.state = forgetSudo ? .on : .off
-        let extra: [[NSView]] = (hasPassword ? [[NSGridCell.emptyContentView, forgetBox]] : [])
-            + (hasSudo ? [[NSGridCell.emptyContentView, forgetSudoBox]] : []) + [[NSGridCell.emptyContentView, lock]]
-        let grid = NSGridView(views: zip(fields, inputs).map { [NSTextField(labelWithString: $0.0 + ":"), $1 === keyField ? keyRow : $1 === pwField ? pwRow : $1] } + extra)
-        grid.column(at: 0).xPlacement = .trailing
-        grid.rowAlignment = .firstBaseline
-        grid.rowSpacing = 8
-        grid.frame = NSRect(x: 0, y: 0, width: 400, height: CGFloat(fields.count + extra.count) * 30)
-
+        let form = ServerForm(server, hasPassword: !server.host.isEmpty && SSHPasswords.has(server.target),
+                              hasSudo: !server.host.isEmpty && SSHPasswords.has(server.target, sudo: true))
         let alert = NSAlert()
         alert.messageText = title.bidiVisible
-        alert.informativeText = problem
-        if !problem.isEmpty { alert.alertStyle = .warning }
-        for b in saved ? ["Save", "Cancel", "Delete…"] : ["Save & Connect", "Save", "Cancel"] {
+        for b in saved ? ["Save", "Delete…", "Cancel"] : ["Save & Connect", "Save", "Cancel"] {
             alert.addButton(withTitle: b).hasDestructiveAction = b == "Delete…"
         }
-        alert.accessoryView = grid
-        alert.window.initialFirstResponder = inputs[server.host.isEmpty ? 1 : 0]
-        alert.beginSheetModal(for: window) { [unowned self] r in
-            _ = (chooser, revealer)
+        let saves = saved ? [alert.buttons[0]] : [alert.buttons[0], alert.buttons[1]]
+        var below = [form.grid as NSView]
+        if !saved {   // ↩ Save, as Edit's; ⌘↩ Save & Connect (not ⌃↩: a text field's context menu, D-107)
+            alert.buttons[1].keyEquivalent = "\r"
+            alert.buttons[0].identifier = Confirm.commandReturn
+            let font = NSFont.systemFont(ofSize: 11), s = NSMutableAttributedString()
+            let word = { (w: String) in NSAttributedString(string: " " + w, attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]) }
+            s.append(KeyCap.text("↩", font: font)); s.append(word("Save  ·  "))
+            s.append(KeyCap.text("⌘↩", font: font)); s.append(word("Save & Connect"))
+            below.append(NSTextField(labelWithAttributedString: s))
+        }
+        let stack = NSStackView(views: below)
+        (stack.orientation, stack.alignment, stack.spacing) = (.vertical, .leading, 10)
+        let fit = { stack.setFrameSize(stack.fittingSize) }
+        fit()
+        alert.accessoryView = stack
+        form.onChange = { [weak alert] in
+            fit()
+            alert?.layout()
+            for b in saves { b.isEnabled = form.typed.issue == nil }
+        }
+        for b in saves { b.isEnabled = form.typed.issue == nil }
+        alert.window.initialFirstResponder = server.host.isEmpty ? form.host : form.name
+        alert.window.autorecalculatesKeyViewLoop = true   // Tab: the groups' order
+        Task {
+            let r = await AppDelegate.sheet(alert, on: window)
             window.makeFirstResponder(active.table)
-            if saved && r == .alertThirdButtonReturn { return deleteServer(server) }
-            let connecting = !saved && r == .alertFirstButtonReturn
-            guard r == .alertFirstButtonReturn || connecting || (!saved && r == .alertSecondButtonReturn) else { return }
-            let v = inputs.map { $0.stringValue.trimmingCharacters(in: .whitespaces) }
-            var s = server
-            s.name = v[0]
-            s.host = v[1]
-            s.user = v[2].isEmpty ? nil : v[2]
-            s.port = v[3].isEmpty ? nil : Int(v[3]) ?? 0   // 0: not a port, the check says so
-            s.identityFile = v[4].isEmpty ? nil : v[4]
-            let typed = shown.isHidden ? pwField.stringValue : shown.stringValue   // as typed: spaces count
-            let password = typed == revealed as String ? "" : typed   // shown, not changed: stays where it is
-            s.startDir = v[6].isEmpty ? nil : v[6]
-            s.locked = lock.state == .on
+            if saved && r == 1 { return deleteServer(server) }
+            let connecting = !saved && r == 0
+            guard r == 0 || (!saved && r == 1) else { return }
+            var s = form.typed
             s.tunnels = savedServers.first { $0.id == s.id }?.tunnels ?? s.tunnels   // as they are now, not when the sheet opened
-            let forget = hasPassword && forgetBox.state == .on, forgetSudo = hasSudo && forgetSudoBox.state == .on
-            if let p = s.problem {   // after this sheet is gone
-                return DispatchQueue.main.async {
-                    self.showServerSheet(s, title: title, connect: connect, problem: p, password: password, forget: forget, forgetSudo: forgetSudo)
-                }
-            }
+            guard s.issue == nil else { return NSSound.beep() }   // its buttons were off
             let old = savedServers.first { $0.id == s.id }
             if let i = savedServers.firstIndex(where: { $0.id == s.id }) { savedServers[i] = s } else { savedServers.append(s) }
             Config.save("servers.json", savedServers)
-            let status = storePassword(old: old, new: s, typed: password, forget: forget, forgetSudo: forgetSudo)
+            let status = storePassword(old: old, new: s, typed: form.newPassword, forget: form.forget?.state == .on, forgetSudo: form.forgetSudo?.state == .on)
             if status != errSecSuccess {
                 showError(JobErrorMessage("Couldn't save the password in the Keychain: \(SecCopyErrorMessageString(status, nil) as String? ?? "error \(status)")"))
             }
             refreshSidebar()
+            if old?.prod != s.prod { prodChanged() }
             if connecting { openServer(ServerRow(target: s.target, saved: s, title: s.title), connect) }
+            _ = form
         }
     }
 

@@ -77,15 +77,19 @@ struct SavedServer: Codable, Equatable {
     var chips: [Chip] { [prod ? .prod : nil, locked ? .locked : nil].compactMap { $0 } }
 
     /// Why ssh can't take it, or nil. A leading "-" would make ssh read it as an option (-oProxyCommand=…).
-    var problem: String? {
-        if host.isEmpty { return "Enter a host." }
-        if host.hasPrefix("-") || host.contains(where: { $0.isWhitespace || $0 == "@" }) { return "“\(host)” isn't a host name." }
-        if let u = user, u.isEmpty || u.hasPrefix("-") || u.contains(where: \.isWhitespace) { return "“\(u)” isn't a user name." }
-        if let p = port, !(1...65535).contains(p) { return "The port must be 1–65535." }
+    var problem: String? { issue?.message ?? Tunnel.problem(tunnels) }
+
+    enum Field { case host, user, port, key }
+    /// What's wrong with what ssh gets, and in which field (the server sheet says it under that one).
+    var issue: (field: Field, message: String)? {
+        if host.isEmpty { return (.host, "Enter a host.") }
+        if host.hasPrefix("-") || host.contains(where: { $0.isWhitespace || $0 == "@" }) { return (.host, "“\(host)” isn't a host name.") }
+        if let u = user, u.isEmpty || u.hasPrefix("-") || u.contains(where: \.isWhitespace) { return (.user, "“\(u)” isn't a user name.") }
+        if let p = port, !(1...65535).contains(p) { return (.port, "The port must be 1–65535.") }
         if let k = identityFile, !FileManager.default.isReadableFile(atPath: (k as NSString).expandingTildeInPath) {
-            return "Can't read the key file “\(k)”."
+            return (.key, "Can't read the key file “\(k)”.")
         }
-        return Tunnel.problem(tunnels)
+        return nil
     }
 
 }
