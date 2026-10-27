@@ -173,6 +173,7 @@ final class OpsController {
     // MARK: - Activity
 
     func retry(_ e: ActivityEntry, _ only: [FileJob.Failure]?) {
+        history.change(e.id) { $0.seen = true }   // from its row: dealt with, so no red count left on the Dock
         activity.popover.close()
         onRetry(e, only)
     }
