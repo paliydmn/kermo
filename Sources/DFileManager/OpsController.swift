@@ -49,10 +49,10 @@ final class OpsController {
     }
 
     func enqueue(_ job: FileJob, title: String) {
-        let side = job.to, local = job.from == .local && job.to == .local   // not `job`: it holds these closures
+        let side = job.to, from = job.from, local = job.from == .local && job.to == .local   // not `job`: it holds these closures
         job.resolveConflict = { [weak self] c in
             Self.ask((.cancel, false)) { done in
-                if let self { self.askConflict(c, on: side, done) } else { done((.cancel, false)) }
+                if let self { self.askConflict(c, from: from, on: side, done) } else { done((.cancel, false)) }
             }
         }
         job.resolveError = { [weak self] path, message in
@@ -239,49 +239,132 @@ final class OpsController {
         return box.value
     }
 
-    private func askConflict(_ c: FileJob.Conflict, on side: Endpoint, _ done: @escaping @Sendable ((FileJob.ConflictChoice, Bool)) -> Void) {
+    /// Compare… in a name's question: the two files in a diff (`AppDelegate.diff`); the question comes back after.
+    var compare: (@MainActor (_ new: AppDelegate.DiffSide, _ existing: AppDelegate.DiffSide) async -> Void)?
+
+    /// A name that's taken (R-55): `conflictQuestion`, asked again after Compare…, its ticks kept.
+    private func askConflict(_ c: FileJob.Conflict, from: Endpoint, on side: Endpoint, _ done: @escaping @Sendable ((FileJob.ConflictChoice, Bool)) -> Void) {
         guard let window else { return done((.cancel, false)) }
-        let date = DateFormatter()
-        date.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        func describe(_ size: Int64, _ mtime: Double) -> String {
-            "\(ByteCountFormatter.short(size)), \(date.string(from: Date(timeIntervalSince1970: mtime)))"
-        }
-        let alert = NSAlert()
-        let name = (c.dst as NSString).lastPathComponent
-        let parent = (c.dst as NSString).deletingLastPathComponent
-        let dir = DirSync.place(side, parent)
-        alert.messageText = "“\(name)” already exists in \(dir)".bidiVisible
-        let choices: [(String, FileJob.ConflictChoice)]
-        if c.replacesFolder {
-            alert.alertStyle = .critical
-            alert.messageText = "Replace the folder “\(name)” in \(dir) with a file?".bidiVisible
-            alert.informativeText = side == .local ? "The folder and everything in it go to the Trash."
-                : "The folder and everything in it are deleted on the server. This can't be undone."
-            choices = [("Skip", .skip), ("Keep Both", .keepBoth), ("Replace Folder", .overwrite), ("Cancel", .cancel)]
-        } else if c.bothDirs {
-            alert.informativeText = "Both are folders. Merge keeps existing files and asks about each clash inside."
-            choices = [("Merge", .overwrite), ("Skip", .skip), ("Keep Both", .keepBoth), ("Cancel", .cancel)]
-            alert.showsSuppressionButton = true   // folders only: a clash of files inside is still asked
-            alert.suppressionButton?.title = "Apply to all remaining folders"
-        } else {
-            let newer = c.srcMtime > c.dstMtime ? "  ← newer" : ""
-            alert.informativeText = "New:       \(describe(c.srcSize, c.srcMtime))\(newer)\nExisting:  \(describe(c.dstSize, c.dstMtime))"
-            choices = [("Overwrite", .overwrite), ("Skip", .skip), ("Keep Both", .keepBoth),
-                       ("Overwrite if Newer", .overwriteIfNewer), ("Cancel", .cancel)]
-            if c.createdByThisJob {   // never "apply to all": one source would replace another
-                alert.informativeText = "This operation just put it there — two of the items get the same name here "
-                    + "(this folder doesn't tell “Makefile” from “makefile”).\n\n" + alert.informativeText
-            } else {
-                alert.showsSuppressionButton = true
-                alert.suppressionButton?.title = "Apply to all remaining conflicts"
+        Task {
+            var ticks = (all: false, older: false)
+            while true {
+                let q = Self.conflictQuestion(c, from: from, on: side, compare: compare != nil)
+                q.alert.suppressionButton?.state = ticks.all ? .on : .off
+                q.older?.state = ticks.older ? .on : .off
+                let compared = q.link.map { link in
+                    MenuAction.attach(to: link) { window.endSheet(q.alert.window, returnCode: .init(rawValue: Self.compareCode)) }
+                }
+                let r = await AppDelegate.sheet(q.alert, on: window)
+                _ = compared
+                ticks = (q.alert.suppressionButton?.state == .on, q.older?.state == .on)
+                guard r == Self.compareCode - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue, let compare else {
+                    return done((q.choice(r), ticks.all))
+                }
+                await compare(Self.diffSide(c.src, on: from, size: c.srcSize, mtime: c.srcMtime, "new"),
+                              Self.diffSide(c.dst, on: side, size: c.dstSize, mtime: c.dstMtime, "there now"))
             }
         }
-        choices.forEach { alert.addButton(withTitle: $0.0) }
-        alert.beginSheetModal(for: window) { response in
-            let i = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-            let choice = choices.indices.contains(i) ? choices[i].1 : .cancel
-            done((choice, alert.suppressionButton?.state == .on))
+    }
+
+    static let compareCode = 2000
+
+    private static func diffSide(_ path: String, on e: Endpoint, size: Int64, mtime: Double, _ which: String) -> AppDelegate.DiffSide {
+        var d = AppDelegate.DiffSide(path: path, size: size, mtime: mtime)
+        if case .sftp(let t) = e { d.server = t }
+        d.name = DirSync.place(e, path) + " (\(which))"
+        return d
+    }
+
+    /// The question for a taken name, as a `Confirm` reads: the title says where; the destination's strip; two cards —
+    /// what's there now, what comes — size and date as the panel shows them, "Newer" on the newer by date; then the
+    /// ticks. Files: Replace ("Only replace older files" makes it Overwrite if Newer), Skip, Keep Both, Cancel, and
+    /// Compare… under the cards (`compare`). Folders: Merge. A file over a folder: Skip first, never "apply to all".
+    @MainActor struct ConflictQuestion {
+        let alert: NSAlert
+        let choices: [FileJob.ConflictChoice]
+        let older: NSButton?, link: NSButton?
+        /// The button's answer: Replace with "Only replace older files" is Overwrite if Newer.
+        func choice(_ index: Int) -> FileJob.ConflictChoice {
+            let c = choices.indices.contains(index) ? choices[index] : .cancel
+            return c == .overwrite && older?.state == .on ? .overwriteIfNewer : c
         }
+    }
+
+    static func conflictQuestion(_ c: FileJob.Conflict, from: Endpoint, on side: Endpoint, compare: Bool, now: Date = Date()) -> ConflictQuestion {
+        let name = (c.dst as NSString).lastPathComponent, parent = (c.dst as NSString).deletingLastPathComponent
+        func machine(_ e: Endpoint) -> String { if case .sftp(let t) = e { SavedServer.name(for: t.asUser) } else { "this Mac" } }
+        let folder = (parent as NSString).lastPathComponent.isEmpty ? parent : (parent as NSString).lastPathComponent
+        let at = "in \(folder)" + (side == .local ? "" : " on \(machine(side))")
+        let sameMachine = from == side
+        let thereNow = sameMachine ? "In \(folder) now" : "On \(machine(side)) now"
+        let coming = sameMachine ? "From \(((c.src as NSString).deletingLastPathComponent as NSString).lastPathComponent)" : "From \(machine(from))"
+        var q: Confirm, choices: [FileJob.ConflictChoice]
+        if c.replacesFolder {
+            q = Confirm("Replace the folder “\(name)” \(at) with a file?", action: "Skip")
+            q.others = ["Keep Both", "Replace Folder"]
+            q.note = side == .local ? "The folder and everything in it go to the Trash." : "The folder and everything in it are deleted on the server. This can't be undone."
+            choices = [.skip, .keepBoth, .overwrite, .cancel]
+        } else if c.bothDirs {
+            q = Confirm("The folder “\(name)” is already \(at)", action: "Merge")
+            q.others = ["Skip", "Keep Both"]
+            q.note = "Both are folders. Merge keeps existing files and asks about each clash inside."
+            choices = [.overwrite, .skip, .keepBoth, .cancel]
+        } else {
+            q = Confirm("“\(name)” is already \(at)", action: "Replace")
+            q.others = ["Skip", "Keep Both"]
+            if c.createdByThisJob {
+                q.note = "This operation just put it there — two of the items get the same name here (this folder doesn't tell “Makefile” from “makefile”)."
+            }
+            choices = [.overwrite, .skip, .keepBoth, .cancel]
+        }
+        if case .sftp(let t) = side { (q.chips, q.place) = (Chip.of(t), machine(side)) }
+        let dates = DateColumn(now)
+        let newer = c.srcMtime == c.dstMtime ? 0 : c.srcMtime > c.dstMtime ? 1 : -1
+        func card(_ title: String, dir: Bool, size: Int64, mtime: Double, newer: Bool) -> NSView {
+            let head = NSTextField(labelWithString: title.bidiVisible)
+            head.font = .systemFont(ofSize: 11)
+            head.textColor = .secondaryLabelColor
+            head.lineBreakMode = .byTruncatingMiddle
+            head.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let top = NSStackView(views: [head] + (newer ? [NSTextField(labelWithAttributedString: Chip.plain("Newer"))] : []))
+            top.spacing = 6
+            let mark = NSImageView(image: (dir ? Symbol.folder : .doc).image(nil, color: .secondaryLabelColor, size: 12))
+            let n = NSTextField(labelWithString: name.bidiVisible)
+            n.font = .systemFont(ofSize: 12, weight: .medium)
+            n.lineBreakMode = .byTruncatingMiddle
+            n.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let row = NSStackView(views: [mark, n])
+            row.spacing = 5
+            let meta = NSTextField(labelWithString: ([dir ? nil : ByteCountFormatter.short(size), dates.text(Date(timeIntervalSince1970: mtime))].compactMap { $0 }).joined(separator: " · "))
+            meta.textColor = .secondaryLabelColor
+            let stack = NSStackView(views: [top, row, meta])
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 3
+            stack.setAccessibilityElement(true)
+            stack.setAccessibilityLabel("\(title): \(name), \(meta.stringValue)" + (newer ? ", newer" : ""))
+            return TintBox(stack, fill: NSColor.labelColor.withAlphaComponent(0.05), inset: NSSize(width: 8, height: 6))
+        }
+        let cards = NSStackView(views: [card(thereNow, dir: c.bothDirs || c.replacesFolder, size: c.dstSize, mtime: c.dstMtime, newer: newer < 0),
+                                        card(coming, dir: c.bothDirs, size: c.srcSize, mtime: c.srcMtime, newer: newer > 0)])
+        cards.distribution = .fillEqually
+        cards.spacing = 8
+        var extra: [NSView] = [cards]
+        let fileOverFile = !c.replacesFolder && !c.bothDirs
+        let older = fileOverFile ? NSButton(checkboxWithTitle: "Only replace older files", target: nil, action: nil) : nil
+        older?.toolTip = "Replace replaces what's there only where it's older; newer ones are skipped"
+        let link = fileOverFile && compare ? NSButton(title: "Compare…", target: nil, action: nil) : nil
+        link?.bezelStyle = .inline
+        link?.toolTip = "The two files in a diff; this question comes back"
+        let ticks = [older, link].compactMap { $0 }
+        if !ticks.isEmpty { extra.append(NSStackView(views: ticks)) }
+        q.extra = Confirm.stack(extra)
+        let alert = q.alert()
+        if !c.replacesFolder && !c.createdByThisJob {   // never "apply to all" there: one source would replace another
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = c.bothDirs ? "Apply to all remaining folders" : "Apply to all remaining conflicts"
+        }
+        return ConflictQuestion(alert: alert, choices: choices, older: older, link: link)
     }
 
     private func askError(_ path: String, _ message: String, local: Bool, _ done: @escaping @Sendable ((FileJob.ErrorChoice, Bool)) -> Void) {

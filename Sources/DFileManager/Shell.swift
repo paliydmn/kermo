@@ -103,7 +103,7 @@ enum Shell {
             chmod(url.path, 0o700)
             NSWorkspace.shared.open([url], withApplicationAt: terminalApp, configuration: NSWorkspace.OpenConfiguration())
         } catch {
-            NSAlert(error: error).runModal()
+            (NSApp.delegate as? AppDelegate)?.showError(error)
         }
     }
 }

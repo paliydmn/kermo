@@ -51,10 +51,10 @@ extension ServerLockTests {
     ServerLock.servers = { [prod] }
     defer { ServerLock.servers = { [] } }
     func risk(_ k: EmbeddedTerminal.Kind) -> String? {
-        EmbeddedTerminal.Tab(kind: k, view: DropTerminalView(frame: .zero)).view.pasteRisk()
+        EmbeddedTerminal.Tab(kind: k, view: DropTerminalView(frame: .zero)).view.pasteRisk().map { $0.chips.map(\.word).joined(separator: " ") + " " + $0.place }
     }
-    #expect(risk(.ssh(prod.target)) == "web1 (production)", "by its saved name")
-    #expect(risk(.ssh(SFTPTarget(host: "root@db.invalid"))) == "root@db.invalid")
+    #expect(risk(.ssh(prod.target)) == "PROD web1", "by its saved name")
+    #expect(risk(.ssh(SFTPTarget(host: "root@db.invalid"))) == "ROOT root@db.invalid")
     #expect(risk(.ssh(SFTPTarget(host: "me@db.invalid"))) == nil)
     #expect(risk(.shell) == nil)
 }

@@ -381,11 +381,12 @@ extension AppDelegate {
             guard current != nil || template != nil else {
                 return panel.flash("No \(dir)/sudo_local.template on this Mac: Touch ID for sudo needs macOS 14 or later", error: true)
             }
-            guard await choose("Let sudo in Terminal use Touch ID?",
-                               info: "Kermo writes \(SudoTouchID.file) (survives macOS updates); macOS asks for your password.",
-                               ["Enable", "Cancel"]) == 0 else { return }
-            let text = SudoTouchID.enabled(current, template: template ?? "")
-            switch await Self.runAsAdmin(SudoTouchID.command(writing: text)) {
+            let text = SudoTouchID.enabled(current, template: template ?? ""), command = SudoTouchID.command(writing: text)
+            var c = Confirm("Let sudo in Terminal use Touch ID?", action: "Enable")
+            (c.chips, c.place, c.runs, c.command) = ([.root], "this Mac", Self.asAdmin, command)
+            c.note = "It writes \(SudoTouchID.file), which survives macOS updates."
+            guard await confirm(c) == 0 else { return }
+            switch await Self.runAsAdmin(command) {
             case .ok:
                 let now = await Blocking.run(.userInitiated) { try? String(contentsOfFile: dir + "/sudo_local", encoding: .utf8) }
                 if now == text { panel.flash("Touch ID for sudo is on — new Terminal windows use it") }
@@ -549,8 +550,12 @@ extension AppDelegate {
             let env = SSHAskpass.env
             Task { [self] in
                 // R1: rm, mv, chmod, chown, dd, systemctl stop/restart on a production server ask first.
-                if SavedServer.isProd(r.target), Shell.isDangerous(expanded),
-                   await !confirm("Run “\(expanded)” on \(r.target.host) (production)?", info: "In \(r.dir).", ok: "Run") { return }
+                if SavedServer.isProd(r.target), Shell.isDangerous(expanded) {
+                    var c = Confirm("Run this command on \(SavedServer.name(for: r.target))?", on: r.target, action: "Run")
+                    c.runs = "In \(r.dir)" + (r.target.sudo ? ", as the server's user — not root." : ".")
+                    c.command = dest == .terminalApp ? SSHCommand.shell(in: r.dir, after: expanded) : Shell.remote(expanded, in: r.dir, follow: false)
+                    guard await confirm(c) == 0 else { return }
+                }
                 if dest == .terminalApp {
                     AuditLog.write(r.target.asUser, "command", paths: [r.dir], command: expanded, exit: nil)   // its end is the terminal's; as the user, root panel or not
                     return openSSH(r.target, command: SSHCommand.shell(in: r.dir, after: expanded))
@@ -1158,10 +1163,12 @@ extension AppDelegate {
             guard await ServerLock.authorize(s, "delete") else { return }
             let listening = tunnels.listening(s).isEmpty ? "" : " Its tunnels turn off: \(tunnels.described(server: ServerRow.key(s.target)))."
             let info = "Its saved passwords too. Open sessions stay open." + listening, history = historyToDelete(with: s)
-            let answer = history == nil ? await confirm("Delete “\(s.title)”?", info: info, ok: "Delete") ? 0 : 2
-                : await choose("Delete “\(s.title)”?", info: info + " Its file history — the versions its saves kept on this Mac — can go too.",
-                               ["Delete", "Delete with File History", "Cancel"])
-            guard answer < 2 else { return }
+            var c = Confirm("Delete the saved server “\(s.title)”?", action: "Delete")
+            (c.chips, c.place, c.irreversible) = (s.chips, s.title, true)
+            c.note = info + (history == nil ? "" : " Its file history — the versions its saves kept on this Mac — can go too.")
+            c.others = history == nil ? [] : ["Delete with File History"]
+            let answer = await confirm(c)
+            guard answer < c.buttons.count - 1 else { return }
             savedServers.removeAll { $0.id == s.id }
             Config.save("servers.json", savedServers)
             forgetPassword(s)
@@ -1286,8 +1293,8 @@ extension AppDelegate {
         private var saves = 0
         /// Overwriting the file on a production server was okayed: later saves of this editor don't ask.
         var prodConfirmed = false
-        /// What the save says first: “h” is a production server — until okayed once; "" elsewhere.
-        func prodNote(_ t: SFTPTarget) -> String { prodConfirmed ? "" : SavedServer.prodNote([t]) }
+        /// The save asks first: a production server's, until okayed once.
+        @MainActor func asks(_ t: SFTPTarget) -> Bool { !prodConfirmed && SavedServer.isProd(t) }
         /// Saves of all editors not yet through (running or waiting): quitting stops them.
         static private(set) var uploading = 0
         init(baseline: SFTPClient.Attrs) { self.baseline = baseline }
@@ -1341,10 +1348,10 @@ extension AppDelegate {
 
     private func uploadNow(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool, action: String) async -> Bool {
         let name = (remotePath as NSString).lastPathComponent   // the copy's own, but not a version's (Revert)
-        let note = state.prodNote(target)
-        if !note.isEmpty {
-            guard await choose("Save “\(name)” to \(target.host)?", info: note + "This overwrites the file there.",
-                               ["Save", "Cancel"], on: Editor.window(for: saved)) == 0 else {
+        if state.asks(target) {
+            var c = Confirm("Save “\(name)” to \(SavedServer.name(for: target))?", on: target, action: "Save")
+            c.note = "This overwrites the file there."
+            guard await confirm(c, on: Editor.window(for: saved)) == 0 else {
                 return notSaved(saved, to: target, CancellationError())   // the editor may be gone: says where the text is
             }
             state.prodConfirmed = true
@@ -1402,9 +1409,10 @@ extension AppDelegate {
             let when = fmt.string(from: Date(timeIntervalSince1970: e.attrs.mtime))
             let info = "Someone or something wrote it at \(when) (\(ByteCountFormatter.short(e.attrs.size))). "
                 + "Overwriting replaces their changes with yours. Compare shows the differences first; Cancel keeps your text \(keeps)."
+            var c = Confirm("“\(name)” changed on \(SavedServer.name(for: target)) since you opened it", on: target, action: "Overwrite")
+            (c.note, c.others, c.irreversible) = (info, ["Compare"], true)   // ⌘S ↩ never writes over theirs
             while true {   // Compare asks again once the diff is up
-                switch await choose("“\(name)” changed on \(target.host) since you opened it", info: info, ["Overwrite", "Compare", "Cancel"],
-                                    default: 2, on: Editor.window(for: saved)) {   // ⌘S ↩ never writes over theirs
+                switch await confirm(c, on: Editor.window(for: saved)) {
                 case 0:   // over what was shown, not whatever's there by now: another change meanwhile asks again
                     state.baseline = e.attrs
                     return await uploadNow(saved, to: remotePath, on: target, state, force: false, action: action)
@@ -1496,7 +1504,7 @@ extension AppDelegate {
         let name = (path as NSString).lastPathComponent, q = Self.reloadQuestion(command, name: name, on: target)
         var before: String?
         ask: while true {
-            switch await choose(q.message, info: q.info, ["Reload", "Compare", "Cancel"], default: q.default, on: Editor.window(for: saved)) {
+            switch await confirm(q, on: Editor.window(for: saved)) {
             case 0: break ask
             case 1:
                 guard let old else { panel.flash("Nothing to compare: the text before this save wasn't kept (over 5 MB, or a new file)"); continue }
@@ -1537,8 +1545,8 @@ extension AppDelegate {
                   running: (@MainActor () -> Void)? = nil) async -> RanThere {
         // A locked server's Touch ID again if its time ran out since it was looked at (a Picker can stay open).
         if await !ServerLock.authorize(target, "run “\(command)” on") { return .notRun("\(target.host) stays locked") }
-        if let ask, let info = Self.prodQuestion(command, on: target) {
-            guard await choose(ask.message, info: info, [ask.button, "Cancel"], default: 1, on: askOn) == 0 else { return .notRun("cancelled") }   // ↩ = Cancel
+        if let ask, let c = Self.prodQuestion(command, on: target, ask) {
+            guard await confirm(c, on: askOn) == 0 else { return .notRun("cancelled") }   // ↩ = Cancel
         }
         let env = SSHAskpass.env
         running?()
@@ -1576,19 +1584,29 @@ extension AppDelegate {
         return false
     }
 
-    /// What `runThere` asks on a production server (nil elsewhere: it just runs).
-    static func prodQuestion(_ command: String, on target: SFTPTarget) -> String? {
-        SavedServer.isProd(target) ? SavedServer.prodNote([target]) + "Runs “\(command)” on \(target.host)\(target.sudo ? " as root" : "")." : nil
+    /// What `runThere` asks on a production server (nil elsewhere: it just runs): the command, where and as whom.
+    static func prodQuestion(_ command: String, on target: SFTPTarget, _ ask: (message: String, button: String)) -> Confirm? {
+        guard SavedServer.isProd(target) else { return nil }
+        var c = Confirm(ask.message, on: target, action: ask.button)
+        (c.runs, c.command) = (runs(on: target), command)
+        return c
     }
 
-    /// The reload question: on a production server it says so, and ↩ is Cancel (elsewhere ↩ is Reload and ⎋ Cancel, as
-    /// any alert has them); sshd moving to another port says what that does.
-    static func reloadQuestion(_ command: String, name: String, on target: SFTPTarget) -> (message: String, info: String, default: Int?) {
-        let socket = command == ConfigCheck.sshdSocketReload ? "\n\nPort or ListenAddress changed. Where systemd listens for sshd (ssh.socket, "
-            + "Ubuntu 22.10 and later) this reloads systemd and restarts ssh.socket: this connection stays, new ones go to the new port." : ""
-        return ("Reload after saving “\(name)”?",
-                SavedServer.prodNote([target]) + "Runs “\(command)” on \(target.host)\(target.sudo ? " as root" : "")." + socket,
-                SavedServer.isProd(target) ? 2 : nil)
+    /// How a command on `target` runs, over it in a question.
+    static func runs(on target: SFTPTarget) -> String {
+        "Runs on \(SavedServer.name(for: target.asUser))" + (target.sudo ? " as root, through the server's sudo." : ".")
+    }
+
+    /// The reload question: what runs, where, as whom; on a production server ↩ is Cancel (elsewhere ↩ is Reload and
+    /// ⎋ Cancel, as any alert has them); sshd moving to another port says what that does.
+    static func reloadQuestion(_ command: String, name: String, on target: SFTPTarget) -> Confirm {
+        var c = Confirm("Reload after saving “\(name)”?", on: target, action: "Reload")
+        (c.others, c.runs, c.command) = (["Compare"], runs(on: target), command)
+        if command == ConfigCheck.sshdSocketReload {
+            c.note = "Port or ListenAddress changed. Where systemd listens for sshd (ssh.socket, Ubuntu 22.10 and later) this reloads "
+                + "systemd and restarts ssh.socket: this connection stays, new ones go to the new port."
+        }
+        return c
     }
 
     /// The text a save replaced, in a temp copy of its own (owner-only; swept with the server copies), for Compare.
@@ -1674,7 +1692,7 @@ extension AppDelegate {
     private func remoteMkdir() {
         guard let (target, dir, _) = active.remoteSelection ?? active.remote.map({ ($0.target, $0.dir, []) }) else { return }
         Task {
-            guard let name = await prompt("New folder on \(target.host):", value: "", ok: "Create"), !name.isEmpty else { return }
+            guard let name = await prompt("New folder on \(target.host):", value: "", ok: "Create", strip: target), !name.isEmpty else { return }
             let path = (dir as NSString).appendingPathComponent(name)
             remoteOp("New folder", target, paths: [path], select: name) { try $0.mkdir(path) }
         }
@@ -1685,7 +1703,7 @@ extension AppDelegate {
         guard let r = active.remote else { return }
         let (target, panel) = (r.target, active)
         Task {
-            guard let name = await prompt("New file on \(target.host):", value: "", ok: "Create", info: SavedServer.prodNote([target])),
+            guard let name = await prompt("New file on \(target.host):", value: "", ok: "Create", strip: target),
                   !name.isEmpty else { return }
             let path = name.hasPrefix("/") ? name : (r.dir as NSString).appendingPathComponent(name)
             remoteOp("New file", target, paths: [path], select: (path as NSString).lastPathComponent, { try Self.newServerFile($0, path) }) { [self] in
@@ -1706,7 +1724,7 @@ extension AppDelegate {
         guard let (target, dir, item) = active.remoteCursor else { return NSSound.beep() }
         Task {
             guard let name = await prompt("Rename “\(item.name)” on \(target.host) to:", value: item.name, ok: "Rename",
-                                          info: SavedServer.prodNote([target]), selectBaseName: true),
+                                          selectBaseName: true, strip: target),
                   name != item.name, !name.isEmpty else { return }
             let from = (dir as NSString).appendingPathComponent(item.name)
             let to = name.hasPrefix("/") ? name : (dir as NSString).appendingPathComponent(name)
@@ -1727,17 +1745,21 @@ extension AppDelegate {
     /// There's no Trash on a server: always asks, then deletes recursively.
     private func remoteDelete() {
         guard let sel = active.remoteSelection else { return NSSound.beep() }
+        let items = active.listed(sel.items)
         Task {
             let what = sel.items.count == 1 ? "“\(sel.items[0].name)”" : "\(sel.items.count) items"
-            guard await confirm("Delete \(what) on \(sel.target.host)?",
-                                info: SavedServer.prodNote([sel.target]) + "Files on a server can't be moved to the Trash. This can't be undone.",
-                                ok: "Delete") else { return }
+            var c = Confirm("Delete \(what) on \(SavedServer.name(for: sel.target)) permanently?", on: sel.target, action: "Delete")
+            (c.items, c.note, c.irreversible) = (items, "A server has no Trash. This can't be undone.", true)
+            guard await confirm(c) == 0 else { return }
             ops.enqueue(Self.serverDelete(sel.items, in: sel.dir, on: sel.target, env: SSHAskpass.env), title: "Delete \(what) on \(sel.target.host)")
             active.unmarkAll()
         }
     }
 
     // MARK: - Administrator operations
+
+    /// How an administrator's command runs, over it in a question.
+    static let asAdmin = "Runs as root on this Mac; macOS asks for an administrator's password first."
 
     func runAdmin(_ title: String, _ command: String) async {
         switch await Self.runAsAdmin(command) {
@@ -1768,12 +1790,16 @@ extension AppDelegate {
         let verb = move ? "Move" : "Copy", panel = active
         let (refusal, existing) = await Blocking.run(.userInitiated) { AdminCommand.check(paths, to: dest, move: move) }
         if let refusal { return panel.flash("\(verb) as administrator: \(refusal)", error: true) }
+        let command = move ? AdminCommand.move(paths, to: dest) : AdminCommand.copy(paths, to: dest)
         if !move, !existing.isEmpty {
-            let what = existing.count == 1 ? "“\(existing[0])” is" : "\(existing.count) items are"
-            guard await choose("\(what) in \((dest as NSString).abbreviatingWithTildeInPath) already. Replace as administrator?",
-                               info: existing.prefix(5).joined(separator: "\n"), ["Replace", "Cancel"]) == 0 else { return }
+            let what = existing.count == 1 ? "“\(existing[0])”" : "\(existing.count) items"
+            var c = Confirm("Replace \(what) in \((dest as NSString).abbreviatingWithTildeInPath) as administrator?", action: "Replace")
+            (c.chips, c.place, c.items) = ([.root], "this Mac", existing.map { Confirm.Item(name: $0) })
+            (c.runs, c.command) = (Self.asAdmin, command)
+            (c.note, c.irreversible) = ("What's there now is replaced. This can't be undone.", true)
+            guard await confirm(c) == 0 else { return }
         }
-        await runAdmin("\(verb) as administrator", move ? AdminCommand.move(paths, to: dest) : AdminCommand.copy(paths, to: dest))
+        await runAdmin("\(verb) as administrator", command)
         panel.unmarkAll()
     }
 
@@ -1788,11 +1814,14 @@ extension AppDelegate {
     func adminDelete() {
         let srcs = active.targetURLs
         guard !srcs.isEmpty else { return NSSound.beep() }
+        let command = AdminCommand.delete(srcs.map(\.path))
+        var c = Confirm("Delete \(Self.describe(srcs)) permanently as administrator?", action: "Delete")
+        (c.chips, c.place, c.items) = ([.root], "this Mac", active.listed(srcs))
+        (c.runs, c.command) = (Self.asAdmin, command)
+        (c.note, c.irreversible) = ("They don't go to the Trash. This can't be undone.", true)
         Task {
-            guard await confirm("Delete \(Self.describe(srcs)) permanently as administrator?",
-                                info: srcs.prefix(5).map(\.path).joined(separator: "\n") + "\n\nThis runs rm -rf as root and can't be undone.",
-                                ok: "Delete") else { return }
-            await runAdmin("Delete as administrator", AdminCommand.delete(srcs.map(\.path)))
+            guard await confirm(c) == 0 else { return }
+            await runAdmin("Delete as administrator", command)
             active.unmarkAll()
         }
     }
@@ -1968,7 +1997,7 @@ extension AppDelegate {
         let there = other.remote.flatMap { $0.target.isSameServer(as: target) ? $0.dir : nil } ?? (file as NSString).deletingLastPathComponent
         Task { [self] in
             guard let input = await prompt("Extract “\((item.name as NSString).lastPathComponent)” on \(target.host) to:", value: there,
-                                           ok: "Extract", info: SavedServer.prodNote([target])), !input.isEmpty else { return }
+                                           ok: "Extract", strip: target), !input.isEmpty else { return }
             let dest = ((input.hasPrefix("/") ? input : (dir as NSString).appendingPathComponent(input)) as NSString).standardizingPath
             // What lands at the top of `dest` that's there already: tar and unzip -o would replace it.
             let found = await panel.busy("Reading “\((item.name as NSString).lastPathComponent)”…") { flag in
@@ -2439,8 +2468,9 @@ extension AppDelegate {
         let verb = move ? "Move" : "Copy"
         let suggestion = other.path == "/" ? "/" : other.path + "/"
         let panel = active   // the one the items were marked in, whichever is active once the destination answers
+        let items = panel.listed(srcs)
         Task {
-            guard let input = await prompt("\(verb) \(what) to:", value: (suggestion as NSString).abbreviatingWithTildeInPath, ok: verb)
+            guard let input = await prompt("\(verb) \(what) to:", value: (suggestion as NSString).abbreviatingWithTildeInPath, ok: verb, items: items)
             else { return }
             let dest = resolve(input), intoDir = input.hasSuffix("/") || srcs.count > 1
             // Off the main thread, saying so (⎋ stops waiting): the destination may be a share that doesn't answer.
@@ -2481,12 +2511,13 @@ extension AppDelegate {
         let side = other.endpoint, base = other.currentDir
         let verb = move ? "Move" : "Copy"
         let what = items.paths.count == 1 ? "“\((items.paths[0] as NSString).lastPathComponent)”" : "\(items.paths.count) items"
-        var host = ""
-        if case .sftp(let t) = side { host = " \(t.host)" }
+        var host = "", there: SFTPTarget?
+        if case .sftp(let t) = side { (host, there) = (" \(t.host)", t) }
         let suggestion = base == "/" ? "/" : base + "/"
+        let listed = active.remoteSelection.map { active.listed($0.items) } ?? active.listed(active.targetURLs)
         Task {
             guard let input = await prompt("\(verb) \(what) to\(host):", value: side == .local ? (suggestion as NSString).abbreviatingWithTildeInPath : suggestion,
-                                           ok: verb), !input.isEmpty else { return }
+                                           ok: verb, strip: there, items: listed), !input.isEmpty else { return }
             var dest = side == .local ? (input as NSString).expandingTildeInPath : input
             if !dest.hasPrefix("/") { dest = (base as NSString).appendingPathComponent(dest) }
             while dest.count > 1 && dest.hasSuffix("/") { dest.removeLast() }
@@ -2530,14 +2561,14 @@ extension AppDelegate {
         let what = sources.count == 1 ? (name ?? (sources[0] as NSString).lastPathComponent) : "\(sources.count) items"
         let place = DirSync.place(side, dir)
         let title = "\(move ? "Move" : "Copy") \(what) → \(place)"
-        let prod = prodAsked ? "" : SavedServer.prodNote(Self.changed(from: from, to: side, move: move))
+        let prod = prodAsked ? [] : Self.changed(from: from, to: side, move: move).filter(SavedServer.isProd)
         if !locked.isEmpty || !prod.isEmpty {
             Task {
                 for t in locked where await !ServerLock.authorize(t) { return active.flash("\(t.host) stays locked") }
                 let landing = side == .local ? [] : sources.map { (dir as NSString).appendingPathComponent(name ?? ($0 as NSString).lastPathComponent) }
                 let unchecked = Self.uncheckedNote(landing, rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules)
-                if !prod.isEmpty, await !confirm(title + "?", info: prod + "Files there may be overwritten" + (move ? " or removed." : ".") + unchecked,
-                                                  ok: move ? "Move" : "Copy") { return }
+                if !prod.isEmpty, await confirm(Self.prodTransfer("\(move ? "Move" : "Copy") \(sources.count == 1 ? "“\(what)”" : what) to \(place)?", sources, to: prod, move: move,
+                                                                   unchecked: unchecked)) != 0 { return }
                 enqueueTransfer(sources, from: from, to: dir, on: side, name: name, move: move, prodAsked: true)
             }
             return
@@ -2555,13 +2586,14 @@ extension AppDelegate {
         let move = e.kind == .move
         Task {
             guard await unlock([e.from, e.to]) else { return }
-            let prod = SavedServer.prodNote(Self.changed(from: e.from, to: e.to, move: move))
+            let prod = Self.changed(from: e.from, to: e.to, move: move).filter(SavedServer.isProd)
             if !prod.isEmpty {
                 let unchecked = Self.uncheckedNote(e.to == .local ? [] : failures.compactMap(\.dst),
                                                    rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules)
                 let what = failures.count == 1 ? "“\((failures[0].src as NSString).lastPathComponent)”" : "\(failures.count) items"
-                guard await confirm("Retry \(move ? "moving" : "copying") \(what)?".bidiVisible,
-                                    info: prod + "Files there may be overwritten" + (move ? " or removed." : ".") + unchecked, ok: "Retry") else { return }
+                var c = Self.prodTransfer("Retry \(move ? "moving" : "copying") \(what)?", failures.map(\.src), to: prod, move: move, unchecked: unchecked)
+                c.action = "Retry"
+                guard await confirm(c) == 0 else { return }
             }
             for g in ActivityEntry.retryGroups(failures) {
                 enqueueTransfer(g.sources, from: e.from, to: g.dir, on: e.to, name: g.name, move: move, prodAsked: true)
@@ -2569,6 +2601,16 @@ extension AppDelegate {
             if only == nil { ops.history.change(e.id) { $0.retried = true } }
             ops.changed()
         }
+    }
+
+    /// The question before a copy or move changes production servers (`prod`): the items, the servers' strip, what
+    /// may follow there. ↩ is Cancel (production).
+    static func prodTransfer(_ title: String, _ sources: [String], to prod: [SFTPTarget], move: Bool, unchecked: String) -> Confirm {
+        var c = Confirm(title, action: move ? "Move" : "Copy")
+        c.on(prod)
+        c.items = sources.map { Confirm.Item(name: ($0 as NSString).lastPathComponent) }
+        c.note = "Files there may be overwritten" + (move ? " or removed." : ".") + (unchecked.isEmpty ? "" : " " + unchecked.trimmingCharacters(in: .newlines))
+        return c
     }
 
     /// Show in the Activity list: `dir` in the active panel with `select` picked; a server's opens like its Favorite.
@@ -2599,13 +2641,17 @@ extension AppDelegate {
         func server(_ e: Endpoint) -> SFTPTarget? { if case .sftp(let t) = e { t } else { nil } }
         let changed = jobs.compactMap { server($0.job.to) }   // a delete's `to` is its server too
         let deleted = jobs.filter { $0.job.kind == .delete }.reduce(0) { $0 + $1.job.sources.count }
-        let prod = SavedServer.prodNote(changed)
+        let prod = changed.filter(SavedServer.isProd)
         guard await unlock(jobs.flatMap { [$0.job.from, $0.job.to] }) else { return false }
         if !prod.isEmpty || deleted > 0 {
             let hosts = Set(changed.map(\.host)).sorted().joined(separator: ", ")
-            guard await confirm("Synchronize with \(hosts)?", info: prod + (deleted > 0
+            var c = Confirm("Synchronize with \(hosts)?", action: "Synchronize")
+            c.on(prod)
+            c.note = deleted > 0
                 ? "\(deleted) item\(deleted == 1 ? "" : "s") only there \(deleted == 1 ? "is" : "are") deleted — a server has no Trash. This can't be undone."
-                : "Files there may be overwritten."), ok: "Synchronize") else { return false }
+                : "Files there may be overwritten."
+            c.irreversible = deleted > 0
+            guard await confirm(c) == 0 else { return false }
         }
         for (job, label) in jobs {
             syncJobs.add(job)   // the production log says "sync"
@@ -2650,8 +2696,8 @@ extension AppDelegate {
         Task {
             let what = (items.count == 1 ? "“\(items[0].name)”" : "\(items.count) items") + (r.map { " on \($0.target.host)" } ?? "")
             guard let text = await prompt("Permissions and owner of \(what):", value: shown, ok: "Apply",
-                                          info: (r.map { SavedServer.prodNote([$0.target]) } ?? "")
-                                            + "Octal mode, then owner:group" + (r != nil ? " — the server's numbers (uid:gid)." : " (names or numbers).")),
+                                          info: "Octal mode, then owner:group" + (r != nil ? " — the server's numbers (uid:gid)." : " (names or numbers)."),
+                                          strip: r?.target),
                   text != shown else { return }
             let typed = Perms.parse(text), before = Perms.parse(shown)
             guard let ids = Perms.ids(typed.owner == before.owner ? "" : typed.owner, names: r == nil) else {
@@ -2660,9 +2706,11 @@ extension AppDelegate {
             let mode = typed.mode == before.mode ? nil : typed.mode
             guard mode != nil || ids.uid != nil || ids.gid != nil else { return }
             // The owner was replaced by a lone number: a uid ("1000") would read as a mode and lock everyone out.
-            if let mode, typed.owner.isEmpty, !before.owner.isEmpty,
-               await !confirm("Set mode \(String(format: "%03o", mode)) (\(Perms.string(mode))) on \(what)?",
-                              info: "To change the owner instead, keep its colon: “\(text.trimmingCharacters(in: .whitespaces)):”.", ok: "Set Mode") { return }
+            if let mode, typed.owner.isEmpty, !before.owner.isEmpty {   // ↩ = Cancel: most likely a uid meant
+                var c = Confirm("Set mode \(String(format: "%03o", mode)) (\(Perms.string(mode))) on \(what)?", on: r?.target, action: "Set Mode")
+                (c.note, c.returnCancels) = ("To change the owner instead, keep its colon: “\(text.trimmingCharacters(in: .whitespaces)):”.", true)
+                guard await confirm(c) == 0 else { return }
+            }
             if let r {
                 let each = items.map { ((r.dir as NSString).appendingPathComponent($0.name), $0) }
                 return remoteOp("Permissions", r.target, paths: each.map(\.0)) { c in
@@ -2712,17 +2760,22 @@ extension AppDelegate {
         let one = (paths[0] as NSString).lastPathComponent, host = r.map { " on \($0.target.host)" } ?? ""
         Task {
             if let r { guard await unlock([.sftp(r.target)]) else { return } }   // once, not per item
-            let value = paths.count == 1 ? one + ".bak" : ".bak", info = r.map { SavedServer.prodNote([$0.target]) } ?? ""
+            let value = paths.count == 1 ? one + ".bak" : ".bak"
             guard let typed = await prompt(paths.count == 1 ? "Copy “\(one)”\(host) here as:" : "Copy \(paths.count) items\(host) here with the suffix:",
-                                           value: value, ok: "Copy", info: info,
-                                           select: paths.count == 1 ? NSRange(location: one.utf16.count, length: 4) : nil),
+                                           value: value, ok: "Copy", select: paths.count == 1 ? NSRange(location: one.utf16.count, length: 4) : nil,
+                                           strip: r?.target),
                   !typed.isEmpty else { return }
             guard !typed.contains("/") else { return showError(JobErrorMessage("A name can't contain “/”")) }
             let copies = Self.copiesAs(paths, typed)
             if paths.count == 1, copies[0].to == paths[0] { return }
             // A config a save would check goes in as it is: said, on a production server, as F5 says it.
-            if let r, !info.isEmpty, case let unchecked = Self.uncheckedNote(copies.map(\.to), rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules),
-               !unchecked.isEmpty, await !confirm("Copy to \(r.target.host)?", info: info + unchecked.trimmingCharacters(in: .newlines), ok: "Copy") { return }
+            if let r, SavedServer.isProd(r.target),
+               case let unchecked = Self.uncheckedNote(copies.map(\.to), rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules),
+               !unchecked.isEmpty {
+                var c = Confirm("Copy to \(SavedServer.name(for: r.target))?", on: r.target, action: "Copy")
+                c.note = unchecked.trimmingCharacters(in: .newlines)
+                guard await confirm(c) == 0 else { return }
+            }
             let to = copies.map(\.to), taken: [String]
             if let r {
                 let env = SSHAskpass.env
@@ -2822,9 +2875,10 @@ extension AppDelegate {
         if active.remote != nil { return remoteDelete() }
         let srcs = active.targetURLs
         guard !srcs.isEmpty else { return NSSound.beep() }
+        var c = Confirm("Delete \(Self.describe(srcs)) permanently?", action: "Delete")
+        (c.items, c.note, c.irreversible) = (active.listed(srcs), "They don't go to the Trash. This can't be undone.", true)
         Task {
-            guard await confirm("Delete \(Self.describe(srcs)) permanently?", info: "This can't be undone.", ok: "Delete")
-            else { return }
+            guard await confirm(c) == 0 else { return }
             ops.enqueue(FileJob(.delete, sources: srcs.map(\.path)), title: "Delete \(Self.describe(srcs))")
             active.unmarkAll()
         }

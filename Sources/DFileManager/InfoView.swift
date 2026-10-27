@@ -265,12 +265,12 @@ final class InfoView: NSView {
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] r in
             guard r == .alertFirstButtonReturn else { return }
-            Task {
-                if case .failed(let msg) = await Admin.run(adminCommand) {
+            Task { @MainActor in
+                if case .failed(let msg) = await Admin.run(adminCommand), let window = self?.window {
                     let a = NSAlert()
                     a.messageText = "\(what) failed"
                     a.informativeText = msg
-                    a.runModal()
+                    a.beginSheetModal(for: window) { _ in }
                 }
                 self?.reload()
             }

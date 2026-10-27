@@ -66,16 +66,18 @@ extension ServerLockTests {
 @Test func reloadAsksFirstOnProduction() {
     let root = SFTPTarget(host: "me@web").asRoot()
     let plain = AppDelegate.reloadQuestion("systemctl reload nginx", name: "site.conf", on: root)
-    #expect(plain.message == "Reload after saving “site.conf”?" && plain.info == "Runs “systemctl reload nginx” on me@web as root.")
-    #expect(plain.default == nil, "↩ Reload, ⎋ Cancel: an alert's own keys")
-    #expect(AppDelegate.reloadQuestion("app reload", name: "a.yaml", on: root.asRoot(false)).info == "Runs “app reload” on me@web.")
+    #expect(plain.title == "Reload after saving “site.conf”?" && plain.buttons == ["Reload", "Compare", "Cancel"])
+    #expect(plain.runs == "Runs on me@web as root, through the server's sudo." && plain.command == "systemctl reload nginx" && plain.strip == [.root])
+    #expect(!plain.safe, "↩ Reload, ⎋ Cancel: an alert's own keys")
+    let user = AppDelegate.reloadQuestion("app reload", name: "a.yaml", on: root.asRoot(false))
+    #expect(user.runs == "Runs on me@web." && user.command == "app reload" && user.strip.isEmpty)
     var prod = SavedServer(address: "me@web")!
     prod.prod = true
     ServerLock.servers = { [prod] }
     defer { ServerLock.servers = { [] } }
     let asked = AppDelegate.reloadQuestion("systemctl reload nginx", name: "site.conf", on: root)
-    #expect(asked.info == "“me@web” is a production server. Runs “systemctl reload nginx” on me@web as root." && asked.default == 2, "↩ is Cancel")
-    let socket = AppDelegate.reloadQuestion(ConfigCheck.sshdSocketReload, name: "sshd_config", on: root).info
+    #expect(asked.strip == [.prod, .root] && asked.place == "me@web" && asked.safe, "↩ is Cancel")
+    let socket = AppDelegate.reloadQuestion(ConfigCheck.sshdSocketReload, name: "sshd_config", on: root).note ?? ""
     #expect(socket.hasSuffix("this connection stays, new ones go to the new port."))
 }
 }

@@ -196,10 +196,14 @@ extension AppDelegate {
         case .resetFailed: "Reset the failed state of \(u.name)"
         default: "\(c.title) \(u.name)"
         }
-        let stop = c != .stop ? nil : (message: "Stop \(u.name) on \(s.title)?", button: "Stop",
-            info: (SavedServer.isProd(root) ? SavedServer.prodNote([root]) : "") + "It stays stopped until it's started again"
-                + (u.unitFile?.hasPrefix("enabled") == true ? " or the server starts: it's enabled at boot." : ".")
-                + " Services that need it may stop with it.")
+        var stop: Confirm?
+        if c == .stop {   // ↩ = Cancel everywhere: it says what stopping means
+            var q = Confirm("Stop \(u.name) on \(s.title)?", on: root, action: "Stop")
+            (q.runs, q.command, q.returnCancels) = (Self.runs(on: root), c.command(u), true)
+            q.note = "It stays stopped until it's started again" + (u.unitFile?.hasPrefix("enabled") == true ? " or the server starts: it's enabled at boot." : ".")
+                + " Services that need it may stop with it."
+            stop = q
+        }
         serviceRuns[Self.serviceID(u, on: t)] = ""   // being asked: no other change of it meanwhile, though its row doesn't say it runs yet
         Task {
             await changeRow(id: Self.serviceID(u, on: t), command: c.command(u), on: root, action: c.rawValue, busy: c.busy, name: u.name, server: s.title,
@@ -234,13 +238,13 @@ extension AppDelegate {
     /// the line under the list says how it went (`say`) until the next one. A list closed meanwhile: the status line
     /// says it, or a failure's alert, as `runThere`'s.
     private func changeRow<S: Sendable>(id: String, command: String, on target: SFTPTarget, action: String, busy: String, name: String, server: String,
-                                        ask: (message: String, button: String), first: (message: String, button: String, info: String)? = nil,
+                                        ask: (message: String, button: String), first: Confirm? = nil,
                                         read: @escaping @Sendable ([String: String], CancelFlag) throws -> S,
                                         row: @escaping @MainActor (S?) -> Picker.Item,
                                         say: @escaping @MainActor (Services.Ran, S?, String?, String) -> (outcome: Services.Outcome, line: String)) async {
         let panel = panel(for: target), list = Picker.current.flatMap { $0.has(id) ? $0 : nil }
         let go: () async -> (RanThere, Result<S, Error>?) = { [unowned self] in
-            if let first, await choose(first.message, info: first.info, [first.button, "Cancel"], default: 1, on: list?.window) != 0 {   // ↩ = Cancel
+            if let first, await confirm(first, on: list?.window) != 0 {
                 return (.notRun("cancelled"), nil)
             }
             let ran = await ranThere(command, on: target, action: action, busy: busy.dropLast() + " \(name) on \(server)…",

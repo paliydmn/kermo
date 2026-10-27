@@ -14,7 +14,7 @@ Operations act on the marked items, or on the cursor item when nothing is marked
 
 ## Copy and move
 
-Press F5 (⌥5) for **Copy To…** and F6 (⌥6) for **Move To…**. The dialog proposes the other panel's folder (with three or four panels, the one you used before this). Edit the path: `~` works, and a relative path starts in the active folder.
+Press F5 (⌥5) for **Copy To…** and F6 (⌥6) for **Move To…**. The dialog lists what goes — up to five items with their sizes, then “and N more” — and proposes the other panel's folder (with three or four panels, the one you used before this); a production or root server there shows its PROD or ROOT strip over the path. Edit the path: `~` works, and a relative path starts in the active folder. A copy to a production server then [asks once more](safety.md#how-a-question-asks), with ↩ on Cancel.
 
 - A path ending in `/`, or several items, means "into this folder", made if missing. One item and a path that isn't a folder means "under this name". F6 to the same name in another case (`Foo` → `foo`) renames it, as ⇧F6 does.
 - ⌘C copies the marked files, ⌘V pastes them (files copied in Finder too) and ⌥⌘V (**Move Here**) moves them. Pasting into their own folder duplicates them as `name 2`.
@@ -36,9 +36,9 @@ Every copy, move, Trash and delete gets a row above the key bar: files done of t
 
 ### When a name is taken
 
-A dialog asks. For files it shows size and date of both (**← newer** marks the new file when it is the newer one).
+A dialog asks — ““config.yaml” is already in site on web-01”, with the server's PROD or ROOT strip. Two cards show what's there now and what comes, each with its size and date as the panel shows them; **Newer** marks the newer one.
 
-- Files: **Overwrite**, **Skip**, **Keep Both** (the new one becomes `name 2.ext`), **Overwrite if Newer**, **Cancel**. **Apply to all remaining conflicts** answers the rest the same way.
+- Files: **Replace**, **Skip**, **Keep Both** (the new one becomes `name 2.ext`), **Cancel**. Tick **Only replace older files** and Replace replaces only what's older, skipping the newer ones (what Overwrite if Newer did). **Compare…** opens the two in a diff (a server's file is fetched first), then asks again. **Apply to all remaining conflicts** answers the rest the same way. ↩ is Replace; on a production server ↩ is Cancel and ⌘↩ Replace.
 - Folders: **Merge** (keeps existing files, asks about each clash inside), **Skip**, **Keep Both**, **Cancel**. **Apply to all remaining folders** answers the other folders the same way; a file that clashes inside is still asked about.
 - A file onto a folder: **Skip**, **Keep Both**, **Replace Folder** (the folder goes to the Trash), **Cancel**. Asked every time.
 - An error asks **Skip**, **Retry** or **Abort**; **Skip all further errors** stops the questions. What was skipped is kept in [Activity](#activity). On "Permission denied" see [Administrator rights](#administrator-rights).
@@ -56,7 +56,7 @@ The **Activity** button in the toolbar (a clock going round; a ring that fills a
 
 - F8 (⌥8, ⌘⌫, ⌦) **Move to Trash** asks nothing. ⌫ alone goes up a folder. On a server's panel the same keys are **Delete…**: Kermo asks, then deletes for good (a server has no Trash).
 - In the Trash folder the same keys, and **File ▸ Put Back**, return items to where Kermo took them from. Missing folders are made and nothing is overwritten. Items Kermo didn't trash stay: use Finder. So does an item that Finder put in the Trash later under a name Kermo's item had there.
-- ⇧F8 (⌥⇧8, ⌥⌘⌫, ⇧⌦) **Delete Permanently…** asks, then deletes without the Trash. It stops at a volume mounted inside the folder (a share, a disk image), as `rm -r --one-file-system` does: what's on it stays, and the summary names it. F6 to another volume stops there too.
+- ⇧F8 (⌥⇧8, ⌥⌘⌫, ⇧⌦) **Delete Permanently…** asks, listing what goes (↩ is Cancel, ⌘↩ deletes), then deletes without the Trash. It stops at a volume mounted inside the folder (a share, a disk image), as `rm -r --one-file-system` does: what's on it stays, and the summary names it. F6 to another volume stops there too.
 
 > [!WARNING]
 > **Delete Permanently…** and **Overwrite** can't be undone: the old file is gone.
@@ -134,4 +134,4 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 
 ## Administrator rights
 
-**Admin ▸ Copy as Administrator…**, **Move as Administrator…**, **New Folder as Administrator…** and **Delete as Administrator…** ask for your password in the standard macOS dialog. They skip the queue: no progress, no undo. Copy asks before it replaces what's in the destination, Move never overwrites, and Delete runs `rm -rf` after a confirmation. Before the password is asked, Copy and Move refuse what F5 and F6 refuse: a folder into itself or below it, and an item onto itself. They also refuse a destination where a link has the item's name: root would write where the link points.
+**Admin ▸ Copy as Administrator…**, **Move as Administrator…**, **New Folder as Administrator…** and **Delete as Administrator…** ask for your password in the standard macOS dialog. They skip the queue: no progress, no undo. Copy asks before it replaces what's in the destination, Move never overwrites, and Delete runs `rm -rf` after a question that shows the command as it will run (↩ is Cancel there, ⌘↩ deletes). Before the password is asked, Copy and Move refuse what F5 and F6 refuse: a folder into itself or below it, and an item onto itself. They also refuse a destination where a link has the item's name: root would write where the link points.

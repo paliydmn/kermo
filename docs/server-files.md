@@ -2,15 +2,15 @@
 
 # Files on a server
 
-What works in an SFTP panel, and how it differs from a local one. To open one, see [Servers and SSH](servers.md). F7, ⇧F6 and F8 create, rename and delete on the server.
+What works in an SFTP panel, and how it differs from a local one. To open one, see [Servers and SSH](servers.md). F7, ⇧F6 and F8 create, rename and delete on the server. F8 asks first, listing what goes: a server has no Trash, so ↩ is Cancel and ⌘↩ deletes ([how a question asks](safety.md#how-a-question-asks)).
 
 ## Copy and move
 
-F5 / F6, ⌘C / ⌘V and drag and drop copy and move files in every direction: server to this Mac, this Mac to a server, server to server, and within one server.
+F5 / F6, ⌘C / ⌘V and drag and drop copy and move files in every direction: server to this Mac, this Mac to a server, server to server, and within one server. F5 and F6 name what goes and show the server's PROD or ROOT strip over the path; onto a production server they ask once more, with ↩ on Cancel.
 
-- They run in the operations queue like local copies: progress with speed and ETA, pause, cancel, the overwrite / skip / keep both dialog, and **Retry**, which continues a large file where a dropped connection left it.
+- They run in the operations queue like local copies: progress with speed and ETA, pause, cancel, the [name-conflict question](files.md#when-a-name-is-taken) — two cards, Replace, Skip, Keep Both, and Compare…, which fetches the server's file for the diff —, and **Retry**, which continues a large file where a dropped connection left it.
 - Within one server a move is a rename. A copy happens on the server when its `sftp-server` supports it (OpenSSH 9.0 and later); otherwise the data goes through this Mac.
-- **Overwrite** of a folder with a file, or of a file with a folder, copies the new one under a hidden `.dfm-new-…` name next to it first. The old one goes only when the new one is whole, so a failed or stopped copy leaves it as it was. A move that fails midway keeps what it moved in that hidden folder, and the summary names it.
+- **Replace Folder** (a file over a folder), or a folder over a file, copies the new one under a hidden `.dfm-new-…` name next to it first. The old one goes only when the new one is whole, so a failed or stopped copy leaves it as it was. A move that fails midway keeps what it moved in that hidden folder, and the summary names it.
 - Operations on different servers and on this Mac run side by side. Ones on the same server wait their turn (**▶︎▶︎ Start Now** runs a queued one at once).
 
 ## Open and edit

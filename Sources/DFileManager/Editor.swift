@@ -95,7 +95,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
                 onClose?()
                 let a = NSAlert(error: error)
                 a.messageText = a.messageText.bidiVisible
-                a.runModal()
+                if let w = NSApp.mainWindow ?? NSApp.keyWindow { a.beginSheetModal(for: w) { _ in } } else { _ = AppDelegate.modal(a) }   // no editor to put it on yet
             }
         }
     }
@@ -484,12 +484,12 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         noticed = now
         guard let app = NSApp.delegate as? AppDelegate else { return }
         let size = ByteCountFormatter.short(noticed?.size ?? 0)
+        var c = Confirm("“\(url.lastPathComponent)” changed on disk since you opened it", action: "Overwrite")
+        c.note = "Something else wrote it (\(size) now). Overwriting replaces those changes with yours. "
+            + "Reload drops your edits and shows the file as it is now. Save As keeps both. Cancel keeps your text unsaved here."
+        (c.others, c.irreversible) = (["Reload", "Save As…"], true)   // ↩: Cancel
         Task {
-            switch await app.choose("“\(url.lastPathComponent)” changed on disk since you opened it",
-                                    info: "Something else wrote it (\(size) now). Overwriting replaces those changes with yours. "
-                                        + "Reload drops your edits and shows the file as it is now. Save As keeps both. "
-                                        + "Cancel keeps your text unsaved here.",
-                                    ["Overwrite", "Reload", "Save As…", "Cancel"], default: 3, on: window) {   // ↩: Cancel
+            switch await app.confirm(c, on: window) {
             case 0: await save(force: true)
             case 1: await reload()
             case 2:
@@ -539,14 +539,12 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// Writes the text over the target as root, in place — so the file keeps its owner, mode and hard links (what you
     /// want for /etc/hosts and friends). See `AdminCommand.writeContents`.
     private func offerAdminSave(_ data: Data, reason: String, force: Bool) {
-        let a = NSAlert()
-        a.messageText = "“\(url.lastPathComponent.bidiVisible)” is protected"
-        a.informativeText = reason + "\nSave it with administrator rights?"
-        a.addButton(withTitle: "Save as Administrator")
-        a.addButton(withTitle: "Cancel")
-        a.beginSheetModal(for: window!) { [weak self] r in
-            guard let self, r == .alertFirstButtonReturn else { return }
-            Task { _ = await self.adminSave(data, force: force) }
+        var c = Confirm("Save “\(url.lastPathComponent)” as administrator?", action: "Save as Administrator")
+        (c.chips, c.place, c.runs) = ([.root], "this Mac", AppDelegate.asAdmin)
+        c.note = reason + " It's written in place, keeping its owner and mode."
+        Task {
+            guard await AppDelegate.sheet(c.alert(), on: window!) == 0 else { return }
+            _ = await adminSave(data, force: force)
         }
     }
 
@@ -626,15 +624,15 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         }
     }
 
+    /// Keep Mine is the safe one — nothing is lost, and the next ⌘S asks before writing over theirs: ↩ and ⎋; Reload ⌘↩.
     private func askReload(_ now: Stamp) {
         noticed = now
-        let a = NSAlert()
-        a.messageText = "“\(url.lastPathComponent.bidiVisible)” changed on disk"
-        a.informativeText = "Reload it and lose your unsaved changes, or keep editing your version?"
-        a.addButton(withTitle: "Keep Mine")
-        a.addButton(withTitle: "Reload")
-        a.beginSheetModal(for: window!) { [weak self] r in
-            if r == .alertSecondButtonReturn { Task { await self?.reload() } }
+        var c = Confirm("“\(url.lastPathComponent)” changed on disk", action: "Reload")
+        (c.cancel, c.irreversible) = ("Keep Mine", true)
+        c.note = "Reload it and lose your unsaved changes, or keep editing your version?"
+        Task {
+            guard await AppDelegate.sheet(c.alert(), on: window!) == 0 else { return }
+            await reload()
         }
     }
 

@@ -121,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         window.undoManager?.levelsOfUndo = 100   // each step holds its paths (and a move's jobs): not a whole day's worth
         window.title = "Kermo"
         ops = OpsController(window: window, historyDir: Config.dir) { [unowned self] in jobFinished($0) }
+        ops.compare = { [unowned self] new, existing in await diff(new, existing, in: active) }
         ops.onRetry = { [unowned self] in retryFailed($0, $1) }
         ops.onShow = { [unowned self] in showItem(on: $0, in: $1, select: $2) }
         let toolbar = NSToolbar(identifier: "Main")   // after `ops`: it asks for the Activity button at once
@@ -296,13 +297,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if let note = tunnels.quitNote() { lost.append(note) }
         lost += terminal.tabs.compactMap(\.busyWith)
         guard !lost.isEmpty else { return true }
-        let a = NSAlert()
-        a.alertStyle = .warning
-        a.messageText = "Quit Kermo?"
-        a.informativeText = (lost.map { "• " + $0 }.joined(separator: "\n") + "\n\nAll of this ends.").bidiVisible
-        a.addButton(withTitle: "Quit").hasDestructiveAction = true
-        a.addButton(withTitle: "Cancel")
-        quitConfirmed = a.runModal() == .alertFirstButtonReturn
+        // App-modal: it's about the whole app, and there may be no main window to put a sheet on (closing it asks).
+        var c = Confirm("Quit Kermo?", action: "Quit")
+        (c.items, c.note, c.irreversible) = (lost.map { Confirm.Item(name: $0) }, "All of this ends.", true)
+        quitConfirmed = (Self.answering.map { $0(c.title, c.buttons, c.buttons.count - 1) } ?? Self.modal(c.alert())) == 0
         return quitConfirmed
     }
 
@@ -818,7 +816,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let info = [live.isEmpty ? nil : live.count == 1 ? "Its SSH session ends." : "Its \(live.count) SSH sessions end.",
                     listening.isEmpty ? nil : "Its tunnels turn off: \(listening)."].compactMap { $0 }
         Task {
-            if !info.isEmpty, await !confirm("Disconnect from \(t.host)?", info: info.joined(separator: " "), ok: "Disconnect") { return }
+            if !info.isEmpty {
+                var c = Confirm("Disconnect from \(SavedServer.name(for: t))?", on: t.asUser, action: "Disconnect")
+                c.note = info.joined(separator: " ")
+                guard await confirm(c) == 0 else { return }
+            }
             await disconnectNow(key)
         }
     }
@@ -1497,8 +1499,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     // MARK: - Dialogs (sheets on the main window)
 
-    /// `select`: what's selected in `value` (else all of it, or its base name with `selectBaseName`).
-    func prompt(_ message: String, value: String, ok: String, info: String = "", selectBaseName: Bool = false, select: NSRange? = nil) async -> String? {
+    /// `select`: what's selected in `value` (else all of it, or its base name with `selectBaseName`). `strip`: the
+    /// server it's about — production or root says so over the field, as a `Confirm` does; `items`: what it's about.
+    func prompt(_ message: String, value: String, ok: String, info: String = "", selectBaseName: Bool = false, select: NSRange? = nil,
+                strip: SFTPTarget? = nil, items: [Confirm.Item] = []) async -> String? {
         let alert = NSAlert()
         alert.messageText = message.bidiVisible
         alert.informativeText = info.bidiVisible
@@ -1506,7 +1510,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         alert.addButton(withTitle: "Cancel")
         let field = NSTextField(string: value)
         field.frame = NSRect(x: 0, y: 0, width: 420, height: 24)
-        alert.accessoryView = field
+        let above = [strip.flatMap { Confirm.strip(Chip.of($0), SavedServer.name(for: $0.asUser)) }, items.count > 1 ? Confirm.list(items) : nil].compactMap { $0 }
+        alert.accessoryView = above.isEmpty ? field : Confirm.stack(above + [field], width: 420)
         alert.window.initialFirstResponder = field
         let response: NSApplication.ModalResponse = await withCheckedContinuation { cont in
             alert.beginSheetModal(for: window) { cont.resume(returning: $0) }
@@ -1558,20 +1563,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Tests: answers `choose` instead of a sheet (the message, the buttons, the one ↩ presses).
     static var answering: (@MainActor (String, [String], Int?) -> Int)?
 
-    /// `alert` as a sheet on `window`; the button's index. A Cancel that took ↩ (`alert(default:)`) answers ⎋ too.
+    /// `alert` as a sheet on `window`; the button's index.
     static func sheet(_ alert: NSAlert, on window: NSWindow) async -> Int {
-        let esc = alert.buttons.first { $0.title == "Cancel" && $0.keyEquivalent == "\r" }.map { cancel in
-            NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
-                guard e.keyCode == 53, e.window === alert.window else { return e }
-                cancel.performClick(nil)
-                return nil
-            }
-        }
-        defer { esc.map(NSEvent.removeMonitor) }
+        let keys = safeKeys(alert)
+        defer { keys.map(NSEvent.removeMonitor) }
         let response: NSApplication.ModalResponse = await withCheckedContinuation { cont in
             alert.beginSheetModal(for: window) { cont.resume(returning: $0) }
         }
         return response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+    }
+
+    /// `alert` app-modal, where there's no window to put it on or it's about the whole app (Quit); the button's index.
+    static func modal(_ alert: NSAlert) -> Int {
+        let keys = safeKeys(alert)
+        defer { keys.map(NSEvent.removeMonitor) }
+        return alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+    }
+
+    /// A Cancel that took ↩ (`alert(default:)`, `Confirm.safe`: the last button, "Keep Mine" too) answers ⎋ too, and
+    /// an action on ⌘↩ answers that: caught before AppKit matches keys, so no button's plain ↩ can take it.
+    private static func safeKeys(_ alert: NSAlert) -> Any? {
+        let (cancel, action) = keyRoles(alert)
+        guard cancel != nil || action != nil else { return nil }
+        return NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
+            guard e.window === alert.window else { return e }
+            let command = e.modifierFlags.intersection([.command, .shift, .option, .control]) == .command
+            if e.keyCode == 53, let cancel { cancel.performClick(nil) }   // ⎋
+            else if let action, command, e.keyCode == 36 || e.keyCode == 76 { action.performClick(nil) }   // ⌘↩
+            else { return e }
+            return nil
+        }
+    }
+
+    /// Who answers ⎋ and ⌘↩ in `safeKeys`: the Cancel that took ↩ — titled Cancel, or the last button (Keep Mine)
+    /// where an action takes ⌘↩ — and that action (`Confirm.commandReturn`). A plain ↩ elsewhere (the server sheet's
+    /// Save) is no Cancel: ⎋ stays AppKit's there.
+    static func keyRoles(_ alert: NSAlert) -> (cancel: NSButton?, action: NSButton?) {
+        let action = alert.buttons.first { $0.identifier == Confirm.commandReturn }
+        let cancel = alert.buttons.first {
+            $0.keyEquivalent == "\r" && $0.keyEquivalentModifierMask.isEmpty && ($0.title == "Cancel" || ($0 === alert.buttons.last && action != nil))
+        }
+        return (cancel, action)
     }
 
     static func alert(_ message: String, info: String, _ buttons: [String], default: Int? = nil) -> NSAlert {
@@ -1587,17 +1619,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return alert
     }
 
-    func confirm(_ message: String, info: String, ok: String) async -> Bool {
-        let alert = NSAlert()
-        alert.messageText = message.bidiVisible
-        alert.informativeText = info.bidiVisible
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: ok).hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancel")
-        let response: NSApplication.ModalResponse = await withCheckedContinuation { cont in
-            alert.beginSheetModal(for: window) { cont.resume(returning: $0) }
-        }
-        return response == .alertFirstButtonReturn
+    /// Every question before something that changes things (`Confirm`): a sheet on `sheetWindow` (default: the main
+    /// one); the index in `c.buttons` — the action 0, Cancel the last. Tests answer it through `answering`, ↩ being
+    /// Cancel's index where `c.safe`.
+    func confirm(_ c: Confirm, on sheetWindow: NSWindow? = nil) async -> Int {
+        if let answer = Self.answering { return answer(c.title, c.buttons, c.safe ? c.buttons.count - 1 : nil) }
+        if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }
+        return await Self.sheet(c.alert(), on: sheetWindow ?? window)
     }
 
     func showError(_ error: Error) {
