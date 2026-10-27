@@ -602,12 +602,14 @@ extension AppDelegate {
         ((Picker.current.map { [$0 as any RowList] } ?? []) + panels.compactMap(\.list)).filter { $0.has(id) }
     }
 
-    /// ⌘↩ in a Picker's list: the same rows in the other panel — not read again — with what was typed and
-    /// highlighted; the keys go there.
-    func openInOther(_ source: ListSource, query: String, select: String?) {
+    /// ⌘↩ in a Picker's list: the same rows in the other panel — as the Picker has them now, not read again — with
+    /// what was typed and highlighted; the keys go there.
+    func openInOther(_ source: ListSource, query: String, select: String?, rows: [Picker.Item]) {
         showPanels()
         let p = other
-        p.showList(source, filter: query, select: select)
+        var c = source.content ?? ListContent(rows: [])
+        c.rows = rows
+        p.showList(source, content: c, filter: query, select: select)
         window.makeFirstResponder(p.table)
     }
 }

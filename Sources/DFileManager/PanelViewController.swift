@@ -30,7 +30,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         else { pathBar.showPlace(.mac, "Mac", chips: [], scp: nil) }
         pathBar.style(text: isActive ? theme.text : theme.hidden, dim: theme.hidden, mono: theme.mono)
         pathBar.line = isActive ? placeTint : nil
-        targetMark.isHidden = !isTarget
+        targetMark.isHidden = !isTarget || list != nil   // a list takes no F5
         if isTarget { targetMark.image = Self.targetMark(placeTint) }
     }
     var targetMarkShown: Bool { !targetMark.isHidden }   // tests
@@ -1575,8 +1575,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// Shows `source`'s list in this tab in place of what's there: read first if nothing of it was (a Picker's rows
     /// come along with ⌘↩). Nothing of the folder behind stays on screen or is acted on; ⌫ goes back.
-    func showList(_ source: ListSource, filter text: String = "", select: String? = nil) {
-        show(ListPanel(source, filter: text, select: select), back: remote ?? listBack)
+    func showList(_ source: ListSource, content: ListContent? = nil, filter text: String = "", select: String? = nil) {
+        show(ListPanel(source, content: content, filter: text, select: select), back: remote ?? listBack)
     }
 
     /// `l` — a tab's again, or a new one — on the table; `back`: where ⌫ goes (a server folder; nil: the tab's folder).

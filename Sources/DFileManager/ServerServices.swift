@@ -110,7 +110,7 @@ extension AppDelegate {
                     items: c.rows, rank: { item, q in Fuzzy.score(q, item.title + " " + item.subtitle + " " + item.detail) },
                     query: kept?.query ?? "", select: kept?.id,
                     onClose: { [unowned self] q, id in servicesKept[key] = (q, id) },
-                    other: { [unowned self] q, id in openInOther(source, query: q, select: id) })
+                    other: { [unowned self] q, id, rows in openInOther(source, query: q, select: id, rows: rows) })
     }
 
     /// The units' rows, the line about them, what's said when there are none: a Picker's and a panel's.

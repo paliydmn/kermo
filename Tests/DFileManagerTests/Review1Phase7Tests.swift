@@ -319,11 +319,14 @@ extension ServerLockTests {
         app.showList(s)
         let picker = try #require(Picker.current)
         #expect(picker.actionBar.contains(KeySlot(key: "⌘↩", label: "Other Panel", id: "other")))
+        picker.update(row("worker", .on, subtitle: "active · running"))   // a restart there since it opened
         _ = picker.panel.performKeyEquivalent(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
                                                                      windowNumber: picker.panel.windowNumber, context: nil, characters: "\r",
                                                                      charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!)
         await until { b.list != nil }
         #expect(Picker.current == nil && b.list?.source === s && s.reads == 0, "the Picker's rows, not read again")
+        #expect(b.list?.content?.rows.first { $0.id == "worker" }?.subtitle == "active · running" && b.list?.content?.header == "3 units · 1 failed",
+                "as the Picker had them: the run since shows")
         #expect(b.list?.cursor?.title == "cron", "what was highlighted: the first row, as the Picker had it")
         #expect(app.active === b && a.list == nil)
 

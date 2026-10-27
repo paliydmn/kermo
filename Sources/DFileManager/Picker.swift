@@ -59,8 +59,9 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     private let emptyText: String
     private let bar = KeyBarView(chips: false)
     private let hints: [KeySlot]
-    /// ⌘↩: the same list in the other panel, with what's typed and highlighted (`show(other:)`).
-    private let other: (@MainActor (_ query: String, _ id: String?) -> Void)?
+    /// ⌘↩: the same list in the other panel, with what's typed and highlighted and its rows as they are now — a run
+    /// on one since it opened shows (`show(other:)`).
+    private let other: (@MainActor (_ query: String, _ id: String?, _ rows: [Item]) -> Void)?
 
     /// `rank` scores an item against the query (nil = hide); default fuzzy-matches title + subtitle.
     /// Ties keep the given order, so pass items best-first.
@@ -79,7 +80,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
                      freeText: ((String) -> [Item])? = nil, freeTextLast: Bool = false, selected: Int = 0,
                      query: String = "", select: String? = nil,
                      onDismiss: (@MainActor () -> Void)? = nil, onClose: (@MainActor (String, String?) -> Void)? = nil,
-                     other: (@MainActor (String, String?) -> Void)? = nil) -> Picker {
+                     other: (@MainActor (String, String?, [Item]) -> Void)? = nil) -> Picker {
         current?.close()
         let p = Picker(parent: window, placeholder: placeholder, scope: scope, header: header, empty: empty, hints: hints, items: items,
                        rank: rank ?? { item, q in Fuzzy.score(q, item.title + " " + item.subtitle) }, freeText: freeText,
@@ -96,7 +97,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     private init(parent: NSWindow, placeholder: String, scope: (name: String, chips: [Chip])?, header: String?, empty: String, hints: [KeySlot],
                  items: [Item], rank: @escaping (Item, String) -> Int?, freeText: ((String) -> [Item])?, freeTextLast: Bool, selected: Int,
                  query: String, select: String?, onDismiss: (@MainActor () -> Void)?, onClose: (@MainActor (String, String?) -> Void)?,
-                 other: (@MainActor (String, String?) -> Void)?) {
+                 other: (@MainActor (String, String?, [Item]) -> Void)?) {
         self.parent = parent
         self.other = other
         self.items = items
@@ -322,10 +323,10 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     /// ⌘↩: closes — saying what was typed and highlighted (`onClose`) — then hands that to `other`.
     private func openOther() {
         guard let other else { return }
-        let (q, id) = (field.stringValue, highlighted?.id)
+        let (q, id, rows) = (field.stringValue, highlighted?.id, items)
         onDismiss = nil
         close()
-        DispatchQueue.main.async { other(q, id) }   // after focus is back on the main window
+        DispatchQueue.main.async { other(q, id, rows) }   // after focus is back on the main window
     }
 
     @objc private func choose() {

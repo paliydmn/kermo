@@ -1494,7 +1494,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         keyBar.server = (active.remote ?? active.parked) != nil
         keyBar.archive = active.archive != nil
         let to = other.remote ?? other.parked
-        keyBar.target = KeyBarModel.target(server: to.map { (SavedServer.name(for: $0.target), SavedServer.isProd($0.target)) }, folder: other.path, panels: panels.count)
+        keyBar.target = other.list != nil ? nil : KeyBarModel.target(server: to.map { (SavedServer.name(for: $0.target), SavedServer.isProd($0.target)) },
+                                                                       folder: other.path, panels: panels.count)   // a list: no F5 into it
         updateGitRow()
         window?.title = root.map { "\($0.target.shown):\($0.dir)" }?.bidiVisible ?? path.bidiVisible   // what the panel's header says
         guard remote == nil else { window?.representedURL = nil; return }
