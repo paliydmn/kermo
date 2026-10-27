@@ -42,7 +42,7 @@ Kermo checks for a new version once a day and installs it with **Install and Rel
 
 | Keys | Action |
 |---|---|
-| ⇧⌘P | Search commands, folders and files |
+| ⇧⌘P | Search commands, servers, folders and files |
 | F1 | Cheat sheet with every shortcut |
 | Tab, Space | Other panel, mark a file |
 | F3 / F4 | View / edit |

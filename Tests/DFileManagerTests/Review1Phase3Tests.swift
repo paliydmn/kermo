@@ -131,7 +131,7 @@ private let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
 /// is. What's still so is listed here, each with why.
 @Test func placeholdersSayWhatToTypeAndHintsHaveOneGrammar() throws {
     let allowed = [
-        "HeaderSearch.swift: ⌘F": "the palette (⇧⌘P) lists keys by design until phase 8 (R-43)",
+        "HeaderSearch.swift: ⌘F": "the palette (⇧⌘P) shows a row's one key as its capsule (R-43, research 4.1)",
     ]
     let literal = try NSRegularExpression(pattern: #""((?:[^"\\]|\\.)*)""#)
     func literals(_ s: String) -> [String] {

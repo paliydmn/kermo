@@ -6,7 +6,7 @@ Every shortcut in Kermo, grouped by what it does. Press F1 in the app for the li
 
 Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ Command, always in that order (⌃⌥⇧⌘), so ⇧⌘P means Shift, Command and P together. A slash separates the keys of paired actions: "Copy / Move: F5 / F6".
 
-- **Find any command** with ⇧⌘P: it is listed with its shortcut. (The viewer and editor keys and mouse marking aren't commands, so search doesn't list them.)
+- **Find any command** with ⇧⌘P: it is listed with its first shortcut. (The viewer and editor keys and mouse marking aren't commands, so search doesn't list them.)
 - **Function keys:** F1–F10 and ⇧F4, ⇧F5, ⇧F6, ⇧F8 also work as ⌥ plus the digit (⌥0 is F10, ⌥⇧6 is ⇧F6), because Mac function keys control media by default. The other F-key shortcuts (⇧F2, ⇧F10, ⌥F1, ⌥F5, ⌥F7, ⌥F9, ⌥F10) have no digit twin: use fn, or remap them.
 - **Text fields** (path entry, the command line, dialogs) take the usual ⌘X, ⌘C, ⌘V, ⌘A and ⌘Z.
 - **Questions:** ⎋ is Cancel. On a production server and for what can't be undone, ↩ is Cancel too and **⌘↩** does the action; the question's last line says so ([how a question asks](safety.md#how-a-question-asks)).
@@ -20,7 +20,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 
 | Action | Keys |
 |---|---|
-| Search commands, folders and files | ⇧⌘P, F9, ⌥9 |
+| Search commands, servers, folders and files | ⇧⌘P, F9, ⌥9 |
 | Keyboard shortcuts cheat sheet (over a viewer or an editor: its keys) | F1, ⌥1 |
 | Settings | ⌘, |
 | Find a menu command by name | **Help** menu's search field |
