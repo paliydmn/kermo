@@ -304,22 +304,12 @@ extension AppDelegate {
     func forwardPort() { onServer("Forward a port of") { [unowned self] in forwardPort(on: $0.asUser) } }
 
     /// The ports `t`'s server listens on (U1): a locked server asks first (U6), then the login (`look`).
-    func forwardPort(on t: SFTPTarget) {
-        look(at: t, "ports", for: "Forward Port", say: { [unowned self] in tunnels.say($0, $1) },
-             { t, title, env, cancel in try ListeningPorts.read(on: t, server: title, env: env, cancel: cancel) }) { [unowned self] ports, s, _ in
-            showPorts(ports, of: s)
-        }
-    }
+    func forwardPort(on t: SFTPTarget) { showInSearch(PortList(self, savedServer(at: t) ?? SavedServer(target: t.asUser))) }
 
     /// One row a port (U2): ":5432 Postgres", its process and where it listens, and "→ localhost:15432" where a tunnel of
     /// the server already goes there. ↩ forwards it, ⌘O and opens it in the browser, ⌘C and copies the address, ⌘S and
-    /// saves it as the server's tunnel (U4).
-    /// ⌘↩: the same ports in the other panel.
-    func showPorts(_ ports: [ListeningPort], of s: SavedServer) {
-        let source = PortList(self, s, ports: ports)
-        Picker.show(over: window, placeholder: "Filter ports", scope: (s.title, Chip.of(s.target)), empty: "Nothing listens on TCP there",
-                    items: portItems(ports, of: s), other: { [unowned self] q, id, rows in openInOther(source, query: q, select: id, rows: rows) })
-    }
+    /// saves it as the server's tunnel (U4). In the search, on its server's overview; ⌘↩: the same ports in the other panel.
+    func showPorts(_ ports: [ListeningPort], of s: SavedServer) { showInSearch(PortList(self, s, ports: ports)) }
 
     /// In a panel too: the process and where it listens in columns of their own, and a tunnel going there as ● (`PortList`).
     func portItems(_ ports: [ListeningPort], of s: SavedServer) -> [Picker.Item] {

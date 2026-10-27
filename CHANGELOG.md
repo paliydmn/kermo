@@ -93,6 +93,7 @@ Release:
 - Search (⇧⌘P) opens over the panels as the other lists to choose from do: its rows in groups (Recent, Commands, Servers, On Servers, Folders, In This Panel), each with an icon and one key — the menu's, F1 lists the rest — and an action bar along the bottom. The toolbar has a **Search or jump to…** button instead of a field.
 - Search's Recent lists what you choose most and lately, not the last ten; those come in.
 - **:** in a list opens search on its server's overview instead of a list of its own.
+- **Services…**, **Containers…** and **Forward Port…** open in search, on the server's overview: ⌫ or ⎋ goes to it, its other lists a ⇥ away, and ⇥ on a row lists its actions. Failed rows come first, as in a panel; each still opens as it was left.
 
 ### Removed
 - **Save as Production…** in a recent or `~/.ssh/config` row's menu: the save sheet has the Production switch.

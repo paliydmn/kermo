@@ -108,8 +108,8 @@ final class HeaderSearch: NSObject {
     /// The rows for what's typed (`HeaderSearchModel`): the ranking itself runs off the main thread, until the flag
     /// says another query took its place.
     var results: (String, CancelFlag) async -> [Picker.Item] = { _, _ in [] }
-    /// ⌘↩ on a list it went into (⇥): those rows in the other panel, as they are.
-    var listInOther: (@MainActor (ListSource, String, String?, [Picker.Item]) -> Void)?
+    /// The button clicked: the app opens the search (`AppDelegate.palette`).
+    var onClick: (() -> Void)?
 
     override init() {
         super.init()
@@ -128,12 +128,11 @@ final class HeaderSearch: NSObject {
         item.toolTip = "Search commands, folders, servers and files  ⇧⌘P · F9"
     }
 
-    @objc private func clicked(_ sender: NSButton) { sender.window.map(focus) }
+    @objc private func clicked(_ sender: NSButton) { onClick?() }
 
-    /// The palette over `window`.
-    @discardableResult
-    func focus(over window: NSWindow) -> Picker {
+    /// The palette over `window`; ⌘↩ on a list it went into (⇥) shows those rows so (`listInOther`), as they are.
+    func focus(over window: NSWindow, listInOther: @escaping @MainActor (ListSource, String, String?, [Picker.Item]) -> Void) -> Picker {
         Picker.show(over: window, placeholder: "Search commands, folders, servers, files", items: [], width: 560, results: results,
-                    listInOther: listInOther ?? { _, _, _, _ in })
+                    listInOther: listInOther)
     }
 }
