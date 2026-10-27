@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 struct SettingsTab {
     let title: String, symbol: Symbol
     let groups: [(title: String, rows: [SettingsRow])]
+    var view: (@MainActor (AppDelegate) -> NSView)? = nil   // a tab of its own making (Keys), not rows
 }
 
 struct SettingsRow {
@@ -53,6 +54,7 @@ extension AppDelegate {
                             control: .number(0...1, step: 0.02, value: 0.12, unit: "s")),
             ]),
         ]),
+        SettingsTab(title: "Keys", symbol: .keyboard, groups: [], view: { KeysPane(app: $0) }),
         SettingsTab(title: "Terminal", symbol: .terminal, groups: [
             ("Text", [
                 SettingsRow(title: "Font", note: "MesloLGS NF shows Powerlevel10k and Starship icons", key: "terminalFont",
@@ -150,7 +152,7 @@ extension AppDelegate {
 final class SettingsWindow: NSObject, NSWindowDelegate {
     private static var shared: SettingsWindow?
     let window: NSWindow
-    let tabs: NSTabViewController
+    let tabs: Tabs
     private unowned let app: AppDelegate
     private let defaults: UserDefaults
     private var refreshers: [() -> Void] = []   // controls re-read their keys (⇧⌘. may have changed one meanwhile)
@@ -167,13 +169,13 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     init(app: AppDelegate, tabs list: [SettingsTab], defaults: UserDefaults) {
         self.app = app
         self.defaults = defaults
-        tabs = NSTabViewController()
+        tabs = Tabs()
         tabs.tabStyle = .toolbar
         window = NSWindow(contentViewController: tabs)
         super.init()
         for t in list {
             let vc = NSViewController()
-            vc.view = page(t)
+            vc.view = t.view?(app) ?? page(t)
             vc.title = t.title
             vc.preferredContentSize = Self.size   // the tab view keeps the window at it
             let item = NSTabViewItem(viewController: vc)
@@ -186,12 +188,24 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         window.autorecalculatesKeyViewLoop = true
         window.delegate = self
         window.center()
+        tabs.selected = { [unowned self] in refresh() }
+    }
+
+    final class Tabs: NSTabViewController {
+        var selected: (() -> Void)?
+        override func tabView(_ tabView: NSTabView, didSelect item: NSTabViewItem?) {
+            super.tabView(tabView, didSelect: item)
+            selected?()
+        }
     }
 
     static let size = NSSize(width: 680, height: 560)
 
     func windowDidBecomeKey(_ notification: Notification) { refresh() }
-    func refresh() { refreshers.forEach { $0() } }
+    func refresh() {
+        refreshers.forEach { $0() }
+        for item in tabs.tabViewItems { (item.viewController?.view as? KeysPane)?.reload() }   // keymap.json again: a hand edit shows
+    }
 
     // MARK: - Building
 

@@ -22,6 +22,7 @@ Release:
 - Every command is in the menu bar now — Services…, Containers…, the tunnels', Copy SSH Key to Server… and Sort By were only in search — but those that are keys by nature (Tab, ↩, ⇧↑ / ⇧↓, the terminal panes' arrows, ⇧F10, ⌃↩).
 - **Settings** (⌘,): General, Appearance, Terminal, Editor & Viewer, Servers & Safety and Advanced — every option that was only a `defaults write`, each with its key at its right, and Edit… for the config files. The terminal's Selecting text copies it and Right-click pastes say what they do with the clipboard.
 - Appearance shows every theme as a preview of a panel in its colors; a click uses it.
+- **Settings › Keys**: every command with its keys, found by name, alias or key. Click a key (or ＋) and press the new one; a key of the menu bar, one macOS takes or another command's says so at once — **Use Here** moves another command's. Only what you change goes into `keymap.json`; a command's arrow and **Reset All…** give Kermo's keys back.
 
 ### Changed
 - Marked files are bold in the accent color with a ✓ before the icon, not red: red now means only that something failed or can't be undone. Themes keep their own mark color, and get the ✓ too; GitHub Light and Solarized Light mark in pink and magenta instead of red.
