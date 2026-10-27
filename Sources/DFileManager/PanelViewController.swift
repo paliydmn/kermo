@@ -233,8 +233,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// A list in place of the folder (`showList`): a server's services, containers, ports — its rows, its columns, its
     /// keys. Nothing of the folder behind it is on screen, nor acted on.
     private(set) var list: ListPanel?
-    /// Where ⌫ goes from the list: the server folder it replaced, if it replaced one; else the tab's folder.
-    private var listBack: (target: SFTPTarget, dir: String)?
+    /// The server's place (`onPlace`): ⌫ from a list or a server's `/`, a click on the path bar's chip, a restart.
+    var isPlace: Bool { list?.source is PlaceSource }
+    /// Its server's place in this panel, the cursor on a row (the list ⌫ came back from: "Services"; "/").
+    var onPlace: ((SFTPTarget, String?) -> Void)?
     /// What a list says to whatever would act on files: it isn't a folder.
     var listHint: String? { list.map { "\($0.source.title) isn't a folder — ↩ acts on a row, ⌫ goes back" } }
     /// The server the panel is on: a server folder's, a list's or a parked tab's.
@@ -266,7 +268,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         var marked = ExactNames()
         var filter = ""
         var list: ListPanel? = nil   // a list shown in the tab (`showList`)
-        var listBack: (target: SFTPTarget, dir: String)? = nil
+        var place: SFTPTarget? = nil   // a server's place back from a restart, shown once the tab is
     }
     private var tabs: [Tab]
     private(set) var tabIndex: Int
@@ -285,7 +287,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// Server tabs come back parked: nothing connects till ↩.
     init(session saved: [Session.Tab], index: Int, showHidden: Bool) {
         tabs = (saved.isEmpty ? [Session.Tab(path: NSHomeDirectory())] : saved).map { t in
-            Tab(path: t.path, cursor: t.cursor, parked: t.server.flatMap { s in t.dir.map { (s.asRoot(t.root), $0) } })
+            Tab(path: t.path, cursor: t.cursor, parked: t.server.flatMap { s in t.dir.map { (s.asRoot(t.root), $0) } }, place: t.place == true ? t.server : nil)
         }
         tabIndex = min(max(index, 0), tabs.count - 1)
         path = tabs[tabIndex].path
@@ -470,6 +472,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         pathBar.onCrumb = { [unowned self] in goTo($0, otherPanel: $1.contains(.option)) }
         pathBar.onCopy = { [unowned self] in copyPath(scp: $0) }
         pathBar.onFilter = { [unowned self] in beginFilter() }
+        pathBar.onPlace = { [unowned self] in   // the server's chip: its place
+            guard let t = server, !isPlace, parked == nil else { return }
+            view.window?.makeFirstResponder(table)   // the keys come here, as a click in the list
+            onPlace?(t.asUser, list?.source.title ?? (remote?.dir == "/" ? "/" : nil))
+        }
         pathBar.validateDrop = { [unowned self] crumb, info in
             guard archive == nil, parked == nil, searchTitle == nil, list == nil, let dir = crumb.path, let items = Self.dropped(info) else { return [] }
             return Self.dragOperation(info, items: items, to: endpoint, target: dir)
@@ -586,7 +593,14 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     override func viewDidLoad() {
         super.viewDidLoad()
         loadSort(for: path)
-        if let p = tabs[tabIndex].parked { park(p) } else { navigate(to: path, select: tabs[tabIndex].cursor, history: .none) }
+        if let p = tabs[tabIndex].parked { park(p) }
+        else if let pt = tabs[tabIndex].place {   // a restart's place: nothing asked — once the app is up (its terminal, its sidebar)
+            let cursor = tabs[tabIndex].cursor
+            DispatchQueue.main.async { [weak self] in
+                guard let self, tabs[tabIndex].place == pt else { return }
+                if let onPlace { onPlace(pt, cursor) } else { navigate(to: path, history: .none) }
+            }
+        } else { navigate(to: path, select: tabs[tabIndex].cursor, history: .none) }
         statTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.view.window?.occlusionState.contains(.visible) == true,
@@ -1418,12 +1432,17 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func goUp() {
         if parked != nil { return navigate(to: path, history: .none) }
-        if list != nil {   // back where it came from: the server folder it replaced, or the tab's folder
-            if let b = listBack { return loadRemote(b.target, dir: b.dir, select: nil) }
-            return navigate(to: path, history: .none)
+        if let l = list {   // a list: back to its server's place; the place: off the server, asked as from its `/`
+            guard isPlace else { return onPlace?(l.source.target, l.source.title) ?? navigate(to: path, history: .none) }
+            Task {
+                guard await Self.confirmLeaving(l.source.target, path, view.window), list === l else { return }
+                navigate(to: path, history: .none)
+            }
+            return
         }
         if let r = remote {
             if searchTitle != nil { return loadRemote(r.target, dir: r.dir, select: nil) }   // leave search results
+            if r.dir == "/", let onPlace { return onPlace(r.target.asUser, "/") }   // up to its place: nothing closes
             if r.dir == "/" {   // leave the server
                 Task {
                     guard await Self.confirmLeaving(r.target, path, view.window),
@@ -1576,14 +1595,14 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// Shows `source`'s list in this tab in place of what's there: read first if nothing of it was (a Picker's rows
     /// come along with ⌘↩). Nothing of the folder behind stays on screen or is acted on; ⌫ goes back.
     func showList(_ source: ListSource, content: ListContent? = nil, filter text: String = "", select: String? = nil) {
-        show(ListPanel(source, content: content, filter: text, select: select), back: remote ?? listBack)
+        show(ListPanel(source, content: content, filter: text, select: select))
     }
 
-    /// `l` — a tab's again, or a new one — on the table; `back`: where ⌫ goes (a server folder; nil: the tab's folder).
-    func show(_ l: ListPanel, back: (target: SFTPTarget, dir: String)?) {
+    /// `l` — a tab's again, or a new one — on the table.
+    func show(_ l: ListPanel) {
         if list !== l { leaveList() }
         list = l   // first: its server is in use before the folder's lets it go (`remote = nil` below)
-        listBack = back
+        tabs[tabIndex].place = nil
         loadGen += 1   // a listing on its way doesn't land over it
         connecting = nil
         busyMessage = busyOps.last?.message
@@ -1623,7 +1642,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         l.headerView.removeFromSuperview()
         l.resultView.removeFromSuperview()
         (l.onChange, l.onCursor) = (nil, nil)
-        (list, listBack) = (nil, nil)
+        list = nil
         if !filterField.stringValue.isEmpty { clearFilter(apply: false) }
         loadSort(for: path)
         loadError = nil
@@ -1986,6 +2005,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// (else there's no Git tab).
     func preview(_ p: Peek, tab chosen: QuickTab? = nil) {
         guard quickView != nil else { return }
+        quickTabs.isHidden = false
         peekShown = p
         quickTitle.stringValue = p.name.bidiVisible
         quickTabs.segmentCount = p.inRepo ? 3 : 2
@@ -2013,6 +2033,41 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             gitKeys.isHidden = p.server != nil
         }
     }
+
+    /// Quick View of a list's row next door (`ListPeek`): no tabs, a row isn't a file — its lines as Info shows them,
+    /// or a text read once the cursor rests a moment ("Looking…" till then); a row before it still on its way is dropped.
+    func preview(list title: String, _ peek: ListPeek?) {
+        guard quickView != nil else { return }
+        hidePreview()
+        listPeekFlag?.cancel()
+        quickTitle.stringValue = title.bidiVisible
+        quickTabs.isHidden = true
+        gitBox?.isHidden = true
+        guard case .text(let read)? = peek else {
+            infoView?.isHidden = false
+            if case .rows(let rows)? = peek { infoView?.show(server: rows) } else { infoView?.show(server: []) }
+            return
+        }
+        infoView?.isHidden = true
+        textPeek?.isHidden = false
+        textPeek?.show(Viewer.Painted(text: "Looking…"), numbers: false)
+        let gen = peekGen, flag = CancelFlag()
+        listPeekFlag = flag
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.peekRest))   // passing over rows asks nothing
+            guard let self, gen == peekGen, !flag.isCancelled else { return }
+            let text = await Blocking.run(.userInitiated) { () -> String in
+                do { return try read(flag) } catch { return "Couldn't look: \(error.localizedDescription)" }
+            }
+            guard gen == peekGen, !flag.isCancelled else { return }
+            textPeek?.show(Viewer.Painted(text: text), numbers: false)
+        }
+    }
+    private var listPeekFlag: CancelFlag?
+    /// How long the cursor rests on a list's row before Quick View asks the server about it (ms).
+    static var peekRest = 350
+    var quickTitleShown: String? { quickBox == nil ? nil : quickTitle.stringValue }   // tests
+    var quickTabsShown: Bool { quickBox != nil && !quickTabs.isHidden }   // tests
 
     private func hidePreview() {
         peekGen += 1
@@ -2058,7 +2113,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var sessionTabs: [Session.Tab] {
         tabs.indices.map { i in
             let t = tabs[i], now = i == tabIndex
-            let server = now ? remote ?? parked ?? listBack : t.remote ?? t.parked ?? t.listBack   // a list: the server folder it replaced
+            // A list or a place comes back as its server's place, the cursor on that list's row: nothing asked till ↩.
+            if let l = now ? list : t.list {
+                let row = l.source is PlaceSource ? l.cursor.map { String($0.id.dropFirst("place ".count)) } : l.source.title
+                return Session.Tab(path: now ? path : t.path, cursor: row, server: l.source.target, place: true)
+            }
+            if let pt = t.place { return Session.Tab(path: t.path, cursor: t.cursor, server: pt, place: true) }
+            let server = now ? remote ?? parked : t.remote ?? t.parked
             // The cursor's name; none yet (its listing is on its way): the one it came with.
             return Session.Tab(path: now ? path : t.path, cursor: now && parked == nil ? currentName ?? pendingSelect ?? t.cursor : t.cursor,
                                server: server?.target, root: server?.target.sudo == true, dir: server?.dir)
@@ -2071,7 +2132,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             tabs.insert(Tab(path: path), at: tabIndex + 1)
             tabIndex += 1
             (backStack, forwardStack) = ([], [])
-            return show(ListPanel(l.source, content: l.content, select: l.cursorID), back: listBack)
+            return show(ListPanel(l.source, content: l.content, select: l.cursorID))
         }
         tabs.insert(Tab(path: path, cursor: parked != nil ? tabs[tabIndex].cursor : currentName, remote: remote, parked: parked), at: tabIndex + 1)
         tabIndex += 1
@@ -2133,7 +2194,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         tabs[tabIndex].back = backStack
         tabs[tabIndex].forward = forwardStack
         tabs[tabIndex].remote = remote
-        (tabs[tabIndex].list, tabs[tabIndex].listBack) = (list, listBack)
+        tabs[tabIndex].list = list
         // Marks in an archive or in search results name entries there, not the files of `path`: they aren't kept.
         let real = archive == nil && searchTitle == nil
         tabs[tabIndex].marked = real ? marked : ExactNames()
@@ -2173,7 +2234,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             park(p)
         } else if let l = t.list {
             path = t.path
-            show(l, back: t.listBack)   // as it was left: nothing read
+            show(l)   // as it was left: nothing read
+        } else if let pt = t.place, let onPlace {   // back from a restart: its place, as nothing is asked
+            path = t.path
+            onPlace(pt, t.cursor)
         } else {
             // Off a parked tab or a list: this tab's own at once — switching again before the listing is back saves it, not that one.
             if parked != nil { (parked, path) = (nil, t.path) }
@@ -2193,14 +2257,20 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let isCurrent: Bool
     }
 
-    /// A list too: its server's connection stays while it shows.
+    /// A list too (its server's connection stays while it shows); a place isn't a session (`heldServers` holds it).
     var remoteTabs: [RemoteTab] {
         tabs.enumerated().compactMap { i, t in
-            let l = i == tabIndex ? list : t.list
+            let l = (i == tabIndex ? list : t.list).flatMap { $0.source is PlaceSource ? nil : $0 }
             return ((i == tabIndex ? remote : t.remote) ?? l.map { (target: $0.source.target, dir: $0.source.title) }).map {
                 RemoteTab(id: t.id, target: $0.target, dir: $0.dir, isCurrent: i == tabIndex)
             }
         }
+    }
+
+    /// The servers whose connection this panel keeps, if one is up: its sessions', and a place's — ↩ there needs no
+    /// login again (`AppDelegate.idleServers`).
+    var heldServers: [SFTPTarget] {
+        remoteTabs.map(\.target) + tabs.indices.compactMap { i in ((i == tabIndex ? list : tabs[i].list)?.source as? PlaceSource)?.target }
     }
 
     /// Shows the tab with this id; false if it isn't one of ours.
@@ -2221,7 +2291,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 navigate(to: path, history: .none)
             } else if remote != nil { navigate(to: path, history: .none) }
         } else {
-            (tabs[i].remote, tabs[i].list, tabs[i].listBack) = (nil, nil, nil)
+            (tabs[i].remote, tabs[i].list) = (nil, nil)
             updateTabBar()
             onPathChange?()
             onSessionsChange?()

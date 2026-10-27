@@ -129,10 +129,11 @@ extension AppDelegate {
 
     /// Tunnels… (⌘⇧P): every saved server's tunnels — ↩ turns one on or off, ⌘E edits, ⌘C copies its address, ⌘O opens it
     /// in the browser, ⌘⌫ deletes — then New Tunnel on each server. `newOnly`: just those (New Tunnel… with no server
-    /// at hand).
-    func showTunnels(newOnly: Bool = false) {
+    /// at hand). `server`: that one's alone (its place's Tunnels).
+    func showTunnels(newOnly: Bool = false, of server: SavedServer? = nil) {
         var items: [Picker.Item] = []
-        for st in newOnly ? [] : tunnels.temporaries() {   // ↩ turns one off: it goes
+        let mine = { (s: SavedServer) in server.map { ServerRow.key($0.target) == ServerRow.key(s.target) } ?? true }
+        for st in newOnly ? [] : tunnels.temporaries() where mine(st.server) {   // ↩ turns one off: it goes
             let (t, s) = (st.tunnel, st.server), n = tunnels.connections(t, of: s)
             var actions: [Picker.Item.Action] = [.init(key: Shortcut("cmd+c")!, label: "Copy Address") { [unowned self] in copyAddress(t) }]
             if let url = t.link { actions.append(.init(key: Shortcut("cmd+o")!, label: "Open in Browser") { [unowned self] in openTunnel(t, of: s, url) }) }
@@ -141,7 +142,7 @@ extension AppDelegate {
                                      detail: (st.error != nil ? "failed" : n > 0 ? "listening · \(n) open" : "listening") + " · temporary",
                                      actions: actions, verb: "Turn Off") { [unowned self] in turnOff(t, of: s) })
         }
-        for s in savedServers where !newOnly {
+        for s in savedServers where !newOnly && mine(s) {
             for t in s.tunnels {
                 let st = tunnels.state(t, of: s), n = tunnels.connections(t, of: s)
                 var actions: [Picker.Item.Action] = [.init(key: Shortcut("cmd+e")!, label: "Edit") { [unowned self] in editTunnel(t, of: s) },
@@ -155,9 +156,9 @@ extension AppDelegate {
                 })
             }
         }
-        items += savedServers.map { s in Picker.Item(title: "New Tunnel on “\(s.title)”…", subtitle: s.target.host, verb: "New Tunnel") { [unowned self] in editTunnel(nil, of: s) } }
+        items += savedServers.filter(mine).map { s in Picker.Item(title: "New Tunnel on “\(s.title)”…", subtitle: s.target.host, verb: "New Tunnel") { [unowned self] in editTunnel(nil, of: s) } }
         guard !items.isEmpty else { return active.flash("Tunnels belong to saved servers: save one first (New Server…), or Forward Port… for now") }
-        Picker.show(over: window, placeholder: newOnly ? "Server" : "Filter tunnels", scope: newOnly ? ("New Tunnel", []) : nil, items: items)
+        Picker.show(over: window, placeholder: newOnly ? "Server" : "Filter tunnels", scope: newOnly ? ("New Tunnel", []) : server.map { ($0.title, $0.chips) }, items: items)
     }
 
     /// New Tunnel… (⌘⇧P, Server ▸ Ports & Tunnels): on the saved server the active panel or SSH tab is on; else pick one.
@@ -311,23 +312,43 @@ extension AppDelegate {
     /// One row a port (U2): ":5432 Postgres", its process and where it listens, and "→ localhost:15432" where a tunnel of
     /// the server already goes there. ↩ forwards it, ⌘O and opens it in the browser, ⌘C and copies the address, ⌘S and
     /// saves it as the server's tunnel (U4).
+    /// ⌘↩: the same ports in the other panel.
     func showPorts(_ ports: [ListeningPort], of s: SavedServer) {
+        let source = PortList(self, s, ports: ports)
         Picker.show(over: window, placeholder: "Filter ports", scope: (s.title, Chip.of(s.target)), empty: "Nothing listens on TCP there",
-                    items: portItems(ports, of: s))
+                    items: portItems(ports, of: s), other: { [unowned self] q, id, rows in openInOther(source, query: q, select: id, rows: rows) })
     }
 
+    /// In a panel too: the process and where it listens in columns of their own, and a tunnel going there as ● (`PortList`).
     func portItems(_ ports: [ListeningPort], of s: SavedServer) -> [Picker.Item] {
         ports.map { p -> Picker.Item in
             let to = tunnelTo(p, of: s).flatMap { tunnels.isListening($0.tunnel, of: $0.server) ? $0 : nil }
-            let actions = [("cmd+o", "Open in Browser", PortThen.open), ("cmd+c", "Copy Address", .copy), ("cmd+s", "Save as Tunnel", .save)].map { key, label, then in
+            let keys = [("return", "Forward", PortThen.none), ("cmd+c", "Copy Address", .copy), ("cmd+o", "Open in Browser", .open), ("cmd+s", "Save as Tunnel", .save)]
+            let actions = keys.dropFirst().map { key, label, then in
                 Picker.Item.Action(key: Shortcut(key)!, label: label) { [unowned self] in forward(p, of: s, then) }
             }
-            return Picker.Item(title: ":\(p.port)" + (Tunnel.knownNames[p.port].map { " " + $0 } ?? ""),
-                               subtitle: ([p.process, p.reach].compactMap { $0 }).joined(separator: " · "),
-                               detail: to.map { "→ \($0.tunnel.address)" + ($0.temporary ? " · temporary" : "") } ?? "", actions: actions, verb: "Forward") { [unowned self] in
+            var item = Picker.Item(title: ":\(p.port)" + (Tunnel.knownNames[p.port].map { " " + $0 } ?? ""),
+                                   subtitle: ([p.process, p.reach].compactMap { $0 }).joined(separator: " · "),
+                                   detail: to.map { "→ \($0.tunnel.address)" + ($0.temporary ? " · temporary" : "") } ?? "", actions: [actions[1], actions[0], actions[2]],
+                                   verb: "Forward") { [unowned self] in
                 forward(p, of: s, .none)
             }
+            item.id = ServerRow.key(s.target) + " port \(p.host):\(p.port)"
+            item.cells = ["process": p.process ?? "", "reach": p.reach]
+            item.state = to == nil ? nil : .on
+            // ⌘O and ⌘S have no command in a panel: there they're in the row's menu (⌃↩).
+            item.listActions = { [unowned self] in
+                keys.enumerated().map { i, k in
+                    ListAction(title: k.1, key: Shortcut(k.0), group: i == 0 ? 0 : 1, closes: false, why: nil) { _ in self.forward(p, of: s, k.2); return nil }
+                }
+            }
+            return item
         }
+    }
+
+    /// A tunnel turned on or off: the ports' lists in panels say where they go now.
+    func refreshPortLists() {
+        for p in panels { if let l = p.list, let c = (l.source as? PortList)?.content { l.set(c) } }
     }
 
     enum PortThen { case none, open, copy, save }
@@ -420,4 +441,38 @@ final class LiveField: NSObject, NSTextFieldDelegate {
     private let changed: () -> Void
     init(_ changed: @escaping () -> Void) { self.changed = changed }
     func controlTextDidChange(_ obj: Notification) { changed() }
+}
+
+/// A server's ports as a list in a panel: Forward Port…'s rows; where a tunnel goes is read again as tunnels change.
+@MainActor
+final class PortList: ListSource {
+    unowned let app: AppDelegate
+    let server: SavedServer
+    let title = "Ports"
+    let columns = [ListColumn(title: "Port", field: .title, width: 130), ListColumn(title: "Process", field: .cell("process"), width: 110),
+                   ListColumn(title: "Listens on", field: .cell("reach"), width: 140), ListColumn(title: "Tunnel", field: .detail, width: 150, state: true)]
+    private var ports: [ListeningPort]?
+    var target: SFTPTarget { server.target }
+    var content: ListContent? {
+        ports.map { ListContent(rows: app.portItems($0, of: server), header: "\($0.count) listening", empty: "Nothing listens on TCP there") }
+    }
+
+    init(_ app: AppDelegate, _ server: SavedServer, ports: [ListeningPort]? = nil) {
+        (self.app, self.server, self.ports) = (app, server, ports)
+        if let ports { app.noteCount("ports", on: server.target, ports.count) }
+    }
+
+    func read(_ cancel: CancelFlag) async throws -> ListContent {
+        ports = try await app.lookRead(at: target.asUser, "ports", for: "Forward Port", cancel: cancel) { t, title, env, cancel in
+            try ListeningPorts.read(on: t, server: title, env: env, cancel: cancel)
+        }
+        app.noteCount("ports", on: target, ports?.count ?? 0)
+        return content!
+    }
+
+    /// Who listens, and where to: its process, its addresses, a tunnel of this server going there.
+    func peek(_ row: Picker.Item) -> ListPeek? {
+        .rows([("Port", row.title), ("Process", row.cells["process"].flatMap { $0.isEmpty ? nil : $0 } ?? "not said (another user's)"),
+               ("Listens on", row.cells["reach"] ?? ""), ("Tunnel", row.detail.isEmpty ? "none — ↩ Forward" : row.detail)])
+    }
 }

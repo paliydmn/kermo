@@ -16,6 +16,22 @@ import DFMCore
     var content: ListContent? { get }
     /// Reads it again: a locked server asks first, then the login if one is due. ⎋ sets `cancel`.
     func read(_ cancel: CancelFlag) async throws -> ListContent
+    /// Quick View next door (⌃Q) of the row under the cursor; nil: nothing more than the row says.
+    func peek(_ row: Picker.Item) -> ListPeek?
+    /// Its rows stay in their order (a place's); else what failed comes first.
+    var keepsOrder: Bool { get }
+}
+
+extension ListSource {
+    func peek(_ row: Picker.Item) -> ListPeek? { nil }
+    var keepsOrder: Bool { false }
+}
+
+/// What Quick View shows of a list's row: lines as Info shows them, or a text read off the main thread once the cursor
+/// rests on the row — passing over rows asks nothing (a service's `systemctl status`).
+enum ListPeek {
+    case rows([(String, String)])
+    case text(@Sendable (CancelFlag) throws -> String)
 }
 
 /// A column: its header, and which of a row's texts it shows. `state`: the row's mark before it (a shape, not only a
@@ -261,7 +277,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
                 let c = x.localizedStandardCompare(y)
                 return c == .orderedSame ? a.offset < b.offset : o.ascending == (c == .orderedAscending)
             }.map(\.element)
-        } else {
+        } else if !source.keepsOrder {
             list = Self.problemsFirst(list)
         }
         shown = list
@@ -481,7 +497,7 @@ extension AppDelegate {
     /// What runs on a list besides: going elsewhere, tabs, panels, the view, the app — as on a parked tab. A file's
     /// commands don't: there's no file.
     static func runsInList(_ id: String) -> Bool {
-        listOwn.contains(id) || id.hasPrefix("panel.focus") || ["panel.switch", "panel.add", "panel.close", "admin.auditLog"].contains(id)
+        listOwn.contains(id) || id.hasPrefix("panel.focus") || ["panel.switch", "panel.add", "panel.close", "admin.auditLog", "admin.rootPanel", "admin.userPanel"].contains(id)
             || !listRefuses.contains(id) && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term"].contains(String(id.prefix { $0 != "." }))
     }
     static let listRefuses: Set<String> = ["go.tree", "go.linktarget", "go.bookmark", "go.path", "view.dirsizes", "view.filterPresets", "view.gitOnly",
@@ -532,6 +548,10 @@ extension AppDelegate {
         func own(_ id: String, _ label: String, _ key: String) -> KeySlot {
             KeySlot(key: commands.first { $0.id == id }?.keys.first?.display ?? key, label: label, id: "list:" + id)
         }
+        if l.source is PlaceSource {   // places aren't marked; its server's shell and its files as root are a key away
+            return slots + [own("view.terminal", "SSH Here", "⌃O"), own("admin.rootPanel", "As Root", "⌃⌘R"), own("view.filter", "Filter", "/"),
+                            own("cmdline.insert", "Actions", "⌃↩")]
+        }
         return slots + [own("mark.toggle", "Mark", "Space"), own("view.filter", "Filter", "/"), own("cmdline.insert", "Actions", "⌃↩")]
     }
 
@@ -552,7 +572,8 @@ extension AppDelegate {
             if let group, group != a.group { menu.addItem(.separator()) }
             group = a.group
             let item = MenuAction.item(a.title) { [unowned self] in runList(a, in: l) }
-            if let k = a.panelKey, !k.flags.isEmpty { (item.keyEquivalent, item.keyEquivalentModifierMask) = (k.menuKey, k.flags) }   // not ↩, F8: the open menu's
+            // Its key where the panel takes it (not ↩, F8: the open menu's; not ⌘O: no command has it here).
+            if let k = a.panelKey, !k.flags.isEmpty, reachesList(k) { (item.keyEquivalent, item.keyEquivalentModifierMask) = (k.menuKey, k.flags) }
             if a.dangerous { item.attributedTitle = NSAttributedString(string: a.title, attributes: [.foregroundColor: Palette.fail]) }
             item.isEnabled = a.why == nil
             item.toolTip = a.why

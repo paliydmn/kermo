@@ -25,6 +25,10 @@ import Testing
         content = rows.map { ListContent(rows: $0, header: header, empty: empty) }
     }
 
+    /// Quick View of a row: none unless a test says.
+    var peeks: (Picker.Item) -> ListPeek? = { _ in nil }
+    func peek(_ row: Picker.Item) -> ListPeek? { peeks(row) }
+
     func read(_ cancel: CancelFlag) async throws -> ListContent {
         reads += 1
         guard let next else { throw JobErrorMessage("read, but nothing may be") }
@@ -163,8 +167,7 @@ import Testing
     p.switchTab(by: 1)
     p.switchTab(by: 1)
     #expect(p.list?.cursor?.title == "nginx" && s.reads == 0)
-    let back = p.sessionTabs
-    #expect(back.allSatisfy { $0.server == nil }, "a list came over a folder of this Mac: a restart brings that back")
+    #expect(p.sessionTabs.allSatisfy { $0.server == s.target && $0.place == true && $0.cursor == "Services" }, "a restart brings its server's place, on its row")
 }
 
 extension ServerLockTests {
@@ -180,7 +183,10 @@ extension ServerLockTests {
         app.panels = [a, b]
         app.wireKeyBar()
         app.window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 600), styleMask: [.titled], backing: .buffered, defer: true)
-        app.window.contentView = NSStackView(views: [a.view, b.view])
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 1000, height: 600))
+        app.window.contentView = host
+        for (i, p) in [a, b].enumerated() { p.view.frame = NSRect(x: CGFloat(i) * 500, y: 0, width: 500, height: 600); host.addSubview(p.view) }
+        host.layoutSubtreeIfNeeded()
         [a, b].forEach(app.wire)
         return (app, a, b, {
             Picker.dismiss()
@@ -386,6 +392,16 @@ extension ServerLockTests {
         #expect(a.list?.resultLines.count == 1 && a.list?.resultLines.first?.contains("web: the restart failed on localhost") == true, "a failure stays")
         func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? NSButton).map { [$0] } ?? buttons($0) } }
         #expect(buttons(try #require(a.list?.resultView)).map(\.title).contains("Output…"))
+
+        // Quick View of a service: its `systemctl status` over the connection the list holds; none up: it says so.
+        let web = try #require(a.list?.shown.first { $0.title == "web" }), was = AppDelegate.connected
+        defer { AppDelegate.connected = was }
+        AppDelegate.connected = { _ in false }   // a master to localhost another test left up: not this one's
+        guard case .rows(let lines)? = source.peek(web) else { Issue.record("not connected: lines, no read"); return }
+        #expect(lines.first?.1 == "Not connected — Refresh reads the list again")
+        AppDelegate.connected = { _ in true }
+        guard case .text(let read)? = source.peek(web) else { Issue.record("connected: its status"); return }
+        #expect(try !read(CancelFlag()).isEmpty, "what systemctl status said, or why it couldn't")
     }
 
     /// A panel showing a list keeps its server's connection: releaseIdleServers leaves it be; Disconnect closes the list
@@ -438,5 +454,173 @@ extension ServerLockTests {
 
         app.showList(s)   // the same rows in a Picker
         #expect(Picker.current?.rows.map(\.title) == ["22/tcp", "8080", "443"] && Picker.current?.emptySaid == "")
+    }
+
+    /// Forward Port…'s ports in a panel: Port · Process · Listens on · Tunnel, ⌘↩ from its Picker, not read again. ↩
+    /// Forward and ⌘C Copy Address are keys there; ⌘O and ⌘S have no command in a panel, so they're in the row's menu.
+    @Test func portsInAPanel() async throws {
+        let (app, a, b, done) = try app()
+        defer { done() }
+        let s = SavedServer(target: SFTPTarget(host: "deploy@db-01.invalid"))
+        let ports = [ListeningPort(port: 5432, addresses: ["localhost"], process: "postgres"), ListeningPort(port: 80, addresses: ["*"], process: "nginx")]
+        app.window.makeFirstResponder(a.table)
+        app.showPorts(ports, of: s)
+        let picker = try #require(Picker.current)
+        #expect(picker.actionBar.contains(KeySlot(key: "⌘↩", label: "Other Panel", id: "other")))
+        _ = picker.panel.performKeyEquivalent(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                                                                     windowNumber: picker.panel.windowNumber, context: nil, characters: "\r",
+                                                                     charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!)
+        await until { b.list != nil }
+        let list = try #require(b.list)
+        #expect(b.table.tableColumns.map(\.title) == ["Port", "Process", "Listens on", "Tunnel"])
+        #expect(list.shown.map(\.title) == [":5432 Postgres", ":80"] && cell(b, 1, 0) == "postgres" && cell(b, 2, 1) == "all addresses")
+        #expect(list.content?.header == "2 listening" && b.headerText == "deploy@db-01.invalid › Ports")
+        #expect(app.focusedKeys?.map(\.label) == ["Forward", "Copy Address", "Mark", "Filter", "Actions"])
+        let menu = NSMenu()
+        app.fillListMenu(menu, list)
+        #expect(menu.items.map(\.title) == ["Forward", "", "Copy Address", "Open in Browser", "Save as Tunnel", "", "Refresh"])
+        #expect(menu.items.map(\.keyEquivalent) == ["", "", "c", "", "", "", ""], "⌘O, ⌘S: not keys in a panel")
+        #expect(app.listRowKeys.contains(Shortcut("cmd+c")!) && !app.listRowKeys.contains(Shortcut("cmd+r")!), "⌘R stays Refresh here")
+    }
+
+    /// Quick View (⌃Q) next door shows the list row under the cursor, as its source says: lines, or a text read once the
+    /// cursor rests — passing over rows asks nothing. No Preview · Info · Git: a row isn't a file.
+    @Test func quickViewShowsTheRowUnderTheCursor() async throws {
+        let (app, a, b, done) = try app()
+        let rest = PanelViewController.peekRest
+        defer { done(); PanelViewController.peekRest = rest }
+        PanelViewController.peekRest = 150
+        let asked = Later<[String]>([])
+        let s = Stub(rows: [row("cron"), row("nginx"), row("worker"), row("redis")])
+        s.peeks = { r in
+            r.title == "redis" ? .rows([("Name", "redis"), ("State", "running")])
+                : .text { [asked] _ in asked.value.append(r.title); return "● \(r.title).service — active (running)" }
+        }
+        a.showList(s)
+        app.window.makeFirstResponder(a.table)
+        app.toggleQuickView()
+        #expect(b.quickTitleShown == "cron" && !b.quickTabsShown)
+        a.list?.moveCursor(to: 1)
+        a.list?.moveCursor(to: 2)   // passing over nginx
+        await until { b.peekedText?.hasPrefix("●") == true }
+        #expect(asked.value == ["worker"] && b.peekedText == "● worker.service — active (running)" && b.quickTitleShown == "worker")
+        a.list?.moveCursor(to: 3)
+        await until { b.infoRows.first?.1 == "redis" }
+        #expect(b.infoRows.map(\.0) == ["Name", "State"] && b.peekedText == nil)
+        app.toggleQuickView()
+    }
+
+    /// A server's place: its rows from the providers, in order; opening it asks the server nothing — no Touch ID on a
+    /// locked one, no read; counts only from a list read before while a connection is up, else "—". ↩ on Services is
+    /// the first row that goes to the server: Touch ID then. ⌫ from the list comes back to the place on its row; ⌫ in
+    /// the place asks as leaving a server's `/` does.
+    @Test func aPlaceAsksTheServerNothing() async throws {
+        let (app, a, _, done) = try app()
+        let was = (AppDelegate.connected, PanelViewController.confirmLeaving, ServerLock.authenticate)
+        defer {
+            done()
+            (AppDelegate.connected, PanelViewController.confirmLeaving, ServerLock.authenticate) = was
+            ServerLock.servers = { [] }
+        }
+        var s = SavedServer(address: "deploy@web-01.invalid")!
+        (s.prod, s.locked, s.startDir) = (true, true, "/var/www/site")
+        app.savedServers = [s]
+        ServerLock.servers = { [s] }
+        var touched = 0
+        ServerLock.authenticate = { _ in touched += 1; return false }
+        AppDelegate.connected = { _ in false }
+        app.window.makeFirstResponder(a.table)
+        app.showPlace(s.target, in: a)
+        #expect(a.isPlace && touched == 0 && app.listCounts.isEmpty)
+        #expect(a.list?.shown.map(\.title) == ["Files", "Home", "/", "Services", "Containers", "Ports", "Tunnels", "File History"])
+        #expect(a.list?.shown.first?.detail == "/var/www/site — start folder" && a.list?.shown[3].subtitle == "—")
+        #expect(a.headerText == "deploy@web-01.invalid › Overview" && a.headerChips == [.prod, .locked] && a.remoteTabs.isEmpty, "not a session")
+        #expect(app.focusedKeys?.map(\.label) == ["Open", "SSH Here", "As Root", "Filter", "Actions"])
+
+        app.noteCount("services", on: s.target, 10, problems: 1)   // a list read before
+        a.readList()
+        await until { a.busyMessage == nil }
+        #expect(a.list?.shown[3].subtitle == "—", "no connection up: not said")
+        AppDelegate.connected = { _ in true }
+        a.readList()
+        await until { a.list?.shown[3].subtitle == "1 failed" }
+        #expect(a.list?.shown[3].detail == "10 units" && a.list?.shown[3].state == .failed && touched == 0)
+
+        a.list?.moveCursor(to: 3)
+        press(a, 36, "\r")   // ↩ Services: the first thing sent — Touch ID first
+        await until { a.emptyShown?.title == "Can't read services" }
+        #expect(touched == 1 && a.emptyShown?.detail == "deploy@web-01.invalid stays locked" && a.headerText == "deploy@web-01.invalid › Services")
+        press(a, 51, "\u{8}")   // ⌫: back to the place, on Services
+        #expect(a.isPlace && a.list?.cursor?.title == "Services")
+        var leaving: SFTPTarget?
+        PanelViewController.confirmLeaving = { t, _, _ in leaving = t; return false }
+        press(a, 51, "\u{8}")
+        await until { leaving != nil }
+        #expect(leaving == s.target && a.isPlace, "asked, and Cancel stays")
+        #expect(a.sessionTabs.first == Session.Tab(path: a.path, cursor: "Services", server: s.target, place: true), "a restart brings the place back")
+    }
+
+    /// ⌫ at a server's `/` goes to its place — nothing asked, nothing closed; the path bar's chip goes there too. One
+    /// click in the sidebar on a server with nothing open: its place; the double-click's second: SSH, as before.
+    @Test func backspaceAtRootTheChipAndOneClickGoToThePlace() async throws {
+        let (app, a, _, done) = try app()
+        let was = PanelViewController.confirmLeaving
+        defer { done(); PanelViewController.confirmLeaving = was }
+        PanelViewController.confirmLeaving = { _, _, _ in Issue.record("asked"); return false }
+        a.loadRemote(.local(), dir: "/", select: nil)
+        await until { a.remote != nil }
+        app.window.makeFirstResponder(a.table)
+        a.goUp()
+        #expect(a.isPlace && a.list?.cursor?.title == "/" && a.list?.source.target == SFTPTarget.local().asUser && a.remote == nil)
+
+        // ↩ on each row goes where it says: its files at / or in the login folder, its tunnels, its file history.
+        func enter(_ title: String) {
+            a.list?.moveCursor(to: a.list?.shown.firstIndex { $0.title == title } ?? -1)
+            press(a, 36, "\r")
+        }
+        enter("/")
+        await until { a.remote?.dir == "/" }
+        #expect(a.remote?.dir == "/" && a.list == nil)
+        a.goUp()
+        enter("Home")
+        await until { a.remote != nil }
+        #expect(a.remote?.dir == FileManager.default.currentDirectoryPath, "the login folder: a stand-in server's is where it runs")
+        app.showPlace(.local(), in: a)
+        enter("Tunnels")
+        #expect(a.statusText.hasPrefix("Tunnels belong to saved servers"), "none saved here: it says how to have one")
+        let history = AppDelegate.historyRoot
+        defer { AppDelegate.historyRoot = history }
+        AppDelegate.historyRoot = try tempDir()   // not this Mac's real one
+        enter("File History")
+        await until { a.statusText.hasPrefix("No file history") }
+        #expect(a.statusText.hasPrefix("No file history for localhost"))
+
+        let sidebar = SidebarController()
+        var placed: ServerRow?, opened: Place?
+        (sidebar.onServerPlace, sidebar.onOpen) = ({ r, _ in placed = r }, { p, _ in opened = p })
+        let row = ServerRow(target: SFTPTarget(host: "deploy@db-01.invalid"), title: "db-01")
+        sidebar.open(place: .server(row), clicks: 1, mods: [])
+        #expect(placed == row && opened == nil)
+        sidebar.open(place: .server(row), clicks: 2, mods: [])
+        #expect(opened == .server(row), "the second click of a double one: as before (SSH)")
+        var busy = row
+        busy.sessions = [ServerSession(id: UUID(), kind: .ssh, target: row.target)]
+        placed = nil
+        sidebar.open(place: .server(busy), clicks: 1, mods: [])
+        #expect(placed == nil && opened == .server(busy), "one with a session open: to it, as before")
+    }
+
+    /// Server ▸ Overview is a menu item and a search hit; on the active panel's server.
+    @Test func overviewIsInTheServerMenuAndSearch() async throws {
+        let (app, a, _, done) = try app()
+        defer { done() }
+        let menu = try #require(NSApp.mainMenu)
+        #expect(menu.items.first { $0.submenu?.title == "Server" }?.submenu?.items.contains { $0.representedObject as? String == "server.overview" } == true)
+        let hits = HeaderSearchModel.results("overview", commands: app.commands, folders: [], files: [], recent: [], cancel: CancelFlag())
+        #expect(hits.flatMap(\.hits).contains { $0.target == .command("server.overview") && $0.subtitle == "Server" })
+        a.showList(Stub(rows: [row("nginx")]))
+        app.window.makeFirstResponder(a.table)
+        app.run("server.overview")
+        #expect(a.isPlace && a.list?.source.target == SFTPTarget(host: "deploy@web-01.invalid"))
     }
 }

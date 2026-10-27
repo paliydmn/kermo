@@ -50,6 +50,7 @@ extension AppDelegate {
         cmd("server.new", "New Server…", [], menu: "Server", group: 1, aliases: "ssh sftp server connection bookmark save") {
             $0.editServer(SavedServer(), title: "New Server")
         },
+        cmd("server.overview", "Overview", [], menu: "Server", group: 2, aliases: "server place home root what runs services containers ports tunnels") { $0.showOverview() },
         cmd("server.services", "Services…", [], menu: "Server", group: 2, aliases: "systemd systemctl service status restart journal journalctl log unit") { $0.showServices() },
         cmd("server.containers", "Containers…", [], menu: "Server", group: 2, aliases: "docker podman container logs restart") { $0.showContainers() },
         cmd("tunnel.list", "Tunnels…", [], menu: "Server/Ports & Tunnels", group: 2, aliases: "port forward localhost database -L") { $0.showTunnels() },
@@ -370,6 +371,9 @@ extension AppDelegate {
     func reopenPanel(asRoot: Bool) {
         let panel = active
         if let p = panel.parked { return panel.connectParked(p.target.asRoot(asRoot)) }   // a restored tab: connects so
+        if let place = panel.list?.source as? PlaceSource {   // its files, from the start folder
+            return openServer(ServerRow(target: place.target, saved: savedServer(at: place.target), title: place.server.title), .sftp, panel: panel, root: asRoot)
+        }
         guard let r = panel.remote else { return panel.flash("Reopen as \(asRoot ? "Root" : "User") is for a server's panel: connect first (⌃⌘K)") }
         guard r.target.sudo != asRoot else { return panel.flash(asRoot ? "This panel is root already — ⌃⇧⌘R reopens it as the user" : "This panel is its user's already — ⌃⌘R reopens it as root") }
         panel.loadRemote(r.target.asRoot(asRoot), dir: r.dir, select: panel.currentName)
@@ -2395,7 +2399,10 @@ extension AppDelegate {
     }
 
     /// Quick View next door, on the active panel's cursor item, on the tab chosen.
-    func showQuickView() { other.preview(active.peek(fetch: PanelViewController.quickTab == .preview)) }
+    func showQuickView() {
+        if let l = active.list { return other.preview(list: l.cursor?.title ?? "", l.cursor.flatMap(l.source.peek)) }   // a row's, its source says what
+        other.preview(active.peek(fetch: PanelViewController.quickTab == .preview))
+    }
 
     /// ⌘I: Quick View next door, on its Info tab (R-48) — a file here or on a server.
     func showInfo() {

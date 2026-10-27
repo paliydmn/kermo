@@ -500,6 +500,8 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
     var onTransfer: ((TransferItems, String, Bool) -> Void)?   // files dropped on a place (what, folder, move)
     var onVolume: ((VolumeRow, VolumeAction) -> Void)?
     var onServer: ((ServerRow, ServerAction, NSEvent.ModifierFlags) -> Void)?   // a server row's buttons
+    /// One click on a server with nothing open: its place — that sends nothing (⌥: in the other panel).
+    var onServerPlace: ((ServerRow, NSEvent.ModifierFlags) -> Void)?
     var serverMenu: ((Place) -> [NSMenuItem])?        // context menu of a server row
     var sectionMenu: ((String) -> [NSMenuItem])?       // context menu of a section header, by section id
     var keyFor: (String) -> String = { _ in "" }       // command id → its first key, for section headers
@@ -630,12 +632,17 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
             if outline.isItemExpanded(item) { folded.remove(s.id) } else { folded.insert(s.id) }
             UserDefaults.standard.set(Array(folded).sorted(), forKey: "sidebarFolded")
         } else if let p = item?.place, p != .tagColors {
-            // A server with nothing open connects on a double-click only: rows shift as Frequent grows, and one stray
-            // click must not open a root shell on the wrong (production) server.
-            if case .server(let r) = p, r.sessions.isEmpty, clicks < 2 { return highlight(highlighted) }
-            onOpen?(p, mods)
+            open(place: p, clicks: clicks, mods: mods)
         }
         highlight(highlighted)   // the panel decides what's selected, after it navigates
+    }
+
+    /// A server with nothing open connects on a double-click only: rows shift as Frequent grows, and one stray click
+    /// must not open a root shell on the wrong (production) server. One click shows its place, which asks the server
+    /// nothing; the double-click's second, SSH as before.
+    func open(place p: Place, clicks: Int, mods: NSEvent.ModifierFlags) {
+        if case .server(let r) = p, r.sessions.isEmpty, clicks < 2 { return onServerPlace?(r, mods) ?? () }
+        onOpen?(p, mods)
     }
 
     // MARK: - Data source
@@ -858,7 +865,7 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         let port = server.target.port.map { ":\($0)" } ?? ""
         let about = ["\(server.target.host)\(port)", locked ? "locked" : nil, prod ? "production" : nil, open.isEmpty ? nil : open + " open"]
         r.toolTip = ([about.compactMap { $0 }.joined(separator: " · ")] + (server.status == .connecting ? ["Connecting…"] : [])
-                     + (failed.map { [$0] } ?? []) + tunnels + ["Click: its session · double-click: SSH · ⋯ or right-click: everything else"])
+                     + (failed.map { [$0] } ?? []) + tunnels + [(open.isEmpty ? "Click: its overview · double-click: SSH" : "Click: its session") + " · ⋯ or right-click: everything else"])
             .joined(separator: "\n")
         return r
     }
