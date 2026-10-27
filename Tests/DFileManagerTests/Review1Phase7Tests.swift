@@ -25,6 +25,10 @@ import Testing
         content = rows.map { ListContent(rows: $0, header: header, empty: empty) }
     }
 
+    /// Quick View of a row: none unless a test says.
+    var peeks: (Picker.Item) -> ListPeek? = { _ in nil }
+    func peek(_ row: Picker.Item) -> ListPeek? { peeks(row) }
+
     func read(_ cancel: CancelFlag) async throws -> ListContent {
         reads += 1
         guard let next else { throw JobErrorMessage("read, but nothing may be") }
@@ -180,7 +184,10 @@ extension ServerLockTests {
         app.panels = [a, b]
         app.wireKeyBar()
         app.window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 600), styleMask: [.titled], backing: .buffered, defer: true)
-        app.window.contentView = NSStackView(views: [a.view, b.view])
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 1000, height: 600))
+        app.window.contentView = host
+        for (i, p) in [a, b].enumerated() { p.view.frame = NSRect(x: CGFloat(i) * 500, y: 0, width: 500, height: 600); host.addSubview(p.view) }
+        host.layoutSubtreeIfNeeded()
         [a, b].forEach(app.wire)
         return (app, a, b, {
             Picker.dismiss()
@@ -386,6 +393,16 @@ extension ServerLockTests {
         #expect(a.list?.resultLines.count == 1 && a.list?.resultLines.first?.contains("web: the restart failed on localhost") == true, "a failure stays")
         func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? NSButton).map { [$0] } ?? buttons($0) } }
         #expect(buttons(try #require(a.list?.resultView)).map(\.title).contains("Output…"))
+
+        // Quick View of a service: its `systemctl status` over the connection the list holds; none up: it says so.
+        let web = try #require(a.list?.shown.first { $0.title == "web" }), was = AppDelegate.connected
+        defer { AppDelegate.connected = was }
+        AppDelegate.connected = { _ in false }   // a master to localhost another test left up: not this one's
+        guard case .rows(let lines)? = source.peek(web) else { Issue.record("not connected: lines, no read"); return }
+        #expect(lines.first?.1 == "Not connected — Refresh reads the list again")
+        AppDelegate.connected = { _ in true }
+        guard case .text(let read)? = source.peek(web) else { Issue.record("connected: its status"); return }
+        #expect(try !read(CancelFlag()).isEmpty, "what systemctl status said, or why it couldn't")
     }
 
     /// A panel showing a list keeps its server's connection: releaseIdleServers leaves it be; Disconnect closes the list
@@ -438,5 +455,59 @@ extension ServerLockTests {
 
         app.showList(s)   // the same rows in a Picker
         #expect(Picker.current?.rows.map(\.title) == ["22/tcp", "8080", "443"] && Picker.current?.emptySaid == "")
+    }
+
+    /// Forward Port…'s ports in a panel: Port · Process · Listens on · Tunnel, ⌘↩ from its Picker, not read again. ↩
+    /// Forward and ⌘C Copy Address are keys there; ⌘O and ⌘S have no command in a panel, so they're in the row's menu.
+    @Test func portsInAPanel() async throws {
+        let (app, a, b, done) = try app()
+        defer { done() }
+        let s = SavedServer(target: SFTPTarget(host: "deploy@db-01.invalid"))
+        let ports = [ListeningPort(port: 5432, addresses: ["localhost"], process: "postgres"), ListeningPort(port: 80, addresses: ["*"], process: "nginx")]
+        app.window.makeFirstResponder(a.table)
+        app.showPorts(ports, of: s)
+        let picker = try #require(Picker.current)
+        #expect(picker.actionBar.contains(KeySlot(key: "⌘↩", label: "Other Panel", id: "other")))
+        _ = picker.panel.performKeyEquivalent(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                                                                     windowNumber: picker.panel.windowNumber, context: nil, characters: "\r",
+                                                                     charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!)
+        await until { b.list != nil }
+        let list = try #require(b.list)
+        #expect(b.table.tableColumns.map(\.title) == ["Port", "Process", "Listens on", "Tunnel"])
+        #expect(list.shown.map(\.title) == [":5432 Postgres", ":80"] && cell(b, 1, 0) == "postgres" && cell(b, 2, 1) == "all addresses")
+        #expect(list.content?.header == "2 listening" && b.headerText == "deploy@db-01.invalid › Ports")
+        #expect(app.focusedKeys?.map(\.label) == ["Forward", "Copy Address", "Mark", "Filter", "Actions"])
+        let menu = NSMenu()
+        app.fillListMenu(menu, list)
+        #expect(menu.items.map(\.title) == ["Forward", "", "Copy Address", "Open in Browser", "Save as Tunnel", "", "Refresh"])
+        #expect(menu.items.map(\.keyEquivalent) == ["", "", "c", "", "", "", ""], "⌘O, ⌘S: not keys in a panel")
+        #expect(app.listRowKeys.contains(Shortcut("cmd+c")!) && !app.listRowKeys.contains(Shortcut("cmd+r")!), "⌘R stays Refresh here")
+    }
+
+    /// Quick View (⌃Q) next door shows the list row under the cursor, as its source says: lines, or a text read once the
+    /// cursor rests — passing over rows asks nothing. No Preview · Info · Git: a row isn't a file.
+    @Test func quickViewShowsTheRowUnderTheCursor() async throws {
+        let (app, a, b, done) = try app()
+        let rest = PanelViewController.peekRest
+        defer { done(); PanelViewController.peekRest = rest }
+        PanelViewController.peekRest = 150
+        let asked = Later<[String]>([])
+        let s = Stub(rows: [row("cron"), row("nginx"), row("worker"), row("redis")])
+        s.peeks = { r in
+            r.title == "redis" ? .rows([("Name", "redis"), ("State", "running")])
+                : .text { [asked] _ in asked.value.append(r.title); return "● \(r.title).service — active (running)" }
+        }
+        a.showList(s)
+        app.window.makeFirstResponder(a.table)
+        app.toggleQuickView()
+        #expect(b.quickTitleShown == "cron" && !b.quickTabsShown)
+        a.list?.moveCursor(to: 1)
+        a.list?.moveCursor(to: 2)   // passing over nginx
+        await until { b.peekedText?.hasPrefix("●") == true }
+        #expect(asked.value == ["worker"] && b.peekedText == "● worker.service — active (running)" && b.quickTitleShown == "worker")
+        a.list?.moveCursor(to: 3)
+        await until { b.infoRows.first?.1 == "redis" }
+        #expect(b.infoRows.map(\.0) == ["Name", "State"] && b.peekedText == nil)
+        app.toggleQuickView()
     }
 }

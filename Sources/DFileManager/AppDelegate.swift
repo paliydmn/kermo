@@ -95,7 +95,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             for s in savedServers where s.locked { looked[ServerRow.key(s.target)] = nil }   // a locked server's look ends with the lock
             releaseIdleServers()
         }
-        tunnels.changed = { [unowned self] in refreshSidebar() }
+        tunnels.changed = { [unowned self] in
+            refreshSidebar()
+            refreshPortLists()
+        }
         tunnels.say = { [unowned self] in active.flash($0, error: $1) }
         // Back from a locked screen or sleep: the tunnels that went off with it are named once (`relock`).
         let back: @Sendable (Notification) -> Void = { _ in

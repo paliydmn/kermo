@@ -361,6 +361,10 @@ extension AppDelegate {
         return text
     }
 
+    /// Whether `t`'s server has a connection up now (its ssh master): Quick View and a place's counts ride it, never
+    /// log in. Tests: a stand-in.
+    nonisolated(unsafe) static var connected: @MainActor (SFTPTarget) -> Bool = { t in SFTP.masterTargets.contains { ServerRow.key($0) == ServerRow.key(t) } }
+
     /// Tests: in place of the server's `systemctl show` (`wait`: a second first) and `docker inspect`.
     nonisolated(unsafe) static var unitState: @Sendable (ServiceUnit, SFTPTarget, Bool, [String: String], CancelFlag) throws -> Services.UnitState = {
         try Services.state($0, on: $1, wait: $2, env: $3, cancel: $4)
@@ -476,18 +480,31 @@ final class ServiceList: ListSource {
     let columns = [ListColumn(title: "Unit", field: .title, width: 170), ListColumn(title: "State", field: .subtitle, width: 130, state: true),
                    ListColumn(title: "Boot", field: .cell("boot"), width: 70), ListColumn(title: "Description", field: .cell("description"), width: 160)]
     private(set) var content: ListContent?
+    private var units: [ServiceUnit] = []
 
     init(_ app: AppDelegate, _ server: SavedServer, _ target: SFTPTarget, units: [ServiceUnit]? = nil) {
         (self.app, self.server, self.target) = (app, server, target)
-        content = units.map { app.serviceContent($0, on: target, of: server) }
+        if let units { (self.units, content) = (units, app.serviceContent(units, on: target, of: server)) }
     }
 
     func read(_ cancel: CancelFlag) async throws -> ListContent {
-        let units = try await app.lookRead(at: target, "services", for: "Services", cancel: cancel) { t, title, env, cancel in
+        units = try await app.lookRead(at: target, "services", for: "Services", cancel: cancel) { t, title, env, cancel in
             try Services.read(on: t.asUser, server: title, env: env, cancel: cancel)
         }
         content = app.serviceContent(units, on: target, of: server)
         return content!
+    }
+
+    /// Its `systemctl status`, as the user, over the connection the list holds — none up: it says so, logs in for nothing.
+    func peek(_ row: Picker.Item) -> ListPeek? {
+        guard let u = units.first(where: { AppDelegate.serviceID($0, on: target) == row.id }) else { return nil }
+        guard AppDelegate.connected(target.asUser) else { return .rows([("Status", "Not connected — Refresh reads the list again")]) }
+        let t = target.asUser, command = Services.status(u), env = SSHAskpass.env
+        return .text { flag in
+            var out = Data()
+            let (_, errors) = try SSHCommand.run(t, command, env: env, cancel: flag) { out += $0 }   // exit 3: inactive — it's said
+            return String(decoding: out, as: UTF8.self) + errors
+        }
     }
 }
 
@@ -513,5 +530,10 @@ final class ContainerList: ListSource {
         }
         content = app.containerContent(found, on: target, of: server)
         return content!
+    }
+
+    /// Its state and image, as the list read them; its log is ↩.
+    func peek(_ row: Picker.Item) -> ListPeek? {
+        .rows([("Name", row.title), ("State", row.subtitle), ("Image", row.cells["image"] ?? row.detail), ("Log", "↩ Live Logs")])
     }
 }

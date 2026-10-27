@@ -45,6 +45,8 @@ Each port is a row: ":5432 Postgres · postgres · localhost only", ":80 · ngin
 
 The tunnel takes the same port on this Mac when it's free, else the next free one, and the status line says so: "Postgres: localhost:5433 → db1:5432 (5432 is taken here) · listening". It never moves afterwards. A port that a saved tunnel already goes to turns that tunnel on instead.
 
+**⌘↩ Other Panel** shows the ports in the other panel instead, not asked again: Port · Process · Listens on · Tunnel, where a port a tunnel goes to has ● and its address, updated as tunnels turn on and off. ↩ forwards there too, ⌘C copies the address; Open in Browser and Save as Tunnel are in the row's menu (⌃↩), since ⌘O and ⌘S are other things in a panel. `/` filters, Space marks, Quick View (⌃Q) next door says who listens and where to, and ⌫ goes back. More in [Services and containers in a panel](servers.md#in-a-panel).
+
 **Temporary tunnels** live until you turn them off, Disconnect, the lock or quitting. They're marked "temporary" in the menus and in **Tunnels…**, show `⇄` on their server's row (the row stays in the sidebar while they listen; its tooltip marks them "temporary"), and their menu has Turn Off, Open in Browser, Copy Address and, once the server is saved, **Save**, which keeps the port open and makes it a tunnel that listens at launch.
 
 ## How it works

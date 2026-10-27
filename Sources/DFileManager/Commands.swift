@@ -2395,7 +2395,10 @@ extension AppDelegate {
     }
 
     /// Quick View next door, on the active panel's cursor item, on the tab chosen.
-    func showQuickView() { other.preview(active.peek(fetch: PanelViewController.quickTab == .preview)) }
+    func showQuickView() {
+        if let l = active.list { return other.preview(list: l.cursor?.title ?? "", l.cursor.flatMap(l.source.peek)) }   // a row's, its source says what
+        other.preview(active.peek(fetch: PanelViewController.quickTab == .preview))
+    }
 
     /// ⌘I: Quick View next door, on its Info tab (R-48) — a file here or on a server.
     func showInfo() {

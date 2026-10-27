@@ -16,6 +16,19 @@ import DFMCore
     var content: ListContent? { get }
     /// Reads it again: a locked server asks first, then the login if one is due. ⎋ sets `cancel`.
     func read(_ cancel: CancelFlag) async throws -> ListContent
+    /// Quick View next door (⌃Q) of the row under the cursor; nil: nothing more than the row says.
+    func peek(_ row: Picker.Item) -> ListPeek?
+}
+
+extension ListSource {
+    func peek(_ row: Picker.Item) -> ListPeek? { nil }
+}
+
+/// What Quick View shows of a list's row: lines as Info shows them, or a text read off the main thread once the cursor
+/// rests on the row — passing over rows asks nothing (a service's `systemctl status`).
+enum ListPeek {
+    case rows([(String, String)])
+    case text(@Sendable (CancelFlag) throws -> String)
 }
 
 /// A column: its header, and which of a row's texts it shows. `state`: the row's mark before it (a shape, not only a
@@ -552,7 +565,8 @@ extension AppDelegate {
             if let group, group != a.group { menu.addItem(.separator()) }
             group = a.group
             let item = MenuAction.item(a.title) { [unowned self] in runList(a, in: l) }
-            if let k = a.panelKey, !k.flags.isEmpty { (item.keyEquivalent, item.keyEquivalentModifierMask) = (k.menuKey, k.flags) }   // not ↩, F8: the open menu's
+            // Its key where the panel takes it (not ↩, F8: the open menu's; not ⌘O: no command has it here).
+            if let k = a.panelKey, !k.flags.isEmpty, reachesList(k) { (item.keyEquivalent, item.keyEquivalentModifierMask) = (k.menuKey, k.flags) }
             if a.dangerous { item.attributedTitle = NSAttributedString(string: a.title, attributes: [.foregroundColor: Palette.fail]) }
             item.isEnabled = a.why == nil
             item.toolTip = a.why

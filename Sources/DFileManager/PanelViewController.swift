@@ -1986,6 +1986,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// (else there's no Git tab).
     func preview(_ p: Peek, tab chosen: QuickTab? = nil) {
         guard quickView != nil else { return }
+        quickTabs.isHidden = false
         peekShown = p
         quickTitle.stringValue = p.name.bidiVisible
         quickTabs.segmentCount = p.inRepo ? 3 : 2
@@ -2013,6 +2014,41 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             gitKeys.isHidden = p.server != nil
         }
     }
+
+    /// Quick View of a list's row next door (`ListPeek`): no tabs, a row isn't a file — its lines as Info shows them,
+    /// or a text read once the cursor rests a moment ("Looking…" till then); a row before it still on its way is dropped.
+    func preview(list title: String, _ peek: ListPeek?) {
+        guard quickView != nil else { return }
+        hidePreview()
+        listPeekFlag?.cancel()
+        quickTitle.stringValue = title.bidiVisible
+        quickTabs.isHidden = true
+        gitBox?.isHidden = true
+        guard case .text(let read)? = peek else {
+            infoView?.isHidden = false
+            if case .rows(let rows)? = peek { infoView?.show(server: rows) } else { infoView?.show(server: []) }
+            return
+        }
+        infoView?.isHidden = true
+        textPeek?.isHidden = false
+        textPeek?.show(Viewer.Painted(text: "Looking…"), numbers: false)
+        let gen = peekGen, flag = CancelFlag()
+        listPeekFlag = flag
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.peekRest))   // passing over rows asks nothing
+            guard let self, gen == peekGen, !flag.isCancelled else { return }
+            let text = await Blocking.run(.userInitiated) { () -> String in
+                do { return try read(flag) } catch { return "Couldn't look: \(error.localizedDescription)" }
+            }
+            guard gen == peekGen, !flag.isCancelled else { return }
+            textPeek?.show(Viewer.Painted(text: text), numbers: false)
+        }
+    }
+    private var listPeekFlag: CancelFlag?
+    /// How long the cursor rests on a list's row before Quick View asks the server about it (ms).
+    static var peekRest = 350
+    var quickTitleShown: String? { quickBox == nil ? nil : quickTitle.stringValue }   // tests
+    var quickTabsShown: Bool { quickBox != nil && !quickTabs.isHidden }   // tests
 
     private func hidePreview() {
         peekGen += 1
