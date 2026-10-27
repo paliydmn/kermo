@@ -20,16 +20,17 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// others' path dimmed. Before the path: the place's chip — `Mac`, a server by its name with its chips, an archive,
     /// search results.
     private func styleHeader() {
-        let place = remote ?? parked
+        let place = remote ?? parked ?? list.map { ($0.source.target, "") }
         let chips = searchTitle == nil && archive == nil ? place.map { Chip.of($0.target) } ?? [] : []
         headerChips = chips
-        if searchTitle != nil { pathBar.showPlace(.search, "", chips: [], scp: nil) }
+        if let l = list { pathBar.showPlace(.server, SavedServer.name(for: l.source.target.asUser), chips: chips, scp: nil, copy: false) }
+        else if searchTitle != nil { pathBar.showPlace(.search, "", chips: [], scp: nil) }
         else if archive != nil { pathBar.showPlace(.archive, "", chips: [], scp: nil) }
         else if let p = place { pathBar.showPlace(.server, SavedServer.name(for: p.target.asUser), chips: chips, scp: Self.scpPath(p.target, p.dir)) }
         else { pathBar.showPlace(.mac, "Mac", chips: [], scp: nil) }
         pathBar.style(text: isActive ? theme.text : theme.hidden, dim: theme.hidden, mono: theme.mono)
         pathBar.line = isActive ? placeTint : nil
-        targetMark.isHidden = !isTarget
+        targetMark.isHidden = !isTarget || list != nil   // a list takes no F5
         if isTarget { targetMark.image = Self.targetMark(placeTint) }
     }
     var targetMarkShown: Bool { !targetMark.isHidden }   // tests
@@ -53,7 +54,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
     /// Where the panel is, by color: production's purple, a root panel's orange (a production one's purple), else the
     /// theme's accent.
-    private var placeTint: NSColor { Chip.tint((remote ?? parked).map { Chip.of($0.target) } ?? []) ?? theme.accent }
+    private var placeTint: NSColor { Chip.tint((remote?.target ?? parked?.target ?? list?.source.target).map { Chip.of($0) } ?? []) ?? theme.accent }
     var headerLine: NSColor? { pathBar.line }   // tests
     var onFocus: (() -> Void)?
     var onCommandKey: ((NSEvent) -> Bool)?
@@ -228,6 +229,22 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var parkedHint: String? {
         parked.map { "Not connected — ↩ Connect to \(SavedServer.name(for: $0.target))".bidiVisible }
     }
+
+    /// A list in place of the folder (`showList`): a server's services, containers, ports — its rows, its columns, its
+    /// keys. Nothing of the folder behind it is on screen, nor acted on.
+    private(set) var list: ListPanel?
+    /// Where ⌫ goes from the list: the server folder it replaced, if it replaced one; else the tab's folder.
+    private var listBack: (target: SFTPTarget, dir: String)?
+    /// What a list says to whatever would act on files: it isn't a folder.
+    var listHint: String? { list.map { "\($0.source.title) isn't a folder — ↩ acts on a row, ⌫ goes back" } }
+    /// The server the panel is on: a server folder's, a list's or a parked tab's.
+    var server: SFTPTarget? { remote?.target ?? list?.source.target ?? parked?.target }
+    /// A list's ↩, ⌘C and the like by the mouse (a double-click, Edit ▸ Copy): what the app runs for the key.
+    var onListKey: ((Shortcut) -> Void)?
+    /// A list row's menu (⌃↩, ⇧F10, a right-click), filled by the app.
+    var onListMenu: ((NSMenu) -> Void)?
+    /// A list's rows or marks changed: the menu's keys, the key bar.
+    var onListChange: (() -> Void)?
     /// A server being connected to (first listing still running), for the sidebar.
     private(set) var connecting: SFTPTarget? { didSet { if connecting != oldValue { onSessionsChange?() } } }
     var onSessionsChange: (() -> Void)?
@@ -248,6 +265,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         var parked: (target: SFTPTarget, dir: String)? = nil   // a server tab restored, not connected
         var marked = ExactNames()
         var filter = ""
+        var list: ListPanel? = nil   // a list shown in the tab (`showList`)
+        var listBack: (target: SFTPTarget, dir: String)? = nil
     }
     private var tabs: [Tab]
     private(set) var tabIndex: Int
@@ -277,9 +296,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     // MARK: - Row mapping & targets
 
-    private var hasParent: Bool { parked == nil && (remote != nil || archive != nil || searchTitle != nil || path != "/") }   // ".." leaves results/archives
-    func item(at row: Int) -> FileItem? {     // nil == ".." (and a parked tab's one row)
-        guard parked == nil else { return nil }
+    private var hasParent: Bool { parked == nil && list == nil && (remote != nil || archive != nil || searchTitle != nil || path != "/") }   // ".." leaves results/archives
+    func item(at row: Int) -> FileItem? {     // nil == ".." (and a parked tab's one row; a list's rows aren't files)
+        guard parked == nil, list == nil else { return nil }
         return hasParent ? (row == 0 ? nil : rows[row - 1]) : rows[row]
     }
     private func row(named name: String) -> Int? {
@@ -301,11 +320,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// The item under the cursor (nil on "..", and inside archives, where nothing is a real file).
     /// The folder shown, when it's a plain one of this Mac's (not a server's, an archive or search results): only
     /// then is `path` what's on screen.
-    var plainFolder: String? { remote == nil && parked == nil && archive == nil && searchTitle == nil ? path : nil }
+    var plainFolder: String? { remote == nil && parked == nil && archive == nil && searchTitle == nil && list == nil ? path : nil }
 
     /// What ⌘I shows: the cursor's file or the folder; inside an archive, the archive itself; nothing on a server.
     var infoURL: URL? {
-        guard remote == nil else { return nil }
+        guard remote == nil, list == nil else { return nil }
         if let a = archive { return URL(fileURLWithPath: a.index.file) }
         return (forFolder ? nil : cursorURL) ?? URL(fileURLWithPath: path)
     }
@@ -452,24 +471,24 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         pathBar.onCopy = { [unowned self] in copyPath(scp: $0) }
         pathBar.onFilter = { [unowned self] in beginFilter() }
         pathBar.validateDrop = { [unowned self] crumb, info in
-            guard archive == nil, parked == nil, searchTitle == nil, let dir = crumb.path, let items = Self.dropped(info) else { return [] }
+            guard archive == nil, parked == nil, searchTitle == nil, list == nil, let dir = crumb.path, let items = Self.dropped(info) else { return [] }
             return Self.dragOperation(info, items: items, to: endpoint, target: dir)
         }
         pathBar.acceptDrop = { [unowned self] crumb, info in   // as a drop on a folder's row
-            guard archive == nil, parked == nil, searchTitle == nil, let dir = crumb.path, let items = Self.dropped(info) else { return false }
+            guard archive == nil, parked == nil, searchTitle == nil, list == nil, let dir = crumb.path, let items = Self.dropped(info) else { return false }
             let operation = Self.dragOperation(info, items: items, to: endpoint, target: dir)
             guard !operation.isEmpty else { return false }
             onTransfer?(items, endpoint, dir, operation == .move)
             return true
         }
-        let header = Self.column([tabBar, pathBar])
+        header = Self.column([tabBar, pathBar])
         spinner.style = .spinning
         spinner.controlSize = .small
         spinner.isHidden = true
         errorIcon.contentTintColor = Palette.fail
         errorIcon.symbolConfiguration = .init(pointSize: 11, weight: .regular)
         errorIcon.isHidden = true
-        let footer = Self.column([filterField, NSStackView(views: [spinner, errorIcon, statusLabel, cancelButton, backButton, statusChips])])
+        footer = Self.column([filterField, NSStackView(views: [spinner, errorIcon, statusLabel, cancelButton, backButton, statusChips])])
         let v = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 700))
         for sub in [header, scroll, footer] as [NSView] {
             sub.translatesAutoresizingMaskIntoConstraints = false
@@ -492,6 +511,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func applyTheme() {
         theme = Theme.current
+        list?.theme = theme
         table.usesAlternatingRowBackgroundColors = theme.background == nil
         table.backgroundColor = theme.background ?? .controlBackgroundColor
         scroll.backgroundColor = table.backgroundColor
@@ -527,6 +547,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         return s
     }
 
+    /// Over the rows and under them: a list's line about itself and how its actions went join these (`show`).
+    private var header: NSStackView!
+    private var footer: NSStackView!
+
     private static let permColumns: Set<String> = ["mode", "owner", "group"]
     /// A server folder's owner and group per name, as its listing printed them (names, or the server's numbers).
     private var remoteOwners: [String: (String, String)] = [:]
@@ -539,6 +563,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// Name keeps a readable width: in a narrow panel (4 panels side by side) Modified makes room first, then Size;
     /// both come back when the panel widens. Dragged widths count, so a widened column gives way sooner.
     private func fitColumns() {
+        if let list { return list.fit(scroll.contentSize.width) }
         let gap = table.intercellSpacing.width
         var room = scroll.contentSize.width - 120 - gap
         // Asked for, the permission columns keep their room before Size and Modified.
@@ -643,6 +668,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 mtimeTolerance = tolerance
                 var select = select
                 if changed {
+                    leaveList()
                     archive = nil
                     remote = nil
                     parked = nil
@@ -729,7 +755,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// Search results and archives stay as they are: re-listing `path` would replace them with the folder.
     func reload(select: String? = nil) {
-        guard archive == nil, searchTitle == nil, parked == nil else { return }
+        guard archive == nil, searchTitle == nil, parked == nil, list == nil else { return }   // a list: ⌘R reads it (`readList`)
         let m = moves
         defer { moves = m }
         if let r = remote { return loadRemote(r.target, dir: r.dir, select: select) }
@@ -749,6 +775,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// `newFolder`: without `name` the cursor starts on the first row instead of keeping its row number.
     private func applyView(select name: String?, newFolder: Bool = false) {
+        guard list == nil else { return }   // its rows are the list's
         if newFolder { flashed = nil }
         let oldRow = table.selectedRow, oldName = currentName
         let cursorShown = NSLocationInRange(oldRow, table.rows(in: table.visibleRect))
@@ -894,6 +921,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         // A message just flashed stays its time through a re-list, a git status or a folder size coming in.
         if let f = flashed, f.until > Date() { statusError = f.error; return say(f.text) }
         if parked != nil { return say("Not connected", chips: [("SFTP", nil)]) }
+        if let l = list {   // the rows, or the marked ones; what the filter left; the connection it's on
+            var parts = [l.marked.isEmpty ? Self.countText(l.shown.count, "rows", 0) : Self.countText(l.marked.count, "marked", 0)]
+            if !l.filter.isEmpty { parts.append("filtered: \(l.shown.count) of \(l.count)") }
+            return say(parts.joined(separator: " · "), lead: l.marked.isEmpty ? 0 : parts[0].count, chips: [("SSH", nil)])
+        }
         var parts: [String] = []
         if !marked.isEmpty { parts.append(Self.countText(marked.count, "marked", bytes(of: rows.filter { marked.contains($0.name) }))) }
         if searchTitle != nil { parts.append("\(searchWhat): " + (searching ? "searching… " : "") + "\(all.count) found") }
@@ -927,7 +959,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// "7 items · 1.2 MB" — or "7 items" with nothing to add up (folders count once measured, on Space): "Zero KB" said nothing.
     static func countText(_ n: Int, _ noun: String, _ bytes: Int64) -> String {
-        "\(n) \(n == 1 && noun == "items" ? "item" : noun)" + (bytes > 0 ? " · " + ByteCountFormatter.short(bytes) : "")
+        "\(n) \(n == 1 && ["items", "rows"].contains(noun) ? String(noun.dropLast()) : noun)" + (bytes > 0 ? " · " + ByteCountFormatter.short(bytes) : "")
     }
 
     // MARK: - The middle, when there's nothing to list (R-26)
@@ -943,7 +975,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var empty: Empty? {
         func slot(_ id: String, _ label: String, _ key: String) -> KeySlot { KeySlot(key: keyFor?(id) ?? key, label: label, id: id) }
         let cancel = KeySlot(key: "⎋", label: "Cancel", id: "cancel")
-        guard quickBox == nil, rows.isEmpty else { return nil }
+        guard quickBox == nil, list?.shown.isEmpty ?? rows.isEmpty else { return nil }
         if let b = busyMessage, let since = busySince, Date().timeIntervalSince(since) >= Self.busyShows {
             let cancellable = b.hasSuffix(" ⎋ cancels")
             return Empty(title: cancellable ? String(b.dropLast(" ⎋ cancels".count)) : b, keys: cancellable ? [cancel] : [])
@@ -951,6 +983,14 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         if let p = parked {
             return Empty(symbol: .server, title: "Not connected", detail: "\(SavedServer.name(for: p.target)):\(p.dir) — nothing is sent until you ask".bidiVisible,
                          keys: [slot("open", "Connect", "↩"), slot("admin.rootPanel", "As Root", "⌃⌘R"), slot("go.up", "This Mac", "⌘↑")])
+        }
+        if let l = list {   // couldn't read it (Retry), nothing there, or what's typed hides every row
+            if let e = loadError {
+                let retry = slot("view.refresh", "Retry", "⌘R")
+                return Empty(symbol: .warn, title: "Can't read \(l.source.title.lowercased())", detail: e, keys: [retry])
+            }
+            guard let c = l.content, busyMessage == nil else { return nil }
+            return c.rows.isEmpty ? Empty(symbol: .server, title: c.empty) : Empty(symbol: .filter, title: "No matches", keys: [slot("view.filter", "Filter", "/")])
         }
         if let e = loadError {
             let refresh = slot("view.refresh", "Refresh", "⌘R")
@@ -1095,6 +1135,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     func cancelBusy() {
         remoteFlag?.cancel()
         busyOps.forEach { $0.flag.cancel() }
+        if let l = list, remoteFlag != nil {   // a list's read: done waiting now (a login or Touch ID may go on by itself)
+            remoteFlag = nil
+            busyMessage = busyOps.last?.message
+            flash("Stopped looking at \(l.source.title.lowercased())")
+        }
     }
 
     @objc private func cancelClicked() { cancelBusy() }
@@ -1309,6 +1354,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func openCursor(intoPackage: Bool) {
         if parked != nil { return connectParked() }
+        if list != nil { return onListKey?(Shortcut("return")!) ?? () }   // a double-click: the row's ↩
         let r = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
         guard r >= 0, r < table.numberOfRows else { return }
         guard let it = item(at: r) else { return goUp() }
@@ -1372,6 +1418,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func goUp() {
         if parked != nil { return navigate(to: path, history: .none) }
+        if list != nil {   // back where it came from: the server folder it replaced, or the tab's folder
+            if let b = listBack { return loadRemote(b.target, dir: b.dir, select: nil) }
+            return navigate(to: path, history: .none)
+        }
         if let r = remote {
             if searchTitle != nil { return loadRemote(r.target, dir: r.dir, select: nil) }   // leave search results
             if r.dir == "/" {   // leave the server
@@ -1504,6 +1554,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         watcher?.cancel()
         watcher = nil
         if searchTitle != nil { searchFlag?.cancel(); searchTitle = nil; searching = false }
+        leaveList()
         archive = nil
         remote = nil
         parked = p
@@ -1518,6 +1569,91 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         showPath()
         applyView(select: nil, newFolder: true)
         updateTabBar()
+    }
+
+    // MARK: - A list in place of the folder (Р7): Services, Containers, Ports
+
+    /// Shows `source`'s list in this tab in place of what's there: read first if nothing of it was (a Picker's rows
+    /// come along with ⌘↩). Nothing of the folder behind stays on screen or is acted on; ⌫ goes back.
+    func showList(_ source: ListSource, content: ListContent? = nil, filter text: String = "", select: String? = nil) {
+        show(ListPanel(source, content: content, filter: text, select: select), back: remote ?? listBack)
+    }
+
+    /// `l` — a tab's again, or a new one — on the table; `back`: where ⌫ goes (a server folder; nil: the tab's folder).
+    func show(_ l: ListPanel, back: (target: SFTPTarget, dir: String)?) {
+        if list !== l { leaveList() }
+        list = l   // first: its server is in use before the folder's lets it go (`remote = nil` below)
+        listBack = back
+        loadGen += 1   // a listing on its way doesn't land over it
+        connecting = nil
+        busyMessage = busyOps.last?.message
+        watcher?.cancel()
+        watcher = nil
+        if searchTitle != nil { searchFlag?.cancel(); searchTitle = nil; searching = false }
+        (archive, remote, parked, loadError) = (nil, nil, nil, nil)
+        all = []
+        (sortedAll, sortedBy, rows) = ([], (sortKey, ascending), [])
+        marked.removeAll()
+        clearSizes()
+        links.removeAll()
+        setGit(nil)
+        filter = nil
+        (filterField.stringValue, filterField.isHidden) = (l.filter, l.filter.isEmpty)
+        l.theme = theme
+        l.onChange = { [unowned self] in updateStatus(); onListChange?() }
+        l.onCursor = { [unowned self] in onCursorChange?() }
+        l.attach(to: table)
+        fitColumns()
+        for (v, stack, at) in [(l.headerView, header!, header.arrangedSubviews.count), (l.resultView, footer!, 0)] where v.superview == nil {
+            stack.insertArrangedSubview(v, at: at)
+            v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -12).isActive = true
+        }
+        showPath()
+        updateTabBar()
+        updateStatus()
+        onSessionsChange?()   // its server's connection is in use
+        onPathChange?()       // the session, the prompt, the key bar
+        if l.content == nil { readList() }
+    }
+
+    /// The list goes, its table's columns back to the files' (before anything else shows in the tab).
+    private func leaveList() {
+        guard let l = list else { return }
+        l.detach()
+        l.headerView.removeFromSuperview()
+        l.resultView.removeFromSuperview()
+        (l.onChange, l.onCursor) = (nil, nil)
+        (list, listBack) = (nil, nil)
+        if !filterField.stringValue.isEmpty { clearFilter(apply: false) }
+        loadSort(for: path)
+        loadError = nil
+        for c in table.tableColumns { (c.headerCell as? PanelHeaderCell)?.fill = theme.background }   // a theme picked meanwhile
+        table.reloadData()
+    }
+
+    /// Reads the list again (⌘R in the menu, Retry, a first show): "Looking at services…" with a spinner — ⎋ stops it.
+    /// What fails says why in the middle with Retry, or, over rows already shown, in the status line.
+    func readList() {
+        guard let l = list else { return }
+        let flag = CancelFlag()
+        remoteFlag?.cancel()
+        remoteFlag = flag
+        loadError = nil
+        busyMessage = "Looking at \(l.source.title.lowercased())… ⎋ cancels"
+        Task { [weak self] in
+            let r: Result<ListContent, Error>
+            do { r = .success(try await l.source.read(flag)) } catch { r = .failure(error) }
+            guard let self, list === l, remoteFlag === flag else { return }
+            remoteFlag = nil
+            busyMessage = busyOps.last?.message
+            switch r {
+            case .success(let c): l.set(c)
+            case .failure(is CancellationError): break
+            case .failure(let e) where l.content == nil: loadError = e.localizedDescription
+            case .failure(let e): flash(e.localizedDescription, error: true)
+            }
+            updateStatus()
+        }
     }
 
     /// A changed host key (R-52, mockup hostkey-dlg): a red line on what it may be, the new key as ssh gave it, where the old
@@ -1553,7 +1689,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         watcher = nil
         archive = nil
         if searchTitle != nil { searchFlag?.cancel(); searchTitle = nil; searching = false }
-        remote = (target, dir)
+        remote = (target, dir)   // before the list goes: its server's connection stays in use
+        leaveList()
         loadError = nil
         all = items
         (sortedAll, sortedBy) = sorted
@@ -1610,6 +1747,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 watcher?.cancel()
                 watcher = nil
                 path = (file as NSString).deletingLastPathComponent
+                leaveList()
                 archive = (index, "")
                 loadError = nil
                 setGit(nil)
@@ -1656,6 +1794,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         watcher = nil
         searchTitle = place.map { "\(what) in \($0)" } ?? what
         parked = nil   // its ".." goes to the tab's folder
+        leaveList()
         loadError = nil
         searchWhat = what
         searching = true
@@ -1691,7 +1830,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// Every git change in this folder and below as one list, like search results. Run it again to refresh.
     func showGitChanges() {
-        guard remote == nil, archive == nil else { return flash("Git Changes works in a local folder") }
+        guard remote == nil, archive == nil, list == nil else { return flash("Git Changes works in a local folder") }
         let dir = path, gen = moves
         guard GitStatus.available else { return flash("Git needs the Command Line Tools (xcode-select --install)") }
         Task { [weak self] in
@@ -1736,6 +1875,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// The cursor's item for Quick View next door. `fetch`: Preview shows it, so a server's file is fetched first.
     func peek(fetch: Bool) -> Peek {
+        if let l = list { return Peek(name: l.cursor?.title ?? "") }   // not the folder behind it
         var p = Peek(inRepo: git != nil, git: currentName.flatMap { git?.marks[$0] })
         if let (target, dir, it) = remoteCursor {
             p.name = it.name
@@ -1918,7 +2058,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var sessionTabs: [Session.Tab] {
         tabs.indices.map { i in
             let t = tabs[i], now = i == tabIndex
-            let server = now ? remote ?? parked : t.remote ?? t.parked
+            let server = now ? remote ?? parked ?? listBack : t.remote ?? t.parked ?? t.listBack   // a list: the server folder it replaced
             // The cursor's name; none yet (its listing is on its way): the one it came with.
             return Session.Tab(path: now ? path : t.path, cursor: now && parked == nil ? currentName ?? pendingSelect ?? t.cursor : t.cursor,
                                server: server?.target, root: server?.target.sudo == true, dir: server?.dir)
@@ -1927,6 +2067,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func newTab() {
         saveTab()
+        if let l = list {   // the same list again, as it is now: no read
+            tabs.insert(Tab(path: path), at: tabIndex + 1)
+            tabIndex += 1
+            (backStack, forwardStack) = ([], [])
+            return show(ListPanel(l.source, content: l.content, select: l.cursorID), back: listBack)
+        }
         tabs.insert(Tab(path: path, cursor: parked != nil ? tabs[tabIndex].cursor : currentName, remote: remote, parked: parked), at: tabIndex + 1)
         tabIndex += 1
         backStack = []
@@ -1948,7 +2094,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             return loadTab()
         }
         saveTab()
-        let wasRemote = tabs[i].remote != nil
+        let wasRemote = tabs[i].remote != nil || tabs[i].list != nil
         tabs.remove(at: i)
         if i < tabIndex { tabIndex -= 1 }
         updateTabBar()
@@ -1987,6 +2133,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         tabs[tabIndex].back = backStack
         tabs[tabIndex].forward = forwardStack
         tabs[tabIndex].remote = remote
+        (tabs[tabIndex].list, tabs[tabIndex].listBack) = (list, listBack)
         // Marks in an archive or in search results name entries there, not the files of `path`: they aren't kept.
         let real = archive == nil && searchTitle == nil
         tabs[tabIndex].marked = real ? marked : ExactNames()
@@ -2010,6 +2157,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         if let r = t.remote {
             // Take the tab's server now, not when the listing arrives: switching again before then must save this tab as it is.
             path = t.path
+            leaveList()
             remote = r
             watcher?.cancel()   // also makes the fallback navigate() below count as a change, clearing `remote`
             watcher = nil
@@ -2023,9 +2171,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         } else if let p = t.parked {
             path = t.path
             park(p)
+        } else if let l = t.list {
+            path = t.path
+            show(l, back: t.listBack)   // as it was left: nothing read
         } else {
-            // Off a parked tab: this tab's own at once — switching again before the listing is back saves it, not that one.
+            // Off a parked tab or a list: this tab's own at once — switching again before the listing is back saves it, not that one.
             if parked != nil { (parked, path) = (nil, t.path) }
+            if list != nil { leaveList(); path = t.path }
             navigate(to: t.path, select: t.cursor, history: .none, keep: keep)
         }
         updateTabBar()
@@ -2041,9 +2193,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         let isCurrent: Bool
     }
 
+    /// A list too: its server's connection stays while it shows.
     var remoteTabs: [RemoteTab] {
         tabs.enumerated().compactMap { i, t in
-            (i == tabIndex ? remote : t.remote).map { RemoteTab(id: t.id, target: $0.target, dir: $0.dir, isCurrent: i == tabIndex) }
+            let l = i == tabIndex ? list : t.list
+            return ((i == tabIndex ? remote : t.remote) ?? l.map { (target: $0.source.target, dir: $0.source.title) }).map {
+                RemoteTab(id: t.id, target: $0.target, dir: $0.dir, isCurrent: i == tabIndex)
+            }
         }
     }
 
@@ -2059,9 +2215,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     func closeRemote(_ id: UUID) {
         guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
         if i == tabIndex {
-            if remote != nil { navigate(to: path, history: .none) }
+            if list != nil {   // at once: its server is being let go
+                leaveList()
+                onSessionsChange?()
+                navigate(to: path, history: .none)
+            } else if remote != nil { navigate(to: path, history: .none) }
         } else {
-            tabs[i].remote = nil
+            (tabs[i].remote, tabs[i].list, tabs[i].listBack) = (nil, nil, nil)
             updateTabBar()
             onPathChange?()
             onSessionsChange?()
@@ -2072,6 +2232,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         tabBar.isHidden = tabs.count < 2
         tabBar.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (i, t) in tabs.enumerated() {
+            if let l = i == tabIndex ? list : t.list {
+                let chips = Chip.of(l.source.target)
+                tabBar.addArrangedSubview(Self.tabButton("\(SavedServer.name(for: l.source.target.asUser)) · \(l.source.title)".bidiVisible, lead: Chip.text(chips),
+                                                         tint: Chip.tint(chips), tip: "\(l.source.title) of \(l.source.target.shown)", index: i, current: i == tabIndex,
+                                                         target: self, action: #selector(tabClicked(_:)), close: #selector(closeTabClicked(_:))))
+                continue
+            }
             if let r = i == tabIndex ? remote ?? parked : t.remote ?? t.parked {
                 let name = r.dir == "/" ? "/" : (r.dir as NSString).lastPathComponent.bidiVisible, chips = Chip.of(r.target)
                 tabBar.addArrangedSubview(Self.tabButton("SFTP · \(r.target.shown) · \(name)", lead: Chip.text(chips), tint: Chip.tint(chips), tip: "\(r.target.shown):\(r.dir)",
@@ -2152,6 +2319,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     // MARK: - Marking
 
     func toggleMark(move: Int) {
+        if let list {
+            flashed = nil
+            return list.toggleMark(move: move)
+        }
         let r = table.selectedRow
         guard r >= 0 else { return }
         if let it = item(at: r) {
@@ -2178,9 +2349,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     @discardableResult
     func setMarks(_ names: Set<String>) -> Int { marked = ExactNames(names).intersection(rows.map(\.name)); refreshMarks(); return marked.count }
 
-    func markAll() { marked = ExactNames(rows.map(\.name)); refreshMarks() }
-    func unmarkAll() { marked.removeAll(); refreshMarks() }
-    func invertMarks() { marked = marked.complement(in: rows.map(\.name)); refreshMarks() }
+    func markAll() { if let list { return list.markAll() }; marked = ExactNames(rows.map(\.name)); refreshMarks() }
+    func unmarkAll() { if let list { return list.unmarkAll() }; marked.removeAll(); refreshMarks() }
+    func invertMarks() { if let list { return list.invertMarks() }; marked = marked.complement(in: rows.map(\.name)); refreshMarks() }
 
     /// "+" / "-" (MC/TC): (un)mark files — not folders — whose names match the mask.
     func mark(matching mask: Mask, _ on: Bool) {
@@ -2199,6 +2370,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// ⌘-click toggles one row, ⇧-click marks the range from the cursor.
     private func markClick(_ row: Int, _ mods: NSEvent.ModifierFlags) {
+        if let list { return list.markClick(row, mods) }
         if mods.contains(.shift) {
             let from = max(table.selectedRow, 0)
             for r in min(from, row)...max(from, row) {
@@ -2314,11 +2486,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// The header: search results' title, "archive/inner", "host:/dir" on a server ("root@host:/dir" on a root panel), else the
     /// local folder — after a symbol of the place and its chips (`styleHeader`). Also what ⎋ in the path field brings back.
     func showPath() {
-        headerText = if let t = searchTitle { t }
+        headerText = if let l = list { "\(l.source.target.shown) › \(l.source.title)" }
+            else if let t = searchTitle { t }
             else if let a = archive { (a.index.file as NSString).abbreviatingWithTildeInPath + (a.inner.isEmpty ? "" : "/" + a.inner) }
             else if let r = remote ?? parked { "\(r.target.shown):\(r.dir)" }
             else { (path as NSString).abbreviatingWithTildeInPath }
-        pathBar.crumbs = if let t = searchTitle { [PathBar.Crumb(title: t, path: nil)] }
+        pathBar.crumbs = if let l = list { [PathBar.Crumb(title: l.source.title, path: nil)] }   // after the server's chip
+            else if let t = searchTitle { [PathBar.Crumb(title: t, path: nil)] }
             else if let a = archive {   // the archive is its root; the folders inside it after
                 [PathBar.Crumb(title: (a.index.file as NSString).lastPathComponent, path: "")] + Self.crumbs(a.inner, inside: true)
             } else if let p = parked { Self.crumbs(p.dir).map { PathBar.Crumb(title: $0.title, path: nil) } }   // nothing sent till ↩
@@ -2369,6 +2543,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     func beginPathEditing() {
+        guard list == nil else { return }   // a list has no path to type: its chip goes to the server
         completions = nil
         onFocus?()
         pathBar.editing = true
@@ -2384,7 +2559,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     /// A filter kept after ↩ is a chip at the path bar's right end; while it's typed, the field says it.
-    private func showFilterChip() { pathBar.filter = filter != nil && !filterFocused ? filterField.stringValue : nil }
+    private func showFilterChip() { pathBar.filter = filtering && !filterFocused ? filterField.stringValue : nil }
+    /// A filter is on: the folder's mask, or what a list's rows are filtered by.
+    private var filtering: Bool { filter != nil || list.map { !$0.filter.isEmpty } == true }
 
     /// Applies a filter as if typed and confirmed (Filter Presets).
     func applyFilter(_ text: String) {
@@ -2406,6 +2583,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         filterField.stringValue = ""
         filterField.isHidden = true
         filter = nil
+        list?.filter("")
         showFilterChip()
         if apply { applyView(select: currentName) }
     }
@@ -2414,6 +2592,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func controlTextDidChange(_ obj: Notification) {
         guard obj.object as? NSTextField === filterField else { return }
+        if let list { return list.filter(filterField.stringValue) }   // its rows by title, subtitle, detail
         filter = filterField.stringValue.isEmpty ? nil : Mask(filter: filterField.stringValue)
         applyView(select: currentName)
     }
@@ -2422,7 +2601,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         if obj.object as? NSTextField === pathField {
             completing?.cancel()
             showPath()   // the crumbs back
-        } else if filter == nil {
+        } else if !filtering {
             filterField.isHidden = true
         } else {
             showFilterChip()
@@ -2440,7 +2619,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     func filterKey(_ id: String) {
         switch id {
         case "filter.keep":
-            Self.rememberFilter(filterField.stringValue)
+            if list == nil { Self.rememberFilter(filterField.stringValue) }   // Filter Presets' recent: masks of files
             confirmFilter()
         case "filter.list": confirmFilter()
         case "filter.clear":
@@ -2662,6 +2841,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     // MARK: - Clipboard (Edit ▸ Copy / Paste act on files when the panel has focus)
 
     @objc func copy(_ sender: Any?) {
+        if list != nil { return onListKey?(Shortcut("cmd+c")!) ?? () }   // the row's ⌘C: its name, its address
         guard let items = transferItems else { return NSSound.beep() }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.writeObjects(items.pasteboardWriters)
@@ -2669,6 +2849,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     @objc func paste(_ sender: Any?) {
         guard archive == nil else { return flash("Archives are read-only here") }
+        if let listHint { return flash(listHint) }
         if let parkedHint { return flash(parkedHint) }
         guard let items = TransferItems(NSPasteboard.general) else { return NSSound.beep() }
         onTransfer?(items, endpoint, currentDir, false)
@@ -2702,6 +2883,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         }
         let r = menuRow ?? table.clickedRow
         onFocus?()   // the menu's commands act on the active panel: make it this one
+        if let list {   // a row's actions, as ⌃↩; a click elsewhere than the cursor's row moves it there first
+            if menuRow == nil, list.shown.indices.contains(r), !list.marked.contains(list.shown[r].id) {   // as Finder, as files
+                if !list.marked.isEmpty { list.unmarkAll() }
+                list.moveCursor(to: r)
+            }
+            return onListMenu?(menu) ?? ()
+        }
         // Like Finder: a click outside the marked set acts on the clicked item alone, never on marks elsewhere. The
         // keyboard's acts as the F-keys do: on the marks, or the cursor's.
         if menuRow == nil, r >= 0, let it = item(at: r), !marked.contains(it.name) {

@@ -6,6 +6,7 @@ struct KeySlot: Equatable {
     let key: String
     let label: String
     let id: String?
+    var danger = false   // can't be undone: its word in red (a list's Stop…)
 }
 
 /// Command registry → key bar layers, one per modifier combination (holding ⌘ shows every ⌘ key).
@@ -286,7 +287,7 @@ final class KeyBarView: NSView {
         let target = list == nil && s.id.map(KeyBarModel.targeted.contains) == true ? target : nil
         let t = NSMutableAttributedString(attributedString: s.key.isEmpty ? NSAttributedString() : KeyCap.text(s.key, font: font))   // a hint without a key: words only
         if !s.label.isEmpty {
-            let color = list == nil && server && s.id == "file.trash" ? Palette.fail : s.id == nil ? .secondaryLabelColor : .labelColor   // gone for good
+            let color = s.danger || list == nil && server && s.id == "file.trash" ? Palette.fail : s.id == nil ? .secondaryLabelColor : .labelColor   // gone for good
             t.append(NSAttributedString(string: (s.key.isEmpty ? "" : " ") + s.label, attributes: [.foregroundColor: color, .font: font]))
         }
         if let target {
