@@ -675,12 +675,11 @@ extension AppDelegate {
         KeyHelp.show(over: window, commands: [], fixed: [(l.source.title, rows), ("List", own)])
     }
 
-    /// `:` in a list: its server's overview as a picker — type a list's name, ↩ shows it here.
+    /// `:` in a list: the search, on its server's place — type a list's name, ↩ shows it here, ⇥ goes into it.
     func goToList() {
         guard let l = active.list else { return }
         let s = savedServer(at: l.source.target) ?? SavedServer(target: l.source.target)
-        let place = PlaceSource(self, s, l.source.target.asUser)
-        Picker.show(over: window, placeholder: "Go to", scope: (s.title, Chip.of(l.source.target)), items: place.content?.rows ?? [])
+        search.focus(over: window).go(into: PlaceSource(self, s, l.source.target.asUser))
     }
 
     /// ⌘L in a list: the cursor row's log as it goes in the other panel (Quick View), following the cursor; again: back

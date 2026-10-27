@@ -674,6 +674,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func windowDidResize(_ notification: Notification) { applySidebarRule() }
 
     func setUpSearch() {   // internal: tests
+        search.listInOther = { [unowned self] source, q, id, rows in openInOther(source, query: q, select: id, rows: rows) }
         search.results = { [unowned self] q, flag in
             let fav = bookmarks.map { SearchHit(title: Bookmark.title($0), subtitle: ($0 as NSString).abbreviatingWithTildeInPath, detail: "favorite", target: .folder($0)) }
             let freq = frecency.ranked().filter { !bookmarks.contains($0) }.prefix(300).map {
@@ -719,9 +720,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         case .server:
             let chips = server.map { Chip.of($0.target) } ?? []
             it.chips = chips
+            if let r = server { it.into = { [unowned self] in PlaceSource(self, r.saved ?? SavedServer(target: r.target), r.target.asUser) } }
             if case .failed? = server?.status { symbol = (.server, Palette.fail) } else { symbol = (.server, Chip.tint(chips) ?? .secondaryLabelColor) }
         case .place:
             it.chips = place.map { Chip.of($0.server.target) } ?? []
+            it.into = place?.row.into
             symbol = (.list, place?.row.state == .failed ? Palette.fail : .secondaryLabelColor)
         case .file: (symbol, it.verb) = ((.doc, .secondaryLabelColor), "Show")
         case .disk: (symbol, it.cap, it.verb) = ((.search, .secondaryLabelColor), h.detail, "Search")

@@ -32,6 +32,7 @@ Release:
 - **Tunnels in a panel**: a server's overview has its tunnels as a list — on and off, copy, edit, delete, ＋ New Tunnel….
 - In a list: **⌘E** runs on its server (`%f` the row under the cursor), **?** shows its keys, **:** goes to another list of its server by name; a column's sort is kept per server and list, and the overview opens on the list opened there last. **Server ▸ Overview** is ⇧⌘O.
 - **Quick View of a list's row**: ⌃Q next to Services shows the service under the cursor's `systemctl status`, read once the cursor rests, over the connection the list holds; next to Containers or Ports, the row's state, image or who listens.
+- **⇥ in search goes into a server**: its overview, then a list of it — Services, Containers, Ports, Tunnels, read as in a panel — then a row's actions, each with its key; ↩ does it, asking first where it would anyway. Chips before the field say where you are (**web-01 › Services › nginx ›**); ⌫ on an empty field or ⎋ goes back a level; ⌘↩ shows the list in the other panel. A server's every list and action is a few keys away, no menu needed.
 - **Search (⇧⌘P) finds every server**: saved ones, the hosts of `~/.ssh/config` and the ones typed lately, with their PROD, ROOT and locked chips — not only those used lately. ↩ opens one as a double-click on its sidebar row does, ⌘↩ in the other panel. Typed, it finds the rows of saved servers' overviews too (`serv web` → **Services — web-01**), from what's known here: nothing is sent.
 
 ### Changed
@@ -91,6 +92,7 @@ Release:
 
 - Search (⇧⌘P) opens over the panels as the other lists to choose from do: its rows in groups (Recent, Commands, Servers, On Servers, Folders, In This Panel), each with an icon and one key — the menu's, F1 lists the rest — and an action bar along the bottom. The toolbar has a **Search or jump to…** button instead of a field.
 - Search's Recent lists what you choose most and lately, not the last ten; those come in.
+- **:** in a list opens search on its server's overview instead of a list of its own.
 
 ### Removed
 - **Save as Production…** in a recent or `~/.ssh/config` row's menu: the save sheet has the Production switch.

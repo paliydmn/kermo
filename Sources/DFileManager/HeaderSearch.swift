@@ -100,13 +100,16 @@ enum HeaderSearchModel {
 
 /// The search (⌘⇧P, F9, the toolbar's button): the palette — a Picker, narrower, its rows in groups ranked off the
 /// main thread once typing pauses. ↑↓ choose, ↩ runs / opens, ⌘↩ opens a folder, a server's files or its list in the
-/// other panel, ⎋ closes. Empty, it lists what's chosen most and lately; ✕ or ⌘⌫ takes a row out of that.
+/// other panel, ⇥ goes into a server, its lists, a row's actions; ⌫ (on an empty field) and ⎋ come back, ⎋ on top
+/// closes. Empty, it lists what's chosen most and lately; ✕ or ⌘⌫ takes a row out of that.
 @MainActor
 final class HeaderSearch: NSObject {
     let item = NSToolbarItem(itemIdentifier: .init("search"))
     /// The rows for what's typed (`HeaderSearchModel`): the ranking itself runs off the main thread, until the flag
     /// says another query took its place.
     var results: (String, CancelFlag) async -> [Picker.Item] = { _, _ in [] }
+    /// ⌘↩ on a list it went into (⇥): those rows in the other panel, as they are.
+    var listInOther: (@MainActor (ListSource, String, String?, [Picker.Item]) -> Void)?
 
     override init() {
         super.init()
@@ -130,6 +133,7 @@ final class HeaderSearch: NSObject {
     /// The palette over `window`.
     @discardableResult
     func focus(over window: NSWindow) -> Picker {
-        Picker.show(over: window, placeholder: "Search commands, folders, servers, files", items: [], width: 560, results: results)
+        Picker.show(over: window, placeholder: "Search commands, folders, servers, files", items: [], width: 560, results: results,
+                    listInOther: listInOther ?? { _, _, _, _ in })
     }
 }

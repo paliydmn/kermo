@@ -21,6 +21,8 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Action | Keys |
 |---|---|
 | Search commands, servers, folders and files | ⇧⌘P, F9, ⌥9 |
+| In search: go into a server, its list, a row's actions / back a level | ⇥ / ⌫ (empty field), ⎋ |
+| In search: open in the other panel / the row's menu | ⌘↩ / ⌃↩ |
 | Keyboard shortcuts cheat sheet (over a viewer or an editor: its keys) | F1, ⌥1 |
 | Settings | ⌘, |
 | Find a menu command by name | **Help** menu's search field |

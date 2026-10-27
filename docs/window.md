@@ -112,6 +112,8 @@ Press ⇧⌘P (or F9, ⌥9), or click **Search or jump to…** in the toolbar. S
 
 ↑↓ choose, ↩ runs a command or opens the rest: a folder, a server as a double-click on its sidebar row does (its files), an overview's row in the active panel. ⌘↩ opens a folder, a server's files or an overview's row in the other panel. ⎋ closes. The action bar along the bottom says what the keys do on the highlighted row. The last row searches the disk (⌘F), and says so when nothing else matches.
 
+**⇥ goes into** a row with more behind it (⇥ on its right): a server lists its [overview](servers.md#the-server-as-a-place) — nothing is sent for it — then **Services**, **Containers**, **Ports** or **Tunnels** list what they list, read as the list in a panel reads it (Touch ID first on a locked server, "Looking at services…", ⎋ stops it), and a row there lists its actions: its key on the right, why it can't now under one that can't, red what can't be undone. Chips before the field say where you are: **web-01 › Services › nginx ›**, the server's in its color. ↩ does on each row what ↩ does on it in a panel — an action asks first where it would anyway, over the search, and the line under the rows says how it went; a row's keys (⌘R, ⌘L, ⌘C) work without ⇥. ⌘↩ shows the list you're in in the other panel, as it is, without reading it again. ⌫ on an empty field or ⎋ goes back a level, to what you typed there; ⎋ at the top closes.
+
 Empty, it lists what you choose most and lately (**Recent**: each choice counts, older ones fade), then Favorites and servers; ✕ or ⌘⌫ takes a row out of Recent.
 
 ## Pickers

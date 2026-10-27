@@ -32,6 +32,74 @@ import Testing
 /// Apps made here live to the end of the run: a panel's callbacks hold them unowned (phase 7's `keptApps`).
 @MainActor private var keptApps: [AppDelegate] = []
 
+/// A list of made-up rows, its reads counted; a read gives `next` — none: the test fails — or, with `hold`, waits
+/// till it's stopped.
+@MainActor private final class Listed: ListSource {
+    let title: String
+    let target: SFTPTarget
+    let columns = [ListColumn(title: "Name", field: .title, width: 120), ListColumn(title: "State", field: .subtitle, width: 120, state: true)]
+    var content: ListContent?
+    var next: ListContent?
+    var hold = false
+    private(set) var reads = 0, stopped = false
+
+    init(_ title: String, on t: SFTPTarget, rows: [Picker.Item]? = nil, header: String? = nil) {
+        (self.title, target) = (title, t)
+        content = rows.map { ListContent(rows: $0, header: header) }
+    }
+
+    func read(_ cancel: CancelFlag) async throws -> ListContent {
+        reads += 1
+        while hold, !cancel.isCancelled { try? await Task.sleep(for: .milliseconds(10)) }
+        if cancel.isCancelled { stopped = true; throw CancellationError() }
+        guard let next else { throw JobErrorMessage("read, but nothing may be") }
+        content = next
+        return next
+    }
+}
+
+/// A row with a service's actions, each run written down: Status (↩) and Live Logs (⌘L) open windows of their own;
+/// Stop… asks everywhere, red; Restart (⌘R) asks on production. A change asks over whoever shows the row, as a
+/// service's does, then updates it there and says how it went.
+@MainActor private func unit(_ app: AppDelegate, _ title: String, on t: SFTPTarget, state: String = "active · running", mark: StateMark = .on,
+                             ran: Later<[String]>, why: [String: String] = [:], over: Later<[NSWindow?]> = Later([])) -> Picker.Item {
+    let id = "unit " + title
+    var it = Picker.Item(title: title, subtitle: state, verb: "Status") { ran.value.append("Status \(title)") }
+    (it.id, it.state) = (id, mark)
+    it.listActions = { [unowned app] in
+        @MainActor func change(_ name: String, _ key: String?, asks: ListAction.Asks, dangerous: Bool = false) -> ListAction {
+            ListAction(title: name, key: key.flatMap(Shortcut.init), group: 1, closes: false, why: why[name], command: "systemctl \(name) -- \(title)",
+                       runsOn: t, asks: asks, dangerous: dangerous) { asked in
+                Task { @MainActor in
+                    let shown = app.rowLists(id).first
+                    if !asked, asks == .always || asks == .prod && SavedServer.isProd(t) {
+                        over.value.append(shown?.sheetWindow)
+                        var c = Confirm("\(name) \(title)?", on: t, action: name)
+                        c.returnCancels = true
+                        guard await app.confirm(c, on: shown?.sheetWindow) == 0 else { return }
+                    }
+                    ran.value.append("\(name) \(title)")
+                    for l in app.rowLists(id) {
+                        l.update(unit(app, title, on: t, state: "\(name.lowercased())ed", ran: ran, why: why, over: over))
+                        l.said(NSAttributedString(string: "\(name) \(title): done"), about: id, failed: false, output: nil)
+                    }
+                }
+                return nil
+            }
+        }
+        return [ListAction(title: "Status", key: Shortcut("return"), group: 0, closes: true, why: nil) { _ in ran.value.append("Status \(title)"); return nil },
+                ListAction(title: "Live Logs", key: Shortcut("cmd+l"), group: 0, closes: true, why: nil) { _ in ran.value.append("Live Logs \(title)"); return nil },
+                change("Stop…", nil, asks: .always, dangerous: true), change("Restart", "cmd+r", asks: .prod)]
+    }
+    return it
+}
+
+/// A key to the picker's panel, as from the keyboard (⌘↩, ⌘R): its row keys, before the field.
+@MainActor @discardableResult private func key(_ p: Picker, _ code: UInt16, _ chars: String, _ mods: NSEvent.ModifierFlags) -> Bool {
+    p.panel.onKey?(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: mods, timestamp: 0, windowNumber: 0, context: nil,
+                                    characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!) == true
+}
+
 extension ServerLockTests {
     /// Two wired panels in a window, the registry and the menu bar — as the app; the search's history empty.
     @MainActor private func palette() throws -> (AppDelegate, PanelViewController, PanelViewController, () -> Void) {
@@ -181,6 +249,194 @@ extension ServerLockTests {
         #expect(vols.cap == "⇧⌘V" && vols.detail.isEmpty && vols.subtitle == "Go" && vols.verb == "Run")
         let disk = try #require(await app.search.results("zzqx", CancelFlag()).last)
         #expect(disk.title == "Search “zzqx” on disk…" && disk.subtitle == "Nothing matches “zzqx”" && disk.cap == "⌘F" && disk.group.isEmpty)
+    }
+
+    /// Р8: ⇥ on a server goes into its place — the overview's rows, nothing sent: a locked one asks no Touch ID. ⇥ on its
+    /// Services is the first thing that goes there: Touch ID, which says no — it stays locked, said under the rows.
+    /// ⌫ on an empty field and ⎋ go up a level, as left; ⎋ on top closes.
+    @Test func intoAServerAndBack() async throws {
+        let (app, _, _, done) = try palette()
+        let was = (AppDelegate.connected, ServerLock.authenticate)
+        defer { done(); (AppDelegate.connected, ServerLock.authenticate) = was }
+        var web = SavedServer(address: "deploy@web-01.invalid")!
+        (web.name, web.prod, web.locked) = ("web-01", true, true)
+        app.savedServers = [web]
+        ServerLock.servers = { [web] }
+        var touched = 0
+        ServerLock.authenticate = { _ in touched += 1; return false }
+        AppDelegate.connected = { _ in false }
+        let p = app.search.focus(over: app.window)
+        type(p, "web-01")
+        await until { p.highlighted?.title == "web-01" }
+        #expect(p.actionBar.map(\.key) == ["↩", "⇥", "⌘↩", "⎋"], "\(p.actionBar.map(\.key))")
+        press(p, #selector(NSResponder.insertTab(_:)))
+        #expect(p.scopeNames == ["web-01"] && p.rows.map(\.title) == ["Home", "/", "Services", "Containers", "Ports", "Tunnels", "File History"])
+        #expect(touched == 0 && p.actionBar.last?.key == "⎋" && p.actionBar.contains { $0.key == "⌫" })
+        press(p, #selector(NSResponder.insertTab(_:)))   // Home: no list behind it
+        #expect(p.scopeNames == ["web-01"])
+        type(p, "services")
+        press(p, #selector(NSResponder.insertTab(_:)))
+        #expect(p.scopeNames == ["web-01", "Services"])
+        await until { p.said == "web-01 stays locked" }
+        #expect(p.said == "web-01 stays locked" && touched == 1 && Picker.current === p, "asked over the palette, which stays")
+        press(p, #selector(NSResponder.deleteBackward(_:)))   // ⌫: up, on Services, as typed
+        #expect(p.scopeNames == ["web-01"] && p.field.stringValue == "services" && p.highlighted?.title == "Services")
+        press(p, #selector(NSResponder.cancelOperation(_:)))   // ⎋: up
+        #expect(p.scopeNames.isEmpty && p.field.stringValue == "web-01")
+        await until { p.highlighted?.title == "web-01" }
+        #expect(p.highlighted?.title == "web-01")
+        press(p, #selector(NSResponder.cancelOperation(_:)))   // ⎋ on top: closed
+        #expect(Picker.current == nil)
+    }
+
+    /// ⇥ into a list reads it once — "Looking at services…" till then — problems first, the line about it on top; ⎋
+    /// while it reads stops it and goes up. ⌘↩ on a list shows its rows in the other panel as they are: no read.
+    @Test func aListIsReadOnceAndEscStopsIt() async throws {
+        let (app, _, b, done) = try palette()
+        defer { done() }
+        let t = SFTPTarget(host: "deploy@web-01.invalid"), ran = Later<[String]>([])
+        let slow = Listed("Services", on: t)
+        slow.hold = true
+        let p = app.search.focus(over: app.window)
+        p.go(into: slow)
+        #expect(p.emptySaid == "Looking at services…" && p.scopeNames == ["deploy@web-01.invalid › Services"])
+        await until { slow.reads == 1 }
+        press(p, #selector(NSResponder.cancelOperation(_:)))
+        await until { slow.stopped }
+        #expect(slow.stopped && p.scopeNames.isEmpty && Picker.current === p)
+
+        let s = Listed("Services", on: t)
+        s.next = ListContent(rows: [unit(app, "cron", on: t, ran: ran), unit(app, "nginx", on: t, state: "activating", mark: .attention, ran: ran),
+                                    unit(app, "worker", on: t, state: "failed", mark: .failed, ran: ran)], header: "3 units · 1 failed")
+        p.go(into: s)
+        await until { !p.rows.isEmpty }
+        #expect(s.reads == 1 && p.rows.map(\.title) == ["worker", "nginx", "cron"] && p.headerSaid == "3 units · 1 failed")
+        #expect(p.actionBar.map(\.label).starts(with: ["Status", "Into", "Live Logs", "Restart"]), "\(p.actionBar.map(\.label))")
+        type(p, "ngi")
+        #expect(key(p, 36, "\r", .command))   // ⌘↩: the list in the other panel, as typed and highlighted
+        await until { b.list?.source === s }
+        #expect(b.list?.source === s && s.reads == 1 && b.list?.shown.map(\.title) == ["nginx"] && b.list?.cursor?.title == "nginx" && Picker.current == nil)
+    }
+
+    /// ⇥ on a row: its actions — its key on the right, why it can't now under it, Stop… red. ↩ runs one as its list
+    /// does: Restart on production asks over the palette, ↩ there being Cancel — nothing runs; ⌘↩ runs it, the row
+    /// updated on the level above, how it went under the rows. ⌘R works on the list's level too, no ⇥.
+    @Test func aRowsActionsRunAsInItsList() async throws {
+        let (app, _, _, done) = try palette()
+        defer { done(); AppDelegate.answering = nil }
+        var web = SavedServer(address: "deploy@web-01.invalid")!
+        web.prod = true
+        ServerLock.servers = { [web] }
+        let t = web.target, ran = Later<[String]>([]), over = Later<[NSWindow?]>([])
+        let s = Listed("Services", on: t, rows: [unit(app, "nginx", on: t, ran: ran, over: over),
+                                                 unit(app, "cron", on: t, ran: ran, why: ["Restart": "cron is restarting… wait for it"], over: over)])
+        let p = app.search.focus(over: app.window)
+        p.go(into: s)
+        #expect(p.highlighted?.title == "nginx")
+        press(p, #selector(NSResponder.insertTab(_:)))
+        #expect(p.scopeNames == ["deploy@web-01.invalid › Services", "nginx"] && p.rows.map(\.title) == ["Status", "Live Logs", "Stop…", "Restart"])
+        #expect(p.rows.map(\.cap) == ["↩", "⌘L", "", "⌘R"] && p.rows[2].titleColor == Palette.fail && p.rows[3].subtitle == "systemctl Restart -- nginx")
+        var asked: [String] = []
+        AppDelegate.answering = { m, _, d in asked.append(m); return d ?? 0 }   // ↩
+        type(p, "restart")
+        press(p, #selector(NSResponder.insertNewline(_:)))
+        await until { !asked.isEmpty }
+        #expect(asked == ["Restart nginx?"] && ran.value.isEmpty && over.value == [p.window] && Picker.current === p)
+        AppDelegate.answering = { _, _, _ in 0 }   // ⌘↩
+        press(p, #selector(NSResponder.insertNewline(_:)))
+        await until { !ran.value.isEmpty }
+        #expect(ran.value == ["Restart nginx"])
+        await until { p.said == "Restart nginx: done" }
+        press(p, #selector(NSResponder.cancelOperation(_:)))
+        #expect(p.rows.first { $0.title == "nginx" }?.subtitle == "restarted", "updated on the level above")
+
+        type(p, "cron")
+        press(p, #selector(NSResponder.insertTab(_:)))
+        #expect(p.rows.first { $0.title == "Restart" }?.subtitle == "cron is restarting… wait for it" && p.rows.first { $0.title == "Restart" }?.titleColor == .tertiaryLabelColor)
+        type(p, "restart")
+        press(p, #selector(NSResponder.insertNewline(_:)))
+        #expect(p.said == "cron is restarting… wait for it" && ran.value == ["Restart nginx"], "said why, nothing ran")
+        press(p, #selector(NSResponder.deleteBackward(_:)))   // the field isn't empty: a letter goes
+        press(p, #selector(NSResponder.cancelOperation(_:)))
+        type(p, "nginx")
+        #expect(key(p, 15, "r", .command))   // ⌘R on the list's level
+        await until { ran.value.count == 2 }
+        #expect(ran.value == ["Restart nginx", "Restart nginx"])
+        type(p, "")
+        press(p, #selector(NSResponder.insertNewline(_:)))   // ↩ on a row: its own ↩, Status
+        await until { ran.value.count == 3 }
+        #expect(ran.value.last == "Status nginx" && Picker.current == nil)
+    }
+
+    /// Tools PR 2 adds a place provider and a source, the palette as it is: search finds "Deployments (dpl) — web-01";
+    /// ⇥ reads the preset — its line, failed first — ⇥ on a row, its actions: Deploy… red, asking on production.
+    /// An empty preset says its own words.
+    @Test func aToolsPresetWalksThroughUnchanged() async throws {
+        let (app, _, _, done) = try palette()
+        defer { done(); AppDelegate.answering = nil; AppDelegate.placeProviders.removeLast() }
+        var web = SavedServer(address: "deploy@web-01.invalid")!
+        (web.name, web.prod) = ("web-01", true)
+        app.savedServers = [web]
+        ServerLock.servers = { [web] }
+        let ran = Later<[String]>([])
+        func app_(_ title: String, _ state: String, _ mark: StateMark, busy: Bool = false) -> Picker.Item {
+            var it = Picker.Item(title: title, subtitle: state) { ran.value.append("Logs \(title)") }
+            (it.id, it.state, it.busy) = ("dpl " + title, mark, busy)
+            it.listActions = { [unowned app] in
+                [ListAction(title: "Logs", key: Shortcut("return"), group: 0, closes: true, why: nil) { _ in ran.value.append("Logs \(title)"); return nil },
+                 ListAction(title: "Deploy…", key: nil, group: 1, closes: false, why: nil, command: "dpl deploy \(title)", runsOn: web.target, asks: .prod, dangerous: true) { asked in
+                     Task { @MainActor in
+                         var c = Confirm("Deploy \(title)?", on: web.target, action: "Deploy")
+                         c.returnCancels = true
+                         if !asked, await app.confirm(c, on: app.rowLists("dpl " + title).first?.sheetWindow) != 0 { return }
+                         ran.value.append("Deploy \(title)")
+                     }
+                     return nil
+                 }]
+            }
+            return it
+        }
+        let preset = Listed("Deployments (dpl)", on: web.target)
+        preset.next = ListContent(rows: [app_("web", "ok", .on), app_("api", "failed", .failed), app_("worker", "deploying", .attention, busy: true)],
+                                  header: "3 apps · 1 failed", empty: "No apps yet")
+        AppDelegate.placeProviders.append { app, p in
+            [app.placeRow("Deployments (dpl)", p, state: "", about: "dpl", into: { preset })]
+        }
+        let p = app.search.focus(over: app.window)
+        type(p, "deployments")
+        await until { p.highlighted?.title == "Deployments (dpl) — web-01" }
+        #expect(p.highlighted?.group == "On Servers")
+        press(p, #selector(NSResponder.insertTab(_:)))
+        await until { !p.rows.isEmpty }
+        #expect(p.scopeNames == ["web-01 › Deployments (dpl)"] && p.rows.map(\.title) == ["api", "worker", "web"] && p.headerSaid == "3 apps · 1 failed")
+        press(p, #selector(NSResponder.insertTab(_:)))   // api
+        #expect(p.rows.map(\.title) == ["Logs", "Deploy…"] && p.rows[1].titleColor == Palette.fail)
+        var asked: [String] = []
+        AppDelegate.answering = { m, _, d in asked.append(m); return d ?? 0 }
+        type(p, "deploy")
+        press(p, #selector(NSResponder.insertNewline(_:)))
+        await until { !asked.isEmpty }
+        #expect(asked == ["Deploy api?"] && ran.value.isEmpty, "↩ = Cancel: nothing deployed")
+
+        let none = Listed("Deployments (dpl)", on: web.target)
+        none.next = ListContent(rows: [], empty: "No apps yet")
+        p.go(into: none)
+        await until { p.emptySaid == "No apps yet" }
+        #expect(p.emptySaid == "No apps yet")
+    }
+
+    /// `:` in a list: the palette, on its server's place — ⌫ goes up to the search.
+    @Test func colonInAListOpensThePaletteOnItsServer() async throws {
+        let (app, a, _, done) = try palette()
+        defer { done() }
+        let t = SFTPTarget(host: "deploy@db-01.invalid")
+        a.showList(Listed("Services", on: t, rows: []))
+        app.window.makeFirstResponder(a.table)
+        app.goToList()
+        let p = try #require(Picker.current)
+        #expect(p.panel.frame.width == 560 && p.scopeNames == ["deploy@db-01.invalid"] && p.rows.map(\.title).contains("Containers"))
+        press(p, #selector(NSResponder.deleteBackward(_:)))
+        #expect(p.scopeNames.isEmpty && Picker.current === p)
     }
 
     /// D-120: a Picker takes its window's appearance — a dark Kermo theme's — and so do the questions over it.
