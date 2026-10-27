@@ -18,6 +18,7 @@ With three or four panels, F5 and F6 target the panel that was active before thi
 
 Under the tabs, the path bar says where the panel is. First a chip for the place: **Mac**, or a server by its saved name with its chips — PROD for a production server, ROOT for a [root panel](root-panel.md), LOCKED for a server locked with Touch ID — or a box for an archive, a magnifier for search results. Then the path as crumbs: `~ › Projects › site`, on a server `/ › var › www › site`.
 
+- **Click the server's name** at the start to see its [overview](servers.md#the-server-as-a-place), which sends nothing to the server.
 - **Click a crumb** to go there; the cursor lands on the folder you came from. **⌥-click** opens it in the other panel. Drop files on a crumb to copy or move them there, as on a folder.
 - In a narrow panel the middle crumbs give way to **…**; the first never does, and the folder you're in shows last.
 - **Click an empty spot** of the bar (or press ⌘L) to type a path: the bar becomes a field with the plain path, all of it selected. ↩ goes there, ⇥ completes a folder's name (on a server, the server's), ⎋ or a click elsewhere brings the crumbs back. While you type, the key bar shows **↩ Go**, **⇥ Complete**, **⎋ Back to Panel**.
@@ -27,6 +28,8 @@ Under the tabs, the path bar says where the panel is. First a chip for the place
 ### After a restart
 
 Kermo comes back as you left it: each panel's tabs and the one in front, the active panel, each tab's cursor (on the same name; on the first row if that item is gone) and the dividers between the panels. Filters, Back / Forward history and marks start clean.
+
+A server's overview, or a list of what it runs, comes back as its [overview](servers.md#the-server-as-a-place), which sends nothing.
 
 A server tab comes back **not connected**. Its header says where it was (`web1:/etc/nginx`, with a ROOT chip for a root panel), and its middle says **Not connected**, `web1:/etc/nginx — nothing is sent until you ask`, with **↩ Connect**, **⌃⌘R As Root** and **⌘↑ This Mac** to click. Nothing is sent to any server until you ask, production and locked ones included:
 
@@ -127,7 +130,7 @@ Every command is in the menu bar, in groups, with its first shortcut. Switches h
 - **Mark:** marking and masks; Mark Differences, Synchronize Folders…, Compare Files; **Tags ▸**.
 - **View:** Sidebar, Quick View, Terminal, Maximize Terminal, Activity; **Tabs ▸** (with the terminal's splits) and **Panels ▸**; Hidden Files, Permissions & Owner, Quick Filter, Filter Presets…, Calculate Folder Sizes, **Sort By ▸**; Theme… and the terminal's text size; Refresh.
 - **Go:** Back, Forward, Enclosing Folder, Open Inside; Home, Computer Root, Go to Path…, Jump to Folder…, Folder Tree…, Go to Link Target, Volumes…; Bookmark This Folder; Search…, Search Files…, Command Line.
-- **Server:** Connect to Server…, New SSH Session…, New Server…; Services…, Containers…, **Ports & Tunnels ▸** (its commands, then every tunnel); Reopen as Root / as User; Copy SSH Key to Server…, File History…, Run on Servers…; Disconnect, Reconnect SSH Session, Edit SSH Config…, Production Log. They work on the active panel's server, as they do from search.
+- **Server:** Connect to Server…, New SSH Session…, New Server…; Overview, Services…, Containers…, **Ports & Tunnels ▸** (its commands, then every tunnel); Reopen as Root / as User; Copy SSH Key to Server…, File History…, Run on Servers…; Disconnect, Reconnect SSH Session, Edit SSH Config…, Production Log. They work on the active panel's server, as they do from search.
 - **Git:** Switch Branch…, New Branch…, Commit…; Sync, Publish Branch, Pull, Push, Fetch; Changes, Show Only Changes, Diff, Log of File, Blame, Stage, Unstage; Go to Repository Root, Copy Branch Name, Initialize Repository….
 - **Window**, then **Help**: its search field finds any menu item by name (type `services` for **Server ▸ Services…**); Keyboard Shortcuts (F1), Kermo Documentation, Report an Issue….
 

@@ -129,10 +129,11 @@ extension AppDelegate {
 
     /// Tunnels… (⌘⇧P): every saved server's tunnels — ↩ turns one on or off, ⌘E edits, ⌘C copies its address, ⌘O opens it
     /// in the browser, ⌘⌫ deletes — then New Tunnel on each server. `newOnly`: just those (New Tunnel… with no server
-    /// at hand).
-    func showTunnels(newOnly: Bool = false) {
+    /// at hand). `server`: that one's alone (its place's Tunnels).
+    func showTunnels(newOnly: Bool = false, of server: SavedServer? = nil) {
         var items: [Picker.Item] = []
-        for st in newOnly ? [] : tunnels.temporaries() {   // ↩ turns one off: it goes
+        let mine = { (s: SavedServer) in server.map { ServerRow.key($0.target) == ServerRow.key(s.target) } ?? true }
+        for st in newOnly ? [] : tunnels.temporaries() where mine(st.server) {   // ↩ turns one off: it goes
             let (t, s) = (st.tunnel, st.server), n = tunnels.connections(t, of: s)
             var actions: [Picker.Item.Action] = [.init(key: Shortcut("cmd+c")!, label: "Copy Address") { [unowned self] in copyAddress(t) }]
             if let url = t.link { actions.append(.init(key: Shortcut("cmd+o")!, label: "Open in Browser") { [unowned self] in openTunnel(t, of: s, url) }) }
@@ -141,7 +142,7 @@ extension AppDelegate {
                                      detail: (st.error != nil ? "failed" : n > 0 ? "listening · \(n) open" : "listening") + " · temporary",
                                      actions: actions, verb: "Turn Off") { [unowned self] in turnOff(t, of: s) })
         }
-        for s in savedServers where !newOnly {
+        for s in savedServers where !newOnly && mine(s) {
             for t in s.tunnels {
                 let st = tunnels.state(t, of: s), n = tunnels.connections(t, of: s)
                 var actions: [Picker.Item.Action] = [.init(key: Shortcut("cmd+e")!, label: "Edit") { [unowned self] in editTunnel(t, of: s) },
@@ -155,9 +156,9 @@ extension AppDelegate {
                 })
             }
         }
-        items += savedServers.map { s in Picker.Item(title: "New Tunnel on “\(s.title)”…", subtitle: s.target.host, verb: "New Tunnel") { [unowned self] in editTunnel(nil, of: s) } }
+        items += savedServers.filter(mine).map { s in Picker.Item(title: "New Tunnel on “\(s.title)”…", subtitle: s.target.host, verb: "New Tunnel") { [unowned self] in editTunnel(nil, of: s) } }
         guard !items.isEmpty else { return active.flash("Tunnels belong to saved servers: save one first (New Server…), or Forward Port… for now") }
-        Picker.show(over: window, placeholder: newOnly ? "Server" : "Filter tunnels", scope: newOnly ? ("New Tunnel", []) : nil, items: items)
+        Picker.show(over: window, placeholder: newOnly ? "Server" : "Filter tunnels", scope: newOnly ? ("New Tunnel", []) : server.map { ($0.title, $0.chips) }, items: items)
     }
 
     /// New Tunnel… (⌘⇧P, Server ▸ Ports & Tunnels): on the saved server the active panel or SSH tab is on; else pick one.
@@ -458,12 +459,14 @@ final class PortList: ListSource {
 
     init(_ app: AppDelegate, _ server: SavedServer, ports: [ListeningPort]? = nil) {
         (self.app, self.server, self.ports) = (app, server, ports)
+        if let ports { app.noteCount("ports", on: server.target, ports.count) }
     }
 
     func read(_ cancel: CancelFlag) async throws -> ListContent {
         ports = try await app.lookRead(at: target.asUser, "ports", for: "Forward Port", cancel: cancel) { t, title, env, cancel in
             try ListeningPorts.read(on: t, server: title, env: env, cancel: cancel)
         }
+        app.noteCount("ports", on: target, ports?.count ?? 0)
         return content!
     }
 

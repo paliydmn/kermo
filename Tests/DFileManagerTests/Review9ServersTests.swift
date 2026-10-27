@@ -305,7 +305,7 @@ extension ServerLockTests {
         root@db:2222 · locked · production · SSH 2, SFTP 1 open
         Tunnels listening: Postgres, Redis
         Redis: db can't resolve cache
-        Click: its session · double-click: SSH · ⋯ or right-click: everything else
+        Click: its session · ⋯ or right-click: everything else
         """)
     let rowView = HoverRowView()
     rowView.addSubview(view)

@@ -116,6 +116,7 @@ extension AppDelegate {
     /// The units' rows, the line about them, what's said when there are none: a Picker's and a panel's.
     func serviceContent(_ units: [ServiceUnit], on t: SFTPTarget, of s: SavedServer) -> ListContent {
         let failed = units.filter(\.failed).count
+        noteCount("services", on: t, units.count, problems: failed)
         return ListContent(rows: units.map { serviceItem($0, on: t, of: s) },
                            header: "\(units.count) unit\(units.count == 1 ? "" : "s")" + (failed > 0 ? " · \(failed) failed" : ""),
                            empty: "systemd lists no services there")
@@ -408,6 +409,7 @@ extension AppDelegate {
     /// The containers' rows, the line about them, what's said when there are none: a Picker's and a panel's.
     func containerContent(_ found: (tool: String, containers: [ContainerInfo]), on t: SFTPTarget, of s: SavedServer) -> ListContent {
         let n = found.containers.count, running = found.containers.filter { $0.state == "running" }.count
+        noteCount("containers", on: t, n, problems: n - running)
         return ListContent(rows: found.containers.map { containerItem($0, tool: found.tool, on: t, of: s) },
                            header: "\(n) container\(n == 1 ? "" : "s") · \(running) running", empty: "\(found.tool) has no containers there")
     }
@@ -536,4 +538,108 @@ final class ContainerList: ListSource {
     func peek(_ row: Picker.Item) -> ListPeek? {
         .rows([("Name", row.title), ("State", row.subtitle), ("Image", row.cells["image"] ?? row.detail), ("Log", "↩ Live Logs")])
     }
+}
+
+// The server as a place (review 1, Р7): its files, what it runs, its ports and tunnels, its file history — rows that ↩
+// goes into, in a panel. Opening it asks the server nothing; what it counts is what its lists last read.
+extension AppDelegate {
+    /// What a place lists, provider by provider, in this order: its folders, what it runs and its ports and tunnels,
+    /// its file history. Tools add theirs as one more provider.
+    static let placeProviders: [@MainActor (AppDelegate, PlaceSource) -> [Picker.Item]] = [
+        { $0.placeFolders($1) }, { $0.placeLists($1) }, { $0.placeHistory($1) },
+    ]
+
+    /// Server ▸ Overview: the active panel's server's place (or its SSH tab's), else picked.
+    func showOverview() { onServer("Overview of") { [unowned self] in showPlace($0, in: active) } }
+
+    /// `t`'s place in `panel`, the cursor on `select` (a row's title: the list ⌫ came back from). Nothing is sent;
+    /// a row that goes to the server asks for Touch ID first on a locked one, as any look.
+    func showPlace(_ t: SFTPTarget, in panel: PanelViewController, select: String? = nil) {
+        if terminal != nil { showPanels() }   // not at launch: a restored place comes before the terminal
+        let s = savedServer(at: t) ?? SavedServer(target: t.asUser)
+        panel.showList(PlaceSource(self, s, t.asUser), select: select.map { "place " + $0 })
+    }
+
+    /// How many a list of `t`'s counted when it was last read, and how many of them are in trouble (failed, exited).
+    func noteCount(_ what: String, on t: SFTPTarget, _ n: Int, problems: Int = 0) { listCounts[ServerRow.key(t.asUser) + " " + what] = (n, problems) }
+
+    /// A place's row: ↩ goes in (in this panel), its menu has Open in Other Panel too.
+    func placeRow(_ title: String, _ p: PlaceSource, state: String = "", about: String, mark: StateMark? = nil,
+                  open: @escaping @MainActor (PanelViewController) -> Void) -> Picker.Item {
+        var it = Picker.Item(title: title, subtitle: state, detail: about) { [unowned self] in open(active) }
+        it.id = "place " + title
+        it.state = mark
+        it.listActions = { [unowned self] in
+            [ListAction(title: "Open", key: Shortcut("return"), group: 0, closes: false, why: nil) { _ in open(self.active); return nil },
+             ListAction(title: "Open in Other Panel", key: nil, group: 0, closes: false, why: nil) { _ in
+                 let o = self.other
+                 open(o)
+                 self.window.makeFirstResponder(o.table)
+                 return nil
+             }]
+        }
+        return it
+    }
+
+    /// Files (its start folder), Home, `/`: its files in that panel — a locked server asks first, as connecting does.
+    func placeFolders(_ p: PlaceSource) -> [Picker.Item] {
+        let s = p.server, row = ServerRow(target: p.target, saved: savedServer(at: p.target), title: s.title)
+        func files(_ dir: String?) -> @MainActor (PanelViewController) -> Void {
+            { [unowned self] panel in
+                remember(row.address)
+                openSFTP(row.target, dir: dir, title: row.title, panel: panel)   // nil: the login folder
+            }
+        }
+        return (s.startDir.map { [placeRow("Files", p, about: "\($0) — start folder", open: files($0))] } ?? [])
+            + [placeRow("Home", p, about: "the login folder", open: files(nil)), placeRow("/", p, about: "the root folder", open: files("/"))]
+    }
+
+    /// Services, Containers, Ports — each a list in that panel, read as it opens — and Tunnels (its own picker). Their
+    /// counts: as its lists last read them, while a connection is up; else "—" till the row is opened.
+    func placeLists(_ p: PlaceSource) -> [Picker.Item] {
+        let s = p.server, t = p.target, up = Self.connected(t)
+        func count(_ what: String) -> (n: Int, problems: Int)? { up ? listCounts[ServerRow.key(t) + " " + what] : nil }
+        func list(_ make: @escaping @MainActor () -> ListSource) -> @MainActor (PanelViewController) -> Void { { $0.showList(make()) } }
+        let units = count("services"), boxes = count("containers"), ports = count("ports")
+        let on = tunnels.listening(s).map(\.title) + tunnels.temporaries(server: ServerRow.key(s.target)).filter { $0.error == nil }.map(\.tunnel.title)
+        return [
+            placeRow("Services", p, state: units.map { $0.problems > 0 ? "\($0.problems) failed" : "" } ?? "—",
+                     about: units.map { "\($0.n) unit\($0.n == 1 ? "" : "s")" } ?? "what systemd runs", mark: units.flatMap { $0.problems > 0 ? .failed : nil },
+                     open: list { [unowned self] in ServiceList(self, s, t) }),
+            placeRow("Containers", p, state: boxes.map { $0.problems > 0 ? "\($0.problems) not running" : "" } ?? "—",
+                     about: boxes.map { "\($0.n) container\($0.n == 1 ? "" : "s")" } ?? "docker or podman", mark: boxes.flatMap { $0.problems > 0 ? .attention : nil },
+                     open: list { [unowned self] in ContainerList(self, s, t) }),
+            placeRow("Ports", p, state: ports == nil ? "—" : "", about: ports.map { "\($0.n) listening" } ?? "what it listens on",
+                     open: list { [unowned self] in PortList(self, s) }),
+            placeRow("Tunnels", p, state: on.isEmpty ? "none on" : "\(on.count) on", about: on.isEmpty ? "to its ports, from this Mac" : on.joined(separator: ", "),
+                     mark: on.isEmpty ? nil : .on) { [unowned self] _ in showTunnels(of: s) },
+        ]
+    }
+
+    /// File History: the versions of its files kept on this Mac, in that panel.
+    func placeHistory(_ p: PlaceSource) -> [Picker.Item] {
+        [placeRow("File History", p, about: "versions of its files kept on this Mac") { [unowned self] panel in
+            window.makeFirstResponder(panel.table)
+            showFileHistory(p.target)
+        }]
+    }
+}
+
+/// A server's place in a panel (`AppDelegate.showPlace`): its rows from `placeProviders`, read again on Refresh —
+/// from what's known here, never from the server.
+@MainActor
+final class PlaceSource: ListSource {
+    unowned let app: AppDelegate
+    let server: SavedServer
+    let title = "Overview"
+    let keepsOrder = true
+    let columns = [ListColumn(title: "Name", field: .title, width: 140), ListColumn(title: "State", field: .subtitle, width: 120, state: true),
+                   ListColumn(title: "About", field: .detail, width: 200)]
+    /// The server as it was reached (its alias, its key), as its user: what its rows connect to.
+    let target: SFTPTarget
+    var content: ListContent? { ListContent(rows: AppDelegate.placeProviders.flatMap { $0(app, self) }) }
+
+    init(_ app: AppDelegate, _ server: SavedServer, _ target: SFTPTarget) { (self.app, self.server, self.target) = (app, server, target) }
+
+    func read(_ cancel: CancelFlag) async throws -> ListContent { content! }
 }

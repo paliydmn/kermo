@@ -11,6 +11,8 @@ struct Session: Codable, Equatable {
         /// A root panel's: `SFTPTarget` never decodes root, so it's said here — and only ↩ on the tab connects as root.
         var root = false
         var dir: String? = nil   // on `server`
+        /// `server`'s place (a list or the place itself was there): shown again as it is, nothing asked of the server.
+        var place: Bool? = nil
     }
     struct Panel: Codable, Equatable {
         var tabs: [Tab]

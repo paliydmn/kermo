@@ -167,8 +167,7 @@ import Testing
     p.switchTab(by: 1)
     p.switchTab(by: 1)
     #expect(p.list?.cursor?.title == "nginx" && s.reads == 0)
-    let back = p.sessionTabs
-    #expect(back.allSatisfy { $0.server == nil }, "a list came over a folder of this Mac: a restart brings that back")
+    #expect(p.sessionTabs.allSatisfy { $0.server == s.target && $0.place == true && $0.cursor == "Services" }, "a restart brings its server's place, on its row")
 }
 
 extension ServerLockTests {
@@ -509,5 +508,119 @@ extension ServerLockTests {
         await until { b.infoRows.first?.1 == "redis" }
         #expect(b.infoRows.map(\.0) == ["Name", "State"] && b.peekedText == nil)
         app.toggleQuickView()
+    }
+
+    /// A server's place: its rows from the providers, in order; opening it asks the server nothing — no Touch ID on a
+    /// locked one, no read; counts only from a list read before while a connection is up, else "—". ↩ on Services is
+    /// the first row that goes to the server: Touch ID then. ⌫ from the list comes back to the place on its row; ⌫ in
+    /// the place asks as leaving a server's `/` does.
+    @Test func aPlaceAsksTheServerNothing() async throws {
+        let (app, a, _, done) = try app()
+        let was = (AppDelegate.connected, PanelViewController.confirmLeaving, ServerLock.authenticate)
+        defer {
+            done()
+            (AppDelegate.connected, PanelViewController.confirmLeaving, ServerLock.authenticate) = was
+            ServerLock.servers = { [] }
+        }
+        var s = SavedServer(address: "deploy@web-01.invalid")!
+        (s.prod, s.locked, s.startDir) = (true, true, "/var/www/site")
+        app.savedServers = [s]
+        ServerLock.servers = { [s] }
+        var touched = 0
+        ServerLock.authenticate = { _ in touched += 1; return false }
+        AppDelegate.connected = { _ in false }
+        app.window.makeFirstResponder(a.table)
+        app.showPlace(s.target, in: a)
+        #expect(a.isPlace && touched == 0 && app.listCounts.isEmpty)
+        #expect(a.list?.shown.map(\.title) == ["Files", "Home", "/", "Services", "Containers", "Ports", "Tunnels", "File History"])
+        #expect(a.list?.shown.first?.detail == "/var/www/site — start folder" && a.list?.shown[3].subtitle == "—")
+        #expect(a.headerText == "deploy@web-01.invalid › Overview" && a.headerChips == [.prod, .locked] && a.remoteTabs.isEmpty, "not a session")
+        #expect(app.focusedKeys?.map(\.label) == ["Open", "SSH Here", "As Root", "Filter", "Actions"])
+
+        app.noteCount("services", on: s.target, 10, problems: 1)   // a list read before
+        a.readList()
+        await until { a.busyMessage == nil }
+        #expect(a.list?.shown[3].subtitle == "—", "no connection up: not said")
+        AppDelegate.connected = { _ in true }
+        a.readList()
+        await until { a.list?.shown[3].subtitle == "1 failed" }
+        #expect(a.list?.shown[3].detail == "10 units" && a.list?.shown[3].state == .failed && touched == 0)
+
+        a.list?.moveCursor(to: 3)
+        press(a, 36, "\r")   // ↩ Services: the first thing sent — Touch ID first
+        await until { a.emptyShown?.title == "Can't read services" }
+        #expect(touched == 1 && a.emptyShown?.detail == "deploy@web-01.invalid stays locked" && a.headerText == "deploy@web-01.invalid › Services")
+        press(a, 51, "\u{8}")   // ⌫: back to the place, on Services
+        #expect(a.isPlace && a.list?.cursor?.title == "Services")
+        var leaving: SFTPTarget?
+        PanelViewController.confirmLeaving = { t, _, _ in leaving = t; return false }
+        press(a, 51, "\u{8}")
+        await until { leaving != nil }
+        #expect(leaving == s.target && a.isPlace, "asked, and Cancel stays")
+        #expect(a.sessionTabs.first == Session.Tab(path: a.path, cursor: "Services", server: s.target, place: true), "a restart brings the place back")
+    }
+
+    /// ⌫ at a server's `/` goes to its place — nothing asked, nothing closed; the path bar's chip goes there too. One
+    /// click in the sidebar on a server with nothing open: its place; the double-click's second: SSH, as before.
+    @Test func backspaceAtRootTheChipAndOneClickGoToThePlace() async throws {
+        let (app, a, _, done) = try app()
+        let was = PanelViewController.confirmLeaving
+        defer { done(); PanelViewController.confirmLeaving = was }
+        PanelViewController.confirmLeaving = { _, _, _ in Issue.record("asked"); return false }
+        a.loadRemote(.local(), dir: "/", select: nil)
+        await until { a.remote != nil }
+        app.window.makeFirstResponder(a.table)
+        a.goUp()
+        #expect(a.isPlace && a.list?.cursor?.title == "/" && a.list?.source.target == SFTPTarget.local().asUser && a.remote == nil)
+
+        // ↩ on each row goes where it says: its files at / or in the login folder, its tunnels, its file history.
+        func enter(_ title: String) {
+            a.list?.moveCursor(to: a.list?.shown.firstIndex { $0.title == title } ?? -1)
+            press(a, 36, "\r")
+        }
+        enter("/")
+        await until { a.remote?.dir == "/" }
+        #expect(a.remote?.dir == "/" && a.list == nil)
+        a.goUp()
+        enter("Home")
+        await until { a.remote != nil }
+        #expect(a.remote?.dir == FileManager.default.currentDirectoryPath, "the login folder: a stand-in server's is where it runs")
+        app.showPlace(.local(), in: a)
+        enter("Tunnels")
+        #expect(a.statusText.hasPrefix("Tunnels belong to saved servers"), "none saved here: it says how to have one")
+        let history = AppDelegate.historyRoot
+        defer { AppDelegate.historyRoot = history }
+        AppDelegate.historyRoot = try tempDir()   // not this Mac's real one
+        enter("File History")
+        await until { a.statusText.hasPrefix("No file history") }
+        #expect(a.statusText.hasPrefix("No file history for localhost"))
+
+        let sidebar = SidebarController()
+        var placed: ServerRow?, opened: Place?
+        (sidebar.onServerPlace, sidebar.onOpen) = ({ r, _ in placed = r }, { p, _ in opened = p })
+        let row = ServerRow(target: SFTPTarget(host: "deploy@db-01.invalid"), title: "db-01")
+        sidebar.open(place: .server(row), clicks: 1, mods: [])
+        #expect(placed == row && opened == nil)
+        sidebar.open(place: .server(row), clicks: 2, mods: [])
+        #expect(opened == .server(row), "the second click of a double one: as before (SSH)")
+        var busy = row
+        busy.sessions = [ServerSession(id: UUID(), kind: .ssh, target: row.target)]
+        placed = nil
+        sidebar.open(place: .server(busy), clicks: 1, mods: [])
+        #expect(placed == nil && opened == .server(busy), "one with a session open: to it, as before")
+    }
+
+    /// Server ▸ Overview is a menu item and a search hit; on the active panel's server.
+    @Test func overviewIsInTheServerMenuAndSearch() async throws {
+        let (app, a, _, done) = try app()
+        defer { done() }
+        let menu = try #require(NSApp.mainMenu)
+        #expect(menu.items.first { $0.submenu?.title == "Server" }?.submenu?.items.contains { $0.representedObject as? String == "server.overview" } == true)
+        let hits = HeaderSearchModel.results("overview", commands: app.commands, folders: [], files: [], recent: [], cancel: CancelFlag())
+        #expect(hits.flatMap(\.hits).contains { $0.target == .command("server.overview") && $0.subtitle == "Server" })
+        a.showList(Stub(rows: [row("nginx")]))
+        app.window.makeFirstResponder(a.table)
+        app.run("server.overview")
+        #expect(a.isPlace && a.list?.source.target == SFTPTarget(host: "deploy@web-01.invalid"))
     }
 }

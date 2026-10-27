@@ -26,9 +26,12 @@ Release:
 - The Dock icon shows the jobs' progress as a bar, and a red count of jobs that finished with errors you haven't looked at in Activity.
 - **Services and containers in a panel**: ⌘↩ in Services… or Containers… shows the same rows in the other panel, not read again — columns (Unit · State · Boot · Description), failed first, a click on a column's title sorts, `/` filters, Space marks. The row's keys are the panel's (↩ Status, ⌘L Live Logs, F4 Edit Unit File…, ⌘R Restart, F8 Stop…, ⌘C Copy), on the key bar in those words; File ▸ and Go ▸ items on those keys take the row's words, View ▸ Refresh reads the list again. An action on several marked rows asks once for all of them, then runs them in turn, a line each under the rows.
 - **Ports in a panel**: ⌘↩ in Forward Port… shows the server's ports in the other panel (Port · Process · Listens on · Tunnel), where a tunnel goes there updated as tunnels turn on and off.
+- **The server as a place**: a server's overview in a panel — Files, Home, `/`, Services, Containers, Ports, Tunnels, File History — rows that ↩ goes into. Opening it sends nothing to the server (no Touch ID, no login); its counts are what its lists last read, while a connection is up. **Server ▸ Overview**, a click on the server's name in the path bar, ⌫ in a server's `/` or in a list of it.
 - **Quick View of a list's row**: ⌃Q next to Services shows the service under the cursor's `systemctl status`, read once the cursor rests, over the connection the list holds; next to Containers or Ports, the row's state, image or who listens.
 
 ### Changed
+- One click on a server in the sidebar with nothing open shows its overview, which sends nothing; a double-click still opens SSH.
+- ⌫ in a server's `/` goes to its overview instead of leaving the server; ⌫ there leaves it, asking as before.
 - Marked files are bold in the accent color with a ✓ before the icon, not red: red now means only that something failed or can't be undone. Themes keep their own mark color, and get the ✓ too; GitHub Light and Solarized Light mark in pink and magenta instead of red.
 - The Git column: `M` is amber, `A` green, `?` and `D` grey (`D` struck through), a conflict `U` red with ⚠; a staged letter is bold. No purple or orange there.
 - A volume in the sidebar has a bar of how full it is under its name, with `350 GB free`: grey, amber from 85 %, red from 95 %. It was used in red and free in green.

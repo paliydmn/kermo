@@ -30,6 +30,8 @@ final class PathBar: LinedStack {
     /// The path to copy: plain, or (⌥) `user@host:path` on a server.
     var onCopy: ((_ scp: Bool) -> Void)?
     var onFilter: (() -> Void)?
+    /// A click on the place's chip (a server's name): its place.
+    var onPlace: (() -> Void)?
     /// A drop on a crumb: what it would do there, and doing it.
     var validateDrop: ((Crumb, NSDraggingInfo) -> NSDragOperation)? {
         get { crumbRow.validateDrop }
@@ -91,6 +93,7 @@ final class PathBar: LinedStack {
         chips.forEach { placeChips.addArrangedSubview(NSImageView(image: $0.image)) }
         placeChips.isHidden = chips.isEmpty
         copyButton.toolTip = "Copy the path" + (scp.map { " — ⌥-click: \($0)" } ?? "")
+        placeName.toolTip = symbol == .server ? "\(name): its overview" : nil
         copyButton.setAccessibilityLabel("Copy path")
         copyButton.setAccessibilityCustomActions(scp == nil ? nil : [
             NSAccessibilityCustomAction(name: "Copy user@host:path") { [weak self] in self?.onCopy?(true); return true },
@@ -136,6 +139,8 @@ final class PathBar: LinedStack {
 
     override func mouseDown(with event: NSEvent) {
         guard !editing else { return super.mouseDown(with: event) }
+        let at = convert(event.locationInWindow, from: nil)
+        if [placeIcon, placeName, placeChips].contains(where: { !$0.isHidden && $0.frame.insetBy(dx: -2, dy: -3).contains(at) }) { return onPlace?() ?? () }
         onEdit?()   // an empty spot: the crumbs and the buttons take their own clicks
     }
 

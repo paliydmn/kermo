@@ -12,6 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// and its other changes wait — and what each server's list had typed and highlighted when it closed.
     var serviceRuns: [String: String] = [:]
     var servicesKept: [String: (query: String, id: String?)] = [:]
+    /// What a server's lists counted when last read ("<key> services" → 10 units, 1 failed): its place shows them while
+    /// a connection is up.
+    var listCounts: [String: (n: Int, problems: Int)] = [:]
     private(set) var ops: OpsController!
     /// Move jobs an undo/redo started (across volumes): their own undo is registered already.
     var replayJobs: [FileJob] = []
@@ -325,7 +328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Of `masters`, the connections `releaseIdleServers` ends.
     func idleServers(_ masters: Set<SFTPTarget>, now: Date = Date()) -> [SFTPTarget] {
         looked = looked.filter { $0.value > now }
-        let inUse = Set(panels.flatMap { $0.remoteTabs.map(\.target) + [$0.connecting].compactMap { $0 } }.map(ServerRow.key)
+        let inUse = Set(panels.flatMap { $0.heldServers + [$0.connecting].compactMap { $0 } }.map(ServerRow.key)
                         + (terminal?.tabs ?? []).filter { $0.exitStatus == nil }.compactMap(\.target).map(ServerRow.key))   // starting or running
             .union(tunnels.inUse)   // else the next client would log in again
             .union(looked.keys)
@@ -519,6 +522,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if panel.list != nil && panel === active { keyBar.list = focusedKeys }   // the row's keys
         }
         panel.onListKey = { [unowned self, unowned panel] in listKey($0, in: panel) }
+        panel.onPlace = { [unowned self, unowned panel] t, row in showPlace(t, in: panel, select: row) }
         panel.onListMenu = { [unowned self, unowned panel] menu in panel.list.map { fillListMenu(menu, $0) } }
         panel.onListChange = { [unowned self, unowned panel] in
             guard panel === active else { return }
@@ -717,6 +721,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         sidebar.onLeave = { [unowned self] in window.makeFirstResponder(active.table) }
         sidebar.onCommandKey = { [unowned self] in runKey($0) }
         sidebar.onServer = { [unowned self] in serverAction($0, $1, $2) }
+        sidebar.onServerPlace = { [unowned self] r, mods in showPlace(r.target, in: mods.contains(.option) ? other : active) }
         sidebar.serverMenu = { [unowned self] in serverMenu($0) }
         sidebar.onGitCommand = { [unowned self] in run($0) }
         sidebar.gitMenu = { [unowned self] in gitMenu() }
@@ -769,7 +774,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// The sidebar row of where you are: the terminal's tab, the active panel's server tab, or its folder.
     private var sidebarKey: String? {
         if terminalActive { return terminal.current?.id.uuidString }
-        return active.remoteTabs.first(where: \.isCurrent)?.id.uuidString ?? (active.parked == nil ? active.path : nil)   // parked: no row is it
+        return active.remoteTabs.first(where: \.isCurrent)?.id.uuidString ?? (active.parked == nil && active.list == nil ? active.path : nil)   // parked, a place: no row is it
     }
 
     func refreshSidebar() {
