@@ -40,7 +40,7 @@ One tab can show up to four sessions at once: run a command in one and watch a l
 - **⌥⌘←** **→** (side by side) or **⌥⌘↑** **↓** (one above another) move to the next pane, and so does a click. Keys go to the pane with the bold title and the colored line in its header. A production server's header is purple and a `root@` login's is orange.
 - Drag a divider to resize, or press **⌃⌘** with an arrow. A double-click on a divider makes the panes the same size.
 - **⌘W** or the header's × closes one pane. The tab's × closes all its panes and asks once if any of them is still running something. The question is a sheet on the window, as for one pane.
-- **View ▸ Join Tab…**, or **Join with Current Tab** in another tab's right-click menu, moves that tab's sessions into the current tab. **Move Pane to New Tab** (in the header's right-click menu, or the View menu) takes a pane out into its own tab.
+- **View ▸ Tabs ▸ Join Tab…**, or **Join with Current Tab** in another tab's right-click menu, moves that tab's sessions into the current tab. **Move Pane to New Tab** (in the header's right-click menu, or **View ▸ Tabs**) takes a pane out into its own tab.
 - After a restart, SSH sessions come back in the same tabs, in the same order and arrangement, not connected. Panes start at equal sizes.
 
 ## Shell integration
@@ -60,7 +60,7 @@ Without it the panel still follows the shell's folder when you hide the terminal
 
 ## Touch ID for sudo
 
-**Admin ▸ Enable Touch ID for sudo** (also in ⇧⌘P) lets `sudo` in a terminal on this Mac take your fingerprint instead of your password. Kermo asks first, then writes `/etc/pam.d/sudo_local` — macOS's `sudo_local.template` with its `pam_tid.so` line on — and macOS asks for your password once to write it. A `sudo_local` of your own keeps its lines; the Touch ID line goes after them (one that is a symlink, kept by nix-darwin or the like, is left alone). The file survives macOS updates; new terminal windows use it. If it's on already, Kermo says so and asks nothing.
+**File ▸ As Administrator ▸ Enable Touch ID for sudo** (also in ⇧⌘P) lets `sudo` in a terminal on this Mac take your fingerprint instead of your password. Kermo asks first, then writes `/etc/pam.d/sudo_local` — macOS's `sudo_local.template` with its `pam_tid.so` line on — and macOS asks for your password once to write it. A `sudo_local` of your own keeps its lines; the Touch ID line goes after them (one that is a symlink, kept by nix-darwin or the like, is left alone). The file survives macOS updates; new terminal windows use it. If it's on already, Kermo says so and asks nothing.
 
 - **Turning it off:** `sudo rm /etc/pam.d/sudo_local` (or put `#` before the `pam_tid.so` line in it).
 - **In tmux or screen** Touch ID needs [pam_reattach](https://github.com/fabianishere/pam_reattach): `brew install pam-reattach`, then the line `auth optional /opt/homebrew/lib/pam/pam_reattach.so` in `sudo_local` before the `pam_tid.so` one.

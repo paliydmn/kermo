@@ -17,6 +17,9 @@ Release:
 - **F1** over a viewer or an editor lists that window's keys and the menu keys that work there; it was greyed out.
 - `isoDates`: `defaults write com.dmn.dfilemanager isoDates -bool true` keeps the Modified column at `2024-03-01 13:33`.
 - `terminalDrawerHeight`: the terminal drawer's height, saved as you drag the line above it.
+- A **Server** menu: Connect to Server…, New SSH Session…, New Server…; Services…, Containers…, **Ports & Tunnels ▸** (Tunnels…, New Tunnel…, Forward Port…, then every tunnel); Reopen as Root / as User; Copy SSH Key to Server…, File History…, Run on Servers…; Disconnect, Reconnect SSH Session, Edit SSH Config…, Production Log.
+- A **Help** menu: macOS's search there finds any menu item by name; Keyboard Shortcuts (F1), Kermo Documentation and Report an Issue….
+- Every command is in the menu bar now — Services…, Containers…, the tunnels', Copy SSH Key to Server… and Sort By were only in search — but those that are keys by nature (Tab, ↩, ⇧↑ / ⇧↓, the terminal panes' arrows, ⇧F10, ⌃↩).
 
 ### Changed
 - Marked files are bold in the accent color with a ✓ before the icon, not red: red now means only that something failed or can't be undone. Themes keep their own mark color, and get the ✓ too; GitHub Light and Solarized Light mark in pink and magenta instead of red.
@@ -67,9 +70,13 @@ Release:
 - A changed host key says so on a red line, with the new key as ssh gave it and where the old one is kept; **Remove Old Key…** is ⌘↩, ↩ Cancel.
 - Unsaved changes ask “Save changes to “nginx.conf” on web-01?” with the server's strip, and say what Save does there besides writing: its check, the old version kept, the production log. “Changed on disk” says when and how big.
 - A taken name asks with two cards — what's there now, what comes — each with its size and date as the panel shows them, and **Newer** on the newer one, instead of a line of text; the destination's PROD or ROOT strip over them. **Replace**, **Skip**, **Keep Both**, **Cancel**: Overwrite if Newer is now **Only replace older files** next to Replace. **Compare…** shows the two files in a diff first. On a production server ↩ is Cancel.
+- The menus come in groups with lines between them, and long lists move into submenus: File ▸ Links, Split & Combine and As Administrator; Mark ▸ Tags; View ▸ Tabs, Panels and Sort By; Kermo ▸ Configuration (the files to edit, Open Config Folder, Reload Config, Check for Updates Automatically).
+- The Admin menu is gone: Copy, Move, New Folder and Delete as Administrator, Root Shell in Terminal and Enable Touch ID for sudo are in **File ▸ As Administrator**; Reopen as Root / as User, Run on Servers… and Production Log in **Server**. Synchronize Folders… and Compare Files moved to Mark, Search Files… to Go, Keyboard Shortcuts to Help, Go ▸ Tunnels to Server ▸ Ports & Tunnels.
+- Menu names: **Sidebar**, **Quick View**, **Terminal**, **Activity**, **Hidden Files**, **Permissions & Owner**, **Show Only Changes**, **Bookmark This Folder** and **Sort By ▸** show ✓ while on; **Mark Differences**, **Compare Files**, **Root Shell in Terminal**, **Edit SSH Config…**; in Git and Server a name doesn't repeat the menu (Git ▸ Diff, Server ▸ Disconnect, Server ▸ File History…). Search (⇧⌘P) still finds the old names and shows each command's menu under it. The key bar keeps its words (Git Diff, Git Blame …) but for ⇧F2 **Differences** and ⇧⌘D **Compare**.
 
 ### Removed
 - **Save as Production…** in a recent or `~/.ssh/config` row's menu: the save sheet has the Production switch.
+- The Admin menu and Go ▸ Tunnels (moved, see Changed).
 
 ### Fixed
 - A new SSH tab shows its green dot as soon as ssh starts; it was grey until the next redraw.

@@ -93,33 +93,27 @@ extension AppDelegate {
         return it
     }
 
-    /// Go ▸ Tunnels (U2): every saved server's tunnels under its name — the temporary ones on its address too — then
-    /// those of servers not saved; built each time it opens.
-    func goTunnelsItem() -> NSMenuItem {
-        let it = NSMenuItem(title: "Tunnels", action: nil, keyEquivalent: "")
-        it.submenu = LiveMenu(title: "Tunnels") { [unowned self] in
-            var items: [NSMenuItem] = []
-            func header(_ title: String, prod: Bool) -> NSMenuItem {
-                let h = NSMenuItem.sectionHeader(title: title)
-                if prod { h.attributedTitle = Chip.prod.menuTitle(title, size: NSFont.smallSystemFontSize) }
-                return h
-            }
-            var temporaries = tunnels.temporaries()
-            for s in savedServers {
-                let key = ServerRow.key(s.target), mine = temporaries.filter { ServerRow.key($0.server.target) == key }
-                temporaries.removeAll { ServerRow.key($0.server.target) == key }
-                guard !s.tunnels.isEmpty || !mine.isEmpty else { continue }
-                items += [header(s.title, prod: s.prod)] + s.tunnels.map { tunnelItem($0, of: s) } + mine.map { tunnelItem($0.tunnel, of: $0.server) }
-            }
-            for key in temporaries.map({ ServerRow.key($0.server.target) }).reduce(into: [String](), { if !$0.contains($1) { $0.append($1) } }) {
-                let mine = temporaries.filter { ServerRow.key($0.server.target) == key }
-                items += [header(mine[0].server.title, prod: false)] + mine.map { tunnelItem($0.tunnel, of: $0.server) }
-            }
-            if !items.isEmpty { items.append(.separator()) }
-            return items + [MenuAction.item("New Tunnel…") { [unowned self] in newTunnel() },
-                            MenuAction.item("Forward Port…") { [unowned self] in forwardPort() }]
+    /// Server ▸ Ports & Tunnels (U2), under its commands: every saved server's tunnels under its name — the temporary ones
+    /// on its address too — then those of servers not saved; built each time it opens.
+    func tunnelMenuItems() -> [NSMenuItem] {
+        var items: [NSMenuItem] = []
+        func header(_ title: String, prod: Bool) -> NSMenuItem {
+            let h = NSMenuItem.sectionHeader(title: title)
+            if prod { h.attributedTitle = Chip.prod.menuTitle(title, size: NSFont.smallSystemFontSize) }
+            return h
         }
-        return it
+        var temporaries = tunnels.temporaries()
+        for s in savedServers {
+            let key = ServerRow.key(s.target), mine = temporaries.filter { ServerRow.key($0.server.target) == key }
+            temporaries.removeAll { ServerRow.key($0.server.target) == key }
+            guard !s.tunnels.isEmpty || !mine.isEmpty else { continue }
+            items += [header(s.title, prod: s.prod)] + s.tunnels.map { tunnelItem($0, of: s) } + mine.map { tunnelItem($0.tunnel, of: $0.server) }
+        }
+        for key in temporaries.map({ ServerRow.key($0.server.target) }).reduce(into: [String](), { if !$0.contains($1) { $0.append($1) } }) {
+            let mine = temporaries.filter { ServerRow.key($0.server.target) == key }
+            items += [header(mine[0].server.title, prod: false)] + mine.map { tunnelItem($0.tunnel, of: $0.server) }
+        }
+        return items.isEmpty ? [] : [.separator()] + items
     }
 
     /// Opens its URL — turning it on first if it's off (a locked server asks), or the page would find nobody there.
@@ -166,7 +160,7 @@ extension AppDelegate {
         Picker.show(over: window, placeholder: newOnly ? "Server" : "Filter tunnels", scope: newOnly ? ("New Tunnel", []) : nil, items: items)
     }
 
-    /// New Tunnel… (⌘⇧P, Go ▸ Tunnels): on the saved server the active panel or SSH tab is on; else pick one.
+    /// New Tunnel… (⌘⇧P, Server ▸ Ports & Tunnels): on the saved server the active panel or SSH tab is on; else pick one.
     func newTunnel() {
         let here = terminalActive ? terminal.current?.target : active.remote?.target
         if let here, let s = savedServers.first(where: { ServerRow.key($0.target) == ServerRow.key(here) }) { return editTunnel(nil, of: s) }
@@ -303,7 +297,7 @@ extension AppDelegate {
             + SSHConfig.hosts().map { SFTPTarget(host: $0.alias) }.filter { !saved.contains(ServerRow.key($0)) }.map { ($0.host, $0, nil) }
     }
 
-    /// Forward Port… (⌘⇧P, Go ▸ Tunnels): on the server the active panel or SSH tab is on (as its user); else pick one.
+    /// Forward Port… (⌘⇧P, Server ▸ Ports & Tunnels): on the server the active panel or SSH tab is on (as its user); else pick one.
     func forwardPort() { onServer("Forward a port of") { [unowned self] in forwardPort(on: $0.asUser) } }
 
     /// The ports `t`'s server listens on (U1): a locked server asks first (U6), then the login (`look`).
@@ -405,16 +399,20 @@ extension AppDelegate {
     }
 }
 
-/// A menu built each time it opens (Go ▸ Tunnels: connections come and go all the time).
+/// A menu built each time it opens, after the items it was made with (Server ▸ Ports & Tunnels: connections come and go all the time).
 final class LiveMenu: NSMenu, NSMenuDelegate {
     private let build: () -> [NSMenuItem]
+    var fixed: [NSMenuItem] = []   // its first items (the registry's): kept, the built ones follow
     init(title: String, _ build: @escaping () -> [NSMenuItem]) {
         self.build = build
         super.init(title: title)
         delegate = self
     }
     required init(coder: NSCoder) { fatalError("not from a nib") }
-    func menuNeedsUpdate(_ menu: NSMenu) { items = build() }
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        while items.count > fixed.count { removeItem(at: fixed.count) }
+        build().forEach(addItem)
+    }
 }
 
 /// A field's text as typed, as it changes.

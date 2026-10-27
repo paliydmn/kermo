@@ -272,7 +272,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
 
     /// A tunnel's item says its name, port and open connections, its state by a ● (and to VoiceOver), why it failed in
     /// its tooltip; its actions sit in a submenu — Open in Browser only with a URL. A production server's are red. The
-    /// server's menu ends with New Tunnel…; Go ▸ Tunnels lists every server's under its name, built as it opens.
+    /// server's menu ends with New Tunnel…; Server ▸ Ports & Tunnels lists every server's under its name, built as it opens.
     @Test func tunnelMenusSayTheirState() async throws {
         let app = AppDelegate()
         app.tunnels.child = tunnels.child
@@ -302,10 +302,9 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(app.tunnelsItem(for: db, at: db.target).submenu?.items.map(\.title)
                 == ["PROD Postgres → \(p[0]) · 1", "PROD Grafana → \(p[1])", "", "New Tunnel…", "Forward Port…"])
         #expect(app.tunnelsItem(for: server("none", []), at: server("none", []).target).submenu?.items.map(\.title) == ["New Tunnel…", "Forward Port…"])
-        let go = try #require(app.goTunnelsItem().submenu)
-        go.delegate?.menuNeedsUpdate?(go)
-        #expect(go.items.map(\.title) == ["PROD db1", "PROD Postgres → \(p[0]) · 1", "PROD Grafana → \(p[1])", "web", "-x:80 → 1", "", "New Tunnel…", "Forward Port…"])
-        #expect(go.items[0].isSectionHeader && go.items[3].isSectionHeader)
+        let live = app.tunnelMenuItems()
+        #expect(live.map(\.title) == ["", "PROD db1", "PROD Postgres → \(p[0]) · 1", "PROD Grafana → \(p[1])", "web", "-x:80 → 1"])
+        #expect(live[1].isSectionHeader && live[4].isSectionHeader)
     }
 
     /// Forward Port… is in every server row's menu, before its Tunnels ▸ (which has it too); server pickers say locked
@@ -406,7 +405,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
     /// Forward Port's Picker (U2): a row a port — its usual name, process and where it listens, "→ localhost:L" where a
     /// tunnel of the server already goes there. ↩ forwards it by a temporary tunnel on the same port here, the next free
     /// one when that's taken (said, U3), and again says it's there already. Temporary ones show "· temporary" in the
-    /// server's menu (Turn Off, Copy Address — Save only for a saved server), in Go ▸ Tunnels under their server (one not
+    /// server's menu (Turn Off, Copy Address — Save only for a saved server), in Server ▸ Ports & Tunnels under their server (one not
     /// saved after the saved ones), and keep an unsaved server's sidebar row, with its ⇄.
     @Test func forwardPortMakesTemporaryTunnels() async throws {
         let app = AppDelegate()
@@ -451,10 +450,8 @@ private func freePorts(_ n: Int) throws -> [Int] {
                 + (w.localPort == 8080 ? "" : " (8080 is taken here)") + " · listening")
         #expect(app.tunnelItem(w, of: web).submenu?.items.map(\.title) == ["Turn Off", "Open in Browser", "Copy Address"], "Save: not until it's saved")
         #expect(app.tunnelsItem(for: nil, at: web.target).submenu?.items.map(\.title) == ["192.0.2.10:8080 → \(w.localPort) · temporary", "", "Forward Port…"])
-        let go = try #require(app.goTunnelsItem().submenu)
-        go.delegate?.menuNeedsUpdate?(go)
-        #expect(go.items.map(\.title) == ["db1", "Main → \(p[1])", "nginx → \(next.localPort) · 1 · temporary",
-                                          "me@web.invalid", "192.0.2.10:8080 → \(w.localPort) · temporary", "", "New Tunnel…", "Forward Port…"])
+        #expect(app.tunnelMenuItems().map(\.title) == ["", "db1", "Main → \(p[1])", "nginx → \(next.localPort) · 1 · temporary",
+                                                       "me@web.invalid", "192.0.2.10:8080 → \(w.localPort) · temporary"])
 
         var list = ServerList(saved: [db], recents: (1...6).map { "me@r\($0).invalid" }, forwarded: [web.target])
         list.tunnels = [ServerRow.key(web.target): [w.title]]

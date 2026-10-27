@@ -7,7 +7,7 @@ Open a server's files with root rights to edit `/etc` and other protected files,
 ## Open a panel as root
 
 - In the sidebar, choose **Open SFTP as Root** in a server's menu.
-- On a server panel, choose **Reopen Panel as Root** (⌃⌘R, **Admin** menu, search). **Reopen Panel as User** (⌃⇧⌘R) goes back.
+- On a server panel, choose **Server ▸ Reopen as Root** (⌃⌘R, or search). **Reopen as User** (⌃⇧⌘R) goes back.
 
 The panel's SFTP then runs through `sudo` on the same connection. Kermo looks for `sftp-server` in the usual places (Debian/Ubuntu, RHEL/Fedora, Arch/Alpine, openSUSE, BSD/macOS) and runs `sudo -n -- <sftp-server>`.
 

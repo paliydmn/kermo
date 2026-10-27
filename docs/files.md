@@ -72,7 +72,7 @@ The **Activity** button in the toolbar (a clock going round; a ring that fills a
 
 ## Preview
 
-- ⌃Q (**Quick View Panel**) turns the other panel into a view of the cursor's item, with three tabs at its top: **Preview** (below), **Info** (see [Info](#tags-info-and-permissions)) and **Git**, which a file in a Git work tree has: its state in words (`Git: modified`) and **⌃D Git Diff**, **⌃L Git Log**, **⌃⇧A Stage**, **⌃⇧U Unstage** to click, as the keys do. Quick View keeps the tab you chose until you quit. ⌘Y opens Quick Look on the marked files, or the cursor's.
+- ⌃Q (**View ▸ Quick View**) turns the other panel into a view of the cursor's item, with three tabs at its top: **Preview** (below), **Info** (see [Info](#tags-info-and-permissions)) and **Git**, which a file in a Git work tree has: its state in words (`Git: modified`) and **⌃D Git Diff**, **⌃L Git Log**, **⌃⇧A Stage**, **⌃⇧U Unstage** to click, as the keys do. Quick View keeps the tab you chose until you quit. ⌘Y opens Quick Look on the marked files, or the cursor's.
 - Quick Look shows text it knows by its extension (`.txt`, `.log`, `.json`, scripts …), but a config without one it knows (`.conf`, `.env`, `.bak`, `syslog.1`, `server.key`, or no extension at all) only as an icon. Kermo looks at such a file's start and, when it's text, ⌃Q shows it itself: read-only, with F3's colors (syntax, error and warning lines, terminal colors) and line numbers if they're on in the viewer (`l`). Over 256 KB it shows the first 256 KB and says so; F3 views it all. ⌘Y shows it through a `.txt` copy with the file's own name in the title: a clone where the volume allows, else its first 4 MB. The copies are read-only, for you alone, and go when Quick Look shows something else or closes, and when you quit; Quick Look's **Open with** opens such a copy, so edit with F4.
 - Binary files, and everything Quick Look shows itself (images, PDF, video …), look as before.
 
@@ -91,7 +91,7 @@ From the keyboard, ⇧F10 or a PC keyboard's Menu key opens the cursor item's me
 - **Rename N** stays off while a new name is invalid or taken (red). The names are applied together: swaps work, and one failure puts everything back.
 - F7 (⌥7, ⇧⌘N) **New Folder…** makes nested folders from `a/b/c`. ⇧F4 (⌥⇧4) **New File…** creates an empty file and opens it in the editor.
 - ⇧F5 (⌥⇧5) **Copy Here As…** copies the cursor item next to itself under a new name: `nginx.conf` proposes `nginx.conf.bak` with `.bak` selected, so ↩ makes the backup. With several marked, it asks for a suffix (`.bak`) and adds it to each name. A folder is copied whole. A name that's taken is an error, nothing is copied and nothing is replaced. Undo moves a copy to the Trash, one copy per ⌘Z.
-- ⌥⌘L **Create Symbolic Link…** and **Create Hard Link…** (File menu, no key) link the cursor item, proposing the other panel's folder. A symbolic link stores the absolute path; a hard link needs a file on the same volume. ⌘J **Go to Link Target** opens the target's folder with the target selected.
+- ⌥⌘L **Create Symbolic Link…** and **Create Hard Link…** (**File ▸ Links**; the hard one has no key) link the cursor item, proposing the other panel's folder. A symbolic link stores the absolute path; a hard link needs a file on the same volume. ⌘J **Go to Link Target** opens the target's folder with the target selected.
 
 ## Drag and drop
 
@@ -112,7 +112,7 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 
 ## Split and combine
 
-**File ▸ Split File…** cuts the cursor file into `name.000`, `name.001` … next to it. The size is bytes or with K, M or G (`650M`; it starts at `1G`, then keeps your last). Split refuses while any part of that name is there already (not only `.000`). **Combine Parts…** with the cursor on any part joins the set (starting at `.000` or `.001`, no gaps) into the name you confirm and never overwrites. Every part but the last must be the size of the first, and the last no bigger: otherwise they're parts of two splits, and Combine names the one that doesn't fit and joins nothing.
+**File ▸ Split & Combine ▸ Split File…** cuts the cursor file into `name.000`, `name.001` … next to it. The size is bytes or with K, M or G (`650M`; it starts at `1G`, then keeps your last). Split refuses while any part of that name is there already (not only `.000`). **Combine Parts…** with the cursor on any part joins the set (starting at `.000` or `.001`, no gaps) into the name you confirm and never overwrites. Every part but the last must be the size of the first, and the last no bigger: otherwise they're parts of two splits, and Combine names the one that doesn't fit and joins nothing.
 
 ## Sizes, hidden files and sort
 
@@ -120,7 +120,7 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 - An executable (a file with the x bit, a script or a program) has Finder's executable icon.
 - **Size** shows a file's size (`310 B`, `4 KB`, `1.2 GB`) and a folder's once counted. A folder not counted yet and a special file (a named pipe, a socket, a device) leave it empty; the row's tooltip says what a special file is.
 - **Modified** reads `Today 13:33`, `Yesterday 09:10`, `Oct 14 13:32` for this year and `2024-03-01` before, 24-hour. "Today" moves on at midnight. To see `2024-03-01 13:33` everywhere: `defaults write com.dmn.dfilemanager isoDates -bool true` ([options](configuration.md#options)).
-- ⇧⌘. (**Show Hidden Files**) shows names starting with `.` and files with the hidden flag, in every panel, and is remembered.
+- ⇧⌘. (**View ▸ Hidden Files**) shows names starting with `.` and files with the hidden flag, in every panel, and is remembered.
 - Click **Name**, **Size** or **Modified** to sort, again to reverse. Folders stay first. Each folder remembers its sort. A folder of more than 5,000 items sorts in the background: the list stays as it was until it's done (`Sorting…` in the status line after a moment), and the cursor stays on its item.
 
 ## Tags, Info and permissions
@@ -129,9 +129,9 @@ Drag items to the other panel, onto a folder row or onto a sidebar place; files 
 - ⌘I **Get Info** opens [Quick View](#preview) in the other panel on its **Info** tab, for the cursor's item (the folder itself on `..`); it follows the cursor from there. Rows, a name and its value: path, kind, size (the exact bytes, then short), owner, mode, flags, dates, inode, xattrs, quarantine, ACL and, once the cursor rests on a folder, its contents. Buttons: **chmod**, **chown**, **Hidden**, **Locked (uchg)**, **Remove Quarantine**, **Code Signature**, **MD5**, **SHA-1**, **SHA-256**. The first checksum you press reads the file once for all three; the other two then show at once. A refused change offers **Try as Administrator**. Moving the cursor or closing Quick View stops what's still on its way (a folder's size, a hash).
 - On a server, Info says what the folder's listing knew — server, path, kind, size, modified, owner, mode — and asks the server nothing; **Permissions & Owner…** (⌘⌥A) changes them there.
 - ⌥⌘A **Permissions & Owner…** takes `755`, `me:staff` or `644 me:staff` for the marked items. A part left as shown isn't changed. A numeric owner needs its colon (`1000:`); without it Kermo asks before taking the number as a mode. It doesn't enter folders and changes a symbolic link itself.
-- View ▸ **Show Permissions & Owner** adds Permissions, Owner and Group columns to every panel (they drop out when a panel is too narrow).
+- View ▸ **Permissions & Owner** adds Permissions, Owner and Group columns to every panel (they drop out when a panel is too narrow).
 - ⇧⌘R **Reveal in Finder**, ⇧⌘C **Copy Path** and ⌥⌘C **Copy Name** (one per line) act on the marked items.
 
 ## Administrator rights
 
-**Admin ▸ Copy as Administrator…**, **Move as Administrator…**, **New Folder as Administrator…** and **Delete as Administrator…** ask for your password in the standard macOS dialog. They skip the queue: no progress, no undo. Copy asks before it replaces what's in the destination, Move never overwrites, and Delete runs `rm -rf` after a question that shows the command as it will run (↩ is Cancel there, ⌘↩ deletes). Before the password is asked, Copy and Move refuse what F5 and F6 refuse: a folder into itself or below it, and an item onto itself. They also refuse a destination where a link has the item's name: root would write where the link points.
+**File ▸ As Administrator ▸ Copy as Administrator…**, **Move as Administrator…**, **New Folder as Administrator…** and **Delete as Administrator…** ask for your password in the standard macOS dialog. They skip the queue: no progress, no undo. Copy asks before it replaces what's in the destination, Move never overwrites, and Delete runs `rm -rf` after a question that shows the command as it will run (↩ is Cancel there, ⌘↩ deletes). Before the password is asked, Copy and Move refuse what F5 and F6 refuse: a folder into itself or below it, and an item onto itself. They also refuse a destination where a link has the item's name: root would write where the link points.

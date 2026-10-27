@@ -6,7 +6,7 @@ Where Kermo keeps its settings, the formats of the files you can edit, and the `
 
 ## Files
 
-Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`; files are `0600`). **Kermo ▸ Open Config Folder** opens it in the panel, and **Reload Config** applies a changed `keymap.json` without a restart.
+Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`; files are `0600`). **Kermo ▸ Configuration ▸ Open Config Folder** opens it in the panel, and **Reload Config** (in the same menu) applies a changed `keymap.json` without a restart.
 
 | File | Holds | Edit with |
 |---|---|---|
@@ -17,7 +17,7 @@ Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`
 | `filters.json` | Quick filter presets (⌘/) | **Edit Filter Presets…** |
 | `bookmarks.json` | Sidebar Favorites | ⌘D, drag and drop |
 | `frecency.json` | Sidebar Frequent and ⌘P | Kermo writes it |
-| `audit.jsonl` | The [production log](safety.md#production-log) | **Admin ▸ Show Production Log** |
+| `audit.jsonl` | The [production log](safety.md#production-log) | **Server ▸ Production Log** |
 | `history.noindex/` | [Versions of server files](server-files.md#file-history) | Kermo writes it |
 
 Kermo also writes `server-pins.json` (the order of pinned servers), `trash.json` (where trashed items came from, for Put Back) and `activity.json` (the last 100 finished jobs in [Activity](files.md#activity)).
@@ -70,7 +70,7 @@ Set an option with `defaults write com.dmn.dfilemanager <key> <value>`. Remove i
 | `editorFinalNewline` | `-bool` | config files only | Whether new editor windows end saved text with a newline; **File ▸ Ensure Final Newline** overrides it per window |
 | `diffCommand` | command | built-in diff | Tool for [comparing files](search-compare.md), for example `'code --diff %1 %2'` (a server's file comes as its local copy) |
 | `serverHistory` | `-bool` | `true` | `false` keeps no [versions of server files](server-files.md#file-history) |
-| `updateCheckOff` | `-bool` | `false` | `true`: Kermo doesn't [check for updates](install.md#updates) by itself (**Kermo ▸ Check for Updates Automatically** sets it) |
+| `updateCheckOff` | `-bool` | `false` | `true`: Kermo doesn't [check for updates](install.md#updates) by itself (**Kermo ▸ Configuration ▸ Check for Updates Automatically** sets it) |
 | `auditLog` | `-bool` | `true` | `false` writes no [production log](safety.md#production-log) |
 
 Kermo also keeps window sizes, the last folders, recent servers and the like in the same defaults domain. Leave those to the app.

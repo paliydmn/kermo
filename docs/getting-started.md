@@ -26,7 +26,7 @@ More in [Files and folders](files.md) and [Search, compare and synchronize](sear
 
 1. Press **⌃⌘K**, type `user@host:/path` (or pick a host from your `~/.ssh/config`) and press ↩. The panel now shows the server, and F5, F6, F3 and F4 work on it as on this Mac. F8 deletes there for good, after asking: a server has no Trash.
 2. Press **⌘K** instead for a shell on the server.
-3. To keep the server in the sidebar, choose **Go ▸ New Server…**. Mark servers where a slip is costly as production: [Servers and SSH](servers.md).
+3. To keep the server in the sidebar, choose **Server ▸ New Server…**. Mark servers where a slip is costly as production: [Servers and SSH](servers.md).
 
 ## Use a terminal
 

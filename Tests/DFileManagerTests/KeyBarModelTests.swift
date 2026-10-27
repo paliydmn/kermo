@@ -60,11 +60,11 @@ import Testing
 /// P-1 (review 1): every command with a key is on F1, under its menu: F1's menus are the menu bar's (Git was missing).
 @Test @MainActor func cheatSheetListsEveryBoundKey() {
     let commands = AppDelegate().makeCommands()
-    #expect(Set(commands.compactMap(\.menu)).isSubset(of: AppDelegate.menus), "a new menu goes into AppDelegate.menus")
+    #expect(Set(commands.compactMap(\.topMenu)).isSubset(of: AppDelegate.menus), "a new menu goes into AppDelegate.menus")
     #expect(Set(KeyHelp.groups) == Set(AppDelegate.menus))
     let rows = KeyHelp.sections(commands).flatMap { s in s.rows.map { "\(s.title): \($0.title)" } }
     for c in commands where !c.keys.isEmpty && !c.hidden {
-        #expect(rows.contains("\(c.menu ?? "Keyboard"): \(c.title)"), "\(c.id) isn't on F1")
+        #expect(rows.contains("\(c.topMenu ?? "Keyboard"): \(c.title)"), "\(c.id) isn't on F1")
     }
     #expect(KeyHelp.sections(commands).contains { $0.title == "Git" && $0.rows.contains { $0.title == "Switch Branch…" && $0.keys == "⌃B" } })
 }

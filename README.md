@@ -62,7 +62,7 @@ Mac function keys control media by default: ‚å• plus the digit does the same (‚å
 - [Getting started](docs/getting-started.md): five minutes from install to your first server.
 
 **Use Kermo**
-- [Panels, sidebar and search](docs/window.md): the window, the key bar, Places, search.
+- [Panels, sidebar and search](docs/window.md): the window, the key bar, Places, search, the menus.
 - [Files and folders](docs/files.md): copy, move, delete, undo, rename, archives, tags.
 - [Search, compare and synchronize](docs/search-compare.md): filter, find, compare folders, diff.
 - [Viewer and editor](docs/viewer-editor.md): large files, hex, follow, syntax highlighting.

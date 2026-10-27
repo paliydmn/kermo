@@ -224,7 +224,7 @@ private func tempDir() -> String {
 @MainActor @Test func theShiftLayerHasTheFileActionsInOrder() {
     let shift = KeyBarModel.layers(AppDelegate().makeCommands()).first { $0.mods == .shift }!.slots
     let fkeys = shift.filter { $0.key.hasPrefix("⇧F") }.map { "\($0.key) \($0.label)" }
-    #expect(fkeys == ["⇧F2 Compare", "⇧F4 New File", "⇧F5 Copy Here As", "⇧F6 Rename", "⇧F8 Delete", "⇧F10 Menu"], "\(shift.map(\.key))")
+    #expect(fkeys == ["⇧F2 Differences", "⇧F4 New File", "⇧F5 Copy Here As", "⇧F6 Rename", "⇧F8 Delete", "⇧F10 Menu"], "\(shift.map(\.key))")
 }
 
 /// The production log names where a copy went: the new name for one copied under it.

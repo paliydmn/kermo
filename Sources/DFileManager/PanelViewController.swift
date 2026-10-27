@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 final class PanelViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSMenuDelegate {
     private(set) var path: String
     var showHidden: Bool { didSet { applyView(select: currentName) } }
-    /// Permissions, Owner and Group columns (View ▸ Show Permissions & Owner); in a narrow panel they stay longer than Size and Modified.
+    /// Permissions, Owner and Group columns (View ▸ Permissions & Owner); in a narrow panel they stay longer than Size and Modified.
     var showPerms = false { didSet { if isViewLoaded { fitColumns() } } }
     /// Only names git reports as changed (or folders with changes inside). Per panel, kept across folders.
     var gitOnly = false { didSet { applyView(select: currentName) } }
@@ -166,8 +166,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     private var remoteFree: String?
     /// `DirSync.mtimeTolerance` of the folder, read with the listing: off the main thread, where a hung mount can't freeze the UI.
     private(set) var mtimeTolerance: Double = 1
-    private var sortKey = SortKey.name
-    private var ascending = true
+    private(set) var sortKey = SortKey.name
+    private(set) var ascending = true
     private var suppressSortCallback = false
     private var loadGen = 0 { didSet { remoteFlag?.cancel(); remoteFlag = nil; moves += 1 } }   // a superseded server listing stops its ssh too
     /// `loadGen`, but a re-list of the same place (`reload`) doesn't count: ↩ or ⌘L that looked at the disk off the

@@ -190,6 +190,8 @@ final class OpsController {
 
     @objc private func toolbarButton() { toggleActivity() }
 
+    var activityShown: Bool { activity.isShown }
+
     /// ⌥⌘J.
     func toggleActivity() {
         if activity.isShown { return activity.popover.close() }
@@ -374,7 +376,7 @@ final class OpsController {
         alert.messageText = "“\((path as NSString).lastPathComponent)”: \(message)".bidiVisible
         alert.informativeText = (path as NSString).abbreviatingWithTildeInPath.bidiVisible
         if local && (message.contains("Permission denied") || message.contains("not permitted")) {
-            alert.informativeText += "\n\nNeeds root? Admin ▸ Copy / Move / Delete as Administrator."
+            alert.informativeText += "\n\nNeeds root? File ▸ As Administrator ▸ Copy / Move / Delete as Administrator."
         }
         let choices: [(String, FileJob.ErrorChoice)] = [("Skip", .skip), ("Retry", .retry), ("Abort", .abort)]
         choices.forEach { alert.addButton(withTitle: $0.0) }

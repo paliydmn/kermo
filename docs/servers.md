@@ -9,13 +9,13 @@ Connect to a server, save it, lock it and mark it as production. Kermo uses the 
 - **⌃⌘K** opens a server's files in the active panel (SFTP). **⌘K** opens a shell on a server in the terminal (SSH); inside the terminal, ⌘K clears it.
 - Both open a picker. Type `user@host:/path`, `user@host:2222/path` or `sftp://host:2222/path`, or choose a saved server (its LOCKED and PROD chips say which; ⌘E edits it), a recent one or a host from `~/.ssh/config`. ⌃⌘K also takes `smb://`, `nfs://` and `afp://` addresses and mounts them.
 - A panel keeps one connection to its server while it shows it, so opening a folder doesn't start ssh again. After sleep or a network change the next folder connects again.
-- If an SSH tab's session ends, **Go ▸ Reconnect SSH Session** (or the tab's **Reconnect** button, ↩) starts it again. **Go ▸ Disconnect Server** ends the server's shared connection: its SSH sessions end, its file tabs go back, its tunnels turn off, and a remembered sudo password is forgotten. It asks first while an SSH session is running or a tunnel is listening.
+- If an SSH tab's session ends, **Server ▸ Reconnect SSH Session** (or the tab's **Reconnect** button, ↩) starts it again. **Server ▸ Disconnect** ends the server's shared connection: its SSH sessions end, its file tabs go back, its tunnels turn off, and a remembered sudo password is forgotten. It asks first while an SSH session is running or a tunnel is listening.
 
 ## Save a server
 
 A saved server gets a name, a sidebar row, a Touch ID lock if you want one, a production mark and tunnels.
 
-1. Choose **Go ▸ New Server…** (also in search, in the Servers header's right-click menu, and as **＋ New Server…** in the picker).
+1. Choose **Server ▸ New Server…** (also in search, in the Servers header's right-click menu, and as **＋ New Server…** in the picker).
 2. Fill in the sheet and click **Save** (↩) or **Save & Connect** (⌘↩).
 
 To keep a server you already used, right-click its recent or `~/.ssh/config` row in the sidebar and choose **Save…**.
@@ -45,7 +45,7 @@ Right-click a server row in the sidebar (or click **⋯** under the mouse):
 - **Open SSH Session**, **Open SFTP**, **Open SFTP in New Tab / in Other Panel**, **Open SFTP as Root** ([root panel](root-panel.md)), **Forward Port…** and **Tunnels** ([tunnels](tunnels.md); both on any server row), **Services…** and **Containers…** ([below](#services-and-containers)), **Copy SSH Command**, **Copy SSH Key to Server…** ([below](#copy-your-ssh-key-to-a-server)) and **Close All Sessions** (the connection closes too, unless a tunnel is on; **Disconnect** also turns tunnels off).
 - **Mark as Production** / **Unmark Production**: see below.
 
-**Go ▸ Edit SSH Config** opens `~/.ssh/config` in the editor and creates it with an example if it doesn't exist.
+**Server ▸ Edit SSH Config…** opens `~/.ssh/config` in the editor and creates it with an example if it doesn't exist.
 
 To run one command on several servers at once, choose **Run on Servers…** in the Servers header's right-click menu: see [Run on several servers](commands.md#run-on-several-servers).
 

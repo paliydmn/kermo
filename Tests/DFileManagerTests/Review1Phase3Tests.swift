@@ -5,18 +5,19 @@ import Testing
 
 // Review 1, phase 3: keys, not prose — one key bar for the panels, the terminal, the command line, Pickers and windows.
 
-/// The words of a text, letters only: "Show/Hide Sidebar" → show, hide, sidebar; "Mark ↓" → mark.
+/// The words of a text, letters only: "Show Hidden Files" → show, hidden, files; "Mark ↓" → mark.
 private func words(_ s: String) -> [String] {
     s.lowercased().split { !$0.isLetter }.map(String.init)
 }
 
-/// R-33: a slot's label is words of its command's menu title — no "MkDir" for New Folder…, no "Commands" for Search… —
-/// in Title Case. Where the bar says what the menu can't, the exceptions are listed here, each with why.
+/// R-33: a slot's label is words of its command's menu title, or of its menu and title (Git ▸ Diff: "Git Diff") — no
+/// "MkDir" for New Folder…, no "Commands" for Search… — in Title Case. Where the bar says what the menu can't, the exceptions are listed here, each with why.
 @MainActor @Test func labelsAreWordsOfTheirMenuTitles() {
     let commands = AppDelegate().makeCommands()
     let exceptions: [String: String] = [
         "file.trash Delete…": "F8 on a server deletes, after a question: no Trash there (the menu item says Delete… then too)",
         "file.copy Extract": "F5 in an archive extracts (the menu item says Extract To… then too)",
+        "view.terminal Hide Terminal": "⌃O in the terminal hides it; the menu item is the switch, Terminal with ✓",
     ]
     let terminal = AppDelegate.terminalCommands.compactMap { id in commands.first { $0.id == id } }
     let all = KeyBarModel.layers(commands) + KeyBarModel.layers(commands, server: true) + KeyBarModel.layers(commands, archive: true)
@@ -28,7 +29,7 @@ private func words(_ s: String) -> [String] {
             used.insert("\(id) \(slot.label)")
             continue
         }
-        let title = Set(words(c.title))
+        let title = Set(words(c.title) + words(c.topMenu ?? ""))
         #expect(words(slot.label).allSatisfy(title.contains), "\(id): “\(slot.label)” isn't in “\(c.title)”")
         let small: Set<String> = ["to", "in", "of", "by", "as", "and", "or", "on", "for", "at"]
         for (i, w) in slot.label.split(separator: " ").enumerated() where w.first?.isLetter == true {

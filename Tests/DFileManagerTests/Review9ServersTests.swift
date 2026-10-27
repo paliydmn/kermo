@@ -169,11 +169,11 @@ extension ServerLockTests {
         try await body(stops)
     }
 
-    /// R10: Disconnect (sidebar menu, Go ▸ Disconnect Server, also with the terminal up) ends that server's shared
+    /// R10: Disconnect (sidebar menu, Server ▸ Disconnect, also with the terminal up) ends that server's shared
     /// connection at once (`-O exit`), whatever key or ControlPersist it was opened with; other servers' stay.
     @Test func disconnectEndsThatServersConnectionNow() async throws {
         let commands = AppDelegate().makeCommands()
-        #expect(commands.contains { $0.id == "server.disconnect" && $0.menu == "Go" } && AppDelegate.terminalCommands.contains("server.disconnect"))
+        #expect(commands.contains { $0.id == "server.disconnect" && $0.menu == "Server" } && AppDelegate.terminalCommands.contains("server.disconnect"))
         try await recording { stops in
             let mine = SFTPTarget(host: "root@dfm-r10.invalid", port: 22, identity: "~/.ssh/k", persist: 60)
             SFTP.noteMaster(mine)

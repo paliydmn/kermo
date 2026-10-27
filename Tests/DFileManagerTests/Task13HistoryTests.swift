@@ -147,11 +147,11 @@ extension ServerCopiesTests {
     Picker.current?.panel.sendEvent(key(53, [], "\u{1b}"))
 }
 
-/// Server File History… is a command: ⌘⇧P finds it, keymap.json can bind it, the File menu lists it.
+/// File History… is a command: ⌘⇧P finds it, keymap.json can bind it, the Server menu lists it.
 @MainActor @Test func serverFileHistoryIsACommand() {
     let commands = AppDelegate().makeCommands()
     let c = commands.first { $0.id == "server.history" }
-    #expect(c?.title == "Server File History…" && c?.menu == "File")
+    #expect(c?.title == "File History…" && c?.menu == "Server")
     let found = HeaderSearchModel.results("file history", commands: commands, folders: [], files: [], recent: [])
     #expect(found.flatMap(\.hits).contains { if case .command(let id) = $0.target { id == "server.history" } else { false } }, "\(found)")
 }

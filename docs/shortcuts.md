@@ -11,7 +11,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 - **Text fields** (path entry, the command line, dialogs) take the usual ⌘X, ⌘C, ⌘V, ⌘A and ⌘Z.
 - **Questions:** ⎋ is Cancel. On a production server and for what can't be undone, ↩ is Cancel too and **⌘↩** does the action; the question's last line says so ([how a question asks](safety.md#how-a-question-asks)).
 - **Layouts:** shortcuts are bound to physical keys, so they work with any keyboard layout (the ISO § key counts as `` ` ``). Menus show the characters of your current layout, so on a layout that moves Latin letters (Dvorak, AZERTY) a letter shortcut in a menu follows the letter.
-- **Remap:** choose **Kermo ▸ Edit Keymap…**, then **Reload Config** to apply it (see [Configuration](configuration.md#keymap)).
+- **Remap:** choose **Kermo ▸ Configuration ▸ Edit Keymap…**, then **Reload Config** to apply it (see [Configuration](configuration.md#keymap)).
 
 > [!NOTE]
 > Two shortcuts clash with macOS: ⇧⌘/ (computer root) is also the Help menu search, and ⌃1…⌃7 (Finder tags) switch desktops once you have several. Turn them off in System Settings ▸ Keyboard ▸ Keyboard Shortcuts, or remap the command. ⌘M minimizes the window, as everywhere on the Mac.
@@ -82,7 +82,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Open an archive as a folder / extract / create | ↩ / F5, ⌥F9 / ⌥F5 |
 | Finder tags: color / remove all / edit | ⌃1…⌃7 / ⌃0 / ⌃T |
 
-**Create Hard Link…**, **Split File…** and **Combine Parts…** (`.000`, `.001`, …) are in the **File** menu and in search, without a key.
+**Create Hard Link…** (**File ▸ Links**), **Split File…** and **Combine Parts…** (`.000`, `.001`, …; **File ▸ Split & Combine**) are in search too, without a key.
 
 ## Compare and Git
 
@@ -115,7 +115,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 
 In the command line, ↑↓ browse its history. On a local panel ↩ runs the line in the ⌃O shell (your aliases, colors, `sudo`, history), ⇧↩ in an output window, ⌘↩ in Terminal. On a server panel ↩ and ⇧↩ run it over ssh in an output window, and ⌘↩ opens an SSH tab with the command.
 
-**Admin ▸ Copy as Administrator…**, **Move as Administrator…**, **New Folder as Administrator…**, **Delete as Administrator…** and **Root Shell Here (Terminal)** (also in search) work on this Mac's files. See [Administrator rights](files.md#administrator-rights).
+**File ▸ As Administrator ▸ Copy as Administrator…**, **Move as Administrator…**, **New Folder as Administrator…**, **Delete as Administrator…** and **Root Shell in Terminal** (also in search) work on this Mac's files. See [Administrator rights](files.md#administrator-rights).
 
 ## Viewer and editor
 
