@@ -1,4 +1,5 @@
 import DFMCore
+import CryptoKit
 import Foundation
 import Testing
 @testable import DFileManager
@@ -28,17 +29,5 @@ import Testing
     #expect(text(InfoView.digests(d + "/big", cancel: stopped)) == "stopped")
 }
 
-private func SHA256Hex(_ data: Data) -> String {
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/shasum")
-    p.arguments = ["-a", "256"]
-    let i = Pipe(), o = Pipe()
-    p.standardInput = i
-    p.standardOutput = o
-    try? p.run()
-    i.fileHandleForWriting.write(data)
-    try? i.fileHandleForWriting.close()
-    let out = o.fileHandleForReading.readDataToEndOfFile()
-    p.waitUntilExit()
-    return String(decoding: out, as: UTF8.self).split(separator: " ").first.map(String.init) ?? ""
-}
+/// In process: `shasum` over a pipe hung the run once — another test's child held the pipe's write end, so no EOF.
+private func SHA256Hex(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
