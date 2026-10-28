@@ -13,6 +13,8 @@ Release:
 
 ## [Unreleased]
 
+## [1.6] - 2026-10-28
+
 ### Added
 - **F1** over a viewer or an editor lists that window's keys and the menu keys that work there; it was greyed out.
 - `isoDates`: `defaults write com.dmn.dfilemanager isoDates -bool true` keeps the Modified column at `2024-03-01 13:33`.
@@ -351,7 +353,8 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.5...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.6...HEAD
+[1.6]: https://github.com/paliydmn/kermo/releases/tag/v1.6
 [1.5]: https://github.com/paliydmn/kermo/releases/tag/v1.5
 [1.4.1]: https://github.com/paliydmn/kermo/releases/tag/v1.4.1
 [1.2.1]: https://github.com/paliydmn/kermo/releases/tag/v1.2.1
