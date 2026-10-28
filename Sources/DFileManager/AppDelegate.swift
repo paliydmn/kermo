@@ -1150,7 +1150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // (`loadGen`), and the panel would stay where it was.
             let cwd = terminal.hide(NSApp.currentEvent)
             for p in panels {
-                if p === active, let cwd, cwd != p.path { p.navigate(to: cwd) } else { p.reload() }
+                if p === active, let to = EmbeddedTerminal.follow(cwd, from: p.path) { p.navigate(to: to) } else { p.reload() }
             }
             window.makeFirstResponder(active.table)
             updatePrompt()

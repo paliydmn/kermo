@@ -781,6 +781,8 @@ final class SidebarController: NSViewController, NSOutlineViewDataSource, NSOutl
         let d = NSTextField(labelWithString: detail)
         d.font = .systemFont(ofSize: 10)
         d.textColor = .secondaryLabelColor
+        d.lineBreakMode = .byTruncatingTail
+        d.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)   // the server gives way, not the name
         let r = row(detail.isEmpty ? [icon, label] : [icon, label, spacer(), d])
         r.toolTip = tip
         return r

@@ -163,3 +163,17 @@ import Testing
     shell.view.feed(text: "\u{1b}]7;file://mac\(dir)\u{7}")
     #expect(told == [dir] && shell.cwd == dir)
 }
+
+/// ⌃O ⌃O on /tmp left the panel on /private/tmp, the cursor on "..": the kernel names the shell's folder its own way.
+@Test func hidingTheTerminalKeepsAPanelOnItsOwnFolder() throws {
+    #expect(EmbeddedTerminal.follow("/private/tmp", from: "/tmp") == nil)
+    #expect(EmbeddedTerminal.follow("/private/var", from: "/tmp") == "/private/var")
+    #expect(EmbeddedTerminal.follow(nil, from: "/tmp") == nil)
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("follow-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir.appendingPathComponent("real"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createSymbolicLink(atPath: dir.path + "/link", withDestinationPath: dir.path + "/real")
+    let real = EmbeddedTerminal.real(dir.path + "/real")
+    #expect(EmbeddedTerminal.follow(real, from: dir.path + "/link") == nil)
+    #expect(EmbeddedTerminal.real(dir.path + "/gone") == dir.path + "/gone")
+}

@@ -105,6 +105,8 @@ Release:
 
 ### Fixed
 - Quit Kermo? names each connection once: several terminal panes on one server were a line each.
+- Hiding the terminal (⌃O) keeps a panel on /tmp, or on a folder reached through a symlink, where it was: it went to the shell's own spelling of it (/private/tmp) and lost its cursor.
+- A Favorites row of a server folder shows its name in a narrow sidebar: the server's address gives way first.
 - A new SSH tab shows its green dot as soon as ssh starts; it was grey until the next redraw.
 - ⌥⌘E in Volumes… ejects the highlighted volume, as the row said; it did nothing there.
 - F1 over the editor no longer lists the system's Start Dictation and Emoji & Symbols as "D" and "E".
