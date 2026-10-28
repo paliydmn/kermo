@@ -104,6 +104,7 @@ Release:
 - The Admin menu and Go ▸ Tunnels (moved, see Changed).
 
 ### Fixed
+- Quit Kermo? names each connection once: several terminal panes on one server were a line each.
 - A new SSH tab shows its green dot as soon as ssh starts; it was grey until the next redraw.
 - ⌥⌘E in Volumes… ejects the highlighted volume, as the row said; it did nothing there.
 - F1 over the editor no longer lists the system's Start Dictation and Emoji & Symbols as "D" and "E".

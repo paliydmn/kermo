@@ -525,7 +525,7 @@ extension ServerLockTests {
         #expect(asked.value == ["worker"] && b.peekedText == "● worker.service — active (running)" && b.quickTitleShown == "worker")
         a.list?.moveCursor(to: 3)
         await until { b.infoRows.first?.1 == "redis" }
-        #expect(b.infoRows.map(\.0) == ["Name", "State"] && b.peekedText == nil)
+        #expect(b.infoRows.map(\.0) == ["Name", "State"] && b.peekedText == nil && !b.infoControlsShown, "a row isn't a file: no Permissions & Owner…")
         app.toggleQuickView()
     }
 
@@ -783,3 +783,4 @@ extension ServerLockTests {
         #expect(a.remote?.target.host == "localhost" && app.terminal.tabs.isEmpty)
     }
 }
+

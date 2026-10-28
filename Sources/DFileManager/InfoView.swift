@@ -28,6 +28,7 @@ final class InfoView: NSView {
     var onCommand: ((String) -> Void)?
     /// What it says now, row by row (tests).
     private(set) var rows: [(String, String)] = []
+    var controlsShown: Bool { !localControls.isHidden || !serverControls.isHidden }   // tests
 
     init() {
         scroll = NSTextView.scrollableTextView()
@@ -117,12 +118,13 @@ final class InfoView: NSView {
     }
 
     /// A server's file, as its folder's listing knew it: nothing is asked of the server for it.
-    func show(server rows: [(String, String)]) {
+    /// `controls`: Permissions & Owner… — a server file's; not a list row's (a port, a service).
+    func show(server rows: [(String, String)], controls: Bool = true) {
         stop()
         path = nil
         server = rows
         localControls.isHidden = true
-        serverControls.isHidden = false
+        serverControls.isHidden = !controls
         self.rows = rows
         draw()
     }

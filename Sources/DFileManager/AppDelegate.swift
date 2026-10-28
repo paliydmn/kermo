@@ -312,7 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         if let busy = Shell.busy { lost.append(busy) }
         if let note = tunnels.quitNote() { lost.append(note) }
-        lost += terminal.tabs.compactMap(\.busyWith)
+        for b in terminal.tabs.compactMap(\.busyWith) where !lost.contains(b) { lost.append(b) }   // two panes on one server: one line
         guard !lost.isEmpty else { return true }
         // App-modal: it's about the whole app, and there may be no main window to put a sheet on (closing it asks).
         var c = Confirm("Quit Kermo?", action: "Quit")
