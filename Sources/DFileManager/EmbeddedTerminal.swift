@@ -240,7 +240,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         let shells = tabs.filter { $0.kind == .shell && $0.isRunning }
         if let t = shells.first(where: { $0 === current }) ?? shells.first {
             reveal(t)
-            if t.isAtPrompt, t.shellCwd != cwd, let line = ShellContext.typedCd(cwd) { t.view.send(txt: line) }
+            if t.isAtPrompt, t.shellCwd != Self.real(cwd), let line = ShellContext.typedCd(cwd) { t.view.send(txt: line) }
         } else {
             newShell(cwd: cwd)
         }
@@ -300,7 +300,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         if let t = shells.first(where: { $0 === current }) ?? shells.first {
             reveal(t)
             // ^U first (typedCd carries its own): a half-typed line would otherwise take the command as its tail.
-            t.view.send(txt: (t.shellCwd != cwd ? cd : "\u{15}") + line + "\r")
+            t.view.send(txt: (t.shellCwd != Self.real(cwd) ? cd : "\u{15}") + line + "\r")
         } else {
             // Typed ahead: the pty holds it until the shell reads — the first prompt is unknowable (the child is the foreground
             // group from forkpty on, .zshrc still running). A .zshrc that flushes input loses it: a known limit.
@@ -644,13 +644,21 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             }
         }
         guard busy.isEmpty else {
-            var c = Confirm("Close \(g.panes.count) sessions?", action: "Close")
-            (c.items, c.note) = (busy.map { Confirm.Item(name: $0) }, "Anything running in them ends.")
-            ask(c, then: end)
+            ask(Self.closeQuestion(g.panes, busy: busy), then: end)
             return false
         }
         end()
         return true
+    }
+
+    /// "Close 3 sessions?": PROD / ROOT as one pane's question has it (↩ is Cancel there); two panes on one server, one line.
+    static func closeQuestion(_ panes: [Tab], busy: [String]) -> Confirm {
+        var c = Confirm("Close \(panes.count) sessions?", action: "Close")
+        let place = panes.first { tint($0) != nil } ?? panes[0]
+        (c.chips, c.place) = (chips(place), place.target.map(SavedServer.name(for:)) ?? "")
+        let what = busy.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        (c.items, c.note) = (what.map { Confirm.Item(name: $0) }, "Anything running in them ends.")
+        return c
     }
 
     /// ⌘W / × on a pane (or a tab of one): a finished session closes at once; a live one asks first (a sheet on the
@@ -897,11 +905,25 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         guard let t = tabs.first(where: { $0.view === source }), let dir = directory.flatMap(Self.osc7Path), dir != t.cwd,
               t.host != nil || t.isAtPrompt
-                && t.shellCwd.map({ cwd in realpath(dir, nil).map { p in defer { free(p) }; return String(cString: p) } == cwd }) == true
+                && t.shellCwd == Self.real(dir)
         else { return }
         t.cwd = dir
         render()   // a local tab is named after its folder; a pane's header shows it
         if t === current, isShown { onDirectory?(t) }
+    }
+
+    /// The folder as the kernel names it (a shell's `shellCwd`): /tmp is /private/tmp, a symlinked folder its target.
+    nonisolated static func real(_ path: String) -> String {
+        guard let p = realpath(path, nil) else { return path }
+        defer { free(p) }
+        return String(cString: p)
+    }
+
+    /// Where the active panel goes as the terminal hides: the shell's folder, unless it's the panel's own written
+    /// another way — the panel would lose its cursor and its path as typed for nothing.
+    nonisolated static func follow(_ cwd: String?, from path: String) -> String? {
+        guard let cwd, cwd != real(path) else { return nil }
+        return cwd
     }
 
     /// "file://host/some%20dir" → "/some dir".

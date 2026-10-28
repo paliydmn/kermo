@@ -55,7 +55,7 @@ To run one command on several servers at once, choose **Run on Servers…** in t
 
 **Services…** asks the server's `systemctl` (systemd's JSON where it has it, its table on an old one), and in the same command whether each service can reload and whether it starts at boot. A row is the service's name, its state (`active · running`, `failed`) and its description; failed ones come first, then by name, and typing searches all three. Services systemd only knows by name (`not-found`) are left out.
 
-![Services… on web-01: a failed worker first, then each service with its state and description](images/services.png)
+![Services… on web-01, in search (web-01 › Services ›): the failed backup-db first, then each service with its state and description; the action bar along the bottom](images/services.png)
 
 | Key | Does |
 |---|---|
@@ -69,9 +69,11 @@ To run one command on several servers at once, choose **Run on Servers…** in t
 The menu has:
 
 - **Status**, **Live Logs**, **Edit Unit File…**, **Refresh Status** (reads its state again, runs nothing), **Copy Service Name**;
-- **Start**, **Stop…**, **Restart**, **Reload**: Reload only for a service that has an `ExecReload`, never a restart in its place;
+- **Start**, **Stop…**, **Restart**, **Reload**: Start greyed out while it runs, Stop… while it doesn't; Reload only for a service that has an `ExecReload`, never a restart in its place;
 - **Enable at Boot**, **Disable at Boot**: only whether it starts at boot (no `--now`), greyed out for a service that's already so, or static, masked or generated;
 - **Reset Failed State**: clears the failed mark (`systemctl reset-failed`), for a failed service only. It doesn't start or fix anything.
+
+![nginx's actions in search (web-01 › Services › nginx ›): each with its key, Start greyed — nginx is running already — and the command each runs](images/service-actions.png)
 
 Along the bottom, the list's action bar shows these keys — **↩ Status**, **⌘L Live Logs**, **⌘R Restart**, **⌃↩ Actions**, **⎋ Close**, and ⌘E and ⌘C under **+2** where there's no room — and a click on one does what the key does. Before the field, **web-01 ›** says whose services they are, in purple with PROD on a production server; above the rows, how many units there are and how many failed. A failed service has a red ◆ and its state in red; highlighted, the row is the system's blue, as in every list. A right-click highlights the row it's on first, and the menu acts on that service; a right-click on an empty spot opens no menu. The menu runs the same actions as the keys and shows ⌘L, ⌘E and ⌘R next to its items. What can't run now or doesn't apply is greyed out, and its tooltip says why.
 
@@ -105,6 +107,8 @@ Status and log run as you. Without the `adm` or `systemd-journal` group the log 
 - **⌫** goes to the [server's overview](#the-server-as-a-place), on the list's row; ⎋ stops a read on its way. **View ▸ Refresh** reads it again; a read that fails says why in the middle, with **Retry**. ⌃O opens SSH on its server.
 - While a panel shows the list, the server's connection stays; **Disconnect** closes the list. It isn't a session in the sidebar: the row's green folder means a panel with its files. A restart brings back the server's overview instead, on the list's row: nothing is asked of a server before you ask.
 
+![web-01's Services in the right panel, api under the cursor; its log as it goes in the left panel](images/log-next-door.png)
+
 The connection a look logs in with stays for its idle time (10 minutes, 60 seconds for a locked server) even when no panel shows the server, so the next look, ↩ or ⌘R needs no login; **Disconnect** ends it, and a locked server's ends when the screen locks. The same goes for Forward Port… and Run on Servers….
 
 On a production server a change of a service or a restart of a container asks first, ↩ being Cancel, and goes into the [production log](safety.md#production-log). A name goes into a command only if it's made of the characters systemd or docker allow in one; any other name is listed, and its keys only say why nothing runs. A log stopped with ⎋ stops on the server too, not just on this Mac.
@@ -120,6 +124,8 @@ A server's **overview** in a panel lists what's there, as rows that ↩ goes int
 | **Services**, **Containers**, **Ports** | [the list in this panel](#in-a-panel), read as it opens |
 | **Tunnels** | its tunnels as a list in this panel, from this Mac: ↩ turns one on or off, ⌘C copies its address, F4 edits, F8 deletes, **＋ New Tunnel…** over the columns ([tunnels](tunnels.md)) |
 | **File History** | the versions of its files kept on this Mac ([file history](server-files.md#file-history)) |
+
+![web-01's overview in a panel: Files, Home, /, then Services with 1 failed and 79 units, Containers, Ports, Tunnels and File History](images/server-overview.png)
 
 Opening it sends nothing to the server, production and locked ones included: no Touch ID, no login, no command. Its counts — `10 units`, `1 failed` (◆), `4 containers`, `6 listening` — are what the lists last read, shown while a connection to the server is up; else `—`, until you open that row. Tunnels says how many are on, from this Mac. The first row that goes to the server asks for Touch ID on a locked one, as any connection does.
 

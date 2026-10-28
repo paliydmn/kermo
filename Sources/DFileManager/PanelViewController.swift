@@ -1661,7 +1661,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     /// Reads the list again (⌘R in the menu, Retry, a first show): "Looking at services…" with a spinner — ⎋ stops it.
-    /// What fails says why in the middle with Retry, or, over rows already shown, in the status line.
+    /// What fails says why in the middle with Retry, or, over rows already shown, in the status line ("Nothing here"
+    /// isn't a row: it would stay, as if the list were empty).
     func readList() {
         guard let l = list else { return }
         let flag = CancelFlag()
@@ -1678,7 +1679,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             switch r {
             case .success(let c): l.set(c)
             case .failure(is CancellationError): break
-            case .failure(let e) where l.content == nil: loadError = e.localizedDescription
+            case .failure(let e) where l.content?.rows.isEmpty != false: loadError = e.localizedDescription
             case .failure(let e): flash(e.localizedDescription, error: true)
             }
             updateStatus()
@@ -1932,6 +1933,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var quickTabShown: QuickTab? { quickBox == nil ? nil : QuickTab(rawValue: quickTabs.selectedSegment) }   // tests
     var quickTabLabels: [String] { (0..<quickTabs.segmentCount).map { quickTabs.label(forSegment: $0) ?? "" } }   // tests
     var infoRows: [(String, String)] { infoView?.rows ?? [] }   // tests
+    var infoControlsShown: Bool { infoView?.controlsShown ?? false }   // tests
     var gitShown: (state: String, keys: [KeySlot])? { gitBox?.isHidden == false ? (gitState.stringValue, gitKeys.list ?? []) : nil }   // tests
 
     func setQuickView(_ on: Bool) {
@@ -1946,7 +1948,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             git.alignment = .leading
             git.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
             gitKeys.heightAnchor.constraint(equalToConstant: 30).isActive = true
-            gitKeys.widthAnchor.constraint(equalTo: git.widthAnchor, constant: -20).isActive = true
+            // ≤: its row hugs its words at 250, the divider's priority — tied to the panel's width it pulled Quick View to the panel's narrowest
+            gitKeys.widthAnchor.constraint(lessThanOrEqualTo: git.widthAnchor, constant: -20).isActive = true
             gitState.font = .systemFont(ofSize: 13)
             git.isHidden = true
             let body = NSView()
@@ -2058,7 +2061,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         gitBox?.isHidden = true
         guard case .text(let read)? = peek else {
             infoView?.isHidden = false
-            if case .rows(let rows)? = peek { infoView?.show(server: rows) } else { infoView?.show(server: []) }
+            if case .rows(let rows)? = peek { infoView?.show(server: rows, controls: false) } else { infoView?.show(server: [], controls: false) }
             return
         }
         infoView?.isHidden = true

@@ -170,7 +170,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 guard e.window === window else { return false }
                 if terminal.hasFocus {
                     if terminal.handleKey(e) { return true }
-                    if let c = keymap[Shortcut(event: e)], Self.terminalCommands.contains(c.id) {   // ⌘1–4 too: back to a panel
+                    if let c = keymap[Shortcut(event: e)], Self.terminalCommands.contains(c.id)   // ⌘1–4 too: back to a panel
+                        || Self.terminalCmdKeys.contains(c.id) && e.modifierFlags.contains(.command) {
                         run(c.id)
                         return true
                     }
@@ -311,7 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         if let busy = Shell.busy { lost.append(busy) }
         if let note = tunnels.quitNote() { lost.append(note) }
-        lost += terminal.tabs.compactMap(\.busyWith)
+        for b in terminal.tabs.compactMap(\.busyWith) where !lost.contains(b) { lost.append(b) }   // two panes on one server: one line
         guard !lost.isEmpty else { return true }
         // App-modal: it's about the whole app, and there may be no main window to put a sheet on (closing it asks).
         var c = Confirm("Quit Kermo?", action: "Quit")
@@ -1131,6 +1132,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// What works while the keys go to the terminal (`terminalActive`), in the key bar's order there; `tab.*` act on
     /// its tabs then. ⌘1–4 go back to a panel.
+    /// From the terminal on their ⌘ keys only (⇧⌘P): those never reach the shell — F9 and ⌥9 do (mc's, the shell's).
+    static let terminalCmdKeys: Set<String> = ["app.palette"]
     static let terminalCommands = ["view.terminal", "view.terminalFull", "tab.new", "tab.close", "term.split.right", "term.split.down", "tab.next",
                                    "tab.prev", "ssh.new", "go.connect", "cmdline.insert", "cmdline.insertPaths", "term.bigger", "term.smaller",
                                    "view.sidebar", "ssh.reconnect", "server.disconnect", "term.join", "term.unsplit", "term.pane.left",
@@ -1147,7 +1150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // (`loadGen`), and the panel would stay where it was.
             let cwd = terminal.hide(NSApp.currentEvent)
             for p in panels {
-                if p === active, let cwd, cwd != p.path { p.navigate(to: cwd) } else { p.reload() }
+                if p === active, let to = EmbeddedTerminal.follow(cwd, from: p.path) { p.navigate(to: to) } else { p.reload() }
             }
             window.makeFirstResponder(active.table)
             updatePrompt()
@@ -1317,7 +1320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Also the key bar's: a click there makes the window key, so only focus and the terminal matter.
     func canRun(_ id: String) -> Bool {
-        if terminalActive { return Self.terminalCommands.contains(id) }   // the panels' commands: from a panel
+        if terminalActive { return Self.terminalCommands.contains(id) || Self.terminalCmdKeys.contains(id) }   // the panels' commands: from a panel
         return !(window?.firstResponder is NSText)
     }
 

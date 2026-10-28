@@ -96,6 +96,7 @@ private func words(_ s: String) -> [String] {
     #expect(rest.contains(KeySlot(key: "⌃⇧O", label: "Maximize", id: "view.terminalFull")))
     #expect(rest.contains(KeySlot(key: "⌘T", label: "New Tab", id: "tab.new")) && rest.contains { $0.id == "term.split.right" })
     #expect(rest.compactMap(\.id).allSatisfy(AppDelegate.terminalCommands.contains))
+    #expect(AppDelegate.terminalCmdKeys == ["app.palette"] && !AppDelegate.terminalCommands.contains("app.palette"), "⇧⌘P from the terminal; F9 stays mc's")
     let terminal = AppDelegate.terminalCommands.compactMap { id in commands.first { $0.id == id } }
     let panes = KeyBarModel.layers(terminal, terminal: true).first { $0.mods == [.command, .option] }?.slots.compactMap(\.id)
     #expect(panes == ["term.pane.left", "term.pane.right", "term.pane.up", "term.pane.down"])
