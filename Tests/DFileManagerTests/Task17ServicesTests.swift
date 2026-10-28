@@ -198,7 +198,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     }
     var u = ServiceUnit(unit: "cron.service", active: "active", sub: "running")
     (u.canReload, u.unitFile) = (false, "enabled")
-    #expect(why(u) == ["Reload": "cron can't reload: it has no ExecReload (Restart is the other way)",
+    #expect(why(u) == ["Start": "cron is running already", "Reload": "cron can't reload: it has no ExecReload (Restart is the other way)",
                        "Enable at Boot": "cron is enabled at boot already", "Reset Failed State": "cron isn't failed"])
     (u.active, u.sub, u.unitFile, u.canReload) = ("inactive", "dead", "static", nil)
     #expect(why(u)["Stop…"] == "cron isn't running" && why(u)["Disable at Boot"] == "cron is static (its unit has no [Install] section): nothing to change at boot")

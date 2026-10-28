@@ -36,6 +36,8 @@ Release:
 - **Search (⇧⌘P) finds every server**: saved ones, the hosts of `~/.ssh/config` and the ones typed lately, with their PROD, ROOT and locked chips — not only those used lately. ↩ opens one as a double-click on its sidebar row does, ⌘↩ in the other panel. Typed, it finds the rows of saved servers' overviews too (`serv web` → **Services — web-01**), from what's known here: nothing is sent.
 
 ### Changed
+- **⇧⌘P** opens search from the terminal too (F9 and ⌥9 stay the terminal's: mc, the shell).
+- **Start** in a service's actions is greyed while it runs, saying so, as Stop… is while it doesn't.
 - **Computer Root** is ⇧⌘↑, next to ⌘↑ Enclosing Folder: ⇧⌘/ is the Help menu's search in every Mac app, so it never reached Kermo. A `keymap.json` that still binds ⇧⌘/ is warned about at launch.
 - One click on a server in the sidebar with nothing open shows its overview, which sends nothing; a double-click (or ↩ in the sidebar) opens its files in its start folder instead of an SSH shell — SSH is the row's button, its menu and ⌘K.
 - ⌫ in a server's `/` goes to its overview instead of leaving the server; ⌫ there leaves it, asking as before.

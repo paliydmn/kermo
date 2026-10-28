@@ -130,7 +130,7 @@ extension AppDelegate {
                 active.flash("Copied “\(u.unit)”")
                 return nil
             },
-            changing(.start, group: 1),
+            changing(.start, group: 1, why: u.active == "active" ? "\(u.name) is \(u.sub == "running" ? "running" : "active") already" : nil),
             changing(.stop, "Stop…", group: 1, why: u.active == "inactive" ? "\(u.name) isn't running" : nil),
             changing(.restart, key: Shortcut("cmd+r"), group: 1),
             changing(.reload, group: 1, why: u.canReload == false ? "\(u.name) can't reload: it has no ExecReload (Restart is the other way)" : nil),
