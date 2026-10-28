@@ -14,7 +14,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 - **Remap:** in **Settings › Keys** (⌘,) click a key and press the new one; or choose **Kermo ▸ Configuration ▸ Edit Keymap…**, then **Reload Config** (see [Configuration](configuration.md#keymap)).
 
 > [!NOTE]
-> Two shortcuts clash with macOS: ⇧⌘/ (computer root) is also the Help menu search, and ⌃1…⌃7 (Finder tags) switch desktops once you have several. Turn them off in System Settings ▸ Keyboard ▸ Keyboard Shortcuts, or remap the command. ⌘M minimizes the window, as everywhere on the Mac.
+> One shortcut clashes with macOS: ⌃1…⌃7 (Finder tags) switch desktops once you have several. Turn that off in System Settings ▸ Keyboard ▸ Keyboard Shortcuts, or remap the command. ⌘M minimizes the window, as everywhere on the Mac.
 
 ## Search and help
 
@@ -43,7 +43,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Bookmark this folder (again: remove the bookmark) | ⌘D |
 | Path entry with Tab completion (or a click on an empty spot of the path bar) | ⌘L, ⇧⌘G |
 | Up / back / forward | ⌫, ⌘↑ / ⌘[ / ⌘] |
-| Home / computer root | ⇧⌘H / ⇧⌘/ |
+| Home / computer root | ⇧⌘H / ⇧⌘↑ |
 | Directory tree (←/→ collapse/expand, ↩ open) | F10, ⌥0, ⌥F10, ⇧⌘T |
 | Open / enter an `.app` bundle | ↩ (or the keypad's ⌤) / ⌘↓ |
 | Follow a link's target | ⌘J |

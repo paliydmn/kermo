@@ -42,7 +42,7 @@ private func key(_ code: UInt16, _ chars: String, _ mods: NSEvent.ModifierFlags 
     let commands = app.makeCommands()
     let reserved = ["cmd+opt+d", "cmd+m", "cmd+h", "cmd+opt+h", "cmd+q", "cmd+space", "cmd+opt+space", "cmd+tab", "cmd+shift+3", "cmd+shift+4",
                     "cmd+shift+5", "ctrl+cmd+q", "cmd+opt+esc", "ctrl+cmd+space", "ctrl+space", "ctrl+opt+space", "ctrl+up", "ctrl+down",
-                    "ctrl+left", "ctrl+right", "cmd+`"]
+                    "ctrl+left", "ctrl+right", "cmd+`", "cmd+shift+/"]
     for spec in reserved {
         let k = Shortcut(spec)!
         if let c = commands.first(where: { $0.keys.contains(k) }) { Issue.record("\(c.id) is on \(k.display), which macOS takes first") }
@@ -50,6 +50,7 @@ private func key(_ code: UInt16, _ chars: String, _ mods: NSEvent.ModifierFlags 
     }
     for c in commands { for k in c.keys { #expect(k.takenByMacOS == nil, "\(c.id) on \(k.display)") } }
     #expect(commands.first { $0.id == "file.diff" }!.keys == [Shortcut("cmd+shift+d")!])
+    #expect(commands.first { $0.id == "go.root" }!.keys == [Shortcut("cmd+shift+up")!], "⇧⌘/ is the Help menu's search (D-124)")
     let menu = app.makeMenu()
     let minimize = try #require(menu.items.compactMap(\.submenu).first { $0.title == "Window" }?.items.first { $0.title == "Minimize" })
     #expect(minimize.keyEquivalent == "m" && minimize.keyEquivalentModifierMask == .command)

@@ -86,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = false   // AppKit's Show Tab Bar in View read as Kermo's tabs (D-125)
         applyConfig(reportProblems: false)
         SFTP.password = { SSHPasswords.get($0) }
         SFTP.hasPassword = { SSHPasswords.has($0) }

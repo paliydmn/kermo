@@ -42,7 +42,7 @@ extension AppDelegate {
         cmd("list.keys", "Keys of This List", ["shift+/"], aliases: "help list keys ?") { $0.showListKeys() },
         cmd("list.go", "Go to List…", ["shift+;"], aliases: "services containers ports tunnels overview :") { $0.goToList() },
         cmd("go.home", "Home", ["cmd+shift+h"], menu: "Go", group: 2) { $0.active.navigate(to: NSHomeDirectory()) },
-        cmd("go.root", "Computer Root", ["cmd+shift+/"], menu: "Go", group: 2, short: "Root") { $0.active.navigate(to: "/") },
+        cmd("go.root", "Computer Root", ["cmd+shift+up"], menu: "Go", group: 2, short: "Root") { $0.active.navigate(to: "/") },
         cmd("go.path", "Go to Path…", ["cmd+l", "cmd+shift+g"], menu: "Go", group: 2, aliases: "path location") { $0.active.beginPathEditing() },
         cmd("go.jump", "Jump to Folder…", ["cmd+p"], menu: "Go", group: 2, short: "Jump", aliases: "go to folder recent frecency") { $0.showJump() },
         cmd("go.tree", "Folder Tree…", ["f10", "opt+0", "opt+f10", "cmd+shift+t"], menu: "Go", group: 2, short: "Tree", aliases: "folder tree") { app in
