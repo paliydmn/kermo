@@ -644,13 +644,21 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             }
         }
         guard busy.isEmpty else {
-            var c = Confirm("Close \(g.panes.count) sessions?", action: "Close")
-            (c.items, c.note) = (busy.map { Confirm.Item(name: $0) }, "Anything running in them ends.")
-            ask(c, then: end)
+            ask(Self.closeQuestion(g.panes, busy: busy), then: end)
             return false
         }
         end()
         return true
+    }
+
+    /// "Close 3 sessions?": PROD / ROOT as one pane's question has it (↩ is Cancel there); two panes on one server, one line.
+    static func closeQuestion(_ panes: [Tab], busy: [String]) -> Confirm {
+        var c = Confirm("Close \(panes.count) sessions?", action: "Close")
+        let place = panes.first { tint($0) != nil } ?? panes[0]
+        (c.chips, c.place) = (chips(place), place.target.map(SavedServer.name(for:)) ?? "")
+        let what = busy.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        (c.items, c.note) = (what.map { Confirm.Item(name: $0) }, "Anything running in them ends.")
+        return c
     }
 
     /// ⌘W / × on a pane (or a tab of one): a finished session closes at once; a live one asks first (a sheet on the

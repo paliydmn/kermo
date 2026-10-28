@@ -161,6 +161,10 @@ import Testing
     q.readList()
     await until { q.emptyShown?.title == "systemd lists no services there" }
     #expect(q.emptyShown?.title == "systemd lists no services there" && empty.reads == 2)
+    empty.next = .failure(JobErrorMessage("ssh: connection closed"))
+    q.readList()
+    await until { q.emptyShown?.title.hasPrefix("Can't read") == true }
+    #expect(q.emptyShown?.detail == "ssh: connection closed", "no rows shown: said in the middle, not flashed under the empty list's words")
 }
 
 /// A tab keeps its list: another tab and back shows it again, not read; ⌘T is the same list in a new tab.
@@ -523,6 +527,20 @@ extension ServerLockTests {
         await until { b.infoRows.first?.1 == "redis" }
         #expect(b.infoRows.map(\.0) == ["Name", "State"] && b.peekedText == nil)
         app.toggleQuickView()
+    }
+
+    /// ⌘↩ on a list the Picker couldn't read: the other panel reads it and says why with Retry — not "Nothing here", as
+    /// if it were empty. With a list active, Settings' Edit… of validators.json and the user menu still run (not a file's).
+    @Test func aListThatFailedOpensInTheOtherPanelWithRetry() async throws {
+        let (app, _, _, done) = try app()
+        defer { done() }
+        let s = Stub("Containers", rows: nil), o = app.other
+        s.next = .failure(JobErrorMessage("db-01 has neither docker nor podman"))
+        app.openInOther(s, query: "", select: nil, rows: [])
+        await until { o.emptyShown?.title.hasPrefix("Can't read") == true }
+        #expect(o.emptyShown?.title == "Can't read containers" && o.emptyShown?.detail == "db-01 has neither docker nor podman" && s.reads == 1)
+        #expect(o.emptyShown?.keys.map(\.label) == ["Retry"])
+        #expect(["validators.edit", "usermenu.edit"].allSatisfy(AppDelegate.runsInList))
     }
 
     /// A server's place: its rows from the providers, in order; opening it asks the server nothing — no Touch ID on a

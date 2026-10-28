@@ -520,7 +520,8 @@ extension AppDelegate {
     /// What runs on a list besides: going elsewhere, tabs, panels, the view, the app — as on a parked tab. A file's
     /// commands don't: there's no file.
     static func runsInList(_ id: String) -> Bool {
-        listOwn.contains(id) || id.hasPrefix("panel.focus") || ["panel.switch", "panel.add", "panel.close", "admin.auditLog", "admin.rootPanel", "admin.userPanel"].contains(id)
+        listOwn.contains(id) || id.hasPrefix("panel.focus")
+            || ["panel.switch", "panel.add", "panel.close", "admin.auditLog", "admin.rootPanel", "admin.userPanel", "usermenu.edit", "validators.edit"].contains(id)
             || !listRefuses.contains(id) && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term"].contains(String(id.prefix { $0 != "." }))
     }
     static let listRefuses: Set<String> = ["go.tree", "go.linktarget", "go.bookmark", "go.path", "view.dirsizes", "view.filterPresets", "view.gitOnly",
@@ -695,12 +696,12 @@ extension AppDelegate {
     }
 
     /// ⌘↩ in a Picker's list: the same rows in the other panel — as the Picker has them now, not read again — with
-    /// what was typed and highlighted; the keys go there.
+    /// what was typed and highlighted; the keys go there. A list it couldn't read is read there: why, with Retry.
     func openInOther(_ source: ListSource, query: String, select: String?, rows: [Picker.Item]) {
         showPanels()
         let p = other
-        var c = source.content ?? ListContent(rows: [])
-        c.rows = rows
+        var c = source.content
+        c?.rows = rows
         p.showList(source, content: c, filter: query, select: select)
         window.makeFirstResponder(p.table)
     }

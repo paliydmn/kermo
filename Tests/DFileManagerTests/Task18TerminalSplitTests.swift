@@ -118,3 +118,20 @@ private let a = SFTPTarget(host: "a@dfm-18.invalid"), b = SFTPTarget(host: "b@df
     let heights = g.panes.map(\.box.frame.height)
     #expect(heights.count == 4 && heights.max()! - heights.min()! < 2, "\(heights)")
 }
+
+extension ServerLockTests {
+    /// × on a tab of several panes on a production server: its PROD strip and ↩ = Cancel, as one pane's question;
+    /// two panes on one server are one line.
+    @Test func closingPanesOnProductionSaysSo() {
+        var s = SavedServer(address: a.host)!
+        s.prod = true
+        let was = ServerLock.servers
+        ServerLock.servers = { [s] }
+        defer { ServerLock.servers = was }
+        let term = terminal()
+        term.restore([.init(vertical: false, panes: [a, a])])
+        let line = "The connection to “\(a.host)”"
+        let c = EmbeddedTerminal.closeQuestion(term.groups[0].panes, busy: [line, line])
+        #expect(c.title == "Close 2 sessions?" && c.strip == [.prod] && c.safe && c.items.map(\.name) == [line])
+    }
+}

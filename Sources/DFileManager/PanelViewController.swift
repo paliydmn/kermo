@@ -1661,7 +1661,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     /// Reads the list again (⌘R in the menu, Retry, a first show): "Looking at services…" with a spinner — ⎋ stops it.
-    /// What fails says why in the middle with Retry, or, over rows already shown, in the status line.
+    /// What fails says why in the middle with Retry, or, over rows already shown, in the status line ("Nothing here"
+    /// isn't a row: it would stay, as if the list were empty).
     func readList() {
         guard let l = list else { return }
         let flag = CancelFlag()
@@ -1678,7 +1679,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             switch r {
             case .success(let c): l.set(c)
             case .failure(is CancellationError): break
-            case .failure(let e) where l.content == nil: loadError = e.localizedDescription
+            case .failure(let e) where l.content?.rows.isEmpty != false: loadError = e.localizedDescription
             case .failure(let e): flash(e.localizedDescription, error: true)
             }
             updateStatus()
