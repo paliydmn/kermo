@@ -36,6 +36,7 @@ Release:
 - **Search (⇧⌘P) finds every server**: saved ones, the hosts of `~/.ssh/config` and the ones typed lately, with their PROD, ROOT and locked chips — not only those used lately. ↩ opens one as a double-click on its sidebar row does, ⌘↩ in the other panel. Typed, it finds the rows of saved servers' overviews too (`serv web` → **Services — web-01**), from what's known here: nothing is sent.
 
 ### Changed
+- **Computer Root** is ⇧⌘↑, next to ⌘↑ Enclosing Folder: ⇧⌘/ is the Help menu's search in every Mac app, so it never reached Kermo. A `keymap.json` that still binds ⇧⌘/ is warned about at launch.
 - One click on a server in the sidebar with nothing open shows its overview, which sends nothing; a double-click (or ↩ in the sidebar) opens its files in its start folder instead of an SSH shell — SSH is the row's button, its menu and ⌘K.
 - ⌫ in a server's `/` goes to its overview instead of leaving the server; ⌫ there leaves it, asking as before.
 - Marked files are bold in the accent color with a ✓ before the icon, not red: red now means only that something failed or can't be undone. Themes keep their own mark color, and get the ✓ too; GitHub Light and Solarized Light mark in pink and magenta instead of red.
@@ -96,6 +97,7 @@ Release:
 - **Services…**, **Containers…** and **Forward Port…** open in search, on the server's overview: ⌫ or ⎋ goes to it, its other lists a ⇥ away, and ⇥ on a row lists its actions. Failed rows come first, as in a panel; each still opens as it was left.
 
 ### Removed
+- macOS's **Show Tab Bar** and **Show All Tabs** in the View menu: they were about window tabs, not Kermo's own.
 - **Save as Production…** in a recent or `~/.ssh/config` row's menu: the save sheet has the Production switch.
 - The Admin menu and Go ▸ Tunnels (moved, see Changed).
 

@@ -84,7 +84,7 @@ struct Shortcut: Hashable {
         ("cmd+`", "next window"), ("cmd+shift+3", "screenshot"), ("cmd+shift+4", "screenshot"), ("cmd+shift+5", "screenshot"),
         ("ctrl+cmd+q", "lock screen"), ("cmd+opt+esc", "Force Quit"), ("ctrl+cmd+space", "emoji"), ("ctrl+space", "input source"),
         ("ctrl+opt+space", "input source"), ("ctrl+up", "Mission Control"), ("ctrl+down", "App windows"), ("ctrl+left", "Spaces"),
-        ("ctrl+right", "Spaces"),
+        ("ctrl+right", "Spaces"), ("cmd+shift+/", "the Help menu's search"),
     ].map { (Shortcut($0.0)!, $0.1) })
 
     /// Back to the "cmd+shift+." form used in keymap.json.
