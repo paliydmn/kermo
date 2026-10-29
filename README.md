@@ -91,3 +91,12 @@ Mac function keys control media by default: ‚å• plus the digit does the same (‚å
 **Project**
 - [Changelog](CHANGELOG.md), [Contributing](CONTRIBUTING.md), [MIT license](LICENSE).
 - Questions and bugs: [GitHub issues](https://github.com/paliydmn/kermo/issues).
+- [Support Kermo](#support-kermo).
+
+## Support Kermo
+
+Kermo is free and open source. If it saves you time, you can support its development:
+
+- [Ko-fi](https://ko-fi.com/kermoinfo)
+
+You can also help without money: star the repository, [report a bug](https://github.com/paliydmn/kermo/issues), or tell a colleague about Kermo.

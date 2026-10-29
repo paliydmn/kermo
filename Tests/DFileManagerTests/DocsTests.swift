@@ -7,6 +7,11 @@ private let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
 
 private func text(_ path: String) throws -> String { try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8) }
 
+/// Support Kermo… and About open README#support-kermo: the section must keep that heading.
+@Test func theSupportSectionIsInTheReadme() throws {
+    #expect(try text("README.md").contains("\n## Support Kermo\n"))
+}
+
 /// Every default shortcut of every command is on docs/shortcuts.md, as the menus write it (⌃⌥⇧⌘). A range there
 /// ("⌘1…⌘4") covers the keys between; a few are written as the character typed ("⌘+" for ⇧⌘=).
 @MainActor @Test func everyDefaultShortcutIsInTheDocs() throws {

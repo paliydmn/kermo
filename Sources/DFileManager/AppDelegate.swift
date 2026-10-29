@@ -1289,7 +1289,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// The app's own items, not the panels': from a viewer, an editor or over the terminal too.
-    static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "app.settings", "help.docs", "help.issue"]
+    static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "app.support", "app.settings", "help.docs", "help.issue"]
 
     /// A disabled menu item still takes its key: AppKit says it handled it and runs nothing, so F3 never reached a viewer
     /// (D-101); by the same path ⌘↑ or ⌃B could miss an editor or a text field. A command's item keeps its key only while

@@ -13,6 +13,9 @@ Release:
 
 ## [Unreleased]
 
+### Added
+- **Kermo ▸ Support Kermo…** (and a link in About) opens the ways to support Kermo's development.
+
 ## [1.6] - 2026-10-28
 
 ### Added

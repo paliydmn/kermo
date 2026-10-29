@@ -1,6 +1,9 @@
 import AppKit
 import DFMCore
 
+/// Every way to support Kermo is on one README section: a new one needs no release.
+private let supportPage = URL(string: "https://github.com/paliydmn/kermo#support-kermo")!
+
 /// Every user action is a named command: bound to keys, shown in menus and the F-key bar.
 /// One table here = one place to look up or rebind anything (keymap.json later reads the same ids).
 struct Command {
@@ -81,6 +84,7 @@ extension AppDelegate {
                                                     attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor])
             credits.append(NSAttributedString(string: "github.com/paliydmn/kermo", attributes: [
                 .font: NSFont.systemFont(ofSize: 11), .link: URL(string: "https://github.com/paliydmn/kermo")!]))
+            credits.append(NSAttributedString(string: "\nSupport Kermo", attributes: [.font: NSFont.systemFont(ofSize: 11), .link: supportPage]))
             credits.setAlignment(.center, range: NSRange(location: 0, length: credits.length))
             NSApp.activate()
             NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
@@ -90,6 +94,7 @@ extension AppDelegate {
             app.showMainWindow(nil)   // its answer is a sheet there, also when a viewer is in front
             Task { await app.checkForUpdates(byHand: true) }
         },
+        cmd("app.support", "Support Kermo…", [], menu: "Kermo", group: 2, aliases: "donate sponsor ko-fi") { _ in NSWorkspace.shared.open(supportPage) },
         cmd("app.update.auto", "Check for Updates Automatically", [], menu: "Kermo/Configuration", group: 5, aliases: "update daily",
             on: { !$0.defaults.bool(forKey: "updateCheckOff") }) { $0.toggleUpdateChecks() },
         cmd("app.installCLI", "Install “fm” Command", [], menu: "Kermo", group: 3) { $0.installCLI() },
