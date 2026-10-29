@@ -134,7 +134,7 @@ The lists that ask you to choose — Search (⇧⌘P, its rows under group heade
 
 Every command is in the menu bar, in groups, with its first shortcut. Switches have ✓ while they're on.
 
-- **Kermo:** About Kermo, Check for Updates…, Install “fm” Command, and **Configuration ▸**: the files to edit (keymap, user menu, validators, filter presets), Open Config Folder, Reload Config, Check for Updates Automatically.
+- **Kermo:** About Kermo, Check for Updates…, Support Kermo…, Install “fm” Command, and **Configuration ▸**: the files to edit (keymap, user menu, validators, filter presets), Open Config Folder, Reload Config, Check for Updates Automatically.
 - **File:** View, Edit, Quick Look, Get Info; Copy To…, Move To…, Rename…; New Folder…, New File…, **Links ▸**; Move to Trash, Put Back, Delete Permanently…; Compress…, Extract…, **Split & Combine ▸**; User Menu…, Open in Terminal, Reveal in Finder; Eject and Unmount; **As Administrator ▸**.
 - **Edit:** Undo, Cut, Copy, Paste, Find… for text; Copy Path, Copy Name, Move Here for files.
 - **Mark:** marking and masks; Mark Differences, Synchronize Folders…, Compare Files; **Tags ▸**.

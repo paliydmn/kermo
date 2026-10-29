@@ -16,7 +16,7 @@ import Testing
 @MainActor @Test func appItemsWorkFromAnyWindow() {
     _ = NSApplication.shared
     let app = AppDelegate()
-    let appWide = ["app.about", "app.update", "app.update.auto"]
+    let appWide = ["app.about", "app.update", "app.update.auto", "app.support"]
     app.window = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: true)   // not key (in tests none is)
     for id in appWide { #expect(app.validateMenuItem(menuItem(id)), "\(id) with another window key") }
     for id in ["file.copy", "view.terminal"] { #expect(!app.validateMenuItem(menuItem(id)), "\(id) with another window key") }
