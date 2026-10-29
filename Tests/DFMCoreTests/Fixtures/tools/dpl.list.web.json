@@ -1,0 +1,12 @@
+{
+  "updated_at": "2026-10-29T10:02:10Z",
+  "kind": "app",
+  "active_version": 7,
+  "last_version": 8,
+  "last_status": "failed",
+  "failure": {
+    "stage": "startup",
+    "error": "container exited with code 1"
+  },
+  "supervised": true
+}

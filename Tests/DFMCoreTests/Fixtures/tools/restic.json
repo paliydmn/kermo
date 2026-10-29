@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "id": "restic",
+  "title": "Backups",
+  "tool": "restic",
+  "where": "server",
+  "about": "restic snapshots on a server: when the last one was made, what's in it, restore files; alerts when a backup is late.",
+  "icon": "externaldrive.badge.timemachine",
+  "group": "Backup",
+  "author": "you (made with New Tool…)",
+  "requires": "command -v restic",
+  "sudo": true,
+
+  "vars": {
+    "repo": { "title": "Repository", "ask": true, "placeholder": "/backup/restic or sftp:backup@host:/srv/restic" },
+    "passfile": { "title": "Password file on the server", "ask": true, "default": "/root/.restic-password" }
+  },
+  "env": { "RESTIC_REPOSITORY": "{repo}", "RESTIC_PASSWORD_FILE": "{passfile}" },
+  "version": { "command": "restic version", "pattern": "restic (?<v>\\d+\\.\\d+\\.\\d+)", "tested": ">=0.16" },
+
+  "list": {
+    "command": "restic snapshots --json",
+    "format": "json",
+    "key": "{short_id}",
+    "title": "{time:datetime}",
+    "subtitle": ["{short_id}", "{paths}", "{tags}"],
+    "detail": "{hostname}",
+    "sort": "-time",
+    "columns": ["time:datetime", "short_id", "paths", "tags", "hostname"],
+    "empty": "No snapshots in {repo} yet"
+  },
+  "actions": [
+    { "id": "files", "title": "Files", "key": "return", "readonly": true, "command": "restic ls {short_id} | head -500", "output": "window" },
+    { "id": "restore", "title": "Restore to…", "key": "f5", "long": true, "confirm": true,
+      "inputs": [
+        { "name": "path", "type": "text", "title": "Only this path (empty: everything)", "optional": true, "placeholder": "/etc/nginx" },
+        { "name": "target", "type": "text", "title": "Into this folder on the server", "default": "/tmp/restore-{short_id}" }
+      ],
+      "command": ["restic restore {short_id} --target {target}", "--include {path}"],
+      "message": "Files are written into {target}; nothing in place is overwritten unless {target} is /.",
+      "output": "window", "done": "Restored {short_id} into {target}" }
+  ],
+  "toolActions": [
+    { "id": "check", "title": "Check Repository", "long": true, "readonly": true, "command": "restic check", "output": "window" }
+  ],
+
+  "poll": { "command": "restic snapshots --latest 1 --json", "format": "json" },
+  "watch": { "every": 3600 },
+  "metrics": {
+    "age": { "title": "Last backup", "rows": "poll", "key": "paths", "path": "time", "calc": "age", "unit": "h" }
+  },
+  "summary": [ { "metric": "age", "as": "text", "of": "max", "label": "last {value} h ago" } ],
+  "alerts": [
+    { "id": "late", "metric": "age", "warn": 26, "crit": 50, "message": "{paths}: the last backup was {value} h ago" }
+  ],
+  "dashboard": [
+    { "row": [ { "stat": "age", "of": "max" } ] },
+    { "table": "list", "title": "Snapshots", "columns": ["time:datetime", "short_id", "paths", "tags", "hostname"], "actions": ["files", "restore"] }
+  ]
+}
