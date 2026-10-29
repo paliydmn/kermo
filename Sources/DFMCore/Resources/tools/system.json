@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "id": "system",
+  "title": "System",
+  "where": "server",
+  "about": "Live CPU, memory, load, disks, network and disk I/O, top processes, failed services and containers; alerts when a server needs you.",
+  "icon": "gauge",
+  "catalogVersion": 1,
+  "requires": "test -r /proc/stat",
+  "sudo": false,
+  "header": "printf '%s · %s · up %s' \"$(sed -n 's/^PRETTY_NAME=//p' /etc/os-release | tr -d '\"')\" \"$(uname -r)\" \"$(uptime -p 2>/dev/null | sed 's/^up //')\"",
+
+  "stream": { "script": "system.stream.sh", "env": { "EVERY": "{every}" }, "format": "jsonl" },
+  "watch": { "every": 5, "down": 3 },
+
+  "metrics": {
+    "cpu":      { "title": "CPU",               "path": "cpu.pct",          "unit": "%", "max": 100 },
+    "iowait":   { "title": "I/O wait",          "path": "cpu.iowait",       "unit": "%", "max": 100 },
+    "steal":    { "title": "Steal",             "path": "cpu.steal",        "unit": "%", "max": 100 },
+    "mem":      { "title": "Memory",            "path": "mem.pct",          "unit": "%", "max": 100, "detail": "{mem.used:bytes} of {mem.total:bytes}" },
+    "mem_swap": { "title": "Memory, swapping",  "path": "mem.swapping_pct", "unit": "%", "max": 100 },
+    "swap":     { "title": "Swap",              "path": "swap.pct",         "unit": "%", "max": 100 },
+    "load":     { "title": "Load per core",     "path": "load.per_core",    "unit": "",  "detail": "{load.1} · {load.5} · {load.15} on {cores} cores" },
+    "rx":       { "title": "In",                "path": "net.rx",           "unit": "B/s" },
+    "tx":       { "title": "Out",               "path": "net.tx",           "unit": "B/s" },
+    "read":     { "title": "Read",              "path": "io.read",          "unit": "B/s" },
+    "write":    { "title": "Write",             "path": "io.write",         "unit": "B/s" },
+    "disk":     { "title": "Disk",              "rows": "disks", "key": "mount", "path": "pct",        "unit": "%", "max": 100 },
+    "inodes":   { "title": "Inodes",            "rows": "disks", "key": "mount", "path": "inodes_pct", "unit": "%", "max": 100 }
+  },
+
+  "summary": [
+    { "metric": "cpu",  "as": "bar" },
+    { "metric": "mem",  "as": "bar" },
+    { "metric": "disk", "as": "bar", "of": "max" }
+  ],
+
+  "alerts": [
+    { "id": "cpu",      "metric": "cpu",      "warn": 85,  "crit": 95,  "for": { "warn": "10m", "crit": "5m" } },
+    { "id": "mem",      "metric": "mem",      "warn": 90,               "for": { "warn": "10m" } },
+    { "id": "mem_swap", "metric": "mem_swap",              "crit": 95,  "for": { "crit": "1m" } },
+    { "id": "load",     "metric": "load",     "warn": 2.0, "crit": 4.0, "for": { "warn": "10m", "crit": "5m" } },
+    { "id": "disk",     "metric": "disk",     "warn": 85,  "crit": 95 },
+    { "id": "inodes",   "metric": "inodes",   "warn": 85,  "crit": 95 }
+  ],
+
+  "events": [
+    { "id": "reboot",    "path": "boot_id",        "when": "changed",   "level": "info",     "message": "Rebooted" },
+    { "id": "oom",       "path": "oom_kill",       "when": "increased", "level": "warning",  "message": "Out of memory: the kernel killed a process" },
+    { "id": "unit",      "rows": "failed_units", "key": "unit", "when": "added", "level": "critical", "message": "{unit} failed", "goto": "services:{unit}" },
+    { "id": "container", "rows": "containers",   "key": "name", "when": "left", "field": "state", "from": "running", "level": "critical", "message": "{name} {status}", "goto": "containers:{name}" },
+    { "id": "restarting","rows": "containers",   "key": "name", "when": "is",   "field": "state", "value": "restarting", "level": "warning", "message": "{name} keeps restarting" },
+    { "id": "reboot_required", "path": "reboot_required", "when": "is", "value": true, "level": "info", "message": "Needs a restart to finish updates" }
+  ],
+
+  "dashboard": [
+    { "row": [ { "stat": "cpu" }, { "stat": "mem", "also": "swap" }, { "stat": "load" }, { "stat": "disk", "of": "max" }, { "stat": ["rx", "tx"] } ] },
+    { "charts": [ ["cpu"], ["mem"], ["rx", "tx"], ["read", "write"] ], "range": ["1h", "24h", "7d"], "log": "log" },
+    { "row": [
+      { "table": "procs", "title": "Top processes", "columns": ["command", "user", "cpu:%", "mem:%", "pid"], "actions": ["folder", "files", "stop", "kill"] },
+      { "table": "disks", "title": "Disks", "columns": ["mount", "pct:bar", "inodes_pct:%", "size:bytes"], "actions": ["biggest"] }
+    ] },
+    { "row": [ { "events": true }, { "counts": [ { "rows": "failed_units", "title": "failed services", "goto": "services" }, { "rows": "containers", "title": "containers", "goto": "containers" } ] } ] }
+  ],
+
+  "actions": [
+    { "id": "folder", "title": "Open Folder",   "rows": "procs", "readonly": true, "command": "readlink /proc/{pid}/cwd", "open": "{stdout}" },
+    { "id": "files",  "title": "Open Files",    "rows": "procs", "readonly": true, "command": "lsof -p {pid} 2>/dev/null | head -200", "output": "window", "sudo": true },
+    { "id": "stop",   "title": "Stop…",         "rows": "procs", "confirm": true, "sudo": true, "message": "Ask {command} (pid {pid}) to stop. It may take a few seconds.",
+      "command": "if [ \"$(sed 's/.*) //' /proc/{pid}/stat 2>/dev/null | cut -d' ' -f20)\" = {start} ]; then kill -TERM {pid}; else echo 'That process has ended, or another one has its pid now: nothing was sent.' >&2; exit 1; fi" },
+    { "id": "kill",   "title": "Kill…",         "rows": "procs", "dangerous": true, "sudo": true, "message": "Kill {command} (pid {pid}) at once. Unsaved work in it is lost.",
+      "command": "if [ \"$(sed 's/.*) //' /proc/{pid}/stat 2>/dev/null | cut -d' ' -f20)\" = {start} ]; then kill -KILL {pid}; else echo 'That process has ended, or another one has its pid now: nothing was sent.' >&2; exit 1; fi" },
+    { "id": "biggest","title": "Biggest Folders","rows": "disks", "readonly": true, "sudo": true,
+      "command": "du -xk -d1 {mount} 2>/dev/null | sort -rn | head -15",
+      "output": "list", "list": { "format": "regex", "pattern": "^(?<kb>\\d+)\\s+(?<path>.+)$", "key": "{path}", "title": "{path}", "detail": "{kb:kbytes}" },
+      "actions": [
+        { "id": "open", "title": "Show in Panel", "key": "return", "open": "{path}" },
+        { "id": "inside", "title": "Biggest Folders Inside", "key": "cmd+down", "readonly": true, "sudo": true,
+          "command": "du -xk -d1 {path} 2>/dev/null | sort -rn | head -15", "output": "list", "list": { "format": "regex", "pattern": "^(?<kb>\\d+)\\s+(?<path>.+)$", "key": "{path}", "title": "{path}", "detail": "{kb:kbytes}" },
+          "actions": [ { "id": "inside-open", "title": "Show in Panel", "key": "return", "open": "{path}" } ] } ] },
+    { "id": "log",    "title": "Log for This Time", "readonly": true, "command": "journalctl --no-pager -o short-iso --since @{from} --until @{to} -p warning..emerg; journalctl --no-pager -q --since @{from} --until @{to} -k | tail -50", "output": "window",
+      "note": "Without the adm or systemd-journal group, journalctl shows only your own services." }
+  ],
+
+  "toolActions": [
+    { "id": "ssh", "title": "Terminal", "key": "cmd+k", "goto": "ssh" }
+  ]
+}
