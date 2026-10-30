@@ -72,14 +72,14 @@ import DFMCore
             t.detail.lineBreakMode = .byTruncatingTail
             let cell = NSStackView(views: [label, t.value] + (t.bar.map { [$0] } ?? []) + [t.detail])
             (cell.orientation, cell.alignment, cell.spacing) = (.vertical, .leading, 3)
-            cell.widthAnchor.constraint(equalToConstant: 150).isActive = true
+            cell.widthAnchor.constraint(lessThanOrEqualToConstant: 170).isActive = true   // five tiles fit a 900-pt window; wider ones stay readable
             t.bar?.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
             t.detail.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
             cell.setAccessibilityLabel(title)
             return cell
         }
         let grid = NSStackView(views: cells)
-        (grid.spacing, grid.alignment) = (14, .top)
+        (grid.spacing, grid.alignment, grid.distribution) = (14, .top, .fillEqually)
         let stripRow = NSStackView(views: [strip, watchButton]), bannerRow = NSStackView(views: [banner, connectButton])
         strip.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         banner.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -90,6 +90,7 @@ import DFMCore
         NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
                                      stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor)])
         for v in [stripRow, bannerRow, foot] { v.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+        grid.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
         update()
     }
 

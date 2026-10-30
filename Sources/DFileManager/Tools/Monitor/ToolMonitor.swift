@@ -46,6 +46,9 @@ import Network
         let target: SFTPTarget
         var tools: [String: Tool] = [:]
         var channel: CancelFlag?
+        /// The channel's stdin: its end of file is how the run ends on the server (the payload's watcher), before
+        /// the client is told to go.
+        var hold: CancelFlag?
         /// This Mac's clock at the last line; the server's clock minus this Mac's.
         var lastLine: Date?
         var skew: TimeInterval = 0
@@ -182,8 +185,8 @@ import Network
         }
         // ponytail: sources that can't share a channel (sudo differs, a value missing) wait for a later PR; the built-ins share one.
         guard let payload = try? ToolPayload.watch(sources, sudoProgram: ToolRunner.sudoProgram) else { s.error = "these tools can't share a channel"; return }
-        let cancel = CancelFlag()
-        s.channel = cancel
+        let cancel = CancelFlag(), hold = CancelFlag()
+        (s.channel, s.hold) = (cancel, hold)
         s.error = nil
         channelSources[s.key] = Set(wanted.map { $0.preset.id })
         if s.since == nil { s.since = Date(); note(s, "Watching started · every \(Int(s.every)) s") }
@@ -203,7 +206,7 @@ import Network
             nonisolated(unsafe) var errors = ""
             let r = Result {
                 try ToolExec.channel(t, cancel: cancel) {
-                    try SSHCommand.run(t, command(payload), env: env, cancel: cancel, stdin: stdin, holdStdin: cancel,
+                    try SSHCommand.run(t, command(payload), env: env, cancel: cancel, stdin: stdin, holdStdin: hold,
                                        onErrors: { d in errors += String(decoding: d, as: UTF8.self) }) { chunk in
                         rest += reader.feed(chunk)
                         guard let last = rest.lastIndex(of: 0x0A) else { return }
@@ -222,9 +225,15 @@ import Network
         }.start()
     }
 
+    /// The channel's end: stdin closed first — on the server the payload's watcher ends the run and the session with
+    /// it, so nothing stays behind — and the client told to go 3 s later if it hasn't (a dead link). A client killed
+    /// at once leaves its session on the server: the shared connection keeps the channel open for no one.
     private func stop(_ s: Server, why: ToolGap) {
-        s.channel?.cancel()
-        s.channel = nil
+        if let run = s.channel {
+            s.hold?.cancel()
+            Timeouts.queue.asyncAfter(deadline: .now() + 3) { run.cancel() }
+        }
+        (s.channel, s.hold) = (nil, nil)
         channelSources[s.key] = nil
         (s.retryAt, s.retries) = (nil, 0)
         if why == .notWatched { s.since = nil }
