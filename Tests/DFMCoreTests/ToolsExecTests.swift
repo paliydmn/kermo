@@ -75,24 +75,30 @@ extension SudoPasswordTests {
         """#
 
     /// At most `channels` runs on one server at a time: one more waits, saying so, till one ends; ⎋ stops the wait.
+    /// A made-up server of its own and a limit of 1: no other test's runs count here.
     @Test func runsPastTheChannelsWait() throws {
-        let was = ToolExec.channels
-        ToolExec.channels = 1
+        let t = SFTPTarget(host: "channels-\(UUID().uuidString).invalid")
         let heard = OSAllocatedUnfairLock<[Bool]>(initialState: [])
-        ToolExec.waiting = { _, on in heard.withLock { $0.append(on) } }
-        defer { ToolExec.channels = was; ToolExec.waiting = nil }
-        let first = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async { _ = try? run("sleep 1; echo first"); first.signal() }
-        usleep(300_000)
+        ToolExec.waiting = { w, on in if w.host == t.host { heard.withLock { $0.append(on) } } }
+        defer { ToolExec.waiting = nil }
+        let first = DispatchSemaphore(value: 0), holding = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            _ = try? ToolExec.channel(t, limit: 1, cancel: CancelFlag()) { holding.signal(); Thread.sleep(forTimeInterval: 0.8) }
+            first.signal()
+        }
+        holding.wait()
         let start = Date()
-        #expect(try run("echo second").text == "second\n")
+        #expect(try ToolExec.channel(t, limit: 1, cancel: CancelFlag()) { "second" } == "second")
         #expect(Date().timeIntervalSince(start) > 0.4 && heard.withLock { $0 } == [true, false], "it waited for the first")
         first.wait()
-        DispatchQueue.global().async { _ = try? run("sleep 1"); first.signal() }
-        usleep(300_000)
+        DispatchQueue.global().async {
+            _ = try? ToolExec.channel(t, limit: 1, cancel: CancelFlag()) { holding.signal(); Thread.sleep(forTimeInterval: 0.8) }
+            first.signal()
+        }
+        holding.wait()
         let flag = CancelFlag()
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { flag.cancel() }
-        #expect(throws: CancellationError.self) { try run("echo never", cancel: flag) }
+        #expect(throws: CancellationError.self) { try ToolExec.channel(t, limit: 1, cancel: flag) { "never" } }
         first.wait()
     }
 

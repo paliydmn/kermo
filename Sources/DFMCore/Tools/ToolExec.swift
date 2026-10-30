@@ -52,12 +52,12 @@ public enum ToolExec {
     private static let slots = NSCondition()
     nonisolated(unsafe) private static var inUse: [String: Int] = [:]
 
-    /// `work` on one of `t`'s channels, once one is free; ⎋ (`cancel`) while waiting throws.
-    public static func channel<T>(_ t: SFTPTarget, cancel: CancelFlag, _ work: () throws -> T) throws -> T {
+    /// `work` on one of `t`'s channels, once one is free; ⎋ (`cancel`) while waiting throws. `limit`: tests' own.
+    public static func channel<T>(_ t: SFTPTarget, limit: Int = channels, cancel: CancelFlag, _ work: () throws -> T) throws -> T {
         let k = key(t)
         var waited = false
         slots.lock()
-        while inUse[k, default: 0] >= channels {
+        while inUse[k, default: 0] >= limit {
             if !waited {
                 waited = true
                 slots.unlock()
