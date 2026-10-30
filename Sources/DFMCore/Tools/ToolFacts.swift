@@ -66,10 +66,14 @@ public enum ToolBatch {
     public struct Answer: Sendable, Hashable {
         public var facts: ToolFacts
         public var passed: Set<String>
-        public init(facts: ToolFacts, passed: Set<String>) { (self.facts, self.passed) = (facts, passed) }
+        /// The tools it was asked about (nil: not known — an answer kept before Kermo noted it).
+        public var asked: Set<String>?
+        public init(facts: ToolFacts, passed: Set<String>, asked: Set<String>? = nil) { (self.facts, self.passed, self.asked) = (facts, passed, asked) }
 
         /// A tool without `requires` is everywhere.
         public func has(_ tool: ToolPreset) -> Bool { tool.requires == nil || passed.contains(tool.id) }
+        /// Whether this answer says anything of `tool`: one trusted since wasn't asked about yet.
+        public func checked(_ tool: ToolPreset) -> Bool { tool.requires == nil || asked?.contains(tool.id) != false }
         public func has(_ action: ToolAction, of tool: ToolPreset) -> Bool {
             action.spec.requires == nil || passed.contains("\(tool.id)/\(action.spec.id)")
         }
@@ -113,7 +117,7 @@ public enum ToolBatch {
         for line in out.split(whereSeparator: \.isNewline) where line.hasPrefix("kermo-ok ") {
             if let n = Int(line.dropFirst("kermo-ok ".count)), items.indices.contains(n) { passed.insert(items[n].name) }
         }
-        return Answer(facts: ToolFacts.read(out), passed: passed)
+        return Answer(facts: ToolFacts.read(out), passed: passed, asked: Set(items.map(\.tool)))
     }
 
     /// Asks `t`'s server — only over its live connection: none (`hasMaster`), and the answer is nil ("Connect to see

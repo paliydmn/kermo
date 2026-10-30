@@ -49,7 +49,7 @@ extension ToolRunner {
         let p = tool.preset, file = (tool.path as NSString).lastPathComponent
         var c = Confirm("Use the tool “\(p.tool.map { "\(p.title) (\($0))" } ?? p.title)”?", action: "Use This Tool")
         c.runs = "\(file) " + (trust.hashes[p.id] == nil ? "is new here." : "changed since you said to use it.") + " Here is everything it can run:"
-        c.command = Self.everything(tool)
+        c.command = tool.runs.text
         let long = p.allActions.contains { $0.action.spec.long == true }
         c.note = (Self.cautions(tool) + ["Kermo asks once for each new or changed tool. A value goes into a command as a variable, scripts go on stdin, and nothing is left on the server"
             + (long ? " but a long job's: it runs on after Kermo quits, and its log stays in ~/.cache/kermo/ there for 7 days." : ".")]).joined(separator: "\n")
@@ -61,6 +61,7 @@ extension ToolRunner {
             case 0:
                 trust.trust(tool)
                 if let dir = Self.own?.path { Config.save("trust.json", trust, in: dir) }
+                askAgain()   // its requires, on each server's next look
                 return true
             case 1:
                 Viewer.show(URL(fileURLWithPath: tool.path))
@@ -79,31 +80,6 @@ extension ToolRunner {
             guard a.spec.readonly == true, let words = ToolSchema.destructive(a.run.command?.all ?? []) else { return nil }
             return "⚠ “\(a.spec.title ?? a.spec.id)” says it changes nothing, but it \(words)."
         }
-    }
-
-    /// A tool's runs for the trust sheet: "Runs by itself" (no question: `requires`, `header`, `version`, vars,
-    /// choices, the list) and "Runs when you choose" (its actions), each "— as root" where it is.
-    static func everything(_ tool: LoadedTool) -> String {
-        let p = tool.preset
-        func line(_ what: String, _ run: ToolRun?) -> String? {
-            guard let run else { return nil }
-            let how = run.command.map { $0.all.joined(separator: " ") } ?? run.script.map { s in
-                "the script \(s) (\((tool.scripts[s] ?? "").split(separator: "\n").count) lines)"
-            }
-            guard let how else { return nil }
-            let root = (run.sudo ?? (what == "requires" ? false : p.sudo ?? false)) && (run.where ?? p.where) != .mac
-            return "  \(what): \(how)" + (root ? "   — as root" : "") + ((run.where ?? p.where) == .mac ? "   — on this Mac" : "")
-        }
-        let itself = [line("requires", p.requires), line("header", p.header ?? p.list?.view.header), line("version", p.version.map { ToolRun(command: .one($0.command)) }),
-                      line("list", p.list?.run)]
-            + p.varCommands.map { line("vars.\($0.name)", $0.run) }
-            + p.allActions.flatMap { _, a in (a.spec.inputs ?? []).filter { $0.info.type == .choiceFrom }.map { line("\(a.spec.title ?? a.spec.id) choices", $0.run) } }
-        let chosen = [line(p.title, p.commandAction?.run)] + p.allActions.map { _, a in
-            (line(a.spec.title ?? a.spec.id, a.run.sources.isEmpty ? nil : a.run) ?? a.spec.edit.map { "  \(a.spec.title ?? a.spec.id): edit \($0)" })
-                .map { $0 + (a.spec.long == true ? "   — runs on after Kermo quits" : "") }
-        }
-        func part(_ title: String, _ lines: [String?]) -> [String] { [title] + (lines.compactMap { $0 }.nilIfEmpty ?? ["  nothing"]) }
-        return (part("Runs by itself:", itself) + part("Runs when you choose:", chosen)).joined(separator: "\n")
     }
 }
 

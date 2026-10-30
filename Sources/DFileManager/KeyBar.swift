@@ -456,10 +456,11 @@ final class DocFrame: NSView {
         (NSApp.delegate as? AppDelegate).flatMap { app in NSApp.mainMenu.map { app.keyRows(over: w, menu: $0) } } ?? []
     }
 
-    init(_ scroll: NSScrollView, size: NSSize) {
+    /// `side`: a pane right of the text, above the status line (a tool's Problems and Test).
+    init(_ scroll: NSScrollView, size: NSSize, side: NSView? = nil) {
         self.scroll = scroll
         super.init(frame: NSRect(origin: .zero, size: size))
-        let bar: CGFloat = 30, line: CGFloat = 22
+        let bar: CGFloat = 30, line: CGFloat = 22, width: CGFloat = side == nil ? 0 : 320
         keys.frame = NSRect(x: 0, y: 0, width: size.width, height: bar)
         keys.autoresizingMask = [.width, .maxYMargin]
         status.font = .systemFont(ofSize: 11.5)
@@ -470,9 +471,18 @@ final class DocFrame: NSView {
         let rule = NSBox(frame: NSRect(x: 0, y: bar + line - 1, width: size.width, height: 1))
         rule.boxType = .separator
         rule.autoresizingMask = [.width, .maxYMargin]
-        scroll.frame = NSRect(x: 0, y: bar + line, width: size.width, height: size.height - bar - line)
+        scroll.frame = NSRect(x: 0, y: bar + line, width: size.width - width, height: size.height - bar - line)
         scroll.autoresizingMask = [.width, .height]
         for v in [scroll, rule, status, keys] as [NSView] { addSubview(v) }
+        if let side {
+            side.frame = NSRect(x: size.width - width, y: bar + line, width: width, height: size.height - bar - line)
+            side.autoresizingMask = [.minXMargin, .height]
+            let edge = NSBox(frame: NSRect(x: size.width - width, y: bar + line, width: 1, height: size.height - bar - line))
+            edge.boxType = .separator
+            edge.autoresizingMask = [.minXMargin, .height]
+            addSubview(side)
+            addSubview(edge)
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
 

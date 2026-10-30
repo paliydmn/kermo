@@ -23,7 +23,7 @@ A server shows the tools whose program it has (and that you [use there](#where-a
 
 ## The Tools window
 
-**Window ▸ Tools** (⌃⌘T) opens it on the active panel's server; **Open in Tools Window**, last in a server's **Tools ▸**, on that server. Its sidebar lists your saved servers (production in its color, a locked one with its lock), then servers connected now, and the library: **Built into Kermo** and **My Tools**.
+**Window ▸ Tools** (⌃⌘T) opens it on the active panel's server; **Open in Tools Window**, last in a server's **Tools ▸**, on that server. Its sidebar lists your saved servers (production in its color, a locked one with its lock), then servers connected now, and the library: **Built into Kermo**, **My Tools** and **[New Tool…](#new-tool)**. ↩ or a double-click on a library row opens the tool's page: who made it, its version and the sha256 its trust goes by; what it runs, grouped as **Use the tool “…”?** shows it (a dangerous action in red); and each saved server — whether it has the program, whether the tool is used there, its values set or **Set Up…**. Its buttons: **Use on Servers…**, **Show File**, and **Edit** for yours, **[Customize](#customize-a-built-in-tool)** for a built-in one.
 
 A server's page has its name, the open tab's line from the program (`jails: sshd · 1.0.2`, a version outside what the tool was tested with), **Terminal** (an SSH tab in the main window) and **⋯**. Its tabs are the tools it shows, ⌘1…⌘9:
 
@@ -35,7 +35,7 @@ A server that isn't connected shows the tools it had when Kermo last saw it, gre
 
 ### Where a tool is used
 
-A tool shows on every server where its program is found. **Use on Servers…** (a library row's button or double-click, or ⋯ on a page) changes that: **Every server where ufw is found**, the saved servers unticked having it hidden, or **Only on the servers checked below**. Each server says whether it has the program, hasn't, or wasn't checked yet. **Hide** takes a tool off one server; ＋ or Use on Servers… shows it again. Tools ▸, the overview's rows, search and the Tools window all go by it. Nothing changes on a server: it's what Kermo shows.
+A tool shows on every server where its program is found. **Use on Servers…** (a library row's button, the tool's page, or ⋯ on a server's page) changes that: **Every server where ufw is found**, the saved servers unticked having it hidden, or **Only on the servers checked below**. Each server says whether it has the program, hasn't, or wasn't checked yet. **Hide** takes a tool off one server; ＋ or Use on Servers… shows it again. Tools ▸, the overview's rows, search and the Tools window all go by it. Nothing changes on a server: it's what Kermo shows.
 
 A tool can ask for a value per server (`vars` with `"ask": true`), say a backup repository's path. It shows on a saved server as **Backups — Set Up on web-01…** until you set it: a sheet with a field for each value, checked as you type. The values stay with the server in Kermo, not in the tool's file. A server that isn't saved has no settings: it shows the tools used wherever they're found, and none that ask for a value.
 
@@ -153,7 +153,28 @@ Put a tool's JSON file in `~/.config/dfilemanager/tools/`, with any script it na
 
 **Kermo ▸ Configuration ▸ Reload Config** reads the folder again and lists what's wrong with each file, with its line: `tools/my-tool.json: line 3: …`. An unknown field is an error, not something left out: it might be a safety field.
 
+My Tools in [the Tools window](#the-tools-window) lists a file of yours that doesn't load under the table, with why; a click opens it in the editor.
+
 A tool of yours runs nothing — not even its check of the server — until you say to use it. **Tools ▸** lists it under **Not in use yet**; choosing it asks **Use the tool “…”?** with everything it can run: what runs by itself (its check, its header, its list, its choices) and what runs when you choose (its actions), each marked where it runs as root. A read-only action whose command looks destructive (`rm`, `kill`, `--force`, `>`…) is pointed out. **Open File** shows the file and its scripts. **Use This Tool** keeps your answer in `tools/trust.json`, by the file's and its scripts' sha256: a change to any of them asks again.
+
+### New Tool…
+
+**New Tool…** in the Tools window's library asks for a name — the file's name comes from it, `Disk Check` → `disk-check.json`; one that's there already, or a built-in tool's, won't do — and what to start from:
+
+- **List with Actions**: rows from a command's output, an action on a row (it starts as the mounted filesystems, `df -P`);
+- **Buttons**: commands that run when pressed, each its own button (`uptime`, `free -h`);
+- **One Command**: one command, its output in a window (`who`).
+
+Each starter works as it is on most Linux servers. It opens in Kermo's editor, not yet on disk; **⌘S** (or **Save** beside the text) writes it to `~/.config/dfilemanager/tools/` readable only by you, reads your tools again and asks **Use the tool “…”?** — then, for a new tool, **Use on Servers…**. Saving again asks again: it's a new version of the file. A tool with no script needs nothing else; one that names a script needs that file next to it.
+
+Beside the text:
+
+- **Problems**: the file checked as Kermo loads it, as you type — errors (it isn't loaded: an unknown field, a missing script, an `id` that isn't the file's name…) apart from warnings (it loads: a placeholder in quotes, `sudo` without `about`…), each with its line; a click selects that line. A file saved with an error isn't loaded, and **Reload Config** says why too.
+- **Test on** a server **connected now**: runs what the tool runs by itself — its `vars` commands, its check (`requires`, its actions' too), its header, its version, its list — and never one of its actions. It shows whether each check passed, the header line, the version against `tested`, the first rows the list made, their fields, and every line of the output that didn't fit the pattern, with the exit status and stderr of what failed. Test never logs in: connect the server first. Its first run says exactly what will run; on production it asks every time. A list read from files (over SFTP) isn't tested yet.
+
+### Customize a built-in tool
+
+**Customize** on a built-in tool's page opens its file in the editor as yours: `~/.config/dfilemanager/tools/` with the same `id`. Once you save it, its scripts are copied next to it, yours takes the built-in's place and asks **Use the tool “…”?**; where you use it stays as it was. Yours with an error leaves the built-in in its place, and My Tools lists your file as not loaded. To go back to the built-in, delete your file and **Reload Config**.
 
 ### The fields that work now
 

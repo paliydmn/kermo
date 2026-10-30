@@ -19,8 +19,10 @@ final class ToolRunner {
     /// The last answers of saved servers (`SavedServer.id`), kept in `tools/known.json`: Tools ▸ shows a server's tools
     /// greyed while it isn't connected. A cache, not a setting: deleting it costs a batch on the next connection.
     private var known: [String: Known] = [:]
-    struct Known: Codable { var facts: ToolFacts; var passed: [String]; var at: Date }
+    struct Known: Codable { var facts: ToolFacts; var passed: [String]; var asked: [String]?; var at: Date }
     private var asking: Set<String> = []
+    /// Bumped as every answer goes (a reload, a tool trusted): a look under way then asked of the tools as they were.
+    private var round = 0
     /// What vars' commands found, per server and tool ("<server> <tool>").
     /// ponytail: once a session, not once a connection — Reload Config looks again.
     var found: [String: [String: String]] = [:]
@@ -58,7 +60,7 @@ final class ToolRunner {
     /// loaded, as Reload Config says it.
     func reload() -> [String] {
         library = ToolLibrary.load(own: Self.own, hasSymbol: Symbol.exists)
-        (answers, found, versions) = ([:], [:], [:])   // a changed tool's requires: asked again
+        (answers, found, versions, round) = ([:], [:], [:], round + 1)   // a changed tool's requires: asked again
         trust = Self.own.flatMap { try? Config.load("trust.json", as: ToolTrust.self, in: $0.path) } ?? ToolTrust()
         known = Self.own.flatMap { try? Config.load("known.json", as: [String: Known].self, in: $0.path) } ?? [:]
         let read = Self.own.map { Config.loadKeeping("servers.json", as: ToolServers.self, in: $0.path) }
@@ -118,11 +120,13 @@ final class ToolRunner {
         let key = ServerRow.key(t.asUser)
         if answers[key] == nil, AppDelegate.connected(t.asUser) { ask(t.asUser) }
         if let a = answers[key] { return a }
-        return app.savedServer(at: t).flatMap { known[$0.id.uuidString] }.map { (ToolBatch.Answer(facts: $0.facts, passed: Set($0.passed)), $0.at) }
+        return app.savedServer(at: t).flatMap { known[$0.id.uuidString] }.map { (ToolBatch.Answer(facts: $0.facts, passed: Set($0.passed), asked: $0.asked.map(Set.init)), $0.at) }
     }
 
     /// `t`'s server asked again on its next look (a tool just trusted, a program gone: exit 127).
     func askAgain(_ t: SFTPTarget) { answers[ServerRow.key(t.asUser)] = nil }
+    /// Every server: a tool just trusted wasn't asked about anywhere.
+    func askAgain() { (answers, round) = ([:], round + 1) }
 
     private func ask(_ t: SFTPTarget) {
         let key = ServerRow.key(t), tools = tools
@@ -131,13 +135,15 @@ final class ToolRunner {
         let scopes = Dictionary(tools.map { ($0.preset.id, scope($0.preset, on: s, t)) }) { a, _ in a }
         let scripts = Dictionary(tools.map { ($0.preset.id, $0.scripts) }) { a, _ in a }
         let items = ToolBatch.items(tools.map(\.preset)), command = Self.command, live = Self.hasMaster
+        let r = round
         Task {
             let a = await Blocking.run { ToolBatch.ask(t, items, scope: { scopes[$0] ?? .init() }, scripts: { scripts[$0] ?? [:] }, hasMaster: live, command: command) }
             asking.remove(key)
+            guard r == round else { return app.toolsKnown(on: t) }   // stale: the next look asks anew
             guard let a else { return }
             answers[key] = (a, Date())
             if let id = app.savedServer(at: t)?.id.uuidString, let dir = Self.own?.path {
-                known[id] = Known(facts: a.facts, passed: a.passed.sorted(), at: Date())
+                known[id] = Known(facts: a.facts, passed: a.passed.sorted(), asked: a.asked?.sorted(), at: Date())
                 Config.save("known.json", known, in: dir)
             }
             app.toolsKnown(on: t)

@@ -71,6 +71,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     private var onSaved: (@MainActor (URL) -> Void)?
     /// Called once the window closes (or the file couldn't be opened).
     var onClose: (@MainActor () -> Void)?
+    /// Called as the text changes (a tool's Problems check it).
+    var edited: (@MainActor () -> Void)?
 
     /// Reads the file off the main thread (up to 32 MB, or a share that doesn't answer), then opens the window.
     /// `note`: said in its status line once it's open (`flash`).
@@ -100,11 +102,27 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         }
     }
 
+    /// `url` with `side` beside its text (a tool's Problems and Test), at once: `text` for a file not on disk yet, which
+    /// its first save writes — over nothing that appeared there meanwhile without asking. Already open: that window.
+    static func open(_ url: URL, text: String?, beside side: NSView, onSaved: @escaping @MainActor (URL) -> Void) throws -> Editor {
+        if let e = open.first(where: { $0.url == url }) {
+            e.window?.makeKeyAndOrderFront(nil)
+            return e
+        }
+        let loaded = try text.map { t -> Loaded in (t, .utf8, false, false, false, nil, SHA256.hash(data: Data(t.utf8))) } ?? load(url)
+        let e = Editor(url, remote: nil, loaded: loaded, side: side)
+        e.onSaved = onSaved
+        open.append(e)
+        e.showWindow(nil)
+        e.window?.listInWindowsMenu()
+        return e
+    }
+
     convenience init(_ url: URL, remote: String? = nil) throws {
         try self.init(url, remote: remote, loaded: Self.load(url))
     }
 
-    private init(_ url: URL, remote: String?, loaded: Loaded) {
+    private init(_ url: URL, remote: String?, loaded: Loaded, side: NSView? = nil) {
         let (text, encoding, lossy, bom, crlf, stamp, digest) = loaded
         self.url = url
         self.remote = remote
@@ -123,7 +141,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         super.init(window: w)
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
-        w.contentView = DocFrame(scroll, size: w.contentRect(forFrameRect: w.frame).size)
+        w.contentView = DocFrame(scroll, size: w.contentRect(forFrameRect: w.frame).size, side: side)
         finalNewlineSwitch.setSelected(finalNewline, forSegment: 0)
         finalNewlineSwitch.toolTip = "Saving ends the file with a newline (File ▸ Ensure Final Newline)"
         let bar = NSToolbar(identifier: "Editor " + UUID().uuidString)   // its own: same-named toolbars share their items
@@ -303,6 +321,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     func textDidChange(_ notification: Notification) {
         dirty = true
         highlight(after: 0.3)
+        edited?()
     }
 
     @objc private func storageEdited(_ n: Notification) {
@@ -670,6 +689,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         textView.setSelectedRange(NSRange(location: min(sel.location, (text as NSString).length), length: 0))
         textView.scrollRangeToVisible(textView.selectedRange())
         dirty = false
+        edited?()   // read anew: what checks the text looks again
         return true
     }
 
