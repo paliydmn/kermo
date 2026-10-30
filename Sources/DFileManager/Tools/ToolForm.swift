@@ -16,8 +16,9 @@ final class ToolForm {
     private let reads = CancelFlag()
     var onChange: (() -> Void)?
 
-    /// `scope`: the names around it (the row's, the tool's); an input's `default` may use them.
-    init(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope) {
+    /// `scope`: the names around it (the row's, the tool's); an input's `default` may use them. `filled`: values to
+    /// start from instead (Retry's; never a secret).
+    init(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, filled: [String: String]? = nil) {
         (action, self.tool, self.scope) = (a, tool, scope)
         for i in inputs {
             switch i.info.type {
@@ -25,6 +26,7 @@ final class ToolForm {
             case .choiceFrom: (values[i.info.name], choices[i.info.name]) = ("", .loading)
             default: values[i.info.name] = i.info.default.map { ToolTemplate.text($0, scope) } ?? ""
             }
+            if i.info.type != .secret, let v = filled?[i.info.name] { values[i.info.name] = v }
         }
     }
 
@@ -79,7 +81,8 @@ final class ToolForm {
                 case .success(let ran) where ran.stopped == nil && i.run.succeeded(ran.status):
                     let list = i.parse.records(ran.out).rows.map { ToolTemplate.text(i.info.key ?? "{line}", ToolTemplate.Scope(rows: [$0])) }.filter { !$0.isEmpty }
                     let said = ran.errors.split(whereSeparator: \.isNewline).first.map { "✕ " + $0 }   // a pipeline's first command failed
-                    (choices[name], values[name]) = (list.isEmpty ? .failed(said ?? "nothing to choose from") : .ready(list), list.first ?? "")
+                    let was = values[name] ?? ""   // Retry's choice, while it's still there
+                    (choices[name], values[name]) = (list.isEmpty ? .failed(said ?? "nothing to choose from") : .ready(list), list.contains(was) ? was : list.first ?? "")
                 case .success(let ran):
                     choices[name] = .failed("✕ " + (ran.stopped ?? ran.errors.split(whereSeparator: \.isNewline).first.map(String.init) ?? "exit \(ran.status)"))
                 case .failure(let e):
@@ -168,8 +171,9 @@ extension ToolRunner {
     nonisolated(unsafe) static var filling: (@MainActor (ToolForm) async -> [String: String]?)?
 
     /// `a`'s form over `window` (§7.4), its choices read on `t` as it opens: the values, or nil for Cancel.
-    func form(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, on t: SFTPTarget, window: NSWindow?) async -> [String: String]? {
-        let f = ToolForm(a, of: tool, scope)
+    func form(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, on t: SFTPTarget, window: NSWindow?,
+              values: [String: String]? = nil) async -> [String: String]? {
+        let f = ToolForm(a, of: tool, scope, filled: values)
         f.load(on: t, env: SSHAskpass.env)
         defer { f.close() }
         if let fill = Self.filling { return await fill(f) }

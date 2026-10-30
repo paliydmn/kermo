@@ -20,6 +20,8 @@ final class OpsController {
     /// production question, the panels).
     var onRetry: (ActivityEntry, [FileJob.Failure]?) -> Void = { _, _ in }
     var onShow: (_ on: Endpoint, _ dir: String, _ select: String?) -> Void = { _, _, _ in }
+    /// Tools' long jobs (§7.6): Activity's cards of theirs, and the ring and the Dock count them.
+    var toolJobs: ToolJobs? { didSet { toolJobs?.ops = self } }
     /// The toolbar's Activity button.
     let toolbarItem = NSToolbarItem(itemIdentifier: OpsController.toolbarID)
     static let toolbarID = NSToolbarItem.Identifier("activity")
@@ -209,6 +211,7 @@ final class OpsController {
                                   of: content, preferredEdge: .minY)
         }
         history.markSeen()
+        toolJobs?.markSeen()
         changed()
     }
 
@@ -218,15 +221,19 @@ final class OpsController {
             let p = r.job.progress
             if p.totalBytes > 0 { total += p.totalBytes; done += min(p.doneBytes, p.totalBytes) }
         }
-        let fraction = rows.isEmpty ? nil : total > 0 ? Double(done) / Double(total) : 0
-        DockTile.show(fraction: fraction, errors: history.unseen)
-        let unseen = history.unseen > 0
-        let key = "\(fraction.map { Int($0 * 60) } ?? -1) \(rows.count) \(unseen)"
+        // The files' share and each long job's (one without progress counts as begun) make the ring.
+        let jobs = toolJobs?.jobs.filter(\.running) ?? []
+        let parts = (rows.isEmpty ? [] : [total > 0 ? Double(done) / Double(total) : 0]) + jobs.map { toolJobs?.state($0.id)?.fraction ?? 0 }
+        let fraction = parts.isEmpty ? nil : parts.reduce(0, +) / Double(parts.count)
+        let errors = history.unseen + (toolJobs?.unseen ?? 0), count = rows.count + jobs.count
+        DockTile.show(fraction: fraction, errors: errors)
+        let unseen = errors > 0
+        let key = "\(fraction.map { Int($0 * 60) } ?? -1) \(count) \(unseen)"
         guard key != buttonKey else { return }
         buttonKey = key
-        toolbarItem.image = Activity.image(fraction: fraction, count: rows.count, alert: unseen)
-        let going = rows.filter { $0.job.progress.state != .queued }.count
-        toolbarItem.toolTip = "Activity  ⌥⌘J — " + (rows.isEmpty ? "nothing running" : "\(going) running, \(rows.count - going) queued")
+        toolbarItem.image = Activity.image(fraction: fraction, count: count, alert: unseen)
+        let going = rows.filter { $0.job.progress.state != .queued }.count + jobs.count
+        toolbarItem.toolTip = "Activity  ⌥⌘J — " + (count == 0 ? "nothing running" : "\(going) running, \(count - going) queued")
             + (unseen ? " · finished with errors" : "")
     }
 

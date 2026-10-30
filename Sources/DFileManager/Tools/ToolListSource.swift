@@ -211,7 +211,7 @@ final class ToolListSource: ListSource {
         it.id = id
         it.keepsOpen = enter.map { !$0.closes } ?? true
         it.state = row.state.flatMap(Self.mark)
-        it.busy = running != nil || row.state == .busy
+        it.busy = running != nil || row.state == .busy || app.tools.jobs.running(rowID: id) != nil
         it.subtitleColor = running == nil && row.state == .bad ? Palette.fail : nil
         it.badges = running == nil && row.state == .bad ? [StateMark.failed.image("failed", size: 9)] : []   // a shape, not only red
         it.cells = Dictionary(row.cells.map { ($0.field, $0.text) }) { a, _ in a }
@@ -241,6 +241,7 @@ final class ToolListSource: ListSource {
                 app.perform(a.title, actions)
             }
             it.id = rowID(a.title)
+            it.busy = app.serviceRuns[it.id]?.isEmpty == false || app.tools.jobs.running(rowID: it.id) != nil   // its action runs
             it.keepsOpen = !a.closes
             it.listActions = actions
             it.menu = { app.serviceMenu(actions) }
@@ -254,6 +255,8 @@ final class ToolListSource: ListSource {
     func listActions(_ row: ToolRow?) -> [ListAction] {
         let known = app.tools.answers[ServerRow.key(target)]?.answer, id = row.map { rowID($0.key) } ?? listID!
         func actions(_ all: [ToolAction]?, onRow: Bool, group: Int) -> [ListAction] {
+            // A launcher's action runs on its own row: that row spins while it runs.
+            func runID(_ a: ToolAction) -> String { preset.list == nil && group == 1 ? rowID(a.spec.title ?? a.spec.id) : id }
             let all = (all ?? []).filter { ToolRunner.runs($0, of: preset) }
             let shown = known.map { $0.visible(all, of: preset) } ?? all.filter { $0.spec.requires == nil }
             var seen = Set<String>(), out: [ListAction] = []
@@ -261,7 +264,7 @@ final class ToolListSource: ListSource {
                 let title = a.spec.title ?? a.spec.id
                 guard !seen.contains(title), shown.contains(a) || !all.contains(where: { ($0.spec.title ?? $0.spec.id) == title && shown.contains($0) }) else { continue }
                 seen.insert(title)
-                out.append(action(a, row: row, onRow: onRow, id: id, group: group, keyed: shown.contains(a)))
+                out.append(action(a, row: row, onRow: onRow, id: runID(a), group: group, keyed: shown.contains(a)))
             }
             return out
         }

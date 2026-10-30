@@ -96,6 +96,18 @@ What opens a window or a tab of its own goes there instead of the line: a window
 
 ⎋ stops the wait. A run that takes over 30 seconds, or gives over 16 MB of output, is stopped and says so; when the connection drops, the run ends on the server too, leaving nothing behind. Tools use at most 9 of a connection's sessions at once (OpenSSH allows 10; past them ssh would log in again): one more waits, and the status line says so.
 
+## Long jobs
+
+An action marked `long` — a deploy, a backup, an upgrade — runs on the server on its own, and Kermo follows it:
+
+- **It starts and comes back at once.** The line under the list says so ("Deploy: started on web-01 at 14:02 — it runs on there; Activity (⌥⌘J) follows it"), and its row spins while it runs. Starting it again on the same row says it's already running and shows Activity. The tool isn't busy meanwhile: its other actions run.
+- **Activity (⌥⌘J)** has a card for it: its progress (or a spinner) and the last line it printed, **Show** (its output in a window, more as it comes; closing the window stops nothing) and **Stop…**. Once it's over: ✓ or ✕ and how it went, **Retry** (the same action with the same values, asked as any run; a secret is asked again), **Show Log** and ✕. The toolbar's ring and the Dock count it along with copies.
+- **It runs on without Kermo.** When the connection drops, the Mac sleeps or Kermo quits, the job goes on. Its card says "connection lost — the job runs on", or after a relaunch "connect to web-01 to see how it goes"; once a connection to that server is up, Kermo follows it again. It never logs in just for that.
+- **Stop…** asks on production, then stops the job and everything it started (its process group; a root job's through sudo).
+- **When it ends** while Kermo isn't in front, after more than a minute, a macOS notification says how it went; clicking it shows Activity. Kermo asks to send notifications when you start your first long job. If they're off, the Dock's badge and the card tell you instead.
+
+On the server a long job runs as the login user in a session of its own (`setsid`; perl's or python3's where there's none), with sudo only around its command; a sudo password is checked before the job starts and goes to sudo through a pipe. Its output goes to `~/.cache/kermo/runs/<id>.log` (the folder is the login user's, `0700`), its exit status to `<id>.exit`. A job's files are removed a week after it ended, when the next long job starts on that server. Kermo keeps the jobs it started in `tools/runs.json` on this Mac.
+
 ## Safety
 
 - **A secret** you type goes to the server in the command's input only: never on a command line, on screen, in Output… or in a log — `•••` there.
@@ -103,7 +115,7 @@ What opens a window or a tab of its own goes there instead of the line: a window
 - **The same environment on every server:** the command goes to `sh` on its input, never to the login shell, with `LC_ALL=C` (no translated output) and `/usr/sbin` and `/sbin` on the `PATH`.
 - **As root:** a tool that needs root runs through the server's `sudo`, `sudo -n` first. When sudo wants a password, Kermo asks for it as a [root panel](root-panel.md) does; the password goes to sudo on its input, never on a command line, and is shown as `•••` anywhere it could appear.
 - **The production log:** each run on a production server is a line in the [production log](safety.md#production-log): `"action": "tool ufw delete"`, what was sent and its exit status.
-- **Nothing stays on the server:** no files, nothing installed. A run ends with its connection.
+- **Nothing stays on the server** but a long job's log: no other files, nothing installed. A run ends with its connection; only a [long job](#long-jobs) runs on, and its log stays in `~/.cache/kermo/` there for 7 days.
 
 ## Your own tools
 
@@ -130,6 +142,7 @@ The smallest tool is three fields; it's in **Tools ▸** on every server, and it
 | `list` | `command` or `script`, and how its output becomes rows: `format` (`lines`, `json`, `jsonl`, `tsv`, `csv`, `table`, `regex`), `pattern`, `names`; `key` (what names a row), `title`, `subtitle`, `detail`, `state`, `columns`, `empty` |
 | `header` | A command whose first line shows above the list |
 | `actions`, `toolActions` | A row's actions and the tool's: `id`, `title`, `key` (`return`, `f8`, `cmd+e`…), `command` or `script`, `readonly` (a look), `dangerous` (can't be undone), `confirm` (asks everywhere), `message` (what the question says), `verify`, `multi` (on marked rows too), `refresh`, `output` (`line`, `window`, `follow`, `terminal`, `silent`), `strip: "cri"`, `edit` (a server path for the editor), `done`, `save` (the name ⌘S offers for a window's output: `{server}-report.txt`). A tool with `toolActions` and no `list` lists its actions as its rows, as Server Info does |
+| `long`, `progress`, `format` | `long: true`: a [long job](#long-jobs), on the server only. `progress` reads each line it prints: `{ "pattern": "(?<percent>\\d+)%" }` for text, `{ "percent": "pct" }` or `{ "fraction": "percent_done" }` for a JSON line, with `text` (a template of the line's fields) for its card; without it, a spinner and the last line. `format` (`jsonl`, `json`…): the last record of its output gives `done` its fields — `"done": "Backed up {files_new} files"` |
 | `inputs` | An action's sheet: `name`, `type` (`text`, `secret`, `choice`, `choice-from`), `title`, `placeholder`, `default`, `pattern`, `optional`, `options`; a `choice-from` has a `command` and a `key` (`{line}`) |
 | `primary` | The tool action on the ＋ button |
 | `version` | `command`, `pattern` with a group `v`, `tested` (`>=0.36 <0.37`) |

@@ -265,8 +265,13 @@ struct ActivityEntry: Codable, Equatable {
                     : kind == .move ? (.right, Palette.accent) : (.copy, Palette.accent)
             }
         }
+        return tile(symbol, tint, result?.rawValue ?? kind.rawValue)
+    }
+
+    /// `symbol` in a square tinted `tint`: a card's badge.
+    static func tile(_ symbol: Symbol, _ tint: NSColor, _ label: String) -> NSView {
         let box = Tile(fill: tint.withAlphaComponent(0.15), radius: 6)
-        let image = NSImageView(image: symbol.image(result?.rawValue ?? kind.rawValue))
+        let image = NSImageView(image: symbol.image(label))
         image.symbolConfiguration = .init(pointSize: 12, weight: .semibold)
         image.contentTintColor = tint
         image.translatesAutoresizingMaskIntoConstraints = false
@@ -346,6 +351,7 @@ final class ClosureButton: NSButton {
     private var open = Set<ObjectIdentifier>(), openEntries = Set<UUID>()
     private var shape = ""
     private var cards: [(row: JobRow, bar: NSProgressIndicator, detail: NSTextField, files: NSTextField?)] = []
+    private var jobCards: [(id: String, bar: NSProgressIndicator, detail: NSTextField)] = []
     /// A click on the toolbar button closes a transient popover on mouse-down, before the button's action: that
     /// click meant "close", not "open again".
     private(set) var closedAt = Date.distantPast
@@ -396,13 +402,20 @@ final class ClosureButton: NSButton {
 
     /// The list again when something came, went or opened; otherwise each running job's bar and lines.
     func refresh() {
-        let rows = ops.jobRows, entries = ops.history.entries
+        let rows = ops.jobRows, entries = ops.history.entries, tools = ops.toolJobs?.jobs ?? []
         let now = rows.map { "\(ObjectIdentifier($0.job).hashValue)\($0.job.progress.state)\($0.job.isPaused)\(open.contains(ObjectIdentifier($0.job)))" }
             + entries.map { "\($0.id)\($0.retried)\(openEntries.contains($0.id))" }
+            + tools.map { j in "\(j.id)\(j.running)\(ops.toolJobs?.state(j.id).map { "\($0.lost)\($0.follow != nil)" } ?? "")" }
         let key = now.joined(separator: "|")
         if key != shape {
             shape = key
-            rebuild(rows, entries)
+            rebuild(rows, entries, tools)
+        }
+        for c in jobCards {   // a long job's progress and last line
+            let l = ops.toolJobs?.state(c.id)
+            c.bar.isIndeterminate = l?.fraction == nil
+            if c.bar.isIndeterminate { c.bar.startAnimation(nil) } else { c.bar.doubleValue = l?.fraction ?? 0 }
+            c.detail.stringValue = (l?.line ?? "").bidiVisible
         }
         for c in cards {   // what the rows' own tick worked out: updating them here again would skew their speed
             c.bar.isIndeterminate = c.row.bar.isIndeterminate
@@ -415,30 +428,41 @@ final class ClosureButton: NSButton {
         if abs(popover.contentSize.height - height) > 1 { popover.contentSize = NSSize(width: Self.width, height: height) }
     }
 
-    private func rebuild(_ rows: [JobRow], _ entries: [ActivityEntry]) {
+    private func rebuild(_ rows: [JobRow], _ entries: [ActivityEntry], _ tools: [ToolJob]) {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        cards = []
+        (cards, jobCards) = ([], [])
         let title = Activity.label("Activity", size: 13, weight: .bold)
         let keys = Activity.label("⌥⌘J", size: 11, color: .secondaryLabelColor)
         let head = NSStackView(views: [title, keys, NSView()])
         head.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 2, right: 4)
         add(head)
         let running = rows.filter { $0.job.progress.state != .queued }, queued = rows.filter { $0.job.progress.state == .queued }
-        if rows.isEmpty && entries.isEmpty {
-            let l = Activity.label("No operations yet. Copies, moves and deletes show up here.", size: 12, color: .secondaryLabelColor)
+        if rows.isEmpty && entries.isEmpty && tools.isEmpty {
+            let l = Activity.label("No operations yet. Copies, moves, deletes and Tools' long jobs show up here.", size: 12, color: .secondaryLabelColor)
             add(NSStackView(views: [l]))
             return
         }
-        for (name, list) in [("RUNNING", running), ("QUEUED", queued)] where !list.isEmpty {
-            add(section(name))
-            list.forEach { add(card($0)) }
+        let going = tools.filter(\.running), over = tools.filter { !$0.running }
+        if !running.isEmpty || !going.isEmpty {
+            add(section("RUNNING"))
+            running.forEach { add(card($0)) }
+            going.forEach { add(card($0)) }
         }
-        guard !entries.isEmpty else { return }
-        let clear = Activity.button("Clear") { [unowned self] in ops.history.remove(nil); ops.changed() }
+        if !queued.isEmpty {
+            add(section("QUEUED"))
+            queued.forEach { add(card($0)) }
+        }
+        guard !entries.isEmpty || !over.isEmpty else { return }
+        let clear = Activity.button("Clear") { [unowned self] in ops.history.remove(nil); ops.toolJobs?.removeFinished(); ops.changed() }
         clear.isBordered = false
         clear.contentTintColor = Palette.accent
         add(section("FINISHED", clear))
-        entries.forEach { add(card($0)) }
+        var o = over.sorted { $0.ended! > $1.ended! }[...]   // newest first: a long job among the operations by when it ended
+        for e in entries {
+            while let j = o.first, j.ended! > e.finished { add(card(j)); o.removeFirst() }
+            add(card(e))
+        }
+        o.forEach { add(card($0)) }
     }
 
     private func add(_ v: NSView) {
@@ -462,7 +486,8 @@ final class ClosureButton: NSButton {
     }
 
     /// ▸ · badge · name over the route · buttons; a click anywhere on it but a button opens it.
-    private func header(_ isOpen: Bool, toggle: @escaping () -> Void, badge: NSView, name: String, route: NSAttributedString?,
+    /// `toggle` nil: nothing to open (a long job's card) — room for ▸ all the same, so the badges line up.
+    private func header(_ isOpen: Bool, toggle: (() -> Void)?, badge: NSView, name: String, route: NSAttributedString?,
                         whole: String?, buttons: [NSView]) -> NSView {
         let title = Activity.label(name, size: 13, weight: .semibold)
         var lines: [NSView] = [title]
@@ -478,7 +503,9 @@ final class ClosureButton: NSButton {
         text.spacing = 1
         let controls = NSStackView(views: buttons)
         controls.spacing = 2
-        let h = ClickStack(views: [disclosure(isOpen, toggle), badge, text, NSView(), controls], onClick: toggle)
+        let room = NSView()
+        room.widthAnchor.constraint(equalToConstant: 14).isActive = true
+        let h = ClickStack(views: [toggle.map { disclosure(isOpen, $0) } ?? room, badge, text, NSView(), controls], onClick: toggle ?? {})
         h.spacing = 8
         return h
     }
@@ -572,6 +599,41 @@ final class ClosureButton: NSButton {
             }
         }
         return box(views, indent: indent, highlighted: isOpen)
+    }
+
+    /// A Tools long job (§7.6): "Upgrade dpl — web-01", where it is — running, the connection lost, not connected — or
+    /// how it went; while it runs its progress (a spinner without one) and last line, Show and Stop…; then Retry,
+    /// Show Log and ✕.
+    private func card(_ j: ToolJob) -> NSView {
+        guard let jobs = ops.toolJobs else { return NSView() }
+        let l = jobs.state(j.id), at = { DateFormatter.localizedString(from: $0, dateStyle: Calendar.current.isDateInToday($0) ? .none : .short, timeStyle: .short) }
+        let place = SavedServer.isProd(j.target) ? NSMutableAttributedString(attributedString: Chip.prod.text) : NSMutableAttributedString()
+        let plain: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
+        let state = !j.running ? "took \(Activity.duration(j.ended!.timeIntervalSince(j.started))) · \(at(j.ended!))"
+            : l?.follow != nil ? "running since \(at(j.started))"
+            : l?.lost == true ? "connection lost — the job runs on" : "connect to \(j.place) to see how it goes"
+        place.append(NSAttributedString(string: (place.length > 0 ? " " : "") + state, attributes: plain))
+        var buttons: [NSView] = []
+        if j.running {
+            buttons = [Activity.button("Show") { [unowned self] in popover.close(); jobs.show(j) },
+                       Activity.button("Stop…") { [unowned self] in popover.close(); jobs.stop(j) }]
+        } else {
+            let remove = Activity.icon(.close, "Remove from the list") { [unowned self] in jobs.remove(j.id); ops.changed() }
+            remove.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
+            buttons = [Activity.button("Retry") { [unowned self] in popover.close(); jobs.retry(j) },
+                       Activity.button("Show Log") { [unowned self] in popover.close(); jobs.show(j) }, remove]
+        }
+        let badge = Activity.tile(j.running ? .tool : j.ok ? .check : .warnFill, j.running ? Palette.accent : j.ok ? Palette.ok : Palette.fail,
+                                  j.running ? "running" : j.ok ? "done" : "failed")
+        let head = header(false, toggle: nil, badge: badge, name: "\(j.name) — \(j.place)", route: place, whole: nil, buttons: buttons)
+        let detail = Activity.label(j.running ? l?.line ?? "" : j.said ?? "", color: j.running || j.ok ? .secondaryLabelColor : Palette.fail)
+        detail.lineBreakMode = .byTruncatingTail
+        detail.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        guard j.running else { return box([head, detail], indent: [detail], highlighted: false) }
+        let bar = NSProgressIndicator()
+        (bar.style, bar.maxValue, bar.controlSize) = (.bar, 1, .small)
+        jobCards.append((j.id, bar, detail))
+        return box([head, bar, detail], indent: [bar, detail], highlighted: false)
     }
 
     private func failedLine(_ e: ActivityEntry, _ f: FileJob.Failure) -> NSView {

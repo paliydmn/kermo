@@ -244,6 +244,22 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         w.window?.listInWindowsMenu()
     }
 
+    /// A Tools long job's log (§7.6): what Kermo has of it, more as it comes (`add`), how it went (`said`). Closing it
+    /// stops nothing: the job runs on, and Activity follows it.
+    static func log(_ text: Data, title: String, status: String) -> OutputWindow {
+        let w = OutputWindow(out: "", errors: "", status: 0, ok: true)
+        w.window?.title = title.bidiVisible
+        w.add(text)
+        w.said(status)
+        open.append(w)
+        w.showWindow(nil)
+        w.window?.listInWindowsMenu()
+        return w
+    }
+
+    func add(_ d: Data) { if let tv, !d.isEmpty { append(d, false, in: tv) } }
+    func said(_ status: String) { window?.docFrame?.text = status }
+
     /// A Tools `follow` run (§2): its payload on `server`'s `sh -s` (this Mac's for a local target), its output after
     /// the start marker as it comes — a container runtime's prefix stripped (`cri`), stderr in red — stdin held open:
     /// closing the window ends ssh, and the watcher there the run. It holds one of the server's channels while it

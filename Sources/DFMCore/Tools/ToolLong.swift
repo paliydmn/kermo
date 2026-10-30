@@ -99,6 +99,9 @@ public enum ToolLong {
         return ToolPayload(body: body, values: [], nonce: n, shell: shell)
     }
 
+    /// A job's log, its last MB: Show Log after a relaunch.
+    public static func read(id: String) -> ToolPayload { ToolPayload(body: "tail -c 1048576 \(file(id, "log"))", values: []) }
+
     /// How a follow ended, from its stderr: the job's exit, or that it has none (`lost`) or no log (`gone`). nil: the
     /// follow itself stopped — the connection went, or it was stopped — and the job may run on.
     public enum End: Sendable, Equatable { case exit(Int32), lost, gone }
