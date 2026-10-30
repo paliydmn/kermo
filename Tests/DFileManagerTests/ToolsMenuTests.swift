@@ -19,15 +19,15 @@ extension ServerLockTests {
         AppDelegate.connected = { _ in up }
         let t = SFTPTarget.local(), key = ServerRow.key(t)
         let first = try #require(app.toolsItem(for: t)?.submenu)
-        #expect(first.items.map(\.title) == ["Connect to see tools"] && first.items.allSatisfy { !$0.isEnabled })
+        #expect(first.items.map(\.title) == ["Connect to see tools", "", "Open in Tools Window"] && !first.items[0].isEnabled)
         #expect(bench.calls.isEmpty && app.tools.answers[key] == nil, "nothing asked")
 
         up = true
-        #expect(app.toolsItem(for: t)?.submenu?.items.map(\.title) == ["Looking at what it has…"])
+        #expect(app.toolsItem(for: t)?.submenu?.items.map(\.title) == ["Looking at what it has…", "", "Open in Tools Window"])
         await toolsUntil { app.tools.answers[key] != nil }
         let menu = try #require(app.toolsItem(for: t)?.submenu)
-        #expect(menu.items.map(\.title) == ["Banned IPs (fail2ban)", "Server Info", "Firewall (ufw)"] && menu.items.allSatisfy(\.isEnabled))
-        #expect(menu.items.map { $0.image != nil } == [true, true, true])
+        #expect(menu.items.map(\.title) == ["Banned IPs (fail2ban)", "Server Info", "Firewall (ufw)", "", "Open in Tools Window"] && menu.items.filter { !$0.isSeparatorItem }.allSatisfy(\.isEnabled))
+        #expect(menu.items.prefix(3).map { $0.image != nil } == [true, true, true])
         let place = PlaceSource(app, SavedServer(target: t), t)
         #expect(place.content?.rows.filter { ["Banned IPs", "Firewall"].contains($0.title) }.map(\.subtitle) == ["—", "—"])
         _ = try await ToolListSource(app, try toolNamed(app, "ufw"), SavedServer(target: t), t).read(CancelFlag())
@@ -35,8 +35,8 @@ extension ServerLockTests {
 
         up = false
         let offline = try #require(app.toolsItem(for: t)?.submenu)
-        #expect(offline.items.first?.title.hasPrefix("As of ") == true && offline.items.dropFirst().map(\.title) == ["Banned IPs (fail2ban)", "Server Info", "Firewall (ufw)"])
-        #expect(offline.items.allSatisfy { !$0.isEnabled })
+        #expect(offline.items.first?.title.hasPrefix("As of ") == true && offline.items.dropFirst().map(\.title) == ["Banned IPs (fail2ban)", "Server Info", "Firewall (ufw)", "", "Open in Tools Window"])
+        #expect(offline.items.dropLast(2).allSatisfy { !$0.isEnabled }, "the Tools window opens offline too")
         #expect(place.content?.rows.first { $0.title == "Firewall" }?.subtitle == "—", "a count only while connected")
 
         _ = app.tools.reload()   // asked again: now it has neither
@@ -45,7 +45,7 @@ extension ServerLockTests {
         try FileManager.default.removeItem(atPath: bench.dir + "/bin/fail2ban-client")
         _ = app.toolsItem(for: t)
         await toolsUntil { app.tools.answers[key] != nil }
-        #expect(app.toolsItem(for: t)?.submenu?.items.map(\.title) == ["Server Info"] && place.content?.rows.contains { $0.title == "Firewall" } == false)
+        #expect(app.toolsItem(for: t)?.submenu?.items.map(\.title) == ["Server Info", "", "Open in Tools Window"] && place.content?.rows.contains { $0.title == "Firewall" } == false)
     }
 
     /// Reload Config reads your tools again and says what's wrong with one, with its line; a one-command tool of yours
@@ -96,7 +96,7 @@ extension ServerLockTests {
         #expect(ToolRunner.everything(hello) == "Runs by itself:\n  requires: command -v echo\nRuns when you choose:\n  Hello: echo hello from {server}   — as root")
         #expect(ToolRunner.cautions(try #require(app.tools.untrusted.first { $0.preset.id == "tidy" })) == ["⚠ “Look” says it changes nothing, but it runs “rm”."])
         let menu = try #require(app.toolsItem(for: .local())?.submenu)
-        #expect(menu.items.map(\.title) == ["Connect to see tools", "", "Not in use yet", "Hello…", "Tidy…"])
+        #expect(menu.items.map(\.title) == ["Connect to see tools", "", "Not in use yet", "Hello…", "Tidy…", "", "Open in Tools Window"])
 
         var asked: [(String, [String])] = []
         AppDelegate.answering = { m, b, _ in asked.append((m, b)); return 2 }   // Don't Use
@@ -137,7 +137,7 @@ extension ServerLockTests {
         up = false
         let calls = bench.calls.count
         let menu = try #require(app.toolsItem(for: t)?.submenu)
-        #expect(menu.items.first?.title.hasPrefix("As of ") == true && menu.items.dropFirst().map(\.title) == ["Banned IPs (fail2ban)", "Server Info", "Firewall (ufw)"])
-        #expect(menu.items.allSatisfy { !$0.isEnabled } && bench.calls.count == calls, "nothing sent")
+        #expect(menu.items.first?.title.hasPrefix("As of ") == true && menu.items.dropFirst().map(\.title) == ["Banned IPs (fail2ban)", "Server Info", "Firewall (ufw)", "", "Open in Tools Window"])
+        #expect(menu.items.dropLast(2).allSatisfy { !$0.isEnabled } && bench.calls.count == calls, "nothing sent")
     }
 }

@@ -1295,7 +1295,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// The app's own items, not the panels': from a viewer, an editor or over the terminal too.
-    static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "app.support", "app.settings", "help.docs", "help.issue"]
+    static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "app.support", "app.settings", "app.tools", "help.docs", "help.issue"]
 
     /// A disabled menu item still takes its key: AppKit says it handled it and runs nothing, so F3 never reached a viewer
     /// (D-101); by the same path ⌘↑ or ⌃B could miss an editor or a text field. A command's item keeps its key only while
@@ -1457,7 +1457,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// The registry's menus (`Command.menu`), in menu bar order; Window goes before Help. F1 lists them too (`KeyHelp.groups`).
-    static let menus = ["Kermo", "File", "Edit", "Mark", "View", "Go", "Server", "Git", "Help"]
+    static let menus = ["Kermo", "File", "Edit", "Mark", "View", "Go", "Server", "Git", "Window", "Help"]
 
     enum MenuNode {
         case command(Command), submenu(String, [MenuNode]), separator
@@ -1538,6 +1538,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             "File": [item("Save", #selector(Editor.saveDocument(_:)), "s"),
                      item("Ensure Final Newline", #selector(Editor.toggleFinalNewline(_:)), ""), .separator()],
             // Standard responder-chain items: text fields handle them as text; panels as files.
+            "Window": [item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"), item("Zoom", #selector(NSWindow.performZoom(_:)), ""),
+                       .separator(), item("Main Window", #selector(showMainWindow(_:)), "0")],
             "Edit": [
                 item("Undo", Selector(("undo:")), "z"),
                 item("Redo", Selector(("redo:")), "z", [.command, .shift]),
@@ -1554,20 +1556,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let tail: [String: [NSMenuItem]] = [
             "Kermo": [.separator(), item("Hide Kermo", #selector(NSApplication.hide(_:)), "h"), item("Quit Kermo", #selector(NSApplication.terminate(_:)), "q")],
             "Server": [.separator(), toolsMenuItem()],
+            "Window": [.separator(), item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), "")],
         ]
         for title in Self.menus {
-            if title == "Help" {
-                // AppKit lists the open windows below.
-                NSApp.windowsMenu = submenu("Window", [
-                    item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
-                    item("Zoom", #selector(NSWindow.performZoom(_:)), ""),
-                    .separator(),
-                    item("Main Window", #selector(showMainWindow(_:)), "0"),
-                    .separator(),
-                    item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), ""),
-                ])
-            }
             let menu = submenu(title, head[title] ?? [], trailing: tail[title] ?? [])
+            if title == "Window" { NSApp.windowsMenu = menu }   // AppKit lists the open windows below
             if title == "Help" { NSApp.helpMenu = menu }   // macOS puts its search there: it finds every menu item
         }
         return main

@@ -12,6 +12,8 @@ final class ToolRunner {
     private(set) var library = ToolLibrary()
     /// Your own tools you said to use (`tools/trust.json`); built-ins always.
     var trust = ToolTrust()
+    /// Where you use each tool, hidden on which server, its vars' values there (`tools/servers.json`).
+    var settings = ToolServers()
     /// What each server (`ServerRow.key`) said this session, and when: its facts, the tools and actions it has.
     private(set) var answers: [String: (answer: ToolBatch.Answer, at: Date)] = [:]
     /// The last answers of saved servers (`SavedServer.id`), kept in `tools/known.json`: Tools ▸ shows a server's tools
@@ -59,19 +61,42 @@ final class ToolRunner {
         (answers, found, versions) = ([:], [:], [:])   // a changed tool's requires: asked again
         trust = Self.own.flatMap { try? Config.load("trust.json", as: ToolTrust.self, in: $0.path) } ?? ToolTrust()
         known = Self.own.flatMap { try? Config.load("known.json", as: [String: Known].self, in: $0.path) } ?? [:]
-        return library.problems
+        let read = Self.own.map { Config.loadKeeping("servers.json", as: ToolServers.self, in: $0.path) }
+        settings = read?.value ?? ToolServers()
+        return library.problems + [read?.problem.map { "tools/" + $0 }].compactMap { $0 }
     }
 
-    /// The tools this version shows: trusted, with nothing to ask before use (vars' `ask`: Tools PR 4), a list read by a
-    /// command or a script, a command of their own, or actions with no list (a launcher) this version runs.
+    func saveSettings() {
+        if let dir = Self.own?.path { Config.save("servers.json", settings, in: dir) }
+    }
+
+    /// A saved server's id, as `tools/servers.json` and `known.json` have it; nil: not saved (no settings).
+    func serverID(_ t: SFTPTarget) -> String? { app.savedServer(at: t)?.id.uuidString }
+
+    /// The tools `t`'s server shows, as last known (nil: not known yet): those it has that you use there — Use on
+    /// Servers…, Hide. One that asks for a value (`vars.ask`) only on a saved server: the value is kept with it, and
+    /// `toSetUp` says what's still to set. Tools ▸, a place's rows (the search's too) and the Tools window show this.
+    func here(_ t: SFTPTarget) -> (tools: [LoadedTool], at: Date)? {
+        guard let a = answer(t) else { return nil }
+        let id = serverID(t)
+        return (tools.filter { a.answer.has($0.preset) && settings.uses($0.preset.id, on: id) && (id != nil || $0.preset.varsToAsk(saved: [:]).isEmpty) }, a.at)
+    }
+
+    /// The values `tool` asks for that aren't set on `t`'s server yet: Set Up… before it's used there.
+    func toSetUp(_ tool: LoadedTool, on t: SFTPTarget) -> [String] {
+        tool.preset.varsToAsk(saved: settings.vars(tool.preset.id, on: serverID(t)))
+    }
+
+    /// The tools this version shows: trusted, a list read by a command or a script, a command of their own, or actions
+    /// with no list (a launcher) this version runs. Which a server shows: `here`.
     var tools: [LoadedTool] { library.trusted(trust).filter(Self.shows) }
     /// Your own tools not trusted yet, or changed since: Tools ▸ offers them, asking first.
     var untrusted: [LoadedTool] { library.tools.filter { !trust.trusts($0) && Self.shows($0) } }
 
     static func shows(_ t: LoadedTool) -> Bool {
         let p = t.preset
-        return p.varsToAsk(saved: [:]).isEmpty && (p.list.map { $0.run.command != nil || $0.run.script != nil } ?? p.commandAction.map { runs($0, of: p) }
-            ?? p.toolActions?.contains { runs($0, of: p) } ?? false)
+        return p.list.map { $0.run.command != nil || $0.run.script != nil } ?? p.commandAction.map { runs($0, of: p) }
+            ?? p.toolActions?.contains { runs($0, of: p) } ?? false
     }
 
     /// What this version runs of an action: a command, a script or an `edit`; a form of text, secrets and choices;
@@ -124,7 +149,7 @@ final class ToolRunner {
         let key = ServerRow.key(t.asUser)
         var kermo: [String: ToolValue] = ["server": .string(s.title), "host": .string(s.host), "user": .string(s.user ?? "")]
         if let f = answers[key]?.answer.facts { kermo.merge(f.names) { $1 } }
-        return .init(rows: rows, vars: p.varValues(saved: [:], found: found[key + " " + p.id] ?? [:]), kermo: kermo)
+        return .init(rows: rows, vars: p.varValues(saved: settings.vars(p.id, on: serverID(t)), found: found[key + " " + p.id] ?? [:]), kermo: kermo)
     }
 
     /// `run` of `tool` with `scope`'s names, once (§2): its payload, as root if the tool says, on `t` or this Mac.
@@ -265,10 +290,11 @@ final class ToolRunner {
 
         let output = a.spec.output ?? (a.spec.edit != nil && a.run.command == nil && a.run.script == nil ? nil : .line)
         if output != .line && output != .silent {   // a window, a log, a terminal, the editor: theirs to show
+            let over = app.rowLists(id).first?.sheetWindow   // a Tools window's button: its question over that window
             return Task {
                 defer { if !readonly { changing[key] = nil } }
                 let panel = app.active
-                let r = await ready(a, of: tool, rowScope, row: rowTitle, on: t, asked: asked, window: nil, values: values)
+                let r = await ready(a, of: tool, rowScope, row: rowTitle, on: t, asked: asked, window: over, values: values)
                 guard case let .go(scope, secret, _, payload) = r else {
                     if case .stop(let why) = r { panel.flash("\(verb): \(why) — nothing ran", error: why != "cancelled") }
                     return
