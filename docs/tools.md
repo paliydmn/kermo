@@ -25,7 +25,7 @@ A tool's list works as Services… does, in search and in a panel: ↑↓, typin
 
 - there are more rows than the list shows ("shown 500 of 812");
 - the server's clock is over a minute off;
-- the program's version is outside what the tool was tested with.
+- the program's version is outside what the tool was tested with (asked once a session).
 
 A row's menu has the row's actions, the tool's actions, then **Copy** (the row as text) and **Show ufw.json** (the tool's file). An action that can't run now is greyed out, and its tooltip says why.
 
@@ -36,7 +36,7 @@ A row's menu has the row's actions, the tool's actions, then **Copy** (the row a
 | ↩ | **Status in Full**: `ufw status verbose` in a window |
 | F8 | **Delete Rule…**: deletes the rule under the cursor |
 
-Its menu also has **Turn Firewall On…** and **Turn Firewall Off…**. An inactive firewall is a list with no rules. Deleting, and turning it on or off, always ask first. **Delete Rule…** acts on the rule under the cursor only, never on marked rows: ufw numbers its rules, and the numbers move after each delete. Before it deletes, Kermo reads the rules again; if that number is now another rule, nothing is deleted and the line says "the list changed".
+Its menu also has **Turn Firewall On…** and **Turn Firewall Off…**. An inactive firewall is a list with no rules; with no row under the cursor, ⌃↩ (in search: **⌃↩ Actions** on the bar) has the tool's own actions all the same. Deleting, and turning it on or off, always ask first. **Delete Rule…** acts on the rule under the cursor only, never on marked rows: ufw numbers its rules, and the numbers move after each delete. Before it deletes, Kermo reads the rules again; if that number is now another rule, nothing is deleted and the line says "the list changed".
 
 ### Banned IPs (fail2ban)
 

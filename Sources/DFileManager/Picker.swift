@@ -160,7 +160,12 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
             let key = Shortcut(event: e)   // the physical key: ⌘E is "у" on a Ukrainian layout
             // ⌘↩: the row's own, if it has one (an overview's row in the other panel), else the list's.
             if key == Self.otherKey, self.other != nil, highlighted?.actions.contains(where: { $0.key == key }) != true { openOther(); return true }
-            guard let row = highlighted else { return false }
+            guard let row = highlighted else {   // no row: the list's own actions (an empty Tools list's)
+                if Self.menuKeys.contains(key), !listActions.isEmpty { return popUpMenu() }
+                guard let a = listActions.first(where: { $0.key == key }) else { return false }
+                run(a)
+                return true
+            }
             if Self.menuKeys.contains(key), row.menu != nil { return popUpMenu() }
             guard let a = row.actions.first(where: { $0.key == key }) else { return false }
             perform(a)
@@ -282,12 +287,16 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         if r == index(at: table.selectedRow) { updateBar() }   // its keys may have changed (a run started on it)
     }
 
-    func has(_ id: String) -> Bool { items.contains { $0.id == id } || above.contains { $0.items.contains { $0.id == id } } }
+    func has(_ id: String) -> Bool {
+        items.contains { $0.id == id } || source?.listID == id || above.contains { l in l.items.contains { $0.id == id } || l.source?.listID == id }
+    }
 
     func reload(_ c: ListContent, having id: String) {
         func rows(_ s: ListSource?) -> [Item] { (s?.keepsOrder == true ? c.rows : ListPanel.problemsFirst(c.rows)).map(keyed) }
-        for l in above.indices where above[l].source != nil && above[l].items.contains(where: { $0.id == id }) { above[l].items = rows(above[l].source) }
-        guard source != nil, items.contains(where: { $0.id == id }) else { return }
+        for l in above.indices where above[l].source != nil && (above[l].items.contains { $0.id == id } || above[l].source?.listID == id) {
+            above[l].items = rows(above[l].source)
+        }
+        guard source != nil, items.contains(where: { $0.id == id }) || source?.listID == id else { return }
         selectID = ListPanel.stay(highlighted?.id, in: shown.map(\.id), now: Set(c.rows.map(\.id)))
         show(c)
     }
@@ -359,10 +368,26 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         onDismiss?()
     }
 
-    /// The highlighted row's menu, under it: ⎋ closes it, and typing goes on in the field.
+    /// This level's list's own actions (`ListContent.actions`): with no row highlighted, its keys and its menu.
+    private var listActions: [ListAction] { source?.content?.actions ?? [] }
+
+    /// The highlighted row's menu, under it: ⎋ closes it, and typing goes on in the field. No row: the list's actions.
     private func popUpMenu() -> Bool {
         let r = table.selectedRow
-        guard let i = index(at: r), let menu = shown[i].menu?() else { return false }
+        guard let i = index(at: r) else {
+            guard !listActions.isEmpty else { return false }
+            let menu = NSMenu()
+            menu.autoenablesItems = false
+            for a in listActions {
+                let item = MenuAction.item(a.title) { [unowned self] in run(a) }
+                if a.dangerous { item.attributedTitle = NSAttributedString(string: a.title, attributes: [.foregroundColor: Palette.fail]) }
+                (item.isEnabled, item.toolTip) = (a.why == nil, a.why)
+                menu.addItem(item)
+            }
+            menu.popUp(positioning: nil, at: NSPoint(x: 24, y: 0), in: table)
+            return true
+        }
+        guard let menu = shown[i].menu?() else { return false }
         table.scrollRowToVisible(r)
         let rect = table.rect(ofRow: r)
         menu.popUp(positioning: nil, at: NSPoint(x: rect.minX + 24, y: rect.maxY), in: table)
@@ -386,6 +411,8 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
             if canGoInto(row) { slots.append(KeySlot(key: "⇥", label: "Into", id: "into")) }
             slots += row.actions.enumerated().filter { !$0.element.label.isEmpty }.map { KeySlot(key: $0.element.key.display, label: $0.element.label, id: "\($0.offset)") }
             if row.menu != nil { slots.append(KeySlot(key: "⌃↩", label: "Actions", id: "menu")) }
+        } else if !listActions.isEmpty {
+            slots.append(KeySlot(key: "⌃↩", label: "Actions", id: "menu"))
         }
         if other != nil, highlighted?.actions.contains(where: { $0.key == Self.otherKey }) != true {
             slots.append(KeySlot(key: "⌘↩", label: "Other Panel", id: "other"))
@@ -471,7 +498,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
                 line.append(NSAttributedString(string: e.localizedDescription, attributes: [.font: font, .foregroundColor: NSColor.labelColor]))
                 let output = (e as? ShowsOutput)?.output ?? "", title = "What \(s.title) said"
                 var show: (@MainActor () -> Void)?
-                if !output.isEmpty { show = { [weak self] in self?.showOutput(title, String(output.suffix(4000))) } }
+                if !output.isEmpty { show = { [weak picker = self] in picker?.showOutput(title, String(output.suffix(4000))) } }
                 say(line, output: show)
             }
         }

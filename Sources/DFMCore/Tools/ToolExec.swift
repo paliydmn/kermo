@@ -31,13 +31,23 @@ public enum ToolExec {
 
     public static let maxOutput = 16 << 20, maxLine = 1 << 20
 
+    /// Servers whose `sudo -n` wanted a password this session: their runs go to the wrapper at once, one round trip
+    /// instead of two (the wrapper runs with NOPASSWD too, should sudoers change).
+    private static let wantPassword = OSAllocatedUnfairLock<Set<String>>(initialState: [])
+    private static func key(_ t: SFTPTarget) -> String { "\(t.host):\(t.port ?? 22)" }
+    /// Tests: `t`'s sudo asked afresh.
+    static func forget(_ t: SFTPTarget) { _ = wantPassword.withLock { $0.remove(key(t)) } }
+
     /// `payload(password)`: the payload, the sudo wrapper's when `password`. `cancel`: ⎋. `command`: what runs it
     /// (tests: in a session of its own).
     public static func run(_ payload: (_ password: Bool) -> ToolPayload, on t: SFTPTarget, timeout: Double, cancel: CancelFlag,
                            env: [String: String] = [:], command: @escaping (ToolPayload) -> String = { $0.command }) throws -> Ran {
         let first = payload(false)
-        let r = try once(first, on: t, password: nil, timeout: timeout, cancel: cancel, env: env, command: command)
-        guard first.sudo == .noPassword, !r.started, r.stopped == nil, SudoServer.passwordTexts.contains(where: r.errors.contains) else { return r }
+        if first.sudo != .noPassword || !wantPassword.withLock({ $0.contains(key(t)) }) {
+            let r = try once(first, on: t, password: nil, timeout: timeout, cancel: cancel, env: env, command: command)
+            guard first.sudo == .noPassword, !r.started, r.stopped == nil, SudoServer.passwordTexts.contains(where: r.errors.contains) else { return r }
+            wantPassword.withLock { _ = $0.insert(key(t)) }
+        }
         let p = payload(true)
         return try SudoServer.asking.withLock {
             var wrong = false, said = ""

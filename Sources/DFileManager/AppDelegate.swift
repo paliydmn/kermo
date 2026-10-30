@@ -1285,7 +1285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if id == "server.history", Editor.server(of: NSApp.keyWindow) != nil { return true }   // its editor's file
         if id == "help.keys", Self.windowToClose(key: NSApp.keyWindow, main: window) != nil { return true }   // that window's keys
         if let list = activePanel?.list, let c, !terminalActive, !Self.appWide.contains(id) {   // a list: its rows' words, no file's commands
-            if let a = Self.titled(c, list.cursor?.listActions?() ?? []) { item.title = a.title }
+            if let a = Self.titled(c, list.actions) { item.title = a.title }
             else if !Self.runsInList(id) { return false }
         }
         return Self.appWide.contains(id) || NSApp.keyWindow === window && canRun(id)
@@ -1312,7 +1312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// A list's row keys (⌘R Restart, F8 Stop…): off the menu, they go to the panel, which knows the key — not through
     /// View ▸ Refresh's ⌘R.
-    var listRowKeys: Set<Shortcut> { Set((terminalActive ? nil : activePanel?.list?.cursor?.listActions?())?.compactMap(\.panelKey) ?? []) }
+    var listRowKeys: Set<Shortcut> { Set((terminalActive ? nil : activePanel?.list?.actions)?.compactMap(\.panelKey) ?? []) }
 
     /// ⌘W (Close Tab) in a viewer, editor or other document window closes that window, through its delegate, so
     /// the editor still asks about unsaved changes. In the main window, or a sheet / picker over it, it closes a tab.

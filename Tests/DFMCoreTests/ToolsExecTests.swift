@@ -63,6 +63,7 @@ private func run(_ body: String, timeout: Double = 30, cancel: CancelFlag = Canc
 extension SudoPasswordTests {
     static let toolSudo = #"""
         #!/bin/sh
+        echo "$1" >> "$0.log"
         n=; while [ $# -gt 0 ]; do case $1 in -n) n=1; shift ;; -S|-k) shift ;; -p) shift 2 ;; *) break ;; esac; done
         [ -n "$n" ] && { echo 'sudo: a password is required' >&2; exit 1; }
         IFS= read -r pw || exit 1
@@ -74,13 +75,18 @@ extension SudoPasswordTests {
         let sudo = NSTemporaryDirectory() + "kermo-tool-sudo-" + UUID().uuidString
         try Data(Self.toolSudo.utf8).write(to: URL(fileURLWithPath: sudo))
         chmod(sudo, 0o755)
-        defer { try? FileManager.default.removeItem(atPath: sudo) }
+        defer { try? FileManager.default.removeItem(atPath: sudo); try? FileManager.default.removeItem(atPath: sudo + ".log"); ToolExec.forget(.local()) }
+        ToolExec.forget(.local())
         let make = { (pw: Bool) in payload("echo as-root", sudo: pw ? .password : .noPassword, sudoProgram: sudo) }
-        let a = Answers(["wrong-one", "kermo-test-pw"])
+        let a = Answers(["wrong-one", "kermo-test-pw", "kermo-test-pw"])
         try Self.answering(a) {
             let r = try ToolExec.run(make, on: .local(), timeout: 30, cancel: CancelFlag()) { setsid + $0.command }
             #expect(r.started && r.status == 0 && r.text == "as-root\n" && r.password == "kermo-test-pw")
             #expect(a.wrong == [false, true] && a.taken == ["kermo-test-pw"])
+            // Known now to want one: the next run goes to the wrapper at once — no `sudo -n` first.
+            try Data().write(to: URL(fileURLWithPath: sudo + ".log"))
+            #expect(try ToolExec.run(make, on: .local(), timeout: 30, cancel: CancelFlag()) { setsid + $0.command }.text == "as-root\n")
+            #expect((try? String(contentsOfFile: sudo + ".log", encoding: .utf8)) == "-S\n" && a.wrong == [false, true, false])
         }
         let none = Answers([nil])
         try Self.answering(none) {

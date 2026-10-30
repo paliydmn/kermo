@@ -37,6 +37,7 @@ import Testing
               "status numbered") [ -f \(dir)/inactive ] && { echo 'Status: inactive'; exit 0; }; cat \(dir)/rules ;;
               "status verbose") printf 'Status: active\\nLogging: on (low)\\nDefault: deny (incoming), allow (outgoing), disabled (routed)\\n' ;;
               "version ") echo 'ufw 0.36.2' ;;
+              "--force enable") rm -f \(dir)/inactive; echo 'Firewall is active and enabled on system startup' ;;
               "--force delete") grep -v "^\\[ *$3\\] " \(dir)/rules > \(dir)/rules.new; mv \(dir)/rules.new \(dir)/rules; echo 'Rule deleted' ;;
               *) echo 'ERROR: Invalid syntax' >&2; exit 1 ;;
             esac
@@ -198,8 +199,8 @@ extension ServerLockTests {
         pressKey(a, 100, toolsF8)
         await toolsUntil { list.resultLines.first?.contains("Deleted") == true }
         #expect(list.resultLines.first?.hasPrefix("\u{FFFC} Deleted rule 3 (Anywhere) on localhost at ") == true, "\(list.resultLines)")
-        #expect(Array(bench.calls.dropFirst(before)) == ["ufw status numbered", "ufw --force delete 3", "ufw status numbered", "ufw status verbose", "ufw version"],
-                "verified, deleted, read again")
+        #expect(Array(bench.calls.dropFirst(before)) == ["ufw status numbered", "ufw --force delete 3", "ufw status numbered", "ufw status verbose"],
+                "verified, deleted, read again — its version asked once a session")
         #expect(list.shown.map(\.title) == ["22/tcp", "80,443/tcp"] && list.cursor?.title == "22/tcp")
     }
 
@@ -228,5 +229,35 @@ extension ServerLockTests {
         try FileManager.default.removeItem(atPath: bench.dir + "/bin/ufw")
         failed = await failure(of: ToolListSource(app, ufw, SavedServer(target: .local()), .local()))
         #expect(failed?.message == "ufw isn't on localhost", "\(failed?.message ?? "")")
+    }
+
+    /// An empty list — an inactive firewall — still has the tool's actions: its keys, its menu (⌃↩) in a panel, and
+    /// ⌃↩ on the Picker's action bar. Turn Firewall On… there asks, runs, says so under the list and reads it again.
+    @Test func anEmptyListStillHasTheToolsActions() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done() }
+        bench.flag("inactive")
+        let source = ToolListSource(app, try toolNamed(app, "ufw"), SavedServer(target: .local()), .local())
+        #expect(try await source.read(CancelFlag()).rows.isEmpty)
+        app.showInSearch(source)
+        let picker = try #require(Picker.current)
+        #expect(picker.rows.isEmpty && picker.actionBar.contains { $0.key == "⌃↩" && $0.label == "Actions" })
+        Picker.dismiss()
+
+        a.showList(source)
+        app.window.makeFirstResponder(a.table)
+        let list = try #require(a.list)
+        #expect(app.focusedKeys?.map(\.label) == ["Status in Full", "Mark", "Filter", "Actions"])
+        let menu = NSMenu()
+        app.fillListMenu(menu, list)
+        #expect(menu.items.map(\.title) == ["Status in Full", "Turn Firewall On…", "Turn Firewall Off…", "", "Show ufw.json", "", "Refresh"])
+        var asked: [String] = []
+        AppDelegate.answering = { m, _, _ in asked.append(m); return 0 }
+        app.runList(try #require(list.actions.first { $0.title == "Turn Firewall On…" }), in: list)
+        await toolsUntil { !list.resultLines.isEmpty && !list.shown.isEmpty }
+        #expect(asked == ["Turn Firewall On on localhost?"] && bench.calls.contains("ufw --force enable"))
+        #expect(list.resultLines.first?.hasPrefix("\u{FFFC} Firewall is on on localhost at ") == true, "\(list.resultLines)")
+        #expect(list.shown.map(\.title) == ["Anywhere", "22/tcp", "80,443/tcp"], "read again")
     }
 }

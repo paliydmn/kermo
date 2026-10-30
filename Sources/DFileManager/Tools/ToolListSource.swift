@@ -20,6 +20,8 @@ final class ToolListSource: ListSource {
     var preset: ToolPreset { tool.preset }
     var title: String { preset.title }
     private var key: String { ServerRow.key(target) + " " + preset.id }
+    /// A tool's action with no row is said about the list (as its one-command run is: `AppDelegate.openTool`).
+    var listID: String? { ServerRow.key(target) + " tool:\(preset.id)" }
 
     /// `columns` (§6.2), else the row's title, its state and its detail.
     var columns: [ListColumn] {
@@ -37,12 +39,14 @@ final class ToolListSource: ListSource {
 
     // MARK: Reading it
 
-    /// A read: the rows, how many there were, the line above them, the vars a command found.
+    /// A read: the rows, how many there were, the line above them, the vars a command found, what the version says
+    /// (nil: not asked; nil inside: nothing to warn about).
     struct Read: Sendable {
         var rows: [ToolRow]
         var total: Int
         var header: String?
         var vars: [String: String]?
+        var version: String??
         /// The row `key` names now, as read (`verify`).
         func current(_ key: String) -> ToolRecord? { rows.first { $0.key == key }?.record }
     }
@@ -62,10 +66,13 @@ final class ToolListSource: ListSource {
         let server: String
         let facts: ToolFacts?
         let findVars: Bool
+        /// The program's version is known already this session: not asked again.
+        let versionKnown: Bool
 
         /// The vars' commands first if they're due, the list, then (`header`) its header line (up to 200 characters)
-        /// and what it warns about: rows past `limit`, a server clock off by over a minute, a version outside `tested`.
-        /// ponytail: three round trips; one (§3.2 rule 9) would save two.
+        /// and what it warns about: rows past `limit`, a server clock off by over a minute, a version outside `tested`
+        /// (asked once a session).
+        /// ponytail: two round trips, three the first time; one (§3.2 rule 9) would do — with the channel count (2b).
         func read(_ env: [String: String], _ cancel: CancelFlag, header: Bool = true) throws -> Read {
             let p = tool.preset, title = p.title
             guard let list = p.list else { throw JobErrorMessage("\(title) has no list") }
@@ -101,8 +108,9 @@ final class ToolListSource: ListSource {
             if let h = list.view.header ?? p.header, let line = first(h) { notes.append(line) }
             if records.total > records.rows.count { notes.append("shown \(records.rows.count) of \(records.total)") }
             if let skew = r.skew, abs(skew) > 60 { notes.append("⚠ the server's clock is \(Int(abs(skew) / 60)) min \(skew > 0 ? "ahead" : "behind")") }
-            if let v = p.version, let out = first(ToolRun(command: .one(v.command))), let found = v.found(in: out), v.tested(found) == false {
-                notes.append("⚠ \(p.tool ?? title) \(found) is outside what this tool was tested with (\(v.tested ?? ""))")
+            if let v = p.version, !versionKnown {
+                let found = first(ToolRun(command: .one(v.command))).flatMap(v.found)
+                read.version = .some(found.flatMap { v.tested($0) == false ? "⚠ \(p.tool ?? title) \($0) is outside what this tool was tested with (\(v.tested ?? ""))" : nil })
             }
             read.header = notes.isEmpty ? nil : notes.joined(separator: " · ")
             return read
@@ -111,7 +119,7 @@ final class ToolListSource: ListSource {
 
     func lister() -> Lister {
         Lister(tool: tool, scope: app.tools.scope(preset, on: server, target), target: target, server: server.title,
-               facts: app.tools.answer(target)?.answer.facts, findVars: app.tools.found[key] == nil)
+               facts: app.tools.answer(target)?.answer.facts, findVars: app.tools.found[key] == nil, versionKnown: app.tools.versions[key] != nil)
     }
 
     /// As any look: a locked server asks first, then the login if one is due — to the server as it was reached (its
@@ -129,10 +137,13 @@ final class ToolListSource: ListSource {
     /// A read's rows as items, the line above them, what an empty list says; the place counts them.
     func show(_ r: Read) -> ListContent {
         if let v = r.vars { app.tools.found[key] = v }
+        if let v = r.version { app.tools.versions[key] = .some(v) }
         app.tools.counts[key] = r.total
         _ = app.tools.answer(target)   // connected now: what the server has, if not asked yet
         let scope = app.tools.scope(preset, on: server, target)
-        let c = ListContent(rows: r.rows.map(item), header: r.header, empty: preset.list?.view.empty.map { ToolTemplate.text($0, scope) } ?? "Nothing here")
+        let header = [r.header, app.tools.versions[key] ?? nil].compactMap { $0 }.joined(separator: " · ")
+        let c = ListContent(rows: r.rows.map(item), header: header.isEmpty ? nil : header, empty: preset.list?.view.empty.map { ToolTemplate.text($0, scope) } ?? "Nothing here",
+                            actions: listActions(nil))
         content = c
         return c
     }
@@ -173,9 +184,10 @@ final class ToolListSource: ListSource {
     }
 
     /// The row's actions, then the tool's — those this server has: of same-key variants the first whose `requires`
-    /// passed; one that passed nowhere grey, saying why, without its key (§10.4) — then Copy and the tool's file.
-    func listActions(_ row: ToolRow) -> [ListAction] {
-        let known = app.tools.answers[ServerRow.key(target)]?.answer, id = rowID(row.key)
+    /// passed; one that passed nowhere grey, saying why, without its key (§10.4) — then Copy and the tool's file. No
+    /// row: the tool's alone, and its file (the list's own, where no row is under the cursor).
+    func listActions(_ row: ToolRow?) -> [ListAction] {
+        let known = app.tools.answers[ServerRow.key(target)]?.answer, id = row.map { rowID($0.key) } ?? listID!
         func actions(_ all: [ToolAction]?, onRow: Bool, group: Int) -> [ListAction] {
             let all = (all ?? []).filter(ToolRunner.runs)
             let shown = known.map { $0.visible(all, of: preset) } ?? all.filter { $0.spec.requires == nil }
@@ -188,14 +200,17 @@ final class ToolListSource: ListSource {
             }
             return out
         }
-        let text = [row.title, row.subtitle, row.detail].filter { !$0.isEmpty }.joined(separator: " · "), path = tool.path
-        return actions(preset.actions, onRow: true, group: 0) + actions(preset.toolActions, onRow: false, group: 1) + [
-            ListAction(title: "Copy", key: nil, group: 2, closes: false, why: nil) { [unowned self] _ in
+        let path = tool.path
+        let copy = row.map { row in
+            let text = [row.title, row.subtitle, row.detail].filter { !$0.isEmpty }.joined(separator: " · ")
+            return ListAction(title: "Copy", key: nil, group: 2, closes: false, why: nil) { [unowned self] _ in
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
                 app.active.flash("Copied “\(text)”")
                 return nil
-            },
+            }
+        }
+        return (row == nil ? [] : actions(preset.actions, onRow: true, group: 0)) + actions(preset.toolActions, onRow: false, group: 1) + [copy].compactMap { $0 } + [
             ListAction(title: "Show \((path as NSString).lastPathComponent)", key: nil, group: 2, closes: true, why: nil) { _ in
                 Viewer.show(URL(fileURLWithPath: path))
                 return nil
@@ -205,9 +220,9 @@ final class ToolListSource: ListSource {
 
     /// One action as a list has it: its key (none where it can't run here), why it can't now, what its question says;
     /// a window's closes a Picker first. `multi`: it runs on marked rows, else only the cursor's (Q15).
-    private func action(_ a: ToolAction, row: ToolRow, onRow: Bool, id: String, group: Int, keyed: Bool) -> ListAction {
+    private func action(_ a: ToolAction, row: ToolRow?, onRow: Bool, id: String, group: Int, keyed: Bool) -> ListAction {
         let mac = (a.run.where ?? preset.where) == .mac, sudo = (a.run.sudo ?? preset.sudo ?? false) && !mac
-        let scope = app.tools.scope(preset, on: server, target, rows: onRow ? [row.record] : [])
+        let scope = app.tools.scope(preset, on: server, target, rows: onRow ? row.map { [$0.record] } ?? [] : [])
         let why = keyed ? app.tools.why(a, of: tool, row: row, onRow: onRow, id: id, on: server, target)
             : app.tools.why(a, of: tool, row: row, onRow: onRow, id: id, on: server, target) ?? "\(a.spec.title ?? a.spec.id) doesn't run here"
         let asks: ListAction.Asks = a.spec.readonly == true ? .never : a.spec.dangerous == true || a.spec.confirm == true ? .always : .prod

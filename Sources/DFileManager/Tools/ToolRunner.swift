@@ -19,6 +19,8 @@ final class ToolRunner {
     /// What vars' commands found, per server and tool ("<server> <tool>").
     /// ponytail: once a session, not once a connection — Reload Config looks again.
     var found: [String: [String: String]] = [:]
+    /// What a tool's version said, per server and tool: asked once a session (nil inside: nothing to warn about).
+    var versions: [String: String?] = [:]
     /// How many rows a tool's list had when last read ("<server> <tool>").
     var counts: [String: Int] = [:]
     /// A change running on a server's tool ("<server> <tool>"): its title. One at a time there; reads run alongside (§2).
@@ -35,7 +37,7 @@ final class ToolRunner {
     /// Reads the tools again (at launch, Reload Config); what couldn't be loaded, as Reload Config says it.
     func reload() -> [String] {
         library = ToolLibrary.load(own: Self.own, hasSymbol: Symbol.exists)
-        (answers, found) = ([:], [:])   // a changed tool's requires: asked again
+        (answers, found, versions) = ([:], [:], [:])   // a changed tool's requires: asked again
         return library.problems
     }
 
