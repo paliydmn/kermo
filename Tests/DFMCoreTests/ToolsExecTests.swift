@@ -15,30 +15,6 @@ private func run(_ body: String, timeout: Double = 30, cancel: CancelFlag = Canc
     try ToolExec.run({ _ in payload(body) }, on: .local(), timeout: timeout, cancel: cancel) { setsid + $0.command }
 }
 
-/// What comes before the marker isn't the run's; a failure keeps its exit and stderr.
-@Test func aRunIsItsOwnOutputAndExit() throws {
-    let r = try run("echo one; echo two; echo oops >&2; exit 3")
-    #expect(r.started && r.status == 3 && r.text == "one\ntwo\n" && r.errors == "oops" && r.stopped == nil)
-}
-
-/// Past its timeout a run is stopped and says so; ⎋ stops it as a cancel.
-@Test func aRunStopsAtItsTimeoutAndOnCancel() throws {
-    let start = Date()
-    let r = try run("echo started; sleep 20", timeout: 1)
-    #expect(r.stopped == "it took over 1 s" && r.text == "started\n" && Date().timeIntervalSince(start) < 5)
-    let flag = CancelFlag()
-    DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { flag.cancel() }
-    #expect(throws: CancellationError.self) { try run("sleep 20", cancel: flag) }
-}
-
-/// Over 16 MB the run is stopped; a line keeps its first 1 MB.
-@Test func outputHasItsLimits() throws {
-    let r = try run("yes 0123456789abcdef")
-    #expect(r.stopped == "over 16 MB of output" && r.out.count > ToolExec.maxOutput && r.out.count < ToolExec.maxOutput + 2 << 20)
-    let long = Data(repeating: 0x61, count: ToolExec.maxLine + 10) + Data("\nnext\n".utf8)
-    #expect(ToolExec.lines(long) == Data(repeating: 0x61, count: ToolExec.maxLine) + Data("\nnext\n".utf8))
-}
-
 /// Exit 127 and 126 say which program, where, and what the server is — from each shell's own words.
 @Test func notFoundAndNotPermittedInWords() {
     var f = ToolFacts()
@@ -58,9 +34,35 @@ private func run(_ body: String, timeout: Double = 30, cancel: CancelFlag = Canc
     #expect(v.tested("0.6.1") == true && v.tested("0.6") == true && v.tested("0.7.0") == false && v.tested("0.5.9") == false && v.tested("0.0.1") == nil)
 }
 
-/// `sudo -n` first; only where it wants a password, the wrapper — asked, a wrong one asked again, then it runs. The
-/// password never shows in what's said.
+/// Runs of their own, in `SudoPasswordTests`' turn. `sudo -n` first; only where it wants a password, the wrapper —
+/// asked, a wrong one asked again, then it runs. The password never shows in what's said.
 extension SudoPasswordTests {
+    // These run processes, a 16 MB one among them: with the suite's others, in turn (its note), not beside the
+    // payload's timing tests.
+    /// What comes before the marker isn't the run's; a failure keeps its exit and stderr.
+    @Test func aRunIsItsOwnOutputAndExit() throws {
+        let r = try run("echo one; echo two; echo oops >&2; exit 3")
+        #expect(r.started && r.status == 3 && r.text == "one\ntwo\n" && r.errors == "oops" && r.stopped == nil)
+    }
+
+    /// Past its timeout a run is stopped and says so; ⎋ stops it as a cancel.
+    @Test func aRunStopsAtItsTimeoutAndOnCancel() throws {
+        let start = Date()
+        let r = try run("echo started; sleep 20", timeout: 1)
+        #expect(r.stopped == "it took over 1 s" && r.text == "started\n" && Date().timeIntervalSince(start) < 5)
+        let flag = CancelFlag()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { flag.cancel() }
+        #expect(throws: CancellationError.self) { try run("sleep 20", cancel: flag) }
+    }
+
+    /// Over 16 MB the run is stopped; a line keeps its first 1 MB.
+    @Test func outputHasItsLimits() throws {
+        let r = try run("yes 0123456789abcdef")
+        #expect(r.stopped == "over 16 MB of output" && r.out.count > ToolExec.maxOutput && r.out.count < ToolExec.maxOutput + 2 << 20)
+        let long = Data(repeating: 0x61, count: ToolExec.maxLine + 10) + Data("\nnext\n".utf8)
+        #expect(ToolExec.lines(long) == Data(repeating: 0x61, count: ToolExec.maxLine) + Data("\nnext\n".utf8))
+    }
+
     static let toolSudo = #"""
         #!/bin/sh
         echo "$1" >> "$0.log"
