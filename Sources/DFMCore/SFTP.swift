@@ -489,12 +489,9 @@ public enum SSHCommand {
     /// Runs `command` on the server without a terminal (its login shell parses it), handing stdout over as it
     /// arrives; the test target (`.local()`) runs it here with /bin/sh. Returns the exit status and stderr.
     /// `stdin`: what the command reads, then end of file (a secret goes this way: never in its command line); none
-    /// by default. `holdStdin`: with it, the end of file waits until the command ends or this is cancelled — a Tools
-    /// payload's watcher takes that end for the connection's, and stops the run. `options`: ssh's, before the host.
-    /// `onErrors`: stderr too as it arrives, on a thread of its own.
+    /// by default. `options`: ssh's, before the host. `onErrors`: stderr too as it arrives, on a thread of its own.
     public static func run(_ t: SFTPTarget, _ command: String, env: [String: String] = [:], cancel: CancelFlag? = nil,
-                           options: [String] = [], stdin: Data? = nil, holdStdin: CancelFlag? = nil,
-                           onErrors: (@Sendable (Data) -> Void)? = nil,
+                           options: [String] = [], stdin: Data? = nil, onErrors: (@Sendable (Data) -> Void)? = nil,
                            onOutput: (Data) -> Void) throws -> (status: Int32, errors: String) {
         try SFTP.startMaster(t, env: env, cancel: cancel)
         let p = Process()
@@ -508,9 +505,6 @@ public enum SSHCommand {
         try p.run()
         try? out.fileHandleForWriting.close()   // our copies: else EOF never comes
         try? err.fileHandleForWriting.close()
-        let released = DispatchSemaphore(value: 0)   // the command ended, or `holdStdin` was cancelled
-        holdStdin?.onCancel { released.signal() }
-        defer { released.signal() }
         if let input, let stdin {
             try? input.fileHandleForReading.close()
             let fd = input.fileHandleForWriting.fileDescriptor
@@ -526,7 +520,6 @@ public enum SSHCommand {
                         off += n
                     }
                 }
-                if holdStdin != nil { released.wait() }
                 try? input.fileHandleForWriting.close()
             }.start()
         }

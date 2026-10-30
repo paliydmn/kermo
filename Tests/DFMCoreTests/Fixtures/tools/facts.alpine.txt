@@ -1,7 +1,0 @@
-kermo-fact ID=alpine
-kermo-fact ID_LIKE=
-kermo-fact VERSION_ID=3.20.10
-kermo-fact pkg=apk
-kermo-fact init=none
-kermo-fact userland=busybox
-kermo-fact arch=x86_64

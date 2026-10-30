@@ -1,7 +1,0 @@
-kermo-fact ID=linuxmint
-kermo-fact ID_LIKE=ubuntu debian
-kermo-fact VERSION_ID=22.3
-kermo-fact pkg=apt-get
-kermo-fact init=systemd
-kermo-fact userland=gnu
-kermo-fact arch=x86_64
