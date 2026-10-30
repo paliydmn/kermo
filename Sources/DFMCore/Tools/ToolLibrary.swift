@@ -88,6 +88,78 @@ public struct ToolTrust: Sendable, Codable, Hashable {
     public mutating func trust(_ t: LoadedTool) { hashes[t.preset.id] = t.hash }
 }
 
+/// What you set for tools on your saved servers (`tools/servers.json`, §9, Q6), by the server's id in servers.json as
+/// known.json has it: a tool hidden on one, its vars' values there; and the tools you use only on the servers you
+/// checked. A server not saved has none of it. Ids Kermo doesn't know now — a tool removed, a server deleted — stay.
+public struct ToolServers: Sendable, Codable, Hashable {
+    /// Per server, per tool.
+    public var servers: [String: [String: Setting]] = [:]
+    /// Tools used only on the servers listed (Use on Servers… ▸ Only on…); a tool not here: wherever it's found.
+    public var only: [String: [String]] = [:]
+
+    public struct Setting: Sendable, Codable, Hashable {
+        public var hidden: Bool?
+        public var vars: [String: String]?
+        public init(hidden: Bool? = nil, vars: [String: String]? = nil) { (self.hidden, self.vars) = (hidden, vars) }
+    }
+
+    public init() {}
+
+    /// A hand-edited file may leave either out.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        servers = try c.decodeIfPresent([String: [String: Setting]].self, forKey: .servers) ?? [:]
+        only = try c.decodeIfPresent([String: [String]].self, forKey: .only) ?? [:]
+    }
+
+    /// Whether `tool` shows on the server `id` (nil: one not saved): on an only-there tool's list; else not hidden there.
+    public func uses(_ tool: String, on id: String?) -> Bool {
+        if let only = only[tool] { return id.map(only.contains) ?? false }
+        return id.flatMap { servers[$0]?[tool]?.hidden } != true
+    }
+
+    /// The vars' values you set for `tool` on the server `id`.
+    public func vars(_ tool: String, on id: String?) -> [String: String] { id.flatMap { servers[$0]?[tool]?.vars } ?? [:] }
+
+    /// Hide, or show again: an only-there tool's list loses or gains the server; any other tool is hidden there or not.
+    public mutating func use(_ tool: String, on id: String, _ shown: Bool) {
+        guard only[tool] != nil else { return edit(tool, id) { $0.hidden = shown ? nil : true } }
+        only[tool]!.removeAll { $0 == id }
+        if shown { only[tool]!.append(id) }
+    }
+
+    public mutating func setVars(_ tool: String, on id: String, _ values: [String: String]) {
+        edit(tool, id) { $0.vars = values.isEmpty ? nil : values }
+    }
+
+    /// Use on Servers…: only on `checked` of `all`; or wherever it's found, each of `all` shown or hidden as checked.
+    public mutating func assign(_ tool: String, onlyChecked: Bool, checked: Set<String>, of all: [String]) {
+        if onlyChecked { return only[tool] = all.filter(checked.contains) }
+        only[tool] = nil
+        for id in all { use(tool, on: id, checked.contains(id)) }
+    }
+
+    /// An empty setting isn't written: the file holds only what you changed.
+    private mutating func edit(_ tool: String, _ id: String, _ change: (inout Setting) -> Void) {
+        var s = servers[id]?[tool] ?? Setting()
+        change(&s)
+        servers[id, default: [:]][tool] = s == Setting() ? nil : s
+        if servers[id]?.isEmpty == true { servers[id] = nil }
+    }
+}
+
+extension ToolVar {
+    /// Why `value` won't do for this var, checked as a form's input is: empty, not its `pattern` whole, a value that
+    /// won't go into a command (§3.2 rule 5).
+    public func problem(_ value: String) -> String? {
+        if value.isEmpty { return "\(info.title ?? "It") is empty" }
+        if let p = info.pattern, (try? Regex(p)).flatMap({ try? $0.wholeMatch(in: value) }) == nil {
+            return "doesn't look right" + (info.placeholder.map { ": like \($0)" } ?? "")
+        }
+        return ToolTemplate.refusal(value, pattern: info.pattern)
+    }
+}
+
 extension ToolPreset {
     /// Every script a Run of the tool names.
     public var scriptNames: Set<String> {
@@ -99,7 +171,7 @@ extension ToolPreset {
     }
 
     /// The vars' values on a server (§9): what you set there, else what its command found this connection, else its
-    /// default. `saved` comes from `tools/servers.json` (Tools PR 4).
+    /// default. `saved`: `tools/servers.json`'s for the server.
     public func varValues(saved: [String: String], found: [String: String] = [:]) -> [String: ToolValue] {
         (vars ?? [:]).reduce(into: [:]) { all, v in
             if let s = saved[v.key] ?? found[v.key] ?? v.value.info.default { all[v.key] = .string(s) }
