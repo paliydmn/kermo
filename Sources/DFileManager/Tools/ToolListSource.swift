@@ -68,6 +68,8 @@ final class ToolListSource: ListSource {
         let target: SFTPTarget
         let server: String
         let facts: ToolFacts?
+        /// The vars' values set on this server (`tools/servers.json`): over what their commands find.
+        let saved: [String: String]
         let findVars: Bool
         /// The program's version is known already this session: not asked again.
         let versionKnown: Bool
@@ -75,8 +77,9 @@ final class ToolListSource: ListSource {
         /// The vars' commands first if they're due, the list, then (`header`) its header line (up to 200 characters)
         /// and what it warns about: rows past `limit`, a server clock off by over a minute, a version outside `tested`
         /// (asked once a session). The list, the header and the version go in one round trip (§3.2 rule 9) where they
-        /// can share one (`ToolPayload.parts`); a launcher reads only its header.
-        func read(_ env: [String: String], _ cancel: CancelFlag, header: Bool = true) throws -> Read {
+        /// can share one (`ToolPayload.parts`); a launcher reads only its header — and so does any tool without `rows`
+        /// (its page in the Tools window: a list's rows are the main window's).
+        func read(_ env: [String: String], _ cancel: CancelFlag, header: Bool = true, rows: Bool = true) throws -> Read {
             let p = tool.preset, title = p.title
             var scope = scope, vars: [String: String]?
             if findVars, !p.varCommands.isEmpty {
@@ -86,7 +89,7 @@ final class ToolListSource: ListSource {
                     if run.succeeded(r.status), let first = r.text.split(whereSeparator: \.isNewline).first { found[name] = String(first) }
                 }
                 vars = found
-                scope.levels[scope.levels.count - 2] = p.varValues(saved: [:], found: found)
+                scope.levels[scope.levels.count - 2] = p.varValues(saved: saved, found: found)
             }
             // The header and the version (once a session) say something above the rows.
             let extra = header ? [p.list?.view.header ?? p.header, versionKnown ? nil : p.version.map { ToolRun(command: .one($0.command)) }] : []
@@ -97,7 +100,7 @@ final class ToolListSource: ListSource {
                       r.stopped == nil, run.succeeded(r.status) else { return nil }
                 return first(r.text)
             }
-            guard let list = p.list else {   // a launcher: its actions are its rows
+            guard let list = p.list, rows else {   // a launcher: its actions are its rows
                 for (i, run) in extra.enumerated() { said[i] = run.flatMap(one) }
                 return note(Read(rows: [], total: 0, vars: vars), said: said, total: 0, skew: nil)
             }
@@ -155,7 +158,7 @@ final class ToolListSource: ListSource {
     static func lister(_ app: AppDelegate, _ tool: LoadedTool, _ server: SavedServer, _ target: SFTPTarget) -> Lister {
         let key = ServerRow.key(target.asUser) + " " + tool.preset.id
         return Lister(tool: tool, scope: app.tools.scope(tool.preset, on: server, target), target: target.asUser, server: server.title,
-                      facts: app.tools.answer(target)?.answer.facts, findVars: app.tools.found[key] == nil, versionKnown: app.tools.versions[key] != nil)
+                      facts: app.tools.answer(target)?.answer.facts, saved: app.tools.settings.vars(tool.preset.id, on: app.tools.serverID(target)), findVars: app.tools.found[key] == nil, versionKnown: app.tools.versions[key] != nil)
     }
 
     /// As any look: a locked server asks first, then the login if one is due — to the server as it was reached (its

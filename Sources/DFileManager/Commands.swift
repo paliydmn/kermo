@@ -90,6 +90,9 @@ extension AppDelegate {
             NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
         },
         cmd("app.settings", "Settings…", ["cmd+,"], menu: "Kermo", group: 2, aliases: "preferences options defaults configuration") { SettingsWindow.show($0) },
+        cmd("app.tools", "Tools", ["ctrl+cmd+t"], menu: "Window", group: 1, aliases: "tools window server page firewall ufw fail2ban server info Open Tools Window") { app in
+            ToolsWindow.show(app, server: app.terminalActive ? app.terminal.current?.target : app.active.remote?.target ?? app.active.list?.source.target)
+        },
         cmd("app.update", "Check for Updates…", [], menu: "Kermo", group: 2, aliases: "update upgrade new version release") { app in
             app.showMainWindow(nil)   // its answer is a sheet there, also when a viewer is in front
             Task { await app.checkForUpdates(byHand: true) }
