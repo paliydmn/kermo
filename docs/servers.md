@@ -42,7 +42,7 @@ Right-click a server row in the sidebar (or click **⋯** under the mouse):
 - **Edit…** opens the same sheet, titled Edit Server. **Duplicate…** makes a copy named "name copy"; its tunnels are copied but turned off.
 - **Delete…** removes the server and its saved passwords from the Keychain (unless another saved server has the same address). It offers to delete its [file history](server-files.md#file-history) too. Open sessions stay open and its tunnels turn off.
 - **Pin** keeps the server at the top of the Servers list. **Remove from Recents** drops a recent address.
-- **Open SSH Session**, **Open SFTP**, **Open SFTP in New Tab / in Other Panel**, **Open SFTP as Root** ([root panel](root-panel.md)), **Forward Port…** and **Tunnels** ([tunnels](tunnels.md); both on any server row), **Services…** and **Containers…** ([below](#services-and-containers)), **Copy SSH Command**, **Copy SSH Key to Server…** ([below](#copy-your-ssh-key-to-a-server)) and **Close All Sessions** (the connection closes too, unless a tunnel is on; **Disconnect** also turns tunnels off).
+- **Open SSH Session**, **Open SFTP**, **Open SFTP in New Tab / in Other Panel**, **Open SFTP as Root** ([root panel](root-panel.md)), **Forward Port…** and **Tunnels** ([tunnels](tunnels.md); both on any server row), **Services…** and **Containers…** ([below](#services-and-containers)), **Tools ▸** (the [tools](tools.md) it has: its firewall, its banned addresses), **Copy SSH Command**, **Copy SSH Key to Server…** ([below](#copy-your-ssh-key-to-a-server)) and **Close All Sessions** (the connection closes too, unless a tunnel is on; **Disconnect** also turns tunnels off).
 - **Mark as Production** / **Unmark Production**: see below.
 
 **Server ▸ Edit SSH Config…** opens `~/.ssh/config` in the editor and creates it with an example if it doesn't exist.
@@ -122,6 +122,7 @@ A server's **overview** in a panel lists what's there, as rows that ↩ goes int
 | **Files** | its files in its start folder (only for a server with one) |
 | **Home**, **/** | its files in the login folder, or in `/` |
 | **Services**, **Containers**, **Ports** | [the list in this panel](#in-a-panel), read as it opens |
+| **Firewall**, **Banned IPs** | a [tool's](tools.md) list in this panel, for a server that has ufw or fail2ban; how many rows it had when last read |
 | **Tunnels** | its tunnels as a list in this panel, from this Mac: ↩ turns one on or off, ⌘C copies its address, F4 edits, F8 deletes, **＋ New Tunnel…** over the columns ([tunnels](tunnels.md)) |
 | **File History** | the versions of its files kept on this Mac ([file history](server-files.md#file-history)) |
 

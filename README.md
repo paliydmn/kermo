@@ -77,6 +77,7 @@ Mac function keys control media by default: ‚å• plus the digit does the same (‚å
 
 **Servers and administration**
 - [Servers and SSH](docs/servers.md): connect, save, lock, mark as production, copy your SSH key; a server's overview, services and containers.
+- [Tools](docs/tools.md): a server's firewall rules and banned addresses as lists with actions; your own tools.
 - [Files on a server](docs/server-files.md): copy, edit, preview, compare, file history.
 - [Server files as root](docs/root-panel.md): a root panel through `sudo`.
 - [Checks on save and reloads](docs/config-checks.md): `visudo`, `nginx -t` and the like before a bad save.

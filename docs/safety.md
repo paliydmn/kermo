@@ -37,7 +37,8 @@ On a production server, what Kermo does there goes into `~/.config/dfilemanager/
 - commands (⌘E, F2, Run on Servers…);
 - copies, moves and deletes (F5, F6, F8, Synchronize);
 - renames, permissions, new folders, extracting and reloads;
-- a key added with Copy SSH Key to Server….
+- a key added with Copy SSH Key to Server…;
+- [tools'](tools.md) actions (`"action": "tool ufw delete"`), with what was sent, its secrets and the sudo password as `•••`.
 
 Each line has the time, the server, the paths, the command and its exit status. There is no exit status for a command handed to Terminal, and a reload stopped with ⎋ says it may have run. `"root": true` marks what ran as root from a root panel: saves, copies, moves, deletes, renames, permissions, new folders and reloads. Commands and extracting always run as the user and carry no `root`. If a line can't be written, the status line says so once.
 
