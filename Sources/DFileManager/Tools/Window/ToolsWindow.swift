@@ -2,8 +2,8 @@ import AppKit
 import DFMCore
 
 /// The Tools window (Tools PR 4, monitor §9): a sidebar of your servers — each a page of its tools (`ToolsPage`) — and
-/// the library: the tools built into Kermo and yours, each with Use on Servers…. A server's page can be a window of its
-/// own (Open in New Window), several at once. WATCHED comes with watching (PR 5); New Tool… with the editor (4b).
+/// the library: the tools built into Kermo and yours, each with its page (`ToolsTool`), and New Tool…. A server's page
+/// can be a window of its own (Open in New Window), several at once. WATCHED comes with watching (PR 5).
 /// ponytail: nothing reopens after a restart (D-159).
 @MainActor
 final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
@@ -17,6 +17,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         case header(String)
         case server(SavedServer, SFTPTarget)
         case library(mine: Bool)
+        case newTool
     }
 
     unowned let app: AppDelegate
@@ -25,6 +26,9 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
     private(set) var rows: [Row] = []
     private(set) var page: ToolsPage?
     private(set) var library: ToolsLibrary?
+    /// A library row's page, over its library.
+    private(set) var tool: ToolsTool?
+    private(set) var starter: ToolsNew?
     private let content = NSView()
     /// A server's page alone: no sidebar.
     private let isAlone: Bool
@@ -61,6 +65,8 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
     static func refresh() {
         main?.reload()
         main?.page?.refresh()
+        main?.library?.refresh()
+        main?.tool?.refresh()
         alone.forEach { $0.page?.refresh() }
     }
 
@@ -122,7 +128,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         }
         let was = sidebar.selectedRow >= 0 && sidebar.selectedRow < rows.count ? rows[sidebar.selectedRow] : nil
         rows = [.header("SERVERS")] + app.savedServers.map { .server($0, given($0.target) ?? $0.target) } + extra.map { .server(SavedServer(target: $0), $0) }
-            + [.header("LIBRARY"), .library(mine: false), .library(mine: true)]
+            + [.header("LIBRARY"), .library(mine: false), .library(mine: true), .newTool]
         sidebar.reloadData()
         if let was, let i = rows.firstIndex(where: { same($0, was) }) { sidebar.selectRowIndexes([i], byExtendingSelection: false) }
     }
@@ -154,6 +160,8 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
             let count = mine ? app.tools.library.tools.filter { !$0.builtIn && ToolRunner.shows($0) }.count : ToolsLibrary.tools(app, mine: false).count
             views = [NSImageView(image: (mine ? Symbol.folder : Symbol.archive).image(nil)), NSTextField(labelWithString: mine ? "My Tools" : "Built into Kermo"),
                      Self.spacer(), Self.small("\(count)")]
+        case .newTool:
+            views = [NSImageView(image: Symbol.plus.image(nil)), NSTextField(labelWithString: "New Tool…")]
         }
         let stack = NSStackView(views: views)
         (stack.spacing, stack.distribution) = (5, .fill)
@@ -164,19 +172,41 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
     func tableViewSelectionDidChange(_ notification: Notification) {
         let r = sidebar.selectedRow
         guard rows.indices.contains(r) else { return }
-        let view: NSView
         switch rows[r] {
         case .header: return
         case .server(let s, let t):
             if let p = page, ServerRow.key(p.target) == ServerRow.key(t) { return }
             let p = ToolsPage(app, s, t)
             p.openAlone = { [unowned self] in ToolsWindow.showAlone(app, s, t) }
-            (page, library, view) = (p, nil, p)
+            (page, library, tool, starter) = (p, nil, nil, nil)
+            place(p)
         case .library(let mine):
             if library?.mine == mine { return }
             let l = ToolsLibrary(app, mine: mine)
-            (page, library, view) = (nil, l, l)
+            l.open = { [unowned self] in open($0) }
+            (page, library, tool, starter) = (nil, l, nil, nil)
+            place(l)
+        case .newTool:
+            if starter != nil { return }
+            let n = ToolsNew(app)
+            (page, library, tool, starter) = (nil, nil, nil, n)
+            place(n)
         }
+    }
+
+    /// A library row's page, over the library; ‹ goes back to it.
+    func open(_ t: LoadedTool) {
+        guard let l = library else { return }
+        let page = ToolsTool(app, t, from: l.mine ? "My Tools" : "Built into Kermo") { [unowned self, unowned l] in
+            tool = nil
+            l.refresh()
+            place(l)
+        }
+        tool = page
+        place(page)
+    }
+
+    private func place(_ view: NSView) {
         content.subviews.forEach { $0.removeFromSuperview() }
         view.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(view)
@@ -206,6 +236,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         reload()
         page?.refresh()
         library?.refresh()
+        tool?.refresh()
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -214,15 +245,20 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
     }
 }
 
-/// The library (4a): the tools built into Kermo, or yours from ~/.config/dfilemanager/tools — each with where it's used
-/// and Use on Servers…; Show File opens its file. Its page, New Tool… and the editor come in 4b.
+/// The library: the tools built into Kermo, or yours from ~/.config/dfilemanager/tools — each with where it's used, Use
+/// on Servers… and Show File; ↩ or a double-click opens its page (`open`). Yours that don't load are listed under the
+/// table, each opening in the editor with its problems.
 @MainActor
 final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
     unowned let app: AppDelegate
     let mine: Bool
     let table = NSTableView()
     private(set) var tools: [LoadedTool] = []
+    /// A tool's page.
+    var open: ((LoadedTool) -> Void)?
     private var kept: [AnyObject] = []
+    /// Yours that don't load: the file and why.
+    let broken = NSStackView()
 
     /// Built-ins this version runs; or yours, in use or not yet.
     static func tools(_ app: AppDelegate, mine: Bool) -> [LoadedTool] {
@@ -241,18 +277,22 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
         table.delegate = self
         table.usesAlternatingRowBackgroundColors = true
         table.target = self
-        table.doubleAction = #selector(useOn)
+        table.doubleAction = #selector(openSelected)
         table.setAccessibilityLabel(mine ? "My Tools" : "Built into Kermo")
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         let heading = ToolsPage.text(mine ? "My Tools" : "Built into Kermo", size: 18, bold: true)
-        let about = ToolsPage.text(mine ? "~/.config/dfilemanager/tools — yours, not reviewed by anyone. One new or changed asks “Use the tool…?” first."
-                                        : "Part of Kermo: they need nothing on a server but the program each one is for.", color: .secondaryLabelColor)
+        let about = ToolsPage.text((mine ? "~/.config/dfilemanager/tools — yours, not reviewed by anyone. One new or changed asks “Use the tool…?” first."
+                                         : "Part of Kermo: they need nothing on a server but the program each one is for.") + " ↩ or a double-click opens a tool's page.",
+                                   color: .secondaryLabelColor)
         let use = NSButton(title: "Use on Servers…", target: self, action: #selector(useOn))
         let show = NSButton(title: "Show File", target: nil, action: nil)
         kept.append(MenuAction.attach(to: show) { [unowned self] in selected.map { Viewer.show(URL(fileURLWithPath: $0.path)) } })
-        let stack = NSStackView(views: [heading, about, scroll, NSStackView(views: [use, show])])
+        broken.orientation = .vertical
+        broken.alignment = .leading
+        broken.spacing = 2
+        let stack = NSStackView(views: [heading, about, scroll, NSStackView(views: [use, show]), broken])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
@@ -261,7 +301,7 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
         addSubview(stack)
         NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
                                      stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor)])
-        for v in [heading, about, scroll] { v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36).isActive = true }
+        for v in [heading, about, scroll, broken] { v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36).isActive = true }
         refresh()
     }
 
@@ -270,9 +310,34 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
     func refresh() {
         tools = Self.tools(app, mine: mine)
         table.reloadData()
+        guard mine, let dir = ToolRunner.own else { return }
+        // "tools/x.json: line 3: …": x.json opens in the editor, its Problems saying the same.
+        let files = app.tools.library.problems.compactMap { p -> (String, String)? in
+            guard p.hasPrefix("tools/"), let colon = p.firstIndex(of: ":") else { return nil }
+            return (String(p[p.index(p.startIndex, offsetBy: 6)..<colon]), p)
+        }
+        broken.setViews((files.isEmpty ? [] : [ToolsPage.text("Not loaded", color: .secondaryLabelColor, size: 11, bold: true)]) + files.map { file, why in
+            let b = NSButton(title: "✕ " + why, target: nil, action: nil)
+            (b.isBordered, b.contentTintColor, b.alignment) = (false, Palette.fail, .left)
+            b.lineBreakMode = .byTruncatingTail
+            b.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            b.toolTip = why + "\nClick to edit it."
+            kept.append(MenuAction.attach(to: b) { [unowned self] in ToolEditor.edit(app, dir.appendingPathComponent(file)) })
+            return b
+        }, in: .top)
     }
 
     private var selected: LoadedTool? { tools.indices.contains(table.selectedRow) ? tools[table.selectedRow] : nil }
+
+    @objc private func openSelected() {
+        guard let tool = selected else { return }
+        open?(tool)
+    }
+
+    /// ↩: the tool's page.
+    override func keyDown(with e: NSEvent) {
+        if [36, 76].contains(e.keyCode), e.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty { openSelected() } else { super.keyDown(with: e) }
+    }
 
     @objc private func useOn() {
         guard let tool = selected else { return NSSound.beep() }

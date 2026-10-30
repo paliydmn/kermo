@@ -61,6 +61,7 @@ extension ToolRunner {
             case 0:
                 trust.trust(tool)
                 if let dir = Self.own?.path { Config.save("trust.json", trust, in: dir) }
+                askAgain()   // its requires, on each server's next look
                 return true
             case 1:
                 Viewer.show(URL(fileURLWithPath: tool.path))

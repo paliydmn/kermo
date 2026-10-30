@@ -70,7 +70,7 @@ extension ToolRunner {
 
     /// What Use on Servers… says of `tool` on `s`: found there, not, or not checked yet (it was never connected).
     func state(_ tool: LoadedTool, on s: SavedServer) -> String {
-        guard let a = answer(s.target) else { return "not checked yet" }
+        guard let a = answer(s.target), a.answer.checked(tool.preset) else { return "not checked yet" }
         return a.answer.has(tool.preset) ? (tool.preset.tool.map { "\($0) found" } ?? "found") : "not there"
     }
 
