@@ -188,6 +188,7 @@ final class ToolEditor: NSView, NSTextViewDelegate, NSMenuDelegate {
                 }
             }
         }
+        Config.flush()   // trust.json and servers.json as last written: reload reads them back
         let problems = app.tools.reload()
         app.toolsKnown(on: nil)
         recheck()
