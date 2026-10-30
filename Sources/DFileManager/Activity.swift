@@ -613,6 +613,9 @@ final class ClosureButton: NSButton {
             : l?.follow != nil ? "running since \(at(j.started))"
             : l?.lost == true ? "connection lost — the job runs on" : "connect to \(j.place) to see how it goes"
         place.append(NSAttributedString(string: (place.length > 0 ? " " : "") + state, attributes: plain))
+        let para = NSMutableParagraphStyle()
+        para.lineBreakMode = .byTruncatingTail   // one line: a wrapping label made the popover as tall as its words
+        place.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: place.length))
         var buttons: [NSView] = []
         if j.running {
             buttons = [Activity.button("Show") { [unowned self] in popover.close(); jobs.show(j) },

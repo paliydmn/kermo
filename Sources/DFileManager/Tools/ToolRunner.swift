@@ -204,9 +204,10 @@ final class ToolRunner {
     }
 
     /// The lock (not on this Mac), the form (its values, nil: Cancel), the values checked, the question (§7.3; `asked`:
-    /// asked for several rows already) — over `window`. `values`: the form filled in so (Retry).
+    /// asked for several rows already) — over `window`. `values`: the form filled in so (Retry). `job`: a long job's id —
+    /// what runs is its start then (`ToolLong.start`), as Show Exactly What Runs shows it.
     func ready(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, row: String?, on t: SFTPTarget, asked: Bool, window: NSWindow?,
-               values filled: [String: String]? = nil) async -> Ready {
+               values filled: [String: String]? = nil, job: String? = nil) async -> Ready {
         let p = tool.preset, verb = (a.spec.title ?? a.spec.id).replacingOccurrences(of: "…", with: "")
         let mac = (a.run.where ?? p.where) == .mac, sudo = (a.run.sudo ?? p.sudo ?? false) && !mac
         if !mac, await !ServerLock.authorize(t, "run “\(verb)” on") { return .stop("\(SavedServer.name(for: t.asUser)) stays locked") }
@@ -222,6 +223,10 @@ final class ToolRunner {
             do {
                 if a.spec.output == .terminal { willRun = try ToolPayload.terminal(a.run, in: p, scope: scope, scripts: tool.scripts).willRun }
                 else { (payload, willRun) = try ToolPayload.of(a.run, in: p, scope: scope, scripts: tool.scripts, secret: secret) }
+                if let job {
+                    let detached = try ToolPayload.of(a.run, in: p, scope: scope, scripts: tool.scripts, secret: secret, detached: true).payload
+                    payload = ToolLong.start(detached, id: job, root: sudo ? .noPassword : .none, sudoProgram: Self.sudoProgram)
+                }
             } catch { return .stop("\(error)") }
         }
         let quietKey = ServerRow.key(t.asUser) + " " + p.id + " " + tool.hash
@@ -347,7 +352,7 @@ final class ToolRunner {
             return nil
         }
         let rowScope = scope(p, on: s, t, rows: row.map { [$0.record] } ?? []), key = ServerRow.key(t.asUser) + " " + p.id
-        let root = a.run.sudo ?? p.sudo ?? false, output = a.spec.output
+        let root = a.run.sudo ?? p.sudo ?? false, output = a.spec.output, jobID = ToolLong.newID()
         changing[key] = title
         var shown = "", said = rowScope
         app.serviceRuns[id] = ""
@@ -355,7 +360,7 @@ final class ToolRunner {
             defer { changing[key] = nil }
             await app.changeRow(id: id, shown: { shown }, on: t, busy: verb + "…", name: row?.title ?? p.title, server: s.title,
                 run: { window, panel, running in
-                    let prepared = await self.ready(a, of: tool, rowScope, row: row?.title, on: t, asked: asked, window: window, values: filled)
+                    let prepared = await self.ready(a, of: tool, rowScope, row: row?.title, on: t, asked: asked, window: window, values: filled, job: jobID)
                     guard case let .go(scope, secret, willRun, _) = prepared,
                           let job = try? ToolPayload.of(a.run, in: p, scope: scope, scripts: tool.scripts, secret: secret, detached: true).payload else {
                         if case .stop(let why) = prepared { return .notRun(why) }
@@ -364,7 +369,7 @@ final class ToolRunner {
                     (shown, said) = (willRun, scope)
                     running()
                     self.jobs.askToNotify()   // the first long job: macOS's question, at a moment you started something
-                    let jobID = ToolLong.newID(), env = SSHAskpass.env, command = Self.command, sudo = Self.sudoProgram
+                    let env = SSHAskpass.env, command = Self.command, sudo = Self.sudoProgram
                     let r = await panel.busy("Starting \(verb) on \(s.title)…") { flag in
                         let ran = try ToolLong.run(root: root, on: t, cancel: flag, env: env, command: command) { ToolLong.start(job, id: jobID, root: $0, sudoProgram: sudo) }
                         return (ran: ran, payload: ToolLong.start(job, id: jobID, root: root ? .noPassword : .none, sudoProgram: sudo))   // logged: no password in it

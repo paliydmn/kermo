@@ -23,6 +23,7 @@ Release:
 
 ### Fixed
 - **＋ New Tunnel…** over a server's tunnels in a panel did nothing.
+- In search and a server's overview, a long subtitle no longer wraps into the row below, and a long description no longer pushes a row's name out.
 
 ## [1.6] - 2026-10-28
 

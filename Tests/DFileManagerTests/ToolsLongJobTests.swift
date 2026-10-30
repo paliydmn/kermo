@@ -57,8 +57,8 @@ private let deployer = #"""
 
 extension ServerLockTests {
     /// The deployer's launcher in a panel, read.
-    @MainActor private func launcher(_ app: AppDelegate, _ a: PanelViewController) async throws -> ListPanel {
-        let source = ToolListSource(app, try toolNamed(app, "deployer"), SavedServer(target: .local()), .local())
+    @MainActor private func launcher(_ app: AppDelegate, _ a: PanelViewController, on s: SavedServer = SavedServer(target: .local())) async throws -> ListPanel {
+        let source = ToolListSource(app, try toolNamed(app, "deployer"), s, .local())
         _ = try await source.read(CancelFlag())
         a.showList(source)
         return try #require(a.list)
@@ -198,4 +198,37 @@ extension ServerLockTests {
         #expect(ToolJobs.notice(took: 61, front: true, allowed: true) == .none && ToolJobs.notice(took: 59, front: false, allowed: true) == .none)
         #expect(ToolJobs.notice(took: 61, front: false, allowed: nil) == .badge)
     }
+
+    /// On production a long job asks as any change; Show Exactly What Runs shows its start — the job
+    /// put in a session of its own, its log under ~/.cache/kermo/runs — with the id the job then has.
+    @Test func exactlyWhatRunsIsTheJobsStart() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let lb = try LongBench(app)
+        defer { lb.done(); done() }
+        var prod = SavedServer(address: "localhost")!
+        prod.prod = true
+        ServerLock.servers = { [prod] }
+        let l = try await launcher(app, a, on: prod)
+        var asked: [String] = [], exactly = ""
+        AppDelegate.answering = { m, b, _ in
+            asked.append(m)
+            if m.hasPrefix("Exactly") { exactly = AppDelegate.answeredInfo; return 0 }
+            if asked.count == 1 { return b.firstIndex(of: "Show Exactly What Runs")! }
+            return 0
+        }
+        await run(l, "Fail")?.value
+        #expect(asked == ["Fail on localhost?", "Exactly what runs on localhost", "Fail on localhost?"], "\(asked)")
+        let j = try #require(app.tools.jobs.jobs.first)
+        #expect(exactly.contains("setsid") && exactly.contains(".cache/kermo/runs/\(j.id).log") && exactly.contains("exit 2"), "\(exactly)")
+    }
+}
+
+/// A row's long subtitle (a launcher's command) stays on its line, cut in the middle, and a long detail gives way
+/// before the title does.
+@MainActor @Test func aPickerRowStaysOneLine() {
+    let cell = PickerCell()
+    cell.show(title: "Upgrade Packages…", subtitle: String(repeating: "for i in $(seq 1 14); do echo step; done; ", count: 4), detail: "⌘U")
+    let style = cell.title.attributedStringValue.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+    #expect(style?.lineBreakMode == .byTruncatingMiddle)
+    #expect(cell.detail.contentCompressionResistancePriority(for: .horizontal) < cell.title.contentCompressionResistancePriority(for: .horizontal))
 }
