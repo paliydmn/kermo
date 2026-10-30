@@ -77,6 +77,7 @@ struct Confirm {
             a.buttons[0].identifier = Self.commandReturn
         }
         a.accessoryView = accessory()
+        a.window.initialFirstResponder = a.buttons.first { $0.keyEquivalent == "\r" }   // not a long command's text: ↩ stays the sheet's
         return a
     }
 
@@ -179,6 +180,7 @@ struct Confirm {
         let scroll = NSTextView.scrollableTextView()
         let view = scroll.documentView as! NSTextView
         view.string = command
+        view.setSelectedRange(NSRange(location: 0, length: 0))   // it opens at its first line
         view.font = font
         view.isEditable = false
         view.drawsBackground = false

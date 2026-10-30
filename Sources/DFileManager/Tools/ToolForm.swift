@@ -126,11 +126,14 @@ final class ToolForm {
             let err = Confirm.label(" ", color: Palette.fail, size: 11)   // a line kept for it: the alert doesn't grow
             (errors[name], views) = (err, views + [err])
         }
-        let preview = NSTextField(labelWithString: "")
-        preview.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        let preview = NSTextField(wrappingLabelWithString: "")   // three lines kept for it, the whole command where it fits
+        let mono = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        preview.font = mono
         preview.textColor = .secondaryLabelColor
-        preview.lineBreakMode = .byTruncatingMiddle
-        preview.isSelectable = true
+        preview.maximumNumberOfLines = 3
+        preview.cell?.truncatesLastVisibleLine = true
+        preview.preferredMaxLayoutWidth = Confirm.width
+        preview.heightAnchor.constraint(equalToConstant: (3 * NSLayoutManager().defaultLineHeight(for: mono)).rounded(.up)).isActive = true
         views.append(preview)
         alert.accessoryView = Confirm.stack(views)
         alert.window.initialFirstResponder = inputs.first.flatMap { fields[$0.info.name] }

@@ -69,12 +69,14 @@ import Testing
         ToolRunner.own = URL(fileURLWithPath: dir + "/own")
         AuditLog.path = dir + "/audit.jsonl"
         AppDelegate.connected = { _ in false }   // another suite's master to localhost isn't this one's: a test says when it's up
+        ToolExec.forget(.local())   // "sudo wants a password there" is the process's: a run of another test's can't leave it
     }
 
     func done() {
         (ToolRunner.command, ToolRunner.sudoProgram, ToolRunner.hasMaster, ToolRunner.own) = (was.command, was.sudo, was.master, was.own)
         (AppDelegate.connected, AuditLog.path) = (was.connected, was.audit)
         ServerLock.servers = { [] }
+        ToolExec.forget(.local())
         try? FileManager.default.removeItem(atPath: dir)
     }
 
@@ -209,6 +211,7 @@ extension ServerLockTests {
         #expect(Array(bench.calls.dropFirst(before)) == ["ufw status numbered", "ufw --force delete 3", "ufw status numbered", "ufw status verbose"],
                 "verified, deleted, read again — its version asked once a session")
         #expect(list.shown.map(\.title) == ["22/tcp", "80,443/tcp"] && list.cursor?.title == "22/tcp")
+        #expect(list.actions.allSatisfy { $0.why == nil } && list.content?.primary?.why == nil, "nothing says busy once it's done")
     }
 
     /// A list that can't be read says why: a program not there in words (exit 127), output that doesn't fit the
@@ -266,5 +269,29 @@ extension ServerLockTests {
         #expect(asked == ["Turn Firewall On on localhost?"] && bench.calls.contains("ufw --force enable"))
         #expect(list.resultLines.first?.hasPrefix("\u{FFFC} Firewall is on on localhost at ") == true, "\(list.resultLines)")
         #expect(list.shown.map(\.title) == ["Anywhere", "22/tcp", "80,443/tcp"], "read again")
+    }
+
+    /// A Picker closes before an action that opens a window of its own runs — and the list may go with it: the
+    /// action (and the row's ↩) still runs, holding the app, the tool and the server, not the list.
+    @Test func anActionRunsAfterItsListIsGone() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done() }
+        var source: ToolListSource? = ToolListSource(app, try toolNamed(app, "ufw"), SavedServer(target: .local()), .local())
+        let row = try #require(try await source?.read(CancelFlag()).rows.first)
+        let status = try #require(row.listActions?().first { $0.title == "Status in Full" })
+        weak var gone = source
+        source = nil
+        #expect(gone == nil, "the list is gone")
+        let runs = { bench.calls.filter { $0 == "ufw status verbose" }.count }, read = runs()   // the header's run too
+        _ = status.run(false)
+        await toolsUntil { runs() == read + 1 && NSApp.windows.contains { $0.title == "Status in Full — localhost" && $0.isVisible } }
+        #expect(runs() == read + 1)
+        NSApp.windows.filter { $0.title == "Status in Full — localhost" }.forEach { $0.close() }
+        row.run()   // ↩ on the row, as a closed Picker runs it
+        await toolsUntil { runs() == read + 2 && NSApp.windows.contains { $0.title == "Status in Full — localhost" && $0.isVisible } }
+        #expect(runs() == read + 2)
+        try? await Task.sleep(for: .milliseconds(300))   // its window, then nothing of it left running
+        NSApp.windows.filter { $0.title == "Status in Full — localhost" }.forEach { $0.close() }
     }
 }

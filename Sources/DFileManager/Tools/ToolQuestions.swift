@@ -36,6 +36,7 @@ extension ToolRunner {
         let alert = AppDelegate.alert(title, info: "", ["OK"])
         alert.accessoryView = Confirm.stack([Confirm.label("This goes to sh -s as its input. Each value is a variable set before the command, never part of it.",
                                                            color: .secondaryLabelColor, size: 11), Confirm.commandBox(shown)])
+        alert.window.initialFirstResponder = alert.buttons[0]   // ↩ is OK: the text can be selected, not take the keys
         _ = await AppDelegate.sheet(alert, on: window ?? app.window)
     }
 

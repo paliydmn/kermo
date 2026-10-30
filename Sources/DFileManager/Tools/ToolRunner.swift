@@ -294,7 +294,8 @@ final class ToolRunner {
         }
 
         // The result line under the list, the list read again (§7.2), in the loop Services… changes go through.
-        let verify = onRow && row != nil && (a.spec.verify ?? (a.spec.dangerous == true)), lister = source?.lister()
+        let verify = onRow && row != nil && (a.spec.verify ?? (a.spec.dangerous == true))
+        let lister = p.list == nil ? nil : ToolListSource.lister(app, tool, s, t)
         let refresh = !readonly && a.spec.refresh != false
         var shown = ""
         var said = rowScope
@@ -317,6 +318,7 @@ final class ToolRunner {
                         }
                         return try Self.exec(a.run, of: tool, scope, secret: secret, on: t, timeout: timeout, env: env, cancel: flag)
                     }
+                    if !readonly { self.changing[key] = nil }   // done: reading the list again isn't the change
                     return self.ran(r, a, of: p, on: t, shown: payload?.shown ?? "")
                 },
                 read: refresh ? lister.map { l in { env, flag in try l.read(env, flag) } } : nil,

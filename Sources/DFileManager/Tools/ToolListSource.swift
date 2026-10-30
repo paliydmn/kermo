@@ -117,9 +117,13 @@ final class ToolListSource: ListSource {
         }
     }
 
-    func lister() -> Lister {
-        Lister(tool: tool, scope: app.tools.scope(preset, on: server, target), target: target, server: server.title,
-               facts: app.tools.answer(target)?.answer.facts, findVars: app.tools.found[key] == nil, versionKnown: app.tools.versions[key] != nil)
+    func lister() -> Lister { Self.lister(app, tool, server, target) }
+
+    /// What reads `tool`'s list on `target` now: an action's `verify` needs it whether its list still shows or not.
+    static func lister(_ app: AppDelegate, _ tool: LoadedTool, _ server: SavedServer, _ target: SFTPTarget) -> Lister {
+        let key = ServerRow.key(target.asUser) + " " + tool.preset.id
+        return Lister(tool: tool, scope: app.tools.scope(tool.preset, on: server, target), target: target.asUser, server: server.title,
+                      facts: app.tools.answer(target)?.answer.facts, findVars: app.tools.found[key] == nil, versionKnown: app.tools.versions[key] != nil)
     }
 
     /// As any look: a locked server asks first, then the login if one is due — to the server as it was reached (its
@@ -142,10 +146,10 @@ final class ToolListSource: ListSource {
         _ = app.tools.answer(target)   // connected now: what the server has, if not asked yet
         let scope = app.tools.scope(preset, on: server, target)
         let header = [r.header, app.tools.versions[key] ?? nil].compactMap { $0 }.joined(separator: " · ")
-        let own = listActions(nil)
+        let primary = preset.primary.flatMap { id in preset.toolActions?.first { $0.spec.id == id } }.map { $0.spec.title ?? $0.spec.id }
         let c = ListContent(rows: r.rows.map(item), header: header.isEmpty ? nil : header, empty: preset.list?.view.empty.map { ToolTemplate.text($0, scope) } ?? "Nothing here",
-                            primary: preset.primary.flatMap { id in preset.toolActions?.first { $0.spec.id == id } }.flatMap { a in own.first { $0.title == (a.spec.title ?? a.spec.id) } },
-                            actions: own)
+                            primary: primary.flatMap { title in listActions(nil).first { $0.title == title } },
+                            actions: { [weak self] in self?.listActions(nil) ?? [] })
         content = c
         return c
     }
@@ -163,20 +167,24 @@ final class ToolListSource: ListSource {
     /// its detail; ↩ and the other keys as its actions have them, ⌃↩ its menu.
     func item(_ row: ToolRow) -> Picker.Item {
         let id = rowID(row.key), running = app.serviceRuns[id].flatMap { $0.isEmpty ? nil : $0 }
-        let actions: @MainActor () -> [ListAction] = { [unowned self] in listActions(row) }
-        let enter = actions().first { $0.key == Shortcut("return") }
-        var it = Picker.Item(title: row.title, subtitle: running ?? row.subtitle, detail: row.detail, verb: enter?.title ?? "Actions") { [unowned self] in
-            if let enter { app.perform(enter.title, actions) } else { NSSound.beep() }
+        // A Picker closes before an action that opens a window of its own runs (↩: Status in Full) — and this list may go
+        // with it: what runs then holds the app, the tool and the server, never the list.
+        let actions: @MainActor () -> [ListAction] = { [weak self] in self?.listActions(row) ?? [] }
+        let enter = actions().first { $0.key == Shortcut("return") }, app = app
+        var it = Picker.Item(title: row.title, subtitle: running ?? row.subtitle, detail: row.detail, verb: enter?.title ?? "Actions") { [weak self] in
+            guard let enter else { return NSSound.beep() }
+            let now = self?.listActions(row) ?? [enter]
+            app.perform(enter.title, { now })
         }
         it.id = id
-        it.keepsOpen = enter == nil
+        it.keepsOpen = enter.map { !$0.closes } ?? true
         it.state = row.state.flatMap(Self.mark)
         it.busy = running != nil || row.state == .busy
         it.subtitleColor = running == nil && row.state == .bad ? Palette.fail : nil
         it.badges = running == nil && row.state == .bad ? [StateMark.failed.image("failed", size: 9)] : []   // a shape, not only red
         it.cells = Dictionary(row.cells.map { ($0.field, $0.text) }) { a, _ in a }
         it.listActions = actions
-        it.menu = { [unowned self] in
+        it.menu = {
             let menu = app.serviceMenu(actions)
             menu.addItem(.separator())
             menu.addItem(MenuAction.item("Refresh") { Picker.current?.reread() })
@@ -205,7 +213,7 @@ final class ToolListSource: ListSource {
         let path = tool.path
         let copy = row.map { row in
             let text = [row.title, row.subtitle, row.detail].filter { !$0.isEmpty }.joined(separator: " · ")
-            return ListAction(title: "Copy", key: nil, group: 2, closes: false, why: nil) { [unowned self] _ in
+            return ListAction(title: "Copy", key: nil, group: 2, closes: false, why: nil) { [app] _ in
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
                 app.active.flash("Copied “\(text)”")
@@ -232,7 +240,7 @@ final class ToolListSource: ListSource {
         var it = ListAction(title: a.spec.title ?? a.spec.id, key: keyed ? a.spec.key.flatMap(Shortcut.init) : nil, group: group, closes: own,
                             why: why, command: a.spec.inputs == nil ? try? ToolPayload.of(a.run, in: preset, scope: scope, scripts: tool.scripts).willRun : nil,
                             runsOn: mac ? nil : target.asRoot(sudo), asks: asks, dangerous: a.spec.dangerous == true,
-                            note: a.spec.message.map { ToolTemplate.text($0, scope) }, multi: a.spec.multi == true) { [unowned self] asked in
+                            note: a.spec.message.map { ToolTemplate.text($0, scope) }, multi: a.spec.multi == true) { [weak self, app, tool, server, target] asked in
             app.tools.perform(a, of: tool, row: row, onRow: onRow, id: id, from: self, on: server, target, asked: asked)
         }
         // A log that asks nothing follows next door in a panel (⌘L's Quick View), the row under the cursor's — not where
