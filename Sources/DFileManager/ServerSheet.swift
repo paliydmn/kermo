@@ -11,13 +11,14 @@ import DFMCore
     let eye = NSButton(image: Symbol.show.image("Show the password"), target: nil, action: nil)
     /// Only where there's one saved.
     let forget: NSButton?, forgetSudo: NSButton?
-    let prod = NSSwitch(), lock = NSSwitch()
+    let prod = NSSwitch(), lock = NSSwitch(), readOnly = NSSwitch()
     let preview = NSTextField(wrappingLabelWithString: "")
     let grid: NSGridView
     /// Safety's rows: a row added here (Tools: "Allow installs") goes in without the rest moving.
     static func safety(_ f: ServerForm) -> [(label: String, control: NSView, hint: String)] {
         [("Production", f.prod, "Purple everywhere; changes on it ask first and go into the production log."),
-         ("Lock", f.lock, "Touch ID or the Mac password before connecting, editing, duplicating or deleting.")]
+         ("Lock", f.lock, "Touch ID or the Mac password before connecting, editing, duplicating or deleting."),
+         ("Read-only", f.readOnly, "Tools run only actions that change nothing.")]
     }
     /// Something changed: the sheet re-lays itself out, its Save buttons follow `typed.issue`.
     var onChange: (() -> Void)?
@@ -49,6 +50,7 @@ import DFMCore
         eye.toolTip = "Show the password (a saved one asks for Touch ID or the Mac password)"
         prod.state = server.prod ? .on : .off
         lock.state = server.locked ? .on : .off
+        readOnly.state = server.readOnly ? .on : .off
         preview.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
         preview.textColor = .secondaryLabelColor
         preview.isSelectable = true
@@ -57,7 +59,7 @@ import DFMCore
         super.init()
         build()
         for f in [host, user, port, name, key, password, shown, start] { f.delegate = self }
-        for s in [prod, lock] { actions.append(MenuAction.attach(to: s) { [weak self] in self?.changed() }) }
+        for s in [prod, lock, readOnly] { actions.append(MenuAction.attach(to: s) { [weak self] in self?.changed() }) }
         actions.append(MenuAction.attach(to: choose) { [weak self] in self?.chooseKey() })
         actions.append(MenuAction.attach(to: eye) { [weak self] in self?.reveal() })
         changed(layout: false)
@@ -136,6 +138,7 @@ import DFMCore
         s.startDir = v(start).isEmpty ? nil : v(start)
         s.prod = prod.state == .on
         s.locked = lock.state == .on
+        s.readOnly = readOnly.state == .on
         return s
     }
     /// The password to store: as typed (spaces count); a saved one shown and left as it was isn't stored again (so it

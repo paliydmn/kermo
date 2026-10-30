@@ -17,6 +17,7 @@ struct SavedServer: Codable, Equatable {
     var startDir: String?      // SFTP; nil = the login folder
     var locked = false         // Touch ID / the Mac password to connect, edit or delete (ServerLock)
     var prod = false           // production: `color` in the sidebar and headers; delete, overwrite and move there ask first
+    var readOnly = false       // Tools run only `readonly` actions there (D-098: the rest of Kermo doesn't look at it yet)
     var tunnels: [Tunnel] = [] // ports on this Mac that lead to it, or past it (`Tunnels`)
 
     init() {}
@@ -52,6 +53,7 @@ struct SavedServer: Codable, Equatable {
         startDir = try c.decodeIfPresent(String.self, forKey: .startDir)
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
         prod = try c.decodeIfPresent(Bool.self, forKey: .prod) ?? false
+        readOnly = try c.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
         tunnels = try c.decodeIfPresent([Tunnel].self, forKey: .tunnels) ?? []
     }
 

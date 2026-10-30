@@ -421,7 +421,7 @@ extension ToolSchema.Check {
                 if input.info.type == .secret, s.output == .terminal { error(ip, "a secret can't go to a terminal: it has no stdin of Kermo's") }
                 if ToolTemplate.kermoNames.contains(input.info.name) { warn(ip + [.key("name")], "“\(input.info.name)” hides Kermo's own {\(input.info.name)}") }
             }
-            if s.readonly == true, let words = destructive(a.run.command?.all ?? []) {
+            if s.readonly == true, let words = ToolSchema.destructive(a.run.command?.all ?? []) {
                 warn(path + [.key("command")], "a readonly action that \(words)")
             }
         }
@@ -491,20 +491,6 @@ extension ToolSchema.Check {
         Set(pattern.matches(of: /\(\?P?<([A-Za-z_][A-Za-z0-9_]*)>/).map { String($0.1) })
     }
 
-    /// What a destructive command does, said for a warning; nil for none.
-    func destructive(_ commands: [String]) -> String? {
-        for c in commands {
-            if let w = c.firstMatch(of: /(?:^|[^\w-])(rm|kill|delete|dd|mkfs(?:\.\w+)?)(?:$|[^\w-])/) { return "runs “\(w.1)”" }
-            if c.contains("--force") { return "has --force" }
-            var rest = Substring(c)
-            while let i = rest.firstIndex(of: ">") {
-                let after = rest[rest.index(after: i)...].drop { $0 == " " }
-                if !(after.hasPrefix("&") || after.hasPrefix("/dev/null")) { return "writes to a file (>)" }
-                rest = rest[rest.index(after: i)...]
-            }
-        }
-        return nil
-    }
 
     /// The field names a level's rows have, as far as the file tells: all of them (a regex's groups, `names`, `lines`),
     /// or only some (JSON's fields are known when it runs).
@@ -588,5 +574,22 @@ extension ToolSchema {
         let schema: [String: Any] = ["$schema": "https://json-schema.org/draft/2020-12/schema", "title": "Kermo Tools preset, schema \(version)",
                                      "$ref": "#/$defs/preset", "$defs": defs]
         return try! JSONSerialization.data(withJSONObject: schema, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+    }
+}
+
+extension ToolSchema {
+    /// What a destructive command does, said for a warning (here, and in the trust sheet); nil for none.
+    public static func destructive(_ commands: [String]) -> String? {
+        for c in commands {
+            if let w = c.firstMatch(of: /(?:^|[^\w-])(rm|kill|delete|dd|mkfs(?:\.\w+)?)(?:$|[^\w-])/) { return "runs “\(w.1)”" }
+            if c.contains("--force") { return "has --force" }
+            var rest = Substring(c)
+            while let i = rest.firstIndex(of: ">") {
+                let after = rest[rest.index(after: i)...].drop { $0 == " " }
+                if !(after.hasPrefix("&") || after.hasPrefix("/dev/null")) { return "writes to a file (>)" }
+                rest = rest[rest.index(after: i)...]
+            }
+        }
+        return nil
     }
 }

@@ -142,8 +142,10 @@ final class ToolListSource: ListSource {
         _ = app.tools.answer(target)   // connected now: what the server has, if not asked yet
         let scope = app.tools.scope(preset, on: server, target)
         let header = [r.header, app.tools.versions[key] ?? nil].compactMap { $0 }.joined(separator: " · ")
+        let own = listActions(nil)
         let c = ListContent(rows: r.rows.map(item), header: header.isEmpty ? nil : header, empty: preset.list?.view.empty.map { ToolTemplate.text($0, scope) } ?? "Nothing here",
-                            actions: listActions(nil))
+                            primary: preset.primary.flatMap { id in preset.toolActions?.first { $0.spec.id == id } }.flatMap { a in own.first { $0.title == (a.spec.title ?? a.spec.id) } },
+                            actions: own)
         content = c
         return c
     }
@@ -189,7 +191,7 @@ final class ToolListSource: ListSource {
     func listActions(_ row: ToolRow?) -> [ListAction] {
         let known = app.tools.answers[ServerRow.key(target)]?.answer, id = row.map { rowID($0.key) } ?? listID!
         func actions(_ all: [ToolAction]?, onRow: Bool, group: Int) -> [ListAction] {
-            let all = (all ?? []).filter(ToolRunner.runs)
+            let all = (all ?? []).filter { ToolRunner.runs($0, of: preset) }
             let shown = known.map { $0.visible(all, of: preset) } ?? all.filter { $0.spec.requires == nil }
             var seen = Set<String>(), out: [ListAction] = []
             for a in all {
@@ -226,11 +228,20 @@ final class ToolListSource: ListSource {
         let why = keyed ? app.tools.why(a, of: tool, row: row, onRow: onRow, id: id, on: server, target)
             : app.tools.why(a, of: tool, row: row, onRow: onRow, id: id, on: server, target) ?? "\(a.spec.title ?? a.spec.id) doesn't run here"
         let asks: ListAction.Asks = a.spec.readonly == true ? .never : a.spec.dangerous == true || a.spec.confirm == true ? .always : .prod
-        return ListAction(title: a.spec.title ?? a.spec.id, key: keyed ? a.spec.key.flatMap(Shortcut.init) : nil, group: group, closes: a.spec.output == .window,
-                          why: why, command: try? ToolPayload.of(a.run, in: preset, scope: scope, scripts: tool.scripts).willRun,
-                          runsOn: mac ? nil : target.asRoot(sudo), asks: asks, dangerous: a.spec.dangerous == true,
-                          note: a.spec.message.map { ToolTemplate.text($0, scope) }, multi: a.spec.multi == true) { [unowned self] asked in
+        let own = a.spec.edit != nil || [.window, .follow, .terminal].contains(a.spec.output)   // a window, a tab or the editor of its own
+        var it = ListAction(title: a.spec.title ?? a.spec.id, key: keyed ? a.spec.key.flatMap(Shortcut.init) : nil, group: group, closes: own,
+                            why: why, command: a.spec.inputs == nil ? try? ToolPayload.of(a.run, in: preset, scope: scope, scripts: tool.scripts).willRun : nil,
+                            runsOn: mac ? nil : target.asRoot(sudo), asks: asks, dangerous: a.spec.dangerous == true,
+                            note: a.spec.message.map { ToolTemplate.text($0, scope) }, multi: a.spec.multi == true) { [unowned self] asked in
             app.tools.perform(a, of: tool, row: row, onRow: onRow, id: id, from: self, on: server, target, asked: asked)
         }
+        // A log that asks nothing follows next door in a panel (⌘L's Quick View), the row under the cursor's — not where
+        // sudo wants a password: that's asked off the main thread, so it opens a window of its own.
+        if a.spec.output == .follow, a.spec.readonly == true, a.spec.inputs == nil, why == nil, !(sudo && ToolExec.wantsPassword(target)),
+           let payload = try? ToolRunner.payloads(a.run, of: tool, scope).0 {
+            let t = mac ? SFTPTarget.local() : target, cri = a.spec.strip == "cri", title = a.spec.title ?? a.spec.id
+            it.followWindow = { OutputWindow.follow(payload, password: nil, on: t, title: title, place: mac ? "this Mac" : SavedServer.name(for: t), cri: cri, embedded: true) }
+        }
+        return it
     }
 }

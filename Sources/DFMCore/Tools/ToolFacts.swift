@@ -66,6 +66,7 @@ public enum ToolBatch {
     public struct Answer: Sendable, Hashable {
         public var facts: ToolFacts
         public var passed: Set<String>
+        public init(facts: ToolFacts, passed: Set<String>) { (self.facts, self.passed) = (facts, passed) }
 
         /// A tool without `requires` is everywhere.
         public func has(_ tool: ToolPreset) -> Bool { tool.requires == nil || passed.contains(tool.id) }

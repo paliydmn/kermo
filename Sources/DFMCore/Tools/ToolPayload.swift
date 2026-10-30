@@ -90,6 +90,9 @@ public struct ToolPayload: Sendable {
         Data(((sudo == .password ? (password ?? "") + "\nKERMO-\(nonce)\n" : "") + script).utf8)
     }
 
+    /// `data`, text as it may be shown: secrets as `•••`.
+    public func mask(_ data: Data) -> Data { secrets.isEmpty ? data : Data(mask(String(decoding: data, as: UTF8.self)).utf8) }
+
     /// `text` as it may be shown or logged: secrets and the sudo password as `•••`.
     public func mask(_ text: String, password: String? = nil) -> String {
         (secrets + [password].compactMap { $0 }.filter { !$0.isEmpty }).reduce(text) { $0.replacingOccurrences(of: $1, with: "•••") }

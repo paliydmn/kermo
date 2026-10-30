@@ -6,22 +6,34 @@ import DFMCore
 // server has is asked once its connection is up (`ToolRunner.answer`), never logging in for a menu.
 extension AppDelegate {
     /// Tools ▸ for `t`'s server: its tools as last known — "Firewall (ufw)", its symbol, a submenu per `group` — grey
-    /// with "As of 14:02" while it isn't connected. Not known yet: "Connect to see tools"; known, none there: no item.
+    /// with "As of 14:02" while it isn't connected (a saved server's last answer, `tools/known.json`). Not known yet:
+    /// "Connect to see tools"; known, none there: no item. Then your own tools not in use yet, each asking first.
     func toolsItem(for t: SFTPTarget) -> NSMenuItem? {
-        guard !tools.tools.isEmpty else { return nil }
+        let untrusted = tools.untrusted
+        guard !tools.tools.isEmpty || !untrusted.isEmpty else { return nil }
         let menu = NSMenu(title: "Tools")
         menu.autoenablesItems = false
         let item = NSMenuItem(title: "Tools", action: nil, keyEquivalent: "")
         item.submenu = menu
-        let up = Self.connected(t.asUser)
-        guard let known = tools.answer(t) else {
+        let up = Self.connected(t.asUser), s = savedServer(at: t) ?? SavedServer(target: t.asUser)
+        var here: [LoadedTool] = []
+        if let known = tools.answer(t) {
+            here = tools.tools.filter { known.answer.has($0.preset) }
+            if !up, !here.isEmpty { menu.addItem(Self.note("As of \(known.at.formatted(date: .omitted, time: .shortened)) — connect to use them")) }
+        } else if !tools.tools.isEmpty {
             menu.addItem(Self.note(up ? "Looking at what it has…" : "Connect to see tools"))
-            return item
         }
-        let here = tools.tools.filter { known.answer.has($0.preset) }
-        guard !here.isEmpty else { return nil }
-        if !up { menu.addItem(Self.note("As of \(known.at.formatted(date: .omitted, time: .shortened)) — connect to use them")) }
-        let s = savedServer(at: t) ?? SavedServer(target: t.asUser)
+        defer {   // yours, new or changed: "Use the tool…?" first
+            if !untrusted.isEmpty {
+                if !menu.items.isEmpty { menu.addItem(.separator()) }
+                menu.addItem(Self.note("Not in use yet"))
+                for tool in untrusted {
+                    let p = tool.preset
+                    menu.addItem(MenuAction.item((p.tool.map { "\(p.title) (\($0))" } ?? p.title) + "…") { [unowned self] in openTool(tool, on: s, t) })
+                }
+            }
+        }
+        guard !here.isEmpty || !menu.items.isEmpty || !untrusted.isEmpty else { return nil }
         var groups: [String: NSMenu] = [:]
         for tool in here {
             let p = tool.preset
@@ -62,8 +74,17 @@ extension AppDelegate {
         return it
     }
 
-    /// A tool on `t`'s server: its list in the search, on the server's place as Services… is; a one-command tool runs.
+    /// A tool on `t`'s server: its list in the search, on the server's place as Services… is; a one-command tool runs. A
+    /// tool of yours not in use yet asks first (§12), and the server is asked again what it has.
     func openTool(_ tool: LoadedTool, on s: SavedServer, _ t: SFTPTarget) {
+        guard tools.trust.trusts(tool) else {
+            Task {
+                guard await tools.trustAsk(tool, window: nil) else { return }
+                tools.askAgain(t)
+                openTool(tool, on: s, t)
+            }
+            return
+        }
         if tool.preset.list != nil { return showInSearch(ToolListSource(self, tool, s, t)) }
         if let a = tool.preset.commandAction {
             tools.perform(a, of: tool, row: nil, onRow: false, id: ServerRow.key(t.asUser) + " tool:\(tool.preset.id)", from: nil, on: s, t.asUser)

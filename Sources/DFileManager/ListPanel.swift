@@ -90,6 +90,8 @@ struct ListAction {
     /// A log as it goes (a Tools preset's `output: follow`): a Picker opens its window (`run`); a panel follows it next
     /// door instead, the row under the cursor's (nil `on`: this Mac).
     var follow: (command: String, on: SFTPTarget?)? = nil
+    /// The same for a run that isn't a command (a Tools preset's `follow` payload): what shows it next door.
+    var followWindow: (@MainActor () -> OutputWindow)? = nil
     /// It acts on marked rows too (a Tools action only with `multi`); false: on the cursor's row alone.
     var multi = true
     /// Starts it — at once, so a second press finds it running — and gives back what to wait for, if there's
@@ -643,7 +645,7 @@ extension AppDelegate {
     /// own question, if it has one). Several: a row it can't run on says why and is left out; one question for the
     /// rest — each command as it runs, production's strip, ↩ = Cancel there — then each in turn, a line each.
     func runList(_ a: ListAction, in l: ListPanel) {
-        if a.follow != nil, a.why == nil { return followNextDoor() }   // a log: next door, the cursor's row's
+        if a.follow != nil || a.followWindow != nil, a.why == nil { return followNextDoor() }   // a log: next door, the cursor's row's
         let rows = a.multi ? l.targets : l.cursor.map { [$0] } ?? []
         guard rows.count > 1 else {
             if let why = a.why { return active.flash(why, error: true) }

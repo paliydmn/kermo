@@ -1631,6 +1631,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         l.theme = theme
         l.onChange = { [unowned self] in updateStatus(); onListChange?() }
         l.onCursor = { [unowned self] in onCursorChange?() }
+        l.onPrimary = { [unowned self] a in if let why = a.why { flash(why, error: true) } else { _ = a.run(false) } }   // ＋ over the columns
         l.attach(to: table)
         fitColumns()
         for (v, stack, at) in [(l.headerView, header!, header.arrangedSubviews.count), (l.resultView, footer!, 0)] where v.superview == nil {
@@ -2083,7 +2084,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// A list row's log as it goes, next door (⌘L in the list): an output window's text, its window never shown;
     /// started once the cursor rests on the row, the one before stopped at once.
-    func preview(log title: String, command: String, on server: SFTPTarget?) {
+    func preview(log title: String, start: @escaping @MainActor () -> OutputWindow) {
         guard quickView != nil, let body = textPeek?.superview else { return }
         hidePreview()
         listPeekFlag?.cancel()
@@ -2096,7 +2097,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(Self.peekRest))   // passing over rows starts nothing
             guard let self, gen == peekGen, quickView != nil else { return }
-            let w = OutputWindow.embedded(command, on: server, follow: true)
+            let w = start()
             guard let text = w.text else { return w.close() }
             text.removeFromSuperview()
             text.translatesAutoresizingMaskIntoConstraints = false
