@@ -93,7 +93,7 @@ extension ServerLockTests {
             """#.utf8).write(to: URL(fileURLWithPath: own + "/tidy.json"))
         _ = app.tools.reload()
         let hello = try #require(app.tools.untrusted.first { $0.preset.id == "hello" })
-        #expect(ToolRunner.everything(hello) == "Runs by itself:\n  requires: command -v echo\nRuns when you choose:\n  Hello: echo hello from {server}   — as root")
+        #expect(hello.runs.text == "Runs by itself:\n  requires: command -v echo\nRuns when you choose:\n  Hello: echo hello from {server}   — as root")
         #expect(ToolRunner.cautions(try #require(app.tools.untrusted.first { $0.preset.id == "tidy" })) == ["⚠ “Look” says it changes nothing, but it runs “rm”."])
         let menu = try #require(app.toolsItem(for: .local())?.submenu)
         #expect(menu.items.map(\.title) == ["Connect to see tools", "", "Not in use yet", "Hello…", "Tidy…", "", "Open in Tools Window"])

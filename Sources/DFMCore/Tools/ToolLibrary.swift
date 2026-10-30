@@ -11,6 +11,66 @@ public struct LoadedTool: Sendable {
     public var hash: String
     /// Warnings: it loads, and Problems shows them.
     public var warnings: [ToolProblem]
+
+    public init(preset: ToolPreset, path: String, builtIn: Bool, scripts: [String: String], hash: String, warnings: [ToolProblem]) {
+        (self.preset, self.path, self.builtIn, self.scripts, self.hash, self.warnings) = (preset, path, builtIn, scripts, hash, warnings)
+    }
+
+    /// What it can run (§12): "Use the tool…?" and its page in the Tools window list it the same.
+    public var runs: ToolRuns {
+        let p = preset
+        func line(_ what: String, _ run: ToolRun?, requires: Bool = false) -> ToolRuns.Line? {
+            guard let run else { return nil }
+            let how = run.command.map { $0.all.joined(separator: " ") } ?? run.script.map { s in
+                "the script \(s) (\((scripts[s] ?? "").split(separator: "\n").count) lines)"
+            }
+            guard let how else { return nil }
+            let mac = (run.where ?? p.where) == .mac
+            return ToolRuns.Line(what: what, how: how, root: (run.sudo ?? (requires ? false : p.sudo ?? false)) && !mac, mac: mac)   // §10.5
+        }
+        let itself = [line("requires", p.requires, requires: true), line("header", p.header ?? p.list?.view.header),
+                      line("version", p.version.map { ToolRun(command: .one($0.command)) }), line("list", p.list?.run)]
+            + p.varCommands.map { line("vars.\($0.name)", $0.run) }
+            + p.allActions.flatMap { _, a in (a.spec.inputs ?? []).filter { $0.info.type == .choiceFrom }.map { line("\(a.spec.title ?? a.spec.id) choices", $0.run) } }
+            + p.allActions.map { _, a in line("\(a.spec.title ?? a.spec.id) requires", a.spec.requires, requires: true) }
+        let chosen = [line(p.title, p.commandAction?.run)] + p.allActions.map { _, a in
+            var l = line(a.spec.title ?? a.spec.id, a.run.sources.isEmpty ? nil : a.run)
+                ?? a.spec.edit.map { ToolRuns.Line(what: a.spec.title ?? a.spec.id, how: "edit \($0)") }
+            l?.long = a.spec.long == true
+            l?.dangerous = a.spec.dangerous == true
+            return l
+        }
+        return ToolRuns(itself: itself.compactMap { $0 }, chosen: chosen.compactMap { $0 })
+    }
+}
+
+/// What a tool can run (§12, §3.3): by itself — with no question, maybe as root, and changing nothing by the author's
+/// promise — and when you choose (its actions). One structure for the trust sheet and the tool's page.
+public struct ToolRuns: Sendable, Hashable {
+    public struct Line: Sendable, Hashable {
+        /// "requires", "list", "Delete Rule"…
+        public var what: String
+        /// Its command, "the script x.sh (12 lines)", "edit /etc/x".
+        public var how: String
+        public var root = false, mac = false, long = false, dangerous = false
+
+        public init(what: String, how: String, root: Bool = false, mac: Bool = false) { (self.what, self.how, self.root, self.mac) = (what, how, root, mac) }
+
+        /// As the trust sheet has it: "  list: ufw status   — as root".
+        public var text: String {
+            "  \(what): \(how)" + (root ? "   — as root" : "") + (mac ? "   — on this Mac" : "") + (long ? "   — runs on after Kermo quits" : "")
+        }
+    }
+
+    public var itself: [Line]
+    public var chosen: [Line]
+
+    public var groups: [(title: String, lines: [Line])] { [("Runs by itself", itself), ("Runs when you choose", chosen)] }
+
+    /// The trust sheet's text: each group, its lines (or "nothing").
+    public var text: String {
+        groups.flatMap { g in ["\(g.title):"] + (g.lines.isEmpty ? ["  nothing"] : g.lines.map(\.text)) }.joined(separator: "\n")
+    }
 }
 
 /// The tools Kermo knows: the built-in ones, and your own from `~/.config/dfilemanager/tools/` (§12). One of yours
