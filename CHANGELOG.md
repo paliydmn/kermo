@@ -19,9 +19,11 @@ Release:
 - Tools: **Allow Port…**, **Block Address…**, **Ban Address…** and **Jail Status…** ask in a sheet, checked as you type, showing the command they'll run; **＋ Allow Port…** over the list. **fail2ban Log** follows in a window, or next door in a panel. Your own tools ask **Use the tool “…”?** with everything they run before they run anything. On production a tool's question can be put off for 10 minutes; a server marked **Read-only** (Edit Server ▸ Safety) runs only what changes nothing. A saved server's tools show in Tools ▸, greyed, while it isn't connected.
 - Tools: **Server Info** on every server — a full report of the machine to send for support (⌘S saves it), CPU · RAM now, the load as it goes, disks, traffic over 5 seconds, GPU and the busiest processes; ↩ on a row runs it.
 - An output window copies all it printed with ⌘C when nothing is selected, and saves it with ⌘S.
+- Tools: **long jobs** — a deploy, a backup, an upgrade runs on the server on its own and comes back at once. Activity shows its progress and last line, with Show, Stop…, Retry and Show Log; it runs on when the connection drops or Kermo quits, and Kermo follows it again once that server is connected. A job that ends after more than a minute while Kermo isn't in front sends a notification (or, with notifications off, a Dock badge). Its log stays in `~/.cache/kermo/` on the server for a week.
 
 ### Fixed
 - **＋ New Tunnel…** over a server's tunnels in a panel did nothing.
+- In search and a server's overview, a long subtitle no longer wraps into the row below, and a long description no longer pushes a row's name out.
 
 ## [1.6] - 2026-10-28
 

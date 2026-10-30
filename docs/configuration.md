@@ -35,6 +35,7 @@ Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`
 | `history.noindex/` | [Versions of server files](server-files.md#file-history) | Kermo writes it |
 | `tools/` | [Your own tools](tools.md#your-own-tools): a JSON file each, with its scripts | By hand; **Reload Config** checks them |
 | `tools/trust.json`, `tools/known.json` | Your own tools you said to use; what each saved server had | Kermo writes them |
+| `tools/runs.json` | The [long jobs](tools.md#long-jobs) Kermo started: where, what (never a secret) and how they ended; kept a week after they end | Kermo writes it |
 
 Kermo also writes `server-pins.json` (the order of pinned servers), `trash.json` (where trashed items came from, for Put Back) and `activity.json` (the last 100 finished jobs in [Activity](files.md#activity)).
 

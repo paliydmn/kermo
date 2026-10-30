@@ -1,4 +1,5 @@
 import AppKit
+import UserNotifications
 import DFMCore
 
 @MainActor
@@ -141,6 +142,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ops.compare = { [unowned self] new, existing in await diff(new, existing, in: active) }
         ops.onRetry = { [unowned self] in retryFailed($0, $1) }
         ops.onShow = { [unowned self] in showItem(on: $0, in: $1, select: $2) }
+        ops.toolJobs = tools.jobs   // a long job still running since the last launch: followed again once its server is connected
+        if ToolJobs.Notices.bundled { UNUserNotificationCenter.current().delegate = ToolJobs.clicks }
         let toolbar = NSToolbar(identifier: "Main")   // after `ops`: it asks for the Activity button at once
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly

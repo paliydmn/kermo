@@ -841,6 +841,9 @@ final class PickerCell: NSTableCellView {
         detail.textColor = .secondaryLabelColor
         detail.font = .systemFont(ofSize: 12)
         detail.setContentHuggingPriority(.required, for: .horizontal)
+        // A long detail (a tool's `about` in a server's overview) gives way before the title does.
+        detail.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
+        detail.lineBreakMode = .byTruncatingTail
         remove.image = Symbol.remove.image("Remove")
         remove.isBordered = false
         remove.contentTintColor = .tertiaryLabelColor
@@ -886,15 +889,21 @@ final class PickerCell: NSTableCellView {
     /// On the system's highlight all of it in its text color — a failed state's red too (its ◆ still says so).
     private func paint() {
         let on = backgroundStyle == .emphasized, white = NSColor.alternateSelectedControlTextColor
-        let s = NSMutableAttributedString(string: texts.title, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: on ? white : titleColor ?? .labelColor])
+        let line = NSMutableParagraphStyle()
+        line.lineBreakMode = .byTruncatingMiddle   // one line: an attributed value drops the label's own mode, and a long subtitle wrapped into the next row
+        let s = NSMutableAttributedString(string: texts.title, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: on ? white : titleColor ?? .labelColor,
+                                                                            .paragraphStyle: line])
         if !texts.subtitle.isEmpty {
             s.append(NSAttributedString(string: "   " + texts.subtitle, attributes: [
-                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: on ? white.withAlphaComponent(0.8) : texts.color ?? NSColor.secondaryLabelColor]))
+                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: on ? white.withAlphaComponent(0.8) : texts.color ?? NSColor.secondaryLabelColor, .paragraphStyle: line]))
         }
         title.attributedStringValue = s
         let d = NSMutableAttributedString(string: end.detail, attributes: [.font: NSFont.systemFont(ofSize: 12),
                                                                           .foregroundColor: on ? white.withAlphaComponent(0.8) : NSColor.secondaryLabelColor])
         if let marks = end.marks { if d.length > 0 { d.append(NSAttributedString(string: "  ")) }; d.append(marks) }
+        let tail = NSMutableParagraphStyle()
+        tail.lineBreakMode = .byTruncatingTail
+        d.addAttribute(.paragraphStyle, value: tail, range: NSRange(location: 0, length: d.length))
         detail.attributedStringValue = d
     }
 }

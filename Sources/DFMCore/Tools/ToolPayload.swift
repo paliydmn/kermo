@@ -24,16 +24,17 @@ public struct ToolPayload: Sendable {
     /// The payload variables come from: the command (or a script's text), the values its template needed, `env`
     /// (name → its value's shell text), which variables hold secrets, and the text an `accepts` action reads.
     /// `where: .mac` gets no watcher: `kill 0` there would reach Kermo's own process group. `shell`: the server's
-    /// `sh` (tests run dash and bash).
+    /// `sh` (tests run dash and bash). `detached`: a long job's own script (`ToolLong`) — no marker, no watcher, no
+    /// sudo: the job around it does those. `hide`: more text to show as `•••` (a password the body holds).
     public init(body: String, values: [ToolTemplate.Variable], env: [(name: String, text: String)] = [], secret: Set<String> = [],
                 text: String? = nil, sudo: Sudo = .none, where: ToolWhere = .server, nonce: String = ToolPayload.newNonce(),
-                sudoProgram: String = "sudo", shell: String = "sh") {
+                sudoProgram: String = "sudo", shell: String = "sh", detached: Bool = false, hide: [String] = []) {
         if [body, text ?? ""].contains(where: { $0.contains("KERMO_\(nonce)") }) || values.contains(where: { $0.value.contains("KERMO_\(nonce)") }) {
             self = ToolPayload(body: body, values: values, env: env, secret: secret, text: text, sudo: sudo, where: `where`,
-                               sudoProgram: sudoProgram, shell: shell)   // a fresh nonce: this one is in the text
+                               sudoProgram: sudoProgram, shell: shell, detached: detached, hide: hide)   // a fresh nonce: this one is in the text
             return
         }
-        let sudo = `where` == .mac ? .none : sudo   // this Mac's part never runs as root
+        let sudo = `where` == .mac || detached ? .none : sudo   // this Mac's part never runs as root
         self.nonce = nonce
         self.sudo = sudo
         let end = "KERMO_\(nonce)"   // a heredoc's last line; a value that holds it gets a fresh nonce
@@ -41,7 +42,7 @@ public struct ToolPayload: Sendable {
         func both(_ s: String) { real.append(s); masked.append(s) }
         both("export LC_ALL=C NO_COLOR=1 TERM=dumb COLUMNS=500 PAGER=cat SYSTEMD_PAGER=")
         both("PATH=\"$PATH:/usr/local/sbin:/usr/sbin:/sbin\"; export PATH")   // Debian's users have no sbin
-        both("printf 'KERMO-%s %s\\n' \(nonce) \"$(date +%s)\"")
+        if !detached { both("printf 'KERMO-%s %s\\n' \(nonce) \"$(date +%s)\"") }
         for v in values {
             if secret.contains(v.name) {   // never in argv: a builtin reads it from a heredoc
                 real.append("IFS= read -r \(v.name) <<'\(end)'\n\(v.value)\n\(end)")
@@ -52,7 +53,7 @@ public struct ToolPayload: Sendable {
         // The body's stdin: /dev/null, or an `accepts` action's text in a heredoc — inside the script, never after it.
         let redirect = text == nil ? "</dev/null" : "<<'\(end)'"
         let heredoc = text.map { "\n" + $0 + ($0.hasSuffix("\n") ? "" : "\n") + end } ?? ""
-        if `where` == .mac {
+        if `where` == .mac || detached {
             both("{ \(body)\n} \(redirect)\(heredoc)")
             both("exit $?")   // stdin may be held open: `sh -s` mustn't wait there for more script
         } else {
@@ -66,8 +67,9 @@ public struct ToolPayload: Sendable {
             both("{ cat <&3; kill -TERM 0; } >/dev/null 2>&1 & exec 3<&-; wait $p; exit $?")
         }
         script = real.joined(separator: "\n") + "\n"
-        shown = masked.joined(separator: "\n") + "\n"
-        secrets = values.filter { secret.contains($0.name) }.map(\.value).filter { !$0.isEmpty }
+        let secrets = values.filter { secret.contains($0.name) }.map(\.value).filter { !$0.isEmpty } + hide.filter { !$0.isEmpty }
+        self.secrets = secrets
+        shown = hide.filter { !$0.isEmpty }.reduce(masked.joined(separator: "\n") + "\n") { $0.replacingOccurrences(of: $1, with: "•••") }
         let q = ShellContext.quote
         command = switch sudo {
         case .none: "\(shell) -s"
@@ -146,9 +148,10 @@ extension ToolPayload {
     /// the tool's `env` and its own, `sudo` and `where` as the tool says unless the Run does. `secret`: the fields that
     /// are secret inputs. `password`: sudo will want one (the wrapper). Also the command with its values filled in,
     /// for reading ("Will run:"). Throws for a single-string command with an empty field. `sudoProgram`: tests' stand-in.
+    /// `detached`: a long job's script (`ToolLong.start` puts it in the job).
     public static func of(_ run: ToolRun, in tool: ToolPreset, scope: ToolTemplate.Scope, scripts: [String: String] = [:],
                           secret: Set<String> = [], text: String? = nil, password: Bool = false,
-                          nonce: String = newNonce(), sudoProgram: String = "sudo") throws(ToolTemplate.Empty) -> (payload: ToolPayload, willRun: String) {
+                          nonce: String = newNonce(), sudoProgram: String = "sudo", detached: Bool = false) throws(ToolTemplate.Empty) -> (payload: ToolPayload, willRun: String) {
         var taken: [String: String] = [:]
         let body: ToolTemplate.Command
         if let c = run.command { body = try ToolTemplate.command(c, scope, vars: &taken) }
@@ -162,7 +165,7 @@ extension ToolPayload {
         let secretVars = Set(secret.compactMap { taken[$0] })
         let sudo: Sudo = (run.sudo ?? tool.sudo ?? false) ? (password ? .password : .noPassword) : .none
         let payload = ToolPayload(body: body.text, values: values, env: env, secret: secretVars, text: text, sudo: sudo,
-                                  where: run.where ?? tool.where ?? .server, nonce: nonce, sudoProgram: sudoProgram)
+                                  where: run.where ?? tool.where ?? .server, nonce: nonce, sudoProgram: sudoProgram, detached: detached)
         return (payload, payload.mask(body.shown))
     }
 }

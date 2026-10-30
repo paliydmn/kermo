@@ -15,7 +15,8 @@ extension ToolRunner {
         let place = mac ? "this Mac" : SavedServer.name(for: t.asUser)
         var c = Confirm("\(verb) on \(place)?", on: mac ? nil : t.asRoot(sudo), action: verb)
         if let row { c.items = [Confirm.Item(name: row)] }
-        (c.runs, c.command, c.note) = (mac ? "Runs on this Mac." : AppDelegate.runs(on: t.asRoot(sudo)), willRun, message)
+        (c.runs, c.command) = (mac ? "Runs on this Mac." : AppDelegate.runs(on: t.asRoot(sudo)), willRun)
+        c.note = [message, a.spec.long == true ? Self.longNote : nil].compactMap { $0 }.joined(separator: "\n").nilIfEmpty
         if payload != nil { c.others = ["Show Exactly What Runs"] }
         c.irreversible = a.spec.dangerous == true
         let box = quietFor.map { NSButton(checkboxWithTitle: "Don't ask again for this tool on \($0) for 10 minutes", target: nil, action: nil) }
@@ -49,8 +50,9 @@ extension ToolRunner {
         var c = Confirm("Use the tool “\(p.tool.map { "\(p.title) (\($0))" } ?? p.title)”?", action: "Use This Tool")
         c.runs = "\(file) " + (trust.hashes[p.id] == nil ? "is new here." : "changed since you said to use it.") + " Here is everything it can run:"
         c.command = Self.everything(tool)
-        c.note = (Self.cautions(tool) + ["Kermo asks once for each new or changed tool. A value goes into a command as a variable, scripts go on stdin, and nothing is left on the server."])
-            .joined(separator: "\n")
+        let long = p.allActions.contains { $0.action.spec.long == true }
+        c.note = (Self.cautions(tool) + ["Kermo asks once for each new or changed tool. A value goes into a command as a variable, scripts go on stdin, and nothing is left on the server"
+            + (long ? " but a long job's: it runs on after Kermo quits, and its log stays in ~/.cache/kermo/ there for 7 days." : ".")]).joined(separator: "\n")
         c.others = ["Open File"]
         c.cancel = "Don't Use"
         c.returnCancels = false
@@ -67,6 +69,9 @@ extension ToolRunner {
             }
         }
     }
+
+    /// What a long job leaves (§7.6, Q10), said by its question and the trust sheet.
+    static let longNote = "It runs on after Kermo quits; its log stays in ~/.cache/kermo/ on the server for 7 days."
 
     /// What the trust sheet warns of: a `readonly` action whose command looks destructive (§3.3).
     static func cautions(_ tool: LoadedTool) -> [String] {
@@ -94,13 +99,14 @@ extension ToolRunner {
             + p.varCommands.map { line("vars.\($0.name)", $0.run) }
             + p.allActions.flatMap { _, a in (a.spec.inputs ?? []).filter { $0.info.type == .choiceFrom }.map { line("\(a.spec.title ?? a.spec.id) choices", $0.run) } }
         let chosen = [line(p.title, p.commandAction?.run)] + p.allActions.map { _, a in
-            line(a.spec.title ?? a.spec.id, a.run.sources.isEmpty ? nil : a.run) ?? a.spec.edit.map { "  \(a.spec.title ?? a.spec.id): edit \($0)" }
+            (line(a.spec.title ?? a.spec.id, a.run.sources.isEmpty ? nil : a.run) ?? a.spec.edit.map { "  \(a.spec.title ?? a.spec.id): edit \($0)" })
+                .map { $0 + (a.spec.long == true ? "   — runs on after Kermo quits" : "") }
         }
         func part(_ title: String, _ lines: [String?]) -> [String] { [title] + (lines.compactMap { $0 }.nilIfEmpty ?? ["  nothing"]) }
         return (part("Runs by itself:", itself) + part("Runs when you choose:", chosen)).joined(separator: "\n")
     }
 }
 
-private extension Array {
+private extension Collection {
     var nilIfEmpty: Self? { isEmpty ? nil : self }
 }

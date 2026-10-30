@@ -39,6 +39,8 @@ public enum ToolExec {
     static func forget(_ t: SFTPTarget) { _ = wantPassword.withLock { $0.remove(key(t)) } }
     /// Whether `t`'s sudo wanted a password this session (a `follow` run starts with the wrapper then).
     public static func wantsPassword(_ t: SFTPTarget) -> Bool { wantPassword.withLock { $0.contains(key(t)) } }
+    /// `t`'s sudo wanted a password (a long job's start found it).
+    static func remember(wantsPassword t: SFTPTarget) { _ = wantPassword.withLock { $0.insert(key(t)) } }
 
     // MARK: Channels
 
