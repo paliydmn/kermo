@@ -172,8 +172,9 @@ extension ToolPayload {
     /// watcher — the tab's end is the run's. `sh -c` with each value set as a variable before the command (never text in
     /// it), the tool's `env`, sbin on the PATH; as root `sudo sh -c`, sudo asking in the terminal if it must. The
     /// locale and TERM stay the terminal's: what runs there is a program for a person. Also the command with its
-    /// values, for reading.
-    /// ponytail: quoted for sh; a fish or csh login shell may read `'\''` otherwise.
+    /// values, for reading. One line where the command is one (`; ` between the parts): csh takes no line break inside
+    /// quotes; fish and csh read `'\''` as sh does.
+    /// ponytail: a multi-line command or a script keeps its line breaks, which a csh login shell refuses.
     public static func terminal(_ run: ToolRun, in tool: ToolPreset, scope: ToolTemplate.Scope, scripts: [String: String] = [:])
         throws(ToolTemplate.Empty) -> (line: String, willRun: String) {
         var taken: [String: String] = [:]
@@ -186,7 +187,8 @@ extension ToolPayload {
             lines += v.values.filter { !body.values.contains($0) }.map { "\($0.name)=\(ShellContext.quote($0.value))" } + ["export \(name)=\(v.text)"]
         }
         let sudo = (run.sudo ?? tool.sudo ?? false) && (run.where ?? tool.where) != .mac
-        return ((sudo ? "sudo " : "") + "sh -c " + ShellContext.quote((lines + [body.text]).joined(separator: "\n")), body.shown)
+        let one = !body.text.contains("\n") && !lines.contains { $0.contains("\n") }
+        return ((sudo ? "sudo " : "") + "sh -c " + ShellContext.quote((lines + [body.text]).joined(separator: one ? "; " : "\n")), body.shown)
     }
 }
 
@@ -206,5 +208,48 @@ public struct ToolCRI: Sendable {
             out += (fields.count == 4 && ["stdout", "stderr"].contains(String(decoding: fields[1], as: UTF8.self)) ? fields[3] : line) + [0x0A]
         }
         return out
+    }
+}
+
+extension ToolPayload {
+    /// Several Runs of `tool` in one round trip (protocol §3.2 rule 9): a list, its header, its version. Each runs in a
+    /// subshell of its own, its stdout then a line `KERMO-<nonce>-PART <exit>` (`parts` takes them apart); the first's
+    /// stderr comes as ever, the others' is dropped — they only add to the line above the list. nil where they can't
+    /// share one: `sudo` or `where` differ, a Run has `env` of its own or isn't a command or a script.
+    public static func parts(_ runs: [ToolRun], in tool: ToolPreset, scope: ToolTemplate.Scope, scripts: [String: String] = [:],
+                             password: Bool = false, nonce: String = newNonce(), sudoProgram: String = "sudo") throws(ToolTemplate.Empty) -> ToolPayload? {
+        let sudo = Set(runs.map { $0.sudo ?? tool.sudo ?? false }), place = Set(runs.map { $0.where ?? tool.where ?? .server })
+        guard runs.count > 1, sudo.count == 1, place == [.server], runs.allSatisfy({ $0.env == nil && ($0.command != nil || $0.script != nil) }) else { return nil }
+        var taken: [String: String] = [:], values: [ToolTemplate.Variable] = [], body: [String] = []
+        for (i, run) in runs.enumerated() {
+            let text: String
+            if let c = run.command {
+                let cmd = try ToolTemplate.command(c, scope, vars: &taken)
+                values += cmd.values.filter { !values.contains($0) }
+                text = cmd.text
+            } else { text = scripts[run.script ?? ""] ?? "" }
+            body.append("(\n\(text)\n)\(i == 0 ? "" : " 2>/dev/null"); printf '\\nKERMO-%s-PART %s\\n' \(nonce) $?")
+        }
+        let env = (tool.env ?? [:]).sorted { $0.key < $1.key }.map { name, t -> (name: String, text: String) in
+            let v = ToolTemplate.value(t, scope, vars: &taken)
+            values += v.values.filter { !values.contains($0) }
+            return (name, v.text)
+        }
+        return ToolPayload(body: body.joined(separator: "\n"), values: values, env: env, sudo: sudo.first! ? (password ? .password : .noPassword) : .none,
+                           nonce: nonce, sudoProgram: sudoProgram)
+    }
+
+    /// What `parts` printed, part by part: each one's stdout (without the line break put before its end line) and
+    /// exit. Fewer than were sent where the run stopped early.
+    public static func parts(_ out: Data, nonce: String) -> [(out: Data, status: Int32)] {
+        let mark = Data("\nKERMO-\(nonce)-PART ".utf8)
+        // A first part that said nothing: its mark's line break went as the blank line after the start (`ToolRunOutput`).
+        let out = out.starts(with: mark.dropFirst()) ? Data([0x0A]) + out : out
+        var found: [(Data, Int32)] = [], from = out.startIndex
+        while let r = out[from...].firstRange(of: mark), let nl = out[r.upperBound...].firstIndex(of: 0x0A) {
+            found.append((Data(out[from..<r.lowerBound]), Int32(String(decoding: out[r.upperBound..<nl], as: UTF8.self)) ?? -1))
+            from = nl + 1
+        }
+        return found
     }
 }

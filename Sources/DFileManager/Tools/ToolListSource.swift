@@ -23,8 +23,11 @@ final class ToolListSource: ListSource {
     /// A tool's action with no row is said about the list (as its one-command run is: `AppDelegate.openTool`).
     var listID: String? { ServerRow.key(target) + " tool:\(preset.id)" }
 
-    /// `columns` (§6.2), else the row's title, its state and its detail.
+    /// `columns` (§6.2), else the row's title, its state and its detail; a launcher's: the action, what it runs, its key.
     var columns: [ListColumn] {
+        if preset.list == nil {
+            return [ListColumn(title: "Action", field: .title, width: 170), ListColumn(title: "Runs", field: .subtitle, width: 330), ListColumn(title: "Key", field: .detail, width: 60)]
+        }
         guard let cs = preset.list?.view.columns else {
             return [ListColumn(title: "Name", field: .title, width: 170), ListColumn(title: "State", field: .subtitle, width: 170, state: true),
                     ListColumn(title: "Detail", field: .detail, width: 160)]
@@ -71,11 +74,10 @@ final class ToolListSource: ListSource {
 
         /// The vars' commands first if they're due, the list, then (`header`) its header line (up to 200 characters)
         /// and what it warns about: rows past `limit`, a server clock off by over a minute, a version outside `tested`
-        /// (asked once a session).
-        /// ponytail: two round trips, three the first time; one (§3.2 rule 9) would do — with the channel count (2b).
+        /// (asked once a session). The list, the header and the version go in one round trip (§3.2 rule 9) where they
+        /// can share one (`ToolPayload.parts`); a launcher reads only its header.
         func read(_ env: [String: String], _ cancel: CancelFlag, header: Bool = true) throws -> Read {
             let p = tool.preset, title = p.title
-            guard let list = p.list else { throw JobErrorMessage("\(title) has no list") }
             var scope = scope, vars: [String: String]?
             if findVars, !p.varCommands.isEmpty {
                 var found: [String: String] = [:]
@@ -86,7 +88,37 @@ final class ToolListSource: ListSource {
                 vars = found
                 scope.levels[scope.levels.count - 2] = p.varValues(saved: [:], found: found)
             }
-            let r = try ToolRunner.exec(list.run, of: tool, scope, on: target, timeout: list.run.timeout ?? 30, env: env, cancel: cancel).ran
+            // The header and the version (once a session) say something above the rows.
+            let extra = header ? [p.list?.view.header ?? p.header, versionKnown ? nil : p.version.map { ToolRun(command: .one($0.command)) }] : []
+            var said = extra.map { _ in String?.none }
+            func first(_ text: String) -> String? { text.split(whereSeparator: \.isNewline).first.map { String($0.prefix(200)) } }
+            func one(_ run: ToolRun) -> String? {
+                guard let r = try? ToolRunner.exec(run, of: tool, scope, on: target, timeout: run.timeout ?? 10, env: env, cancel: cancel).ran,
+                      r.stopped == nil, run.succeeded(r.status) else { return nil }
+                return first(r.text)
+            }
+            guard let list = p.list else {   // a launcher: its actions are its rows
+                for (i, run) in extra.enumerated() { said[i] = run.flatMap(one) }
+                return note(Read(rows: [], total: 0, vars: vars), said: said, total: 0, skew: nil)
+            }
+            var r: ToolExec.Ran
+            let together = [list.run] + extra.compactMap { $0 }
+            if together.count > 1, let plain = try? ToolPayload.parts(together, in: p, scope: scope, scripts: tool.scripts, sudoProgram: ToolRunner.sudoProgram),
+               let wrapped = try? ToolPayload.parts(together, in: p, scope: scope, scripts: tool.scripts, password: true, sudoProgram: ToolRunner.sudoProgram) {
+                // One round trip (§3.2 rule 9): the list, then what goes above it.
+                r = try ToolExec.run({ $0 ? wrapped : plain }, on: target, timeout: (list.run.timeout ?? 30) + 10 * Double(together.count - 1),
+                                     cancel: cancel, env: env, command: ToolRunner.command)
+                let parts = ToolPayload.parts(r.out, nonce: r.password == nil ? plain.nonce : wrapped.nonce)
+                if let mine = parts.first { (r.out, r.status) = (mine.out, mine.status) }
+                var k = 1
+                for (i, run) in extra.enumerated() where run != nil {
+                    if parts.indices.contains(k), run!.succeeded(parts[k].status) { said[i] = first(String(decoding: parts[k].out, as: UTF8.self)) }
+                    k += 1
+                }
+            } else {
+                r = try ToolRunner.exec(list.run, of: tool, scope, on: target, timeout: list.run.timeout ?? 30, env: env, cancel: cancel).ran
+                for (i, run) in extra.enumerated() where r.stopped == nil && list.run.succeeded(r.status) { said[i] = run.flatMap(one) }
+            }
             if let stopped = r.stopped { throw JobErrorMessage("\(title) on \(server): \(stopped)") }
             let output = [r.errors, r.text].filter { !$0.isEmpty }.joined(separator: "\n")
             guard list.run.succeeded(r.status) else {
@@ -98,19 +130,19 @@ final class ToolListSource: ListSource {
                 throw Failed(message: "\(title) on \(server): the output didn't match — " + (records.unmatched.first { !$0.isEmpty } ?? ""), output: output)
             }
             let now = Date().addingTimeInterval(r.skew ?? 0)   // `ago` by the server's clock
-            var read = Read(rows: records.rows.map { list.view.row($0, scope, now: now) }, total: records.total, vars: vars), notes: [String] = []
-            guard header else { return read }
-            func first(_ run: ToolRun) -> String? {
-                guard let r = try? ToolRunner.exec(run, of: tool, scope, on: target, timeout: run.timeout ?? 10, env: env, cancel: cancel).ran,
-                      r.stopped == nil, run.succeeded(r.status) else { return nil }
-                return r.text.split(whereSeparator: \.isNewline).first.map { String($0.prefix(200)) }
-            }
-            if let h = list.view.header ?? p.header, let line = first(h) { notes.append(line) }
-            if records.total > records.rows.count { notes.append("shown \(records.rows.count) of \(records.total)") }
-            if let skew = r.skew, abs(skew) > 60 { notes.append("⚠ the server's clock is \(Int(abs(skew) / 60)) min \(skew > 0 ? "ahead" : "behind")") }
-            if let v = p.version, !versionKnown {
-                let found = first(ToolRun(command: .one(v.command))).flatMap(v.found)
-                read.version = .some(found.flatMap { v.tested($0) == false ? "⚠ \(p.tool ?? title) \($0) is outside what this tool was tested with (\(v.tested ?? ""))" : nil })
+            let read = Read(rows: records.rows.map { list.view.row($0, scope, now: now) }, total: records.total, vars: vars)
+            return header ? note(read, said: said, total: records.rows.count, skew: r.skew) : read
+        }
+
+        /// The line above the rows: the header's first line, "shown N of M", a clock off by over a minute; and what the
+        /// version says.
+        private func note(_ read: Read, said: [String?], total shown: Int, skew: TimeInterval?) -> Read {
+            var read = read, notes = [said.first ?? nil].compactMap { $0 }
+            if read.total > shown { notes.append("shown \(shown) of \(read.total)") }
+            if let skew, abs(skew) > 60 { notes.append("⚠ the server's clock is \(Int(abs(skew) / 60)) min \(skew > 0 ? "ahead" : "behind")") }
+            if let v = tool.preset.version, !versionKnown, said.count > 1 {
+                let found = said[1].flatMap(v.found)
+                read.version = .some(found.flatMap { v.tested($0) == false ? "⚠ \(tool.preset.tool ?? tool.preset.title) \($0) is outside what this tool was tested with (\(v.tested ?? ""))" : nil })
             }
             read.header = notes.isEmpty ? nil : notes.joined(separator: " · ")
             return read
@@ -147,7 +179,7 @@ final class ToolListSource: ListSource {
         let scope = app.tools.scope(preset, on: server, target)
         let header = [r.header, app.tools.versions[key] ?? nil].compactMap { $0 }.joined(separator: " · ")
         let primary = preset.primary.flatMap { id in preset.toolActions?.first { $0.spec.id == id } }.map { $0.spec.title ?? $0.spec.id }
-        let c = ListContent(rows: r.rows.map(item), header: header.isEmpty ? nil : header, empty: preset.list?.view.empty.map { ToolTemplate.text($0, scope) } ?? "Nothing here",
+        let c = ListContent(rows: preset.list == nil ? launcherRows() : r.rows.map(item), header: header.isEmpty ? nil : header, empty: preset.list?.view.empty.map { ToolTemplate.text($0, scope) } ?? "Nothing here",
                             primary: primary.flatMap { title in listActions(nil).first { $0.title == title } },
                             actions: { [weak self] in self?.listActions(nil) ?? [] })
         content = c
@@ -191,6 +223,29 @@ final class ToolListSource: ListSource {
             return menu
         }
         return it
+    }
+
+    /// A launcher's rows (§1.3): its actions, each one's ↩ running it — the others keep their keys; one that can't run
+    /// here says why.
+    private func launcherRows() -> [Picker.Item] {
+        listActions(nil).filter { $0.group == 1 }.map { a in
+            let actions: @MainActor () -> [ListAction] = { [weak self] in
+                (self?.listActions(nil) ?? [a]).map { b in
+                    var b = b
+                    if b.group == 1 { b.key = b.title == a.title ? Shortcut("return") : b.key == Shortcut("return") ? nil : b.key }
+                    return b
+                }
+            }
+            let app = app
+            var it = Picker.Item(title: a.title, subtitle: a.why ?? a.command ?? "", detail: a.key.flatMap { $0 == Shortcut("return") ? nil : $0.display } ?? "", verb: a.title) {
+                app.perform(a.title, actions)
+            }
+            it.id = rowID(a.title)
+            it.keepsOpen = !a.closes
+            it.listActions = actions
+            it.menu = { app.serviceMenu(actions) }
+            return it
+        }
     }
 
     /// The row's actions, then the tool's — those this server has: of same-key variants the first whose `requires`

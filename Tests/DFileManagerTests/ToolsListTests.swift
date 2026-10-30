@@ -63,7 +63,7 @@ import Testing
         rules(Self.rules)
         banned("203.0.113.7 198.51.100.2")
         let setsid = "/usr/bin/perl -e 'use POSIX; setsid(); exec @ARGV' -- "
-        ToolRunner.command = { [dir] in "PATH=\(dir)/bin:$PATH " + setsid + $0.command }
+        ToolRunner.command = { [dir] in "echo >> \(dir)/trips; PATH=\(dir)/bin:$PATH " + setsid + $0.command }
         ToolRunner.sudoProgram = dir + "/sudo"
         ToolRunner.hasMaster = { _ in true }
         ToolRunner.own = URL(fileURLWithPath: dir + "/own")
@@ -86,6 +86,8 @@ import Testing
         if on { FileManager.default.createFile(atPath: dir + "/" + name, contents: nil) } else { try? FileManager.default.removeItem(atPath: dir + "/" + name) }
     }
     var calls: [String] { ((try? String(contentsOfFile: dir + "/calls.log", encoding: .utf8)) ?? "").split(separator: "\n").map(String.init) }
+    /// Round trips: payloads sent.
+    var trips: Int { ((try? String(contentsOfFile: dir + "/trips", encoding: .utf8)) ?? "").count }
 }
 
 @MainActor func toolsUntil(_ done: () -> Bool) async {
@@ -153,7 +155,7 @@ extension ServerLockTests {
         #expect(c.rows.map(\.title) == ["22/tcp", "80,443/tcp", "Anywhere"] && c.rows.map(\.state) == [.on, .on, .failed])
         #expect(c.rows[0].subtitle == "ALLOW IN · from Anywhere" && c.rows[1].detail == "web" && c.rows[2].badges.count == 1)
         #expect(c.header == "Firewall active · default: deny (incoming), allow (outgoing), disabled (routed)")
-        #expect(Array(bench.calls.prefix(3)) == ["ufw status numbered", "ufw status verbose", "ufw version"])
+        #expect(Array(bench.calls.prefix(3)) == ["ufw status numbered", "ufw status verbose", "ufw version"] && bench.trips == 1, "one round trip")
 
         a.showList(source)
         app.window.makeFirstResponder(a.table)
@@ -269,6 +271,40 @@ extension ServerLockTests {
         #expect(asked == ["Turn Firewall On on localhost?"] && bench.calls.contains("ufw --force enable"))
         #expect(list.resultLines.first?.hasPrefix("\u{FFFC} Firewall is on on localhost at ") == true, "\(list.resultLines)")
         #expect(list.shown.map(\.title) == ["Anywhere", "22/tcp", "80,443/tcp"], "read again")
+    }
+
+    /// Server Info has no list: its actions are its rows (§1.3), what each runs and its key beside it, the header above
+    /// them. ↩ runs the row's — the others keep their keys. A window's output has Copy and Save… (⌘C with nothing
+    /// selected, ⌘S), Save… offering the action's `save` name.
+    @Test func aLauncherListsItsActions() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done() }
+        let source = ToolListSource(app, try toolNamed(app, "sysinfo"), SavedServer(target: .local()), .local())
+        let c = try await source.read(CancelFlag())
+        #expect(c.rows.map(\.title) == ["Full Report", "CPU · RAM Now", "Live Load", "Disks", "Traffic (5 s)", "GPU", "Top Processes"])
+        #expect(c.rows[0].subtitle == "sh -s < sysinfo.report.sh" && c.rows[0].detail == "" && c.rows[1].subtitle == "uptime; free -h; top -bn1 | head -15" && c.rows[1].detail == "⌘L")
+        #expect(c.header?.contains(" · Darwin ") == true && bench.trips == 1, "\(c.header ?? "")")
+
+        a.showList(source)
+        app.window.makeFirstResponder(a.table)
+        let list = try #require(a.list)
+        #expect(list.shown.map(\.title) == c.rows.map(\.title) && a.table.tableColumns.map(\.title) == ["Action", "Runs", "Key"])
+        #expect(list.actions.filter { $0.key == Shortcut("return") }.map(\.title) == ["Full Report"])
+        a.table.selectRowIndexes([3], byExtendingSelection: false)
+        #expect(list.actions.filter { $0.key == Shortcut("return") }.map(\.title) == ["Disks"] && list.actions.contains { $0.title == "CPU · RAM Now" && $0.key == Shortcut("cmd+l") })
+        pressKey(a, 36, "\r")
+        await toolsUntil { NSApp.windows.contains { $0.title == "Disks — localhost" && $0.isVisible } }
+        let disks = try #require(NSApp.windows.first { $0.title == "Disks — localhost" })
+        #expect(OutputWindow.keys(of: disks)?.map(\.title).suffix(2) == ["Copy", "Save…"] && (disks.windowController as? OutputWindow)?.saveName == nil)
+        disks.close()
+
+        a.table.selectRowIndexes([0], byExtendingSelection: false)
+        pressKey(a, 36, "\r")
+        await toolsUntil { NSApp.windows.contains { $0.title == "Full Report — localhost" && $0.isVisible } }
+        let report = try #require(NSApp.windows.first { $0.title == "Full Report — localhost" })
+        #expect((report.windowController as? OutputWindow)?.saveName == "localhost-report.txt")
+        report.close()
     }
 
     /// A Picker closes before an action that opens a window of its own runs — and the list may go with it: the

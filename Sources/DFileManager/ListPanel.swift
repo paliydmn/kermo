@@ -72,7 +72,7 @@ struct ListAction {
     /// The question before it: none (a look), on a production server, everywhere (a Stop).
     enum Asks { case never, prod, always }
     let title: String
-    let key: Shortcut?
+    var key: Shortcut?
     let group: Int
     let closes: Bool
     let why: String?

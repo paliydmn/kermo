@@ -2,10 +2,11 @@
 
 # Tools
 
-A tool turns a program on a server into a list with actions, as [Services…](servers.md#services-and-containers) does for systemd. Kermo comes with two:
+A tool turns a program on a server into a list with actions, as [Services…](servers.md#services-and-containers) does for systemd. Kermo comes with three:
 
 - **Firewall (ufw)**: the rules, what's allowed and what's denied, and from where;
-- **Banned IPs (fail2ban)**: the addresses fail2ban has banned, by jail.
+- **Banned IPs (fail2ban)**: the addresses fail2ban has banned, by jail;
+- **Server Info**: a report of the machine for support, its load now and as it goes, disks, traffic, GPU, the busiest processes.
 
 A tool is a JSON file, a *preset*. Kermo has no code for any particular tool: the built-in ones use only what a preset of your own can.
 
@@ -17,7 +18,7 @@ A server shows the tools whose program it has:
 - A row each in the server's [overview](servers.md#the-server-as-a-place): **Firewall**, **Banned IPs**, with how many rows the list had when it was last read (`20 rows`), shown while a connection is up; `—` till then. ↩ shows the list in that panel, ⌘↩ in the other.
 - Search finds them by name too, once Kermo knows the server has them: `fire web` finds **Firewall — web-01**.
 
-**What a server has is asked once its connection is up** — one short run that checks for every tool's program at once (`command -v ufw`), as the login user, and learns the system ("Fedora 44 · dnf"). Kermo never logs in for a menu: with no connection, **Tools ▸** says **Connect to see tools**. Once known, the tools stay in the menu greyed, with **As of 14:02**, after the connection closes — for a saved server across restarts too (`tools/known.json`; deleting it only means asking again). A server with none of their programs has no **Tools ▸**.
+**What a server has is asked once its connection is up** — one short run that checks for every tool's program at once (`command -v ufw`), as the login user, and learns the system ("Fedora 44 · dnf"). Kermo never logs in for a menu: with no connection, **Tools ▸** says **Connect to see tools**. Once known, the tools stay in the menu greyed, with **As of 14:02**, after the connection closes — for a saved server across restarts too (`tools/known.json`; deleting it only means asking again). Server Info needs no program of its own, so every server has it.
 
 ## A tool's list
 
@@ -54,6 +55,22 @@ Its menu also has **Turn Firewall On…** and **Turn Firewall Off…**. An inact
 
 Its menu also has **Unban from Every Jail**. The line above the rows lists the jails and fail2ban's version.
 
+### Server Info
+
+Server Info has no list: its rows are what it can show, and ↩ on a row runs it. The line above them is the server's name, its kernel and how long it's been up. Nothing needs root, and nothing changes on the server.
+
+| Row | Key | Shows |
+|---|---|---|
+| **Full Report** | | Host, OS, CPU, memory, disks, GPU, network, the busiest processes and failed services, in a window — ⌘S saves it as `web-01-report.txt` to send |
+| **CPU · RAM Now** | ⌘L | `uptime`, `free -h` and `top`'s first lines |
+| **Live Load** | | `vmstat 2` as it goes, in a window of its own; in a panel, next door |
+| **Disks** | | Mounted file systems by use, and the disks with their sizes and models |
+| **Traffic (5 s)** | | Each network interface's download and upload over 5 seconds |
+| **GPU** | | `nvidia-smi`, else the graphics devices `lspci` sees |
+| **Top Processes** | | The busiest by CPU |
+
+A command that isn't on the server says so in its window (`lsblk: not available here`) instead of leaving it empty.
+
 The keys work in search. In a panel a row's key works where it's one of Kermo's own command keys (↩, F8, ⌘L, ⌘J); the others (⌘N, ⌘B) are on the ＋ button and in the row's menu (⌃↩).
 
 ## How an action runs
@@ -75,7 +92,7 @@ The keys work in search. In a panel a row's key works where it's one of Kermo's 
 5. **How it went**, in a line under the list: "Deleted rule 3 (80/tcp) on web-01 at 14:02:11", or ✕ and the first line of what the program said, with **Output…** for all of it. With the list closed, the status line says it. A program that isn't on the server is said so: "apt-get isn't on web-01 (Fedora 44 · dnf)".
 6. **The list is read again** after a change, the cursor staying on its row, or going to the next one if that row is gone. A look reads nothing again.
 
-What opens a window or a tab of its own goes there instead of the line: a window of output, a log that follows (closing it ends the command on the server), a command in an SSH tab, a file in the editor (as any server file: history, checks, production's question on save).
+What opens a window or a tab of its own goes there instead of the line: a window of output, a log that follows (closing it ends the command on the server), a command in an SSH tab, a file in the editor (as any server file: history, checks, production's question on save). In a window of output, **⌘C** with nothing selected copies all of it, and **⌘S** saves it as a text file.
 
 ⎋ stops the wait. A run that takes over 30 seconds, or gives over 16 MB of output, is stopped and says so; when the connection drops, the run ends on the server too, leaving nothing behind. Tools use at most 9 of a connection's sessions at once (OpenSSH allows 10; past them ssh would log in again): one more waits, and the status line says so.
 
@@ -112,7 +129,7 @@ The smallest tool is three fields; it's in **Tools ▸** on every server, and it
 | `sudo`, `where` | As root through sudo; `server` (default) or `mac` (this Mac's `sh`, never as root) |
 | `list` | `command` or `script`, and how its output becomes rows: `format` (`lines`, `json`, `jsonl`, `tsv`, `csv`, `table`, `regex`), `pattern`, `names`; `key` (what names a row), `title`, `subtitle`, `detail`, `state`, `columns`, `empty` |
 | `header` | A command whose first line shows above the list |
-| `actions`, `toolActions` | A row's actions and the tool's: `id`, `title`, `key` (`return`, `f8`, `cmd+e`…), `command` or `script`, `readonly` (a look), `dangerous` (can't be undone), `confirm` (asks everywhere), `message` (what the question says), `verify`, `multi` (on marked rows too), `refresh`, `output` (`line`, `window`, `follow`, `terminal`, `silent`), `strip: "cri"`, `edit` (a server path for the editor), `done` |
+| `actions`, `toolActions` | A row's actions and the tool's: `id`, `title`, `key` (`return`, `f8`, `cmd+e`…), `command` or `script`, `readonly` (a look), `dangerous` (can't be undone), `confirm` (asks everywhere), `message` (what the question says), `verify`, `multi` (on marked rows too), `refresh`, `output` (`line`, `window`, `follow`, `terminal`, `silent`), `strip: "cri"`, `edit` (a server path for the editor), `done`, `save` (the name ⌘S offers for a window's output: `{server}-report.txt`). A tool with `toolActions` and no `list` lists its actions as its rows, as Server Info does |
 | `inputs` | An action's sheet: `name`, `type` (`text`, `secret`, `choice`, `choice-from`), `title`, `placeholder`, `default`, `pattern`, `optional`, `options`; a `choice-from` has a `command` and a `key` (`{line}`) |
 | `primary` | The tool action on the ＋ button |
 | `version` | `command`, `pattern` with a group `v`, `tested` (`>=0.36 <0.37`) |
