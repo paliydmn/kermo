@@ -161,7 +161,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
             views = [NSImageView(image: (mine ? Symbol.folder : Symbol.archive).image(nil)), NSTextField(labelWithString: mine ? "My Tools" : "Built into Kermo"),
                      Self.spacer(), Self.small("\(count)")]
         case .newTool:
-            views = [NSImageView(image: Symbol.plus.image(nil)), NSTextField(labelWithString: "New Tool…")]
+            views = [NSImageView(image: Symbol.plus.image(nil)), NSTextField(labelWithString: "New Tool…"), Self.spacer()]
         }
         let stack = NSStackView(views: views)
         (stack.spacing, stack.distribution) = (5, .fill)

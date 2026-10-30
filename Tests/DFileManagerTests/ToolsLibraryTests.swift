@@ -51,7 +51,8 @@ extension ServerLockTests {
         #expect(all.contains("Runs by itself") && all.contains("Runs when you choose"))
         #expect(all.contains(runs.itself[0].text.trimmingCharacters(in: .whitespaces)) && runs.itself[0].text.contains("requires: command -v ufw"))
         #expect(all.contains { $0.hasPrefix("header: ") && $0.hasSuffix("— as root") }, "ufw's header runs as root")
-        let red = page.stack.arrangedSubviews.compactMap { $0 as? NSTextField }.filter { $0.textColor == Palette.fail }.map(\.stringValue)
+        func fields(_ v: NSView) -> [NSTextField] { ((v as? NSTextField).map { [$0] } ?? []) + v.subviews.flatMap(fields) }
+        let red = fields(page.stack).filter { $0.textColor == Palette.fail }.map(\.stringValue)
         #expect(!red.isEmpty && red.allSatisfy { line in runs.chosen.contains { $0.dangerous && $0.text.trimmingCharacters(in: .whitespaces) == line } })
         #expect(all.contains("ufw found") && all.contains("not checked yet"), "localhost has ufw (the stand-in); web-01 was never connected: \(all)")
         press(buttons(page).first { $0.title == "‹ Built into Kermo" })
@@ -183,6 +184,9 @@ extension ServerLockTests {
         try Data(#"{ "schema": 1, "id": "sysinfo", "title": "Mine", "oops": 1 }"#.utf8).write(to: URL(fileURLWithPath: bench.dir + "/own/sysinfo.json"))
         _ = app.tools.reload()
         #expect(try toolNamed(app, "sysinfo").builtIn, "yours has an error: the built-in stays")
+        #expect(await editor.reload())
+        await toolsUntil { p.problems.string.contains("oops") }
+        #expect(p.problems.string.contains("✕ line 1: oops: unknown field"), "read anew from disk, checked anew: \(p.problems.string)")
         #expect(app.tools.library.problems.contains { $0.hasPrefix("tools/sysinfo.json: line 1: oops") }, "\(app.tools.library.problems)")
         let lib = ToolsLibrary(app, mine: true)
         #expect(buttons(lib.broken).map(\.title).contains { $0.hasPrefix("✕ tools/sysinfo.json: line 1: oops") })

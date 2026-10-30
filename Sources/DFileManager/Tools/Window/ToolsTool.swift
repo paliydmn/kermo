@@ -73,8 +73,10 @@ final class ToolsTool: NSView {
         }
         views.append(Self.heading("What it runs"))
         for g in tool.runs.groups {
-            views.append(ToolsPage.text(g.title, color: .secondaryLabelColor, size: 11, bold: true))
-            views += (g.lines.isEmpty ? [ToolRuns.Line(what: "nothing", how: "")] : g.lines).map(line)
+            let lines = NSStackView(views: [ToolsPage.text(g.title, color: .secondaryLabelColor, size: 11, bold: true)]
+                                    + (g.lines.isEmpty ? [ToolRuns.Line(what: "nothing", how: "")] : g.lines).map(line))
+            (lines.orientation, lines.alignment, lines.spacing) = (.vertical, .leading, 3)
+            views.append(lines)
         }
         views.append(Self.heading("Servers"))
         views.append(servers())
@@ -121,6 +123,7 @@ final class ToolsTool: NSView {
         let g = NSGridView(views: rows.map { $0 + Array(repeating: NSGridCell.emptyContentView, count: 4 - $0.count) })
         (g.rowSpacing, g.columnSpacing) = (6, 16)
         g.rowAlignment = .firstBaseline
+        g.setContentHuggingPriority(.required, for: .horizontal)   // its columns as wide as they need, not the page
         return g
     }
 

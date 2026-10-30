@@ -689,6 +689,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         textView.setSelectedRange(NSRange(location: min(sel.location, (text as NSString).length), length: 0))
         textView.scrollRangeToVisible(textView.selectedRange())
         dirty = false
+        edited?()   // read anew: what checks the text looks again
         return true
     }
 

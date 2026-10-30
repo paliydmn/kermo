@@ -74,7 +74,7 @@ final class ToolEditor: NSView, NSTextViewDelegate, NSMenuDelegate {
         for (t, s) in [(problems!, problemsScroll), (output!, outputScroll)] {
             (t.isEditable, t.isSelectable, t.drawsBackground) = (false, true, false)
             t.textContainerInset = NSSize(width: 2, height: 4)
-            (s.drawsBackground, s.borderType) = (false, .noBorder)
+            (s.drawsBackground, s.borderType, s.autohidesScrollers) = (false, .noBorder, true)
         }
         problems.delegate = self
         problems.setAccessibilityLabel("Problems")
