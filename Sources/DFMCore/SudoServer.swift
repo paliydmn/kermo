@@ -78,7 +78,7 @@ enum SudoServer {
         return nil
     }
 
-    private static let asking = NSLock()
+    static let asking = NSLock()
     /// How long the session waits for sftp-server's first answer after the password (tests: less).
     nonisolated(unsafe) static var versionWait: TimeInterval = 10
 
