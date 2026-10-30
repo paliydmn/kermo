@@ -301,6 +301,9 @@ extension AppDelegate {
             $0.enableSudoTouchID()
         },
         cmd("admin.auditLog", "Production Log", [], menu: "Server", group: 5, aliases: "audit journal prod history Show Production Log") { $0.showAuditLog() },
+        cmd("server.watch", "Watch Server…", [], menu: "Server", group: 4, aliases: "monitor watch background system cpu memory disk alerts Stop Watching") { app in
+            app.watchActiveServer()
+        },
         cmd("server.runOn", "Run on Servers…", [], menu: "Server", group: 4, aliases: "ssh command several many all servers parallel pssh") {
             $0.runOnServers()
         },

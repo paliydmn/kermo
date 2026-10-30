@@ -256,3 +256,55 @@ extension ToolPayload {
         return found
     }
 }
+
+extension ToolPayload {
+    /// A watched source of a server (§8.5): a stream's Run, or a poll's run again every `every` seconds.
+    public struct Watched: Sendable {
+        public var tool: ToolPreset
+        public var run: ToolRun
+        public var every: Double?
+        public var scope: ToolTemplate.Scope
+        public var scripts: [String: String]
+        public init(tool: ToolPreset, run: ToolRun, every: Double?, scope: ToolTemplate.Scope, scripts: [String: String]) {
+            (self.tool, self.run, self.every, self.scope, self.scripts) = (tool, run, every, scope, scripts)
+        }
+    }
+
+    /// A server's watched streams and polls in one channel (§8.5): each in a subshell of its own — its values and env
+    /// set inside it, a poll's command run again every `every` seconds — all at once, its lines each prefixed with
+    /// the tool's id and a tab (`watchLine` takes them apart); the payload ends when the last of them does, or with
+    /// the connection, as any payload's. nil where they can't share one: `sudo` differs, or a source is this Mac's.
+    /// ponytail: a line over PIPE_BUF (4 KB) may interleave with another source's; an unparsed line is a missed sample.
+    public static func watch(_ sources: [Watched], password: Bool = false, nonce: String = newNonce(), sudoProgram: String = "sudo",
+                             shell: String = "sh") throws(ToolTemplate.Empty) -> ToolPayload? {
+        let sudo = Set(sources.map { $0.run.sudo ?? $0.tool.sudo ?? false })
+        guard !sources.isEmpty, sudo.count == 1, sources.allSatisfy({ ($0.run.where ?? $0.tool.where ?? .server) == .server }) else { return nil }
+        var body: [String] = []
+        for s in sources {
+            var taken: [String: String] = [:], values: [ToolTemplate.Variable] = []
+            let text: String
+            if let c = s.run.command {
+                let cmd = try ToolTemplate.command(c, s.scope, vars: &taken)
+                (text, values) = (cmd.text, cmd.values)
+            } else { text = s.scripts[s.run.script ?? ""] ?? "" }
+            var lines: [String] = []
+            for (name, t) in (s.tool.env ?? [:]).merging(s.run.env ?? [:], uniquingKeysWith: { $1 }).sorted(by: { $0.key < $1.key }) {
+                let v = ToolTemplate.value(t, s.scope, vars: &taken)
+                values += v.values.filter { !values.contains($0) }
+                lines.append("export \(name)=\(v.text)")
+            }
+            lines = values.map { "\($0.name)=\(ShellContext.quote($0.value))" } + lines
+            let inner = s.every.map { "while :; do\n\(text)\nsleep \(Int($0))\ndone" } ?? text
+            body.append("(\n\(lines.joined(separator: "\n"))\n\(inner)\n) | while IFS= read -r l; do printf '%s\\t%s\\n' \(ShellContext.quote(s.tool.id)) \"$l\"; done &")
+        }
+        body.append("wait")
+        return ToolPayload(body: body.joined(separator: "\n"), values: [], sudo: sudo.first! ? (password ? .password : .noPassword) : .none, nonce: nonce,
+                           sudoProgram: sudoProgram, shell: shell)
+    }
+
+    /// A line of `watch`'s output: the tool's id and the source's line.
+    public static func watchLine(_ line: String) -> (tool: String, line: String)? {
+        guard let tab = line.firstIndex(of: "\t") else { return nil }
+        return (String(line[..<tab]), String(line[line.index(after: tab)...]))
+    }
+}

@@ -40,7 +40,13 @@ public struct LoadedTool: Sendable {
             l?.dangerous = a.spec.dangerous == true
             return l
         }
-        return ToolRuns(itself: itself.compactMap { $0 }, chosen: chosen.compactMap { $0 })
+        var runs = ToolRuns(itself: itself.compactMap { $0 }, chosen: chosen.compactMap { $0 })
+        runs.background = [line("stream", p.stream?.run), line("poll", p.poll?.run)].compactMap { $0 }.map { l in
+            var l = l
+            l.every = p.watch?.every
+            return l
+        }
+        return runs
     }
 }
 
@@ -53,19 +59,26 @@ public struct ToolRuns: Sendable, Hashable {
         /// Its command, "the script x.sh (12 lines)", "edit /etc/x".
         public var how: String
         public var root = false, mac = false, long = false, dangerous = false
+        /// A watched source's: every so many seconds on each watched server.
+        public var every: Double?
 
         public init(what: String, how: String, root: Bool = false, mac: Bool = false) { (self.what, self.how, self.root, self.mac) = (what, how, root, mac) }
 
         /// As the trust sheet has it: "  list: ufw status   — as root".
         public var text: String {
             "  \(what): \(how)" + (root ? "   — as root" : "") + (mac ? "   — on this Mac" : "") + (long ? "   — runs on after Kermo quits" : "")
+                + (every.map { "   — every \(Int($0)) s on each watched server" } ?? "")
         }
     }
 
     public var itself: [Line]
     public var chosen: [Line]
+    /// In the background, when you watch it (§8.5, §12): its stream or poll.
+    public var background: [Line] = []
 
-    public var groups: [(title: String, lines: [Line])] { [("Runs by itself", itself), ("Runs when you choose", chosen)] }
+    public var groups: [(title: String, lines: [Line])] {
+        [("Runs by itself", itself), ("Runs when you choose", chosen)] + (background.isEmpty ? [] : [("In the background, when you watch it", background)])
+    }
 
     /// The trust sheet's text: each group, its lines (or "nothing").
     public var text: String {
@@ -160,7 +173,9 @@ public struct ToolServers: Sendable, Codable, Hashable {
     public struct Setting: Sendable, Codable, Hashable {
         public var hidden: Bool?
         public var vars: [String: String]?
-        public init(hidden: Bool? = nil, vars: [String: String]? = nil) { (self.hidden, self.vars) = (hidden, vars) }
+        /// Watched in the background (§8.5): its stream or poll runs there while Kermo is open.
+        public var watch: Bool?
+        public init(hidden: Bool? = nil, vars: [String: String]? = nil, watch: Bool? = nil) { (self.hidden, self.vars, self.watch) = (hidden, vars, watch) }
     }
 
     public init() {}
@@ -190,6 +205,17 @@ public struct ToolServers: Sendable, Codable, Hashable {
 
     public mutating func setVars(_ tool: String, on id: String, _ values: [String: String]) {
         edit(tool, id) { $0.vars = values.isEmpty ? nil : values }
+    }
+
+    /// Whether `tool` is watched on the server `id`.
+    public func watches(_ tool: String, on id: String?) -> Bool { id.flatMap { servers[$0]?[tool]?.watch } == true }
+
+    /// Watch, or Stop Watching.
+    public mutating func watch(_ tool: String, on id: String, _ on: Bool) { edit(tool, id) { $0.watch = on ? true : nil } }
+
+    /// Every server and tool watched: (server id, tool id).
+    public var watched: [(server: String, tool: String)] {
+        servers.flatMap { id, tools in tools.filter { $0.value.watch == true }.keys.sorted().map { (id, $0) } }.sorted { $0.0 + $0.1 < $1.0 + $1.1 }
     }
 
     /// Use on Servers…: only on `checked` of `all`; or wherever it's found, each of `all` shown or hidden as checked.

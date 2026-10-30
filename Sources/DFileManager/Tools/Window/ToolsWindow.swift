@@ -3,7 +3,8 @@ import DFMCore
 
 /// The Tools window (Tools PR 4, monitor §9): a sidebar of your servers — each a page of its tools (`ToolsPage`) — and
 /// the library: the tools built into Kermo and yours, each with its page (`ToolsTool`), and New Tool…. A server's page
-/// can be a window of its own (Open in New Window), several at once. WATCHED comes with watching (PR 5).
+/// can be a window of its own (Open in New Window), several at once. WATCHED (PR 5, decisions 6 and 21): the servers
+/// watched in the background, problems first, each with its tools' summary; the rest under OTHER SERVERS.
 /// ponytail: nothing reopens after a restart (D-159).
 @MainActor
 final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
@@ -16,6 +17,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
     enum Row: Equatable {
         case header(String)
         case server(SavedServer, SFTPTarget)
+        case watched(SavedServer, SFTPTarget)
         case library(mine: Bool)
         case newTool
     }
@@ -45,7 +47,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
             w.given.append(t.asUser)
         }
         w.reload()
-        if let t, let i = w.rows.firstIndex(where: { if case .server(_, let x) = $0 { ServerRow.key(x) == ServerRow.key(t.asUser) } else { false } }) {
+        if let t, let i = w.rows.firstIndex(where: { w.target($0).map { ServerRow.key($0) == ServerRow.key(t.asUser) } ?? false }) {
             w.sidebar.selectRowIndexes([i], byExtendingSelection: false)
         } else if w.sidebar.selectedRow < 0, let i = w.rows.firstIndex(where: { if case .header = $0 { false } else { true } }) {
             w.sidebar.selectRowIndexes([i], byExtendingSelection: false)
@@ -59,6 +61,12 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         let w = ToolsWindow(app, alone: (s, t))
         alone.append(w)
         w.window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Samples came, or a watched server's state changed: the sidebar's WATCHED rows and the open live tabs, in place.
+    static func live() {
+        main?.reload()
+        pages.forEach { $0.live() }
     }
 
     /// What servers have, or what you set, changed: every window shows it again.
@@ -127,20 +135,32 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
             if !keys.contains(ServerRow.key(t)), !extra.contains(where: { ServerRow.key($0) == ServerRow.key(t) }) { extra.append(t) }
         }
         let was = sidebar.selectedRow >= 0 && sidebar.selectedRow < rows.count ? rows[sidebar.selectedRow] : nil
-        rows = [.header("SERVERS")] + app.savedServers.map { .server($0, given($0.target) ?? $0.target) } + extra.map { .server(SavedServer(target: $0), $0) }
+        let watched = app.tools.monitor.watched, watchedKeys = Set(watched.map(\.key))
+        rows = (watched.isEmpty ? [] : [.header("WATCHED")] + watched.map { .watched($0.saved, $0.target) })
+            + [.header(watched.isEmpty ? "SERVERS" : "OTHER SERVERS")]
+            + app.savedServers.filter { !watchedKeys.contains(ServerRow.key($0.target)) }.map { .server($0, given($0.target) ?? $0.target) }
+            + extra.map { .server(SavedServer(target: $0), $0) }
             + [.header("LIBRARY"), .library(mine: false), .library(mine: true), .newTool]
         sidebar.reloadData()
         if let was, let i = rows.firstIndex(where: { same($0, was) }) { sidebar.selectRowIndexes([i], byExtendingSelection: false) }
     }
 
-    /// The same row: a server by its address (a not-saved one's id is new each time).
+    /// The same row: a server by its address (a not-saved one's id is new each time), watched or not.
     private func same(_ a: Row, _ b: Row) -> Bool {
-        if case .server(_, let x) = a, case .server(_, let y) = b { return ServerRow.key(x) == ServerRow.key(y) }
+        if let x = target(a), let y = target(b) { return ServerRow.key(x) == ServerRow.key(y) }
         return a == b
+    }
+
+    private func target(_ r: Row) -> SFTPTarget? {
+        switch r {
+        case .server(_, let t), .watched(_, let t): t
+        default: nil
+        }
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool { if case .header = rows[row] { true } else { false } }
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { if case .watched = rows[row] { 44 } else { tableView.rowHeight } }
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { !self.tableView(tableView, isGroupRow: row) }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -156,6 +176,8 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
             views = [NSImageView(image: Symbol.server.image(nil)), name]
                 + Chip.of(t).map { c in let v = NSImageView(image: c.image); v.setAccessibilityLabel(c.spoken); return v }
                 + [Self.spacer(), Self.small(n)]
+        case .watched(let s, let t):
+            return watchedRow(s, t)
         case .library(let mine):
             let count = mine ? app.tools.library.tools.filter { !$0.builtIn && ToolRunner.shows($0) }.count : ToolsLibrary.tools(app, mine: false).count
             views = [NSImageView(image: (mine ? Symbol.folder : Symbol.archive).image(nil)), NSTextField(labelWithString: mine ? "My Tools" : "Built into Kermo"),
@@ -174,7 +196,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         guard rows.indices.contains(r) else { return }
         switch rows[r] {
         case .header: return
-        case .server(let s, let t):
+        case .server(let s, let t), .watched(let s, let t):
             if let p = page, ServerRow.key(p.target) == ServerRow.key(t) { return }
             let p = ToolsPage(app, s, t)
             p.openAlone = { [unowned self] in ToolsWindow.showAlone(app, s, t) }
@@ -212,6 +234,60 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         content.addSubview(view)
         NSLayoutConstraint.activate([view.leadingAnchor.constraint(equalTo: content.leadingAnchor), view.trailingAnchor.constraint(equalTo: content.trailingAnchor),
                                      view.topAnchor.constraint(equalTo: content.topAnchor), view.bottomAnchor.constraint(equalTo: content.bottomAnchor)])
+        app.tools.monitor.reconcile()   // the page that left took its live tab with it
+    }
+
+    /// A watched server's row (decisions 9, 21): its worst state as a shape with its color — a triangle for a
+    /// warning, an octagon for a critical one, a dot when fine, a ring while paused — the name, its chips and a word
+    /// on the state; under them each watched tool's summary: a bar with its thresholds, a count, a text.
+    private func watchedRow(_ s: SavedServer, _ t: SFTPTarget) -> NSView {
+        let monitor = app.tools.monitor
+        guard let state = monitor.server(t) else { return NSTextField(labelWithString: s.title) }
+        let (worst, why) = monitor.worst(state)
+        let mark = NSImageView(image: worst == .critical ? Symbol.crit.image("critical", color: Palette.fail, size: 12)
+                               : worst == .warning ? Symbol.warnFill.image("warning", color: Palette.warn, size: 12)
+                               : worst == .ok ? Symbol.dot.image("fine", color: Palette.ok, size: 9) : Symbol.ring.image("paused", color: .tertiaryLabelColor, size: 9))
+        let name = NSTextField(labelWithString: s.title)
+        name.textColor = s.prod ? Palette.prod : .labelColor
+        name.lineBreakMode = .byTruncatingTail
+        name.setContentCompressionResistancePriority(.init(499), for: .horizontal)
+        let said = Self.small(why)
+        said.textColor = worst == .critical ? Palette.fail : worst == .warning ? Palette.warn : .secondaryLabelColor
+        let top = NSStackView(views: [mark, name] + Chip.of(t).map { c in let v = NSImageView(image: c.image); v.setAccessibilityLabel(c.spoken); return v } + [Self.spacer(), said])
+        (top.spacing, top.distribution) = (5, .fill)
+        var items: [NSView] = []
+        for tool in state.tools.values.filter(\.watched).sorted(by: { $0.preset.id < $1.preset.id }) {
+            for item in monitor.summary(tool) {
+                if let v = item.value {
+                    let bar = NSLevelIndicator()
+                    bar.levelIndicatorStyle = .continuousCapacity
+                    (bar.minValue, bar.maxValue, bar.doubleValue) = (0, 100, v)
+                    bar.warningValue = item.warn ?? 101
+                    bar.criticalValue = item.crit ?? 101
+                    bar.controlSize = .mini
+                    bar.isEditable = false
+                    bar.widthAnchor.constraint(equalToConstant: 34).isActive = true
+                    bar.toolTip = "\(item.label) \(item.text)"
+                    bar.setAccessibilityLabel("\(item.label) \(item.text)")
+                    let label = Self.small(item.label.lowercased())
+                    label.font = .systemFont(ofSize: 9)
+                    items.append(NSStackView(views: [label, bar]))
+                    (items.last as? NSStackView)?.spacing = 2
+                } else {
+                    let l = Self.small(item.text)
+                    l.textColor = item.level == .critical ? Palette.fail : item.level == .warning ? Palette.warn : .secondaryLabelColor
+                    items.append(l)
+                }
+            }
+        }
+        let under = NSStackView(views: items.isEmpty ? [Self.small(state.channel == nil ? (state.needsLogin ? "needs login" : "connecting…") : "no sample yet")] : items)
+        under.spacing = 8
+        let stack = NSStackView(views: [top, under])
+        (stack.orientation, stack.alignment, stack.spacing) = (.vertical, .leading, 2)
+        stack.edgeInsets = NSEdgeInsets(top: 2, left: 2, bottom: 2, right: 4)
+        top.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -6).isActive = true
+        stack.setAccessibilityLabel("\(s.title): " + (why.isEmpty ? "fine" : why))
+        return stack
     }
 
     private static func spacer() -> NSView {
@@ -242,6 +318,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
     func windowWillClose(_ notification: Notification) {
         if Self.main === self { Self.main = nil }
         Self.alone.removeAll { $0 === self }
+        DispatchQueue.main.async { [app] in MainActor.assumeIsolated { app.tools.monitor.reconcile() } }   // once the window is gone: its live tab ends
     }
 }
 

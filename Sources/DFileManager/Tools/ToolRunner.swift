@@ -37,6 +37,8 @@ final class ToolRunner {
     var quiet: [String: Date] = [:]
     /// Long jobs (§7.6): Activity's, `tools/runs.json`.
     private(set) lazy var jobs = ToolJobs(app)
+    /// Watching (§8): the streams and polls of watched tools and open tabs, their series, alerts and events.
+    private(set) lazy var monitor = ToolMonitor(app)
 
     /// Tests: how a payload starts (in a session of its own), sudo's stand-in, your folder, a connection that answers.
     nonisolated(unsafe) static var command: @Sendable (ToolPayload) -> String = { $0.command }
@@ -65,6 +67,8 @@ final class ToolRunner {
         known = Self.own.flatMap { try? Config.load("known.json", as: [String: Known].self, in: $0.path) } ?? [:]
         let read = Self.own.map { Config.loadKeeping("servers.json", as: ToolServers.self, in: $0.path) }
         settings = read?.value ?? ToolServers()
+        monitor.reconcile()   // watched servers, as the file says now (at launch: watching resumes by itself)
+        ToolsWindow.refresh()
         return library.problems + [read?.problem.map { "tools/" + $0 }].compactMap { $0 }
     }
 
@@ -97,6 +101,7 @@ final class ToolRunner {
 
     static func shows(_ t: LoadedTool) -> Bool {
         let p = t.preset
+        if p.stream != nil || p.poll != nil { return true }   // watched, or live on its tab (PR 5)
         return p.list.map { $0.run.command != nil || $0.run.script != nil } ?? p.commandAction.map { runs($0, of: p) }
             ?? p.toolActions?.contains { runs($0, of: p) } ?? false
     }

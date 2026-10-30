@@ -195,8 +195,9 @@ public enum ToolLevel: Int, Sendable, Comparable, Codable {
 /// An alert's standing on one series (§8.3).
 public struct ToolAlertState: Sendable, Equatable {
     public var level: ToolLevel?
-    /// When it first went past a threshold, for "after 12 min" when it's back.
+    /// When it was raised, for "after 12 min" when it's back; the message then.
     public var since: Date?
+    public var message: String?
     /// Past each level's threshold since (real samples in a row; a gap starts it over).
     var over: [ToolLevel: Date] = [:]
     var streak: [ToolLevel: Int] = [:]
@@ -241,9 +242,10 @@ public struct ToolAlerts: Sendable {
                 s.level = held
                 if let held, held > (was ?? .warning) || was == nil {
                     s.since = s.since ?? sample.at
-                    changes.append(.worse(alert: id, key: key, level: held, message: message(a, m, key: key, value: v, level: held, sample: sample)))
+                    s.message = message(a, m, key: key, value: v, level: held, sample: sample)
+                    changes.append(.worse(alert: id, key: key, level: held, message: s.message!))
                 } else if held == nil, let was, let since = s.since {
-                    s.since = nil
+                    (s.since, s.message) = (nil, nil)
                     changes.append(.ok(alert: id, key: key, was: was, since: since))
                 }
                 states[id, default: [:]][key] = s
@@ -279,7 +281,8 @@ public struct ToolAlerts: Sendable {
         return (row == nil ? "\(m.title ?? a.metric ?? "") \(shown)" : "\(key) \(shown)") + (long.map { " for " + Self.minutes($0) } ?? "")
     }
 
-    static func minutes(_ s: Double) -> String { s < 60 ? "\(Int(s)) s" : s < 3600 ? "\(Int(s / 60)) min" : "\(Int(s / 3600)) h" }
+    /// "45 s", "12 min", "3 h".
+    public static func minutes(_ s: Double) -> String { s < 60 ? "\(Int(s)) s" : s < 3600 ? "\(Int(s / 60)) min" : "\(Int(s / 3600)) h" }
 }
 
 // MARK: Events

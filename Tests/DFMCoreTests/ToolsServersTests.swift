@@ -57,3 +57,18 @@ import Testing
     let hand = #"{ "servers": { "A": { "ufw": { "hidden": true } } } }"#   // `only` left out by hand: nothing only-there
     #expect(try JSONDecoder().decode(ToolServers.self, from: Data(hand.utf8)).uses("ufw", on: "A") == false)
 }
+
+/// Watched per server and tool (§8.5): `watch: true` in the server's setting, off again leaves nothing behind;
+/// the file keeps it.
+@Test func watchedPerServerAndTool() throws {
+    var s = ToolServers()
+    #expect(!s.watches("system", on: "A") && s.watched.isEmpty)
+    s.watch("system", on: "A", true)
+    s.watch("dpl", on: "B", true)
+    #expect(s.watches("system", on: "A") && !s.watches("system", on: nil) && !s.watches("system", on: "B"))
+    #expect(s.watched.map { $0.server + " " + $0.tool } == ["A system", "B dpl"])
+    let back = try JSONDecoder().decode(ToolServers.self, from: try JSONEncoder().encode(s))
+    #expect(back.watched.map(\.tool) == ["system", "dpl"] && back.uses("system", on: "A"), "watched, and shown as ever")
+    s.watch("system", on: "A", false)
+    #expect(!s.watches("system", on: "A") && s.servers["A"] == nil, "an empty setting isn't kept")
+}
