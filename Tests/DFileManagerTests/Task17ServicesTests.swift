@@ -276,4 +276,83 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     #expect(list.highlighted?.subtitle == "exited" && list.highlighted?.busy == false)
     #expect((try? String(contentsOfFile: dir + "/podman.log", encoding: .utf8)) == "restart -- api\n")
 }
+
+// The loop a change of a row goes through (Services…, Containers…, Tools' actions): pinned before Tools PR 2 made it one.
+
+/// A second press while the production question is still up waits: one change of a row at a time, and one restart ran.
+@MainActor @Test func aSecondPressWhileAskedWaits() async throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-svc-" + UUID().uuidString
+    defer {
+        try? FileManager.default.removeItem(atPath: dir)
+        AppDelegate.unitState = { try Services.state($0, on: $1, wait: $2, env: $3, cancel: $4) }
+        AppDelegate.answering = nil
+        ServerLock.servers = { [] }
+    }
+    let t = try standIns(dir)
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    let app = AppDelegate()
+    app.panels = [panel]
+    AppDelegate.unitState = { _, _, _, _, _ in .init(active: "active", sub: "running") }
+    var prod = SavedServer(address: "localhost")!
+    prod.prod = true
+    ServerLock.servers = { [prod] }
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+    let unit = ServiceUnit(unit: "web.service", active: "active", sub: "running")
+    let list = Picker.show(over: window, placeholder: "", items: [app.serviceItem(unit, on: t, of: SavedServer(target: t))])
+    defer { Picker.dismiss() }
+    let cmdR = { list.panel.performKeyEquivalent(with: key(15, "r", .command, window: list.panel.windowNumber)) }
+    var meanwhile = ""
+    AppDelegate.answering = { _, _, _ in
+        _ = cmdR()   // again, while it's asked
+        meanwhile = panel.statusText
+        return 0   // Restart
+    }
+    #expect(cmdR())
+    await until { !list.said.isEmpty }
+    #expect(meanwhile == "web: one change at a time — another is being asked")
+    #expect(list.said.hasPrefix("\u{FFFC} web restarted on localhost at "), "\(list.said)")
+    #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "restart -- web.service\n", "once")
+}
+
+/// A failure's whole output is a click away — its last 4000 characters — under the list (Output…), or, the list closed,
+/// in the alert that says it failed.
+@MainActor @Test func aFailuresOutputIsItsLast4000Characters() async throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-svc-" + UUID().uuidString
+    defer {
+        try? FileManager.default.removeItem(atPath: dir)
+        AppDelegate.unitState = { try Services.state($0, on: $1, wait: $2, env: $3, cancel: $4) }
+        AppDelegate.answering = nil
+    }
+    let t = try standIns(dir)
+    try Data("#!/bin/sh\ni=0; while [ $i -lt 300 ]; do echo \"line $i of what systemctl said\"; i=$((i+1)); done\necho the-end\nexit 1\n".utf8)
+        .write(to: URL(fileURLWithPath: dir + "/bin/systemctl"))
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    let app = AppDelegate()
+    app.panels = [panel]
+    ServerLock.servers = { [] }
+    AppDelegate.unitState = { _, _, _, _, _ in .init(active: "failed", sub: "failed") }
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+    let unit = ServiceUnit(unit: "web.service", active: "active", sub: "running")
+    let list = Picker.show(over: window, placeholder: "", items: [app.serviceItem(unit, on: t, of: SavedServer(target: t))])
+    #expect(list.panel.performKeyEquivalent(with: key(15, "r", .command, window: list.panel.windowNumber)))
+    await until { list.said.hasPrefix("\u{FFFC} web: the restart failed") }
+    func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? NSButton).map { [$0] } ?? buttons($0) } }
+    let output = try #require(buttons(list.panel.contentView!).first { $0.title == "Output…" && !$0.isHidden })
+    var asked = ""
+    AppDelegate.answering = { m, _, _ in asked = m; return 0 }
+    _ = (output.target as? NSObject)?.perform(output.action)   // not performClick: it ends a test run
+    await until { !asked.isEmpty }
+    #expect(AppDelegate.answeredInfo.count == 4000 && AppDelegate.answeredInfo.hasSuffix("the-end") && !AppDelegate.answeredInfo.hasPrefix("line 0 "))
+    Picker.dismiss()
+
+    asked = ""
+    app.serviceItem(unit, on: t, of: SavedServer(target: t)).actions.first { $0.key == Shortcut("cmd+r") }?.run()   // no list open
+    await until { !asked.isEmpty }
+    #expect(asked == "“systemctl restart -- web.service” failed on localhost")
+    #expect(AppDelegate.answeredInfo.count == 4000 && AppDelegate.answeredInfo.hasSuffix("the-end"))
+}
 }
