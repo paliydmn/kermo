@@ -39,6 +39,26 @@
             "target": "DFileManager",
             "configuration": "release",
             "preLaunchTask": "swift: Build Release DFileManager"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:dfilemanager}",
+            "name": "Debug tools-lint",
+            "target": "tools-lint",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug tools-lint"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:dfilemanager}",
+            "name": "Release tools-lint",
+            "target": "tools-lint",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release tools-lint"
         }
     ]
 }

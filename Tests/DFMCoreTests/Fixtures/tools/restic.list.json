@@ -1,0 +1,30 @@
+[
+  {
+    "time": "2026-10-29T22:41:45.898838157Z",
+    "tree": "5bd0a5efdada3c7d01338c5533d5c90ba191c39c637d003d388ff17ace61afe3",
+    "paths": [
+      "/etc/demo"
+    ],
+    "hostname": "backup-01",
+    "username": "root",
+    "tags": [
+      "nightly"
+    ],
+    "program_version": "restic 0.16.4",
+    "id": "d04f20b4785e33d97cf1fc555c9624b986cb134980038640ce2da90b85245f21",
+    "short_id": "d04f20b4"
+  },
+  {
+    "time": "2026-10-29T22:41:46.623177412Z",
+    "tree": "76b58160ca3cc7c422aef75c9a4c353a0fe3294c41d79748d2e2d9e691f2b2f6",
+    "paths": [
+      "/etc/demo",
+      "/srv/www"
+    ],
+    "hostname": "backup-01",
+    "username": "root",
+    "program_version": "restic 0.16.4",
+    "id": "66132c9a4437b7ddcdce10629322f2e1461c9f9d2d98a6fee6ba13cf0a5b9c16",
+    "short_id": "66132c9a"
+  }
+]

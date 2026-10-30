@@ -1,0 +1,11 @@
+{
+  "updated_at": "2026-10-29T10:05:31Z",
+  "kind": "app",
+  "last_version": 1,
+  "last_status": "failed",
+  "failure": {
+    "stage": "build",
+    "error": "build command failed"
+  },
+  "supervised": false
+}

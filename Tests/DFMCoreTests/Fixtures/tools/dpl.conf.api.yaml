@@ -1,0 +1,6 @@
+kind: app
+strategy: parallel
+image: registry.example.com/api
+port: 8080
+http:
+  domain: api.example.com

@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "id": "sysinfo",
+  "title": "Server Info",
+  "where": "server",
+  "about": "For support: a report of the machine (OS, CPU, RAM, disks, GPU, network), load now and live, traffic, top processes.",
+  "icon": "gauge",
+  "catalogVersion": 1,
+  "sudo": false,
+  "header": "printf '%s · %s · up %s' \"$(hostname)\" \"$(uname -sr)\" \"$(uptime -p 2>/dev/null | sed 's/^up //')\"",
+  "toolActions": [
+    {
+      "id": "report",
+      "title": "Full Report",
+      "key": "return",
+      "script": "sysinfo.report.sh",
+      "output": "window",
+      "readonly": true,
+      "save": "{server}-report.txt"
+    },
+    {
+      "id": "load",
+      "title": "CPU · RAM Now",
+      "key": "cmd+l",
+      "command": "uptime; free -h; top -bn1 | head -15",
+      "output": "window",
+      "readonly": true
+    },
+    {
+      "id": "live",
+      "title": "Live Load",
+      "command": "vmstat 2",
+      "output": "follow",
+      "readonly": true
+    },
+    {
+      "id": "disks",
+      "title": "Disks",
+      "command": "df -hT -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null || df -h; lsblk -d -o NAME,SIZE,ROTA,MODEL 2>/dev/null || echo 'lsblk: not available here'",
+      "output": "window",
+      "readonly": true
+    },
+    {
+      "id": "traffic",
+      "title": "Traffic (5 s)",
+      "script": "sysinfo.traffic.sh",
+      "output": "window",
+      "readonly": true
+    },
+    {
+      "id": "gpu",
+      "title": "GPU",
+      "command": "nvidia-smi 2>/dev/null || lspci 2>/dev/null | grep -iE 'vga|3d|display' || echo 'No GPU found (or lspci is not here)'",
+      "output": "window",
+      "readonly": true
+    },
+    {
+      "id": "top",
+      "title": "Top Processes",
+      "command": "{ ps -eo pid,user,%cpu,%mem,etime,comm --sort=-%cpu 2>/dev/null || top -bn1; } | head -20",
+      "output": "window",
+      "readonly": true
+    }
+  ]
+}

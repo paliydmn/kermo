@@ -1,0 +1,25 @@
+Status: active
+
+     To                         Action      From
+     --                         ------      ----
+[ 1] 51820/udp                  ALLOW IN    Anywhere                  
+[ 2] 22/tcp                     LIMIT IN    Anywhere                  
+[ 3] 80/tcp                     ALLOW IN    Anywhere                   # web
+[ 4] 443/tcp                    ALLOW IN    Anywhere                   # web
+[ 5] Anywhere                   DENY IN     203.0.113.7                # blocked in Kermo
+[ 6] Anywhere                   REJECT IN   198.51.100.0/24           
+[ 7] 192.0.2.10 8100/tcp        ALLOW IN    192.0.2.35                 # test UI from the Mac
+[ 8] 192.0.2.10 32768:60999/udp on wlan0 ALLOW IN    192.0.2.35                 # media from the Mac
+[ 9] 32768:60999/udp on eth0    ALLOW IN    192.0.2.35                
+[10] 8000/tcp                   ALLOW IN    192.0.2.0/24               # admin UI (LAN)
+[11] 5432/tcp                   DENY IN     Anywhere                  
+[12] 25/tcp                     DENY OUT    Anywhere                   # no mail from here
+[13] Anywhere on eth1           ALLOW IN    Anywhere                   # lab interface
+[14] 6000:6010/tcp              ALLOW IN    Anywhere                  
+[15] 51820/udp (v6)             ALLOW IN    Anywhere (v6)             
+[16] 22/tcp (v6)                LIMIT IN    Anywhere (v6)             
+[17] 80/tcp (v6)                ALLOW IN    Anywhere (v6)              # web
+[18] 443/tcp (v6)               ALLOW IN    Anywhere (v6)              # web
+[19] Anywhere (v6)              DENY IN     2001:db8::/32             
+[20] Anywhere (v6) on eth1      ALLOW IN    Anywhere (v6)              # lab interface
+

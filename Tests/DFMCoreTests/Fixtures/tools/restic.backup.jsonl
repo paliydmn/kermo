@@ -1,0 +1,4 @@
+{"message_type":"status","seconds_elapsed":1,"percent_done":0.25,"total_files":2,"files_done":0,"total_bytes":108898,"bytes_done":27224,"current_files":["/srv/www/index.html"]}
+{"message_type":"status","seconds_elapsed":2,"percent_done":0.5,"total_files":2,"files_done":1,"total_bytes":108898,"bytes_done":54449,"current_files":["/srv/www/index.html"]}
+{"message_type":"status","percent_done":1,"total_files":2,"files_done":2,"total_bytes":108898,"bytes_done":108898}
+{"message_type":"summary","files_new":2,"files_changed":0,"files_unmodified":0,"dirs_new":4,"dirs_changed":0,"dirs_unmodified":0,"data_blobs":2,"tree_blobs":5,"data_added":110996,"total_files_processed":2,"total_bytes_processed":108898,"total_duration":0.222651651,"snapshot_id":"66132c9a4437b7ddcdce10629322f2e1461c9f9d2d98a6fee6ba13cf0a5b9c16"}

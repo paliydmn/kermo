@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "id": "dpl",
+  "title": "Deployments",
+  "tool": "dpl",
+  "where": "server",
+  "about": "Apps deployed with dpl (dpl.cesbo.com): state, logs, deploy, roll back; traffic and errors per domain.",
+  "icon": "shippingbox",
+  "group": "Deploy",
+  "catalogVersion": 4,
+  "requires": "command -v dpl",
+  "sudo": true,
+
+  "vars": {
+    "base": { "title": "dpl base folder", "command": "systemctl show dpl -p Environment | sed -n 's/.*DPL_BASE=\\([^ ]*\\).*/\\1/p'", "default": "/opt/dpl" }
+  },
+
+  "version": {
+    "command": "dpl --version",
+    "pattern": "(?<v>\\d+\\.\\d+\\.\\d+)",
+    "tested": ">=0.6 <0.7",
+    "unknown": ["0.0.1"]
+  },
+  "install": {
+    "script": { "url": "https://dpl.cesbo.com/install.sh", "env": { "DPL_VERSION": "0.6.1" } },
+    "precheck": [ { "title": "Podman 4.8 or newer", "command": "podman --version", "pattern": "(?<v>\\d+\\.\\d+)", "min": "4.8" } ],
+    "docs": "https://dpl.cesbo.com",
+    "after": "Needs root. Put a unit in {base}/conf, then Deploy. Nothing is deployed or turned on for you."
+  },
+  "header": "printf '%s · serve %s' \"$(dpl --version)\" \"$(systemctl is-active dpl)\"",
+
+  "list": {
+    "files": "{base}/state/*/deploy.json",
+    "format": "json",
+    "name": "unit",
+    "also": { "files": "{base}/conf/{unit}.yaml", "pattern": "^\\s*strategy:\\s*(?<strategy>\\w+)" },
+    "key": "{unit}",
+    "title": "{unit}",
+    "subtitle": ["{last_status}", "at {failure.stage}", "v{active_version}", "switching to v{candidate_version}", "rollback of v{source_version}", "{strategy}"],
+    "detail": "{kind}",
+    "state": { "field": "last_status", "ok": ["ready"], "bad": ["failed"], "busy": ["building", "check"] },
+    "columns": ["unit", "kind", "last_status:state", "active_version:v", "strategy", "updated_at:ago"],
+    "empty": "Nothing deployed yet: put a unit's YAML in {base}/conf, then Deploy."
+  },
+
+  "actions": [
+    { "id": "inspect", "title": "Inspect", "key": "return", "readonly": true, "command": "dpl inspect {unit}", "output": "window" },
+    { "id": "logs", "title": "Logs", "key": "cmd+l", "readonly": true, "command": "tail -n 200 -F {base}/state/{unit}/log/runtime-v{active_version}.log", "output": "follow", "strip": "cri" },
+    { "id": "buildlog", "title": "Build Log", "key": "cmd+shift+l", "readonly": true, "command": "tail -n 300 {base}/state/{unit}/log/build.log", "output": "follow", "strip": "cri" },
+    { "id": "check", "title": "Check Config", "readonly": true, "command": "dpl check {unit}", "output": "line", "done": "{unit}: config is valid" },
+    { "id": "config", "title": "Edit Config", "key": "cmd+e", "edit": "{base}/conf/{unit}.yaml" },
+    { "id": "deploy", "title": "Deploy…", "key": "f5", "only": { "kind": ["app"] }, "long": true,
+      "command": "dpl check {unit} && dpl deploy {unit} {archive}",
+      "inputs": [ { "name": "archive", "type": "folder", "title": "Folder on this Mac", "remember": true } ],
+      "message": "Strategy: {strategy}. With parallel the old version serves until the new one is ready; with replace the app is down while the new one starts.",
+      "output": "window", "done": "{unit}: v{active_version} deployed" },
+    { "id": "rollback", "title": "Roll Back…", "key": "cmd+z", "only": { "kind": ["app"] }, "long": true,
+      "command": "dpl rollback {unit}", "confirm": true,
+      "message": "{unit} goes back to the version before v{active_version}, without a build. dpl keeps one earlier version. The database is not rolled back: if v{active_version} changed its schema, the earlier version may not start.",
+      "output": "window", "done": "{unit}: v{source_version} serves again (as v{active_version})" },
+    { "id": "undeploy", "title": "Undeploy…", "key": "f8", "command": "dpl undeploy {unit}", "dangerous": true, "verify": true,
+      "message": "{unit} stops serving. Its config, volumes and database stay.", "output": "line", "done": "{unit} undeployed" }
+  ],
+  "toolActions": [
+    { "id": "status", "title": "dpl status", "key": "cmd+shift+s", "readonly": true, "command": "dpl status", "output": "window" },
+    { "id": "upgrade", "title": "Upgrade dpl…", "command": "dpl upgrade", "confirm": true, "long": true, "message": "Containers keep running; only dpl serve restarts.", "output": "window" }
+  ],
+
+  "context": [
+    { "path": "{base}/conf/*.yaml", "row": "{stem}", "actions": ["deploy", "check", "inspect"] }
+  ],
+  "validators": [
+    { "path": "{base}/conf/*.yaml", "check": "dpl check {stem}", "when": "after" }
+  ],
+
+  "stream": { "script": "dpl.traffic.sh", "sudo": false, "env": { "BASE": "{base}", "EVERY": "{every}" }, "format": "jsonl" },
+  "watch": { "every": 10, "down": 3 },
+  "metrics": {
+    "apps":   { "title": "Units ready", "rows": "list", "count": "state" },
+    "rpm":    { "title": "Requests",     "rows": "hosts", "key": "host", "path": "rpm",    "unit": "/min" },
+    "e5_pct": { "title": "Errors (5xx)", "rows": "hosts", "key": "host", "path": "e5_pct", "unit": "%", "max": 100 },
+    "p95":    { "title": "Slowest 5 %",  "rows": "hosts", "key": "host", "path": "p95_ms", "unit": "ms" }
+  },
+  "summary": [ { "metric": "apps", "as": "count", "label": "{ok} of {all} ready" } ],
+  "alerts": [
+    { "id": "errors", "metric": "e5_pct", "warn": 2, "crit": 5, "for": { "warn": "5m", "crit": "5m" }, "message": "{host}: {value}% of requests fail (5xx)" },
+    { "id": "slow",   "metric": "p95", "warn": 1500, "for": { "warn": "5m" }, "message": "{host}: the slowest 5 % take {value} ms" }
+  ],
+  "events": [
+    { "id": "deployed", "rows": "list", "key": "unit", "path": "active_version", "when": "increased", "level": "info", "message": "{unit} v{active_version} serving" },
+    { "id": "down",     "rows": "list", "key": "unit", "when": "is", "field": "last_status", "value": "failed", "unless": "active_version", "level": "critical", "message": "{unit} is down: failed at {failure.stage}", "goto": "row" },
+    { "id": "failed",   "rows": "list", "key": "unit", "when": "is", "field": "last_status", "value": "failed", "if": "active_version", "level": "warning", "message": "{unit}: v{last_version} failed at {failure.stage}; v{active_version} still serves", "goto": "row" }
+  ],
+  "dashboard": [
+    { "row": [ { "stat": "apps" }, { "stat": "rpm", "of": "sum" }, { "stat": "e5_pct", "of": "max" }, { "stat": "p95", "of": "max" } ] },
+    { "table": "list", "title": "Units", "columns": ["unit", "kind", "last_status:state", "active_version:v", "strategy", "updated_at:ago"], "actions": ["inspect", "logs", "deploy", "rollback", "config", "undeploy"] },
+    { "charts": [ ["rpm"], ["e5_pct"], ["p95"] ], "per": "host", "range": ["1h", "24h", "7d"] },
+    { "row": [ { "events": true } ] }
+  ]
+}

@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "id": "fail2ban",
+  "title": "Banned IPs",
+  "tool": "fail2ban",
+  "where": "server",
+  "about": "Addresses fail2ban has banned, by jail: look one up, unban, ban by hand.",
+  "icon": "hand.raised",
+  "catalogVersion": 1,
+  "requires": "command -v fail2ban-client",
+  "sudo": true,
+  "version": {
+    "command": "fail2ban-client version",
+    "pattern": "(?<v>\\d+\\.\\d+\\.\\d+)",
+    "tested": ">=0.11"
+  },
+  "install": {
+    "apt": "apt-get install -y fail2ban",
+    "dnf": "dnf install -y fail2ban",
+    "docs": "https://github.com/fail2ban/fail2ban",
+    "after": "Debian and Ubuntu turn the sshd jail on; elsewhere add it in /etc/fail2ban/jail.local."
+  },
+  "header": "printf 'jails: %s · %s' \"$(fail2ban-client status | sed -n 's/.*Jail list:[[:space:]]*//p' | tr ',' '\\n' | tr -d ' ' | paste -sd ',' -)\" \"$(fail2ban-client version)\"",
+  "list": {
+    "script": "fail2ban.list.sh",
+    "format": "tsv",
+    "names": [
+      "jail",
+      "ip"
+    ],
+    "key": "{jail}/{ip}",
+    "title": "{ip}",
+    "subtitle": [
+      "banned by {jail}"
+    ],
+    "empty": "No banned addresses. ⌘N bans one by hand."
+  },
+  "actions": [
+    {
+      "id": "whois",
+      "title": "Who Is It?",
+      "key": "return",
+      "where": "mac",
+      "readonly": true,
+      "command": "whois {ip}",
+      "output": "window"
+    },
+    {
+      "id": "unban",
+      "title": "Unban",
+      "key": "f8",
+      "command": "fail2ban-client set {jail} unbanip {ip}",
+      "output": "line",
+      "done": "Unbanned {ip} ({jail})"
+    },
+    {
+      "id": "unbanall",
+      "title": "Unban from Every Jail",
+      "command": "fail2ban-client unban {ip}",
+      "output": "line",
+      "done": "Unbanned {ip} from every jail"
+    }
+  ],
+  "toolActions": [
+    {
+      "id": "ban",
+      "title": "Ban Address…",
+      "key": "cmd+n",
+      "command": "fail2ban-client set {jail} banip {ip}",
+      "inputs": [
+        {
+          "name": "ip",
+          "type": "text",
+          "title": "Address",
+          "placeholder": "203.0.113.7",
+          "pattern": "^[0-9a-fA-F:.]+$"
+        },
+        {
+          "name": "jail",
+          "type": "choice-from",
+          "title": "Jail",
+          "command": "fail2ban-client status | sed -n 's/.*Jail list:[[:space:]]*//p' | tr ',' '\\n' | tr -d ' '"
+        }
+      ],
+      "output": "line",
+      "done": "Banned {ip} in {jail}"
+    },
+    {
+      "id": "jail",
+      "title": "Jail Status…",
+      "key": "cmd+j",
+      "command": "fail2ban-client status {jail}",
+      "readonly": true,
+      "inputs": [
+        {
+          "name": "jail",
+          "type": "choice-from",
+          "title": "Jail",
+          "command": "fail2ban-client status | sed -n 's/.*Jail list:[[:space:]]*//p' | tr ',' '\\n' | tr -d ' '"
+        }
+      ],
+      "output": "window"
+    },
+    {
+      "id": "log",
+      "title": "fail2ban Log",
+      "key": "cmd+l",
+      "command": "tail -n 200 -F /var/log/fail2ban.log",
+      "readonly": true,
+      "output": "follow"
+    }
+  ],
+  "primary": "ban"
+}

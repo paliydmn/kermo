@@ -14,7 +14,9 @@ private let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().d
     for s in Symbol.allCases { #expect(NSImage(systemSymbolName: s.rawValue, accessibilityDescription: nil) != nil, "\(s.rawValue)") }
     var outside: [String] = []
     for case let file as URL in FileManager.default.enumerator(at: root.appendingPathComponent("Sources"), includingPropertiesForKeys: nil)!
-    where file.pathExtension == "swift" && file.lastPathComponent != "Palette.swift" {
+    where file.pathExtension == "swift" && file.lastPathComponent != "Palette.swift"
+        && !file.path.contains("/tools-lint/") {   // it checks a preset's own icon, not one of Kermo's
+
         if try String(contentsOf: file, encoding: .utf8).contains("systemSymbolName:") { outside.append(file.lastPathComponent) }
     }
     #expect(outside.isEmpty, "symbols named outside `Symbol`: \(outside)")

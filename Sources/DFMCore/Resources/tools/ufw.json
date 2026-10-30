@@ -1,0 +1,154 @@
+{
+  "schema": 1,
+  "id": "ufw",
+  "title": "Firewall",
+  "tool": "ufw",
+  "where": "server",
+  "about": "ufw rules: what's open and to whom; allow a port, block an address, delete a rule.",
+  "icon": "shield.lefthalf.filled",
+  "catalogVersion": 2,
+  "requires": "command -v ufw",
+  "sudo": true,
+  "version": {
+    "command": "ufw version",
+    "pattern": "ufw (?<v>[\\d.]+)",
+    "tested": ">=0.36"
+  },
+  "install": {
+    "apt": "apt-get install -y ufw",
+    "dnf": "dnf install -y ufw",
+    "docs": "https://launchpad.net/ufw",
+    "after": "ufw starts off. Allow the SSH port first, then Turn Firewall On."
+  },
+  "header": "ufw status verbose | sed -n 's/^Status: /Firewall /p; s/^Default: /default: /p' | awk 'NR>1{printf \" · \"}{printf \"%s\", $0}'",
+  "list": {
+    "command": "ufw status numbered",
+    "format": "regex",
+    "pattern": "^\\[\\s*(?<num>\\d+)\\]\\s+(?<dest>.+?)\\s+(?<action>ALLOW|DENY|REJECT|LIMIT)(?:\\s(?<dir>IN|OUT|FWD))?\\s+(?<src>.+?)(?:\\s+#\\s*(?<comment>.*?))?\\s*$",
+    "key": "{num}",
+    "title": "{dest}",
+    "subtitle": [
+      "{action} {dir}",
+      "from {src}"
+    ],
+    "detail": "{comment}",
+    "state": {
+      "field": "action",
+      "ok": [
+        "ALLOW",
+        "LIMIT"
+      ],
+      "bad": [
+        "DENY",
+        "REJECT"
+      ]
+    },
+    "empty": "No rules: everything follows the default policy."
+  },
+  "actions": [
+    {
+      "id": "delete",
+      "title": "Delete Rule…",
+      "key": "f8",
+      "command": "ufw --force delete {num}",
+      "dangerous": true,
+      "message": "Rule {num}: {dest} {action} from {src}. Deleting the rule for the SSH port shuts you out of this server.",
+      "output": "line",
+      "done": "Deleted rule {num} ({dest})"
+    }
+  ],
+  "toolActions": [
+    {
+      "id": "allow",
+      "title": "Allow Port…",
+      "key": "cmd+n",
+      "command": "ufw allow proto {proto} from {source} to any port {port} comment {comment}",
+      "inputs": [
+        {
+          "name": "port",
+          "type": "text",
+          "title": "Port",
+          "placeholder": "8080 or 6000:6010",
+          "pattern": "^\\d{1,5}(:\\d{1,5})?$"
+        },
+        {
+          "name": "proto",
+          "type": "choice",
+          "title": "Protocol",
+          "options": [
+            "tcp",
+            "udp"
+          ],
+          "default": "tcp"
+        },
+        {
+          "name": "source",
+          "type": "text",
+          "title": "From",
+          "default": "any",
+          "pattern": "^(any|[0-9a-fA-F:.]+(/\\d{1,3})?)$"
+        },
+        {
+          "name": "comment",
+          "type": "text",
+          "title": "Comment",
+          "default": "added in Kermo",
+          "optional": true
+        }
+      ],
+      "output": "line",
+      "done": "Allowed {proto} {port} from {source}"
+    },
+    {
+      "id": "block",
+      "title": "Block Address…",
+      "key": "cmd+b",
+      "command": "ufw insert 1 deny from {ip} comment {comment}",
+      "inputs": [
+        {
+          "name": "ip",
+          "type": "text",
+          "title": "Address or network",
+          "placeholder": "203.0.113.7 or 203.0.113.0/24",
+          "pattern": "^[0-9a-fA-F:.]+(/\\d{1,3})?$"
+        },
+        {
+          "name": "comment",
+          "type": "text",
+          "title": "Comment",
+          "default": "blocked in Kermo",
+          "optional": true
+        }
+      ],
+      "output": "line",
+      "done": "Blocked {ip}"
+    },
+    {
+      "id": "verbose",
+      "title": "Status in Full",
+      "command": "ufw status verbose",
+      "output": "window",
+      "key": "return",
+      "readonly": true
+    },
+    {
+      "id": "enable",
+      "title": "Turn Firewall On…",
+      "command": "ufw --force enable",
+      "dangerous": true,
+      "message": "Make sure a rule allows the SSH port, or this connection is cut.",
+      "output": "line",
+      "done": "Firewall is on"
+    },
+    {
+      "id": "disable",
+      "title": "Turn Firewall Off…",
+      "command": "ufw disable",
+      "dangerous": true,
+      "message": "Every port on the server opens to the network.",
+      "output": "line",
+      "done": "Firewall is off"
+    }
+  ],
+  "primary": "allow"
+}
