@@ -100,8 +100,9 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
                                              v.topAnchor.constraint(equalTo: inside.topAnchor), v.bottomAnchor.constraint(equalTo: inside.bottomAnchor)])
             }
             let root = NSStackView(views: [side, content])
-            root.spacing = 0
-            side.widthAnchor.constraint(equalToConstant: 210).isActive = true
+            (root.spacing, root.distribution) = (0, .fill)
+            content.setContentHuggingPriority(.init(1), for: .horizontal)
+            side.widthAnchor.constraint(equalToConstant: 230).isActive = true
             window.contentView = root
             reload()
         }
@@ -144,7 +145,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
             let name = NSTextField(labelWithString: s.title)
             name.textColor = s.prod ? Palette.prod : .labelColor
             name.lineBreakMode = .byTruncatingTail
-            name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            name.setContentCompressionResistancePriority(.init(499), for: .horizontal)   // over the count, which goes first
             let n = AppDelegate.connected(t) ? app.tools.here(t).map { "\($0.tools.count) tool\($0.tools.count == 1 ? "" : "s")" } ?? "…" : "not connected"
             views = [NSImageView(image: Symbol.server.image(nil)), name]
                 + Chip.of(t).map { c in let v = NSImageView(image: c.image); v.setAccessibilityLabel(c.spoken); return v }
@@ -155,7 +156,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
                      Self.spacer(), Self.small("\(count)")]
         }
         let stack = NSStackView(views: views)
-        stack.spacing = 5
+        (stack.spacing, stack.distribution) = (5, .fill)
         stack.edgeInsets = NSEdgeInsets(top: 0, left: 2, bottom: 0, right: 4)
         return stack
     }
@@ -193,6 +194,8 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         let l = NSTextField(labelWithString: s)
         l.font = .systemFont(ofSize: 11)
         l.textColor = .secondaryLabelColor
+        l.lineBreakMode = .byTruncatingTail
+        l.setContentCompressionResistancePriority(.init(250), for: .horizontal)
         return l
     }
 
@@ -306,10 +309,12 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
         }
     }
 
-    private func label(_ s: String) -> NSTextField {
+    /// In a stack, as the Tool column's: centred in the row.
+    private func label(_ s: String) -> NSView {
         let l = NSTextField(labelWithString: s)
         l.lineBreakMode = .byTruncatingTail
+        l.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         l.toolTip = s
-        return l
+        return NSStackView(views: [l])
     }
 }

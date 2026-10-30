@@ -66,7 +66,7 @@ final class ToolsPage: NSView, RowList {
         let spacer = NSView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
         let top = NSStackView(views: [title, chips, spacer, terminal, more])
-        top.spacing = 8
+        (top.spacing, top.distribution) = (8, .fill)
         chips.spacing = 4
         let tabRow = NSStackView(views: [tabs, add])
         tabRow.spacing = 6
@@ -149,9 +149,9 @@ final class ToolsPage: NSView, RowList {
         (ids, bodyKept) = ([], [])
         let views: [NSView]
         if !up {
-            let since = at.map { " As of \($0.formatted(date: .omitted, time: .shortened)) it had " + (shown.isEmpty ? "none of your tools." : shown.map(\.preset.title).joined(separator: ", ") + ".") }
+            let since = at.map { "As of \($0.formatted(date: .omitted, time: .shortened)) it had " + (shown.isEmpty ? "none of your tools." : shown.map(\.preset.title).joined(separator: ", ") + ".") }
             views = [Self.text("\(server.title) isn't connected.", size: 15, bold: true),
-                     Self.text((since ?? " Kermo hasn't seen what it has yet.") + " Kermo doesn't connect to draw this page.", color: .secondaryLabelColor),
+                     Self.text((since ?? "Kermo hasn't seen what it has yet.") + " Kermo doesn't connect to draw this page.", color: .secondaryLabelColor),
                      button(connecting ? "Connecting…" : "Connect", enabled: !connecting) { [unowned self] in connect() }]
         } else if let tool = current {
             views = page(tool)
@@ -172,7 +172,7 @@ final class ToolsPage: NSView, RowList {
         if !needs.isEmpty {
             let titles = needs.map { p.vars?[$0]?.info.title ?? $0 }.joined(separator: ", ")
             return [Self.text("\(p.title) needs settings on \(server.title)", size: 15, bold: true),
-                    Self.text("\(titles): Kermo keeps them with the server, not in the tool's file. Nothing runs before they're set.", color: .secondaryLabelColor),
+                    Self.text("It asks for: \(titles). Kermo keeps the values with the server, not in the tool's file; nothing runs before they're set.", color: .secondaryLabelColor),
                     button("Set Up on \(server.title)…") { [unowned self] in Task { _ = await app.tools.setUp(tool, on: target, window: window) } }]
         }
         if p.list != nil {
@@ -209,10 +209,10 @@ final class ToolsPage: NSView, RowList {
         b.controlSize = .large
         b.isEnabled = why == nil
         b.toolTip = why ?? about
-        bodyKept.append(MenuAction.attach(to: b) { [weak b] in
+        bodyKept.append(MenuAction.attach(to: b) { [weak self, weak b] in
             guard let task = run() else { return }
             b?.isEnabled = false
-            Task { await task.value; b?.isEnabled = true }
+            Task { await task.value; self?.refresh() }   // drawn again meanwhile (a sheet came and went): as it is now
         })
         let under = NSTextField(labelWithString: why ?? about)
         under.font = why == nil ? .monospacedSystemFont(ofSize: 10.5, weight: .regular) : .systemFont(ofSize: 11)
@@ -223,6 +223,7 @@ final class ToolsPage: NSView, RowList {
         cell.orientation = .vertical
         cell.alignment = .leading
         cell.spacing = 3
+        cell.widthAnchor.constraint(equalToConstant: 200).isActive = true
         b.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
         under.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
         return cell
@@ -233,7 +234,6 @@ final class ToolsPage: NSView, RowList {
         let rows = stride(from: 0, to: cells.count, by: 3).map { i in (0..<3).map { i + $0 < cells.count ? cells[i + $0] : NSGridCell.emptyContentView } }
         let g = NSGridView(views: rows)
         (g.rowSpacing, g.columnSpacing) = (12, 12)
-        for c in 0..<g.numberOfColumns { g.column(at: c).width = 190 }
         return g
     }
 

@@ -91,9 +91,15 @@ extension ServerLockTests {
         #expect(app.rowLists(id).first === page && app.rowLists(id).first?.sheetWindow === ToolsWindow.main?.window)
 
         var asked: [String] = []
-        AppDelegate.answering = { m, _, _ in asked.append(m); return 0 }
+        AppDelegate.answering = { m, _, _ in
+            asked.append(m)
+            MainActor.assumeIsolated { page.refresh() }   // drawn again while it's asked, as a sheet's end makes the window key
+            return 0
+        }
         press(buttons(page.body).first { $0.title == "Say Hello" })
         await toolsUntil { page.result.stringValue.contains("Said hello") }
+        await toolsUntil { buttons(page.body).first { $0.title == "Say Hello" }?.isEnabled == true }
+        #expect(buttons(page.body).first { $0.title == "Say Hello" }?.isEnabled == true, "not left saying one change at a time")
         #expect(asked == ["Say Hello on localhost?"] && page.result.stringValue.contains("Said hello on localhost at "), "\(asked) \(page.result.stringValue)")
         #expect(try String(contentsOfFile: bench.dir + "/audit.jsonl", encoding: .utf8).contains("tool kit hello"))
         press(buttons(page.body).first { $0.title == "Peek" })
@@ -186,8 +192,7 @@ extension ServerLockTests {
         w.close()
     }
 
-    /// Open in New Window: a server's page alone, several at once; the same server again comes to the front. One not
-    /// connected sends nothing.
+    /// Open in New Window: a server's page alone, several at once; the same server again comes to the front.
     @Test func serversPagesInWindowsOfTheirOwn() async throws {
         let (app, _, _, done) = try toolsApp()
         let bench = try ToolsBench()
@@ -199,6 +204,8 @@ extension ServerLockTests {
         ToolsWindow.showAlone(app, b, b.target)
         ToolsWindow.showAlone(app, a, .local())
         #expect(ToolsWindow.alone.map(\.window.title) == ["localhost — Tools", "web-01 — Tools"] && ToolsWindow.alone.allSatisfy(\.window.isVisible))
-        #expect(ToolsWindow.pages.count == 3 && bench.trips == 0)
+        #expect(ToolsWindow.pages.count == 3)
+        let alone = try #require(ToolsWindow.alone.last?.page)   // not connected: says so, nothing logs in (`aServersPageHasItsToolsAsTabs`)
+        #expect(alone.body.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue }.first == "web-01 isn't connected.")
     }
 }
