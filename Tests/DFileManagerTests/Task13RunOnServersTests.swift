@@ -28,7 +28,7 @@ import Testing
     let x = (storage.string as NSString).range(of: "✗")
     #expect(storage.attribute(.foregroundColor, at: x.location, effectiveRange: nil) as? NSColor == .systemRed)
     #expect(storage.attribute(.foregroundColor, at: (storage.string as NSString).range(of: "1 locked").location, effectiveRange: nil) as? NSColor == .textColor)
-    #expect(w.subtitle == "3 servers" && w.statusText.hasPrefix("done · ") && OutputWindow.keys(of: w)?.map(\.title) == ["Close"])
+    #expect(w.subtitle == "3 servers" && w.statusText.hasPrefix("done · ") && OutputWindow.keys(of: w)?.map(\.title) == ["Close", "Copy", "Save…"])
     w.close()
 
     let slow = "Run on 2 servers: dfm-" + UUID().uuidString.prefix(6)
@@ -43,6 +43,26 @@ import Testing
     #expect(s.subtitle == "2 servers" && s.statusText.hasPrefix("stopped · "))
     s.windowController?.cancelOperation(nil)
     #expect(!s.isVisible, "⎋ again closes it")
+}
+
+/// ⌘C in an output window with nothing selected copies all of it (selected, so you see what went); with a selection
+/// it's the text view's own Copy, through the menu.
+@MainActor @Test func commandCCopiesItAll() async throws {
+    _ = NSApplication.shared
+    let title = "Copy: dfm-" + UUID().uuidString.prefix(6)
+    OutputWindow.show("one\ntwo\n", errors: "", title: title, status: 0, ok: true)
+    let w = try #require(NSApp.windows.first { $0.title == title }), o = try #require(w.windowController as? OutputWindow)
+    defer { w.close() }
+    let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString))   // not the user's clipboard
+    defer { pb.releaseGlobally() }
+    o.pasteboard = pb
+    let c = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: w.windowNumber,
+                                          context: nil, characters: "c", charactersIgnoringModifiers: "c", isARepeat: false, keyCode: 8))
+    let tv = try #require(w.docFrame?.scroll.documentView as? NSTextView)
+    #expect(w.performKeyEquivalent(with: c) && pb.string(forType: .string) == "one\ntwo\n" && tv.selectedRange().length == 8)
+    pb.clearContents()
+    tv.setSelectedRange(NSRange(location: 0, length: 3))
+    #expect(!w.performKeyEquivalent(with: c) && pb.string(forType: .string) == nil, "a selection: the menu's Copy")
 }
 
 /// ⌘R in a several-servers window runs it again (asked with this window, before the main menu's Refresh sees the
@@ -60,7 +80,7 @@ import Testing
                                           context: nil, characters: "r", charactersIgnoringModifiers: "r", isARepeat: false, keyCode: 15))
     #expect(w.performKeyEquivalent(with: r) && asked.isEmpty, "not while it runs")
     for _ in 0..<300 where !(ended && w.statusText.contains("done")) { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(OutputWindow.keys(of: w)?.map { "\($0.key) \($0.title)" } == ["⎋ Close", "⌘R Run Again"], "its key bar and F1")
+    #expect(OutputWindow.keys(of: w)?.map { "\($0.key) \($0.title)" } == ["⎋ Close", "⌘R Run Again", "⌘C Copy", "⌘S Save…"], "its key bar and F1")
     #expect(w.performKeyEquivalent(with: r))
     for _ in 0..<100 where asked.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
     #expect(asked.count == 1 && asked[0] === w && w.isVisible, "not started again: it stays")
@@ -78,11 +98,11 @@ import Testing
     Shell.run("echo before; sleep 30", in: NSTemporaryDirectory(), title: title) { status = $0 }
     let w = try #require(NSApp.windows.first { $0.title == title })
     for _ in 0..<300 where text(w)?.string.hasPrefix("before") != true { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(w.statusText == "running…" && OutputWindow.keys(of: w)?.map { "\($0.key) \($0.title)" } == ["⎋ Stop"])
+    #expect(w.statusText == "running…" && OutputWindow.keys(of: w)?.map { "\($0.key) \($0.title)" } == ["⎋ Stop", "⌘C Copy", "⌘S Save…"])
     w.windowController?.cancelOperation(nil)
     for _ in 0..<300 where status == nil { try await Task.sleep(for: .milliseconds(10)) }
     #expect(status != nil && status != 0 && w.isVisible && text(w)?.string.hasPrefix("before\n") == true, "stopped, still showing it")
-    #expect(w.statusText.hasPrefix("exit ") && OutputWindow.keys(of: w)?.map(\.title) == ["Close"], "\(w.statusText)")
+    #expect(w.statusText.hasPrefix("exit ") && OutputWindow.keys(of: w)?.map(\.title) == ["Close", "Copy", "Save…"], "\(w.statusText)")
     w.windowController?.cancelOperation(nil)
     #expect(!w.isVisible)
 }

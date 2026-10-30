@@ -1,5 +1,6 @@
 import AppKit
 import DFMCore
+import UniformTypeIdentifiers
 
 /// Runs shell commands in an output window (⌘E ⇧↩, a server panel's ⌘E, tar / diff / git) or hands them to the
 /// terminal app (⌘↩). ⌘E ↩ on a local panel types into the ⌃O shell instead: `EmbeddedTerminal.run`.
@@ -232,10 +233,12 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         return w
     }
 
-    /// A run that's over already (a Tools action's `window`): what it said, stderr in red, how it ended.
-    static func show(_ out: String, errors: String, title: String, status: Int32, ok: Bool) {
+    /// A run that's over already (a Tools action's `window`): what it said, stderr in red, how it ended. `save`: the
+    /// name Save… offers (the action's `save`).
+    static func show(_ out: String, errors: String, title: String, status: Int32, ok: Bool, save: String? = nil) {
         let w = OutputWindow(out: out, errors: errors, status: status, ok: ok)
         w.window?.title = title.bidiVisible
+        w.saveName = save
         open.append(w)
         w.showWindow(nil)
         w.window?.listInWindowsMenu()
@@ -265,7 +268,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         let cancel = CancelFlag()
         servers = cancel   // what stops it; `over` says it's over
         super.init(window: w)
-        w.delegate = self
+        own(w)
         let inbox = inbox, over = over, env = SSHAskpass.env, command = ToolRunner.command, stdin = p.stdin(password: password)
         let hop: @Sendable (Data, Int) -> Void = { [weak self] d, stream in
             guard !d.isEmpty, inbox.put(d, stream) else { return }   // else a hop is on its way: it takes this too
@@ -338,7 +341,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         w.title = command.bidiVisible
         w.subtitle = DocFrame.place(dir, host: server.map { SavedServer.name(for: $0) })
         super.init(window: w)
-        w.delegate = self
+        own(w)
 
         if let server {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
@@ -405,7 +408,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     private init(out: String, errors: String, status: Int32, ok: Bool) {   // the title names the place already
         let (w, tv) = Self.window()
         super.init(window: w)
-        w.delegate = self
+        own(w)
         for (text, isErr) in [(out, false), (errors, true)] where !text.isEmpty {
             append(Data((text.hasSuffix("\n") ? text : text + "\n").utf8), isErr, in: tv)
             append(Data(), isErr, in: tv)   // its last character, if a read had cut it
@@ -424,12 +427,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         servers = cancel
         self.again = again
         super.init(window: w)
-        w.delegate = self
-        w.onKey = { [weak self] e in   // ⌘R: again, once it's over (before the main menu's Refresh)
-            guard let self, Shortcut(event: e) == Shortcut("cmd+r"), self.again != nil else { return false }
-            runAgain()
-            return true
-        }
+        own(w)
         let names = list.map(\.name), width = names.map(\.count).max() ?? 0   // the skipped have no lines
         let inbox = LineInbox(), over = over
         Thread { [weak self] in
@@ -470,12 +468,56 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         if alive { NSSound.beep() } else { Task { if await again(window) { window?.close() } } }
     }
 
-    /// Its keys, on its key bar and F1 over it: ⎋ stops what runs, then closes; ⌘R runs it again where it can.
+    /// Its keys, on its key bar and F1 over it: ⎋ stops what runs, then closes; ⌘R runs it again where it can; ⌘C with
+    /// nothing selected copies it all, ⌘S saves it.
     static func keys(of window: NSWindow?) -> [AppDelegate.KeyRow]? {
         open.first { $0.window === window && window != nil }.map { o in
             let running = !o.stopAsked && o.alive
             return [AppDelegate.KeyRow(section: "Output", title: running ? "Stop" : "Close", key: "⎋") { o.cancelOperation(nil) }]
                 + (o.again == nil || running ? [] : [AppDelegate.KeyRow(section: "Output", title: "Run Again", key: "⌘R") { o.runAgain() }])
+                + [AppDelegate.KeyRow(section: "Output", title: "Copy", key: "⌘C") { o.copyAll() },
+                   AppDelegate.KeyRow(section: "Output", title: "Save…", key: "⌘S") { o.save() }]
+        }
+    }
+
+    /// Its delegate, and its keys — before the main menu's (Refresh, Copy, Save).
+    private func own(_ w: KeyWindow) {
+        w.delegate = self
+        w.onKey = { [weak self] e in
+            guard let self else { return false }
+            switch Shortcut(event: e) {
+            case Shortcut("cmd+r") where again != nil: runAgain()
+            case Shortcut("cmd+c") where tv?.selectedRange().length == 0: copyAll()
+            case Shortcut("cmd+s"): save()
+            default: return false
+            }
+            return true
+        }
+    }
+
+    private var tv: NSTextView? { text?.documentView as? NSTextView }
+    /// The name Save… offers; nil: the title's.
+    private(set) var saveName: String?
+    var pasteboard = NSPasteboard.general   // tests: their own
+
+    /// All it says, selected and copied.
+    private func copyAll() {
+        guard let tv else { return }
+        tv.selectAll(nil)
+        pasteboard.clearContents()
+        pasteboard.setString(tv.string, forType: .string)
+    }
+
+    /// What it says so far, as a text file — in Downloads unless you choose.
+    private func save() {
+        guard let window, let text = tv?.string else { return }
+        let panel = NSSavePanel()
+        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        panel.nameFieldStringValue = (saveName ?? window.title + ".txt").replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        panel.allowedContentTypes = [.plainText]
+        Task {
+            guard await panel.beginSheetModal(for: window) == .OK, let url = panel.url else { return }
+            do { try Data(text.utf8).write(to: url, options: .atomic) } catch { _ = await NSAlert(error: error).beginSheetModal(for: window) }
         }
     }
 

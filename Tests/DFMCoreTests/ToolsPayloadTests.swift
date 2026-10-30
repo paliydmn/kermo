@@ -58,7 +58,7 @@ private func standInSudo(_ kind: String) throws -> String {
     DispatchQueue.global().asyncAfter(deadline: .now() + 1) { hold.cancel() }
     let start = Date()
     let r = try run(payload("sleep \(token); echo late", shell: shell), hold: hold)
-    #expect(Date().timeIntervalSince(start) < 5)
+    #expect(Date().timeIntervalSince(start) < 10, "at once, not the sleep's — a loaded full run once took 6.7 s")
     #expect(!r.out.contains("late"))
     usleep(300_000)
     let p = Process()
@@ -183,7 +183,30 @@ private func standInSudo(_ kind: String) throws -> String {
     let (line, willRun) = try ToolPayload.terminal(run, in: tool, scope: scope)
     #expect(willRun == #"printf '[%s]' 'a b'\''; echo pwned' "$MODE""#)
     #expect(try SSHCommand.capture(.local(), line) == "[a b'; echo pwned][x y]")
+    #expect(!line.contains("\n"), "one line: a csh login shell takes no line break inside quotes")
     var root = run
     root.sudo = true
     #expect(try ToolPayload.terminal(root, in: tool, scope: scope).line.hasPrefix("sudo sh -c "))
+}
+
+/// A list, its header and its version in one round trip (§3.2 rule 9): each part's output and exit apart, output
+/// without a last line break too, none at all; the list's stderr kept, the others' dropped; the same variables for all.
+@Test(arguments: shells) func severalRunsShareOneRoundTrip(_ shell: String) throws {
+    let tool = try JSONDecoder().decode(ToolPreset.self, from: Data(#"{ "schema": 1, "id": "t", "title": "T" }"#.utf8))
+    let runs = [ToolRun(command: .one("printf 'a\\nb %s\\n' {x}; echo oops >&2")), ToolRun(command: .one("printf 'no-newline %s' {x}; exit 3")),
+                ToolRun(command: .one("echo hidden >&2; echo v1.2"))]
+    let p = try #require(try ToolPayload.parts(runs, in: tool, scope: ToolTemplate.Scope(rows: [["x": "1 2"]])))
+    let shelled = ToolPayload(body: "", values: [], shell: shell)   // the shell's own command
+    var reader = ToolRunOutput(nonce: p.nonce), out = Data()
+    let (status, errors) = try SSHCommand.run(.local(), setsid + shelled.command, stdin: p.stdin(), holdStdin: CancelFlag()) { out += reader.feed($0) }
+    let parts = ToolPayload.parts(out, nonce: p.nonce)
+    #expect(status == 0 && parts.count == 3 && errors == "oops")
+    #expect(parts.map { String(decoding: $0.out, as: UTF8.self) } == ["a\nb 1 2\n", "no-newline 1 2", "v1.2\n"] && parts.map(\.status) == [0, 3, 0])
+    let quiet = try #require(try ToolPayload.parts([ToolRun(command: .one("true")), runs[2]], in: tool, scope: .init()))
+    var quietReader = ToolRunOutput(nonce: quiet.nonce), quietOut = Data()
+    _ = try SSHCommand.run(.local(), setsid + shelled.command, stdin: quiet.stdin(), holdStdin: CancelFlag()) { quietOut += quietReader.feed($0) }
+    #expect(ToolPayload.parts(quietOut, nonce: quiet.nonce).map { String(decoding: $0.out, as: UTF8.self) } == ["", "v1.2\n"], "a first part that said nothing")
+    var root = runs[1]
+    root.sudo = true
+    #expect(try ToolPayload.parts([runs[0], root], in: tool, scope: .init()) == nil, "sudo differs: separate runs")
 }

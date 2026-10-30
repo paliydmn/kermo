@@ -10,7 +10,7 @@ import Testing
 extension ServerLockTests {
     /// Without a connection nothing is asked: Tools ▸ says to connect. Connected, the server is asked once, off the
     /// main thread; then its tools show — and stay, greyed with when they were known, once it's disconnected. Its place
-    /// has a row each, with the rows its list had when last read. A server with none of them has no Tools ▸.
+    /// has a row each, with the rows its list had when last read. A server with none of them has Server Info alone: it needs nothing.
     @Test func toolsShowWhereTheServerHasThem() async throws {
         let (app, _, _, done) = try toolsApp()
         let bench = try ToolsBench()
@@ -26,8 +26,8 @@ extension ServerLockTests {
         #expect(app.toolsItem(for: t)?.submenu?.items.map(\.title) == ["Looking at what it has…"])
         await toolsUntil { app.tools.answers[key] != nil }
         let menu = try #require(app.toolsItem(for: t)?.submenu)
-        #expect(menu.items.map(\.title) == ["Banned IPs (fail2ban)", "Firewall (ufw)"] && menu.items.allSatisfy(\.isEnabled))
-        #expect(menu.items.map { $0.image != nil } == [true, true])
+        #expect(menu.items.map(\.title) == ["Banned IPs (fail2ban)", "Server Info", "Firewall (ufw)"] && menu.items.allSatisfy(\.isEnabled))
+        #expect(menu.items.map { $0.image != nil } == [true, true, true])
         let place = PlaceSource(app, SavedServer(target: t), t)
         #expect(place.content?.rows.filter { ["Banned IPs", "Firewall"].contains($0.title) }.map(\.subtitle) == ["—", "—"])
         _ = try await ToolListSource(app, try toolNamed(app, "ufw"), SavedServer(target: t), t).read(CancelFlag())
@@ -35,7 +35,7 @@ extension ServerLockTests {
 
         up = false
         let offline = try #require(app.toolsItem(for: t)?.submenu)
-        #expect(offline.items.first?.title.hasPrefix("As of ") == true && offline.items.dropFirst().map(\.title) == ["Banned IPs (fail2ban)", "Firewall (ufw)"])
+        #expect(offline.items.first?.title.hasPrefix("As of ") == true && offline.items.dropFirst().map(\.title) == ["Banned IPs (fail2ban)", "Server Info", "Firewall (ufw)"])
         #expect(offline.items.allSatisfy { !$0.isEnabled })
         #expect(place.content?.rows.first { $0.title == "Firewall" }?.subtitle == "—", "a count only while connected")
 
@@ -45,7 +45,7 @@ extension ServerLockTests {
         try FileManager.default.removeItem(atPath: bench.dir + "/bin/fail2ban-client")
         _ = app.toolsItem(for: t)
         await toolsUntil { app.tools.answers[key] != nil }
-        #expect(app.toolsItem(for: t) == nil && place.content?.rows.contains { $0.title == "Firewall" } == false)
+        #expect(app.toolsItem(for: t)?.submenu?.items.map(\.title) == ["Server Info"] && place.content?.rows.contains { $0.title == "Firewall" } == false)
     }
 
     /// Reload Config reads your tools again and says what's wrong with one, with its line; a one-command tool of yours
@@ -137,7 +137,7 @@ extension ServerLockTests {
         up = false
         let calls = bench.calls.count
         let menu = try #require(app.toolsItem(for: t)?.submenu)
-        #expect(menu.items.first?.title.hasPrefix("As of ") == true && menu.items.dropFirst().map(\.title) == ["Banned IPs (fail2ban)", "Firewall (ufw)"])
+        #expect(menu.items.first?.title.hasPrefix("As of ") == true && menu.items.dropFirst().map(\.title) == ["Banned IPs (fail2ban)", "Server Info", "Firewall (ufw)"])
         #expect(menu.items.allSatisfy { !$0.isEnabled } && bench.calls.count == calls, "nothing sent")
     }
 }

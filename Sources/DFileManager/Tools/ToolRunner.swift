@@ -61,14 +61,15 @@ final class ToolRunner {
     }
 
     /// The tools this version shows: trusted, with nothing to ask before use (vars' `ask`: Tools PR 4), a list read by a
-    /// command or a script, or a command of their own.
+    /// command or a script, a command of their own, or actions with no list (a launcher) this version runs.
     var tools: [LoadedTool] { library.trusted(trust).filter(Self.shows) }
     /// Your own tools not trusted yet, or changed since: Tools ▸ offers them, asking first.
     var untrusted: [LoadedTool] { library.tools.filter { !trust.trusts($0) && Self.shows($0) } }
 
     static func shows(_ t: LoadedTool) -> Bool {
         let p = t.preset
-        return p.varsToAsk(saved: [:]).isEmpty && (p.list.map { $0.run.command != nil || $0.run.script != nil } ?? p.commandAction.map { runs($0, of: p) } ?? false)
+        return p.varsToAsk(saved: [:]).isEmpty && (p.list.map { $0.run.command != nil || $0.run.script != nil } ?? p.commandAction.map { runs($0, of: p) }
+            ?? p.toolActions?.contains { runs($0, of: p) } ?? false)
     }
 
     /// What this version runs of an action: a command, a script or an `edit`; a form of text, secrets and choices;
@@ -281,7 +282,7 @@ final class ToolRunner {
                     switch r {
                     case .success(let (ran, payload)):
                         OutputWindow.show(payload.mask(ran.text, password: ran.password), errors: ran.stopped ?? ran.errors, title: "\(verb) — \(place)",
-                                          status: ran.status, ok: ran.stopped == nil && a.run.succeeded(ran.status))
+                                          status: ran.status, ok: ran.stopped == nil && a.run.succeeded(ran.status), save: a.spec.save.map { ToolTemplate.text($0, scope) })
                     case .failure(is CancellationError): break
                     case .failure(is ToolExec.NoPassword): panel.flash("\(verb): no sudo password — nothing ran")
                     case .failure(let e): app.showError(e)

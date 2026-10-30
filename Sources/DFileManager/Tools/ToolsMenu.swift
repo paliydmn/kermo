@@ -74,8 +74,8 @@ extension AppDelegate {
         return it
     }
 
-    /// A tool on `t`'s server: its list in the search, on the server's place as Services… is; a one-command tool runs. A
-    /// tool of yours not in use yet asks first (§12), and the server is asked again what it has.
+    /// A tool on `t`'s server: its list (a launcher's: its actions) in the search, on the server's place as Services… is;
+    /// a one-command tool runs. A tool of yours not in use yet asks first (§12), and the server is asked again what it has.
     func openTool(_ tool: LoadedTool, on s: SavedServer, _ t: SFTPTarget) {
         guard tools.trust.trusts(tool) else {
             Task {
@@ -85,10 +85,8 @@ extension AppDelegate {
             }
             return
         }
-        if tool.preset.list != nil { return showInSearch(ToolListSource(self, tool, s, t)) }
-        if let a = tool.preset.commandAction {
-            tools.perform(a, of: tool, row: nil, onRow: false, id: ServerRow.key(t.asUser) + " tool:\(tool.preset.id)", from: nil, on: s, t.asUser)
-        }
+        guard let a = tool.preset.commandAction else { return showInSearch(ToolListSource(self, tool, s, t)) }   // a list, a launcher's actions
+        tools.perform(a, of: tool, row: nil, onRow: false, id: ServerRow.key(t.asUser) + " tool:\(tool.preset.id)", from: nil, on: s, t.asUser)
     }
 
     /// A place's tools: a row for each its server has, as last asked; its state the rows its list had when last read
@@ -97,11 +95,11 @@ extension AppDelegate {
         guard let known = tools.answer(p.target) else { return [] }
         let up = Self.connected(p.target)
         return tools.tools.filter { known.answer.has($0.preset) }.map { tool in
-            guard tool.preset.list != nil else {
+            if tool.preset.commandAction != nil {
                 return placeRow(tool.preset.title, p, about: tool.preset.about ?? "", open: { [unowned self] _ in openTool(tool, on: p.server, p.target) })
             }
-            let n = up ? tools.counts[ServerRow.key(p.target) + " " + tool.preset.id] : nil
-            return placeRow(tool.preset.title, p, state: n.map { $0 == 1 ? "1 row" : "\($0) rows" } ?? "—", about: tool.preset.about ?? "",
+            let n = up && tool.preset.list != nil ? tools.counts[ServerRow.key(p.target) + " " + tool.preset.id] : nil   // a launcher's rows are its actions
+            return placeRow(tool.preset.title, p, state: n.map { $0 == 1 ? "1 row" : "\($0) rows" } ?? (tool.preset.list == nil ? "" : "—"), about: tool.preset.about ?? "",
                             into: { [unowned self] in ToolListSource(self, tool, p.server, p.target) })
         }
     }
