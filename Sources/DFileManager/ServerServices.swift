@@ -246,29 +246,41 @@ extension AppDelegate {
         }
     }
 
-    /// A change of one row — a service, a container — the list staying open; `serviceRuns[id]` is "" already (being
-    /// asked), so a second press waits. Once it's asked (the lock, `first`'s
-    /// question or else the production one — `ask`, nil: asked for several already — the sudo password: all over the
-    /// list) its row says it runs and its other changes wait; then its state is read again, as the user (`read`), into
-    /// its row (`row`, nil: as it was), and the line under the list says how it went (`say`) until the next one. The
-    /// list is a Picker's or a panel's (`rowLists`), both if both show it. One closed meanwhile: the status line says
-    /// it, or a failure's alert, as `runThere`'s.
+    /// A service's or a container's change in the loop of one (`changeRow`): the lock, `first`'s question or else the
+    /// production one (`ask`, nil: asked for several already), the sudo password, the run (`ranThere`); then its state
+    /// read again, as the user (`read`), into its row (`row`, nil: as it was).
     private func changeRow<S: Sendable>(id: String, command: String, on target: SFTPTarget, action: String, busy: String, name: String, server: String,
                                         ask: (message: String, button: String)?, first: Confirm? = nil,
                                         read: @escaping @Sendable ([String: String], CancelFlag) throws -> S,
                                         row: @escaping @MainActor (S?) -> Picker.Item,
                                         say: @escaping @MainActor (Services.Ran, S?, String?, String) -> (outcome: Services.Outcome, line: String)) async {
+        await changeRow(id: id, shown: command, on: target, busy: busy, name: name, server: server, run: { [unowned self] window, panel, running in
+            if let first, await confirm(first, on: window) != 0 { return .notRun("cancelled") }
+            return await ranThere(command, on: target, action: action, busy: busy.dropLast() + " \(name) on \(server)…",
+                                  ask: first == nil ? ask : nil, askOn: window, in: panel, running: running)
+        }, read: read, show: { $0.update(row($1)) }, say: say)
+    }
+
+    /// A change of one row — a service, a container, a Tools action — the list staying open; `serviceRuns[id]` is ""
+    /// already (being asked), so a second press waits. `run` asks (over the list: `window`) and runs it; once it's
+    /// asked (`running`) the row says it runs (`busy`) and its other changes wait. Then what it changed is read again
+    /// (`read`; nil: nothing to read) into each list showing the row (`show`, nil: as it was), and the line under the
+    /// list says how it went (`say`) until the next one, a failure's output a click away. The list is a Picker's or a
+    /// panel's (`rowLists`), both if both show it. One closed meanwhile: the status line says it, or a failure's alert,
+    /// as `runThere`'s. `shown`: the command, as those name it.
+    func changeRow<S: Sendable>(id: String, shown command: String, on target: SFTPTarget, busy: String, name: String, server: String,
+                                run: @escaping @MainActor (_ window: NSWindow?, PanelViewController, _ running: @escaping @MainActor () -> Void) async -> RanThere,
+                                read: (@Sendable ([String: String], CancelFlag) throws -> S)?,
+                                show: @escaping @MainActor (any RowList, S?) -> Void,
+                                say: @escaping @MainActor (Services.Ran, S?, String?, String) -> (outcome: Services.Outcome, line: String)) async {
         let panel = panel(for: target), list = rowLists(id).first
         let go: () async -> (RanThere, Result<S, Error>?) = { [unowned self] in
-            if let first, await confirm(first, on: list?.sheetWindow) != 0 {
-                return (.notRun("cancelled"), nil)
-            }
-            let ran = await ranThere(command, on: target, action: action, busy: busy.dropLast() + " \(name) on \(server)…",
-                                     ask: first == nil ? ask : nil, askOn: list?.sheetWindow, in: panel) { [unowned self] in
+            let ran = await run(list?.sheetWindow, panel) { [unowned self] in
                 serviceRuns[id] = busy
-                rowLists(id).forEach { $0.update(row(nil)) }
+                rowLists(id).forEach { show($0, nil) }
             }
             if case .notRun = ran { return (ran, nil) }
+            guard let read else { return (ran, nil) }
             let env = SSHAskpass.env
             return (ran, await panel.busy("Looking at \(name) on \(server)…") { flag in try read(env, flag) })
         }
@@ -282,24 +294,24 @@ extension AppDelegate {
         }
         serviceRuns[id] = nil
         let said = say(how, state, stateError, Self.clock.string(from: Date()))
-        let shown = rowLists(id)
-        guard !shown.isEmpty else {   // closed (or another list): as runThere says it
+        let lists = rowLists(id)
+        guard !lists.isEmpty else {   // closed (or another list): as runThere says it
             if case .passed = how { return panel.flash(said.line, error: said.outcome != .ok) }
             if case .notRun = how { return }
             _ = await sayRan(ran, command, on: target, done: said.line, in: panel)
             return
         }
         let full = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        for list in shown {
-            list.update(row(state))
-            var show: (@MainActor () -> Void)?
+        for list in lists {
+            show(list, state)
+            var output: (@MainActor () -> Void)?
             if !full.isEmpty {
-                show = { [unowned self, weak list] in
+                output = { [unowned self, weak list] in
                     guard let list else { return }
                     Task { await list.holding { _ = await choose("“\(command)” on \(server)", info: String(full.suffix(4000)), ["OK"], on: list.sheetWindow) } }
                 }
             }
-            list.said(Self.result(said), about: id, failed: said.outcome == .failed || said.outcome == .warning, output: show)
+            list.said(Self.result(said), about: id, failed: said.outcome == .failed || said.outcome == .warning, output: output)
         }
     }
 
