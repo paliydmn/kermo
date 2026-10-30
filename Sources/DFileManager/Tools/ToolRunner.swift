@@ -376,7 +376,7 @@ final class ToolRunner {
                     self.jobs.add(ToolJob(id: jobID, server: self.app.savedServer(at: t)?.id.uuidString ?? "", target: t.asUser, place: s.title, tool: p.id,
                                           action: a.spec.id, title: title, row: row?.title, rowID: id, record: row?.record,
                                           values: scope.levels[0].filter { inputs.contains($0.key) }.mapValues(\.text), root: root, pid: pid, started: Date(),
-                                          skew: ran.skew), show: output == .window || output == .follow)
+                                          skew: ran.skew), payload: job, show: output == .window || output == .follow)
                     return said
                 },
                 read: nil as (@Sendable ([String: String], CancelFlag) throws -> Bool)?,

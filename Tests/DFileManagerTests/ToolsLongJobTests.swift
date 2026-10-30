@@ -14,7 +14,9 @@ private let deployer = #"""
           "inputs": [ { "name": "version", "type": "text", "title": "Version", "default": "v1" } ],
           "command": "echo start {version}; sleep 1; echo '{\"pct\": 50, \"step\": \"building\"}'; [ -f \"$HOME/hold\" ] && sleep 30; sleep 1; echo '{\"pct\": 100, \"release\": \"v13\"}'",
           "progress": { "percent": "pct", "text": "{step}" }, "format": "jsonl", "done": "deployed {release}" },
-        { "id": "fail", "title": "Fail", "long": true, "output": "line", "command": "echo broken >&2; exit 2" }
+        { "id": "fail", "title": "Fail", "long": true, "output": "line", "command": "echo broken >&2; exit 2" },
+        { "id": "unseal", "title": "Unseal", "long": true, "output": "line", "command": "echo key {key}",
+          "inputs": [ { "name": "key", "type": "secret", "title": "Key" } ] }
       ] }
     """#
 
@@ -102,6 +104,13 @@ extension ServerLockTests {
         #expect(lb.ops.toolbarItem.toolTip?.contains("finished") == true, "a failure: red, as a copy's errors")
         lb.ops.showActivity(entry: nil)
         #expect(jobs.unseen == 0)
+
+        ToolRunner.filling = { form in form.set("key", "hunter2-xyz"); return form.values }
+        await run(l, "Unseal")?.value
+        await toolsUntil { jobs.jobs.first?.running == false && jobs.jobs.first?.action == "unseal" }
+        let sealed = try #require(jobs.jobs.first)
+        #expect(sealed.values.isEmpty && String(decoding: jobs.state(sealed.id)?.text ?? Data(), as: UTF8.self) == "key •••\n")
+        #expect(!(try String(contentsOfFile: file, encoding: .utf8)).contains("hunter2"), "runs.json keeps no secret")
     }
 
     /// One at a time on a row: a second Deploy says it runs and shows Activity. Stop… ends it (exit 143, "stopped");

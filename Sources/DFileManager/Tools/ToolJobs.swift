@@ -56,6 +56,8 @@ struct ToolJob: Codable, Equatable {
         var line = ""
         var lost = false
         var windows: [OutputWindow] = []
+        /// Its payload, for its secrets: what the job prints of them shows as `•••` (this run only — runs.json keeps none).
+        var payload: ToolPayload?
         init(offset: Int? = nil) { self.offset = offset }
     }
     private var live: [String: Live] = [:]
@@ -88,10 +90,11 @@ struct ToolJob: Codable, Equatable {
         save()
     }
 
-    /// A job just started: kept, followed from its first byte.
-    func add(_ j: ToolJob, show: Bool) {
+    /// A job just started: kept, followed from its first byte. `payload`: the job's own (its secrets).
+    func add(_ j: ToolJob, payload: ToolPayload, show: Bool) {
         jobs.insert(j, at: 0)
         live[j.id] = Live(offset: 0)
+        live[j.id]?.payload = payload
         save()
         attach(j)
         if show { self.show(j) }
@@ -178,6 +181,8 @@ struct ToolJob: Codable, Equatable {
     private func got(_ d: Data, _ id: String) {
         guard let l = live[id], let j = job(id) else { return }
         l.offset = l.offset.map { $0 + d.count }
+        // ponytail: a secret cut in two by a chunk's end shows; the server's log has it whole anyway
+        let d = l.payload?.mask(d) ?? d
         l.text += d
         if l.text.count > 1 << 20 { l.text = Data(l.text.suffix(1 << 20)) }
         l.windows.forEach { $0.add(d) }

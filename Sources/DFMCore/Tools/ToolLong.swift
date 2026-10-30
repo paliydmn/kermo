@@ -47,6 +47,7 @@ public enum ToolLong {
             elif command -v python3 >/dev/null 2>&1; then set -- python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \(shell) -s
             else echo "no setsid, perl or python3 here: a job can't outlive the connection" >&2; exit 98
             fi
+            rm -f \(pid) \(exit)
             "$@" >\(file(id, "log")) 2>&1 <<'KERMO_\(n)_JOB' &
             echo $$ >\(pid)
             trap 'kermo_stop=1' TERM INT HUP
@@ -113,13 +114,14 @@ public enum ToolLong {
 
     /// Stop… (§7.6): TERM to the job's process group — root's through sudo: a user's kill reaches sudo, which passes it
     /// to its command only, and root's children run on — then KILL after 5 s, the exit written as 137 then. Nothing
-    /// where the job is over already.
+    /// where the job is over already. Always the shell's own `kill`: procps-ng 4.0's `kill -TERM -<group>` says 0 and
+    /// kills nothing.
     public static func stop(id: String, root: Root, sudoProgram: String = "sudo", shell: String = "sh") -> ToolPayload {
         let n = ToolPayload.newNonce(), s = ShellContext.quote(sudoProgram), (_, hide, check) = sudo(root, n, s), x = file(id, "exit")
         let kill: String = switch root {
         case .none: "kill \"$@\""
-        case .noPassword: "\(s) -n kill \"$@\""
-        case .password: "printf '%s\\n' \"$K_kermo_pw\" | \(s) -S -p '' -k kill \"$@\""
+        case .noPassword: "\(s) -n \(shell) -c 'kill \"$@\"' sh \"$@\""
+        case .password: "printf '%s\\n' \"$K_kermo_pw\" | \(s) -S -p '' -k \(shell) -c 'kill \"$@\"' sh \"$@\""
         }
         let body = """
             [ -f \(x) ] && exit 0

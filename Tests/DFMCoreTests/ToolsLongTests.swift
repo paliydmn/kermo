@@ -124,19 +124,22 @@ private func running(_ text: String) -> Bool {
     #expect(box.waitFor("r1", "exit") == "0\n" && box.read("r1", "log") == "key=hunter2-xyz\n")
 }
 
-/// Stop…: TERM to the job's group, the exit file says 143; a job that's over is left alone.
-@Test(arguments: shells) func stopKillsTheJobsGroup(_ shell: String) throws {
+/// Stop…: TERM to the job's group — a root job's through sudo, the shell's own kill — the exit file says 143; a job
+/// that's over is left alone.
+@Test(arguments: shells, [ToolLong.Root.none, .password("right-pw-7731")]) func stopKillsTheJobsGroup(_ shell: String, _ root: ToolLong.Root) throws {
     let box = try Box()
     defer { box.done() }
     let token = "3\(Int.random(in: 100_000...999_999))"
-    #expect(try box.start("sleep \(token) & wait; echo late", shell: shell, id: "k1").status == 0)
+    #expect(try box.start("sleep \(token) & wait; echo late", shell: shell, id: "k1", root: root).status == 0)
     usleep(300_000)
     #expect(running("sleep \(token)"))
-    #expect(try box.run(ToolLong.stop(id: "k1", root: .none, shell: shell)).status == 0)
+    let stop = ToolLong.stop(id: "k1", root: root, sudoProgram: box.bin + "/sudo", shell: shell)
+    #expect(!stop.shown.contains("right-pw-7731") && !stop.script.contains("/kill"))
+    #expect(try box.run(stop).status == 0)
     #expect(box.waitFor("k1", "exit") == "143\n")
     usleep(300_000)
     #expect(!running("sleep \(token)") && box.read("k1", "log")?.contains("late") != true)
-    #expect(try box.run(ToolLong.stop(id: "k1", root: .none, shell: shell)).status == 0, "over already: nothing to do")
+    #expect(try box.run(ToolLong.stop(id: "k1", root: root, sudoProgram: box.bin + "/sudo", shell: shell)).status == 0, "over already: nothing to do")
 }
 
 /// The next start removes a job's files a week after it ended — or, with no exit, after it started and its process
