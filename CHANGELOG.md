@@ -20,6 +20,8 @@ Release:
 - Tools: **Server Info** on every server — a full report of the machine to send for support (⌘S saves it), CPU · RAM now, the load as it goes, disks, traffic over 5 seconds, GPU and the busiest processes; ↩ on a row runs it.
 - An output window copies all it printed with ⌘C when nothing is selected, and saves it with ⌘S.
 - Tools: **long jobs** — a deploy, a backup, an upgrade runs on the server on its own and comes back at once. Activity shows its progress and last line, with Show, Stop…, Retry and Show Log; it runs on when the connection drops or Kermo quits, and Kermo follows it again once that server is connected. A job that ends after more than a minute while Kermo isn't in front sends a notification (or, with notifications off, a Dock badge). Its log stays in `~/.cache/kermo/` on the server for a week.
+- **The Tools window** (Window ▸ Tools, ⌃⌘T): your servers, each a page of its tools as tabs (⌘1…⌘9) — a list opens in a panel or in search, Server Info's buttons run there and say how it went — and the library. A server's page opens in a window of its own too, several at once. One that isn't connected shows what it last had, and Connect.
+- Tools: **Use on Servers…** — wherever the program is found, or only on the servers you check — and **Hide** on one server; a tool that asks for a value per server (a backup repository) asks once on each saved server and keeps it in `tools/servers.json`.
 
 ### Fixed
 - **＋ New Tunnel…** over a server's tunnels in a panel did nothing.

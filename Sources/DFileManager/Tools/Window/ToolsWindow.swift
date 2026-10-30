@@ -172,6 +172,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
             p.openAlone = { [unowned self] in ToolsWindow.showAlone(app, s, t) }
             (page, library, view) = (p, nil, p)
         case .library(let mine):
+            if library?.mine == mine { return }
             let l = ToolsLibrary(app, mine: mine)
             (page, library, view) = (nil, l, l)
         }

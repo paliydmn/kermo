@@ -12,13 +12,43 @@ A tool is a JSON file, a *preset*. Kermo has no code for any particular tool: th
 
 ## Where tools show
 
-A server shows the tools whose program it has:
+A server shows the tools whose program it has (and that you [use there](#where-a-tool-is-used)):
 
 - **Tools ▸** in its row's menu in the sidebar, in a server folder's menu in a panel, and **Server ▸ Tools** in the menu bar (for the active panel's server): "Firewall (ufw)", "Banned IPs (fail2ban)". A click lists it in [search](window.md#search), on the server's overview (**web-01 › Firewall ›**), as Services… does.
 - A row each in the server's [overview](servers.md#the-server-as-a-place): **Firewall**, **Banned IPs**, with how many rows the list had when it was last read (`20 rows`), shown while a connection is up; `—` till then. ↩ shows the list in that panel, ⌘↩ in the other.
 - Search finds them by name too, once Kermo knows the server has them: `fire web` finds **Firewall — web-01**.
+- [The Tools window](#the-tools-window): a page for each server, its tools as tabs.
 
 **What a server has is asked once its connection is up** — one short run that checks for every tool's program at once (`command -v ufw`), as the login user, and learns the system ("Fedora 44 · dnf"). Kermo never logs in for a menu: with no connection, **Tools ▸** says **Connect to see tools**. Once known, the tools stay in the menu greyed, with **As of 14:02**, after the connection closes — for a saved server across restarts too (`tools/known.json`; deleting it only means asking again). Server Info needs no program of its own, so every server has it.
+
+## The Tools window
+
+**Window ▸ Tools** (⌃⌘T) opens it on the active panel's server; **Open in Tools Window**, last in a server's **Tools ▸**, on that server. Its sidebar lists your saved servers (production in its color, a locked one with its lock), then servers connected now, and the library: **Built into Kermo** and **My Tools**.
+
+A server's page has its name, the open tab's line from the program (`jails: sshd · 1.0.2`, a version outside what the tool was tested with), **Terminal** (an SSH tab in the main window) and **⋯**. Its tabs are the tools it shows, ⌘1…⌘9:
+
+- **A list** stays in the main window: **Open in Panel** shows it in the active panel, **Open in Search** in search, with the same rows, keys and questions as anywhere else.
+- **Buttons** (Server Info): each runs its action as its row does — the question on production, the line under the buttons saying how it went, its window where it has one. One that can't run here is greyed, saying why.
+- **A one-command tool**: one button.
+
+A server that isn't connected shows the tools it had when Kermo last saw it, greyed, and **Connect**: Kermo doesn't log in to draw a page. **＋** after the tabs lists the library's other tools: one hidden on this server shows again, one the server hasn't got is greyed. **⋯** has **Open in New Window** (the page as a window of its own; several servers' at once), **Use … on Servers…**, the tool's file, and **Hide … on web-01**. The windows don't reopen after a restart.
+
+### Where a tool is used
+
+A tool shows on every server where its program is found. **Use on Servers…** (a library row's button or double-click, or ⋯ on a page) changes that: **Every server where ufw is found**, the saved servers unticked having it hidden, or **Only on the servers checked below**. Each server says whether it has the program, hasn't, or wasn't checked yet. **Hide** takes a tool off one server; ＋ or Use on Servers… shows it again. Tools ▸, the overview's rows, search and the Tools window all go by it. Nothing changes on a server: it's what Kermo shows.
+
+A tool can ask for a value per server (`vars` with `"ask": true`), say a backup repository's path. It shows on a saved server as **Backups — Set Up on web-01…** until you set it: a sheet with a field for each value, checked as you type. The values stay with the server in Kermo, not in the tool's file. A server that isn't saved has no settings: it shows the tools used wherever they're found, and none that ask for a value.
+
+These settings are in `tools/servers.json`, by the saved server's id:
+
+```json
+{
+  "servers": {
+    "6F1C2A4E-…": { "ufw": { "hidden": true }, "restic": { "vars": { "repo": "/backup/restic" } } }
+  },
+  "only": { "restic": ["6F1C2A4E-…"] }
+}
+```
 
 ## A tool's list
 
@@ -146,6 +176,7 @@ The smallest tool is three fields; it's in **Tools ▸** on every server, and it
 | `inputs` | An action's sheet: `name`, `type` (`text`, `secret`, `choice`, `choice-from`), `title`, `placeholder`, `default`, `pattern`, `optional`, `options`; a `choice-from` has a `command` and a `key` (`{line}`) |
 | `primary` | The tool action on the ＋ button |
 | `version` | `command`, `pattern` with a group `v`, `tested` (`>=0.36 <0.37`) |
+| `vars` | Values per server, `{name}` in commands: `title`, `default`, `placeholder`, `pattern`, and one source — `command` (its first line, read once per connection) or `"ask": true` (asked on a saved server, kept in `tools/servers.json`; see [Where a tool is used](#where-a-tool-is-used)) |
 | `timeout`, `exitOk` | Seconds (30 by default); exit codes that count as success (`[0]`) |
 
 Placeholders in braces, `{ip}`, take a sheet's values first, then a row's fields; `{server}`, `{host}` and `{user}` are Kermo's. A command given as an array of parts, `["ufw allow {port}", "comment {comment}"]`, leaves out a part whose value is empty.

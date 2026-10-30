@@ -90,9 +90,6 @@ extension AppDelegate {
             NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
         },
         cmd("app.settings", "Settings…", ["cmd+,"], menu: "Kermo", group: 2, aliases: "preferences options defaults configuration") { SettingsWindow.show($0) },
-        cmd("app.tools", "Tools", ["ctrl+cmd+t"], menu: "Window", group: 1, aliases: "tools window server page firewall ufw fail2ban server info Open Tools Window") { app in
-            ToolsWindow.show(app, server: app.terminalActive ? app.terminal.current?.target : app.active.remote?.target ?? app.active.list?.source.target)
-        },
         cmd("app.update", "Check for Updates…", [], menu: "Kermo", group: 2, aliases: "update upgrade new version release") { app in
             app.showMainWindow(nil)   // its answer is a sheet there, also when a viewer is in front
             Task { await app.checkForUpdates(byHand: true) }
@@ -296,6 +293,9 @@ extension AppDelegate {
         cmd("admin.delete", "Delete as Administrator…", [], menu: "File/As Administrator", group: 8, aliases: "root sudo rm") { $0.adminDelete() },
         cmd("admin.shell", "Root Shell in Terminal", [], menu: "File/As Administrator", group: 9, aliases: "root sudo Root Shell Here (Terminal)") { $0.runShell("sudo -s", in: .terminalApp) },
         cmd("admin.rootPanel", "Reopen as Root", ["ctrl+cmd+r"], menu: "Server", group: 3, short: "As Root", aliases: "root sudo server etc Reopen Panel as Root") { $0.reopenPanel(asRoot: true) },
+        cmd("app.tools", "Tools", ["ctrl+cmd+t"], menu: "Window", group: 1, aliases: "tools window server page firewall ufw fail2ban server info Open Tools Window") { app in
+            ToolsWindow.show(app, server: app.terminalActive ? app.terminal.current?.target : app.active.remote?.target ?? app.active.list?.source.target)
+        },
         cmd("admin.userPanel", "Reopen as User", ["ctrl+shift+cmd+r"], menu: "Server", group: 3, short: "As User", aliases: "root sudo server user Reopen Panel as User") { $0.reopenPanel(asRoot: false) },
         cmd("admin.sudoTouchID", "Enable Touch ID for sudo", [], menu: "File/As Administrator", group: 9, aliases: "touch id fingerprint sudo terminal pam tid password") {
             $0.enableSudoTouchID()
