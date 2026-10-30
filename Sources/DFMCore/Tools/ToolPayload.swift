@@ -54,6 +54,7 @@ public struct ToolPayload: Sendable {
         let heredoc = text.map { "\n" + $0 + ($0.hasSuffix("\n") ? "" : "\n") + end } ?? ""
         if `where` == .mac {
             both("{ \(body)\n} \(redirect)\(heredoc)")
+            both("exit $?")   // stdin may be held open: `sh -s` mustn't wait there for more script
         } else {
             both("exec 3<&0")
             // The body keeps fd 3 (a read end: it can't hold the watcher's end of file back). Closing it there aborts
