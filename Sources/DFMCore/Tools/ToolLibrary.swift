@@ -20,6 +20,8 @@ public struct ToolLibrary: Sendable {
     /// What couldn't be loaded and why, as Reload Config says it: "tools/ufw.json: line 3: …".
     public var problems: [String]
 
+    public init(tools: [LoadedTool] = [], problems: [String] = []) { (self.tools, self.problems) = (tools, problems) }
+
     /// `own`: your folder (nil: none). `uid`: who may own your files. `hasSymbol`: whether this macOS has an SF Symbol.
     public static func load(builtIn: URL = ToolPreset.builtInFolder, own: URL?, uid: uid_t = getuid(),
                             hasSymbol: @escaping (String) -> Bool = { _ in true }) -> ToolLibrary {

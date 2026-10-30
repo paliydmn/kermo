@@ -54,6 +54,7 @@ public struct ToolPayload: Sendable {
         let heredoc = text.map { "\n" + $0 + ($0.hasSuffix("\n") ? "" : "\n") + end } ?? ""
         if `where` == .mac {
             both("{ \(body)\n} \(redirect)\(heredoc)")
+            both("exit $?")   // stdin may be held open: `sh -s` mustn't wait there for more script
         } else {
             both("exec 3<&0")
             // The body keeps fd 3 (a read end: it can't hold the watcher's end of file back). Closing it there aborts
@@ -141,10 +142,10 @@ extension ToolPayload {
     /// The payload of `run`, a Run of `tool`, with the names of `scope`: its command (a script's text from `scripts`),
     /// the tool's `env` and its own, `sudo` and `where` as the tool says unless the Run does. `secret`: the fields that
     /// are secret inputs. `password`: sudo will want one (the wrapper). Also the command with its values filled in,
-    /// for reading ("Will run:"). Throws for a single-string command with an empty field.
+    /// for reading ("Will run:"). Throws for a single-string command with an empty field. `sudoProgram`: tests' stand-in.
     public static func of(_ run: ToolRun, in tool: ToolPreset, scope: ToolTemplate.Scope, scripts: [String: String] = [:],
                           secret: Set<String> = [], text: String? = nil, password: Bool = false,
-                          nonce: String = newNonce()) throws(ToolTemplate.Empty) -> (payload: ToolPayload, willRun: String) {
+                          nonce: String = newNonce(), sudoProgram: String = "sudo") throws(ToolTemplate.Empty) -> (payload: ToolPayload, willRun: String) {
         var taken: [String: String] = [:]
         let body: ToolTemplate.Command
         if let c = run.command { body = try ToolTemplate.command(c, scope, vars: &taken) }
@@ -158,7 +159,7 @@ extension ToolPayload {
         let secretVars = Set(secret.compactMap { taken[$0] })
         let sudo: Sudo = (run.sudo ?? tool.sudo ?? false) ? (password ? .password : .noPassword) : .none
         let payload = ToolPayload(body: body.text, values: values, env: env, secret: secretVars, text: text, sudo: sudo,
-                                  where: run.where ?? tool.where ?? .server, nonce: nonce)
+                                  where: run.where ?? tool.where ?? .server, nonce: nonce, sudoProgram: sudoProgram)
         return (payload, payload.mask(body.shown))
     }
 }

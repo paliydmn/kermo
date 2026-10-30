@@ -22,7 +22,7 @@
   },
   "header": "ufw status verbose | sed -n 's/^Status: /Firewall /p; s/^Default: /default: /p' | awk 'NR>1{printf \" · \"}{printf \"%s\", $0}'",
   "list": {
-    "command": "ufw status numbered",
+    "command": "out=$(ufw status numbered) || exit; printf '%s\\n' \"$out\" | grep '^\\[' || :",
     "format": "regex",
     "pattern": "^\\[\\s*(?<num>\\d+)\\]\\s+(?<dest>.+?)\\s+(?<action>ALLOW|DENY|REJECT|LIMIT)(?:\\s(?<dir>IN|OUT|FWD))?\\s+(?<src>.+?)(?:\\s+#\\s*(?<comment>.*?))?\\s*$",
     "key": "{num}",

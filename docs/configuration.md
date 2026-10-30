@@ -20,7 +20,7 @@ Where Kermo keeps its settings, the formats of the files you can edit, and the `
 
 ## Files
 
-Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`; files are `0600`). **Kermo ▸ Configuration ▸ Open Config Folder** (or **Open** in Settings › Advanced) opens it in the panel, and **Reload Config** (in the same menu, and there) applies a changed `keymap.json` without a restart.
+Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`; files are `0600`). **Kermo ▸ Configuration ▸ Open Config Folder** (or **Open** in Settings › Advanced) opens it in the panel, and **Reload Config** (in the same menu, and there) applies a changed `keymap.json` and reads `tools/` again without a restart.
 
 | File | Holds | Edit with |
 |---|---|---|
@@ -33,6 +33,7 @@ Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`
 | `frecency.json` | Sidebar Frequent and ⌘P | Kermo writes it |
 | `audit.jsonl` | The [production log](safety.md#production-log) | **Server ▸ Production Log** |
 | `history.noindex/` | [Versions of server files](server-files.md#file-history) | Kermo writes it |
+| `tools/` | [Your own tools](tools.md#your-own-tools): a JSON file each, with its scripts | By hand; **Reload Config** checks them |
 
 Kermo also writes `server-pins.json` (the order of pinned servers), `trash.json` (where trashed items came from, for Put Back) and `activity.json` (the last 100 finished jobs in [Activity](files.md#activity)).
 

@@ -20,11 +20,20 @@ import DFMCore
     func peek(_ row: Picker.Item) -> ListPeek?
     /// Its rows stay in their order (a place's); else what failed comes first.
     var keepsOrder: Bool { get }
+    /// What a change of the whole list is said about, as a row's id (a Tools action with no row): a list showing it
+    /// has it. nil: none.
+    var listID: String? { get }
 }
 
 extension ListSource {
     func peek(_ row: Picker.Item) -> ListPeek? { nil }
     var keepsOrder: Bool { false }
+    var listID: String? { nil }
+}
+
+/// A list's read that failed, with what the server said: a Picker offers it (Output…).
+protocol ShowsOutput: Error {
+    var output: String { get }
 }
 
 /// What Quick View shows of a list's row: lines as Info shows them, or a text read off the main thread once the cursor
@@ -45,12 +54,15 @@ struct ListColumn {
 }
 
 /// What a read gives: the rows, a line about them all above ("10 units · 1 failed"), what's said when there are none,
-/// and an action of the whole list on a button by that line (a Tools preset's `primary`: "＋ Allow Port…").
+/// and an action of the whole list on a button by that line (a Tools preset's `primary`: "＋ Allow Port…"). `actions`:
+/// the whole list's (a Tools preset's `toolActions`) — its keys and menu where no row is under the cursor, an empty
+/// list's (an inactive firewall's Turn Firewall On…).
 struct ListContent {
     var rows: [Picker.Item]
     var header: String? = nil
     var empty = "Nothing here"
     var primary: ListAction? = nil
+    var actions: [ListAction] = []
 }
 
 /// What a row's keys, its menu and its slots do — one list, so a Picker and a panel act alike on the same row
@@ -78,6 +90,8 @@ struct ListAction {
     /// A log as it goes (a Tools preset's `output: follow`): a Picker opens its window (`run`); a panel follows it next
     /// door instead, the row under the cursor's (nil `on`: this Mac).
     var follow: (command: String, on: SFTPTarget?)? = nil
+    /// It acts on marked rows too (a Tools action only with `multi`); false: on the cursor's row alone.
+    var multi = true
     /// Starts it — at once, so a second press finds it running — and gives back what to wait for, if there's
     /// something (several marked rows run one after another). `asked`: the question was asked already, for several
     /// rows at once: it runs without asking again.
@@ -94,6 +108,9 @@ struct ListAction {
     func update(_ item: Picker.Item)
     /// How a run on row `id` went; `failed`: it stays till it's closed. `output`: a button that shows more.
     func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?)
+    /// The rows of the list that has row `id`, read again after a change (a Tools action): the cursor stays on its row,
+    /// or goes to its neighbour if that went.
+    func reload(_ c: ListContent, having id: String)
     /// What a question goes on.
     var sheetWindow: NSWindow? { get }
     func holding<T>(_ work: () async -> T) async -> T
@@ -238,7 +255,22 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         if r == table?.selectedRow { onCursor?() }   // its keys may have changed (a run started on it)
     }
 
-    func has(_ id: String) -> Bool { content?.rows.contains { $0.id == id } == true }
+    func has(_ id: String) -> Bool { content?.rows.contains { $0.id == id } == true || source.listID == id }
+
+    /// What the keys and the menu do now: the cursor row's actions, else the list's own (`ListContent.actions`).
+    var actions: [ListAction] { cursor?.listActions?() ?? content?.actions ?? [] }
+
+    func reload(_ c: ListContent, having id: String) {
+        cursorID = Self.stay(cursorID, in: shown.map(\.id), now: Set(c.rows.map(\.id)))
+        set(c)
+    }
+
+    /// Where a cursor on `id` goes when the rows change: there, else the next row of `old` that's still there, else
+    /// the one before.
+    static func stay(_ id: String?, in old: [String], now: Set<String>) -> String? {
+        guard let id, !now.contains(id), let at = old.firstIndex(of: id) else { return id }
+        return old[(at + 1)...].first(where: now.contains) ?? old[..<at].last(where: now.contains)
+    }
 
     var cursor: Picker.Item? { shown.first { $0.id == cursorID } }
     var cursorRow: Int? { shown.firstIndex { $0.id == cursorID } }
@@ -538,7 +570,7 @@ extension AppDelegate {
     /// after a row's action does that. View ▸ Refresh reads the list again, ⌘R in it being the row's when it has one;
     /// ⌃↩ is the row's menu. A file's command beeps, saying why.
     func listRun(_ c: Command, key: Shortcut?, in list: ListPanel) -> Bool {
-        let actions = list.cursor?.listActions?() ?? []
+        let actions = list.actions
         if let key, let a = actions.first(where: { $0.panelKey == key }) { runList(a, in: list); return true }
         if key == nil, let a = Self.titled(c, actions) { runList(a, in: list); return true }
         switch c.id {
@@ -554,7 +586,7 @@ extension AppDelegate {
 
     /// The panel's ↩ or ⌘C by the mouse (a double-click, Edit ▸ Copy): the cursor row's action on that key.
     func listKey(_ key: Shortcut, in panel: PanelViewController) {
-        guard let l = panel.list, let a = l.cursor?.listActions?().first(where: { $0.panelKey == key }) else { return NSSound.beep() }
+        guard let l = panel.list, let a = l.actions.first(where: { $0.panelKey == key }) else { return NSSound.beep() }
         runList(a, in: l)
     }
 
@@ -565,7 +597,7 @@ extension AppDelegate {
     /// The key bar while a list has the keys: the cursor row's keys in its words — ↩ first, Stop… in red — then Mark,
     /// Filter and Actions. A click runs the slot's action, as its key.
     func listKeys(_ l: ListPanel) -> [KeySlot] {
-        let actions = l.cursor?.listActions?() ?? []
+        let actions = l.actions
         let keyed = actions.enumerated().compactMap { i, a -> (Int, Shortcut, ListAction)? in a.panelKey.flatMap { reachesList($0) ? (i, $0, a) : nil } }
         let slots = keyed.sorted { ($0.1 == Shortcut("return") ? 0 : 1, $0.0) < ($1.1 == Shortcut("return") ? 0 : 1, $1.0) }
             .map { i, k, a in KeySlot(key: k.display, label: a.title, id: "list:\(i)", danger: a.dangerous) }
@@ -583,7 +615,7 @@ extension AppDelegate {
     func runListSlot(_ id: String) {
         let rest = String(id.dropFirst("list:".count))
         guard let l = active.list else { return }
-        if let i = Int(rest), let a = l.cursor?.listActions?(), a.indices.contains(i) { return runList(a[i], in: l) }
+        if let i = Int(rest), case let a = l.actions, a.indices.contains(i) { return runList(a[i], in: l) }
         run(rest)
     }
 
@@ -592,7 +624,7 @@ extension AppDelegate {
     func fillListMenu(_ menu: NSMenu, _ l: ListPanel) {
         menu.autoenablesItems = false
         var group: Int?
-        for a in l.cursor?.listActions?() ?? [] {
+        for a in l.actions {
             if let group, group != a.group { menu.addItem(.separator()) }
             group = a.group
             let item = MenuAction.item(a.title) { [unowned self] in runList(a, in: l) }
@@ -612,7 +644,7 @@ extension AppDelegate {
     /// rest — each command as it runs, production's strip, ↩ = Cancel there — then each in turn, a line each.
     func runList(_ a: ListAction, in l: ListPanel) {
         if a.follow != nil, a.why == nil { return followNextDoor() }   // a log: next door, the cursor's row's
-        let rows = l.targets
+        let rows = a.multi ? l.targets : l.cursor.map { [$0] } ?? []
         guard rows.count > 1 else {
             if let why = a.why { return active.flash(why, error: true) }
             if a.command != nil { l.clearResults() }

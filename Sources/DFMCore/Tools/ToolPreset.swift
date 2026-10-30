@@ -430,6 +430,7 @@ public struct ToolAction: Sendable, Hashable, Codable {
     }
     public init(from d: Decoder) throws { (run, spec) = (try ToolRun(from: d), try Spec(from: d)) }
     public func encode(to e: Encoder) throws { try run.encode(to: e); try spec.encode(to: e) }
+    init(run: ToolRun, spec: Spec) { (self.run, self.spec) = (run, spec) }
 }
 
 public struct ToolPreset: Sendable, Hashable, Codable {
@@ -478,6 +479,12 @@ public struct ToolPreset: Sendable, Hashable, Codable {
             (list ?? []).enumerated().flatMap { i, a in [(at + [.index(i)], a)] + walk(a.spec.actions, at + [.index(i), .key("actions")]) }
         }
         return walk(actions, [.key("actions")]) + walk(toolActions, [.key("toolActions")])
+    }
+
+    /// A one-command tool's (§1) command as an action — what its Tools ▸ item and its place row run; nil for others.
+    public var commandAction: ToolAction? {
+        guard command != nil || script != nil else { return nil }
+        return ToolAction(run: ToolRun(command: command, script: script), spec: .init(id: "command", title: title, done: done, save: save, output: output ?? .window))
     }
 }
 

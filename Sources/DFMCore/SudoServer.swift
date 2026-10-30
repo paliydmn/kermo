@@ -78,7 +78,7 @@ enum SudoServer {
         return nil
     }
 
-    private static let asking = NSLock()
+    static let asking = NSLock()
     /// How long the session waits for sftp-server's first answer after the password (tests: less).
     nonisolated(unsafe) static var versionWait: TimeInterval = 10
 
@@ -112,7 +112,7 @@ enum SudoServer {
                     SFTP.sudoPasswordTaken?(t, password)
                     return (password, status, out)
                 }
-                if errors.contains("invalid option") { throw noStdinPassword(t, path: path) }   // sudo-rs 0.2.2: no -p
+                if errors.contains("invalid option") { throw noStdinPassword(t, path: path) }   // sudo-rs before 0.2.13: no -p
                 // It took the password but won't run that command for this user: asking again won't help.
                 if notAllowedTexts.contains(where: errors.contains) { throw SFTPError(message: "sudo on \(t.host) refused: " + errors, connection: true) }
                 (wrong, said) = (true, errors)
@@ -136,10 +136,11 @@ enum SudoServer {
         return (r.status, r.out)
     }
 
-    /// sudo-rs 0.2.2 takes no password this way (no `-p`; and it reads all of stdin, not a line).
+    /// sudo-rs before 0.2.13 takes no password this way (no `-p`; and it reads all of stdin, not a line). 0.2.13, Ubuntu
+    /// 26.04's, takes `-p ''` and one line.
     static func noStdinPassword(_ t: SFTPTarget, path: String?) -> SFTPError {
         let user = t.host.contains("@") ? String(t.host[..<t.host.lastIndex(of: "@")!]) : "<user>"
-        return SFTPError(message: "sudo on \(t.host) can't take a password from Kermo (it reads no password line from stdin, as sudo-rs 0.2.2). "
+        return SFTPError(message: "sudo on \(t.host) can't take a password from Kermo (it reads no password line from stdin, as sudo-rs before 0.2.13). "
                          + (path.map { "To open it as root, allow sftp-server without one there in sudoers: \(user) ALL=(root) NOPASSWD: \($0)" }
                             ?? "Checks as root need sudo without a password there."), connection: true)
     }

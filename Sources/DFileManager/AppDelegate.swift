@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// What a server's lists counted when last read ("<key> services" → 10 units, 1 failed): its place shows them while
     /// a connection is up.
     var listCounts: [String: (n: Int, problems: Int)] = [:]
+    lazy var tools = ToolRunner(self)   // Tools: the library, what servers have, actions' runs
     private(set) var ops: OpsController!
     /// Move jobs an undo/redo started (across volumes): their own undo is registered already.
     var replayJobs: [FileJob] = []
@@ -92,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         SFTP.hasPassword = { SSHPasswords.has($0) }
         SFTP.sudoPassword = { SudoPasswords.password($0, wrong: $1) }
         SFTP.sudoPasswordTaken = { SudoPasswords.taken($0, $1) }
+        PanelViewController.toolsItem = { [unowned self] in toolsItem(for: $0) }
         askpass = SSHAskpass.serve()
         ServerLock.servers = { [unowned self] in savedServers }
         ServerCopies.upload = { [unowned self] c in await upload(c.url, to: c.path, on: c.target, c.state) }
@@ -398,7 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         var file: [String: [String]] = [:], problems: [String] = []
         do { file = try Self.readKeymap() } catch { problems.append("keymap.json: \(error.localizedDescription)") }
         let bound = Self.bind(makeCommands(), file)
-        problems += bound.problems
+        problems += bound.problems + tools.reload()
         let (cmds, overrides) = (bound.commands, bound.overrides)
         commands = cmds
         keymap = bound.keymap
@@ -1032,6 +1034,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             tunnelsItem(for: r.saved, at: r.target),
             MenuAction.item("Services…") { [unowned self] in showServices(on: r.target) },
             MenuAction.item("Containers…") { [unowned self] in showContainers(on: r.target) },
+            toolsItem(for: r.target),
             .separator(),
             MenuAction.item(r.pinned ? "Unpin" : "Pin") { [unowned self] in
                 unpin(r.key)
@@ -1282,7 +1285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if id == "server.history", Editor.server(of: NSApp.keyWindow) != nil { return true }   // its editor's file
         if id == "help.keys", Self.windowToClose(key: NSApp.keyWindow, main: window) != nil { return true }   // that window's keys
         if let list = activePanel?.list, let c, !terminalActive, !Self.appWide.contains(id) {   // a list: its rows' words, no file's commands
-            if let a = Self.titled(c, list.cursor?.listActions?() ?? []) { item.title = a.title }
+            if let a = Self.titled(c, list.actions) { item.title = a.title }
             else if !Self.runsInList(id) { return false }
         }
         return Self.appWide.contains(id) || NSApp.keyWindow === window && canRun(id)
@@ -1309,7 +1312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// A list's row keys (⌘R Restart, F8 Stop…): off the menu, they go to the panel, which knows the key — not through
     /// View ▸ Refresh's ⌘R.
-    var listRowKeys: Set<Shortcut> { Set((terminalActive ? nil : activePanel?.list?.cursor?.listActions?())?.compactMap(\.panelKey) ?? []) }
+    var listRowKeys: Set<Shortcut> { Set((terminalActive ? nil : activePanel?.list?.actions)?.compactMap(\.panelKey) ?? []) }
 
     /// ⌘W (Close Tab) in a viewer, editor or other document window closes that window, through its delegate, so
     /// the editor still asks about unsaved changes. In the main window, or a sheet / picker over it, it closes a tab.
@@ -1547,6 +1550,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ]
         let tail: [String: [NSMenuItem]] = [
             "Kermo": [.separator(), item("Hide Kermo", #selector(NSApplication.hide(_:)), "h"), item("Quit Kermo", #selector(NSApplication.terminate(_:)), "q")],
+            "Server": [.separator(), toolsMenuItem()],
         ]
         for title in Self.menus {
             if title == "Help" {
@@ -1751,13 +1755,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// A sheet with `buttons` (the last one is Cancel / ⎋) on `sheetWindow` (default: the main one); returns the index pressed.
     /// `default`: the button ↩ answers (else the first). Esc still answers Cancel when ↩ took its key.
     func choose(_ message: String, info: String, _ buttons: [String], default: Int? = nil, on sheetWindow: NSWindow? = nil) async -> Int {
-        if let answer = Self.answering { return answer(message, buttons, `default`) }
+        if let answer = Self.answering { Self.answeredInfo = info; return answer(message, buttons, `default`) }
         if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }   // asked by a save in another app: the Dock icon bounces
         return await Self.sheet(Self.alert(message, info: info, buttons, default: `default`), on: sheetWindow ?? window)
     }
 
-    /// Tests: answers `choose` instead of a sheet (the message, the buttons, the one ↩ presses).
+    /// Tests: answers `choose` instead of a sheet (the message, the buttons, the one ↩ presses); `answeredInfo` is what
+    /// the last one said under its title.
     static var answering: (@MainActor (String, [String], Int?) -> Int)?
+    static var answeredInfo = ""
 
     /// `alert` as a sheet on `window`; the button's index.
     static func sheet(_ alert: NSAlert, on window: NSWindow) async -> Int {
