@@ -21,6 +21,7 @@ public enum ToolExec {
         /// The sudo password it ran with: masked in all that's shown and logged.
         public var password: String?
         public var text: String { String(decoding: out, as: UTF8.self) }
+        public init() {}
     }
 
     /// The sudo password wasn't given (the dialog's Cancel): nothing ran.
@@ -111,9 +112,16 @@ public enum ToolExec {
         let said = r.status == 127 ? "(?:command )?not found" : "[Pp]ermission denied"
         let program = (try? Regex("([^\\s:]+): \(said)")).flatMap { r.errors.firstMatch(of: $0)?.output[1].substring }.map(String.init) ?? "a command"
         if r.status == 126 { return "\(program) can't be run on \(server): permission" }
-        let system = facts.map { f in [f.os.isEmpty ? "" : (f.os.prefix(1).uppercased() + f.os.dropFirst() + (f.osVersion.isEmpty ? "" : " \(f.osVersion)")),
-                                       f.pkg == "none" ? "" : f.pkg].filter { !$0.isEmpty }.joined(separator: " · ") } ?? ""
+        let system = facts?.said ?? ""
         return "\(program) isn't on \(server)" + (system.isEmpty ? "" : " (\(system))")
+    }
+}
+
+extension ToolFacts {
+    /// The server's system for people: "Fedora 44 · dnf".
+    public var said: String {
+        [os.isEmpty ? "" : os.prefix(1).uppercased() + os.dropFirst() + (osVersion.isEmpty ? "" : " " + osVersion), pkg == "none" ? "" : pkg]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }
 

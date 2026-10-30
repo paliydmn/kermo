@@ -27,6 +27,11 @@ extension ListSource {
     var keepsOrder: Bool { false }
 }
 
+/// A list's read that failed, with what the server said: a Picker offers it (Output…).
+protocol ShowsOutput: Error {
+    var output: String { get }
+}
+
 /// What Quick View shows of a list's row: lines as Info shows them, or a text read off the main thread once the cursor
 /// rests on the row — passing over rows asks nothing (a service's `systemctl status`).
 enum ListPeek {
@@ -78,6 +83,8 @@ struct ListAction {
     /// A log as it goes (a Tools preset's `output: follow`): a Picker opens its window (`run`); a panel follows it next
     /// door instead, the row under the cursor's (nil `on`: this Mac).
     var follow: (command: String, on: SFTPTarget?)? = nil
+    /// It acts on marked rows too (a Tools action only with `multi`); false: on the cursor's row alone.
+    var multi = true
     /// Starts it — at once, so a second press finds it running — and gives back what to wait for, if there's
     /// something (several marked rows run one after another). `asked`: the question was asked already, for several
     /// rows at once: it runs without asking again.
@@ -94,6 +101,9 @@ struct ListAction {
     func update(_ item: Picker.Item)
     /// How a run on row `id` went; `failed`: it stays till it's closed. `output`: a button that shows more.
     func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?)
+    /// The rows of the list that has row `id`, read again after a change (a Tools action): the cursor stays on its row,
+    /// or goes to its neighbour if that went.
+    func reload(_ c: ListContent, having id: String)
     /// What a question goes on.
     var sheetWindow: NSWindow? { get }
     func holding<T>(_ work: () async -> T) async -> T
@@ -239,6 +249,18 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
     }
 
     func has(_ id: String) -> Bool { content?.rows.contains { $0.id == id } == true }
+
+    func reload(_ c: ListContent, having id: String) {
+        cursorID = Self.stay(cursorID, in: shown.map(\.id), now: Set(c.rows.map(\.id)))
+        set(c)
+    }
+
+    /// Where a cursor on `id` goes when the rows change: there, else the next row of `old` that's still there, else
+    /// the one before.
+    static func stay(_ id: String?, in old: [String], now: Set<String>) -> String? {
+        guard let id, !now.contains(id), let at = old.firstIndex(of: id) else { return id }
+        return old[(at + 1)...].first(where: now.contains) ?? old[..<at].last(where: now.contains)
+    }
 
     var cursor: Picker.Item? { shown.first { $0.id == cursorID } }
     var cursorRow: Int? { shown.firstIndex { $0.id == cursorID } }
@@ -612,7 +634,7 @@ extension AppDelegate {
     /// rest — each command as it runs, production's strip, ↩ = Cancel there — then each in turn, a line each.
     func runList(_ a: ListAction, in l: ListPanel) {
         if a.follow != nil, a.why == nil { return followNextDoor() }   // a log: next door, the cursor's row's
-        let rows = l.targets
+        let rows = a.multi ? l.targets : l.cursor.map { [$0] } ?? []
         guard rows.count > 1 else {
             if let why = a.why { return active.flash(why, error: true) }
             if a.command != nil { l.clearResults() }

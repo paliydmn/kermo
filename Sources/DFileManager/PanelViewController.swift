@@ -3088,11 +3088,15 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         add("Calculate Folder Sizes", "view.dirsizes")
         if git != nil || remote != nil { menu.addItem(.separator()) }
         if git != nil { add("Git Changes", "git.changes") }
-        if remote != nil {
+        if let remote {
             add("Services…", "server.services")
             add("Containers…", "server.containers")
+            Self.toolsItem(remote.target).map(menu.addItem)
         }
     }
+
+    /// Tools ▸ for a server (`AppDelegate.toolsItem`): set at launch.
+    static var toolsItem: @MainActor (SFTPTarget) -> NSMenuItem? = { _ in nil }
 
     private func fillOpenWith(_ m: NSMenu, for url: URL) {
         for app in NSWorkspace.shared.urlsForApplications(toOpen: url) {

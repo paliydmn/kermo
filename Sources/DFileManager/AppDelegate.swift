@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// What a server's lists counted when last read ("<key> services" → 10 units, 1 failed): its place shows them while
     /// a connection is up.
     var listCounts: [String: (n: Int, problems: Int)] = [:]
+    lazy var tools = ToolRunner(self)   // Tools: the library, what servers have, actions' runs
     private(set) var ops: OpsController!
     /// Move jobs an undo/redo started (across volumes): their own undo is registered already.
     var replayJobs: [FileJob] = []
@@ -92,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         SFTP.hasPassword = { SSHPasswords.has($0) }
         SFTP.sudoPassword = { SudoPasswords.password($0, wrong: $1) }
         SFTP.sudoPasswordTaken = { SudoPasswords.taken($0, $1) }
+        PanelViewController.toolsItem = { [unowned self] in toolsItem(for: $0) }
         askpass = SSHAskpass.serve()
         ServerLock.servers = { [unowned self] in savedServers }
         ServerCopies.upload = { [unowned self] c in await upload(c.url, to: c.path, on: c.target, c.state) }
@@ -398,7 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         var file: [String: [String]] = [:], problems: [String] = []
         do { file = try Self.readKeymap() } catch { problems.append("keymap.json: \(error.localizedDescription)") }
         let bound = Self.bind(makeCommands(), file)
-        problems += bound.problems
+        problems += bound.problems + tools.reload()
         let (cmds, overrides) = (bound.commands, bound.overrides)
         commands = cmds
         keymap = bound.keymap
@@ -1032,6 +1034,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             tunnelsItem(for: r.saved, at: r.target),
             MenuAction.item("Services…") { [unowned self] in showServices(on: r.target) },
             MenuAction.item("Containers…") { [unowned self] in showContainers(on: r.target) },
+            toolsItem(for: r.target),
             .separator(),
             MenuAction.item(r.pinned ? "Unpin" : "Pin") { [unowned self] in
                 unpin(r.key)
@@ -1547,6 +1550,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ]
         let tail: [String: [NSMenuItem]] = [
             "Kermo": [.separator(), item("Hide Kermo", #selector(NSApplication.hide(_:)), "h"), item("Quit Kermo", #selector(NSApplication.terminate(_:)), "q")],
+            "Server": [.separator(), toolsMenuItem()],
         ]
         for title in Self.menus {
             if title == "Help" {

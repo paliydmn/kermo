@@ -146,7 +146,7 @@ extension AppDelegate {
     }
 
     /// The action called `title` as it is now (a run may have started or ended since the row was made).
-    private func perform(_ title: String, _ actions: () -> [ServiceAction]) {
+    func perform(_ title: String, _ actions: () -> [ServiceAction]) {
         guard let a = actions().first(where: { $0.title == title }) else { return }
         if let why = a.why { return active.flash(why, error: true) }
         guard a.closes, Picker.current != nil else { _ = a.run(false); return }
@@ -154,8 +154,9 @@ extension AppDelegate {
         DispatchQueue.main.async { _ = a.run(false) }   // after focus is back on the main window
     }
 
-    /// The menu of a service's row, a line between looks and changes; what can't run now is greyed, saying why.
-    private func serviceMenu(_ actions: @escaping () -> [ServiceAction]) -> NSMenu {
+    /// The menu of a service's row (a Tools row's too), a line between looks and changes; what can't run now is
+    /// greyed, saying why; red what can't be undone.
+    func serviceMenu(_ actions: @escaping () -> [ServiceAction]) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
         var group: Int?
@@ -165,6 +166,7 @@ extension AppDelegate {
             let item = MenuAction.item(a.title) { [unowned self] in perform(a.title, actions) }
             // Not ↩: in an open menu it would run Status, not the highlighted item.
             if let key = a.key, !key.flags.isEmpty { (item.keyEquivalent, item.keyEquivalentModifierMask) = (key.menuKey, key.flags) }
+            if a.dangerous { item.attributedTitle = NSAttributedString(string: a.title, attributes: [.foregroundColor: Palette.fail]) }
             item.isEnabled = a.why == nil
             item.toolTip = a.why
             menu.addItem(item)
@@ -522,7 +524,7 @@ extension AppDelegate {
     /// What a place lists, provider by provider, in this order: its folders, what it runs and its ports and tunnels,
     /// its file history. Tools add theirs as one more provider (tests: one of theirs).
     static var placeProviders: [@MainActor (AppDelegate, PlaceSource) -> [Picker.Item]] = [
-        { $0.placeFolders($1) }, { $0.placeLists($1) }, { $0.placeHistory($1) },
+        { $0.placeFolders($1) }, { $0.placeLists($1) }, { $0.placeTools($1) }, { $0.placeHistory($1) },
     ]
 
     /// Server ▸ Overview: the active panel's server's place (or its SSH tab's), else picked.

@@ -232,6 +232,15 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         return w
     }
 
+    /// A run that's over already (a Tools action's `window`): what it said, stderr in red, how it ended.
+    static func show(_ out: String, errors: String, title: String, place: String, status: Int32, ok: Bool) {
+        let w = OutputWindow(out: out, errors: errors, place: place, status: status, ok: ok)
+        w.window?.title = title.bidiVisible
+        open.append(w)
+        w.showWindow(nil)
+        w.window?.listInWindowsMenu()
+    }
+
     /// Embedded: its text, taken out of the window for a panel to show.
     var text: NSScrollView? { window?.docFrame?.scroll }
     private var embedded = false
@@ -334,6 +343,19 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
             onExit(self.status)
         }
         do { try process.run() } catch { append(Data("\(error.localizedDescription)\n".utf8), true, in: tv) }
+    }
+
+    private init(out: String, errors: String, place: String, status: Int32, ok: Bool) {
+        let (w, tv) = Self.window()
+        w.subtitle = place
+        super.init(window: w)
+        w.delegate = self
+        for (text, isErr) in [(out, false), (errors, true)] where !text.isEmpty {
+            append(Data((text.hasSuffix("\n") ? text : text + "\n").utf8), isErr, in: tv)
+            append(Data(), isErr, in: tv)   // its last character, if a read had cut it
+        }
+        w.docFrame?.text = ok ? "done" : "exit \(status)"
+        w.docFrame?.showKeys()
     }
 
     /// Run on Servers': `MultiRun` on a thread of its own, its lines taken in batches; the summary once all are over.

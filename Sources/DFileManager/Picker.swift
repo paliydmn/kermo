@@ -284,6 +284,17 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
 
     func has(_ id: String) -> Bool { items.contains { $0.id == id } || above.contains { $0.items.contains { $0.id == id } } }
 
+    func reload(_ c: ListContent, having id: String) {
+        func rows(_ s: ListSource?) -> [Item] { (s?.keepsOrder == true ? c.rows : ListPanel.problemsFirst(c.rows)).map(keyed) }
+        for l in above.indices where above[l].source != nil && above[l].items.contains(where: { $0.id == id }) { above[l].items = rows(above[l].source) }
+        guard source != nil, items.contains(where: { $0.id == id }) else { return }
+        selectID = ListPanel.stay(highlighted?.id, in: shown.map(\.id), now: Set(c.rows.map(\.id)))
+        show(c)
+    }
+
+    /// This level's list read again (a Tools row's menu: Refresh).
+    func reread() { if let source { read(source) } }
+
     /// A line under the rows that stays till the next one, or the picker's end; nil takes it away. `output`: a
     /// button that shows more (a command's whole output).
     func say(_ text: NSAttributedString?, output show: (@MainActor () -> Void)? = nil) {
@@ -458,9 +469,17 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
                 let font = NSFont.systemFont(ofSize: 12), line = NSMutableAttributedString()
                 if !(e is AppDelegate.Locked) { line.append(Symbol.failed.text(Palette.fail, font: font, label: "failed")); line.append(NSAttributedString(string: " ")) }
                 line.append(NSAttributedString(string: e.localizedDescription, attributes: [.font: font, .foregroundColor: NSColor.labelColor]))
-                say(line)
+                let output = (e as? ShowsOutput)?.output ?? "", title = "What \(s.title) said"
+                var show: (@MainActor () -> Void)?
+                if !output.isEmpty { show = { [weak self] in self?.showOutput(title, String(output.suffix(4000))) } }
+                say(line, output: show)
             }
         }
+    }
+
+    /// What the server said when a list's read failed, as a failed change's Output… shows it.
+    private func showOutput(_ title: String, _ text: String) {
+        Task { await holding { _ = await (NSApp.delegate as? AppDelegate)?.choose(title, info: text, ["OK"], on: window) } }
     }
 
     /// `row`'s actions as the next level: its chip, the actions as rows.
