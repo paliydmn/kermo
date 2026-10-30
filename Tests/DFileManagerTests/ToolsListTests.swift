@@ -62,6 +62,7 @@ import Testing
         ToolRunner.hasMaster = { _ in true }
         ToolRunner.own = URL(fileURLWithPath: dir + "/own")
         AuditLog.path = dir + "/audit.jsonl"
+        AppDelegate.connected = { _ in false }   // another suite's master to localhost isn't this one's: a test says when it's up
     }
 
     func done() {

@@ -34,7 +34,7 @@ final class ToolRunner {
 
     /// Reads the tools again (at launch, Reload Config); what couldn't be loaded, as Reload Config says it.
     func reload() -> [String] {
-        library = ToolLibrary.load(own: Self.own, hasSymbol: { NSImage(systemSymbolName: $0, accessibilityDescription: nil) != nil })
+        library = ToolLibrary.load(own: Self.own, hasSymbol: Symbol.exists)
         (answers, found) = ([:], [:])   // a changed tool's requires: asked again
         return library.problems
     }

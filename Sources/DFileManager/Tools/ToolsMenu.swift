@@ -26,7 +26,7 @@ extension AppDelegate {
         for tool in here {
             let p = tool.preset
             let it = MenuAction.item(p.tool.map { "\(p.title) (\($0))" } ?? p.title) { [unowned self] in openTool(tool, on: s, t) }
-            it.image = NSImage(systemSymbolName: p.icon ?? "wrench", accessibilityDescription: nil) ?? NSImage(systemSymbolName: "wrench", accessibilityDescription: nil)
+            it.image = Symbol.preset(p.icon)
             it.isEnabled = up
             guard let g = p.group else { menu.addItem(it); continue }
             let sub = groups[g] ?? {

@@ -46,9 +46,15 @@ enum Symbol: String, CaseIterable {
     // Settings' tabs
     case general = "gearshape", appearance = "paintpalette", keyboard, terminal, document = "doc.text", safety = "lock.shield",
          advanced = "slider.horizontal.3"
+    // a Tools preset's, when it names none or one this macOS lacks
+    case tool = "wrench"
 
     /// `label`: what VoiceOver says for it.
     func image(_ label: String? = nil) -> NSImage { NSImage(systemSymbolName: rawValue, accessibilityDescription: label)! }
+
+    /// A Tools preset's own `icon`, not one of Kermo's: whether this macOS has it, and its image — else `tool`'s.
+    static func exists(_ name: String) -> Bool { NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil }
+    static func preset(_ name: String?) -> NSImage { name.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) } ?? tool.image() }
 
     /// In `color`, `size` points — not a template, so a button's title or a menu draws it in that color, not its own.
     func image(_ label: String? = nil, color: NSColor, size: CGFloat, weight: NSFont.Weight = .regular) -> NSImage {
