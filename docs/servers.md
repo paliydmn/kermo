@@ -31,6 +31,7 @@ The sheet has four groups — **Connection**, **Sign in**, **Safety**, **Open** 
 | **Password** | ask every time | Saved in the login Keychain as "Kermo: user@host" (with `:port` for a port other than 22), one per user, host and port. Shown as dots; the eye beside it shows it after Touch ID or the Mac password. Type to replace it. Read only when ssh asks for a password: a server that takes your key never reads it. |
 | **Production** | off | A switch; see [below](#mark-a-server-as-production). |
 | **Lock** | not locked | Touch ID or the Mac password; see below. |
+| **Read-only** | off | [Tools](tools.md) run only actions that change nothing there; the rest are greyed, saying so. Files and commands aren't limited yet. |
 | **Start folder** | the login folder | Where SFTP opens. |
 
 Saved servers live in `~/.config/dfilemanager/servers.json` (see [Configuration](configuration.md#saved-servers)). Passwords are never written there.

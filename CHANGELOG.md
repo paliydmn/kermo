@@ -16,6 +16,10 @@ Release:
 ### Added
 - **Kermo ▸ Support Kermo…** (and a link in About) opens the ways to support Kermo's development.
 - **Tools**: a server's ufw rules (**Firewall**) and fail2ban's banned addresses (**Banned IPs**) as lists — in **Tools ▸** of a server's menus and **Server ▸ Tools**, a row each in its overview, in search and in a panel — with their actions: Status in Full, Delete Rule…, Turn Firewall On… / Off…; Who Is It?, Unban. A change asks on production (always for one that can't be undone), shows the command with its values, says how it went under the list and reads the list again; Delete Rule… checks the rule is still the one you saw. What a server has is asked once its connection is up, never logging in for a menu. Tools are JSON presets; Reload Config checks your own in `~/.config/dfilemanager/tools/`.
+- Tools: **Allow Port…**, **Block Address…**, **Ban Address…** and **Jail Status…** ask in a sheet, checked as you type, showing the command they'll run; **＋ Allow Port…** over the list. **fail2ban Log** follows in a window, or next door in a panel. Your own tools ask **Use the tool “…”?** with everything they run before they run anything. On production a tool's question can be put off for 10 minutes; a server marked **Read-only** (Edit Server ▸ Safety) runs only what changes nothing. A saved server's tools show in Tools ▸, greyed, while it isn't connected.
+
+### Fixed
+- **＋ New Tunnel…** over a server's tunnels in a panel did nothing.
 
 ## [1.6] - 2026-10-28
 
