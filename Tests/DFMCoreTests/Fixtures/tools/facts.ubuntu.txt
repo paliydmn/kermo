@@ -1,0 +1,7 @@
+kermo-fact ID=ubuntu
+kermo-fact ID_LIKE=debian
+kermo-fact VERSION_ID=26.04
+kermo-fact pkg=apt-get
+kermo-fact init=none
+kermo-fact userland=gnu
+kermo-fact arch=x86_64

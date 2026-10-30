@@ -1,0 +1,7 @@
+kermo-fact ID=fedora
+kermo-fact ID_LIKE=
+kermo-fact VERSION_ID=44
+kermo-fact pkg=dnf
+kermo-fact init=none
+kermo-fact userland=gnu
+kermo-fact arch=x86_64
