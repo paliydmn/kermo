@@ -72,6 +72,7 @@ import Testing
 /// The app with `pulse` loaded and trusted, localhost saved; its tools known once connected.
 @MainActor private func watching(_ app: AppDelegate, _ bench: ToolsBench, ids: [String] = ["pulse"], servers: [SavedServer]? = nil) async throws {
     try pulse(bench, ids)
+    app.tools.monitor.ready = true
     _ = app.tools.reload()
     for id in ids { app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == id })) }
     app.savedServers = servers ?? [SavedServer(address: "localhost")!]

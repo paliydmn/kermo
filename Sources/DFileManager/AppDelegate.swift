@@ -118,6 +118,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: back)
         Masters.stopOnWake()
         Masters.stopOnNetworkChange()
+        tools.monitor.ready = true   // watched servers log in now, the Keychain hooks set
+        tools.monitor.reconcile()
         Task { _ = await Blocking.run { GitStatus.available } }   // runs xcode-select: not on the main thread at first use
         DispatchQueue.global(qos: .utility).async { TempCopies.sweep() }
 

@@ -70,6 +70,9 @@ import Network
     }
 
     private(set) var servers: [String: Server] = [:]
+    /// Set once the app has its Keychain hooks (`applicationDidFinishLaunching`): a quiet login before that would
+    /// find no saved password and say "needs login" for nothing. Till then `reconcile` only notes what's wanted.
+    var ready = false
     private var timer: Timer?
     private var wokeAt: Date?, sleptAt: Date?
     private var lastRetry = Date.distantPast
@@ -93,7 +96,7 @@ import Network
         ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.woke() } }
         network.pathUpdateHandler = Masters.changes { [weak self] (p: NWPath) in
             let on = p.status == .satisfied
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.online = on } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.online = on; self?.wokeAt = Date(); self?.restart() } }
         }
         network.start(queue: DispatchQueue(label: "dfm.monitor.network"))
     }
@@ -145,7 +148,7 @@ import Network
             }
             // A tool joined, or one left: the channel runs anew with the sources as they are now.
             if s.channel != nil, Set(s.tools.filter(\.value.wanted).keys) != channelSources[key] { stop(s, why: .reconnecting); s.retryAt = Date() }
-            if s.channel == nil, s.retryAt == nil, !s.needsLogin { start(s) }
+            if ready, s.channel == nil, s.retryAt == nil, !s.needsLogin { start(s) }
         }
         tickIfNeeded()
         changed()
@@ -223,7 +226,8 @@ import Network
         s.channel?.cancel()
         s.channel = nil
         channelSources[s.key] = nil
-        (s.retryAt, s.retries, s.since) = (nil, 0, nil)
+        (s.retryAt, s.retries) = (nil, 0)
+        if why == .notWatched { s.since = nil }
         gap(s, why)
     }
 
@@ -345,13 +349,22 @@ import Network
         for s in servers.values where s.wanted { gap(s, .asleep) }
     }
 
-    /// Back from sleep: the connections go (`Masters.stopOnWake`), so each channel ends and comes back staggered;
-    /// a minute's grace before any "not answering".
+    /// Back from sleep, or on another network: the shared connections are stopped (`Masters`), but a session on one
+    /// lives on till ssh notices the dead link (ServerAlive: some 90 s) — so each channel is ended here and comes back
+    /// staggered, with a minute's grace before any "not answering".
     private func woke() {
         wokeAt = Date()
         for s in servers.values where s.wanted {
             note(s, "Paused while this Mac slept" + (sleptAt.map { " since " + $0.formatted(date: .omitted, time: .shortened) } ?? ""))
             s.missed = 0
+        }
+        restart()
+    }
+
+    func restart() {
+        for s in servers.values where s.wanted && s.channel != nil {
+            stop(s, why: .reconnecting)
+            retryLater(s)
         }
         changed()
     }
