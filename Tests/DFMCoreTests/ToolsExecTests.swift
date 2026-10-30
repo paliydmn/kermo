@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 @testable import DFMCore
 
@@ -72,6 +73,28 @@ extension SudoPasswordTests {
         [ "$pw" = kermo-test-pw ] || { echo "Sorry, try again ($pw)." >&2; exit 1; }
         exec "$@"
         """#
+
+    /// At most `channels` runs on one server at a time: one more waits, saying so, till one ends; ⎋ stops the wait.
+    @Test func runsPastTheChannelsWait() throws {
+        let was = ToolExec.channels
+        ToolExec.channels = 1
+        let heard = OSAllocatedUnfairLock<[Bool]>(initialState: [])
+        ToolExec.waiting = { _, on in heard.withLock { $0.append(on) } }
+        defer { ToolExec.channels = was; ToolExec.waiting = nil }
+        let first = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { _ = try? run("sleep 1; echo first"); first.signal() }
+        usleep(300_000)
+        let start = Date()
+        #expect(try run("echo second").text == "second\n")
+        #expect(Date().timeIntervalSince(start) > 0.4 && heard.withLock { $0 } == [true, false], "it waited for the first")
+        first.wait()
+        DispatchQueue.global().async { _ = try? run("sleep 1"); first.signal() }
+        usleep(300_000)
+        let flag = CancelFlag()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { flag.cancel() }
+        #expect(throws: CancellationError.self) { try run("echo never", cancel: flag) }
+        first.wait()
+    }
 
     @Test func aToolRunAsksForSudosPasswordOnlyWhenItWantsOne() throws {
         let sudo = NSTemporaryDirectory() + "kermo-tool-sudo-" + UUID().uuidString

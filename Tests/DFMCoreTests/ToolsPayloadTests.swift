@@ -173,3 +173,17 @@ private func standInSudo(_ kind: String) throws -> String {
     let p = ToolPayload(body: "echo KERMO_abc", values: [], nonce: "abc")
     #expect(p.nonce != "abc" && p.nonce.count == 16)
 }
+
+/// A `terminal` run's line (§2): `sh -c` with each value a variable before the command — one argument, whatever it
+/// holds — the tool's env, and `sudo` in front as root. It runs as the login shell would have it.
+@Test func aTerminalLineKeepsEachValueOneArgument() throws {
+    let tool = try JSONDecoder().decode(ToolPreset.self, from: Data(#"{ "schema": 1, "id": "t", "title": "T", "env": { "MODE": "{mode}" } }"#.utf8))
+    let run = ToolRun(command: .one(#"printf '[%s]' {name} "$MODE""#))
+    let scope = ToolTemplate.Scope(rows: [["name": "a b'; echo pwned", "mode": "x y"]])
+    let (line, willRun) = try ToolPayload.terminal(run, in: tool, scope: scope)
+    #expect(willRun == #"printf '[%s]' 'a b'\''; echo pwned' "$MODE""#)
+    #expect(try SSHCommand.capture(.local(), line) == "[a b'; echo pwned][x y]")
+    var root = run
+    root.sudo = true
+    #expect(try ToolPayload.terminal(root, in: tool, scope: scope).line.hasPrefix("sudo sh -c "))
+}

@@ -126,7 +126,7 @@ public enum ToolBatch {
         let flag = CancelFlag(), hold = CancelFlag()
         Timeouts.queue.asyncAfter(deadline: .now() + 10) { flag.cancel() }
         var reader = ToolRunOutput(nonce: p.nonce), out = Data()
-        guard (try? SSHCommand.run(t, command(p), cancel: flag, stdin: p.stdin(), holdStdin: hold) { out += reader.feed($0) }) != nil,
+        guard (try? ToolExec.channel(t, cancel: flag) { try SSHCommand.run(t, command(p), cancel: flag, stdin: p.stdin(), holdStdin: hold) { out += reader.feed($0) } }) != nil,
               reader.started else { return nil }
         return read(String(decoding: out, as: UTF8.self), items)
     }
