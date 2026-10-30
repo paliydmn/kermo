@@ -268,7 +268,7 @@ final class ToolRunner {
                     guard let payload else { return }
                     let password: String? = payload.sudo == .noPassword && ToolExec.wantsPassword(t) ? await Blocking.run { SFTP.sudoPassword?(t, false) } : nil
                     let p2 = password == nil ? payload : (try? Self.payloads(a.run, of: tool, scope, secret: secret).1) ?? payload
-                    OutputWindow.follow(p2, password: password, on: mac ? .local() : t, title: "\(verb) — \(place)", place: place, cri: a.spec.strip == "cri")
+                    OutputWindow.follow(p2, password: password, on: mac ? .local() : t, title: "\(verb) — \(place)", cri: a.spec.strip == "cri")
                     AuditLog.write(t, "tool \(p.id) \(a.spec.id)", paths: [], command: p2.mask(p2.shown, password: password), exit: nil)
                 case .terminal?:
                     guard let line = try? ToolPayload.terminal(a.run, in: p, scope: scope, scripts: tool.scripts).line else { return }
@@ -281,7 +281,7 @@ final class ToolRunner {
                     switch r {
                     case .success(let (ran, payload)):
                         OutputWindow.show(payload.mask(ran.text, password: ran.password), errors: ran.stopped ?? ran.errors, title: "\(verb) — \(place)",
-                                          place: place, status: ran.status, ok: ran.stopped == nil && a.run.succeeded(ran.status))
+                                          status: ran.status, ok: ran.stopped == nil && a.run.succeeded(ran.status))
                     case .failure(is CancellationError): break
                     case .failure(is ToolExec.NoPassword): panel.flash("\(verb): no sudo password — nothing ran")
                     case .failure(let e): app.showError(e)

@@ -77,7 +77,6 @@ struct Confirm {
             a.buttons[0].identifier = Self.commandReturn
         }
         a.accessoryView = accessory()
-        a.window.initialFirstResponder = a.buttons.first { $0.keyEquivalent == "\r" }   // not a long command's text: ↩ stays the sheet's
         return a
     }
 
@@ -177,10 +176,13 @@ struct Confirm {
         text.setAccessibilityLabel("Command: " + command)
         let line = NSLayoutManager().defaultLineHeight(for: font)
         guard text.fittingSize.height > 8 * line + 1 else { return TintBox(text, fill: fill, inset: inset) }
-        let scroll = NSTextView.scrollableTextView()
-        let view = scroll.documentView as! NSTextView
+        let scroll = NSScrollView(), view = CommandText(frame: NSRect(x: 0, y: 0, width: width - 2 * inset.width, height: 0))
+        scroll.hasVerticalScroller = true
+        (view.isVerticallyResizable, view.autoresizingMask) = (true, [.width])
+        view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        view.textContainer?.widthTracksTextView = true
+        scroll.documentView = view
         view.string = command
-        view.setSelectedRange(NSRange(location: 0, length: 0))   // it opens at its first line
         view.font = font
         view.isEditable = false
         view.drawsBackground = false
@@ -221,5 +223,24 @@ final class TintBox: NSView {
     override func draw(_ dirtyRect: NSRect) {
         fill.setFill()
         NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+    }
+}
+
+/// A long command's text in a question. Made the sheet's first responder, a text view took ↩ and ⎋ for itself and
+/// scrolled to its end (found in the Tools GUI check): it takes the keys only once it's clicked — to select and copy —
+/// and even then ↩ and ⎋ are the sheet's buttons'.
+final class CommandText: NSTextView {
+    private var clicked = false
+    override var acceptsFirstResponder: Bool { clicked }
+
+    override func mouseDown(with e: NSEvent) {
+        clicked = true
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: e)
+    }
+
+    override func keyDown(with e: NSEvent) {
+        if [36, 76, 53].contains(e.keyCode), window?.performKeyEquivalent(with: e) == true { return }
+        super.keyDown(with: e)
     }
 }

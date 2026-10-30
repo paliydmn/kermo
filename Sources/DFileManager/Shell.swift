@@ -233,8 +233,8 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     }
 
     /// A run that's over already (a Tools action's `window`): what it said, stderr in red, how it ended.
-    static func show(_ out: String, errors: String, title: String, place: String, status: Int32, ok: Bool) {
-        let w = OutputWindow(out: out, errors: errors, place: place, status: status, ok: ok)
+    static func show(_ out: String, errors: String, title: String, status: Int32, ok: Bool) {
+        let w = OutputWindow(out: out, errors: errors, status: status, ok: ok)
         w.window?.title = title.bidiVisible
         open.append(w)
         w.showWindow(nil)
@@ -246,8 +246,8 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     /// closing the window ends ssh, and the watcher there the run. It holds one of the server's channels while it
     /// runs (`ToolExec.channel`). `embedded`: a panel shows its text next door, its window never shown.
     @discardableResult
-    static func follow(_ p: ToolPayload, password: String?, on server: SFTPTarget, title: String, place: String, cri: Bool, embedded: Bool = false) -> OutputWindow {
-        let w = OutputWindow(p, password: password, on: server, place: place, cri: cri)
+    static func follow(_ p: ToolPayload, password: String?, on server: SFTPTarget, title: String, cri: Bool, embedded: Bool = false) -> OutputWindow {
+        let w = OutputWindow(p, password: password, on: server, cri: cri)
         w.window?.title = title.bidiVisible
         open.append(w)
         if embedded {
@@ -260,9 +260,8 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         return w
     }
 
-    private init(_ p: ToolPayload, password: String?, on server: SFTPTarget, place: String, cri: Bool) {
+    private init(_ p: ToolPayload, password: String?, on server: SFTPTarget, cri: Bool) {   // the title names the place already
         let (w, tv) = Self.window()
-        w.subtitle = place
         let cancel = CancelFlag()
         servers = cancel   // what stops it; `over` says it's over
         super.init(window: w)
@@ -403,9 +402,8 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         do { try process.run() } catch { append(Data("\(error.localizedDescription)\n".utf8), true, in: tv) }
     }
 
-    private init(out: String, errors: String, place: String, status: Int32, ok: Bool) {
+    private init(out: String, errors: String, status: Int32, ok: Bool) {   // the title names the place already
         let (w, tv) = Self.window()
-        w.subtitle = place
         super.init(window: w)
         w.delegate = self
         for (text, isErr) in [(out, false), (errors, true)] where !text.isEmpty {

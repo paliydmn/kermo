@@ -36,7 +36,6 @@ extension ToolRunner {
         let alert = AppDelegate.alert(title, info: "", ["OK"])
         alert.accessoryView = Confirm.stack([Confirm.label("This goes to sh -s as its input. Each value is a variable set before the command, never part of it.",
                                                            color: .secondaryLabelColor, size: 11), Confirm.commandBox(shown)])
-        alert.window.initialFirstResponder = alert.buttons[0]   // ↩ is OK: the text can be selected, not take the keys
         _ = await AppDelegate.sheet(alert, on: window ?? app.window)
     }
 
@@ -97,6 +96,11 @@ extension ToolRunner {
         let chosen = [line(p.title, p.commandAction?.run)] + p.allActions.map { _, a in
             line(a.spec.title ?? a.spec.id, a.run.sources.isEmpty ? nil : a.run) ?? a.spec.edit.map { "  \(a.spec.title ?? a.spec.id): edit \($0)" }
         }
-        return (["Runs by itself:"] + itself.compactMap { $0 } + ["Runs when you choose:"] + chosen.compactMap { $0 }).joined(separator: "\n")
+        func part(_ title: String, _ lines: [String?]) -> [String] { [title] + (lines.compactMap { $0 }.nilIfEmpty ?? ["  nothing"]) }
+        return (part("Runs by itself:", itself) + part("Runs when you choose:", chosen)).joined(separator: "\n")
     }
+}
+
+private extension Array {
+    var nilIfEmpty: Self? { isEmpty ? nil : self }
 }

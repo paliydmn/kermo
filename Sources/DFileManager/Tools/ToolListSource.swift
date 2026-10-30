@@ -248,7 +248,7 @@ final class ToolListSource: ListSource {
         if a.spec.output == .follow, a.spec.readonly == true, a.spec.inputs == nil, why == nil, !(sudo && ToolExec.wantsPassword(target)),
            let payload = try? ToolRunner.payloads(a.run, of: tool, scope).0 {
             let t = mac ? SFTPTarget.local() : target, cri = a.spec.strip == "cri", title = a.spec.title ?? a.spec.id
-            it.followWindow = { OutputWindow.follow(payload, password: nil, on: t, title: title, place: mac ? "this Mac" : SavedServer.name(for: t), cri: cri, embedded: true) }
+            it.followWindow = { OutputWindow.follow(payload, password: nil, on: t, title: "\(title) — " + (mac ? "this Mac" : SavedServer.name(for: t)), cri: cri, embedded: true) }
         }
         return it
     }

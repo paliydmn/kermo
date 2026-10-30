@@ -133,7 +133,7 @@ final class ToolForm {
         preview.maximumNumberOfLines = 3
         preview.cell?.truncatesLastVisibleLine = true
         preview.preferredMaxLayoutWidth = Confirm.width
-        preview.heightAnchor.constraint(equalToConstant: (3 * NSLayoutManager().defaultLineHeight(for: mono)).rounded(.up)).isActive = true
+        preview.heightAnchor.constraint(equalToConstant: (3 * NSLayoutManager().defaultLineHeight(for: mono)).rounded(.up) + 4).isActive = true   // + the cell's own inset
         views.append(preview)
         alert.accessoryView = Confirm.stack(views)
         alert.window.initialFirstResponder = inputs.first.flatMap { fields[$0.info.name] }
