@@ -62,7 +62,10 @@
       "id": "allow",
       "title": "Allow Port…",
       "key": "cmd+n",
-      "command": "ufw allow proto {proto} from {source} to any port {port} comment {comment}",
+      "command": [
+        "ufw allow proto {proto} from {source} to any port {port}",
+        "comment {comment}"
+      ],
       "inputs": [
         {
           "name": "port",
@@ -103,7 +106,10 @@
       "id": "block",
       "title": "Block Address…",
       "key": "cmd+b",
-      "command": "ufw insert 1 deny from {ip} comment {comment}",
+      "command": [
+        "ufw $(ufw show added | grep -q '^ufw ' && echo insert 1) deny from {ip}",
+        "comment {comment}"
+      ],
       "inputs": [
         {
           "name": "ip",

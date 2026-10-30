@@ -2,19 +2,22 @@ import AppKit
 import DFMCore
 
 // Tools in the main window (Tools PR 2): the tools Kermo knows, what each server has of them, and the one path an
-// action takes to a server — the lock, the question, the run, the line that says how it went, the list read again
-// (protocol §7.2–7.3). A tool's list is a `ToolListSource`; Tools ▸ and a place's rows are in ToolsMenu.swift.
+// action takes to a server — trust, the lock, the form, the question, the run, the line that says how it went, the
+// list read again (protocol §7.2–7.3). A tool's list is a `ToolListSource`; Tools ▸ and a place's rows are in
+// ToolsMenu.swift; the questions in ToolQuestions.swift, the form in ToolForm.swift.
 
 @MainActor
 final class ToolRunner {
     unowned let app: AppDelegate
     private(set) var library = ToolLibrary()
     /// Your own tools you said to use (`tools/trust.json`); built-ins always.
-    /// ponytail: nothing asks yet — the trust sheet comes with Tools PR 2b, until then only built-ins run.
     var trust = ToolTrust()
     /// What each server (`ServerRow.key`) said this session, and when: its facts, the tools and actions it has.
-    /// ponytail: this session's only; Tools PR 2b keeps them in tools/known.json, for a menu without a connection.
     private(set) var answers: [String: (answer: ToolBatch.Answer, at: Date)] = [:]
+    /// The last answers of saved servers (`SavedServer.id`), kept in `tools/known.json`: Tools ▸ shows a server's tools
+    /// greyed while it isn't connected. A cache, not a setting: deleting it costs a batch on the next connection.
+    private var known: [String: Known] = [:]
+    struct Known: Codable { var facts: ToolFacts; var passed: [String]; var at: Date }
     private var asking: Set<String> = []
     /// What vars' commands found, per server and tool ("<server> <tool>").
     /// ponytail: once a session, not once a connection — Reload Config looks again.
@@ -25,6 +28,9 @@ final class ToolRunner {
     var counts: [String: Int] = [:]
     /// A change running on a server's tool ("<server> <tool>"): its title. One at a time there; reads run alongside (§2).
     var changing: [String: String] = [:]
+    /// Production's question waved off for a while (§7.3): server, tool and the tool's hash (an updated tool asks
+    /// again) → till when. In memory only.
+    var quiet: [String: Date] = [:]
 
     /// Tests: how a payload starts (in a session of its own), sudo's stand-in, your folder, a connection that answers.
     nonisolated(unsafe) static var command: @Sendable (ToolPayload) -> String = { $0.command }
@@ -32,40 +38,63 @@ final class ToolRunner {
     nonisolated(unsafe) static var hasMaster: @Sendable (SFTPTarget) -> Bool = { ToolBatch.live($0) }
     static var own: URL? = URL(fileURLWithPath: Config.path("tools"))
 
-    init(_ app: AppDelegate) { self.app = app }
+    init(_ app: AppDelegate) {
+        self.app = app
+        ToolExec.waiting = { [weak app] t, waits in   // the channel budget (§2): a run that waits says so
+            guard waits else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    app?.active.flash("Waiting for a free channel on \(SavedServer.name(for: t.asUser)): Tools hold \(ToolExec.channels) of its connection's sessions")
+                }
+            }
+        }
+    }
 
-    /// Reads the tools again (at launch, Reload Config); what couldn't be loaded, as Reload Config says it.
+    /// Reads the tools again (at launch, Reload Config), what you trusted and what servers had; what couldn't be
+    /// loaded, as Reload Config says it.
     func reload() -> [String] {
         library = ToolLibrary.load(own: Self.own, hasSymbol: Symbol.exists)
         (answers, found, versions) = ([:], [:], [:])   // a changed tool's requires: asked again
+        trust = Self.own.flatMap { try? Config.load("trust.json", as: ToolTrust.self, in: $0.path) } ?? ToolTrust()
+        known = Self.own.flatMap { try? Config.load("known.json", as: [String: Known].self, in: $0.path) } ?? [:]
         return library.problems
     }
 
     /// The tools this version shows: trusted, with nothing to ask before use (vars' `ask`: Tools PR 4), a list read by a
     /// command or a script, or a command of their own.
-    var tools: [LoadedTool] {
-        library.trusted(trust).filter { t in
-            let p = t.preset
-            return p.varsToAsk(saved: [:]).isEmpty && (p.list.map { $0.run.command != nil || $0.run.script != nil } ?? p.commandAction.map(Self.runs) ?? false)
-        }
+    var tools: [LoadedTool] { library.trusted(trust).filter(Self.shows) }
+    /// Your own tools not trusted yet, or changed since: Tools ▸ offers them, asking first.
+    var untrusted: [LoadedTool] { library.tools.filter { !trust.trusts($0) && Self.shows($0) } }
+
+    static func shows(_ t: LoadedTool) -> Bool {
+        let p = t.preset
+        return p.varsToAsk(saved: [:]).isEmpty && (p.list.map { $0.run.command != nil || $0.run.script != nil } ?? p.commandAction.map { runs($0, of: p) } ?? false)
     }
 
-    /// What this version runs of an action: a command or a script whose output is a line, a window or nothing; no form.
-    /// ponytail: Tools PR 2b brings inputs, follow, terminal and edit — this filter goes then.
-    static func runs(_ a: ToolAction) -> Bool {
-        (a.run.command != nil || a.run.script != nil) && a.spec.inputs == nil && a.spec.long != true && a.spec.list == nil
-            && [nil, .line, .window, .silent].contains(a.spec.output) && a.spec.edit == nil && a.spec.open == nil && a.spec.goto == nil && a.spec.accepts == nil
+    /// What this version runs of an action: a command, a script or an `edit`; a form of text, secrets and choices;
+    /// output as a line, a window, a log that follows, a terminal or nothing.
+    /// ponytail: `long` (Tools PR 3), levels (PR 6), folder and file inputs (PR 7), `open`, `goto` and `accepts` (PR 5,
+    /// 9) and a terminal on this Mac are left out till then.
+    static func runs(_ a: ToolAction, of p: ToolPreset) -> Bool {
+        (a.run.command != nil || a.run.script != nil || a.spec.edit != nil) && a.spec.long != true && a.spec.list == nil && a.spec.output != .list
+            && !(a.spec.inputs ?? []).contains { [.folder, .file].contains($0.info.type) }
+            && a.spec.open == nil && a.spec.goto == nil && a.spec.accepts == nil
+            && !(a.spec.output == .terminal && (a.run.where ?? p.where) == .mac)
     }
 
     // MARK: What a server has
 
     /// What `t`'s server has, as last asked; nil: not yet. The first look asks — off the main thread, in one batch with
-    /// the facts, over a connection that's up: never a login for it (§10.5).
+    /// the facts, over a connection that's up: never a login for it (§10.5). Till then, a saved server's last answer.
     func answer(_ t: SFTPTarget) -> (answer: ToolBatch.Answer, at: Date)? {
         let key = ServerRow.key(t.asUser)
         if answers[key] == nil, AppDelegate.connected(t.asUser) { ask(t.asUser) }
-        return answers[key]
+        if let a = answers[key] { return a }
+        return app.savedServer(at: t).flatMap { known[$0.id.uuidString] }.map { (ToolBatch.Answer(facts: $0.facts, passed: Set($0.passed)), $0.at) }
     }
+
+    /// `t`'s server asked again on its next look (a tool just trusted, a program gone: exit 127).
+    func askAgain(_ t: SFTPTarget) { answers[ServerRow.key(t.asUser)] = nil }
 
     private func ask(_ t: SFTPTarget) {
         let key = ServerRow.key(t), tools = tools
@@ -79,6 +108,10 @@ final class ToolRunner {
             asking.remove(key)
             guard let a else { return }
             answers[key] = (a, Date())
+            if let id = app.savedServer(at: t)?.id.uuidString, let dir = Self.own?.path {
+                known[id] = Known(facts: a.facts, passed: a.passed.sorted(), at: Date())
+                Config.save("known.json", known, in: dir)
+            }
             app.toolsKnown(on: t)
         }
     }
@@ -92,49 +125,63 @@ final class ToolRunner {
     }
 
     /// `run` of `tool` with `scope`'s names, once (§2): its payload, as root if the tool says, on `t` or this Mac.
-    nonisolated static func exec(_ run: ToolRun, of tool: LoadedTool, _ scope: ToolTemplate.Scope, on t: SFTPTarget, timeout: Double,
-                                 env: [String: String], cancel: CancelFlag) throws -> (ran: ToolExec.Ran, payload: ToolPayload) {
-        let mac = (run.where ?? tool.preset.where) == .mac, sudo = sudoProgram
-        let plain = try ToolPayload.of(run, in: tool.preset, scope: scope, scripts: tool.scripts, sudoProgram: sudo).payload
-        let wrapped = plain.sudo == .noPassword
-            ? try ToolPayload.of(run, in: tool.preset, scope: scope, scripts: tool.scripts, password: true, sudoProgram: sudo).payload : plain
+    /// `secret`: inputs that go into the payload only (§7.4).
+    nonisolated static func exec(_ run: ToolRun, of tool: LoadedTool, _ scope: ToolTemplate.Scope, secret: Set<String> = [], on t: SFTPTarget,
+                                 timeout: Double, env: [String: String], cancel: CancelFlag) throws -> (ran: ToolExec.Ran, payload: ToolPayload) {
+        let (plain, wrapped) = try payloads(run, of: tool, scope, secret: secret)
+        let mac = (run.where ?? tool.preset.where) == .mac
         let ran = try ToolExec.run({ $0 ? wrapped : plain }, on: mac ? .local() : t, timeout: timeout, cancel: cancel, env: env, command: command)
         return (ran, ran.password == nil ? plain : wrapped)
     }
 
+    /// `run`'s payload as `sudo -n` takes it, and with the password wrapper.
+    nonisolated static func payloads(_ run: ToolRun, of tool: LoadedTool, _ scope: ToolTemplate.Scope, secret: Set<String> = []) throws -> (ToolPayload, ToolPayload) {
+        let plain = try ToolPayload.of(run, in: tool.preset, scope: scope, scripts: tool.scripts, secret: secret, sudoProgram: sudoProgram).payload
+        guard plain.sudo == .noPassword else { return (plain, plain) }
+        return (plain, try ToolPayload.of(run, in: tool.preset, scope: scope, scripts: tool.scripts, secret: secret, password: true, sudoProgram: sudoProgram).payload)
+    }
+
     // MARK: An action
 
-    /// Why `a` can't run now, or nil: its `requires` didn't pass on this server, a change of the row or of the tool
-    /// runs, a value won't go into a command (§3.2 rule 5; `where: mac` with a server's data, S3), a field is empty.
+    /// Why `a` can't run now, or nil: its `requires` didn't pass on this server, the server is read-only and it changes
+    /// things, a change of the row or of the tool runs, a value won't go into a command (§3.2 rule 5; `where: mac`
+    /// with a server's data, S3), a field is empty. Its form's values are the form's to check.
     func why(_ a: ToolAction, of tool: LoadedTool, row: ToolRow?, onRow: Bool, id: String, on s: SavedServer, _ t: SFTPTarget) -> String? {
         let p = tool.preset, title = a.spec.title ?? a.spec.id
         if let r = a.spec.requires {
-            guard let known = answers[ServerRow.key(t.asUser)]?.answer else { return "\(title): not checked on \(s.title) yet" }
+            guard let known = answer(t)?.answer else { return "\(title): not checked on \(s.title) yet" }
             if !known.has(a, of: p) {
                 let program = (r.command?.all.first).flatMap { $0.firstMatch(of: /command -v ([^\s;|&]+)/)?.output.1 }.map { "needs \($0)" } ?? "its check didn't pass"
                 return "\(title) \(program); \(s.title) is \(known.facts.said)"
             }
         }
         if a.spec.readonly != true {
+            if s.readOnly { return "\(s.title) is read-only: Tools run only actions that change nothing there" }
             let name = row?.title ?? p.title
             if let busy = app.serviceRuns[id] { return busy.isEmpty ? "\(name): one change at a time — another is being asked" : "\(name): \(busy.dropLast()) runs on it — wait for it" }
             if let other = changing[ServerRow.key(t.asUser) + " " + p.id] { return "\(p.title) on \(s.title) is busy: \(other.replacingOccurrences(of: "…", with: ""))" }
         }
-        let scope = scope(p, on: s, t, rows: onRow ? row.map { [$0.record] } ?? [] : [])
-        if let why = Self.refusal(a.run, of: p, scope) { return "\(title): \(why) — nothing runs" }
-        do { _ = try ToolPayload.of(a.run, in: p, scope: scope, scripts: tool.scripts) } catch { return "\(title): \(error) — nothing runs" }
+        var scope = scope(p, on: s, t, rows: onRow ? row.map { [$0.record] } ?? [] : [])
+        scope.levels[0] = Dictionary((a.spec.inputs ?? []).map { ($0.info.name, ToolValue.string("…")) }) { x, _ in x }   // the form fills them
+        if let why = Self.refusal(a, of: p, scope) { return "\(title): \(why) — nothing runs" }
+        if a.run.command != nil || a.run.script != nil {
+            do { _ = try ToolPayload.of(a.run, in: p, scope: scope, scripts: tool.scripts) } catch { return "\(title): \(error) — nothing runs" }
+        }
         return nil
     }
 
-    /// Why a value can't go into `run`'s command, or nil: it begins with `-`, holds a line break or a control character
-    /// (§3.2 rule 5). On this Mac (`where: mac`) a value is a server's data: only `[A-Za-z0-9._:/@%+=,-]`, and `open`
-    /// takes only a web address.
-    static func refusal(_ run: ToolRun, of p: ToolPreset, _ scope: ToolTemplate.Scope) -> String? {
-        let mac = (run.where ?? p.where) == .mac
-        for text in (run.command?.all ?? []) + Array((p.env ?? [:]).values) + Array((run.env ?? [:]).values) {
+    /// Why a value can't go into `a`'s command (or its `edit` path), or nil: it begins with `-`, holds a line break or a
+    /// control character (§3.2 rule 5) — an input's `pattern` may allow it. On this Mac (`where: mac`) a value is a
+    /// server's data: only `[A-Za-z0-9._:/@%+=,-]`, and `open` takes only a web address. An input not filled in yet
+    /// (the form's "…") is the form's to check.
+    static func refusal(_ a: ToolAction, of p: ToolPreset, _ scope: ToolTemplate.Scope) -> String? {
+        let run = a.run, mac = (run.where ?? p.where) == .mac, inputs = Dictionary((a.spec.inputs ?? []).map { ($0.info.name, $0) }) { x, _ in x }
+        let texts = (run.command?.all ?? []) + [a.spec.edit].compactMap { $0 } + Array((p.env ?? [:]).values) + Array((run.env ?? [:]).values)
+        for text in texts {
             for ph in ToolTemplate.placeholders(in: text) {
-                let v = scope.value(ph.name)?.text ?? ""
-                if let why = ToolTemplate.refusal(v) { return "{\(ph.name)}: \(why)" }
+                let v = scope.value(ph.name)?.text ?? "", input = inputs[ph.name]
+                if input != nil, v == "…" { continue }
+                if let why = ToolTemplate.refusal(v, pattern: input?.info.pattern) { return "{\(ph.name)}: \(why)" }
                 guard mac else { continue }
                 if !v.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "._:/@%+=,-".unicodeScalars.contains($0)) }) {
                     return "{\(ph.name)}: “\(v)” has characters this Mac won't put into a command"
@@ -147,77 +194,139 @@ final class ToolRunner {
         return nil
     }
 
+    /// What the steps before a run came to (§7.2): its names with the form's values, and what runs; or why nothing does.
+    enum Ready {
+        case go(ToolTemplate.Scope, secret: Set<String>, willRun: String, payload: ToolPayload?)
+        case stop(String)
+    }
+
+    /// The lock (not on this Mac), the form (its values, nil: Cancel), the values checked, the question (§7.3; `asked`:
+    /// asked for several rows already) — over `window`.
+    func ready(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, row: String?, on t: SFTPTarget, asked: Bool, window: NSWindow?) async -> Ready {
+        let p = tool.preset, verb = (a.spec.title ?? a.spec.id).replacingOccurrences(of: "…", with: "")
+        let mac = (a.run.where ?? p.where) == .mac, sudo = (a.run.sudo ?? p.sudo ?? false) && !mac
+        if !mac, await !ServerLock.authorize(t, "run “\(verb)” on") { return .stop("\(SavedServer.name(for: t.asUser)) stays locked") }
+        var scope = scope
+        if let inputs = a.spec.inputs, !inputs.isEmpty {
+            guard let values = await form(a, of: tool, scope, on: t, window: window) else { return .stop("cancelled") }
+            scope.levels[0] = values.mapValues { .string($0) }
+        }
+        if let why = Self.refusal(a, of: p, scope) { return .stop(why) }
+        let secret = Set((a.spec.inputs ?? []).filter { $0.info.type == .secret }.map(\.info.name))
+        var willRun = a.spec.edit.map { "edit " + ToolTemplate.text($0, scope) } ?? "", payload: ToolPayload?
+        if a.run.command != nil || a.run.script != nil {
+            do {
+                if a.spec.output == .terminal { willRun = try ToolPayload.terminal(a.run, in: p, scope: scope, scripts: tool.scripts).willRun }
+                else { (payload, willRun) = try ToolPayload.of(a.run, in: p, scope: scope, scripts: tool.scripts, secret: secret) }
+            } catch { return .stop("\(error)") }
+        }
+        let quietKey = ServerRow.key(t.asUser) + " " + p.id + " " + tool.hash
+        let always = a.spec.dangerous == true || a.spec.confirm == true
+        let prod = a.spec.readonly != true && payload != nil && SavedServer.isProd(t)   // `edit` asks as any file's save does
+        guard !asked, always || prod && (quiet[quietKey] ?? .distantPast) < Date() else { return .go(scope, secret: secret, willRun: willRun, payload: payload) }
+        let message = a.spec.message.map { ToolTemplate.text($0, scope) }
+        switch await ask(a, verb: verb, row: row, on: t, mac: mac, sudo: sudo, willRun: willRun, payload: payload, message: message,
+                         quietFor: always ? nil : SavedServer.name(for: t.asUser), window: window) {
+        case nil: return .stop("cancelled")
+        case let waved?:
+            if waved { quiet[quietKey] = Date().addingTimeInterval(600) }
+            return .go(scope, secret: secret, willRun: willRun, payload: payload)
+        }
+    }
+
     /// `a` of `tool` on `t`'s server, started on `row` of a list (`source`) — acting on it if `onRow`, else a tool's
-    /// action — or from Tools ▸: §7.2's order — the lock (not on this Mac), the question (§7.3; `asked`: asked for
-    /// several rows already), the run, how it went, the list read again unless it's `readonly`. `id`: the row that
-    /// says it runs; a second press there waits. What to wait for: its run.
+    /// action — or from Tools ▸: §7.2's order — trust (asked where the tool opens), the lock, the form, the question,
+    /// the run, how it went, the list read again unless it's `readonly`. `id`: the row that says it runs; a second
+    /// press there waits. What to wait for: its run.
     @discardableResult
     func perform(_ a: ToolAction, of tool: LoadedTool, row: ToolRow?, onRow: Bool, id: String, from source: ToolListSource?, on s: SavedServer,
                  _ t: SFTPTarget, asked: Bool = false) -> Task<Void, Never>? {
         let p = tool.preset, title = a.spec.title ?? a.spec.id, verb = title.replacingOccurrences(of: "…", with: "")
+        guard trust.trusts(tool) else { app.active.flash("\(p.title) isn't in use yet: open it from Tools ▸ first", error: true); return nil }
         if let why = why(a, of: tool, row: row, onRow: onRow, id: id, on: s, t) {
             app.active.flash(why, error: true)
             return nil
         }
-        let scope = scope(p, on: s, t, rows: onRow ? row.map { [$0.record] } ?? [] : [])
-        guard let made = try? ToolPayload.of(a.run, in: p, scope: scope, scripts: tool.scripts) else { return nil }
+        let rowScope = scope(p, on: s, t, rows: onRow ? row.map { [$0.record] } ?? [] : [])
         let mac = (a.run.where ?? p.where) == .mac, readonly = a.spec.readonly == true, sudo = (a.run.sudo ?? p.sudo ?? false) && !mac
-        let place = mac ? "this Mac" : s.title, key = ServerRow.key(t.asUser) + " " + p.id
-        let asks = !asked && (a.spec.dangerous == true || a.spec.confirm == true || !readonly && SavedServer.isProd(t))
-        let message = a.spec.message.map { ToolTemplate.text($0, scope) }
-        let question: @MainActor (NSWindow?) async -> Bool = { [unowned self] window in
-            if !mac, await !ServerLock.authorize(t, "run “\(verb)” on") { return false }
-            guard asks else { return true }
-            return await ask(a, verb: verb, row: onRow ? row?.title : nil, on: t, mac: mac, sudo: sudo, willRun: made.willRun,
-                             payload: made.payload, message: message, window: window)
-        }
-        let timeout = a.run.timeout ?? 30
+        let place = mac ? "this Mac" : s.title, key = ServerRow.key(t.asUser) + " " + p.id, timeout = a.run.timeout ?? 30
+        let rowTitle = onRow ? row?.title : nil
         if !readonly { changing[key] = title }
 
-        if a.spec.output == .window {   // a window of its own: the run, then its output there
+        let output = a.spec.output ?? (a.spec.edit != nil && a.run.command == nil && a.run.script == nil ? nil : .line)
+        if output != .line && output != .silent {   // a window, a log, a terminal, the editor: theirs to show
             return Task {
                 defer { if !readonly { changing[key] = nil } }
                 let panel = app.active
-                guard await question(nil) else { return panel.flash("\(verb): cancelled — nothing ran") }
-                let env = SSHAskpass.env
-                let r = await panel.busy("\(verb) on \(place)…") { flag in try Self.exec(a.run, of: tool, scope, on: t, timeout: timeout, env: env, cancel: flag) }
-                _ = ran(r, a, of: p, on: t, shown: made.payload.shown)
-                switch r {
-                case .success(let (ran, _)):
-                    OutputWindow.show(ran.text, errors: ran.stopped ?? ran.errors, title: "\(verb) — \(place)", place: place,
-                                      status: ran.status, ok: ran.stopped == nil && a.run.succeeded(ran.status))
-                case .failure(is CancellationError): break
-                case .failure(is ToolExec.NoPassword): panel.flash("\(verb): no sudo password — nothing ran")
-                case .failure(let e): app.showError(e)
+                let r = await ready(a, of: tool, rowScope, row: rowTitle, on: t, asked: asked, window: nil)
+                guard case let .go(scope, secret, _, payload) = r else {
+                    if case .stop(let why) = r { panel.flash("\(verb): \(why) — nothing ran", error: why != "cancelled") }
+                    return
+                }
+                switch output {
+                case .follow?:
+                    guard let payload else { return }
+                    let password: String? = payload.sudo == .noPassword && ToolExec.wantsPassword(t) ? await Blocking.run { SFTP.sudoPassword?(t, false) } : nil
+                    let p2 = password == nil ? payload : (try? Self.payloads(a.run, of: tool, scope, secret: secret).1) ?? payload
+                    OutputWindow.follow(p2, password: password, on: mac ? .local() : t, title: "\(verb) — \(place)", cri: a.spec.strip == "cri")
+                    AuditLog.write(t, "tool \(p.id) \(a.spec.id)", paths: [], command: p2.mask(p2.shown, password: password), exit: nil)
+                case .terminal?:
+                    guard let line = try? ToolPayload.terminal(a.run, in: p, scope: scope, scripts: tool.scripts).line else { return }
+                    AuditLog.write(t, "tool \(p.id) \(a.spec.id)", paths: [], command: line, exit: nil)
+                    app.openSSH(t.asUser, command: line)
+                case .window?:
+                    let env = SSHAskpass.env
+                    let r = await panel.busy("\(verb) on \(place)…") { flag in try Self.exec(a.run, of: tool, scope, secret: secret, on: t, timeout: timeout, env: env, cancel: flag) }
+                    _ = ran(r, a, of: p, on: t, shown: payload?.shown ?? "")
+                    switch r {
+                    case .success(let (ran, payload)):
+                        OutputWindow.show(payload.mask(ran.text, password: ran.password), errors: ran.stopped ?? ran.errors, title: "\(verb) — \(place)",
+                                          status: ran.status, ok: ran.stopped == nil && a.run.succeeded(ran.status))
+                    case .failure(is CancellationError): break
+                    case .failure(is ToolExec.NoPassword): panel.flash("\(verb): no sudo password — nothing ran")
+                    case .failure(let e): app.showError(e)
+                    }
+                default:   // `edit`: the file in the editor, as root if the tool is — history, checks and production as any file's
+                    guard let path = a.spec.edit.map({ ToolTemplate.text($0, scope) }) else { return }
+                    app.remoteOpen(.edit, t.asRoot(sudo), path, in: panel)
                 }
             }
         }
 
         // The result line under the list, the list read again (§7.2), in the loop Services… changes go through.
-        let verify = onRow && row != nil && (a.spec.verify ?? (a.spec.dangerous == true)), lister = source?.lister()
+        let verify = onRow && row != nil && (a.spec.verify ?? (a.spec.dangerous == true))
+        let lister = p.list == nil ? nil : ToolListSource.lister(app, tool, s, t)
         let refresh = !readonly && a.spec.refresh != false
+        var shown = ""
+        var said = rowScope
         app.serviceRuns[id] = ""
         return Task {
             defer { if !readonly { changing[key] = nil } }
-            await app.changeRow(id: id, shown: made.willRun, on: t, busy: verb + "…", name: onRow ? row?.title ?? p.title : p.title, server: place,
+            await app.changeRow(id: id, shown: { shown }, on: t, busy: verb + "…", name: rowTitle ?? p.title, server: place,
                 run: { window, panel, running in
-                    guard await question(window) else { return .notRun("cancelled") }
+                    let prepared = await self.ready(a, of: tool, rowScope, row: rowTitle, on: t, asked: asked, window: window)
+                    guard case let .go(scope, secret, willRun, payload) = prepared, payload != nil else {
+                        if case .stop(let why) = prepared { return .notRun(why) }
+                        return .notRun("nothing to run")
+                    }
+                    (shown, said) = (willRun, scope)
                     running()
                     let env = SSHAskpass.env, rowKey = row?.key, record = row?.record
                     let r = await panel.busy("\(verb) on \(place)…") { flag in
                         if verify, let lister, let rowKey {   // the row as it was asked about, field for field, or nothing runs
                             guard try lister.read(env, flag, header: false).current(rowKey) == record else { throw Changed() }
                         }
-                        return try Self.exec(a.run, of: tool, scope, on: t, timeout: timeout, env: env, cancel: flag)
+                        return try Self.exec(a.run, of: tool, scope, secret: secret, on: t, timeout: timeout, env: env, cancel: flag)
                     }
-                    return self.ran(r, a, of: p, on: t, shown: made.payload.shown)
+                    if !readonly { self.changing[key] = nil }   // done: reading the list again isn't the change
+                    return self.ran(r, a, of: p, on: t, shown: payload?.shown ?? "")
                 },
                 read: refresh ? lister.map { l in { env, flag in try l.read(env, flag) } } : nil,
                 show: { list, read in
                     guard let source else { return }
                     if let read { list.reload(source.show(read), having: id) } else if let row { list.update(source.item(row)) }
                 },
-                say: { how, _, error, time in self.line(how, a, scope, place: place, at: time, readError: error, facts: self.answers[ServerRow.key(t.asUser)]?.answer.facts) })
+                say: { how, _, error, time in self.line(how, a, said, place: place, at: time, readError: error, facts: self.answer(t)?.answer.facts) })
         }
     }
 
@@ -235,8 +344,9 @@ final class ToolRunner {
                            error: ok ? nil : ran.stopped ?? ran.errors.split(whereSeparator: \.isNewline).first.map(String.init))
             if let stopped = ran.stopped { return .ran(.failure(JobErrorMessage(stopped))) }
             if ok { return .ran(.success(.passed(""))) }
-            if ran.status == 127 { answers[ServerRow.key(t.asUser)] = nil }   // its requires again on the next look
-            return .ran(.success(.failed(status: ran.status, output: [ran.errors, ran.text].filter { !$0.isEmpty }.joined(separator: "\n"))))
+            if ran.status == 127 { askAgain(t) }   // its requires again on the next look
+            let output = payload.mask([ran.errors, ran.text].filter { !$0.isEmpty }.joined(separator: "\n"), password: ran.password)
+            return .ran(.success(.failed(status: ran.status, output: output)))
         case .failure(is ToolExec.NoPassword): return .notRun("no sudo password")
         case .failure(is Changed): return .notRun("the list changed")
         case .failure(let e):
@@ -264,34 +374,5 @@ final class ToolRunner {
         case .unknown: return (.warning, "\(verb): stopped waiting on \(place) at \(time) — it may have run")
         case .notRun(let why): return (.notRun, "\(verb): " + (why == "cancelled" ? "cancelled — nothing ran" : "\(why); nothing ran"))
         }
-    }
-
-    /// The question (§7.3): what runs with its values, how and where, the production strip, the action's `message`;
-    /// "Show Exactly What Runs" shows the payload, then asks again. True: run it.
-    func ask(_ a: ToolAction, verb: String, row: String?, on t: SFTPTarget, mac: Bool, sudo: Bool, willRun: String, payload: ToolPayload,
-             message: String?, window: NSWindow?) async -> Bool {
-        let place = mac ? "this Mac" : SavedServer.name(for: t.asUser)
-        var c = Confirm("\(verb) on \(place)?", on: mac ? nil : t.asRoot(sudo), action: verb)
-        if let row { c.items = [Confirm.Item(name: row)] }
-        (c.runs, c.command, c.note) = (mac ? "Runs on this Mac." : AppDelegate.runs(on: t.asRoot(sudo)), willRun, message)
-        c.others = ["Show Exactly What Runs"]
-        c.irreversible = a.spec.dangerous == true
-        while true {
-            switch await app.confirm(c, on: window) {
-            case 0: return true
-            case 1: await exactly(payload.shown, on: place, window: window)
-            default: return false
-            }
-        }
-    }
-
-    /// The payload as it's sent, its secrets as •••: mono, scrolling past 8 lines.
-    private func exactly(_ shown: String, on place: String, window: NSWindow?) async {
-        let title = "Exactly what runs on \(place)"
-        if let answer = AppDelegate.answering { AppDelegate.answeredInfo = shown; _ = answer(title, ["OK"], nil); return }
-        let alert = AppDelegate.alert(title, info: "", ["OK"])
-        alert.accessoryView = Confirm.stack([Confirm.label("This goes to sh -s as its input. Each value is a variable set before the command, never part of it.",
-                                                           color: .secondaryLabelColor, size: 11), Confirm.commandBox(shown)])
-        _ = await AppDelegate.sheet(alert, on: window ?? app.window)
     }
 }

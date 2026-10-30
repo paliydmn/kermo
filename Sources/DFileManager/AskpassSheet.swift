@@ -87,7 +87,7 @@ import DFMCore
     static func sudo(_ t: SFTPTarget, wrong: Bool) -> (confirm: Confirm, field: NSSecureTextField, save: NSButton) {
         var c = Confirm((wrong ? "Sorry, try again: " : "") + "sudo password on \(SavedServer.name(for: t.asUser))", on: t, action: "Continue")
         c.returnCancels = false
-        c.note = "For root there: a root panel, a reload, a restart. It goes to sudo there, through ssh, and nowhere else."
+        c.note = "For root there: a root panel, a reload, a restart, a tool. It goes to sudo there, through ssh, and nowhere else."
         let field = NSSecureTextField(), save = NSButton(checkboxWithTitle: "Save in Keychain", target: nil, action: nil)
         save.toolTip = "Kept as “Kermo sudo” in the login keychain, apart from the ssh password; gone once sudo refuses it, or with the saved server"
         field.widthAnchor.constraint(equalToConstant: Confirm.width).isActive = true

@@ -15,8 +15,8 @@ enum Config {
     static func path(_ name: String) -> String { (dir as NSString).appendingPathComponent(name) }
 
     /// nil if the file doesn't exist; throws if it exists but can't be read or parsed.
-    static func load<T: Decodable>(_ name: String, as type: T.Type) throws -> T? {
-        guard let data = try contents(path(name)) else { return nil }
+    static func load<T: Decodable>(_ name: String, as type: T.Type, in dir: String = dir) throws -> T? {
+        guard let data = try contents((dir as NSString).appendingPathComponent(name)) else { return nil }
         return try JSONDecoder().decode(T.self, from: data)
     }
 

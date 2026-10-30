@@ -256,7 +256,7 @@ extension AppDelegate {
                                         read: @escaping @Sendable ([String: String], CancelFlag) throws -> S,
                                         row: @escaping @MainActor (S?) -> Picker.Item,
                                         say: @escaping @MainActor (Services.Ran, S?, String?, String) -> (outcome: Services.Outcome, line: String)) async {
-        await changeRow(id: id, shown: command, on: target, busy: busy, name: name, server: server, run: { [unowned self] window, panel, running in
+        await changeRow(id: id, shown: { command }, on: target, busy: busy, name: name, server: server, run: { [unowned self] window, panel, running in
             if let first, await confirm(first, on: window) != 0 { return .notRun("cancelled") }
             return await ranThere(command, on: target, action: action, busy: busy.dropLast() + " \(name) on \(server)…",
                                   ask: first == nil ? ask : nil, askOn: window, in: panel, running: running)
@@ -269,8 +269,8 @@ extension AppDelegate {
     /// (`read`; nil: nothing to read) into each list showing the row (`show`, nil: as it was), and the line under the
     /// list says how it went (`say`) until the next one, a failure's output a click away. The list is a Picker's or a
     /// panel's (`rowLists`), both if both show it. One closed meanwhile: the status line says it, or a failure's alert,
-    /// as `runThere`'s. `shown`: the command, as those name it.
-    func changeRow<S: Sendable>(id: String, shown command: String, on target: SFTPTarget, busy: String, name: String, server: String,
+    /// as `runThere`'s. `shown`: the command, as those name it (once it ran: a form may have filled it in).
+    func changeRow<S: Sendable>(id: String, shown: @escaping @MainActor () -> String, on target: SFTPTarget, busy: String, name: String, server: String,
                                 run: @escaping @MainActor (_ window: NSWindow?, PanelViewController, _ running: @escaping @MainActor () -> Void) async -> RanThere,
                                 read: (@Sendable ([String: String], CancelFlag) throws -> S)?,
                                 show: @escaping @MainActor (any RowList, S?) -> Void,
@@ -287,7 +287,7 @@ extension AppDelegate {
             return (ran, await panel.busy("Looking at \(name) on \(server)…") { flag in try read(env, flag) })
         }
         let (ran, read) = if let list { await list.holding(go) } else { await go() }
-        let (how, output) = Self.how(ran)
+        let (how, output) = Self.how(ran), command = shown()
         var state: S?, stateError: String?
         switch read {
         case .success(let now)?: state = now
@@ -297,6 +297,7 @@ extension AppDelegate {
         serviceRuns[id] = nil
         let said = say(how, state, stateError, Self.clock.string(from: Date()))
         let lists = rowLists(id)
+        if said.line.isEmpty { return lists.forEach { show($0, state) } }   // nothing to say (a `silent` Tools action that went well)
         guard !lists.isEmpty else {   // closed (or another list): as runThere says it
             if case .passed = how { return panel.flash(said.line, error: said.outcome != .ok) }
             if case .notRun = how { return }

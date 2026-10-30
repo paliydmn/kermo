@@ -90,6 +90,9 @@ public struct ToolPayload: Sendable {
         Data(((sudo == .password ? (password ?? "") + "\nKERMO-\(nonce)\n" : "") + script).utf8)
     }
 
+    /// `data`, text as it may be shown: secrets as `•••`.
+    public func mask(_ data: Data) -> Data { secrets.isEmpty ? data : Data(mask(String(decoding: data, as: UTF8.self)).utf8) }
+
     /// `text` as it may be shown or logged: secrets and the sudo password as `•••`.
     public func mask(_ text: String, password: String? = nil) -> String {
         (secrets + [password].compactMap { $0 }.filter { !$0.isEmpty }).reduce(text) { $0.replacingOccurrences(of: $1, with: "•••") }
@@ -161,5 +164,47 @@ extension ToolPayload {
         let payload = ToolPayload(body: body.text, values: values, env: env, secret: secretVars, text: text, sudo: sudo,
                                   where: run.where ?? tool.where ?? .server, nonce: nonce, sudoProgram: sudoProgram)
         return (payload, payload.mask(body.shown))
+    }
+}
+
+extension ToolPayload {
+    /// A `terminal` run's command line for the login shell (§2): a terminal has no stdin of Kermo's, so no payload and no
+    /// watcher — the tab's end is the run's. `sh -c` with each value set as a variable before the command (never text in
+    /// it), the tool's `env`, sbin on the PATH; as root `sudo sh -c`, sudo asking in the terminal if it must. The
+    /// locale and TERM stay the terminal's: what runs there is a program for a person. Also the command with its
+    /// values, for reading.
+    /// ponytail: quoted for sh; a fish or csh login shell may read `'\''` otherwise.
+    public static func terminal(_ run: ToolRun, in tool: ToolPreset, scope: ToolTemplate.Scope, scripts: [String: String] = [:])
+        throws(ToolTemplate.Empty) -> (line: String, willRun: String) {
+        var taken: [String: String] = [:]
+        let body: ToolTemplate.Command
+        if let c = run.command { body = try ToolTemplate.command(c, scope, vars: &taken) }
+        else { body = ToolTemplate.Command(text: scripts[run.script ?? ""] ?? "", values: [], shown: "sh -c < \(run.script ?? "")") }
+        var lines = ["PATH=\"$PATH:/usr/local/sbin:/usr/sbin:/sbin\"; export PATH"] + body.values.map { "\($0.name)=\(ShellContext.quote($0.value))" }
+        for (name, t) in (tool.env ?? [:]).merging(run.env ?? [:], uniquingKeysWith: { $1 }).sorted(by: { $0.key < $1.key }) {
+            let v = ToolTemplate.value(t, scope, vars: &taken)
+            lines += v.values.filter { !body.values.contains($0) }.map { "\($0.name)=\(ShellContext.quote($0.value))" } + ["export \(name)=\(v.text)"]
+        }
+        let sudo = (run.sudo ?? tool.sudo ?? false) && (run.where ?? tool.where) != .mac
+        return ((sudo ? "sudo " : "") + "sh -c " + ShellContext.quote((lines + [body.text]).joined(separator: "\n")), body.shown)
+    }
+}
+
+/// `strip: "cri"` (§6.1): a container runtime's log line, `<time> <stream> <tag> <message>`, as its message. Lines come
+/// in pieces: an unfinished one waits for its end.
+public struct ToolCRI: Sendable {
+    private var rest = Data()
+    public init() {}
+    public mutating func feed(_ chunk: Data) -> Data {
+        rest += chunk
+        guard let last = rest.lastIndex(of: 0x0A) else { return Data() }
+        let whole = rest[...last]
+        rest = Data(rest[(last + 1)...])
+        var out = Data()
+        for line in whole.split(separator: 0x0A, omittingEmptySubsequences: false).dropLast() {
+            let fields = line.split(separator: 0x20, maxSplits: 3, omittingEmptySubsequences: false)
+            out += (fields.count == 4 && ["stdout", "stderr"].contains(String(decoding: fields[1], as: UTF8.self)) ? fields[3] : line) + [0x0A]
+        }
+        return out
     }
 }

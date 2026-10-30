@@ -56,13 +56,13 @@ struct ListColumn {
 /// What a read gives: the rows, a line about them all above ("10 units · 1 failed"), what's said when there are none,
 /// and an action of the whole list on a button by that line (a Tools preset's `primary`: "＋ Allow Port…"). `actions`:
 /// the whole list's (a Tools preset's `toolActions`) — its keys and menu where no row is under the cursor, an empty
-/// list's (an inactive firewall's Turn Firewall On…).
+/// list's (an inactive firewall's Turn Firewall On…). Made when asked: what may run changes after the read.
 struct ListContent {
     var rows: [Picker.Item]
     var header: String? = nil
     var empty = "Nothing here"
     var primary: ListAction? = nil
-    var actions: [ListAction] = []
+    var actions: (@MainActor () -> [ListAction])? = nil
 }
 
 /// What a row's keys, its menu and its slots do — one list, so a Picker and a panel act alike on the same row
@@ -90,6 +90,8 @@ struct ListAction {
     /// A log as it goes (a Tools preset's `output: follow`): a Picker opens its window (`run`); a panel follows it next
     /// door instead, the row under the cursor's (nil `on`: this Mac).
     var follow: (command: String, on: SFTPTarget?)? = nil
+    /// The same for a run that isn't a command (a Tools preset's `follow` payload): what shows it next door.
+    var followWindow: (@MainActor () -> OutputWindow)? = nil
     /// It acts on marked rows too (a Tools action only with `multi`); false: on the cursor's row alone.
     var multi = true
     /// Starts it — at once, so a second press finds it running — and gives back what to wait for, if there's
@@ -258,7 +260,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
     func has(_ id: String) -> Bool { content?.rows.contains { $0.id == id } == true || source.listID == id }
 
     /// What the keys and the menu do now: the cursor row's actions, else the list's own (`ListContent.actions`).
-    var actions: [ListAction] { cursor?.listActions?() ?? content?.actions ?? [] }
+    var actions: [ListAction] { cursor?.listActions?() ?? content?.actions?() ?? [] }
 
     func reload(_ c: ListContent, having id: String) {
         cursorID = Self.stay(cursorID, in: shown.map(\.id), now: Set(c.rows.map(\.id)))
@@ -438,7 +440,11 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
     var sheetWindow: NSWindow? { table?.window }
     func holding<T>(_ work: () async -> T) async -> T { await work() }
 
-    @objc private func primaryClicked() { content?.primary.map { onPrimary?($0) } }
+    /// The button's action as it is now (a change since the read may have ended).
+    @objc private func primaryClicked() {
+        guard let p = content?.primary else { return }
+        onPrimary?(content?.actions?().first { $0.title == p.title } ?? p)
+    }
 
     // MARK: - Table
 
@@ -643,7 +649,7 @@ extension AppDelegate {
     /// own question, if it has one). Several: a row it can't run on says why and is left out; one question for the
     /// rest — each command as it runs, production's strip, ↩ = Cancel there — then each in turn, a line each.
     func runList(_ a: ListAction, in l: ListPanel) {
-        if a.follow != nil, a.why == nil { return followNextDoor() }   // a log: next door, the cursor's row's
+        if a.follow != nil || a.followWindow != nil, a.why == nil { return followNextDoor() }   // a log: next door, the cursor's row's
         let rows = a.multi ? l.targets : l.cursor.map { [$0] } ?? []
         guard rows.count > 1 else {
             if let why = a.why { return active.flash(why, error: true) }

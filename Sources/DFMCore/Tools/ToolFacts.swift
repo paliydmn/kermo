@@ -66,6 +66,7 @@ public enum ToolBatch {
     public struct Answer: Sendable, Hashable {
         public var facts: ToolFacts
         public var passed: Set<String>
+        public init(facts: ToolFacts, passed: Set<String>) { (self.facts, self.passed) = (facts, passed) }
 
         /// A tool without `requires` is everywhere.
         public func has(_ tool: ToolPreset) -> Bool { tool.requires == nil || passed.contains(tool.id) }
@@ -126,7 +127,7 @@ public enum ToolBatch {
         let flag = CancelFlag(), hold = CancelFlag()
         Timeouts.queue.asyncAfter(deadline: .now() + 10) { flag.cancel() }
         var reader = ToolRunOutput(nonce: p.nonce), out = Data()
-        guard (try? SSHCommand.run(t, command(p), cancel: flag, stdin: p.stdin(), holdStdin: hold) { out += reader.feed($0) }) != nil,
+        guard (try? ToolExec.channel(t, cancel: flag) { try SSHCommand.run(t, command(p), cancel: flag, stdin: p.stdin(), holdStdin: hold) { out += reader.feed($0) } }) != nil,
               reader.started else { return nil }
         return read(String(decoding: out, as: UTF8.self), items)
     }

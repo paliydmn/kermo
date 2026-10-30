@@ -90,3 +90,12 @@ private let mine = #"{ "schema": 1, "id": "mine", "title": "Mine", "list": { "sc
     let p = try #require(ToolSchema.validate(Data(json.utf8), file: "s.json").preset)
     #expect(p.scriptNames == ["r.sh", "h.sh", "v.sh", "l.sh", "lh.sh", "st.sh", "p.sh", "a.sh", "ar.sh", "i.sh"])
 }
+
+/// Kermo's own files in your folder — what you trusted, what servers had — are never read as tools.
+@Test func kermosOwnFilesArentTools() throws {
+    let dir = try folder(["mine.json": mine, "mine.sh": "echo a\n", "trust.json": #"{ "hashes": {} }"#, "known.json": "{}"])
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let lib = ToolLibrary.load(own: dir)
+    #expect(lib.problems.isEmpty, "\(lib.problems)")
+    #expect(lib.tools.contains { $0.preset.id == "mine" } && !lib.tools.contains { ["trust", "known"].contains($0.preset.id) })
+}

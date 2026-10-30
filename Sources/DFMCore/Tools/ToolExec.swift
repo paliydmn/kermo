@@ -37,6 +37,48 @@ public enum ToolExec {
     private static func key(_ t: SFTPTarget) -> String { "\(t.host):\(t.port ?? 22)" }
     /// Tests: `t`'s sudo asked afresh.
     static func forget(_ t: SFTPTarget) { _ = wantPassword.withLock { $0.remove(key(t)) } }
+    /// Whether `t`'s sudo wanted a password this session (a `follow` run starts with the wrapper then).
+    public static func wantsPassword(_ t: SFTPTarget) -> Bool { wantPassword.withLock { $0.contains(key(t)) } }
+
+    // MARK: Channels
+
+    /// Sessions Tools may hold at once on one server's connection (§2): OpenSSH allows 10 (MaxSessions), and past them
+    /// ssh quietly opens a connection of its own — a new login. One more waits for a free one; `waiting` hears when a
+    /// wait starts (true) and ends (false).
+    /// ponytail: counts Tools' runs only — Services…, SFTP panels and terminals ride the same connection uncounted; a
+    /// count kept in SFTP would see them all.
+    nonisolated(unsafe) public static var channels = 9
+    nonisolated(unsafe) public static var waiting: (@Sendable (SFTPTarget, Bool) -> Void)?
+    private static let slots = NSCondition()
+    nonisolated(unsafe) private static var inUse: [String: Int] = [:]
+
+    /// `work` on one of `t`'s channels, once one is free; ⎋ (`cancel`) while waiting throws. `limit`: tests' own.
+    public static func channel<T>(_ t: SFTPTarget, limit: Int = channels, cancel: CancelFlag, _ work: () throws -> T) throws -> T {
+        let k = key(t)
+        var waited = false
+        slots.lock()
+        while inUse[k, default: 0] >= limit {
+            if !waited {
+                waited = true
+                slots.unlock()
+                waiting?(t, true)
+                slots.lock()
+                continue
+            }
+            if cancel.isCancelled { slots.unlock(); throw CancellationError() }
+            slots.wait(until: Date().addingTimeInterval(0.2))
+        }
+        inUse[k, default: 0] += 1
+        slots.unlock()
+        if waited { waiting?(t, false) }
+        defer {
+            slots.lock()
+            inUse[k, default: 1] -= 1
+            slots.broadcast()
+            slots.unlock()
+        }
+        return try work()
+    }
 
     /// `payload(password)`: the payload, the sudo wrapper's when `password`. `cancel`: ⎋. `command`: what runs it
     /// (tests: in a session of its own).
@@ -84,12 +126,13 @@ public enum ToolExec {
         Timeouts.queue.asyncAfter(deadline: .now() + timeout, execute: timer)
         defer { timer.cancel() }
         do {
-            (ran.status, ran.errors) = try SSHCommand.run(t, command(p), env: env, cancel: run, stdin: p.stdin(password: password),
-                                                          holdStdin: CancelFlag()) { chunk in
-                ran.out += reader.feed(chunk)
-                if ran.out.count > maxOutput {
-                    stopped.withLock { $0 = $0 ?? "over 16 MB of output" }
-                    run.cancel()
+            (ran.status, ran.errors) = try channel(t, cancel: run) {
+                try SSHCommand.run(t, command(p), env: env, cancel: run, stdin: p.stdin(password: password), holdStdin: CancelFlag()) { chunk in
+                    ran.out += reader.feed(chunk)
+                    if ran.out.count > maxOutput {
+                        stopped.withLock { $0 = $0 ?? "over 16 MB of output" }
+                        run.cancel()
+                    }
                 }
             }
         } catch is CancellationError {

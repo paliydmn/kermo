@@ -233,12 +233,69 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     }
 
     /// A run that's over already (a Tools action's `window`): what it said, stderr in red, how it ended.
-    static func show(_ out: String, errors: String, title: String, place: String, status: Int32, ok: Bool) {
-        let w = OutputWindow(out: out, errors: errors, place: place, status: status, ok: ok)
+    static func show(_ out: String, errors: String, title: String, status: Int32, ok: Bool) {
+        let w = OutputWindow(out: out, errors: errors, status: status, ok: ok)
         w.window?.title = title.bidiVisible
         open.append(w)
         w.showWindow(nil)
         w.window?.listInWindowsMenu()
+    }
+
+    /// A Tools `follow` run (§2): its payload on `server`'s `sh -s` (this Mac's for a local target), its output after
+    /// the start marker as it comes — a container runtime's prefix stripped (`cri`), stderr in red — stdin held open:
+    /// closing the window ends ssh, and the watcher there the run. It holds one of the server's channels while it
+    /// runs (`ToolExec.channel`). `embedded`: a panel shows its text next door, its window never shown.
+    @discardableResult
+    static func follow(_ p: ToolPayload, password: String?, on server: SFTPTarget, title: String, cri: Bool, embedded: Bool = false) -> OutputWindow {
+        let w = OutputWindow(p, password: password, on: server, cri: cri)
+        w.window?.title = title.bidiVisible
+        open.append(w)
+        if embedded {
+            w.embedded = true
+            w.window?.setFrameAutosaveName("")
+        } else {
+            w.showWindow(nil)
+            w.window?.listInWindowsMenu()
+        }
+        return w
+    }
+
+    private init(_ p: ToolPayload, password: String?, on server: SFTPTarget, cri: Bool) {   // the title names the place already
+        let (w, tv) = Self.window()
+        let cancel = CancelFlag()
+        servers = cancel   // what stops it; `over` says it's over
+        super.init(window: w)
+        w.delegate = self
+        let inbox = inbox, over = over, env = SSHAskpass.env, command = ToolRunner.command, stdin = p.stdin(password: password)
+        let hop: @Sendable (Data, Int) -> Void = { [weak self] d, stream in
+            guard !d.isEmpty, inbox.put(d, stream) else { return }   // else a hop is on its way: it takes this too
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.drain(in: tv) } }
+        }
+        Thread { [weak self] in
+            var reader = ToolRunOutput(nonce: p.nonce), strip = ToolCRI()
+            let r = Result {
+                try ToolExec.channel(server, cancel: cancel) {
+                    try SSHCommand.run(server, command(p), env: env, cancel: cancel, stdin: stdin, holdStdin: cancel, onErrors: { hop(p.mask($0), 1) }) { chunk in
+                        var d = reader.feed(chunk)
+                        if cri { d = strip.feed(d) }
+                        hop(d, 0)
+                    }
+                }
+            }
+            over.cancel()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.drain(in: tv)
+                    switch r {
+                    case .success(let (status, _)): self.window?.docFrame?.text = cancel.isCancelled ? "stopped" : "exit \(status)"
+                    case .failure(is CancellationError): self.window?.docFrame?.text = "stopped"
+                    case .failure(let e): self.append(Data((e.localizedDescription + "\n").utf8), true, in: tv)
+                    }
+                    self.window?.docFrame?.showKeys()
+                }
+            }
+        }.start()
     }
 
     /// Embedded: its text, taken out of the window for a panel to show.
@@ -345,9 +402,8 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         do { try process.run() } catch { append(Data("\(error.localizedDescription)\n".utf8), true, in: tv) }
     }
 
-    private init(out: String, errors: String, place: String, status: Int32, ok: Bool) {
+    private init(out: String, errors: String, status: Int32, ok: Bool) {   // the title names the place already
         let (w, tv) = Self.window()
-        w.subtitle = place
         super.init(window: w)
         w.delegate = self
         for (text, isErr) in [(out, false), (errors, true)] where !text.isEmpty {

@@ -73,4 +73,71 @@ extension ServerLockTests {
         #expect(((w.docFrame?.scroll.documentView as? NSTextView)?.string ?? "").hasPrefix("hello from localhost"))
         w.close()
     }
+
+    /// A tool of yours that's new (or changed) runs nothing — not even its `requires` — till you say to use it: Tools ▸
+    /// offers it under "Not in use yet", and "Use the tool…?" lists what it runs by itself and when you choose, root
+    /// marked. Don't Use: nothing ran; Use This Tool: kept in tools/trust.json, and it opens.
+    @Test func aToolOfYoursAsksFirst() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done() }
+        let own = bench.dir + "/own"
+        try FileManager.default.createDirectory(atPath: own, withIntermediateDirectories: true)
+        try Data(#"""
+            { "schema": 1, "id": "hello", "title": "Hello", "sudo": true, "command": "echo hello from {server}",
+              "requires": "command -v echo" }
+            """#.utf8).write(to: URL(fileURLWithPath: own + "/hello.json"))
+        try Data(#"""
+            { "schema": 1, "id": "tidy", "title": "Tidy", "list": { "command": "ls /tmp" },
+              "actions": [ { "id": "look", "title": "Look", "readonly": true, "command": "rm -rf /tmp/x" } ] }
+            """#.utf8).write(to: URL(fileURLWithPath: own + "/tidy.json"))
+        _ = app.tools.reload()
+        let hello = try #require(app.tools.untrusted.first { $0.preset.id == "hello" })
+        #expect(ToolRunner.everything(hello) == "Runs by itself:\n  requires: command -v echo\nRuns when you choose:\n  Hello: echo hello from {server}   — as root")
+        #expect(ToolRunner.cautions(try #require(app.tools.untrusted.first { $0.preset.id == "tidy" })) == ["⚠ “Look” says it changes nothing, but it runs “rm”."])
+        let menu = try #require(app.toolsItem(for: .local())?.submenu)
+        #expect(menu.items.map(\.title) == ["Connect to see tools", "", "Not in use yet", "Hello…", "Tidy…"])
+
+        var asked: [(String, [String])] = []
+        AppDelegate.answering = { m, b, _ in asked.append((m, b)); return 2 }   // Don't Use
+        let item = try #require(menu.items.first { $0.title == "Hello…" })
+        _ = (item.target as? NSObject)?.perform(item.action, with: item)
+        await toolsUntil { !asked.isEmpty }
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(asked.first?.0 == "Use the tool “Hello”?" && asked.first?.1 == ["Use This Tool", "Open File", "Don't Use"])
+        #expect(bench.calls.isEmpty && !FileManager.default.fileExists(atPath: own + "/trust.json") && !NSApp.windows.contains { $0.title == "Hello — localhost" })
+
+        AppDelegate.answering = { _, _, _ in 0 }
+        _ = (item.target as? NSObject)?.perform(item.action, with: item)
+        await toolsUntil { NSApp.windows.contains { $0.title == "Hello — localhost" } }
+        let w = try #require(NSApp.windows.first { $0.title == "Hello — localhost" })
+        #expect(((w.docFrame?.scroll.documentView as? NSTextView)?.string ?? "").hasPrefix("hello from localhost"))
+        w.close()
+        await toolsUntil { FileManager.default.fileExists(atPath: own + "/trust.json") }
+        #expect(try String(contentsOfFile: own + "/trust.json", encoding: .utf8).contains(hello.hash) && app.tools.tools.contains { $0.preset.id == "hello" })
+    }
+
+    /// A saved server's last answer is kept (tools/known.json): after a relaunch, with no connection, Tools ▸ shows its
+    /// tools greyed, "As of …", and nothing is sent to it.
+    @Test func aSavedServersToolsShowOffline() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done(); app.savedServers = [] }
+        app.savedServers = [SavedServer(address: "localhost")!]
+        var up = true
+        AppDelegate.connected = { _ in up }
+        let t = SFTPTarget.local()
+        _ = app.toolsItem(for: t)
+        await toolsUntil { app.tools.answers[ServerRow.key(t)] != nil }
+        await toolsUntil { FileManager.default.fileExists(atPath: bench.dir + "/own/known.json") }
+        let known = try String(contentsOfFile: bench.dir + "/own/known.json", encoding: .utf8)
+        #expect(known.contains(app.savedServers[0].id.uuidString) && known.contains("ufw"))
+
+        _ = app.tools.reload()   // as at the next launch
+        up = false
+        let calls = bench.calls.count
+        let menu = try #require(app.toolsItem(for: t)?.submenu)
+        #expect(menu.items.first?.title.hasPrefix("As of ") == true && menu.items.dropFirst().map(\.title) == ["Banned IPs (fail2ban)", "Firewall (ufw)"])
+        #expect(menu.items.allSatisfy { !$0.isEnabled } && bench.calls.count == calls, "nothing sent")
+    }
 }

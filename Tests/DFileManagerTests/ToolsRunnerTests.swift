@@ -72,7 +72,7 @@ extension ServerLockTests {
         #expect(try action(l, "-h", "Unban").why?.hasPrefix("Unban: {ip}: it begins with “-”") == true)
         #expect(try action(l, "203.0.113.7;x", "Who Is It?").why == "Who Is It?: {ip}: “203.0.113.7;x” has characters this Mac won't put into a command — nothing runs")
         #expect(try action(l, "203.0.113.7;x", "Unban").why == nil, "on the server it's one argument, whatever it holds")
-        #expect(ToolRunner.refusal(ToolRun(command: .one("open {url}"), where: .mac), of: try toolNamed(app, "ufw").preset,
+        #expect(ToolRunner.refusal(ToolAction(run: ToolRun(command: .one("open {url}"), where: .mac), spec: .init(id: "open")), of: try toolNamed(app, "ufw").preset,
                                    ToolTemplate.Scope(rows: [["url": "file:///etc/passwd"]])) == "{url}: open takes only http:// and https:// addresses")
         _ = try action(l, "-h", "Unban").run(false)
         #expect(!bench.calls.contains { $0.contains("unbanip") })
@@ -99,5 +99,168 @@ extension ServerLockTests {
         let missing = try action(l, "198.51.100.2", "Unban").run(false)
         await missing?.value
         #expect(l.resultLines.last == "\u{FFFC} fail2ban-client isn't on localhost", "\(l.resultLines)")
+    }
+
+    /// ufw's list, read, in a panel.
+    @MainActor private func ufw(_ app: AppDelegate, _ a: PanelViewController, on s: SavedServer = SavedServer(target: .local())) async throws -> ListPanel {
+        let source = ToolListSource(app, try toolNamed(app, "ufw"), s, .local())
+        _ = try await source.read(CancelFlag())
+        a.showList(source)
+        app.window.makeFirstResponder(a.table)
+        return try #require(a.list)
+    }
+
+    /// A form (§7.4) checks as you type: empty where it may not be, the `pattern` on the whole value, a value that
+    /// would be an option; "Will run:" follows, and an empty optional field drops its part. Cancel: nothing runs.
+    @Test func aFormChecksAsYouTypeAndRunsWithItsValues() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done(); ToolRunner.filling = nil }
+        let l = try await ufw(app, a)
+        let allow = try #require(l.content?.primary)
+        var seen: [String] = []
+        ToolRunner.filling = { form in
+            let port = form.inputs.first { $0.info.name == "port" }!
+            seen.append(form.problem(port) ?? "ok")
+            form.set("port", "http")
+            seen.append(form.problem(port) ?? "ok")
+            form.set("port", "-1")
+            seen.append(form.problem(port) ?? "ok")
+            form.set("port", "8080")
+            seen.append(form.problem(port) ?? "ok")
+            seen.append(form.willRun)
+            form.set("comment", "")
+            seen.append(form.willRun)
+            #expect(form.ready && form.values["proto"] == "tcp" && form.values["source"] == "any")
+            return form.values
+        }
+        _ = allow.run(false)
+        await toolsUntil { !l.resultLines.isEmpty }
+        #expect(seen == ["Port is empty", "doesn't look right: like 8080 or 6000:6010", "doesn't look right: like 8080 or 6000:6010", "ok",
+                         "ufw allow proto tcp from any to any port 8080 comment 'added in Kermo'", "ufw allow proto tcp from any to any port 8080"])
+        #expect(bench.calls.contains("ufw allow proto tcp from any to any port 8080"), "the comment's part left out")
+        #expect(l.resultLines.first?.hasPrefix("\u{FFFC} Allowed tcp 8080 from any on localhost at ") == true, "\(l.resultLines)")
+
+        ToolRunner.filling = { _ in nil }
+        let before = bench.calls.count
+        _ = allow.run(false)
+        await toolsUntil { l.resultLines.first?.contains("cancelled") == true }
+        #expect(l.resultLines == ["Allow Port: cancelled — nothing ran"] && bench.calls.count == before)
+    }
+
+    /// A `choice-from` input reads its choices from the server as the form opens; one that can't be read says why in
+    /// its field, and the form won't run.
+    @Test func choicesComeFromTheServer() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done(); ToolRunner.filling = nil }
+        let l = try await fail2ban(app, a)
+        let ban = try #require(l.content?.primary)
+        #expect(ban.title == "Ban Address…")
+        ToolRunner.filling = { form in
+            await form.loading?.value
+            guard case .ready(let jails)? = form.choices["jail"] else { Issue.record("no jails"); return nil }
+            #expect(jails == ["sshd"] && form.values["jail"] == "sshd" && !form.ready)
+            form.set("ip", "203.0.113.9")
+            #expect(form.ready && form.willRun == "fail2ban-client set sshd banip 203.0.113.9")
+            return form.values
+        }
+        await ban.run(false)?.value
+        #expect(bench.calls.contains("fail2ban-client set sshd banip 203.0.113.9") && l.resultLines.last?.contains("Banned 203.0.113.9 in sshd") == true)
+
+        bench.flag("f2b-down")
+        var why: String?
+        ToolRunner.filling = { form in
+            await form.loading?.value
+            why = form.problem(form.inputs.first { $0.info.name == "jail" }!)
+            #expect(!form.ready)
+            return nil
+        }
+        await ban.run(false)?.value
+        #expect(why == "✕ Failed to access socket path: /var/run/fail2ban/fail2ban.sock. Is fail2ban running?", "\(why ?? "")")
+    }
+
+    /// A secret goes into the payload only (a heredoc): never the command line, the question, Show Exactly What Runs,
+    /// the production log or what a failure shows.
+    @Test func aSecretNeverShows() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done(); ToolRunner.filling = nil }
+        let own = bench.dir + "/own"
+        try FileManager.default.createDirectory(atPath: own, withIntermediateDirectories: true)
+        try Data(#"""
+            { "schema": 1, "id": "vault", "title": "Vault", "list": { "command": "echo one" },
+              "toolActions": [ { "id": "unseal", "title": "Unseal…", "key": "cmd+u", "command": "echo \"sealed: {key}\" >&2; exit 1",
+                                 "inputs": [ { "name": "key", "type": "secret", "title": "Key" } ] } ] }
+            """#.utf8).write(to: URL(fileURLWithPath: own + "/vault.json"))
+        _ = app.tools.reload()
+        app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == "vault" }))
+        var prod = SavedServer(address: "localhost")!
+        prod.prod = true
+        ServerLock.servers = { [prod] }
+        let source = ToolListSource(app, try toolNamed(app, "vault"), prod, .local())
+        _ = try await source.read(CancelFlag())
+        a.showList(source)
+        let l = try #require(a.list)
+        var preview = ""
+        ToolRunner.filling = { form in
+            form.set("key", "hunter2-xyz")
+            preview = form.willRun
+            return form.values
+        }
+        var asked: [String] = [], exactly = ""
+        AppDelegate.answering = { m, b, _ in
+            asked.append(m)
+            if m.hasPrefix("Exactly") { exactly = AppDelegate.answeredInfo; return 0 }
+            return asked.count == 1 ? b.firstIndex(of: "Show Exactly What Runs")! : 0
+        }
+        await l.actions.first { $0.title == "Unseal…" }?.run(false)?.value
+        #expect(preview == #"echo "sealed: •••" >&2; exit 1"# && exactly.contains("•••") && !exactly.contains("hunter2"))
+        #expect(l.resultLines.first?.contains("sealed: •••") == true && l.resultLines.first?.contains("hunter2") == false, "\(l.resultLines)")
+        await toolsUntil { FileManager.default.fileExists(atPath: AuditLog.path) }
+        let log = try String(contentsOfFile: AuditLog.path, encoding: .utf8)
+        #expect(log.contains("tool vault unseal") && !log.contains("hunter2"))
+    }
+
+    /// On production a change asks, once — "Don't ask again for 10 minutes" lets the next ones of that tool there
+    /// run without; one that can't be undone asks each time. A read-only server runs only what changes nothing.
+    @Test func tenMinutesAndReadOnly() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done(); ToolRunner.ticks = false }
+        var prod = SavedServer(address: "localhost")!
+        prod.prod = true
+        ServerLock.servers = { [prod] }
+        let l = try await fail2ban(app, a, on: prod)
+        var asked: [String] = []
+        AppDelegate.answering = { m, _, _ in asked.append(m); return 0 }
+        ToolRunner.ticks = true
+        await try action(l, "203.0.113.7", "Unban").run(false)?.value
+        await try action(l, "198.51.100.2", "Unban").run(false)?.value
+        #expect(asked == ["Unban on localhost?"], "the second: not asked")
+        let u = try await ufw(app, a, on: prod)
+        await u.shown.first { $0.title == "Anywhere" }?.listActions?().first { $0.title == "Delete Rule…" }?.run(false)?.value
+        #expect(asked.last == "Delete Rule on localhost?", "can't be undone: always")
+
+        var ro = SavedServer(address: "localhost")!
+        ro.readOnly = true
+        let r = try await fail2ban(app, a, on: ro)
+        #expect(try action(r, "203.0.113.7", "Unban").why == "localhost is read-only: Tools run only actions that change nothing there")
+        #expect(try action(r, "203.0.113.7", "Who Is It?").why == nil)
+    }
+
+    /// fail2ban's log follows in a window of its own, its payload's output as it comes; closing the window ends it.
+    @Test func aLogFollows() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done() }
+        let l = try await fail2ban(app, a)
+        let log = try #require(l.actions.first { $0.title == "fail2ban Log" })
+        #expect(log.closes && log.followWindow != nil, "next door in a panel too")
+        await log.run(false)?.value
+        await toolsUntil { NSApp.windows.contains { $0.title == "fail2ban Log — localhost" && (($0.docFrame?.scroll.documentView as? NSTextView)?.string ?? "").contains("Ban 203.0.113.7") } }
+        let w = try #require(NSApp.windows.first { $0.title == "fail2ban Log — localhost" })
+        #expect(((w.docFrame?.scroll.documentView as? NSTextView)?.string ?? "").hasPrefix("2026-10-30 10:00:00,123 fail2ban.actions"))
+        w.close()
     }
 }

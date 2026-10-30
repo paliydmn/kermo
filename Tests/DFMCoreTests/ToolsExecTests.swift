@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 @testable import DFMCore
 
@@ -72,6 +73,34 @@ extension SudoPasswordTests {
         [ "$pw" = kermo-test-pw ] || { echo "Sorry, try again ($pw)." >&2; exit 1; }
         exec "$@"
         """#
+
+    /// At most `channels` runs on one server at a time: one more waits, saying so, till one ends; ⎋ stops the wait.
+    /// A made-up server of its own and a limit of 1: no other test's runs count here.
+    @Test func runsPastTheChannelsWait() throws {
+        let t = SFTPTarget(host: "channels-\(UUID().uuidString).invalid")
+        let heard = OSAllocatedUnfairLock<[Bool]>(initialState: [])
+        ToolExec.waiting = { w, on in if w.host == t.host { heard.withLock { $0.append(on) } } }
+        defer { ToolExec.waiting = nil }
+        let first = DispatchSemaphore(value: 0), holding = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            _ = try? ToolExec.channel(t, limit: 1, cancel: CancelFlag()) { holding.signal(); Thread.sleep(forTimeInterval: 0.8) }
+            first.signal()
+        }
+        holding.wait()
+        let start = Date()
+        #expect(try ToolExec.channel(t, limit: 1, cancel: CancelFlag()) { "second" } == "second")
+        #expect(Date().timeIntervalSince(start) > 0.4 && heard.withLock { $0 } == [true, false], "it waited for the first")
+        first.wait()
+        DispatchQueue.global().async {
+            _ = try? ToolExec.channel(t, limit: 1, cancel: CancelFlag()) { holding.signal(); Thread.sleep(forTimeInterval: 0.8) }
+            first.signal()
+        }
+        holding.wait()
+        let flag = CancelFlag()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { flag.cancel() }
+        #expect(throws: CancellationError.self) { try ToolExec.channel(t, limit: 1, cancel: flag) { "never" } }
+        first.wait()
+    }
 
     @Test func aToolRunAsksForSudosPasswordOnlyWhenItWantsOne() throws {
         let sudo = NSTemporaryDirectory() + "kermo-tool-sudo-" + UUID().uuidString

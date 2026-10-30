@@ -162,3 +162,10 @@ private func parse(_ format: ToolFormat, _ text: String, _ change: (inout ToolPa
     #expect((row.title, row.detail) == ("/var", ToolTemplate.show(812344, "kbytes")))
     #expect(ToolTemplate.Scope(rows: [r.rows[1], ["mount": "/"]]).value("mount") == "/")
 }
+
+/// `strip: "cri"`: a container runtime's log line as its message; one that isn't stays; a line comes whole.
+@Test func criLinesAreTheirMessage() {
+    var cri = ToolCRI()
+    #expect(cri.feed(Data("2026-10-30T10:00:00.1Z stdout F listening on :8080\n2026-10-30T10:00:01Z std".utf8)) == Data("listening on :8080\n".utf8))
+    #expect(cri.feed(Data("err P half a line\nplain text\n".utf8)) == Data("half a line\nplain text\n".utf8))
+}

@@ -2416,8 +2416,9 @@ extension AppDelegate {
     /// Quick View next door, on the active panel's cursor item, on the tab chosen.
     func showQuickView() {
         if let l = active.list {   // a row's, its source says what — or its log as it goes (⌘L)
-            if quickLog, let row = l.cursor, let f = row.listActions?().first(where: { $0.follow != nil })?.follow {
-                return other.preview(log: row.title, command: f.command, on: f.on)
+            if quickLog, let row = l.cursor, let a = row.listActions?().first(where: { $0.follow != nil || $0.followWindow != nil }) {
+                if let f = a.follow { return other.preview(log: row.title, start: { OutputWindow.embedded(f.command, on: f.on, follow: true) }) }
+                if let start = a.followWindow { return other.preview(log: row.title, start: start) }
             }
             return other.preview(list: l.cursor?.title ?? "", l.cursor.flatMap(l.source.peek))
         }

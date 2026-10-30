@@ -38,13 +38,17 @@ import Testing
               "status verbose") printf 'Status: active\\nLogging: on (low)\\nDefault: deny (incoming), allow (outgoing), disabled (routed)\\n' ;;
               "version ") echo 'ufw 0.36.2' ;;
               "--force enable") rm -f \(dir)/inactive; echo 'Firewall is active and enabled on system startup' ;;
+              "allow proto"|"deny from"|"insert 1") echo 'Rule added' ;;
+              "show added") echo 'Added user rules (see ufw status for running firewall):'; echo 'ufw allow 22/tcp' ;;
               "--force delete") grep -v "^\\[ *$3\\] " \(dir)/rules > \(dir)/rules.new; mv \(dir)/rules.new \(dir)/rules; echo 'Rule deleted' ;;
               *) echo 'ERROR: Invalid syntax' >&2; exit 1 ;;
             esac
             """)
         try tool("fail2ban-client", """
             case "$*" in
-              status) printf 'Status\\n|- Number of jail:\\t1\\n`- Jail list:\\tsshd\\n' ;;
+              status) [ -f \(dir)/f2b-down ] && { echo 'Failed to access socket path: /var/run/fail2ban/fail2ban.sock. Is fail2ban running?' >&2; exit 255; }
+                      printf 'Status\\n|- Number of jail:\\t1\\n`- Jail list:\\tsshd\\n' ;;
+              "set sshd banip "*) echo 1 ;;
               "status sshd") printf 'Status for the jail: sshd\\n`- Actions\\n   `- Banned IP list:\\t%s\\n' "$(cat \(dir)/banned)" ;;
               version) echo 1.0.2 ;;
               "set sshd unbanip "*) [ -f \(dir)/slow ] && sleep 1; echo 1 ;;
@@ -52,6 +56,7 @@ import Testing
             esac
             """)
         try tool("whois", "echo 'NetRange: 203.0.113.0 - 203.0.113.255'")
+        try tool("tail", "echo '2026-10-30 10:00:00,123 fail2ban.actions [1]: NOTICE [sshd] Ban 203.0.113.7'; exec sleep 30")
         try Data("#!/bin/sh\nwhile [ $# -gt 0 ]; do case $1 in -n|-S|-k) shift ;; -p) shift 2 ;; *) break ;; esac; done\nexec \"$@\"\n".utf8)
             .write(to: URL(fileURLWithPath: dir + "/sudo"))
         chmod(dir + "/sudo", 0o755)
@@ -64,12 +69,14 @@ import Testing
         ToolRunner.own = URL(fileURLWithPath: dir + "/own")
         AuditLog.path = dir + "/audit.jsonl"
         AppDelegate.connected = { _ in false }   // another suite's master to localhost isn't this one's: a test says when it's up
+        ToolExec.forget(.local())   // "sudo wants a password there" is the process's: a run of another test's can't leave it
     }
 
     func done() {
         (ToolRunner.command, ToolRunner.sudoProgram, ToolRunner.hasMaster, ToolRunner.own) = (was.command, was.sudo, was.master, was.own)
         (AppDelegate.connected, AuditLog.path) = (was.connected, was.audit)
         ServerLock.servers = { [] }
+        ToolExec.forget(.local())
         try? FileManager.default.removeItem(atPath: dir)
     }
 
@@ -157,7 +164,9 @@ extension ServerLockTests {
         #expect(app.focusedKeys?.first { $0.label == "Delete Rule…" }?.danger == true)
         let menu = NSMenu()
         app.fillListMenu(menu, list)
-        #expect(menu.items.map(\.title) == ["Delete Rule…", "", "Status in Full", "Turn Firewall On…", "Turn Firewall Off…", "", "Copy", "Show ufw.json", "", "Refresh"])
+        #expect(menu.items.map(\.title) == ["Delete Rule…", "", "Allow Port…", "Block Address…", "Status in Full", "Turn Firewall On…", "Turn Firewall Off…", "",
+                                            "Copy", "Show ufw.json", "", "Refresh"])
+        #expect(list.content?.primary?.title == "Allow Port…", "＋ Allow Port… over the columns")
 
         app.showInSearch(source)
         let picker = try #require(Picker.current)
@@ -202,6 +211,7 @@ extension ServerLockTests {
         #expect(Array(bench.calls.dropFirst(before)) == ["ufw status numbered", "ufw --force delete 3", "ufw status numbered", "ufw status verbose"],
                 "verified, deleted, read again — its version asked once a session")
         #expect(list.shown.map(\.title) == ["22/tcp", "80,443/tcp"] && list.cursor?.title == "22/tcp")
+        #expect(list.actions.allSatisfy { $0.why == nil } && list.content?.primary?.why == nil, "nothing says busy once it's done")
     }
 
     /// A list that can't be read says why: a program not there in words (exit 127), output that doesn't fit the
@@ -251,7 +261,7 @@ extension ServerLockTests {
         #expect(app.focusedKeys?.map(\.label) == ["Status in Full", "Mark", "Filter", "Actions"])
         let menu = NSMenu()
         app.fillListMenu(menu, list)
-        #expect(menu.items.map(\.title) == ["Status in Full", "Turn Firewall On…", "Turn Firewall Off…", "", "Show ufw.json", "", "Refresh"])
+        #expect(menu.items.map(\.title) == ["Allow Port…", "Block Address…", "Status in Full", "Turn Firewall On…", "Turn Firewall Off…", "", "Show ufw.json", "", "Refresh"])
         var asked: [String] = []
         AppDelegate.answering = { m, _, _ in asked.append(m); return 0 }
         app.runList(try #require(list.actions.first { $0.title == "Turn Firewall On…" }), in: list)
@@ -259,5 +269,29 @@ extension ServerLockTests {
         #expect(asked == ["Turn Firewall On on localhost?"] && bench.calls.contains("ufw --force enable"))
         #expect(list.resultLines.first?.hasPrefix("\u{FFFC} Firewall is on on localhost at ") == true, "\(list.resultLines)")
         #expect(list.shown.map(\.title) == ["Anywhere", "22/tcp", "80,443/tcp"], "read again")
+    }
+
+    /// A Picker closes before an action that opens a window of its own runs — and the list may go with it: the
+    /// action (and the row's ↩) still runs, holding the app, the tool and the server, not the list.
+    @Test func anActionRunsAfterItsListIsGone() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done() }
+        var source: ToolListSource? = ToolListSource(app, try toolNamed(app, "ufw"), SavedServer(target: .local()), .local())
+        let row = try #require(try await source?.read(CancelFlag()).rows.first)
+        let status = try #require(row.listActions?().first { $0.title == "Status in Full" })
+        weak var gone = source
+        source = nil
+        #expect(gone == nil, "the list is gone")
+        let runs = { bench.calls.filter { $0 == "ufw status verbose" }.count }, read = runs()   // the header's run too
+        _ = status.run(false)
+        await toolsUntil { runs() == read + 1 && NSApp.windows.contains { $0.title == "Status in Full — localhost" && $0.isVisible } }
+        #expect(runs() == read + 1)
+        NSApp.windows.filter { $0.title == "Status in Full — localhost" }.forEach { $0.close() }
+        row.run()   // ↩ on the row, as a closed Picker runs it
+        await toolsUntil { runs() == read + 2 && NSApp.windows.contains { $0.title == "Status in Full — localhost" && $0.isVisible } }
+        #expect(runs() == read + 2)
+        try? await Task.sleep(for: .milliseconds(300))   // its window, then nothing of it left running
+        NSApp.windows.filter { $0.title == "Status in Full — localhost" }.forEach { $0.close() }
     }
 }

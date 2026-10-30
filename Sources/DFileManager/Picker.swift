@@ -369,7 +369,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     }
 
     /// This level's list's own actions (`ListContent.actions`): with no row highlighted, its keys and its menu.
-    private var listActions: [ListAction] { source?.content?.actions ?? [] }
+    private var listActions: [ListAction] { source?.content?.actions?() ?? [] }
 
     /// The highlighted row's menu, under it: ⎋ closes it, and typing goes on in the field. No row: the list's actions.
     private func popUpMenu() -> Bool {

@@ -27,7 +27,8 @@ public struct ToolLibrary: Sendable {
                             hasSymbol: @escaping (String) -> Bool = { _ in true }) -> ToolLibrary {
         var problems: [String] = []
         func read(_ dir: URL, builtIn: Bool) -> [LoadedTool] {
-            let files = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0.hasSuffix(".json") }.sorted()
+            let files = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [])
+                .filter { $0.hasSuffix(".json") && (builtIn || !kermosOwn.contains($0)) }.sorted()
             return files.compactMap { f in
                 let path = dir.appendingPathComponent(f).path, label = builtIn ? "built-in \(f)" : "tools/\(f)"
                 if !builtIn, let why = refusal(path, uid: uid) { problems.append("\(label): not loaded: \(why)"); return nil }
@@ -59,6 +60,9 @@ public struct ToolLibrary: Sendable {
         }
         return ToolLibrary(tools: tools, problems: problems)
     }
+
+    /// Kermo's own files in your tools folder — what you trusted, what servers had — never a tool.
+    public static let kermosOwn: Set<String> = ["trust.json", "known.json", "servers.json", "runs.json", "installed.json"]
 
     /// Why a file of yours isn't read (as mc has it): someone else owns it, or its group or others may write it. The
     /// file a link leads to counts.
