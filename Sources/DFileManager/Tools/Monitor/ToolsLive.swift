@@ -236,10 +236,11 @@ extension ToolRunner {
             c.note = ((rules.isEmpty ? [] : ["Alerts, as the tool sets them:"] + rules)
                       + ["The connection stays open while \(s.title) is watched — it shows in w and last there. "
                          + (s.locked ? "\(s.title) is locked: watching resumes by itself after the Mac sleeps or locks, without Touch ID — the lock guards actions in Kermo, not the connection."
-                                     : "Alerts show in the Tools window; notifications come with a later release.")]).joined(separator: "\n")
+                                     : "Warnings show in the menu bar; critical alerts also come as notifications and run your on_alert (Settings ▸ Monitor).")]).joined(separator: "\n")
             guard await app.confirm(c, on: window) == 0 else { return false }
         }
         monitor.watch(tool, on: t, true)
+        jobs.askToNotify()   // the first Watch asks macOS — your choice, at a moment you chose to watch
         return true
     }
 

@@ -128,7 +128,7 @@ final class ToolsPage: NSView, RowList {
         }
         tabs.isHidden = shown.isEmpty
         tabs.isEnabled = up || shown.contains(where: watched)
-        if current == nil { tab = shown.first?.preset.id }
+        if current == nil { tab = (shown.first(where: watched) ?? shown.first)?.preset.id }   // a watched server opens on what's watched
         tabs.selectedSegment = shown.firstIndex { $0.preset.id == tab } ?? -1
         more.isEnabled = current != nil
         showBody(known?.at)

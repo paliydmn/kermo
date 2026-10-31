@@ -72,3 +72,19 @@ import Testing
     s.watch("system", on: "A", false)
     #expect(!s.watches("system", on: "A") && s.servers["A"] == nil, "an empty setting isn't kept")
 }
+
+/// A notification's Mute This Alert on This Server: by the alert's id, for one tool on one server, kept in the file;
+/// undone, nothing is left.
+@Test func mutedPerServerToolAndAlert() throws {
+    var s = ToolServers()
+    s.mute("cpu", of: "system", on: "A", true)
+    s.mute("cpu", of: "system", on: "A", true)
+    s.mute("disk", of: "system", on: "A", true)
+    #expect(s.mutes("cpu", of: "system", on: "A") && !s.mutes("cpu", of: "system", on: "B") && !s.mutes("cpu", of: "dpl", on: "A") && !s.mutes("cpu", of: "system", on: nil))
+    #expect(s.servers["A"]?["system"]?.muted == ["cpu", "disk"], "once each")
+    let back = try JSONDecoder().decode(ToolServers.self, from: try JSONEncoder().encode(s))
+    #expect(back.mutes("disk", of: "system", on: "A"))
+    s.mute("cpu", of: "system", on: "A", false)
+    s.mute("disk", of: "system", on: "A", false)
+    #expect(s.servers["A"] == nil, "an empty setting isn't kept")
+}

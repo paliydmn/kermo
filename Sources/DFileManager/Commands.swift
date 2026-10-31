@@ -296,6 +296,12 @@ extension AppDelegate {
         cmd("app.tools", "Tools", ["ctrl+cmd+t"], menu: "Window", group: 1, aliases: "tools window server page firewall ufw fail2ban server info Open Tools Window") { app in
             ToolsWindow.show(app, server: app.terminalActive ? app.terminal.current?.target : app.active.remote?.target ?? app.active.list?.source.target)
         },
+        // Settings ▸ Monitor's buttons
+        cmd("monitor.notificationSettings", "Notification Settings for Kermo", [], hidden: true) { _ in ToolMonitor.notificationSettings() },
+        cmd("monitor.test", "Send a Test Alert", [], hidden: true) { $0.tools.monitor.test() },
+        cmd("app.monitor", "Monitor", ["cmd+opt+m"], menu: "Window", group: 1, aliases: "watched servers alerts menu bar Open Monitor") {
+            $0.tools.monitor.open($0.tools.monitor.watched.first?.target)
+        },
         cmd("admin.userPanel", "Reopen as User", ["ctrl+shift+cmd+r"], menu: "Server", group: 3, short: "As User", aliases: "root sudo server user Reopen Panel as User") { $0.reopenPanel(asRoot: false) },
         cmd("admin.sudoTouchID", "Enable Touch ID for sudo", [], menu: "File/As Administrator", group: 9, aliases: "touch id fingerprint sudo terminal pam tid password") {
             $0.enableSudoTouchID()

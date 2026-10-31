@@ -31,6 +31,8 @@ import Network
         /// Newest first, the last 40.
         var events: [ToolEventRecord] = []
         var budget = ToolEventBudget()
+        /// A script's critical `_event`s notified and not closed yet (`level: "ok"`): one notification each (§8.7).
+        var open: Set<String> = []
         var frames: ToolFrames
         /// Watched in the background; live on an open tab.
         var watched = false, live = false
@@ -87,11 +89,22 @@ import Network
     /// never redraws itself from inside, and a tick's many changes draw once.
     var onChange: @MainActor () -> Void = { ToolsWindow.live() }
     private var drawing = false
+    /// The menu bar's item: the app's, made at launch (a test's app has none).
+    var menuBar: ToolsMenuBar?
+    /// What Send Test did (Settings ▸ Monitor).
+    var tested = ""
 
-    private func changed() {
+    func changed() {
         guard !drawing else { return }
         drawing = true
-        DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.drawing = false; self?.onChange() } }
+        DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.draw() } }
+    }
+
+    private func draw() {
+        drawing = false
+        onChange()
+        menuBar?.update()
+        DockTile.problems = watched.filter { [.critical, .warning].contains(worst($0).state) }.count
     }
 
     init(_ app: AppDelegate) {
@@ -138,6 +151,7 @@ import Network
             for (id, t) in s.tools {
                 t.watched = w?.2.contains { $0.0.preset.id == id && $0.1 } ?? false
                 t.live = w?.2.contains { $0.0.preset.id == id && !$0.1 } ?? false
+                if !t.watched { t.open = [] }
                 if !t.wanted { t.alerts.clear() }   // a stop is no recovery, and nothing to say
             }
             if !s.wanted { stop(s, why: .notWatched) }
@@ -265,18 +279,26 @@ import Network
                 var fresh: [ToolEventRecord] = []
                 for c in t.alerts.judge(values, alerts: p.alerts ?? [], metrics: p.metrics ?? [:], sample: sample, now: now) {
                     switch c {
-                    case .worse(_, _, let level, let message): fresh.append(ToolEventRecord(at: now, id: "alert", level: level.name, message: message))
+                    case .worse(let alert, let key, let level, let message):
+                        fresh.append(ToolEventRecord(at: now, id: "alert", level: level.name, message: message))
+                        if level == .critical { deliver(s, tool: t, alert: alert, id: "\(s.key) \(p.id) \(alert) \(key)", message) }
                     case .ok(let alert, let key, _, let since):
                         let what = (p.alerts ?? []).first { ($0.id ?? $0.metric) == alert }.flatMap { a in a.metric.flatMap { p.metrics?[$0]?.title } } ?? alert
                         fresh.append(ToolEventRecord(at: now, id: "ok", level: "ok", message: "Back to normal: \(what)\(key.isEmpty ? "" : " " + key) · after " + ToolAlerts.minutes(now.timeIntervalSince(since))))
                     }
                 }
-                fresh += ToolEvents.raised(p.events ?? [], in: sample, previous: t.history.previous, carrying: t.history.carriedBefore,
-                                           scope: app.tools.scope(p, on: s.saved, s.target))
-                if let e = ToolEvents.scripted(sample), t.budget.allows(now) {   // past 10 an hour: held, said as "N more" once there's room
-                    let held = t.budget.takeHeld()
-                    if held > 0 { fresh.append(ToolEventRecord(at: now, id: "more", level: "info", message: "\(p.title): \(held) more")) }
-                    fresh.append(e)
+                let raised = ToolEvents.raised(p.events ?? [], in: sample, previous: t.history.previous, carrying: t.history.carriedBefore,
+                                               scope: app.tools.scope(p, on: s.saved, s.target))
+                for e in raised where e.level == "critical" { deliver(s, tool: t, id: "\(s.key) \(p.id) \(e.id)", e.message) }
+                fresh += raised
+                if let e = ToolEvents.scripted(sample) {
+                    if e.level == "ok" { t.open.remove(e.id) }
+                    if t.budget.allows(now) {   // past 10 an hour: held, said as "N more" once there's room
+                        let held = t.budget.takeHeld()
+                        if held > 0 { fresh.append(ToolEventRecord(at: now, id: "more", level: "info", message: "\(p.title): \(held) more")) }
+                        fresh.append(e)
+                        if e.level == "critical", t.watched, t.open.insert(e.id).inserted { deliver(s, tool: t, id: "\(s.key) \(p.id) _event \(e.id)", e.message) }
+                    }
                 }
                 t.events = Array((fresh.reversed() + t.events).prefix(40))
             }
@@ -331,7 +353,7 @@ import Network
         }
     }
 
-    private func note(_ s: Server, _ text: String, level: String = "info") {
+    func note(_ s: Server, _ text: String, level: String = "info") {
         s.events = Array(([ToolEventRecord(at: Date().addingTimeInterval(s.skew), id: "watch", level: level, message: text)] + s.events).prefix(40))
     }
 
@@ -359,6 +381,7 @@ import Network
             if missed >= s.downAfter, s.down == nil, online, !grace {
                 s.down = last
                 note(s, "Not answering — \(missed) checks in a row", level: "critical")
+                deliver(s, tool: nil, id: "\(s.key) down", "Not answering — \(missed) checks in a row. This Mac is online: it's the server or the way to it.")
             }
             changed()
         }

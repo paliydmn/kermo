@@ -76,8 +76,11 @@ public struct ToolRuns: Sendable, Hashable {
     /// In the background, when you watch it (§8.5, §12): its stream or poll.
     public var background: [Line] = []
 
+    /// A watched tool may notify (§8.7, §12): its alerts, its events, or a script's `_event` — which any stream or poll
+    /// may carry — so the background group says so.
     public var groups: [(title: String, lines: [Line])] {
-        [("Runs by itself", itself), ("Runs when you choose", chosen)] + (background.isEmpty ? [] : [("In the background, when you watch it", background)])
+        [("Runs by itself", itself), ("Runs when you choose", chosen)]
+            + (background.isEmpty ? [] : [("In the background, when you watch it — may send notifications", background)])
     }
 
     /// The trust sheet's text: each group, its lines (or "nothing").
@@ -175,7 +178,11 @@ public struct ToolServers: Sendable, Codable, Hashable {
         public var vars: [String: String]?
         /// Watched in the background (§8.5): its stream or poll runs there while Kermo is open.
         public var watch: Bool?
-        public init(hidden: Bool? = nil, vars: [String: String]? = nil, watch: Bool? = nil) { (self.hidden, self.vars, self.watch) = (hidden, vars, watch) }
+        /// Alerts (`alerts[].id`) that notify nothing here: they still show in the menu bar and the window (§8.7).
+        public var muted: [String]?
+        public init(hidden: Bool? = nil, vars: [String: String]? = nil, watch: Bool? = nil, muted: [String]? = nil) {
+            (self.hidden, self.vars, self.watch, self.muted) = (hidden, vars, watch, muted)
+        }
     }
 
     public init() {}
@@ -212,6 +219,17 @@ public struct ToolServers: Sendable, Codable, Hashable {
 
     /// Watch, or Stop Watching.
     public mutating func watch(_ tool: String, on id: String, _ on: Bool) { edit(tool, id) { $0.watch = on ? true : nil } }
+
+    /// Whether `alert` of `tool` is muted on the server `id`.
+    public func mutes(_ alert: String, of tool: String, on id: String?) -> Bool { id.flatMap { servers[$0]?[tool]?.muted }?.contains(alert) == true }
+
+    /// A notification's Mute This Alert on This Server, or undone.
+    public mutating func mute(_ alert: String, of tool: String, on id: String, _ on: Bool) {
+        edit(tool, id) { s in
+            let rest = (s.muted ?? []).filter { $0 != alert }
+            s.muted = on ? rest + [alert] : rest.isEmpty ? nil : rest
+        }
+    }
 
     /// Every server and tool watched: (server id, tool id).
     public var watched: [(server: String, tool: String)] {
