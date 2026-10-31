@@ -1158,6 +1158,7 @@ extension AppDelegate {
             forgetPassword(s)
             unpin(ServerRow.key(s.target))   // else it'd stay as a pinned bare address
             tools.unpinFromMenuBar(s)
+            try? FileManager.default.removeItem(atPath: ToolMonitor.history(s.id))   // its watching's history: nothing shows it now
             refreshSidebar()
             if answer == 1, let history { do { try FileManager.default.removeItem(atPath: history) } catch { showError(error) } }
         }

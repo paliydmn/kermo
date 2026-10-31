@@ -459,7 +459,7 @@ extension ServerLockTests {
         weak var hosting = charts.hosting
         page?.window?.layoutIfNeeded()
         #expect(view.frame.height > 200 && view.frame.width > 300, "the live tab takes the page's body: \(view.frame)")
-        #expect(hosting?.window != nil && charts.range.segmentCount == 3 && charts.range.isEnabled(forSegment: 0) && !charts.range.isEnabled(forSegment: 1))
+        #expect(hosting?.window != nil && charts.range.segmentCount == 3 && charts.range.selectedSegment == 0)
         let d = charts.model.data
         #expect(d.charts.map(\.title) == ["CPU", "Ticks"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95 && d.charts[1].warn == nil)
         #expect(d.charts[0].lines.first?.chart.runs.last?.last?.value == 99 && d.to.timeIntervalSince(d.from) == 3600, "\(d.charts[0].lines.first?.points.suffix(2) ?? [])")
@@ -695,6 +695,38 @@ extension ServerLockTests {
         press(rowButtons(table, 1).first { $0.title == "Check Now" })
         await toolsUntil { posts.sent.count == 1 }
         #expect(posts.sent.first?.body == "Sites: \(web.url)/down is down: 503" && monitor.worst(s).state == .critical, "\(posts.sent)")
+    }
+
+    /// The history on disk: a watched tool's slot so far and "not watched" go to its server's day file when watching
+    /// stops (a whole slot every 15 minutes); a tab's 24h reads them — the slot's average, the band after it — and
+    /// the hour is the memory's again.
+    @Test func watchingWritesItsHistoryAndTheChartsReadIt() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app)
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        let monitor = app.tools.monitor, pulse = try toolNamed(app, "pulse"), dir = ToolMonitor.history(app.savedServers[0].id)
+        monitor.watch(pulse, on: .local(), true)
+        await toolsUntil { (monitor.tool("pulse", on: .local())?.history.points("cpu").count ?? 0) >= 3 }
+        monitor.watch(pulse, on: .local(), false)
+        await toolsUntil { ToolSlots.read(dir, tool: "pulse", from: Date().addingTimeInterval(-3600)).count == 2 }
+        let lines = ToolSlots.read(dir, tool: "pulse", from: Date().addingTimeInterval(-3600))
+        #expect(lines.first?.v?["cpu"]?[""]?[1] == 10 && lines.last?.gap == .notWatched, "\(lines)")
+
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("pulse")
+        await toolsUntil { live(page)?.blocks.contains { $0 is ToolsCharts } == true }
+        let charts = try #require(live(page)?.blocks.compactMap { $0 as? ToolsCharts }.first)
+        #expect((0..<3).allSatisfy(charts.range.isEnabled(forSegment:)))
+        charts.range.selectedSegment = 1
+        _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
+        let d = charts.model.data, cpu = try #require(d.charts.first)
+        #expect(d.to.timeIntervalSince(d.from) == 86400 && charts.model.every == 900 && charts.model.days == false)
+        #expect(cpu.lines.first?.points.compactMap(\.value) == [10] && cpu.bands.map(\.gap) == [.notWatched, .notWatched], "before it, and since: \(cpu.bands)")
+        charts.range.selectedSegment = 0
+        _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
+        #expect(charts.model.data.to.timeIntervalSince(charts.model.data.from) == 3600 && charts.model.every == 1)
     }
 
     /// A script's critical `_event` notifies, as the server's not answering does; a tool only live on an open tab

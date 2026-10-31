@@ -28,6 +28,8 @@ import Network
     final class Tool {
         let loaded: LoadedTool
         var history = ToolHistory()
+        /// Watched: its 15-minute slots on the way to the disk (24h, 7d).
+        var slots: ToolSlots
         var alerts = ToolAlerts()
         /// Newest first, the last 40.
         var events: [ToolEventRecord] = []
@@ -40,7 +42,7 @@ import Network
         /// `http`: a check under way; when the next is due.
         var checking = false
         var due: Date?
-        init(_ t: LoadedTool) { (loaded, frames) = (t, ToolFrames(split: t.preset.source?.parse.split)) }
+        init(_ t: LoadedTool) { (loaded, frames, slots) = (t, ToolFrames(split: t.preset.source?.parse.split), ToolSlots(tool: t.preset.id)) }
         var preset: ToolPreset { loaded.preset }
         var wanted: Bool { watched || live }
         /// The channel ended: a frame half-read stays there.
@@ -162,7 +164,9 @@ import Network
         for (key, s) in servers {
             let w = want[key]
             for (id, t) in s.tools {
+                let was = t.watched
                 t.watched = w?.2.contains { $0.0.preset.id == id && $0.1 } ?? false
+                if was, !t.watched { record(s, t.slots.mark(.notWatched, at: Date().addingTimeInterval(s.skew))) }
                 t.live = w?.2.contains { $0.0.preset.id == id && !$0.1 } ?? false
                 if !t.watched { t.open = [] }
                 if !t.wanted { t.alerts.clear() }   // a stop is no recovery, and nothing to say
@@ -299,6 +303,7 @@ import Network
     private func take(_ sample: ToolSample, of t: Tool, on s: Server) {
         let p = t.preset, now = sample.at
         let values = t.history.add(sample, metrics: p.metrics ?? [:], now: now, states: p.list?.view.state)
+        if t.watched { record(s, t.slots.add(values, at: now)) }
         var fresh: [ToolEventRecord] = []
         for c in t.alerts.judge(values, alerts: alerts(t, on: s), metrics: p.metrics ?? [:], sample: sample, now: now) {
             switch c {
@@ -394,7 +399,27 @@ import Network
         for t in s.tools.values {
             t.history.mark(why, at: at)
             t.alerts.gap()
+            if t.watched { record(s, t.slots.mark(why, at: at)) }
         }
+    }
+
+    // MARK: The history on disk
+
+    /// A saved server's history folder: `monitor/<its id>` (`ToolSlots`).
+    static func history(_ id: UUID) -> String { Config.path("monitor/" + id.uuidString) }
+    private let disk = DispatchQueue(label: "dfm.monitor.history")
+
+    /// Lines to the server's day file, off the main thread, in order.
+    private func record(_ s: Server, _ lines: [ToolSlots.Line]) {
+        guard !lines.isEmpty else { return }
+        let dir = Self.history(s.saved.id)
+        disk.async { ToolSlots.append(lines, to: dir) }
+    }
+
+    /// Kermo quits: each watched tool's slot so far, and "not watched" from now — written before it goes.
+    func closing() {
+        for s in servers.values { for t in s.tools.values where t.watched { record(s, t.slots.mark(.notWatched, at: Date().addingTimeInterval(s.skew))) } }
+        disk.sync {}
     }
 
     func note(_ s: Server, _ text: String, level: String = "info") {

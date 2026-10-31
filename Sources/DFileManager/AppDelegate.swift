@@ -281,6 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationWillTerminate(_ notification: Notification) {
         saveSession()   // the cursors, the active panel, the dividers: none of them saves it as it changes
         Config.save("frecency.json", frecency)
+        tools.monitor.closing()   // the history's last slots
         tunnels.stopAll()   // first: a client connecting now would start a login
         askpass?.stop()   // a login still asking falls back to the dialog
         // No logged-in connection outlives the app. All at once: each may take up to `SFTP.stopWait`.
