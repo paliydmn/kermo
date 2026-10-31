@@ -5,7 +5,7 @@ import DFMCore
 // a script's critical `_event`, and a watched server not answering, come as a macOS notification — Open, Snooze 1 Hour
 // and, for an alert, Mute This Alert on This Server — and run your `on_alert`. A warning stays in the menu bar, the
 // Dock's badge and the window; "back to normal" is an event in the window, not a notification. Nothing goes out while
-// snoozed (everything) or muted (one alert on one server).
+// snoozed (everything), muted (one alert on one server) or in maintenance (one server).
 extension ToolMonitor {
     /// Snoozed till then (the menu bar's Snooze, a notification's Snooze 1 Hour); the menu bar and the window still show
     /// every problem. In `monitorSnooze`, so "until 9:00" outlives a relaunch.
@@ -20,7 +20,7 @@ extension ToolMonitor {
     /// it isn't watched, notifications are snoozed or the alert is muted there. `id`: one notification per alert and
     /// series, a newer one in its place.
     func deliver(_ s: Server, tool: Tool?, alert: String? = nil, id: String, _ message: String) {
-        guard tool?.watched ?? s.watched, snoozed == nil else { return }
+        guard tool?.watched ?? s.watched, snoozed == nil, !s.inMaintenance else { return }
         if let tool, let alert, app.tools.settings.mutes(alert, of: tool.preset.id, on: s.saved.id.uuidString) { return }
         var info = ["server": s.key]
         (info["tool"], info["alert"]) = (tool?.preset.id, alert)
@@ -54,6 +54,22 @@ extension ToolMonitor {
             }
             return p.terminationStatus == 0 ? "on_alert ran" : "on_alert failed: exit \(p.terminationStatus)"
         }
+    }
+
+    /// Maintenance on `t`'s server for `minutes` — a reboot, an upgrade: nothing notifies of it till then, the charts mark
+    /// the time, and it ends by itself; nil: End Now.
+    func maintain(_ t: SFTPTarget, minutes: Double?) {
+        guard let s = server(t) else { return }
+        let now = Date()
+        if let minutes {
+            let until = now.addingTimeInterval(minutes * 60)
+            s.maintenance = (s.inMaintenance ? s.maintenance!.from : now, until)
+            note(s, "Maintenance till " + until.formatted(date: .omitted, time: .shortened))
+        } else if let m = s.maintenance, s.inMaintenance {
+            s.maintenance = (m.from, now)
+            note(s, "Maintenance ended")
+        }
+        changed()
     }
 
     /// Settings ▸ Monitor's word on notifications, as macOS has it now (S1: not what the request's answer said).

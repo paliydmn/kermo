@@ -16,6 +16,7 @@ import DFMCore
     let watchButton = NSButton(title: "Watch in Background…", target: nil, action: nil)
     let banner = NSTextField(wrappingLabelWithString: "")
     let connectButton = NSButton(title: "Connect", target: nil, action: nil)
+    let endButton = NSButton(title: "End Now", target: nil, action: nil)
     let foot = NSTextField(labelWithString: "")
     private(set) var tiles: [Tile] = []
     private(set) var blocks: [any ToolsBlock] = []
@@ -44,14 +45,16 @@ import DFMCore
         watchButton.controlSize = .small
         banner.font = .systemFont(ofSize: 12)
         connectButton.controlSize = .small
+        endButton.controlSize = .small
         foot.font = .systemFont(ofSize: 11)
         foot.textColor = .secondaryLabelColor
         foot.lineBreakMode = .byTruncatingTail
         kept = [MenuAction.attach(to: watchButton) { [unowned self] in Task { await app.tools.toggleWatch(tool, on: server, target, window: window) } },
-                MenuAction.attach(to: connectButton) { [unowned self] in app.tools.monitor.connect(target) }]
+                MenuAction.attach(to: connectButton) { [unowned self] in app.tools.monitor.connect(target) },
+                MenuAction.attach(to: endButton) { [unowned self] in app.tools.monitor.maintain(target, minutes: nil) }]
         // The dashboard's blocks; none: the summary's metrics as a row of tiles.
         let shown = p.dashboard.map { $0.map(make) } ?? [row((p.summary ?? []).map { tile([$0.metric], of: $0.of, also: nil) })]
-        let stripRow = NSStackView(views: [strip, watchButton]), bannerRow = NSStackView(views: [banner, connectButton])
+        let stripRow = NSStackView(views: [strip, watchButton]), bannerRow = NSStackView(views: [banner, connectButton, endButton])
         strip.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         banner.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let stack = NSStackView(views: [stripRow, bannerRow] + shown + [foot])
@@ -106,10 +109,6 @@ import DFMCore
             let b = NSLevelIndicator()
             b.levelIndicatorStyle = .continuousCapacity
             (b.minValue, b.maxValue) = (0, m.max ?? 100)
-            if let a = (p.alerts ?? []).first(where: { $0.metric == metrics[0] && $0.below != true }) {
-                b.warningValue = a.warn ?? b.maxValue + 1
-                b.criticalValue = a.crit ?? b.maxValue + 1
-            }
             b.isEditable = false
             bar = b
         }
@@ -133,6 +132,8 @@ import DFMCore
     }
 
     var state: ToolMonitor.Server? { app.tools.monitor.server(target) }
+    /// The tool's alerts with your thresholds on this server.
+    var alerts: [ToolAlert] { app.tools.settings.alerts(tool.preset, on: app.tools.serverID(target)) }
     var known: ToolMonitor.Tool? { app.tools.monitor.tool(tool.preset.id, on: target) }
     /// Now by the server's clock, as the series are.
     var now: Date { Date().addingTimeInterval(state?.skew ?? 0) }
@@ -158,6 +159,8 @@ import DFMCore
             ("No answer for \(s.missed * Int(s.every)) s — Kermo calls it down after \(s.downAfter) checks in a row.", NSColor.secondaryLabelColor)
         } else if let s, s.channel == nil, s.retryAt == nil, let why = s.error {
             ("\(server.title): \(why)", Palette.warn)
+        } else if let s, let m = s.maintenance, s.inMaintenance {
+            ("Maintenance till \(m.until.formatted(date: .omitted, time: .shortened)): nothing notifies of \(server.title); the charts mark the time.", NSColor.secondaryLabelColor)
         } else if !app.tools.monitor.online {
             ("This Mac has no network: nothing counts as down.", NSColor.secondaryLabelColor)
         } else if locked {
@@ -167,7 +170,8 @@ import DFMCore
         banner.textColor = color
         banner.isHidden = text.isEmpty
         connectButton.isHidden = s?.needsLogin != true || s?.connecting == true
-        let record = t?.history.last?.record ?? [:]
+        endButton.isHidden = s?.inMaintenance != true || !text.hasPrefix("Maintenance")
+        let record = t?.history.last?.record ?? [:], alerts = alerts
         let scope = ToolTemplate.Scope(rows: [record])
         for tile in tiles {
             let texts = tile.metrics.map { id -> String in   // two in one tile, in the label's order ("In · Out")
@@ -176,9 +180,13 @@ import DFMCore
             }
             tile.value.stringValue = texts.joined(separator: " · ")
             let m = p.metrics?[tile.metrics[0]]
-            let level = t?.alerts.worst(metric: tile.metrics[0], alerts: p.alerts ?? [])
+            let level = t?.alerts.worst(metric: tile.metrics[0], alerts: alerts)
             tile.value.textColor = level == .critical ? Palette.fail : level == .warning ? Palette.warn : .labelColor
-            if let bar = tile.bar { bar.doubleValue = ToolMetric.one(t?.history.latest(tile.metrics[0]) ?? [:], of: tile.of) ?? 0 }
+            if let bar = tile.bar {
+                bar.doubleValue = ToolMetric.one(t?.history.latest(tile.metrics[0]) ?? [:], of: tile.of) ?? 0
+                let a = alerts.first { $0.metric == tile.metrics[0] && $0.below != true }   // yours, as Thresholds… set them
+                (bar.warningValue, bar.criticalValue) = (a?.warn ?? bar.maxValue + 1, a?.crit ?? bar.maxValue + 1)
+            }
             var detail = m?.detail.map { ToolTemplate.text($0, scope) } ?? ""
             if let also = tile.also, let am = p.metrics?[also], let v = ToolMetric.one(t?.history.latest(also) ?? [:], of: nil) {
                 detail = [detail, "\(am.title?.lowercased() ?? also) \(am.text(v))"].filter { !$0.isEmpty }.joined(separator: " · ")
@@ -224,7 +232,7 @@ extension ToolRunner {
             let every = Int(p.watch?.every ?? 60)
             c.runs = "Every \(every) s, over the connection Kermo keeps for watching, while this Mac is awake:"
             c.command = tool.runs.background.map { $0.text.trimmingCharacters(in: .whitespaces) }.joined(separator: "\n")
-            let rules = (p.alerts ?? []).map { a -> String in
+            let rules = settings.alerts(p, on: id).map { a -> String in
                 let unit = a.metric.flatMap { p.metrics?[$0]?.unit } ?? ""
                 var at: [String] = []
                 if let w = a.warn { at.append("warning at \(ToolValue.number(w).text)\(unit)") }
@@ -233,7 +241,7 @@ extension ToolRunner {
                 if let s = (a.for?.crit ?? a.for?.warn)?.seconds { held = " for " + ToolAlerts.minutes(s) } else if let n = a.checks { held = " \(n) checks in a row" }
                 return "• \(a.id ?? a.metric ?? ""): " + at.joined(separator: ", ") + held
             }
-            c.note = ((rules.isEmpty ? [] : ["Alerts, as the tool sets them:"] + rules)
+            c.note = ((rules.isEmpty ? [] : ["Alerts (Thresholds… on the page changes them):"] + rules)
                       + ["The connection stays open while \(s.title) is watched — it shows in w and last there. "
                          + (s.locked ? "\(s.title) is locked: watching resumes by itself after the Mac sleeps or locks, without Touch ID — the lock guards actions in Kermo, not the connection."
                                      : "Warnings show in the menu bar; critical alerts also come as notifications and run your on_alert (Settings ▸ Monitor).")]).joined(separator: "\n")

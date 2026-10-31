@@ -172,6 +172,14 @@ public struct ToolServers: Sendable, Codable, Hashable {
     public var servers: [String: [String: Setting]] = [:]
     /// Tools used only on the servers listed (Use on Servers… ▸ Only on…); a tool not here: wherever it's found.
     public var only: [String: [String]] = [:]
+    /// Your thresholds for all servers (Thresholds…): tool → alert id → its own `warn` / `crit`.
+    public var alerts: [String: [String: Threshold]] = [:]
+
+    /// Your own `warn` / `crit` for an alert (§8.3), either left to the one under it.
+    public struct Threshold: Sendable, Codable, Hashable {
+        public var warn, crit: Double?
+        public init(warn: Double? = nil, crit: Double? = nil) { (self.warn, self.crit) = (warn, crit) }
+    }
 
     public struct Setting: Sendable, Codable, Hashable {
         public var hidden: Bool?
@@ -180,8 +188,10 @@ public struct ToolServers: Sendable, Codable, Hashable {
         public var watch: Bool?
         /// Alerts (`alerts[].id`) that notify nothing here: they still show in the menu bar and the window (§8.7).
         public var muted: [String]?
-        public init(hidden: Bool? = nil, vars: [String: String]? = nil, watch: Bool? = nil, muted: [String]? = nil) {
-            (self.hidden, self.vars, self.watch, self.muted) = (hidden, vars, watch, muted)
+        /// Your thresholds on this server, over those for all servers.
+        public var alerts: [String: Threshold]?
+        public init(hidden: Bool? = nil, vars: [String: String]? = nil, watch: Bool? = nil, muted: [String]? = nil, alerts: [String: Threshold]? = nil) {
+            (self.hidden, self.vars, self.watch, self.muted, self.alerts) = (hidden, vars, watch, muted, alerts)
         }
     }
 
@@ -192,6 +202,7 @@ public struct ToolServers: Sendable, Codable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         servers = try c.decodeIfPresent([String: [String: Setting]].self, forKey: .servers) ?? [:]
         only = try c.decodeIfPresent([String: [String]].self, forKey: .only) ?? [:]
+        alerts = try c.decodeIfPresent([String: [String: Threshold]].self, forKey: .alerts) ?? [:]
     }
 
     /// Whether `tool` shows on the server `id` (nil: one not saved): on an only-there tool's list; else not hidden there.
@@ -229,6 +240,40 @@ public struct ToolServers: Sendable, Codable, Hashable {
             let rest = (s.muted ?? []).filter { $0 != alert }
             s.muted = on ? rest + [alert] : rest.isEmpty ? nil : rest
         }
+    }
+
+    /// `p`'s alerts with your thresholds (§8.3): the server `id`'s over all servers' over the preset's — by the alert's
+    /// id (its metric when it has none), so they outlive a new version of the tool.
+    public func alerts(_ p: ToolPreset, on id: String?) -> [ToolAlert] {
+        (p.alerts ?? []).map { a in
+            let key = a.id ?? a.metric ?? ""
+            var a = a
+            for t in [alerts[p.id]?[key], id.flatMap { servers[$0]?[p.id]?.alerts?[key] }].compactMap({ $0 }) {
+                (a.warn, a.crit) = (t.warn ?? a.warn, t.crit ?? a.crit)
+            }
+            return a
+        }
+    }
+
+    /// Thresholds…: yours for `tool`'s alert `key`, on the server `id` or (nil) for all servers; an empty one goes.
+    public mutating func setThreshold(_ t: Threshold, alert key: String, of tool: String, on id: String?) {
+        let kept = t == Threshold() ? nil : t
+        guard let id else {
+            alerts[tool, default: [:]][key] = kept
+            if alerts[tool]?.isEmpty == true { alerts[tool] = nil }
+            return
+        }
+        edit(tool, id) { s in
+            var all = s.alerts ?? [:]
+            all[key] = kept
+            s.alerts = all.isEmpty ? nil : all
+        }
+    }
+
+    /// Yours for `tool`'s alert `key` on the server `id`, or (nil) for all servers.
+    public func threshold(_ key: String, of tool: String, on id: String?) -> Threshold {
+        guard let id else { return alerts[tool]?[key] ?? Threshold() }
+        return servers[id]?[tool]?.alerts?[key] ?? Threshold()
     }
 
     /// Every server and tool watched: (server id, tool id).

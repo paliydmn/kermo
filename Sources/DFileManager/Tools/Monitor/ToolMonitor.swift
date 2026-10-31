@@ -68,6 +68,10 @@ import Network
         var since: Date?
         /// The server's own events: watching started, not answering, answers again.
         var events: [ToolEventRecord] = []
+        /// Maintenance (this Mac's clock), now or the last: no notification till `until`; the charts mark it.
+        /// ponytail: in memory — a relaunch ends it, and an earlier one in the hour isn't drawn.
+        var maintenance: (from: Date, until: Date)?
+        var inMaintenance: Bool { maintenance.map { $0.until > Date() } == true }
         init(_ s: SavedServer, _ t: SFTPTarget) { (saved, target) = (s, t) }
         var every: Double { tools.values.compactMap { $0.preset.watch?.every }.min() ?? 60 }
         var downAfter: Int { tools.values.compactMap { $0.preset.watch?.down }.min() ?? 3 }
@@ -277,7 +281,7 @@ import Network
                 guard let sample = source.parse.sample(frame, at: now) else { continue }
                 let values = t.history.add(sample, metrics: p.metrics ?? [:], now: now, states: p.list?.view.state)
                 var fresh: [ToolEventRecord] = []
-                for c in t.alerts.judge(values, alerts: p.alerts ?? [], metrics: p.metrics ?? [:], sample: sample, now: now) {
+                for c in t.alerts.judge(values, alerts: alerts(t, on: s), metrics: p.metrics ?? [:], sample: sample, now: now) {
                     switch c {
                     case .worse(let alert, let key, let level, let message):
                         fresh.append(ToolEventRecord(at: now, id: "alert", level: level.name, message: message))
@@ -460,6 +464,7 @@ import Network
         }
         if s.channel == nil { return (.off, s.retryAt == nil ? "" : "connecting…") }
         if s.missed > 0 { return (.off, "no answer \(s.missed) of \(s.downAfter)") }
+        if let m = s.maintenance, s.inMaintenance { return (.ok, "maintenance till " + m.until.formatted(date: .omitted, time: .shortened)) }
         return (.ok, "")
     }
 
@@ -475,15 +480,18 @@ import Network
         }
     }
 
+    /// `t`'s alerts on `s` with your thresholds (Thresholds…).
+    func alerts(_ t: Tool, on s: Server) -> [ToolAlert] { app.tools.settings.alerts(t.preset, on: s.saved.id.uuidString) }
+
     /// A tool's `summary` on a server (§6.3): each item's value now — a bar's share of `max`, a count's label with
     /// `{ok}` / `{bad}` / `{all}`, a text — with the alert's thresholds for the bar.
-    func summary(_ t: Tool) -> [(label: String, value: Double?, max: Double, text: String, warn: Double?, crit: Double?, level: ToolLevel?)] {
-        let p = t.preset
+    func summary(_ t: Tool, on s: Server) -> [(label: String, value: Double?, max: Double, text: String, warn: Double?, crit: Double?, level: ToolLevel?)] {
+        let p = t.preset, alerts = alerts(t, on: s)
         return (p.summary ?? []).compactMap { item in
             guard let m = p.metrics?[item.metric] else { return nil }
             let latest = t.history.latest(item.metric)
-            let alert = (p.alerts ?? []).first { $0.metric == item.metric }
-            let level = t.alerts.worst(metric: item.metric, alerts: p.alerts ?? [])
+            let alert = alerts.first { $0.metric == item.metric }
+            let level = t.alerts.worst(metric: item.metric, alerts: alerts)
             switch item.as ?? "text" {
             case "count":
                 let scope = ToolTemplate.Scope(inputs: Dictionary(uniqueKeysWithValues: latest.map { ($0.key, ToolValue.number($0.value)) }))

@@ -16,7 +16,7 @@ Where Kermo keeps its settings, the formats of the files you can edit, and the `
 | Terminal | Font and size (`terminalFont`, `terminalFontSize`); the drawer's height (`terminalDrawerHeight`, by dragging its line); Option is Meta (`terminalOptionIsMeta`); Selecting text copies it and Right-click pastes (`terminalCopyOnSelect`, `terminalRightClickPaste`: both use the clipboard); the app for ⌥⌘T and ⌘↩ (`terminalBundleID`) |
 | Editor & Viewer | The editor for files on this Mac (`editorBundleID`); End with a newline (`editorFinalNewline`); Line numbers (`viewerLineNumbers`); the tool that compares files (`diffCommand`) |
 | Servers & Safety | Keep a production log (`auditLog`) and Show it; Keep earlier versions of saved server files (`serverHistory`); Checks before saving (**Edit…**); **Edit SSH Config…**; how long the sudo password is kept |
-| Monitor | Whether macOS lets Kermo [notify](tools.md#notifications) and **Open System Settings**; a command to run on critical alerts (`onAlert`) and **Send Test** |
+| Monitor | Whether macOS lets Kermo [notify](tools.md#notifications) and **Open System Settings**; a command to run on critical alerts (`onAlert`) and **Send Test**. Thresholds are in the Tools window |
 | Advanced | **Edit…** for `keymap.json`, `usermenu.json`, `validators.json` and `filters.json`; **Open** the config folder; **Reload Config** |
 
 ## Files

@@ -173,9 +173,11 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     /// Something a row's note says changed meanwhile (`SettingsRow.status`).
     static func refreshShown() { shared?.refresh() }
 
-    static func show(_ app: AppDelegate) {
+    /// `tab`: its title, to open on it (Thresholds' Notification Settings… opens Monitor).
+    static func show(_ app: AppDelegate, tab: String? = nil) {
         let s = shared ?? SettingsWindow(app: app, tabs: app.settingsTabs, defaults: app.defaults)
         shared = s
+        if let i = s.tabs.tabViewItems.firstIndex(where: { $0.label == tab }) { s.tabs.selectedTabViewItemIndex = i }
         s.refresh()
         s.window.makeKeyAndOrderFront(nil)
     }

@@ -266,7 +266,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         (top.spacing, top.distribution) = (5, .fill)
         var items: [NSView] = []
         for tool in state.tools.values.filter(\.watched).sorted(by: { $0.preset.id < $1.preset.id }) {
-            for item in monitor.summary(tool) {
+            for item in monitor.summary(tool, on: state) {
                 if let v = item.value {
                     let bar = NSLevelIndicator()
                     bar.levelIndicatorStyle = .continuousCapacity

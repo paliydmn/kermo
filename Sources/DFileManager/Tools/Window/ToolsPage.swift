@@ -35,6 +35,9 @@ final class ToolsPage: NSView, RowList {
     let add = NSButton(title: "", target: nil, action: nil)
     let more = NSButton(title: "", target: nil, action: nil)
     let terminal = NSButton(title: "Terminal", target: nil, action: nil)
+    /// A watched tool's tab: Maintenance ▾ on the server, Thresholds….
+    let maintenance = NSButton(title: "Maintenance", target: nil, action: nil)
+    let thresholds = NSButton(title: "Thresholds…", target: nil, action: nil)
     let body = NSStackView()
     let result = NSTextField(labelWithString: "")
     let outputButton = NSButton(title: "Output…", target: nil, action: nil)
@@ -50,6 +53,10 @@ final class ToolsPage: NSView, RowList {
         terminal.image = Symbol.ssh.image("Terminal")
         terminal.imagePosition = .imageLeading
         terminal.toolTip = "An SSH tab on \(server.title) in the main window"
+        maintenance.image = Symbol.maintenance.image(nil)
+        thresholds.image = Symbol.advanced.image(nil)
+        for b in [maintenance, thresholds] { b.imagePosition = .imageLeading }
+        thresholds.toolTip = "Your own warning and critical values, for every server or only \(server.title)"
         more.image = Symbol.more.image("More")
         more.bezelStyle = .accessoryBarAction
         add.image = Symbol.plus.image("Use another tool here")
@@ -62,12 +69,16 @@ final class ToolsPage: NSView, RowList {
                     app.openSSH(target)
                 },
                 MenuAction.attach(to: more) { [unowned self] in moreMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: more.bounds.height + 4), in: more) },
+                MenuAction.attach(to: maintenance) { [unowned self] in
+                    maintenanceMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: maintenance.bounds.height + 4), in: maintenance)
+                },
+                MenuAction.attach(to: thresholds) { [unowned self] in Task { await app.tools.thresholds(on: target, window: window) } },
                 MenuAction.attach(to: add) { [unowned self] in addMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: add.bounds.height + 4), in: add) },
                 MenuAction.attach(to: tabs) { [unowned self] in select(shown.indices.contains(tabs.selectedSegment) ? shown[tabs.selectedSegment].preset.id : nil) },
                 MenuAction.attach(to: outputButton) { [unowned self] in output?() }]
         let spacer = NSView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
-        let top = NSStackView(views: [title, chips, spacer, terminal, more])
+        let top = NSStackView(views: [title, chips, spacer, maintenance, thresholds, terminal, more])
         (top.spacing, top.distribution) = (8, .fill)
         chips.spacing = 4
         let tabRow = NSStackView(views: [tabs, add])
@@ -132,6 +143,7 @@ final class ToolsPage: NSView, RowList {
         tabs.selectedSegment = shown.firstIndex { $0.preset.id == tab } ?? -1
         more.isEnabled = current != nil
         showBody(known?.at)
+        heads()
         showHeader()
         marks()
         app.tools.monitor.reconcile()
@@ -141,6 +153,33 @@ final class ToolsPage: NSView, RowList {
     func live() {
         tab.flatMap { lives[$0] }?.update()
         marks()
+        heads()
+    }
+
+    /// Maintenance and Thresholds… on a watched tool's tab; Maintenance while the server is watched (nothing else
+    /// notifies).
+    private func heads() {
+        let watchable = current?.preset.watchable == true, watched = app.tools.monitor.server(target)?.watched == true
+        maintenance.isHidden = !watchable
+        thresholds.isHidden = !watchable || current?.preset.alerts?.isEmpty != false
+        maintenance.isEnabled = watched
+        maintenance.toolTip = watched ? "Nothing notifies of \(server.title) for a while: a reboot, an upgrade" : "Only a watched server notifies"
+    }
+
+    /// Maintenance ▾: 30 minutes, 1 hour, 3 hours, or End Maintenance.
+    func maintenanceMenu() -> NSMenu {
+        let menu = NSMenu(), monitor = app.tools.monitor
+        menu.autoenablesItems = false
+        menu.addItem(AppDelegate.note("Maintenance on \(server.title)"))
+        for (title, minutes) in [("30 Minutes", 30.0), ("1 Hour", 60), ("3 Hours", 180)] {
+            menu.addItem(MenuAction.item(title) { [unowned self] in monitor.maintain(target, minutes: minutes) })
+        }
+        menu.addItem(.separator())
+        let end = MenuAction.item("End Maintenance") { [unowned self] in monitor.maintain(target, minutes: nil) }
+        end.isEnabled = monitor.server(target)?.inMaintenance == true
+        menu.addItem(end)
+        menu.addItem(AppDelegate.note("Nothing notifies of it till then; the charts mark the time"))
+        return menu
     }
 
     /// A tab with an alert standing shows it instead of its icon (monitor §3.6): a triangle for a warning, an octagon

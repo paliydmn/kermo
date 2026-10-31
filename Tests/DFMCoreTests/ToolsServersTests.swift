@@ -88,3 +88,27 @@ import Testing
     s.mute("disk", of: "system", on: "A", false)
     #expect(s.servers["A"] == nil, "an empty setting isn't kept")
 }
+
+/// Your thresholds (Thresholds…): one server's over all servers' over the tool's, by the alert's id (its metric when it
+/// has none), each of warn and crit on its own; an empty one isn't kept.
+@Test func thresholdsOverTheToolsByAlertID() throws {
+    let p = try JSONDecoder().decode(ToolPreset.self, from: Data(#"""
+        { "schema": 1, "id": "system", "title": "System",
+          "alerts": [ { "id": "cpu", "metric": "cpu", "warn": 85, "crit": 95 }, { "metric": "disk", "warn": 85 } ] }
+        """#.utf8))
+    var s = ToolServers()
+    #expect(s.alerts(p, on: "A") == p.alerts, "none of yours: the tool's")
+    s.setThreshold(.init(warn: 70), alert: "cpu", of: "system", on: nil)
+    s.setThreshold(.init(crit: 99), alert: "cpu", of: "system", on: "A")
+    s.setThreshold(.init(warn: 90), alert: "disk", of: "system", on: "A")
+    let a = s.alerts(p, on: "A"), b = s.alerts(p, on: "B")
+    #expect(a[0].warn == 70 && a[0].crit == 99 && a[1].warn == 90, "A: all servers' warn, its own crit; disk by its metric")
+    #expect(b[0].warn == 70 && b[0].crit == 95 && b[1].warn == 85 && s.alerts(p, on: nil)[0].warn == 70)
+    #expect(s.threshold("cpu", of: "system", on: "A") == .init(crit: 99) && s.threshold("cpu", of: "system", on: nil) == .init(warn: 70))
+    let back = try JSONDecoder().decode(ToolServers.self, from: try JSONEncoder().encode(s))
+    #expect(back.alerts(p, on: "A") == a)
+    s.setThreshold(.init(), alert: "cpu", of: "system", on: nil)
+    s.setThreshold(.init(), alert: "cpu", of: "system", on: "A")
+    s.setThreshold(.init(), alert: "disk", of: "system", on: "A")
+    #expect(s == ToolServers(), "emptied: nothing kept")
+}
