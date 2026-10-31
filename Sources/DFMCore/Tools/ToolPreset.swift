@@ -243,6 +243,9 @@ public struct ToolListView: Sendable, Hashable, Codable {
     public var header: ToolRun?
     public var name: String?
     public var also: ToolAlso?
+
+    /// A dashboard table's view (§6.3): its columns alone; a row's key is its record.
+    public init(columns: [ToolColumn]?) { self.columns = columns }
 }
 
 /// `list`, and an action's own list one level down (whose Run is the action's).

@@ -270,7 +270,8 @@ import Network
                         fresh.append(ToolEventRecord(at: now, id: "ok", level: "ok", message: "Back to normal: \(what)\(key.isEmpty ? "" : " " + key) · after " + ToolAlerts.minutes(now.timeIntervalSince(since))))
                     }
                 }
-                fresh += ToolEvents.raised(p.events ?? [], in: sample, previous: t.history.previous, scope: app.tools.scope(p, on: s.saved, s.target))
+                fresh += ToolEvents.raised(p.events ?? [], in: sample, previous: t.history.previous, carrying: t.history.carriedBefore,
+                                           scope: app.tools.scope(p, on: s.saved, s.target))
                 if let e = ToolEvents.scripted(sample), t.budget.allows(now) {   // past 10 an hour: held, said as "N more" once there's room
                     let held = t.budget.takeHeld()
                     if held > 0 { fresh.append(ToolEventRecord(at: now, id: "more", level: "info", message: "\(p.title): \(held) more")) }
