@@ -60,9 +60,8 @@ extension ToolParse {
         }
     }
 
-    /// The records in a run's output. Values from text formats are strings; `prometheus` and `nagios` are read from
-    /// Tools PR 5 on, so here their output stays unmatched.
-    public func records(_ out: Data) -> ToolRecords {
+    /// The records in a run's output. Values from text formats are strings. `exit`: the run's code, `nagios`' status.
+    public func records(_ out: Data, exit: Int32? = nil) -> ToolRecords {
         let text = String(decoding: out, as: UTF8.self)
         var r = ToolRecords()
         switch format ?? .lines {
@@ -90,9 +89,44 @@ extension ToolParse {
                 for g in m.output.dropFirst() { if let name = g.name, let s = g.substring { rec[name] = .string(String(s)) } }
                 r.rows.append(rec)
             }
-        case .prometheus, .nagios: r.unmatched = units(text)
+        case .prometheus:
+            for l in Self.lines(text) where !l.hasPrefix("#") && !l.trimmingCharacters(in: .whitespaces).isEmpty {
+                if let rec = Self.prometheus(l) { r.rows.append(rec) } else { r.unmatched.append(l) }
+            }
+        case .nagios: r.rows = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && exit == nil ? [] : [Self.nagios(text, exit: exit)]
         }
         return finish(r)
+    }
+
+    /// A sample line of Prometheus' text format (§4.2): `name{label="value",…} value [timestamp]` — each label, `name`,
+    /// `value` (a string, as text formats give: `NaN` and `+Inf` too). A label called `name` or `value` (cAdvisor's
+    /// container `name`) is `label_name`, `label_value`.
+    static func prometheus(_ line: String) -> ToolRecord? {
+        guard let m = line.firstMatch(of: /^\s*([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})?\s+(\S+)(?:\s+-?\d+)?\s*$/) else { return nil }
+        var rec: ToolRecord = [:]
+        for l in (m.2 ?? "").matches(of: /([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*"((?:[^"\\]|\\.)*)"/) {
+            let k = String(l.1)
+            rec[["name", "value"].contains(k) ? "label_" + k : k] = .string(String(l.2).replacing(/\\(.)/) { $0.1 == "n" ? "\n" : String($0.1) })
+        }
+        (rec["name"], rec["value"]) = (.string(String(m.1)), .string(String(m.3)))
+        return rec
+    }
+
+    /// A Nagios plugin's run (§4.2): `status` from its exit code — 0 ok, 1 warn, 2 crit, anything else unknown —
+    /// `message` its first line before `|`, `perf.<label>` the numbers of its performance data: after the first
+    /// line's `|`, and from the next `|` on to the end (the plugins' long form).
+    static func nagios(_ text: String, exit: Int32?) -> ToolRecord {
+        let lines = Self.lines(text).filter { !$0.isEmpty }
+        func after(_ l: String) -> Substring { l.firstIndex(of: "|").map { l[l.index(after: $0)...] } ?? "" }
+        var perfText = lines.first.map(after) ?? ""
+        if let i = lines.dropFirst().firstIndex(where: { $0.contains("|") }) { perfText += " " + after(lines[i]) + " " + lines[(i + 1)...].joined(separator: " ") }
+        var perf: [String: ToolValue] = [:]
+        for p in perfText.matches(of: /(?:^|\s)(?:'([^']+)'|([^\s=']+))=(-?[0-9.]+)/) {
+            if let n = Double(p.3) { perf[String(p.1 ?? p.2 ?? "")] = .number(n) }
+        }
+        let codes = ["ok", "warn", "crit"]
+        return ["status": .string(exit.map { codes.indices.contains(Int($0)) ? codes[Int($0)] : "unknown" } ?? "unknown"),
+                "message": .string(lines.first.map { String($0.prefix { $0 != "|" }).trimmingCharacters(in: .whitespaces) } ?? ""), "perf": .object(perf)]
     }
 
     /// A `files` list: each file one record, read by this Parse (its first record); `name` gets the file's parent
@@ -219,8 +253,10 @@ extension ToolRecords {
 }
 
 extension ToolRun {
-    /// Whether an exit code counts as success (`exitOk`, default `[0]`).
-    public func succeeded(_ exit: Int32) -> Bool { (exitOk ?? [0]).contains(Int(exit)) }
+    /// Whether an exit code counts as success (`exitOk`, default `[0]`); a `nagios` run's code is its status: 0–3.
+    public func succeeded(_ exit: Int32, format: ToolFormat? = nil) -> Bool {
+        format == .nagios ? (0...3).contains(exit) : (exitOk ?? [0]).contains(Int(exit))
+    }
 }
 
 // MARK: How a row looks

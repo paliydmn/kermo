@@ -213,3 +213,24 @@ private func systemSamples() throws -> [ToolSample] {
     #expect((0..<10).allSatisfy { budget.allows(at(Double($0))) } && !budget.allows(at(11)) && !budget.allows(at(12)))
     #expect(budget.takeHeld() == 2 && budget.held == 0 && budget.allows(at(3601)), "an hour on, room again")
 }
+
+/// A poll's run is one sample (§8.1): its lines held till the line that ends it; its exit code is a Nagios run's
+/// status; Prometheus' samples are rows.
+@Test func aPollsRunIsOneSampleWithItsExitCode() throws {
+    var f = ToolFrames(split: nil, poll: true)
+    #expect(f.feed("node_load1 0.5").isEmpty && f.feed("up 1").isEmpty)
+    let frame = try #require(f.feed(ToolPayload.ranMark + "0").first)
+    #expect(f.feed("next").isEmpty, "the next run starts afresh")
+    let s = try #require(ToolParse(format: .prometheus).sample(frame, at: at(0)))
+    #expect(s.rows("rows").map { $0["name"] } == ["node_load1", "up"])
+    let n = try #require(ToolParse(format: .nagios).sample("LOAD CRITICAL - load 9.5 | load1=9.5;2;4\n" + ToolPayload.ranMark + "2", at: at(0)))
+    #expect(n.record["status"] == "crit" && ToolValue.object(n.record)["perf.load1"] == 9.5 && n.record["message"] == "LOAD CRITICAL - load 9.5")
+    var g = ToolFrames(split: nil, poll: true)
+    let bare = try #require(g.feed("{\"a\":1}" + ToolPayload.ranMark + "0").first, "output with no newline at its end: the mark ends its line")
+    #expect(ToolParse(format: .json).sample(bare, at: at(0))?.record == ["a": 1])
+    #expect(ToolPayload.ran("{\"a\":1}\n" + ToolPayload.ranMark + "1").exit == 1 && ToolPayload.ran("a line").exit == nil, "the run's code, for the engine to judge")
+    let nan = try #require(ToolParse(format: .prometheus).sample("x NaN\ny +Inf\nz 2", at: at(0)))
+    #expect(ToolMetric(path: "value", rows: "rows", key: "name").values(in: nan, previous: nil, now: at(0)) == ["z": 2], "NaN and +Inf are no value")
+    let rate = ToolMetric(path: "value", rows: "rows", key: "name", calc: "rate")
+    #expect(rate.values(in: ToolSample(at: at(5), record: nan.record), previous: nan, now: at(5)) == ["z": 0], "nor after a rate")
+}

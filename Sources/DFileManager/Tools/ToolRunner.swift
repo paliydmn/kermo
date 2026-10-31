@@ -81,11 +81,13 @@ final class ToolRunner {
 
     /// The tools `t`'s server shows, as last known (nil: not known yet): those it has that you use there — Use on
     /// Servers…, Hide. One that asks for a value (`vars.ask`) only on a saved server: the value is kept with it, and
-    /// `toSetUp` says what's still to set. Tools ▸, a place's rows (the search's too) and the Tools window show this.
+    /// `toSetUp` says what's still to set. One that checks the server's addresses (Sites) once some are saved (Edit
+    /// Server). Tools ▸, a place's rows (the search's too) and the Tools window show this.
     func here(_ t: SFTPTarget) -> (tools: [LoadedTool], at: Date)? {
         guard let a = answer(t) else { return nil }
-        let id = serverID(t)
-        return (tools.filter { a.answer.has($0.preset) && settings.uses($0.preset.id, on: id) && (id != nil || $0.preset.varsToAsk(saved: [:]).isEmpty) }, a.at)
+        let saved = app.savedServer(at: t), id = saved?.id.uuidString
+        return (tools.filter { a.answer.has($0.preset) && settings.uses($0.preset.id, on: id) && (id != nil || $0.preset.varsToAsk(saved: [:]).isEmpty)
+                && ($0.preset.http == nil || saved?.sites.isEmpty == false) }, a.at)
     }
 
     /// The values `tool` asks for that aren't set on `t`'s server yet: Set Up… before it's used there.
@@ -101,7 +103,7 @@ final class ToolRunner {
 
     static func shows(_ t: LoadedTool) -> Bool {
         let p = t.preset
-        if p.source != nil { return true }   // watched, or live on its tab (PR 5)
+        if p.watchable { return true }   // watched, or live on its tab (PR 5)
         return p.list.map { $0.run.command != nil || $0.run.script != nil } ?? p.commandAction.map { runs($0, of: p) }
             ?? p.toolActions?.contains { runs($0, of: p) } ?? false
     }
@@ -109,8 +111,8 @@ final class ToolRunner {
     /// What this version runs of an action: a command, a script, an `edit`, an `open` (a server path in the panel) or
     /// a `goto` (a place in Kermo); a form of text, secrets and choices; output as a line, a window, a log that
     /// follows, a terminal or nothing; a long job (Activity's).
-    /// ponytail: levels (PR 6), folder and file inputs (PR 7), `check` (http, 5c), `accepts` (PR 9) and a terminal
-    /// on this Mac are left out till then.
+    /// ponytail: levels (PR 6), folder and file inputs (PR 7), `accepts` (PR 9) and a terminal on this Mac are left out
+    /// till then; `check` (Check Now) is the watching's own (`ToolsTable`).
     static func runs(_ a: ToolAction, of p: ToolPreset) -> Bool {
         (a.run.command != nil || a.run.script != nil || a.spec.edit != nil || a.spec.open != nil || a.spec.goto != nil)
             && a.spec.list == nil && a.spec.output != .list

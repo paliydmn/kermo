@@ -18,7 +18,8 @@ import SwiftUI
 /// time axis and one crosshair for the block, the values under it in each chart's header; a click runs the `log`
 /// action with `{from}` / `{to}` five minutes around that moment. Swift Charts in an NSHostingView over an
 /// ObservableObject the tab's update feeds (SwiftUI's @State is a macro the Command Line Tools haven't). The hour
-/// in memory; `range`'s 24h and 7d wait for the history on disk, greyed.
+/// in memory; `range`'s longer spans from the history on disk (`ToolSlots`): each 15-minute slot's average, the
+/// gaps it wrote, "not watched" where it has nothing.
 @MainActor final class ToolsCharts: NSView, ToolsBlock {
     /// What the charts draw: changed as one, so a sample draws the block once.
     struct Data {
@@ -42,6 +43,8 @@ import SwiftUI
         @Published var hover: Date?
         var every: TimeInterval = 5
         var clicked: (Date) -> Void = { _ in }
+        /// Days on the axis: the week's.
+        var days: Bool { data.to.timeIntervalSince(data.from) > 2 * 86400 }
     }
 
     let block: ToolBlock
@@ -50,6 +53,9 @@ import SwiftUI
     private(set) var hosting: NSHostingView<ChartsView>?
     private let place = NSView()
     let range = NSSegmentedControl()
+    /// The longer span's lines as last read, and the slot they were read in: a new slot may be on disk since.
+    private var disk: (span: Double, slot: Double, lines: [ToolSlots.Line])?
+    private var kept: AnyObject?
 
     init(_ live: ToolsLive, _ block: ToolBlock) {
         self.block = block
@@ -63,11 +69,11 @@ import SwiftUI
             for (i, r) in ranges.enumerated() {
                 let text: String = switch r { case .text(let s): s; case .seconds(let s): ToolAlerts.minutes(s) }
                 range.setLabel(text, forSegment: i)
-                range.setEnabled(i == 0, forSegment: i)   // ponytail: the hour in memory; the rest with the history on disk
-                range.setToolTip(i == 0 ? "The last hour, as watched" : "With the 7-day history (a later release)", forSegment: i)
+                range.setToolTip((r.seconds ?? 0) <= 3600 ? "The last hour, as watched" : "From the history on this Mac: 15-minute averages, while watched", forSegment: i)
             }
             range.selectedSegment = 0
             range.controlSize = .small
+            kept = MenuAction.attach(to: range) { [weak self, unowned live] in self?.update(live) }
             let head = NSStackView(views: [ToolsWindow.spacer(), range])
             views.insert(head, at: 0)
         }
@@ -103,8 +109,16 @@ import SwiftUI
 
     func update(_ live: ToolsLive) {
         let p = live.tool.preset, t = live.known, now = live.now, alerts = live.alerts
+        let span = block.range.flatMap { $0.indices.contains(range.selectedSegment) ? $0[range.selectedSegment].seconds : nil } ?? 3600
         var d = Data()
-        (d.to, d.from) = (now, now.addingTimeInterval(-(t?.history.keep ?? 3600)))
+        (d.to, d.from) = (now, now.addingTimeInterval(-max(span, t?.history.keep ?? 3600)))
+        // Past the hour: the slots on disk, read again once a slot has passed since.
+        let slots: [ToolSlots.Line]? = span <= 3600 ? nil : {
+            if let disk, disk.span == span, disk.slot == ToolSlots.slot(Date()) { return disk.lines }
+            let lines = ToolSlots.read(ToolMonitor.history(live.server.id), tool: p.id, from: d.from)
+            disk = (span, ToolSlots.slot(Date()), lines)
+            return lines
+        }()
         // Maintenance over the values: by the server's clock, as the series are.
         let maintenance = live.state?.maintenance.flatMap { m -> [ToolChart.Band] in
             let skew = live.state?.skew ?? 0, from = max(m.from.addingTimeInterval(skew), d.from), to = min(m.until.addingTimeInterval(skew), now)
@@ -117,8 +131,9 @@ import SwiftUI
             for (id, m) in metrics {
                 // ponytail: a line per series key, six a chart (disks by mount) — `per` isn't read, it would say the same;
                 // more lines and a legend that scrolls wait for a design pass.
-                for key in (t?.history.series[id]?.keys.sorted() ?? [""]).prefix(6) {
-                    let pts = t?.history.points(id, key) ?? []
+                let keys = slots.map { ToolSlots.keys($0, metric: id) } ?? t?.history.series[id]?.keys.sorted() ?? []
+                for key in (keys.isEmpty ? [""] : keys).prefix(6) {
+                    let pts = slots.map { ToolSlots.points($0, metric: id, key: key, from: d.from) } ?? t?.history.points(id, key) ?? []
                     lines.append(Line(id: "\(id) \(key)", name: key.isEmpty ? m.title ?? id : key, points: pts, chart: ToolChart(pts, now: now)))
                 }
             }
@@ -128,7 +143,7 @@ import SwiftUI
                          lines: lines, bands: (lines.map(\.chart.bands).max { $0.count < $1.count } ?? []) + maintenance, warn: alert?.warn, crit: alert?.crit)
         }
         d.events = ((t?.events ?? []) + (live.state?.events ?? [])).filter { $0.at >= d.from && $0.level != "ok" }
-        model.every = p.watch?.every ?? 60
+        model.every = slots == nil ? (p.watch?.every ?? 60) * (live.app.tools.monitor.slow ? 3 : 1) : ToolSlots.length
         model.data = d
     }
 }
@@ -168,7 +183,7 @@ struct OneChart: View {
     var said: String {
         func shown(_ v: Double?) -> String { v.map(chart.metric.text) ?? "—" }
         guard let h = model.hover else { return chart.lines.map { shown($0.points.last?.value) }.joined(separator: " · ") }
-        let time = h.formatted(date: .omitted, time: .standard)
+        let time = h.formatted(model.days ? .dateTime.weekday().hour().minute() : .dateTime.hour().minute().second())
         if let b = chart.bands.first(where: { $0.gap != .maintenance && $0.from <= h && h <= $0.to }) { return Self.word(b.gap) + " · " + time }
         return chart.lines.map { shown(ToolChart.nearest($0.points, to: h, within: model.every * 1.5)?.value) }.joined(separator: " · ") + " · " + time
     }
@@ -190,7 +205,11 @@ struct OneChart: View {
             ForEach(Array(chart.bands.enumerated()), id: \.offset) { _, b in
                 RectangleMark(xStart: .value("From", b.from), xEnd: .value("To", b.to), yStart: .value("Bottom", 0), yEnd: .value("Top", chart.top))
                     .foregroundStyle(Self.band(b.gap))
-                    .annotation(position: .overlay, alignment: .topLeading) { Text(Self.word(b.gap)).font(.caption2).foregroundStyle(.secondary).padding(2) }
+                    .annotation(position: .overlay, alignment: .topLeading) {   // a week's nights are too narrow for words: the hover says them
+                        if b.to.timeIntervalSince(b.from) >= model.data.to.timeIntervalSince(model.data.from) / 10 {
+                            Text(Self.word(b.gap)).font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize().padding(2)
+                        }
+                    }
             }
             ForEach(chart.lines) { line in
                 ForEach(Array(line.chart.runs.enumerated()), id: \.offset) { i, run in
@@ -224,7 +243,9 @@ struct OneChart: View {
                 AxisValueLabel { if let d = v.as(Double.self) { Text(chart.metric.text(d)) } }
             }
         }
-        .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) { _ in AxisGridLine(); AxisValueLabel(format: .dateTime.hour().minute()) } }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 4)) { _ in AxisGridLine(); AxisValueLabel(format: model.days ? .dateTime.weekday().hour() : .dateTime.hour().minute()) }
+        }
         .chartOverlay { proxy in
             GeometryReader { g in
                 Rectangle().fill(.clear).contentShape(Rectangle())
@@ -377,12 +398,17 @@ struct OneChart: View {
 
     /// The row's buttons: one an action; pressed, it waits for its run.
     private func buttons(_ row: ToolRow) -> NSView {
-        let p = source.preset, id = source.rowID(row.key), known = source.app.tools.answers[ServerRow.key(source.target)]?.answer
+        let p = source.preset, id = source.rowID(row.key), known = source.app.tools.answers[ServerRow.key(source.target)]?.answer, monitor = source.app.tools.monitor
         let views = actions.map { a -> NSButton in
             let title = (a.spec.title ?? a.spec.id)
             let b = NSButton(title: title, target: nil, action: nil)
             b.controlSize = .small
             b.font = .systemFont(ofSize: 11)
+            if a.spec.check == true, let s = monitor.server(source.target), let t = s.tools[p.id] {   // Check Now: the checks, at once
+                b.toolTip = "Check every address now, from this Mac"
+                kept.append(MenuAction.attach(to: b) { [weak s, weak t] in if let s, let t { monitor.check(t, on: s) } })
+                return b
+            }
             guard ToolRunner.runs(a, of: p) else {
                 b.isEnabled = false
                 b.toolTip = "\(title): levels of a list come with a later release"

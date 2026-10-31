@@ -17,6 +17,8 @@ import DFMCore
     let banner = NSTextField(wrappingLabelWithString: "")
     let connectButton = NSButton(title: "Connect", target: nil, action: nil)
     let endButton = NSButton(title: "End Now", target: nil, action: nil)
+    /// Sites: the addresses are the server's (Edit Server).
+    let addButton = NSButton(title: "Add Address…", target: nil, action: nil)
     let foot = NSTextField(labelWithString: "")
     private(set) var tiles: [Tile] = []
     private(set) var blocks: [any ToolsBlock] = []
@@ -46,15 +48,21 @@ import DFMCore
         banner.font = .systemFont(ofSize: 12)
         connectButton.controlSize = .small
         endButton.controlSize = .small
+        addButton.controlSize = .small
+        addButton.isHidden = p.http == nil
         foot.font = .systemFont(ofSize: 11)
         foot.textColor = .secondaryLabelColor
         foot.lineBreakMode = .byTruncatingTail
         kept = [MenuAction.attach(to: watchButton) { [unowned self] in Task { await app.tools.toggleWatch(tool, on: server, target, window: window) } },
                 MenuAction.attach(to: connectButton) { [unowned self] in app.tools.monitor.connect(target) },
-                MenuAction.attach(to: endButton) { [unowned self] in app.tools.monitor.maintain(target, minutes: nil) }]
+                MenuAction.attach(to: endButton) { [unowned self] in app.tools.monitor.maintain(target, minutes: nil) },
+                MenuAction.attach(to: addButton) { [unowned self] in
+                    app.showMainWindow(nil)
+                    app.editServer(app.savedServers.first { $0.id == server.id } ?? server, title: "Edit Server")
+                }]
         // The dashboard's blocks; none: the summary's metrics as a row of tiles.
         let shown = p.dashboard.map { $0.map(make) } ?? [row((p.summary ?? []).map { tile([$0.metric], of: $0.of, also: nil) })]
-        let stripRow = NSStackView(views: [strip, watchButton]), bannerRow = NSStackView(views: [banner, connectButton, endButton])
+        let stripRow = NSStackView(views: [strip, watchButton]), bannerRow = NSStackView(views: [banner, connectButton, endButton, addButton])
         strip.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         banner.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let stack = NSStackView(views: [stripRow, bannerRow] + shown + [foot])
@@ -140,9 +148,9 @@ import DFMCore
 
     /// What the monitor knows now, into the strip, the banner, the tiles, the blocks and the line.
     func update() {
-        let p = tool.preset, s = state, t = known, every = Int(p.watch?.every ?? 60), saved = app.tools.serverID(target) != nil
+        let slow = app.tools.monitor.slow, p = tool.preset, s = state, t = known, every = Int((p.watch?.every ?? 60) * (slow ? 3 : 1)), saved = app.tools.serverID(target) != nil
         let watched = t?.watched == true
-        strip.stringValue = watched ? "Watched in the background · every \(every) s · alerts on"
+        strip.stringValue = watched ? "Watched in the background · every \(every) s\(slow ? " to save power" : "") · alerts on"
             : "Live while open: nothing runs on \(server.title) after you leave this tab, no alerts."
         watchButton.title = watched ? "Stop Watching" : "Watch in Background…"
         watchButton.isEnabled = saved
@@ -198,7 +206,9 @@ import DFMCore
         }
         blocks.forEach { $0.update(self) }
         let last = t?.history.last.map { "last sample " + $0.at.formatted(date: .omitted, time: .standard) } ?? "no sample yet"
-        foot.stringValue = (s?.channel == nil ? "Paused" : "Live") + " · \(last) · every \(every) s · " + (p.stream?.run.sudo ?? p.sudo ?? false ? "over SSH as root" : "over SSH · read-only")
+        let running = p.http != nil ? t?.wanted == true : s?.channel != nil
+        foot.stringValue = (running ? "Live" : "Paused") + " · \(last) · every \(every) s · "
+            + (p.http != nil ? "checked from this Mac · no SSH" : p.stream?.run.sudo ?? p.sudo ?? false ? "over SSH as root" : "over SSH · read-only")
     }
 
     /// A chart's click: the `log` action with `{from}` / `{to}` five minutes around `at` — epochs by the server's
@@ -230,8 +240,13 @@ extension ToolRunner {
             c.chips = s.chips
             c.place = s.title
             let every = Int(p.watch?.every ?? 60)
-            c.runs = "Every \(every) s, over the connection Kermo keeps for watching, while this Mac is awake:"
-            c.command = tool.runs.background.map { $0.text.trimmingCharacters(in: .whitespaces) }.joined(separator: "\n")
+            if p.http != nil {
+                c.runs = "Every \(every) s, from this Mac — no SSH — while this Mac is awake, these addresses:"
+                c.command = (app.savedServers.first { $0.id == s.id }?.sites ?? s.sites).joined(separator: "\n")   // as saved now: the tab may be older
+            } else {
+                c.runs = "Every \(every) s, over the connection Kermo keeps for watching, while this Mac is awake:"
+                c.command = tool.runs.background.map { $0.text.trimmingCharacters(in: .whitespaces) }.joined(separator: "\n")
+            }
             let rules = settings.alerts(p, on: id).map { a -> String in
                 let unit = a.metric.flatMap { p.metrics?[$0]?.unit } ?? ""
                 var at: [String] = []
@@ -242,8 +257,8 @@ extension ToolRunner {
                 return "• \(a.id ?? a.metric ?? ""): " + at.joined(separator: ", ") + held
             }
             c.note = ((rules.isEmpty ? [] : ["Alerts (Thresholds… on the page changes them):"] + rules)
-                      + ["The connection stays open while \(s.title) is watched — it shows in w and last there. "
-                         + (s.locked ? "\(s.title) is locked: watching resumes by itself after the Mac sleeps or locks, without Touch ID — the lock guards actions in Kermo, not the connection. " : "")
+                      + [(p.http != nil ? "" : "The connection stays open while \(s.title) is watched — it shows in w and last there. ")
+                         + (s.locked && p.http == nil ? "\(s.title) is locked: watching resumes by itself after the Mac sleeps or locks, without Touch ID — the lock guards actions in Kermo, not the connection. " : "")
                          + "Warnings show in the menu bar; critical alerts also come as notifications and run your on_alert (Settings ▸ Monitor)."]).joined(separator: "\n")
             guard await app.confirm(c, on: window) == 0 else { return false }
         }

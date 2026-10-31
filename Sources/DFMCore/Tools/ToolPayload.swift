@@ -294,12 +294,23 @@ extension ToolPayload {
                 lines.append("export \(name)=\(v.text)")
             }
             lines = values.map { "\($0.name)=\(ShellContext.quote($0.value))" } + lines
-            let inner = s.every.map { "while :; do\n\(text)\nsleep \(max(1, Int($0)))\ndone" } ?? text   // never `sleep 0`: the schema wants a second or more
+            // A poll's run in a subshell of its own, then its exit code on a line that ends it (each run one sample);
+            // never `sleep 0`: the schema wants a second or more.
+            let inner = s.every.map { "while :; do\n(\n\(text)\n)\nprintf '\(ranMark)%s\\n' $?\nsleep \(max(1, Int($0)))\ndone" } ?? text
             body.append("(\n\(lines.joined(separator: "\n"))\n\(inner)\n) | while IFS= read -r l; do printf '%s\\t%s\\n' \(ShellContext.quote(s.tool.id)) \"$l\"; done &")
         }
         body.append("wait")
         return ToolPayload(body: body.joined(separator: "\n"), values: [], sudo: sudo.first! ? (password ? .password : .noPassword) : .none, nonce: nonce,
                            sudoProgram: sudoProgram, shell: shell)
+    }
+
+    /// The line that ends a poll's run in `watch`'s output: this, then the run's exit code (RS, never in text).
+    public static let ranMark = "\u{1E}ran "
+
+    /// A poll's frame (`ToolFrames`) as the run's output and its exit code; a stream's frame as it is.
+    public static func ran(_ frame: String) -> (out: Substring, exit: Int32?) {
+        guard let end = frame.range(of: ranMark, options: .backwards) else { return (Substring(frame), nil) }
+        return (frame[..<end.lowerBound], Int32(frame[end.upperBound...]))
     }
 
     /// A line of `watch`'s output: the tool's id and the source's line.

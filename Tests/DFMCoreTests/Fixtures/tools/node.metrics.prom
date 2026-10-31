@@ -1,0 +1,13 @@
+# HELP node_load1 1m load average.
+# TYPE node_load1 gauge
+node_load1 0.21
+# HELP node_filesystem_avail_bytes Filesystem space available to non-root users in bytes.
+# TYPE node_filesystem_avail_bytes gauge
+node_filesystem_avail_bytes{device="/dev/sda1",fstype="ext4",mountpoint="/"} 2.0735033344e+10
+node_filesystem_avail_bytes{device="tmpfs",fstype="tmpfs",mountpoint="/run"} 4.10066944e+08
+# HELP http_requests_total Requests served.
+# TYPE http_requests_total counter
+http_requests_total{code="200",handler="/api/v1/query"} 1027 1395066363000
+http_requests_total{code="500",handler="/say \"hi\"\n"} 3
+node_scrape_collector_duration_seconds{collector="arp"} NaN
+process_max_fds +Inf

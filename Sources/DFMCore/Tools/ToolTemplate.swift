@@ -129,6 +129,7 @@ public enum ToolTemplate {
 
     /// A time: Unix seconds, or ISO 8601 with any number of fraction digits (restic writes nanoseconds).
     public static func date(_ v: ToolValue) -> Date? {
+        if case .bool = v { return nil }   // a number to metrics, never a time
         if let n = v.number { return Date(timeIntervalSince1970: n) }
         guard case .string(var s) = v else { return nil }
         if let dot = s.firstIndex(of: "."), let end = s[dot...].firstIndex(where: { !$0.isNumber && $0 != "." }) ?? Optional(s.endIndex) {

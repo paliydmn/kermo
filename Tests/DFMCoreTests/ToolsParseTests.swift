@@ -119,7 +119,28 @@ private func parse(_ format: ToolFormat, _ text: String, _ change: (inout ToolPa
     let many = parse(.lines, (1...812).map(String.init).joined(separator: "\n"))
     #expect((many.rows.count, many.total, many.summary) == (500, 812, "500 of 812 rows"))
     #expect(parse(.lines, "a\nb\nc") { $0.limit = 2 }.summary == "2 of 3 rows")
-    #expect(!parse(.prometheus, "up 1\n").matched)   // read from Tools PR 5
+}
+
+/// Prometheus' text format: a record a sample line — its name, labels (escapes undone) and value, the timestamp
+/// left out, comments skipped; Nagios: the whole run, its status from the exit code, the first line, every number
+/// of the performance data, the long form's too. A Nagios run's code is its status, never a failure up to 3.
+@Test func prometheusAndNagios() throws {
+    let prom = ToolParse(format: .prometheus).records(try fixture("node.metrics.prom"))
+    #expect(prom.unmatched.isEmpty && prom.rows.count == 7, "\(prom.unmatched)")
+    #expect(prom.rows[0] == ["name": "node_load1", "value": "0.21"])
+    #expect(prom.rows[1] == ["name": "node_filesystem_avail_bytes", "device": "/dev/sda1", "fstype": "ext4", "mountpoint": "/", "value": "2.0735033344e+10"])
+    #expect(prom.rows[3]["value"] == "1027" && prom.rows[4]["handler"] == "/say \"hi\"\n", "the timestamp isn't the value; escapes undone")
+    #expect(prom.rows[5]["value"]?.number?.isNaN == true && prom.rows[6]["value"]?.number == .infinity)
+    #expect(!parse(.prometheus, "not a sample line\n").matched)
+    #expect(parse(.prometheus, #"container_cpu{name="web",value="x"} 12"#).rows == [["name": "container_cpu", "value": "12", "label_name": "web", "label_value": "x"]],
+            "the sample's own name and value; the labels so called beside them")
+
+    let disk = ToolParse(format: .nagios).records(try fixture("check_disk.nagios.txt"), exit: 1)
+    #expect(disk.rows == [["status": "warn", "message": "DISK WARNING - free space: / 3326 MB (16% inode=91%);",
+                           "perf": .object(["/": 16642, "/boot": 30, "used %": 84, "inode %": 9])]], "\(disk.rows)")
+    #expect(ToolParse(format: .nagios).records(Data("PROCS OK: 90 processes\n".utf8), exit: 0).rows.first?["status"] == "ok")
+    #expect(ToolParse(format: .nagios).records(Data("sh: check_x: not found\n".utf8), exit: 127).rows.first?["status"] == "unknown")
+    #expect(ToolRun().succeeded(2, format: .nagios) && !ToolRun().succeeded(127, format: .nagios) && !ToolRun().succeeded(2))
 }
 
 @Test func sortNumbersAsNumbers() {

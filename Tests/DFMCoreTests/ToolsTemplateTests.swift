@@ -126,3 +126,8 @@ func aValueIsAlwaysOneArgument(_ value: String) throws {
     dt.dateFormat = "EEE dd.MM HH:mm"
     #expect(show("{u:datetime}") == dt.string(from: now - 300))
 }
+
+/// A Bool is a number to metrics (`ok`: 1 or 0), never a time.
+@Test func aBoolIsNoTime() {
+    #expect(ToolTemplate.date(.bool(true)) == nil && ToolValue.bool(true).number == 1 && ToolValue.bool(false).number == 0)
+}

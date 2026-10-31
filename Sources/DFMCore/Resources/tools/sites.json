@@ -19,21 +19,23 @@
   "summary": [ { "metric": "up", "as": "count", "label": "{ok} of {all} up" } ],
 
   "alerts": [
-    { "id": "down", "metric": "up",       "crit": 0,                "below": true, "checks": 2, "message": "{url} answers {status}" },
+    { "id": "down", "metric": "up",       "crit": 0,                "below": true, "checks": 2, "message": "{url} is down: {status}" },
     { "id": "slow", "metric": "latency",  "warn": 2000,             "for": { "warn": "5m" },  "message": "{url} takes {ms} ms" },
     { "id": "tls",  "metric": "tls_days", "warn": 14,  "crit": 3,   "below": true,           "message": "{url}: certificate ends in {tls_days} days" }
   ],
 
   "dashboard": [
-    { "table": "urls", "columns": ["url", "status:state", "ms:spark", "tls_days:days", "checked:ago"], "actions": ["browser", "now", "headers", "errors"] },
+    { "table": "urls", "title": "Addresses",
+      "columns": [{ "field": "url", "title": "Address" }, "status", { "field": "ms:ms", "title": "Response" }, { "field": "tls_days:days", "title": "Certificate" }, { "field": "checked:ago", "title": "Checked" }],
+      "actions": ["browser", "now", "headers", "errors"] },
     { "charts": [ ["latency"] ], "range": ["1h", "24h", "7d"], "per": "url" }
   ],
 
   "actions": [
-    { "id": "browser", "title": "Open in Browser", "rows": "urls", "key": "return", "readonly": true, "where": "mac", "command": "open {url}", "output": "silent" },
+    { "id": "browser", "title": "Open", "rows": "urls", "key": "return", "readonly": true, "where": "mac", "command": "open {url}", "output": "silent" },
     { "id": "now",     "title": "Check Now",       "rows": "urls", "key": "cmd+r",  "readonly": true, "check": true },
-    { "id": "headers", "title": "Response Headers","rows": "urls", "readonly": true, "where": "mac", "command": "curl -sSI --max-time 10 {url}", "output": "window" },
-    { "id": "errors",  "title": "Web Server Errors","rows": "urls", "readonly": true, "where": "server", "sudo": true,
+    { "id": "headers", "title": "Headers","rows": "urls", "readonly": true, "where": "mac", "command": "curl -sSI --max-time 10 {url}", "output": "window" },
+    { "id": "errors",  "title": "Errors","rows": "urls", "readonly": true, "where": "server", "sudo": true,
       "command": "tail -n 200 -F /var/log/nginx/error.log 2>/dev/null || tail -n 200 -F /var/log/apache2/error.log", "output": "follow" }
   ]
 }

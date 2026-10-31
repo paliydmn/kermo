@@ -1,4 +1,6 @@
 import AppKit
+import Network
+import ServiceManagement
 import UserNotifications
 @testable import DFMCore
 import Testing
@@ -62,6 +64,31 @@ import Testing
     }
 }
 
+/// A web server on 127.0.0.1 for Sites: each request gets the status `answer` gives for its path.
+private final class LocalWeb: @unchecked Sendable {
+    let listener: NWListener
+    var url: String { "http://127.0.0.1:\(listener.port!.rawValue)" }
+    init(_ answer: @escaping @Sendable (String) -> Int) throws {
+        let params = NWParameters.tcp
+        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)   // loopback only: no firewall question
+        listener = try NWListener(using: params)
+        let queue = DispatchQueue(label: "local-web")   // its own: a busy run's global queues answered 10 s late
+        listener.newConnectionHandler = { c in
+            c.start(queue: queue)
+            c.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, _, _ in
+                let words = String(decoding: data ?? Data(), as: UTF8.self).split(separator: " ")
+                let head = "HTTP/1.1 \(answer(words.count > 1 ? String(words[1]) : "/")) X\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                c.send(content: Data(head.utf8), completion: .contentProcessed { _ in c.cancel() })
+            }
+        }
+        let ready = DispatchSemaphore(value: 0)
+        listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
+        listener.start(queue: queue)
+        _ = ready.wait(timeout: .now() + 5)
+    }
+    func done() { listener.cancel() }
+}
+
 @MainActor private func pid(_ bench: ToolsBench, _ server: String = "localhost", _ id: String = "pulse") -> pid_t? {
     (try? String(contentsOfFile: bench.dir + "/\(id)-\(server).pid", encoding: .utf8)).flatMap { pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
 }
@@ -71,7 +98,7 @@ import Testing
 @MainActor private struct Quick {
     let app: AppDelegate
     let was = (tick: ToolMonitor.tick, backoff: ToolMonitor.backoff, login: ToolMonitor.login, watching: ToolRunner.watching, auth: ServerLock.authenticate,
-               target: ToolMonitor.target, grace: ToolMonitor.wakeGrace)
+               target: ToolMonitor.target, grace: ToolMonitor.wakeGrace, power: ToolMonitor.power)
     init(_ app: AppDelegate) {
         self.app = app
         ToolMonitor.tick = 0.2
@@ -79,13 +106,15 @@ import Testing
         ToolMonitor.login = { _, _ in }
         ToolMonitor.target = { _ in .local() }
         ToolMonitor.wakeGrace = 0   // a Wi-Fi flap during the run mustn't hold "not answering" back
+        ToolMonitor.power = { (false, false) }   // the Mac on battery mustn't make every interval three times longer
         ToolRunner.watching = { _, _ in true }
     }
     func done() {
         app.tools.settings = ToolServers()
         closeWindows()
         app.tools.monitor.reconcile()
-        (ToolMonitor.tick, ToolMonitor.backoff, ToolMonitor.login, ToolRunner.watching, ServerLock.authenticate, ToolMonitor.target, ToolMonitor.wakeGrace) = was
+        (ToolMonitor.tick, ToolMonitor.backoff, ToolMonitor.login, ToolRunner.watching, ServerLock.authenticate, ToolMonitor.target, ToolMonitor.wakeGrace,
+         ToolMonitor.power) = was
     }
 }
 
@@ -434,7 +463,7 @@ extension ServerLockTests {
         weak var hosting = charts.hosting
         page?.window?.layoutIfNeeded()
         #expect(view.frame.height > 200 && view.frame.width > 300, "the live tab takes the page's body: \(view.frame)")
-        #expect(hosting?.window != nil && charts.range.segmentCount == 3 && charts.range.isEnabled(forSegment: 0) && !charts.range.isEnabled(forSegment: 1))
+        #expect(hosting?.window != nil && charts.range.segmentCount == 3 && charts.range.selectedSegment == 0)
         let d = charts.model.data
         #expect(d.charts.map(\.title) == ["CPU", "Ticks"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95 && d.charts[1].warn == nil)
         #expect(d.charts[0].lines.first?.chart.runs.last?.last?.value == 99 && d.to.timeIntervalSince(d.from) == 3600, "\(d.charts[0].lines.first?.points.suffix(2) ?? [])")
@@ -602,7 +631,8 @@ extension ServerLockTests {
         bar.fill()
         let content = try #require(bar.popover.contentViewController?.view)
         #expect(labels(content).contains("Monitor · 1 critical") && labels(content).contains("localhost"), "\(labels(content))")
-        #expect(buttons(content).map(\.title) == ["Open Monitor  ⌃⌘M", "Open Kermo", "Snooze Notifications ▾", "Quit Kermo"] && bar.item == nil, "\(buttons(content).map(\.title))")
+        #expect(buttons(content).map(\.title) == ["Open Monitor  ⌃⌘M", "Open Kermo", "Snooze Notifications ▾", "Keep This Mac Awake on Power", "Quit Kermo"] && bar.item == nil,
+                "\(buttons(content).map(\.title))")
         await toolsUntil { DockTile.problems == 1 }
         #expect(DockTile.problems == 1, "the Dock's badge counts it")
         try await Task.sleep(for: .milliseconds(500))
@@ -637,6 +667,123 @@ extension ServerLockTests {
         monitor.clicked(UNNotificationDefaultActionIdentifier, sent.info)
         let w = try #require(ToolsWindow.main)
         #expect(w.page?.tab == "pulse" && posts.activations.last?.0 == .regular && posts.activations.last?.1 === w.window, "Open: its tab, Kermo in front")
+    }
+
+    /// Sites: the server's addresses (Edit Server) checked from this Mac with no channel — each round one sample of
+    /// `urls` rows, in the order saved: the table, "1 of 2 up"; two failed checks in a row are `down`, critical, a
+    /// notification. Check Now in a row checks at once. An address that isn't http(s) keeps the server sheet's Save off.
+    @Test func sitesChecksTheServersAddressesFromThisMac() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), posts = Posts(), web = try LocalWeb { $0 == "/down" ? 503 : 200 }
+        defer { web.done(); posts.done(); quick.done(); bench.done(); done(); app.savedServers = [] }
+        var saved = SavedServer(address: "localhost")!
+        saved.sites = ["ftp://example.com"]
+        #expect(saved.issue?.field == .sites)
+        saved.sites = [web.url + "/", web.url + "/down"]
+        #expect(saved.issue == nil)
+        try await watching(app, bench, servers: [saved])
+        let monitor = app.tools.monitor
+        await toolsUntil { app.tools.here(.local())?.tools.contains { $0.preset.id == "sites" } == true }
+        monitor.watch(try toolNamed(app, "sites"), on: .local(), true)
+        await toolsUntil { monitor.tool("sites", on: .local())?.history.rows("urls").count == 2 }
+        let s = try #require(monitor.server(.local())), t = try #require(s.tools["sites"])
+        #expect(s.channel == nil && monitor.worst(s).state == .ok, "from this Mac: no channel, and none missed")
+        #expect(t.history.rows("urls").map { $0["status"] } == [200, 503] && t.history.rows("urls").map { $0["ok"] } == [true, false])
+        #expect(monitor.summary(t, on: s).first?.text == "1 of 2 up" && posts.sent.isEmpty, "one failed check isn't down yet")
+
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("sites")
+        await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 2 }
+        let view = try #require(live(page)), table = try #require(view.blocks.compactMap { $0 as? ToolsTable }.first)
+        #expect(view.foot.stringValue.hasSuffix("checked from this Mac · no SSH") && !view.addButton.isHidden && view.banner.isHidden, "\(view.foot.stringValue)")
+        press(rowButtons(table, 1).first { $0.title == "Check Now" })
+        await toolsUntil { posts.sent.count == 1 }
+        #expect(posts.sent.first?.body == "Sites: \(web.url)/down is down: 503" && monitor.worst(s).state == .critical, "\(posts.sent)")
+    }
+
+    /// On battery (or in Low Power Mode) watching is three times less often: the channel starts again with its
+    /// `{every}` three times longer, the tab says so; Settings' switch off, it's as on power. On power, Keep This Mac
+    /// Awake holds an assertion while something is watched — not on battery, not once nothing is. Open at Login is as
+    /// macOS has it, never a copy.
+    @Test func batteryPaceKeepAwakeAndOpenAtLogin() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), login = ToolMonitor.loginItem
+        nonisolated(unsafe) var battery = false, status = SMAppService.Status.notRegistered
+        ToolMonitor.power = { (battery, false) }   // Quick puts its own back
+        ToolMonitor.loginItem = ({ status }, { status = $0 ? .enabled : .notRegistered })
+        defer {
+            ToolMonitor.loginItem = login
+            for k in ["monitorKeepAwake", "monitorSlowOnBattery"] { app.defaults.removeObject(forKey: k) }
+            quick.done(); bench.done(); done(); app.savedServers = []
+        }
+        try await watching(app, bench)
+        let monitor = app.tools.monitor, pulse = try toolNamed(app, "pulse")
+        monitor.watch(pulse, on: .local(), true)
+        await toolsUntil { bench.calls.contains("pulse 1 localhost") }
+        battery = true
+        monitor.pace()
+        await toolsUntil { bench.calls.contains("pulse 3 localhost") }
+        let s = try #require(monitor.server(.local()))
+        #expect(monitor.slow && s.every == 3 && bench.calls.contains("pulse 3 localhost"), "on battery: three times less often")
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("pulse")
+        #expect(live(page)?.strip.stringValue.hasPrefix("Watched in the background · every 3 s to save power") == true, "\(live(page)?.strip.stringValue ?? "")")
+        app.run("monitor.slowOnBattery")
+        await toolsUntil { bench.calls.filter { $0 == "pulse 1 localhost" }.count == 2 }
+        #expect(!monitor.slow && s.every == 1, "your switch: as on power")
+
+        battery = false
+        app.run("monitor.keepAwake")
+        #expect(monitor.keepingAwake && app.commands.first { $0.id == "monitor.keepAwake" }?.on?(app) == true)
+        battery = true
+        monitor.pace()
+        #expect(!monitor.keepingAwake, "on battery it sleeps as usual")
+        battery = false
+        monitor.pace()
+        #expect(monitor.keepingAwake)
+        monitor.watch(pulse, on: .local(), false)
+        #expect(!monitor.keepingAwake, "nothing watched: nothing held")
+
+        app.run("monitor.openAtLogin")
+        #expect(status == .enabled && app.commands.first { $0.id == "monitor.openAtLogin" }?.on?(app) == true)
+        app.run("monitor.openAtLogin")
+        #expect(status == .notRegistered && app.commands.first { $0.id == "monitor.openAtLogin" }?.on?(app) == false)
+    }
+
+    /// The history on disk: a watched tool's slot so far and "not watched" go to its server's day file when watching
+    /// stops (a whole slot every 15 minutes); a tab's 24h reads them — the slot's average, the band after it — and
+    /// the hour is the memory's again.
+    @Test func watchingWritesItsHistoryAndTheChartsReadIt() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app)
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        let monitor = app.tools.monitor, pulse = try toolNamed(app, "pulse"), dir = ToolMonitor.history(app.savedServers[0].id)
+        monitor.watch(pulse, on: .local(), true)
+        await toolsUntil { (monitor.tool("pulse", on: .local())?.history.points("cpu").count ?? 0) >= 3 }
+        monitor.watch(pulse, on: .local(), false)
+        await toolsUntil { ToolSlots.read(dir, tool: "pulse", from: Date().addingTimeInterval(-3600)).last?.gap == .notWatched }
+        let lines = ToolSlots.read(dir, tool: "pulse", from: Date().addingTimeInterval(-3600))   // two slots, if the samples straddled a quarter
+        #expect(lines.first?.v?["cpu"]?[""]?[1] == 10 && lines.last?.gap == .notWatched && lines.count >= 2, "\(lines)")
+
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("pulse")
+        await toolsUntil { live(page)?.blocks.contains { $0 is ToolsCharts } == true }
+        let charts = try #require(live(page)?.blocks.compactMap { $0 as? ToolsCharts }.first)
+        #expect((0..<3).allSatisfy(charts.range.isEnabled(forSegment:)))
+        charts.range.selectedSegment = 1
+        _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
+        let d = charts.model.data, cpu = try #require(d.charts.first)
+        #expect(d.to.timeIntervalSince(d.from) == 86400 && charts.model.every == 900 && charts.model.days == false)
+        #expect(cpu.lines.first?.points.compactMap(\.value).isEmpty == false && cpu.lines.first?.points.compactMap(\.value).allSatisfy { $0 == 10 } == true
+                && cpu.bands.first?.gap == .notWatched && cpu.bands.last?.gap == .notWatched,
+                "before it, and since: \(cpu.bands)")
+        charts.range.selectedSegment = 0
+        _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
+        #expect(charts.model.data.to.timeIntervalSince(charts.model.data.from) == 3600 && charts.model.every == 1)
     }
 
     /// A script's critical `_event` notifies, as the server's not answering does; a tool only live on an open tab

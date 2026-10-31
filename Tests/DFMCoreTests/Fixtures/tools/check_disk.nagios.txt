@@ -1,0 +1,3 @@
+DISK WARNING - free space: / 3326 MB (16% inode=91%); | /=16642MB;16004;18004;0;20005 /boot=30MB;80;90;0;99
+Long text: the root disk is filling up | 'used %'=84%;80;90;0;100
+'inode %'=9%;;;0;100

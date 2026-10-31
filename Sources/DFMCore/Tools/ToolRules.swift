@@ -39,20 +39,31 @@ public typealias ToolValues = [String: Double]
 
 /// A stream's lines into frames (§8.1): each line (the default — `jsonl`), the blocks between blank lines
 /// (`split: "blank"`), or blocks that each start with a line `split`'s regex finds — such a frame is done only when
-/// the next one begins. Not Sendable: it holds its regex, and one channel's parser lives with the engine on the main
-/// actor.
+/// the next one begins. A poll's frame is its whole run, with the line that ends it (`ToolPayload.ranMark`, its exit
+/// code). Not Sendable: it holds its regex, and one channel's parser lives with the engine on the main actor.
 public struct ToolFrames {
     private let split: String?
+    private let poll: Bool
     private let first: Regex<AnyRegexOutput>?
     private var held: [String] = []
 
-    public init(split: String?) {
-        self.split = split
+    public init(split: String?, poll: Bool = false) {
+        (self.split, self.poll) = (split, poll)
         first = split.flatMap { $0 == "line" || $0 == "blank" ? nil : try? Regex($0) }
     }
 
     /// The frames `line` completes.
     public mutating func feed(_ line: String) -> [String] {
+        if poll {   // output with no newline at its end has the mark at the end of its last line
+            guard let mark = line.range(of: ToolPayload.ranMark) else {
+                held.append(line)
+                if held.count > 20_000 { held.removeFirst(10_000) }   // ponytail: a run that never ends keeps its last lines, once in a while
+                return []
+            }
+            defer { held = [] }
+            if mark.lowerBound > line.startIndex { held.append(String(line[..<mark.lowerBound])) }
+            return [(held + [String(line[mark.lowerBound...])]).joined(separator: "\n")]
+        }
         let blank = line.trimmingCharacters(in: .whitespaces).isEmpty
         switch split ?? "line" {
         case "line": return blank ? [] : [line]
@@ -73,13 +84,15 @@ public struct ToolFrames {
 }
 
 extension ToolParse {
-    /// A frame as a sample (§8.1): a `json` / `jsonl` object is the sample itself; anything else — a table under its
-    /// header, a regex's groups, lines — is rows, one record or many, so a metric's `rows` names them the same way
-    /// whatever the frame held. nil: the frame gave no record.
+    /// A frame as a sample (§8.1): a `json` / `jsonl` object or a `nagios` run is the sample itself; anything else — a
+    /// table under its header, a regex's groups, lines, Prometheus' samples — is rows, one record or many, so a
+    /// metric's `rows` names them the same way whatever the frame held. A poll's run ends with its exit code (a Nagios
+    /// run's status; whether it failed is the engine's to judge, `ToolPayload.ran`). nil: the frame gave no record.
     public func sample(_ frame: String, at: Date) -> ToolSample? {
-        let r = Self(format: format, rows: rows, pattern: pattern, names: names, split: nil, sort: sort, limit: limit).records(Data(frame.utf8))
+        let (text, exit) = ToolPayload.ran(frame)
+        let r = Self(format: format, rows: rows, pattern: pattern, names: names, split: nil, sort: sort, limit: limit).records(Data(text.utf8), exit: exit)
         guard !r.rows.isEmpty else { return nil }
-        if r.rows.count == 1, [.json, .jsonl].contains(format ?? .lines) { return ToolSample(at: at, record: r.rows[0]) }
+        if r.rows.count == 1, [.json, .jsonl, .nagios].contains(format ?? .lines) { return ToolSample(at: at, record: r.rows[0]) }
         return ToolSample(at: at, record: ["rows": .array(r.rows.map(ToolValue.object))])
     }
 }
@@ -104,7 +117,8 @@ extension ToolMetric {
             return out
         }
         guard let path else { return [:] }
-        func number(_ r: ToolRecord, _ before: ToolRecord?) -> Double? {
+        func number(_ r: ToolRecord, _ before: ToolRecord?) -> Double? { raw(r, before).flatMap { $0.isFinite ? $0 : nil } }   // NaN, ±Inf: no value
+        func raw(_ r: ToolRecord, _ before: ToolRecord?) -> Double? {
             let v = ToolValue.object(r)[path]
             switch calc {
             case "rate":

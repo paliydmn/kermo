@@ -299,6 +299,9 @@ extension AppDelegate {
         // Settings ▸ Monitor's buttons
         cmd("monitor.notificationSettings", "Notification Settings for Kermo", [], hidden: true) { _ in ToolMonitor.notificationSettings() },
         cmd("monitor.test", "Send a Test Alert", [], hidden: true) { $0.tools.monitor.test() },
+        cmd("monitor.keepAwake", "Keep This Mac Awake on Power", [], hidden: true, on: { $0.tools.monitor.keepAwake }) { $0.tools.monitor.keepAwake.toggle() },
+        cmd("monitor.slowOnBattery", "Watch Less Often on Battery", [], hidden: true, on: { $0.tools.monitor.slowOnBattery }) { $0.tools.monitor.slowOnBattery.toggle() },
+        cmd("monitor.openAtLogin", "Open Kermo at Login", [], hidden: true, on: { _ in ToolMonitor.loginItem.status() == .enabled }) { $0.tools.monitor.openAtLogin() },
         cmd("app.monitor", "Monitor", ["ctrl+cmd+m"], menu: "Window", group: 1, aliases: "watched servers alerts menu bar Open Monitor") {
             $0.tools.monitor.open($0.tools.monitor.watched.first?.target)
         },
@@ -1158,6 +1161,7 @@ extension AppDelegate {
             forgetPassword(s)
             unpin(ServerRow.key(s.target))   // else it'd stay as a pinned bare address
             tools.unpinFromMenuBar(s)
+            tools.monitor.forget(s.id)   // its watching's history: nothing shows it now
             refreshSidebar()
             if answer == 1, let history { do { try FileManager.default.removeItem(atPath: history) } catch { showError(error) } }
         }

@@ -119,11 +119,11 @@ final class ToolListSource: ListSource {
             }
             if let stopped = r.stopped { throw JobErrorMessage("\(title) on \(server): \(stopped)") }
             let output = [r.errors, r.text].filter { !$0.isEmpty }.joined(separator: "\n")
-            guard list.run.succeeded(r.status) else {
+            guard list.run.succeeded(r.status, format: list.parse.format) else {
                 throw Failed(message: ToolExec.notHere(r, server: server, facts: facts)
                              ?? "\(title) on \(server): " + (r.errors.split(whereSeparator: \.isNewline).first.map(String.init) ?? "exit \(r.status)"), output: output)
             }
-            let records = list.parse.records(r.out)
+            let records = list.parse.records(r.out, exit: r.status)
             guard records.matched else {
                 throw Failed(message: "\(title) on \(server): the output didn't match — " + (records.unmatched.first { !$0.isEmpty } ?? ""), output: output)
             }

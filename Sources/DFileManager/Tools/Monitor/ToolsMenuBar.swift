@@ -134,6 +134,10 @@ import DFMCore
             actions.append(MenuAction.attach(to: b) { [unowned b] in run(b) })
             return b
         }
+        let awake = NSButton(checkboxWithTitle: "Keep This Mac Awake on Power", target: nil, action: nil)   // Settings ▸ Monitor has it too
+        awake.state = monitor.keepAwake ? .on : .off
+        awake.toolTip = "While it's on power and something is watched; closing the lid still puts it to sleep"
+        actions.append(MenuAction.attach(to: awake) { [unowned self] in app.run("monitor.keepAwake") })
         let key = app.commands.first { $0.id == "app.monitor" }?.keys.first.map { "  " + $0.display } ?? ""   // as keymap.json has it
         views += [button("Open Monitor" + key, .monitor) { [unowned self] _ in popover.performClose(nil); monitor.open(monitor.watched.first?.target) },
                   button("Open Kermo", .folder) { [unowned self] _ in popover.performClose(nil); app.bringBack(app.window) },
@@ -141,6 +145,7 @@ import DFMCore
                       Self.snoozeMenu(monitor).popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height), in: b)
                       if popover.isShown { fill() }
                   },
+                  awake,
                   button("Quit Kermo", .quit) { [unowned self] _ in   // asks first if anything would be lost: in front, so the question is seen
                       popover.performClose(nil)
                       NSApp.activate()

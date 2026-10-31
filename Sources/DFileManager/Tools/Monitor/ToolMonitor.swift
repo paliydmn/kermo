@@ -1,6 +1,11 @@
 import AppKit
 import DFMCore
+import IOKit.ps
+import IOKit.pwr_mgt
 import Network
+import ServiceManagement
+
+private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
 
 /// Watching (protocol §8, monitor decisions 1–23): a server's watched tools (`tools/servers.json`, `watch`) and the
 /// tool live on an open tab, their streams and polls over one channel of its connection (`ToolPayload.watch`), each
@@ -8,7 +13,8 @@ import Network
 /// 60 s, one server after another after a wake or a network change; no sample for `watch.down` intervals is "not
 /// answering", unless this Mac has no network or just woke. A watched server logs in with no dialog (a key, a
 /// password in the Keychain) or says "needs login"; a tab alone never logs in. A locked server is watched read-only,
-/// without Touch ID: its connection stays up (`inUse`), the lock guards actions (decision 23).
+/// without Touch ID: its connection stays up (`inUse`), the lock guards actions (decision 23). A tool that checks
+/// addresses (`http`, Sites) needs no channel: its checks run from this Mac every `watch.every`, each a sample.
 @MainActor final class ToolMonitor {
     unowned let app: AppDelegate
 
@@ -27,6 +33,8 @@ import Network
     final class Tool {
         let loaded: LoadedTool
         var history = ToolHistory()
+        /// Watched: its 15-minute slots on the way to the disk (24h, 7d).
+        var slots: ToolSlots
         var alerts = ToolAlerts()
         /// Newest first, the last 40.
         var events: [ToolEventRecord] = []
@@ -36,16 +44,21 @@ import Network
         var frames: ToolFrames
         /// Watched in the background; live on an open tab.
         var watched = false, live = false
-        init(_ t: LoadedTool) { (loaded, frames) = (t, ToolFrames(split: t.preset.source?.parse.split)) }
+        /// `http`: a check under way; when the next is due.
+        var checking = false
+        var due: Date?
+        init(_ t: LoadedTool) { (loaded, frames, slots) = (t, Self.frames(t.preset), ToolSlots(tool: t.preset.id)) }
+        static func frames(_ p: ToolPreset) -> ToolFrames { ToolFrames(split: p.source?.parse.split, poll: p.stream == nil) }
         var preset: ToolPreset { loaded.preset }
         var wanted: Bool { watched || live }
         /// The channel ended: a frame half-read stays there.
-        func reset() { frames = ToolFrames(split: preset.source?.parse.split) }
+        func reset() { frames = Self.frames(preset) }
     }
 
     /// A server watched or live: its channel on the server, its tools, how it's doing.
     final class Server {
-        let saved: SavedServer
+        /// As servers.json has it now (`reconcile`): Sites' addresses, the title on pins and in notifications.
+        var saved: SavedServer
         /// As its user; a locked one's connection lingers as any other's, not 60 s (decision 23).
         let target: SFTPTarget
         var tools: [String: Tool] = [:]
@@ -74,11 +87,17 @@ import Network
         var inMaintenance: Bool { maintenance.map { $0.until > Date() } == true }
         /// Silenced at the last tick (Snooze, Maintenance): when that ends, what still stands is sent.
         var quiet = false
+        /// 3 on battery or in Low Power Mode (`ToolMonitor.slow`), as its channel was started.
+        var pace: Double = 1
         init(_ s: SavedServer, _ t: SFTPTarget) { (saved, target) = (s, t) }
-        var every: Double { tools.values.compactMap { $0.preset.watch?.every }.min() ?? 60 }
-        var downAfter: Int { tools.values.compactMap { $0.preset.watch?.down }.min() ?? 3 }
+        /// The channel's interval, as paced — what "missed" and "not answering" go by; a server with checks only, theirs.
+        var every: Double { (paced.compactMap { $0.preset.watch?.every }.min() ?? 60) * pace }
+        var downAfter: Int { paced.compactMap { $0.preset.watch?.down }.min() ?? 3 }
+        private var paced: [Tool] { channelTools.isEmpty ? tools.values.filter(\.wanted) : Array(channelTools.values) }   // a closed tab's tool no more
         var watched: Bool { tools.values.contains(where: \.watched) }
         var wanted: Bool { tools.values.contains(where: \.wanted) }
+        /// The tools its channel runs: streams and polls (an `http` tool's checks run from this Mac).
+        var channelTools: [String: Tool] { tools.filter { $0.value.wanted && $0.value.preset.source != nil } }
         var key: String { ServerRow.key(target) }
     }
 
@@ -123,7 +142,20 @@ import Network
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.online = on; self?.wokeAt = Date(); self?.restart() } }
         }
         network.start(queue: DispatchQueue(label: "dfm.monitor.network"))
+        // The power source and Low Power Mode (spike S5).
+        _ = Self.powerSource
+        for name in [.NSProcessInfoPowerStateDidChange, powerSourceChanged] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.pace() } }
+        }
     }
+
+    /// The power source's changes (a battery's every percent too), heard once for the app on the main run loop and
+    /// passed on as a notification: a monitor that's gone — a test's app — never hears one.
+    private static let powerSource: Void = {
+        CFRunLoopAddSource(CFRunLoopGetMain(), IOPSNotificationCreateRunLoopSource({ _ in
+            NotificationCenter.default.post(name: powerSourceChanged, object: nil)
+        }, nil).takeRetainedValue(), .defaultMode)
+    }()
 
     /// Watched servers' keys: in use, so their connections stay up (`AppDelegate.idleServers`).
     var inUse: Set<String> { Set(servers.values.filter(\.watched).map(\.key)) }
@@ -146,16 +178,21 @@ import Network
         }
         let tools = app.tools.tools.filter(\.preset.watchable)
         for s in app.savedServers {
-            for tool in tools where app.tools.settings.watches(tool.preset.id, on: s.id.uuidString) { add(s, Self.target(s), tool, watched: true) }
+            for tool in tools where app.tools.settings.watches(tool.preset.id, on: s.id.uuidString) && (tool.preset.http == nil || !s.sites.isEmpty) {
+                add(s, Self.target(s), tool, watched: true)
+            }
         }
         for page in ToolsWindow.pages where page.window?.isVisible == true {
-            if let tool = page.liveTool, AppDelegate.connected(page.target) { add(page.server, page.target, tool, watched: false) }
+            guard let tool = page.liveTool, AppDelegate.connected(page.target) || tool.preset.http != nil else { continue }
+            add(app.savedServers.first { $0.id == page.server.id } ?? page.server, page.target, tool, watched: false)   // as saved now: the page may be older
         }
         let wereWatched = Set(servers.values.filter(\.watched).map(\.key))
         for (key, s) in servers {
             let w = want[key]
             for (id, t) in s.tools {
+                let was = t.watched
                 t.watched = w?.2.contains { $0.0.preset.id == id && $0.1 } ?? false
+                if was, !t.watched { record(s, t.slots.mark(.notWatched, at: Date().addingTimeInterval(s.skew))) }
                 t.live = w?.2.contains { $0.0.preset.id == id && !$0.1 } ?? false
                 if !t.watched { t.open = [] }
                 if !t.wanted { t.alerts.clear() }   // a stop is no recovery, and nothing to say
@@ -165,6 +202,7 @@ import Network
         }
         for (key, w) in want {
             let s = servers[key] ?? Server(w.0, w.1)
+            s.saved = w.0
             servers[key] = s
             var sources = Set(s.tools.keys)
             for (tool, watched) in w.2 {
@@ -173,12 +211,14 @@ import Network
                 if watched { t.watched = true } else { t.live = true }
                 sources.insert(tool.preset.id)
             }
+            s.pace = slow ? 3 : 1
             if !wereWatched.contains(key), s.watched { note(s, "Watching started · every \(Int(s.every)) s") }
             // A tool joined, or one left: the channel runs anew with the sources as they are now.
-            if s.channel != nil, Set(s.tools.filter(\.value.wanted).keys) != channelSources[key] { stop(s, why: .reconnecting); s.retryAt = Date() }
+            if s.channel != nil, Set(s.channelTools.keys) != channelSources[key] { stop(s, why: .reconnecting); s.retryAt = Date() }
             if ready, s.channel == nil, s.retryAt == nil, !s.needsLogin, !s.connecting { start(s) }
         }
         tickIfNeeded()
+        pace()
         changed()
     }
 
@@ -198,14 +238,17 @@ import Network
     /// The server's sources in one payload, over its connection. A watched server logs in quietly first (a saved
     /// password; anything that would ask fails: "needs login"); a live-only one rides a connection that's up.
     private func start(_ s: Server) {
-        let wanted = s.tools.values.filter(\.wanted)
+        let wanted = Array(s.channelTools.values)
         guard !wanted.isEmpty, s.channel == nil, !s.connecting else { return }
         let t = s.target, watched = s.watched, login = Self.login
+        s.pace = slow ? 3 : 1
         var sources: [ToolPayload.Watched] = []
         for tool in wanted {
-            let p = tool.preset
+            let p = tool.preset, every = (p.watch?.every ?? 60) * s.pace
             guard let source = p.source else { continue }
-            sources.append(.init(tool: p, run: source.run, every: p.stream == nil ? p.watch?.every ?? 60 : nil, scope: app.tools.scope(p, on: s.saved, t), scripts: tool.loaded.scripts))
+            var scope = app.tools.scope(p, on: s.saved, t)
+            scope.levels[scope.levels.count - 1]["every"] = .number(every)   // a stream's `{every}`, as paced
+            sources.append(.init(tool: p, run: source.run, every: p.stream == nil ? every : nil, scope: scope, scripts: tool.loaded.scripts))
         }
         // ponytail: sources that can't share a channel (sudo differs), a value missing, and sudo that wants a password
         // (`sudo -n` is refused, retried each minute) wait for a later PR; the built-ins share one and run as you.
@@ -280,41 +323,69 @@ import Network
         let now = Date().addingTimeInterval(skew)
         for line in lines {
             guard let tagged = ToolPayload.watchLine(line), let t = s.tools[tagged.tool], let source = t.preset.source else { continue }
-            let p = t.preset
             for frame in t.frames.feed(tagged.line) {
-                guard let sample = source.parse.sample(frame, at: now) else { continue }
-                let values = t.history.add(sample, metrics: p.metrics ?? [:], now: now, states: p.list?.view.state)
-                var fresh: [ToolEventRecord] = []
-                for c in t.alerts.judge(values, alerts: alerts(t, on: s), metrics: p.metrics ?? [:], sample: sample, now: now) {
-                    switch c {
-                    case .worse(let alert, let key, let level, let message):
-                        fresh.append(ToolEventRecord(at: now, id: "alert", level: level.name, message: message))
-                        if level == .critical { deliver(s, tool: t, alert: alert, id: "\(s.key) \(p.id) \(alert) \(key)", message) }
-                    case .ok(let alert, let key, _, let since):
-                        let what = (p.alerts ?? []).first { ($0.id ?? $0.metric) == alert }.flatMap { a in a.metric.flatMap { p.metrics?[$0]?.title } } ?? alert
-                        fresh.append(ToolEventRecord(at: now, id: "ok", level: "ok", message: "Back to normal: \(what)\(key.isEmpty ? "" : " " + key) · after " + ToolAlerts.minutes(now.timeIntervalSince(since))))
-                    }
-                }
-                let raised = ToolEvents.raised(p.events ?? [], in: sample, previous: t.history.previous, carrying: t.history.carriedBefore,
-                                               scope: app.tools.scope(p, on: s.saved, s.target))
-                for e in raised where e.level == "critical" { deliver(s, tool: t, id: "\(s.key) \(p.id) \(e.id)", e.message) }
-                fresh += raised
-                if let e = ToolEvents.scripted(sample) {
-                    if e.level == "ok" { t.open.remove(e.id) }
-                    if t.budget.allows(now) {   // past 10 an hour: held, said as "N more" once there's room
-                        let held = t.budget.takeHeld()
-                        if held > 0 { fresh.append(ToolEventRecord(at: now, id: "more", level: "info", message: "\(p.title): \(held) more")) }
-                        fresh.append(e)
-                        // Silenced, it isn't marked sent: its next line after the quiet sends it.
-                        if e.level == "critical", t.watched, !silent(s), t.open.insert(e.id).inserted {
-                            deliver(s, tool: t, id: "\(s.key) \(p.id) _event \(e.id)", e.message)
-                        }
-                    }
-                }
-                t.events = Array((fresh.reversed() + t.events).prefix(40))
+                // A poll's run that failed is a missed sample (§3): a gap of its own tool, the channel's others going on.
+                if let exit = ToolPayload.ran(frame).exit, !source.run.succeeded(exit, format: source.parse.format) { gap(t, on: s, .noAnswer); continue }
+                if let sample = source.parse.sample(frame, at: now) { take(sample, of: t, on: s) }
             }
         }
         changed()
+    }
+
+    /// A sample of `t`, from its channel or its checks: its series, its alerts' changes as events, its events.
+    private func take(_ sample: ToolSample, of t: Tool, on s: Server) {
+        let p = t.preset, now = sample.at
+        let values = t.history.add(sample, metrics: p.metrics ?? [:], now: now, states: p.list?.view.state)
+        if t.watched { record(s, t.slots.add(values, at: now)) }
+        var fresh: [ToolEventRecord] = []
+        for c in t.alerts.judge(values, alerts: alerts(t, on: s), metrics: p.metrics ?? [:], sample: sample, now: now) {
+            switch c {
+            case .worse(let alert, let key, let level, let message):
+                fresh.append(ToolEventRecord(at: now, id: "alert", level: level.name, message: message))
+                if level == .critical { deliver(s, tool: t, alert: alert, id: "\(s.key) \(p.id) \(alert) \(key)", message) }
+            case .ok(let alert, let key, _, let since):
+                let what = (p.alerts ?? []).first { ($0.id ?? $0.metric) == alert }.flatMap { a in a.metric.flatMap { p.metrics?[$0]?.title } } ?? alert
+                fresh.append(ToolEventRecord(at: now, id: "ok", level: "ok", message: "Back to normal: \(what)\(key.isEmpty ? "" : " " + key) · after " + ToolAlerts.minutes(now.timeIntervalSince(since))))
+            }
+        }
+        let raised = ToolEvents.raised(p.events ?? [], in: sample, previous: t.history.previous, carrying: t.history.carriedBefore,
+                                       scope: app.tools.scope(p, on: s.saved, s.target))
+        for e in raised where e.level == "critical" { deliver(s, tool: t, id: "\(s.key) \(p.id) \(e.id)", e.message) }
+        fresh += raised
+        if let e = ToolEvents.scripted(sample) {
+            if e.level == "ok" { t.open.remove(e.id) }
+            if t.budget.allows(now) {   // past 10 an hour: held, said as "N more" once there's room
+                let held = t.budget.takeHeld()
+                if held > 0 { fresh.append(ToolEventRecord(at: now, id: "more", level: "info", message: "\(p.title): \(held) more")) }
+                fresh.append(e)
+                // Silenced, it isn't marked sent: its next line after the quiet sends it.
+                if e.level == "critical", t.watched, !silent(s), t.open.insert(e.id).inserted {
+                    deliver(s, tool: t, id: "\(s.key) \(p.id) _event \(e.id)", e.message)
+                }
+            }
+        }
+        t.events = Array((fresh.reversed() + t.events).prefix(40))
+    }
+
+    /// `http` (§8.6): each of the server's addresses checked from this Mac at once, the answers one sample — rows
+    /// `urls`, in the order you saved them. Check Now checks them all too.
+    func check(_ t: Tool, on s: Server) {
+        guard let http = t.preset.http, !t.checking else { return }
+        let urls = s.saved.sites, key = s.key, id = t.preset.id, method = http.method ?? "GET", timeout = http.timeout ?? 10
+        (t.checking, t.due) = (true, Date().addingTimeInterval((t.preset.watch?.every ?? 60) * (slow ? 3 : 1)))
+        Task { [weak self] in
+            let rows = await withTaskGroup(of: ToolRecord.self) { g in
+                for u in urls { g.addTask { await ToolHTTPCheck.check(u, method: method, timeout: timeout) } }
+                var all: [ToolRecord] = []
+                for await r in g { all.append(r) }
+                return all
+            }
+            t.checking = false
+            guard let self, let s = servers[key], s.tools[id] === t, t.wanted else { return }
+            let ordered = urls.compactMap { u in rows.first { $0["url"]?.text == u } }
+            take(ToolSample(at: Date().addingTimeInterval(s.skew), record: ["urls": .array(ordered.map(ToolValue.object))]), of: t, on: s)
+            changed()
+        }
     }
 
     private func ended(_ key: String, _ why: String, cancel: CancelFlag) {
@@ -357,11 +428,99 @@ import Network
     }
 
     private func gap(_ s: Server, _ why: ToolGap) {
+        // The channel's trouble isn't the checks from this Mac: their streaks and series go on.
+        for t in s.tools.values where t.preset.http == nil || ![.noAnswer, .reconnecting].contains(why) { gap(t, on: s, why) }
+    }
+
+    /// No data from `t` from now on: a band on its series, its alerts' durations start over, the gap on disk.
+    private func gap(_ t: Tool, on s: Server, _ why: ToolGap) {
         let at = Date().addingTimeInterval(s.skew)
-        for t in s.tools.values {
-            t.history.mark(why, at: at)
-            t.alerts.gap()
+        t.history.mark(why, at: at)
+        t.alerts.gap()
+        if t.watched { record(s, t.slots.mark(why, at: at)) }
+    }
+
+    // MARK: Power
+
+    /// On battery or in Low Power Mode, watching is three times less often (§8.5, Q11) — unless you said no in
+    /// Settings ▸ Monitor; each channel starts again with its intervals so. On power, while something is watched,
+    /// this Mac can be kept from sleeping by itself (S5) — closing the lid still puts it to sleep.
+    private(set) var slow = false
+    private var awake: IOPMAssertionID = 0
+    var keepingAwake: Bool { awake != 0 }
+
+    /// Settings ▸ Monitor's switches (Keep This Mac Awake also in the menu bar's popover).
+    var slowOnBattery: Bool {
+        get { app.defaults.object(forKey: "monitorSlowOnBattery") as? Bool ?? true }
+        set { app.defaults.set(newValue, forKey: "monitorSlowOnBattery"); pace() }
+    }
+    var keepAwake: Bool {
+        get { app.defaults.bool(forKey: "monitorKeepAwake") }
+        set { app.defaults.set(newValue, forKey: "monitorKeepAwake"); pace() }
+    }
+
+    /// On battery, and in Low Power Mode, as macOS has them now. Tests: a stand-in.
+    nonisolated(unsafe) static var power: @MainActor () -> (battery: Bool, lowPower: Bool) = {
+        ((IOPSGetProvidingPowerSourceType(IOPSCopyPowerSourcesInfo().takeRetainedValue())?.takeUnretainedValue() as String?) == kIOPSBatteryPowerValue,
+         ProcessInfo.processInfo.isLowPowerModeEnabled)
+    }
+
+    /// The pace and the assertion as things stand: what's watched, the power, Low Power Mode, your settings.
+    func pace() {
+        let (battery, lowPower) = Self.power()
+        let slow = slowOnBattery && (battery || lowPower)
+        if slow != self.slow {
+            self.slow = slow
+            restart()
         }
+        let want = !battery && keepAwake && servers.values.contains(where: \.watched)
+        if want, awake == 0 {
+            if IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleSystemSleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                                           "Kermo is watching servers" as CFString, &awake) != kIOReturnSuccess { awake = 0 }
+        } else if !want, awake != 0 {
+            IOPMAssertionRelease(awake)
+            awake = 0
+        }
+    }
+
+    /// Open at Login (`SMAppService`): as macOS has it, never a copy in defaults. Tests: a stand-in.
+    nonisolated(unsafe) static var loginItem: (status: @MainActor () -> SMAppService.Status, set: @MainActor (Bool) throws -> Void) = (
+        { SMAppService.mainApp.status }, { try $0 ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister() })
+
+    func openAtLogin() {
+        let on = Self.loginItem.status() == .enabled
+        do { try Self.loginItem.set(!on) } catch { app.active.flash("Open at Login: \(error.localizedDescription)", error: true) }
+        if Self.loginItem.status() == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+    }
+
+    /// What Settings ▸ Monitor says under Open at Login, when it isn't the row's note.
+    static func loginSaid() -> String {
+        loginItem.status() == .requiresApproval ? "Waiting for you in System Settings ▸ General ▸ Login Items" : ""
+    }
+
+    // MARK: The history on disk
+
+    /// A saved server's history folder: `monitor/<its id>` (`ToolSlots`).
+    static func history(_ id: UUID) -> String { Config.path("monitor/" + id.uuidString) }
+    private let disk = DispatchQueue(label: "dfm.monitor.history")
+
+    /// Lines to the server's day file, off the main thread, in order.
+    private func record(_ s: Server, _ lines: [ToolSlots.Line]) {
+        guard !lines.isEmpty else { return }
+        let dir = Self.history(s.saved.id)
+        disk.async { ToolSlots.append(lines, to: dir) }
+    }
+
+    /// A deleted server's history: after what's still on its way there (the deletion's own "not watched").
+    func forget(_ id: UUID) {
+        let dir = Self.history(id)
+        disk.async { try? FileManager.default.removeItem(atPath: dir) }
+    }
+
+    /// Kermo quits: each watched tool's slot so far, and "not watched" from now — written before it goes.
+    func closing() {
+        for s in servers.values { for t in s.tools.values where t.watched { record(s, t.slots.mark(.notWatched, at: Date().addingTimeInterval(s.skew))) } }
+        disk.sync {}
     }
 
     func note(_ s: Server, _ text: String, level: String = "info") {
@@ -379,6 +538,8 @@ import Network
         // Back from sleep or offline, what stood before isn't known to stand: the quiet's end waits for that to pass.
         if !stalled, online, !grace { servers.values.filter(\.watched).forEach(quietOver) }
         for s in servers.values where s.wanted {
+            // Checks from this Mac: none offline or in the wake's first minute — no answer then isn't the site's.
+            for t in s.tools.values where t.wanted && t.preset.http != nil && online && !grace && (t.due ?? .distantPast) <= now { check(t, on: s) }
             if s.channel == nil, !s.needsLogin, let at = s.retryAt, at <= now {
                 s.retryAt = nil
                 start(s)
@@ -471,7 +632,7 @@ import Network
             let n = standing.count
             return (top.level == .critical ? .critical : .warning, n == 1 ? top.text : "\(n) alerts")
         }
-        if s.channel == nil { return (.off, s.retryAt == nil ? "" : "connecting…") }
+        if s.channel == nil, !s.channelTools.isEmpty { return (.off, s.retryAt == nil ? "" : "connecting…") }
         if s.missed > 0 { return (.off, "no answer \(s.missed) of \(s.downAfter)") }
         if let m = s.maintenance, s.inMaintenance { return (.ok, "maintenance till " + m.until.formatted(date: .omitted, time: .shortened)) }
         return (.ok, "")
@@ -503,8 +664,10 @@ import Network
             let level = t.alerts.worst(metric: item.metric, alerts: alerts)
             switch item.as ?? "text" {
             case "count":
-                let scope = ToolTemplate.Scope(inputs: Dictionary(uniqueKeysWithValues: latest.map { ($0.key, ToolValue.number($0.value)) }))
-                return (m.title ?? item.metric, nil, 100, item.label.map { ToolTemplate.text($0, scope) } ?? latest["all"].map { ToolValue.number($0).text } ?? "—", nil, nil, level)
+                // A metric of rows that isn't a count (Sites' `up`: 1 or 0 an address): `all` of them, `ok` those not 0.
+                let counts = m.count != nil ? latest : ["all": Double(latest.count), "ok": Double(latest.values.filter { $0 != 0 }.count), "bad": Double(latest.values.filter { $0 == 0 }.count)]
+                let scope = ToolTemplate.Scope(inputs: Dictionary(uniqueKeysWithValues: counts.map { ($0.key, ToolValue.number($0.value)) }))
+                return (m.title ?? item.metric, nil, 100, latest.isEmpty ? "—" : item.label.map { ToolTemplate.text($0, scope) } ?? counts["all"].map { ToolValue.number($0).text } ?? "—", nil, nil, level)
             default:
                 let v = ToolMetric.one(latest, of: item.of)
                 return (item.label ?? m.title ?? item.metric, item.as == "bar" ? v : nil, m.max ?? 100, v.map(m.text) ?? "—", alert?.warn, alert?.crit, level)
