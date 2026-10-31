@@ -205,7 +205,11 @@ struct OneChart: View {
             ForEach(Array(chart.bands.enumerated()), id: \.offset) { _, b in
                 RectangleMark(xStart: .value("From", b.from), xEnd: .value("To", b.to), yStart: .value("Bottom", 0), yEnd: .value("Top", chart.top))
                     .foregroundStyle(Self.band(b.gap))
-                    .annotation(position: .overlay, alignment: .topLeading) { Text(Self.word(b.gap)).font(.caption2).foregroundStyle(.secondary).padding(2) }
+                    .annotation(position: .overlay, alignment: .topLeading) {   // a week's nights are too narrow for words: the hover says them
+                        if b.to.timeIntervalSince(b.from) >= model.data.to.timeIntervalSince(model.data.from) / 10 {
+                            Text(Self.word(b.gap)).font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize().padding(2)
+                        }
+                    }
             }
             ForEach(chart.lines) { line in
                 ForEach(Array(line.chart.runs.enumerated()), id: \.offset) { i, run in

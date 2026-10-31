@@ -40,6 +40,7 @@ cat > $APP/Contents/Info.plist <<EOF
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSLocalNetworkUsageDescription</key><string>Kermo checks the web addresses you saved with your servers (Tools ▸ Sites), and some of them are on this network.</string>
   <key>CFBundleDocumentTypes</key><array><dict>
     <key>CFBundleTypeName</key><string>Folder</string>
     <key>CFBundleTypeRole</key><string>Viewer</string>

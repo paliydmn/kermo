@@ -488,9 +488,9 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         if Self.loginItem.status() == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
     }
 
-    /// What Settings ▸ Monitor says under Open at Login.
+    /// What Settings ▸ Monitor says under Open at Login (its live note takes the row's place).
     static func loginSaid() -> String {
-        loginItem.status() == .requiresApproval ? "Waiting for you in System Settings ▸ General ▸ Login Items" : ""
+        loginItem.status() == .requiresApproval ? "Waiting for you in System Settings ▸ General ▸ Login Items" : "Watching starts again by itself"
     }
 
     // MARK: The history on disk

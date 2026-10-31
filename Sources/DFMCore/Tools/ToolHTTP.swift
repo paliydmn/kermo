@@ -39,9 +39,11 @@ public enum ToolHTTPCheck {
         return u.host?.isEmpty == false
     }
 
-    /// Why there was no answer, in a word or two for the table and the alert.
+    /// Why there was no answer, in a word or two for the table and the alert. An address on this network that macOS
+    /// keeps Kermo from (Privacy & Security ▸ Local Network) fails as "offline": its path says why.
     static func said(_ e: Error) -> String {
-        switch (e as? URLError)?.code {
+        if "\((e as NSError).userInfo)".contains("Local network prohibited") { return "local network off" }
+        return switch (e as? URLError)?.code {
         case .timedOut?: "timed out"
         case .cannotConnectToHost?: "refused"
         case .cannotFindHost?, .dnsLookupFailed?: "no such host"
@@ -61,13 +63,13 @@ public enum ToolHTTPCheck {
     }
 
     /// The session's delegate: no redirect followed; the leaf certificate's days as the server sent it, then the
-    /// system's own judgement of it.
+    /// system's own judgement of it. The trust question comes to the task's method: `bytes(for:)` asks there.
     private final class Probe: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
         /// Set on the session's queue before the answer comes back, read after it.
         var days: Double?
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                         newRequest request: URLRequest) async -> URLRequest? { nil }
-        func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+        func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
             if let trust = challenge.protectionSpace.serverTrust, let leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first {
                 days = ToolHTTPCheck.days(leaf)
             }

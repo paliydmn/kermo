@@ -7,14 +7,15 @@ import Testing
 // the time to it, a word for no answer at all, and a certificate's days left. Against a web server on this Mac's
 // loopback, never the network.
 
-/// A web server on 127.0.0.1: each request gets the status `answer` gives for its path (a Location with a 3xx),
-/// after its delay.
+/// A web server on 127.0.0.1 — over TLS with `tls` — : each request gets the status `answer` gives for its path (a
+/// Location with a 3xx), after its delay.
 private final class LocalWeb: @unchecked Sendable {
-    let listener: NWListener
-    var url: String { "http://127.0.0.1:\(listener.port!.rawValue)" }
+    let listener: NWListener, scheme: String
+    var url: String { "\(scheme)://127.0.0.1:\(listener.port!.rawValue)" }
 
-    init(_ answer: @escaping @Sendable (String) -> (code: Int, delay: Double)) throws {
-        let params = NWParameters.tcp
+    init(tls: NWProtocolTLS.Options? = nil, _ answer: @escaping @Sendable (String) -> (code: Int, delay: Double)) throws {
+        scheme = tls == nil ? "http" : "https"
+        let params = tls.map { NWParameters(tls: $0) } ?? .tcp
         params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)   // loopback only: no firewall question
         listener = try NWListener(using: params)
         let queue = DispatchQueue(label: "local-web")   // its own: a busy run's global queues answered 10 s late
@@ -67,16 +68,41 @@ private final class LocalWeb: @unchecked Sendable {
     #expect(bad["ok"] == false && bad["status"] == "bad address")
 }
 
+/// A certificate macOS doesn't trust is down — never let through — and its days are read all the same. A server of
+/// its own on loopback, its identity kept in memory only (never the keychain).
+@Test func aRefusedCertificateIsDownWithItsDays() async throws {
+    guard #available(macOS 15, *) else { return }
+    let dir = NSTemporaryDirectory() + "kermo-tls-\(UUID().uuidString)"
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    try openssl(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", dir + "/k", "-out", dir + "/c", "-days", "10", "-subj", "/CN=127.0.0.1"])
+    try openssl(["pkcs12", "-export", "-inkey", dir + "/k", "-in", dir + "/c", "-out", dir + "/p", "-passout", "pass:kermo"])
+    var items: CFArray?
+    let options = [kSecImportExportPassphrase: "kermo", kSecImportToMemoryOnly: true] as CFDictionary
+    try #require(SecPKCS12Import(try Data(contentsOf: URL(fileURLWithPath: dir + "/p")) as CFData, options, &items) == errSecSuccess)
+    let identity = try #require((items as? [[String: Any]])?.first?[kSecImportItemIdentity as String].map { $0 as! SecIdentity })
+    let tls = NWProtocolTLS.Options()
+    sec_protocol_options_set_local_identity(tls.securityProtocolOptions, try #require(sec_identity_create(identity)))
+    let web = try LocalWeb(tls: tls) { _ in (200, 0) }
+    defer { web.done() }
+    let r = await ToolHTTPCheck.check(web.url + "/")
+    #expect(r["ok"] == false && r["status"] == "certificate refused" && r["tls_days"] == 9 && r["ms"] == nil, "\(r)")
+}
+
+private func openssl(_ args: [String]) throws {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
+    p.arguments = args
+    (p.standardOutput, p.standardError) = (FileHandle.nullDevice, FileHandle.nullDevice)
+    try p.run()
+    p.waitUntilExit()
+}
+
 @Test func aCertificatesDaysLeft() throws {
     let dir = NSTemporaryDirectory() + "kermo-cert-\(UUID().uuidString)"
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(atPath: dir) }
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
-    p.arguments = ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", dir + "/k", "-out", dir + "/c", "-outform", "DER", "-days", "30", "-subj", "/CN=test"]
-    (p.standardOutput, p.standardError) = (FileHandle.nullDevice, FileHandle.nullDevice)
-    try p.run()
-    p.waitUntilExit()
+    try openssl(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", dir + "/k", "-out", dir + "/c", "-outform", "DER", "-days", "30", "-subj", "/CN=test"])
     let cert = try #require(SecCertificateCreateWithData(nil, try Data(contentsOf: URL(fileURLWithPath: dir + "/c")) as CFData))
     #expect(ToolHTTPCheck.days(cert) == 29, "30 days from now, less the seconds since")
     #expect(ToolHTTPCheck.days(cert, now: Date().addingTimeInterval(40 * 86400)) == -11, "ended ten days and a bit ago")
