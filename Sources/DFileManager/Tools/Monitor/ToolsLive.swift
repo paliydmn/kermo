@@ -110,7 +110,7 @@ import DFMCore
         watchButton.toolTip = saved ? nil : "Save the server to watch it"
         let locked = ServerLock.server(for: target)?.locked == true
         let (text, color): (String, NSColor) = if let s, s.needsLogin {
-            ("\(server.title) needs login — a key or a saved password would connect without asking. " + (s.error ?? ""), Palette.warn)
+            (s.connecting ? "Logging in to \(server.title)…" : "\(server.title) needs login — a key or a saved password would connect without asking. " + (s.error ?? ""), Palette.warn)
         } else if let s, let down = s.down {
             ("Not answering since \(down.formatted(date: .omitted, time: .shortened)) · \(s.missed) checks in a row · last data "
              + (s.lastLine?.formatted(date: .omitted, time: .standard) ?? "—") + ". This Mac is online.", Palette.fail)
@@ -118,6 +118,8 @@ import DFMCore
             ("Connecting…" + (s.error.map { " (\($0))" } ?? ""), NSColor.secondaryLabelColor)
         } else if let s, s.channel != nil, s.missed > 0 {
             ("No answer for \(s.missed * Int(s.every)) s — Kermo calls it down after \(s.downAfter) checks in a row.", NSColor.secondaryLabelColor)
+        } else if let s, s.channel == nil, s.retryAt == nil, let why = s.error {
+            ("\(server.title): \(why)", Palette.warn)
         } else if !app.tools.monitor.online {
             ("This Mac has no network: nothing counts as down.", NSColor.secondaryLabelColor)
         } else if locked {
@@ -126,21 +128,21 @@ import DFMCore
         banner.stringValue = text
         banner.textColor = color
         banner.isHidden = text.isEmpty
-        connectButton.isHidden = s?.needsLogin != true
+        connectButton.isHidden = s?.needsLogin != true || s?.connecting == true
         let record = t?.history.last?.record ?? [:]
         let scope = ToolTemplate.Scope(rows: [record])
         for tile in tiles {
-            let texts = tile.metrics.map { id -> String in
-                guard let m = p.metrics?[id], let v = Self.value(t?.history.latest(id) ?? [:], tile.of) else { return "—" }
-                return (tile.metrics.count > 1 ? (id == "rx" ? "↓ " : id == "tx" ? "↑ " : "") : "") + m.text(v)
+            let texts = tile.metrics.map { id -> String in   // two in one tile, in the label's order ("In · Out")
+                guard let m = p.metrics?[id], let v = ToolMetric.one(t?.history.latest(id) ?? [:], of: tile.of) else { return "—" }
+                return m.text(v)
             }
             tile.value.stringValue = texts.joined(separator: " · ")
             let m = p.metrics?[tile.metrics[0]]
-            let level = (p.alerts ?? []).first { $0.metric == tile.metrics[0] }.flatMap { t?.alerts.states[$0.id ?? tile.metrics[0]]?.values.compactMap(\.level).max() }
+            let level = t?.alerts.worst(metric: tile.metrics[0], alerts: p.alerts ?? [])
             tile.value.textColor = level == .critical ? Palette.fail : level == .warning ? Palette.warn : .labelColor
-            if let bar = tile.bar { bar.doubleValue = Self.value(t?.history.latest(tile.metrics[0]) ?? [:], tile.of) ?? 0 }
+            if let bar = tile.bar { bar.doubleValue = ToolMetric.one(t?.history.latest(tile.metrics[0]) ?? [:], of: tile.of) ?? 0 }
             var detail = m?.detail.map { ToolTemplate.text($0, scope) } ?? ""
-            if let also = tile.also, let am = p.metrics?[also], let v = Self.value(t?.history.latest(also) ?? [:], nil) {
+            if let also = tile.also, let am = p.metrics?[also], let v = ToolMetric.one(t?.history.latest(also) ?? [:], of: nil) {
                 detail = [detail, "\(am.title?.lowercased() ?? also) \(am.text(v))"].filter { !$0.isEmpty }.joined(separator: " · ")
             }
             if let m, m.rows != nil, tile.metrics.count == 1, let (key, _) = (t?.history.latest(tile.metrics[0]) ?? [:]).max(by: { $0.value < $1.value }) {
@@ -152,18 +154,6 @@ import DFMCore
         foot.stringValue = (s?.channel == nil ? "Paused" : "Live") + " · \(last) · every \(every) s · " + (p.stream?.run.sudo ?? p.sudo ?? false ? "over SSH as root" : "over SSH · read-only")
     }
 
-    /// A metric's one number: `of` over its rows (max by default), the scalar as it is.
-    static func value(_ v: ToolValues, _ of: String?) -> Double? {
-        if let x = v[""] { return x }
-        let all = Array(v.values)
-        guard !all.isEmpty else { return nil }
-        switch of ?? "max" {
-        case "sum": return all.reduce(0, +)
-        case "min": return all.min()
-        case "avg": return all.reduce(0, +) / Double(all.count)
-        default: return all.max()
-        }
-    }
 }
 
 extension ToolRunner {

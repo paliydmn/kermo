@@ -101,7 +101,7 @@ final class ToolRunner {
 
     static func shows(_ t: LoadedTool) -> Bool {
         let p = t.preset
-        if p.stream != nil || p.poll != nil { return true }   // watched, or live on its tab (PR 5)
+        if p.source != nil { return true }   // watched, or live on its tab (PR 5)
         return p.list.map { $0.run.command != nil || $0.run.script != nil } ?? p.commandAction.map { runs($0, of: p) }
             ?? p.toolActions?.contains { runs($0, of: p) } ?? false
     }
@@ -159,6 +159,7 @@ final class ToolRunner {
     func scope(_ p: ToolPreset, on s: SavedServer, _ t: SFTPTarget, rows: [ToolRecord] = []) -> ToolTemplate.Scope {
         let key = ServerRow.key(t.asUser)
         var kermo: [String: ToolValue] = ["server": .string(s.title), "host": .string(s.host), "user": .string(s.user ?? "")]
+        if let every = p.watch?.every { kermo["every"] = .number(every) }   // a stream's `{every}`
         if let f = answers[key]?.answer.facts { kermo.merge(f.names) { $1 } }
         return .init(rows: rows, vars: p.varValues(saved: settings.vars(p.id, on: serverID(t)), found: found[key + " " + p.id] ?? [:]), kermo: kermo)
     }

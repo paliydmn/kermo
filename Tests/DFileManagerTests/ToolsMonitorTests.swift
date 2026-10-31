@@ -9,8 +9,9 @@ import Testing
 // in use; WATCHED lists problems first; two tools on one server share one channel. Against `ToolsBench` and a
 // stream of its own (`pulse`) on this Mac.
 
-/// A stream on this Mac: a JSON line every 0.3 s — cpu 10, or 99 while the flag `hot-<server>` is there — its pid in
-/// `pulse-<server>.pid`. `pulse2`: the same under another name.
+/// A stream on this Mac: a JSON line every 0.3 s — cpu 10, or 99 while the flag `hot-<server>` is there; every 1.3 s
+/// with `slow-<server>`; with `event-<server>`, an `_event` in each line — its pid in `pulse-<server>.pid`. `pulse2`:
+/// the same under another name.
 @MainActor private func pulse(_ bench: ToolsBench, _ ids: [String] = ["pulse"]) throws {
     for id in ids {
         try Data("""
@@ -20,9 +21,10 @@ import Testing
             i=0
             while :; do
               cpu=10; [ -f \(bench.dir)/hot-$2 ] && cpu=99
-              printf '{"cpu":{"pct":%s},"n":%s}\\n' "$cpu" "$i"
+              ev=''; [ -f \(bench.dir)/event-$2 ] && ev=',"_event":{"id":"tick","level":"info","message":"tick"}'
+              printf '{"cpu":{"pct":%s},"n":%s%s}\\n' "$cpu" "$i" "$ev"
               i=$((i+1))
-              sleep 0.3
+              if [ -f \(bench.dir)/slow-$2 ]; then sleep 1.3; else sleep 0.3; fi
             done
 
             """.utf8).write(to: URL(fileURLWithPath: bench.dir + "/bin/" + id))
@@ -49,18 +51,18 @@ import Testing
 /// The watching seams quick, and back after.
 @MainActor private struct Quick {
     let was = (tick: ToolMonitor.tick, backoff: ToolMonitor.backoff, login: ToolMonitor.login, watching: ToolRunner.watching, auth: ServerLock.authenticate,
-               target: ToolMonitor.target)
+               target: ToolMonitor.target, grace: ToolMonitor.wakeGrace)
     init() {
         ToolMonitor.tick = 0.2
         ToolMonitor.backoff = [0.3]
         ToolMonitor.login = { _, _ in }
         ToolMonitor.target = { _ in .local() }
+        ToolMonitor.wakeGrace = 0   // a Wi-Fi flap during the run mustn't hold "not answering" back
         ToolRunner.watching = { _, _ in true }
     }
     func done() {
-        (ToolMonitor.tick, ToolMonitor.backoff, ToolMonitor.login, ToolRunner.watching, ServerLock.authenticate, ToolMonitor.target) = was
-        (ToolsWindow.main.map { [$0.window] } ?? []).forEach { $0.close() }
-        ToolsWindow.alone.forEach { $0.window.close() }
+        (ToolMonitor.tick, ToolMonitor.backoff, ToolMonitor.login, ToolRunner.watching, ServerLock.authenticate, ToolMonitor.target, ToolMonitor.wakeGrace) = was
+        closeWindows()
     }
 }
 
@@ -268,7 +270,7 @@ extension ServerLockTests {
         bench.flag("hot-localhost")
         await toolsUntil { s.tools["pulse"]?.alerts.worst == .critical }
         #expect(app.tools.monitor.worst(s) == (.critical, "CPU 99%") && s.tools["pulse"]?.events.first?.message == "CPU 99%", "\(s.tools["pulse"]?.events ?? [])")
-        #expect(s.tools["pulse"]?.events.contains { $0.message == "hot: 99" && $0.level == "warning" } == true, "the `is` event, once")
+        #expect(s.tools["pulse"]?.events.filter { $0.message == "hot: 99" && $0.level == "warning" }.count == 1, "the `is` event, once")
         #expect(app.tools.monitor.watched.map(\.saved.title) == ["localhost"] && app.tools.monitor.summary(s.tools["pulse"]!).first?.level == .critical)
         ToolsWindow.show(app, server: .local())
         let w = try #require(ToolsWindow.main), page = try #require(w.page)
@@ -298,5 +300,91 @@ extension ServerLockTests {
         #expect(alive(pid(bench)) && alive(pid(bench, "localhost", "pulse2")))
         let runs = try toolNamed(app, "pulse").runs
         #expect(runs.groups.last?.title == "In the background, when you watch it" && runs.background.first?.text == "  stream: pulse {every} {server}   — every 1 s on each watched server")
+    }
+
+    /// A stream that runs a little slower than `every` (System sleeps after its reads) is no gap: nothing missed, no
+    /// mark, the alerts' clocks untouched. Once it really stops, the intervals are missed from half of one on.
+    @Test func aSlightlyLateStreamIsNoGap() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick()
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        bench.flag("slow-localhost")
+        app.tools.monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        await toolsUntil { app.tools.monitor.tool("pulse", on: .local())?.history.points("cpu").count ?? 0 >= 3 }
+        let s = try #require(app.tools.monitor.server(.local())), t = try #require(s.tools["pulse"])
+        #expect(s.missed == 0 && t.history.points("cpu").allSatisfy { $0.gap == nil }, "1.3 s against every 1: \(t.history.points("cpu").map { $0.gap?.rawValue ?? "v" })")
+        kill(try #require(pid(bench)), SIGSTOP)
+        await toolsUntil { s.missed >= 1 }
+        #expect(s.missed >= 1 && t.history.points("cpu").last?.gap == .noAnswer)
+        kill(try #require(pid(bench)), SIGCONT)
+    }
+
+    /// A script's `_event`s go through ten an hour; the rest are held and said as "N more" with the next that goes
+    /// through — never one "1 more" each.
+    @Test func scriptedEventsAreBudgeted() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick()
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        bench.flag("event-localhost")
+        app.tools.monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        await toolsUntil { (app.tools.monitor.tool("pulse", on: .local())?.history.points("n").count ?? 0) >= 14 }
+        let t = try #require(app.tools.monitor.tool("pulse", on: .local()))
+        #expect(t.events.filter { $0.id == "tick" }.count == ToolEventBudget.perHour && !t.events.contains { $0.id == "more" }, "\(t.events.map(\.message))")
+        #expect(t.budget.held >= 2, "the rest wait for the hour")
+    }
+
+    /// While a click's login runs, no quiet login runs beside it (a reconcile meanwhile would find it refused and say
+    /// "needs login" again); a login refused for another reason than a password — the server unreachable — is retried.
+    @Test func aClicksLoginRunsAloneAndOtherFailuresRetry() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick()
+        defer { quick.done(); bench.done(); done(); app.savedServers = []; ToolRunner.hasMaster = { _ in true } }
+        try await watching(app, bench)
+        ToolRunner.hasMaster = { _ in false }
+        nonisolated(unsafe) var logins: [Bool] = []
+        nonisolated(unsafe) var refuse = "ssh: connect to host localhost port 22: Connection refused"
+        let gate = DispatchSemaphore(value: 0)
+        ToolMonitor.login = { _, quiet in
+            logins.append(quiet)
+            if quiet { throw SFTPError(message: refuse) }
+            gate.wait()   // the sheet is up
+            ToolRunner.hasMaster = { _ in true }
+        }
+        app.tools.monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        await toolsUntil { app.tools.monitor.server(.local())?.retryAt != nil }
+        let s = try #require(app.tools.monitor.server(.local()))
+        #expect(!s.needsLogin && s.retryAt != nil, "unreachable: retried, not a click's")
+        refuse = "Permission denied (publickey)."
+        await toolsUntil { s.needsLogin }
+        #expect(s.needsLogin && logins.count >= 2 && logins.allSatisfy { $0 })
+        let quietSoFar = logins.count
+        app.tools.monitor.connect(.local())
+        await toolsUntil { logins.count == quietSoFar + 1 }
+        #expect(s.connecting && app.tools.monitor.worst(s).why == "logging in…")
+        app.tools.monitor.reconcile()
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(logins.count == quietSoFar + 1 && logins.last == false, "no quiet login beside the click's")
+        gate.signal()
+        await toolsUntil { s.tools["pulse"]?.history.last != nil }
+        #expect(!s.needsLogin && !s.connecting && s.channel != nil)
+    }
+
+    /// Back from sleep, or on another network, each channel is ended and comes back: a gap, one more round trip,
+    /// the series going on.
+    @Test func aWakeRestartsTheChannel() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick()
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        app.tools.monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        await toolsUntil { app.tools.monitor.tool("pulse", on: .local())?.history.last != nil }
+        let s = try #require(app.tools.monitor.server(.local())), t = try #require(s.tools["pulse"])
+        let trips = bench.trips, first = pid(bench)
+        app.tools.monitor.restart()
+        #expect(s.channel == nil && s.retryAt != nil && t.history.points("cpu").last?.gap == .reconnecting)
+        await toolsUntil { bench.trips > trips && pid(bench) != first && t.history.points("cpu").last?.value != nil }
+        #expect(bench.trips == trips + 1 && !alive(first) && s.channel != nil, "the old run ended on the server, a new one runs")
     }
 }

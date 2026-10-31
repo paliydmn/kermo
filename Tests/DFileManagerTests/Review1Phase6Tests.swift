@@ -62,7 +62,7 @@ private func titles(_ nodes: [AppDelegate.MenuNode]) -> [String] {
     #expect(NSApp.helpMenu?.title == "Help" && NSApp.helpMenu?.items.contains { $0.representedObject as? String == "help.keys" } == true)
     #expect(titles(AppDelegate.menuItems(app.commands, in: "Server")) == [
         "Connect to Server…", "New SSH Session…", "New Server…", "—", "Overview", "Services…", "Containers…", "Ports & Tunnels ▸", "—",
-        "Reopen as Root", "Reopen as User", "—", "Copy SSH Key to Server…", "File History…", "Run on Servers…", "—",
+        "Reopen as Root", "Reopen as User", "—", "Copy SSH Key to Server…", "File History…", "Watch Server…", "Run on Servers…", "—",
         "Disconnect", "Reconnect SSH Session", "Edit SSH Config…", "Production Log"])
     #expect(titles(AppDelegate.menuItems(app.commands, in: "View")).prefix(8) == ["Sidebar", "Quick View", "Terminal", "Maximize Terminal", "Activity", "—", "Tabs ▸", "Panels ▸"])
     #expect(titles(AppDelegate.menuItems(app.commands, in: "View/Sort By")) == ["Name", "Size", "Modified", "—", "Reverse"])

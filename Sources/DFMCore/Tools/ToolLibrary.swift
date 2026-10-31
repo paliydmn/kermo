@@ -215,7 +215,7 @@ public struct ToolServers: Sendable, Codable, Hashable {
 
     /// Every server and tool watched: (server id, tool id).
     public var watched: [(server: String, tool: String)] {
-        servers.flatMap { id, tools in tools.filter { $0.value.watch == true }.keys.sorted().map { (id, $0) } }.sorted { $0.0 + $0.1 < $1.0 + $1.1 }
+        servers.flatMap { id, tools in tools.filter { $0.value.watch == true }.keys.sorted().map { (id, $0) } }.sorted { ($0.0, $0.1) < ($1.0, $1.1) }
     }
 
     /// Use on Servers…: only on `checked` of `all`; or wherever it's found, each of `all` shown or hidden as checked.

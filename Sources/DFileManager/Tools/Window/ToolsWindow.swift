@@ -65,8 +65,16 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
 
     /// Samples came, or a watched server's state changed: the sidebar's WATCHED rows and the open live tabs, in place.
     static func live() {
-        main?.reload()
+        main?.liveRows()
         pages.forEach { $0.live() }
+    }
+
+    /// The WATCHED rows drawn again where the set and its order are as before; else the sidebar as a whole.
+    private func liveRows() {
+        let now = app.tools.monitor.watched.map(\.key)
+        let shown = rows.indices.filter { if case .watched = rows[$0] { true } else { false } }
+        guard now == shown.compactMap({ target(rows[$0]).map(ServerRow.key) }) else { return reload() }
+        sidebar.reloadData(forRowIndexes: IndexSet(shown), columnIndexes: [0])
     }
 
     /// What servers have, or what you set, changed: every window shows it again.
@@ -261,9 +269,9 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
                 if let v = item.value {
                     let bar = NSLevelIndicator()
                     bar.levelIndicatorStyle = .continuousCapacity
-                    (bar.minValue, bar.maxValue, bar.doubleValue) = (0, 100, v)
-                    bar.warningValue = item.warn ?? 101
-                    bar.criticalValue = item.crit ?? 101
+                    (bar.minValue, bar.maxValue, bar.doubleValue) = (0, item.max, v)
+                    bar.warningValue = item.warn ?? item.max + 1
+                    bar.criticalValue = item.crit ?? item.max + 1
                     bar.controlSize = .mini
                     bar.isEditable = false
                     bar.widthAnchor.constraint(equalToConstant: 34).isActive = true

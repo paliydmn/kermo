@@ -38,14 +38,17 @@ public typealias ToolValues = [String: Double]
 
 /// A stream's lines into frames (§8.1): each line (the default — `jsonl`), the blocks between blank lines
 /// (`split: "blank"`), or blocks that each start with a line `split`'s regex finds — such a frame is done only when
-/// the next one begins.
-public struct ToolFrames: Sendable {
+/// the next one begins. Not Sendable: it holds its regex, and one channel's parser lives with the engine on the main
+/// actor.
+public struct ToolFrames {
     private let split: String?
+    private let first: Regex<AnyRegexOutput>?
     private var held: [String] = []
-    /// `split`'s regex, compiled per line: Regex isn't Sendable, and a stream brings a line every few seconds.
-    private var first: Regex<AnyRegexOutput>? { split.flatMap { $0 == "line" || $0 == "blank" ? nil : try? Regex($0) } }
 
-    public init(split: String?) { self.split = split }
+    public init(split: String?) {
+        self.split = split
+        first = split.flatMap { $0 == "line" || $0 == "blank" ? nil : try? Regex($0) }
+    }
 
     /// The frames `line` completes.
     public mutating func feed(_ line: String) -> [String] {
@@ -69,7 +72,9 @@ public struct ToolFrames: Sendable {
 }
 
 extension ToolParse {
-    /// A frame as a sample: one record is the sample; several are its `rows`. nil: the frame gave none.
+    /// A frame as a sample (§8.1): a `json` / `jsonl` object is the sample itself; anything else — a table under its
+    /// header, a regex's groups, lines — is rows, one record or many, so a metric's `rows` names them the same way
+    /// whatever the frame held. nil: the frame gave no record.
     public func sample(_ frame: String, at: Date) -> ToolSample? {
         let r = Self(format: format, rows: rows, pattern: pattern, names: names, split: nil, sort: sort, limit: limit).records(Data(frame.utf8))
         guard !r.rows.isEmpty else { return nil }
@@ -117,6 +122,20 @@ extension ToolMetric {
             guard let k = r[key]?.text, let n = number(r, was[k]) else { return nil }
             return (k, n)
         }) { a, _ in a }
+    }
+
+    /// One number of a metric's values (§6.3): a scalar as it is; over rows, `of` — `max` (the default), `sum`,
+    /// `min` or `avg`.
+    public static func one(_ values: ToolValues, of: String?) -> Double? {
+        if let x = values[""] { return x }
+        let all = Array(values.values)
+        guard !all.isEmpty else { return nil }
+        switch of ?? "max" {
+        case "sum": return all.reduce(0, +)
+        case "min": return all.min()
+        case "avg": return all.reduce(0, +) / Double(all.count)
+        default: return all.max()
+        }
     }
 
     /// `v` as the metric shows it: "96%", "1.2 MB/s", "1500 ms", "4.0".
@@ -236,7 +255,7 @@ public struct ToolAlerts: Sendable {
                     s.streak[level, default: 0] += 1
                     let long = (level == .critical ? a.for?.crit : a.for?.warn)?.seconds
                     // Held long enough — or standing already: past its threshold, an alert stays (a gap started the count over).
-                    let ok = (was ?? .warning) >= level && was != nil || (long.map { sample.at.timeIntervalSince(s.over[level]!) >= $0 } ?? a.checks.map { s.streak[level]! >= $0 } ?? true)
+                    let ok = was.map { $0 >= level } == true || (long.map { sample.at.timeIntervalSince(s.over[level]!) >= $0 } ?? a.checks.map { s.streak[level]! >= $0 } ?? true)
                     if ok, held == nil { held = level }
                 }
                 s.level = held
@@ -244,6 +263,8 @@ public struct ToolAlerts: Sendable {
                     s.since = s.since ?? sample.at
                     s.message = message(a, m, key: key, value: v, level: held, sample: sample)
                     changes.append(.worse(alert: id, key: key, level: held, message: s.message!))
+                } else if let held, let was, held < was {
+                    s.message = message(a, m, key: key, value: v, level: held, sample: sample)   // down to a warning: its words, no message
                 } else if held == nil, let was, let since = s.since {
                     (s.since, s.message) = (nil, nil)
                     changes.append(.ok(alert: id, key: key, was: was, since: since))
@@ -267,9 +288,14 @@ public struct ToolAlerts: Sendable {
     /// The worst level standing on any series.
     public var worst: ToolLevel? { states.values.flatMap { $0.values.compactMap(\.level) }.max() }
 
+    /// The worst level standing on `metric`'s series, by the alert that watches it.
+    public func worst(metric: String, alerts: [ToolAlert]) -> ToolLevel? {
+        alerts.first { $0.metric == metric }.flatMap { states[$0.id ?? metric]?.values.compactMap(\.level).max() }
+    }
+
     /// Every series past a threshold: alert id, key, standing.
     public var standing: [(alert: String, key: String, state: ToolAlertState)] {
-        states.flatMap { id, keys in keys.compactMap { $0.value.level == nil ? nil : (id, $0.key, $0.value) } }.sorted { $0.alert + $0.key < $1.alert + $1.key }
+        states.flatMap { id, keys in keys.compactMap { $0.value.level == nil ? nil : (id, $0.key, $0.value) } }.sorted { ($0.alert, $0.key) < ($1.alert, $1.key) }
     }
 
     private func message(_ a: ToolAlert, _ m: ToolMetric, key: String, value: Double, level: ToolLevel, sample: ToolSample) -> String {

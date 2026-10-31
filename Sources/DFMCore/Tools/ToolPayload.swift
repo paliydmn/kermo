@@ -294,7 +294,7 @@ extension ToolPayload {
                 lines.append("export \(name)=\(v.text)")
             }
             lines = values.map { "\($0.name)=\(ShellContext.quote($0.value))" } + lines
-            let inner = s.every.map { "while :; do\n\(text)\nsleep \(Int($0))\ndone" } ?? text
+            let inner = s.every.map { "while :; do\n\(text)\nsleep \(max(1, Int($0)))\ndone" } ?? text   // never `sleep 0`: the schema wants a second or more
             body.append("(\n\(lines.joined(separator: "\n"))\n\(inner)\n) | while IFS= read -r l; do printf '%s\\t%s\\n' \(ShellContext.quote(s.tool.id)) \"$l\"; done &")
         }
         body.append("wait")

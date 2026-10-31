@@ -102,7 +102,7 @@ final class ToolsPage: NSView, RowList {
     private var up: Bool { AppDelegate.connected(target) }
     private var current: LoadedTool? { shown.first { $0.preset.id == tab } }
     /// The open tab's tool when it has a stream or a poll: live while this page shows it (`ToolMonitor`).
-    var liveTool: LoadedTool? { current.flatMap { $0.preset.stream != nil || $0.preset.poll != nil ? $0 : nil } }
+    var liveTool: LoadedTool? { current.flatMap { $0.preset.watchable ? $0 : nil } }
     private func watched(_ tool: LoadedTool) -> Bool { app.tools.monitor.tool(tool.preset.id, on: target)?.watched == true }
     private func name(_ p: ToolPreset) -> String { p.tool.map { "\(p.title) (\($0))" } ?? p.title }
 
@@ -344,7 +344,7 @@ final class ToolsPage: NSView, RowList {
         if let openAlone { menu.addItem(MenuAction.item("Open in New Window", openAlone)) }
         guard let tool = current else { return menu }
         let p = tool.preset
-        if p.watch != nil, p.stream != nil || p.poll != nil {
+        if p.watchable {
             let on = watched(tool)
             let it = MenuAction.item(on ? "Stop Watching \(p.title) on \(server.title)" : "Watch \(p.title) in Background…") { [unowned self] in
                 Task { await app.tools.toggleWatch(tool, on: server, target, window: window) }

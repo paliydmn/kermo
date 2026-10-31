@@ -20,8 +20,8 @@ import Network
     nonisolated(unsafe) static var tick: TimeInterval = 1
     /// Tests: a saved server's target (a local stand-in's way of running isn't in servers.json).
     nonisolated(unsafe) static var target: @MainActor (SavedServer) -> SFTPTarget = { $0.target }
-    /// A minute after a wake, and while this Mac has no network, no answer isn't "down" (§8.1).
-    static let wakeGrace: TimeInterval = 60
+    /// A minute after a wake, and while this Mac has no network, no answer isn't "down" (§8.1). Tests: shorter.
+    nonisolated(unsafe) static var wakeGrace: TimeInterval = 60
 
     /// One tool on one server: what came of it.
     final class Tool {
@@ -34,9 +34,11 @@ import Network
         var frames: ToolFrames
         /// Watched in the background; live on an open tab.
         var watched = false, live = false
-        init(_ t: LoadedTool) { (loaded, frames) = (t, ToolFrames(split: (t.preset.stream ?? t.preset.poll)?.parse.split)) }
+        init(_ t: LoadedTool) { (loaded, frames) = (t, ToolFrames(split: t.preset.source?.parse.split)) }
         var preset: ToolPreset { loaded.preset }
         var wanted: Bool { watched || live }
+        /// The channel ended: a frame half-read stays there.
+        func reset() { frames = ToolFrames(split: preset.source?.parse.split) }
     }
 
     /// A server watched or live: its channel on the server, its tools, how it's doing.
@@ -55,8 +57,8 @@ import Network
         /// Intervals with no sample; not answering since.
         var missed = 0
         var down: Date?
-        /// Its login would ask: a click logs in once.
-        var needsLogin = false
+        /// Its login would ask: a click logs in once — `connecting` while that login runs.
+        var needsLogin = false, connecting = false
         /// Why the last channel ended, or the login failed.
         var error: String?
         var retries = 0
@@ -123,13 +125,14 @@ import Network
             w.2.append((tool, watched))
             want[key] = w
         }
-        let tools = app.tools.tools.filter { $0.preset.watch != nil && ($0.preset.stream != nil || $0.preset.poll != nil) }
+        let tools = app.tools.tools.filter(\.preset.watchable)
         for s in app.savedServers {
             for tool in tools where app.tools.settings.watches(tool.preset.id, on: s.id.uuidString) { add(s, Self.target(s), tool, watched: true) }
         }
         for page in ToolsWindow.pages where page.window?.isVisible == true {
-            if let tool = page.liveTool, tool.preset.watch != nil, AppDelegate.connected(page.target) { add(page.server, page.target, tool, watched: false) }
+            if let tool = page.liveTool, AppDelegate.connected(page.target) { add(page.server, page.target, tool, watched: false) }
         }
+        let wereWatched = Set(servers.values.filter(\.watched).map(\.key))
         for (key, s) in servers {
             let w = want[key]
             for (id, t) in s.tools {
@@ -149,9 +152,10 @@ import Network
                 if watched { t.watched = true } else { t.live = true }
                 sources.insert(tool.preset.id)
             }
+            if !wereWatched.contains(key), s.watched { note(s, "Watching started · every \(Int(s.every)) s") }
             // A tool joined, or one left: the channel runs anew with the sources as they are now.
             if s.channel != nil, Set(s.tools.filter(\.value.wanted).keys) != channelSources[key] { stop(s, why: .reconnecting); s.retryAt = Date() }
-            if ready, s.channel == nil, s.retryAt == nil, !s.needsLogin { start(s) }
+            if ready, s.channel == nil, s.retryAt == nil, !s.needsLogin, !s.connecting { start(s) }
         }
         tickIfNeeded()
         changed()
@@ -173,23 +177,25 @@ import Network
     /// password; anything that would ask fails: "needs login"); a live-only one rides a connection that's up.
     private func start(_ s: Server) {
         let wanted = s.tools.values.filter(\.wanted)
-        guard !wanted.isEmpty, s.channel == nil else { return }
+        guard !wanted.isEmpty, s.channel == nil, !s.connecting else { return }
         let t = s.target, watched = s.watched, login = Self.login
         var sources: [ToolPayload.Watched] = []
         for tool in wanted {
             let p = tool.preset
-            guard let source = p.stream ?? p.poll else { continue }
-            var scope = app.tools.scope(p, on: s.saved, t)
-            scope.levels[scope.levels.count - 1]["every"] = .number(p.watch?.every ?? 60)
-            sources.append(.init(tool: p, run: source.run, every: p.stream == nil ? p.watch?.every ?? 60 : nil, scope: scope, scripts: tool.loaded.scripts))
+            guard let source = p.source else { continue }
+            sources.append(.init(tool: p, run: source.run, every: p.stream == nil ? p.watch?.every ?? 60 : nil, scope: app.tools.scope(p, on: s.saved, t), scripts: tool.loaded.scripts))
         }
-        // ponytail: sources that can't share a channel (sudo differs, a value missing) wait for a later PR; the built-ins share one.
-        guard let payload = try? ToolPayload.watch(sources, sudoProgram: ToolRunner.sudoProgram) else { s.error = "these tools can't share a channel"; return }
+        // ponytail: sources that can't share a channel (sudo differs), a value missing, and sudo that wants a password
+        // (`sudo -n` is refused, retried each minute) wait for a later PR; the built-ins share one and run as you.
+        // Such a server stays as it is, its row and its tab saying why.
+        let payload: ToolPayload?
+        do { payload = try ToolPayload.watch(sources, sudoProgram: ToolRunner.sudoProgram) } catch { s.error = "\(error)"; return changed() }
+        guard let payload else { s.error = "these tools can't share one channel (sudo differs)"; return changed() }
         let cancel = CancelFlag(), hold = CancelFlag()
         (s.channel, s.hold) = (cancel, hold)
         s.error = nil
         channelSources[s.key] = Set(wanted.map { $0.preset.id })
-        if s.since == nil { s.since = Date(); note(s, "Watching started · every \(Int(s.every)) s") }
+        if s.since == nil { s.since = Date() }
         let key = s.key, env = SSHAskpass.env, command = ToolRunner.command, stdin = payload.stdin(), has = ToolRunner.hasMaster
         Thread { [weak self] in
             if watched, !has(t) {
@@ -203,11 +209,9 @@ import Network
                 return
             }
             var reader = ToolRunOutput(nonce: payload.nonce), rest = Data()
-            nonisolated(unsafe) var errors = ""
             let r = Result {
                 try ToolExec.channel(t, cancel: cancel) {
-                    try SSHCommand.run(t, command(payload), env: env, cancel: cancel, stdin: stdin, holdStdin: hold,
-                                       onErrors: { d in errors += String(decoding: d, as: UTF8.self) }) { chunk in
+                    try SSHCommand.run(t, command(payload), env: env, cancel: cancel, stdin: stdin, holdStdin: hold) { chunk in
                         rest += reader.feed(chunk)
                         guard let last = rest.lastIndex(of: 0x0A) else { return }
                         let lines = ToolParse.lines(String(decoding: rest[...last], as: UTF8.self)).filter { !$0.isEmpty }
@@ -218,7 +222,7 @@ import Network
                 }
             }
             let why: String = switch r {
-            case .success(let (status, said)): (said.isEmpty ? errors : said).split(whereSeparator: \.isNewline).first.map(String.init) ?? (status == 255 ? "connection lost" : "ended (exit \(status))")
+            case .success(let (status, said)): said.split(whereSeparator: \.isNewline).first.map(String.init) ?? (status == 255 ? "connection lost" : "ended (exit \(status))")
             case .failure(let e): e.localizedDescription
             }
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.ended(key, why, cancel: cancel) } }
@@ -237,6 +241,7 @@ import Network
         channelSources[s.key] = nil
         (s.retryAt, s.retries) = (nil, 0)
         if why == .notWatched { s.since = nil }
+        s.tools.values.forEach { $0.reset() }
         gap(s, why)
     }
 
@@ -251,7 +256,7 @@ import Network
         }
         let now = Date().addingTimeInterval(skew)
         for line in lines {
-            guard let tagged = ToolPayload.watchLine(line), let t = s.tools[tagged.tool], let source = t.preset.stream ?? t.preset.poll else { continue }
+            guard let tagged = ToolPayload.watchLine(line), let t = s.tools[tagged.tool], let source = t.preset.source else { continue }
             let p = t.preset
             for frame in t.frames.feed(tagged.line) {
                 guard let sample = source.parse.sample(frame, at: now) else { continue }
@@ -266,10 +271,10 @@ import Network
                     }
                 }
                 fresh += ToolEvents.raised(p.events ?? [], in: sample, previous: t.history.previous, scope: app.tools.scope(p, on: s.saved, s.target))
-                if let e = ToolEvents.scripted(sample) {
-                    if t.budget.allows(now) { fresh.append(e) }
+                if let e = ToolEvents.scripted(sample), t.budget.allows(now) {   // past 10 an hour: held, said as "N more" once there's room
                     let held = t.budget.takeHeld()
-                    if held > 0, fresh.isEmpty { fresh.append(ToolEventRecord(at: now, id: "more", level: "info", message: "\(p.title): \(held) more")) }
+                    if held > 0 { fresh.append(ToolEventRecord(at: now, id: "more", level: "info", message: "\(p.title): \(held) more")) }
+                    fresh.append(e)
                 }
                 t.events = Array((fresh.reversed() + t.events).prefix(40))
             }
@@ -277,11 +282,12 @@ import Network
         changed()
     }
 
-    private func ended(_ key: String, _ why: String, cancel: CancelFlag?) {
-        guard let s = servers[key], cancel == nil || s.channel === cancel else { return }
-        s.channel = nil
+    private func ended(_ key: String, _ why: String, cancel: CancelFlag) {
+        guard let s = servers[key], s.channel === cancel else { return }
+        (s.channel, s.hold) = (nil, nil)
         channelSources[key] = nil
         s.error = why
+        s.tools.values.forEach { $0.reset() }
         guard s.wanted else { return changed() }
         gap(s, .reconnecting)
         retryLater(s)
@@ -337,7 +343,9 @@ import Network
                 continue
             }
             guard s.channel != nil, let last = s.lastLine else { continue }
-            let missed = Int(now.timeIntervalSince(last) / s.every)
+            // A stream sleeps `every` after its reads, so samples come a little late: an interval is missed only past
+            // half of one more, else a healthy stream would mark gaps and start every `for` over.
+            let missed = max(0, Int((now.timeIntervalSince(last) - s.every / 2) / s.every))
             guard missed > s.missed else { continue }
             s.missed = missed
             gap(s, .noAnswer)
@@ -380,21 +388,20 @@ import Network
 
     /// "Needs login": the lock, then the login as any look's, then the channel.
     func connect(_ t: SFTPTarget) {
-        guard let s = server(t), s.needsLogin else { return }
-        s.needsLogin = false
+        guard let s = server(t), s.needsLogin, !s.connecting else { return }
+        s.connecting = true   // no quiet login meanwhile: a reconcile would find it refused and say "needs login" again
         changed()
         let target = s.target, login = Self.login
         Task {
-            guard await ServerLock.authorize(target, "connect to") else { s.needsLogin = true; return changed() }
+            defer { s.connecting = false; changed() }
+            guard await ServerLock.authorize(target, "connect to") else { return }
             do {
                 try await Blocking.run { try login(target, false) }
                 app.noteLook(target)
+                s.needsLogin = false
+                s.connecting = false
                 start(s)
-            } catch {
-                s.needsLogin = true
-                s.error = error.localizedDescription
-            }
-            changed()
+            } catch { s.error = error.localizedDescription }
         }
     }
 
@@ -415,7 +422,8 @@ import Network
     /// a word on it.
     func worst(_ s: Server) -> (state: State, why: String) {
         if s.down != nil { return (.critical, "not answering") }
-        if s.needsLogin { return (.off, "needs login") }
+        if s.needsLogin { return (.off, s.connecting ? "logging in…" : "needs login") }
+        if s.channel == nil, s.retryAt == nil, let why = s.error { return (.off, why) }   // can't run as it is: its tab says why
         let standing = s.tools.values.flatMap { t in t.alerts.standing.map { (level: $0.state.level!, text: $0.state.message ?? $0.alert) } }
         if let top = standing.max(by: { $0.level < $1.level }) {
             let n = standing.count
@@ -433,33 +441,27 @@ import Network
     var watched: [Server] {
         servers.values.filter(\.watched).sorted { a, b in
             let x = worst(a).state, y = worst(b).state
-            func rank(_ s: State) -> Int { switch s { case .critical: 0; case .warning: 1; default: 2 } }
+            func rank(_ s: State) -> Int { s == .critical ? 0 : s == .warning ? 1 : 2 }
             return rank(x) != rank(y) ? rank(x) < rank(y) : a.saved.title.localizedStandardCompare(b.saved.title) == .orderedAscending
         }
     }
 
-    /// A tool's `summary` on a server (§6.3): each item's value now — a bar's percentage, a count's label with
+    /// A tool's `summary` on a server (§6.3): each item's value now — a bar's share of `max`, a count's label with
     /// `{ok}` / `{bad}` / `{all}`, a text — with the alert's thresholds for the bar.
-    func summary(_ t: Tool) -> [(label: String, value: Double?, text: String, warn: Double?, crit: Double?, level: ToolLevel?)] {
+    func summary(_ t: Tool) -> [(label: String, value: Double?, max: Double, text: String, warn: Double?, crit: Double?, level: ToolLevel?)] {
         let p = t.preset
         return (p.summary ?? []).compactMap { item in
             guard let m = p.metrics?[item.metric] else { return nil }
             let latest = t.history.latest(item.metric)
             let alert = (p.alerts ?? []).first { $0.metric == item.metric }
-            let level = alert.flatMap { t.alerts.states[$0.id ?? item.metric]?.values.compactMap(\.level).max() }
+            let level = t.alerts.worst(metric: item.metric, alerts: p.alerts ?? [])
             switch item.as ?? "text" {
             case "count":
                 let scope = ToolTemplate.Scope(inputs: Dictionary(uniqueKeysWithValues: latest.map { ($0.key, ToolValue.number($0.value)) }))
-                return (m.title ?? item.metric, nil, item.label.map { ToolTemplate.text($0, scope) } ?? latest["all"].map { ToolValue.number($0).text } ?? "—", nil, nil, level)
+                return (m.title ?? item.metric, nil, 100, item.label.map { ToolTemplate.text($0, scope) } ?? latest["all"].map { ToolValue.number($0).text } ?? "—", nil, nil, level)
             default:
-                let values = Array(latest.values)
-                let v: Double? = switch item.of ?? "max" {
-                case "sum": values.isEmpty ? nil : values.reduce(0, +)
-                case "min": values.min()
-                case "avg": values.isEmpty ? nil : values.reduce(0, +) / Double(values.count)
-                default: values.max()
-                }
-                return (item.label ?? m.title ?? item.metric, item.as == "bar" ? v : nil, v.map(m.text) ?? "—", alert?.warn, alert?.crit, level)
+                let v = ToolMetric.one(latest, of: item.of)
+                return (item.label ?? m.title ?? item.metric, item.as == "bar" ? v : nil, m.max ?? 100, v.map(m.text) ?? "—", alert?.warn, alert?.crit, level)
             }
         }
     }
