@@ -99,7 +99,7 @@ import DFMCore
             actions.append(MenuAction.attach(to: b) { [unowned b] in run(b) })
             return b
         }
-        views += [button("Open Monitor  ⌥⌘M", .monitor) { [unowned self] _ in popover.performClose(nil); monitor.open(monitor.watched.first?.target) },
+        views += [button("Open Monitor  ⌃⌘M", .monitor) { [unowned self] _ in popover.performClose(nil); monitor.open(monitor.watched.first?.target) },
                   button("Open Kermo", .folder) { [unowned self] _ in popover.performClose(nil); app.bringBack(app.window) },
                   button(snoozed == nil ? "Snooze Notifications ▾" : "Resume or Snooze ▾", .snooze) { [unowned self] b in
                       Self.snoozeMenu(monitor).popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height), in: b)

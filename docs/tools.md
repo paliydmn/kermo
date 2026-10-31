@@ -158,7 +158,7 @@ On the server a long job runs as the login user in a session of its own (`setsid
 
 ### Notifications
 
-While something is watched, Kermo has an item in the menu bar: a gauge, and how many watched servers have a problem, in red when one is critical, orange for warnings. Its popover lists each watched server as WATCHED does, problems first — a click opens its page — then **Open Monitor** (⌥⌘M: the Tools window on the watched servers), **Open Kermo** and **Snooze Notifications ▾**. Closing the last window leaves Kermo there alone — no Dock icon, no ⌘Tab — watching on, a copy's progress on the item; any of these, a notification, or opening Kermo again brings the Dock icon back. With nothing watched, closing the last window quits Kermo as before.
+While something is watched, Kermo has an item in the menu bar: a gauge, and how many watched servers have a problem, in red when one is critical, orange for warnings. Its popover lists each watched server as WATCHED does, problems first — a click opens its page — then **Open Monitor** (⌃⌘M: the Tools window on the watched servers), **Open Kermo** and **Snooze Notifications ▾**. Closing the last window leaves Kermo there alone — no Dock icon, no ⌘Tab — watching on, a copy's progress on the item; any of these, a notification, or opening Kermo again brings the Dock icon back. With nothing watched, closing the last window quits Kermo as before.
 
 What reaches you:
 

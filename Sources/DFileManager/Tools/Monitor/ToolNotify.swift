@@ -116,7 +116,7 @@ extension ToolMonitor {
         }
     }
 
-    /// Open Monitor (the menu bar, ⌥⌘M, a notification): Kermo in front with the Tools window — on `t`'s page and
+    /// Open Monitor (the menu bar, ⌃⌘M, a notification): Kermo in front with the Tools window — on `t`'s page and
     /// `tool`'s tab when given, else where it was (WATCHED comes first). Once, though a click brings a reopen too (S1).
     func open(_ t: SFTPTarget?, tool: String? = nil) {
         ToolsWindow.show(app, server: t)
