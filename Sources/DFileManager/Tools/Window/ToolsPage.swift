@@ -80,12 +80,11 @@ final class ToolsPage: NSView, RowList {
         outputButton.bezelStyle = .accessoryBarAction
         outputButton.isHidden = true
         let foot = NSStackView(views: [result, outputButton])
-        let fill = NSView()
-        fill.setContentHuggingPriority(.init(2), for: .vertical)
-        body.setContentHuggingPriority(.init(1), for: .vertical)   // a live tab's dashboard takes the height, scrolling inside
-        let stack = NSStackView(views: [top, line, tabRow, body, fill, foot])
+        body.setContentHuggingPriority(.init(1), for: .vertical)   // the body takes the height: a live tab's dashboard fills it, scrolling inside
+        let stack = NSStackView(views: [top, line, tabRow, body, foot])
         stack.orientation = .vertical
         stack.alignment = .leading
+        stack.distribution = .fill
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 14, left: 18, bottom: 12, right: 18)
         stack.setCustomSpacing(4, after: top)

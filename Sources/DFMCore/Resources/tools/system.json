@@ -57,8 +57,10 @@
     { "row": [ { "stat": "cpu" }, { "stat": "mem", "also": "swap" }, { "stat": "load" }, { "stat": "disk", "of": "max" }, { "stat": ["rx", "tx"] } ] },
     { "charts": [ ["cpu"], ["mem"], ["rx", "tx"], ["read", "write"] ], "range": ["1h", "24h", "7d"], "log": "log" },
     { "row": [
-      { "table": "procs", "title": "Top processes", "columns": ["command", "user", "cpu:%", "mem:%", "pid"], "actions": ["folder", "files", "stop", "kill"] },
-      { "table": "disks", "title": "Disks", "columns": ["mount", "pct:bar", "inodes_pct:%", "size:bytes"], "actions": ["biggest"] }
+      { "table": "procs", "title": "Top processes", "actions": ["folder", "files", "stop", "kill"],
+        "columns": ["command", "user", { "field": "cpu:%", "title": "CPU" }, { "field": "mem:%", "title": "Mem" }, { "field": "pid", "title": "PID" }] },
+      { "table": "disks", "title": "Disks", "actions": ["biggest"],
+        "columns": ["mount", { "field": "pct:bar", "title": "Used" }, { "field": "inodes_pct:%", "title": "Inodes" }, { "field": "size:bytes", "title": "Size" }] }
     ] },
     { "row": [ { "events": true }, { "counts": [ { "rows": "failed_units", "title": "failed services", "goto": "services" }, { "rows": "containers", "title": "containers", "goto": "containers" } ] } ] }
   ],

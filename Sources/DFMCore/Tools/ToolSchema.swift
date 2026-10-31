@@ -297,10 +297,9 @@ public enum ToolSchema {
             case .runOrText:
                 if let s = v as? String { texts.append((path, .command, s)) } else { walk(v, .object("run"), path) }
             case .column:
-                if let s = v as? String {
-                    let spec = ToolColumn.spec(s).field
-                    if let fmt = spec.format, !ToolTemplate.columnFormats.contains(fmt) { error(path, "“\(fmt)” isn't a column format") }
-                } else { walk(v, .object("column"), path) }
+                let field = (v as? String) ?? (v as? [String: Any])?["field"] as? String
+                if let fmt = field.flatMap({ ToolColumn.spec($0).field.format }), !ToolTemplate.columnFormats.contains(fmt) { error(path, "“\(fmt)” isn't a column format") }
+                if !(v is String) { walk(v, .object("column"), path) }
             case .object(let name):
                 guard let o = v as? [String: Any] else { return wrong("an object") }
                 let spec = name == "column" ? Object(fields: ["field": .text(.plain), "title": .text(.plain), "width": .number], required: ["field"])

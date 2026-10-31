@@ -421,7 +421,7 @@ extension ServerLockTests {
         #expect(one.said.hasPrefix("99% · "), "\(one.said)")
         charts.model.hover = nil
         #expect(table.rows.map(\.title).count == 2 && table.rows[1].cells.map(\.text) == ["second", "20 %", "2"], "\(table.rows)")
-        #expect(table.table.numberOfRows == 2 && table.table.tableColumns.map(\.title) == ["Command", "Cpu", "Pid", ""])
+        #expect(table.table.numberOfRows == 2 && table.table.tableColumns.map(\.title) == ["Command", "Cpu", "Pid", ""], "\(table.table.numberOfRows) \(table.table.tableColumns.map(\.title))")
         let first = rowButtons(table, 0)
         #expect(first.map(\.title) == ["Folder", "Stop…", "Deeper"] && rowButtons(table, 1).map(\.title) == first.map(\.title), "\(first.map(\.title))")
         try #require(first.count == 3)

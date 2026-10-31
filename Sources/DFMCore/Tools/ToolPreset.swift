@@ -216,14 +216,11 @@ public enum ToolColumn: Sendable, Hashable, Codable {
         }
     }
 
-    /// The field it shows and its display format ("updated_at:ago" → updated_at, ago).
+    /// The field it shows and its display format ("updated_at:ago" → updated_at, ago), in either form.
     public var field: (name: String, format: String?) {
-        switch self {
-        case .spec(let s):
-            guard let i = s.firstIndex(of: ":") else { return (s, nil) }
-            return (String(s[..<i]), String(s[s.index(after: i)...]))
-        case .object(let f, _, _): return (f, nil)
-        }
+        let s = switch self { case .spec(let s): s; case .object(let f, _, _): f }
+        guard let i = s.firstIndex(of: ":") else { return (s, nil) }
+        return (String(s[..<i]), String(s[s.index(after: i)...]))
     }
 }
 

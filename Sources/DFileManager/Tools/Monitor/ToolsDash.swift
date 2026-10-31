@@ -263,17 +263,22 @@ struct OneChart: View {
         heading.font = .systemFont(ofSize: 12, weight: .semibold)
         heading.stringValue = block.title ?? block.table ?? ""
         for c in block.columns ?? [] {
-            let (field, format) = c.field
-            var (title, width) = (field.prefix(1).uppercased() + field.dropFirst(), 80.0)
+            let (field, format) = c.field, number = Self.numbers.contains(format ?? "")
+            let words = field.replacingOccurrences(of: "_", with: " ")
+            var (title, width) = (words.prefix(1).uppercased() + words.dropFirst(), number ? 56.0 : format == "bar" ? 100 : 72)
             if case .object(_, let t, let w) = c { (title, width) = (t ?? title, w ?? width) }
             let col = NSTableColumn(identifier: .init(field))
             (col.title, col.width, col.minWidth) = (title, width, 40)
-            if Self.numbers.contains(format ?? "") { col.headerCell.alignment = .right }
+            if number { col.headerCell.alignment = .right }
             table.addTableColumn(col)
         }
-        if !(block.actions ?? []).isEmpty {
+        if !actions.isEmpty {   // as wide as its buttons
+            let probe = NSButton(title: "", target: nil, action: nil)
+            (probe.controlSize, probe.font) = (.small, .systemFont(ofSize: 11))
             let col = NSTableColumn(identifier: .init("actions"))
-            (col.title, col.width) = ("", 60 * Double(block.actions!.count))
+            col.title = ""
+            col.width = actions.reduce(6) { w, a in probe.title = a.spec.title ?? a.spec.id; return w + probe.fittingSize.width + 4 }
+            col.minWidth = col.width
             table.addTableColumn(col)
         }
         table.dataSource = self
@@ -285,6 +290,8 @@ struct OneChart: View {
         table.setAccessibilityLabel(heading.stringValue)
         scroll.documentView = table
         scroll.hasVerticalScroller = false
+        scroll.hasHorizontalScroller = true   // a narrow window: the buttons stay reachable
+        scroll.autohidesScrollers = true
         scroll.verticalScrollElasticity = .none
         let stack = NSStackView(views: [heading, scroll])
         (stack.orientation, stack.alignment, stack.spacing) = (.vertical, .leading, 4)
@@ -377,7 +384,8 @@ struct OneChart: View {
 /// (`goto`).
 @MainActor final class ToolsEvents: NSView, ToolsBlock {
     private let list = NSStackView()
-    private var shown: [ToolEventRecord] = []
+    /// nil till the first draw: an empty list says "Nothing yet".
+    private var shown: [ToolEventRecord]?
     private var kept: [AnyObject] = []
 
     init() {
