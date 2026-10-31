@@ -54,11 +54,15 @@ public struct ToolFrames {
 
     /// The frames `line` completes.
     public mutating func feed(_ line: String) -> [String] {
-        if poll {
-            held.append(line)
-            guard line.hasPrefix(ToolPayload.ranMark) else { return [] }
+        if poll {   // output with no newline at its end has the mark at the end of its last line
+            guard let mark = line.range(of: ToolPayload.ranMark) else {
+                held.append(line)
+                if held.count > 10_000 { held.removeFirst(held.count - 10_000) }   // a run that never ends: its last lines
+                return []
+            }
             defer { held = [] }
-            return [held.joined(separator: "\n")]
+            if mark.lowerBound > line.startIndex { held.append(String(line[..<mark.lowerBound])) }
+            return [(held + [String(line[mark.lowerBound...])]).joined(separator: "\n")]
         }
         let blank = line.trimmingCharacters(in: .whitespaces).isEmpty
         switch split ?? "line" {
@@ -82,12 +86,13 @@ public struct ToolFrames {
 extension ToolParse {
     /// A frame as a sample (§8.1): a `json` / `jsonl` object or a `nagios` run is the sample itself; anything else — a
     /// table under its header, a regex's groups, lines, Prometheus' samples — is rows, one record or many, so a
-    /// metric's `rows` names them the same way whatever the frame held. A poll's run ends with its exit code. nil: the
-    /// frame gave no record.
-    public func sample(_ frame: String, at: Date) -> ToolSample? {
+    /// metric's `rows` names them the same way whatever the frame held. A poll's run ends with its exit code: one `ok`
+    /// doesn't take is a missed sample (§3, `exitOk`). nil: the frame gave no record.
+    public func sample(_ frame: String, at: Date, ok: ((Int32) -> Bool)? = nil) -> ToolSample? {
         var text = Substring(frame), exit: Int32?
-        if let end = frame.range(of: ToolPayload.ranMark, options: .backwards), end.lowerBound == frame.startIndex || frame[frame.index(before: end.lowerBound)] == "\n" {
+        if let end = frame.range(of: ToolPayload.ranMark, options: .backwards) {
             (text, exit) = (frame[..<end.lowerBound], Int32(frame[end.upperBound...]))
+            if let exit, let ok, !ok(exit) { return nil }
         }
         let r = Self(format: format, rows: rows, pattern: pattern, names: names, split: nil, sort: sort, limit: limit).records(Data(text.utf8), exit: exit)
         guard !r.rows.isEmpty else { return nil }
@@ -126,7 +131,7 @@ extension ToolMetric {
             case "age":
                 guard let v, let d = ToolTemplate.date(v) else { return nil }
                 return now.timeIntervalSince(d) / (["h": 3600, "days": 86400, "ms": 0.001][unit ?? ""] ?? 1)
-            default: return v?.number
+            default: return v?.number.flatMap { $0.isFinite ? $0 : nil }   // Prometheus' NaN and +Inf: no value
             }
         }
         guard let rows, let key else { return number(sample.record, previous?.record).map { ["": $0] } ?? [:] }

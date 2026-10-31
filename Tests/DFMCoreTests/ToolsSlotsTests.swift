@@ -53,5 +53,7 @@ private func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
     let want: [ToolPoint] = [.init(at: t0, gap: .notWatched), .init(at: at(900), value: 10), .init(at: at(1800), value: 12),
                              .init(at: at(2000), gap: .asleep), .init(at: at(9000), value: 30), .init(at: at(9900), gap: .notWatched), .init(at: at(18000), value: 40)]
     #expect(p == want, "\(p)")
+    let twice = [lines[1], .init(t: at(2000).timeIntervalSince1970, tool: "s", gap: .asleep), .init(t: at(2100).timeIntervalSince1970, tool: "s", gap: .reconnecting)]
+    #expect(ToolSlots.points(twice, metric: "cpu", key: "", from: at(1800)).compactMap(\.gap) == [.asleep, .reconnecting], "a gap of another kind is a band of its own")
     #expect(ToolSlots.keys(lines, metric: "disk") == ["/"] && ToolSlots.points(Array(lines.suffix(1)), metric: "disk", key: "/", from: at(18000)) == [.init(at: at(18000), value: 5)])
 }

@@ -10,7 +10,7 @@ public enum ToolHTTPCheck {
     /// (2xx or 3xx), `ms`, `tls_days`, `checked` (Unix seconds), `error`.
     public static func check(_ url: String, method: String = "GET", timeout: Double = 10) async -> ToolRecord {
         var r: ToolRecord = ["url": .string(url), "ok": false, "checked": .number(Date().timeIntervalSince1970.rounded())]
-        guard let u = URL(string: url), ["http", "https"].contains(u.scheme?.lowercased() ?? ""), u.host != nil else {
+        guard valid(url), let u = URL(string: url) else {
             (r["status"], r["error"]) = ("bad address", "not an http:// or https:// address")
             return r
         }
@@ -31,6 +31,12 @@ public enum ToolHTTPCheck {
         }
         if let days = probe.days { r["tls_days"] = .number(days) }
         return r
+    }
+
+    /// An address a check takes: http:// or https:// with a host — what the server sheet lets you save.
+    public static func valid(_ url: String) -> Bool {
+        guard let u = URL(string: url), ["http", "https"].contains(u.scheme?.lowercased() ?? "") else { return false }
+        return u.host?.isEmpty == false
     }
 
     /// Why there was no answer, in a word or two for the table and the alert.

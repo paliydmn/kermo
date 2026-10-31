@@ -729,7 +729,7 @@ extension ServerLockTests {
         ToolsWindow.show(app, server: .local())
         let page = try #require(ToolsWindow.main?.page)
         page.select("pulse")
-        #expect(live(page)?.strip.stringValue.hasPrefix("Watched in the background · every 3 s on battery") == true, "\(live(page)?.strip.stringValue ?? "")")
+        #expect(live(page)?.strip.stringValue.hasPrefix("Watched in the background · every 3 s to save power") == true, "\(live(page)?.strip.stringValue ?? "")")
         app.run("monitor.slowOnBattery")
         await toolsUntil { bench.calls.filter { $0 == "pulse 1 localhost" }.count == 2 }
         #expect(!monitor.slow && s.every == 1, "your switch: as on power")
@@ -764,9 +764,9 @@ extension ServerLockTests {
         monitor.watch(pulse, on: .local(), true)
         await toolsUntil { (monitor.tool("pulse", on: .local())?.history.points("cpu").count ?? 0) >= 3 }
         monitor.watch(pulse, on: .local(), false)
-        await toolsUntil { ToolSlots.read(dir, tool: "pulse", from: Date().addingTimeInterval(-3600)).count == 2 }
-        let lines = ToolSlots.read(dir, tool: "pulse", from: Date().addingTimeInterval(-3600))
-        #expect(lines.first?.v?["cpu"]?[""]?[1] == 10 && lines.last?.gap == .notWatched, "\(lines)")
+        await toolsUntil { ToolSlots.read(dir, tool: "pulse", from: Date().addingTimeInterval(-3600)).last?.gap == .notWatched }
+        let lines = ToolSlots.read(dir, tool: "pulse", from: Date().addingTimeInterval(-3600))   // two slots, if the samples straddled a quarter
+        #expect(lines.first?.v?["cpu"]?[""]?[1] == 10 && lines.last?.gap == .notWatched && lines.count >= 2, "\(lines)")
 
         ToolsWindow.show(app, server: .local())
         let page = try #require(ToolsWindow.main?.page)
@@ -778,7 +778,8 @@ extension ServerLockTests {
         _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
         let d = charts.model.data, cpu = try #require(d.charts.first)
         #expect(d.to.timeIntervalSince(d.from) == 86400 && charts.model.every == 900 && charts.model.days == false)
-        #expect(cpu.lines.first?.points.compactMap(\.value) == [10] && cpu.bands.map(\.gap) == [.notWatched, .notWatched], "before it, and since: \(cpu.bands)")
+        #expect(cpu.lines.first?.points.compactMap(\.value).allSatisfy { $0 == 10 } == true && cpu.bands.first?.gap == .notWatched && cpu.bands.last?.gap == .notWatched,
+                "before it, and since: \(cpu.bands)")
         charts.range.selectedSegment = 0
         _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
         #expect(charts.model.data.to.timeIntervalSince(charts.model.data.from) == 3600 && charts.model.every == 1)

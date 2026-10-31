@@ -225,4 +225,10 @@ private func systemSamples() throws -> [ToolSample] {
     #expect(s.rows("rows").map { $0["name"] } == ["node_load1", "up"])
     let n = try #require(ToolParse(format: .nagios).sample("LOAD CRITICAL - load 9.5 | load1=9.5;2;4\n" + ToolPayload.ranMark + "2", at: at(0)))
     #expect(n.record["status"] == "crit" && ToolValue.object(n.record)["perf.load1"] == 9.5 && n.record["message"] == "LOAD CRITICAL - load 9.5")
+    var g = ToolFrames(split: nil, poll: true)
+    let bare = try #require(g.feed("{\"a\":1}" + ToolPayload.ranMark + "0").first, "output with no newline at its end: the mark ends its line")
+    #expect(ToolParse(format: .json).sample(bare, at: at(0))?.record == ["a": 1])
+    #expect(ToolParse(format: .json).sample("{\"a\":1}\n" + ToolPayload.ranMark + "1", at: at(0), ok: { $0 == 0 }) == nil, "a failed run is a missed sample")
+    let nan = try #require(ToolParse(format: .prometheus).sample("x NaN\ny +Inf\nz 2", at: at(0)))
+    #expect(ToolMetric(path: "value", rows: "rows", key: "name").values(in: nan, previous: nil, now: at(0)) == ["z": 2], "NaN and +Inf are no value")
 }

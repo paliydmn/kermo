@@ -139,7 +139,7 @@ import DFMCore
         s.port = v(port).isEmpty ? nil : Int(v(port)) ?? 0   // 0: not a port, `issue` says so
         s.identityFile = v(key).isEmpty ? nil : v(key)
         s.startDir = v(start).isEmpty ? nil : v(start)
-        s.sites = sites.stringValue.split(whereSeparator: { $0.isWhitespace || $0 == "," }).map(String.init)
+        s.sites = sites.stringValue.split(whereSeparator: \.isWhitespace).map(String.init)   // a comma may be in an address
         s.prod = prod.state == .on
         s.locked = lock.state == .on
         s.readOnly = readOnly.state == .on

@@ -60,20 +60,21 @@ public struct ToolSlots: Sendable {
     // MARK: The files
 
     /// `lines` at the end of their days' files in `dir` (0700; each file 0600), and the files past 7 days deleted.
-    /// ponytail: a file opened and closed each slot — 96 appends a day a server.
+    /// ponytail: a file opened and closed each slot — 96 appends a day a server; a server no longer watched keeps its
+    /// last week till it's watched again or deleted.
     public static func append(_ lines: [Line], to dir: String) {
         guard !lines.isEmpty else { return }
         let fm = FileManager.default
         try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let oldest = name(Date().addingTimeInterval(-Double(days + 1) * 86400))
+        let oldest = name(Date().addingTimeInterval(-Double(days) * 86400))   // today and the 7 days before: a week back from now
         for f in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] where f.hasSuffix(".jsonl") && f < oldest { try? fm.removeItem(atPath: dir + "/" + f) }
         for (day, some) in Dictionary(grouping: lines, by: { name(Date(timeIntervalSince1970: $0.t)) }) {
             let path = dir + "/" + day
             if !fm.fileExists(atPath: path) { fm.createFile(atPath: path, contents: nil, attributes: [.posixPermissions: 0o600]) }
             guard let h = FileHandle(forWritingAtPath: path) else { continue }
-            h.seekToEndOfFile()
-            h.write(Data(some.compactMap { try? String(decoding: JSONEncoder.sorted.encode($0), as: UTF8.self) }.joined(separator: "\n").utf8 + [0x0A]))
-            try? h.close()
+            defer { try? h.close() }
+            _ = try? h.seekToEnd()   // a full disk: the line is lost, never Kermo
+            try? h.write(contentsOf: Data(some.compactMap { try? String(decoding: JSONEncoder.sorted.encode($0), as: UTF8.self) }.joined(separator: "\n").utf8 + [0x0A]))
         }
     }
 
@@ -101,7 +102,7 @@ public struct ToolSlots: Sendable {
         var end = from.timeIntervalSince1970   // where the last slot ended
         for l in lines {
             if let gap = l.gap {
-                if out.last?.gap == nil { out.append(ToolPoint(at: Date(timeIntervalSince1970: l.t), gap: gap)) }
+                if out.last?.gap != gap { out.append(ToolPoint(at: Date(timeIntervalSince1970: l.t), gap: gap)) }
                 continue
             }
             guard let v = l.v?[metric]?[key], v.count == 3 else { continue }

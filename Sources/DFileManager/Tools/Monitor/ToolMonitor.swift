@@ -90,8 +90,10 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         /// 3 on battery or in Low Power Mode (`ToolMonitor.slow`), as its channel was started.
         var pace: Double = 1
         init(_ s: SavedServer, _ t: SFTPTarget) { (saved, target) = (s, t) }
-        var every: Double { (tools.values.compactMap { $0.preset.watch?.every }.min() ?? 60) * pace }
-        var downAfter: Int { tools.values.compactMap { $0.preset.watch?.down }.min() ?? 3 }
+        /// The channel's interval, as paced — what "missed" and "not answering" go by; a server with checks only, theirs.
+        var every: Double { (paced.compactMap { $0.preset.watch?.every }.min() ?? 60) * pace }
+        var downAfter: Int { paced.compactMap { $0.preset.watch?.down }.min() ?? 3 }
+        private var paced: [Tool] { tools.values.contains { $0.preset.source != nil } ? tools.values.filter { $0.preset.source != nil } : Array(tools.values) }
         var watched: Bool { tools.values.contains(where: \.watched) }
         var wanted: Bool { tools.values.contains(where: \.wanted) }
         /// The tools its channel runs: streams and polls (an `http` tool's checks run from this Mac).
@@ -176,10 +178,13 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         }
         let tools = app.tools.tools.filter(\.preset.watchable)
         for s in app.savedServers {
-            for tool in tools where app.tools.settings.watches(tool.preset.id, on: s.id.uuidString) { add(s, Self.target(s), tool, watched: true) }
+            for tool in tools where app.tools.settings.watches(tool.preset.id, on: s.id.uuidString) && (tool.preset.http == nil || !s.sites.isEmpty) {
+                add(s, Self.target(s), tool, watched: true)
+            }
         }
         for page in ToolsWindow.pages where page.window?.isVisible == true {
-            if let tool = page.liveTool, AppDelegate.connected(page.target) || tool.preset.http != nil { add(page.server, page.target, tool, watched: false) }
+            guard let tool = page.liveTool, AppDelegate.connected(page.target) || tool.preset.http != nil else { continue }
+            add(app.savedServers.first { $0.id == page.server.id } ?? page.server, page.target, tool, watched: false)   // as saved now: the page may be older
         }
         let wereWatched = Set(servers.values.filter(\.watched).map(\.key))
         for (key, s) in servers {
@@ -206,6 +211,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
                 if watched { t.watched = true } else { t.live = true }
                 sources.insert(tool.preset.id)
             }
+            s.pace = slow ? 3 : 1
             if !wereWatched.contains(key), s.watched { note(s, "Watching started · every \(Int(s.every)) s") }
             // A tool joined, or one left: the channel runs anew with the sources as they are now.
             if s.channel != nil, Set(s.channelTools.keys) != channelSources[key] { stop(s, why: .reconnecting); s.retryAt = Date() }
@@ -318,7 +324,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         for line in lines {
             guard let tagged = ToolPayload.watchLine(line), let t = s.tools[tagged.tool], let source = t.preset.source else { continue }
             for frame in t.frames.feed(tagged.line) {
-                if let sample = source.parse.sample(frame, at: now) { take(sample, of: t, on: s) }
+                if let sample = source.parse.sample(frame, at: now, ok: { source.run.succeeded($0, format: source.parse.format) }) { take(sample, of: t, on: s) }
             }
         }
         changed()
@@ -421,7 +427,8 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
 
     private func gap(_ s: Server, _ why: ToolGap) {
         let at = Date().addingTimeInterval(s.skew)
-        for t in s.tools.values {
+        // The channel's trouble isn't the checks from this Mac: their streaks and series go on.
+        for t in s.tools.values where t.preset.http == nil || ![.noAnswer, .reconnecting].contains(why) {
             t.history.mark(why, at: at)
             t.alerts.gap()
             if t.watched { record(s, t.slots.mark(why, at: at)) }
@@ -437,6 +444,16 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
     private var awake: IOPMAssertionID = 0
     var keepingAwake: Bool { awake != 0 }
 
+    /// Settings ▸ Monitor's switches (Keep This Mac Awake also in the menu bar's popover).
+    var slowOnBattery: Bool {
+        get { app.defaults.object(forKey: "monitorSlowOnBattery") as? Bool ?? true }
+        set { app.defaults.set(newValue, forKey: "monitorSlowOnBattery"); pace() }
+    }
+    var keepAwake: Bool {
+        get { app.defaults.bool(forKey: "monitorKeepAwake") }
+        set { app.defaults.set(newValue, forKey: "monitorKeepAwake"); pace() }
+    }
+
     /// On battery, and in Low Power Mode, as macOS has them now. Tests: a stand-in.
     nonisolated(unsafe) static var power: @MainActor () -> (battery: Bool, lowPower: Bool) = {
         ((IOPSGetProvidingPowerSourceType(IOPSCopyPowerSourcesInfo().takeRetainedValue())?.takeUnretainedValue() as String?) == kIOPSBatteryPowerValue,
@@ -446,12 +463,12 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
     /// The pace and the assertion as things stand: what's watched, the power, Low Power Mode, your settings.
     func pace() {
         let (battery, lowPower) = Self.power()
-        let slow = (app.defaults.object(forKey: "monitorSlowOnBattery") as? Bool ?? true) && (battery || lowPower)
+        let slow = slowOnBattery && (battery || lowPower)
         if slow != self.slow {
             self.slow = slow
             restart()
         }
-        let want = !battery && app.defaults.bool(forKey: "monitorKeepAwake") && servers.values.contains(where: \.watched)
+        let want = !battery && keepAwake && servers.values.contains(where: \.watched)
         if want, awake == 0 {
             if IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleSystemSleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
                                            "Kermo is watching servers" as CFString, &awake) != kIOReturnSuccess { awake = 0 }
@@ -487,6 +504,12 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         guard !lines.isEmpty else { return }
         let dir = Self.history(s.saved.id)
         disk.async { ToolSlots.append(lines, to: dir) }
+    }
+
+    /// A deleted server's history: after what's still on its way there (the deletion's own "not watched").
+    func forget(_ id: UUID) {
+        let dir = Self.history(id)
+        disk.async { try? FileManager.default.removeItem(atPath: dir) }
     }
 
     /// Kermo quits: each watched tool's slot so far, and "not watched" from now — written before it goes.

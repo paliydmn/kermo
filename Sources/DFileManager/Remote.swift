@@ -94,7 +94,7 @@ struct SavedServer: Codable, Equatable {
             return (.key, "Can't read the key file “\(k)”.")
         }
         // Each opened and fetched on this Mac: a web address and nothing else.
-        if let bad = sites.first(where: { u in URL(string: u).map { !["http", "https"].contains($0.scheme?.lowercased() ?? "") || $0.host?.isEmpty != false } ?? true }) {
+        if let bad = sites.first(where: { !ToolHTTPCheck.valid($0) }) {
             return (.sites, "“\(bad)” isn't an http:// or https:// address.")
         }
         return nil

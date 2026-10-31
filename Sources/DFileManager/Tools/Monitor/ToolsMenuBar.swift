@@ -135,7 +135,7 @@ import DFMCore
             return b
         }
         let awake = NSButton(checkboxWithTitle: "Keep This Mac Awake on Power", target: nil, action: nil)   // Settings ▸ Monitor has it too
-        awake.state = app.defaults.bool(forKey: "monitorKeepAwake") ? .on : .off
+        awake.state = monitor.keepAwake ? .on : .off
         awake.toolTip = "While it's on power and something is watched; closing the lid still puts it to sleep"
         actions.append(MenuAction.attach(to: awake) { [unowned self] in app.run("monitor.keepAwake") })
         let key = app.commands.first { $0.id == "app.monitor" }?.keys.first.map { "  " + $0.display } ?? ""   // as keymap.json has it
