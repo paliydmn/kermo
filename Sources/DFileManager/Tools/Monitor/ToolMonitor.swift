@@ -334,16 +334,20 @@ import Network
         s.events = Array(([ToolEventRecord(at: Date().addingTimeInterval(s.skew), id: "watch", level: level, message: text)] + s.events).prefix(40))
     }
 
-    /// Every second: retries due, intervals missed, "not answering" after `down` of them.
+    private var lastTock = Date()
+
+    /// Every second: retries due, intervals missed, "not answering" after `down` of them. A tick that comes late —
+    /// the app was busy, or stopped a while — judges nothing: the lines that came meanwhile are still to be read.
     private func tock() {
-        let now = Date()
+        let now = Date(), stalled = now.timeIntervalSince(lastTock) > max(3 * Self.tick, 1.5)
+        lastTock = now
         for s in servers.values where s.wanted {
             if s.channel == nil, !s.needsLogin, let at = s.retryAt, at <= now {
                 s.retryAt = nil
                 start(s)
                 continue
             }
-            guard s.channel != nil, let last = s.lastLine else { continue }
+            guard s.channel != nil, let last = s.lastLine, !stalled else { continue }
             // A stream sleeps `every` after its reads, so samples come a little late: an interval is missed only past
             // half of one more, else a healthy stream would mark gaps and start every `for` over.
             let missed = max(0, Int((now.timeIntervalSince(last) - s.every / 2) / s.every))

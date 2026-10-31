@@ -415,11 +415,12 @@ extension ServerLockTests {
         let d = charts.model.data
         #expect(d.charts.map(\.title) == ["CPU", "Ticks"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95 && d.charts[1].warn == nil)
         #expect(d.charts[0].lines.first?.chart.runs.first?.last?.value == 99 && d.to.timeIntervalSince(d.from) == 3600, "\(d.charts[0].lines.first?.points.suffix(2) ?? [])")
-        let one = OneChart(chart: d.charts[0], model: charts.model)
-        #expect(one.said == "99%")
-        charts.model.hover = d.to
+        let model = ToolsCharts.Model()   // its own: the pointer may be over the window's charts, hovering
+        (model.data, model.every) = (d, charts.model.every)
+        let one = OneChart(chart: d.charts[0], model: model)
+        #expect(one.said == "99%", "\(one.said)")
+        model.hover = d.to
         #expect(one.said.hasPrefix("99% · "), "\(one.said)")
-        charts.model.hover = nil
         #expect(table.rows.map(\.title).count == 2 && table.rows[1].cells.map(\.text) == ["second", "20 %", "2"], "\(table.rows)")
         #expect(table.table.numberOfRows == 2 && table.table.tableColumns.map(\.title) == ["Command", "Cpu", "Pid", ""], "\(table.table.numberOfRows) \(table.table.tableColumns.map(\.title))")
         let first = rowButtons(table, 0)

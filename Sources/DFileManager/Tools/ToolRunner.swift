@@ -340,11 +340,10 @@ final class ToolRunner {
         let rowTitle = onRow ? row?.title : nil
         if !readonly { changing[key] = title }
 
-        if a.spec.goto != nil || a.spec.open != nil {   // a place in Kermo, a server path in the panel: no line, no list read again
-            let over = app.rowLists(id).first?.sheetWindow
+        if a.spec.goto != nil || a.spec.open != nil {   // a place in Kermo, a server path in the panel: no list read again
             return Task {
                 defer { if !readonly { changing[key] = nil } }
-                await go(a, of: tool, rowScope, row: rowTitle, on: t, asked: asked, values: values, over: over, timeout: timeout, place: place)
+                await go(a, of: tool, rowScope, row: rowTitle, id: id, on: t, asked: asked, values: values, timeout: timeout, place: place)
             }
         }
 
@@ -427,18 +426,24 @@ final class ToolRunner {
     }
 
     /// `goto`: there, after the lock. `open`: the server path — the command's first output line as `{stdout}`, else the
-    /// template over the row — in the active panel, after the lock and the question as any run's; what went wrong
-    /// flashes where the panel is, since that's where the path would have shown.
-    private func go(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, row: String?, on t: SFTPTarget, asked: Bool,
-                    values: [String: String]?, over window: NSWindow?, timeout: Double, place: String) async {
+    /// template over the row — in the active panel, after the lock and the question as any run's. What went wrong
+    /// is said under the list or page that has the row (a Tools window's table), else where the panel is.
+    private func go(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, row: String?, id: String, on t: SFTPTarget, asked: Bool,
+                    values: [String: String]?, timeout: Double, place: String) async {
         let p = tool.preset, verb = (a.spec.title ?? a.spec.id).replacingOccurrences(of: "…", with: ""), panel = app.active
-        let r = await ready(a, of: tool, scope, row: row, on: t, asked: asked, window: window, values: values)
+        let lists = app.rowLists(id)
+        func tell(_ text: String, failed: Bool) {
+            guard !lists.isEmpty else { return panel.flash(text, error: failed) }
+            let said = NSAttributedString(string: text, attributes: [.foregroundColor: failed ? Palette.fail : NSColor.labelColor, .font: NSFont.systemFont(ofSize: 12)])
+            lists.forEach { $0.said(said, about: id, failed: failed, output: nil) }
+        }
+        let r = await ready(a, of: tool, scope, row: row, on: t, asked: asked, window: lists.first?.sheetWindow, values: values)
         guard case .go(let scope, let secret, _, let payload) = r else {
-            if case .stop(let why) = r { panel.flash("\(verb): \(why) — nothing ran", error: why != "cancelled") }
+            if case .stop(let why) = r { tell(why == "cancelled" ? "\(verb): cancelled — nothing ran" : "\(verb): \(why); nothing ran", failed: why != "cancelled") }
             return
         }
         if let g = a.spec.goto {
-            guard let there = Goto(ToolTemplate.text(g, scope)) else { return panel.flash("\(verb): Kermo has no place “\(g)”", error: true) }
+            guard let there = Goto(ToolTemplate.text(g, scope)) else { return tell("\(verb): Kermo has no place “\(g)”", failed: true) }
             return go(there, on: t)
         }
         var names = scope
@@ -448,12 +453,13 @@ final class ToolRunner {
             let (how, _) = AppDelegate.how(ran(r, a, of: p, on: t, shown: payload.shown))
             guard case .passed = how else {
                 if case .unknown = how { return }
-                return panel.flash(line(how, a, scope, place: place, at: Date().formatted(date: .omitted, time: .shortened), readError: nil, facts: answer(t)?.answer.facts).line, error: true)
+                return tell(line(how, a, scope, place: place, at: Date().formatted(date: .omitted, time: .shortened), readError: nil, facts: answer(t)?.answer.facts).line, failed: true)
             }
             if case .success(let (ran, _)) = r { names.levels[0]["stdout"] = .string(ran.text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "") }
         }
         let path = ToolTemplate.text(a.spec.open ?? "", names)
-        guard path.hasPrefix("/"), ToolTemplate.refusal(path) == nil else { return panel.flash("\(verb): “\(path)” isn't a path on \(place)", error: true) }
+        guard path.hasPrefix("/"), ToolTemplate.refusal(path) == nil else { return tell("\(verb): “\(path)” isn't a path on \(place)", failed: true) }
+        tell("\(verb): \(path) in the panel", failed: false)
         Self.reveal(app, t, path)
     }
 

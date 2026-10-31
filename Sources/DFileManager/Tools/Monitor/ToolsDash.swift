@@ -262,13 +262,14 @@ struct OneChart: View {
         super.init(frame: .zero)
         heading.font = .systemFont(ofSize: 12, weight: .semibold)
         heading.stringValue = block.title ?? block.table ?? ""
+        table.columnAutoresizingStyle = .noColumnAutoresizing   // before the columns: the first takes the slack (`layout`); past the width, it scrolls
         for c in block.columns ?? [] {
             let (field, format) = c.field, number = Self.numbers.contains(format ?? "")
             let words = field.replacingOccurrences(of: "_", with: " ")
-            var (title, width) = (words.prefix(1).uppercased() + words.dropFirst(), number ? 56.0 : format == "bar" ? 100 : 72)
+            var (title, width) = (words.prefix(1).uppercased() + words.dropFirst(), number ? 56.0 : format == "bar" ? 100 : 64)
             if case .object(_, let t, let w) = c { (title, width) = (t ?? title, w ?? width) }
             let col = NSTableColumn(identifier: .init(field))
-            (col.title, col.width, col.minWidth) = (title, width, 40)
+            (col.title, col.width, col.minWidth) = (title, width, table.tableColumns.isEmpty ? 80 : 40)   // the first names the row
             if number { col.headerCell.alignment = .right }
             table.addTableColumn(col)
         }
@@ -277,7 +278,7 @@ struct OneChart: View {
             (probe.controlSize, probe.font) = (.small, .systemFont(ofSize: 11))
             let col = NSTableColumn(identifier: .init("actions"))
             col.title = ""
-            col.width = actions.reduce(6) { w, a in probe.title = a.spec.title ?? a.spec.id; return w + probe.fittingSize.width + 4 }
+            col.width = actions.reduce(6) { w, a in probe.title = a.spec.title ?? a.spec.id; return w + probe.intrinsicContentSize.width + 4 }
             col.minWidth = col.width
             table.addTableColumn(col)
         }
@@ -286,7 +287,6 @@ struct OneChart: View {
         table.rowHeight = 22
         table.usesAlternatingRowBackgroundColors = true
         table.selectionHighlightStyle = .none
-        table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         table.setAccessibilityLabel(heading.stringValue)
         scroll.documentView = table
         scroll.hasVerticalScroller = false
@@ -304,11 +304,24 @@ struct OneChart: View {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// The first column as wide as the block leaves it, the others as set.
+    override func layout() {
+        super.layout()
+        guard let first = table.tableColumns.first, let clip = table.enclosingScrollView?.contentView else { return }
+        let rest = table.tableColumns.dropFirst().reduce(0) { $0 + $1.width } + CGFloat(table.tableColumns.count) * table.intercellSpacing.width
+        let width = max(first.minWidth, clip.bounds.width - rest)
+        if abs(first.width - width) > 0.5 { first.width = width }
+    }
+
     private var actions: [ToolAction] { (block.actions ?? []).compactMap { id in source.preset.actions?.first { $0.spec.id == id } } }
 
     func update(_ live: ToolsLive) {
         let scope = live.app.tools.scope(live.tool.preset, on: live.server, live.target), now = live.now
-        let fresh = (live.known?.history.rows(block.table ?? "") ?? []).map { view.row($0, scope, now: now) }
+        let fresh = (live.known?.history.rows(block.table ?? "") ?? []).map { record -> ToolRow in
+            var r = view.row(record, scope, now: now)
+            r.title = r.cells.first?.text ?? r.title   // the first column names the row in a question ("sleep"), its record is its key
+            return r
+        }
         guard fresh != rows else { return }
         rows = fresh
         kept = []
