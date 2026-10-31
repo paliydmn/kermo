@@ -377,12 +377,17 @@ struct OneChart: View {
 
     /// The row's buttons: one an action; pressed, it waits for its run.
     private func buttons(_ row: ToolRow) -> NSView {
-        let p = source.preset, id = source.rowID(row.key), known = source.app.tools.answers[ServerRow.key(source.target)]?.answer
+        let p = source.preset, id = source.rowID(row.key), known = source.app.tools.answers[ServerRow.key(source.target)]?.answer, monitor = source.app.tools.monitor
         let views = actions.map { a -> NSButton in
             let title = (a.spec.title ?? a.spec.id)
             let b = NSButton(title: title, target: nil, action: nil)
             b.controlSize = .small
             b.font = .systemFont(ofSize: 11)
+            if a.spec.check == true, let s = monitor.server(source.target), let t = s.tools[p.id] {   // Check Now: the checks, at once
+                b.toolTip = "Check every address now, from this Mac"
+                kept.append(MenuAction.attach(to: b) { [weak s, weak t] in if let s, let t { monitor.check(t, on: s) } })
+                return b
+            }
             guard ToolRunner.runs(a, of: p) else {
                 b.isEnabled = false
                 b.toolTip = "\(title): levels of a list come with a later release"

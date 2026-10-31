@@ -19,6 +19,7 @@ struct SavedServer: Codable, Equatable {
     var prod = false           // production: `color` in the sidebar and headers; delete, overwrite and move there ask first
     var readOnly = false       // Tools run only `readonly` actions there (D-098: the rest of Kermo doesn't look at it yet)
     var tunnels: [Tunnel] = [] // ports on this Mac that lead to it, or past it (`Tunnels`)
+    var sites: [String] = []   // web addresses Tools ▸ Sites checks from this Mac (`ToolHTTPCheck`)
 
     init() {}
 
@@ -55,6 +56,7 @@ struct SavedServer: Codable, Equatable {
         prod = try c.decodeIfPresent(Bool.self, forKey: .prod) ?? false
         readOnly = try c.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
         tunnels = try c.decodeIfPresent([Tunnel].self, forKey: .tunnels) ?? []
+        sites = try c.decodeIfPresent([String].self, forKey: .sites) ?? []
     }
 
     /// A saved server's name for `t`, else its address: what questions and hints call it.
@@ -81,7 +83,7 @@ struct SavedServer: Codable, Equatable {
     /// Why ssh can't take it, or nil. A leading "-" would make ssh read it as an option (-oProxyCommand=…).
     var problem: String? { issue?.message ?? Tunnel.problem(tunnels) }
 
-    enum Field { case host, user, port, key }
+    enum Field { case host, user, port, key, sites }
     /// What's wrong with what ssh gets, and in which field (the server sheet says it under that one).
     var issue: (field: Field, message: String)? {
         if host.isEmpty { return (.host, "Enter a host.") }
@@ -90,6 +92,10 @@ struct SavedServer: Codable, Equatable {
         if let p = port, !(1...65535).contains(p) { return (.port, "The port must be 1–65535.") }
         if let k = identityFile, !FileManager.default.isReadableFile(atPath: (k as NSString).expandingTildeInPath) {
             return (.key, "Can't read the key file “\(k)”.")
+        }
+        // Each opened and fetched on this Mac: a web address and nothing else.
+        if let bad = sites.first(where: { u in URL(string: u).map { !["http", "https"].contains($0.scheme?.lowercased() ?? "") || $0.host?.isEmpty != false } ?? true }) {
+            return (.sites, "“\(bad)” isn't an http:// or https:// address.")
         }
         return nil
     }

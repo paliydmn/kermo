@@ -212,7 +212,7 @@ extension ServerLockTests {
     let form = ServerForm(SavedServer(), hasPassword: false, hasSudo: false)
     let words = (0..<form.grid.numberOfRows).compactMap { (form.grid.cell(atColumnIndex: 0, rowIndex: $0).contentView as? NSTextField)?.stringValue }
         .filter { !$0.isEmpty && !$0.hasPrefix("ssh") }
-    #expect(words == ["Connection", "Host", "User · Port", "Name", "Sign in", "Key", "Password", "Safety", "Production", "Lock", "Read-only", "Open", "Start folder"])
+    #expect(words == ["Connection", "Host", "User · Port", "Name", "Sign in", "Key", "Password", "Safety", "Production", "Lock", "Read-only", "Open", "Start folder", "Tools", "Sites"])
     #expect(form.preview.stringValue == "ssh …" && form.typed.issue?.field == .host)
     form.host.stringValue = "web-01.example.net"
     form.user.stringValue = "deploy"

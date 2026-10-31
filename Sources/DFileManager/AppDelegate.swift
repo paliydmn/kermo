@@ -66,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         didSet {
             tunnels.sync(savedServers)   // a tunnel gone or changed: its port follows
             Task { await ServerLock.learn(again: true) }
+            tools.monitor.reconcile()   // watching follows: Sites' addresses, a new title
         }
     }
     var serverPins: [String] = Config.noting(Config.loadEach("server-pins.json", as: String.self))   // addresses, in pin order

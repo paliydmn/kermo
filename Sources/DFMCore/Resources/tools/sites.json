@@ -19,7 +19,7 @@
   "summary": [ { "metric": "up", "as": "count", "label": "{ok} of {all} up" } ],
 
   "alerts": [
-    { "id": "down", "metric": "up",       "crit": 0,                "below": true, "checks": 2, "message": "{url} answers {status}" },
+    { "id": "down", "metric": "up",       "crit": 0,                "below": true, "checks": 2, "message": "{url} is down: {status}" },
     { "id": "slow", "metric": "latency",  "warn": 2000,             "for": { "warn": "5m" },  "message": "{url} takes {ms} ms" },
     { "id": "tls",  "metric": "tls_days", "warn": 14,  "crit": 3,   "below": true,           "message": "{url}: certificate ends in {tls_days} days" }
   ],

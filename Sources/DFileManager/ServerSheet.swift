@@ -6,7 +6,7 @@ import DFMCore
 /// Production is a switch here, the same `prod` the sidebar's Mark as Production sets. What it reads back: `typed`.
 @MainActor final class ServerForm: NSObject, NSTextFieldDelegate {
     let host = NSTextField(), user = NSTextField(), port = NSTextField(), name = NSTextField(), key = NSTextField(),
-        password = NSSecureTextField(), shown = NSTextField(), start = NSTextField()
+        password = NSSecureTextField(), shown = NSTextField(), start = NSTextField(), sites = NSTextField()
     let choose = NSButton(title: "Choose…", target: nil, action: nil)
     let eye = NSButton(image: Symbol.show.image("Show the password"), target: nil, action: nil)
     /// Only where there's one saved.
@@ -39,7 +39,8 @@ import DFMCore
                                  (port, server.port.map(String.init) ?? "", "22"), (name, server.name, "shown in the sidebar; empty = the address"),
                                  (key, server.identityFile ?? "", "ssh's own: agent, config"),
                                  (password, "", hasPassword ? "••••••••" : "ask each time; saved in the Keychain"),
-                                 (start, server.startDir ?? "", "for SFTP; empty = the login folder")] {
+                                 (start, server.startDir ?? "", "for SFTP; empty = the login folder"),
+                                 (sites, server.sites.joined(separator: " "), "https://… — checked from this Mac (Tools ▸ Sites)")] {
             f.stringValue = value
             f.placeholderString = hint
         }
@@ -58,7 +59,7 @@ import DFMCore
         grid = NSGridView(numberOfColumns: 2, rows: 0)
         super.init()
         build()
-        for f in [host, user, port, name, key, password, shown, start] { f.delegate = self }
+        for f in [host, user, port, name, key, password, shown, start, sites] { f.delegate = self }
         for s in [prod, lock, readOnly] { actions.append(MenuAction.attach(to: s) { [weak self] in self?.changed() }) }
         actions.append(MenuAction.attach(to: choose) { [weak self] in self?.chooseKey() })
         actions.append(MenuAction.attach(to: eye) { [weak self] in self?.reveal() })
@@ -115,6 +116,8 @@ import DFMCore
         for s in Self.safety(self) { line(s.label, row([s.control, hint(s.hint)])) }
         header("Open")
         line("Start folder", field(start))
+        header("Tools")
+        line("Sites", field(sites)); error(.sites)
         grid.column(at: 0).xPlacement = .trailing
         grid.rowAlignment = .firstBaseline
         grid.rowSpacing = 6
@@ -136,6 +139,7 @@ import DFMCore
         s.port = v(port).isEmpty ? nil : Int(v(port)) ?? 0   // 0: not a port, `issue` says so
         s.identityFile = v(key).isEmpty ? nil : v(key)
         s.startDir = v(start).isEmpty ? nil : v(start)
+        s.sites = sites.stringValue.split(whereSeparator: { $0.isWhitespace || $0 == "," }).map(String.init)
         s.prod = prod.state == .on
         s.locked = lock.state == .on
         s.readOnly = readOnly.state == .on

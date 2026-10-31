@@ -1,4 +1,5 @@
 import AppKit
+import Network
 import UserNotifications
 @testable import DFMCore
 import Testing
@@ -60,6 +61,30 @@ import Testing
               "toolActions": [ { "id": "ssh", "title": "Terminal", "goto": "ssh" }, { "id": "svc", "title": "Services", "goto": "services:{server}.service" } ] }
             """.utf8).write(to: URL(fileURLWithPath: bench.dir + "/own/\(id).json"))
     }
+}
+
+/// A web server on 127.0.0.1 for Sites: each request gets the status `answer` gives for its path.
+private final class LocalWeb: @unchecked Sendable {
+    let listener: NWListener
+    var url: String { "http://127.0.0.1:\(listener.port!.rawValue)" }
+    init(_ answer: @escaping @Sendable (String) -> Int) throws {
+        let params = NWParameters.tcp
+        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)   // loopback only: no firewall question
+        listener = try NWListener(using: params)
+        listener.newConnectionHandler = { c in
+            c.start(queue: .global())
+            c.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, _, _ in
+                let words = String(decoding: data ?? Data(), as: UTF8.self).split(separator: " ")
+                let head = "HTTP/1.1 \(answer(words.count > 1 ? String(words[1]) : "/")) X\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                c.send(content: Data(head.utf8), completion: .contentProcessed { _ in c.cancel() })
+            }
+        }
+        let ready = DispatchSemaphore(value: 0)
+        listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
+        listener.start(queue: .global())
+        _ = ready.wait(timeout: .now() + 5)
+    }
+    func done() { listener.cancel() }
 }
 
 @MainActor private func pid(_ bench: ToolsBench, _ server: String = "localhost", _ id: String = "pulse") -> pid_t? {
@@ -637,6 +662,39 @@ extension ServerLockTests {
         monitor.clicked(UNNotificationDefaultActionIdentifier, sent.info)
         let w = try #require(ToolsWindow.main)
         #expect(w.page?.tab == "pulse" && posts.activations.last?.0 == .regular && posts.activations.last?.1 === w.window, "Open: its tab, Kermo in front")
+    }
+
+    /// Sites: the server's addresses (Edit Server) checked from this Mac with no channel — each round one sample of
+    /// `urls` rows, in the order saved: the table, "1 of 2 up"; two failed checks in a row are `down`, critical, a
+    /// notification. Check Now in a row checks at once. An address that isn't http(s) keeps the server sheet's Save off.
+    @Test func sitesChecksTheServersAddressesFromThisMac() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), posts = Posts(), web = try LocalWeb { $0 == "/down" ? 503 : 200 }
+        defer { web.done(); posts.done(); quick.done(); bench.done(); done(); app.savedServers = [] }
+        var saved = SavedServer(address: "localhost")!
+        saved.sites = ["ftp://example.com"]
+        #expect(saved.issue?.field == .sites)
+        saved.sites = [web.url + "/", web.url + "/down"]
+        #expect(saved.issue == nil)
+        try await watching(app, bench, servers: [saved])
+        let monitor = app.tools.monitor
+        await toolsUntil { app.tools.here(.local())?.tools.contains { $0.preset.id == "sites" } == true }
+        monitor.watch(try toolNamed(app, "sites"), on: .local(), true)
+        await toolsUntil { monitor.tool("sites", on: .local())?.history.rows("urls").count == 2 }
+        let s = try #require(monitor.server(.local())), t = try #require(s.tools["sites"])
+        #expect(s.channel == nil && monitor.worst(s).state == .ok, "from this Mac: no channel, and none missed")
+        #expect(t.history.rows("urls").map { $0["status"] } == [200, 503] && t.history.rows("urls").map { $0["ok"] } == [true, false])
+        #expect(monitor.summary(t, on: s).first?.text == "1 of 2 up" && posts.sent.isEmpty, "one failed check isn't down yet")
+
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("sites")
+        await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 2 }
+        let view = try #require(live(page)), table = try #require(view.blocks.compactMap { $0 as? ToolsTable }.first)
+        #expect(view.foot.stringValue.hasSuffix("checked from this Mac · no SSH") && !view.addButton.isHidden && view.banner.isHidden, "\(view.foot.stringValue)")
+        press(rowButtons(table, 1).first { $0.title == "Check Now" })
+        await toolsUntil { posts.sent.count == 1 }
+        #expect(posts.sent.first?.body == "Sites: \(web.url)/down is down: 503" && monitor.worst(s).state == .critical, "\(posts.sent)")
     }
 
     /// A script's critical `_event` notifies, as the server's not answering does; a tool only live on an open tab

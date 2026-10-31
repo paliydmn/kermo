@@ -59,6 +59,7 @@ public enum ToolValue: Sendable, Hashable, Codable {
         switch self {
         case .number(let n): n
         case .string(let s): Double(s.trimmingCharacters(in: .whitespaces))
+        case .bool(let b): b ? 1 : 0   // a check's `ok`: up is 1, a metric like any other
         default: nil
         }
     }
@@ -492,8 +493,9 @@ public struct ToolPreset: Sendable, Hashable, Codable {
 
     /// Its stream or poll (§8.1): what watching runs.
     public var source: ToolSource? { stream ?? poll }
-    /// Whether it can be watched, or live on a tab: a stream or a poll, and `watch` saying how often.
-    public var watchable: Bool { watch != nil && source != nil }
+    /// Whether it can be watched, or live on a tab: a stream, a poll or checks from this Mac (`http`), and `watch`
+    /// saying how often.
+    public var watchable: Bool { watch != nil && (source != nil || http != nil) }
 
     /// A one-command tool's (§1) command as an action — what its Tools ▸ item and its place row run; nil for others.
     public var commandAction: ToolAction? {
