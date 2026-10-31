@@ -402,7 +402,10 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             let bs = list.map { b -> NSButton in
                 let button = NSButton(title: b.title, target: nil, action: nil)
                 button.setAccessibilityLabel("\(b.title.replacingOccurrences(of: "…", with: "")) — \(r.title)")   // "Edit — keymap.json", not five "Edit…"
-                target(button) { [unowned self] in app.run(b.command) }
+                target(button) { [unowned self] in
+                    window.makeFirstResponder(nil)   // a field still being typed in is written first: Send Test runs what it shows
+                    app.run(b.command)
+                }
                 return button
             }
             if bs.count == 1 { return bs[0] }

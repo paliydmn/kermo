@@ -97,9 +97,9 @@ import Testing
     /// How the app went to the menu bar alone, or back with a window in front.
     var activations: [(NSApplication.ActivationPolicy, NSWindow?)] = []
     init() {
-        ToolJobs.notices = .init(allowed: { [unowned self] in allowed }, ask: { [unowned self] in asked += 1 },
-                                 post: { [unowned self] in sent.append(($0, $1, $2, $3)) })
-        AppDelegate.activation = { [unowned self] in activations.append(($0, $1)) }
+        ToolJobs.notices = .init(allowed: { [weak self] in self?.allowed ?? nil }, ask: { [weak self] in self?.asked += 1 },
+                                 post: { [weak self] in self?.sent.append(($0, $1, $2, $3)) })   // a delivery late after the test: dropped
+        AppDelegate.activation = { [weak self] in self?.activations.append(($0, $1)) }
     }
     func done() { (ToolJobs.notices, AppDelegate.activation) = was }
 }
@@ -597,6 +597,11 @@ extension ServerLockTests {
         #expect(try String(contentsOfFile: out, encoding: .utf8) == "argc=0\nKERMO_LEVEL=critical\nKERMO_MESSAGE=CPU 99%\nKERMO_SERVER=localhost\nKERMO_TOOL=pulse\n")
         #expect(t.events.contains { $0.message == "hot: 99" && $0.level == "warning" }, "the warning is there, not notified")
         #expect(ToolsMenuBar.head(monitor).text == "1 critical")
+        let bar = ToolsMenuBar(app)   // its popover's content, never shown: no item in the menu bar of the Mac running the tests
+        bar.fill()
+        let content = try #require(bar.popover.contentViewController?.view)
+        #expect(labels(content).contains("Monitor · 1 critical") && labels(content).contains("localhost"), "\(labels(content))")
+        #expect(buttons(content).map(\.title) == ["Open Monitor  ⌃⌘M", "Open Kermo", "Snooze Notifications ▾"] && bar.item == nil, "\(buttons(content).map(\.title))")
         await toolsUntil { DockTile.problems == 1 }
         #expect(DockTile.problems == 1, "the Dock's badge counts it")
         try await Task.sleep(for: .milliseconds(500))
@@ -746,19 +751,18 @@ extension ServerLockTests {
             asked = edits
             return edits.map { e in
                 var e = e
-                if e.scope == id { (e.mine, e.notify) = (.init(crit: 100), false) }
+                if e.scope == id { (e.mine, e.notify) = (.init(crit: 98), false) }
                 return e
             }
         }
         await app.tools.thresholds(on: .local(), window: nil)
         #expect(asked.filter { $0.tool == "pulse" }.map { "\($0.alert) \($0.scope == nil ? "all" : "this")" } == ["cpu all", "cpu this"], "\(asked)")
-        #expect(app.tools.settings.alerts(t.preset, on: id).first?.crit == 100 && app.tools.settings.mutes("cpu", of: "pulse", on: id))
+        #expect(app.tools.settings.alerts(t.preset, on: id).first?.crit == 98 && app.tools.settings.mutes("cpu", of: "pulse", on: id))
+        #expect(monitor.summary(t, on: s).first?.crit == 98, "WATCHED's bar by your threshold")
         bench.flag("hot-localhost")
-        await toolsUntil { t.alerts.worst != nil }
+        await toolsUntil { t.alerts.worst == .critical }
         try await Task.sleep(for: .milliseconds(400))
-        #expect(t.alerts.worst == .warning && monitor.worst(s) == (.warning, "CPU 99%"), "99 is under your 100: a warning")
-        #expect(monitor.summary(t, on: s).first?.crit == 100)
-        #expect(posts.sent.isEmpty)
+        #expect(monitor.worst(s) == (.critical, "CPU 99%") && posts.sent.isEmpty, "critical by your 98, and Notify unticked: shown, not sent")
     }
 
     /// Maintenance on a watched server: a critical alert stands as ever, nothing notifies; the live tab says till when

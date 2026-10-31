@@ -243,8 +243,8 @@ extension ToolRunner {
             }
             c.note = ((rules.isEmpty ? [] : ["Alerts (Thresholds… on the page changes them):"] + rules)
                       + ["The connection stays open while \(s.title) is watched — it shows in w and last there. "
-                         + (s.locked ? "\(s.title) is locked: watching resumes by itself after the Mac sleeps or locks, without Touch ID — the lock guards actions in Kermo, not the connection."
-                                     : "Warnings show in the menu bar; critical alerts also come as notifications and run your on_alert (Settings ▸ Monitor).")]).joined(separator: "\n")
+                         + (s.locked ? "\(s.title) is locked: watching resumes by itself after the Mac sleeps or locks, without Touch ID — the lock guards actions in Kermo, not the connection. " : "")
+                         + "Warnings show in the menu bar; critical alerts also come as notifications and run your on_alert (Settings ▸ Monitor)."]).joined(separator: "\n")
             guard await app.confirm(c, on: window) == 0 else { return false }
         }
         monitor.watch(tool, on: t, true)

@@ -21,9 +21,9 @@ extension ToolRunner {
     /// Done keeps them.
     func thresholds(on t: SFTPTarget, window: NSWindow?) async {
         let id = serverID(t), title = app.savedServer(at: t)?.title ?? t.shown
-        let watched = (here(t)?.tools ?? tools).filter { $0.preset.watchable && !($0.preset.alerts ?? []).isEmpty }   // the server's
+        let watchable = (here(t)?.tools ?? tools).filter { $0.preset.watchable && !($0.preset.alerts ?? []).isEmpty }   // the server's
         let scopes: [String?] = [nil] + (id.map { [$0] } ?? [])
-        let edits = watched.flatMap { tool in
+        let edits = watchable.flatMap { tool in
             (tool.preset.alerts ?? []).flatMap { a in
                 let key = a.id ?? a.metric ?? "", tid = tool.preset.id
                 return scopes.map { scope in
@@ -31,7 +31,7 @@ extension ToolRunner {
                 }
             }
         }
-        let got = if let answer = Self.thresholding { await answer(edits) } else { await thresholdsSheet(watched, edits, server: id.map { ($0, title) }, window: window ?? app.window) }
+        let got = if let answer = Self.thresholding { await answer(edits) } else { await thresholdsSheet(watchable, edits, server: id.map { ($0, title) }, window: window ?? app.window) }
         guard let got else { return }
         for e in got {
             settings.setThreshold(e.mine, alert: e.alert, of: e.tool, on: e.scope)
@@ -59,15 +59,15 @@ extension ToolRunner {
             grid.mergeCells(inHorizontalRange: NSRange(location: 0, length: 5), verticalRange: NSRange(location: grid.numberOfRows - 1, length: 1))
             for a in p.alerts ?? [] {
                 let key = a.id ?? a.metric ?? "", m = a.metric.flatMap { p.metrics?[$0] }
-                func field(_ preset: Double?) -> NSTextField? {
+                func field(_ preset: Double?, _ level: String) -> NSTextField? {
                     guard preset != nil else { return nil }   // the tool has none: nothing to change
                     let f = NSTextField()
                     f.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
                     f.widthAnchor.constraint(equalToConstant: 60).isActive = true
-                    f.setAccessibilityLabel("\(m?.title ?? key) \(preset == a.warn ? "warning" : "critical")")
+                    f.setAccessibilityLabel("\(m?.title ?? key) \(level)")
                     return f
                 }
-                let warn = field(a.warn), crit = field(a.crit), unit = m?.unit ?? ""
+                let warn = field(a.warn, "warning"), crit = field(a.crit, "critical"), unit = m?.unit ?? ""
                 func cell(_ f: NSTextField?) -> NSView {
                     guard let f else { return small("—") }
                     let h = NSStackView(views: [f, small(unit)])
@@ -135,6 +135,7 @@ extension ToolRunner {
             seg.selectedSegment = 0
             kept.append(MenuAction.attach(to: seg) {
                 store()
+                guard done.isEnabled else { seg.selectedSegment = scope == nil ? 0 : 1; return }   // a field that isn't a number stays in sight
                 scope = seg.selectedSegment == 0 ? nil : server.id
                 load()
             })

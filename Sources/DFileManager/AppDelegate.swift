@@ -150,7 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             UNUserNotificationCenter.current().setNotificationCategories(ToolJobs.Notices.categories)
         }
         tools.monitor.menuBar = ToolsMenuBar(self)   // shown while something is watched
-        DockTile.changed = { [unowned self] in tools.monitor.menuBar?.update() }
+        DockTile.changed = { [unowned self] in tools.monitor.menuBar?.update(rows: false) }
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.windowClosed() }
         }
@@ -522,9 +522,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { tools.monitor.watched.isEmpty }
 
     /// Dock click with the main window closed (a viewer kept the app alive), or Kermo opened again from the menu bar
-    /// alone: bring it back.
+    /// alone: bring it back — a moment later, and not for a notification's click, which brings a reopen too (S1) and
+    /// shows its own window.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !window.isVisible { bringBack(window) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [self] in
+            if !window.isVisible, Date().timeIntervalSince(ToolJobs.Clicks.at) > 1 { bringBack(window) }
+        }
         return true
     }
 

@@ -38,7 +38,8 @@ extension ToolMonitor {
 
     /// Your `on_alert` (Settings ▸ Monitor; never a tool's, §8.3) on this Mac, in your login shell — so it finds what
     /// your Terminal finds (curl, ntfy) — with what happened in its environment only, never in its words. Not waited
-    /// for past 30 s. Its end, as the server's events say it.
+    /// for past 30 s: its whole group stops (`Process` makes it the leader). Its end, as the server's events say it.
+    /// ponytail: a thread waits on each run; a burst of criticals (one per disk) is as many shells at once.
     nonisolated static func onAlert(_ command: String, env: [String: String]) async -> String {
         await Blocking.run(.utility) { () -> String in
             let p = Process(), ended = DispatchSemaphore(value: 0)
@@ -49,7 +50,7 @@ extension ToolMonitor {
             p.terminationHandler = { _ in ended.signal() }
             do { try p.run() } catch { return "on_alert couldn't run: \(error.localizedDescription)" }
             guard ended.wait(timeout: .now() + 30) == .success else {
-                p.terminate()
+                killpg(p.processIdentifier, SIGTERM)
                 return "on_alert still running after 30 s: stopped"
             }
             return p.terminationStatus == 0 ? "on_alert ran" : "on_alert failed: exit \(p.terminationStatus)"

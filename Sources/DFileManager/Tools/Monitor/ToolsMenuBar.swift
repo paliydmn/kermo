@@ -30,8 +30,9 @@ import DFMCore
                 monitor.snoozed.map { "snoozed until " + $0.formatted(date: .omitted, time: .shortened) })
     }
 
-    /// Watching changed: the item made or gone, its count and color, the popover's rows if it's open.
-    func update() {
+    /// Watching changed: the item made or gone, its count and color, the popover's rows if it's open (`rows`: not
+    /// for a copy's progress, which changes only the item).
+    func update(rows: Bool = true) {
         let monitor = app.tools.monitor, watched = monitor.watched
         guard !watched.isEmpty else {
             popover.performClose(nil)
@@ -43,17 +44,16 @@ import DFMCore
         guard let b = item.button else { return }
         let states = watched.map { monitor.worst($0).state }, bad = states.filter { $0 == .critical || $0 == .warning }.count
         let color = states.contains(.critical) ? Palette.fail : Palette.warn
-        var title = NSMutableAttributedString(string: bad > 0 ? " \(bad)" : "", attributes: [.foregroundColor: color, .font: NSFont.menuBarFont(ofSize: 0)])
+        let title = NSMutableAttributedString(string: bad > 0 ? " \(bad)" : "", attributes: [.foregroundColor: color, .font: NSFont.menuBarFont(ofSize: 0)])
         if NSApp.activationPolicy() == .accessory, let f = DockTile.fraction {   // no Dock to show a copy's progress (plan §7)
             title.append(NSAttributedString(string: " \(Int(f * 100))%", attributes: [.font: NSFont.menuBarFont(ofSize: 0)]))
         }
-        if title.length == 0 { title = NSMutableAttributedString() }
         b.attributedTitle = title
         b.appearsDisabled = monitor.snoozed != nil
         let (head, snoozed) = Self.head(monitor)
         b.setAccessibilityLabel("Kermo Monitor: " + head + (snoozed.map { ", " + $0 } ?? ""))
         b.toolTip = "Kermo Monitor — " + head
-        if popover.isShown { fill() }
+        if rows, popover.isShown { fill() }
     }
 
     private func make() -> NSStatusItem {
@@ -73,8 +73,8 @@ import DFMCore
         popover.contentViewController?.view.window?.makeKey()   // ⎋ reaches it without Kermo in front
     }
 
-    /// The head, a row a server — a click opens its page — and the buttons.
-    private func fill() {
+    /// The head, a row a server — a click opens its page — and the buttons; tests read them without showing them.
+    func fill() {
         let monitor = app.tools.monitor, (head, snoozed) = Self.head(monitor)
         let title = NSTextField(labelWithString: "Monitor · " + head)
         title.font = .systemFont(ofSize: 12, weight: .semibold)
@@ -99,7 +99,8 @@ import DFMCore
             actions.append(MenuAction.attach(to: b) { [unowned b] in run(b) })
             return b
         }
-        views += [button("Open Monitor  ⌃⌘M", .monitor) { [unowned self] _ in popover.performClose(nil); monitor.open(monitor.watched.first?.target) },
+        let key = app.commands.first { $0.id == "app.monitor" }?.keys.first.map { "  " + $0.display } ?? ""   // as keymap.json has it
+        views += [button("Open Monitor" + key, .monitor) { [unowned self] _ in popover.performClose(nil); monitor.open(monitor.watched.first?.target) },
                   button("Open Kermo", .folder) { [unowned self] _ in popover.performClose(nil); app.bringBack(app.window) },
                   button(snoozed == nil ? "Snooze Notifications ▾" : "Resume or Snooze ▾", .snooze) { [unowned self] b in
                       Self.snoozeMenu(monitor).popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height), in: b)

@@ -394,11 +394,15 @@ struct ToolJob: Codable, Equatable {
     /// A notification clicked: Kermo in front, Activity showing — once, though a click brings both this and a reopen (S1).
     /// A watched server's: its button, or its page (`ToolMonitor.clicked`).
     final class Clicks: NSObject, UNUserNotificationCenterDelegate {
+        /// The last click: the reopen it brings leaves the main window alone (`AppDelegate.applicationShouldHandleReopen`).
+        @MainActor static var at = Date.distantPast
+
         nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                                 withCompletionHandler done: @escaping () -> Void) {
             let info = response.notification.request.content.userInfo as? [String: String] ?? [:], action = response.actionIdentifier
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    Self.at = Date()
                     guard let app = NSApp.delegate as? AppDelegate else { return }
                     if info["server"] != nil { return app.tools.monitor.clicked(action, info) }
                     app.bringBack(app.window)
