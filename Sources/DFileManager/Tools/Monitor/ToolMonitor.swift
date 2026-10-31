@@ -160,6 +160,7 @@ import Network
                 if !t.watched { t.open = [] }
                 if !t.wanted { t.alerts.clear() }   // a stop is no recovery, and nothing to say
             }
+            if !s.watched { s.quiet = false }   // watched again later: nothing of before is "still standing"
             if !s.wanted { stop(s, why: .notWatched) }
         }
         for (key, w) in want {
@@ -275,6 +276,7 @@ import Network
             s.down = nil
             note(s, "Answers again · after " + ToolAlerts.minutes(Date().timeIntervalSince(since)), level: "ok")
         }
+        quietOver(s)   // before this sample's own changes: what they raise isn't "still standing" too
         let now = Date().addingTimeInterval(skew)
         for line in lines {
             guard let tagged = ToolPayload.watchLine(line), let t = s.tools[tagged.tool], let source = t.preset.source else { continue }
@@ -373,11 +375,9 @@ import Network
     private func tock() {
         let now = Date(), stalled = now.timeIntervalSince(lastTock) > max(3 * Self.tick, 1.5)
         lastTock = now
-        for s in servers.values where s.watched {
-            let quiet = silent(s)
-            if s.quiet, !quiet { deliverStanding(s) }
-            s.quiet = quiet
-        }
+        let grace = wokeAt.map { now.timeIntervalSince($0) < Self.wakeGrace } ?? false
+        // Back from sleep or offline, what stood before isn't known to stand: the quiet's end waits for that to pass.
+        if !stalled, online, !grace { servers.values.filter(\.watched).forEach(quietOver) }
         for s in servers.values where s.wanted {
             if s.channel == nil, !s.needsLogin, let at = s.retryAt, at <= now {
                 s.retryAt = nil
@@ -391,7 +391,6 @@ import Network
             guard missed > s.missed else { continue }
             s.missed = missed
             gap(s, .noAnswer)
-            let grace = wokeAt.map { now.timeIntervalSince($0) < Self.wakeGrace } ?? false
             if missed >= s.downAfter, s.down == nil, online, !grace {
                 s.down = last
                 note(s, "Not answering — \(missed) checks in a row", level: "critical")

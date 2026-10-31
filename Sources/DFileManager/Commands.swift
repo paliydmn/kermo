@@ -1157,6 +1157,7 @@ extension AppDelegate {
             Config.save("servers.json", savedServers)
             forgetPassword(s)
             unpin(ServerRow.key(s.target))   // else it'd stay as a pinned bare address
+            tools.unpinFromMenuBar(s)
             refreshSidebar()
             if answer == 1, let history { do { try FileManager.default.removeItem(atPath: history) } catch { showError(error) } }
         }

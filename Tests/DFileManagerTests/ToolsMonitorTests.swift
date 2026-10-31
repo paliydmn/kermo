@@ -736,6 +736,8 @@ extension ServerLockTests {
         let s = try #require(app.tools.monitor.server(.local()))
         await toolsUntil { s.tools["pulse"]?.history.last != nil }
         #expect(ToolsMenuBar.pinText(app.tools.monitor, s) == "localhost 10%", "\(ToolsMenuBar.pinText(app.tools.monitor, s))")
+        app.tools.unpinFromMenuBar(app.savedServers[0])   // as deleting the server does
+        #expect(app.tools.settings.pinned.isEmpty, "a deleted server doesn't hold one of the three")
 
         let menu = ToolsMenuBar.snoozeMenu(app.tools.monitor)
         #expect(Array(menu.items.prefix(2).map(\.title)) == ["For 15 Minutes", "For 1 Hour"] && menu.items[2].title.hasPrefix("Until ")

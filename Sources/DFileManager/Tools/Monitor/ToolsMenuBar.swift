@@ -37,8 +37,8 @@ import DFMCore
     /// for a copy's progress, which changes only the item).
     func update(rows: Bool = true) {
         let monitor = app.tools.monitor, watched = monitor.watched
-        updatePins(watched)
         guard !watched.isEmpty else {
+            updatePins([])
             popover.performClose(nil)
             item.map(NSStatusBar.system.removeStatusItem)
             item = nil
@@ -57,6 +57,7 @@ import DFMCore
         let (head, snoozed) = Self.head(monitor)
         b.setAccessibilityLabel("Kermo Monitor: " + head + (snoozed.map { ", " + $0 } ?? ""))
         b.toolTip = "Kermo Monitor — " + head
+        if rows { updatePins(watched) }   // after the main item: pins come to its left
         if rows, popover.isShown { fill() }
     }
 
@@ -69,7 +70,8 @@ import DFMCore
     /// An item for each pinned server still watched, in the order pinned (added left of the ones before: newest first
     /// from the right); a click opens its page.
     private func updatePins(_ watched: [ToolMonitor.Server]) {
-        let monitor = app.tools.monitor, want = app.tools.settings.pinned.compactMap { id in watched.first { $0.saved.id.uuidString == id } }
+        let monitor = app.tools.monitor
+        let want = app.tools.settings.pinned.prefix(ToolServers.pinnedMax).compactMap { id in watched.first { $0.saved.id.uuidString == id } }
         for (id, pin) in pins where !want.contains(where: { $0.saved.id.uuidString == id }) {
             NSStatusBar.system.removeStatusItem(pin.item)
             pins[id] = nil
@@ -78,13 +80,13 @@ import DFMCore
             let id = s.saved.id.uuidString
             if pins[id] == nil {
                 let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-                pins[id] = (item, MenuAction.attach(to: item.button!) { monitor.open(s.target) })
+                pins[id] = (item, MenuAction.attach(to: item.button!) { [unowned self] in   // the server as it is then: an edit may move it
+                    app.tools.monitor.open(app.tools.monitor.watched.first { $0.saved.id.uuidString == id }?.target)
+                })
             }
             guard let b = pins[id]?.item.button else { continue }
             let (state, why) = monitor.worst(s)
-            let mark = state == .critical ? Symbol.crit.image(color: Palette.fail, size: 11) : state == .warning ? Symbol.warnFill.image(color: Palette.warn, size: 11)
-                : state == .ok ? Symbol.dot.image(color: Palette.ok, size: 7) : Symbol.ring.image(color: .tertiaryLabelColor, size: 7)
-            (b.image, b.imagePosition, b.title) = (mark, .imageLeading, Self.pinText(monitor, s))
+            (b.image, b.imagePosition, b.title) = (state.mark(11), .imageLeading, Self.pinText(monitor, s))
             b.setAccessibilityLabel("Kermo: " + Self.pinText(monitor, s) + (why.isEmpty ? "" : ", " + why))
         }
     }
@@ -139,7 +141,11 @@ import DFMCore
                       Self.snoozeMenu(monitor).popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height), in: b)
                       if popover.isShown { fill() }
                   },
-                  button("Quit Kermo", .quit) { [unowned self] _ in popover.performClose(nil); NSApp.terminate(nil) }]   // asks first if anything would be lost
+                  button("Quit Kermo", .quit) { [unowned self] _ in   // asks first if anything would be lost: in front, so the question is seen
+                      popover.performClose(nil)
+                      NSApp.activate()
+                      NSApp.terminate(nil)
+                  }]
         let stack = NSStackView(views: views)
         (stack.orientation, stack.alignment, stack.spacing) = (.vertical, .leading, 6)
         stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
@@ -174,6 +180,18 @@ import DFMCore
     func popoverDidClose(_ notification: Notification) { popover.contentViewController = nil }   // its rows go till next time
 }
 
+extension ToolMonitor.State {
+    /// Its shape and color (monitor §3.6): an octagon critical, a triangle a warning, a dot fine, a ring paused.
+    func mark(_ size: CGFloat) -> NSImage {
+        switch self {
+        case .critical: Symbol.crit.image("critical", color: Palette.fail, size: size)
+        case .warning: Symbol.warnFill.image("warning", color: Palette.warn, size: size)
+        case .ok: Symbol.dot.image("fine", color: Palette.ok, size: size * 0.75)
+        case .off: Symbol.ring.image("paused", color: .tertiaryLabelColor, size: size * 0.75)
+        }
+    }
+}
+
 extension AppDelegate {
     /// Tests: how the app goes to the menu bar alone, and back with `window` in front — the test runner's own policy
     /// mustn't change.
@@ -199,5 +217,14 @@ extension AppDelegate {
             guard !tools.monitor.watched.isEmpty, !windows().contains(where: { ($0.isVisible || $0.isMiniaturized) && $0.canBecomeMain }) else { return }
             Self.activation(.accessory, nil)
         }
+    }
+}
+
+extension ToolRunner {
+    /// A deleted server's pin goes with it: else it would hold one of the three for good, with no page to take it off.
+    func unpinFromMenuBar(_ s: SavedServer) {
+        guard settings.pinned.contains(s.id.uuidString) else { return }
+        settings.pin(s.id.uuidString, false)
+        saveSettings()
     }
 }

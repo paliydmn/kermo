@@ -40,9 +40,17 @@ extension ToolMonitor {
     /// Snoozed, or `s` in maintenance: nothing of it goes out now.
     func silent(_ s: Server) -> Bool { snoozed != nil || s.inMaintenance }
 
+    /// Silenced at the last look and not now: what still stands is sent, once.
+    func quietOver(_ s: Server) {
+        let quiet = silent(s)
+        if s.quiet, !quiet { deliverStanding(s) }
+        s.quiet = quiet
+    }
+
     /// The quiet over: what still stands critical on `s` — not answering, its watched tools' alerts — is sent, once
-    /// more for what was sent before it began (a muted alert still not). A script's `_event` comes with its next line.
-    func deliverStanding(_ s: Server) {
+    /// more for what was sent before it began (a muted alert still not). A script's `_event` raised during the quiet
+    /// comes with its next line; one sent before it isn't sent again.
+    private func deliverStanding(_ s: Server) {
         if let down = s.down {
             deliver(s, tool: nil, id: "\(s.key) down", "Not answering since \(down.formatted(date: .omitted, time: .shortened)). This Mac is online: it's the server or the way to it.")
         }

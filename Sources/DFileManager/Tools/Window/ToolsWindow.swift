@@ -253,9 +253,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         let monitor = app.tools.monitor
         guard let state = monitor.server(t) else { return NSTextField(labelWithString: s.title) }
         let (worst, why) = monitor.worst(state)
-        let mark = NSImageView(image: worst == .critical ? Symbol.crit.image("critical", color: Palette.fail, size: 12)
-                               : worst == .warning ? Symbol.warnFill.image("warning", color: Palette.warn, size: 12)
-                               : worst == .ok ? Symbol.dot.image("fine", color: Palette.ok, size: 9) : Symbol.ring.image("paused", color: .tertiaryLabelColor, size: 9))
+        let mark = NSImageView(image: worst.mark(12))
         let name = NSTextField(labelWithString: s.title)
         name.textColor = s.prod ? Palette.prod : .labelColor
         name.lineBreakMode = .byTruncatingTail
