@@ -85,6 +85,7 @@ extension ToolRunner {
             }
         }
         let note = Confirm.label("", color: .secondaryLabelColor, size: 11)
+        note.heightAnchor.constraint(equalToConstant: 30).isActive = true   // two lines in either scope: a shown NSAlert doesn't lay out again
         let done = alert.buttons[0]
         func number(_ f: NSTextField?) -> Double?? {   // nil: not a number; .some(nil): empty
             guard let f else { return .some(nil) }

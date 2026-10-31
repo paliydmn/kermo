@@ -111,10 +111,11 @@ import DFMCore
         for v in views { v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true }
         stack.widthAnchor.constraint(equalToConstant: 320).isActive = true
         kept = actions
-        let vc = popover.contentViewController ?? NSViewController()
+        // A new controller each time: a shown popover whose controller only changed its view shrank to the item's size.
+        let vc = NSViewController()
         vc.view = stack
+        vc.preferredContentSize = stack.fittingSize
         popover.contentViewController = vc
-        popover.contentSize = stack.fittingSize
     }
 
     /// Snooze ▾ (decision 14): 15 minutes, an hour, till the morning; or Resume. The menu bar and the window still
