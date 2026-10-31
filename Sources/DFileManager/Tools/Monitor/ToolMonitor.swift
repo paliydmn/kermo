@@ -72,6 +72,8 @@ import Network
         /// ponytail: in memory — a relaunch ends it, and an earlier one in the hour isn't drawn.
         var maintenance: (from: Date, until: Date)?
         var inMaintenance: Bool { maintenance.map { $0.until > Date() } == true }
+        /// Silenced at the last tick (Snooze, Maintenance): when that ends, what still stands is sent.
+        var quiet = false
         init(_ s: SavedServer, _ t: SFTPTarget) { (saved, target) = (s, t) }
         var every: Double { tools.values.compactMap { $0.preset.watch?.every }.min() ?? 60 }
         var downAfter: Int { tools.values.compactMap { $0.preset.watch?.down }.min() ?? 3 }
@@ -301,7 +303,10 @@ import Network
                         let held = t.budget.takeHeld()
                         if held > 0 { fresh.append(ToolEventRecord(at: now, id: "more", level: "info", message: "\(p.title): \(held) more")) }
                         fresh.append(e)
-                        if e.level == "critical", t.watched, t.open.insert(e.id).inserted { deliver(s, tool: t, id: "\(s.key) \(p.id) _event \(e.id)", e.message) }
+                        // Silenced, it isn't marked sent: its next line after the quiet sends it.
+                        if e.level == "critical", t.watched, !silent(s), t.open.insert(e.id).inserted {
+                            deliver(s, tool: t, id: "\(s.key) \(p.id) _event \(e.id)", e.message)
+                        }
                     }
                 }
                 t.events = Array((fresh.reversed() + t.events).prefix(40))
@@ -368,6 +373,11 @@ import Network
     private func tock() {
         let now = Date(), stalled = now.timeIntervalSince(lastTock) > max(3 * Self.tick, 1.5)
         lastTock = now
+        for s in servers.values where s.watched {
+            let quiet = silent(s)
+            if s.quiet, !quiet { deliverStanding(s) }
+            s.quiet = quiet
+        }
         for s in servers.values where s.wanted {
             if s.channel == nil, !s.needsLogin, let at = s.retryAt, at <= now {
                 s.retryAt = nil

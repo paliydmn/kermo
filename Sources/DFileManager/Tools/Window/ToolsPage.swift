@@ -394,6 +394,7 @@ final class ToolsPage: NSView, RowList {
             it.isEnabled = app.tools.serverID(target) != nil
             it.toolTip = it.isEnabled ? nil : "\(server.title) isn't saved: only a saved server is watched"
             menu.addItem(it)
+            menu.addItem(pinItem())
             menu.addItem(.separator())
         }
         menu.addItem(MenuAction.item("Use \(p.title) on Servers…") { [unowned self] in Task { await app.tools.useOnServers(tool, window: window) } })
@@ -404,6 +405,22 @@ final class ToolsPage: NSView, RowList {
         hide.toolTip = hide.isEnabled ? "＋ or Use on Servers… shows it again" : "\(server.title) isn't saved: only a saved server keeps settings"
         menu.addItem(hide)
         return menu
+    }
+
+    /// Show in the Menu Bar (decision 18): an item of its own with its summary, for a watched server; three at most.
+    private func pinItem() -> NSMenuItem {
+        let id = app.tools.serverID(target), pinned = id.map(app.tools.settings.pinned.contains) == true
+        let it = MenuAction.item("Show \(server.title) in the Menu Bar") { [unowned self] in
+            guard let id else { return }
+            app.tools.settings.pin(id, !pinned)
+            app.tools.saveSettings()
+            app.tools.monitor.changed()
+        }
+        it.state = pinned ? .on : .off
+        let watched = app.tools.monitor.server(target)?.watched == true, room = app.tools.settings.pinned.count < ToolServers.pinnedMax
+        it.isEnabled = pinned || (watched && room)
+        it.toolTip = it.isEnabled ? nil : !watched ? "Only a watched server" : "Three servers at most: take one off first"
+        return it
     }
 
     /// ＋: the library's tools this server doesn't show — hidden or not used here (shown again), not there (grey), yours

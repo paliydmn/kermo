@@ -574,8 +574,9 @@ extension ServerLockTests {
 
     /// A watched tool's critical alert comes as one notification — the server, the tool's words, its ids for the
     /// buttons — and runs `on_alert` with what happened in its environment, nothing in its words; the `is` event, a
-    /// warning, notifies nothing, nor does "back to normal". Snoozed, nothing goes out; a notification's Mute keeps
-    /// that alert quiet on this server (tools/servers.json), and Open shows its tab with Kermo in front.
+    /// warning, notifies nothing, nor does "back to normal". Snoozed, nothing goes out — what still stands when the
+    /// snooze ends is sent then; a notification's Mute keeps that alert quiet on this server (tools/servers.json), and
+    /// Open shows its tab with Kermo in front.
     @Test func aCriticalAlertNotifiesOnceAndRunsOnAlert() async throws {
         let (app, _, _, done) = try toolsApp()
         let bench = try ToolsBench(), quick = Quick(app), posts = Posts()
@@ -601,7 +602,7 @@ extension ServerLockTests {
         bar.fill()
         let content = try #require(bar.popover.contentViewController?.view)
         #expect(labels(content).contains("Monitor · 1 critical") && labels(content).contains("localhost"), "\(labels(content))")
-        #expect(buttons(content).map(\.title) == ["Open Monitor  ⌃⌘M", "Open Kermo", "Snooze Notifications ▾"] && bar.item == nil, "\(buttons(content).map(\.title))")
+        #expect(buttons(content).map(\.title) == ["Open Monitor  ⌃⌘M", "Open Kermo", "Snooze Notifications ▾", "Quit Kermo"] && bar.item == nil, "\(buttons(content).map(\.title))")
         await toolsUntil { DockTile.problems == 1 }
         #expect(DockTile.problems == 1, "the Dock's badge counts it")
         try await Task.sleep(for: .milliseconds(500))
@@ -617,10 +618,12 @@ extension ServerLockTests {
         await toolsUntil { t.alerts.worst == .critical }
         try await Task.sleep(for: .milliseconds(300))
         #expect(posts.sent.count == 1, "snoozed")
+        monitor.snooze(until: nil)
+        await toolsUntil { posts.sent.count == 2 }
+        #expect(posts.sent.count == 2 && posts.sent.last?.body == "Pulse: CPU 99%", "the snooze over: what still stands is sent")
         bench.flag("hot-localhost", false)
         await toolsUntil { t.alerts.worst == nil }
 
-        monitor.snooze(until: nil)
         monitor.clicked(ToolJobs.Notices.mute, sent.info)
         #expect(app.tools.settings.mutes("cpu", of: "pulse", on: app.savedServers[0].id.uuidString))
         let file = bench.dir + "/own/servers.json"
@@ -629,7 +632,7 @@ extension ServerLockTests {
         bench.flag("hot-localhost")
         await toolsUntil { t.alerts.worst == .critical }
         try await Task.sleep(for: .milliseconds(300))
-        #expect(posts.sent.count == 1 && monitor.worst(s).state == .critical, "muted: still shown, not notified")
+        #expect(posts.sent.count == 2 && monitor.worst(s).state == .critical, "muted: still shown, not notified")
 
         monitor.clicked(UNNotificationDefaultActionIdentifier, sent.info)
         let w = try #require(ToolsWindow.main)
@@ -724,6 +727,16 @@ extension ServerLockTests {
         let w = try #require(ToolsWindow.main)
         #expect(posts.activations.last?.0 == .regular && posts.activations.last?.1 === w.window && w.sidebar.selectedRow == 1, "on WATCHED")
 
+        // Show in the Menu Bar: pinned in tools/servers.json, its item's words — the name and the summary.
+        let page = try #require(w.page), id = app.savedServers[0].id.uuidString
+        let pin = try #require(page.moreMenu().items.first { $0.title == "Show localhost in the Menu Bar" })
+        #expect(pin.isEnabled && pin.state == .off)
+        _ = (pin.target as? NSObject)?.perform(pin.action, with: pin)
+        #expect(app.tools.settings.pinned == [id] && page.moreMenu().items.first { $0.title.hasPrefix("Show localhost") }?.state == .on)
+        let s = try #require(app.tools.monitor.server(.local()))
+        await toolsUntil { s.tools["pulse"]?.history.last != nil }
+        #expect(ToolsMenuBar.pinText(app.tools.monitor, s) == "localhost 10%", "\(ToolsMenuBar.pinText(app.tools.monitor, s))")
+
         let menu = ToolsMenuBar.snoozeMenu(app.tools.monitor)
         #expect(Array(menu.items.prefix(2).map(\.title)) == ["For 15 Minutes", "For 1 Hour"] && menu.items[2].title.hasPrefix("Until ")
                 && menu.items[3].title == "Resume Notifications" && !menu.items[3].isEnabled)
@@ -766,7 +779,8 @@ extension ServerLockTests {
     }
 
     /// Maintenance on a watched server: a critical alert stands as ever, nothing notifies; the live tab says till when
-    /// with End Now, the charts get a band; it ends by itself or by End Now, and notifications come again.
+    /// with End Now, the charts get a band; it ends by itself or by End Now — what still stands is sent then — and
+    /// notifications come again.
     @Test func maintenanceHoldsNotificationsAndMarksTheCharts() async throws {
         let (app, _, _, done) = try toolsApp()
         let bench = try ToolsBench(), quick = Quick(app), posts = Posts()
@@ -795,11 +809,13 @@ extension ServerLockTests {
         #expect(charts.model.data.charts.first?.bands.contains { $0.gap == .maintenance } == true)
         press(view.endButton)
         #expect(!s.inMaintenance && s.events.first?.message == "Maintenance ended")
+        await toolsUntil { !posts.sent.isEmpty }
+        #expect(posts.sent.count == 1 && posts.sent[0].body == "Pulse: CPU 99%", "the maintenance over: what still stands is sent")
         bench.flag("hot-localhost", false)
         await toolsUntil { t.alerts.worst == nil }
         bench.flag("hot-localhost")
-        await toolsUntil { !posts.sent.isEmpty }
-        #expect(posts.sent.count == 1, "after maintenance: notified again")
+        await toolsUntil { posts.sent.count == 2 }
+        #expect(posts.sent.count == 2, "after maintenance: notified again")
         charts.update(view)
         #expect(charts.model.data.charts.first?.bands.contains { $0.gap == .maintenance } == true, "the band stays for the time it was")
     }

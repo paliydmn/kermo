@@ -3,14 +3,17 @@ import DFMCore
 
 /// The menu bar while something is watched (monitor decisions 2, 10, 18; protocol §8.8): one item — a gauge, and how
 /// many servers have a problem in the worst one's color, dimmed while notifications are snoozed — whose popover lists
-/// every watched server as WATCHED does (problems first, each tool's summary), then Open Monitor, Open Kermo and
-/// Snooze. Nothing watched: no item. With every window closed Kermo lives here alone — no Dock icon, no ⌘Tab
-/// (`.accessory`), watching going on — and a running copy's progress shows here, as the Dock would show it.
+/// every watched server as WATCHED does (problems first, each tool's summary), then Open Monitor, Open Kermo, Snooze
+/// and Quit. Up to three watched servers pinned (Show in the Menu Bar) have an item each: their state and summary,
+/// "web-01 42% · 61%" (protocol §8.8). Nothing watched: no item. With every window closed Kermo lives here alone — no
+/// Dock icon, no ⌘Tab (`.accessory`), watching going on — and a running copy's progress shows here, as the Dock would.
 @MainActor final class ToolsMenuBar: NSObject, NSPopoverDelegate {
     unowned let app: AppDelegate
     private(set) var item: NSStatusItem?
     let popover = NSPopover()
     private var click: AnyObject?
+    /// Pinned servers' items, by saved server id, with their clicks.
+    private var pins: [String: (item: NSStatusItem, click: AnyObject)] = [:]
     /// The popover's buttons' actions: replaced with its rows.
     private var kept: [AnyObject] = []
 
@@ -34,6 +37,7 @@ import DFMCore
     /// for a copy's progress, which changes only the item).
     func update(rows: Bool = true) {
         let monitor = app.tools.monitor, watched = monitor.watched
+        updatePins(watched)
         guard !watched.isEmpty else {
             popover.performClose(nil)
             item.map(NSStatusBar.system.removeStatusItem)
@@ -54,6 +58,35 @@ import DFMCore
         b.setAccessibilityLabel("Kermo Monitor: " + head + (snoozed.map { ", " + $0 } ?? ""))
         b.toolTip = "Kermo Monitor — " + head
         if rows, popover.isShown { fill() }
+    }
+
+    /// A pinned watched server's words: its name and its tools' summary values, "web-01 42% · 61% · 27%".
+    static func pinText(_ monitor: ToolMonitor, _ s: ToolMonitor.Server) -> String {
+        let values = s.tools.values.filter(\.watched).sorted { $0.preset.id < $1.preset.id }.flatMap { t in monitor.summary(t, on: s).map(\.text) }
+        return ([s.saved.title] + [values.joined(separator: " · ")].filter { !$0.isEmpty }).joined(separator: " ")
+    }
+
+    /// An item for each pinned server still watched, in the order pinned (added left of the ones before: newest first
+    /// from the right); a click opens its page.
+    private func updatePins(_ watched: [ToolMonitor.Server]) {
+        let monitor = app.tools.monitor, want = app.tools.settings.pinned.compactMap { id in watched.first { $0.saved.id.uuidString == id } }
+        for (id, pin) in pins where !want.contains(where: { $0.saved.id.uuidString == id }) {
+            NSStatusBar.system.removeStatusItem(pin.item)
+            pins[id] = nil
+        }
+        for s in want {
+            let id = s.saved.id.uuidString
+            if pins[id] == nil {
+                let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+                pins[id] = (item, MenuAction.attach(to: item.button!) { monitor.open(s.target) })
+            }
+            guard let b = pins[id]?.item.button else { continue }
+            let (state, why) = monitor.worst(s)
+            let mark = state == .critical ? Symbol.crit.image(color: Palette.fail, size: 11) : state == .warning ? Symbol.warnFill.image(color: Palette.warn, size: 11)
+                : state == .ok ? Symbol.dot.image(color: Palette.ok, size: 7) : Symbol.ring.image(color: .tertiaryLabelColor, size: 7)
+            (b.image, b.imagePosition, b.title) = (mark, .imageLeading, Self.pinText(monitor, s))
+            b.setAccessibilityLabel("Kermo: " + Self.pinText(monitor, s) + (why.isEmpty ? "" : ", " + why))
+        }
     }
 
     private func make() -> NSStatusItem {
@@ -105,7 +138,8 @@ import DFMCore
                   button(snoozed == nil ? "Snooze Notifications ▾" : "Resume or Snooze ▾", .snooze) { [unowned self] b in
                       Self.snoozeMenu(monitor).popUp(positioning: nil, at: NSPoint(x: 0, y: b.bounds.height), in: b)
                       if popover.isShown { fill() }
-                  }]
+                  },
+                  button("Quit Kermo", .quit) { [unowned self] _ in popover.performClose(nil); NSApp.terminate(nil) }]   // asks first if anything would be lost
         let stack = NSStackView(views: views)
         (stack.orientation, stack.alignment, stack.spacing) = (.vertical, .leading, 6)
         stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)

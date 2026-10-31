@@ -5,7 +5,8 @@ import DFMCore
 // a script's critical `_event`, and a watched server not answering, come as a macOS notification — Open, Snooze 1 Hour
 // and, for an alert, Mute This Alert on This Server — and run your `on_alert`. A warning stays in the menu bar, the
 // Dock's badge and the window; "back to normal" is an event in the window, not a notification. Nothing goes out while
-// snoozed (everything), muted (one alert on one server) or in maintenance (one server).
+// snoozed (everything) or in maintenance (one server) — what still stands when that ends is sent then — nor ever for an
+// alert muted on its server.
 extension ToolMonitor {
     /// Snoozed till then (the menu bar's Snooze, a notification's Snooze 1 Hour); the menu bar and the window still show
     /// every problem. In `monitorSnooze`, so "until 9:00" outlives a relaunch.
@@ -20,7 +21,7 @@ extension ToolMonitor {
     /// it isn't watched, notifications are snoozed or the alert is muted there. `id`: one notification per alert and
     /// series, a newer one in its place.
     func deliver(_ s: Server, tool: Tool?, alert: String? = nil, id: String, _ message: String) {
-        guard tool?.watched ?? s.watched, snoozed == nil, !s.inMaintenance else { return }
+        guard tool?.watched ?? s.watched, !silent(s) else { return }
         if let tool, let alert, app.tools.settings.mutes(alert, of: tool.preset.id, on: s.saved.id.uuidString) { return }
         var info = ["server": s.key]
         (info["tool"], info["alert"]) = (tool?.preset.id, alert)
@@ -33,6 +34,22 @@ extension ToolMonitor {
             let said = await Self.onAlert(command, env: env)
             self?.note(s, said)
             self?.changed()
+        }
+    }
+
+    /// Snoozed, or `s` in maintenance: nothing of it goes out now.
+    func silent(_ s: Server) -> Bool { snoozed != nil || s.inMaintenance }
+
+    /// The quiet over: what still stands critical on `s` — not answering, its watched tools' alerts — is sent, once
+    /// more for what was sent before it began (a muted alert still not). A script's `_event` comes with its next line.
+    func deliverStanding(_ s: Server) {
+        if let down = s.down {
+            deliver(s, tool: nil, id: "\(s.key) down", "Not answering since \(down.formatted(date: .omitted, time: .shortened)). This Mac is online: it's the server or the way to it.")
+        }
+        for t in s.tools.values where t.watched {
+            for a in t.alerts.standing where a.state.level == .critical {
+                deliver(s, tool: t, alert: a.alert, id: "\(s.key) \(t.preset.id) \(a.alert) \(a.key)", a.state.message ?? a.alert)
+            }
         }
     }
 

@@ -89,6 +89,17 @@ import Testing
     #expect(s.servers["A"] == nil, "an empty setting isn't kept")
 }
 
+/// Show in the Menu Bar: in the order pinned, once each, three at most; kept in the file.
+@Test func pinnedServersThreeAtMost() throws {
+    var s = ToolServers()
+    for id in ["A", "B", "A", "C", "D"] { s.pin(id, true) }
+    #expect(s.pinned == ["B", "A", "C"], "A moved to the end, D past three")
+    s.pin("B", false)
+    s.pin("D", true)
+    #expect(s.pinned == ["A", "C", "D"])
+    #expect(try JSONDecoder().decode(ToolServers.self, from: try JSONEncoder().encode(s)).pinned == ["A", "C", "D"])
+}
+
 /// Your thresholds (Thresholds…): one server's over all servers' over the tool's, by the alert's id (its metric when it
 /// has none), each of warn and crit on its own; an empty one isn't kept.
 @Test func thresholdsOverTheToolsByAlertID() throws {

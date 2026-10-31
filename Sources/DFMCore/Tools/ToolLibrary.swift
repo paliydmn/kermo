@@ -174,6 +174,9 @@ public struct ToolServers: Sendable, Codable, Hashable {
     public var only: [String: [String]] = [:]
     /// Your thresholds for all servers (Thresholds…): tool → alert id → its own `warn` / `crit`.
     public var alerts: [String: [String: Threshold]] = [:]
+    /// Servers with an item of their own in the menu bar (decision 18), in the order pinned; three at most.
+    public var pinned: [String] = []
+    public static let pinnedMax = 3
 
     /// Your own `warn` / `crit` for an alert (§8.3), either left to the one under it.
     public struct Threshold: Sendable, Codable, Hashable {
@@ -203,6 +206,13 @@ public struct ToolServers: Sendable, Codable, Hashable {
         servers = try c.decodeIfPresent([String: [String: Setting]].self, forKey: .servers) ?? [:]
         only = try c.decodeIfPresent([String: [String]].self, forKey: .only) ?? [:]
         alerts = try c.decodeIfPresent([String: [String: Threshold]].self, forKey: .alerts) ?? [:]
+        pinned = try c.decodeIfPresent([String].self, forKey: .pinned) ?? []
+    }
+
+    /// Show in the Menu Bar, or not: past three, nothing changes.
+    public mutating func pin(_ id: String, _ on: Bool) {
+        pinned.removeAll { $0 == id }
+        if on, pinned.count < Self.pinnedMax { pinned.append(id) }
     }
 
     /// Whether `tool` shows on the server `id` (nil: one not saved): on an only-there tool's list; else not hidden there.
