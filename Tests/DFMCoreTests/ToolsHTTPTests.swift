@@ -66,6 +66,8 @@ private final class LocalWeb: @unchecked Sendable {
     #expect(refused["ok"] == false && refused["status"] == "refused", "\(refused)")
     let bad = await ToolHTTPCheck.check("ftp://example.com/")
     #expect(bad["ok"] == false && bad["status"] == "bad address")
+    #expect(!ToolHTTPCheck.valid("https://a.com,https://b.com") && !ToolHTTPCheck.valid("https://a.com,") && ToolHTTPCheck.valid("https://a.com/x?a=1,2"),
+            "a comma: in a path or a query, never in a host")
 }
 
 /// A certificate macOS doesn't trust is down — never let through — and its days are read all the same. A server of

@@ -36,11 +36,12 @@ public enum ToolHTTPCheck {
     /// An address a check takes: http:// or https:// with a host — what the server sheet lets you save.
     public static func valid(_ url: String) -> Bool {
         guard let u = URL(string: url), ["http", "https"].contains(u.scheme?.lowercased() ?? "") else { return false }
-        return u.host?.isEmpty == false
+        return u.host.map { !$0.isEmpty && !$0.contains(",") } == true   // "a.com,b.com" parses, with a host no name has
     }
 
     /// Why there was no answer, in a word or two for the table and the alert. An address on this network that macOS
     /// keeps Kermo from (Privacy & Security ▸ Local Network) fails as "offline": its path says why.
+    /// ponytail: told by Network.framework's words in the error; worded otherwise, it says "no network".
     static func said(_ e: Error) -> String {
         if "\((e as NSError).userInfo)".contains("Local network prohibited") { return "local network off" }
         return switch (e as? URLError)?.code {

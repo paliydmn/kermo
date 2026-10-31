@@ -301,7 +301,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             if let status = r.status {
                 refreshers.append { [unowned self, weak note] in
                     let app = app   // the window may be gone by the answer
-                    Task { let said = await status(app); note?.stringValue = said }
+                    Task { let said = await status(app); note?.stringValue = said.isEmpty ? r.note : said }   // nothing to say: the row's own note
                 }
             }
         }

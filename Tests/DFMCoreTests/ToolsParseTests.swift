@@ -132,7 +132,8 @@ private func parse(_ format: ToolFormat, _ text: String, _ change: (inout ToolPa
     #expect(prom.rows[3]["value"] == "1027" && prom.rows[4]["handler"] == "/say \"hi\"\n", "the timestamp isn't the value; escapes undone")
     #expect(prom.rows[5]["value"]?.number?.isNaN == true && prom.rows[6]["value"]?.number == .infinity)
     #expect(!parse(.prometheus, "not a sample line\n").matched)
-    #expect(parse(.prometheus, #"container_cpu{name="web",value="x"} 12"#).rows == [["name": "container_cpu", "value": "12"]], "the sample's own name and value")
+    #expect(parse(.prometheus, #"container_cpu{name="web",value="x"} 12"#).rows == [["name": "container_cpu", "value": "12", "label_name": "web", "label_value": "x"]],
+            "the sample's own name and value; the labels so called beside them")
 
     let disk = ToolParse(format: .nagios).records(try fixture("check_disk.nagios.txt"), exit: 1)
     #expect(disk.rows == [["status": "warn", "message": "DISK WARNING - free space: / 3326 MB (16% inode=91%);",

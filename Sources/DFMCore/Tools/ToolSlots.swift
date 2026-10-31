@@ -73,7 +73,7 @@ public struct ToolSlots: Sendable {
             if !fm.fileExists(atPath: path) { fm.createFile(atPath: path, contents: nil, attributes: [.posixPermissions: 0o600]) }
             guard let h = FileHandle(forWritingAtPath: path) else { continue }
             defer { try? h.close() }
-            _ = try? h.seekToEnd()   // a full disk: the line is lost, never Kermo
+            guard (try? h.seekToEnd()) != nil else { continue }   // never over the day's first lines
             try? h.write(contentsOf: Data(some.compactMap { try? String(decoding: JSONEncoder.sorted.encode($0), as: UTF8.self) }.joined(separator: "\n").utf8 + [0x0A]))
         }
     }

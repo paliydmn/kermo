@@ -228,7 +228,9 @@ private func systemSamples() throws -> [ToolSample] {
     var g = ToolFrames(split: nil, poll: true)
     let bare = try #require(g.feed("{\"a\":1}" + ToolPayload.ranMark + "0").first, "output with no newline at its end: the mark ends its line")
     #expect(ToolParse(format: .json).sample(bare, at: at(0))?.record == ["a": 1])
-    #expect(ToolParse(format: .json).sample("{\"a\":1}\n" + ToolPayload.ranMark + "1", at: at(0), ok: { $0 == 0 }) == nil, "a failed run is a missed sample")
+    #expect(ToolPayload.ran("{\"a\":1}\n" + ToolPayload.ranMark + "1").exit == 1 && ToolPayload.ran("a line").exit == nil, "the run's code, for the engine to judge")
     let nan = try #require(ToolParse(format: .prometheus).sample("x NaN\ny +Inf\nz 2", at: at(0)))
     #expect(ToolMetric(path: "value", rows: "rows", key: "name").values(in: nan, previous: nil, now: at(0)) == ["z": 2], "NaN and +Inf are no value")
+    let rate = ToolMetric(path: "value", rows: "rows", key: "name", calc: "rate")
+    #expect(rate.values(in: ToolSample(at: at(5), record: nan.record), previous: nan, now: at(5)) == ["z": 0], "nor after a rate")
 }

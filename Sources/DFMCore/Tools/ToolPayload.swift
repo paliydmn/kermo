@@ -307,6 +307,12 @@ extension ToolPayload {
     /// The line that ends a poll's run in `watch`'s output: this, then the run's exit code (RS, never in text).
     public static let ranMark = "\u{1E}ran "
 
+    /// A poll's frame (`ToolFrames`) as the run's output and its exit code; a stream's frame as it is.
+    public static func ran(_ frame: String) -> (out: Substring, exit: Int32?) {
+        guard let end = frame.range(of: ranMark, options: .backwards) else { return (Substring(frame), nil) }
+        return (frame[..<end.lowerBound], Int32(frame[end.upperBound...]))
+    }
+
     /// A line of `watch`'s output: the tool's id and the source's line.
     public static func watchLine(_ line: String) -> (tool: String, line: String)? {
         guard let tab = line.firstIndex(of: "\t") else { return nil }

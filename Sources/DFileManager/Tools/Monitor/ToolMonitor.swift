@@ -93,7 +93,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         /// The channel's interval, as paced — what "missed" and "not answering" go by; a server with checks only, theirs.
         var every: Double { (paced.compactMap { $0.preset.watch?.every }.min() ?? 60) * pace }
         var downAfter: Int { paced.compactMap { $0.preset.watch?.down }.min() ?? 3 }
-        private var paced: [Tool] { tools.values.contains { $0.preset.source != nil } ? tools.values.filter { $0.preset.source != nil } : Array(tools.values) }
+        private var paced: [Tool] { channelTools.isEmpty ? tools.values.filter(\.wanted) : Array(channelTools.values) }   // a closed tab's tool no more
         var watched: Bool { tools.values.contains(where: \.watched) }
         var wanted: Bool { tools.values.contains(where: \.wanted) }
         /// The tools its channel runs: streams and polls (an `http` tool's checks run from this Mac).
@@ -324,7 +324,9 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         for line in lines {
             guard let tagged = ToolPayload.watchLine(line), let t = s.tools[tagged.tool], let source = t.preset.source else { continue }
             for frame in t.frames.feed(tagged.line) {
-                if let sample = source.parse.sample(frame, at: now, ok: { source.run.succeeded($0, format: source.parse.format) }) { take(sample, of: t, on: s) }
+                // A poll's run that failed is a missed sample (§3): a gap of its own tool, the channel's others going on.
+                if let exit = ToolPayload.ran(frame).exit, !source.run.succeeded(exit, format: source.parse.format) { gap(t, on: s, .noAnswer); continue }
+                if let sample = source.parse.sample(frame, at: now) { take(sample, of: t, on: s) }
             }
         }
         changed()
@@ -426,13 +428,16 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
     }
 
     private func gap(_ s: Server, _ why: ToolGap) {
-        let at = Date().addingTimeInterval(s.skew)
         // The channel's trouble isn't the checks from this Mac: their streaks and series go on.
-        for t in s.tools.values where t.preset.http == nil || ![.noAnswer, .reconnecting].contains(why) {
-            t.history.mark(why, at: at)
-            t.alerts.gap()
-            if t.watched { record(s, t.slots.mark(why, at: at)) }
-        }
+        for t in s.tools.values where t.preset.http == nil || ![.noAnswer, .reconnecting].contains(why) { gap(t, on: s, why) }
+    }
+
+    /// No data from `t` from now on: a band on its series, its alerts' durations start over, the gap on disk.
+    private func gap(_ t: Tool, on s: Server, _ why: ToolGap) {
+        let at = Date().addingTimeInterval(s.skew)
+        t.history.mark(why, at: at)
+        t.alerts.gap()
+        if t.watched { record(s, t.slots.mark(why, at: at)) }
     }
 
     // MARK: Power
@@ -488,9 +493,9 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         if Self.loginItem.status() == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
     }
 
-    /// What Settings ▸ Monitor says under Open at Login (its live note takes the row's place).
+    /// What Settings ▸ Monitor says under Open at Login, when it isn't the row's note.
     static func loginSaid() -> String {
-        loginItem.status() == .requiresApproval ? "Waiting for you in System Settings ▸ General ▸ Login Items" : "Watching starts again by itself"
+        loginItem.status() == .requiresApproval ? "Waiting for you in System Settings ▸ General ▸ Login Items" : ""
     }
 
     // MARK: The history on disk

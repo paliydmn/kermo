@@ -778,7 +778,8 @@ extension ServerLockTests {
         _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
         let d = charts.model.data, cpu = try #require(d.charts.first)
         #expect(d.to.timeIntervalSince(d.from) == 86400 && charts.model.every == 900 && charts.model.days == false)
-        #expect(cpu.lines.first?.points.compactMap(\.value).allSatisfy { $0 == 10 } == true && cpu.bands.first?.gap == .notWatched && cpu.bands.last?.gap == .notWatched,
+        #expect(cpu.lines.first?.points.compactMap(\.value).isEmpty == false && cpu.lines.first?.points.compactMap(\.value).allSatisfy { $0 == 10 } == true
+                && cpu.bands.first?.gap == .notWatched && cpu.bands.last?.gap == .notWatched,
                 "before it, and since: \(cpu.bands)")
         charts.range.selectedSegment = 0
         _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)

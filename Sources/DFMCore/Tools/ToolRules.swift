@@ -57,7 +57,7 @@ public struct ToolFrames {
         if poll {   // output with no newline at its end has the mark at the end of its last line
             guard let mark = line.range(of: ToolPayload.ranMark) else {
                 held.append(line)
-                if held.count > 10_000 { held.removeFirst(held.count - 10_000) }   // a run that never ends: its last lines
+                if held.count > 20_000 { held.removeFirst(10_000) }   // ponytail: a run that never ends keeps its last lines, once in a while
                 return []
             }
             defer { held = [] }
@@ -86,14 +86,10 @@ public struct ToolFrames {
 extension ToolParse {
     /// A frame as a sample (§8.1): a `json` / `jsonl` object or a `nagios` run is the sample itself; anything else — a
     /// table under its header, a regex's groups, lines, Prometheus' samples — is rows, one record or many, so a
-    /// metric's `rows` names them the same way whatever the frame held. A poll's run ends with its exit code: one `ok`
-    /// doesn't take is a missed sample (§3, `exitOk`). nil: the frame gave no record.
-    public func sample(_ frame: String, at: Date, ok: ((Int32) -> Bool)? = nil) -> ToolSample? {
-        var text = Substring(frame), exit: Int32?
-        if let end = frame.range(of: ToolPayload.ranMark, options: .backwards) {
-            (text, exit) = (frame[..<end.lowerBound], Int32(frame[end.upperBound...]))
-            if let exit, let ok, !ok(exit) { return nil }
-        }
+    /// metric's `rows` names them the same way whatever the frame held. A poll's run ends with its exit code (a Nagios
+    /// run's status; whether it failed is the engine's to judge, `ToolPayload.ran`). nil: the frame gave no record.
+    public func sample(_ frame: String, at: Date) -> ToolSample? {
+        let (text, exit) = ToolPayload.ran(frame)
         let r = Self(format: format, rows: rows, pattern: pattern, names: names, split: nil, sort: sort, limit: limit).records(Data(text.utf8), exit: exit)
         guard !r.rows.isEmpty else { return nil }
         if r.rows.count == 1, [.json, .jsonl, .nagios].contains(format ?? .lines) { return ToolSample(at: at, record: r.rows[0]) }
@@ -121,7 +117,8 @@ extension ToolMetric {
             return out
         }
         guard let path else { return [:] }
-        func number(_ r: ToolRecord, _ before: ToolRecord?) -> Double? {
+        func number(_ r: ToolRecord, _ before: ToolRecord?) -> Double? { raw(r, before).flatMap { $0.isFinite ? $0 : nil } }   // NaN, ±Inf: no value
+        func raw(_ r: ToolRecord, _ before: ToolRecord?) -> Double? {
             let v = ToolValue.object(r)[path]
             switch calc {
             case "rate":
@@ -131,7 +128,7 @@ extension ToolMetric {
             case "age":
                 guard let v, let d = ToolTemplate.date(v) else { return nil }
                 return now.timeIntervalSince(d) / (["h": 3600, "days": 86400, "ms": 0.001][unit ?? ""] ?? 1)
-            default: return v?.number.flatMap { $0.isFinite ? $0 : nil }   // Prometheus' NaN and +Inf: no value
+            default: return v?.number
             }
         }
         guard let rows, let key else { return number(sample.record, previous?.record).map { ["": $0] } ?? [:] }

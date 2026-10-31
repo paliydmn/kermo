@@ -100,12 +100,13 @@ extension ToolParse {
 
     /// A sample line of Prometheus' text format (§4.2): `name{label="value",…} value [timestamp]` — each label, `name`,
     /// `value` (a string, as text formats give: `NaN` and `+Inf` too). A label called `name` or `value` (cAdvisor's
-    /// container `name`) gives way to the sample's own.
+    /// container `name`) is `label_name`, `label_value`.
     static func prometheus(_ line: String) -> ToolRecord? {
         guard let m = line.firstMatch(of: /^\s*([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})?\s+(\S+)(?:\s+-?\d+)?\s*$/) else { return nil }
         var rec: ToolRecord = [:]
         for l in (m.2 ?? "").matches(of: /([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*"((?:[^"\\]|\\.)*)"/) {
-            rec[String(l.1)] = .string(String(l.2).replacing(/\\(.)/) { $0.1 == "n" ? "\n" : String($0.1) })
+            let k = String(l.1)
+            rec[["name", "value"].contains(k) ? "label_" + k : k] = .string(String(l.2).replacing(/\\(.)/) { $0.1 == "n" ? "\n" : String($0.1) })
         }
         (rec["name"], rec["value"]) = (.string(String(m.1)), .string(String(m.3)))
         return rec
