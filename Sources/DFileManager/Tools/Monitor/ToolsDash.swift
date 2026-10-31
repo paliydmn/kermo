@@ -110,7 +110,8 @@ import SwiftUI
             guard let first = metrics.first else { return nil }
             var lines: [Line] = []
             for (id, m) in metrics {
-                // ponytail: six lines a chart (disks by mount); more wait for a design pass.
+                // ponytail: a line per series key, six a chart (disks by mount) — `per` isn't read, it would say the same;
+                // more lines and a legend that scrolls wait for a design pass.
                 for key in (t?.history.series[id]?.keys.sorted() ?? [""]).prefix(6) {
                     let pts = t?.history.points(id, key) ?? []
                     lines.append(Line(id: "\(id) \(key)", name: key.isEmpty ? m.title ?? id : key, points: pts, chart: ToolChart(pts, now: now)))
@@ -119,7 +120,7 @@ import SwiftUI
             let alert = metrics.count == 1 ? (p.alerts ?? []).first { $0.metric == first.id && $0.below != true } : nil
             return Chart(id: ids.joined(separator: "+"), title: metrics.map { $0.metric.title ?? $0.id }.joined(separator: " · "), metric: first.metric,
                          top: ToolChart.top(lines.flatMap { $0.points.compactMap(\.value) }, max: first.metric.max ?? (first.metric.unit == "%" ? 100 : nil)),
-                         lines: lines, bands: lines.first?.chart.bands ?? [], warn: alert?.warn, crit: alert?.crit)
+                         lines: lines, bands: lines.map(\.chart.bands).max { $0.count < $1.count } ?? [], warn: alert?.warn, crit: alert?.crit)
         }
         d.events = ((t?.events ?? []) + (live.state?.events ?? [])).filter { $0.at >= d.from && $0.level != "ok" }
         model.every = p.watch?.every ?? 60
@@ -186,7 +187,7 @@ struct OneChart: View {
             }
             ForEach(chart.lines) { line in
                 ForEach(Array(line.chart.runs.enumerated()), id: \.offset) { i, run in
-                    ForEach(run, id: \.at) { p in
+                    ForEach(Array(run.enumerated()), id: \.offset) { _, p in   // by place: lines read together share one time
                         LineMark(x: .value("Time", p.at), y: .value(chart.title, min(p.value ?? 0, chart.top)), series: .value("Run", "\(line.id) \(i)"))
                             .foregroundStyle(by: .value("Series", line.name))
                             .lineStyle(StrokeStyle(lineWidth: 1.5))
@@ -220,10 +221,13 @@ struct OneChart: View {
         .chartOverlay { proxy in
             GeometryReader { g in
                 Rectangle().fill(.clear).contentShape(Rectangle())
-                    .onContinuousHover { phase in
+                    .onContinuousHover { phase in   // snapped to a sample, published only when it moves to another: a move redraws the block
                         switch phase {
-                        case .active(let p): if let f = proxy.plotFrame { model.hover = proxy.value(atX: p.x - g[f].origin.x, as: Date.self) }
-                        case .ended: model.hover = nil
+                        case .active(let p):
+                            guard let f = proxy.plotFrame, let d = proxy.value(atX: p.x - g[f].origin.x, as: Date.self) else { return }
+                            let at = Date(timeIntervalSince1970: (d.timeIntervalSince1970 / model.every).rounded() * model.every)
+                            if model.hover != at { model.hover = at }
+                        case .ended: if model.hover != nil { model.hover = nil }
                         }
                     }
                     .gesture(SpatialTapGesture().onEnded { v in
@@ -248,6 +252,8 @@ struct OneChart: View {
     private let source: ToolListSource
     private let heading = NSTextField(labelWithString: "")
     private let height: NSLayoutConstraint
+    /// The header and the rows; a legacy horizontal scroller adds its height (`layout`).
+    private var fit: CGFloat = 48
     private var kept: [AnyObject] = []
     private var tasks: [String: Task<Void, Never>] = [:]
 
@@ -255,7 +261,8 @@ struct OneChart: View {
 
     init(_ live: ToolsLive, _ block: ToolBlock) {
         self.block = block
-        view = ToolListView(columns: block.columns)
+        // ponytail: a table with no `key` names its rows by their record, so a row's id changes with its numbers; System's say `{pid}` / `{mount}`.
+        view = ToolListView(columns: block.columns, key: block.key)
         source = ToolListSource(live.app, live.tool, live.server, live.target)
         let scroll = NSScrollView()
         height = scroll.heightAnchor.constraint(equalToConstant: 48)
@@ -265,11 +272,8 @@ struct OneChart: View {
         table.columnAutoresizingStyle = .noColumnAutoresizing   // before the columns: the first takes the slack (`layout`); past the width, it scrolls
         for c in block.columns ?? [] {
             let (field, format) = c.field, number = Self.numbers.contains(format ?? "")
-            let words = field.replacingOccurrences(of: "_", with: " ")
-            var (title, width) = (words.prefix(1).uppercased() + words.dropFirst(), number ? 56.0 : format == "bar" ? 100 : 64)
-            if case .object(_, let t, let w) = c { (title, width) = (t ?? title, w ?? width) }
             let col = NSTableColumn(identifier: .init(field))
-            (col.title, col.width, col.minWidth) = (title, width, table.tableColumns.isEmpty ? 80 : 40)   // the first names the row
+            (col.title, col.width, col.minWidth) = (c.title, c.width ?? (number ? 56 : format == "bar" ? 100 : 64), table.tableColumns.isEmpty ? 80 : 40)   // the first names the row
             if number { col.headerCell.alignment = .right }
             table.addTableColumn(col)
         }
@@ -304,13 +308,17 @@ struct OneChart: View {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// The first column as wide as the block leaves it, the others as set.
+    /// The first column as wide as the block leaves it, the others as set; a legacy scroller under a table wider
+    /// than the block gets its height.
     override func layout() {
         super.layout()
-        guard let first = table.tableColumns.first, let clip = table.enclosingScrollView?.contentView else { return }
+        guard let first = table.tableColumns.first, let scroll = table.enclosingScrollView else { return }
         let rest = table.tableColumns.dropFirst().reduce(0) { $0 + $1.width } + CGFloat(table.tableColumns.count) * table.intercellSpacing.width
-        let width = max(first.minWidth, clip.bounds.width - rest)
+        let width = max(first.minWidth, scroll.contentView.bounds.width - rest)
         if abs(first.width - width) > 0.5 { first.width = width }
+        let bar: CGFloat = width + rest > scroll.contentView.bounds.width + 0.5 && NSScroller.preferredScrollerStyle == .legacy
+            ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+        if abs(height.constant - (fit + bar)) > 0.5 { height.constant = fit + bar }
     }
 
     private var actions: [ToolAction] { (block.actions ?? []).compactMap { id in source.preset.actions?.first { $0.spec.id == id } } }
@@ -326,7 +334,8 @@ struct OneChart: View {
         rows = fresh
         kept = []
         table.reloadData()
-        height.constant = (table.headerView?.frame.height ?? 23) + CGFloat(max(1, rows.count)) * (table.rowHeight + table.intercellSpacing.height) + 2
+        fit = (table.headerView?.frame.height ?? 23) + CGFloat(max(1, rows.count)) * (table.rowHeight + table.intercellSpacing.height) + 2
+        needsLayout = true
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
@@ -437,11 +446,6 @@ struct OneChart: View {
         }
     }
 
-    /// Where a `goto` goes, as a button says it.
-    static func place(_ g: ToolRunner.Goto) -> String {
-        switch g { case .services: "Services…"; case .containers: "Containers…"; case .ssh: "Terminal" }
-    }
-
     private func row(_ e: ToolEventRecord, _ live: ToolsLive) -> NSView {
         let time = ToolsWindow.small(e.at.formatted(date: .omitted, time: .shortened))
         time.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
@@ -453,7 +457,7 @@ struct OneChart: View {
         text.setContentCompressionResistancePriority(.init(250), for: .horizontal)
         var views: [NSView] = [time, NSImageView(image: Self.mark(e.level)), text, ToolsWindow.spacer()]
         if let g = e.goto.flatMap(ToolRunner.Goto.init) {
-            let b = NSButton(title: Self.place(g), target: nil, action: nil)
+            let b = NSButton(title: g.title, target: nil, action: nil)
             b.controlSize = .small
             b.font = .systemFont(ofSize: 11)
             kept.append(MenuAction.attach(to: b) { [unowned live] in live.app.tools.go(g, on: live.target) })
@@ -482,14 +486,14 @@ struct OneChart: View {
             let n = NSTextField(labelWithString: "—")
             n.font = .monospacedDigitSystemFont(ofSize: 16, weight: .semibold)
             n.alignment = .right
-            n.widthAnchor.constraint(equalToConstant: 36).isActive = true
+            n.widthAnchor.constraint(greaterThanOrEqualToConstant: 36).isActive = true
             numbers.append(n)
             let title = NSTextField(labelWithString: c.title)
             title.font = .systemFont(ofSize: 12)
             title.lineBreakMode = .byTruncatingTail
             var views: [NSView] = [n, title, ToolsWindow.spacer()]
             if let g = c.goto.flatMap(ToolRunner.Goto.init) {
-                let b = NSButton(title: ToolsEvents.place(g), target: nil, action: nil)
+                let b = NSButton(title: g.title, target: nil, action: nil)
                 b.controlSize = .small
                 b.font = .systemFont(ofSize: 11)
                 kept.append(MenuAction.attach(to: b) { [unowned live] in live.app.tools.go(g, on: live.target) })
@@ -513,7 +517,7 @@ struct OneChart: View {
 
     func update(_ live: ToolsLive) {
         for (n, c) in zip(numbers, block.counts ?? []) {
-            n.stringValue = live.known?.history.carrying[c.rows == "list" ? "rows" : c.rows].map { "\($0.rows(c.rows).count)" } ?? "—"
+            n.stringValue = live.known?.history.carried(c.rows).map { "\($0.rows(c.rows).count)" } ?? "—"
         }
     }
 }

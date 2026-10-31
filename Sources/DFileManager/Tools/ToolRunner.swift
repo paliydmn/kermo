@@ -119,9 +119,18 @@ final class ToolRunner {
             && !(a.spec.output == .terminal && (a.run.where ?? p.where) == .mac)
     }
 
+    /// A look (§3.3): the preset says `readonly`, or the action goes somewhere in Kermo (`goto`) or shows a path it
+    /// already has (`open` with no command) — nothing runs on the server, so no question and no "one change at a time".
+    static func looks(_ a: ToolAction) -> Bool {
+        a.spec.readonly == true || a.spec.goto != nil || (a.spec.open != nil && a.run.command == nil && a.run.script == nil)
+    }
+
     /// `goto` (§7.1): where in Kermo an action or an event goes.
     enum Goto: Equatable {
         case services(unit: String?), containers(name: String?), ssh
+
+        /// As a button says it.
+        var title: String { switch self { case .services: "Services…"; case .containers: "Containers…"; case .ssh: "Terminal" } }
 
         init?(_ s: String) {
             let parts = s.split(separator: ":", maxSplits: 1).map(String.init), rest = parts.count > 1 ? parts[1] : nil
@@ -234,7 +243,7 @@ final class ToolRunner {
                 return "\(title) \(program); \(s.title) is \(known.facts.said)"
             }
         }
-        if a.spec.readonly != true {
+        if !Self.looks(a) {
             if s.readOnly { return "\(s.title) is read-only: Tools run only actions that change nothing there" }
             let name = row?.title ?? p.title
             if let busy = app.serviceRuns[id] { return busy.isEmpty ? "\(name): one change at a time — another is being asked" : "\(name): \(busy.dropLast()) runs on it — wait for it" }
@@ -335,7 +344,7 @@ final class ToolRunner {
         }
         if a.spec.long == true { return long(a, of: tool, row: onRow ? row : nil, id: id, from: source, on: s, t, asked: asked, values: values) }
         let rowScope = scope(p, on: s, t, rows: onRow ? row.map { [$0.record] } ?? [] : [])
-        let mac = (a.run.where ?? p.where) == .mac, readonly = a.spec.readonly == true, sudo = (a.run.sudo ?? p.sudo ?? false) && !mac
+        let mac = (a.run.where ?? p.where) == .mac, readonly = Self.looks(a), sudo = (a.run.sudo ?? p.sudo ?? false) && !mac
         let place = mac ? "this Mac" : s.title, key = ServerRow.key(t.asUser) + " " + p.id, timeout = a.run.timeout ?? 30
         let rowTitle = onRow ? row?.title : nil
         if !readonly { changing[key] = title }
@@ -343,7 +352,7 @@ final class ToolRunner {
         if a.spec.goto != nil || a.spec.open != nil {   // a place in Kermo, a server path in the panel: no list read again
             return Task {
                 defer { if !readonly { changing[key] = nil } }
-                await go(a, of: tool, rowScope, row: rowTitle, id: id, on: t, asked: asked, values: values, timeout: timeout, place: place)
+                await openOrGo(a, of: tool, rowScope, row: rowTitle, id: id, on: t, asked: asked, values: values, timeout: timeout, place: place)
             }
         }
 
@@ -428,8 +437,8 @@ final class ToolRunner {
     /// `goto`: there, after the lock. `open`: the server path — the command's first output line as `{stdout}`, else the
     /// template over the row — in the active panel, after the lock and the question as any run's. What went wrong
     /// is said under the list or page that has the row (a Tools window's table), else where the panel is.
-    private func go(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, row: String?, id: String, on t: SFTPTarget, asked: Bool,
-                    values: [String: String]?, timeout: Double, place: String) async {
+    private func openOrGo(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, row: String?, id: String, on t: SFTPTarget, asked: Bool,
+                          values: [String: String]?, timeout: Double, place: String) async {
         let p = tool.preset, verb = (a.spec.title ?? a.spec.id).replacingOccurrences(of: "…", with: ""), panel = app.active
         let lists = app.rowLists(id)
         func tell(_ text: String, failed: Bool) {
@@ -438,8 +447,9 @@ final class ToolRunner {
             lists.forEach { $0.said(said, about: id, failed: failed, output: nil) }
         }
         let r = await ready(a, of: tool, scope, row: row, on: t, asked: asked, window: lists.first?.sheetWindow, values: values)
+        let facts = answer(t)?.answer.facts, when = Date().formatted(date: .omitted, time: .shortened)
         guard case .go(let scope, let secret, _, let payload) = r else {
-            if case .stop(let why) = r { tell(why == "cancelled" ? "\(verb): cancelled — nothing ran" : "\(verb): \(why); nothing ran", failed: why != "cancelled") }
+            if case .stop(let why) = r { tell(line(.notRun(why), a, scope, place: place, at: when, readError: nil, facts: facts).line, failed: why != "cancelled") }
             return
         }
         if let g = a.spec.goto {
@@ -453,7 +463,7 @@ final class ToolRunner {
             let (how, _) = AppDelegate.how(ran(r, a, of: p, on: t, shown: payload.shown))
             guard case .passed = how else {
                 if case .unknown = how { return }
-                return tell(line(how, a, scope, place: place, at: Date().formatted(date: .omitted, time: .shortened), readError: nil, facts: answer(t)?.answer.facts).line, failed: true)
+                return tell(line(how, a, scope, place: place, at: when, readError: nil, facts: facts).line, failed: true)
             }
             if case .success(let (ran, _)) = r { names.levels[0]["stdout"] = .string(ran.text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "") }
         }

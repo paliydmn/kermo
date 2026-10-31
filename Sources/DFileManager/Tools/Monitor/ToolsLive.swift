@@ -81,19 +81,17 @@ import DFMCore
 
     /// A block as its view: a `row`'s side by side, a `stat` a tile, the rest ToolsDash's.
     private func make(_ b: ToolBlock) -> NSView {
-        if let blocks = b.row {
-            return row(blocks.map(make))
-        }
+        if let blocks = b.row { return row(blocks.map(make), tiles: blocks.allSatisfy { $0.stat != nil }) }
         if let stat = b.stat { return tile(stat.all, of: b.of, also: b.also) }
         let v: any ToolsBlock = if b.charts != nil { ToolsCharts(self, b) } else if b.table != nil { ToolsTable(self, b) } else if b.events == true { ToolsEvents() } else { ToolsCounts(self, b) }
         blocks.append(v)
         return v
     }
 
-    private func row(_ views: [NSView]) -> NSStackView {
+    private func row(_ views: [NSView], tiles: Bool = true) -> NSStackView {
         let s = NSStackView(views: views)
         (s.spacing, s.alignment, s.distribution) = (14, .top, .fillEqually)
-        if views.allSatisfy({ v in tiles.contains { $0.value.isDescendant(of: v) } }) { tileRows.append(s) }
+        if tiles { tileRows.append(s) }
         return s
     }
 
@@ -199,7 +197,7 @@ import DFMCore
         let from = at.addingTimeInterval(-150), to = at.addingTimeInterval(150)
         let row = ToolRow(key: "log \(Int(from.timeIntervalSince1970))", title: from.formatted(date: .omitted, time: .shortened) + "–" + to.formatted(date: .omitted, time: .shortened),
                           record: ["from": .number(from.timeIntervalSince1970.rounded()), "to": .number(to.timeIntervalSince1970.rounded())])
-        app.tools.perform(a, of: tool, row: row, onRow: true, id: ToolListSource(app, tool, server, target).rowID(row.key), from: nil, on: server, target)
+        app.tools.perform(a, of: tool, row: row, onRow: true, id: ToolListSource.rowID(row.key, tool: tool.preset.id, on: target), from: nil, on: server, target)
     }
 }
 

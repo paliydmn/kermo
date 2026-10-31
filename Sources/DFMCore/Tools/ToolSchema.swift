@@ -121,7 +121,7 @@ public enum ToolSchema {
                                    "label": .text(.display)], required: ["metric"]),
         "block": Object(fields: ["row": .list(.object("block")), "stat": .strings(.plain), "of": .oneOf(["max", "sum", "min", "avg"]),
                                  "also": .text(.plain), "charts": .list(.list(.text(.plain))), "range": .list(.duration),
-                                 "per": .text(.plain), "log": .text(.plain), "table": .text(.plain), "title": .text(.plain),
+                                 "per": .text(.plain), "log": .text(.plain), "table": .text(.plain), "title": .text(.plain), "key": .text(.display),
                                  "columns": .list(.column), "actions": .list(.text(.plain)), "events": .bool, "counts": .list(.object("count"))]),
         "count": Object(fields: ["rows": .text(.plain), "title": .text(.plain), "goto": .text(.display)], required: ["rows", "title"]),
         "context": Object(fields: ["path": .text(.path), "row": .text(.display), "actions": .list(.text(.plain))], required: ["path", "actions"]),
@@ -435,10 +435,16 @@ extension ToolSchema.Check {
         for (i, c) in (p.context ?? []).enumerated() {
             for x in c.actions where !rowActions.contains(x) { error([.key("context"), .index(i), .key("actions")], "“\(x)” isn't one of the actions") }
         }
+        let actionRows = Dictionary((p.actions ?? []).map { ($0.spec.id, $0.spec.rows) }) { a, _ in a }
         func blocks(_ list: [ToolBlock], _ at: [ToolPath]) {
             for (i, b) in list.enumerated() {
                 let bp = at + [.index(i)]
+                if [b.row != nil, b.stat != nil, b.charts != nil, b.table != nil, b.events != nil, b.counts != nil].filter({ $0 }).count != 1 {
+                    error(bp, "a block is one of row, stat, charts, table, events, counts")
+                }
+                if b.table != nil, b.columns?.isEmpty ?? true { error(bp + [.key("columns")], "a table needs its columns") }
                 for x in b.actions ?? [] where !rowActions.contains(x) { error(bp + [.key("actions")], "“\(x)” isn't one of the actions") }
+                for x in b.actions ?? [] { if let rows = actionRows[x] ?? nil, let table = b.table, rows != table { error(bp + [.key("actions")], "“\(x)” acts on rows of \(rows), not \(table)") } }
                 if let log = b.log, !rowActions.contains(log) { error(bp + [.key("log")], "“\(log)” isn't one of the actions") }
                 for m in (b.stat?.all ?? []) + (b.charts ?? []).flatMap({ $0 }) where !metrics.contains(m) { error(bp, "“\(m)” isn't one of the metrics") }
                 blocks(b.row ?? [], bp + [.key("row")])

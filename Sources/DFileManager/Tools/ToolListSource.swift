@@ -32,12 +32,7 @@ final class ToolListSource: ListSource {
             return [ListColumn(title: "Name", field: .title, width: 170), ListColumn(title: "State", field: .subtitle, width: 170, state: true),
                     ListColumn(title: "Detail", field: .detail, width: 160)]
         }
-        return cs.map { c in
-            let (field, format) = c.field
-            var (title, width) = (field.prefix(1).uppercased() + field.dropFirst(), 120.0)
-            if case .object(_, let t, let w) = c { (title, width) = (t ?? title, w ?? width) }
-            return ListColumn(title: title, field: .cell(field), width: CGFloat(width), state: format == "state")
-        }
+        return cs.map { c in ListColumn(title: c.title, field: .cell(c.field.name), width: CGFloat(c.width ?? 120), state: c.field.format == "state") }
     }
 
     // MARK: Reading it
@@ -191,7 +186,8 @@ final class ToolListSource: ListSource {
 
     // MARK: A row
 
-    func rowID(_ key: String) -> String { ServerRow.key(target) + " tool:\(preset.id) " + key }
+    func rowID(_ key: String) -> String { Self.rowID(key, tool: preset.id, on: target) }
+    static func rowID(_ key: String, tool: String, on t: SFTPTarget) -> String { ServerRow.key(t.asUser) + " tool:\(tool) " + key }
 
     /// ok ●, warn ○, bad ◆, off a grey dot (§6.2); busy is a spinner.
     static func mark(_ s: ToolRowState) -> StateMark? {

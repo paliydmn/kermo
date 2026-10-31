@@ -188,15 +188,14 @@ final class ToolsPage: NSView, RowList {
                      Self.text("＋ above uses one of the library's here; Use on Servers… in the library chooses where each one is used.", color: .secondaryLabelColor)]
         }
         body.setViews(views, in: .top)
-        if let v = views.first as? ToolsLive {
-            NSLayoutConstraint.activate([v.widthAnchor.constraint(equalTo: body.widthAnchor), v.heightAnchor.constraint(equalTo: body.heightAnchor)])
-        }
     }
 
     private func live(_ tool: LoadedTool) -> ToolsLive {
-        let v = lives[tool.preset.id] ?? ToolsLive(app, tool, server, target)
+        if let v = lives[tool.preset.id] { v.update(); return v }
+        let v = ToolsLive(app, tool, server, target)
         lives[tool.preset.id] = v
-        v.update()
+        body.addSubview(v)   // in the body before its constraints to it; `setViews` keeps it there
+        NSLayoutConstraint.activate([v.widthAnchor.constraint(equalTo: body.widthAnchor), v.heightAnchor.constraint(equalTo: body.heightAnchor)])
         return v
     }
 
@@ -408,6 +407,8 @@ final class ToolsPage: NSView, RowList {
     // MARK: RowList — how a button's run went
 
     /// Its buttons' rows, and the open live tab's table rows (`ToolListSource.rowID`'s form).
+    /// ponytail: the prefix takes every row of the open tab's tool — a tool with both a list in a Picker and a
+    /// dashboard table would see the Picker's line here too; no built-in has both.
     func has(_ id: String) -> Bool { window != nil && (ids.contains(id) || id.hasPrefix(key + " tool:" + (tab ?? "") + " ")) }
     func update(_ item: Picker.Item) {}
     func reload(_ c: ListContent, having id: String) {}

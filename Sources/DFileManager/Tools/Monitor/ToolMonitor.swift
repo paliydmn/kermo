@@ -167,6 +167,7 @@ import Network
     private func tickIfNeeded() {
         let needed = servers.values.contains(where: \.wanted)
         if needed, timer == nil {
+            lastTock = Date()
             timer = Timer.scheduledTimer(withTimeInterval: Self.tick, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tock() } }
         } else if !needed { timer?.invalidate(); timer = nil }
     }

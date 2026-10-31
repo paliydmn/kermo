@@ -175,6 +175,15 @@ private func systemSamples() throws -> [ToolSample] {
     #expect(later.map(\.message) == ["b.service failed", "api Exited (1)"], "\(later)")
     #expect(ToolEvents.raised(events, in: sample(25, ["boot_id": "b1", "failed_units": units]), previous: sample(20, ["boot_id": "b1"])).map(\.message) == ["a.service failed"],
             "without the carrying map, the line before is all there is")
+
+    // A poll's rows come as `rows`, and an event names them `list`: the same sample is found under either.
+    let gone = ToolEvent(id: "gone", rows: "list", key: "unit", when: "added", level: "info", message: "{unit} new")
+    var poll = ToolHistory()
+    let one: ToolRecord = ["rows": .array([.object(["unit": "a"])])], two: ToolRecord = ["rows": .array([.object(["unit": "a"]), .object(["unit": "b"])])]
+    _ = poll.add(sample(0, one), metrics: [:], now: at(0))
+    _ = poll.add(sample(5, two), metrics: [:], now: at(5))
+    #expect(ToolEvents.raised([gone], in: sample(5, two), previous: poll.previous, carrying: poll.carriedBefore).map(\.message) == ["b new"])
+    #expect(poll.rows("list").count == 2 && poll.carried("list")?.at == at(5))
 }
 
 @Test func aChartHasRunsBandsAndATop() {

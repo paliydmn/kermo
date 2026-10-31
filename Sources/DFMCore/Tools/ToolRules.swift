@@ -186,8 +186,10 @@ public struct ToolHistory: Sendable {
         return all
     }
 
-    /// The rows of `path` (`list`: the list's) as the latest sample that carried them had them.
-    public func rows(_ path: String) -> [ToolRecord] { carrying[path == "list" ? "rows" : path]?.rows(path) ?? [] }
+    /// The latest sample that carried the row set `path` (`list`: the list's, under `rows`), if any.
+    public func carried(_ path: String) -> ToolSample? { carrying[path == "list" ? "rows" : path] }
+    /// The rows of `path` as the latest sample that carried them had them.
+    public func rows(_ path: String) -> [ToolRecord] { carried(path)?.rows(path) ?? [] }
 
     /// No data from `at` on: a gap point on every series (one per stretch), till the next value.
     public mutating func mark(_ gap: ToolGap, at: Date) {
@@ -206,6 +208,7 @@ public struct ToolHistory: Sendable {
     }
 
     private mutating func trim(before: Date) {
+        carrying = carrying.filter { $0.value.at >= before }   // a row set that stopped coming isn't shown for ever
         for (id, keys) in series {
             for (key, points) in keys where points.first.map({ $0.at < before }) == true {
                 series[id]![key] = Array(points.drop { $0.at < before })
@@ -243,7 +246,7 @@ public struct ToolChart: Sendable, Equatable {
         if let max { return max }
         let v = Swift.max(1, values.max() ?? 1) * 1.15
         let p = pow(10, floor(log10(v)))
-        return [1, 2, 2.5, 5, 10].first { $0 * p >= v }.map { $0 * p } ?? 10 * p
+        return [1, 2, 2.5, 5, 10].first { $0 * p >= v }! * p   // v < 10·p by construction
     }
 
     /// The point nearest `at` among `points` with a value; nil past `within` seconds of any.
@@ -400,7 +403,7 @@ public enum ToolEvents {
         }
         for e in events {
             if let rows = e.rows, let key = e.key {
-                let earlier: ToolSample? = if let carrying { carrying[rows] } else { previous }
+                let earlier: ToolSample? = if let carrying { carrying[rows == "list" ? "rows" : rows] } else { previous }
                 let now = sample.rows(rows), was = earlier?.rows(rows)
                 let before = Dictionary((was ?? []).compactMap { r in r[key].map { ($0.text, r) } }) { a, _ in a }
                 for r in now where fits(e, r) {

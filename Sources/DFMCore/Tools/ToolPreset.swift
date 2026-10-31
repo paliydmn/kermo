@@ -222,6 +222,15 @@ public enum ToolColumn: Sendable, Hashable, Codable {
         guard let i = s.firstIndex(of: ":") else { return (s, nil) }
         return (String(s[..<i]), String(s[s.index(after: i)...]))
     }
+
+    /// Its heading: the object's `title`, else the field's words ("inodes_pct" → "Inodes pct").
+    public var title: String {
+        if case .object(_, let t?, _) = self { return t }
+        let words = field.name.replacingOccurrences(of: "_", with: " ")
+        return words.prefix(1).uppercased() + words.dropFirst()
+    }
+    /// The object's `width`, if given.
+    public var width: Double? { if case .object(_, _, let w) = self { w } else { nil } }
 }
 
 /// `list.also`: fields read from another file by regex.
@@ -241,8 +250,8 @@ public struct ToolListView: Sendable, Hashable, Codable {
     public var name: String?
     public var also: ToolAlso?
 
-    /// A dashboard table's view (§6.3): its columns alone; a row's key is its record.
-    public init(columns: [ToolColumn]?) { self.columns = columns }
+    /// A dashboard table's view (§6.3): its columns and what names a row (`key`); none: the record itself.
+    public init(columns: [ToolColumn]?, key: String? = nil) { (self.columns, self.key) = (columns, key) }
 }
 
 /// `list`, and an action's own list one level down (whose Run is the action's).
@@ -370,7 +379,7 @@ public struct ToolBlock: Sendable, Hashable, Codable {
     public var charts: [[String]]?
     public var range: [ToolDuration]?
     public var per, log: String?
-    public var table, title: String?
+    public var table, title, key: String?
     public var columns: [ToolColumn]?
     public var actions: [String]?
     public var events: Bool?

@@ -47,7 +47,7 @@ import Testing
               "events": [ { "id": "hot", "path": "cpu.pct", "when": "is", "value": 99, "level": "warning", "message": "hot: {cpu.pct}", "goto": "services:hot.service" } ],
               "dashboard": [ { "row": [ { "stat": "cpu" }, { "stat": "n" } ] },
                              { "charts": [ ["cpu"], ["n"] ], "range": ["1h", "24h", "7d"], "log": "log" },
-                             { "row": [ { "table": "procs", "title": "Processes", "columns": ["command", "cpu:%", "pid"], "actions": ["folder", "stop", "deeper"] },
+                             { "row": [ { "table": "procs", "title": "Processes", "key": "{pid}", "columns": ["command", "cpu:%", "pid"], "actions": ["folder", "stop", "deeper"] },
                                         { "counts": [ { "rows": "procs", "title": "processes", "goto": "services" } ] } ] },
                              { "events": true } ],
               "actions": [
@@ -411,17 +411,19 @@ extension ServerLockTests {
         let counts = try #require(view.blocks.compactMap { $0 as? ToolsCounts }.first), events = try #require(view.blocks.compactMap { $0 as? ToolsEvents }.first)
         await toolsUntil { table.rows.count == 2 && charts.model.data.charts.first?.lines.first?.points.count ?? 0 >= 3 && !(events.subviews.isEmpty) }
         weak var hosting = charts.hosting
+        page?.window?.layoutIfNeeded()
+        #expect(view.frame.height > 200 && view.frame.width > 300, "the live tab takes the page's body: \(view.frame)")
         #expect(hosting?.window != nil && charts.range.segmentCount == 3 && charts.range.isEnabled(forSegment: 0) && !charts.range.isEnabled(forSegment: 1))
         let d = charts.model.data
         #expect(d.charts.map(\.title) == ["CPU", "Ticks"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95 && d.charts[1].warn == nil)
-        #expect(d.charts[0].lines.first?.chart.runs.first?.last?.value == 99 && d.to.timeIntervalSince(d.from) == 3600, "\(d.charts[0].lines.first?.points.suffix(2) ?? [])")
+        #expect(d.charts[0].lines.first?.chart.runs.last?.last?.value == 99 && d.to.timeIntervalSince(d.from) == 3600, "\(d.charts[0].lines.first?.points.suffix(2) ?? [])")
         let model = ToolsCharts.Model()   // its own: the pointer may be over the window's charts, hovering
         (model.data, model.every) = (d, charts.model.every)
         let one = OneChart(chart: d.charts[0], model: model)
         #expect(one.said == "99%", "\(one.said)")
-        model.hover = d.to
+        model.hover = d.charts[0].lines.first?.points.last?.at
         #expect(one.said.hasPrefix("99% · "), "\(one.said)")
-        #expect(table.rows.map(\.title).count == 2 && table.rows[1].cells.map(\.text) == ["second", "20 %", "2"], "\(table.rows)")
+        #expect(table.rows.map(\.key) == ["1", "2"] && table.rows.map(\.title) == ["first", "second"] && table.rows[1].cells.map(\.text) == ["second", "20 %", "2"], "\(table.rows)")
         #expect(table.table.numberOfRows == 2 && table.table.tableColumns.map(\.title) == ["Command", "Cpu", "Pid", ""], "\(table.table.numberOfRows) \(table.table.tableColumns.map(\.title))")
         let first = rowButtons(table, 0)
         #expect(first.map(\.title) == ["Folder", "Stop…", "Deeper"] && rowButtons(table, 1).map(\.title) == first.map(\.title), "\(first.map(\.title))")
@@ -504,6 +506,22 @@ extension ServerLockTests {
         await toolsUntil { page.result.stringValue.contains("Log: done") }
         #expect(page.result.stringValue.contains("Log: done on localhost"), "\(page.result.stringValue)")
         #expect(buttons(view).map(\.title).contains("Terminal") == false, "a tool's goto isn't a dashboard button")
+    }
+
+    /// A tick that comes late — the main thread was busy — judges no interval missed: the stream's lines that
+    /// came meanwhile are still to be read, so nothing is a gap.
+    @Test func aLateTickJudgesNoInterval() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick()
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        bench.flag("slow-localhost")   // a line every 1.3 s against every 1: healthy, and sparse enough that the tick comes first
+        app.tools.monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        await toolsUntil { (app.tools.monitor.tool("pulse", on: .local())?.history.points("cpu").count ?? 0) >= 2 }
+        let s = try #require(app.tools.monitor.server(.local())), t = try #require(s.tools["pulse"])
+        usleep(1_800_000)   // the main thread busy past 3 ticks: the timer and the lines wait
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(s.missed == 0 && !t.history.points("cpu").contains { $0.gap == .noAnswer }, "\(t.history.points("cpu").map { $0.gap?.rawValue ?? "v" })")
     }
 
     /// Back from sleep, or on another network, each channel is ended and comes back: a gap, one more round trip,
