@@ -298,13 +298,13 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         return stack
     }
 
-    private static func spacer() -> NSView {
+    static func spacer() -> NSView {
         let v = NSView()
         v.setContentHuggingPriority(.init(1), for: .horizontal)
         return v
     }
 
-    private static func small(_ s: String) -> NSTextField {
+    static func small(_ s: String) -> NSTextField {
         let l = NSTextField(labelWithString: s)
         l.font = .systemFont(ofSize: 11)
         l.textColor = .secondaryLabelColor

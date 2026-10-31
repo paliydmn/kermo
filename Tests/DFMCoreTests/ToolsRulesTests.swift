@@ -154,6 +154,48 @@ private func systemSamples() throws -> [ToolSample] {
     #expect(ToolEvents.raised(events, in: sample(0, next), previous: nil).map(\.id) == ["restarting", "reboot_required"], "`is` on the first sample: the state is so")
 }
 
+/// System prints its units and containers every 12th line: a failed unit is "added" once — against the last sample
+/// that had the rows, not the line before — and a container that left `running` is seen; the history hands tables
+/// and counts the rows of the last sample that carried them.
+@Test func rowsThatComeEveryFewLinesCompareWithTheLastThatCame() throws {
+    let events = try #require(system.events), m = try #require(system.metrics)
+    var h = ToolHistory()
+    func feed(_ s: Double, _ r: ToolRecord) -> [ToolEventRecord] {
+        let x = sample(s, r)
+        _ = h.add(x, metrics: m, now: at(s))
+        return ToolEvents.raised(events, in: x, previous: h.previous, carrying: h.carriedBefore)
+    }
+    let units: ToolValue = .array([.object(["unit": "a.service"])]), running: ToolValue = .array([.object(["name": "api", "state": "running", "status": "Up"])])
+    #expect(feed(0, ["boot_id": "b1", "failed_units": units, "containers": running]).isEmpty)
+    #expect(feed(5, ["boot_id": "b1"]).isEmpty && feed(10, ["boot_id": "b1"]).isEmpty, "lines without the rows")
+    #expect(h.rows("failed_units").map { $0["unit"] } == ["a.service"] && h.last?.rows("failed_units").isEmpty == true, "the table reads the last sample that had them")
+    #expect(feed(15, ["boot_id": "b1", "failed_units": units, "containers": running]).isEmpty, "the same rows again: nothing added")
+    let later = feed(20, ["boot_id": "b1", "failed_units": .array([.object(["unit": "a.service"]), .object(["unit": "b.service"])]),
+                          "containers": .array([.object(["name": "api", "state": "exited", "status": "Exited (1)"])])])
+    #expect(later.map(\.message) == ["b.service failed", "api Exited (1)"], "\(later)")
+    #expect(ToolEvents.raised(events, in: sample(25, ["boot_id": "b1", "failed_units": units]), previous: sample(20, ["boot_id": "b1"])).map(\.message) == ["a.service failed"],
+            "without the carrying map, the line before is all there is")
+
+    // A poll's rows come as `rows`, and an event names them `list`: the same sample is found under either.
+    let gone = ToolEvent(id: "gone", rows: "list", key: "unit", when: "added", level: "info", message: "{unit} new")
+    var poll = ToolHistory()
+    let one: ToolRecord = ["rows": .array([.object(["unit": "a"])])], two: ToolRecord = ["rows": .array([.object(["unit": "a"]), .object(["unit": "b"])])]
+    _ = poll.add(sample(0, one), metrics: [:], now: at(0))
+    _ = poll.add(sample(5, two), metrics: [:], now: at(5))
+    #expect(ToolEvents.raised([gone], in: sample(5, two), previous: poll.previous, carrying: poll.carriedBefore).map(\.message) == ["b new"])
+    #expect(poll.rows("list").count == 2 && poll.carried("list")?.at == at(5))
+}
+
+@Test func aChartHasRunsBandsAndATop() {
+    let pts = [ToolPoint(at: at(0), value: 1), ToolPoint(at: at(5), value: 2), ToolPoint(at: at(10), gap: .asleep), ToolPoint(at: at(60), gap: .reconnecting),
+               ToolPoint(at: at(65), value: 3), ToolPoint(at: at(70), gap: .noAnswer)]
+    let c = ToolChart(pts, now: at(80))
+    #expect(c.runs.map { $0.map(\.value) } == [[1, 2], [3]], "a line never crosses a gap")
+    #expect(c.bands == [.init(from: at(10), to: at(60), gap: .asleep), .init(from: at(60), to: at(65), gap: .reconnecting), .init(from: at(70), to: at(80), gap: .noAnswer)])
+    #expect(ToolChart.top([3, 40], max: 100) == 100 && ToolChart.top([3, 40], max: nil) == 50 && ToolChart.top([], max: nil) == 2 && ToolChart.top([1_900_000], max: nil) == 2_500_000)
+    #expect(ToolChart.nearest(pts, to: at(12), within: 10)?.at == at(5) && ToolChart.nearest(pts, to: at(30), within: 10) == nil)
+}
+
 @Test func eventsIfUnlessAndScripted() {
     let down = ToolEvent(id: "down", rows: "list", key: "unit", field: "last_status", when: "is", level: "critical", message: "{unit} is down", value: "failed", unless: "active_version")
     let failed = ToolEvent(id: "failed", rows: "list", key: "unit", field: "last_status", when: "is", level: "warning", message: "{unit}: v{active_version} still serves", value: "failed", if: "active_version")

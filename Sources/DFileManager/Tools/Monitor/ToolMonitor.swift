@@ -167,6 +167,7 @@ import Network
     private func tickIfNeeded() {
         let needed = servers.values.contains(where: \.wanted)
         if needed, timer == nil {
+            lastTock = Date()
             timer = Timer.scheduledTimer(withTimeInterval: Self.tick, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tock() } }
         } else if !needed { timer?.invalidate(); timer = nil }
     }
@@ -270,7 +271,8 @@ import Network
                         fresh.append(ToolEventRecord(at: now, id: "ok", level: "ok", message: "Back to normal: \(what)\(key.isEmpty ? "" : " " + key) · after " + ToolAlerts.minutes(now.timeIntervalSince(since))))
                     }
                 }
-                fresh += ToolEvents.raised(p.events ?? [], in: sample, previous: t.history.previous, scope: app.tools.scope(p, on: s.saved, s.target))
+                fresh += ToolEvents.raised(p.events ?? [], in: sample, previous: t.history.previous, carrying: t.history.carriedBefore,
+                                           scope: app.tools.scope(p, on: s.saved, s.target))
                 if let e = ToolEvents.scripted(sample), t.budget.allows(now) {   // past 10 an hour: held, said as "N more" once there's room
                     let held = t.budget.takeHeld()
                     if held > 0 { fresh.append(ToolEventRecord(at: now, id: "more", level: "info", message: "\(p.title): \(held) more")) }
@@ -333,16 +335,20 @@ import Network
         s.events = Array(([ToolEventRecord(at: Date().addingTimeInterval(s.skew), id: "watch", level: level, message: text)] + s.events).prefix(40))
     }
 
-    /// Every second: retries due, intervals missed, "not answering" after `down` of them.
+    private var lastTock = Date()
+
+    /// Every second: retries due, intervals missed, "not answering" after `down` of them. A tick that comes late —
+    /// the app was busy, or stopped a while — judges nothing: the lines that came meanwhile are still to be read.
     private func tock() {
-        let now = Date()
+        let now = Date(), stalled = now.timeIntervalSince(lastTock) > max(3 * Self.tick, 1.5)
+        lastTock = now
         for s in servers.values where s.wanted {
             if s.channel == nil, !s.needsLogin, let at = s.retryAt, at <= now {
                 s.retryAt = nil
                 start(s)
                 continue
             }
-            guard s.channel != nil, let last = s.lastLine else { continue }
+            guard s.channel != nil, let last = s.lastLine, !stalled else { continue }
             // A stream sleeps `every` after its reads, so samples come a little late: an interval is missed only past
             // half of one more, else a healthy stream would mark gaps and start every `for` over.
             let missed = max(0, Int((now.timeIntervalSince(last) - s.every / 2) / s.every))

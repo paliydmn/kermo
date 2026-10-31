@@ -106,15 +106,63 @@ final class ToolRunner {
             ?? p.toolActions?.contains { runs($0, of: p) } ?? false
     }
 
-    /// What this version runs of an action: a command, a script or an `edit`; a form of text, secrets and choices;
-    /// output as a line, a window, a log that follows, a terminal or nothing; a long job (Activity's).
-    /// ponytail: levels (PR 6), folder and file inputs (PR 7), `open`, `goto` and `accepts` (PR 5, 9) and a terminal on
-    /// this Mac are left out till then.
+    /// What this version runs of an action: a command, a script, an `edit`, an `open` (a server path in the panel) or
+    /// a `goto` (a place in Kermo); a form of text, secrets and choices; output as a line, a window, a log that
+    /// follows, a terminal or nothing; a long job (Activity's).
+    /// ponytail: levels (PR 6), folder and file inputs (PR 7), `check` (http, 5c), `accepts` (PR 9) and a terminal
+    /// on this Mac are left out till then.
     static func runs(_ a: ToolAction, of p: ToolPreset) -> Bool {
-        (a.run.command != nil || a.run.script != nil || a.spec.edit != nil) && a.spec.list == nil && a.spec.output != .list
+        (a.run.command != nil || a.run.script != nil || a.spec.edit != nil || a.spec.open != nil || a.spec.goto != nil)
+            && a.spec.list == nil && a.spec.output != .list
             && !(a.spec.inputs ?? []).contains { [.folder, .file].contains($0.info.type) }
-            && a.spec.open == nil && a.spec.goto == nil && a.spec.accepts == nil
+            && a.spec.accepts == nil && a.spec.check == nil
             && !(a.spec.output == .terminal && (a.run.where ?? p.where) == .mac)
+    }
+
+    /// A look (§3.3): the preset says `readonly`, or the action goes somewhere in Kermo (`goto`) or shows a path it
+    /// already has (`open` with no command) — nothing runs on the server, so no question and no "one change at a time".
+    static func looks(_ a: ToolAction) -> Bool {
+        a.spec.readonly == true || a.spec.goto != nil || (a.spec.open != nil && a.run.command == nil && a.run.script == nil)
+    }
+
+    /// `goto` (§7.1): where in Kermo an action or an event goes.
+    enum Goto: Equatable {
+        case services(unit: String?), containers(name: String?), ssh
+
+        /// As a button says it.
+        var title: String { switch self { case .services: "Services…"; case .containers: "Containers…"; case .ssh: "Terminal" } }
+
+        init?(_ s: String) {
+            let parts = s.split(separator: ":", maxSplits: 1).map(String.init), rest = parts.count > 1 ? parts[1] : nil
+            switch parts.first {
+            case "services": self = .services(unit: rest)
+            case "containers": self = .containers(name: rest)
+            case "ssh": self = .ssh
+            default: return nil
+            }
+        }
+    }
+
+    /// There: Services… or Containers… of `t`'s server in the search, on the row named; an SSH tab. As any look, a
+    /// locked server asks first (the lists do; the terminal's login does).
+    func go(_ g: Goto, on t: SFTPTarget) {
+        app.showMainWindow(nil)
+        let s = app.savedServer(at: t) ?? SavedServer(target: t.asUser), key = ServerRow.key(t.asUser)
+        switch g {
+        case .services(let unit): app.showInSearch(ServiceList(app, s, t.asUser), select: unit.map { key + " " + $0 })
+        case .containers(let name): app.showInSearch(ContainerList(app, s, t.asUser), select: name.map { key + " container " + $0 })
+        case .ssh: app.openSSH(t.asUser)
+        }
+    }
+
+    /// Tests: a server path shown in the active panel — the folder, or a file's folder with the file under the cursor.
+    nonisolated(unsafe) static var reveal: @MainActor (AppDelegate, SFTPTarget, String) -> Void = { app, t, path in
+        app.showMainWindow(nil)
+        app.showPanels()
+        let panel = app.active
+        panel.loadRemote(t.asUser, dir: path, select: nil) { [weak panel] _ in
+            panel?.loadRemote(t.asUser, dir: (path as NSString).deletingLastPathComponent, select: (path as NSString).lastPathComponent)
+        }
     }
 
     // MARK: What a server has
@@ -195,7 +243,7 @@ final class ToolRunner {
                 return "\(title) \(program); \(s.title) is \(known.facts.said)"
             }
         }
-        if a.spec.readonly != true {
+        if !Self.looks(a) {
             if s.readOnly { return "\(s.title) is read-only: Tools run only actions that change nothing there" }
             let name = row?.title ?? p.title
             if let busy = app.serviceRuns[id] { return busy.isEmpty ? "\(name): one change at a time — another is being asked" : "\(name): \(busy.dropLast()) runs on it — wait for it" }
@@ -216,11 +264,12 @@ final class ToolRunner {
     /// (the form's "…") is the form's to check.
     static func refusal(_ a: ToolAction, of p: ToolPreset, _ scope: ToolTemplate.Scope) -> String? {
         let run = a.run, mac = (run.where ?? p.where) == .mac, inputs = Dictionary((a.spec.inputs ?? []).map { ($0.info.name, $0) }) { x, _ in x }
-        let texts = (run.command?.all ?? []) + [a.spec.edit].compactMap { $0 } + Array((p.env ?? [:]).values) + Array((run.env ?? [:]).values)
+        let texts = (run.command?.all ?? []) + [a.spec.edit, a.spec.open].compactMap { $0 } + Array((p.env ?? [:]).values) + Array((run.env ?? [:]).values)
         for text in texts {
             for ph in ToolTemplate.placeholders(in: text) {
                 let v = scope.value(ph.name)?.text ?? "", input = inputs[ph.name]
                 if input != nil, v == "…" { continue }
+                if ph.name == "stdout", text == a.spec.open { continue }   // the command's output: checked once it's there
                 if let why = ToolTemplate.refusal(v, pattern: input?.info.pattern) { return "{\(ph.name)}: \(why)" }
                 guard mac else { continue }
                 if !v.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "._:/@%+=,-".unicodeScalars.contains($0)) }) {
@@ -295,10 +344,17 @@ final class ToolRunner {
         }
         if a.spec.long == true { return long(a, of: tool, row: onRow ? row : nil, id: id, from: source, on: s, t, asked: asked, values: values) }
         let rowScope = scope(p, on: s, t, rows: onRow ? row.map { [$0.record] } ?? [] : [])
-        let mac = (a.run.where ?? p.where) == .mac, readonly = a.spec.readonly == true, sudo = (a.run.sudo ?? p.sudo ?? false) && !mac
+        let mac = (a.run.where ?? p.where) == .mac, readonly = Self.looks(a), sudo = (a.run.sudo ?? p.sudo ?? false) && !mac
         let place = mac ? "this Mac" : s.title, key = ServerRow.key(t.asUser) + " " + p.id, timeout = a.run.timeout ?? 30
         let rowTitle = onRow ? row?.title : nil
         if !readonly { changing[key] = title }
+
+        if a.spec.goto != nil || a.spec.open != nil {   // a place in Kermo, a server path in the panel: no list read again
+            return Task {
+                defer { if !readonly { changing[key] = nil } }
+                await openOrGo(a, of: tool, rowScope, row: rowTitle, id: id, on: t, asked: asked, values: values, timeout: timeout, place: place)
+            }
+        }
 
         let output = a.spec.output ?? (a.spec.edit != nil && a.run.command == nil && a.run.script == nil ? nil : .line)
         if output != .line && output != .silent {   // a window, a log, a terminal, the editor: theirs to show
@@ -376,6 +432,45 @@ final class ToolRunner {
                 },
                 say: { how, _, error, time in self.line(how, a, said, place: place, at: time, readError: error, facts: self.answer(t)?.answer.facts) })
         }
+    }
+
+    /// `goto`: there, after the lock. `open`: the server path — the command's first output line as `{stdout}`, else the
+    /// template over the row — in the active panel, after the lock and the question as any run's. What went wrong
+    /// is said under the list or page that has the row (a Tools window's table), else where the panel is.
+    private func openOrGo(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, row: String?, id: String, on t: SFTPTarget, asked: Bool,
+                          values: [String: String]?, timeout: Double, place: String) async {
+        let p = tool.preset, verb = (a.spec.title ?? a.spec.id).replacingOccurrences(of: "…", with: ""), panel = app.active
+        let lists = app.rowLists(id)
+        func tell(_ text: String, failed: Bool) {
+            guard !lists.isEmpty else { return panel.flash(text, error: failed) }
+            let said = NSAttributedString(string: text, attributes: [.foregroundColor: failed ? Palette.fail : NSColor.labelColor, .font: NSFont.systemFont(ofSize: 12)])
+            lists.forEach { $0.said(said, about: id, failed: failed, output: nil) }
+        }
+        let r = await ready(a, of: tool, scope, row: row, on: t, asked: asked, window: lists.first?.sheetWindow, values: values)
+        let facts = answer(t)?.answer.facts, when = Date().formatted(date: .omitted, time: .shortened)
+        guard case .go(let scope, let secret, _, let payload) = r else {
+            if case .stop(let why) = r { tell(line(.notRun(why), a, scope, place: place, at: when, readError: nil, facts: facts).line, failed: why != "cancelled") }
+            return
+        }
+        if let g = a.spec.goto {
+            guard let there = Goto(ToolTemplate.text(g, scope)) else { return tell("\(verb): Kermo has no place “\(g)”", failed: true) }
+            return go(there, on: t)
+        }
+        var names = scope
+        if let payload {   // the path is what the command prints
+            let env = SSHAskpass.env
+            let r = await panel.busy("\(verb) on \(place)…") { flag in try Self.exec(a.run, of: tool, scope, secret: secret, on: t, timeout: timeout, env: env, cancel: flag) }
+            let (how, _) = AppDelegate.how(ran(r, a, of: p, on: t, shown: payload.shown))
+            guard case .passed = how else {
+                if case .unknown = how { return }
+                return tell(line(how, a, scope, place: place, at: when, readError: nil, facts: facts).line, failed: true)
+            }
+            if case .success(let (ran, _)) = r { names.levels[0]["stdout"] = .string(ran.text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "") }
+        }
+        let path = ToolTemplate.text(a.spec.open ?? "", names)
+        guard path.hasPrefix("/"), ToolTemplate.refusal(path) == nil else { return tell("\(verb): “\(path)” isn't a path on \(place)", failed: true) }
+        tell("\(verb): \(path) in the panel", failed: false)
+        Self.reveal(app, t, path)
     }
 
     /// A long job (§7.6): asked as any run, then started on the server — the start comes back at once — and Activity's

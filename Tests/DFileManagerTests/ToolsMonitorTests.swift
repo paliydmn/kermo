@@ -10,8 +10,10 @@ import Testing
 // stream of its own (`pulse`) on this Mac.
 
 /// A stream on this Mac: a JSON line every 0.3 s — cpu 10, or 99 while the flag `hot-<server>` is there; every 1.3 s
-/// with `slow-<server>`; with `event-<server>`, an `_event` in each line — its pid in `pulse-<server>.pid`. `pulse2`:
-/// the same under another name.
+/// with `slow-<server>`; with `event-<server>`, an `_event` in each line; two `procs` rows in every other line (as
+/// System spaces its heavier reads) — its pid in `pulse-<server>.pid`. `pulse2`: the same under another name. Its
+/// dashboard has every block; its actions: Folder (`open` what `pulse-dir` prints), Stop… (dangerous), Deeper (a
+/// level: not run yet), Log (`{from}` / `{to}` into `pulse-log`), Terminal and Services (`goto`).
 @MainActor private func pulse(_ bench: ToolsBench, _ ids: [String] = ["pulse"]) throws {
     for id in ids {
         try Data("""
@@ -22,13 +24,18 @@ import Testing
             while :; do
               cpu=10; [ -f \(bench.dir)/hot-$2 ] && cpu=99
               ev=''; [ -f \(bench.dir)/event-$2 ] && ev=',"_event":{"id":"tick","level":"info","message":"tick"}'
-              printf '{"cpu":{"pct":%s},"n":%s%s}\\n' "$cpu" "$i" "$ev"
+              procs=''; [ $((i % 2)) -eq 0 ] && procs=',"procs":[{"pid":1,"command":"first","cpu":1.5},{"pid":2,"command":"second","cpu":20}]'
+              printf '{"cpu":{"pct":%s},"n":%s%s%s}\\n' "$cpu" "$i" "$ev" "$procs"
               i=$((i+1))
               if [ -f \(bench.dir)/slow-$2 ]; then sleep 1.3; else sleep 0.3; fi
             done
 
             """.utf8).write(to: URL(fileURLWithPath: bench.dir + "/bin/" + id))
         chmod(bench.dir + "/bin/" + id, 0o755)
+        for (name, body) in [("pulse-dir", "echo /tmp/pulse-$1"), ("pulse-log", ":")] {
+            try Data("#!/bin/sh\necho \"\(name) $*\" >> \(bench.dir)/calls.log\n\(body)\n".utf8).write(to: URL(fileURLWithPath: bench.dir + "/bin/" + name))
+            chmod(bench.dir + "/bin/" + name, 0o755)
+        }
         try FileManager.default.createDirectory(atPath: bench.dir + "/own", withIntermediateDirectories: true)
         try Data("""
             { "schema": 1, "id": "\(id)", "title": "\(id.capitalized)",
@@ -37,8 +44,18 @@ import Testing
               "metrics": { "cpu": { "title": "CPU", "path": "cpu.pct", "unit": "%", "max": 100 }, "n": { "title": "Ticks", "path": "n" } },
               "summary": [ { "metric": "cpu", "as": "bar" } ],
               "alerts": [ { "id": "cpu", "metric": "cpu", "warn": 85, "crit": 95, "checks": 2 } ],
-              "events": [ { "id": "hot", "path": "cpu.pct", "when": "is", "value": 99, "level": "warning", "message": "hot: {cpu.pct}" } ],
-              "dashboard": [ { "row": [ { "stat": "cpu" }, { "stat": "n" } ] } ] }
+              "events": [ { "id": "hot", "path": "cpu.pct", "when": "is", "value": 99, "level": "warning", "message": "hot: {cpu.pct}", "goto": "services:hot.service" } ],
+              "dashboard": [ { "row": [ { "stat": "cpu" }, { "stat": "n" } ] },
+                             { "charts": [ ["cpu"], ["n"] ], "range": ["1h", "24h", "7d"], "log": "log" },
+                             { "row": [ { "table": "procs", "title": "Processes", "key": "{pid}", "columns": ["command", "cpu:%", "pid"], "actions": ["folder", "stop", "deeper"] },
+                                        { "counts": [ { "rows": "procs", "title": "processes", "goto": "services" } ] } ] },
+                             { "events": true } ],
+              "actions": [
+                { "id": "folder", "title": "Folder", "rows": "procs", "readonly": true, "command": "pulse-dir {pid}", "open": "{stdout}" },
+                { "id": "stop", "title": "Stop…", "rows": "procs", "dangerous": true, "command": "pulse-log stop {pid}" },
+                { "id": "deeper", "title": "Deeper", "rows": "procs", "readonly": true, "command": "echo {pid}", "output": "list", "list": { "format": "lines", "key": "{line}" } },
+                { "id": "log", "title": "Log", "readonly": true, "command": "pulse-log {from} {to}" } ],
+              "toolActions": [ { "id": "ssh", "title": "Terminal", "goto": "ssh" }, { "id": "svc", "title": "Services", "goto": "services:{server}.service" } ] }
             """.utf8).write(to: URL(fileURLWithPath: bench.dir + "/own/\(id).json"))
     }
 }
@@ -85,6 +102,11 @@ import Testing
 
 @MainActor private func live(_ page: ToolsPage) -> ToolsLive? { page.body.arrangedSubviews.first as? ToolsLive }
 @MainActor private func buttons(_ v: NSView) -> [NSButton] { ((v as? NSButton).map { [$0] } ?? []) + v.subviews.flatMap(buttons) }
+@MainActor private func labels(_ v: NSView) -> [String] { ((v as? NSTextField).map { [$0.stringValue] } ?? []) + v.subviews.flatMap(labels) }
+/// A dashboard table's row buttons (its last column), the row's view made if the table hasn't drawn yet.
+@MainActor private func rowButtons(_ t: ToolsTable, _ row: Int) -> [NSButton] {
+    t.table.view(atColumn: t.table.numberOfColumns - 1, row: row, makeIfNecessary: true).map(buttons) ?? []
+}
 @MainActor private func press(_ b: NSButton?) { _ = (b?.target as? NSObject)?.perform(b?.action, with: b) }
 
 extension ServerLockTests {
@@ -369,6 +391,145 @@ extension ServerLockTests {
         gate.signal()
         await toolsUntil { s.tools["pulse"]?.history.last != nil }
         #expect(!s.needsLogin && !s.connecting && s.channel != nil)
+    }
+
+    /// The dashboard's blocks draw from the stream: two charts with the series (24h and 7d greyed), the processes
+    /// table from the last line that had the rows (every other one), their count, the events with where they go
+    /// — the hover's values in a chart's words. Closing the window takes the charts out of the view tree.
+    @Test func theDashboardDrawsItsBlocksFromTheStream() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick()
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        bench.flag("hot-localhost")
+        ToolsWindow.show(app, server: .local())
+        weak var page = ToolsWindow.main?.page
+        page?.select("pulse")
+        await toolsUntil { (app.tools.monitor.tool("pulse", on: .local())?.history.points("cpu").count ?? 0) >= 3 }
+        let view = try #require(page.flatMap(live))
+        let charts = try #require(view.blocks.compactMap { $0 as? ToolsCharts }.first), table = try #require(view.blocks.compactMap { $0 as? ToolsTable }.first)
+        let counts = try #require(view.blocks.compactMap { $0 as? ToolsCounts }.first), events = try #require(view.blocks.compactMap { $0 as? ToolsEvents }.first)
+        await toolsUntil { table.rows.count == 2 && charts.model.data.charts.first?.lines.first?.points.count ?? 0 >= 3 && !(events.subviews.isEmpty) }
+        weak var hosting = charts.hosting
+        page?.window?.layoutIfNeeded()
+        #expect(view.frame.height > 200 && view.frame.width > 300, "the live tab takes the page's body: \(view.frame)")
+        #expect(hosting?.window != nil && charts.range.segmentCount == 3 && charts.range.isEnabled(forSegment: 0) && !charts.range.isEnabled(forSegment: 1))
+        let d = charts.model.data
+        #expect(d.charts.map(\.title) == ["CPU", "Ticks"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95 && d.charts[1].warn == nil)
+        #expect(d.charts[0].lines.first?.chart.runs.last?.last?.value == 99 && d.to.timeIntervalSince(d.from) == 3600, "\(d.charts[0].lines.first?.points.suffix(2) ?? [])")
+        let model = ToolsCharts.Model()   // its own: the pointer may be over the window's charts, hovering
+        (model.data, model.every) = (d, charts.model.every)
+        let one = OneChart(chart: d.charts[0], model: model)
+        #expect(one.said == "99%", "\(one.said)")
+        model.hover = d.charts[0].lines.first?.points.last?.at
+        #expect(one.said.hasPrefix("99% · "), "\(one.said)")
+        #expect(table.rows.map(\.key) == ["1", "2"] && table.rows.map(\.title) == ["first", "second"] && table.rows[1].cells.map(\.text) == ["second", "20 %", "2"], "\(table.rows)")
+        #expect(table.table.numberOfRows == 2 && table.table.tableColumns.map(\.title) == ["Command", "Cpu", "Pid", ""], "\(table.table.numberOfRows) \(table.table.tableColumns.map(\.title))")
+        let first = rowButtons(table, 0)
+        #expect(first.map(\.title) == ["Folder", "Stop…", "Deeper"] && rowButtons(table, 1).map(\.title) == first.map(\.title), "\(first.map(\.title))")
+        try #require(first.count == 3)
+        #expect(first[0].isEnabled && first[1].isEnabled && !first[2].isEnabled && first[2].toolTip?.contains("later release") == true)
+        #expect(first[1].attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == Palette.fail, "dangerous: red")
+        #expect(counts.numbers.map(\.stringValue) == ["2"] && buttons(counts).map(\.title) == ["Services…"])
+        #expect(buttons(events).map(\.title) == ["Services…"] && events.subviews.first.map { labels($0) }?.contains("hot: 99") == true, "\(events.subviews.first.map(labels) ?? [])")
+
+        page?.select("fail2ban")   // away: the charts leave the tree and go; back: the same tab, its size again, charts anew
+        await toolsUntil { hosting == nil }
+        #expect(hosting == nil && charts.hosting == nil, "the charts go with the tab")
+        page?.select("pulse")
+        page?.window?.layoutIfNeeded()
+        #expect(live(page!) === view && view.frame.height > 200 && charts.hosting?.window != nil, "back from another tab: \(view.frame)")
+        weak var again = charts.hosting
+
+        closeWindows()
+        await toolsUntil { page == nil && again == nil }
+        #expect(page == nil && again == nil, "the charts leave the view tree with the window: page \(page != nil), charts \(again != nil)")
+    }
+
+    /// A table row's action goes down the one path every action takes: Stop… asks everywhere (↩ = Cancel) and runs
+    /// with the row's fields; Folder runs its command and shows what it printed in the panel; the line under the
+    /// page says how each went. On a locked server the row's action asks Touch ID first — metrics never did.
+    @Test func aTableRowsActionsTakeTheActionsPath() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick()
+        let reveal = ToolRunner.reveal
+        defer { quick.done(); bench.done(); done(); app.savedServers = []; ToolRunner.reveal = reveal; AppDelegate.answering = nil }
+        try await watching(app, bench)
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("pulse")
+        await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 2 }
+        let table = try #require(live(page)?.blocks.compactMap { $0 as? ToolsTable }.first)
+        var asked: [(String, [String], Int?)] = []
+        AppDelegate.answering = { m, b, d in asked.append((m, b, d)); return asked.count == 1 ? 2 : 0 }
+        press(rowButtons(table, 0).first { $0.title == "Stop…" })
+        await toolsUntil { !page.result.stringValue.isEmpty }
+        #expect(asked.first?.0 == "Stop on localhost?" && asked.first?.1 == ["Stop", "Show Exactly What Runs", "Cancel"] && asked.first?.2 == 2, "\(asked)")
+        #expect(page.result.stringValue == "Stop: cancelled — nothing ran")
+        press(rowButtons(table, 0).first { $0.title == "Stop…" })
+        await toolsUntil { page.result.stringValue.contains("Stop: done") }
+        #expect(page.result.stringValue.contains("Stop: done on localhost at ") && asked.count == 2, "\(page.result.stringValue) \(asked.map(\.0))")
+        #expect(bench.calls.contains("pulse-log stop 1"), "the row's pid in the command: \(bench.calls)")
+
+        nonisolated(unsafe) var shown: [(SFTPTarget, String)] = []
+        ToolRunner.reveal = { _, t, path in shown.append((t, path)) }
+        press(rowButtons(table, 0).first { $0.title == "Folder" })
+        await toolsUntil { !shown.isEmpty }
+        #expect(shown.map(\.1) == ["/tmp/pulse-1"] && bench.calls.contains("pulse-dir 1") && asked.count == 2, "readonly: no question; what it printed opens")
+
+        var locked = app.savedServers[0]
+        locked.locked = true
+        ServerLock.servers = { [locked] }
+        var touched = 0
+        ServerLock.authenticate = { _ in touched += 1; return false }
+        press(rowButtons(table, 0).first { $0.title == "Folder" })
+        await toolsUntil { touched == 1 }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(touched == 1 && shown.count == 1, "locked: Touch ID first, and nothing without it")
+    }
+
+    /// `goto` and the chart's click: an event's Services… and a count's open the server's services in the search;
+    /// a click on a chart runs the `log` action with five minutes around that moment, by the server's clock.
+    @Test func gotoAndAChartsClickFromTheDashboard() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick()
+        defer { quick.done(); bench.done(); done(); app.savedServers = []; Picker.dismiss() }
+        try await watching(app, bench)
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("pulse")
+        await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsCounts }.first?.numbers.first?.stringValue ?? "—") != "—" }
+        let view = try #require(live(page))
+        press(buttons(try #require(view.blocks.compactMap { $0 as? ToolsCounts }.first)).first)
+        let picker = try #require(Picker.current)
+        #expect(picker.scopeNames.last == "Services", "\(picker.scopeNames)")
+        Picker.dismiss()
+        #expect(ToolRunner.Goto("services:nginx.service") == .services(unit: "nginx.service") && ToolRunner.Goto("containers:api") == .containers(name: "api")
+                && ToolRunner.Goto("ssh") == .ssh && ToolRunner.Goto("mail") == nil)
+
+        let at = Date(timeIntervalSince1970: 1_800_000_000)
+        view.log("log", at: at)
+        await toolsUntil { bench.calls.contains { $0.hasPrefix("pulse-log") } }
+        #expect(bench.calls.contains("pulse-log 1799999850 1800000150"), "\(bench.calls)")
+        await toolsUntil { page.result.stringValue.contains("Log: done") }
+        #expect(page.result.stringValue.contains("Log: done on localhost"), "\(page.result.stringValue)")
+        #expect(buttons(view).map(\.title).contains("Terminal") == false, "a tool's goto isn't a dashboard button")
+    }
+
+    /// A tick that comes late — the main thread was busy — judges no interval missed: the stream's lines that
+    /// came meanwhile are still to be read, so nothing is a gap.
+    @Test func aLateTickJudgesNoInterval() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick()
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        bench.flag("slow-localhost")   // a line every 1.3 s against every 1: healthy, and sparse enough that the tick comes first
+        app.tools.monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        await toolsUntil { (app.tools.monitor.tool("pulse", on: .local())?.history.points("cpu").count ?? 0) >= 2 }
+        let s = try #require(app.tools.monitor.server(.local())), t = try #require(s.tools["pulse"])
+        usleep(1_800_000)   // the main thread busy past 3 ticks: the timer and the lines wait
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(s.missed == 0 && !t.history.points("cpu").contains { $0.gap == .noAnswer }, "\(t.history.points("cpu").map { $0.gap?.rawValue ?? "v" })")
     }
 
     /// Back from sleep, or on another network, each channel is ended and comes back: a gap, one more round trip,

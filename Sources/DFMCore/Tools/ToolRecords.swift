@@ -247,6 +247,13 @@ public struct ToolRow: Sendable, Hashable {
     }
 }
 
+extension ToolRow {
+    /// A row made up outside a list: a chart's click as the `log` action's row, `{from}` and `{to}` its fields.
+    public init(key: String, title: String, record: ToolRecord) {
+        self.init(key: key, title: title, subtitle: "", detail: "", state: nil, cells: [], record: record)
+    }
+}
+
 extension ToolListView {
     /// `record` as a row. `scope`: the names around it (vars, Kermo's, parent rows); the record goes first among the
     /// rows. `now`: the server's clock, for `ago`.

@@ -32,12 +32,7 @@ final class ToolListSource: ListSource {
             return [ListColumn(title: "Name", field: .title, width: 170), ListColumn(title: "State", field: .subtitle, width: 170, state: true),
                     ListColumn(title: "Detail", field: .detail, width: 160)]
         }
-        return cs.map { c in
-            let (field, format) = c.field
-            var (title, width) = (field.prefix(1).uppercased() + field.dropFirst(), 120.0)
-            if case .object(_, let t, let w) = c { (title, width) = (t ?? title, w ?? width) }
-            return ListColumn(title: title, field: .cell(field), width: CGFloat(width), state: format == "state")
-        }
+        return cs.map { c in ListColumn(title: c.title, field: .cell(c.field.name), width: CGFloat(c.width ?? 120), state: c.field.format == "state") }
     }
 
     // MARK: Reading it
@@ -191,7 +186,8 @@ final class ToolListSource: ListSource {
 
     // MARK: A row
 
-    func rowID(_ key: String) -> String { ServerRow.key(target) + " tool:\(preset.id) " + key }
+    func rowID(_ key: String) -> String { Self.rowID(key, tool: preset.id, on: target) }
+    static func rowID(_ key: String, tool: String, on t: SFTPTarget) -> String { ServerRow.key(t.asUser) + " tool:\(tool) " + key }
 
     /// ok ●, warn ○, bad ◆, off a grey dot (§6.2); busy is a spinner.
     static func mark(_ s: ToolRowState) -> StateMark? {
@@ -291,7 +287,7 @@ final class ToolListSource: ListSource {
 
     /// One action as a list has it: its key (none where it can't run here), why it can't now, what its question says;
     /// a window's closes a Picker first. `multi`: it runs on marked rows, else only the cursor's (Q15).
-    private func action(_ a: ToolAction, row: ToolRow?, onRow: Bool, id: String, group: Int, keyed: Bool) -> ListAction {
+    func action(_ a: ToolAction, row: ToolRow?, onRow: Bool, id: String, group: Int, keyed: Bool) -> ListAction {
         let mac = (a.run.where ?? preset.where) == .mac, sudo = (a.run.sudo ?? preset.sudo ?? false) && !mac
         let scope = app.tools.scope(preset, on: server, target, rows: onRow ? row.map { [$0.record] } ?? [] : [])
         let why = keyed ? app.tools.why(a, of: tool, row: row, onRow: onRow, id: id, on: server, target)

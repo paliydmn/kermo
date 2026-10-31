@@ -121,7 +121,7 @@ public enum ToolSchema {
                                    "label": .text(.display)], required: ["metric"]),
         "block": Object(fields: ["row": .list(.object("block")), "stat": .strings(.plain), "of": .oneOf(["max", "sum", "min", "avg"]),
                                  "also": .text(.plain), "charts": .list(.list(.text(.plain))), "range": .list(.duration),
-                                 "per": .text(.plain), "log": .text(.plain), "table": .text(.plain), "title": .text(.plain),
+                                 "per": .text(.plain), "log": .text(.plain), "table": .text(.plain), "title": .text(.plain), "key": .text(.display),
                                  "columns": .list(.column), "actions": .list(.text(.plain)), "events": .bool, "counts": .list(.object("count"))]),
         "count": Object(fields: ["rows": .text(.plain), "title": .text(.plain), "goto": .text(.display)], required: ["rows", "title"]),
         "context": Object(fields: ["path": .text(.path), "row": .text(.display), "actions": .list(.text(.plain))], required: ["path", "actions"]),
@@ -297,10 +297,9 @@ public enum ToolSchema {
             case .runOrText:
                 if let s = v as? String { texts.append((path, .command, s)) } else { walk(v, .object("run"), path) }
             case .column:
-                if let s = v as? String {
-                    let spec = ToolColumn.spec(s).field
-                    if let fmt = spec.format, !ToolTemplate.columnFormats.contains(fmt) { error(path, "“\(fmt)” isn't a column format") }
-                } else { walk(v, .object("column"), path) }
+                let field = (v as? String) ?? (v as? [String: Any])?["field"] as? String
+                if let fmt = field.flatMap({ ToolColumn.spec($0).field.format }), !ToolTemplate.columnFormats.contains(fmt) { error(path, "“\(fmt)” isn't a column format") }
+                if !(v is String) { walk(v, .object("column"), path) }
             case .object(let name):
                 guard let o = v as? [String: Any] else { return wrong("an object") }
                 let spec = name == "column" ? Object(fields: ["field": .text(.plain), "title": .text(.plain), "width": .number], required: ["field"])
@@ -436,10 +435,16 @@ extension ToolSchema.Check {
         for (i, c) in (p.context ?? []).enumerated() {
             for x in c.actions where !rowActions.contains(x) { error([.key("context"), .index(i), .key("actions")], "“\(x)” isn't one of the actions") }
         }
+        let actionRows = Dictionary((p.actions ?? []).map { ($0.spec.id, $0.spec.rows) }) { a, _ in a }
         func blocks(_ list: [ToolBlock], _ at: [ToolPath]) {
             for (i, b) in list.enumerated() {
                 let bp = at + [.index(i)]
+                if [b.row != nil, b.stat != nil, b.charts != nil, b.table != nil, b.events != nil, b.counts != nil].filter({ $0 }).count != 1 {
+                    error(bp, "a block is one of row, stat, charts, table, events, counts")
+                }
+                if b.table != nil, b.columns?.isEmpty ?? true { error(bp + [.key("columns")], "a table needs its columns") }
                 for x in b.actions ?? [] where !rowActions.contains(x) { error(bp + [.key("actions")], "“\(x)” isn't one of the actions") }
+                for x in b.actions ?? [] { if let rows = actionRows[x] ?? nil, let table = b.table, rows != table { error(bp + [.key("actions")], "“\(x)” acts on rows of \(rows), not \(table)") } }
                 if let log = b.log, !rowActions.contains(log) { error(bp + [.key("log")], "“\(log)” isn't one of the actions") }
                 for m in (b.stat?.all ?? []) + (b.charts ?? []).flatMap({ $0 }) where !metrics.contains(m) { error(bp, "“\(m)” isn't one of the metrics") }
                 blocks(b.row ?? [], bp + [.key("row")])

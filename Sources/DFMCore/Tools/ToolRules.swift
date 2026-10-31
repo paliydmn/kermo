@@ -161,6 +161,12 @@ public struct ToolHistory: Sendable {
     public private(set) var last: ToolSample?
     /// The sample before `last`: rates and events go by the two.
     public private(set) var previous: ToolSample?
+    /// Each row set (a top-level array in a record) → the latest sample that carried it: a stream prints its heavier
+    /// reads every few lines (System's processes every 3rd, its disks every 6th), so a table, a count and an
+    /// `added` event go by the last sample that had the rows, not by the last line.
+    public private(set) var carrying: [String: ToolSample] = [:]
+    /// `carrying` as it stood before `last` came: what `last`'s rows are compared with.
+    public private(set) var carriedBefore: [String: ToolSample] = [:]
     public var keep: TimeInterval = 3600
 
     public init(keep: TimeInterval = 3600) { self.keep = keep }
@@ -174,9 +180,16 @@ public struct ToolHistory: Sendable {
             for (key, n) in v { series[id, default: [:]][key, default: []].append(ToolPoint(at: sample.at, value: n)) }
         }
         (previous, last) = (last, sample)
+        carriedBefore = carrying
+        for (k, v) in sample.record { if case .array = v { carrying[k] = sample } }
         trim(before: sample.at.addingTimeInterval(-keep))
         return all
     }
+
+    /// The latest sample that carried the row set `path` (`list`: the list's, under `rows`), if any.
+    public func carried(_ path: String) -> ToolSample? { carrying[path == "list" ? "rows" : path] }
+    /// The rows of `path` as the latest sample that carried them had them.
+    public func rows(_ path: String) -> [ToolRecord] { carried(path)?.rows(path) ?? [] }
 
     /// No data from `at` on: a gap point on every series (one per stretch), till the next value.
     public mutating func mark(_ gap: ToolGap, at: Date) {
@@ -195,11 +208,51 @@ public struct ToolHistory: Sendable {
     }
 
     private mutating func trim(before: Date) {
+        carrying = carrying.filter { $0.value.at >= before }   // a row set that stopped coming isn't shown for ever
         for (id, keys) in series {
             for (key, points) in keys where points.first.map({ $0.at < before }) == true {
                 series[id]![key] = Array(points.drop { $0.at < before })
             }
         }
+    }
+}
+
+// MARK: A chart
+
+/// What a chart draws of one series (§6.3): the runs of values between gaps — a line each, never one across a gap
+/// — and each gap as a band from its point to the next point or `now`.
+public struct ToolChart: Sendable, Equatable {
+    public struct Band: Sendable, Equatable {
+        public var from: Date, to: Date
+        public var gap: ToolGap
+        public init(from: Date, to: Date, gap: ToolGap) { (self.from, self.to, self.gap) = (from, to, gap) }
+    }
+    public var runs: [[ToolPoint]] = []
+    public var bands: [Band] = []
+
+    public init(_ points: [ToolPoint], now: Date) {
+        var run: [ToolPoint] = []
+        for (i, p) in points.enumerated() {
+            guard let gap = p.gap else { run.append(p); continue }
+            if !run.isEmpty { runs.append(run); run = [] }
+            bands.append(Band(from: p.at, to: points.indices.contains(i + 1) ? points[i + 1].at : now, gap: gap))
+        }
+        if !run.isEmpty { runs.append(run) }
+    }
+
+    /// The top of a chart's scale: `max` (a percentage's 100), else a round number — 1, 2, 2.5, 5 or 10 times a
+    /// power of ten — a little over the highest value.
+    public static func top(_ values: [Double], max: Double?) -> Double {
+        if let max { return max }
+        let v = Swift.max(1, values.max() ?? 1) * 1.15
+        let p = pow(10, floor(log10(v)))
+        return [1, 2, 2.5, 5, 10].first { $0 * p >= v }! * p   // v < 10·p by construction
+    }
+
+    /// The point nearest `at` among `points` with a value; nil past `within` seconds of any.
+    public static func nearest(_ points: [ToolPoint], to at: Date, within: TimeInterval) -> ToolPoint? {
+        let p = points.filter { $0.value != nil }.min { abs($0.at.timeIntervalSince(at)) < abs($1.at.timeIntervalSince(at)) }
+        return p.flatMap { abs($0.at.timeIntervalSince(at)) <= within ? $0 : nil }
     }
 }
 
@@ -330,8 +383,11 @@ public enum ToolEvents {
     /// The events `sample` raises against `previous` (§8.4): `changed` and `increased` of `path`, `added` and `left`
     /// of `rows` by `key`, `is` of `path` or a row's `field` — the first sample raises `is` alone (the state is so;
     /// nothing was added to nothing). `if` / `unless`: a field that must be non-empty / empty. `scope`: the names
-    /// around the sample (vars, Kermo's).
-    public static func raised(_ events: [ToolEvent], in sample: ToolSample, previous: ToolSample?, scope: ToolTemplate.Scope = .init()) -> [ToolEventRecord] {
+    /// around the sample (vars, Kermo's). `carrying`: for each row set, the last sample before this one that had it
+    /// (`ToolHistory.carriedBefore`) — rows that come every few lines are compared with the last that came, else a
+    /// failed unit would be "added" again each time the set came round; nil: `previous` is it.
+    public static func raised(_ events: [ToolEvent], in sample: ToolSample, previous: ToolSample?, carrying: [String: ToolSample]? = nil,
+                              scope: ToolTemplate.Scope = .init()) -> [ToolEventRecord] {
         var out: [ToolEventRecord] = []
         func fits(_ e: ToolEvent, _ r: ToolRecord) -> Bool {
             var s = scope
@@ -347,7 +403,8 @@ public enum ToolEvents {
         }
         for e in events {
             if let rows = e.rows, let key = e.key {
-                let now = sample.rows(rows), was = previous?.rows(rows)
+                let earlier: ToolSample? = if let carrying { carrying[rows == "list" ? "rows" : rows] } else { previous }
+                let now = sample.rows(rows), was = earlier?.rows(rows)
                 let before = Dictionary((was ?? []).compactMap { r in r[key].map { ($0.text, r) } }) { a, _ in a }
                 for r in now where fits(e, r) {
                     guard let k = r[key]?.text else { continue }

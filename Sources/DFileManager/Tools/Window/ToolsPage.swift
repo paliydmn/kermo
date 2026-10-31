@@ -80,11 +80,11 @@ final class ToolsPage: NSView, RowList {
         outputButton.bezelStyle = .accessoryBarAction
         outputButton.isHidden = true
         let foot = NSStackView(views: [result, outputButton])
-        let fill = NSView()
-        fill.setContentHuggingPriority(.init(1), for: .vertical)
-        let stack = NSStackView(views: [top, line, tabRow, body, fill, foot])
+        body.setContentHuggingPriority(.init(1), for: .vertical)   // the body takes the height: a live tab's dashboard fills it, scrolling inside
+        let stack = NSStackView(views: [top, line, tabRow, body, foot])
         stack.orientation = .vertical
         stack.alignment = .leading
+        stack.distribution = .fill
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 14, left: 18, bottom: 12, right: 18)
         stack.setCustomSpacing(4, after: top)
@@ -188,12 +188,15 @@ final class ToolsPage: NSView, RowList {
                      Self.text("＋ above uses one of the library's here; Use on Servers… in the library chooses where each one is used.", color: .secondaryLabelColor)]
         }
         body.setViews(views, in: .top)
+        if let v = views.first as? ToolsLive { NSLayoutConstraint.activate(v.fit) }   // back from another tab: its constraints went with it
     }
 
     private func live(_ tool: LoadedTool) -> ToolsLive {
-        let v = lives[tool.preset.id] ?? ToolsLive(app, tool, server, target)
+        if let v = lives[tool.preset.id] { v.update(); return v }
+        let v = ToolsLive(app, tool, server, target)
         lives[tool.preset.id] = v
-        v.update()
+        body.addSubview(v)   // in the body before its constraints to it; `setViews` keeps it there
+        v.fit = [v.widthAnchor.constraint(equalTo: body.widthAnchor), v.heightAnchor.constraint(equalTo: body.heightAnchor)]
         return v
     }
 
@@ -404,7 +407,10 @@ final class ToolsPage: NSView, RowList {
 
     // MARK: RowList — how a button's run went
 
-    func has(_ id: String) -> Bool { window != nil && ids.contains(id) }
+    /// Its buttons' rows, and the open live tab's table rows (`ToolListSource.rowID`'s form).
+    /// ponytail: the prefix takes every row of the open tab's tool — a tool with both a list in a Picker and a
+    /// dashboard table would see the Picker's line here too; no built-in has both.
+    func has(_ id: String) -> Bool { window != nil && (ids.contains(id) || id.hasPrefix(key + " tool:" + (tab ?? "") + " ")) }
     func update(_ item: Picker.Item) {}
     func reload(_ c: ListContent, having id: String) {}
     var sheetWindow: NSWindow? { window }

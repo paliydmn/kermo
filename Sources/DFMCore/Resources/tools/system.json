@@ -56,15 +56,16 @@
   "dashboard": [
     { "row": [ { "stat": "cpu" }, { "stat": "mem", "also": "swap" }, { "stat": "load" }, { "stat": "disk", "of": "max" }, { "stat": ["rx", "tx"] } ] },
     { "charts": [ ["cpu"], ["mem"], ["rx", "tx"], ["read", "write"] ], "range": ["1h", "24h", "7d"], "log": "log" },
-    { "row": [
-      { "table": "procs", "title": "Top processes", "columns": ["command", "user", "cpu:%", "mem:%", "pid"], "actions": ["folder", "files", "stop", "kill"] },
-      { "table": "disks", "title": "Disks", "columns": ["mount", "pct:bar", "inodes_pct:%", "size:bytes"], "actions": ["biggest"] }
-    ] },
+    { "table": "procs", "title": "Top processes", "key": "{pid}", "actions": ["folder", "files", "stop", "kill"],
+      "columns": ["command", "user", { "field": "cpu:%", "title": "CPU" }, { "field": "mem:%", "title": "Mem" }, { "field": "pid", "title": "PID" }] },
+    { "table": "disks", "title": "Disks", "key": "{mount}", "actions": ["biggest"],
+      "columns": ["mount", { "field": "pct:bar", "title": "Used" }, { "field": "inodes_pct:%", "title": "Inodes" }, { "field": "size:bytes", "title": "Size" }] },
     { "row": [ { "events": true }, { "counts": [ { "rows": "failed_units", "title": "failed services", "goto": "services" }, { "rows": "containers", "title": "containers", "goto": "containers" } ] } ] }
   ],
 
   "actions": [
-    { "id": "folder", "title": "Open Folder",   "rows": "procs", "readonly": true, "command": "readlink /proc/{pid}/cwd", "open": "{stdout}" },
+    { "id": "folder", "title": "Open Folder",   "rows": "procs", "readonly": true, "sudo": true, "open": "{stdout}",
+      "command": "readlink /proc/{pid}/cwd || { echo 'That process has ended, or the kernel hides where it runs.' >&2; exit 1; }" },
     { "id": "files",  "title": "Open Files",    "rows": "procs", "readonly": true, "command": "lsof -p {pid} 2>/dev/null | head -200", "output": "window", "sudo": true },
     { "id": "stop",   "title": "Stop…",         "rows": "procs", "confirm": true, "sudo": true, "message": "Ask {command} (pid {pid}) to stop. It may take a few seconds.",
       "command": "if [ \"$(sed 's/.*) //' /proc/{pid}/stat 2>/dev/null | cut -d' ' -f20)\" = {start} ]; then kill -TERM {pid}; else echo 'That process has ended, or another one has its pid now: nothing was sent.' >&2; exit 1; fi" },

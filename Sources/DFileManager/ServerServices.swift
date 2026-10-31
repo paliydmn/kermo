@@ -70,12 +70,13 @@ extension AppDelegate {
     /// read as it opens (a locked server asks first, then the login, "Looking at services…", ⎋ stops it), it stays open
     /// while its rows change, and opens again where it was left (what was typed and highlighted) — after a look at a
     /// status or a log, say. ⌘↩: the same rows in the other panel.
-    func showInSearch(_ source: ListSource) {
+    /// `select`: a row to stand on instead (a Tools `goto`), with no filter in the way.
+    func showInSearch(_ source: ListSource, select: String? = nil) {
         let key = source.title.lowercased() + " " + ServerRow.key(source.target.asUser), kept = servicesKept[key]
         let s = savedServer(at: source.target) ?? SavedServer(target: source.target.asUser)
         let p = palette()
         p.go(into: PlaceSource(self, s, source.target.asUser), select: "place " + source.title)
-        p.go(into: source, query: kept?.query ?? "", select: kept?.id) { [unowned self] q, id in servicesKept[key] = (q, id) }
+        p.go(into: source, query: select == nil ? kept?.query ?? "" : "", select: select ?? kept?.id) { [unowned self] q, id in servicesKept[key] = (q, id) }
     }
 
     /// The units' rows, the line about them, what's said when there are none: a Picker's and a panel's.
@@ -319,7 +320,7 @@ extension AppDelegate {
     }
 
     /// `ranThere`'s outcome as `Services.outcome` takes it, and a failure's output.
-    private static func how(_ ran: RanThere) -> (Services.Ran, String) {
+    static func how(_ ran: RanThere) -> (Services.Ran, String) {
         switch ran {
         case .notRun(let why): (.notRun(why), "")
         case .ran(.success(.passed)): (.passed, "")

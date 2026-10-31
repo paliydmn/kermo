@@ -3,10 +3,10 @@ import DFMCore
 
 /// A watched tool's tab on a server's page (§6.3, monitor decision 7): the strip that says whether it's live while
 /// open or watched in the background (Watch in Background… / Stop Watching), a banner on how the server is doing —
-/// not answering, no answer yet, connecting, needs login, locked: metrics only — the dashboard's `stat` tiles with
-/// their thresholds, and a line on the last sample. Made once a tab and updated in place as samples come
-/// (`ToolMonitor.changed`): nothing is rebuilt every 5 s.
-/// ponytail: charts, tables, events and counts of the dashboard come with the next PR; a tile shows the number now.
+/// not answering, no answer yet, connecting, needs login, locked: metrics only — the dashboard's blocks top to bottom
+/// (`stat` tiles with their thresholds here; charts, tables, events and counts in ToolsDash.swift), and a line on the
+/// last sample, in a scroll of their own. Made once a tab and updated in place as samples come
+/// (`ToolMonitor.changed`): nothing is rebuilt every 5 s, and a tab that isn't shown isn't updated.
 @MainActor final class ToolsLive: NSView {
     unowned let app: AppDelegate
     let tool: LoadedTool
@@ -18,6 +18,10 @@ import DFMCore
     let connectButton = NSButton(title: "Connect", target: nil, action: nil)
     let foot = NSTextField(labelWithString: "")
     private(set) var tiles: [Tile] = []
+    private(set) var blocks: [any ToolsBlock] = []
+    /// Its size in the page's body (`ToolsPage.live`): activated again each time the tab comes back, since AppKit
+    /// drops a constraint whose view left the hierarchy.
+    var fit: [NSLayoutConstraint] = []
     private var kept: [AnyObject] = []
 
     /// One `stat` block: its metrics (two for `["rx", "tx"]`), `of` over rows, `also` under it.
@@ -27,6 +31,9 @@ import DFMCore
         let bar: NSLevelIndicator?
         init(metrics: [String], of: String?, also: String?, bar: NSLevelIndicator?) { (self.metrics, self.of, self.also, self.bar) = (metrics, of, also, bar) }
     }
+
+    /// A scroll's document that grows downwards.
+    private final class Flipped: NSView { override var isFlipped: Bool { true } }
 
     init(_ app: AppDelegate, _ tool: LoadedTool, _ server: SavedServer, _ target: SFTPTarget) {
         (self.app, self.tool, self.server, self.target) = (app, tool, server, target)
@@ -42,64 +49,95 @@ import DFMCore
         foot.lineBreakMode = .byTruncatingTail
         kept = [MenuAction.attach(to: watchButton) { [unowned self] in Task { await app.tools.toggleWatch(tool, on: server, target, window: window) } },
                 MenuAction.attach(to: connectButton) { [unowned self] in app.tools.monitor.connect(target) }]
-        // The dashboard's stat blocks, else the summary's metrics.
-        let blocks = (p.dashboard ?? []).flatMap { $0.row ?? [$0] }.filter { $0.stat != nil }
-        let specs: [(metrics: [String], of: String?, also: String?)] = blocks.isEmpty ? (p.summary ?? []).map { ([$0.metric], $0.of, nil) } : blocks.map { ($0.stat!.all, $0.of, $0.also) }
-        tiles = specs.map { spec in
-            let m = p.metrics?[spec.metrics[0]]
-            var bar: NSLevelIndicator?
-            if spec.metrics.count == 1, let m, m.unit == "%" || m.max != nil {
-                let b = NSLevelIndicator()
-                b.levelIndicatorStyle = .continuousCapacity
-                (b.minValue, b.maxValue) = (0, m.max ?? 100)
-                if let a = (p.alerts ?? []).first(where: { $0.metric == spec.metrics[0] && $0.below != true }) {
-                    b.warningValue = a.warn ?? b.maxValue + 1
-                    b.criticalValue = a.crit ?? b.maxValue + 1
-                }
-                b.isEditable = false
-                bar = b
-            }
-            return Tile(metrics: spec.metrics, of: spec.of, also: spec.also, bar: bar)
-        }
-        let cells = tiles.map { t -> NSView in
-            let title = (t.metrics.count > 1 ? t.metrics.compactMap { p.metrics?[$0]?.title } : [p.metrics?[t.metrics[0]]?.title ?? t.metrics[0]]).joined(separator: " · ")
-            let label = NSTextField(labelWithString: title)
-            label.font = .systemFont(ofSize: 11, weight: .medium)
-            label.textColor = .secondaryLabelColor
-            t.value.font = .monospacedDigitSystemFont(ofSize: t.metrics.count > 1 ? 14 : 22, weight: .semibold)
-            t.detail.font = .systemFont(ofSize: 11)
-            t.detail.textColor = .secondaryLabelColor
-            t.detail.lineBreakMode = .byTruncatingTail
-            let cell = NSStackView(views: [label, t.value] + (t.bar.map { [$0] } ?? []) + [t.detail])
-            (cell.orientation, cell.alignment, cell.spacing) = (.vertical, .leading, 3)
-            cell.widthAnchor.constraint(lessThanOrEqualToConstant: 170).isActive = true   // five tiles fit a 900-pt window; wider ones stay readable
-            t.bar?.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
-            t.detail.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
-            cell.setAccessibilityLabel(title)
-            return cell
-        }
-        let grid = NSStackView(views: cells)
-        (grid.spacing, grid.alignment, grid.distribution) = (14, .top, .fillEqually)
+        // The dashboard's blocks; none: the summary's metrics as a row of tiles.
+        let shown = p.dashboard.map { $0.map(make) } ?? [row((p.summary ?? []).map { tile([$0.metric], of: $0.of, also: nil) })]
         let stripRow = NSStackView(views: [strip, watchButton]), bannerRow = NSStackView(views: [banner, connectButton])
         strip.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         banner.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let stack = NSStackView(views: [stripRow, bannerRow, grid, foot])
-        (stack.orientation, stack.alignment, stack.spacing) = (.vertical, .leading, 10)
+        let stack = NSStackView(views: [stripRow, bannerRow] + shown + [foot])
+        (stack.orientation, stack.alignment, stack.spacing) = (.vertical, .leading, 12)
         stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-                                     stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor)])
-        for v in [stripRow, bannerRow, foot] { v.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
-        grid.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
+        for v in stack.arrangedSubviews {   // a row of tiles keeps its own width (a tile at most 170 pt); every other block takes it
+            if tileRows.contains(where: { $0 === v }) { v.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true }
+            else { v.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+        }
+        let doc = Flipped(), scroll = NSScrollView()
+        doc.addSubview(stack)
+        doc.translatesAutoresizingMaskIntoConstraints = false
+        scroll.documentView = doc
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scroll)
+        NSLayoutConstraint.activate([scroll.leadingAnchor.constraint(equalTo: leadingAnchor), scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+                                     scroll.topAnchor.constraint(equalTo: topAnchor), scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+                                     doc.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+                                     stack.leadingAnchor.constraint(equalTo: doc.leadingAnchor), stack.trailingAnchor.constraint(equalTo: doc.trailingAnchor, constant: -4),
+                                     stack.topAnchor.constraint(equalTo: doc.topAnchor), stack.bottomAnchor.constraint(equalTo: doc.bottomAnchor)])
         update()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    private var state: ToolMonitor.Server? { app.tools.monitor.server(target) }
-    private var known: ToolMonitor.Tool? { app.tools.monitor.tool(tool.preset.id, on: target) }
+    /// Rows of tiles alone: not stretched to the width.
+    private var tileRows: [NSView] = []
 
-    /// What the monitor knows now, into the strip, the banner, the tiles and the line.
+    /// A block as its view: a `row`'s side by side, a `stat` a tile, the rest ToolsDash's.
+    private func make(_ b: ToolBlock) -> NSView {
+        if let blocks = b.row { return row(blocks.map(make), tiles: blocks.allSatisfy { $0.stat != nil }) }
+        if let stat = b.stat { return tile(stat.all, of: b.of, also: b.also) }
+        let v: any ToolsBlock = if b.charts != nil { ToolsCharts(self, b) } else if b.table != nil { ToolsTable(self, b) } else if b.events == true { ToolsEvents() } else { ToolsCounts(self, b) }
+        blocks.append(v)
+        return v
+    }
+
+    private func row(_ views: [NSView], tiles: Bool = true) -> NSStackView {
+        let s = NSStackView(views: views)
+        (s.spacing, s.alignment, s.distribution) = (14, .top, .fillEqually)
+        if tiles { tileRows.append(s) }
+        return s
+    }
+
+    /// A `stat` tile: its title, the number, a bar with the alert's thresholds for a bounded metric, a detail line.
+    private func tile(_ metrics: [String], of: String?, also: String?) -> NSView {
+        let p = tool.preset, m = p.metrics?[metrics[0]]
+        var bar: NSLevelIndicator?
+        if metrics.count == 1, let m, m.unit == "%" || m.max != nil {
+            let b = NSLevelIndicator()
+            b.levelIndicatorStyle = .continuousCapacity
+            (b.minValue, b.maxValue) = (0, m.max ?? 100)
+            if let a = (p.alerts ?? []).first(where: { $0.metric == metrics[0] && $0.below != true }) {
+                b.warningValue = a.warn ?? b.maxValue + 1
+                b.criticalValue = a.crit ?? b.maxValue + 1
+            }
+            b.isEditable = false
+            bar = b
+        }
+        let t = Tile(metrics: metrics, of: of, also: also, bar: bar)
+        tiles.append(t)
+        let title = (metrics.count > 1 ? metrics.compactMap { p.metrics?[$0]?.title } : [m?.title ?? metrics[0]]).joined(separator: " · ")
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.textColor = .secondaryLabelColor
+        t.value.font = .monospacedDigitSystemFont(ofSize: metrics.count > 1 ? 14 : 22, weight: .semibold)
+        t.detail.font = .systemFont(ofSize: 11)
+        t.detail.textColor = .secondaryLabelColor
+        t.detail.lineBreakMode = .byTruncatingTail
+        let cell = NSStackView(views: [label, t.value] + (t.bar.map { [$0] } ?? []) + [t.detail])
+        (cell.orientation, cell.alignment, cell.spacing) = (.vertical, .leading, 3)
+        cell.widthAnchor.constraint(lessThanOrEqualToConstant: 170).isActive = true   // five tiles fit a 900-pt window; wider ones stay readable
+        t.bar?.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
+        t.detail.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
+        cell.setAccessibilityLabel(title)
+        return cell
+    }
+
+    var state: ToolMonitor.Server? { app.tools.monitor.server(target) }
+    var known: ToolMonitor.Tool? { app.tools.monitor.tool(tool.preset.id, on: target) }
+    /// Now by the server's clock, as the series are.
+    var now: Date { Date().addingTimeInterval(state?.skew ?? 0) }
+
+    /// What the monitor knows now, into the strip, the banner, the tiles, the blocks and the line.
     func update() {
         let p = tool.preset, s = state, t = known, every = Int(p.watch?.every ?? 60), saved = app.tools.serverID(target) != nil
         let watched = t?.watched == true
@@ -150,10 +188,20 @@ import DFMCore
             }
             tile.detail.stringValue = detail
         }
+        blocks.forEach { $0.update(self) }
         let last = t?.history.last.map { "last sample " + $0.at.formatted(date: .omitted, time: .standard) } ?? "no sample yet"
         foot.stringValue = (s?.channel == nil ? "Paused" : "Live") + " · \(last) · every \(every) s · " + (p.stream?.run.sudo ?? p.sudo ?? false ? "over SSH as root" : "over SSH · read-only")
     }
 
+    /// A chart's click: the `log` action with `{from}` / `{to}` five minutes around `at` — epochs by the server's
+    /// clock, as the series are — down the path every action takes, its window over this one.
+    func log(_ id: String?, at: Date) {
+        guard let id, let a = tool.preset.actions?.first(where: { $0.spec.id == id }) else { return }
+        let from = at.addingTimeInterval(-150), to = at.addingTimeInterval(150)
+        let row = ToolRow(key: "log \(Int(from.timeIntervalSince1970))", title: from.formatted(date: .omitted, time: .shortened) + "–" + to.formatted(date: .omitted, time: .shortened),
+                          record: ["from": .number(from.timeIntervalSince1970.rounded()), "to": .number(to.timeIntervalSince1970.rounded())])
+        app.tools.perform(a, of: tool, row: row, onRow: true, id: ToolListSource.rowID(row.key, tool: tool.preset.id, on: target), from: nil, on: server, target)
+    }
 }
 
 extension ToolRunner {
