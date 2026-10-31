@@ -115,7 +115,7 @@ extension AppDelegate {
                             status: { await $0.tools.monitor.notificationsSaid() }),
             ]),
             ("On critical alerts", [
-                SettingsRow(title: "Also run this command", note: "On this Mac, in your login shell, with $KERMO_SERVER, $KERMO_LEVEL, $KERMO_MESSAGE and $KERMO_TOOL set. Only you set it: a tool never can",
+                SettingsRow(title: "Also run this command", note: "On this Mac, in zsh as a login shell, with $KERMO_SERVER, $KERMO_LEVEL, $KERMO_MESSAGE and $KERMO_TOOL set. Only you set it: a tool never can",
                             key: "onAlert", control: .field("curl -d \"$KERMO_MESSAGE\" ntfy.sh/…")),
                 SettingsRow(title: "Test", control: .buttons([("Send Test", "monitor.test")]), status: { $0.tools.monitor.tested }),
             ]),

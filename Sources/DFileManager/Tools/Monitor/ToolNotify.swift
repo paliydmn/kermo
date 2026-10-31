@@ -36,7 +36,7 @@ extension ToolMonitor {
         }
     }
 
-    /// Your `on_alert` (Settings ▸ Monitor; never a tool's, §8.3) on this Mac, in your login shell — so it finds what
+    /// Your `on_alert` (Settings ▸ Monitor; never a tool's, §8.3) on this Mac, in zsh as a login shell — so it finds what
     /// your Terminal finds (curl, ntfy) — with what happened in its environment only, never in its words. Not waited
     /// for past 30 s: its whole group stops (`Process` makes it the leader). Its end, as the server's events say it.
     /// ponytail: a thread waits on each run; a burst of criticals (one per disk) is as many shells at once.

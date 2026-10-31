@@ -14,7 +14,7 @@ struct Command {
     var group = 0                         // a menu's items by group, a separator between groups (`AppDelegate.menuItems`)
     var short: String                     // key bar label; "" = title
     let aliases: String                   // extra words the search matches ("zip" → Compress), and its old title
-    var hidden = false                    // run by a panel itself (↩ on a server's file): not in ⇧⌘P or F1
+    var hidden = false                    // run by a panel itself (↩ on a server's file) or a Settings button: not in ⇧⌘P or F1
     var on: (@MainActor (AppDelegate) -> Bool)? = nil   // a switch: its menu item's ✓
     let run: @MainActor (AppDelegate) -> Void
 

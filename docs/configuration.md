@@ -95,6 +95,6 @@ Set an option in [Settings](#settings), or with `defaults write com.dmn.dfileman
 | `serverHistory` | `-bool` | `true` | `false` keeps no [versions of server files](server-files.md#file-history) |
 | `updateCheckOff` | `-bool` | `false` | `true`: Kermo doesn't [check for updates](install.md#updates) by itself (**Kermo ▸ Configuration ▸ Check for Updates Automatically** sets it) |
 | `auditLog` | `-bool` | `true` | `false` writes no [production log](safety.md#production-log) |
-| `onAlert` | command | none | Runs on this Mac, in your login shell, on each [critical alert](tools.md#notifications) of a watched server, with `KERMO_SERVER`, `KERMO_LEVEL`, `KERMO_MESSAGE` and `KERMO_TOOL` in its environment, for example `'curl -s -d "$KERMO_SERVER: $KERMO_MESSAGE" ntfy.sh/my-topic'` |
+| `onAlert` | command | none | Runs on this Mac, in zsh as a login shell, on each [critical alert](tools.md#notifications) of a watched server, with `KERMO_SERVER`, `KERMO_LEVEL`, `KERMO_MESSAGE` and `KERMO_TOOL` in its environment, for example `'curl -s -d "$KERMO_SERVER: $KERMO_MESSAGE" ntfy.sh/my-topic'` |
 
 Kermo also keeps window sizes, the last folders, recent servers and the like in the same defaults domain. Leave those to the app.

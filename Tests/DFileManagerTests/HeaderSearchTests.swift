@@ -47,10 +47,11 @@ import Testing
     #expect(ranked().first { $0.group == "In This Panel" } == nil)
 }
 
-/// P-7 (review 1): what a panel runs by itself (↩ on a server's file or archive) isn't offered as a command.
+/// P-7 (review 1): what a panel runs by itself (↩ on a server's file or archive) isn't offered as a command, nor are
+/// Settings › Monitor's buttons.
 @Test @MainActor func searchLeavesOutHiddenCommands() {
     let hidden = AppDelegate().makeCommands().filter(\.hidden).map(\.id)
-    #expect(Set(hidden) == ["remote.open", "remote.archive", "archive.open"])
+    #expect(Set(hidden) == ["remote.open", "remote.archive", "archive.open", "monitor.notificationSettings", "monitor.test"])
     for q in ["remote", "archive", "open"] {
         #expect(!search(q).flatMap(\.hits).contains { if case .command(let id) = $0.target { hidden.contains(id) } else { false } }, "\(q)")
     }
