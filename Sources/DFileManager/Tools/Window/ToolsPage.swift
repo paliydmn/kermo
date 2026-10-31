@@ -188,6 +188,7 @@ final class ToolsPage: NSView, RowList {
                      Self.text("＋ above uses one of the library's here; Use on Servers… in the library chooses where each one is used.", color: .secondaryLabelColor)]
         }
         body.setViews(views, in: .top)
+        if let v = views.first as? ToolsLive { NSLayoutConstraint.activate(v.fit) }   // back from another tab: its constraints went with it
     }
 
     private func live(_ tool: LoadedTool) -> ToolsLive {
@@ -195,7 +196,7 @@ final class ToolsPage: NSView, RowList {
         let v = ToolsLive(app, tool, server, target)
         lives[tool.preset.id] = v
         body.addSubview(v)   // in the body before its constraints to it; `setViews` keeps it there
-        NSLayoutConstraint.activate([v.widthAnchor.constraint(equalTo: body.widthAnchor), v.heightAnchor.constraint(equalTo: body.heightAnchor)])
+        v.fit = [v.widthAnchor.constraint(equalTo: body.widthAnchor), v.heightAnchor.constraint(equalTo: body.heightAnchor)]
         return v
     }
 

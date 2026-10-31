@@ -433,9 +433,17 @@ extension ServerLockTests {
         #expect(counts.numbers.map(\.stringValue) == ["2"] && buttons(counts).map(\.title) == ["Services…"])
         #expect(buttons(events).map(\.title) == ["Services…"] && events.subviews.first.map { labels($0) }?.contains("hot: 99") == true, "\(events.subviews.first.map(labels) ?? [])")
 
+        page?.select("fail2ban")   // away: the charts leave the tree and go; back: the same tab, its size again, charts anew
+        await toolsUntil { hosting == nil }
+        #expect(hosting == nil && charts.hosting == nil, "the charts go with the tab")
+        page?.select("pulse")
+        page?.window?.layoutIfNeeded()
+        #expect(live(page!) === view && view.frame.height > 200 && charts.hosting?.window != nil, "back from another tab: \(view.frame)")
+        weak var again = charts.hosting
+
         closeWindows()
-        await toolsUntil { page == nil && hosting == nil }
-        #expect(page == nil && hosting == nil, "the charts leave the view tree with the window: page \(page != nil), charts \(hosting != nil)")
+        await toolsUntil { page == nil && again == nil }
+        #expect(page == nil && again == nil, "the charts leave the view tree with the window: page \(page != nil), charts \(again != nil)")
     }
 
     /// A table row's action goes down the one path every action takes: Stop… asks everywhere (↩ = Cancel) and runs

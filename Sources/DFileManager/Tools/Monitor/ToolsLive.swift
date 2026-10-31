@@ -19,6 +19,9 @@ import DFMCore
     let foot = NSTextField(labelWithString: "")
     private(set) var tiles: [Tile] = []
     private(set) var blocks: [any ToolsBlock] = []
+    /// Its size in the page's body (`ToolsPage.live`): activated again each time the tab comes back, since AppKit
+    /// drops a constraint whose view left the hierarchy.
+    var fit: [NSLayoutConstraint] = []
     private var kept: [AnyObject] = []
 
     /// One `stat` block: its metrics (two for `["rx", "tx"]`), `of` over rows, `also` under it.
