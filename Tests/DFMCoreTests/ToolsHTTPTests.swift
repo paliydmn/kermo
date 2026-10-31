@@ -17,12 +17,13 @@ private final class LocalWeb: @unchecked Sendable {
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)   // loopback only: no firewall question
         listener = try NWListener(using: params)
+        let queue = DispatchQueue(label: "local-web")   // its own: a busy run's global queues answered 10 s late
         listener.newConnectionHandler = { c in
-            c.start(queue: .global())
+            c.start(queue: queue)
             c.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, _, _ in
                 let words = String(decoding: data ?? Data(), as: UTF8.self).split(separator: " ")
                 let (code, delay) = answer(words.count > 1 ? String(words[1]) : "/")
-                DispatchQueue.global().asyncAfter(deadline: .now() + delay) {
+                queue.asyncAfter(deadline: .now() + delay) {
                     let head = "HTTP/1.1 \(code) X\r\nContent-Length: 2\r\nConnection: close\r\n" + (code / 100 == 3 ? "Location: /elsewhere\r\n" : "") + "\r\n"
                     c.send(content: Data((head + "ok").utf8), completion: .contentProcessed { _ in c.cancel() })
                 }
@@ -30,7 +31,7 @@ private final class LocalWeb: @unchecked Sendable {
         }
         let ready = DispatchSemaphore(value: 0)
         listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
-        listener.start(queue: .global())
+        listener.start(queue: queue)
         _ = ready.wait(timeout: .now() + 5)
     }
 
@@ -42,10 +43,11 @@ private final class LocalWeb: @unchecked Sendable {
         switch path { case "/moved": (301, 0); case "/elsewhere": (404, 0); case "/down": (503, 0); case "/slow": (200, 2); default: (200, 0) }
     }
     defer { web.done() }
+    let before = Date().timeIntervalSince1970.rounded(.down)
     let up = await ToolHTTPCheck.check(web.url + "/")
     #expect(up["ok"] == true && up["status"] == 200 && up["error"] == nil && up["tls_days"] == nil, "\(up)")
     #expect((up["ms"]?.number ?? -1) >= 0 && up["url"] == .string(web.url + "/"))
-    #expect(abs((up["checked"]?.number ?? 0) - Date().timeIntervalSince1970) < 5)
+    #expect((before...Date().timeIntervalSince1970 + 1).contains(up["checked"]?.number ?? 0), "when it was checked")
     let moved = await ToolHTTPCheck.check(web.url + "/moved")
     #expect(moved["ok"] == true && moved["status"] == 301, "a redirect is an answer, not followed: \(moved)")
     let down = await ToolHTTPCheck.check(web.url + "/down", method: "HEAD")

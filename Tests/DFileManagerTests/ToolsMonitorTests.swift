@@ -72,8 +72,9 @@ private final class LocalWeb: @unchecked Sendable {
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)   // loopback only: no firewall question
         listener = try NWListener(using: params)
+        let queue = DispatchQueue(label: "local-web")   // its own: a busy run's global queues answered 10 s late
         listener.newConnectionHandler = { c in
-            c.start(queue: .global())
+            c.start(queue: queue)
             c.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, _, _ in
                 let words = String(decoding: data ?? Data(), as: UTF8.self).split(separator: " ")
                 let head = "HTTP/1.1 \(answer(words.count > 1 ? String(words[1]) : "/")) X\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
@@ -82,7 +83,7 @@ private final class LocalWeb: @unchecked Sendable {
         }
         let ready = DispatchSemaphore(value: 0)
         listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
-        listener.start(queue: .global())
+        listener.start(queue: queue)
         _ = ready.wait(timeout: .now() + 5)
     }
     func done() { listener.cancel() }
@@ -97,7 +98,7 @@ private final class LocalWeb: @unchecked Sendable {
 @MainActor private struct Quick {
     let app: AppDelegate
     let was = (tick: ToolMonitor.tick, backoff: ToolMonitor.backoff, login: ToolMonitor.login, watching: ToolRunner.watching, auth: ServerLock.authenticate,
-               target: ToolMonitor.target, grace: ToolMonitor.wakeGrace)
+               target: ToolMonitor.target, grace: ToolMonitor.wakeGrace, power: ToolMonitor.power)
     init(_ app: AppDelegate) {
         self.app = app
         ToolMonitor.tick = 0.2
@@ -105,13 +106,15 @@ private final class LocalWeb: @unchecked Sendable {
         ToolMonitor.login = { _, _ in }
         ToolMonitor.target = { _ in .local() }
         ToolMonitor.wakeGrace = 0   // a Wi-Fi flap during the run mustn't hold "not answering" back
+        ToolMonitor.power = { (false, false) }   // the Mac on battery mustn't make every interval three times longer
         ToolRunner.watching = { _, _ in true }
     }
     func done() {
         app.tools.settings = ToolServers()
         closeWindows()
         app.tools.monitor.reconcile()
-        (ToolMonitor.tick, ToolMonitor.backoff, ToolMonitor.login, ToolRunner.watching, ServerLock.authenticate, ToolMonitor.target, ToolMonitor.wakeGrace) = was
+        (ToolMonitor.tick, ToolMonitor.backoff, ToolMonitor.login, ToolRunner.watching, ServerLock.authenticate, ToolMonitor.target, ToolMonitor.wakeGrace,
+         ToolMonitor.power) = was
     }
 }
 
@@ -705,14 +708,14 @@ extension ServerLockTests {
     /// macOS has it, never a copy.
     @Test func batteryPaceKeepAwakeAndOpenAtLogin() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick(app), was = (power: ToolMonitor.power, login: ToolMonitor.loginItem)
+        let bench = try ToolsBench(), quick = Quick(app), login = ToolMonitor.loginItem
         nonisolated(unsafe) var battery = false, status = SMAppService.Status.notRegistered
-        ToolMonitor.power = { (battery, false) }
+        ToolMonitor.power = { (battery, false) }   // Quick puts its own back
         ToolMonitor.loginItem = ({ status }, { status = $0 ? .enabled : .notRegistered })
         defer {
-            quick.done(); bench.done(); done(); app.savedServers = []
-            (ToolMonitor.power, ToolMonitor.loginItem) = was
+            ToolMonitor.loginItem = login
             for k in ["monitorKeepAwake", "monitorSlowOnBattery"] { app.defaults.removeObject(forKey: k) }
+            quick.done(); bench.done(); done(); app.savedServers = []
         }
         try await watching(app, bench)
         let monitor = app.tools.monitor, pulse = try toolNamed(app, "pulse")

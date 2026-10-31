@@ -5,6 +5,8 @@ import IOKit.pwr_mgt
 import Network
 import ServiceManagement
 
+private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
+
 /// Watching (protocol §8, monitor decisions 1–23): a server's watched tools (`tools/servers.json`, `watch`) and the
 /// tool live on an open tab, their streams and polls over one channel of its connection (`ToolPayload.watch`), each
 /// sample into its tool's series, alerts and events (`ToolRules`). A drop is a gap and a reconnect — 2, 5, 15, 30,
@@ -138,15 +140,20 @@ import ServiceManagement
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.online = on; self?.wokeAt = Date(); self?.restart() } }
         }
         network.start(queue: DispatchQueue(label: "dfm.monitor.network"))
-        // The power source and Low Power Mode (spike S5): on the main run loop, as the rest of the engine.
-        let source = IOPSNotificationCreateRunLoopSource({ me in
-            MainActor.assumeIsolated { me.map { Unmanaged<ToolMonitor>.fromOpaque($0).takeUnretainedValue() }?.pace() }
-        }, Unmanaged.passUnretained(self).toOpaque()).takeRetainedValue()
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
-        NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.pace() }
+        // The power source and Low Power Mode (spike S5).
+        _ = Self.powerSource
+        for name in [.NSProcessInfoPowerStateDidChange, powerSourceChanged] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.pace() } }
         }
     }
+
+    /// The power source's changes (a battery's every percent too), heard once for the app on the main run loop and
+    /// passed on as a notification: a monitor that's gone — a test's app — never hears one.
+    private static let powerSource: Void = {
+        CFRunLoopAddSource(CFRunLoopGetMain(), IOPSNotificationCreateRunLoopSource({ _ in
+            NotificationCenter.default.post(name: powerSourceChanged, object: nil)
+        }, nil).takeRetainedValue(), .defaultMode)
+    }()
 
     /// Watched servers' keys: in use, so their connections stay up (`AppDelegate.idleServers`).
     var inUse: Set<String> { Set(servers.values.filter(\.watched).map(\.key)) }
