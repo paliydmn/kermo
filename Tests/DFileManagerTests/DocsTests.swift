@@ -36,7 +36,7 @@ private func text(_ path: String) throws -> String { try String(contentsOf: root
 /// hand, so docs/configuration.md leaves them out ("Leave those to the app"). A key the code reads that is in neither
 /// list fails here: document it, or add it below.
 private let keptByTheApp: Set<String> = [
-    "folderSort", "lastMask", "listSort", "panelPaths", "placeLastList", "panelSession", "panelTabIndex", "panelTabs", "recentFilters", "recentServers", "recentTags",
+    "folderSort", "lastMask", "listSort", "monitorSnooze", "panelPaths", "placeLastList", "panelSession", "panelTabIndex", "panelTabs", "recentFilters", "recentServers", "recentTags",
     "runOnServers", "runOnServersCommand", "searchCase", "searchHidden", "searchFrecency", "searchName", "searchRecent", "searchSpotlight",
     "searchTag", "searchText", "showHidden", "showPerms", "sidebarFolded", "sidebarVisible", "splitSize", "sshTabs", "terminalGroups", "theme",
     "updateChecked", "updateLatest", "updateSkipped",

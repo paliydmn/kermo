@@ -48,6 +48,8 @@ enum Symbol: String, CaseIterable {
          advanced = "slider.horizontal.3"
     // a Tools preset's, when it names none or one this macOS lacks
     case tool = "wrench"
+    // watching: the menu bar's item, Snooze
+    case monitor = "gauge.with.dots.needle.33percent", snooze = "bell.slash", maintenance = "wrench.and.screwdriver"
 
     /// `label`: what VoiceOver says for it.
     func image(_ label: String? = nil) -> NSImage { NSImage(systemSymbolName: rawValue, accessibilityDescription: label)! }

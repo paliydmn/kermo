@@ -242,7 +242,7 @@ struct ToolJob: Codable, Equatable {
         Task {
             let allowed = await Self.notices.allowed()
             switch Self.notice(took: took, front: front, allowed: allowed) {
-            case .notification: Self.notices.post(id, "\(j.name) on \(j.place)", j.ok ? "✓ " + (j.said ?? "done") : "✕ " + (j.said ?? "failed"))
+            case .notification: Self.notices.post("job-" + id, "\(j.name) on \(j.place)", j.ok ? "✓ " + (j.said ?? "done") : "✕ " + (j.said ?? "failed"), [:])
             case .badge:
                 guard let k = jobs.firstIndex(where: { $0.id == id }) else { return }
                 jobs[k].unseen = true
@@ -340,11 +340,22 @@ struct ToolJob: Codable, Equatable {
 
     // MARK: Notifications
 
-    /// macOS notifications — or tests' stand-in: whether they're allowed (nil: never asked), asking, posting one.
+    /// macOS notifications — or tests' stand-in: whether they're allowed (nil: never asked), asking, posting one. A
+    /// watched server's (`info["server"]`) has Open and Snooze 1 Hour; an alert's (`info["alert"]`) Mute too.
     struct Notices {
         var allowed: @MainActor () async -> Bool?
         var ask: @MainActor () -> Void
-        var post: @MainActor (_ id: String, _ title: String, _ body: String) -> Void
+        var post: @MainActor (_ id: String, _ title: String, _ body: String, _ info: [String: String]) -> Void
+
+        static let open = "open", snooze = "snooze", mute = "mute"
+        /// Set once at launch: a category's buttons are its own, the same for every notification of it.
+        static var categories: Set<UNNotificationCategory> {
+            let open = UNNotificationAction(identifier: Self.open, title: "Open", options: [.foreground])
+            let snooze = UNNotificationAction(identifier: Self.snooze, title: "Snooze 1 Hour", options: [])
+            let mute = UNNotificationAction(identifier: Self.mute, title: "Mute This Alert on This Server", options: [])
+            return [UNNotificationCategory(identifier: "watch", actions: [open, snooze], intentIdentifiers: []),
+                    UNNotificationCategory(identifier: "alert", actions: [open, snooze, mute], intentIdentifiers: [])]
+        }
 
         /// Only a bundled Kermo has notifications: a bare binary has no bundle to ask for (and a copy in /tmp, one that
         /// LaunchServices doesn't know, is refused unasked — S1).
@@ -364,29 +375,37 @@ struct ToolJob: Codable, Equatable {
                 }
             },
             ask: { if bundled { UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in } } },
-            post: { id, title, body in
+            post: { id, title, body, info in
                 guard bundled else { return }
                 let c = UNMutableNotificationContent()
-                (c.title, c.body, c.sound) = (title, body, .default)
-                UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "job-" + id, content: c, trigger: nil))
+                (c.title, c.body, c.sound, c.userInfo) = (title, body, .default, info)
+                c.categoryIdentifier = info["alert"] != nil ? "alert" : info["server"] != nil ? "watch" : ""
+                c.threadIdentifier = info["server"] ?? ""   // a server's notifications as one stack
+                UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: c, trigger: nil))
             })
     }
 
-    /// The first long job asks macOS for notifications (a choice of the user's at a moment they started something);
-    /// never again once it's answered.
+    /// The first long job or Watch asks macOS for notifications (a choice of the user's at a moment they started
+    /// something); never again once it's answered.
     func askToNotify() {
         Task { if await Self.notices.allowed() == nil { Self.notices.ask() } }
     }
 
     /// A notification clicked: Kermo in front, Activity showing — once, though a click brings both this and a reopen (S1).
+    /// A watched server's: its button, or its page (`ToolMonitor.clicked`).
     final class Clicks: NSObject, UNUserNotificationCenterDelegate {
+        /// The last click: the reopen it brings leaves the main window alone (`AppDelegate.applicationShouldHandleReopen`).
+        @MainActor static var at = Date.distantPast
+
         nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                                 withCompletionHandler done: @escaping () -> Void) {
+            let info = response.notification.request.content.userInfo as? [String: String] ?? [:], action = response.actionIdentifier
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    Self.at = Date()
                     guard let app = NSApp.delegate as? AppDelegate else { return }
-                    NSApp.activate()
-                    app.window.makeKeyAndOrderFront(nil)
+                    if info["server"] != nil { return app.tools.monitor.clicked(action, info) }
+                    app.bringBack(app.window)
                     if app.ops?.activityShown != true { app.ops?.showActivity(entry: nil) }
                 }
             }

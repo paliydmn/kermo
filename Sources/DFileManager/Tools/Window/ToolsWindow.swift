@@ -185,7 +185,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
                 + Chip.of(t).map { c in let v = NSImageView(image: c.image); v.setAccessibilityLabel(c.spoken); return v }
                 + [Self.spacer(), Self.small(n)]
         case .watched(let s, let t):
-            return watchedRow(s, t)
+            return Self.watchedRow(app, s, t)
         case .library(let mine):
             let count = mine ? app.tools.library.tools.filter { !$0.builtIn && ToolRunner.shows($0) }.count : ToolsLibrary.tools(app, mine: false).count
             views = [NSImageView(image: (mine ? Symbol.folder : Symbol.archive).image(nil)), NSTextField(labelWithString: mine ? "My Tools" : "Built into Kermo"),
@@ -247,8 +247,9 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
 
     /// A watched server's row (decisions 9, 21): its worst state as a shape with its color — a triangle for a
     /// warning, an octagon for a critical one, a dot when fine, a ring while paused — the name, its chips and a word
-    /// on the state; under them each watched tool's summary: a bar with its thresholds, a count, a text.
-    private func watchedRow(_ s: SavedServer, _ t: SFTPTarget) -> NSView {
+    /// on the state; under them each watched tool's summary: a bar with its thresholds, a count, a text. The menu bar's
+    /// popover lists them the same.
+    static func watchedRow(_ app: AppDelegate, _ s: SavedServer, _ t: SFTPTarget) -> NSView {
         let monitor = app.tools.monitor
         guard let state = monitor.server(t) else { return NSTextField(labelWithString: s.title) }
         let (worst, why) = monitor.worst(state)
@@ -265,7 +266,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         (top.spacing, top.distribution) = (5, .fill)
         var items: [NSView] = []
         for tool in state.tools.values.filter(\.watched).sorted(by: { $0.preset.id < $1.preset.id }) {
-            for item in monitor.summary(tool) {
+            for item in monitor.summary(tool, on: state) {
                 if let v = item.value {
                     let bar = NSLevelIndicator()
                     bar.levelIndicatorStyle = .continuousCapacity

@@ -1,4 +1,5 @@
 import AppKit
+import UserNotifications
 @testable import DFMCore
 import Testing
 @testable import DFileManager
@@ -10,7 +11,7 @@ import Testing
 // stream of its own (`pulse`) on this Mac.
 
 /// A stream on this Mac: a JSON line every 0.3 s — cpu 10, or 99 while the flag `hot-<server>` is there; every 1.3 s
-/// with `slow-<server>`; with `event-<server>`, an `_event` in each line; two `procs` rows in every other line (as
+/// with `slow-<server>`; with `event-<server>`, an `_event` in each line (a critical one with `boom-<server>`); two `procs` rows in every other line (as
 /// System spaces its heavier reads) — its pid in `pulse-<server>.pid`. `pulse2`: the same under another name. Its
 /// dashboard has every block; its actions: Folder (`open` what `pulse-dir` prints), Stop… (dangerous), Deeper (a
 /// level: not run yet), Log (`{from}` / `{to}` into `pulse-log`), Terminal and Services (`goto`).
@@ -24,6 +25,7 @@ import Testing
             while :; do
               cpu=10; [ -f \(bench.dir)/hot-$2 ] && cpu=99
               ev=''; [ -f \(bench.dir)/event-$2 ] && ev=',"_event":{"id":"tick","level":"info","message":"tick"}'
+              [ -f \(bench.dir)/boom-$2 ] && ev=',"_event":{"id":"boom","level":"critical","message":"boom"}'
               procs=''; [ $((i % 2)) -eq 0 ] && procs=',"procs":[{"pid":1,"command":"first","cpu":1.5},{"pid":2,"command":"second","cpu":20}]'
               printf '{"cpu":{"pct":%s},"n":%s%s%s}\\n' "$cpu" "$i" "$ev" "$procs"
               i=$((i+1))
@@ -65,11 +67,13 @@ import Testing
 }
 @MainActor private func alive(_ p: pid_t?) -> Bool { p.map { kill($0, 0) == 0 } ?? false }
 
-/// The watching seams quick, and back after.
+/// The watching seams quick, and back after — the app's watching stopped, so no stream of a test runs on into the next.
 @MainActor private struct Quick {
+    let app: AppDelegate
     let was = (tick: ToolMonitor.tick, backoff: ToolMonitor.backoff, login: ToolMonitor.login, watching: ToolRunner.watching, auth: ServerLock.authenticate,
                target: ToolMonitor.target, grace: ToolMonitor.wakeGrace)
-    init() {
+    init(_ app: AppDelegate) {
+        self.app = app
         ToolMonitor.tick = 0.2
         ToolMonitor.backoff = [0.3]
         ToolMonitor.login = { _, _ in }
@@ -78,9 +82,26 @@ import Testing
         ToolRunner.watching = { _, _ in true }
     }
     func done() {
-        (ToolMonitor.tick, ToolMonitor.backoff, ToolMonitor.login, ToolRunner.watching, ServerLock.authenticate, ToolMonitor.target, ToolMonitor.wakeGrace) = was
+        app.tools.settings = ToolServers()
         closeWindows()
+        app.tools.monitor.reconcile()
+        (ToolMonitor.tick, ToolMonitor.backoff, ToolMonitor.login, ToolRunner.watching, ServerLock.authenticate, ToolMonitor.target, ToolMonitor.wakeGrace) = was
     }
+}
+
+/// macOS notifications' stand-in: allowed or not (nil: never asked), each one posted, each ask.
+@MainActor private final class Posts {
+    var allowed: Bool? = true, asked = 0
+    var sent: [(id: String, title: String, body: String, info: [String: String])] = []
+    let was = (notices: ToolJobs.notices, activation: AppDelegate.activation)
+    /// How the app went to the menu bar alone, or back with a window in front.
+    var activations: [(NSApplication.ActivationPolicy, NSWindow?)] = []
+    init() {
+        ToolJobs.notices = .init(allowed: { [weak self] in self?.allowed ?? nil }, ask: { [weak self] in self?.asked += 1 },
+                                 post: { [weak self] in self?.sent.append(($0, $1, $2, $3)) })   // a delivery late after the test: dropped
+        AppDelegate.activation = { [weak self] in self?.activations.append(($0, $1)) }
+    }
+    func done() { (ToolJobs.notices, AppDelegate.activation) = was }
 }
 
 @MainActor private func closeWindows() {
@@ -115,7 +136,7 @@ extension ServerLockTests {
     /// another tab is chosen.
     @Test func aStreamRunsWhileItsTabShowsAndStopsWhenItDoesnt() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = [] }
         try await watching(app, bench)
         let trips = bench.trips
@@ -152,7 +173,7 @@ extension ServerLockTests {
     /// Stop Watching ends it and takes the key out.
     @Test func watchKeepsTheStreamWithoutAWindow() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = [] }
         try await watching(app, bench)
         ToolsWindow.show(app, server: .local())
@@ -196,7 +217,7 @@ extension ServerLockTests {
     /// WATCHED, and "answers again" once a sample comes.
     @Test func aDropIsAGapAndAReconnect() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = [] }
         try await watching(app, bench)
         let tool = try toolNamed(app, "pulse")
@@ -226,7 +247,7 @@ extension ServerLockTests {
     /// click — the lock, then the login as any look's — brings its stream up.
     @Test func aLoginThatWouldAskWaitsForAClick() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = []; ToolRunner.hasMaster = { _ in true } }
         try await watching(app, bench)
         ToolRunner.hasMaster = { _ in false }
@@ -259,7 +280,7 @@ extension ServerLockTests {
     /// A locked server is watched read-only, without Touch ID; its connection stays in use; the tab says so.
     @Test func aLockedServerIsWatchedWithoutTouchID() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = [] }
         var locked = SavedServer(address: "localhost")!
         locked.locked = true
@@ -282,7 +303,7 @@ extension ServerLockTests {
     /// server's row says its words, the tab shows the mark — and back to normal is an event; the words say so.
     @Test func aProblemShowsInWatchedAndOnTheTab() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = [] }
         try await watching(app, bench)
         let tool = try toolNamed(app, "pulse")
@@ -293,7 +314,7 @@ extension ServerLockTests {
         await toolsUntil { s.tools["pulse"]?.alerts.worst == .critical }
         #expect(app.tools.monitor.worst(s) == (.critical, "CPU 99%") && s.tools["pulse"]?.events.first?.message == "CPU 99%", "\(s.tools["pulse"]?.events ?? [])")
         #expect(s.tools["pulse"]?.events.filter { $0.message == "hot: 99" && $0.level == "warning" }.count == 1, "the `is` event, once")
-        #expect(app.tools.monitor.watched.map(\.saved.title) == ["localhost"] && app.tools.monitor.summary(s.tools["pulse"]!).first?.level == .critical)
+        #expect(app.tools.monitor.watched.map(\.saved.title) == ["localhost"] && app.tools.monitor.summary(s.tools["pulse"]!, on: s).first?.level == .critical)
         ToolsWindow.show(app, server: .local())
         let w = try #require(ToolsWindow.main), page = try #require(w.page)
         page.select("pulse")
@@ -309,7 +330,7 @@ extension ServerLockTests {
     /// Two watched tools on one server run in one channel: one round trip, both their series fed.
     @Test func twoToolsOnOneServerShareOneChannel() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = [] }
         try await watching(app, bench, ids: ["pulse", "pulse2"])
         let trips = bench.trips
@@ -321,14 +342,14 @@ extension ServerLockTests {
         #expect(bench.trips - trips <= 2 && bench.calls.contains("pulse 1 localhost") && bench.calls.contains("pulse2 1 localhost"), "\(bench.trips - trips) \(bench.calls)")
         #expect(alive(pid(bench)) && alive(pid(bench, "localhost", "pulse2")))
         let runs = try toolNamed(app, "pulse").runs
-        #expect(runs.groups.last?.title == "In the background, when you watch it" && runs.background.first?.text == "  stream: pulse {every} {server}   — every 1 s on each watched server")
+        #expect(runs.groups.last?.title == "In the background, when you watch it — may send notifications" && runs.background.first?.text == "  stream: pulse {every} {server}   — every 1 s on each watched server")
     }
 
     /// A stream that runs a little slower than `every` (System sleeps after its reads) is no gap: nothing missed, no
     /// mark, the alerts' clocks untouched. Once it really stops, the intervals are missed from half of one on.
     @Test func aSlightlyLateStreamIsNoGap() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = [] }
         try await watching(app, bench)
         bench.flag("slow-localhost")
@@ -346,7 +367,7 @@ extension ServerLockTests {
     /// through — never one "1 more" each.
     @Test func scriptedEventsAreBudgeted() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = [] }
         try await watching(app, bench)
         bench.flag("event-localhost")
@@ -361,7 +382,7 @@ extension ServerLockTests {
     /// "needs login" again); a login refused for another reason than a password — the server unreachable — is retried.
     @Test func aClicksLoginRunsAloneAndOtherFailuresRetry() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = []; ToolRunner.hasMaster = { _ in true } }
         try await watching(app, bench)
         ToolRunner.hasMaster = { _ in false }
@@ -398,7 +419,7 @@ extension ServerLockTests {
     /// — the hover's values in a chart's words. Closing the window takes the charts out of the view tree.
     @Test func theDashboardDrawsItsBlocksFromTheStream() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = [] }
         try await watching(app, bench)
         bench.flag("hot-localhost")
@@ -451,7 +472,7 @@ extension ServerLockTests {
     /// page says how each went. On a locked server the row's action asks Touch ID first — metrics never did.
     @Test func aTableRowsActionsTakeTheActionsPath() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         let reveal = ToolRunner.reveal
         defer { quick.done(); bench.done(); done(); app.savedServers = []; ToolRunner.reveal = reveal; AppDelegate.answering = nil }
         try await watching(app, bench)
@@ -492,7 +513,7 @@ extension ServerLockTests {
     /// a click on a chart runs the `log` action with five minutes around that moment, by the server's clock.
     @Test func gotoAndAChartsClickFromTheDashboard() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = []; Picker.dismiss() }
         try await watching(app, bench)
         ToolsWindow.show(app, server: .local())
@@ -520,7 +541,7 @@ extension ServerLockTests {
     /// came meanwhile are still to be read, so nothing is a gap.
     @Test func aLateTickJudgesNoInterval() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = [] }
         try await watching(app, bench)
         bench.flag("slow-localhost")   // a line every 1.3 s against every 1: healthy, and sparse enough that the tick comes first
@@ -536,7 +557,7 @@ extension ServerLockTests {
     /// the series going on.
     @Test func aWakeRestartsTheChannel() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick()
+        let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = [] }
         try await watching(app, bench)
         app.tools.monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
@@ -547,5 +568,239 @@ extension ServerLockTests {
         #expect(s.channel == nil && s.retryAt != nil && t.history.points("cpu").last?.gap == .reconnecting)
         await toolsUntil { bench.trips > trips && pid(bench) != first && t.history.points("cpu").last?.value != nil }
         #expect(bench.trips == trips + 1 && !alive(first) && s.channel != nil, "the old run ended on the server, a new one runs")
+    }
+
+    // MARK: Tools PR 5b — notifications, the menu bar, the app without windows
+
+    /// A watched tool's critical alert comes as one notification — the server, the tool's words, its ids for the
+    /// buttons — and runs `on_alert` with what happened in its environment, nothing in its words; the `is` event, a
+    /// warning, notifies nothing, nor does "back to normal". Snoozed, nothing goes out; a notification's Mute keeps
+    /// that alert quiet on this server (tools/servers.json), and Open shows its tab with Kermo in front.
+    @Test func aCriticalAlertNotifiesOnceAndRunsOnAlert() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), posts = Posts()
+        let out = bench.dir + "/on-alert.txt", script = bench.dir + "/bin/on-alert"
+        try Data("#!/bin/sh\n{ echo \"argc=$#\"; env | grep '^KERMO_' | sort; } > \(out)\n".utf8).write(to: URL(fileURLWithPath: script))
+        chmod(script, 0o755)
+        app.defaults.set(script, forKey: "onAlert")
+        defer { posts.done(); quick.done(); bench.done(); done(); app.savedServers = []; app.defaults.removeObject(forKey: "onAlert"); app.tools.monitor.snooze(until: nil) }
+        try await watching(app, bench)
+        let monitor = app.tools.monitor
+        monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        await toolsUntil { monitor.tool("pulse", on: .local())?.history.last != nil }
+        let s = try #require(monitor.server(.local())), t = try #require(s.tools["pulse"])
+        bench.flag("hot-localhost")
+        await toolsUntil { t.alerts.worst == .critical && s.events.contains { $0.message == "on_alert ran" } }
+        #expect(posts.sent.count == 1, "\(posts.sent)")
+        let sent = try #require(posts.sent.first)
+        #expect(sent.title == "localhost" && sent.body == "Pulse: CPU 99%" && sent.info == ["server": s.key, "tool": "pulse", "alert": "cpu"], "\(sent)")
+        #expect(try String(contentsOfFile: out, encoding: .utf8) == "argc=0\nKERMO_LEVEL=critical\nKERMO_MESSAGE=CPU 99%\nKERMO_SERVER=localhost\nKERMO_TOOL=pulse\n")
+        #expect(t.events.contains { $0.message == "hot: 99" && $0.level == "warning" }, "the warning is there, not notified")
+        #expect(ToolsMenuBar.head(monitor).text == "1 critical")
+        let bar = ToolsMenuBar(app)   // its popover's content, never shown: no item in the menu bar of the Mac running the tests
+        bar.fill()
+        let content = try #require(bar.popover.contentViewController?.view)
+        #expect(labels(content).contains("Monitor · 1 critical") && labels(content).contains("localhost"), "\(labels(content))")
+        #expect(buttons(content).map(\.title) == ["Open Monitor  ⌃⌘M", "Open Kermo", "Snooze Notifications ▾"] && bar.item == nil, "\(buttons(content).map(\.title))")
+        await toolsUntil { DockTile.problems == 1 }
+        #expect(DockTile.problems == 1, "the Dock's badge counts it")
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(posts.sent.count == 1, "once, while it stands")
+
+        bench.flag("hot-localhost", false)
+        await toolsUntil { t.alerts.worst == nil }
+        #expect(posts.sent.count == 1 && t.events.first?.message.hasPrefix("Back to normal") == true, "back to normal: an event only")
+
+        monitor.clicked(ToolJobs.Notices.snooze, sent.info)
+        #expect(monitor.snoozed.map { abs($0.timeIntervalSinceNow - 3600) < 5 } == true && ToolsMenuBar.head(monitor).snoozed?.hasPrefix("snoozed until") == true)
+        bench.flag("hot-localhost")
+        await toolsUntil { t.alerts.worst == .critical }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(posts.sent.count == 1, "snoozed")
+        bench.flag("hot-localhost", false)
+        await toolsUntil { t.alerts.worst == nil }
+
+        monitor.snooze(until: nil)
+        monitor.clicked(ToolJobs.Notices.mute, sent.info)
+        #expect(app.tools.settings.mutes("cpu", of: "pulse", on: app.savedServers[0].id.uuidString))
+        let file = bench.dir + "/own/servers.json"
+        await toolsUntil { ((try? String(contentsOfFile: file, encoding: .utf8)) ?? "").contains("muted") }
+        #expect(((try? String(contentsOfFile: file, encoding: .utf8)) ?? "").contains("muted"))
+        bench.flag("hot-localhost")
+        await toolsUntil { t.alerts.worst == .critical }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(posts.sent.count == 1 && monitor.worst(s).state == .critical, "muted: still shown, not notified")
+
+        monitor.clicked(UNNotificationDefaultActionIdentifier, sent.info)
+        let w = try #require(ToolsWindow.main)
+        #expect(w.page?.tab == "pulse" && posts.activations.last?.0 == .regular && posts.activations.last?.1 === w.window, "Open: its tab, Kermo in front")
+    }
+
+    /// A script's critical `_event` notifies, as the server's not answering does; a tool only live on an open tab
+    /// notifies nothing — only what's watched does (§8.7).
+    @Test func eventsAndNotAnsweringNotifyOnlyWhenWatched() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), posts = Posts()
+        defer { posts.done(); quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        let monitor = app.tools.monitor
+        ToolsWindow.show(app, server: .local())
+        try #require(ToolsWindow.main?.page).select("pulse")
+        bench.flag("hot-localhost")
+        bench.flag("boom-localhost")
+        await toolsUntil { monitor.tool("pulse", on: .local())?.alerts.worst == .critical }
+        let t = try #require(monitor.tool("pulse", on: .local()))
+        #expect(t.live && !t.watched && t.events.contains { $0.id == "boom" } && posts.sent.isEmpty, "live on a tab: nothing notifies")
+        closeWindows()
+        bench.flag("hot-localhost", false)
+
+        monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        await toolsUntil { posts.sent.contains { $0.body == "Pulse: boom" } }
+        let boom = try #require(posts.sent.first { $0.body == "Pulse: boom" })
+        #expect(boom.info == ["server": monitor.server(.local())!.key, "tool": "pulse"], "an event: Open and Snooze, no Mute")
+        try await Task.sleep(for: .milliseconds(700))
+        #expect(posts.sent.filter { $0.body == "Pulse: boom" }.count == 1, "a script's event in every line: one notification till it's closed")
+        bench.flag("boom-localhost", false)
+        let s = try #require(monitor.server(.local()))
+        kill(try #require(pid(bench)), SIGSTOP)
+        await toolsUntil { posts.sent.contains { $0.body.hasPrefix("Not answering") } }
+        kill(try #require(pid(bench)), SIGCONT)
+        let down = try #require(posts.sent.first { $0.body.hasPrefix("Not answering") })
+        #expect(down.title == "localhost" && down.info == ["server": s.key] && down.body.hasSuffix("This Mac is online: it's the server or the way to it."), "\(down)")
+    }
+
+    /// The first Watch asks macOS for notifications, once; Settings ▸ Monitor says how they stand as macOS has it now,
+    /// and Send Test runs `on_alert` with made-up values.
+    @Test func watchAsksForNotificationsAndSettingsSayHowTheyStand() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), posts = Posts()
+        defer { posts.done(); quick.done(); bench.done(); done(); app.savedServers = []; app.defaults.removeObject(forKey: "onAlert") }
+        try await watching(app, bench)
+        posts.allowed = nil
+        let tool = try toolNamed(app, "pulse")
+        #expect(await app.tools.toggleWatch(tool, on: app.savedServers[0], .local(), window: nil))
+        await toolsUntil { posts.asked == 1 }
+        #expect(posts.asked == 1, "asked at the user's Watch")
+        let rows = try #require(app.settingsTabs.first { $0.title == "Monitor" }).groups.flatMap(\.rows)
+        let state = try #require(rows.first?.status)
+        #expect(await state(app) == "Not asked yet: Kermo asks when you first watch a server")
+        posts.allowed = false
+        #expect(await state(app).hasPrefix("Notifications are off for Kermo"))
+        #expect(rows.contains { $0.key == "onAlert" })
+
+        app.defaults.set("exit 3", forKey: "onAlert")
+        app.tools.monitor.test()
+        await toolsUntil { app.tools.monitor.tested.contains("on_alert") }
+        #expect(app.tools.monitor.tested.hasPrefix("No notification (they're off) · on_alert failed: exit 3"), "\(app.tools.monitor.tested)")
+        #expect(posts.sent.isEmpty)
+    }
+
+    /// Closing the last window while something is watched leaves Kermo in the menu bar alone — no quit question, no
+    /// quitting — and Open Monitor brings it back with the Tools window; with nothing watched it quits as before.
+    /// Snooze ▾: 15 minutes, an hour, the morning, Resume.
+    @Test func withoutWindowsKermoStaysInTheMenuBar() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), posts = Posts()
+        defer { posts.done(); quick.done(); bench.done(); done(); app.savedServers = []; app.tools.monitor.snooze(until: nil) }
+        try await watching(app, bench)
+        #expect(app.applicationShouldTerminateAfterLastWindowClosed(NSApp), "nothing watched: the last window quits")
+        app.windowClosed { [] }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(posts.activations.isEmpty)
+
+        app.tools.monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        #expect(!app.applicationShouldTerminateAfterLastWindowClosed(NSApp) && app.windowShouldClose(app.window))
+        let open = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: true)
+        open.orderFront(nil)
+        app.windowClosed { [open] }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(posts.activations.isEmpty, "a window still open")
+        open.orderOut(nil)
+        app.windowClosed { [open] }
+        await toolsUntil { !posts.activations.isEmpty }
+        #expect(posts.activations.count == 1 && posts.activations[0].0 == .accessory && posts.activations[0].1 == nil)
+
+        try #require(app.commands.first { $0.id == "app.monitor" }).run(app)
+        let w = try #require(ToolsWindow.main)
+        #expect(posts.activations.last?.0 == .regular && posts.activations.last?.1 === w.window && w.sidebar.selectedRow == 1, "on WATCHED")
+
+        let menu = ToolsMenuBar.snoozeMenu(app.tools.monitor)
+        #expect(Array(menu.items.prefix(2).map(\.title)) == ["For 15 Minutes", "For 1 Hour"] && menu.items[2].title.hasPrefix("Until ")
+                && menu.items[3].title == "Resume Notifications" && !menu.items[3].isEnabled)
+        _ = (menu.items[1].target as? NSObject)?.perform(menu.items[1].action, with: menu.items[1])
+        #expect(app.tools.monitor.snoozed.map { abs($0.timeIntervalSinceNow - 3600) < 5 } == true)
+        let again = ToolsMenuBar.snoozeMenu(app.tools.monitor)
+        #expect(again.items[3].isEnabled)
+        _ = (again.items[3].target as? NSObject)?.perform(again.items[3].action, with: again.items[3])
+        #expect(app.tools.monitor.snoozed == nil)
+    }
+
+    /// Thresholds… on a server: yours over the tool's — the alert judged by them, the tile's bar and the sheet's
+    /// next look show them — and Notify unticked mutes it there.
+    @Test func thresholdsChangeWhatIsJudged() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), posts = Posts()
+        defer { posts.done(); quick.done(); bench.done(); done(); app.savedServers = []; ToolRunner.thresholding = nil }
+        try await watching(app, bench)
+        let monitor = app.tools.monitor, id = app.savedServers[0].id.uuidString
+        monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        await toolsUntil { monitor.tool("pulse", on: .local())?.history.last != nil }
+        let s = try #require(monitor.server(.local())), t = try #require(s.tools["pulse"])
+        var asked: [ToolRunner.Edit] = []
+        ToolRunner.thresholding = { edits in
+            asked = edits
+            return edits.map { e in
+                var e = e
+                if e.scope == id { (e.mine, e.notify) = (.init(crit: 98), false) }
+                return e
+            }
+        }
+        await app.tools.thresholds(on: .local(), window: nil)
+        #expect(asked.filter { $0.tool == "pulse" }.map { "\($0.alert) \($0.scope == nil ? "all" : "this")" } == ["cpu all", "cpu this"], "\(asked)")
+        #expect(app.tools.settings.alerts(t.preset, on: id).first?.crit == 98 && app.tools.settings.mutes("cpu", of: "pulse", on: id))
+        #expect(monitor.summary(t, on: s).first?.crit == 98, "WATCHED's bar by your threshold")
+        bench.flag("hot-localhost")
+        await toolsUntil { t.alerts.worst == .critical }
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(monitor.worst(s) == (.critical, "CPU 99%") && posts.sent.isEmpty, "critical by your 98, and Notify unticked: shown, not sent")
+    }
+
+    /// Maintenance on a watched server: a critical alert stands as ever, nothing notifies; the live tab says till when
+    /// with End Now, the charts get a band; it ends by itself or by End Now, and notifications come again.
+    @Test func maintenanceHoldsNotificationsAndMarksTheCharts() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), posts = Posts()
+        defer { posts.done(); quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        let monitor = app.tools.monitor
+        monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        await toolsUntil { monitor.tool("pulse", on: .local())?.history.last != nil }
+        let s = try #require(monitor.server(.local())), t = try #require(s.tools["pulse"])
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        #expect(page.tab == "pulse" && !page.maintenance.isHidden && page.maintenance.isEnabled && !page.thresholds.isHidden, "a watched server opens on its watched tab")
+        let menu = page.maintenanceMenu()
+        #expect(menu.items.map(\.title).filter { !$0.isEmpty } == ["Maintenance on localhost", "30 Minutes", "1 Hour", "3 Hours", "End Maintenance", "Nothing notifies of it till then; the charts mark the time"])
+        _ = (menu.items[1].target as? NSObject)?.perform(menu.items[1].action, with: menu.items[1])
+        #expect(s.inMaintenance && monitor.worst(s).why.hasPrefix("maintenance till") && s.events.first?.message.hasPrefix("Maintenance till") == true)
+        bench.flag("hot-localhost")
+        await toolsUntil { t.alerts.worst == .critical }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(posts.sent.isEmpty && monitor.worst(s).state == .critical, "it stands, and nothing notifies")
+        let view = try #require(live(page))
+        view.update()
+        #expect(view.banner.stringValue.hasPrefix("Maintenance till") && !view.endButton.isHidden, "\(view.banner.stringValue)")
+        let charts = try #require(view.blocks.compactMap { $0 as? ToolsCharts }.first)
+        charts.update(view)
+        #expect(charts.model.data.charts.first?.bands.contains { $0.gap == .maintenance } == true)
+        press(view.endButton)
+        #expect(!s.inMaintenance && s.events.first?.message == "Maintenance ended")
+        bench.flag("hot-localhost", false)
+        await toolsUntil { t.alerts.worst == nil }
+        bench.flag("hot-localhost")
+        await toolsUntil { !posts.sent.isEmpty }
+        #expect(posts.sent.count == 1, "after maintenance: notified again")
+        charts.update(view)
+        #expect(charts.model.data.charts.first?.bands.contains { $0.gap == .maintenance } == true, "the band stays for the time it was")
     }
 }

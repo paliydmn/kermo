@@ -145,7 +145,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ops.onRetry = { [unowned self] in retryFailed($0, $1) }
         ops.onShow = { [unowned self] in showItem(on: $0, in: $1, select: $2) }
         ops.toolJobs = tools.jobs   // a long job still running since the last launch: followed again once its server is connected
-        if ToolJobs.Notices.bundled { UNUserNotificationCenter.current().delegate = ToolJobs.clicks }
+        if ToolJobs.Notices.bundled {
+            UNUserNotificationCenter.current().delegate = ToolJobs.clicks
+            UNUserNotificationCenter.current().setNotificationCategories(ToolJobs.Notices.categories)
+        }
+        tools.monitor.menuBar = ToolsMenuBar(self)   // shown while something is watched
+        DockTile.changed = { [unowned self] in tools.monitor.menuBar?.update(rows: false) }
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.windowClosed() }
+        }
         let toolbar = NSToolbar(identifier: "Main")   // after `ops`: it asks for the Activity button at once
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
@@ -246,7 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func show(_ urls: [URL]) {
         let places = Array(zip(urls.filter(\.isFileURL).map(\.standardizedFileURL), [active, other]))
         pendingOpen = []
-        showMainWindow(nil)
+        bringBack(window)   // from the menu bar alone too
         Task {
             // Off the main thread: a path on a share that doesn't answer.
             let kinds = await Blocking.run(.userInitiated) { () -> [Bool?] in   // folder or not; nil: nothing there
@@ -293,7 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Another window (viewer, editor) keeps the app alive: the main window just hides and sessions go on.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        NSApp.windows.contains { Self.keepsAlive($0, besides: sender) } || confirmQuit()
+        NSApp.windows.contains { Self.keepsAlive($0, besides: sender) } || !tools.monitor.watched.isEmpty || confirmQuit()   // watching: to the menu bar
     }
     /// One in the Dock counts too: it isn't visible, the app lives on with it — and the quit question, answered here
     /// for nothing, was never asked again: ⌘Q later lost its unsaved text unasked.
@@ -510,11 +518,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                        dividers: w > 0 ? panels.dropLast().map { Double($0.view.frame.maxX / w) } : [])
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// Something watched: Kermo stays in the menu bar (decision 2).
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { tools.monitor.watched.isEmpty }
 
-    /// Dock click with the main window closed (a viewer kept the app alive): bring it back.
+    /// Dock click with the main window closed (a viewer kept the app alive), or Kermo opened again from the menu bar
+    /// alone: bring it back — a moment later, and not for a notification's click, which brings a reopen too (S1) and
+    /// shows its own window.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !window.isVisible { showMainWindow(nil) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [self] in
+            if !window.isVisible, Date().timeIntervalSince(ToolJobs.Clicks.at) > 1 { bringBack(window) }
+        }
         return true
     }
 
@@ -1299,7 +1312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// The app's own items, not the panels': from a viewer, an editor or over the terminal too.
-    static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "app.support", "app.settings", "app.tools", "help.docs", "help.issue"]
+    static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "app.support", "app.settings", "app.tools", "app.monitor", "help.docs", "help.issue"]
 
     /// A disabled menu item still takes its key: AppKit says it handled it and runs nothing, so F3 never reached a viewer
     /// (D-101); by the same path ⌘↑ or ⌃B could miss an editor or a text field. A command's item keeps its key only while

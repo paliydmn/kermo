@@ -20,7 +20,8 @@ public struct ToolSample: Sendable, Equatable {
 }
 
 /// Why a stretch of a series has no values (§2): a band on the chart, never zeros; nothing recovers through one.
-public enum ToolGap: String, Sendable, Codable { case asleep, noAnswer, reconnecting, notWatched }
+/// `maintenance` is a band over values: the server's own time (`ToolMonitor`), never a point of a series.
+public enum ToolGap: String, Sendable, Codable { case asleep, noAnswer, reconnecting, notWatched, maintenance }
 
 /// A point of a series: a value, or the start of a gap (till the next value).
 public struct ToolPoint: Sendable, Equatable {

@@ -41,7 +41,7 @@ private let deployer = #"""
         ToolJobs.front = { true }
         ops = OpsController(window: app.window) { _ in }
         ToolJobs.notices = .init(allowed: { [unowned self] in allowed }, ask: { [unowned self] in asked += 1; allowed = false },
-                                 post: { [unowned self] _, title, body in posted.append("\(title): \(body)") })
+                                 post: { [unowned self] _, title, body, _ in posted.append("\(title): \(body)") })
         ops.toolJobs = app.tools.jobs
         ToolRunner.filling = { $0.values }
     }

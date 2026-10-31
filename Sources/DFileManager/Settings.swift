@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 // Settings (⌘,): one window of tabs, each tab groups of rows. A row is an option the code already reads — its
 // `defaults` key at its right, written where the code reads it and applied the way the menu or Reload Config does —
-// or a button that runs a command. A new tab is one entry in `settingsTabs` (Tools' Monitor and Tools tabs will be).
+// or a button that runs a command. A new tab is one entry in `settingsTabs` (Monitor is; Tools' tab will be).
 
 struct SettingsTab {
     let title: String, symbol: Symbol
@@ -27,6 +27,7 @@ struct SettingsRow {
     var key: String? = nil
     let control: Control
     var apply: (@MainActor (AppDelegate) -> Void)? = nil   // after the write: the path the menu or Reload Config takes
+    var status: (@MainActor (AppDelegate) async -> String)? = nil   // the note, as things are now: read again each time the window shows
 }
 
 extension AppDelegate {
@@ -108,6 +109,17 @@ extension AppDelegate {
                 SettingsRow(title: "sudo password", note: "Kept in memory for 5 minutes after its last use; forgotten at screen lock, sleep and Disconnect", control: .info),
             ]),
         ]),
+        SettingsTab(title: "Monitor", symbol: .monitor, groups: [
+            ("Notifications", [
+                SettingsRow(title: "Critical alerts as notifications", control: .buttons([("Open System Settings", "monitor.notificationSettings")]),
+                            status: { await $0.tools.monitor.notificationsSaid() }),
+            ]),
+            ("On critical alerts", [
+                SettingsRow(title: "Also run this command", note: "On this Mac, in zsh as a login shell, with $KERMO_SERVER, $KERMO_LEVEL, $KERMO_MESSAGE and $KERMO_TOOL set. Only you set it: a tool never can",
+                            key: "onAlert", control: .field("curl -d \"$KERMO_MESSAGE\" ntfy.sh/…")),
+                SettingsRow(title: "Test", control: .buttons([("Send Test", "monitor.test")]), status: { $0.tools.monitor.tested }),
+            ]),
+        ]),
         SettingsTab(title: "Advanced", symbol: .advanced, groups: [
             ("Files", [
                 SettingsRow(title: "keymap.json", note: "Your shortcuts", control: .buttons([("Edit…", "app.keymap")])),
@@ -158,9 +170,14 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     private var refreshers: [() -> Void] = []   // controls re-read their keys (⇧⌘. may have changed one meanwhile)
     private var actions: [ClosureTarget] = []
 
-    static func show(_ app: AppDelegate) {
+    /// Something a row's note says changed meanwhile (`SettingsRow.status`).
+    static func refreshShown() { shared?.refresh() }
+
+    /// `tab`: its title, to open on it (Thresholds' Notification Settings… opens Monitor).
+    static func show(_ app: AppDelegate, tab: String? = nil) {
         let s = shared ?? SettingsWindow(app: app, tabs: app.settingsTabs, defaults: app.defaults)
         shared = s
+        if let i = s.tabs.tabViewItems.firstIndex(where: { $0.label == tab }) { s.tabs.selectedTabViewItemIndex = i }
         s.refresh()
         s.window.makeKeyAndOrderFront(nil)
     }
@@ -267,12 +284,18 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         let title = NSTextField(labelWithString: r.title)
         title.font = .systemFont(ofSize: 13)
         var left: [NSView] = [title]
-        if !r.note.isEmpty {
+        if !r.note.isEmpty || r.status != nil {
             let note = NSTextField(wrappingLabelWithString: r.note)
             note.font = .systemFont(ofSize: 11.5)
             note.textColor = .secondaryLabelColor
             note.preferredMaxLayoutWidth = 330
             left.append(note)
+            if let status = r.status {
+                refreshers.append { [unowned self, weak note] in
+                    let app = app   // the window may be gone by the answer
+                    Task { let said = await status(app); note?.stringValue = said }
+                }
+            }
         }
         let text = NSStackView(views: left)
         text.orientation = .vertical
@@ -379,7 +402,10 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             let bs = list.map { b -> NSButton in
                 let button = NSButton(title: b.title, target: nil, action: nil)
                 button.setAccessibilityLabel("\(b.title.replacingOccurrences(of: "…", with: "")) — \(r.title)")   // "Edit — keymap.json", not five "Edit…"
-                target(button) { [unowned self] in app.run(b.command) }
+                target(button) { [unowned self] in
+                    window.makeFirstResponder(nil)   // a field still being typed in is written first: Send Test runs what it shows
+                    app.run(b.command)
+                }
                 return button
             }
             if bs.count == 1 { return bs[0] }
