@@ -42,11 +42,12 @@ import Network
         /// `http`: a check under way; when the next is due.
         var checking = false
         var due: Date?
-        init(_ t: LoadedTool) { (loaded, frames, slots) = (t, ToolFrames(split: t.preset.source?.parse.split), ToolSlots(tool: t.preset.id)) }
+        init(_ t: LoadedTool) { (loaded, frames, slots) = (t, Self.frames(t.preset), ToolSlots(tool: t.preset.id)) }
+        static func frames(_ p: ToolPreset) -> ToolFrames { ToolFrames(split: p.source?.parse.split, poll: p.stream == nil) }
         var preset: ToolPreset { loaded.preset }
         var wanted: Bool { watched || live }
         /// The channel ended: a frame half-read stays there.
-        func reset() { frames = ToolFrames(split: preset.source?.parse.split) }
+        func reset() { frames = Self.frames(preset) }
     }
 
     /// A server watched or live: its channel on the server, its tools, how it's doing.

@@ -267,11 +267,11 @@ final class ToolEditor: NSView, NSTextViewDelegate, NSMenuDelegate {
         var out: [(Mark, String)] = [], scope = scope
         func first(_ s: String) -> String { s.split(whereSeparator: \.isNewline).first.map { String($0.prefix(300)) } ?? "" }
         /// Its output, or why it gave none: stopped, failed (exit, stderr's first line), couldn't start.
-        func run(_ what: String, _ r: ToolRun, _ timeout: Double) -> ToolExec.Ran? {
+        func run(_ what: String, _ r: ToolRun, _ timeout: Double, format: ToolFormat? = nil) -> ToolExec.Ran? {
             do {
                 let ran = try ToolRunner.exec(r, of: tool, scope, on: t, timeout: r.timeout ?? timeout, env: env, cancel: cancel).ran
                 if let stopped = ran.stopped { out.append((.fail, "\(what): \(stopped)")); return nil }
-                guard r.succeeded(ran.status) else {
+                guard r.succeeded(ran.status, format: format) else {
                     out.append((.fail, "\(what): exit \(ran.status)" + (ran.errors.isEmpty ? "" : " — " + first(ran.errors))))
                     return nil
                 }
@@ -311,8 +311,8 @@ final class ToolEditor: NSView, NSTextViewDelegate, NSMenuDelegate {
         if let list = p.list {
             if list.run.files != nil {
                 out.append((.plain, "list: files are read over SFTP — not in Test yet"))
-            } else if let ran = run("list", list.run, 30) {
-                let records = list.parse.records(ran.out), now = Date().addingTimeInterval(ran.skew ?? 0)
+            } else if let ran = run("list", list.run, 30, format: list.parse.format) {
+                let records = list.parse.records(ran.out, exit: ran.status), now = Date().addingTimeInterval(ran.skew ?? 0)
                 out.append((records.matched ? .ok : .fail, "list: " + records.summary))
                 for r in records.rows.prefix(20) {
                     let row = list.view.row(r, scope, now: now)

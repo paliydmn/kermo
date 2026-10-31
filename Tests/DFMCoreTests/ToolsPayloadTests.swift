@@ -230,6 +230,7 @@ private func standInSudo(_ kind: String) throws -> String {
     let lines = r.out.split(separator: "\n").map(String.init)
     #expect(lines.contains("one\tx=1") && lines.contains("one\ttwo"), "\(lines)")
     #expect(lines.filter { $0 == "two\ttick" }.count >= 2, "the poll ran again: \(lines)")
+    #expect(lines.contains("two\t" + ToolPayload.ranMark + "0"), "each run ends with its exit code")
     #expect(ToolPayload.watchLine("one\tx=1").map { $0.tool + "|" + $0.line } == "one|x=1" && ToolPayload.watchLine("no tab") == nil)
     let root = try preset(#"{ "schema": 1, "id": "root", "title": "Root", "sudo": true, "watch": { "every": 1 }, "poll": { "command": "echo tick" } }"#)
     #expect(try ToolPayload.watch([.init(tool: one, run: one.stream!.run, every: nil, scope: scope, scripts: [:]),

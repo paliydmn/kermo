@@ -213,3 +213,16 @@ private func systemSamples() throws -> [ToolSample] {
     #expect((0..<10).allSatisfy { budget.allows(at(Double($0))) } && !budget.allows(at(11)) && !budget.allows(at(12)))
     #expect(budget.takeHeld() == 2 && budget.held == 0 && budget.allows(at(3601)), "an hour on, room again")
 }
+
+/// A poll's run is one sample (§8.1): its lines held till the line that ends it; its exit code is a Nagios run's
+/// status; Prometheus' samples are rows.
+@Test func aPollsRunIsOneSampleWithItsExitCode() throws {
+    var f = ToolFrames(split: nil, poll: true)
+    #expect(f.feed("node_load1 0.5").isEmpty && f.feed("up 1").isEmpty)
+    let frame = try #require(f.feed(ToolPayload.ranMark + "0").first)
+    #expect(f.feed("next").isEmpty, "the next run starts afresh")
+    let s = try #require(ToolParse(format: .prometheus).sample(frame, at: at(0)))
+    #expect(s.rows("rows").map { $0["name"] } == ["node_load1", "up"])
+    let n = try #require(ToolParse(format: .nagios).sample("LOAD CRITICAL - load 9.5 | load1=9.5;2;4\n" + ToolPayload.ranMark + "2", at: at(0)))
+    #expect(n.record["status"] == "crit" && ToolValue.object(n.record)["perf.load1"] == 9.5 && n.record["message"] == "LOAD CRITICAL - load 9.5")
+}
