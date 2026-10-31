@@ -58,13 +58,13 @@ private func keysRead() throws -> Set<String> {
     return Set(w.tabs.tabViewItems.flatMap { $0.viewController.map { all($0.view) } ?? [] })
 }
 
-/// Tools PR 5 / 8 add Monitor and Tools: one entry each.
+/// Tools PR 5 added Monitor, PR 8 adds Tools: one entry each.
 @MainActor @Test func aNewTabIsOneEntry() {
     let app = AppDelegate()
-    let monitor = SettingsTab(title: "Monitor", symbol: .general, groups: [("Notifications", [SettingsRow(title: "Alerts", key: "kermoTestKey", control: .toggle(true))])])
+    let tools = SettingsTab(title: "Tools", symbol: .general, groups: [("Catalogs", [SettingsRow(title: "Alerts", key: "kermoTestKey", control: .toggle(true))])])
     let suite = UserDefaults(suiteName: "kermo-settings-\(UUID().uuidString)")!
-    let w = window(app, tabs: app.settingsTabs + [monitor], defaults: suite)
-    #expect(w.tabs.tabViewItems.map(\.label) == ["General", "Appearance", "Keys", "Terminal", "Editor & Viewer", "Servers & Safety", "Advanced", "Monitor"])
+    let w = window(app, tabs: app.settingsTabs + [tools], defaults: suite)
+    #expect(w.tabs.tabViewItems.map(\.label) == ["General", "Appearance", "Keys", "Terminal", "Editor & Viewer", "Servers & Safety", "Monitor", "Advanced", "Tools"])
     let s = try? #require(control(w, "Alerts", as: NSSwitch.self))
     #expect(s?.state == .on, "its default")
     s?.state = .off

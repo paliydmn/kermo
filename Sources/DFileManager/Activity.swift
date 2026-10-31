@@ -686,7 +686,7 @@ final class ClosureButton: NSButton {
 }
 
 /// A row that takes a click on itself (not on a button in it) as `onClick`: a card's header opens the card.
-private final class ClickStack: NSStackView {
+final class ClickStack: NSStackView {
     private var onClick: () -> Void = {}
     convenience init(views: [NSView], onClick: @escaping () -> Void) {
         self.init(views: views)
@@ -696,18 +696,29 @@ private final class ClickStack: NSStackView {
 }
 
 /// The Dock icon: while jobs run, a bar of all the work done so far (the toolbar ring's), and the system's red badge
-/// with how many finished with errors not looked at yet. The one place that changes the tile.
-// ponytail: Dock only — Tools PR 5 (no Dock while only watching) moves the progress to the menu bar's item here.
+/// with how many finished with errors not looked at yet, and how many watched servers have a problem (§8.7: a warning
+/// shows in the menu bar and the Dock). The one place that changes the tile; with no Dock (`.accessory`, Kermo in the
+/// menu bar alone) the progress shows on the menu bar's item.
 @MainActor enum DockTile {
     private static var key = ""
     private static let bar = Bar()
+    private(set) static var fraction: Double?
+    private static var errors = 0
+    static var problems = 0 { didSet { draw() } }
+    /// The menu bar's item, told when the progress changes.
+    static var changed: @MainActor () -> Void = {}
 
-    static func show(fraction: Double?, errors: Int) {
-        let k = "\(fraction.map { Int($0 * 100) } ?? -1) \(errors)"
+    static func show(fraction f: Double?, errors e: Int) {
+        (fraction, errors) = (f, e)
+        draw()
+    }
+
+    private static func draw() {
+        let k = "\(fraction.map { Int($0 * 100) } ?? -1) \(errors) \(problems)"
         guard k != key else { return }
         key = k
         let tile = NSApplication.shared.dockTile
-        tile.badgeLabel = errors > 0 ? "\(errors)" : nil
+        tile.badgeLabel = errors + problems > 0 ? "\(errors + problems)" : nil
         if let fraction {
             bar.fraction = fraction
             bar.frame = NSRect(origin: .zero, size: tile.size)
@@ -717,6 +728,7 @@ private final class ClickStack: NSStackView {
             tile.contentView = nil
         }
         tile.display()
+        changed()
     }
 
     private final class Bar: NSView {

@@ -79,7 +79,7 @@ struct Shortcut: Hashable {
     /// What macOS does with it before any app sees it — a keymap.json binding there never fires (warned about at launch).
     var takenByMacOS: String? { Self.systemTaken[self] }
     private static let systemTaken: [Shortcut: String] = Dictionary(uniqueKeysWithValues: [
-        ("cmd+opt+d", "toggles Dock hiding"), ("cmd+m", "Minimize, in every Mac app"), ("cmd+h", "Hide"), ("cmd+opt+h", "Hide Others"),
+        ("cmd+opt+d", "toggles Dock hiding"), ("cmd+m", "Minimize, in every Mac app"), ("cmd+opt+m", "Minimize All, in every Mac app"), ("cmd+h", "Hide"), ("cmd+opt+h", "Hide Others"),
         ("cmd+q", "Quit"), ("cmd+space", "Spotlight"), ("cmd+opt+space", "Finder search"), ("cmd+tab", "the app switcher"),
         ("cmd+`", "next window"), ("cmd+shift+3", "screenshot"), ("cmd+shift+4", "screenshot"), ("cmd+shift+5", "screenshot"),
         ("ctrl+cmd+q", "lock screen"), ("cmd+opt+esc", "Force Quit"), ("ctrl+cmd+space", "emoji"), ("ctrl+space", "input source"),

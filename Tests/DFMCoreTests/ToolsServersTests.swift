@@ -72,3 +72,54 @@ import Testing
     s.watch("system", on: "A", false)
     #expect(!s.watches("system", on: "A") && s.servers["A"] == nil, "an empty setting isn't kept")
 }
+
+/// A notification's Mute This Alert on This Server: by the alert's id, for one tool on one server, kept in the file;
+/// undone, nothing is left.
+@Test func mutedPerServerToolAndAlert() throws {
+    var s = ToolServers()
+    s.mute("cpu", of: "system", on: "A", true)
+    s.mute("cpu", of: "system", on: "A", true)
+    s.mute("disk", of: "system", on: "A", true)
+    #expect(s.mutes("cpu", of: "system", on: "A") && !s.mutes("cpu", of: "system", on: "B") && !s.mutes("cpu", of: "dpl", on: "A") && !s.mutes("cpu", of: "system", on: nil))
+    #expect(s.servers["A"]?["system"]?.muted == ["cpu", "disk"], "once each")
+    let back = try JSONDecoder().decode(ToolServers.self, from: try JSONEncoder().encode(s))
+    #expect(back.mutes("disk", of: "system", on: "A"))
+    s.mute("cpu", of: "system", on: "A", false)
+    s.mute("disk", of: "system", on: "A", false)
+    #expect(s.servers["A"] == nil, "an empty setting isn't kept")
+}
+
+/// Show in the Menu Bar: in the order pinned, once each, three at most; kept in the file.
+@Test func pinnedServersThreeAtMost() throws {
+    var s = ToolServers()
+    for id in ["A", "B", "A", "C", "D"] { s.pin(id, true) }
+    #expect(s.pinned == ["B", "A", "C"], "A moved to the end, D past three")
+    s.pin("B", false)
+    s.pin("D", true)
+    #expect(s.pinned == ["A", "C", "D"])
+    #expect(try JSONDecoder().decode(ToolServers.self, from: try JSONEncoder().encode(s)).pinned == ["A", "C", "D"])
+}
+
+/// Your thresholds (Thresholds…): one server's over all servers' over the tool's, by the alert's id (its metric when it
+/// has none), each of warn and crit on its own; an empty one isn't kept.
+@Test func thresholdsOverTheToolsByAlertID() throws {
+    let p = try JSONDecoder().decode(ToolPreset.self, from: Data(#"""
+        { "schema": 1, "id": "system", "title": "System",
+          "alerts": [ { "id": "cpu", "metric": "cpu", "warn": 85, "crit": 95 }, { "metric": "disk", "warn": 85 } ] }
+        """#.utf8))
+    var s = ToolServers()
+    #expect(s.alerts(p, on: "A") == p.alerts, "none of yours: the tool's")
+    s.setThreshold(.init(warn: 70), alert: "cpu", of: "system", on: nil)
+    s.setThreshold(.init(crit: 99), alert: "cpu", of: "system", on: "A")
+    s.setThreshold(.init(warn: 90), alert: "disk", of: "system", on: "A")
+    let a = s.alerts(p, on: "A"), b = s.alerts(p, on: "B")
+    #expect(a[0].warn == 70 && a[0].crit == 99 && a[1].warn == 90, "A: all servers' warn, its own crit; disk by its metric")
+    #expect(b[0].warn == 70 && b[0].crit == 95 && b[1].warn == 85 && s.alerts(p, on: nil)[0].warn == 70)
+    #expect(s.threshold("cpu", of: "system", on: "A") == .init(crit: 99) && s.threshold("cpu", of: "system", on: nil) == .init(warn: 70))
+    let back = try JSONDecoder().decode(ToolServers.self, from: try JSONEncoder().encode(s))
+    #expect(back.alerts(p, on: "A") == a)
+    s.setThreshold(.init(), alert: "cpu", of: "system", on: nil)
+    s.setThreshold(.init(), alert: "cpu", of: "system", on: "A")
+    s.setThreshold(.init(), alert: "disk", of: "system", on: "A")
+    #expect(s == ToolServers(), "emptied: nothing kept")
+}

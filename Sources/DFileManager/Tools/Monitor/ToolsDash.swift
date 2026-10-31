@@ -102,9 +102,14 @@ import SwiftUI
     }
 
     func update(_ live: ToolsLive) {
-        let p = live.tool.preset, t = live.known, now = live.now
+        let p = live.tool.preset, t = live.known, now = live.now, alerts = live.alerts
         var d = Data()
         (d.to, d.from) = (now, now.addingTimeInterval(-(t?.history.keep ?? 3600)))
+        // Maintenance over the values: by the server's clock, as the series are.
+        let maintenance = live.state?.maintenance.flatMap { m -> [ToolChart.Band] in
+            let skew = live.state?.skew ?? 0, from = max(m.from.addingTimeInterval(skew), d.from), to = min(m.until.addingTimeInterval(skew), now)
+            return from < to ? [ToolChart.Band(from: from, to: to, gap: .maintenance)] : []
+        } ?? []
         d.charts = (block.charts ?? []).compactMap { ids -> Chart? in
             let metrics = ids.compactMap { id in p.metrics?[id].map { (id: id, metric: $0) } }
             guard let first = metrics.first else { return nil }
@@ -117,10 +122,10 @@ import SwiftUI
                     lines.append(Line(id: "\(id) \(key)", name: key.isEmpty ? m.title ?? id : key, points: pts, chart: ToolChart(pts, now: now)))
                 }
             }
-            let alert = metrics.count == 1 ? (p.alerts ?? []).first { $0.metric == first.id && $0.below != true } : nil
+            let alert = metrics.count == 1 ? alerts.first { $0.metric == first.id && $0.below != true } : nil
             return Chart(id: ids.joined(separator: "+"), title: metrics.map { $0.metric.title ?? $0.id }.joined(separator: " · "), metric: first.metric,
                          top: ToolChart.top(lines.flatMap { $0.points.compactMap(\.value) }, max: first.metric.max ?? (first.metric.unit == "%" ? 100 : nil)),
-                         lines: lines, bands: lines.map(\.chart.bands).max { $0.count < $1.count } ?? [], warn: alert?.warn, crit: alert?.crit)
+                         lines: lines, bands: (lines.map(\.chart.bands).max { $0.count < $1.count } ?? []) + maintenance, warn: alert?.warn, crit: alert?.crit)
         }
         d.events = ((t?.events ?? []) + (live.state?.events ?? [])).filter { $0.at >= d.from && $0.level != "ok" }
         model.every = p.watch?.every ?? 60
@@ -164,15 +169,17 @@ struct OneChart: View {
         func shown(_ v: Double?) -> String { v.map(chart.metric.text) ?? "—" }
         guard let h = model.hover else { return chart.lines.map { shown($0.points.last?.value) }.joined(separator: " · ") }
         let time = h.formatted(date: .omitted, time: .standard)
-        if let b = chart.bands.first(where: { $0.from <= h && h <= $0.to }) { return Self.word(b.gap) + " · " + time }
+        if let b = chart.bands.first(where: { $0.gap != .maintenance && $0.from <= h && h <= $0.to }) { return Self.word(b.gap) + " · " + time }
         return chart.lines.map { shown(ToolChart.nearest($0.points, to: h, within: model.every * 1.5)?.value) }.joined(separator: " · ") + " · " + time
     }
 
     static func word(_ g: ToolGap) -> String {
-        switch g { case .asleep: "Mac asleep"; case .noAnswer: "no answer"; case .reconnecting: "reconnecting"; case .notWatched: "not watched" }
+        switch g { case .asleep: "Mac asleep"; case .noAnswer: "no answer"; case .reconnecting: "reconnecting"; case .notWatched: "not watched"; case .maintenance: "maintenance" }
     }
 
-    private static func band(_ g: ToolGap) -> Color { g == .noAnswer ? Color(nsColor: Palette.fail).opacity(0.1) : Color(nsColor: .labelColor).opacity(0.08) }
+    private static func band(_ g: ToolGap) -> Color {
+        g == .noAnswer ? Color(nsColor: Palette.fail).opacity(0.1) : g == .maintenance ? Color(nsColor: Palette.accent).opacity(0.1) : Color(nsColor: .labelColor).opacity(0.08)
+    }
 
     private static func level(_ s: String) -> Color {
         s == "critical" ? Color(nsColor: Palette.fail) : s == "warning" ? Color(nsColor: Palette.warn) : Color(nsColor: .secondaryLabelColor)
