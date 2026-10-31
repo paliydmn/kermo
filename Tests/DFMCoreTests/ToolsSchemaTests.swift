@@ -195,3 +195,11 @@ func everyCheckOfTheProtocol(_ c: Case) {
     #expect(top.keys.contains("toolActions") && top.keys.contains("$schema"))
     #expect(defs["preset"]?["additionalProperties"] as? Bool == false)
 }
+
+/// `watch.every` is a second or more: `sleep 0` would spin on the server, and a tick divides by it.
+@Test func watchEveryIsASecondOrMore() {
+    let json = #"{ "schema": 1, "id": "x", "title": "X", "watch": { "every": 0.5 }, "stream": { "command": "cat", "format": "jsonl" } }"#
+    let found = ToolSchema.validate(Data(json.utf8), file: "x.json")
+    #expect(found.preset == nil && found.problems.contains { $0.text == "watch.every: a second or more" }, "\(found.problems)")
+    #expect(ToolSchema.validate(Data(json.replacingOccurrences(of: "0.5", with: "1").utf8), file: "x.json").preset != nil)
+}

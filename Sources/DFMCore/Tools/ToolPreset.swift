@@ -481,6 +481,11 @@ public struct ToolPreset: Sendable, Hashable, Codable {
         return walk(actions, [.key("actions")]) + walk(toolActions, [.key("toolActions")])
     }
 
+    /// Its stream or poll (§8.1): what watching runs.
+    public var source: ToolSource? { stream ?? poll }
+    /// Whether it can be watched, or live on a tab: a stream or a poll, and `watch` saying how often.
+    public var watchable: Bool { watch != nil && source != nil }
+
     /// A one-command tool's (§1) command as an action — what its Tools ▸ item and its place row run; nil for others.
     public var commandAction: ToolAction? {
         guard command != nil || script != nil else { return nil }

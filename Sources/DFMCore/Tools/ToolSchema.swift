@@ -455,6 +455,7 @@ extension ToolSchema.Check {
         for (id, m) in p.metrics ?? [:] where m.calc != nil && (m.path == nil || m.count != nil) {
             error([.key("metrics"), .key(id), .key("calc")], "\(m.calc!) works on a number at path, not on a count")
         }
+        if let w = p.watch, w.every < 1 { error([.key("watch"), .key("every")], "a second or more") }   // `sleep 0` would spin, and a tick divides by it
 
         // Names: Kermo's own hidden, placeholders nothing fills.
         for name in (p.vars ?? [:]).keys where ToolTemplate.kermoNames.contains(name) {

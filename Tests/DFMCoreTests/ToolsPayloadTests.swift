@@ -210,3 +210,29 @@ private func standInSudo(_ kind: String) throws -> String {
     root.sudo = true
     #expect(try ToolPayload.parts([runs[0], root], in: tool, scope: .init()) == nil, "sudo differs: separate runs")
 }
+
+/// A server's watched sources in one channel (§8.5): each in a subshell of its own with its env, a poll run again
+/// every `every` seconds, every line tagged with its tool's id; the end of stdin — the connection gone — ends them
+/// all. Sources with different sudo can't share one.
+@Test(arguments: shells) func aWatchPayloadRunsEverySourceAndTagsItsLines(_ shell: String) throws {
+    func preset(_ json: String) throws -> ToolPreset {
+        let id = try #require(json.firstMatch(of: /"id": "([a-z]+)"/)?.output.1)
+        return try #require(ToolSchema.validate(Data(json.utf8), file: id + ".json").preset)
+    }
+    let one = try preset(#"{ "schema": 1, "id": "one", "title": "One", "env": { "X": "{every}" }, "watch": { "every": 1 }, "stream": { "command": "printf 'x=%s\\n' \"$X\"; echo two; sleep 5", "format": "lines" } }"#)
+    let two = try preset(#"{ "schema": 1, "id": "two", "title": "Two", "watch": { "every": 1 }, "poll": { "command": "echo tick", "format": "lines" } }"#)
+    let scope = ToolTemplate.Scope(kermo: ["every": 1])
+    let p = try #require(try ToolPayload.watch([.init(tool: one, run: one.stream!.run, every: nil, scope: scope, scripts: [:]),
+                                                .init(tool: two, run: two.poll!.run, every: 1, scope: scope, scripts: [:])], shell: shell))
+    let hold = CancelFlag()
+    Timeouts.queue.asyncAfter(deadline: .now() + 1.6) { hold.cancel() }   // the connection goes: the watcher ends them all
+    let r = try run(p, hold: hold)
+    let lines = r.out.split(separator: "\n").map(String.init)
+    #expect(lines.contains("one\tx=1") && lines.contains("one\ttwo"), "\(lines)")
+    #expect(lines.filter { $0 == "two\ttick" }.count >= 2, "the poll ran again: \(lines)")
+    #expect(ToolPayload.watchLine("one\tx=1").map { $0.tool + "|" + $0.line } == "one|x=1" && ToolPayload.watchLine("no tab") == nil)
+    let root = try preset(#"{ "schema": 1, "id": "root", "title": "Root", "sudo": true, "watch": { "every": 1 }, "poll": { "command": "echo tick" } }"#)
+    #expect(try ToolPayload.watch([.init(tool: one, run: one.stream!.run, every: nil, scope: scope, scripts: [:]),
+                                   .init(tool: root, run: root.poll!.run, every: 1, scope: scope, scripts: [:])]) == nil, "sudo differs")
+    #expect(try ToolPayload.watch([]) == nil)
+}

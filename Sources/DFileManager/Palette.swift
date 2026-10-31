@@ -35,7 +35,7 @@ enum Symbol: String, CaseIterable {
          notPublished = "icloud.and.arrow.up", sync = "arrow.triangle.2.circlepath", changes = "plusminus",
          activity = "clock.arrow.circlepath", star, add = "plus.circle", eject, refresh = "arrow.clockwise", filter = "line.3.horizontal.decrease"
     // states and results
-    case check = "checkmark", warn = "exclamationmark.triangle", warnFill = "exclamationmark.triangle.fill",
+    case check = "checkmark", warn = "exclamationmark.triangle", warnFill = "exclamationmark.triangle.fill", crit = "exclamationmark.octagon.fill",
          failed = "xmark.circle", dot = "circle.fill", ring = "circle", diamond = "diamond.fill", pending = "circle.dotted"
     // controls
     case close = "xmark", remove = "xmark.circle.fill", more = "ellipsis.circle", expand = "chevron.right",

@@ -44,11 +44,27 @@ These settings are in `tools/servers.json`, by the saved server's id:
 ```json
 {
   "servers": {
-    "6F1C2A4E-…": { "ufw": { "hidden": true }, "restic": { "vars": { "repo": "/backup/restic" } } }
+    "6F1C2A4E-…": { "ufw": { "hidden": true }, "restic": { "vars": { "repo": "/backup/restic" } }, "system": { "watch": true } }
   },
   "only": { "restic": ["6F1C2A4E-…"] }
 }
 ```
+
+### Watching a server
+
+A tool with a `stream` (**System**: CPU, memory, load, disks, network and disk I/O, the busiest processes, failed services and containers, read-only from `/proc`, `df` and `ps` every 5 seconds) has a live tab on a server's page. Opened on a connected server, the tab is **live while open**: the stream runs on the server while the tab shows, its numbers in tiles with the tool's thresholds, and ends there when you leave the tab or close the window. Nothing logs in to draw it: a server that isn't connected shows **Connect**.
+
+**Watch in Background…** (⋯ on the page, **Watch…** in a saved server's menu in the main window, **Server ▸ Watch Server…**) keeps it running without a window, with alerts: the sheet says what goes to the server and how often, the tool's rules, and that the connection stays open while the server is watched — it shows in `w` and `last` there. Only a saved server is watched (`"watch": true` in `tools/servers.json`), and watching resumes by itself when Kermo starts. **Stop Watching** ends it; an alert that was standing goes without a word — a stop is no recovery.
+
+The Tools window's sidebar then starts with **WATCHED**: each watched server with its worst state as a shape — a triangle for a warning, an octagon for a critical alert, a dot when fine, a ring while paused or waiting for a login — and its tools' summary (CPU, memory and the fullest disk as bars with their thresholds), problems first; the rest under **OTHER SERVERS**. A tab with an alert standing shows the mark instead of its icon.
+
+How watching behaves:
+
+- **Alerts** come from the tool's rules: CPU over 85 % for 10 minutes is a warning, over 95 % for 5 minutes critical, a disk over 85 % a warning at once. One line per change for the worse; **back to normal** only when a real sample says so. A gap — the Mac asleep, the connection dropped, the server not answering — keeps every alert as it was: nothing recovers through a gap.
+- **Drops.** When the connection goes (sleep, a network change, ⌘Q of the shared connection), the series get a gap and Kermo reconnects after 2, 5, 15, 30, then 60 seconds, one server after another. No sample for three intervals is **not answering** (critical) — unless this Mac has no network, or woke less than a minute ago.
+- **Login.** A watched server logs in without a dialog: a key, or a password saved in the Keychain. One whose login would ask — a password not saved, a passphrase, a host key to confirm — isn't logged in behind your back: its row says **needs login**, and a click on **Connect** in its tab logs in once, as any look does.
+- **A locked server** is watched read-only, without Touch ID, and its connection stays open while it's watched — after the Mac sleeps or locks, watching resumes by itself. The lock guards actions in Kermo (Stop, Kill, a panel), not the connection.
+- **An hour** of each series stays in memory; events (a reboot, an OOM kill, a service that failed, a container that left `running`) are listed per tool. Charts, tables and a longer history come with a later release; so do notifications and the menu bar.
 
 ## A tool's list
 
@@ -199,5 +215,10 @@ The smallest tool is three fields; it's in **Tools ▸** on every server, and it
 | `version` | `command`, `pattern` with a group `v`, `tested` (`>=0.36 <0.37`) |
 | `vars` | Values per server, `{name}` in commands: `title`, `default`, `placeholder`, `pattern`, and one source — `command` (its first line, read once per connection) or `"ask": true` (asked on a saved server, kept in `tools/servers.json`; see [Where a tool is used](#where-a-tool-is-used)) |
 | `timeout`, `exitOk` | Seconds (30 by default); exit codes that count as success (`[0]`) |
+| `stream`, `poll`, `watch` | [Watching](#watching-a-server): a `stream` runs on and prints a record (a `jsonl` line, or a frame — `split`) every so often; a `poll` runs again every `watch.every` seconds. `watch`: `every` (seconds, 1 or more), `down` (missed samples that make "not answering", 3) |
+| `metrics` | Named numbers of a sample: `title`, `path` (`cpu.pct`), `unit` (`%`, `B`, `B/s`, `ms`, `s`, `h`, `days`, `/min`), `max`, `detail` (a template), `rows` + `key` (one series per row: disks by `mount`), `count: "state"` (rows by state), `calc` (`rate`: a counter's change per second; `age`: now minus the time at `path`, by the server's clock) |
+| `alerts` | `id`, `metric`, `warn`, `crit`, `below` (low is bad), `for` (`{ "warn": "10m", "crit": "5m" }`) or `checks` (samples in a row), `message` (a template with `{value}` and the row's fields) |
+| `events` | `id`, `level` (`info`, `warning`, `critical`), `message`, `goto`; `path` or `rows` + `key` + `field`; `when`: `changed`, `increased`, `added`, `left` (from `from`), `is` (`value`); `if` / `unless` (a field non-empty / empty). A record's own `"_event": { "id", "level", "message" }` is an event too, at most 10 an hour |
+| `summary`, `dashboard` | The server's row in WATCHED: `metric`, `as` (`bar`, `count`, `text`), `of` (`max`, `sum`, `min`, `avg`), `label`. `dashboard`: blocks top to bottom; `{ "stat": "cpu" }` tiles (`["rx", "tx"]` two in one, `of`, `also`) show now, in a `row` side by side; `charts`, `table`, `events` and `counts` come with a later release |
 
 Placeholders in braces, `{ip}`, take a sheet's values first, then a row's fields; `{server}`, `{host}` and `{user}` are Kermo's. A command given as an array of parts, `["ufw allow {port}", "comment {comment}"]`, leaves out a part whose value is empty.

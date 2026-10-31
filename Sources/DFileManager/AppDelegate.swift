@@ -118,6 +118,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: back)
         Masters.stopOnWake()
         Masters.stopOnNetworkChange()
+        tools.monitor.ready = true   // watched servers log in now, the Keychain hooks set
+        tools.monitor.reconcile()
         Task { _ = await Blocking.run { GitStatus.available } }   // runs xcode-select: not on the main thread at first use
         DispatchQueue.global(qos: .utility).async { TempCopies.sweep() }
 
@@ -341,6 +343,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let inUse = Set(panels.flatMap { $0.heldServers + [$0.connecting].compactMap { $0 } }.map(ServerRow.key)
                         + (terminal?.tabs ?? []).filter { $0.exitStatus == nil }.compactMap(\.target).map(ServerRow.key))   // starting or running
             .union(tunnels.inUse)   // else the next client would log in again
+            .union(tools.monitor.inUse)   // a watched server stays connected, locked or not (decision 23)
             .union(looked.keys)
         return masters.filter { !inUse.contains(ServerRow.key($0)) }
     }
@@ -1038,6 +1041,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             MenuAction.item("Services…") { [unowned self] in showServices(on: r.target) },
             MenuAction.item("Containers…") { [unowned self] in showContainers(on: r.target) },
             toolsItem(for: r.target),
+            watchItem(for: r.saved, at: r.target),
             .separator(),
             MenuAction.item(r.pinned ? "Unpin" : "Pin") { [unowned self] in
                 unpin(r.key)

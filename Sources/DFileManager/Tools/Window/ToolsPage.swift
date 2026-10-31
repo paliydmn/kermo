@@ -25,6 +25,8 @@ final class ToolsPage: NSView, RowList {
     private var kept: [AnyObject] = []
     /// The body's buttons' actions: replaced with it.
     private var bodyKept: [AnyObject] = []
+    /// A watched tool's tab, made once and updated in place (`live`).
+    private var lives: [String: ToolsLive] = [:]
 
     let title = NSTextField(labelWithString: "")
     let chips = NSStackView()
@@ -99,6 +101,9 @@ final class ToolsPage: NSView, RowList {
     private var key: String { ServerRow.key(target) }
     private var up: Bool { AppDelegate.connected(target) }
     private var current: LoadedTool? { shown.first { $0.preset.id == tab } }
+    /// The open tab's tool when it has a stream or a poll: live while this page shows it (`ToolMonitor`).
+    var liveTool: LoadedTool? { current.flatMap { $0.preset.watchable ? $0 : nil } }
+    private func watched(_ tool: LoadedTool) -> Bool { app.tools.monitor.tool(tool.preset.id, on: target)?.watched == true }
     private func name(_ p: ToolPreset) -> String { p.tool.map { "\(p.title) (\($0))" } ?? p.title }
 
     // MARK: Showing it
@@ -122,12 +127,30 @@ final class ToolsPage: NSView, RowList {
             tabs.setToolTip((t.preset.about.map { $0 + " · " } ?? "") + (i < 9 ? "⌘\(i + 1)" : ""), forSegment: i)
         }
         tabs.isHidden = shown.isEmpty
-        tabs.isEnabled = up
+        tabs.isEnabled = up || shown.contains(where: watched)
         if current == nil { tab = shown.first?.preset.id }
         tabs.selectedSegment = shown.firstIndex { $0.preset.id == tab } ?? -1
         more.isEnabled = current != nil
         showBody(known?.at)
         showHeader()
+        marks()
+        app.tools.monitor.reconcile()
+    }
+
+    /// Samples came, or the server's state changed: the live tab and the tabs' marks, in place.
+    func live() {
+        tab.flatMap { lives[$0] }?.update()
+        marks()
+    }
+
+    /// A tab with an alert standing shows it instead of its icon (monitor §3.6): a triangle for a warning, an octagon
+    /// for a critical one.
+    private func marks() {
+        for (i, t) in shown.enumerated() {
+            let level = app.tools.monitor.level(t.preset.id, on: target)
+            tabs.setImage(level == .critical ? Symbol.crit.image(color: Palette.fail, size: 13) : level == .warning ? Symbol.warnFill.image(color: Palette.warn, size: 13)
+                          : Symbol.preset(t.preset.icon), forSegment: i)
+        }
     }
 
     func select(_ id: String?) {
@@ -140,7 +163,7 @@ final class ToolsPage: NSView, RowList {
     /// ⌘1…⌘9: a tab.
     override func performKeyEquivalent(with e: NSEvent) -> Bool {
         guard e.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command, let c = e.charactersIgnoringModifiers, let n = Int(c), (1...9).contains(n),
-              shown.indices.contains(n - 1), up else { return super.performKeyEquivalent(with: e) }
+              shown.indices.contains(n - 1), tabs.isEnabled else { return super.performKeyEquivalent(with: e) }
         select(shown[n - 1].preset.id)
         return true
     }
@@ -148,7 +171,9 @@ final class ToolsPage: NSView, RowList {
     private func showBody(_ at: Date?) {
         (ids, bodyKept) = ([], [])
         let views: [NSView]
-        if !up {
+        if let tool = current, watched(tool) || (up && liveTool != nil) {   // a watched tool's tab draws on its own, connected or not
+            views = [live(tool)]
+        } else if !up {
             let since = at.map { "As of \($0.formatted(date: .omitted, time: .shortened)) it had " + (shown.isEmpty ? "none of your tools." : shown.map(\.preset.title).joined(separator: ", ") + ".") }
             views = [Self.text("\(server.title) isn't connected.", size: 15, bold: true),
                      Self.text((since ?? "Kermo hasn't seen what it has yet.") + " Kermo doesn't connect to draw this page.", color: .secondaryLabelColor),
@@ -163,6 +188,13 @@ final class ToolsPage: NSView, RowList {
                      Self.text("＋ above uses one of the library's here; Use on Servers… in the library chooses where each one is used.", color: .secondaryLabelColor)]
         }
         body.setViews(views, in: .top)
+    }
+
+    private func live(_ tool: LoadedTool) -> ToolsLive {
+        let v = lives[tool.preset.id] ?? ToolsLive(app, tool, server, target)
+        lives[tool.preset.id] = v
+        v.update()
+        return v
     }
 
     /// The open tab's: a list's card, a launcher's buttons, a one-command tool's button — or its values to set first.
@@ -312,6 +344,16 @@ final class ToolsPage: NSView, RowList {
         if let openAlone { menu.addItem(MenuAction.item("Open in New Window", openAlone)) }
         guard let tool = current else { return menu }
         let p = tool.preset
+        if p.watchable {
+            let on = watched(tool)
+            let it = MenuAction.item(on ? "Stop Watching \(p.title) on \(server.title)" : "Watch \(p.title) in Background…") { [unowned self] in
+                Task { await app.tools.toggleWatch(tool, on: server, target, window: window) }
+            }
+            it.isEnabled = app.tools.serverID(target) != nil
+            it.toolTip = it.isEnabled ? nil : "\(server.title) isn't saved: only a saved server is watched"
+            menu.addItem(it)
+            menu.addItem(.separator())
+        }
         menu.addItem(MenuAction.item("Use \(p.title) on Servers…") { [unowned self] in Task { await app.tools.useOnServers(tool, window: window) } })
         menu.addItem(MenuAction.item("Show \((tool.path as NSString).lastPathComponent)") { Viewer.show(URL(fileURLWithPath: tool.path)) })
         menu.addItem(.separator())

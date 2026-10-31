@@ -96,8 +96,20 @@ extension AppDelegate {
             Task { if await tools.setUp(tool, on: t, window: nil) { openTool(tool, on: s, t) } }
             return
         }
+        if tool.preset.list == nil, tool.preset.source != nil {   // a watched tool: its tab in the Tools window
+            ToolsWindow.show(self, server: t)
+            ToolsWindow.main?.page?.select(tool.preset.id)
+            return
+        }
         guard let a = tool.preset.commandAction else { return showInSearch(ToolListSource(self, tool, s, t)) }   // a list, a launcher's actions
         tools.perform(a, of: tool, row: nil, onRow: false, id: ServerRow.key(t.asUser) + " tool:\(tool.preset.id)", from: nil, on: s, t.asUser)
+    }
+
+    /// Watch… / Stop Watching in a saved server's menu (decision 7): the first watched kind of tool it shows — System.
+    func watchItem(for s: SavedServer?, at t: SFTPTarget) -> NSMenuItem? {
+        guard let s, let tool = tools.here(t)?.tools.first(where: \.preset.watchable) else { return nil }
+        let on = tools.settings.watches(tool.preset.id, on: s.id.uuidString)
+        return MenuAction.item(on ? "Stop Watching" : "Watch…") { [unowned self] in Task { await tools.toggleWatch(tool, on: s, t.asUser, window: nil) } }
     }
 
     /// A place's tools: a row for each its server shows, as last asked; its state the rows its list had when last read
@@ -111,7 +123,7 @@ extension AppDelegate {
                 return placeRow(tool.preset.title, p, state: "set up…", about: "asks for its settings on \(p.server.title) first",
                                 open: { [unowned self] _ in openTool(tool, on: p.server, p.target) })
             }
-            if tool.preset.commandAction != nil {
+            if tool.preset.commandAction != nil || tool.preset.list == nil && tool.preset.source != nil {
                 return placeRow(tool.preset.title, p, about: tool.preset.about ?? "", open: { [unowned self] _ in openTool(tool, on: p.server, p.target) })
             }
             let n = up && tool.preset.list != nil ? tools.counts[ServerRow.key(p.target) + " " + tool.preset.id] : nil   // a launcher's rows are its actions
@@ -128,5 +140,19 @@ extension AppDelegate {
             l.set(c)
         }
         ToolsWindow.refresh()
+    }
+}
+
+extension AppDelegate {
+    /// Server ▸ Watch Server… (the menu, the search): Watch, or Stop Watching, the active panel's server — its SSH tab's, a list's.
+    func watchActiveServer() {
+        guard let t = terminalActive ? terminal.current?.target : active.remote?.target ?? active.list?.source.target else {
+            return active.flash("No server in the active panel", error: true)
+        }
+        guard let s = savedServer(at: t) else { return active.flash("\(SavedServer.name(for: t.asUser)) isn't saved: only a saved server is watched", error: true) }
+        guard let tool = tools.here(t)?.tools.first(where: \.preset.watchable) else {
+            return active.flash("Nothing to watch on \(s.title): " + (Self.connected(t.asUser) ? "no tool with a stream shows there" : "connect first"), error: true)
+        }
+        Task { await tools.toggleWatch(tool, on: s, t.asUser, window: nil) }
     }
 }
