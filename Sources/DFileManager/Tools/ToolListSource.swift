@@ -291,7 +291,7 @@ final class ToolListSource: ListSource {
 
     /// One action as a list has it: its key (none where it can't run here), why it can't now, what its question says;
     /// a window's closes a Picker first. `multi`: it runs on marked rows, else only the cursor's (Q15).
-    private func action(_ a: ToolAction, row: ToolRow?, onRow: Bool, id: String, group: Int, keyed: Bool) -> ListAction {
+    func action(_ a: ToolAction, row: ToolRow?, onRow: Bool, id: String, group: Int, keyed: Bool) -> ListAction {
         let mac = (a.run.where ?? preset.where) == .mac, sudo = (a.run.sudo ?? preset.sudo ?? false) && !mac
         let scope = app.tools.scope(preset, on: server, target, rows: onRow ? row.map { [$0.record] } ?? [] : [])
         let why = keyed ? app.tools.why(a, of: tool, row: row, onRow: onRow, id: id, on: server, target)

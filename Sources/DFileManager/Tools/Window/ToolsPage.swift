@@ -81,7 +81,8 @@ final class ToolsPage: NSView, RowList {
         outputButton.isHidden = true
         let foot = NSStackView(views: [result, outputButton])
         let fill = NSView()
-        fill.setContentHuggingPriority(.init(1), for: .vertical)
+        fill.setContentHuggingPriority(.init(2), for: .vertical)
+        body.setContentHuggingPriority(.init(1), for: .vertical)   // a live tab's dashboard takes the height, scrolling inside
         let stack = NSStackView(views: [top, line, tabRow, body, fill, foot])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -188,6 +189,9 @@ final class ToolsPage: NSView, RowList {
                      Self.text("＋ above uses one of the library's here; Use on Servers… in the library chooses where each one is used.", color: .secondaryLabelColor)]
         }
         body.setViews(views, in: .top)
+        if let v = views.first as? ToolsLive {
+            NSLayoutConstraint.activate([v.widthAnchor.constraint(equalTo: body.widthAnchor), v.heightAnchor.constraint(equalTo: body.heightAnchor)])
+        }
     }
 
     private func live(_ tool: LoadedTool) -> ToolsLive {
@@ -404,7 +408,8 @@ final class ToolsPage: NSView, RowList {
 
     // MARK: RowList — how a button's run went
 
-    func has(_ id: String) -> Bool { window != nil && ids.contains(id) }
+    /// Its buttons' rows, and the open live tab's table rows (`ToolListSource.rowID`'s form).
+    func has(_ id: String) -> Bool { window != nil && (ids.contains(id) || id.hasPrefix(key + " tool:" + (tab ?? "") + " ")) }
     func update(_ item: Picker.Item) {}
     func reload(_ c: ListContent, having id: String) {}
     var sheetWindow: NSWindow? { window }
