@@ -111,7 +111,8 @@ private func titles(_ nodes: [AppDelegate.MenuNode]) -> [String] {
 @MainActor @Test func switchesShowTheirState() {
     let app = app()
     let switches = ["view.sidebar", "view.quickview", "view.terminal", "view.terminalFull", "view.activity", "view.hidden", "view.perms",
-                    "view.gitOnly", "go.bookmark", "view.sort.name", "view.sort.size", "view.sort.mtime", "view.sort.reverse", "app.update.auto"]
+                    "view.gitOnly", "go.bookmark", "view.sort.name", "view.sort.size", "view.sort.mtime", "view.sort.reverse", "app.update.auto",
+                    "monitor.keepAwake", "monitor.slowOnBattery", "monitor.openAtLogin"]   // Settings ▸ Monitor's
     #expect(Set(app.commands.filter { $0.on != nil }.map(\.id)) == Set(switches))
     let item = NSMenuItem(title: "", action: NSSelectorFromString("menuCommand:"), keyEquivalent: "")
     item.representedObject = "view.quickview"
@@ -123,7 +124,7 @@ private func titles(_ nodes: [AppDelegate.MenuNode]) -> [String] {
     for id in switches {   // no window, no panels yet (launch): off, not a crash
         item.representedObject = id
         _ = app.validateMenuItem(item)
-        #expect(id == "app.update.auto" || id == "view.hidden" || id == "view.perms" || item.state == .off, "\(id)")
+        #expect(["app.update.auto", "view.hidden", "view.perms", "monitor.slowOnBattery"].contains(id) || item.state == .off, "\(id)")   // as defaults have them
     }
 }
 

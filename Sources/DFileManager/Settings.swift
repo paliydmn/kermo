@@ -119,6 +119,14 @@ extension AppDelegate {
                             key: "onAlert", control: .field("curl -d \"$KERMO_MESSAGE\" ntfy.sh/…")),
                 SettingsRow(title: "Test", control: .buttons([("Send Test", "monitor.test")]), status: { $0.tools.monitor.tested }),
             ]),
+            ("This Mac", [
+                SettingsRow(title: "Keep this Mac awake on power while something is watched", note: "Closing the lid still puts it to sleep; on battery it sleeps as usual",
+                            key: "monitorKeepAwake", control: .command("monitor.keepAwake")),
+                SettingsRow(title: "Watch three times less often on battery", note: "And in Low Power Mode: fewer wake-ups, longer battery",
+                            key: "monitorSlowOnBattery", control: .command("monitor.slowOnBattery")),
+                SettingsRow(title: "Open Kermo at login", note: "Watching starts again by itself", control: .command("monitor.openAtLogin"),
+                            status: { _ in ToolMonitor.loginSaid() }),
+            ]),
         ]),
         SettingsTab(title: "Advanced", symbol: .advanced, groups: [
             ("Files", [

@@ -1,6 +1,9 @@
 import AppKit
 import DFMCore
+import IOKit.ps
+import IOKit.pwr_mgt
 import Network
+import ServiceManagement
 
 /// Watching (protocol §8, monitor decisions 1–23): a server's watched tools (`tools/servers.json`, `watch`) and the
 /// tool live on an open tab, their streams and polls over one channel of its connection (`ToolPayload.watch`), each
@@ -82,8 +85,10 @@ import Network
         var inMaintenance: Bool { maintenance.map { $0.until > Date() } == true }
         /// Silenced at the last tick (Snooze, Maintenance): when that ends, what still stands is sent.
         var quiet = false
+        /// 3 on battery or in Low Power Mode (`ToolMonitor.slow`), as its channel was started.
+        var pace: Double = 1
         init(_ s: SavedServer, _ t: SFTPTarget) { (saved, target) = (s, t) }
-        var every: Double { tools.values.compactMap { $0.preset.watch?.every }.min() ?? 60 }
+        var every: Double { (tools.values.compactMap { $0.preset.watch?.every }.min() ?? 60) * pace }
         var downAfter: Int { tools.values.compactMap { $0.preset.watch?.down }.min() ?? 3 }
         var watched: Bool { tools.values.contains(where: \.watched) }
         var wanted: Bool { tools.values.contains(where: \.wanted) }
@@ -133,6 +138,14 @@ import Network
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.online = on; self?.wokeAt = Date(); self?.restart() } }
         }
         network.start(queue: DispatchQueue(label: "dfm.monitor.network"))
+        // The power source and Low Power Mode (spike S5): on the main run loop, as the rest of the engine.
+        let source = IOPSNotificationCreateRunLoopSource({ me in
+            MainActor.assumeIsolated { me.map { Unmanaged<ToolMonitor>.fromOpaque($0).takeUnretainedValue() }?.pace() }
+        }, Unmanaged.passUnretained(self).toOpaque()).takeRetainedValue()
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
+        NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pace() }
+        }
     }
 
     /// Watched servers' keys: in use, so their connections stay up (`AppDelegate.idleServers`).
@@ -192,6 +205,7 @@ import Network
             if ready, s.channel == nil, s.retryAt == nil, !s.needsLogin, !s.connecting { start(s) }
         }
         tickIfNeeded()
+        pace()
         changed()
     }
 
@@ -214,11 +228,14 @@ import Network
         let wanted = Array(s.channelTools.values)
         guard !wanted.isEmpty, s.channel == nil, !s.connecting else { return }
         let t = s.target, watched = s.watched, login = Self.login
+        s.pace = slow ? 3 : 1
         var sources: [ToolPayload.Watched] = []
         for tool in wanted {
-            let p = tool.preset
+            let p = tool.preset, every = (p.watch?.every ?? 60) * s.pace
             guard let source = p.source else { continue }
-            sources.append(.init(tool: p, run: source.run, every: p.stream == nil ? p.watch?.every ?? 60 : nil, scope: app.tools.scope(p, on: s.saved, t), scripts: tool.loaded.scripts))
+            var scope = app.tools.scope(p, on: s.saved, t)
+            scope.levels[scope.levels.count - 1]["every"] = .number(every)   // a stream's `{every}`, as paced
+            sources.append(.init(tool: p, run: source.run, every: p.stream == nil ? every : nil, scope: scope, scripts: tool.loaded.scripts))
         }
         // ponytail: sources that can't share a channel (sudo differs), a value missing, and sudo that wants a password
         // (`sudo -n` is refused, retried each minute) wait for a later PR; the built-ins share one and run as you.
@@ -340,7 +357,7 @@ import Network
     func check(_ t: Tool, on s: Server) {
         guard let http = t.preset.http, !t.checking else { return }
         let urls = s.saved.sites, key = s.key, id = t.preset.id, method = http.method ?? "GET", timeout = http.timeout ?? 10
-        (t.checking, t.due) = (true, Date().addingTimeInterval(t.preset.watch?.every ?? 60))
+        (t.checking, t.due) = (true, Date().addingTimeInterval((t.preset.watch?.every ?? 60) * (slow ? 3 : 1)))
         Task { [weak self] in
             let rows = await withTaskGroup(of: ToolRecord.self) { g in
                 for u in urls { g.addTask { await ToolHTTPCheck.check(u, method: method, timeout: timeout) } }
@@ -402,6 +419,54 @@ import Network
             t.alerts.gap()
             if t.watched { record(s, t.slots.mark(why, at: at)) }
         }
+    }
+
+    // MARK: Power
+
+    /// On battery or in Low Power Mode, watching is three times less often (§8.5, Q11) — unless you said no in
+    /// Settings ▸ Monitor; each channel starts again with its intervals so. On power, while something is watched,
+    /// this Mac can be kept from sleeping by itself (S5) — closing the lid still puts it to sleep.
+    private(set) var slow = false
+    private var awake: IOPMAssertionID = 0
+    var keepingAwake: Bool { awake != 0 }
+
+    /// On battery, and in Low Power Mode, as macOS has them now. Tests: a stand-in.
+    nonisolated(unsafe) static var power: @MainActor () -> (battery: Bool, lowPower: Bool) = {
+        ((IOPSGetProvidingPowerSourceType(IOPSCopyPowerSourcesInfo().takeRetainedValue())?.takeUnretainedValue() as String?) == kIOPSBatteryPowerValue,
+         ProcessInfo.processInfo.isLowPowerModeEnabled)
+    }
+
+    /// The pace and the assertion as things stand: what's watched, the power, Low Power Mode, your settings.
+    func pace() {
+        let (battery, lowPower) = Self.power()
+        let slow = (app.defaults.object(forKey: "monitorSlowOnBattery") as? Bool ?? true) && (battery || lowPower)
+        if slow != self.slow {
+            self.slow = slow
+            restart()
+        }
+        let want = !battery && app.defaults.bool(forKey: "monitorKeepAwake") && servers.values.contains(where: \.watched)
+        if want, awake == 0 {
+            if IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleSystemSleep as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                                           "Kermo is watching servers" as CFString, &awake) != kIOReturnSuccess { awake = 0 }
+        } else if !want, awake != 0 {
+            IOPMAssertionRelease(awake)
+            awake = 0
+        }
+    }
+
+    /// Open at Login (`SMAppService`): as macOS has it, never a copy in defaults. Tests: a stand-in.
+    nonisolated(unsafe) static var loginItem: (status: @MainActor () -> SMAppService.Status, set: @MainActor (Bool) throws -> Void) = (
+        { SMAppService.mainApp.status }, { try $0 ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister() })
+
+    func openAtLogin() {
+        let on = Self.loginItem.status() == .enabled
+        do { try Self.loginItem.set(!on) } catch { app.active.flash("Open at Login: \(error.localizedDescription)", error: true) }
+        if Self.loginItem.status() == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+    }
+
+    /// What Settings ▸ Monitor says under Open at Login.
+    static func loginSaid() -> String {
+        loginItem.status() == .requiresApproval ? "Waiting for you in System Settings ▸ General ▸ Login Items" : ""
     }
 
     // MARK: The history on disk

@@ -20,7 +20,7 @@ A saved server gets a name, a sidebar row, a Touch ID lock if you want one, a pr
 
 To keep a server you already used, right-click its recent or `~/.ssh/config` row in the sidebar and choose **Save…**.
 
-The sheet has four groups — **Connection**, **Sign in**, **Safety**, **Open** — and, under them, the ssh command it makes as you type (`ssh -p 2222 -i … -- deploy@web-01`; the password never shows there). What ssh couldn't take (a port out of range, a key file it can't read) is said under its field, and Save waits until it's fixed.
+The sheet has five groups — **Connection**, **Sign in**, **Safety**, **Open**, **Tools** — and, under them, the ssh command it makes as you type (`ssh -p 2222 -i … -- deploy@web-01`; the password never shows there). What ssh couldn't take (a port out of range, a key file it can't read) is said under its field, and Save waits until it's fixed.
 
 | Field | Left empty means | Notes |
 |---|---|---|
@@ -33,6 +33,7 @@ The sheet has four groups — **Connection**, **Sign in**, **Safety**, **Open** 
 | **Lock** | not locked | Touch ID or the Mac password; see below. |
 | **Read-only** | off | [Tools](tools.md) run only actions that change nothing there; the rest are greyed, saying so. Files and commands aren't limited yet. |
 | **Start folder** | the login folder | Where SFTP opens. |
+| **Sites** | none | Web addresses (`https://example.com`, space between) that [Sites](tools.md#sites) checks from this Mac. Only `http://` and `https://` addresses. |
 
 Saved servers live in `~/.config/dfilemanager/servers.json` (see [Configuration](configuration.md#saved-servers)). Passwords are never written there.
 

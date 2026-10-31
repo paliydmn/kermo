@@ -148,9 +148,9 @@ import DFMCore
 
     /// What the monitor knows now, into the strip, the banner, the tiles, the blocks and the line.
     func update() {
-        let p = tool.preset, s = state, t = known, every = Int(p.watch?.every ?? 60), saved = app.tools.serverID(target) != nil
+        let slow = app.tools.monitor.slow, p = tool.preset, s = state, t = known, every = Int((p.watch?.every ?? 60) * (slow ? 3 : 1)), saved = app.tools.serverID(target) != nil
         let watched = t?.watched == true
-        strip.stringValue = watched ? "Watched in the background · every \(every) s · alerts on"
+        strip.stringValue = watched ? "Watched in the background · every \(every) s\(slow ? " on battery" : "") · alerts on"
             : "Live while open: nothing runs on \(server.title) after you leave this tab, no alerts."
         watchButton.title = watched ? "Stop Watching" : "Watch in Background…"
         watchButton.isEnabled = saved

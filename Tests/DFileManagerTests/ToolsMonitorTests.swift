@@ -1,5 +1,6 @@
 import AppKit
 import Network
+import ServiceManagement
 import UserNotifications
 @testable import DFMCore
 import Testing
@@ -627,7 +628,8 @@ extension ServerLockTests {
         bar.fill()
         let content = try #require(bar.popover.contentViewController?.view)
         #expect(labels(content).contains("Monitor · 1 critical") && labels(content).contains("localhost"), "\(labels(content))")
-        #expect(buttons(content).map(\.title) == ["Open Monitor  ⌃⌘M", "Open Kermo", "Snooze Notifications ▾", "Quit Kermo"] && bar.item == nil, "\(buttons(content).map(\.title))")
+        #expect(buttons(content).map(\.title) == ["Open Monitor  ⌃⌘M", "Open Kermo", "Snooze Notifications ▾", "Keep This Mac Awake on Power", "Quit Kermo"] && bar.item == nil,
+                "\(buttons(content).map(\.title))")
         await toolsUntil { DockTile.problems == 1 }
         #expect(DockTile.problems == 1, "the Dock's badge counts it")
         try await Task.sleep(for: .milliseconds(500))
@@ -695,6 +697,56 @@ extension ServerLockTests {
         press(rowButtons(table, 1).first { $0.title == "Check Now" })
         await toolsUntil { posts.sent.count == 1 }
         #expect(posts.sent.first?.body == "Sites: \(web.url)/down is down: 503" && monitor.worst(s).state == .critical, "\(posts.sent)")
+    }
+
+    /// On battery (or in Low Power Mode) watching is three times less often: the channel starts again with its
+    /// `{every}` three times longer, the tab says so; Settings' switch off, it's as on power. On power, Keep This Mac
+    /// Awake holds an assertion while something is watched — not on battery, not once nothing is. Open at Login is as
+    /// macOS has it, never a copy.
+    @Test func batteryPaceKeepAwakeAndOpenAtLogin() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), was = (power: ToolMonitor.power, login: ToolMonitor.loginItem)
+        nonisolated(unsafe) var battery = false, status = SMAppService.Status.notRegistered
+        ToolMonitor.power = { (battery, false) }
+        ToolMonitor.loginItem = ({ status }, { status = $0 ? .enabled : .notRegistered })
+        defer {
+            quick.done(); bench.done(); done(); app.savedServers = []
+            (ToolMonitor.power, ToolMonitor.loginItem) = was
+            for k in ["monitorKeepAwake", "monitorSlowOnBattery"] { app.defaults.removeObject(forKey: k) }
+        }
+        try await watching(app, bench)
+        let monitor = app.tools.monitor, pulse = try toolNamed(app, "pulse")
+        monitor.watch(pulse, on: .local(), true)
+        await toolsUntil { bench.calls.contains("pulse 1 localhost") }
+        battery = true
+        monitor.pace()
+        await toolsUntil { bench.calls.contains("pulse 3 localhost") }
+        let s = try #require(monitor.server(.local()))
+        #expect(monitor.slow && s.every == 3 && bench.calls.contains("pulse 3 localhost"), "on battery: three times less often")
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("pulse")
+        #expect(live(page)?.strip.stringValue.hasPrefix("Watched in the background · every 3 s on battery") == true, "\(live(page)?.strip.stringValue ?? "")")
+        app.run("monitor.slowOnBattery")
+        await toolsUntil { bench.calls.filter { $0 == "pulse 1 localhost" }.count == 2 }
+        #expect(!monitor.slow && s.every == 1, "your switch: as on power")
+
+        battery = false
+        app.run("monitor.keepAwake")
+        #expect(monitor.keepingAwake && app.commands.first { $0.id == "monitor.keepAwake" }?.on?(app) == true)
+        battery = true
+        monitor.pace()
+        #expect(!monitor.keepingAwake, "on battery it sleeps as usual")
+        battery = false
+        monitor.pace()
+        #expect(monitor.keepingAwake)
+        monitor.watch(pulse, on: .local(), false)
+        #expect(!monitor.keepingAwake, "nothing watched: nothing held")
+
+        app.run("monitor.openAtLogin")
+        #expect(status == .enabled && app.commands.first { $0.id == "monitor.openAtLogin" }?.on?(app) == true)
+        app.run("monitor.openAtLogin")
+        #expect(status == .notRegistered && app.commands.first { $0.id == "monitor.openAtLogin" }?.on?(app) == false)
     }
 
     /// The history on disk: a watched tool's slot so far and "not watched" go to its server's day file when watching

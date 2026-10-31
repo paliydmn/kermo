@@ -51,7 +51,8 @@ import Testing
 /// Settings › Monitor's buttons.
 @Test @MainActor func searchLeavesOutHiddenCommands() {
     let hidden = AppDelegate().makeCommands().filter(\.hidden).map(\.id)
-    #expect(Set(hidden) == ["remote.open", "remote.archive", "archive.open", "monitor.notificationSettings", "monitor.test"])
+    #expect(Set(hidden) == ["remote.open", "remote.archive", "archive.open", "monitor.notificationSettings", "monitor.test", "monitor.keepAwake",
+                            "monitor.slowOnBattery", "monitor.openAtLogin"])
     for q in ["remote", "archive", "open"] {
         #expect(!search(q).flatMap(\.hits).contains { if case .command(let id) = $0.target { hidden.contains(id) } else { false } }, "\(q)")
     }

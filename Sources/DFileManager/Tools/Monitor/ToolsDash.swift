@@ -143,7 +143,7 @@ import SwiftUI
                          lines: lines, bands: (lines.map(\.chart.bands).max { $0.count < $1.count } ?? []) + maintenance, warn: alert?.warn, crit: alert?.crit)
         }
         d.events = ((t?.events ?? []) + (live.state?.events ?? [])).filter { $0.at >= d.from && $0.level != "ok" }
-        model.every = slots == nil ? p.watch?.every ?? 60 : ToolSlots.length
+        model.every = slots == nil ? (p.watch?.every ?? 60) * (live.app.tools.monitor.slow ? 3 : 1) : ToolSlots.length
         model.data = d
     }
 }
