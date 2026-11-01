@@ -34,7 +34,7 @@ public struct ToolFile: Sendable {
 
     /// The paths a `files` template names (§3.1): its values in place, each as it is, and the template's own `*`, `?`
     /// and `[…]` matching names in their folder as `sh` would (not one that starts with a dot) — in name order, folder
-    /// by folder; a folder (or a link) on the way, anything but a folder at the end; a name the server sent that would
+    /// by folder; a folder (or a link) on the way, a file (or a link) at the end — never a pipe; a name the server sent that would
     /// leave its folder, never. `list`: a folder's names and kinds; nil: no such folder. A path not relative to `/` is
     /// to the login folder.
     public static func paths(_ template: String, _ scope: ToolTemplate.Scope, list: (String) throws -> [(name: String, kind: FileItem.Kind)]?) throws -> [String] {
@@ -53,7 +53,7 @@ public struct ToolFile: Sendable {
             let last = i == parts.count - 1
             found = try found.flatMap { dir in
                 (try list(dir.isEmpty ? "/" : dir) ?? []).filter { f in
-                    FileJob.isSafeName(f.name) && (last ? f.kind != .dir : f.kind == .dir || f.kind == .link) && fnmatch(part, f.name, FNM_PERIOD) == 0
+                    FileJob.isSafeName(f.name) && (f.kind == .link || f.kind == (last ? .file : .dir)) && fnmatch(part, f.name, FNM_PERIOD) == 0
                 }.map { dir + "/" + $0.name }.sorted()
             }
         }

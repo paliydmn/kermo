@@ -182,14 +182,14 @@ private func parse(_ format: ToolFormat, _ text: String, _ change: (inout ToolPa
 @Test func filesTemplateNamesPaths() throws {
     let tree: [String: [(name: String, kind: FileItem.Kind)]] = [
         "/opt/d*l/state": [("web", .dir), ("api", .link), (".old", .dir), ("serve.pid", .file), ("../../etc", .dir)],
-        "./logs": [("a.log", .file), ("b.txt", .file), ("c.log", .dir), ("d.log", .link)],
+        "./logs": [("a.log", .file), ("b.txt", .file), ("c.log", .dir), ("d.log", .link), ("e.log", .other)],
     ]
     var listed: [String] = []
     func list(_ dir: String) -> [(name: String, kind: FileItem.Kind)]? { listed.append(dir); return tree[dir] }
     let scope = ToolTemplate.Scope(vars: ["base": "/opt/d*l"])
     #expect(try ToolFile.paths("{base}/state/*/deploy.json", scope, list: list) == ["/opt/d*l/state/api/deploy.json", "/opt/d*l/state/web/deploy.json"])
     #expect(listed == ["/opt/d*l/state"], "the value's * is a name, not a wildcard")
-    #expect(try ToolFile.paths("logs/*.log", scope, list: list) == ["./logs/a.log", "./logs/d.log"], "the last part: a file or a link")
+    #expect(try ToolFile.paths("logs/*.log", scope, list: list) == ["./logs/a.log", "./logs/d.log"], "the last part: a file or a link — not a folder, nor a pipe")
     #expect(try ToolFile.paths("{base}/gone/*/x", scope, list: list) == [])
     #expect(try ToolFile.paths("{base}/conf/web.yaml", scope, list: list) == ["/opt/d*l/conf/web.yaml"] && listed.count == 3, "no wildcard: not listed")
     #expect(throws: ToolTemplate.Empty(field: "nope")) { try ToolFile.paths("{nope}/x", scope, list: list) }

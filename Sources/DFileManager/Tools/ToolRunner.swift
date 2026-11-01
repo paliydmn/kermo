@@ -333,7 +333,9 @@ final class ToolRunner {
                 guard let job, let typed = values[i.info.name], !typed.isEmpty else { continue }   // an optional one left empty drops out
                 if home == nil {
                     let env = SSHAskpass.env
-                    do { home = try await Blocking.run { try SFTP.home(t.asUser, env: env) } } catch { return .stop("\(error.localizedDescription)") }
+                    do { home = try await Blocking.run { try SFTP.home(t.asUser, env: env) } } catch {
+                        return .stop("the home folder on \(SavedServer.name(for: t.asUser)), where uploads go, can't be read: \(error.localizedDescription)")
+                    }
                 }
                 let local = (typed as NSString).expandingTildeInPath
                 uploads.append(Upload(input: i.info.name, local: local, remote: home! + "/" + ToolLong.upload(job, i, local: local), folder: i.info.type == .folder))
@@ -552,10 +554,10 @@ final class ToolRunner {
         let rowScope = scope(p, on: s, t, rows: row?.records ?? []), key = ServerRow.key(t.asUser) + " " + p.id
         let root = a.run.sudo ?? p.sudo ?? false, output = a.spec.output, jobID = ToolLong.newID()
         changing[key] = title
-        var shown = "", said = rowScope
+        var shown = "", said = rowScope, held = true   // held: this one's mark, till it goes ahead (another may hold one then)
         app.serviceRuns[id] = ""
         return Task {
-            defer { changing[key] = nil }
+            defer { if held { changing[key] = nil } }
             await app.changeRow(id: id, shown: { shown }, on: t, busy: verb + "…", name: row?.title ?? p.title, server: s.title,
                 run: { window, panel, running in
                     let prepared = await self.ready(a, of: tool, rowScope, row: row?.title, on: t, asked: asked, window: window, values: filled, job: jobID)
@@ -566,7 +568,7 @@ final class ToolRunner {
                     }
                     (shown, said) = (willRun, scope)
                     running()
-                    self.changing[key] = nil   // started: an upload doesn't keep the tool's other changes waiting
+                    (self.changing[key], held) = (nil, false)   // asked: an upload doesn't keep the tool's other changes waiting
                     if let why = await self.upload(uploads, to: t, place: s.title) { return .notRun(why) }
                     self.jobs.askToNotify()   // the first long job: macOS's question, at a moment you started something
                     let env = SSHAskpass.env, command = Self.command, sudo = Self.sudoProgram
@@ -574,7 +576,6 @@ final class ToolRunner {
                         let ran = try ToolLong.run(root: root, on: t, cancel: flag, env: env, command: command) { ToolLong.start(job, id: jobID, root: $0, sudoProgram: sudo) }
                         return (ran: ran, payload: ToolLong.start(job, id: jobID, root: root ? .noPassword : .none, sudoProgram: sudo))   // logged: no password in it
                     }
-                    self.changing[key] = nil
                     let said = self.ran(r, a, of: p, on: t, shown: willRun)
                     guard case .success(let (ran, _)) = r, ran.status == 0, let pid = Int32(ran.text.trimmingCharacters(in: .whitespacesAndNewlines)) else { return said }
                     let inputs = Set((a.spec.inputs ?? []).map(\.info.name)).subtracting(secret)
@@ -624,7 +625,7 @@ final class ToolRunner {
             if !u.folder {
                 let now = Date().timeIntervalSince1970
                 do { try await Blocking.run { try SFTP.session(target, env: env, cancel: nil, on: nil) { try $0.setAttrs(u.remote, mtime: now, mode: nil) } } } catch {
-                    return "\(name) wasn't uploaded: \(error.localizedDescription)"
+                    return "\(name) was uploaded, but its time couldn't be set (a week's sweep might take it): \(error.localizedDescription)"
                 }
             }
         }

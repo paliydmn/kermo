@@ -262,7 +262,8 @@ struct ToolJob: Codable, Equatable {
         guard !ServerLock.needsUnlock(t) else { return }
         let env = SSHAskpass.env
         for list in app.rowLists(rowID) {
-            guard let source = ((list as? ListPanel)?.source ?? (list as? Picker)?.source) as? ToolListSource, source.content?.rows.contains(where: { $0.id == rowID }) == true,
+            guard let source = ((list as? ListPanel)?.source ?? (list as? Picker)?.source) as? ToolListSource,
+                  source.listID == rowID || source.content?.rows.contains(where: { $0.id == rowID }) == true,   // a tool's action: the list's own id
                   let lister = source.relister else { continue }
             Task {
                 guard let read = try? await Blocking.run(.default, { try lister.read(env, CancelFlag()) }), list.has(rowID),

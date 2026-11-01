@@ -187,7 +187,7 @@ extension ServerLockTests {
     }
 
     /// A long job on a list's row: once it's over the list is read again, as after any change — the row shows what the
-    /// job left, with no Refresh.
+    /// job left, with no Refresh. A tool's own long job (no row: the first deploy to an empty list) too.
     @Test func aListIsReadAgainWhenItsJobEnds() async throws {
         let (app, a, _, done) = try toolsApp()
         let lb = try LongBench(app)
@@ -197,7 +197,8 @@ extension ServerLockTests {
         try Data(#"""
             { "schema": 1, "id": "units", "title": "Units",
               "list": { "command": "cat \"$HOME/units\"", "format": "regex", "pattern": "^(?<unit>\\S+) (?<v>\\S+)$", "key": "{unit}", "title": "{unit}", "subtitle": "{v}" },
-              "actions": [ { "id": "bump", "title": "Bump", "key": "f5", "long": true, "output": "line", "command": "echo \"{unit} new\" > \"$HOME/units\"" } ] }
+              "actions": [ { "id": "bump", "title": "Bump", "key": "f5", "long": true, "output": "line", "command": "echo \"{unit} new\" > \"$HOME/units\"" } ],
+              "toolActions": [ { "id": "add", "title": "Add", "long": true, "output": "line", "command": "echo \"web v1\" >> \"$HOME/units\"" } ] }
             """#.utf8).write(to: URL(fileURLWithPath: home + "/own/units.json"))
         _ = app.tools.reload()
         app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == "units" }))
@@ -211,6 +212,10 @@ extension ServerLockTests {
         await toolsUntil { jobs.job(j.id)?.running == false }
         await toolsUntil { l.shown.first?.subtitle == "new" }
         #expect(l.shown.map(\.subtitle) == ["new"] && jobs.job(j.id)?.exit == 0, "\(l.shown.map(\.subtitle))")
+
+        await l.content?.actions?().first { $0.title == "Add" }?.run(false)?.value
+        await toolsUntil { l.shown.count == 2 }
+        #expect(l.shown.map(\.title) == ["api", "web"], "\(l.shown.map(\.title))")
     }
 
     /// One at a time on a row: a second Deploy says it runs and shows Activity. Stop… ends it (exit 143, "stopped");
