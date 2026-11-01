@@ -352,7 +352,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
                 for frame in t.listFrames.feed(tagged.line) {   // its list's poll: each run the list's rows, beside the stream's
                     let (out, exit) = ToolPayload.ran(frame), r = list.parse.records(Data(out.utf8), exit: exit)
                     t.listError = !list.run.succeeded(exit ?? 0, format: list.parse.format) ? "exit \(exit ?? 0)"
-                        : r.matched ? nil : "the output didn't match — " + (r.unmatched.first { !$0.isEmpty } ?? "")
+                        : r.matched ? nil : r.summary
                     if t.listError != nil { listGap(t, on: s) } else { take(ToolSample(at: now, record: ["rows": .array(r.rows.map(ToolValue.object))]), of: t, on: s, list: true) }
                 }
                 continue
@@ -360,7 +360,10 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
             guard let t = s.tools[tagged.tool], let source = t.preset.source else { continue }
             for frame in t.frames.feed(tagged.line) {
                 // A poll's run that failed is a missed sample (§3): a gap of its own tool, the channel's others going on.
-                if let exit = ToolPayload.ran(frame).exit, !source.run.succeeded(exit, format: source.parse.format) { gap(t, on: s, .noAnswer); continue }
+                if let exit = ToolPayload.ran(frame).exit, !source.run.succeeded(exit, format: source.parse.format) {
+                    gap(t, on: s, .noAnswer, metrics: t.readsFiles || t.pollsList ? t.metrics(list: false) : nil)   // its list is read apart
+                    continue
+                }
                 if let sample = source.parse.sample(frame, at: now) { take(sample, of: t, on: s) }
             }
         }
@@ -372,7 +375,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
     private func take(_ sample: ToolSample, of t: Tool, on s: Server, list: Bool = false) {
         let p = t.preset, now = sample.at
         let values = t.history.add(sample, metrics: p.metrics ?? [:], now: now, states: p.list?.view.state, list: list)
-        if t.watched { record(s, t.slots.add(values, at: now)) }
+        if t.watched { record(s, t.slots.add(values, at: now, ends: !list || p.source == nil)) }
         var fresh: [ToolEventRecord] = []
         for c in t.alerts.judge(values, alerts: alerts(t, on: s), metrics: p.metrics ?? [:], sample: sample, now: now) {
             switch c {
@@ -428,7 +431,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
     /// sample. Never a dialog: a tab reads over a connection that's up, a watched server logs in quietly, a sudo that
     /// wants a password says so. One that fails is a gap of the list's metrics, said on the tab; the next in a minute.
     /// ponytail: a tool with a files list alone has no channel, so a login that would ask is retried quietly each
-    /// minute, said on its tab, never "needs login"; none of the built-ins.
+    /// minute, said on its tab, never "needs login"; none of the built-ins. The timeout doesn't bound that login.
     func read(_ t: Tool, on s: Server) {
         guard let list = t.preset.list, !t.checking else { return }
         let p = t.preset, root = list.run.sudo ?? p.sudo ?? false, target = s.target, watched = t.watched, key = s.key
@@ -447,7 +450,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
                         try login(target, true)
                     }
                     let r = try ToolExec.files(list, of: p, scope, on: target, env: env, cancel: cancel, kept: kept)
-                    guard r.matched else { throw JobErrorMessage("the output didn't match — " + (r.unmatched.first { !$0.isEmpty } ?? "")) }
+                    guard r.matched else { throw JobErrorMessage(r.summary) }
                     return r.rows
                 }
             } catch { said = cancel.isCancelled ? "it took over \(Int(timeout)) s" : error.localizedDescription }
@@ -510,9 +513,11 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
     }
 
     private func gap(_ s: Server, _ why: ToolGap) {
-        // The channel's trouble isn't the checks or the list reads from this Mac: their streaks and series go on.
+        // The channel's trouble is only its tools': the checks and the list reads from this Mac go on.
         let channel = [ToolGap.noAnswer, .reconnecting].contains(why)
-        for t in s.tools.values where t.preset.http == nil || !channel { gap(t, on: s, why, metrics: channel && t.readsFiles ? t.metrics(list: false) : nil) }
+        for t in s.tools.values where !channel || t.preset.source != nil || t.pollsList {
+            gap(t, on: s, why, metrics: channel && t.readsFiles ? t.metrics(list: false) : nil)
+        }
     }
 
     /// No data from `t` from now on: a band on its series and its alerts' durations started over — `metrics`' only,
