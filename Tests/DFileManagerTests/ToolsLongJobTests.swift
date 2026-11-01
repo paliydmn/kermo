@@ -179,7 +179,11 @@ extension ServerLockTests {
         (git.executableURL, git.arguments) = (URL(fileURLWithPath: "/usr/bin/git"), ["-C", empty, "init", "-q"])
         try git.run()
         git.waitUntilExit()
-        #expect(ToolRunner.Upload(input: "src", local: empty, remote: "x", folder: true).said.contains("as committed (git archive HEAD)"))
+        var said = ToolRunner.Upload(input: "src", local: empty, remote: "x", folder: true)
+        said.repository = true
+        #expect(said.said == "Uploads \(empty) as committed (git archive HEAD).", "nothing uncommitted: nothing to warn of")
+        said.uncommitted = 3
+        #expect(said.said == "Uploads \(empty) as committed (git archive HEAD). ⚠ 3 changes not committed stay here.")
         ToolRunner.filling = { form in form.set("src", empty); return form.values }
         await run(l, "Ship…")?.value
         #expect(jobs.jobs.count == 3, "nothing started")

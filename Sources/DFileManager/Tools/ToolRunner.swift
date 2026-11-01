@@ -299,12 +299,14 @@ final class ToolRunner {
     /// A `folder` or `file` input (§7.4): the choice on this Mac, and where it goes on the server — its value there.
     struct Upload {
         let input: String, local: String, remote: String, folder: Bool
+        /// A git repository `pack` archives as committed, and how many changes in it aren't (they stay here).
+        var repository = false, uncommitted = 0
         /// As the question says it: what of it goes.
         var said: String {
             guard folder else { return "Uploads \(local) first." }
-            return ArchiveIndex.isRepository(local)
-                ? "Uploads \(local) as committed (git archive HEAD): changes not committed stay here."
-                : "Uploads \(local) first, without .git, node_modules and .DS_Store."
+            guard repository else { return "Uploads \(local) first, without .git, node_modules and .DS_Store." }
+            let n = uncommitted == 1 ? "1 change" : "\(uncommitted) changes"
+            return "Uploads \(local) as committed (git archive HEAD)." + (uncommitted == 0 ? "" : " ⚠ \(n) not committed stay here.")
         }
     }
 
@@ -337,9 +339,15 @@ final class ToolRunner {
                         return .stop("the home folder on \(SavedServer.name(for: t.asUser)), where uploads go, can't be read: \(error.localizedDescription)")
                     }
                 }
-                let local = (typed as NSString).expandingTildeInPath
-                uploads.append(Upload(input: i.info.name, local: local, remote: home! + "/" + ToolLong.upload(job, i, local: local), folder: i.info.type == .folder))
-                scope.levels[0][i.info.name] = .string(uploads.last!.remote)
+                let local = (typed as NSString).expandingTildeInPath, folder = i.info.type == .folder
+                var u = Upload(input: i.info.name, local: local, remote: home! + "/" + ToolLong.upload(job, i, local: local), folder: folder)
+                if folder {
+                    (u.repository, u.uncommitted) = await Blocking.run {
+                        ArchiveIndex.isRepository(local) ? (true, GitStatus.load(local)?.changes.count ?? 0) : (false, 0)
+                    }
+                }
+                uploads.append(u)
+                scope.levels[0][i.info.name] = .string(u.remote)
             }
         }
         if let why = Self.refusal(a, of: p, scope) { return .stop(why) }

@@ -274,9 +274,12 @@ public struct ArchiveIndex: Sendable {
     }
 
     /// A git repository's top, with git on this Mac to archive it (without the Command Line Tools /usr/bin/git only
-    /// offers to install them): `pack` sends what's committed.
+    /// offers to install them) and a config of its own that can't make git run a command (`GitStatus.trustedRoot`: a
+    /// cloned repository's `tar.tar.gz.command` would run in `git archive`): `pack` sends what's committed. Runs git:
+    /// off the main thread.
     public static func isRepository(_ folder: String) -> Bool {
         GitStatus.available && FileManager.default.fileExists(atPath: (folder as NSString).appendingPathComponent(".git"))
+            && GitStatus.trustedRoot(folder) == (folder as NSString).resolvingSymlinksInPath
     }
 
     /// `program` (bsdtar, or git for `pack`) with COPYFILE_DISABLE; what it said on stderr if it failed.
