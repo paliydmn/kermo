@@ -290,6 +290,7 @@ extension ServerLockTests {
         await run(l, "Deploy…")?.value
         let j = try #require(app.tools.jobs.jobs.first)
         let file = URL(fileURLWithPath: lb.bench.dir + "/own/runs.json")
+        await toolsUntil { FileManager.default.fileExists(atPath: file.path) }   // written off the main thread (`Config.writes`)
         var saved = try JSONDecoder().decode([ToolJob].self, from: Data(contentsOf: file))
         saved[0].started = Date().addingTimeInterval(-120)
         try JSONEncoder().encode(saved).write(to: file)
