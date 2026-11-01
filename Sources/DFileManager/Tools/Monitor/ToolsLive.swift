@@ -211,7 +211,7 @@ import DFMCore
             if let also = tile.also, let am = p.metrics?[also], let v = ToolMetric.one(t?.history.latest(also) ?? [:], of: nil) {
                 detail = [detail, "\(am.title?.lowercased() ?? also) \(am.text(v))"].filter { !$0.isEmpty }.joined(separator: " · ")
             }
-            if let m, m.rows != nil, tile.metrics.count == 1, let (key, _) = (t?.history.latest(tile.metrics[0]) ?? [:]).max(by: { $0.value < $1.value }) {
+            if let m, m.rows != nil, m.count == nil, tile.metrics.count == 1, let (key, _) = (t?.history.latest(tile.metrics[0]) ?? [:]).max(by: { $0.value < $1.value }) {
                 detail = [key, detail].filter { !$0.isEmpty }.joined(separator: " · ")   // the fullest disk
             }
             tile.detail.stringValue = detail

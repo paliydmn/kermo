@@ -1134,11 +1134,11 @@ extension ServerLockTests {
         let (page, t) = try await dplTab(app, bench, base, sudo: sudo)
         await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 4 }
         let view = try #require(live(page)), table = try #require(view.blocks.compactMap { $0 as? ToolsTable }.first)
-        guard let tool = app.tools.monitor.tool("dpl", on: t), let s = app.tools.monitor.server(t) else {   // #require would reflect the app
-            Issue.record("dpl isn't live on its first tab: \(app.tools.monitor.servers.mapValues { Array($0.tools.keys) })")
-            return
+        guard let tool = app.tools.monitor.tool("dpl", on: t), let s = app.tools.monitor.server(t), table.rows.count == 4 else {   // #require would reflect the app
+            Issue.record("dpl isn't live on its first tab: \(app.tools.monitor.servers.mapValues { Array($0.tools.keys) }), \(table.rows.count) rows")
+            return   // a row's buttons of a table with none would end the run
         }
-        #expect(view.tiles.first?.value.stringValue == "3 of 4", "\(view.tiles.map(\.value.stringValue))")
+        #expect(view.tiles.first?.value.stringValue == "3 of 4" && view.tiles.first?.detail.stringValue == "", "\(view.tiles.map(\.value.stringValue)) \(view.tiles.first?.detail.stringValue ?? "")")
         #expect(app.tools.monitor.summary(tool, on: s).first?.text == "3 of 4 ready")
         #expect(table.rows.map(\.title) == ["api", "first", "shop", "web"] && table.rows[0].cells.map(\.text).prefix(5) == ["api", "app", "ready", "v3", "parallel"],
                 "\(table.rows.map { $0.cells.map(\.text) })")
