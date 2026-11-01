@@ -175,6 +175,8 @@ import DFMCore
             ("No answer for \(s.missed * Int(s.every)) s — Kermo calls it down after \(s.downAfter) checks in a row.", NSColor.secondaryLabelColor)
         } else if let s, s.channel == nil, s.retryAt == nil, let why = s.error {
             ("\(server.title): \(why)", Palette.warn)
+        } else if let why = t?.listError {
+            ("The list wasn't read: \(why)", Palette.warn)
         } else if let s, let m = s.maintenance, s.inMaintenance {
             ("Maintenance till \(m.until.formatted(date: .omitted, time: .shortened)): nothing notifies of \(server.title); the charts mark the time.", NSColor.secondaryLabelColor)
         } else if !app.tools.monitor.online {
@@ -191,7 +193,9 @@ import DFMCore
         let scope = ToolTemplate.Scope(rows: [record])
         for tile in tiles {
             let texts = tile.metrics.map { id -> String in   // two in one tile, in the label's order ("In · Out")
-                guard let m = p.metrics?[id], let v = ToolMetric.one(t?.history.latest(id) ?? [:], of: tile.of) else { return "—" }
+                let latest = t?.history.latest(id) ?? [:]
+                if p.metrics?[id]?.count != nil, let all = latest["all"] { return "\(Int(latest["ok"] ?? 0)) of \(Int(all))" }   // "3 of 4" ready
+                guard let m = p.metrics?[id], let v = ToolMetric.one(latest, of: tile.of) else { return "—" }
                 return m.text(v)
             }
             tile.value.stringValue = texts.joined(separator: " · ")

@@ -51,6 +51,27 @@ private func systemSamples() throws -> [ToolSample] {
     let v = m.values(in: s, previous: nil, now: at(0), states: states)
     #expect(v["all"] == 3 && v["ok"] == 2 && v["bad"] == 1 && v["warn"] == 0)
     #expect(m.values(in: s, previous: nil, now: at(0)) == ["all": 3])
+    #expect(m.values(in: sample(5, ["hosts": .array([])]), previous: nil, now: at(5), states: states) == [:], "a line without the list counts none, not zero")
+    #expect(m.values(in: sample(5, ["rows": .array([])]), previous: nil, now: at(5))["all"] == 0, "an empty list is zero")
+}
+
+/// dpl's list read beside its stream (§8.7): the list's sample feeds its count and leaves the stream's `last` — the
+/// stream's rates and events go on from their own line; the stream's lines leave the count as the list had it; a
+/// gap of one source marks its metrics only.
+@Test func aListsSampleSitsBesideTheStreams() throws {
+    let dpl = try #require(ToolSchema.validate(try Data(contentsOf: ToolPreset.builtInFolder.appendingPathComponent("dpl.json")), file: "dpl.json").preset)
+    #expect(dpl.watchesList && dpl.watchable && !system.watchesList)
+    let metrics = (dpl.metrics ?? [:]).merging(["req": ToolMetric(path: "req", calc: "rate")]) { a, _ in a }, states = dpl.list?.view.state
+    func list(_ statuses: [String]) -> ToolSample { sample(7, ["rows": .array(statuses.map { .object(["unit": .string($0), "last_status": .string($0)]) })]) }
+    var h = ToolHistory()
+    _ = h.add(sample(0, ["req": 100, "hosts": .array([.object(["host": "a", "rpm": 6])])]), metrics: metrics, now: at(0), states: states)
+    _ = h.add(list(["ready", "ready", "ready", "failed"]), metrics: metrics, now: at(7), states: states, list: true)
+    let v = h.add(sample(10, ["req": 160, "hosts": .array([.object(["host": "a", "rpm": 12])])]), metrics: metrics, now: at(10), states: states)
+    #expect(v["req"] == ["": 6], "the rate from the stream's line before, not the list's: \(v)")
+    #expect(h.latest("apps") == ["all": 4, "ok": 3, "bad": 1, "warn": 0, "off": 0, "busy": 0] && h.points("apps", "all").count == 1, "\(h.latest("apps"))")
+    #expect(h.latest("rpm") == ["a": 12] && h.last?.at == at(10) && h.previous?.at == at(0) && h.rows("list").count == 4)
+    h.mark(.noAnswer, at: at(12), metrics: ["apps"])
+    #expect(h.latest("apps").isEmpty && h.latest("rpm") == ["a": 12], "the list's gap, not the stream's")
 }
 
 @Test func framesByBlankLinesAndByAFirstLine() throws {

@@ -160,6 +160,41 @@ private final class LocalWeb: @unchecked Sendable {
 }
 @MainActor private func press(_ b: NSButton?) { _ = (b?.target as? NSObject)?.perform(b?.action, with: b) }
 
+/// dpl's state folder under `base` (`{unit}/deploy.json`, api's YAML), a `dpl` that says its version, and a sudo for
+/// the root SFTP session: it lets `-n --` through, or (`refuses`) wants a password — its calls in `sftp-sudo.log`.
+@MainActor private func dplState(_ bench: ToolsBench, _ base: String, refuses: Bool = false) throws -> String {
+    let fm = FileManager.default
+    for (unit, json) in [("api", #"{"kind": "app", "active_version": 3, "last_version": 3, "last_status": "ready"}"#),
+                         ("web", #"{"kind": "http-server", "active_version": 1, "last_version": 1, "last_status": "ready"}"#),
+                         ("shop", #"{"kind": "domain", "active_version": 4, "last_version": 4, "last_status": "ready"}"#),
+                         ("first", #"{"kind": "app", "last_version": 1, "last_status": "failed", "failure": {"stage": "build"}}"#)] {
+        try fm.createDirectory(atPath: "\(base)/state/\(unit)", withIntermediateDirectories: true)
+        try Data(json.utf8).write(to: URL(fileURLWithPath: "\(base)/state/\(unit)/deploy.json"))
+    }
+    try fm.createDirectory(atPath: base + "/conf", withIntermediateDirectories: true)
+    try Data("image: x\nstrategy: parallel\n".utf8).write(to: URL(fileURLWithPath: base + "/conf/api.yaml"))
+    try Data("#!/bin/sh\n[ \"$1\" = --version ] && echo 'dpl 0.7.1'\n".utf8).write(to: URL(fileURLWithPath: bench.dir + "/bin/dpl"))
+    chmod(bench.dir + "/bin/dpl", 0o755)
+    let sudo = bench.dir + "/sftp-sudo"
+    try Data(("#!/bin/sh\necho \"$*\" >> \(bench.dir)/sftp-sudo.log\n" + (refuses ? "echo 'sudo: a password is required' >&2\nexit 1\n"
+              : "[ \"$1\" = -n ] && [ \"$2\" = -- ] || exit 2\nshift 2\nexec \"$@\"\n")).utf8).write(to: URL(fileURLWithPath: sudo))
+    chmod(sudo, 0o755)
+    return sudo
+}
+
+/// dpl's tab on localhost with `base` as its folder, the target its sudo's.
+@MainActor private func dplTab(_ app: AppDelegate, _ bench: ToolsBench, _ base: String, sudo: String) async throws -> (ToolsPage, SFTPTarget) {
+    try await watching(app, bench)
+    app.tools.settings.setVars("dpl", on: app.savedServers[0].id.uuidString, ["base": base])
+    let t = SFTPTarget.local(sudo: sudo).asRoot(false)
+    _ = app.tools.here(t)
+    await toolsUntil { app.tools.here(t)?.tools.contains { $0.preset.id == "dpl" } == true }
+    ToolsWindow.show(app, server: t)
+    let page = try #require(ToolsWindow.main?.page)
+    #expect(page.liveTool?.preset.id == "dpl", "its first tab: live once the window shows")
+    return (page, t)
+}
+
 extension ServerLockTests {
     /// A tab on a server that isn't connected logs nothing in. Connected, its stream runs while the tab shows — one
     /// round trip, the tiles with its numbers, the strip saying it's live while open — and ends on the server when
@@ -1083,5 +1118,83 @@ extension ServerLockTests {
         #expect(posts.sent.count == 2, "after maintenance: notified again")
         charts.update(view)
         #expect(charts.model.data.charts.first?.bands.contains { $0.gap == .maintenance } == true, "the band stays for the time it was")
+    }
+
+    /// dpl's dashboard (§8.7) by its own preset, on a state folder of fixtures: while the tab shows, its list of files
+    /// is read beside its stream — as root over one kept SFTP session, never a password — "3 of 4" units ready on the
+    /// tile and in WATCHED's summary, the Units table with each row's actions (`only`: an app's), the failed first
+    /// deploy's `down`, and `deployed` once a unit's active version goes up.
+    @Test func dplsDashboardReadsItsListOfFiles() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), was = SFTP.sudoPassword
+        nonisolated(unsafe) var asked = 0
+        SFTP.sudoPassword = { _, _ in asked += 1; return nil }
+        defer { quick.done(); bench.done(); done(); app.savedServers = []; SFTP.sudoPassword = was }
+        let base = bench.dir + "/dpl", sudo = try dplState(bench, base)
+        let (page, t) = try await dplTab(app, bench, base, sudo: sudo)
+        await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 4 }
+        let view = try #require(live(page)), table = try #require(view.blocks.compactMap { $0 as? ToolsTable }.first)
+        guard let tool = app.tools.monitor.tool("dpl", on: t), let s = app.tools.monitor.server(t) else {   // #require would reflect the app
+            Issue.record("dpl isn't live on its first tab: \(app.tools.monitor.servers.mapValues { Array($0.tools.keys) })")
+            return
+        }
+        #expect(view.tiles.first?.value.stringValue == "3 of 4", "\(view.tiles.map(\.value.stringValue))")
+        #expect(app.tools.monitor.summary(tool, on: s).first?.text == "3 of 4 ready")
+        #expect(table.rows.map(\.title) == ["api", "first", "shop", "web"] && table.rows[0].cells.map(\.text).prefix(5) == ["api", "app", "ready", "v3", "parallel"],
+                "\(table.rows.map { $0.cells.map(\.text) })")
+        #expect(rowButtons(table, 0).map(\.title) == ["Inspect", "Logs", "Deploy…", "Roll Back…", "Edit Config", "Undeploy…"], "\(rowButtons(table, 0).map(\.title))")
+        #expect(rowButtons(table, 2).map(\.title) == ["Inspect", "Edit Config", "Undeploy…"], "a domain: \(rowButtons(table, 2).map(\.title))")
+        #expect(tool.events.map(\.message) == ["first is down: failed at build"], "\(tool.events.map(\.message))")
+        let sudoRuns = { ((try? String(contentsOfFile: bench.dir + "/sftp-sudo.log", encoding: .utf8)) ?? "").split(separator: "\n").count }
+        let before = sudoRuns()
+
+        try Data(#"{"kind": "app", "active_version": 4, "last_version": 4, "last_status": "ready"}"#.utf8).write(to: URL(fileURLWithPath: base + "/state/api/deploy.json"))
+        tool.due = nil   // the next read now, not in 10 s
+        await toolsUntil { tool.events.count == 2 }
+        #expect(tool.events.first?.message == "api v4 serving", "\(tool.events.map(\.message))")
+        #expect(sudoRuns() == before && asked == 0, "the same session: no sudo again, no password asked")
+        #expect(tool.history.points("apps", "all").count == 2 && tool.history.last?.record["rows"] == nil, "the stream's last is the stream's")
+    }
+
+    /// A root list whose sudo wants a password (§8.7): watching asks none — the tab says what sudoers needs, the
+    /// list's tile stays empty, and nothing is read till sudo lets it.
+    @Test func aListWhoseSudoWantsAPasswordAsksNone() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), was = SFTP.sudoPassword
+        nonisolated(unsafe) var asked = 0
+        SFTP.sudoPassword = { _, _ in asked += 1; return "secret" }
+        defer { quick.done(); bench.done(); done(); app.savedServers = []; SFTP.sudoPassword = was }
+        let base = bench.dir + "/dpl", sudo = try dplState(bench, base, refuses: true)
+        let (page, _) = try await dplTab(app, bench, base, sudo: sudo)
+        await toolsUntil { live(page)?.banner.stringValue.isEmpty == false }
+        let view = try #require(live(page))
+        #expect(view.banner.stringValue.hasPrefix("The list wasn't read: sudo on localhost needs a password to run sftp-server as root."), "\(view.banner.stringValue)")
+        #expect(asked == 0 && view.tiles.first?.value.stringValue == "—")
+    }
+
+    /// A tool that has only a list (§8.7): its command polled in the channel every `watch.every`, each run's rows a
+    /// sample — its count, and `added` for a row that wasn't there.
+    @Test func aCommandsListIsPolledInTheChannel() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app)
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try Data("a\nb\n".utf8).write(to: URL(fileURLWithPath: bench.dir + "/jobs"))
+        try FileManager.default.createDirectory(atPath: bench.dir + "/own", withIntermediateDirectories: true)
+        try Data("""
+            { "schema": 1, "id": "jobs", "title": "Jobs", "list": { "command": "cat \(bench.dir)/jobs", "format": "lines", "key": "{line}" },
+              "watch": { "every": 1 }, "metrics": { "n": { "title": "Jobs", "rows": "list", "count": "state" } },
+              "events": [ { "id": "new", "rows": "list", "key": "line", "when": "added", "message": "{line} new" } ] }
+            """.utf8).write(to: URL(fileURLWithPath: bench.dir + "/own/jobs.json"))
+        try await watching(app, bench, ids: ["pulse"])
+        let jobs = try #require(app.tools.library.tools.first { $0.preset.id == "jobs" })
+        app.tools.trust.trust(jobs)
+        app.tools.monitor.watch(try toolNamed(app, "jobs"), on: .local(), true)
+        await toolsUntil { app.tools.monitor.tool("jobs", on: .local())?.history.latest("n")["all"] == 2 }
+        let tool = try #require(app.tools.monitor.tool("jobs", on: .local()))
+        #expect(tool.history.latest("n")["all"] == 2 && app.tools.monitor.server(.local())?.channel != nil)
+        try Data("a\nb\nc\n".utf8).write(to: URL(fileURLWithPath: bench.dir + "/jobs"))
+        await toolsUntil { tool.events.contains { $0.message == "c new" } }
+        #expect(tool.events.map(\.message) == ["c new"] && tool.history.latest("n")["all"] == 3, "\(tool.events.map(\.message))")
+        app.tools.monitor.watch(tool.loaded, on: .local(), false)
     }
 }

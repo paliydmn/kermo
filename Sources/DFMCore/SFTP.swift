@@ -295,6 +295,8 @@ public enum SFTP {
     nonisolated(unsafe) public static var sudoPassword: (@Sendable (SFTPTarget, _ wrong: Bool) -> String?)?
     /// That sudo took it (worth keeping).
     nonisolated(unsafe) public static var sudoPasswordTaken: (@Sendable (SFTPTarget, String) -> Void)?
+    /// In a session's env: it may ask nothing — no sudo password, saved or not (watching's).
+    public static let quiet = "DFM_QUIET"
 
     /// Runs `login` with the target's saved password waiting for the askpass script in a FIFO ($DFM_ASKPASS_FIFO):
     /// not an environment variable (those show in `ps eww`), not a file. Read once, then gone, so a wrong password's

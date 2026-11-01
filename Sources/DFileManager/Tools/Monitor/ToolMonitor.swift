@@ -14,7 +14,9 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
 /// answering", unless this Mac has no network or just woke. A watched server logs in with no dialog (a key, a
 /// password in the Keychain) or says "needs login"; a tab alone never logs in. A locked server is watched read-only,
 /// without Touch ID: its connection stays up (`inUse`), the lock guards actions (decision 23). A tool that checks
-/// addresses (`http`, Sites) needs no channel: its checks run from this Mac every `watch.every`, each a sample.
+/// addresses (`http`, Sites) needs no channel: its checks run from this Mac every `watch.every`, each a sample. A list
+/// that watching reads (§8.7) is one more sample beside the stream's: a `files` list from this Mac over a kept SFTP
+/// session, a command's polled in the channel.
 @MainActor final class ToolMonitor {
     unowned let app: AppDelegate
 
@@ -44,15 +46,24 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         var frames: ToolFrames
         /// Watched in the background; live on an open tab.
         var watched = false, live = false
-        /// `http`: a check under way; when the next is due.
+        /// `http` or a `files` list: a check or a read under way; when the next is due.
         var checking = false
         var due: Date?
+        /// Its list's poll in the channel: that run's lines into frames.
+        var listFrames = ToolFrames(split: nil, poll: true)
+        /// Why its list wasn't read the last time.
+        var listError: String?
         init(_ t: LoadedTool) { (loaded, frames, slots) = (t, Self.frames(t.preset), ToolSlots(tool: t.preset.id)) }
         static func frames(_ p: ToolPreset) -> ToolFrames { ToolFrames(split: p.source?.parse.split, poll: p.stream == nil) }
         var preset: ToolPreset { loaded.preset }
         var wanted: Bool { watched || live }
+        /// Its list as watching reads it: its files from this Mac, or its command polled in the channel.
+        var readsFiles: Bool { preset.watchesList && preset.list?.run.files != nil }
+        var pollsList: Bool { preset.watchesList && preset.list?.run.files == nil }
+        /// The metrics its list feeds (`rows: "list"`), or the others.
+        func metrics(list: Bool) -> Set<String> { Set((preset.metrics ?? [:]).filter { ($0.value.rows == "list") == list }.keys) }
         /// The channel ended: a frame half-read stays there.
-        func reset() { frames = Self.frames(preset) }
+        func reset() { (frames, listFrames) = (Self.frames(preset), ToolFrames(split: nil, poll: true)) }
     }
 
     /// A server watched or live: its channel on the server, its tools, how it's doing.
@@ -89,15 +100,22 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         var quiet = false
         /// 3 on battery or in Low Power Mode (`ToolMonitor.slow`), as its channel was started.
         var pace: Double = 1
+        /// The SFTP sessions its `files` lists are read over, as root or not: kept from one read to the next.
+        var kept: [Bool: KeptSession] = [:]
         init(_ s: SavedServer, _ t: SFTPTarget) { (saved, target) = (s, t) }
+        func closeKept() {
+            kept.values.forEach { $0.close() }
+            kept = [:]
+        }
         /// The channel's interval, as paced — what "missed" and "not answering" go by; a server with checks only, theirs.
         var every: Double { (paced.compactMap { $0.preset.watch?.every }.min() ?? 60) * pace }
         var downAfter: Int { paced.compactMap { $0.preset.watch?.down }.min() ?? 3 }
         private var paced: [Tool] { channelTools.isEmpty ? tools.values.filter(\.wanted) : Array(channelTools.values) }   // a closed tab's tool no more
         var watched: Bool { tools.values.contains(where: \.watched) }
         var wanted: Bool { tools.values.contains(where: \.wanted) }
-        /// The tools its channel runs: streams and polls (an `http` tool's checks run from this Mac).
-        var channelTools: [String: Tool] { tools.filter { $0.value.wanted && $0.value.preset.source != nil } }
+        /// The tools its channel runs: streams and polls (an `http` tool's checks and a `files` list's reads run from
+        /// this Mac).
+        var channelTools: [String: Tool] { tools.filter { $0.value.wanted && ($0.value.preset.source != nil || $0.value.pollsList) } }
         var key: String { ServerRow.key(target) }
     }
 
@@ -199,6 +217,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
                 if !t.wanted { t.alerts.clear() }   // a stop is no recovery, and nothing to say
             }
             if !s.watched { s.quiet = false }   // watched again later: nothing of before is "still standing"
+            if !s.tools.values.contains(where: { $0.wanted && $0.readsFiles }) { s.closeKept() }
             if !s.wanted { stop(s, why: .notWatched) }
         }
         for (key, w) in want {
@@ -246,10 +265,10 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         var sources: [ToolPayload.Watched] = []
         for tool in wanted {
             let p = tool.preset, every = (p.watch?.every ?? 60) * s.pace
-            guard let source = p.source else { continue }
             var scope = app.tools.scope(p, on: s.saved, t)
             scope.levels[scope.levels.count - 1]["every"] = .number(every)   // a stream's `{every}`, as paced
-            sources.append(.init(tool: p, run: source.run, every: p.stream == nil ? every : nil, scope: scope, scripts: tool.loaded.scripts))
+            if let source = p.source { sources.append(.init(tool: p, run: source.run, every: p.stream == nil ? every : nil, scope: scope, scripts: tool.loaded.scripts)) }
+            if tool.pollsList, let list = p.list { sources.append(.init(tool: p, run: list.run, every: every, scope: scope, scripts: tool.loaded.scripts, tag: p.id + " list")) }
         }
         // ponytail: sources that can't share a channel (sudo differs), a value missing, and sudo that wants a password
         // (`sudo -n` is refused, retried each minute) wait for a later PR; the built-ins share one and run as you.
@@ -306,7 +325,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         (s.channel, s.hold) = (nil, nil)
         channelSources[s.key] = nil
         (s.retryAt, s.retries) = (nil, 0)
-        if why == .notWatched { s.since = nil }
+        if why == .notWatched { s.since = nil; s.closeKept() }
         s.tools.values.forEach { $0.reset() }
         gap(s, why)
     }
@@ -323,7 +342,16 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         quietOver(s)   // before this sample's own changes: what they raise isn't "still standing" too
         let now = Date().addingTimeInterval(skew)
         for line in lines {
-            guard let tagged = ToolPayload.watchLine(line), let t = s.tools[tagged.tool], let source = t.preset.source else { continue }
+            guard let tagged = ToolPayload.watchLine(line) else { continue }
+            if tagged.tool.hasSuffix(" list"), let t = s.tools[String(tagged.tool.dropLast(5))], let list = t.preset.list {
+                for frame in t.listFrames.feed(tagged.line) {   // its list's poll: each run the list's rows, beside the stream's
+                    let (out, exit) = ToolPayload.ran(frame)
+                    guard list.run.succeeded(exit ?? 0, format: list.parse.format) else { gap(t, on: s, .noAnswer, metrics: t.metrics(list: true)); continue }
+                    take(ToolSample(at: now, record: ["rows": .array(list.parse.records(Data(out.utf8), exit: exit).rows.map(ToolValue.object))]), of: t, on: s, list: true)
+                }
+                continue
+            }
+            guard let t = s.tools[tagged.tool], let source = t.preset.source else { continue }
             for frame in t.frames.feed(tagged.line) {
                 // A poll's run that failed is a missed sample (§3): a gap of its own tool, the channel's others going on.
                 if let exit = ToolPayload.ran(frame).exit, !source.run.succeeded(exit, format: source.parse.format) { gap(t, on: s, .noAnswer); continue }
@@ -333,10 +361,11 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         changed()
     }
 
-    /// A sample of `t`, from its channel or its checks: its series, its alerts' changes as events, its events.
-    private func take(_ sample: ToolSample, of t: Tool, on s: Server) {
+    /// A sample of `t`, from its channel, its checks or its list (`list`): its series, its alerts' changes as events,
+    /// its events — a list's sample raises the events on the list's rows, the others the rest.
+    private func take(_ sample: ToolSample, of t: Tool, on s: Server, list: Bool = false) {
         let p = t.preset, now = sample.at
-        let values = t.history.add(sample, metrics: p.metrics ?? [:], now: now, states: p.list?.view.state)
+        let values = t.history.add(sample, metrics: p.metrics ?? [:], now: now, states: p.list?.view.state, list: list)
         if t.watched { record(s, t.slots.add(values, at: now)) }
         var fresh: [ToolEventRecord] = []
         for c in t.alerts.judge(values, alerts: alerts(t, on: s), metrics: p.metrics ?? [:], sample: sample, now: now) {
@@ -349,8 +378,8 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
                 fresh.append(ToolEventRecord(at: now, id: "ok", level: "ok", message: "Back to normal: \(what)\(key.isEmpty ? "" : " " + key) · after " + ToolAlerts.minutes(now.timeIntervalSince(since))))
             }
         }
-        let raised = ToolEvents.raised(p.events ?? [], in: sample, previous: t.history.previous, carrying: t.history.carriedBefore,
-                                       scope: app.tools.scope(p, on: s.saved, s.target))
+        let raised = ToolEvents.raised((p.events ?? []).filter { ($0.rows == "list") == list }, in: sample, previous: t.history.previous,
+                                       carrying: t.history.carriedBefore, scope: app.tools.scope(p, on: s.saved, s.target))
         for e in raised where e.level == "critical" { deliver(s, tool: t, id: "\(s.key) \(p.id) \(e.id)", e.message) }
         fresh += raised
         if let e = ToolEvents.scripted(sample) {
@@ -385,6 +414,42 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
             guard let self, let s = servers[key], s.tools[id] === t, t.wanted else { return }
             let ordered = urls.compactMap { u in rows.first { $0["url"]?.text == u } }
             take(ToolSample(at: Date().addingTimeInterval(s.skew), record: ["urls": .array(ordered.map(ToolValue.object))]), of: t, on: s)
+            changed()
+        }
+    }
+
+    /// A `files` list (§8.7): read from this Mac every `watch.every` over the server's kept SFTP session, its rows a
+    /// sample. Never a dialog: a tab reads over a connection that's up, a watched server logs in quietly, a sudo that
+    /// wants a password says so. One that fails is a gap of the list's metrics, said on the tab; the next in a minute.
+    func read(_ t: Tool, on s: Server) {
+        guard let list = t.preset.list, !t.checking else { return }
+        let p = t.preset, root = list.run.sudo ?? p.sudo ?? false, target = s.target, watched = t.watched, key = s.key
+        let kept = s.kept[root] ?? KeptSession(target.asRoot(root))
+        s.kept[root] = kept
+        let scope = app.tools.scope(p, on: s.saved, target), login = Self.login, has = ToolRunner.hasMaster, env = SSHAskpass.quietEnv
+        (t.checking, t.due) = (true, Date().addingTimeInterval((p.watch?.every ?? 60) * (slow ? 3 : 1)))
+        Task { [weak self] in
+            var rows: [ToolRecord] = [], said: String?
+            do {
+                rows = try await Blocking.run {
+                    if !has(target) {
+                        guard watched else { throw JobErrorMessage("not connected") }
+                        try login(target, true)
+                    }
+                    let r = try ToolExec.files(list, of: p, scope, on: target, env: env, cancel: CancelFlag(), kept: kept)
+                    guard r.matched else { throw JobErrorMessage("the output didn't match — " + (r.unmatched.first { !$0.isEmpty } ?? "")) }
+                    return r.rows
+                }
+            } catch { said = error.localizedDescription }
+            t.checking = false
+            guard let self, let s = servers[key], s.tools[p.id] === t, t.wanted else { return }
+            t.listError = said
+            if said == nil {
+                take(ToolSample(at: Date().addingTimeInterval(s.skew), record: ["rows": .array(rows.map(ToolValue.object))]), of: t, on: s, list: true)
+            } else {
+                gap(t, on: s, .noAnswer, metrics: t.metrics(list: true))
+                t.due = Date().addingTimeInterval(60)
+            }
             changed()
         }
     }
@@ -429,16 +494,19 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
     }
 
     private func gap(_ s: Server, _ why: ToolGap) {
-        // The channel's trouble isn't the checks from this Mac: their streaks and series go on.
-        for t in s.tools.values where t.preset.http == nil || ![.noAnswer, .reconnecting].contains(why) { gap(t, on: s, why) }
+        // The channel's trouble isn't the checks or the list reads from this Mac: their streaks and series go on.
+        let channel = [ToolGap.noAnswer, .reconnecting].contains(why)
+        for t in s.tools.values where t.preset.http == nil || !channel { gap(t, on: s, why, metrics: channel && t.readsFiles ? t.metrics(list: false) : nil) }
     }
 
-    /// No data from `t` from now on: a band on its series, its alerts' durations start over, the gap on disk.
-    private func gap(_ t: Tool, on s: Server, _ why: ToolGap) {
+    /// No data from `t` from now on: a band on its series — `metrics`' only, where one of its sources stopped —, its
+    /// alerts' durations start over, the gap on disk.
+    /// ponytail: one source's gap isn't on disk — its slot just has fewer values.
+    private func gap(_ t: Tool, on s: Server, _ why: ToolGap, metrics: Set<String>? = nil) {
         let at = Date().addingTimeInterval(s.skew)
-        t.history.mark(why, at: at)
+        t.history.mark(why, at: at, metrics: metrics)
         t.alerts.gap()
-        if t.watched { record(s, t.slots.mark(why, at: at)) }
+        if t.watched, metrics == nil { record(s, t.slots.mark(why, at: at)) }
     }
 
     // MARK: Power
@@ -539,8 +607,10 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         // Back from sleep or offline, what stood before isn't known to stand: the quiet's end waits for that to pass.
         if !stalled, online, !grace { servers.values.filter(\.watched).forEach(quietOver) }
         for s in servers.values where s.wanted {
-            // Checks from this Mac: none offline or in the wake's first minute — no answer then isn't the site's.
-            for t in s.tools.values where t.wanted && t.preset.http != nil && online && !grace && (t.due ?? .distantPast) <= now { check(t, on: s) }
+            // Checks and list reads from this Mac: none offline or in the wake's first minute — no answer then isn't the site's.
+            for t in s.tools.values where t.wanted && online && !grace && (t.due ?? .distantPast) <= now {
+                if t.preset.http != nil { check(t, on: s) } else if t.readsFiles, !s.needsLogin { read(t, on: s) }
+            }
             if s.channel == nil, !s.needsLogin, let at = s.retryAt, at <= now {
                 s.retryAt = nil
                 start(s)
@@ -583,6 +653,9 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
     }
 
     func restart() {
+        for s in servers.values {
+            s.closeKept()   // a session on a connection that's gone would wait some 90 s for ssh to notice
+        }
         for s in servers.values where s.wanted && s.channel != nil {
             stop(s, why: .reconnecting)
             retryLater(s)
@@ -679,11 +752,11 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
 
 extension SSHAskpass {
     /// For watching (§8.5): the saved password answers, as ever; anything else — a password not kept, a passphrase,
-    /// a host key to confirm — fails the login instead of asking.
+    /// a host key to confirm — fails the login instead of asking; a root SFTP session asks no sudo password (`SFTP.quiet`).
     static let quietEnv: [String: String] = {
         let path = SFTP.controlDir + "/askpass-quiet"
         try? ("#!/bin/sh\n" + SFTP.askpassSavedPassword + "\nexit 1\n").write(toFile: path, atomically: true, encoding: .utf8)
         chmod(path, 0o700)
-        return ["SSH_ASKPASS": path, "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": ":0"]
+        return ["SSH_ASKPASS": path, "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": ":0", SFTP.quiet: "1"]
     }()
 }

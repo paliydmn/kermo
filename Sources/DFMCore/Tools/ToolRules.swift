@@ -11,11 +11,18 @@ public struct ToolSample: Sendable, Equatable {
     public var record: ToolRecord
     public init(at: Date, record: ToolRecord) { (self.at, self.record) = (at, record) }
 
-    /// `rows` of the sample: an array at that path, or the list's rows (`rows: "list"`, which a poll of the list gives
-    /// as `rows`).
+    /// `rows` of the sample: an array at that path, or the list's rows (`rows: "list"`, which watching's read of the
+    /// list gives as `rows`).
+    /// ponytail: a tool with a poll that gives rows and a watched list shares the key; none has both.
     public func rows(_ path: String) -> [ToolRecord] {
         guard case .array(let a)? = ToolValue.object(record)[path == "list" ? "rows" : path] else { return [] }
         return a.compactMap { if case .object(let o) = $0 { o } else { nil } }
+    }
+
+    /// Whether it carries the row set `path` at all — an empty one too: a stream's line without the list's rows
+    /// counts none of them, not zero.
+    public func carries(_ path: String) -> Bool {
+        if case .array? = ToolValue.object(record)[path == "list" ? "rows" : path] { true } else { false }
     }
 }
 
@@ -106,6 +113,7 @@ extension ToolMetric {
     /// stream's first line has no rates).
     public func values(in sample: ToolSample, previous: ToolSample?, now: Date, states: ToolStateMap? = nil) -> ToolValues {
         if count != nil, let rows {
+            guard sample.carries(rows) else { return [:] }
             let all = sample.rows(rows)
             var out: ToolValues = ["all": Double(all.count)]
             if let states {
@@ -186,15 +194,16 @@ public struct ToolHistory: Sendable {
 
     public init(keep: TimeInterval = 3600) { self.keep = keep }
 
-    /// `sample` taken: each metric's values added to its series; the values, for the alerts.
-    public mutating func add(_ sample: ToolSample, metrics: [String: ToolMetric], now: Date, states: ToolStateMap? = nil) -> [String: ToolValues] {
+    /// `sample` taken: each metric's values added to its series; the values, for the alerts. `list`: watching's read
+    /// of the list (§8.7), beside the stream's samples — never their `last`, which rates and events go by.
+    public mutating func add(_ sample: ToolSample, metrics: [String: ToolMetric], now: Date, states: ToolStateMap? = nil, list: Bool = false) -> [String: ToolValues] {
         var all: [String: ToolValues] = [:]
         for (id, m) in metrics {
-            let v = m.values(in: sample, previous: last, now: now, states: states)
+            let v = m.values(in: sample, previous: list ? carried("list") : last, now: now, states: states)
             all[id] = v
             for (key, n) in v { series[id, default: [:]][key, default: []].append(ToolPoint(at: sample.at, value: n)) }
         }
-        (previous, last) = (last, sample)
+        if !list { (previous, last) = (last, sample) }
         carriedBefore = carrying
         for (k, v) in sample.record { if case .array = v { carrying[k] = sample } }
         trim(before: sample.at.addingTimeInterval(-keep))
@@ -206,9 +215,10 @@ public struct ToolHistory: Sendable {
     /// The rows of `path` as the latest sample that carried them had them.
     public func rows(_ path: String) -> [ToolRecord] { carried(path)?.rows(path) ?? [] }
 
-    /// No data from `at` on: a gap point on every series (one per stretch), till the next value.
-    public mutating func mark(_ gap: ToolGap, at: Date) {
-        for (id, keys) in series {
+    /// No data from `at` on: a gap point on every series (one per stretch) — `metrics`' only, where one source of
+    /// several stopped — till the next value.
+    public mutating func mark(_ gap: ToolGap, at: Date, metrics: Set<String>? = nil) {
+        for (id, keys) in series where metrics?.contains(id) ?? true {
             for (key, points) in keys where points.last?.gap != gap { series[id]![key]!.append(ToolPoint(at: at, gap: gap)) }
         }
         trim(before: at.addingTimeInterval(-keep))
