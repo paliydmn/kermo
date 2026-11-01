@@ -1443,7 +1443,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         if parked != nil { return navigate(to: path, history: .none) }
         if let l = list {   // a level: back to the list above; a list: to its server's place; the place: off the server, asked as from its `/`
             if let up = l.source.up { return showList(up.source, content: up.source.content, select: up.row) }
-            guard isPlace else { return onPlace?(l.source.target, l.source.title) ?? navigate(to: path, history: .none) }
+            guard isPlace else { return onPlace?(l.source.target, l.source.trail.first ?? l.source.title) ?? navigate(to: path, history: .none) }
             guard AppDelegate.connected(l.source.target) else { return navigate(to: path, history: .none) }   // nothing to close: no question
             Task {
                 guard await Self.confirmLeavingPlace(l.source.target, path, view.window), list === l else { return }

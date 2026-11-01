@@ -568,6 +568,8 @@ extension ServerLockTests {
         let other = try #require(app.panels.first { ($0.list?.source as? ToolListSource)?.level != nil })
         #expect(other.list?.shown.map(\.title) == ["1 first"] && other.pathBar.shownCrumbs == ["Pulse", "first"], "the level in the other panel: \(other.pathBar.shownCrumbs)")
         #expect(app.window.firstResponder === other.table, "the keys there")
+        other.goUp()   // a dashboard isn't a list: back to the server's place, on the tool's row
+        #expect(other.list?.source is PlaceSource && other.list?.cursor?.title == "Pulse", "\(other.list?.cursor?.title ?? "")")
     }
 
     /// `goto` and the chart's click: an event's Services… and a count's open the server's services in the search;
