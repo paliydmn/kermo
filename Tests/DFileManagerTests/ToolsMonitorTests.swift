@@ -354,6 +354,7 @@ extension ServerLockTests {
         bench.flag("hot-localhost", false)
         await toolsUntil { s.tools["pulse"]?.alerts.worst == nil }
         #expect(s.tools["pulse"]?.events.first?.message.hasPrefix("Back to normal: CPU") == true && app.tools.monitor.worst(s).state == .ok, "\(s.tools["pulse"]?.events ?? [])")
+        await toolsUntil { page.tabs.image(forSegment: page.tabs.selectedSegment)?.isTemplate == true }   // the page draws it after the sample
         #expect(page.tabs.image(forSegment: page.tabs.selectedSegment)?.isTemplate == true)
     }
 
@@ -725,6 +726,26 @@ extension ServerLockTests {
         press(rowButtons(table, 1).first { $0.title == "Check Now" })
         await toolsUntil { posts.sent.count == 1 }
         #expect(posts.sent.first?.body == "Sites: \(web.url)/down is down: 503" && monitor.worst(s).state == .critical, "\(posts.sent)")
+    }
+
+    /// Sites is on every saved server: with no addresses its tab says so beside Add Address…, and nothing is checked; a
+    /// server that isn't saved has none — its addresses would have nowhere to be kept.
+    @Test func aSavedServerWithoutAddressesHasASitesTabThatSaysSo() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app)
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        #expect(app.savedServers.first?.sites.isEmpty == true && app.tools.here(.local())?.tools.contains { $0.preset.id == "sites" } == true)
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("sites")
+        let view = try #require(live(page))
+        #expect(view.banner.stringValue.hasPrefix("No addresses yet: add localhost's web addresses") && !view.banner.isHidden && !view.addButton.isHidden, "\(view.banner.stringValue)")
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(app.tools.monitor.tool("sites", on: .local())?.history.last == nil, "nothing to check")
+        closeWindows()
+        app.savedServers = []
+        #expect(app.tools.here(.local())?.tools.contains { $0.preset.id == "sites" } == false, "not saved: no Sites")
     }
 
     /// The channel's interval is its streams' and polls': checks from this Mac every second beside a poll every 3 s

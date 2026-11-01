@@ -156,7 +156,9 @@ import DFMCore
         watchButton.isEnabled = saved
         watchButton.toolTip = saved ? nil : "Save the server to watch it"
         let locked = ServerLock.server(for: target)?.locked == true
-        let (text, color): (String, NSColor) = if let s, s.needsLogin {
+        let (text, color): (String, NSColor) = if p.http != nil, (app.savedServers.first { $0.id == server.id } ?? server).sites.isEmpty {
+            ("No addresses yet: add \(server.title)'s web addresses to check them from this Mac — status, response time, certificate.", NSColor.secondaryLabelColor)
+        } else if let s, s.needsLogin {
             (s.connecting ? "Logging in to \(server.title)…" : "\(server.title) needs login — a key or a saved password would connect without asking. " + (s.error ?? ""), Palette.warn)
         } else if let s, let down = s.down {
             ("Not answering since \(down.formatted(date: .omitted, time: .shortened)) · \(s.missed) checks in a row · last data "

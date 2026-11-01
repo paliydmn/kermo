@@ -137,7 +137,7 @@ extension ServerLockTests {
         up = false
         let calls = bench.calls.count
         let menu = try #require(app.toolsItem(for: t)?.submenu)
-        #expect(menu.items.first?.title.hasPrefix("As of ") == true && menu.items.dropFirst().map(\.title) == ["Banned IPs (fail2ban)", "Server Info", "Firewall (ufw)", "", "Open in Tools Window"])
+        #expect(menu.items.first?.title.hasPrefix("As of ") == true && menu.items.dropFirst().map(\.title) == ["Banned IPs (fail2ban)", "Sites", "Server Info", "Firewall (ufw)", "", "Open in Tools Window"], "\(menu.items.map(\.title))")
         #expect(menu.items.dropLast(2).allSatisfy { !$0.isEnabled } && bench.calls.count == calls, "nothing sent")
     }
 }
