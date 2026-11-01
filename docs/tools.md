@@ -2,13 +2,14 @@
 
 # Tools
 
-A tool turns a program on a server into a list with actions, as [Services…](servers.md#services-and-containers) does for systemd. Kermo comes with five:
+A tool turns a program on a server into a list with actions, as [Services…](servers.md#services-and-containers) does for systemd. Kermo comes with six:
 
 - **Firewall (ufw)**: the rules, what's allowed and what's denied, and from where;
 - **Banned IPs (fail2ban)**: the addresses fail2ban has banned, by jail;
 - **Server Info**: a report of the machine for support, its load now and as it goes, disks, traffic, GPU, the busiest processes;
 - **System**: CPU, memory, disks and traffic, [watched](#watching-a-server) live or in the background;
-- **[Sites](#sites)**: the web addresses you saved with a server, checked from this Mac.
+- **[Sites](#sites)**: the web addresses you saved with a server, checked from this Mac;
+- **Deployments (dpl)**: the units [dpl](https://dpl.cesbo.com) deployed — their state, read from dpl's own files as root — with **Deploy…** (a folder from this Mac, as a [long job](#long-jobs)), **Roll Back…**, Inspect, Logs and their config.
 
 A tool is a JSON file, a *preset*. Kermo has no code for any particular tool: the built-in ones use only what a preset of your own can.
 
@@ -161,11 +162,13 @@ What opens a window or a tab of its own goes there instead of the line: a window
 
 An action marked `long` — a deploy, a backup, an upgrade — runs on the server on its own, and Kermo follows it:
 
-- **It starts and comes back at once.** The line under the list says so ("Deploy: started on web-01 at 14:02 — it runs on there; Activity (⌥⌘J) follows it"), and its row spins while it runs. Starting it again on the same row says it's already running and shows Activity. The tool isn't busy meanwhile: its other actions run.
+- **It starts and comes back at once.** The line under the list says so ("Deploy: started on web-01 at 14:02 — it runs on there; Activity (⌥⌘J) follows it"), and its row spins while it runs; when it's over, its list is read again, as after any change. Starting it again on the same row says it's already running and shows Activity. The tool isn't busy meanwhile: its other actions run.
 - **Activity (⌥⌘J)** has a card for it: its progress (or a spinner) and the last line it printed, **Show** (its output in a window, more as it comes; closing the window stops nothing) and **Stop…**. Once it's over: ✓ or ✕ and how it went, **Retry** (the same action with the same values, asked as any run; a secret is asked again), **Show Log** and ✕. The toolbar's ring and the Dock count it along with copies.
 - **It runs on without Kermo.** When the connection drops, the Mac sleeps or Kermo quits, the job goes on. Its card says "connection lost — the job runs on", or after a relaunch "connect to web-01 to see how it goes"; once a connection to that server is up, Kermo follows it again. It never logs in just for that.
 - **Stop…** asks on production, then stops the job and everything it started (its process group; a root job's through sudo).
 - **When it ends** while Kermo isn't in front, after more than a minute, a macOS notification says how it went; clicking it shows Activity. Kermo asks to send notifications when you start your first long job. If they're off, the Dock's badge and the card tell you instead.
+
+**A folder or a file from this Mac** (a deploy's source): the sheet has **Choose…**, and the question says what goes — a folder that is a git repository as committed (`git archive HEAD`: changes not committed stay on the Mac), any other folder without `.git`, `node_modules` and `.DS_Store`. After the question it's packed (`.tar.gz`) and uploaded through the copy queue, which Activity shows, to `~/.cache/kermo/upload/` on the server; the command gets that path. The job removes it when its command ends; one whose job never started goes a week later.
 
 On the server a long job runs as the login user in a session of its own (`setsid`; perl's or python3's where there's none), with sudo only around its command; a sudo password is checked before the job starts and goes to sudo through a pipe. Its output goes to `~/.cache/kermo/runs/<id>.log` (the folder is the login user's, `0700`), its exit status to `<id>.exit`. A job's files are removed a week after it ended, when the next long job starts on that server. Kermo keeps the jobs it started in `tools/runs.json` on this Mac.
 
@@ -191,7 +194,7 @@ macOS asks whether Kermo may notify the first time you watch a server. If you sa
 - **The same environment on every server:** the command goes to `sh` on its input, never to the login shell, with `LC_ALL=C` (no translated output) and `/usr/sbin` and `/sbin` on the `PATH`.
 - **As root:** a tool that needs root runs through the server's `sudo`, `sudo -n` first. When sudo wants a password, Kermo asks for it as a [root panel](root-panel.md) does; the password goes to sudo on its input, never on a command line, and is shown as `•••` anywhere it could appear.
 - **The production log:** each run on a production server is a line in the [production log](safety.md#production-log): `"action": "tool ufw delete"`, what was sent and its exit status.
-- **Nothing stays on the server** but a long job's log: no other files, nothing installed. A run ends with its connection; only a [long job](#long-jobs) runs on, and its log stays in `~/.cache/kermo/` there for 7 days.
+- **Nothing stays on the server** but a long job's log: no other files, nothing installed. A run ends with its connection; only a [long job](#long-jobs) runs on, and its log stays in `~/.cache/kermo/` there for 7 days; a folder uploaded for it goes when it ends.
 
 ## Your own tools
 
@@ -216,7 +219,7 @@ Each starter works as it is on most Linux servers. It opens in Kermo's editor, n
 Beside the text:
 
 - **Problems**: the file checked as Kermo loads it, as you type — errors (it isn't loaded: an unknown field, a missing script, an `id` that isn't the file's name…) apart from warnings (it loads: a placeholder in quotes, `sudo` without `about`…), each with its line; a click selects that line. A file saved with an error isn't loaded, and **Reload Config** says why too.
-- **Test on** a server **connected now**: runs what the tool runs by itself — its `vars` commands, its check (`requires`, its actions' too), its header, its version, its list — and never one of its actions. It shows whether each check passed, the header line, the version against `tested`, the first rows the list made, their fields, and every line of the output that didn't fit the pattern, with the exit status and stderr of what failed. Test never logs in: connect the server first. Its first run says exactly what will run; on production it asks every time. A list read from files (over SFTP) isn't tested yet.
+- **Test on** a server **connected now**: runs what the tool runs by itself — its `vars` commands, its check (`requires`, its actions' too), its header, its version, its list — and never one of its actions. It shows whether each check passed, the header line, the version against `tested`, the first rows the list made, their fields, and every line of the output that didn't fit the pattern, with the exit status and stderr of what failed. Test never logs in: connect the server first. Its first run says exactly what will run; on production it asks every time. A list made of files is read over SFTP, as the list reads them.
 
 ### Customize a built-in tool
 
@@ -236,11 +239,11 @@ The smallest tool is three fields; it's in **Tools ▸** on every server, and it
 | `tool`, `icon`, `group`, `about` | The program's name ("Firewall (ufw)"); an SF Symbol (`wrench` if this macOS lacks it); a submenu of Tools ▸; one sentence for the overview |
 | `requires` | A command that exits 0 where the tool can run: `command -v ufw`. As the login user, even with `sudo` |
 | `sudo`, `where` | As root through sudo; `server` (default) or `mac` (this Mac's `sh`, never as root) |
-| `list` | `command` or `script`, and how its output becomes rows: `format` (`lines`, `json`, `jsonl`, `tsv`, `csv`, `table`, `regex`, `prometheus` — a record a sample line: `name`, its labels, `value` (a label called `name` or `value` is `label_name`, `label_value`) — or `nagios` — the whole run one record: `status` `ok` · `warn` · `crit` · `unknown` from the exit code, which then never counts as a failure up to 3, `message`, `perf.<label>`), `pattern`, `names`; `key` (what names a row), `title`, `subtitle`, `detail`, `state`, `columns`, `empty` |
+| `list` | `command`, `script` or `files`, and how its output becomes rows — `files`: a path on the server, `*` matching names in a folder (`{base}/state/*/deploy.json`), each file a row read over SFTP, as root through the server's sudo where the tool runs as root; `name` gets the file's folder's name, `also` (`files` and a `pattern` with named groups) adds fields from another file each row names (`{base}/conf/{unit}.yaml`) — `format` (`lines`, `json`, `jsonl`, `tsv`, `csv`, `table`, `regex`, `prometheus` — a record a sample line: `name`, its labels, `value` (a label called `name` or `value` is `label_name`, `label_value`) — or `nagios` — the whole run one record: `status` `ok` · `warn` · `crit` · `unknown` from the exit code, which then never counts as a failure up to 3, `message`, `perf.<label>`), `pattern`, `names`; `key` (what names a row), `title`, `subtitle`, `detail`, `state`, `columns`, `empty` |
 | `header` | A command whose first line shows above the list |
 | `actions`, `toolActions` | A row's actions and the tool's: `id`, `title`, `key` (`return`, `f8`, `cmd+e`…), `command` or `script`, `readonly` (a look), `dangerous` (can't be undone), `confirm` (asks everywhere), `message` (what the question says), `verify`, `multi` (on marked rows too), `refresh`, `only` (offered only on rows whose field has one of these values: `{ "kind": ["app"] }`), `output` (`line`, `window`, `follow`, `terminal`, `silent`, or `list`: rows one level down, read by the action's own `list` with its `actions` — without a `list` of its own it repeats the level it's on), `strip: "cri"`, `edit` (a server path for the editor), `open` (a server path shown in the active panel — `{stdout}` is the command's first line of output), `goto` (a place in Kermo: `services:{unit}`, `containers:{name}`, `ssh`), `done`, `save` (the name ⌘S offers for a window's output: `{server}-report.txt`). A tool with `toolActions` and no `list` lists its actions as its rows, as Server Info does |
 | `long`, `progress`, `format` | `long: true`: a [long job](#long-jobs), on the server only. `progress` reads each line it prints: `{ "pattern": "(?<percent>\\d+)%" }` for text, `{ "percent": "pct" }` or `{ "fraction": "percent_done" }` for a JSON line, with `text` (a template of the line's fields) for its card; without it, a spinner and the last line. `format` (`jsonl`, `json`…): the last record of its output gives `done` its fields — `"done": "Backed up {files_new} files"` |
-| `inputs` | An action's sheet: `name`, `type` (`text`, `secret`, `choice`, `choice-from`), `title`, `placeholder`, `default`, `pattern`, `optional`, `options`; a `choice-from` has a `command` and a `key` (`{line}`) |
+| `inputs` | An action's sheet: `name`, `type` (`text`, `secret`, `choice`, `choice-from`, and for a long action `folder` or `file` on this Mac — see [Long jobs](#long-jobs)), `title`, `placeholder`, `default`, `pattern`, `optional`, `options`, `remember` (a folder or a file: the last one chosen on that server and row fills the sheet); a `choice-from` has a `command` and a `key` (`{line}`) |
 | `primary` | The tool action on the ＋ button |
 | `version` | `command`, `pattern` with a group `v`, `tested` (`>=0.36 <0.37`) |
 | `vars` | Values per server, `{name}` in commands: `title`, `default`, `placeholder`, `pattern`, and one source — `command` (its first line, read once per connection) or `"ask": true` (asked on a saved server, kept in `tools/servers.json`; see [Where a tool is used](#where-a-tool-is-used)) |

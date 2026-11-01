@@ -239,6 +239,7 @@ struct ToolJob: Codable, Equatable {
             let text = NSAttributedString(string: line, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor])
             list.said(text, about: j.rowID, failed: !j.ok, output: nil)
         }
+        reread(j.rowID, on: j.target)
         Task {
             let allowed = await Self.notices.allowed()
             switch Self.notice(took: took, front: front, allowed: allowed) {
@@ -252,6 +253,20 @@ struct ToolJob: Codable, Equatable {
             changed()
         }
         changed()
+    }
+
+    /// The lists that have the job's row, read again now it's over, as a change's are — the cursor staying on its row —
+    /// where the server needs no Touch ID now, and not a level whose own read changes something (`relister`).
+    private func reread(_ rowID: String, on t: SFTPTarget) {
+        guard !ServerLock.needsUnlock(t) else { return }
+        let env = SSHAskpass.env
+        for list in app.rowLists(rowID) {
+            guard let source = ((list as? ListPanel)?.source ?? (list as? Picker)?.source) as? ToolListSource, let lister = source.relister else { continue }
+            Task {
+                guard let read = try? await Blocking.run(.default, { try lister.read(env, CancelFlag()) }) else { return }
+                list.reload(source.show(read), having: rowID)
+            }
+        }
     }
 
     /// The action's `done` (§6.1) with the form's values, the row's fields, Kermo's names and — with `format` — the last

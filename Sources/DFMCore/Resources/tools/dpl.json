@@ -53,11 +53,11 @@
       "command": "dpl check {unit} && dpl deploy {unit} {archive}",
       "inputs": [ { "name": "archive", "type": "folder", "title": "Folder on this Mac", "remember": true } ],
       "message": "Strategy: {strategy}. With parallel the old version serves until the new one is ready; with replace the app is down while the new one starts.",
-      "output": "window", "done": "{unit}: v{active_version} deployed" },
+      "output": "window", "done": "{unit} deployed" },
     { "id": "rollback", "title": "Roll Back…", "key": "cmd+z", "only": { "kind": ["app"] }, "long": true,
       "command": "dpl rollback {unit}", "confirm": true,
       "message": "{unit} goes back to the version before v{active_version}, without a build. dpl keeps one earlier version. The database is not rolled back: if v{active_version} changed its schema, the earlier version may not start.",
-      "output": "window", "done": "{unit}: v{source_version} serves again (as v{active_version})" },
+      "output": "window", "done": "{unit} rolled back" },
     { "id": "undeploy", "title": "Undeploy…", "key": "f8", "command": "dpl undeploy {unit}", "dangerous": true, "verify": true,
       "message": "{unit} stops serving. Its config, volumes and database stay.", "output": "line", "done": "{unit} undeployed" }
   ],

@@ -162,6 +162,33 @@ extension ServerLockTests {
         #expect(folder.said == "Uploads \(src) first, without .git, node_modules and .DS_Store.")
     }
 
+    /// A long job on a list's row: once it's over the list is read again, as after any change — the row shows what the
+    /// job left, with no Refresh.
+    @Test func aListIsReadAgainWhenItsJobEnds() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let lb = try LongBench(app)
+        defer { lb.done(); done() }
+        let home = lb.bench.dir
+        try Data("api old\n".utf8).write(to: URL(fileURLWithPath: home + "/units"))
+        try Data(#"""
+            { "schema": 1, "id": "units", "title": "Units",
+              "list": { "command": "cat \"$HOME/units\"", "format": "regex", "pattern": "^(?<unit>\\S+) (?<v>\\S+)$", "key": "{unit}", "title": "{unit}", "subtitle": "{v}" },
+              "actions": [ { "id": "bump", "title": "Bump", "key": "f5", "long": true, "output": "line", "command": "sleep 1; echo \"{unit} new\" > \"$HOME/units\"" } ] }
+            """#.utf8).write(to: URL(fileURLWithPath: home + "/own/units.json"))
+        _ = app.tools.reload()
+        app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == "units" }))
+        let source = ToolListSource(app, try toolNamed(app, "units"), SavedServer(target: .local()), .local())
+        _ = try await source.read(CancelFlag())
+        a.showList(source)
+        let l = try #require(a.list)
+        #expect(l.shown.map(\.subtitle) == ["old"])
+        await l.shown.first?.listActions?().first { $0.title == "Bump" }?.run(false)?.value
+        let jobs = app.tools.jobs, j = try #require(jobs.jobs.first)
+        await toolsUntil { jobs.job(j.id)?.running == false }
+        await toolsUntil { l.shown.first?.subtitle == "new" }
+        #expect(l.shown.map(\.subtitle) == ["new"] && jobs.job(j.id)?.exit == 0, "\(l.shown.map(\.subtitle))")
+    }
+
     /// One at a time on a row: a second Deploy says it runs and shows Activity. Stop… ends it (exit 143, "stopped");
     /// Retry runs it again with the form filled in as before.
     @Test func stopRetryAndAlreadyRunning() async throws {
