@@ -32,11 +32,12 @@ enum SudoServer {
     /// The sftp-server to run on `t`'s server, the password its sudo took if it wants one, and whether SELinux is on there.
     /// A server where it runs without a password is looked at once; a password is never sent unless `sudo -n` refused
     /// for want of one just now.
+    /// `env` with `SFTP.quiet` set (watching's): never a password — a sudo that wants one says so instead.
     static func prepare(_ t: SFTPTarget, env: [String: String], cancel: CancelFlag?) throws -> (path: String, password: String?, selinux: Bool) {
         if let k = lock.withLock({ known[key(t)] }) { return (k.path, nil, k.selinux) }
         var out = Data()
         let (status, errors) = try SSHCommand.run(t, probe(t), env: env, cancel: cancel, options: ["-x", "-a"]) { out += $0 }   // as the session: no agent
-        let path = try check(t, out, status, errors, asking: SFTP.sudoPassword != nil)
+        let path = try check(t, out, status, errors, asking: SFTP.sudoPassword != nil && env[SFTP.quiet] == nil)
         let selinux = String(decoding: out, as: UTF8.self).split(whereSeparator: \.isNewline).contains("kermo-selinux")
         guard status != 0 else {
             lock.withLock { known[key(t)] = (path, selinux) }

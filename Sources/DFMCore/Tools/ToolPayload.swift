@@ -258,21 +258,23 @@ extension ToolPayload {
 }
 
 extension ToolPayload {
-    /// A watched source of a server (§8.5): a stream's Run, or a poll's run again every `every` seconds.
+    /// A watched source of a server (§8.5): a stream's Run, or a poll's run again every `every` seconds. `tag`: what
+    /// its lines start with — the tool's id, or another for a second source of one tool (its list's poll).
     public struct Watched: Sendable {
         public var tool: ToolPreset
         public var run: ToolRun
         public var every: Double?
         public var scope: ToolTemplate.Scope
         public var scripts: [String: String]
-        public init(tool: ToolPreset, run: ToolRun, every: Double?, scope: ToolTemplate.Scope, scripts: [String: String]) {
-            (self.tool, self.run, self.every, self.scope, self.scripts) = (tool, run, every, scope, scripts)
+        public var tag: String
+        public init(tool: ToolPreset, run: ToolRun, every: Double?, scope: ToolTemplate.Scope, scripts: [String: String], tag: String? = nil) {
+            (self.tool, self.run, self.every, self.scope, self.scripts, self.tag) = (tool, run, every, scope, scripts, tag ?? tool.id)
         }
     }
 
     /// A server's watched streams and polls in one channel (§8.5): each in a subshell of its own — its values and env
     /// set inside it, a poll's command run again every `every` seconds — all at once, its lines each prefixed with
-    /// the tool's id and a tab (`watchLine` takes them apart); the payload ends when the last of them does, or with
+    /// its `tag` and a tab (`watchLine` takes them apart); the payload ends when the last of them does, or with
     /// the connection, as any payload's. nil where they can't share one: `sudo` differs, or a source is this Mac's.
     /// ponytail: a line over PIPE_BUF (4 KB) may interleave with another source's; an unparsed line is a missed sample.
     public static func watch(_ sources: [Watched], password: Bool = false, nonce: String = newNonce(), sudoProgram: String = "sudo",
@@ -297,7 +299,7 @@ extension ToolPayload {
             // A poll's run in a subshell of its own, then its exit code on a line that ends it (each run one sample);
             // never `sleep 0`: the schema wants a second or more.
             let inner = s.every.map { "while :; do\n(\n\(text)\n)\nprintf '\(ranMark)%s\\n' $?\nsleep \(max(1, Int($0)))\ndone" } ?? text
-            body.append("(\n\(lines.joined(separator: "\n"))\n\(inner)\n) | while IFS= read -r l; do printf '%s\\t%s\\n' \(ShellContext.quote(s.tool.id)) \"$l\"; done &")
+            body.append("(\n\(lines.joined(separator: "\n"))\n\(inner)\n) | while IFS= read -r l; do printf '%s\\t%s\\n' \(ShellContext.quote(s.tag)) \"$l\"; done &")
         }
         body.append("wait")
         return ToolPayload(body: body.joined(separator: "\n"), values: [], sudo: sudo.first! ? (password ? .password : .noPassword) : .none, nonce: nonce,

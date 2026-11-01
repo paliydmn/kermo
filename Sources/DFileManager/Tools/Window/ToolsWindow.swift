@@ -54,6 +54,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
             w.sidebar.selectRowIndexes([i], byExtendingSelection: false)
         }
         w.window.makeKeyAndOrderFront(nil)
+        app.tools.monitor.reconcile()   // a page drawn before its window showed: its live tab starts now
         return w
     }
 
@@ -63,6 +64,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         let w = alone.first { $0.page.map { ServerRow.key($0.target) == ServerRow.key(t.asUser) } == true } ?? ToolsWindow(app, alone: (s, t))
         if !alone.contains(where: { $0 === w }) { alone.append(w) }
         w.window.makeKeyAndOrderFront(nil)
+        app.tools.monitor.reconcile()
         return w
     }
 

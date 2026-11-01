@@ -29,11 +29,12 @@ public struct ToolSlots: Sendable {
 
     public static func slot(_ at: Date) -> Double { floor(at.timeIntervalSince1970 / length) * length }
 
-    /// A sample's `values` (by metric) at `at` into the slot; the slot before it, if `at` is past it.
-    public mutating func add(_ values: [String: ToolValues], at: Date) -> [Line] {
+    /// A sample's `values` (by metric) at `at` into the slot; the slot before it, if `at` is past it. `ends`: it ends
+    /// the gap written last — a second source's sample (a list read beside a silent stream) doesn't.
+    public mutating func add(_ values: [String: ToolValues], at: Date, ends: Bool = true) -> [Line] {
         let slot = Self.slot(at), done = start.map { $0 != slot } == true ? flush() : []
         start = slot
-        gapped = nil
+        if ends { gapped = nil }
         for (metric, keys) in values {
             for (key, v) in keys {
                 let a = sums[metric]?[key] ?? (v, 0, 0, v)
