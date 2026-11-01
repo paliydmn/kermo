@@ -366,13 +366,13 @@ final class ToolRunner {
 
         let output = a.spec.output ?? (a.spec.edit != nil && a.run.command == nil && a.run.script == nil ? nil : .line)
         if output != .line && output != .silent {   // a window, a log, a terminal, the editor: theirs to show
-            let over = app.rowLists(id).first?.sheetWindow   // a Tools window's button: its question over that window
+            let lists = app.rowLists(id)   // a Tools window's button: its question over that window, what stopped it on its page
             return Task {
                 defer { if !readonly { changing[key] = nil } }
                 let panel = app.active
-                let r = await ready(a, of: tool, rowScope, row: rowTitle, on: t, asked: asked, window: over, values: values)
+                let r = await ready(a, of: tool, rowScope, row: rowTitle, on: t, asked: asked, window: lists.first?.sheetWindow, values: values)
                 guard case let .go(scope, secret, _, payload) = r else {
-                    if case .stop(let why) = r { panel.flash("\(verb): \(why) — nothing ran", error: why != "cancelled") }
+                    if case .stop(let why) = r { say("\(verb): \(why) — nothing ran", to: lists, about: id, failed: why != "cancelled") }
                     return
                 }
                 switch output {
@@ -395,7 +395,7 @@ final class ToolRunner {
                         OutputWindow.show(payload.mask(ran.text, password: ran.password), errors: ran.stopped ?? ran.errors, title: "\(verb) — \(place)",
                                           status: ran.status, ok: ran.stopped == nil && a.run.succeeded(ran.status), save: a.spec.save.map { ToolTemplate.text($0, scope) })
                     case .failure(is CancellationError): break
-                    case .failure(is ToolExec.NoPassword): panel.flash("\(verb): no sudo password — nothing ran")
+                    case .failure(is ToolExec.NoPassword): say("\(verb): no sudo password — nothing ran", to: lists, about: id, failed: false)
                     case .failure(let e): app.showError(e)
                     }
                 default:   // `edit`: the file in the editor, as root if the tool is — history, checks and production as any file's
@@ -459,11 +459,7 @@ final class ToolRunner {
                           values: [String: String]?, timeout: Double, place: String) async {
         let p = tool.preset, verb = (a.spec.title ?? a.spec.id).replacingOccurrences(of: "…", with: ""), panel = app.active
         let lists = app.rowLists(id)
-        func tell(_ text: String, failed: Bool) {
-            guard !lists.isEmpty else { return panel.flash(text, error: failed) }
-            let said = NSAttributedString(string: text, attributes: [.foregroundColor: failed ? Palette.fail : NSColor.labelColor, .font: NSFont.systemFont(ofSize: 12)])
-            lists.forEach { $0.said(said, about: id, failed: failed, output: nil) }
-        }
+        func tell(_ text: String, failed: Bool) { say(text, to: lists, about: id, failed: failed) }
         let r = await ready(a, of: tool, scope, row: row, on: t, asked: asked, window: lists.first?.sheetWindow, values: values)
         let facts = answer(t)?.answer.facts, when = Date().formatted(date: .omitted, time: .shortened)
         guard case .go(let scope, let secret, _, let payload) = r else {
@@ -489,6 +485,14 @@ final class ToolRunner {
         guard path.hasPrefix("/"), ToolTemplate.refusal(path) == nil else { return tell("\(verb): “\(path)” isn't a path on \(place)", failed: true) }
         tell("\(verb): \(path) in the panel", failed: false)
         Self.reveal(app, t, path)
+    }
+
+    /// What stopped a run, or how it went, said where it was pressed — each list or page with its row — else in the
+    /// active panel.
+    private func say(_ text: String, to lists: [any RowList], about id: String, failed: Bool) {
+        guard !lists.isEmpty else { return app.active.flash(text, error: failed) }
+        let said = NSAttributedString(string: text, attributes: [.foregroundColor: failed ? Palette.fail : NSColor.labelColor, .font: NSFont.systemFont(ofSize: 12)])
+        lists.forEach { $0.said(said, about: id, failed: failed, output: nil) }
     }
 
     /// A long job (§7.6): asked as any run, then started on the server — the start comes back at once — and Activity's

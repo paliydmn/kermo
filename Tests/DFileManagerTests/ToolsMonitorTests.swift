@@ -746,6 +746,9 @@ extension ServerLockTests {
         closeWindows()
         app.savedServers = []
         #expect(app.tools.here(.local())?.tools.contains { $0.preset.id == "sites" } == false, "not saved: no Sites")
+        ToolsWindow.show(app, server: .local())
+        let add = try #require(ToolsWindow.main?.page?.addMenu().items.first { $0.title.hasPrefix("Sites") })
+        #expect(add.title == "Sites — save the server to use it here" && !add.isEnabled, "\(add.title)")
     }
 
     /// The channel's interval is its streams' and polls': checks from this Mac every second beside a poll every 3 s
