@@ -2,7 +2,8 @@ import Foundation
 import DFMCore
 
 /// What a restart brings back (`panelSession` in defaults): each panel's tabs, a server tab as its server and folder
-/// (shown not connected till ↩: `PanelViewController.parked`), the cursor by name, the active panel and the dividers.
+/// (shown not connected till ↩: `PanelViewController.parked`), the cursor by name, the active panel and the dividers;
+/// the Tools windows that were open.
 struct Session: Codable, Equatable {
     struct Tab: Codable, Equatable {
         var path: String   // the local folder; a server tab goes back to it when it leaves the server
@@ -22,6 +23,15 @@ struct Session: Codable, Equatable {
     var active = 0
     /// Each divider's place, a fraction of the panels' width.
     var dividers: [Double] = []
+    /// An open Tools window: whose page — a saved server's id; none, the library's — its tab, its frame; `alone`: a
+    /// server's page in a window of its own (`ToolsWindow.restore`).
+    struct Tools: Codable, Equatable {
+        var server: String?
+        var tab: String?
+        var frame: String
+        var alone: Bool?
+    }
+    var tools: [Tools]? = nil
 
     /// The saved one; before it, `panelTabs` / `panelTabIndex` (local folders only), before them `panelPaths`. An older
     /// Kermo run since writes only those: then they're newer, and they win.

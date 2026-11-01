@@ -4,8 +4,8 @@ import DFMCore
 /// The Tools window (Tools PR 4, monitor §9): a sidebar of your servers — each a page of its tools (`ToolsPage`) — and
 /// the library: the tools built into Kermo and yours, each with its page (`ToolsTool`), and New Tool…. A server's page
 /// can be a window of its own (Open in New Window), several at once. WATCHED (PR 5, decisions 6 and 21): the servers
-/// watched in the background, problems first, each with its tools' summary; the rest under OTHER SERVERS.
-/// ponytail: nothing reopens after a restart (D-159).
+/// watched in the background, problems first, each with its tools' summary; the rest under OTHER SERVERS. The windows
+/// open at quit come back after a restart (`Session.tools`).
 @MainActor
 final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
     /// The Tools window; and servers' pages in windows of their own.
@@ -310,6 +310,38 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         l.lineBreakMode = .byTruncatingTail
         l.setContentCompressionResistancePriority(.init(250), for: .horizontal)
         return l
+    }
+
+    // MARK: After a restart
+
+    /// The windows open now, each on its saved server's page and tab, with its frame — a server not saved has nothing
+    /// to be found by after a restart: its window alone isn't kept, the Tools window is, on no page.
+    static func saved(_ app: AppDelegate) -> [Session.Tools] {
+        ([main].compactMap { $0 } + alone).compactMap { w in
+            let id = w.page.flatMap { app.savedServer(at: $0.target)?.id.uuidString }
+            if w.isAlone, id == nil { return nil }
+            return Session.Tools(server: id, tab: id == nil ? nil : w.page?.tab, frame: NSStringFromRect(w.window.frame), alone: w.isAlone ? true : nil)
+        }
+    }
+
+    /// Back as they were left — not connected: a page that isn't says Connect (§10.5), a watched tab draws by itself.
+    /// A server no longer saved is left out.
+    /// ponytail: the library's own pages (a tool's, New Tool…) come back as the Tools window on its first row.
+    static func restore(_ app: AppDelegate, _ saved: [Session.Tools]) {
+        for s in saved {
+            let server = s.server.flatMap { id in app.savedServers.first { $0.id.uuidString == id } }
+            if s.server != nil, server == nil { continue }
+            let w: ToolsWindow?
+            if s.alone == true, let server {
+                showAlone(app, server, server.target)
+                w = alone.first { $0.page.map { ServerRow.key($0.target) == ServerRow.key(server.target) } == true }
+            } else {
+                show(app, server: server?.target)
+                w = main
+            }
+            if let tab = s.tab { w?.page?.select(tab) }
+            w?.window.setFrame(NSRectFromString(s.frame), display: false)
+        }
     }
 
     // MARK: The window

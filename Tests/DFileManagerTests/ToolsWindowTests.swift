@@ -62,6 +62,40 @@ extension ServerLockTests {
         #expect(buttons(page.body).map(\.title).prefix(3) == ["Full Report", "CPU · RAM Now", "Live Load"])
     }
 
+    /// After a restart the Tools windows open at quit come back (`Session.tools`), each on its saved server's page and
+    /// tab, in its frame — not connected: nothing is sent to draw them. One whose server is no longer saved is left
+    /// out, and a session saved before there were any reads as none.
+    @Test func toolsWindowsComeBackAfterARestart() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { closeToolsWindows(); bench.done(); done(); app.savedServers = [] }
+        let here = SavedServer(address: "localhost")!, gone = SavedServer(address: "web-01")!
+        app.savedServers = [here, gone]
+        AppDelegate.connected = { $0.host == "localhost" }
+        _ = app.tools.answer(.local())   // what it has, known: its tabs
+        await toolsUntil { app.tools.answers[ServerRow.key(.local())] != nil }
+        AppDelegate.connected = { _ in false }
+        ToolsWindow.show(app, server: .local())
+        let main = try #require(ToolsWindow.main)
+        main.page?.select("ufw")
+        main.window.setFrame(NSRect(x: 120, y: 140, width: 960, height: 600), display: false)
+        ToolsWindow.showAlone(app, gone, gone.target)
+        let saved = ToolsWindow.saved(app)
+        #expect(saved.map(\.server) == [here.id.uuidString, gone.id.uuidString] && saved.map(\.tab) == ["ufw", nil] && saved.map(\.alone) == [nil, true], "\(saved)")
+        let data = try JSONEncoder().encode(Session(panels: [], tools: saved))
+        #expect(try JSONDecoder().decode(Session.self, from: data).tools == saved)
+        #expect(try JSONDecoder().decode(Session.self, from: Data(#"{"panels":[],"active":0,"dividers":[]}"#.utf8)).tools == nil, "an older session: none")
+
+        closeToolsWindows()
+        app.savedServers = [here]   // web-01 deleted meanwhile
+        let trips = bench.trips
+        ToolsWindow.restore(app, saved)
+        let back = try #require(ToolsWindow.main)
+        #expect(back !== main && back.page.map { ServerRow.key($0.target) } == ServerRow.key(here.target) && back.page?.tab == "ufw")
+        #expect(back.window.frame == NSRect(x: 120, y: 140, width: 960, height: 600) && ToolsWindow.alone.isEmpty, "\(back.window.frame) \(ToolsWindow.alone.count)")
+        #expect(bench.trips == trips && buttons(back.page!.body).map(\.title) == ["Connect"], "not connected: nothing sent")
+    }
+
     /// A launcher's button goes the way its row does: on production the question, then the run, the line under the
     /// buttons saying how it went — the page is the list it's said on, and the question's window is the page's. A
     /// `readonly` one asks nothing. What stops one with a window before it runs — Touch ID refused — is said there too.
