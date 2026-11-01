@@ -170,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         applySidebarRule()
         setUpSidebar()
         setUpSearch()
+        ToolsWindow.restore(self, session.tools ?? [])   // behind the main window, nothing connected for them
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(active.table)
         updatePanelStates()
@@ -517,7 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     var session: Session {
         let w = split?.bounds.width ?? 0
         return Session(panels: panels.map { Session.Panel(tabs: $0.sessionTabs, index: $0.tabIndex) }, active: activeIndex,
-                       dividers: w > 0 ? panels.dropLast().map { Double($0.view.frame.maxX / w) } : [])
+                       dividers: w > 0 ? panels.dropLast().map { Double($0.view.frame.maxX / w) } : [], tools: ToolsWindow.saved(self))
     }
 
     /// Something watched: Kermo stays in the menu bar (decision 2).

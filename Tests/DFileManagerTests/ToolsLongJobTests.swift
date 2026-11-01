@@ -85,6 +85,7 @@ extension ServerLockTests {
         #expect(lb.ops.toolbarItem.toolTip?.contains("1 running") == true, "\(lb.ops.toolbarItem.toolTip ?? "")")
         #expect(lb.asked == 1, "the first long job asks for notifications")
         let file = lb.bench.dir + "/own/runs.json"
+        await toolsUntil { FileManager.default.fileExists(atPath: file) }   // written off the main thread (`Config.writes`)
         #expect((try FileManager.default.attributesOfItem(atPath: file)[.posixPermissions] as? Int) == 0o600)
 
         await toolsUntil { jobs.state(j.id)?.fraction == 0.5 }
