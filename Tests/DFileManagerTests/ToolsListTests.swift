@@ -137,6 +137,24 @@ let toolsF8 = String(Character(UnicodeScalar(NSF8FunctionKey)!))
 
 @MainActor func toolNamed(_ app: AppDelegate, _ id: String) throws -> LoadedTool { try #require(app.tools.tools.first { $0.preset.id == id }) }
 
+/// A list's columns in a narrow panel give way from the right, and come back as it widens — though the last one shown
+/// stretched to the edge meanwhile (dpl's six columns never came back).
+@MainActor @Test func aListsColumnsComeBackInAWiderPanel() throws {
+    final class Six: ListSource {
+        let title = "Six", target = SFTPTarget.local(), content: ListContent? = nil
+        let columns = (0..<6).map { ListColumn(title: "c\($0)", field: .title, width: 120) }
+        func read(_ cancel: CancelFlag) async throws -> ListContent { ListContent(rows: []) }
+    }
+    let table = NSTableView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+    let list = ListPanel(Six())
+    list.attach(to: table)
+    list.fit(250)
+    #expect(table.tableColumns.map(\.isHidden) == [false, false, true, true, true, true])
+    table.tableColumns[1].width = 372   // stretched to the edge of a 495-point panel, as the last one shown
+    list.fit(900)
+    #expect(table.tableColumns.allSatisfy { !$0.isHidden }, "\(table.tableColumns.map(\.isHidden))")
+}
+
 /// Why a list's read failed (nil: it didn't).
 @MainActor func failure(of s: ToolListSource) async -> ToolListSource.Failed? {
     do { _ = try await s.read(CancelFlag()); return nil } catch { return error as? ToolListSource.Failed }

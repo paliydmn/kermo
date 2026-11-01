@@ -228,12 +228,14 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         (self.table, before) = (nil, nil)
     }
 
-    /// A narrow panel: columns from the right give way (the first two never), as the files' Modified and Size do.
+    /// A narrow panel: columns from the right give way (the first two never), as the files' Modified and Size do. By
+    /// their own widths, not as drawn: the last one shown stretches to the edge, and would keep the rest out once wider.
     func fit(_ width: CGFloat) {
         guard let table else { return }
-        var room = width - (table.tableColumns.first?.width ?? 0)
+        let widths = source.columns.map(\.width)
+        var room = width - (widths.first ?? 0)
         for (i, col) in table.tableColumns.enumerated().dropFirst() {
-            let need = (i == table.tableColumns.count - 1 ? 60 : col.width) + table.intercellSpacing.width
+            let need = (i == table.tableColumns.count - 1 ? 60 : widths.indices.contains(i) ? widths[i] : col.width) + table.intercellSpacing.width
             room -= need
             let hide = i > 1 && room < 0
             if col.isHidden != hide { col.isHidden = hide }
