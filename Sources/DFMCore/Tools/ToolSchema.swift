@@ -426,6 +426,8 @@ extension ToolSchema.Check {
                 } else if !input.run.sources.isEmpty { error(ip, "only a choice-from input runs a command for its choices") }
                 if input.info.type == .choice, (input.info.options ?? []).isEmpty { error(ip, "a choice needs options") }
                 if input.info.type == .secret, s.output == .terminal { error(ip, "a secret can't go to a terminal: it has no stdin of Kermo's") }
+                if input.uploads, s.long != true { error(ip + [.key("type")], "a folder or a file is uploaded first: only a long action takes one") }
+                if input.info.remember == true, !input.uploads { error(ip + [.key("remember")], "only a folder or a file is remembered") }
                 if ToolTemplate.kermoNames.contains(input.info.name) { warn(ip + [.key("name")], "“\(input.info.name)” hides Kermo's own {\(input.info.name)}") }
             }
             if s.readonly == true, let words = ToolSchema.destructive(a.run.command?.all ?? []) {

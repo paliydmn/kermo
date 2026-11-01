@@ -193,6 +193,8 @@ public struct ToolServers: Sendable, Codable, Hashable {
         public var muted: [String]?
         /// Your thresholds on this server, over those for all servers.
         public var alerts: [String: Threshold]?
+        /// The last folder or file chosen for an input that says `remember` (§7.4): row (`""`: none) → input → path on this Mac.
+        public var remembered: [String: [String: String]]?
         public init(hidden: Bool? = nil, vars: [String: String]? = nil, watch: Bool? = nil, muted: [String]? = nil, alerts: [String: Threshold]? = nil) {
             (self.hidden, self.vars, self.watch, self.muted, self.alerts) = (hidden, vars, watch, muted, alerts)
         }
@@ -233,6 +235,14 @@ public struct ToolServers: Sendable, Codable, Hashable {
 
     public mutating func setVars(_ tool: String, on id: String, _ values: [String: String]) {
         edit(tool, id) { $0.vars = values.isEmpty ? nil : values }
+    }
+
+    /// The folders and files last chosen for `tool`'s inputs on the server `id`, on `row`.
+    public func remembered(_ tool: String, on id: String?, row: String?) -> [String: String] { id.flatMap { servers[$0]?[tool]?.remembered?[row ?? ""] } ?? [:] }
+
+    public mutating func remember(_ tool: String, on id: String, row: String?, _ values: [String: String]) {
+        guard !values.isEmpty else { return }
+        edit(tool, id) { $0.remembered = ($0.remembered ?? [:]).merging([row ?? "": values]) { old, new in old.merging(new) { $1 } } }
     }
 
     /// Whether `tool` is watched on the server `id`.

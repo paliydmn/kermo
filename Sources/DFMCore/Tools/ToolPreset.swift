@@ -421,6 +421,11 @@ public struct ToolInput: Sendable, Hashable, Codable {
     public func encode(to e: Encoder) throws { try info.encode(to: e); try run.encode(to: e); try parse.encode(to: e) }
 }
 
+extension ToolInput {
+    /// A folder or a file on this Mac, uploaded before its long job (§7.4).
+    public var uploads: Bool { [.folder, .file].contains(info.type) }
+}
+
 /// An action (§7), on a row or (in `toolActions`) on the tool.
 public struct ToolAction: Sendable, Hashable, Codable {
     public var run: ToolRun

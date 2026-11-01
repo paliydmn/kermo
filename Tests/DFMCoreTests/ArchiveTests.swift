@@ -82,6 +82,30 @@ private func read(_ path: String) -> String? {
     }
 }
 
+/// A folder as a Tools `folder` input sends it: a repository as committed (`git archive HEAD`), else the folder without
+/// `.git`, `node_modules` and `.DS_Store` — anywhere in it — nor AppleDouble files.
+@Test func aFolderPackedForUpload() throws {
+    let root = sampleTree()
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    for junk in ["proj/.DS_Store", "proj/sub/.DS_Store", "proj/node_modules/x/y.js", "proj/sub/node_modules/z.js", "proj/sub/.git/HEAD"] {
+        try FileManager.default.createDirectory(atPath: (root + "/" + junk as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: URL(fileURLWithPath: root + "/" + junk))
+    }
+    sh("xattr -w com.example.test 1 proj/a.txt", in: root)
+    try ArchiveIndex.pack(root + "/proj", to: root + "/plain.tar.gz")
+    let plain = try ArchiveIndex.read(root + "/plain.tar.gz")
+    #expect(names(plain.list("")) == ["a.txt", "sub"] && names(plain.list("sub")) == ["b.txt", "deep"], "\(names(plain.list("")))")
+
+    sh("git init -q && git add a.txt sub/b.txt && git -c user.name=t -c user.email=t@example.com commit -qm one && echo changed > a.txt", in: root + "/proj")
+    try ArchiveIndex.pack(root + "/proj", to: root + "/repo.tar.gz")
+    let repo = try ArchiveIndex.read(root + "/repo.tar.gz")
+    #expect(names(repo.list("")) == ["a.txt", "sub"] && names(repo.list("sub")) == ["b.txt"], "committed files only")
+    let a = root + "/out"
+    try FileManager.default.createDirectory(atPath: a, withIntermediateDirectories: true)
+    sh("tar -xzf ../repo.tar.gz", in: a)
+    #expect(read(a + "/a.txt") == "A", "as committed, not as changed since")
+}
+
 @Test func archiveDetectionAndUnsafePaths() throws {
     #expect(ArchiveIndex.isArchive("backup.TAR.GZ") && ArchiveIndex.isArchive("a.zip") && ArchiveIndex.isArchive("x.7z"))
     #expect(!ArchiveIndex.isArchive("notes.txt") && !ArchiveIndex.isArchive("log.gz"))

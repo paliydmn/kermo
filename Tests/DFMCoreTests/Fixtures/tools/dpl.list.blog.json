@@ -1,9 +1,9 @@
 {
-  "updated_at": "2026-10-29T10:09:55Z",
+  "updated_at": "2026-11-01T12:46:03.542017080Z",
   "kind": "app",
-  "active_version": 6,
-  "last_version": 6,
-  "source_version": 5,
+  "active_version": 3,
+  "last_version": 3,
   "last_status": "ready",
-  "supervised": true
+  "supervised": true,
+  "source_version": 1
 }

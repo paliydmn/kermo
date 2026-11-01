@@ -309,10 +309,14 @@ final class ToolEditor: NSView, NSTextViewDelegate, NSMenuDelegate {
             }
         }
         if let list = p.list {
-            if list.run.files != nil {
-                out.append((.plain, "list: files are read over SFTP — not in Test yet"))
-            } else if let ran = run("list", list.run, 30, format: list.parse.format) {
-                let records = list.parse.records(ran.out, exit: ran.status), now = Date().addingTimeInterval(ran.skew ?? 0)
+            var ran: ToolExec.Ran?, records: ToolRecords?
+            if list.run.files != nil {   // over SFTP, as the list reads them
+                do { records = try ToolExec.files(list, of: p, scope, on: t, env: env, cancel: cancel) } catch { out.append((.fail, "list: \(error.localizedDescription)")) }
+            } else if let r = run("list", list.run, 30, format: list.parse.format) {
+                (ran, records) = (r, list.parse.records(r.out, exit: r.status))
+            }
+            if let records {
+                let now = Date().addingTimeInterval(ran?.skew ?? 0)
                 out.append((records.matched ? .ok : .fail, "list: " + records.summary))
                 for r in records.rows.prefix(20) {
                     let row = list.view.row(r, scope, now: now)
@@ -324,7 +328,7 @@ final class ToolEditor: NSView, NSTextViewDelegate, NSMenuDelegate {
                     out.append((.warn, "\(records.unmatched.count) \(records.unmatched.count == 1 ? "line" : "lines") didn't fit:"))
                     out += records.unmatched.prefix(10).map { (.plain, "  " + String($0.prefix(300))) }
                 }
-                if !ran.errors.isEmpty { out.append((.warn, "stderr: " + first(ran.errors))) }
+                if let errors = ran?.errors, !errors.isEmpty { out.append((.warn, "stderr: " + first(errors))) }
             }
         }
         return out.isEmpty ? [(.plain, "Nothing runs by itself: its actions run only when you choose one, and Test runs none.")] : out

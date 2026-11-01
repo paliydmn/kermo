@@ -147,6 +147,30 @@ private func write(_ path: String, _ text: String = "x") {
     #expect(ops.view.arrangedSubviews.count == 1, "✓ goes after a moment; the one with errors stays")
 }
 
+/// `enqueue`'s `then` (a Tools upload waits on it): once each job is over — as it's cancelled while still queued (it
+/// never starts), and as it finishes.
+@MainActor @Test func aJobsThenRunsWhenItsOver() async throws {
+    _ = NSApplication.shared
+    let d = tempDir()
+    defer { chmod(d + "/bad", 0o644); try? FileManager.default.removeItem(atPath: d) }
+    write(d + "/bad")
+    write(d + "/good")
+    chmod(d + "/bad", 0)
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    let ops = OpsController(window: window) { _ in }
+    var over: [String] = []
+    ops.enqueue(FileJob(.copy, sources: [d + "/bad"], destDir: d + "/out"), title: "first") { over.append("first \($0.progress.state)") }
+    ops.enqueue(FileJob(.copy, sources: [d + "/good"], destDir: d + "/out"), title: "second") { over.append("second \($0.isCancelled)") }
+    await waitUntil { window.attachedSheet != nil }   // the first waits on its error: the second stays queued behind it
+    let row = try #require(ops.jobRows.last)
+    let cancel = try #require(row.view.subviews.compactMap { $0 as? NSStackView }.flatMap(\.arrangedSubviews).compactMap { $0 as? NSButton }.first { $0.toolTip == "Cancel" })
+    cancel.sendAction(cancel.action, to: cancel.target)
+    #expect(over == ["second true"])
+    window.endSheet(try #require(window.attachedSheet), returnCode: .alertFirstButtonReturn)   // Skip
+    await waitUntil { over.count == 2 }
+    #expect(over == ["second true", "first done"])
+}
+
 /// ▸ on a running job's row opens its files: the last ones done and the picked items still to come.
 @MainActor @Test func aRowOpensToItsFiles() {
     _ = NSApplication.shared

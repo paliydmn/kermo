@@ -155,23 +155,64 @@ private func parse(_ format: ToolFormat, _ text: String, _ change: (inout ToolPa
     #expect(ToolRun(exitOk: [0, 1]).succeeded(1) && !ToolRun(exitOk: [0, 1]).succeeded(2))
 }
 
-/// dpl's units: one deploy.json each, the unit from its folder, `strategy` from its conf, the subtitle from parts.
+/// dpl's units: one deploy.json each, the unit from its folder, `strategy` from its conf, the subtitle from parts. The
+/// fixtures are dpl 0.7.1's own files (a check under way, a failed start with the earlier version serving, a failed
+/// first build, a domain, a rollback, a failed first start, an http-server).
 @Test func dplUnitsFromFiles() throws {
     let list = try #require(try preset("dpl").list)
-    let files = try ["api", "web", "worker", "shop", "blog"].map { u in
-        ToolFile(path: "/opt/dpl/state/\(u)/deploy.json", data: try fixture("dpl.list.\(u).json"),
-                 also: u == "api" ? try fixture("dpl.conf.api.yaml") : nil)
-    }
-    let r = list.parse.records(files: files, name: list.view.name, also: list.view.also?.pattern)
+    let units = ["api", "web", "worker", "shop", "blog", "cron", "edge"]
+    let files = try units.map { u in ToolFile(path: "/opt/dpl/state/\(u)/deploy.json", data: try fixture("dpl.list.\(u).json")) }
+    let conf = try fixture("dpl.conf.api.yaml")
+    let r = list.parse.records(files: files, name: list.view.name, also: list.view.also?.pattern) { $0["unit"]?.text == "api" ? conf : nil }
     let rows = r.rows.map { list.view.row($0) }
-    #expect(rows.map(\.key) == ["api", "web", "worker", "shop", "blog"])
-    #expect(rows.map(\.subtitle) == ["ready · v13 · parallel", "failed · at startup · v7", "failed · at build", "check · v4 · switching to v5",
-                                     "ready · v6 · rollback of v5"])
-    #expect(rows.map(\.state) == [.ok, .bad, .bad, .busy, .ok])
-    #expect(rows[0].cells.map(\.text) == ["api", "app", "ready", "v13", "parallel", rows[0].cells[5].text])
-    #expect(rows[0].cells[2].value == "ready")   // a state column: the raw value, the view draws the mark
+    #expect(rows.map(\.key) == units)
+    #expect(rows.map(\.subtitle) == ["check · v1 · switching to v2 · parallel", "failed · at startup · v3", "failed · at build", "ready · v2",
+                                     "ready · v3 · rollback of v1", "failed · at startup · v1", "ready · v1"])
+    #expect(rows.map(\.state) == [.busy, .bad, .bad, .ok, .ok, .bad, .ok])
+    #expect(rows[0].cells.map(\.text) == ["api", "app", "check", "v1", "parallel", rows[0].cells[5].text])
+    #expect(rows[0].cells[2].value == "check")   // a state column: the raw value, the view draws the mark
     let broken = list.parse.records(files: [ToolFile(path: "/opt/dpl/state/x/deploy.json", data: Data("{".utf8))], name: "unit", also: nil)
     #expect(broken.unmatched == ["/opt/dpl/state/x/deploy.json"])
+}
+
+/// A `files` template's paths (§3.1): `*` of the template matches names in its folder — not a dot name, nor one the
+/// server sent with a `/`; before the last part a folder or a link, at the end anything but a folder; a value stays as
+/// it is, even with `*` in it; no such folder gives nothing; a path not from `/` is the login folder's; an empty value
+/// names no file.
+@Test func filesTemplateNamesPaths() throws {
+    let tree: [String: [(name: String, kind: FileItem.Kind)]] = [
+        "/opt/d*l/state": [("web", .dir), ("api", .link), (".old", .dir), ("serve.pid", .file), ("../../etc", .dir)],
+        "./logs": [("a.log", .file), ("b.txt", .file), ("c.log", .dir), ("d.log", .link), ("e.log", .other)],
+    ]
+    var listed: [String] = []
+    func list(_ dir: String) -> [(name: String, kind: FileItem.Kind)]? { listed.append(dir); return tree[dir] }
+    let scope = ToolTemplate.Scope(vars: ["base": "/opt/d*l"])
+    #expect(try ToolFile.paths("{base}/state/*/deploy.json", scope, list: list) == ["/opt/d*l/state/api/deploy.json", "/opt/d*l/state/web/deploy.json"])
+    #expect(listed == ["/opt/d*l/state"], "the value's * is a name, not a wildcard")
+    #expect(try ToolFile.paths("logs/*.log", scope, list: list) == ["./logs/a.log", "./logs/d.log"], "the last part: a file or a link — not a folder, nor a pipe")
+    #expect(try ToolFile.paths("{base}/gone/*/x", scope, list: list) == [])
+    #expect(try ToolFile.paths("{base}/conf/web.yaml", scope, list: list) == ["/opt/d*l/conf/web.yaml"] && listed.count == 3, "no wildcard: not listed")
+    #expect(throws: ToolTemplate.Empty(field: "nope")) { try ToolFile.paths("{nope}/x", scope, list: list) }
+}
+
+/// A `files` list read through `list` and `read` (§3.1): each file a record, its folder the `name`, `also`'s fields from
+/// the file that record's fields name; a file gone since the listing, or an `also` that can't be read, costs nothing.
+@Test func filesListReadsEachFileAndItsAlso() throws {
+    let list = try #require(try preset("dpl").list)
+    let files: [String: Data] = [
+        "/srv/dpl/state/api/deploy.json": try fixture("dpl.list.api.json"), "/srv/dpl/state/web/deploy.json": try fixture("dpl.list.web.json"),
+        "/srv/dpl/conf/api.yaml": try fixture("dpl.conf.api.yaml"),
+    ]
+    struct Denied: Error {}
+    var read: [String] = []
+    let r = try list.records(ToolTemplate.Scope(vars: ["base": "/srv/dpl"]), list: { _ in [("api", .dir), ("gone", .dir), ("web", .dir)] }) { path in
+        read.append(path)
+        if path.hasSuffix("web.yaml") { throw Denied() }
+        return files[path]
+    }
+    #expect(r.rows.map { $0["unit"]?.text } == ["api", "web"] && r.rows.map { $0["strategy"]?.text } == ["parallel", nil])
+    #expect(read == ["/srv/dpl/state/api/deploy.json", "/srv/dpl/state/gone/deploy.json", "/srv/dpl/state/web/deploy.json",
+                     "/srv/dpl/conf/api.yaml", "/srv/dpl/conf/web.yaml"])
 }
 
 /// A level down (`output: "list"`): the row's own fields first, then its parent's.

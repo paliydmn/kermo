@@ -1,0 +1,12 @@
+{
+  "updated_at": "2026-11-01T12:41:17.145458824Z",
+  "kind": "app",
+  "active_version": 1,
+  "last_version": 1,
+  "last_status": "failed",
+  "failure": {
+    "stage": "startup",
+    "error": "waiting for app 'cron': waited 90s: the container was never created; make sure dpl serve is running"
+  },
+  "supervised": true
+}

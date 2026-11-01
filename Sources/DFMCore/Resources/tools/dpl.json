@@ -7,7 +7,7 @@
   "about": "Apps deployed with dpl (dpl.cesbo.com): state, logs, deploy, roll back; traffic and errors per domain.",
   "icon": "shippingbox",
   "group": "Deploy",
-  "catalogVersion": 4,
+  "catalogVersion": 5,
   "requires": "command -v dpl",
   "sudo": true,
 
@@ -18,11 +18,11 @@
   "version": {
     "command": "dpl --version",
     "pattern": "(?<v>\\d+\\.\\d+\\.\\d+)",
-    "tested": ">=0.6 <0.7",
+    "tested": ">=0.6 <0.8",
     "unknown": ["0.0.1"]
   },
   "install": {
-    "script": { "url": "https://dpl.cesbo.com/install.sh", "env": { "DPL_VERSION": "0.6.1" } },
+    "script": { "url": "https://dpl.cesbo.com/install.sh", "env": { "DPL_VERSION": "0.7.1" } },
     "precheck": [ { "title": "Podman 4.8 or newer", "command": "podman --version", "pattern": "(?<v>\\d+\\.\\d+)", "min": "4.8" } ],
     "docs": "https://dpl.cesbo.com",
     "after": "Needs root. Put a unit in {base}/conf, then Deploy. Nothing is deployed or turned on for you."
@@ -45,19 +45,19 @@
 
   "actions": [
     { "id": "inspect", "title": "Inspect", "key": "return", "readonly": true, "command": "dpl inspect {unit}", "output": "window" },
-    { "id": "logs", "title": "Logs", "key": "cmd+l", "readonly": true, "command": "tail -n 200 -F {base}/state/{unit}/log/runtime-v{active_version}.log", "output": "follow", "strip": "cri" },
-    { "id": "buildlog", "title": "Build Log", "key": "cmd+shift+l", "readonly": true, "command": "tail -n 300 {base}/state/{unit}/log/build.log", "output": "follow", "strip": "cri" },
+    { "id": "logs", "title": "Logs", "key": "cmd+l", "readonly": true, "only": { "kind": ["app", "http-server"] }, "command": "tail -n 200 -F {base}/state/{unit}/log/runtime.log", "output": "follow", "strip": "cri" },
+    { "id": "buildlog", "title": "Build Log", "key": "cmd+shift+l", "readonly": true, "only": { "kind": ["app"] }, "command": "tail -n 300 {base}/state/{unit}/log/build.log", "output": "follow", "strip": "cri" },
     { "id": "check", "title": "Check Config", "readonly": true, "command": "dpl check {unit}", "output": "line", "done": "{unit}: config is valid" },
     { "id": "config", "title": "Edit Config", "key": "cmd+e", "edit": "{base}/conf/{unit}.yaml" },
     { "id": "deploy", "title": "Deploy…", "key": "f5", "only": { "kind": ["app"] }, "long": true,
       "command": "dpl check {unit} && dpl deploy {unit} {archive}",
       "inputs": [ { "name": "archive", "type": "folder", "title": "Folder on this Mac", "remember": true } ],
       "message": "Strategy: {strategy}. With parallel the old version serves until the new one is ready; with replace the app is down while the new one starts.",
-      "output": "window", "done": "{unit}: v{active_version} deployed" },
+      "output": "window", "done": "{unit} deployed" },
     { "id": "rollback", "title": "Roll Back…", "key": "cmd+z", "only": { "kind": ["app"] }, "long": true,
       "command": "dpl rollback {unit}", "confirm": true,
       "message": "{unit} goes back to the version before v{active_version}, without a build. dpl keeps one earlier version. The database is not rolled back: if v{active_version} changed its schema, the earlier version may not start.",
-      "output": "window", "done": "{unit}: v{source_version} serves again (as v{active_version})" },
+      "output": "window", "done": "{unit} rolled back" },
     { "id": "undeploy", "title": "Undeploy…", "key": "f8", "command": "dpl undeploy {unit}", "dangerous": true, "verify": true,
       "message": "{unit} stops serving. Its config, volumes and database stay.", "output": "line", "done": "{unit} undeployed" }
   ],

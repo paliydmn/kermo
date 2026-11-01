@@ -1,9 +1,8 @@
 {
-  "updated_at": "2026-10-29T10:07:02Z",
-  "kind": "app",
-  "active_version": 4,
-  "last_version": 5,
-  "candidate_version": 5,
-  "last_status": "check",
-  "supervised": true
+  "updated_at": "2026-11-01T12:39:45.713938101Z",
+  "kind": "domain",
+  "active_version": 2,
+  "last_version": 2,
+  "last_status": "ready",
+  "supervised": false
 }

@@ -1,0 +1,2 @@
+{"hosts":[{"host":"shop.example.com","req":6,"rpm":90,"e5":6,"e5_pct":100.0,"p95_ms":1},{"host":"app.example.com","req":30,"rpm":450,"e5":0,"e5_pct":0.0,"p95_ms":2}]}
+{"hosts":[]}

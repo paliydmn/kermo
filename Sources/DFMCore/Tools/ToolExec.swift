@@ -54,6 +54,28 @@ public enum ToolExec {
     private static let slots = NSCondition()
     nonisolated(unsafe) private static var inUse: [String: Int] = [:]
 
+    /// A `files` list read over SFTP (§3.1), in one session that counts as a channel: as root where the tool runs as
+    /// root — dpl's `deploy.json` is 0600 — through the server's sudo, as a root panel's. A file or folder that can't be
+    /// read throws with its path; one that isn't there is left out.
+    public static func files(_ list: ToolList, of p: ToolPreset, _ scope: ToolTemplate.Scope, on t: SFTPTarget, env: [String: String],
+                             cancel: CancelFlag) throws -> ToolRecords {
+        func gone<T>(_ path: String, _ body: () throws -> T) throws -> T? {
+            do {
+                return try body()
+            } catch let e as SFTPError where e.code == SFTPClient.NO_SUCH_FILE {
+                return nil
+            } catch let e as SFTPError where e.code != nil {   // a refusal, said with its path (not a lost connection)
+                throw SFTPError(message: "\(path): \(e.message)", code: e.code)
+            }
+        }
+        return try channel(t.asRoot(false), cancel: cancel) {
+            try SFTP.session(t.asRoot(list.run.sudo ?? p.sudo ?? false), env: env, cancel: cancel, on: nil) { c in
+                try list.records(scope, list: { dir in try gone(dir) { try c.list(dir).map { ($0.name, $0.attrs.kind) } } },
+                                 read: { path in try gone(path) { try c.read(path, max: 1 << 20) } })   // ponytail: a file's first MB — state files are small
+            }
+        }
+    }
+
     /// `work` on one of `t`'s channels, once one is free; ⎋ (`cancel`) while waiting throws. `limit`: tests' own.
     public static func channel<T>(_ t: SFTPTarget, limit: Int = channels, cancel: CancelFlag, _ work: () throws -> T) throws -> T {
         let k = key(t)

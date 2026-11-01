@@ -85,7 +85,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     /// `listInOther`: ⌘↩ on a list's level — set, ⇥ goes into rows.
     private var above: [Level] = []
     private let listInOther: (@MainActor (ListSource, String, String?, [Item]) -> Void)?
-    private var source: ListSource?   // this level's list
+    private(set) var source: ListSource?   // this level's list
     private var actionsOf: Item?   // the row whose actions this level lists
     private var onLeave: ((String, String?) -> Void)?   // this level's: what was typed and highlighted as it goes
     private var reading: CancelFlag?

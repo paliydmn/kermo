@@ -321,11 +321,11 @@ public final class SFTPClient: @unchecked Sendable {
     }
 
     /// `mkdir -p`: each missing folder on the way. Fails if something on the way is a file.
-    public func makeDirectories(_ path: String) throws {
+    public func makeDirectories(_ path: String, mode: UInt32 = 0o755) throws {
         var p = ""
         for part in path.split(separator: "/") {
             p += "/" + part
-            guard let a = try lstat(p) else { try mkdir(p); continue }
+            guard let a = try lstat(p) else { try mkdir(p, mode: mode); continue }
             if a.kind != .dir && a.kind != .link { throw SFTPError(message: "“\(p)” is not a folder") }
         }
     }
@@ -1073,14 +1073,17 @@ extension SFTPClient {
         return a
     }
 
-    /// The server's file as it is now, whole (it follows a symlink): small ones only.
-    private func contents(_ remote: String, size: Int64) throws -> Data {
-        let r = try openRead(remote, sizeHint: size)
+    /// The server's file as it is now, its first `max` bytes at most (it follows a symlink): a Tools list's file.
+    public func read(_ remote: String, max: Int, sizeHint: Int64 = 0) throws -> Data {
+        let r = try openRead(remote, sizeHint: sizeHint)
         defer { r.close() }
         var out = Data()
-        while let d = try r.read() { out.append(d) }
-        return out
+        while out.count < max, let d = try r.read() { out.append(d) }
+        return out.count > max ? out.prefix(max) : out
     }
+
+    /// The server's file as it is now, whole (it follows a symlink): small ones only.
+    private func contents(_ remote: String, size: Int64) throws -> Data { try read(remote, max: .max, sizeHint: size) }
 
     /// Where a symlink leads (`realpath`; nil: it can't be followed) and what's there (`stat`; nil: nothing), asked
     /// together: one wait.

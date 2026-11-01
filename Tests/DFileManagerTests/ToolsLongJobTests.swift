@@ -114,6 +114,110 @@ extension ServerLockTests {
         #expect(!(try String(contentsOfFile: file, encoding: .utf8)).contains("hunter2"), "runs.json keeps no secret")
     }
 
+    /// A folder input (§7.4): packed on this Mac and uploaded before its job starts — the command gets the upload's path
+    /// under the home folder, from `/`, without what's left out (`node_modules`) — and gone once the job ends. The folder
+    /// is remembered on that server (the next form starts with it), and a Retry gets it, not the upload's path. A file
+    /// last changed a month ago isn't swept as a week old by its own start; a folder that can't be packed (a repository
+    /// with nothing committed) runs nothing.
+    @Test func aFolderIsUploadedBeforeItsJob() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let lb = try LongBench(app)
+        let home = lb.bench.dir
+        defer { app.savedServers = []; lb.done(); done() }
+        let src = home + "/src", fm = FileManager.default
+        try fm.createDirectory(atPath: src + "/node_modules/x", withIntermediateDirectories: true)
+        try Data("a".utf8).write(to: URL(fileURLWithPath: src + "/a.txt"))
+        try Data("x".utf8).write(to: URL(fileURLWithPath: src + "/node_modules/x/y.js"))
+        try Data("#!/bin/sh\ncd \(home) || exit 1\nexec /usr/libexec/sftp-server\n".utf8).write(to: URL(fileURLWithPath: home + "/sftp-server"))
+        chmod(home + "/sftp-server", 0o755)
+        try Data(#"""
+            { "schema": 1, "id": "shipper", "title": "Shipper",
+              "toolActions": [ { "id": "ship", "title": "Ship…", "long": true, "output": "line", "done": "shipped",
+                "inputs": [ { "name": "src", "type": "folder", "title": "Folder", "remember": true } ],
+                "command": "echo {src}; tar -tzf {src} | sort | tr '\n' ' '" },
+              { "id": "note", "title": "Note…", "long": true, "output": "line", "command": "cat {note}",
+                "inputs": [ { "name": "note", "type": "file", "title": "File" } ] } ] }
+            """#.utf8).write(to: URL(fileURLWithPath: home + "/own/shipper.json"))
+        _ = app.tools.reload()
+        app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == "shipper" }))
+        let t = SFTPTarget.local(server: home + "/sftp-server"), server = try #require(SavedServer(address: "localhost"))
+        app.savedServers = [server]
+        let source = ToolListSource(app, try toolNamed(app, "shipper"), server, t)
+        _ = try await source.read(CancelFlag())
+        a.showList(source)
+        let l = try #require(a.list)
+        var offered: String?
+        ToolRunner.filling = { form in offered = form.values["src"]; form.set("src", src); return form.values }
+        await run(l, "Ship…")?.value
+        let jobs = app.tools.jobs, j = try #require(jobs.jobs.first)
+        #expect(offered == "" && j.values == ["src": src], "\(j.values)")
+        await toolsUntil { jobs.job(j.id)?.running == false }
+        let log = String(decoding: jobs.state(j.id)?.text ?? Data(), as: UTF8.self)
+        #expect(log.hasPrefix("\(home)/.cache/kermo/upload/\(j.id).src.tar.gz\n") && log.contains("./a.txt") && !log.contains("node_modules"), "\(log)")
+        let uploads = try fm.contentsOfDirectory(atPath: home + "/.cache/kermo/upload")
+        #expect(jobs.job(j.id)?.exit == 0 && uploads.isEmpty, "the upload went with its job: \(uploads)")
+        #expect(app.tools.settings.remembered("shipper", on: server.id.uuidString, row: nil) == ["src": src])
+
+        await run(l, "Ship…")?.value
+        #expect(offered == src, "the folder chosen last time on this server")
+        await toolsUntil { jobs.jobs.first?.running == false }
+        #expect(jobs.jobs.count == 2 && jobs.jobs.first?.exit == 0)
+        #expect(ToolRunner.Upload(input: "src", local: src, remote: "x", folder: true).said == "Uploads \(src) first, without .git, node_modules and .DS_Store.")
+
+        let old = home + "/old.txt"
+        try Data("old\n".utf8).write(to: URL(fileURLWithPath: old))
+        try fm.setAttributes([.modificationDate: Date().addingTimeInterval(-30 * 86_400)], ofItemAtPath: old)
+        ToolRunner.filling = { form in form.set("note", old); return form.values }
+        await run(l, "Note…")?.value
+        let n = try #require(jobs.jobs.first)
+        await toolsUntil { jobs.job(n.id)?.running == false }
+        #expect(jobs.job(n.id)?.exit == 0 && String(decoding: jobs.state(n.id)?.text ?? Data(), as: UTF8.self) == "old\n", "kept till its command read it")
+
+        let empty = home + "/empty"
+        try fm.createDirectory(atPath: empty, withIntermediateDirectories: true)
+        let git = Process()
+        (git.executableURL, git.arguments) = (URL(fileURLWithPath: "/usr/bin/git"), ["-C", empty, "init", "-q"])
+        try git.run()
+        git.waitUntilExit()
+        #expect(ToolRunner.Upload(input: "src", local: empty, remote: "x", folder: true).said.contains("as committed (git archive HEAD)"))
+        ToolRunner.filling = { form in form.set("src", empty); return form.values }
+        await run(l, "Ship…")?.value
+        #expect(jobs.jobs.count == 3, "nothing started")
+        #expect(l.resultLines.last?.contains("Ship: empty wasn't uploaded: ") == true && l.resultLines.last?.hasSuffix("nothing ran") == true, "\(l.resultLines)")
+    }
+
+    /// A long job on a list's row: once it's over the list is read again, as after any change — the row shows what the
+    /// job left, with no Refresh. A tool's own long job (no row: the first deploy to an empty list) too.
+    @Test func aListIsReadAgainWhenItsJobEnds() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let lb = try LongBench(app)
+        defer { lb.done(); done() }
+        let home = lb.bench.dir
+        try Data("api old\n".utf8).write(to: URL(fileURLWithPath: home + "/units"))
+        try Data(#"""
+            { "schema": 1, "id": "units", "title": "Units",
+              "list": { "command": "cat \"$HOME/units\"", "format": "regex", "pattern": "^(?<unit>\\S+) (?<v>\\S+)$", "key": "{unit}", "title": "{unit}", "subtitle": "{v}" },
+              "actions": [ { "id": "bump", "title": "Bump", "key": "f5", "long": true, "output": "line", "command": "echo \"{unit} new\" > \"$HOME/units\"" } ],
+              "toolActions": [ { "id": "add", "title": "Add", "long": true, "output": "line", "command": "echo \"web v1\" >> \"$HOME/units\"" } ] }
+            """#.utf8).write(to: URL(fileURLWithPath: home + "/own/units.json"))
+        _ = app.tools.reload()
+        app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == "units" }))
+        let source = ToolListSource(app, try toolNamed(app, "units"), SavedServer(target: .local()), .local())
+        _ = try await source.read(CancelFlag())
+        a.showList(source)
+        let l = try #require(a.list)
+        #expect(l.shown.map(\.subtitle) == ["old"])
+        await l.shown.first?.listActions?().first { $0.title == "Bump" }?.run(false)?.value
+        let jobs = app.tools.jobs, j = try #require(jobs.jobs.first)
+        await toolsUntil { jobs.job(j.id)?.running == false }
+        await toolsUntil { l.shown.first?.subtitle == "new" }
+        #expect(l.shown.map(\.subtitle) == ["new"] && jobs.job(j.id)?.exit == 0, "\(l.shown.map(\.subtitle))")
+
+        await l.content?.actions?().first { $0.title == "Add" }?.run(false)?.value
+        await toolsUntil { l.shown.count == 2 }
+        #expect(l.shown.map(\.title) == ["api", "web"], "\(l.shown.map(\.title))")
+    }
+
     /// One at a time on a row: a second Deploy says it runs and shows Activity. Stop… ends it (exit 143, "stopped");
     /// Retry runs it again with the form filled in as before.
     @Test func stopRetryAndAlreadyRunning() async throws {
