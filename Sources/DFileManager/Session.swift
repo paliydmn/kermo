@@ -23,13 +23,14 @@ struct Session: Codable, Equatable {
     var active = 0
     /// Each divider's place, a fraction of the panels' width.
     var dividers: [Double] = []
-    /// An open Tools window: whose page — a saved server's id; none, the library's — its tab, its frame; `alone`: a
-    /// server's page in a window of its own (`ToolsWindow.restore`).
+    /// An open Tools window: whose page — a saved server's id; none, the library's — its tab, its frame (AppKit's
+    /// `frameDescriptor`: a screen that's gone moves it onto one that's there); `alone`: a server's page in a window of
+    /// its own (`ToolsWindow.restore`).
     struct Tools: Codable, Equatable {
         var server: String?
         var tab: String?
         var frame: String
-        var alone: Bool?
+        var alone: Bool
     }
     var tools: [Tools]? = nil
 

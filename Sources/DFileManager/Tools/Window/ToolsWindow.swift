@@ -39,7 +39,8 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
     private var given: [SFTPTarget] = []
 
     /// Window ▸ Tools (⌃⌘T), Tools ▸ ▸ Open in Tools Window: the window, on `t`'s server if given.
-    static func show(_ app: AppDelegate, server t: SFTPTarget? = nil) {
+    @discardableResult
+    static func show(_ app: AppDelegate, server t: SFTPTarget? = nil) -> ToolsWindow {
         let w = main ?? ToolsWindow(app, alone: nil)
         main = w
         if let t {
@@ -53,14 +54,16 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
             w.sidebar.selectRowIndexes([i], byExtendingSelection: false)
         }
         w.window.makeKeyAndOrderFront(nil)
+        return w
     }
 
     /// A server's page as a window of its own; one already open comes to the front.
-    static func showAlone(_ app: AppDelegate, _ s: SavedServer, _ t: SFTPTarget) {
-        if let w = alone.first(where: { $0.page.map { ServerRow.key($0.target) == ServerRow.key(t.asUser) } == true }) { return w.window.makeKeyAndOrderFront(nil) }
-        let w = ToolsWindow(app, alone: (s, t))
-        alone.append(w)
+    @discardableResult
+    static func showAlone(_ app: AppDelegate, _ s: SavedServer, _ t: SFTPTarget) -> ToolsWindow {
+        let w = alone.first { $0.page.map { ServerRow.key($0.target) == ServerRow.key(t.asUser) } == true } ?? ToolsWindow(app, alone: (s, t))
+        if !alone.contains(where: { $0 === w }) { alone.append(w) }
         w.window.makeKeyAndOrderFront(nil)
+        return w
     }
 
     /// Samples came, or a watched server's state changed: the sidebar's WATCHED rows and the open live tabs, in place.
@@ -315,12 +318,14 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
     // MARK: After a restart
 
     /// The windows open now, each on its saved server's page and tab, with its frame — a server not saved has nothing
-    /// to be found by after a restart: its window alone isn't kept, the Tools window is, on no page.
+    /// to be found by after a restart: its window alone isn't kept, the Tools window is, on no page. Not Sites' tab:
+    /// open, it checks the addresses from this Mac, and a launch sends nothing (the page opens on its first tab).
     static func saved(_ app: AppDelegate) -> [Session.Tools] {
         ([main].compactMap { $0 } + alone).compactMap { w in
             let id = w.page.flatMap { app.savedServer(at: $0.target)?.id.uuidString }
             if w.isAlone, id == nil { return nil }
-            return Session.Tools(server: id, tab: id == nil ? nil : w.page?.tab, frame: NSStringFromRect(w.window.frame), alone: w.isAlone ? true : nil)
+            let tab = id == nil || w.page?.liveTool?.preset.http != nil ? nil : w.page?.tab
+            return Session.Tools(server: id, tab: tab, frame: w.window.frameDescriptor, alone: w.isAlone)
         }
     }
 
@@ -331,16 +336,9 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         for s in saved {
             let server = s.server.flatMap { id in app.savedServers.first { $0.id.uuidString == id } }
             if s.server != nil, server == nil { continue }
-            let w: ToolsWindow?
-            if s.alone == true, let server {
-                showAlone(app, server, server.target)
-                w = alone.first { $0.page.map { ServerRow.key($0.target) == ServerRow.key(server.target) } == true }
-            } else {
-                show(app, server: server?.target)
-                w = main
-            }
-            if let tab = s.tab { w?.page?.select(tab) }
-            w?.window.setFrame(NSRectFromString(s.frame), display: false)
+            let w = s.alone ? server.map { showAlone(app, $0, $0.target) } : show(app, server: server?.target)
+            if let tab = s.tab { w?.page?.select(tab) }   // one no longer there: the page's first
+            w?.window.setFrame(from: s.frame)
         }
     }
 
