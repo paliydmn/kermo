@@ -702,6 +702,59 @@ extension ServerLockTests {
         #expect(posts.sent.first?.body == "Sites: \(web.url)/down is down: 503" && monitor.worst(s).state == .critical, "\(posts.sent)")
     }
 
+    /// The channel's interval is its streams' and polls': checks from this Mac every second beside a poll every 3 s
+    /// miss nothing of the poll — no gap, never "not answering".
+    @Test func checksFromThisMacLeaveASlowPollsIntervalAlone() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), web = try LocalWeb { _ in 200 }
+        defer { web.done(); quick.done(); bench.done(); done(); app.savedServers = [] }
+        try FileManager.default.createDirectory(atPath: bench.dir + "/own", withIntermediateDirectories: true)
+        try Data(#"{ "schema": 1, "id": "slowpoll", "title": "Slow Poll", "watch": { "every": 3, "down": 2 }, "poll": { "command": "echo '{\"n\":1}'", "format": "json" }, "metrics": { "n": { "title": "N", "path": "n" } } }"#.utf8)
+            .write(to: URL(fileURLWithPath: bench.dir + "/own/slowpoll.json"))
+        try Data(#"{ "schema": 1, "id": "hits", "title": "Hits", "where": "mac", "http": { "urls": "server", "timeout": 2 }, "watch": { "every": 1 }, "metrics": { "up": { "title": "Up", "rows": "urls", "key": "url", "path": "ok" } } }"#.utf8)
+            .write(to: URL(fileURLWithPath: bench.dir + "/own/hits.json"))
+        var saved = SavedServer(address: "localhost")!
+        saved.sites = [web.url + "/"]
+        try await watching(app, bench, ids: ["pulse"], servers: [saved])
+        for id in ["slowpoll", "hits"] { app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == id })) }
+        app.tools.askAgain()
+        _ = app.tools.here(.local())
+        await toolsUntil { app.tools.here(.local())?.tools.contains { $0.preset.id == "slowpoll" } == true }
+        let monitor = app.tools.monitor
+        monitor.watch(try toolNamed(app, "slowpoll"), on: .local(), true)
+        monitor.watch(try toolNamed(app, "hits"), on: .local(), true)
+        await toolsUntil { monitor.tool("slowpoll", on: .local())?.history.last != nil && (monitor.tool("hits", on: .local())?.history.rows("urls").count ?? 0) > 0 }
+        let s = try #require(monitor.server(.local())), poll = try #require(s.tools["slowpoll"])
+        #expect(s.every == 3, "the poll's, not the checks' 1 s")
+        try await Task.sleep(for: .milliseconds(2600))   // past twice the checks' second: what the old interval called missed
+        #expect(s.missed == 0 && s.down == nil && !poll.history.points("n").contains { $0.gap == .noAnswer }, "\(poll.history.points("n").map { $0.gap?.rawValue ?? "v" })")
+    }
+
+    /// The channel's trouble leaves Sites alone: a stream killed between two failed checks of an address is a gap of
+    /// its own, while the address's streak goes on — the second failed check is `down` — and its series has no band.
+    @Test func aChannelGapLeavesASitesStreakAlone() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), posts = Posts(), web = try LocalWeb { _ in 503 }
+        defer { web.done(); posts.done(); quick.done(); bench.done(); done(); app.savedServers = [] }
+        var saved = SavedServer(address: "localhost")!
+        saved.sites = [web.url + "/down"]
+        try await watching(app, bench, servers: [saved])
+        let monitor = app.tools.monitor
+        await toolsUntil { app.tools.here(.local())?.tools.contains { $0.preset.id == "sites" } == true }
+        monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        monitor.watch(try toolNamed(app, "sites"), on: .local(), true)
+        await toolsUntil { monitor.tool("pulse", on: .local())?.history.last != nil && monitor.tool("sites", on: .local())?.history.rows("urls").count == 1 }
+        let s = try #require(monitor.server(.local())), stream = try #require(s.tools["pulse"]), sites = try #require(s.tools["sites"])
+        #expect(sites.alerts.worst == nil, "one failed check isn't down yet")
+        kill(try #require(pid(bench)), SIGKILL)
+        await toolsUntil { stream.history.points("cpu").contains { $0.gap == .reconnecting } }
+        #expect(stream.history.points("cpu").contains { $0.gap == .reconnecting })
+        monitor.check(sites, on: s)   // the second check, every 60 s otherwise
+        await toolsUntil { sites.alerts.worst == .critical }
+        #expect(sites.alerts.worst == .critical && posts.sent.map(\.body) == ["Sites: \(web.url)/down is down: 503"], "the streak went on: \(posts.sent)")
+        #expect(!sites.history.points("up", web.url + "/down").contains { $0.gap != nil }, "\(sites.history.points("up", web.url + "/down"))")
+    }
+
     /// On battery (or in Low Power Mode) watching is three times less often: the channel starts again with its
     /// `{every}` three times longer, the tab says so; Settings' switch off, it's as on power. On power, Keep This Mac
     /// Awake holds an assertion while something is watched — not on battery, not once nothing is. Open at Login is as
