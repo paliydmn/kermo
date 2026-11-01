@@ -97,7 +97,7 @@ final class ToolRunner {
         tool.preset.varsToAsk(saved: settings.vars(tool.preset.id, on: serverID(t)))
     }
 
-    /// The tools this version shows: trusted, a list read by a command or a script, a command of their own, or actions
+    /// The tools this version shows: trusted, a list read by a command, a script or its files, a command of their own, or actions
     /// with no list (a launcher) this version runs. Which a server shows: `here`.
     var tools: [LoadedTool] { library.trusted(trust).filter(Self.shows) }
     /// Your own tools not trusted yet, or changed since: Tools ▸ offers them, asking first.
@@ -106,7 +106,7 @@ final class ToolRunner {
     static func shows(_ t: LoadedTool) -> Bool {
         let p = t.preset
         if p.watchable { return true }   // watched, or live on its tab (PR 5)
-        return p.list.map { $0.run.command != nil || $0.run.script != nil } ?? p.commandAction.map { runs($0, of: p) }
+        return p.list.map { $0.run.command != nil || $0.run.script != nil || $0.run.files != nil } ?? p.commandAction.map { runs($0, of: p) }
             ?? p.toolActions?.contains { runs($0, of: p) } ?? false
     }
 

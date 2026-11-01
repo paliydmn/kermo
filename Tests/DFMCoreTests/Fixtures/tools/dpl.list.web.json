@@ -1,12 +1,12 @@
 {
-  "updated_at": "2026-10-29T10:02:10Z",
+  "updated_at": "2026-11-01T12:47:59.610812690Z",
   "kind": "app",
-  "active_version": 7,
-  "last_version": 8,
+  "active_version": 3,
+  "last_version": 4,
   "last_status": "failed",
   "failure": {
     "stage": "startup",
-    "error": "container exited with code 1"
+    "error": "waiting for app 'web': waited 90s: the container was never created; make sure dpl serve is running"
   },
   "supervised": true
 }

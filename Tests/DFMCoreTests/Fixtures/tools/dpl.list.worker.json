@@ -1,11 +1,11 @@
 {
-  "updated_at": "2026-10-29T10:05:31Z",
+  "updated_at": "2026-11-01T12:48:46.586042541Z",
   "kind": "app",
   "last_version": 1,
   "last_status": "failed",
   "failure": {
     "stage": "build",
-    "error": "build command failed"
+    "error": "check archive: NAME does not contain `other-app`"
   },
   "supervised": false
 }

@@ -135,37 +135,46 @@ final class ToolListSource: ListSource {
                 for (i, run) in extra.enumerated() { said[i] = run.flatMap(one) }
                 return note(Read(rows: [], total: 0, vars: vars), said: said, total: 0, skew: nil)
             }
-            var r: ToolExec.Ran
-            let together = [list.run] + extra.compactMap { $0 }
-            if together.count > 1, let plain = try? ToolPayload.parts(together, in: p, scope: scope, scripts: tool.scripts, sudoProgram: ToolRunner.sudoProgram),
-               let wrapped = try? ToolPayload.parts(together, in: p, scope: scope, scripts: tool.scripts, password: true, sudoProgram: ToolRunner.sudoProgram) {
-                // One round trip (§3.2 rule 9): the list, then what goes above it.
-                r = try ToolExec.run({ $0 ? wrapped : plain }, on: target, timeout: (list.run.timeout ?? 30) + 10 * Double(together.count - 1),
-                                     cancel: cancel, env: env, command: ToolRunner.command)
-                let parts = ToolPayload.parts(r.out, nonce: r.password == nil ? plain.nonce : wrapped.nonce)
-                if let mine = parts.first { (r.out, r.status) = (mine.out, mine.status) }
-                var k = 1
-                for (i, run) in extra.enumerated() where run != nil {
-                    if parts.indices.contains(k), run!.succeeded(parts[k].status) { said[i] = first(String(decoding: parts[k].out, as: UTF8.self)) }
-                    k += 1
+            let records: ToolRecords, output: String, skew: TimeInterval?
+            if list.run.files != nil {   // its files over SFTP; what goes above them as commands
+                do { records = try ToolExec.files(list, of: p, scope, on: target, env: env, cancel: cancel) } catch let e as SFTPError where e.code != nil {
+                    throw Failed(message: "\(title) on \(server): \(e.localizedDescription)", output: "")
                 }
+                (output, skew) = (records.unmatched.joined(separator: "\n"), nil)
+                for (i, run) in extra.enumerated() { said[i] = run.flatMap(one) }
             } else {
-                r = try ToolRunner.exec(list.run, of: tool, scope, on: target, timeout: list.run.timeout ?? 30, env: env, cancel: cancel).ran
-                for (i, run) in extra.enumerated() where r.stopped == nil && list.run.succeeded(r.status) { said[i] = run.flatMap(one) }
+                var r: ToolExec.Ran
+                let together = [list.run] + extra.compactMap { $0 }
+                if together.count > 1, let plain = try? ToolPayload.parts(together, in: p, scope: scope, scripts: tool.scripts, sudoProgram: ToolRunner.sudoProgram),
+                   let wrapped = try? ToolPayload.parts(together, in: p, scope: scope, scripts: tool.scripts, password: true, sudoProgram: ToolRunner.sudoProgram) {
+                    // One round trip (§3.2 rule 9): the list, then what goes above it.
+                    r = try ToolExec.run({ $0 ? wrapped : plain }, on: target, timeout: (list.run.timeout ?? 30) + 10 * Double(together.count - 1),
+                                         cancel: cancel, env: env, command: ToolRunner.command)
+                    let parts = ToolPayload.parts(r.out, nonce: r.password == nil ? plain.nonce : wrapped.nonce)
+                    if let mine = parts.first { (r.out, r.status) = (mine.out, mine.status) }
+                    var k = 1
+                    for (i, run) in extra.enumerated() where run != nil {
+                        if parts.indices.contains(k), run!.succeeded(parts[k].status) { said[i] = first(String(decoding: parts[k].out, as: UTF8.self)) }
+                        k += 1
+                    }
+                } else {
+                    r = try ToolRunner.exec(list.run, of: tool, scope, on: target, timeout: list.run.timeout ?? 30, env: env, cancel: cancel).ran
+                    for (i, run) in extra.enumerated() where r.stopped == nil && list.run.succeeded(r.status) { said[i] = run.flatMap(one) }
+                }
+                if let stopped = r.stopped { throw JobErrorMessage("\(title) on \(server): \(stopped)") }
+                output = [r.errors, r.text].filter { !$0.isEmpty }.joined(separator: "\n")
+                guard list.run.succeeded(r.status, format: list.parse.format) else {
+                    throw Failed(message: ToolExec.notHere(r, server: server, facts: facts)
+                                 ?? "\(title) on \(server): " + (r.errors.split(whereSeparator: \.isNewline).first.map(String.init) ?? "exit \(r.status)"), output: output)
+                }
+                (records, skew) = (list.parse.records(r.out, exit: r.status), r.skew)
             }
-            if let stopped = r.stopped { throw JobErrorMessage("\(title) on \(server): \(stopped)") }
-            let output = [r.errors, r.text].filter { !$0.isEmpty }.joined(separator: "\n")
-            guard list.run.succeeded(r.status, format: list.parse.format) else {
-                throw Failed(message: ToolExec.notHere(r, server: server, facts: facts)
-                             ?? "\(title) on \(server): " + (r.errors.split(whereSeparator: \.isNewline).first.map(String.init) ?? "exit \(r.status)"), output: output)
-            }
-            let records = list.parse.records(r.out, exit: r.status)
             guard records.matched else {
                 throw Failed(message: "\(title) on \(server): the output didn't match — " + (records.unmatched.first { !$0.isEmpty } ?? ""), output: output)
             }
-            let now = Date().addingTimeInterval(r.skew ?? 0)   // `ago` by the server's clock
+            let now = Date().addingTimeInterval(skew ?? 0)   // `ago` by the server's clock
             let read = Read(rows: records.rows.map { var r = list.view.row($0, scope, now: now); r.above = above; return r }, total: records.total, vars: vars)
-            return header ? note(read, said: said, total: records.rows.count, skew: r.skew) : read
+            return header ? note(read, said: said, total: records.rows.count, skew: skew) : read
         }
 
         /// The line above the rows: the header's first line, "shown N of M", a clock off by over a minute; and what the

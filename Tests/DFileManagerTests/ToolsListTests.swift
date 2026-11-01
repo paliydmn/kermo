@@ -330,4 +330,50 @@ extension ServerLockTests {
         try? await Task.sleep(for: .milliseconds(300))   // its window, then nothing of it left running
         NSApp.windows.filter { $0.title == "Status in Full — localhost" }.forEach { $0.close() }
     }
+
+    /// A list of files (§3.1): read over SFTP — through the server's sudo where the tool runs as root — each file a row,
+    /// its folder its name, `also`'s fields from the file that row names; nothing runs as a command. A folder that
+    /// can't be read says so with its path; no folder at all is an empty list.
+    @Test func aListOfFilesIsReadOverSFTP() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done() }
+        let base = bench.dir + "/dpl", fm = FileManager.default
+        for (unit, status) in [("api", "ready"), ("web", "failed"), (".old", "ready")] {
+            try fm.createDirectory(atPath: "\(base)/state/\(unit)", withIntermediateDirectories: true)
+            try Data(#"{"kind": "app", "last_status": "\#(status)"}"#.utf8).write(to: URL(fileURLWithPath: "\(base)/state/\(unit)/deploy.json"))
+        }
+        try fm.createDirectory(atPath: "\(base)/state/empty", withIntermediateDirectories: true)   // no deploy.json: left out
+        try Data("1".utf8).write(to: URL(fileURLWithPath: base + "/state/serve.pid"))
+        try fm.createDirectory(atPath: base + "/conf", withIntermediateDirectories: true)
+        try Data("image: x\nstrategy: parallel\n".utf8).write(to: URL(fileURLWithPath: base + "/conf/api.yaml"))
+        let sudo = bench.dir + "/sftp-sudo"
+        try Data("#!/bin/sh\necho \"$*\" >> \(bench.dir)/sftp-sudo.log\n[ \"$1\" = -n ] && [ \"$2\" = -- ] || exit 2\nshift 2\nexec \"$@\"\n".utf8)
+            .write(to: URL(fileURLWithPath: sudo))
+        chmod(sudo, 0o755)
+        try fm.createDirectory(atPath: bench.dir + "/own", withIntermediateDirectories: true)
+        try Data(#"""
+            { "schema": 1, "id": "units", "title": "Units", "sudo": true, "vars": { "base": { "default": "\#(base)" } },
+              "list": { "files": "{base}/state/*/deploy.json", "format": "json", "name": "unit",
+                        "also": { "files": "{base}/conf/{unit}.yaml", "pattern": "^strategy: (?<strategy>\\w+)" },
+                        "key": "{unit}", "title": "{unit}", "subtitle": ["{last_status}", "{strategy}"], "empty": "No units in {base}" } }
+            """#.utf8).write(to: URL(fileURLWithPath: bench.dir + "/own/units.json"))
+        _ = app.tools.reload()
+        app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == "units" }))
+        let t = SFTPTarget.local(sudo: sudo).asRoot(false)
+        let source = ToolListSource(app, try toolNamed(app, "units"), SavedServer(target: t), t)
+        let c = try await source.read(CancelFlag())
+        #expect(c.rows.map(\.title) == ["api", "web"] && c.rows.map(\.subtitle) == ["ready · parallel", "failed"], "\(c.rows.map(\.subtitle))")
+        #expect((try? String(contentsOfFile: bench.dir + "/sftp-sudo.log", encoding: .utf8))?.contains("-n -- ") == true, "as root, through sudo")
+        #expect(bench.trips == 0, "nothing ran as a command")
+
+        chmod(base + "/state/web", 0)
+        defer { chmod(base + "/state/web", 0o755) }
+        let denied = await failure(of: source)
+        #expect(denied?.message == "Units on localhost: \(base)/state/web/deploy.json: Permission denied", "\(String(describing: denied?.message))")
+        chmod(base + "/state/web", 0o755)
+        try fm.removeItem(atPath: base + "/state")
+        let none = try await source.read(CancelFlag())
+        #expect(none.rows.isEmpty && none.empty == "No units in \(base)")
+    }
 }

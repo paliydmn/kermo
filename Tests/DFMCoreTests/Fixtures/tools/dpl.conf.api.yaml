@@ -1,6 +1,8 @@
-kind: app
+type: app
+image: python:3.12-alpine
 strategy: parallel
-image: registry.example.com/api
-port: 8080
-http:
-  domain: api.example.com
+builds:
+  - files: ["*"]
+runtime:
+  port: 8000
+  cmd: python -m http.server 8000

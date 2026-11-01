@@ -7,7 +7,7 @@
   "about": "Apps deployed with dpl (dpl.cesbo.com): state, logs, deploy, roll back; traffic and errors per domain.",
   "icon": "shippingbox",
   "group": "Deploy",
-  "catalogVersion": 4,
+  "catalogVersion": 5,
   "requires": "command -v dpl",
   "sudo": true,
 
@@ -18,11 +18,11 @@
   "version": {
     "command": "dpl --version",
     "pattern": "(?<v>\\d+\\.\\d+\\.\\d+)",
-    "tested": ">=0.6 <0.7",
+    "tested": ">=0.6 <0.8",
     "unknown": ["0.0.1"]
   },
   "install": {
-    "script": { "url": "https://dpl.cesbo.com/install.sh", "env": { "DPL_VERSION": "0.6.1" } },
+    "script": { "url": "https://dpl.cesbo.com/install.sh", "env": { "DPL_VERSION": "0.7.1" } },
     "precheck": [ { "title": "Podman 4.8 or newer", "command": "podman --version", "pattern": "(?<v>\\d+\\.\\d+)", "min": "4.8" } ],
     "docs": "https://dpl.cesbo.com",
     "after": "Needs root. Put a unit in {base}/conf, then Deploy. Nothing is deployed or turned on for you."
@@ -45,8 +45,8 @@
 
   "actions": [
     { "id": "inspect", "title": "Inspect", "key": "return", "readonly": true, "command": "dpl inspect {unit}", "output": "window" },
-    { "id": "logs", "title": "Logs", "key": "cmd+l", "readonly": true, "command": "tail -n 200 -F {base}/state/{unit}/log/runtime-v{active_version}.log", "output": "follow", "strip": "cri" },
-    { "id": "buildlog", "title": "Build Log", "key": "cmd+shift+l", "readonly": true, "command": "tail -n 300 {base}/state/{unit}/log/build.log", "output": "follow", "strip": "cri" },
+    { "id": "logs", "title": "Logs", "key": "cmd+l", "readonly": true, "only": { "kind": ["app", "http-server"] }, "command": "tail -n 200 -F {base}/state/{unit}/log/runtime.log", "output": "follow", "strip": "cri" },
+    { "id": "buildlog", "title": "Build Log", "key": "cmd+shift+l", "readonly": true, "only": { "kind": ["app"] }, "command": "tail -n 300 {base}/state/{unit}/log/build.log", "output": "follow", "strip": "cri" },
     { "id": "check", "title": "Check Config", "readonly": true, "command": "dpl check {unit}", "output": "line", "done": "{unit}: config is valid" },
     { "id": "config", "title": "Edit Config", "key": "cmd+e", "edit": "{base}/conf/{unit}.yaml" },
     { "id": "deploy", "title": "Deploy…", "key": "f5", "only": { "kind": ["app"] }, "long": true,

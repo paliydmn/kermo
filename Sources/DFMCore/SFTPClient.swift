@@ -1073,6 +1073,15 @@ extension SFTPClient {
         return a
     }
 
+    /// The server's file as it is now, its first `max` bytes at most (it follows a symlink): a Tools list's file.
+    public func read(_ remote: String, max: Int) throws -> Data {
+        let r = try openRead(remote)
+        defer { r.close() }
+        var out = Data()
+        while out.count < max, let d = try r.read() { out.append(d) }
+        return out.prefix(max)
+    }
+
     /// The server's file as it is now, whole (it follows a symlink): small ones only.
     private func contents(_ remote: String, size: Int64) throws -> Data {
         let r = try openRead(remote, sizeHint: size)
