@@ -161,11 +161,9 @@ private func parse(_ format: ToolFormat, _ text: String, _ change: (inout ToolPa
 @Test func dplUnitsFromFiles() throws {
     let list = try #require(try preset("dpl").list)
     let units = ["api", "web", "worker", "shop", "blog", "cron", "edge"]
-    let files = try units.map { u in
-        ToolFile(path: "/opt/dpl/state/\(u)/deploy.json", data: try fixture("dpl.list.\(u).json"),
-                 also: u == "api" ? try fixture("dpl.conf.api.yaml") : nil)
-    }
-    let r = list.parse.records(files: files, name: list.view.name, also: list.view.also?.pattern)
+    let files = try units.map { u in ToolFile(path: "/opt/dpl/state/\(u)/deploy.json", data: try fixture("dpl.list.\(u).json")) }
+    let conf = try fixture("dpl.conf.api.yaml")
+    let r = list.parse.records(files: files, name: list.view.name, also: list.view.also?.pattern) { $0["unit"]?.text == "api" ? conf : nil }
     let rows = r.rows.map { list.view.row($0) }
     #expect(rows.map(\.key) == units)
     #expect(rows.map(\.subtitle) == ["check · v1 · switching to v2 · parallel", "failed · at startup · v3", "failed · at build", "ready · v2",
@@ -177,20 +175,21 @@ private func parse(_ format: ToolFormat, _ text: String, _ change: (inout ToolPa
     #expect(broken.unmatched == ["/opt/dpl/state/x/deploy.json"])
 }
 
-/// A `files` template's paths (§3.1): `*` of the template matches names in its folder — not a dot name, and before the
-/// last part only a folder; a value stays as it is, even with `*` in it; no such folder gives nothing; a path not from
-/// `/` is the login folder's; an empty value names no file.
+/// A `files` template's paths (§3.1): `*` of the template matches names in its folder — not a dot name, nor one the
+/// server sent with a `/`; before the last part a folder or a link, at the end anything but a folder; a value stays as
+/// it is, even with `*` in it; no such folder gives nothing; a path not from `/` is the login folder's; an empty value
+/// names no file.
 @Test func filesTemplateNamesPaths() throws {
-    let tree: [String: [(name: String, folder: Bool)]] = [
-        "/opt/d*l/state": [("web", true), ("api", true), (".old", true), ("serve.pid", false)],
-        "./logs": [("a.log", false), ("b.txt", false), ("c.log", true)],
+    let tree: [String: [(name: String, kind: FileItem.Kind)]] = [
+        "/opt/d*l/state": [("web", .dir), ("api", .link), (".old", .dir), ("serve.pid", .file), ("../../etc", .dir)],
+        "./logs": [("a.log", .file), ("b.txt", .file), ("c.log", .dir), ("d.log", .link)],
     ]
     var listed: [String] = []
-    func list(_ dir: String) -> [(name: String, folder: Bool)]? { listed.append(dir); return tree[dir] }
+    func list(_ dir: String) -> [(name: String, kind: FileItem.Kind)]? { listed.append(dir); return tree[dir] }
     let scope = ToolTemplate.Scope(vars: ["base": "/opt/d*l"])
     #expect(try ToolFile.paths("{base}/state/*/deploy.json", scope, list: list) == ["/opt/d*l/state/api/deploy.json", "/opt/d*l/state/web/deploy.json"])
     #expect(listed == ["/opt/d*l/state"], "the value's * is a name, not a wildcard")
-    #expect(try ToolFile.paths("logs/*.log", scope, list: list) == ["./logs/a.log", "./logs/c.log"], "the last part: any kind")
+    #expect(try ToolFile.paths("logs/*.log", scope, list: list) == ["./logs/a.log", "./logs/d.log"], "the last part: a file or a link")
     #expect(try ToolFile.paths("{base}/gone/*/x", scope, list: list) == [])
     #expect(try ToolFile.paths("{base}/conf/web.yaml", scope, list: list) == ["/opt/d*l/conf/web.yaml"] && listed.count == 3, "no wildcard: not listed")
     #expect(throws: ToolTemplate.Empty(field: "nope")) { try ToolFile.paths("{nope}/x", scope, list: list) }
@@ -206,7 +205,7 @@ private func parse(_ format: ToolFormat, _ text: String, _ change: (inout ToolPa
     ]
     struct Denied: Error {}
     var read: [String] = []
-    let r = try list.records(ToolTemplate.Scope(vars: ["base": "/srv/dpl"]), list: { _ in [("api", true), ("gone", true), ("web", true)] }) { path in
+    let r = try list.records(ToolTemplate.Scope(vars: ["base": "/srv/dpl"]), list: { _ in [("api", .dir), ("gone", .dir), ("web", .dir)] }) { path in
         read.append(path)
         if path.hasSuffix("web.yaml") { throw Denied() }
         return files[path]

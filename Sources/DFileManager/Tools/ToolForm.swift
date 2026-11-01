@@ -47,7 +47,7 @@ final class ToolForm {
         default: break
         }
         if v.isEmpty { return i.info.optional == true ? nil : "\(i.info.title ?? i.info.name) is empty" }
-        if [.folder, .file].contains(i.info.type) {
+        if i.uploads {
             var folder: ObjCBool = false
             guard FileManager.default.fileExists(atPath: (v as NSString).expandingTildeInPath, isDirectory: &folder) else { return "not on this Mac" }
             if folder.boolValue != (i.info.type == .folder) { return i.info.type == .folder ? "not a folder" : "a folder, not a file" }
@@ -63,8 +63,8 @@ final class ToolForm {
     var filled: ToolTemplate.Scope {
         var s = scope
         s.levels[0] = values.mapValues { .string($0) }
-        for i in inputs where [.folder, .file].contains(i.info.type) {
-            if let job, let v = values[i.info.name], !v.isEmpty { s.levels[0][i.info.name] = .string(ToolLong.upload(job, i, local: v)) }
+        for i in inputs where i.uploads {   // as the question will have it: under the server's home folder
+            if let job, let v = values[i.info.name], !v.isEmpty { s.levels[0][i.info.name] = .string("~/" + ToolLong.upload(job, i, local: v)) }
         }
         return s
     }
@@ -136,7 +136,7 @@ final class ToolForm {
                 f.delegate = live
                 kept.append(live)
                 fields[name] = f
-                guard [.folder, .file].contains(i.info.type) else { views.append(f); break }
+                guard i.uploads else { views.append(f); break }
                 let choose = NSButton(title: "Choose…", target: nil, action: nil)
                 kept.append(MenuAction.attach(to: choose) { [unowned self, unowned f, unowned alert] in
                     let panel = NSOpenPanel()

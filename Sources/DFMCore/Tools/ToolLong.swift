@@ -18,11 +18,11 @@ public enum ToolLong {
     /// A job's id: its start time and a random part — its files' names.
     public static func newID(now: Date = Date()) -> String { "\(Int(now.timeIntervalSince1970))-" + ToolPayload.newNonce().prefix(8) }
 
-    /// Where a `folder` or `file` input is uploaded for job `id` (§7.4) — relative to the login folder, where the job
-    /// runs and where SFTP starts: a folder as `<id>.<input>.tar.gz`, a file under its own name after the id. The job
-    /// removes it when its command ends (`start`); one whose job never started goes a week later.
+    /// Where a `folder` or `file` input is uploaded for job `id` (§7.4), under the home folder: a folder as
+    /// `<id>.<input>.tar.gz`, a file as `<id>.<input>.<its name>`. The job removes it when its command ends (`start`);
+    /// one whose job never started goes a week after it came (its time is the upload's).
     public static func upload(_ id: String, _ input: ToolInput, local: String) -> String {
-        ".cache/kermo/upload/\(id)." + (input.info.type == .folder ? input.info.name + ".tar.gz" : (local as NSString).lastPathComponent)
+        ".cache/kermo/upload/\(id).\(input.info.name)" + (input.info.type == .folder ? ".tar.gz" : "." + (local as NSString).lastPathComponent)
     }
 
     /// One of a job's files, as shell text.

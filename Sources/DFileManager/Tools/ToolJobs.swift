@@ -256,14 +256,17 @@ struct ToolJob: Codable, Equatable {
     }
 
     /// The lists that have the job's row, read again now it's over, as a change's are — the cursor staying on its row —
-    /// where the server needs no Touch ID now, and not a level whose own read changes something (`relister`).
+    /// where the server needs no Touch ID now; only the level that shows the row (a Picker may be a level below it), and
+    /// not one whose own read changes something (`relister`).
     private func reread(_ rowID: String, on t: SFTPTarget) {
         guard !ServerLock.needsUnlock(t) else { return }
         let env = SSHAskpass.env
         for list in app.rowLists(rowID) {
-            guard let source = ((list as? ListPanel)?.source ?? (list as? Picker)?.source) as? ToolListSource, let lister = source.relister else { continue }
+            guard let source = ((list as? ListPanel)?.source ?? (list as? Picker)?.source) as? ToolListSource, source.content?.rows.contains(where: { $0.id == rowID }) == true,
+                  let lister = source.relister else { continue }
             Task {
-                guard let read = try? await Blocking.run(.default, { try lister.read(env, CancelFlag()) }) else { return }
+                guard let read = try? await Blocking.run(.default, { try lister.read(env, CancelFlag()) }), list.has(rowID),
+                      ((list as? ListPanel)?.source ?? (list as? Picker)?.source) === source else { return }
                 list.reload(source.show(read), having: rowID)
             }
         }

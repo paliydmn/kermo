@@ -1074,22 +1074,16 @@ extension SFTPClient {
     }
 
     /// The server's file as it is now, its first `max` bytes at most (it follows a symlink): a Tools list's file.
-    public func read(_ remote: String, max: Int) throws -> Data {
-        let r = try openRead(remote)
+    public func read(_ remote: String, max: Int, sizeHint: Int64 = 0) throws -> Data {
+        let r = try openRead(remote, sizeHint: sizeHint)
         defer { r.close() }
         var out = Data()
         while out.count < max, let d = try r.read() { out.append(d) }
-        return out.prefix(max)
+        return out.count > max ? out.prefix(max) : out
     }
 
     /// The server's file as it is now, whole (it follows a symlink): small ones only.
-    private func contents(_ remote: String, size: Int64) throws -> Data {
-        let r = try openRead(remote, sizeHint: size)
-        defer { r.close() }
-        var out = Data()
-        while let d = try r.read() { out.append(d) }
-        return out
-    }
+    private func contents(_ remote: String, size: Int64) throws -> Data { try read(remote, max: .max, sizeHint: size) }
 
     /// Where a symlink leads (`realpath`; nil: it can't be followed) and what's there (`stat`; nil: nothing), asked
     /// together: one wait.

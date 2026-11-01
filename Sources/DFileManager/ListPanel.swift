@@ -235,7 +235,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         let widths = source.columns.map(\.width)
         var room = width - (widths.first ?? 0)
         for (i, col) in table.tableColumns.enumerated().dropFirst() {
-            let need = (i == table.tableColumns.count - 1 ? 60 : widths.indices.contains(i) ? widths[i] : col.width) + table.intercellSpacing.width
+            let need = (i == table.tableColumns.count - 1 ? 60 : widths[i]) + table.intercellSpacing.width
             room -= need
             let hide = i > 1 && room < 0
             if col.isHidden != hide { col.isHidden = hide }

@@ -297,12 +297,12 @@ final class ToolRunner {
     }
 
     /// A `folder` or `file` input (§7.4): the choice on this Mac, and where it goes on the server — its value there.
-    struct Upload: Equatable {
+    struct Upload {
         let input: String, local: String, remote: String, folder: Bool
         /// As the question says it: what of it goes.
         var said: String {
             guard folder else { return "Uploads \(local) first." }
-            return FileManager.default.fileExists(atPath: (local as NSString).appendingPathComponent(".git"))
+            return ArchiveIndex.isRepository(local)
                 ? "Uploads \(local) as committed (git archive HEAD): changes not committed stay here."
                 : "Uploads \(local) first, without .git, node_modules and .DS_Store."
         }
@@ -322,14 +322,21 @@ final class ToolRunner {
             let kept = settings.remembered(p.id, on: serverID(t), row: row)
             guard let values = await form(a, of: tool, scope, on: t, window: window, values: filled ?? (kept.isEmpty ? nil : kept), job: job) else { return .stop("cancelled") }
             scope.levels[0] = values.mapValues { .string($0) }
-            if let id = serverID(t) {
-                settings.remember(p.id, on: id, row: row, values.filter { name, _ in inputs.contains { $0.info.name == name && $0.info.remember == true } })
+            let chosen = values.filter { name, _ in inputs.contains { $0.info.name == name && $0.info.remember == true } }
+            if let id = serverID(t), !chosen.isEmpty {
+                settings.remember(p.id, on: id, row: row, chosen)
                 saveSettings()
             }
-            for i in inputs where [.folder, .file].contains(i.info.type) {
+            // Where each goes: under the home folder, by its path from `/` — a command may `cd` (§3.2 rule 10).
+            var home: String?
+            for i in inputs where i.uploads {
                 guard let job, let typed = values[i.info.name], !typed.isEmpty else { continue }   // an optional one left empty drops out
+                if home == nil {
+                    let env = SSHAskpass.env
+                    do { home = try await Blocking.run { try SFTP.home(t.asUser, env: env) } } catch { return .stop("\(error.localizedDescription)") }
+                }
                 let local = (typed as NSString).expandingTildeInPath
-                uploads.append(Upload(input: i.info.name, local: local, remote: ToolLong.upload(job, i, local: local), folder: i.info.type == .folder))
+                uploads.append(Upload(input: i.info.name, local: local, remote: home! + "/" + ToolLong.upload(job, i, local: local), folder: i.info.type == .folder))
                 scope.levels[0][i.info.name] = .string(uploads.last!.remote)
             }
         }
@@ -559,6 +566,7 @@ final class ToolRunner {
                     }
                     (shown, said) = (willRun, scope)
                     running()
+                    self.changing[key] = nil   // started: an upload doesn't keep the tool's other changes waiting
                     if let why = await self.upload(uploads, to: t, place: s.title) { return .notRun(why) }
                     self.jobs.askToNotify()   // the first long job: macOS's question, at a moment you started something
                     let env = SSHAskpass.env, command = Self.command, sudo = Self.sudoProgram
@@ -587,32 +595,38 @@ final class ToolRunner {
     }
 
     /// `folder` and `file` inputs onto the server before their job starts (§7.2 step 5), through the copy queue —
-    /// Activity shows each — a folder packed on this Mac first (`ArchiveIndex.pack`). Why not, or nil.
+    /// Activity shows each — a folder packed on this Mac first (`ArchiveIndex.pack`). A copy keeps a file's own time:
+    /// a file's is set to now, so a week's sweep (`ToolLong.start`) never takes one older than that. Why not, or nil.
+    /// ponytail: packing and the folder's making aren't cancellable (⎋ waits for them); the copy is, in Activity.
     private func upload(_ uploads: [Upload], to t: SFTPTarget, place: String) async -> String? {
-        let env = SSHAskpass.env, target = t.asUser
+        guard let first = uploads.first else { return nil }
+        let env = SSHAskpass.env, target = t.asUser, folder = (first.remote as NSString).deletingLastPathComponent
+        do { try await Blocking.run { try SFTP.session(target, env: env, cancel: nil, on: nil) { try $0.makeDirectories(folder, mode: 0o700) } } } catch {
+            return "nothing was uploaded: \(error.localizedDescription)"
+        }
         for u in uploads {
             let name = (u.local as NSString).lastPathComponent
             let packed = u.folder ? (NSTemporaryDirectory() as NSString).appendingPathComponent("kermo-" + (u.remote as NSString).lastPathComponent) : nil
             defer { if let packed { try? FileManager.default.removeItem(atPath: packed) } }
-            let home: String
-            do {
-                home = try await Blocking.run {
-                    if let packed { try ArchiveIndex.pack(u.local, to: packed) }
-                    return try SFTP.session(target, env: env, cancel: nil, on: nil) { c in
-                        let home = try c.realpath(".")
-                        try c.makeDirectories(home + "/.cache/kermo/upload", mode: 0o700)
-                        return home
-                    }
-                }
-            } catch { return "\(name) wasn't uploaded: \(error.localizedDescription)" }
-            let job = FileJob(copyPairs: [(packed ?? u.local, home + "/" + u.remote)], from: .local, to: .sftp(target), sshEnv: env)
+            if let packed {
+                do { try await Blocking.run { try ArchiveIndex.pack(u.local, to: packed) } } catch { return "\(name) wasn't uploaded: \(error.localizedDescription)" }
+            }
+            let job = FileJob(copyPairs: [(packed ?? u.local, u.remote)], from: .local, to: .sftp(target), sshEnv: env)
             if let ops = app.ops {
                 await withCheckedContinuation { done in ops.enqueue(job, title: "Upload \(name) to \(place)") { _ in done.resume() } }
             } else {
                 await Blocking.run { job.run() }
             }
             let p = job.progress
-            guard p.state == .done, p.failed.isEmpty else { return job.isCancelled ? "cancelled" : "\(name) wasn't uploaded: " + (p.errors.first ?? "the copy failed") }
+            guard p.state == .done, p.failed.isEmpty else {
+                return p.errors.first.map { "\(name) wasn't uploaded: \($0)" } ?? (job.isCancelled ? "cancelled" : "\(name) wasn't uploaded")
+            }
+            if !u.folder {
+                let now = Date().timeIntervalSince1970
+                do { try await Blocking.run { try SFTP.session(target, env: env, cancel: nil, on: nil) { try $0.setAttrs(u.remote, mtime: now, mode: nil) } } } catch {
+                    return "\(name) wasn't uploaded: \(error.localizedDescription)"
+                }
+            }
         }
         return nil
     }

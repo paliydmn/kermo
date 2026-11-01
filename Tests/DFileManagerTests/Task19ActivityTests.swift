@@ -147,7 +147,6 @@ private func write(_ path: String, _ text: String = "x") {
     #expect(ops.view.arrangedSubviews.count == 1, "✓ goes after a moment; the one with errors stays")
 }
 
-/// ▸ on a running job's row opens its files: the last ones done and the picked items still to come.
 /// `enqueue`'s `then` (a Tools upload waits on it): once each job is over — as it's cancelled while still queued (it
 /// never starts), and as it finishes.
 @MainActor @Test func aJobsThenRunsWhenItsOver() async throws {
@@ -172,6 +171,7 @@ private func write(_ path: String, _ text: String = "x") {
     #expect(over == ["second true", "first done"])
 }
 
+/// ▸ on a running job's row opens its files: the last ones done and the picked items still to come.
 @MainActor @Test func aRowOpensToItsFiles() {
     _ = NSApplication.shared
     let job = FileJob(.copy, sources: ["/a/one", "/a/two", "/a/three"], destDir: "/tmp")

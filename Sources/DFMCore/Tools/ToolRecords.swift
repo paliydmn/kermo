@@ -26,18 +26,18 @@ public struct ToolRecords: Sendable, Hashable {
     }
 }
 
-/// A file a `files` list reads (over SFTP): its path, its content, and the content of its `also` file.
+/// A file a `files` list reads (over SFTP): its path and its content.
 public struct ToolFile: Sendable {
     public var path: String
     public var data: Data
-    public var also: Data?
-    public init(path: String, data: Data, also: Data? = nil) { (self.path, self.data, self.also) = (path, data, also) }
+    public init(path: String, data: Data) { (self.path, self.data) = (path, data) }
 
     /// The paths a `files` template names (§3.1): its values in place, each as it is, and the template's own `*`, `?`
     /// and `[…]` matching names in their folder as `sh` would (not one that starts with a dot) — in name order, folder
-    /// by folder. `list`: a folder's names, and which may be folders; nil: no such folder. A path not relative to `/`
-    /// is to the login folder.
-    public static func paths(_ template: String, _ scope: ToolTemplate.Scope, list: (String) throws -> [(name: String, folder: Bool)]?) throws -> [String] {
+    /// by folder; a folder (or a link) on the way, anything but a folder at the end; a name the server sent that would
+    /// leave its folder, never. `list`: a folder's names and kinds; nil: no such folder. A path not relative to `/` is
+    /// to the login folder.
+    public static func paths(_ template: String, _ scope: ToolTemplate.Scope, list: (String) throws -> [(name: String, kind: FileItem.Kind)]?) throws -> [String] {
         var text = "", from = template.startIndex
         for p in ToolTemplate.placeholders(in: template) {
             let v = scope.value(p.name)?.text ?? ""
@@ -52,7 +52,9 @@ public struct ToolFile: Sendable {
             if let name = literal(part) { found = found.map { $0 + "/" + name }; continue }
             let last = i == parts.count - 1
             found = try found.flatMap { dir in
-                (try list(dir.isEmpty ? "/" : dir) ?? []).filter { (last || $0.folder) && fnmatch(part, $0.name, FNM_PERIOD) == 0 }.map { dir + "/" + $0.name }.sorted()
+                (try list(dir.isEmpty ? "/" : dir) ?? []).filter { f in
+                    FileJob.isSafeName(f.name) && (last ? f.kind != .dir : f.kind == .dir || f.kind == .link) && fnmatch(part, f.name, FNM_PERIOD) == 0
+                }.map { dir + "/" + $0.name }.sorted()
             }
         }
         return found
@@ -72,7 +74,7 @@ extension ToolList {
     /// A `files` list's read (§3.1): the files its template names, each read by `read` (nil: gone since — left out)
     /// into one record; `also`'s file for each, named by that record's fields, read the same way — one that can't be
     /// read adds nothing.
-    public func records(_ scope: ToolTemplate.Scope, list: (String) throws -> [(name: String, folder: Bool)]?, read: (String) throws -> Data?) throws -> ToolRecords {
+    public func records(_ scope: ToolTemplate.Scope, list: (String) throws -> [(name: String, kind: FileItem.Kind)]?, read: (String) throws -> Data?) throws -> ToolRecords {
         guard let template = run.files else { return ToolRecords() }
         let files = try ToolFile.paths(template, scope, list: list).compactMap { p in try read(p).map { ToolFile(path: p, data: $0) } }
         return parse.records(files: files, name: view.name, also: view.also?.pattern) { record in
@@ -180,7 +182,7 @@ extension ToolParse {
     }
 
     /// A `files` list: each file one record, read by this Parse (its first record); `name` gets the file's parent
-    /// folder's name, and `also`'s pattern adds its groups from the file's `also` — or what `alsoOf` reads for its record.
+    /// folder's name, and `also`'s pattern adds its groups from what `alsoOf` reads for that record.
     public func records(files: [ToolFile], name: String?, also: String?, alsoOf: (ToolRecord) -> Data? = { _ in nil }) -> ToolRecords {
         var r = ToolRecords()
         let alsoRe = also.flatMap { try? Regex($0).anchorsMatchLineEndings() }   // ^ and $ at each line of the file
@@ -188,7 +190,7 @@ extension ToolParse {
             let one = Self(format: format, rows: rows, pattern: pattern, names: names, split: split).records(f.data)
             guard var rec = one.rows.first else { r.unmatched.append(f.path); continue }
             if let name { rec[name] = .string(((f.path as NSString).deletingLastPathComponent as NSString).lastPathComponent) }
-            if let alsoRe, let a = (f.also ?? alsoOf(rec)).map({ String(decoding: $0, as: UTF8.self) }), let m = a.firstMatch(of: alsoRe) {
+            if let alsoRe, let a = alsoOf(rec).map({ String(decoding: $0, as: UTF8.self) }), let m = a.firstMatch(of: alsoRe) {
                 for g in m.output.dropFirst() { if let n = g.name, let s = g.substring { rec[n] = .string(String(s)) } }
             }
             r.rows.append(rec)

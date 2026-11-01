@@ -60,13 +60,17 @@ public enum ToolExec {
     public static func files(_ list: ToolList, of p: ToolPreset, _ scope: ToolTemplate.Scope, on t: SFTPTarget, env: [String: String],
                              cancel: CancelFlag) throws -> ToolRecords {
         func gone<T>(_ path: String, _ body: () throws -> T) throws -> T? {
-            do { return try body() } catch let e as SFTPError where e.code == SFTPClient.NO_SUCH_FILE { return nil } catch let e as SFTPError where e.code != nil {
+            do {
+                return try body()
+            } catch let e as SFTPError where e.code == SFTPClient.NO_SUCH_FILE {
+                return nil
+            } catch let e as SFTPError where e.code != nil {   // a refusal, said with its path (not a lost connection)
                 throw SFTPError(message: "\(path): \(e.message)", code: e.code)
             }
         }
         return try channel(t.asRoot(false), cancel: cancel) {
             try SFTP.session(t.asRoot(list.run.sudo ?? p.sudo ?? false), env: env, cancel: cancel, on: nil) { c in
-                try list.records(scope, list: { dir in try gone(dir) { try c.list(dir).map { ($0.name, $0.attrs.kind != .file) } } },
+                try list.records(scope, list: { dir in try gone(dir) { try c.list(dir).map { ($0.name, $0.attrs.kind) } } },
                                  read: { path in try gone(path) { try c.read(path, max: 1 << 20) } })   // ponytail: a file's first MB — state files are small
             }
         }
