@@ -1122,8 +1122,8 @@ extension ServerLockTests {
 
     /// dpl's dashboard (§8.7) by its own preset, on a state folder of fixtures: while the tab shows, its list of files
     /// is read beside its stream — as root over one kept SFTP session, never a password — "3 of 4" units ready on the
-    /// tile and in WATCHED's summary, the Units table with each row's actions (`only`: an app's), the failed first
-    /// deploy's `down`, and `deployed` once a unit's active version goes up.
+    /// tile and in WATCHED's summary, the Units table with each row's actions (`only`: an app's), the failed deploy's
+    /// critical event, and `deployed` once a unit's active version goes up.
     @Test func dplsDashboardReadsItsListOfFiles() async throws {
         let (app, _, _, done) = try toolsApp()
         let bench = try ToolsBench(), quick = Quick(app), was = SFTP.sudoPassword
@@ -1144,7 +1144,7 @@ extension ServerLockTests {
                 "\(table.rows.map { $0.cells.map(\.text) })")
         #expect(rowButtons(table, 0).map(\.title) == ["Inspect", "Logs", "Deploy…", "Roll Back…", "Edit Config", "Undeploy…"], "\(rowButtons(table, 0).map(\.title))")
         #expect(rowButtons(table, 2).map(\.title) == ["Inspect", "Edit Config", "Undeploy…"], "a domain: \(rowButtons(table, 2).map(\.title))")
-        #expect(tool.events.map(\.message) == ["first is down: failed at build"], "\(tool.events.map(\.message))")
+        #expect(tool.events.map(\.message) == ["first: v1 failed at build"] && tool.events.first?.level == "critical", "\(tool.events.map(\.message))")
         let sudoRuns = { ((try? String(contentsOfFile: bench.dir + "/sftp-sudo.log", encoding: .utf8)) ?? "").split(separator: "\n").count }
         let before = sudoRuns()
 
