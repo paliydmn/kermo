@@ -262,7 +262,8 @@ final class ToolRunner {
 
     /// Why a value can't go into `a`'s command (or its `edit` path), or nil: it begins with `-`, holds a line break or a
     /// control character (§3.2 rule 5) — an input's `pattern` may allow it. On this Mac (`where: mac`) a value is a
-    /// server's data: only `[A-Za-z0-9._:/@%+=,-]`, and `open` takes only a web address. An input not filled in yet
+    /// server's data: only `[A-Za-z0-9._:/@%+=,-]` — a web address its query and fragment too (`?&#~`) — and `open`
+    /// takes only a web address. An input not filled in yet
     /// (the form's "…") is the form's to check.
     static func refusal(_ a: ToolAction, of p: ToolPreset, _ scope: ToolTemplate.Scope) -> String? {
         let run = a.run, mac = (run.where ?? p.where) == .mac, inputs = Dictionary((a.spec.inputs ?? []).map { ($0.info.name, $0) }) { x, _ in x }
@@ -274,7 +275,8 @@ final class ToolRunner {
                 if ph.name == "stdout", text == a.spec.open { continue }   // the command's output: checked once it's there
                 if let why = ToolTemplate.refusal(v, pattern: input?.info.pattern) { return "{\(ph.name)}: \(why)" }
                 guard mac else { continue }
-                if !v.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "._:/@%+=,-".unicodeScalars.contains($0)) }) {
+                let safe = "._:/@%+=,-" + (ToolHTTPCheck.valid(v) ? "?&#~" : "")
+                if !v.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || safe.unicodeScalars.contains($0)) }) {
                     return "{\(ph.name)}: “\(v)” has characters this Mac won't put into a command"
                 }
                 if (run.command?.all.first ?? "").hasPrefix("open"), !(v.hasPrefix("http://") || v.hasPrefix("https://")) {

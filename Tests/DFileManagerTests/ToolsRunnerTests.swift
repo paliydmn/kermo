@@ -74,6 +74,9 @@ extension ServerLockTests {
         #expect(try action(l, "203.0.113.7;x", "Unban").why == nil, "on the server it's one argument, whatever it holds")
         #expect(ToolRunner.refusal(ToolAction(run: ToolRun(command: .one("open {url}"), where: .mac), spec: .init(id: "open")), of: try toolNamed(app, "ufw").preset,
                                    ToolTemplate.Scope(rows: [["url": "file:///etc/passwd"]])) == "{url}: open takes only http:// and https:// addresses")
+        let open = ToolAction(run: ToolRun(command: .one("open {url}"), where: .mac), spec: .init(id: "open")), ufw = try toolNamed(app, "ufw").preset
+        #expect(ToolRunner.refusal(open, of: ufw, ToolTemplate.Scope(rows: [["url": "https://example.com/search?q=a&page=2#top"]])) == nil, "a web address's query and fragment")
+        #expect(ToolRunner.refusal(open, of: ufw, ToolTemplate.Scope(rows: [["url": "https://example.com/?a=1;b"]])) != nil && ToolRunner.refusal(open, of: ufw, ToolTemplate.Scope(rows: [["url": "x?y&z"]])) != nil)
         _ = try action(l, "-h", "Unban").run(false)
         #expect(!bench.calls.contains { $0.contains("unbanip") })
     }
