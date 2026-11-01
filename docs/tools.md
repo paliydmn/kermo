@@ -33,7 +33,7 @@ A server's page has its name, the open tab's line from the program (`jails: sshd
 - **Buttons** (Server Info): each runs its action as its row does — the question on production, the line under the buttons saying how it went, its window where it has one. One that can't run here is greyed, saying why.
 - **A one-command tool**: one button.
 
-A server that isn't connected shows the tools it had when Kermo last saw it, greyed, and **Connect**: Kermo doesn't log in to draw a page. **＋** after the tabs lists the library's other tools: one hidden on this server shows again, one the server hasn't got is greyed. **⋯** has **Open in New Window** (the page as a window of its own; several servers' at once), **Use … on Servers…**, the tool's file, and **Hide … on web-01**. The windows don't reopen after a restart.
+A server that isn't connected shows the tools it had when Kermo last saw it, greyed, and **Connect**: Kermo doesn't log in to draw a page. **＋** after the tabs lists the library's other tools: one hidden on this server shows again, one the server hasn't got is greyed. **⋯** has **Open in New Window** (the page as a window of its own; several servers' at once), **Use … on Servers…**, the tool's file, and **Hide … on web-01**. The windows open when Kermo quits come back when it starts, each on its server and tab, in its place — not connected, as above; a server deleted meanwhile is left out.
 
 ### Where a tool is used
 
