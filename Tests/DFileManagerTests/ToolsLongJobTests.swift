@@ -15,6 +15,7 @@ private let deployer = #"""
           "command": "echo start {version}; sleep 1; echo '{\"pct\": 50, \"step\": \"building\"}'; [ -f \"$HOME/hold\" ] && sleep 30; sleep 1; echo '{\"pct\": 100, \"release\": \"v13\"}'",
           "progress": { "percent": "pct", "text": "{step}" }, "format": "jsonl", "done": "deployed {release}" },
         { "id": "fail", "title": "Fail", "long": true, "output": "line", "command": "echo broken >&2; exit 2" },
+        { "id": "partly", "title": "Partly", "long": true, "output": "line", "exitOk": [0, 3], "command": "echo some left; exit 3" },
         { "id": "unseal", "title": "Unseal", "long": true, "output": "line", "command": "echo key {key}",
           "inputs": [ { "name": "key", "type": "secret", "title": "Key" } ] }
       ] }
@@ -105,6 +106,11 @@ extension ServerLockTests {
         #expect(lb.ops.toolbarItem.toolTip?.contains("finished") == true, "a failure: red, as a copy's errors")
         lb.ops.showActivity(entry: nil)
         #expect(jobs.unseen == 0)
+
+        await run(l, "Partly")?.value   // its exitOk: 3 is ✓ too
+        await toolsUntil { jobs.jobs.first?.running == false && jobs.jobs.first?.action == "partly" }
+        let partly = try #require(jobs.jobs.first)
+        #expect(partly.exit == 3 && partly.ok && partly.unseen == nil && l.resultLines.last?.hasPrefix("✓ Partly on localhost") == true, "\(partly) \(l.resultLines)")
 
         ToolRunner.filling = { form in form.set("key", "hunter2-xyz"); return form.values }
         await run(l, "Unseal")?.value
