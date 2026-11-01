@@ -505,7 +505,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
             reading = nil
             switch r {
             case .success(let c): show(c)
-            case .failure(is CancellationError): break
+            case .failure(is CancellationError): above.isEmpty ? close() : up()   // its own: a level's form cancelled — back where it came from
             case .failure(let e):
                 let font = NSFont.systemFont(ofSize: 12), line = NSMutableAttributedString()
                 if !(e is AppDelegate.Locked) { line.append(Symbol.failed.text(Palette.fail, font: font, label: "failed")); line.append(NSAttributedString(string: " ")) }

@@ -96,7 +96,7 @@ extension AppDelegate {
             Task { if await tools.setUp(tool, on: t, window: nil) { openTool(tool, on: s, t) } }
             return
         }
-        if tool.preset.list == nil, tool.preset.source != nil {   // a watched tool: its tab in the Tools window
+        if tool.preset.list == nil, tool.preset.watchable {   // a watched tool (Sites too: from this Mac): its tab in the Tools window
             ToolsWindow.show(self, server: t)
             ToolsWindow.main?.page?.select(tool.preset.id)
             return
@@ -123,7 +123,7 @@ extension AppDelegate {
                 return placeRow(tool.preset.title, p, state: "set up…", about: "asks for its settings on \(p.server.title) first",
                                 open: { [unowned self] _ in openTool(tool, on: p.server, p.target) })
             }
-            if tool.preset.commandAction != nil || tool.preset.list == nil && tool.preset.source != nil {
+            if tool.preset.commandAction != nil || tool.preset.list == nil && tool.preset.watchable {
                 return placeRow(tool.preset.title, p, about: tool.preset.about ?? "", open: { [unowned self] _ in openTool(tool, on: p.server, p.target) })
             }
             let n = up && tool.preset.list != nil ? tools.counts[ServerRow.key(p.target) + " " + tool.preset.id] : nil   // a launcher's rows are its actions

@@ -8,7 +8,8 @@ import Testing
 // repeats the level it's on (D-155); `only` keeps an action off the rows it doesn't name.
 
 /// `deep`: a list of things (`kind name`); Inside (⌘↓) lists a thing's files — the thing itself first, as `du -d1`
-/// does — whose Show (↩) says the parent's name, and Again (⌘↓) repeats that level; Deploy only on an app.
+/// does — whose Show (↩) says the parent's name, and Again (⌘↓) repeats that level; Deploy only on an app. Scan… asks
+/// a depth and changes something: its level's Zap can't be checked against a list that reading would change.
 @MainActor private func deep(_ app: AppDelegate, _ bench: ToolsBench) throws {
     for (name, body) in [("deep-list", "printf 'app api\\nsite www\\n'"), ("deep-in", "[ \"$1\" = www ] || printf '%s 30\\n%s/a 10\\n%s/b 20\\n' \"$1\" \"$1\" \"$1\""),
                          ("deep-show", ":"), ("deep-deploy", ":")] {
@@ -24,6 +25,9 @@ import Testing
               "list": { "format": "regex", "pattern": "^(?<file>\\S+) (?<size>\\d+)$", "key": "{file}", "title": "{file}", "detail": "{size}", "empty": "Nothing in {name}" },
               "actions": [ { "id": "show", "title": "Show", "key": "return", "readonly": true, "command": "deep-show {name} {file}", "done": "Shown {file} of {name}" },
                            { "id": "again", "title": "Again", "key": "cmd+down", "readonly": true, "command": "deep-in {file}", "output": "list" } ] },
+            { "id": "scan", "title": "Scan…", "command": "deep-in {name} {depth}", "output": "list", "inputs": [ { "name": "depth", "type": "text", "default": "1" } ],
+              "list": { "format": "regex", "pattern": "^(?<file>\\S+) (?<size>\\d+)$", "key": "{file}", "title": "{file}" },
+              "actions": [ { "id": "zap", "title": "Zap", "dangerous": true, "command": "deep-show zap {file}" } ] },
             { "id": "deploy", "title": "Deploy", "key": "f5", "only": { "kind": ["app"] }, "command": "deep-deploy {name}" } ] }
         """#.utf8).write(to: URL(fileURLWithPath: bench.dir + "/own/deep.json"))
     _ = app.tools.reload()
@@ -109,5 +113,47 @@ extension ServerLockTests {
         app.runList(try #require(site.actions.first { $0.title == "Inside" }), in: site)
         await toolsUntil { a.list?.source !== source && a.list?.content != nil }
         #expect(a.list?.shown.isEmpty == true && a.list?.content?.empty == "Nothing in www", "\(a.list?.content?.empty ?? "")")
+    }
+
+    /// A level's read is its action's run (§7.2): its form — Cancel goes back to the list — production's question, the
+    /// production log; a locked server says so, as any list's read. A row's dangerous action down there isn't run
+    /// unchecked when reading the level again would run its change.
+    @Test func aLevelsReadAsksAsAnyRun() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let bench = try ToolsBench(), auth = ServerLock.authenticate
+        defer { bench.done(); done(); app.savedServers = []; ToolRunner.filling = nil; ServerLock.authenticate = auth }
+        try deep(app, bench)
+        var prod = SavedServer(target: .local())
+        prod.prod = true
+        app.savedServers = [prod]
+        ServerLock.servers = { [prod] }
+        let source = ToolListSource(app, try toolNamed(app, "deep"), prod, .local())
+        _ = try await source.read(CancelFlag())
+        a.showList(source)
+        app.window.makeFirstResponder(a.table)
+        var forms = 0, asked: [String] = []
+        ToolRunner.filling = { _ in forms += 1; return nil }   // Cancel
+        AppDelegate.answering = { m, _, _ in asked.append(m); return 0 }
+        app.runList(try #require(a.list?.actions.first { $0.title == "Scan…" }), in: try #require(a.list))
+        await toolsUntil { forms == 1 && a.list?.source === source }
+        #expect(a.list?.source === source && a.list?.cursor?.title == "api" && asked.isEmpty && !bench.calls.contains("deep-in api 2"), "cancelled: back on its row")
+
+        ToolRunner.filling = { _ in forms += 1; return ["depth": "2"] }
+        app.runList(try #require(a.list?.actions.first { $0.title == "Scan…" }), in: try #require(a.list))
+        await toolsUntil { a.list?.source !== source && a.list?.shown.count == 3 }
+        #expect(asked == ["Scan on localhost?"] && bench.calls.contains("deep-in api 2"), "\(asked)")
+        await toolsUntil { ((try? String(contentsOfFile: bench.dir + "/audit.jsonl", encoding: .utf8)) ?? "").contains("tool deep scan") }
+        #expect(((try? String(contentsOfFile: bench.dir + "/audit.jsonl", encoding: .utf8)) ?? "").contains("tool deep scan"), "in the production log")
+        let level = try #require(a.list)
+        app.runList(try #require(level.actions.first { $0.title == "Zap" }), in: level)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(asked.count == 1 && !bench.calls.contains { $0.hasPrefix("deep-show zap") }, "not checked, not run: \(asked)")
+
+        var locked = prod
+        locked.locked = true
+        ServerLock.servers = { [locked] }
+        ServerLock.authenticate = { _ in false }
+        let scan = try #require(level.source as? ToolListSource)
+        do { _ = try await scan.read(CancelFlag()); Issue.record("read while locked") } catch { #expect(error is AppDelegate.Locked, "\(error)") }
     }
 }

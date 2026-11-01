@@ -1680,7 +1680,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             busyMessage = busyOps.last?.message
             switch r {
             case .success(let c): l.set(c)
-            case .failure(is CancellationError): break
+            case .failure(is CancellationError): if l.source.up != nil { goUp() }   // a level's form cancelled: back where it came from
             case .failure(let e) where l.content?.rows.isEmpty != false: loadError = e.localizedDescription
             case .failure(let e): flash(e.localizedDescription, error: true)
             }

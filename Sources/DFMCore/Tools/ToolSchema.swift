@@ -393,7 +393,7 @@ extension ToolSchema.Check {
 
         var ids: [String: Bool] = [:]
         for (path, a) in p.allActions {
-            let s = a.spec, onTool = path.first == .key("toolActions")
+            let s = a.spec, onTool = path.count == 2 && path.first == .key("toolActions")   // a tool's own: one down there is a list's row's
             if ids.updateValue(true, forKey: s.id) != nil { error(path + [.key("id")], "“\(s.id)” is another action's id too") }
             source(a.run, path, needed: false)
             source(s.requires, path + [.key("requires")])
@@ -410,6 +410,10 @@ extension ToolSchema.Check {
                 error(path + [.key("output")], "“list” needs the action's own list here: there's no list it's on to repeat")
             }
             if s.output == .list, s.list == nil, s.actions != nil { error(path + [.key("actions")], "an action that repeats its level has that level's actions") }
+            if s.output == .list, s.multi == true { error(path + [.key("multi")], "a level is one row's: not on marked rows") }
+            if s.output == .list, (s.inputs ?? []).contains(where: { $0.info.type == .secret }) {
+                error(path + [.key("inputs")], "a secret doesn't go into a level's run: its read isn't masked")
+            }
             if s.output != .list, s.list != nil || s.actions != nil { error(path + [.key("output")], "an action with its own list and actions has output “list”") }
             if let pat = s.progress?.pattern, !groups(pat).contains("percent") {
                 error(path + [.key("progress"), .key("pattern")], "needs a group (?<percent>…)")

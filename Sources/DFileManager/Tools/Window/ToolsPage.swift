@@ -465,8 +465,8 @@ final class ToolsPage: NSView, RowList {
     // MARK: RowList — how a button's run went
 
     /// Its buttons' rows, and the open live tab's table rows (`ToolListSource.rowID`'s form).
-    /// ponytail: the prefix takes every row of the open tab's tool — a tool with both a list in a Picker and a
-    /// dashboard table would see the Picker's line here too; no built-in has both.
+    /// ponytail: the prefix takes every row of the open tab's tool — a list's in a Picker, a dashboard level's (System's
+    /// Biggest Folders) — so their line shows here too; harmless, the page keeps it after the Picker closes.
     func has(_ id: String) -> Bool { window != nil && (ids.contains(id) || id.hasPrefix(key + " tool:" + (tab ?? "") + " ")) }
     func update(_ item: Picker.Item) {}
     func reload(_ c: ListContent, having id: String) {}

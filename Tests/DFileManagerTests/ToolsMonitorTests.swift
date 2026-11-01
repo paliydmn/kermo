@@ -567,6 +567,7 @@ extension ServerLockTests {
         await toolsUntil { app.panels.contains { ($0.list?.source as? ToolListSource)?.level != nil } }
         let other = try #require(app.panels.first { ($0.list?.source as? ToolListSource)?.level != nil })
         #expect(other.list?.shown.map(\.title) == ["1 first"] && other.pathBar.shownCrumbs == ["Pulse", "first"], "the level in the other panel: \(other.pathBar.shownCrumbs)")
+        #expect(app.window.firstResponder === other.table, "the keys there")
     }
 
     /// `goto` and the chart's click: an event's Services… and a count's open the server's services in the search;
@@ -750,6 +751,9 @@ extension ServerLockTests {
         #expect(view.blocks.allSatisfy { $0.isHidden } && view.foot.isHidden, "no empty table or chart")
         try await Task.sleep(for: .milliseconds(400))
         #expect(app.tools.monitor.tool("sites", on: .local())?.history.last == nil, "nothing to check")
+        closeWindows()
+        app.openTool(try toolNamed(app, "sites"), on: app.savedServers[0], .local())   // Tools ▸ Sites: its tab, never a list over SSH
+        #expect(ToolsWindow.main?.page?.tab == "sites" && Picker.current == nil)
         closeWindows()
         app.savedServers = []
         #expect(app.tools.here(.local())?.tools.contains { $0.preset.id == "sites" } == false, "not saved: no Sites")

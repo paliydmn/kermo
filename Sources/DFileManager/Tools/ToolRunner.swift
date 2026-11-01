@@ -264,8 +264,8 @@ final class ToolRunner {
 
     /// Why a value can't go into `a`'s command (or its `edit` path), or nil: it begins with `-`, holds a line break or a
     /// control character (§3.2 rule 5) — an input's `pattern` may allow it. On this Mac (`where: mac`) a value is a
-    /// server's data: only `[A-Za-z0-9._:/@%+=,-]` — a web address its query and fragment too (`?&#~`) — and `open`
-    /// takes only a web address. An input not filled in yet
+    /// server's data: only `[A-Za-z0-9._:/@%+=,-]` — to `open`, a web address with its query and fragment too (`?&#~`:
+    /// `open` is no shell) — and `open` takes only a web address. An input not filled in yet
     /// (the form's "…") is the form's to check.
     static func refusal(_ a: ToolAction, of p: ToolPreset, _ scope: ToolTemplate.Scope) -> String? {
         let run = a.run, mac = (run.where ?? p.where) == .mac, inputs = Dictionary((a.spec.inputs ?? []).map { ($0.info.name, $0) }) { x, _ in x }
@@ -277,7 +277,7 @@ final class ToolRunner {
                 if ph.name == "stdout", text == a.spec.open { continue }   // the command's output: checked once it's there
                 if let why = ToolTemplate.refusal(v, pattern: input?.info.pattern) { return "{\(ph.name)}: \(why)" }
                 guard mac else { continue }
-                let safe = "._:/@%+=,-" + (ToolHTTPCheck.valid(v) ? "?&#~" : "")
+                let opens = (run.command?.all.first ?? "").hasPrefix("open "), safe = "._:/@%+=,-" + (opens && ToolHTTPCheck.valid(v) ? "?&#~" : "")
                 if !v.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || safe.unicodeScalars.contains($0)) }) {
                     return "{\(ph.name)}: “\(v)” has characters this Mac won't put into a command"
                 }
@@ -410,6 +410,11 @@ final class ToolRunner {
         // The result line under the list, the list read again (§7.2), in the loop Services… changes go through.
         let verify = onRow && row != nil && (a.spec.verify ?? (a.spec.dangerous == true))
         let lister = source.map(\.relister) ?? (p.list == nil ? nil : ToolListSource.lister(app, tool, s, t))
+        if verify, lister == nil, source?.level != nil {   // reading this level again would run its change: nothing to check the row by
+            app.active.flash("\(title): \(rowTitle ?? p.title) can't be checked again here — reading this list changes something; nothing ran", error: true)
+            if !readonly { changing[key] = nil }
+            return nil
+        }
         let refresh = !readonly && a.spec.refresh != false
         var shown = ""
         var said = rowScope
@@ -452,7 +457,8 @@ final class ToolRunner {
         if let l = list as? ListPanel, let panel = app.panels.first(where: { $0.list === l }) { return panel.showList(level) }
         Picker.show(over: (list as? ToolsPage)?.window ?? app.window, level,
                     scope: ("\(SavedServer.name(for: level.target)) › " + level.trail.joined(separator: " › "), Chip.of(level.target))) { [app] s, q, id, rows in
-            app.openInOther(s, query: q, select: id, rows: rows)   // ⌘↩: that level in the main window's other panel
+            app.showMainWindow(nil)   // ⌘↩: that level in the main window's other panel, the keys there
+            app.openInOther(s, query: q, select: id, rows: rows)
         }
     }
 

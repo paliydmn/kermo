@@ -31,7 +31,10 @@ final class ToolListSource: ListSource {
     /// A level's: the row it went into (`web-01 › fail2ban › sshd`), else the action.
     var title: String { level.map { $0.row?.title ?? $0.action.spec.title ?? $0.action.spec.id } ?? preset.title }
     var trail: [String] { (level?.parent.trail ?? []) + [title] }
-    var up: (source: ListSource, row: String?)? { level.map { lv in (lv.parent, lv.row.map { lv.parent.rowID($0.key) }) } }
+    /// The list above, if it was one: a dashboard's table isn't (its level goes back to the server's place).
+    var up: (source: ListSource, row: String?)? {
+        level.flatMap { lv in lv.parent.content == nil ? nil : (lv.parent, lv.row.map { lv.parent.rowID($0.key) }) }
+    }
     private var key: String { ServerRow.key(target) + " " + preset.id }
     /// What its rows and a change of it are said about: a level's own, so a row there with a key one above has too
     /// (`du -d1 /var` lists `/var`) is another row. A tool's action with no row is said about the list (as its
@@ -205,9 +208,9 @@ final class ToolListSource: ListSource {
     /// As any look: a locked server asks first, then the login if one is due — to the server as it was reached (its
     /// place's) — then the list's runs. Its connection is kept for its ControlPersist (`noteLook`).
     func read(_ cancel: CancelFlag) async throws -> ListContent {
+        if await !ServerLock.authorize(target, "look at the \(title.lowercased()) of") { throw AppDelegate.Locked(message: "\(server.title) stays locked") }
         var willRun: String?
         if let level { willRun = try await ready(level) }
-        else if await !ServerLock.authorize(target, "look at the \(title.lowercased()) of") { throw AppDelegate.Locked(message: "\(server.title) stays locked") }
         let t = target, env = SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For “\(title)” on \(server.title)"]) { $1 }
         try await Blocking.run { try SFTP.startMaster(t, env: env) }
         app.noteLook(t)
@@ -222,21 +225,23 @@ final class ToolListSource: ListSource {
         return show(read)
     }
 
-    /// A level's action as any (§7.2): the lock, its form, production's question — over the list it's shown in. What it runs.
+    /// A level's action as any (§7.2), after the lock: its form, production's question — over the list it's shown in.
+    /// What it runs; Cancel goes back where it came from.
     private func ready(_ lv: Level) async throws -> String {
         let verb = (lv.action.spec.title ?? lv.action.spec.id).replacingOccurrences(of: "…", with: "")
         switch await app.tools.ready(lv.action, of: tool, app.tools.scope(preset, on: server, target, rows: above), row: lv.row?.title, on: target, asked: false,
                                      window: app.rowLists(base).first?.sheetWindow, values: values) {
-        case .stop(let why): throw JobErrorMessage("\(verb): " + (why == "cancelled" ? "cancelled — nothing ran" : "\(why); nothing ran"))
+        case .stop("cancelled"): throw CancellationError()
+        case .stop(let why): throw JobErrorMessage("\(verb): \(why) — nothing ran")
         case .go(let scope, _, let willRun, _):
             values = scope.levels[0].mapValues(\.text)
             return willRun
         }
     }
 
-    /// A level whose run changes something is in the production log, as any run is; a look isn't.
+    /// A level's run is in the production log, as any action's is.
     private func changed(_ willRun: String?, _ error: Error?) {
-        guard let lv = level, let willRun, !ToolRunner.looks(lv.action) else { return }
+        guard let lv = level, let willRun else { return }
         AuditLog.write(target, "tool \(preset.id) \(lv.action.spec.id)", paths: [], command: willRun, exit: error == nil ? 0 : nil, error: error?.localizedDescription)
     }
 
