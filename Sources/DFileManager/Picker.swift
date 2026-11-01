@@ -465,10 +465,11 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     }
 
     /// `s` as a picker's own first level — ⎋ closes from there — its chip `scope`: a dashboard's Biggest Folders over
-    /// the Tools window.
+    /// the Tools window. `listInOther`: ⌘↩, as the palette's.
     @discardableResult
-    static func show(over window: NSWindow, _ s: ListSource, scope: (name: String, chips: [Chip])) -> Picker {
-        let p = show(over: window, placeholder: "Filter \(s.title.lowercased())", scope: scope, items: [])
+    static func show(over window: NSWindow, _ s: ListSource, scope: (name: String, chips: [Chip]),
+                     listInOther: @escaping @MainActor (ListSource, String, String?, [Item]) -> Void) -> Picker {
+        let p = show(over: window, placeholder: "Filter \(s.title.lowercased())", scope: scope, items: [], listInOther: listInOther)
         p.enter(s, query: "", select: nil, onLeave: nil)
         return p
     }
@@ -476,8 +477,8 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     private func enter(_ s: ListSource, query: String, select: String?, onLeave: ((String, String?) -> Void)?) {
         (source, field.stringValue, selectID, self.onLeave) = (s, query, select, onLeave)
         rank = { item, q in Fuzzy.score(q, item.title + " " + item.subtitle + " " + item.detail) }
-        let inOther = listInOther   // not self: ⌘↩ runs it after the picker closed and went
-        other = { q, id, rows in inOther?(s, q, id, rows) }
+        other = nil   // none: no ⌘↩ slot
+        if let inOther = listInOther { other = { q, id, rows in inOther(s, q, id, rows) } }   // not self: ⌘↩ runs it after the picker closed and went
         guard let c = s.content else { return read(s) }
         show(c)
     }

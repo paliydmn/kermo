@@ -44,7 +44,7 @@ extension ServerLockTests {
         page.refresh()
         await toolsUntil { app.tools.here(.local())?.tools.isEmpty == false }
         page.refresh()
-        #expect(labels(page.tabs) == ["Banned IPs", "Sites", "Server Info", "Firewall"] && page.tab == "fail2ban" && page.tabs.isEnabled, "\(labels(page.tabs))")
+        #expect(labels(page.tabs) == ["Banned IPs", "Server Info", "Firewall", "Sites"] && page.tab == "fail2ban" && page.tabs.isEnabled, "\(labels(page.tabs))")
         #expect(buttons(page.body).map(\.title) == ["Open in Panel", "Open in Search"])
         await toolsUntil { page.line.stringValue.hasPrefix("jails: sshd") }
         #expect(page.line.stringValue.hasPrefix("jails: sshd"), "the header line, as the list has it above its rows: \(page.line.stringValue) \(bench.calls)")
@@ -55,9 +55,9 @@ extension ServerLockTests {
         await toolsUntil { app.active.list?.shown.isEmpty == false }
         #expect(app.active.list?.shown.map(\.title) == ["203.0.113.7", "198.51.100.2"], "\(String(describing: app.active.list?.shown.map(\.title))) \(app.active.busyMessage ?? "")")
 
-        let four = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: 0, context: nil,
-                                    characters: "4", charactersIgnoringModifiers: "4", isARepeat: false, keyCode: 21)!
-        #expect(page.performKeyEquivalent(with: four) && page.tab == "ufw")
+        let three = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: 0, context: nil,
+                                     characters: "3", charactersIgnoringModifiers: "3", isARepeat: false, keyCode: 20)!
+        #expect(page.performKeyEquivalent(with: three) && page.tab == "ufw")
         page.select("sysinfo")
         #expect(buttons(page.body).map(\.title).prefix(3) == ["Full Report", "CPU · RAM Now", "Live Load"])
     }

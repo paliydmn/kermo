@@ -82,13 +82,15 @@ final class ToolRunner {
     /// The tools `t`'s server shows, as last known (nil: not known yet): those it has that you use there — Use on
     /// Servers…, Hide. One that asks for a value (`vars.ask`) only on a saved server: the value is kept with it, and
     /// `toSetUp` says what's still to set. One that checks the server's addresses (Sites) only on a saved server: they
-    /// are kept with it (Edit Server), and its tab says when there are none yet. Tools ▸, a place's rows (the search's
-    /// too) and the Tools window show this.
+    /// are kept with it (Edit Server), and its tab says when there are none yet — last, not a server's first. Tools ▸, a
+    /// place's rows (the search's too) and the Tools window show this.
     func here(_ t: SFTPTarget) -> (tools: [LoadedTool], at: Date)? {
         guard let a = answer(t) else { return nil }
         let saved = app.savedServer(at: t), id = saved?.id.uuidString
-        return (tools.filter { a.answer.has($0.preset) && settings.uses($0.preset.id, on: id) && (id != nil || $0.preset.varsToAsk(saved: [:]).isEmpty)
-                && ($0.preset.http == nil || saved != nil) }, a.at)
+        let shown = tools.filter { a.answer.has($0.preset) && settings.uses($0.preset.id, on: id) && (id != nil || $0.preset.varsToAsk(saved: [:]).isEmpty)
+                && ($0.preset.http == nil || saved != nil) }
+        func none(_ t: LoadedTool) -> Bool { t.preset.http != nil && saved?.sites.isEmpty == true }
+        return (shown.filter { !none($0) } + shown.filter(none), a.at)
     }
 
     /// The values `tool` asks for that aren't set on `t`'s server yet: Set Up… before it's used there.
@@ -449,7 +451,9 @@ final class ToolRunner {
         if let p = list as? Picker { return p.go(into: level) }
         if let l = list as? ListPanel, let panel = app.panels.first(where: { $0.list === l }) { return panel.showList(level) }
         Picker.show(over: (list as? ToolsPage)?.window ?? app.window, level,
-                    scope: ("\(SavedServer.name(for: level.target)) › " + level.trail.joined(separator: " › "), Chip.of(level.target)))
+                    scope: ("\(SavedServer.name(for: level.target)) › " + level.trail.joined(separator: " › "), Chip.of(level.target))) { [app] s, q, id, rows in
+            app.openInOther(s, query: q, select: id, rows: rows)   // ⌘↩: that level in the main window's other panel
+        }
     }
 
     /// `goto`: there, after the lock. `open`: the server path — the command's first output line as `{stdout}`, else the

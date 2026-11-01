@@ -562,6 +562,11 @@ extension ServerLockTests {
         await toolsUntil { bench.calls.contains("pulse-log here 1 1 first") }
         #expect(bench.calls.contains("pulse-log here 1 1 first"), "the parent row's pid with the level's line: \(bench.calls)")
         #expect(p.actionBar.last?.label == "Close", "its first level: ⎋ closes")
+        _ = p.panel.onKey?(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: 0, context: nil,
+                                             characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!)   // ⌘↩
+        await toolsUntil { app.panels.contains { ($0.list?.source as? ToolListSource)?.level != nil } }
+        let other = try #require(app.panels.first { ($0.list?.source as? ToolListSource)?.level != nil })
+        #expect(other.list?.shown.map(\.title) == ["1 first"] && other.pathBar.shownCrumbs == ["Pulse", "first"], "the level in the other panel: \(other.pathBar.shownCrumbs)")
     }
 
     /// `goto` and the chart's click: an event's Services… and a count's open the server's services in the search;
@@ -728,19 +733,21 @@ extension ServerLockTests {
         #expect(posts.sent.first?.body == "Sites: \(web.url)/down is down: 503" && monitor.worst(s).state == .critical, "\(posts.sent)")
     }
 
-    /// Sites is on every saved server: with no addresses its tab says so beside Add Address…, and nothing is checked; a
-    /// server that isn't saved has none — its addresses would have nowhere to be kept.
+    /// Sites is on every saved server: with no addresses its tab — the last — says so beside Add Address…, with no empty
+    /// table or chart, and nothing is checked; a server that isn't saved has none — its addresses would have nowhere to
+    /// be kept.
     @Test func aSavedServerWithoutAddressesHasASitesTabThatSaysSo() async throws {
         let (app, _, _, done) = try toolsApp()
         let bench = try ToolsBench(), quick = Quick(app)
         defer { quick.done(); bench.done(); done(); app.savedServers = [] }
         try await watching(app, bench)
-        #expect(app.savedServers.first?.sites.isEmpty == true && app.tools.here(.local())?.tools.contains { $0.preset.id == "sites" } == true)
+        #expect(app.savedServers.first?.sites.isEmpty == true && app.tools.here(.local())?.tools.last?.preset.id == "sites", "\(app.tools.here(.local())?.tools.map(\.preset.id) ?? [])")
         ToolsWindow.show(app, server: .local())
         let page = try #require(ToolsWindow.main?.page)
         page.select("sites")
         let view = try #require(live(page))
         #expect(view.banner.stringValue.hasPrefix("No addresses yet: add localhost's web addresses") && !view.banner.isHidden && !view.addButton.isHidden, "\(view.banner.stringValue)")
+        #expect(view.blocks.allSatisfy { $0.isHidden } && view.foot.isHidden, "no empty table or chart")
         try await Task.sleep(for: .milliseconds(400))
         #expect(app.tools.monitor.tool("sites", on: .local())?.history.last == nil, "nothing to check")
         closeWindows()
