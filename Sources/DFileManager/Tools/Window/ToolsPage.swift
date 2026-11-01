@@ -424,7 +424,8 @@ final class ToolsPage: NSView, RowList {
     }
 
     /// ＋: the library's tools this server doesn't show — hidden or not used here (shown again), not there (grey), yours
-    /// not in use yet ("Use the tool…?" first).
+    /// not in use yet ("Use the tool…?" first). On a server that isn't saved, grey: what a tool keeps of it (a value it
+    /// asks, Sites' addresses) has nowhere to go.
     func addMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -435,7 +436,7 @@ final class ToolsPage: NSView, RowList {
                 menu.addItem(AppDelegate.note("\(name(p)) — " + (known == nil ? "not checked yet" : "not on \(server.title)")))
                 continue
             }
-            let it = MenuAction.item("\(name(p)) — " + (app.tools.settings.only[p.id] != nil ? "used on other servers" : "hidden here")) { [unowned self] in
+            let it = MenuAction.item("\(name(p)) — " + (!saved ? "save the server to use it here" : app.tools.settings.only[p.id] != nil ? "used on other servers" : "hidden here")) { [unowned self] in
                 app.tools.show(tool, on: target, true)
                 select(p.id)
             }
@@ -464,8 +465,8 @@ final class ToolsPage: NSView, RowList {
     // MARK: RowList — how a button's run went
 
     /// Its buttons' rows, and the open live tab's table rows (`ToolListSource.rowID`'s form).
-    /// ponytail: the prefix takes every row of the open tab's tool — a tool with both a list in a Picker and a
-    /// dashboard table would see the Picker's line here too; no built-in has both.
+    /// ponytail: the prefix takes every row of the open tab's tool — a list's in a Picker, a dashboard level's (System's
+    /// Biggest Folders) — so their line shows here too; harmless, the page keeps it after the Picker closes.
     func has(_ id: String) -> Bool { window != nil && (ids.contains(id) || id.hasPrefix(key + " tool:" + (tab ?? "") + " ")) }
     func update(_ item: Picker.Item) {}
     func reload(_ c: ListContent, having id: String) {}

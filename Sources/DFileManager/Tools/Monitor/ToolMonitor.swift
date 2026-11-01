@@ -183,8 +183,9 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
             }
         }
         for page in ToolsWindow.pages where page.window?.isVisible == true {
-            guard let tool = page.liveTool, AppDelegate.connected(page.target) || tool.preset.http != nil else { continue }
-            add(app.savedServers.first { $0.id == page.server.id } ?? page.server, page.target, tool, watched: false)   // as saved now: the page may be older
+            let saved = app.savedServers.first { $0.id == page.server.id } ?? page.server   // as saved now: the page may be older
+            guard let tool = page.liveTool, tool.preset.http == nil ? AppDelegate.connected(page.target) : !saved.sites.isEmpty else { continue }
+            add(saved, page.target, tool, watched: false)
         }
         let wereWatched = Set(servers.values.filter(\.watched).map(\.key))
         for (key, s) in servers {

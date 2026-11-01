@@ -62,6 +62,7 @@ import DFMCore
                 }]
         // The dashboard's blocks; none: the summary's metrics as a row of tiles.
         let shown = p.dashboard.map { $0.map(make) } ?? [row((p.summary ?? []).map { tile([$0.metric], of: $0.of, also: nil) })]
+        dash = shown
         let stripRow = NSStackView(views: [strip, watchButton]), bannerRow = NSStackView(views: [banner, connectButton, endButton, addButton])
         strip.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         banner.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -92,6 +93,9 @@ import DFMCore
 
     /// Rows of tiles alone: not stretched to the width.
     private var tileRows: [NSView] = []
+    /// The dashboard's blocks: hidden while Sites has no addresses to show.
+    private var dash: [NSView] = []
+    private var noAddresses: Bool { tool.preset.http != nil && (app.savedServers.first { $0.id == server.id } ?? server).sites.isEmpty }
 
     /// A block as its view: a `row`'s side by side, a `stat` a tile, the rest ToolsDash's.
     private func make(_ b: ToolBlock) -> NSView {
@@ -156,7 +160,11 @@ import DFMCore
         watchButton.isEnabled = saved
         watchButton.toolTip = saved ? nil : "Save the server to watch it"
         let locked = ServerLock.server(for: target)?.locked == true
-        let (text, color): (String, NSColor) = if let s, s.needsLogin {
+        let none = noAddresses
+        (dash + [foot]).forEach { $0.isHidden = none }
+        let (text, color): (String, NSColor) = if none {
+            ("No addresses yet: add \(server.title)'s web addresses to check them from this Mac — status, response time, certificate.", NSColor.secondaryLabelColor)
+        } else if let s, s.needsLogin {
             (s.connecting ? "Logging in to \(server.title)…" : "\(server.title) needs login — a key or a saved password would connect without asking. " + (s.error ?? ""), Palette.warn)
         } else if let s, let down = s.down {
             ("Not answering since \(down.formatted(date: .omitted, time: .shortened)) · \(s.missed) checks in a row · last data "

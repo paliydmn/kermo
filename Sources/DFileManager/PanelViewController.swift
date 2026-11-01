@@ -475,7 +475,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         pathBar.onPlace = { [unowned self] in   // the server's chip: its place
             guard let t = server, !isPlace, parked == nil else { return }
             view.window?.makeFirstResponder(table)   // the keys come here, as a click in the list
-            onPlace?(t.asUser, list?.source.title ?? (remote?.dir == "/" ? "/" : nil))
+            onPlace?(t.asUser, list?.source.trail.first ?? (remote?.dir == "/" ? "/" : nil))
         }
         pathBar.validateDrop = { [unowned self] crumb, info in
             guard archive == nil, parked == nil, searchTitle == nil, list == nil, let dir = crumb.path, let items = Self.dropped(info) else { return [] }
@@ -1441,8 +1441,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func goUp() {
         if parked != nil { return navigate(to: path, history: .none) }
-        if let l = list {   // a list: back to its server's place; the place: off the server, asked as from its `/`
-            guard isPlace else { return onPlace?(l.source.target, l.source.title) ?? navigate(to: path, history: .none) }
+        if let l = list {   // a level: back to the list above; a list: to its server's place; the place: off the server, asked as from its `/`
+            if let up = l.source.up { return showList(up.source, content: up.source.content, select: up.row) }
+            guard isPlace else { return onPlace?(l.source.target, l.source.trail.first ?? l.source.title) ?? navigate(to: path, history: .none) }
             guard AppDelegate.connected(l.source.target) else { return navigate(to: path, history: .none) }   // nothing to close: no question
             Task {
                 guard await Self.confirmLeavingPlace(l.source.target, path, view.window), list === l else { return }
@@ -1679,7 +1680,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             busyMessage = busyOps.last?.message
             switch r {
             case .success(let c): l.set(c)
-            case .failure(is CancellationError): break
+            case .failure(is CancellationError): if l.content == nil, l.source.up != nil { goUp() }   // a level's form cancelled: back where it came from; ⌘R's, its rows stay
             case .failure(let e) where l.content?.rows.isEmpty != false: loadError = e.localizedDescription
             case .failure(let e): flash(e.localizedDescription, error: true)
             }
@@ -2167,7 +2168,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             let t = tabs[i], now = i == tabIndex
             // A list or a place comes back as its server's place, the cursor on that list's row: nothing asked till ↩.
             if let l = now ? list : t.list {
-                let row = l.source is PlaceSource ? l.cursor.map { String($0.id.dropFirst("place ".count)) } : l.source.title
+                let row = l.source is PlaceSource ? l.cursor.map { String($0.id.dropFirst("place ".count)) } : l.source.trail.first ?? l.source.title
                 return Session.Tab(path: now ? path : t.path, cursor: row, server: l.source.target, place: true)
             }
             if let pt = t.place { return Session.Tab(path: t.path, cursor: t.cursor, server: pt, place: true) }
@@ -2610,12 +2611,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// The header: search results' title, "archive/inner", "host:/dir" on a server ("root@host:/dir" on a root panel), else the
     /// local folder — after a symbol of the place and its chips (`styleHeader`). Also what ⎋ in the path field brings back.
     func showPath() {
-        headerText = if let l = list { "\(l.source.target.shown) › \(l.source.title)" }
+        headerText = if let l = list { "\(l.source.target.shown) › " + l.source.trail.joined(separator: " › ") }
             else if let t = searchTitle { t }
             else if let a = archive { (a.index.file as NSString).abbreviatingWithTildeInPath + (a.inner.isEmpty ? "" : "/" + a.inner) }
             else if let r = remote ?? parked { "\(r.target.shown):\(r.dir)" }
             else { (path as NSString).abbreviatingWithTildeInPath }
-        pathBar.crumbs = if let l = list { [PathBar.Crumb(title: l.source.title, path: nil)] }   // after the server's chip
+        pathBar.crumbs = if let l = list { l.source.trail.map { PathBar.Crumb(title: $0, path: nil) } }   // after the server's chip
             else if let t = searchTitle { [PathBar.Crumb(title: t, path: nil)] }
             else if let a = archive {   // the archive is its root; the folders inside it after
                 [PathBar.Crumb(title: (a.index.file as NSString).lastPathComponent, path: "")] + Self.crumbs(a.inner, inside: true)

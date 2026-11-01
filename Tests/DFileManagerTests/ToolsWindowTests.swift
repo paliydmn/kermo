@@ -44,7 +44,7 @@ extension ServerLockTests {
         page.refresh()
         await toolsUntil { app.tools.here(.local())?.tools.isEmpty == false }
         page.refresh()
-        #expect(labels(page.tabs) == ["Banned IPs", "Server Info", "Firewall"] && page.tab == "fail2ban" && page.tabs.isEnabled)
+        #expect(labels(page.tabs) == ["Banned IPs", "Server Info", "Firewall", "Sites"] && page.tab == "fail2ban" && page.tabs.isEnabled, "\(labels(page.tabs))")
         #expect(buttons(page.body).map(\.title) == ["Open in Panel", "Open in Search"])
         await toolsUntil { page.line.stringValue.hasPrefix("jails: sshd") }
         #expect(page.line.stringValue.hasPrefix("jails: sshd"), "the header line, as the list has it above its rows: \(page.line.stringValue) \(bench.calls)")
@@ -64,15 +64,16 @@ extension ServerLockTests {
 
     /// A launcher's button goes the way its row does: on production the question, then the run, the line under the
     /// buttons saying how it went — the page is the list it's said on, and the question's window is the page's. A
-    /// `readonly` one asks nothing.
+    /// `readonly` one asks nothing. What stops one with a window before it runs — Touch ID refused — is said there too.
     @Test func aLauncherButtonRunsItsActionTheSameWay() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench()
-        defer { closeToolsWindows(); bench.done(); done(); app.savedServers = [] }
+        let bench = try ToolsBench(), auth = ServerLock.authenticate
+        defer { closeToolsWindows(); bench.done(); done(); app.savedServers = []; ServerLock.authenticate = auth }
         try own(bench, ["kit.json": #"""
             { "schema": 1, "id": "kit", "title": "Kit", "toolActions": [
                 { "id": "hello", "title": "Say Hello", "command": "echo hello", "done": "Said hello" },
-                { "id": "peek", "title": "Peek", "readonly": true, "command": "echo peek", "done": "Peeked" } ] }
+                { "id": "peek", "title": "Peek", "readonly": true, "command": "echo peek", "done": "Peeked" },
+                { "id": "win", "title": "Window", "readonly": true, "command": "echo win", "output": "window" } ] }
             """#])
         _ = app.tools.reload()
         app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == "kit" }))
@@ -86,7 +87,7 @@ extension ServerLockTests {
         ToolsWindow.show(app, server: .local())
         let page = try #require(ToolsWindow.main?.page)
         page.select("kit")
-        #expect(buttons(page.body).map(\.title) == ["Say Hello", "Peek"] && page.title.textColor == Palette.prod)
+        #expect(buttons(page.body).map(\.title) == ["Say Hello", "Peek", "Window"] && page.title.textColor == Palette.prod)
         let id = ToolListSource(app, try toolNamed(app, "kit"), prod, .local()).rowID("Say Hello")
         #expect(app.rowLists(id).first === page && app.rowLists(id).first?.sheetWindow === ToolsWindow.main?.window)
 
@@ -105,6 +106,14 @@ extension ServerLockTests {
         press(buttons(page.body).first { $0.title == "Peek" })
         await toolsUntil { page.result.stringValue.contains("Peeked") }
         #expect(asked.count == 1, "readonly: no question")
+
+        var locked = prod
+        locked.locked = true
+        ServerLock.servers = { [locked] }
+        ServerLock.authenticate = { _ in false }
+        press(buttons(page.body).first { $0.title == "Window" })
+        await toolsUntil { page.result.stringValue.hasPrefix("Window") }
+        #expect(page.result.stringValue == "Window: localhost stays locked — nothing ran", "on the page, not the main window: \(page.result.stringValue)")
     }
 
     /// Use on Servers… "only on the servers checked" takes a tool off every other server — Tools ▸, the place's rows,

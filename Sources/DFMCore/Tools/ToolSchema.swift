@@ -393,7 +393,7 @@ extension ToolSchema.Check {
 
         var ids: [String: Bool] = [:]
         for (path, a) in p.allActions {
-            let s = a.spec, onTool = path.first == .key("toolActions")
+            let s = a.spec, onTool = path.count == 2 && path.first == .key("toolActions")   // a tool's own: one down there is a list's row's
             if ids.updateValue(true, forKey: s.id) != nil { error(path + [.key("id")], "“\(s.id)” is another action's id too") }
             source(a.run, path, needed: false)
             source(s.requires, path + [.key("requires")])
@@ -405,7 +405,15 @@ extension ToolSchema.Check {
             }
             if s.long == true, (a.run.where ?? p.where) == .mac { error(path + [.key("long")], "a long job runs on the server, not on this Mac") }
             if s.verify == true, onTool || s.rows != nil { error(path + [.key("verify")], "verify reads a list again: only for a list's rows") }
-            if s.output == .list, s.list == nil { error(path + [.key("output")], "“list” needs the action's own list") }
+            // No list of its own repeats the level it's on (§7.5): a row's of a list, or one level down — not a tool's, nor a dashboard table's.
+            if s.output == .list, s.list == nil, onTool || s.rows != nil || path.count == 2 && p.list == nil {
+                error(path + [.key("output")], "“list” needs the action's own list here: there's no list it's on to repeat")
+            }
+            if s.output == .list, s.list == nil, s.actions != nil { error(path + [.key("actions")], "an action that repeats its level has that level's actions") }
+            if s.output == .list, s.multi == true { error(path + [.key("multi")], "a level is one row's: not on marked rows") }
+            if s.output == .list, (s.inputs ?? []).contains(where: { $0.info.type == .secret }) {
+                error(path + [.key("inputs")], "a secret doesn't go into a level's run: its read isn't masked")
+            }
             if s.output != .list, s.list != nil || s.actions != nil { error(path + [.key("output")], "an action with its own list and actions has output “list”") }
             if let pat = s.progress?.pattern, !groups(pat).contains("percent") {
                 error(path + [.key("progress"), .key("pattern")], "needs a group (?<percent>…)")

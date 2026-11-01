@@ -16,7 +16,7 @@ import Testing
 /// with `slow-<server>`; with `event-<server>`, an `_event` in each line (a critical one with `boom-<server>`); two `procs` rows in every other line (as
 /// System spaces its heavier reads) — its pid in `pulse-<server>.pid`. `pulse2`: the same under another name. Its
 /// dashboard has every block; its actions: Folder (`open` what `pulse-dir` prints), Stop… (dangerous), Deeper (a
-/// level: not run yet), Log (`{from}` / `{to}` into `pulse-log`), Terminal and Services (`goto`).
+/// level, only on the row of `first`), Log (`{from}` / `{to}` into `pulse-log`), Terminal and Services (`goto`).
 @MainActor private func pulse(_ bench: ToolsBench, _ ids: [String] = ["pulse"]) throws {
     for id in ids {
         try Data("""
@@ -57,7 +57,8 @@ import Testing
               "actions": [
                 { "id": "folder", "title": "Folder", "rows": "procs", "readonly": true, "command": "pulse-dir {pid}", "open": "{stdout}" },
                 { "id": "stop", "title": "Stop…", "rows": "procs", "dangerous": true, "command": "pulse-log stop {pid}" },
-                { "id": "deeper", "title": "Deeper", "rows": "procs", "readonly": true, "command": "echo {pid}", "output": "list", "list": { "format": "lines", "key": "{line}" } },
+                { "id": "deeper", "title": "Deeper", "rows": "procs", "readonly": true, "only": { "command": ["first"] }, "command": "echo {pid} {command}", "output": "list",
+                  "list": { "format": "lines", "key": "{line}", "empty": "nothing in {command}" }, "actions": [ { "id": "here", "title": "Here", "key": "return", "readonly": true, "command": "pulse-log here {pid} {line}" } ] },
                 { "id": "log", "title": "Log", "readonly": true, "command": "pulse-log {from} {to}" } ],
               "toolActions": [ { "id": "ssh", "title": "Terminal", "goto": "ssh" }, { "id": "svc", "title": "Services", "goto": "services:{server}.service" } ] }
             """.utf8).write(to: URL(fileURLWithPath: bench.dir + "/own/\(id).json"))
@@ -353,6 +354,7 @@ extension ServerLockTests {
         bench.flag("hot-localhost", false)
         await toolsUntil { s.tools["pulse"]?.alerts.worst == nil }
         #expect(s.tools["pulse"]?.events.first?.message.hasPrefix("Back to normal: CPU") == true && app.tools.monitor.worst(s).state == .ok, "\(s.tools["pulse"]?.events ?? [])")
+        await toolsUntil { page.tabs.image(forSegment: page.tabs.selectedSegment)?.isTemplate == true }   // the page draws it after the sample
         #expect(page.tabs.image(forSegment: page.tabs.selectedSegment)?.isTemplate == true)
     }
 
@@ -476,9 +478,9 @@ extension ServerLockTests {
         #expect(table.rows.map(\.key) == ["1", "2"] && table.rows.map(\.title) == ["first", "second"] && table.rows[1].cells.map(\.text) == ["second", "20 %", "2"], "\(table.rows)")
         #expect(table.table.numberOfRows == 2 && table.table.tableColumns.map(\.title) == ["Command", "Cpu", "Pid", ""], "\(table.table.numberOfRows) \(table.table.tableColumns.map(\.title))")
         let first = rowButtons(table, 0)
-        #expect(first.map(\.title) == ["Folder", "Stop…", "Deeper"] && rowButtons(table, 1).map(\.title) == first.map(\.title), "\(first.map(\.title))")
+        #expect(first.map(\.title) == ["Folder", "Stop…", "Deeper"] && rowButtons(table, 1).map(\.title) == ["Folder", "Stop…"], "only: Deeper on first's row \(first.map(\.title))")
         try #require(first.count == 3)
-        #expect(first[0].isEnabled && first[1].isEnabled && !first[2].isEnabled && first[2].toolTip?.contains("later release") == true)
+        #expect(first.allSatisfy { $0.isEnabled }, "a level runs now")
         #expect(first[1].attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == Palette.fail, "dangerous: red")
         #expect(counts.numbers.map(\.stringValue) == ["2"] && buttons(counts).map(\.title) == ["Services…"])
         #expect(buttons(events).map(\.title) == ["Services…"] && events.subviews.first.map { labels($0) }?.contains("hot: 99") == true, "\(events.subviews.first.map(labels) ?? [])")
@@ -536,6 +538,38 @@ extension ServerLockTests {
         await toolsUntil { touched == 1 }
         try await Task.sleep(for: .milliseconds(200))
         #expect(touched == 1 && shown.count == 1, "locked: Touch ID first, and nothing without it")
+    }
+
+    /// A table row's level (Biggest Folders) opens in a Picker over the Tools window, the level its first: where it is
+    /// as its chip, the action's rows read with the row's fields, a row's action down there with its parent's too; ⎋
+    /// closes it.
+    @Test func aTableRowsLevelOpensInAPickerOverTheToolsWindow() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app)
+        defer { quick.done(); bench.done(); done(); app.savedServers = []; Picker.dismiss() }
+        try await watching(app, bench)
+        ToolsWindow.show(app, server: .local())
+        let w = try #require(ToolsWindow.main), page = try #require(w.page)
+        page.select("pulse")
+        await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 2 }
+        let table = try #require(live(page)?.blocks.compactMap { $0 as? ToolsTable }.first)
+        press(rowButtons(table, 0).first { $0.title == "Deeper" })
+        let p = try #require(Picker.current)
+        await toolsUntil { !p.rows.isEmpty }
+        #expect(p.panel.parent === w.window && p.scopeNames == ["localhost › Pulse › first"], "\(p.scopeNames)")
+        #expect(p.rows.map(\.title) == ["1 first"] && bench.calls.contains("pulse-log here 1 1 first") == false, "\(p.rows.map(\.title))")
+        p.highlighted?.run()
+        await toolsUntil { bench.calls.contains("pulse-log here 1 1 first") }
+        #expect(bench.calls.contains("pulse-log here 1 1 first"), "the parent row's pid with the level's line: \(bench.calls)")
+        #expect(p.actionBar.last?.label == "Close", "its first level: ⎋ closes")
+        _ = p.panel.onKey?(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: 0, context: nil,
+                                             characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!)   // ⌘↩
+        await toolsUntil { app.panels.contains { ($0.list?.source as? ToolListSource)?.level != nil } }
+        let other = try #require(app.panels.first { ($0.list?.source as? ToolListSource)?.level != nil })
+        #expect(other.list?.shown.map(\.title) == ["1 first"] && other.pathBar.shownCrumbs == ["Pulse", "first"], "the level in the other panel: \(other.pathBar.shownCrumbs)")
+        #expect(app.window.firstResponder === other.table, "the keys there")
+        other.goUp()   // a dashboard isn't a list: back to the server's place, on the tool's row
+        #expect(other.list?.source is PlaceSource && other.list?.cursor?.title == "Pulse", "\(other.list?.cursor?.title ?? "")")
     }
 
     /// `goto` and the chart's click: an event's Services… and a count's open the server's services in the search;
@@ -684,6 +718,7 @@ extension ServerLockTests {
         try await watching(app, bench, servers: [saved])
         let monitor = app.tools.monitor
         await toolsUntil { app.tools.here(.local())?.tools.contains { $0.preset.id == "sites" } == true }
+        #expect(app.tools.here(.local())?.tools.last?.preset.id == "sites", "last with addresses too: Watch… is another tool's")
         monitor.watch(try toolNamed(app, "sites"), on: .local(), true)
         await toolsUntil { monitor.tool("sites", on: .local())?.history.rows("urls").count == 2 }
         let s = try #require(monitor.server(.local())), t = try #require(s.tools["sites"])
@@ -700,6 +735,87 @@ extension ServerLockTests {
         press(rowButtons(table, 1).first { $0.title == "Check Now" })
         await toolsUntil { posts.sent.count == 1 }
         #expect(posts.sent.first?.body == "Sites: \(web.url)/down is down: 503" && monitor.worst(s).state == .critical, "\(posts.sent)")
+    }
+
+    /// Sites is on every saved server: with no addresses its tab — the last — says so beside Add Address…, with no empty
+    /// table or chart, and nothing is checked; a server that isn't saved has none — its addresses would have nowhere to
+    /// be kept.
+    @Test func aSavedServerWithoutAddressesHasASitesTabThatSaysSo() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app)
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        #expect(app.savedServers.first?.sites.isEmpty == true && app.tools.here(.local())?.tools.last?.preset.id == "sites", "\(app.tools.here(.local())?.tools.map(\.preset.id) ?? [])")
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("sites")
+        let view = try #require(live(page))
+        #expect(view.banner.stringValue.hasPrefix("No addresses yet: add localhost's web addresses") && !view.banner.isHidden && !view.addButton.isHidden, "\(view.banner.stringValue)")
+        #expect(view.blocks.allSatisfy { $0.isHidden } && view.foot.isHidden, "no empty table or chart")
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(app.tools.monitor.tool("sites", on: .local())?.history.last == nil, "nothing to check")
+        closeWindows()
+        app.openTool(try toolNamed(app, "sites"), on: app.savedServers[0], .local())   // Tools ▸ Sites: its tab, never a list over SSH
+        #expect(ToolsWindow.main?.page?.tab == "sites" && Picker.current == nil)
+        closeWindows()
+        app.savedServers = []
+        #expect(app.tools.here(.local())?.tools.contains { $0.preset.id == "sites" } == false, "not saved: no Sites")
+        ToolsWindow.show(app, server: .local())
+        let add = try #require(ToolsWindow.main?.page?.addMenu().items.first { $0.title.hasPrefix("Sites") })
+        #expect(add.title == "Sites — save the server to use it here" && !add.isEnabled, "\(add.title)")
+    }
+
+    /// The channel's interval is its streams' and polls': checks from this Mac every second beside a poll every 3 s
+    /// miss nothing of the poll — no gap, never "not answering".
+    @Test func checksFromThisMacLeaveASlowPollsIntervalAlone() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), web = try LocalWeb { _ in 200 }
+        defer { web.done(); quick.done(); bench.done(); done(); app.savedServers = [] }
+        try FileManager.default.createDirectory(atPath: bench.dir + "/own", withIntermediateDirectories: true)
+        try Data(#"{ "schema": 1, "id": "slowpoll", "title": "Slow Poll", "watch": { "every": 3, "down": 2 }, "poll": { "command": "echo '{\"n\":1}'", "format": "json" }, "metrics": { "n": { "title": "N", "path": "n" } } }"#.utf8)
+            .write(to: URL(fileURLWithPath: bench.dir + "/own/slowpoll.json"))
+        try Data(#"{ "schema": 1, "id": "hits", "title": "Hits", "where": "mac", "http": { "urls": "server", "timeout": 2 }, "watch": { "every": 1 }, "metrics": { "up": { "title": "Up", "rows": "urls", "key": "url", "path": "ok" } } }"#.utf8)
+            .write(to: URL(fileURLWithPath: bench.dir + "/own/hits.json"))
+        var saved = SavedServer(address: "localhost")!
+        saved.sites = [web.url + "/"]
+        try await watching(app, bench, ids: ["pulse"], servers: [saved])
+        for id in ["slowpoll", "hits"] { app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == id })) }
+        app.tools.askAgain()
+        _ = app.tools.here(.local())
+        await toolsUntil { app.tools.here(.local())?.tools.contains { $0.preset.id == "slowpoll" } == true }
+        let monitor = app.tools.monitor
+        monitor.watch(try toolNamed(app, "slowpoll"), on: .local(), true)
+        monitor.watch(try toolNamed(app, "hits"), on: .local(), true)
+        await toolsUntil { monitor.tool("slowpoll", on: .local())?.history.last != nil && (monitor.tool("hits", on: .local())?.history.rows("urls").count ?? 0) > 0 }
+        let s = try #require(monitor.server(.local())), poll = try #require(s.tools["slowpoll"])
+        #expect(s.every == 3, "the poll's, not the checks' 1 s")
+        try await Task.sleep(for: .milliseconds(2600))   // past twice the checks' second: what the old interval called missed
+        #expect(s.missed == 0 && s.down == nil && !poll.history.points("n").contains { $0.gap == .noAnswer }, "\(poll.history.points("n").map { $0.gap?.rawValue ?? "v" })")
+    }
+
+    /// The channel's trouble leaves Sites alone: a stream killed between two failed checks of an address is a gap of
+    /// its own, while the address's streak goes on — the second failed check is `down` — and its series has no band.
+    @Test func aChannelGapLeavesASitesStreakAlone() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), posts = Posts(), web = try LocalWeb { _ in 503 }
+        defer { web.done(); posts.done(); quick.done(); bench.done(); done(); app.savedServers = [] }
+        var saved = SavedServer(address: "localhost")!
+        saved.sites = [web.url + "/down"]
+        try await watching(app, bench, servers: [saved])
+        let monitor = app.tools.monitor
+        await toolsUntil { app.tools.here(.local())?.tools.contains { $0.preset.id == "sites" } == true }
+        monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        monitor.watch(try toolNamed(app, "sites"), on: .local(), true)
+        await toolsUntil { monitor.tool("pulse", on: .local())?.history.last != nil && monitor.tool("sites", on: .local())?.history.rows("urls").count == 1 }
+        let s = try #require(monitor.server(.local())), stream = try #require(s.tools["pulse"]), sites = try #require(s.tools["sites"])
+        #expect(sites.alerts.worst == nil, "one failed check isn't down yet")
+        kill(try #require(pid(bench)), SIGKILL)
+        await toolsUntil { stream.history.points("cpu").contains { $0.gap == .reconnecting } }
+        #expect(stream.history.points("cpu").contains { $0.gap == .reconnecting })
+        monitor.check(sites, on: s)   // the second check, every 60 s otherwise
+        await toolsUntil { sites.alerts.worst == .critical }
+        #expect(sites.alerts.worst == .critical && posts.sent.map(\.body) == ["Sites: \(web.url)/down is down: 503"], "the streak went on: \(posts.sent)")
+        #expect(!sites.history.points("up", web.url + "/down").contains { $0.gap != nil }, "\(sites.history.points("up", web.url + "/down"))")
     }
 
     /// On battery (or in Low Power Mode) watching is three times less often: the channel starts again with its

@@ -86,6 +86,16 @@ struct Case: CustomTestStringConvertible, Sendable {
     Case(name: "on_alert in a preset", json: "{ \(head), \"on_alert\": \"curl …\" }", says: "on_alert is a user setting"),
     Case(name: "a list without its output", json: "{ \(head), \"toolActions\": [ { \"id\": \"a\", \"command\": \"x\", \"list\": { \"format\": \"lines\" } } ] }",
          says: "has output “list”"),
+    Case(name: "a tool's level with nothing to repeat", json: "{ \(head), \"toolActions\": [ { \"id\": \"a\", \"command\": \"x\", \"output\": \"list\" } ] }",
+         says: "no list it's on to repeat"),
+    Case(name: "a dashboard row's level with nothing to repeat", json: "{ \(head), \"list\": { \"command\": \"x\" }, \"actions\": [ { \"id\": \"a\", \"rows\": \"disks\", \"command\": \"x\", \"output\": \"list\" } ] }",
+         says: "no list it's on to repeat"),
+    Case(name: "a repeated level with actions", json: "{ \(head), \"list\": { \"command\": \"x\" }, \"actions\": [ { \"id\": \"a\", \"command\": \"x\", \"output\": \"list\", "
+         + "\"actions\": [ { \"id\": \"b\", \"command\": \"x\" } ] } ] }", says: "has that level's actions"),
+    Case(name: "a level on marked rows", json: "{ \(head), \"list\": { \"command\": \"x\" }, \"actions\": [ { \"id\": \"a\", \"command\": \"x\", \"output\": \"list\", \"multi\": true } ] }",
+         says: "a level is one row's"),
+    Case(name: "a secret into a level", json: "{ \(head), \"list\": { \"command\": \"x\" }, \"actions\": [ { \"id\": \"a\", \"command\": \"x {p}\", \"output\": \"list\", "
+         + "\"inputs\": [ { \"name\": \"p\", \"type\": \"secret\" } ] } ] }", says: "a secret doesn't go into a level's run"),
     Case(name: "a metric that isn't there", json: "{ \(head), \"alerts\": [ { \"metric\": \"cpu\", \"warn\": 1 } ] }", says: "“cpu” isn't one of the metrics"),
     Case(name: "a bad env name", json: "{ \(head), \"env\": { \"KERMO_X\": \"1\" } }", says: "an env name is A–Z"),
     Case(name: "a bad key", json: "{ \(head), \"toolActions\": [ { \"id\": \"a\", \"key\": \"hyper+x\", \"command\": \"x\" } ] }", says: "isn't a key"),
@@ -202,4 +212,17 @@ func everyCheckOfTheProtocol(_ c: Case) {
     let found = ToolSchema.validate(Data(json.utf8), file: "x.json")
     #expect(found.preset == nil && found.problems.contains { $0.text == "watch.every: a second or more" }, "\(found.problems)")
     #expect(ToolSchema.validate(Data(json.replacingOccurrences(of: "0.5", with: "1").utf8), file: "x.json").preset != nil)
+}
+
+/// D-155: a row's action with `output: "list"` and no list of its own repeats the level it's on — the tool's list, or
+/// one level down the action's above it (System's Biggest Folders Inside).
+@Test func aLevelWithNoListOfItsOwnRepeatsTheOneItsOn() {
+    let row = check("{ \(head), \"list\": { \"command\": \"x\", \"format\": \"lines\", \"key\": \"{line}\" }, \"actions\": [ { \"id\": \"a\", \"command\": \"ls {line}\", \"output\": \"list\" } ] }")
+    #expect(row.problems.isEmpty && row.preset != nil, "\(row.problems)")
+    let underTool = check("{ \(head), \"toolActions\": [ { \"id\": \"t\", \"command\": \"x\", \"output\": \"list\", \"list\": { \"format\": \"lines\", \"key\": \"{line}\" }, "
+                          + "\"actions\": [ { \"id\": \"a\", \"command\": \"ls {line}\", \"output\": \"list\" }, { \"id\": \"v\", \"command\": \"rm {line}\", \"verify\": true } ] } ] }")
+    #expect(underTool.problems.isEmpty, "a tool action's level is a list: its rows repeat it and verify — \(underTool.problems)")
+    let system = ToolSchema.validate(try! Data(contentsOf: ToolPreset.builtInFolder.appendingPathComponent("system.json")), file: "system.json") { _ in true }
+    let inside = system.preset?.actions?.first { $0.spec.id == "biggest" }?.spec.actions?.first { $0.spec.id == "inside" }
+    #expect(system.problems.isEmpty && inside?.spec.output == .list && inside?.spec.list == nil && inside?.spec.actions == nil)
 }

@@ -461,10 +461,24 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         let name = SavedServer.name(for: s.target.asUser), chips = Chip.of(s.target)
         let here = source.map { ServerRow.key($0.target) == ServerRow.key(s.target) } == true   // its server's place is the level above
         push(s is PlaceSource ? (name, chips) : here ? (s.title, []) : ("\(name) › \(s.title)", chips), placeholder: "Filter \(s.title.lowercased())")
+        enter(s, query: query, select: select, onLeave: onLeave)
+    }
+
+    /// `s` as a picker's own first level — ⎋ closes from there — its chip `scope`: a dashboard's Biggest Folders over
+    /// the Tools window. `listInOther`: ⌘↩, as the palette's.
+    @discardableResult
+    static func show(over window: NSWindow, _ s: ListSource, scope: (name: String, chips: [Chip]),
+                     listInOther: @escaping @MainActor (ListSource, String, String?, [Item]) -> Void) -> Picker {
+        let p = show(over: window, placeholder: "Filter \(s.title.lowercased())", scope: scope, items: [], listInOther: listInOther)
+        p.enter(s, query: "", select: nil, onLeave: nil)
+        return p
+    }
+
+    private func enter(_ s: ListSource, query: String, select: String?, onLeave: ((String, String?) -> Void)?) {
         (source, field.stringValue, selectID, self.onLeave) = (s, query, select, onLeave)
         rank = { item, q in Fuzzy.score(q, item.title + " " + item.subtitle + " " + item.detail) }
-        let inOther = listInOther   // not self: ⌘↩ runs it after the picker closed and went
-        other = { q, id, rows in inOther?(s, q, id, rows) }
+        other = nil   // none: no ⌘↩ slot
+        if let inOther = listInOther { other = { q, id, rows in inOther(s, q, id, rows) } }   // not self: ⌘↩ runs it after the picker closed and went
         guard let c = s.content else { return read(s) }
         show(c)
     }
@@ -491,7 +505,8 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
             reading = nil
             switch r {
             case .success(let c): show(c)
-            case .failure(is CancellationError): break
+            case .failure(is CancellationError):   // its own: a level's form cancelled — back where it came from, or (⌘R) its rows as they were
+                if let c = s.content { show(c) } else { above.isEmpty ? close() : up() }
             case .failure(let e):
                 let font = NSFont.systemFont(ofSize: 12), line = NSMutableAttributedString()
                 if !(e is AppDelegate.Locked) { line.append(Symbol.failed.text(Palette.fail, font: font, label: "failed")); line.append(NSAttributedString(string: " ")) }
