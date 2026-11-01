@@ -3,7 +3,7 @@ import Foundation
 /// A long job (protocol §7.6): started detached on the server as the login user — a session of its own (`setsid`; perl's
 /// or python's where there's none: a macOS server, a small busybox), `sudo` only around the command — its output in
 /// `~/.cache/kermo/runs/<id>.log`, its exit in `<id>.exit`, its process group in `<id>.pid`; the folder 0700, a job's
-/// files gone a week after it ended, at the next start there (Q10). It runs on without Kermo: the start comes back at
+/// files gone a week after it ended, at the next start there (Q10); what was uploaded for it, as its command ends. It runs on without Kermo: the start comes back at
 /// once with its pid, a follow reads its log from where Kermo left it till the exit comes, Stop… kills its group.
 /// The sudo password goes into the script as a secret does (a heredoc a builtin reads) and on to sudo through a pipe —
 /// never argv, the environment or a file — checked before anything detaches: a wrong one is `ToolPayload.sudoRefused`
@@ -17,6 +17,13 @@ public enum ToolLong {
 
     /// A job's id: its start time and a random part — its files' names.
     public static func newID(now: Date = Date()) -> String { "\(Int(now.timeIntervalSince1970))-" + ToolPayload.newNonce().prefix(8) }
+
+    /// Where a `folder` or `file` input is uploaded for job `id` (§7.4) — relative to the login folder, where the job
+    /// runs and where SFTP starts: a folder as `<id>.<input>.tar.gz`, a file under its own name after the id. The job
+    /// removes it when its command ends (`start`); one whose job never started goes a week later.
+    public static func upload(_ id: String, _ input: ToolInput, local: String) -> String {
+        ".cache/kermo/upload/\(id)." + (input.info.type == .folder ? input.info.name + ".tar.gz" : (local as NSString).lastPathComponent)
+    }
 
     /// One of a job's files, as shell text.
     static func file(_ id: String, _ ext: String) -> String { "\"$HOME/.cache/kermo/runs/\(id).\(ext)\"" }
@@ -42,6 +49,9 @@ public enum ToolLong {
               if [ -f "$i.exit" ]; then f=$i.exit; elif kill -0 "$(cat "$p")" 2>/dev/null; then continue; else f=$p; fi
               [ -n "$(find "$f" -mtime +6 2>/dev/null)" ] && rm -f "$i".*
             done
+            for f in "$HOME/.cache/kermo/upload"/*; do
+              [ -f "$f" ] && [ -n "$(find "$f" -mtime +6 2>/dev/null)" ] && rm -f "$f"
+            done
             \(check)if command -v setsid >/dev/null 2>&1; then set -- setsid \(shell) -s
             elif command -v perl >/dev/null 2>&1; then set -- perl -e 'use POSIX; setsid(); exec @ARGV' -- \(shell) -s
             elif command -v python3 >/dev/null 2>&1; then set -- python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \(shell) -s
@@ -53,6 +63,7 @@ public enum ToolLong {
             trap 'kermo_stop=1' TERM INT HUP
             \(inner)
             s=$?
+            rm -f "$HOME/.cache/kermo/upload/\(id)".*
             echo "$s" >\(file(id, "new")) && mv -f \(file(id, "new")) \(exit)
             KERMO_\(n)_JOB
             n=0

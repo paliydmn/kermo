@@ -114,6 +114,54 @@ extension ServerLockTests {
         #expect(!(try String(contentsOfFile: file, encoding: .utf8)).contains("hunter2"), "runs.json keeps no secret")
     }
 
+    /// A folder input (§7.4): packed on this Mac and uploaded before its job starts — the command gets the upload's path,
+    /// relative to the login folder, without what's left out (`node_modules`) — and gone once the job ends. The folder
+    /// is remembered on that server (the next form starts with it), and a Retry gets it, not the upload's path.
+    @Test func aFolderIsUploadedBeforeItsJob() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let lb = try LongBench(app)
+        let home = lb.bench.dir, was = ToolRunner.command
+        defer { ToolRunner.command = was; app.savedServers = []; lb.done(); done() }
+        ToolRunner.command = { "cd \(home) && " + was($0) }   // a job runs in the login folder, as on a server
+        let src = home + "/src", fm = FileManager.default
+        try fm.createDirectory(atPath: src + "/node_modules/x", withIntermediateDirectories: true)
+        try Data("a".utf8).write(to: URL(fileURLWithPath: src + "/a.txt"))
+        try Data("x".utf8).write(to: URL(fileURLWithPath: src + "/node_modules/x/y.js"))
+        try Data("#!/bin/sh\ncd \(home) || exit 1\nexec /usr/libexec/sftp-server\n".utf8).write(to: URL(fileURLWithPath: home + "/sftp-server"))
+        chmod(home + "/sftp-server", 0o755)
+        try Data(#"""
+            { "schema": 1, "id": "shipper", "title": "Shipper",
+              "toolActions": [ { "id": "ship", "title": "Ship…", "long": true, "output": "line", "done": "shipped",
+                "inputs": [ { "name": "src", "type": "folder", "title": "Folder", "remember": true } ],
+                "command": "echo {src}; tar -tzf {src} | sort | tr '\n' ' '" } ] }
+            """#.utf8).write(to: URL(fileURLWithPath: home + "/own/shipper.json"))
+        _ = app.tools.reload()
+        app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == "shipper" }))
+        let t = SFTPTarget.local(server: home + "/sftp-server"), server = try #require(SavedServer(address: "localhost"))
+        app.savedServers = [server]
+        let source = ToolListSource(app, try toolNamed(app, "shipper"), server, t)
+        _ = try await source.read(CancelFlag())
+        a.showList(source)
+        let l = try #require(a.list)
+        var offered: String?
+        ToolRunner.filling = { form in offered = form.values["src"]; form.set("src", src); return form.values }
+        await run(l, "Ship…")?.value
+        let jobs = app.tools.jobs, j = try #require(jobs.jobs.first)
+        #expect(offered == "" && j.values == ["src": src], "\(j.values)")
+        await toolsUntil { jobs.job(j.id)?.running == false }
+        let log = String(decoding: jobs.state(j.id)?.text ?? Data(), as: UTF8.self)
+        #expect(log.hasPrefix(".cache/kermo/upload/\(j.id).src.tar.gz\n") && log.contains("./a.txt") && !log.contains("node_modules"), "\(log)")
+        let uploads = try fm.contentsOfDirectory(atPath: home + "/.cache/kermo/upload")
+        #expect(jobs.job(j.id)?.exit == 0 && uploads.isEmpty, "the upload went with its job: \(uploads)")
+        #expect(app.tools.settings.remembered("shipper", on: server.id.uuidString, row: nil) == ["src": src])
+
+        await run(l, "Ship…")?.value
+        #expect(offered == src, "the folder chosen last time on this server")
+        await toolsUntil { jobs.jobs.first?.running == false }
+        let folder = ToolRunner.Upload(input: "src", local: src, remote: "x", folder: true)
+        #expect(folder.said == "Uploads \(src) first, without .git, node_modules and .DS_Store.")
+    }
+
     /// One at a time on a row: a second Deploy says it runs and shows Activity. Stop… ends it (exit 143, "stopped");
     /// Retry runs it again with the form filled in as before.
     @Test func stopRetryAndAlreadyRunning() async throws {

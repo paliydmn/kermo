@@ -113,11 +113,10 @@ final class ToolRunner {
     /// What this version runs of an action: a command, a script, an `edit`, an `open` (a server path in the panel) or
     /// a `goto` (a place in Kermo); a form of text, secrets and choices; output as a line, a window, a log that
     /// follows, a terminal, rows one level down or nothing; a long job (Activity's).
-    /// ponytail: folder and file inputs (PR 7), `accepts` (PR 9) and a terminal on this Mac are left out till then;
-    /// `check` (Check Now) is the watching's own (`ToolsTable`).
+    /// ponytail: `accepts` (PR 9) and a terminal on this Mac are left out till then; `check` (Check Now) is the
+    /// watching's own (`ToolsTable`).
     static func runs(_ a: ToolAction, of p: ToolPreset) -> Bool {
         (a.run.command != nil || a.run.script != nil || a.spec.edit != nil || a.spec.open != nil || a.spec.goto != nil)
-            && !(a.spec.inputs ?? []).contains { [.folder, .file].contains($0.info.type) }
             && a.spec.accepts == nil && a.spec.check == nil
             && !(a.spec.output == .terminal && (a.run.where ?? p.where) == .mac)
     }
@@ -290,24 +289,49 @@ final class ToolRunner {
         return nil
     }
 
-    /// What the steps before a run came to (§7.2): its names with the form's values, and what runs; or why nothing does.
+    /// What the steps before a run came to (§7.2): its names with the form's values, what runs, what's uploaded first;
+    /// or why nothing does.
     enum Ready {
-        case go(ToolTemplate.Scope, secret: Set<String>, willRun: String, payload: ToolPayload?)
+        case go(ToolTemplate.Scope, secret: Set<String>, willRun: String, payload: ToolPayload?, uploads: [Upload])
         case stop(String)
     }
 
+    /// A `folder` or `file` input (§7.4): the choice on this Mac, and where it goes on the server — its value there.
+    struct Upload: Equatable {
+        let input: String, local: String, remote: String, folder: Bool
+        /// As the question says it: what of it goes.
+        var said: String {
+            guard folder else { return "Uploads \(local) first." }
+            return FileManager.default.fileExists(atPath: (local as NSString).appendingPathComponent(".git"))
+                ? "Uploads \(local) as committed (git archive HEAD): changes not committed stay here."
+                : "Uploads \(local) first, without .git, node_modules and .DS_Store."
+        }
+    }
+
     /// The lock (not on this Mac), the form (its values, nil: Cancel), the values checked, the question (§7.3; `asked`:
-    /// asked for several rows already) — over `window`. `values`: the form filled in so (Retry). `job`: a long job's id —
-    /// what runs is its start then (`ToolLong.start`), as Show Exactly What Runs shows it.
+    /// asked for several rows already) — over `window`. `values`: the form filled in so (Retry), else the folders and
+    /// files last chosen there (`remember`). `job`: a long job's id — what runs is its start then (`ToolLong.start`),
+    /// as Show Exactly What Runs shows it, and a folder or a file its upload's path.
     func ready(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, row: String?, on t: SFTPTarget, asked: Bool, window: NSWindow?,
                values filled: [String: String]? = nil, job: String? = nil) async -> Ready {
         let p = tool.preset, verb = (a.spec.title ?? a.spec.id).replacingOccurrences(of: "…", with: "")
         let mac = (a.run.where ?? p.where) == .mac, sudo = (a.run.sudo ?? p.sudo ?? false) && !mac
         if !mac, await !ServerLock.authorize(t, "run “\(verb)” on") { return .stop("\(SavedServer.name(for: t.asUser)) stays locked") }
-        var scope = scope
+        var scope = scope, uploads: [Upload] = []
         if let inputs = a.spec.inputs, !inputs.isEmpty {
-            guard let values = await form(a, of: tool, scope, on: t, window: window, values: filled) else { return .stop("cancelled") }
+            let kept = settings.remembered(p.id, on: serverID(t), row: row)
+            guard let values = await form(a, of: tool, scope, on: t, window: window, values: filled ?? (kept.isEmpty ? nil : kept), job: job) else { return .stop("cancelled") }
             scope.levels[0] = values.mapValues { .string($0) }
+            if let id = serverID(t) {
+                settings.remember(p.id, on: id, row: row, values.filter { name, _ in inputs.contains { $0.info.name == name && $0.info.remember == true } })
+                saveSettings()
+            }
+            for i in inputs where [.folder, .file].contains(i.info.type) {
+                guard let job, let typed = values[i.info.name], !typed.isEmpty else { continue }   // an optional one left empty drops out
+                let local = (typed as NSString).expandingTildeInPath
+                uploads.append(Upload(input: i.info.name, local: local, remote: ToolLong.upload(job, i, local: local), folder: i.info.type == .folder))
+                scope.levels[0][i.info.name] = .string(uploads.last!.remote)
+            }
         }
         if let why = Self.refusal(a, of: p, scope) { return .stop(why) }
         let secret = Set((a.spec.inputs ?? []).filter { $0.info.type == .secret }.map(\.info.name))
@@ -325,14 +349,15 @@ final class ToolRunner {
         let quietKey = ServerRow.key(t.asUser) + " " + p.id + " " + tool.hash
         let always = a.spec.dangerous == true || a.spec.confirm == true
         let prod = a.spec.readonly != true && payload != nil && SavedServer.isProd(t)   // `edit` asks as any file's save does
-        guard !asked, always || prod && (quiet[quietKey] ?? .distantPast) < Date() else { return .go(scope, secret: secret, willRun: willRun, payload: payload) }
-        let message = a.spec.message.map { ToolTemplate.text($0, scope) }
+        guard !asked, always || prod && (quiet[quietKey] ?? .distantPast) < Date() else { return .go(scope, secret: secret, willRun: willRun, payload: payload, uploads: uploads) }
+        let notes = ([a.spec.message.map { ToolTemplate.text($0, scope) }] + uploads.map(\.said)).compactMap { $0 }
+        let message = notes.isEmpty ? nil : notes.joined(separator: "\n\n")
         switch await ask(a, verb: verb, row: row, on: t, mac: mac, sudo: sudo, willRun: willRun, payload: payload, message: message,
                          quietFor: always ? nil : SavedServer.name(for: t.asUser), window: window) {
         case nil: return .stop("cancelled")
         case let waved?:
             if waved { quiet[quietKey] = Date().addingTimeInterval(600) }
-            return .go(scope, secret: secret, willRun: willRun, payload: payload)
+            return .go(scope, secret: secret, willRun: willRun, payload: payload, uploads: uploads)
         }
     }
 
@@ -374,7 +399,7 @@ final class ToolRunner {
                 defer { if !readonly { changing[key] = nil } }
                 let panel = app.active
                 let r = await ready(a, of: tool, rowScope, row: rowTitle, on: t, asked: asked, window: lists.first?.sheetWindow, values: values)
-                guard case let .go(scope, secret, _, payload) = r else {
+                guard case let .go(scope, secret, _, payload, _) = r else {
                     if case .stop(let why) = r { say("\(verb): \(why) — nothing ran", to: lists, about: id, failed: why != "cancelled") }
                     return
                 }
@@ -425,7 +450,7 @@ final class ToolRunner {
             await app.changeRow(id: id, shown: { shown }, on: t, busy: verb + "…", name: rowTitle ?? p.title, server: place,
                 run: { window, panel, running in
                     let prepared = await self.ready(a, of: tool, rowScope, row: rowTitle, on: t, asked: asked, window: window, values: values)
-                    guard case let .go(scope, secret, willRun, payload) = prepared, payload != nil else {
+                    guard case let .go(scope, secret, willRun, payload, _) = prepared, payload != nil else {
                         if case .stop(let why) = prepared { return .notRun(why) }
                         return .notRun("nothing to run")
                     }
@@ -473,7 +498,7 @@ final class ToolRunner {
         func tell(_ text: String, failed: Bool) { say(text, to: lists, about: id, failed: failed) }
         let r = await ready(a, of: tool, scope, row: row, on: t, asked: asked, window: lists.first?.sheetWindow, values: values)
         let facts = answer(t)?.answer.facts, when = Date().formatted(date: .omitted, time: .shortened)
-        guard case .go(let scope, let secret, _, let payload) = r else {
+        guard case .go(let scope, let secret, _, let payload, _) = r else {
             if case .stop(let why) = r { tell(line(.notRun(why), a, scope, place: place, at: when, readError: nil, facts: facts).line, failed: why != "cancelled") }
             return
         }
@@ -527,13 +552,14 @@ final class ToolRunner {
             await app.changeRow(id: id, shown: { shown }, on: t, busy: verb + "…", name: row?.title ?? p.title, server: s.title,
                 run: { window, panel, running in
                     let prepared = await self.ready(a, of: tool, rowScope, row: row?.title, on: t, asked: asked, window: window, values: filled, job: jobID)
-                    guard case let .go(scope, secret, willRun, _) = prepared,
+                    guard case let .go(scope, secret, willRun, _, uploads) = prepared,
                           let job = try? ToolPayload.of(a.run, in: p, scope: scope, scripts: tool.scripts, secret: secret, detached: true).payload else {
                         if case .stop(let why) = prepared { return .notRun(why) }
                         return .notRun("nothing to run")
                     }
                     (shown, said) = (willRun, scope)
                     running()
+                    if let why = await self.upload(uploads, to: t, place: s.title) { return .notRun(why) }
                     self.jobs.askToNotify()   // the first long job: macOS's question, at a moment you started something
                     let env = SSHAskpass.env, command = Self.command, sudo = Self.sudoProgram
                     let r = await panel.busy("Starting \(verb) on \(s.title)…") { flag in
@@ -546,7 +572,8 @@ final class ToolRunner {
                     let inputs = Set((a.spec.inputs ?? []).map(\.info.name)).subtracting(secret)
                     self.jobs.add(ToolJob(id: jobID, server: self.app.savedServer(at: t)?.id.uuidString ?? "", target: t.asUser, place: s.title, tool: p.id,
                                           action: a.spec.id, title: title, row: row?.title, rowID: id, record: row?.record,
-                                          values: scope.levels[0].filter { inputs.contains($0.key) }.mapValues(\.text), root: root, pid: pid, started: Date(),
+                                          values: scope.levels[0].filter { inputs.contains($0.key) }.mapValues(\.text)
+                                            .merging(uploads.map { ($0.input, $0.local) }) { $1 }, root: root, pid: pid, started: Date(),
                                           skew: ran.skew), payload: job, show: output == .window || output == .follow)
                     return said
                 },
@@ -557,6 +584,37 @@ final class ToolRunner {
                     return self.line(how, a, said, place: s.title, at: time, readError: nil, facts: self.answer(t)?.answer.facts)
                 })
         }
+    }
+
+    /// `folder` and `file` inputs onto the server before their job starts (§7.2 step 5), through the copy queue —
+    /// Activity shows each — a folder packed on this Mac first (`ArchiveIndex.pack`). Why not, or nil.
+    private func upload(_ uploads: [Upload], to t: SFTPTarget, place: String) async -> String? {
+        let env = SSHAskpass.env, target = t.asUser
+        for u in uploads {
+            let name = (u.local as NSString).lastPathComponent
+            let packed = u.folder ? (NSTemporaryDirectory() as NSString).appendingPathComponent("kermo-" + (u.remote as NSString).lastPathComponent) : nil
+            defer { if let packed { try? FileManager.default.removeItem(atPath: packed) } }
+            let home: String
+            do {
+                home = try await Blocking.run {
+                    if let packed { try ArchiveIndex.pack(u.local, to: packed) }
+                    return try SFTP.session(target, env: env, cancel: nil, on: nil) { c in
+                        let home = try c.realpath(".")
+                        try c.makeDirectories(home + "/.cache/kermo/upload", mode: 0o700)
+                        return home
+                    }
+                }
+            } catch { return "\(name) wasn't uploaded: \(error.localizedDescription)" }
+            let job = FileJob(copyPairs: [(packed ?? u.local, home + "/" + u.remote)], from: .local, to: .sftp(target), sshEnv: env)
+            if let ops = app.ops {
+                await withCheckedContinuation { done in ops.enqueue(job, title: "Upload \(name) to \(place)") { _ in done.resume() } }
+            } else {
+                await Blocking.run { job.run() }
+            }
+            let p = job.progress
+            guard p.state == .done, p.failed.isEmpty else { return job.isCancelled ? "cancelled" : "\(name) wasn't uploaded: " + (p.errors.first ?? "the copy failed") }
+        }
+        return nil
     }
 
     /// The row changed between the question and the run (`verify`).

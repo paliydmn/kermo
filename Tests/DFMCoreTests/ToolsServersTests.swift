@@ -58,6 +58,19 @@ import Testing
     #expect(try JSONDecoder().decode(ToolServers.self, from: Data(hand.utf8)).uses("ufw", on: "A") == false)
 }
 
+/// A folder or a file last chosen (`remember`, §7.4): per server, tool and row; another row or server has none; the
+/// file keeps it.
+@Test func rememberedPerServerToolAndRow() throws {
+    var s = ToolServers()
+    s.remember("dpl", on: "A", row: "api", ["archive": "/src/api"])
+    s.remember("dpl", on: "A", row: "web", ["archive": "/src/web"])
+    s.remember("dpl", on: "A", row: "api", ["archive": "/src/api-2"])
+    s.remember("dpl", on: "A", row: nil, [:])
+    #expect(s.remembered("dpl", on: "A", row: "api") == ["archive": "/src/api-2"] && s.remembered("dpl", on: "A", row: "web") == ["archive": "/src/web"])
+    #expect(s.remembered("dpl", on: "B", row: "api").isEmpty && s.remembered("dpl", on: nil, row: "api").isEmpty && s.remembered("dpl", on: "A", row: nil).isEmpty)
+    #expect(try JSONDecoder().decode(ToolServers.self, from: JSONEncoder().encode(s)) == s)
+}
+
 /// Watched per server and tool (§8.5): `watch: true` in the server's setting, off again leaves nothing behind;
 /// the file keeps it.
 @Test func watchedPerServerAndTool() throws {

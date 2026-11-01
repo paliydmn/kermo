@@ -321,11 +321,11 @@ public final class SFTPClient: @unchecked Sendable {
     }
 
     /// `mkdir -p`: each missing folder on the way. Fails if something on the way is a file.
-    public func makeDirectories(_ path: String) throws {
+    public func makeDirectories(_ path: String, mode: UInt32 = 0o755) throws {
         var p = ""
         for part in path.split(separator: "/") {
             p += "/" + part
-            guard let a = try lstat(p) else { try mkdir(p); continue }
+            guard let a = try lstat(p) else { try mkdir(p, mode: mode); continue }
             if a.kind != .dir && a.kind != .link { throw SFTPError(message: "“\(p)” is not a folder") }
         }
     }

@@ -96,6 +96,10 @@ struct Case: CustomTestStringConvertible, Sendable {
          says: "a level is one row's"),
     Case(name: "a secret into a level", json: "{ \(head), \"list\": { \"command\": \"x\" }, \"actions\": [ { \"id\": \"a\", \"command\": \"x {p}\", \"output\": \"list\", "
          + "\"inputs\": [ { \"name\": \"p\", \"type\": \"secret\" } ] } ] }", says: "a secret doesn't go into a level's run"),
+    Case(name: "a folder on a short action", json: "{ \(head), \"toolActions\": [ { \"id\": \"a\", \"command\": \"x {f}\", "
+         + "\"inputs\": [ { \"name\": \"f\", \"type\": \"folder\" } ] } ] }", says: "only a long action takes one"),
+    Case(name: "remember on a text", json: "{ \(head), \"toolActions\": [ { \"id\": \"a\", \"command\": \"x {f}\", "
+         + "\"inputs\": [ { \"name\": \"f\", \"type\": \"text\", \"remember\": true } ] } ] }", says: "only a folder or a file is remembered"),
     Case(name: "a metric that isn't there", json: "{ \(head), \"alerts\": [ { \"metric\": \"cpu\", \"warn\": 1 } ] }", says: "“cpu” isn't one of the metrics"),
     Case(name: "a bad env name", json: "{ \(head), \"env\": { \"KERMO_X\": \"1\" } }", says: "an env name is A–Z"),
     Case(name: "a bad key", json: "{ \(head), \"toolActions\": [ { \"id\": \"a\", \"key\": \"hyper+x\", \"command\": \"x\" } ] }", says: "isn't a key"),

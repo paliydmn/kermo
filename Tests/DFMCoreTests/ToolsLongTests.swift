@@ -166,6 +166,23 @@ private func running(_ text: String) -> Bool {
     #expect(left == ["ended-new", "alive-old", "n1"], "\(left)")
 }
 
+/// A job removes what was uploaded for it when its command ends, as it went; the next start removes an upload a week
+/// old whose job never started — never a newer one.
+@Test(arguments: shells) func aJobsUploadGoesWhenItEnds(_ shell: String) throws {
+    let box = try Box()
+    defer { box.done() }
+    let uploads = box.home + "/.cache/kermo/upload"
+    try FileManager.default.createDirectory(atPath: uploads, withIntermediateDirectories: true)
+    for name in ["u1.archive.tar.gz", "u1.notes.txt", "u2.archive.tar.gz", "orphan.archive.tar.gz"] {
+        try Data("x".utf8).write(to: URL(fileURLWithPath: uploads + "/" + name))
+    }
+    try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-8 * 86_400)], ofItemAtPath: uploads + "/orphan.archive.tar.gz")
+    #expect(try box.start("test -f \"$HOME/.cache/kermo/upload/u1.archive.tar.gz\" || exit 9; exit 3", shell: shell, id: "u1").status == 0)
+    #expect(box.waitFor("u1", "exit") == "3\n", "the upload was there while its command ran")
+    let left = try FileManager.default.contentsOfDirectory(atPath: uploads).sorted()
+    #expect(left == ["u2.archive.tar.gz"], "\(left)")
+}
+
 /// `progress` (§7.6): a pattern's `percent`, a JSON line's `percent` or `fraction`, its text from the line's fields;
 /// the last record of the log for `done`.
 @Test func progressAndTheLastRecord() {

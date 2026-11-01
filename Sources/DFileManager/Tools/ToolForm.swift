@@ -2,12 +2,15 @@ import AppKit
 import DFMCore
 
 /// An action's form (protocol §7.4): its inputs' values, each checked as you type — empty where it may not be, its
-/// `pattern` (the whole value), a value that would be an option — and what will run with them ("Will run:", a secret
-/// as •••). A `choice-from` input's choices are read as the form opens: loading, then them, or why not.
+/// `pattern` (the whole value), a value that would be an option, a folder or a file that isn't on this Mac — and what
+/// will run with them ("Will run:", a secret as •••, a folder as the path it's uploaded to). A `choice-from` input's
+/// choices are read as the form opens: loading, then them, or why not.
 @MainActor
 final class ToolForm {
     enum Choices { case loading, ready([String]), failed(String) }
     let action: ToolAction, tool: LoadedTool, scope: ToolTemplate.Scope
+    /// A long job's id: where a folder or a file goes (`ToolLong.upload`).
+    let job: String?
     var inputs: [ToolInput] { action.spec.inputs ?? [] }
     private(set) var values: [String: String] = [:]
     private(set) var choices: [String: Choices] = [:]
@@ -17,9 +20,9 @@ final class ToolForm {
     var onChange: (() -> Void)?
 
     /// `scope`: the names around it (the row's, the tool's); an input's `default` may use them. `filled`: values to
-    /// start from instead (Retry's; never a secret).
-    init(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, filled: [String: String]? = nil) {
-        (action, self.tool, self.scope) = (a, tool, scope)
+    /// start from instead (Retry's, or the folder last chosen; never a secret).
+    init(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, filled: [String: String]? = nil, job: String? = nil) {
+        (action, self.tool, self.scope, self.job) = (a, tool, scope, job)
         for i in inputs {
             switch i.info.type {
             case .choice: values[i.info.name] = i.info.default ?? i.info.options?.first ?? ""
@@ -44,6 +47,11 @@ final class ToolForm {
         default: break
         }
         if v.isEmpty { return i.info.optional == true ? nil : "\(i.info.title ?? i.info.name) is empty" }
+        if [.folder, .file].contains(i.info.type) {
+            var folder: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: (v as NSString).expandingTildeInPath, isDirectory: &folder) else { return "not on this Mac" }
+            if folder.boolValue != (i.info.type == .folder) { return i.info.type == .folder ? "not a folder" : "a folder, not a file" }
+        }
         if let p = i.info.pattern, (try? Regex(p)).flatMap({ try? $0.wholeMatch(in: v) }) == nil {
             return "doesn't look right" + (i.info.placeholder.map { ": like \($0)" } ?? "")
         }
@@ -55,6 +63,9 @@ final class ToolForm {
     var filled: ToolTemplate.Scope {
         var s = scope
         s.levels[0] = values.mapValues { .string($0) }
+        for i in inputs where [.folder, .file].contains(i.info.type) {
+            if let job, let v = values[i.info.name], !v.isEmpty { s.levels[0][i.info.name] = .string(ToolLong.upload(job, i, local: v)) }
+        }
         return s
     }
 
@@ -124,7 +135,21 @@ final class ToolForm {
                 let live = LiveField { [unowned self, unowned f] in set(name, f.stringValue) }
                 f.delegate = live
                 kept.append(live)
-                (fields[name], views) = (f, views + [f])
+                fields[name] = f
+                guard [.folder, .file].contains(i.info.type) else { views.append(f); break }
+                let choose = NSButton(title: "Choose…", target: nil, action: nil)
+                kept.append(MenuAction.attach(to: choose) { [unowned self, unowned f, unowned alert] in
+                    let panel = NSOpenPanel()
+                    (panel.canChooseDirectories, panel.canChooseFiles) = (i.info.type == .folder, i.info.type == .file)
+                    if !f.stringValue.isEmpty { panel.directoryURL = URL(fileURLWithPath: (f.stringValue as NSString).expandingTildeInPath) }
+                    panel.beginSheetModal(for: alert.window) { r in
+                        guard r == .OK, let url = panel.url else { return }
+                        f.stringValue = url.path
+                        self.set(name, url.path)
+                    }
+                })
+                f.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                views.append(NSStackView(views: [f, choose]))
             }
             let err = Confirm.label(" ", color: Palette.fail, size: 11)   // a line kept for it: the alert doesn't grow
             (errors[name], views) = (err, views + [err])
@@ -172,8 +197,8 @@ extension ToolRunner {
 
     /// `a`'s form over `window` (§7.4), its choices read on `t` as it opens: the values, or nil for Cancel.
     func form(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, on t: SFTPTarget, window: NSWindow?,
-              values: [String: String]? = nil) async -> [String: String]? {
-        let f = ToolForm(a, of: tool, scope, filled: values)
+              values: [String: String]? = nil, job: String? = nil) async -> [String: String]? {
+        let f = ToolForm(a, of: tool, scope, filled: values, job: job)
         f.load(on: t, env: SSHAskpass.env)
         defer { f.close() }
         if let fill = Self.filling { return await fill(f) }

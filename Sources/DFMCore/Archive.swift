@@ -261,9 +261,20 @@ public struct ArchiveIndex: Sendable {
         ["-a", "-c", "-f", archive, "-C", dir] + names.map { $0.hasPrefix("-") ? "./" + $0 : $0 }
     }
 
-    static func tar(_ args: [String]) throws {
+    /// A folder as a Tools `folder` input sends it (protocol §7.4): `git archive HEAD` of a repository — what's
+    /// committed — else a tar of it without `.git`, `node_modules` and `.DS_Store`; gzipped, with no AppleDouble files,
+    /// extended attributes or this Mac's user names.
+    public static func pack(_ folder: String, to out: String) throws {
+        if FileManager.default.fileExists(atPath: (folder as NSString).appendingPathComponent(".git")) {
+            try tar(["-C", folder, "archive", "--format=tar.gz", "-o", out, "HEAD"], program: "/usr/bin/git")
+        } else {
+            try tar(["-czf", out, "--no-xattrs", "--numeric-owner", "--exclude", ".git", "--exclude", "node_modules", "--exclude", ".DS_Store", "-C", folder, "."])
+        }
+    }
+
+    static func tar(_ args: [String], program: String = "/usr/bin/tar") throws {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        p.executableURL = URL(fileURLWithPath: program)
         p.arguments = args
         p.environment = ProcessInfo.processInfo.environment.merging(["COPYFILE_DISABLE": "1"]) { $1 }
         let err = Pipe()

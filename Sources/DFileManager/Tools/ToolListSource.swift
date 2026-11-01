@@ -242,7 +242,7 @@ final class ToolListSource: ListSource {
                                      window: app.rowLists(base).first?.sheetWindow, values: values) {
         case .stop("cancelled"): throw CancellationError()
         case .stop(let why): throw JobErrorMessage("\(verb): \(why) — nothing ran")
-        case .go(let scope, _, let willRun, _):
+        case .go(let scope, _, let willRun, _, _):
             values = scope.levels[0].mapValues(\.text)
             return willRun
         }

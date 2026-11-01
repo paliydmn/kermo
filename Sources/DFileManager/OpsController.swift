@@ -32,6 +32,8 @@ final class OpsController {
     private var timer: Timer?
     private var buttonKey = ""
     private let onFinished: (FileJob) -> Void
+    /// What waits for a job to end (`enqueue`'s `then`): run once, as it finishes or is cancelled before it starts.
+    private var waiting: [ObjectIdentifier: (FileJob) -> Void] = [:]
 
     /// `historyDir`: where activity.json is (nil: this run only — tests).
     init(window: NSWindow, historyDir: String? = nil, onFinished: @escaping (FileJob) -> Void) {
@@ -50,7 +52,9 @@ final class OpsController {
         updateButton()
     }
 
-    func enqueue(_ job: FileJob, title: String) {
+    /// `then`: once it's over — done, failed, or cancelled before it started.
+    func enqueue(_ job: FileJob, title: String, then: ((FileJob) -> Void)? = nil) {
+        waiting[ObjectIdentifier(job)] = then
         let side = job.to, from = job.from, local = job.from == .local && job.to == .local   // not `job`: it holds these closures
         job.resolveConflict = { [weak self] c in
             Self.ask((.cancel, false)) { done in
@@ -104,7 +108,10 @@ final class OpsController {
 
     private func cancel(_ job: FileJob) {
         job.cancel()
-        if !running.contains(where: { $0 === job }) { remove(job) }   // queued, never started
+        if !running.contains(where: { $0 === job }) {   // queued, never started
+            remove(job)
+            waiting.removeValue(forKey: ObjectIdentifier(job))?(job)
+        }
         changed()
     }
 
@@ -115,6 +122,7 @@ final class OpsController {
         if activity.isShown { entry.seen = true }
         remove(job)
         onFinished(job)
+        waiting.removeValue(forKey: ObjectIdentifier(job))?(job)
         history.add(entry)
         showResult(entry)
         startNext()
