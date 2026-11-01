@@ -2,8 +2,8 @@ import AppKit
 import DFMCore
 
 /// A tool's list on a server (protocol §6.2) — in a Picker (Tools ▸) and in a panel (its place's row, ⌘↩) alike: the
-/// rows, the line above them, the row's keys and menu, its actions' questions and how they went. (Not `ToolList`: that's
-/// the preset's `list`.)
+/// rows, the line above them, the row's keys and menu, its actions' questions and how they went. One level down
+/// (§7.5), an action's rows: its own list, its run, its rows' actions. (Not `ToolList`: that's the preset's `list`.)
 @MainActor
 final class ToolListSource: ListSource {
     unowned let app: AppDelegate
@@ -12,23 +12,51 @@ final class ToolListSource: ListSource {
     /// As its user: a tool says itself when it runs as root.
     let target: SFTPTarget
     private(set) var content: ListContent?
+    /// One level down (§7.5): the action whose output it lists, the row it ran on (none: a tool's action), the list
+    /// that row is in.
+    struct Level {
+        let action: ToolAction
+        let row: ToolRow?
+        let parent: ToolListSource
+    }
+    let level: Level?
+    /// A level's form as filled in: ⌘R shows it so.
+    private var values: [String: String]?
 
-    init(_ app: AppDelegate, _ tool: LoadedTool, _ server: SavedServer, _ target: SFTPTarget) {
-        (self.app, self.tool, self.server, self.target) = (app, tool, server, target.asUser)
+    init(_ app: AppDelegate, _ tool: LoadedTool, _ server: SavedServer, _ target: SFTPTarget, level: Level? = nil) {
+        (self.app, self.tool, self.server, self.target, self.level) = (app, tool, server, target.asUser, level)
     }
 
     var preset: ToolPreset { tool.preset }
-    var title: String { preset.title }
+    /// A level's: the row it went into (`web-01 › fail2ban › sshd`), else the action.
+    var title: String { level.map { $0.row?.title ?? $0.action.spec.title ?? $0.action.spec.id } ?? preset.title }
+    var trail: [String] { (level?.parent.trail ?? []) + [title] }
+    var up: (source: ListSource, row: String?)? { level.map { lv in (lv.parent, lv.row.map { lv.parent.rowID($0.key) }) } }
     private var key: String { ServerRow.key(target) + " " + preset.id }
-    /// A tool's action with no row is said about the list (as its one-command run is: `AppDelegate.openTool`).
-    var listID: String? { ServerRow.key(target) + " tool:\(preset.id)" }
+    /// What its rows and a change of it are said about: a level's own, so a row there with a key one above has too
+    /// (`du -d1 /var` lists `/var`) is another row. A tool's action with no row is said about the list (as its
+    /// one-command run is: `AppDelegate.openTool`).
+    private var base: String { level.map { $0.parent.base + " › \($0.action.spec.id)" + ($0.row.map { " " + $0.key } ?? "") } ?? ServerRow.key(target) + " tool:\(preset.id)" }
+    var listID: String? { base }
+
+    /// What it lists: the tool's list, or an action's own with the action's run; one with no list of its own repeats
+    /// the level it's on (D-155) — its rows' actions too.
+    var list: ToolList? {
+        guard let lv = level else { return preset.list }
+        var l = lv.action.spec.list ?? lv.parent.list
+        l?.run = lv.action.run
+        return l
+    }
+    var rowActions: [ToolAction]? { level.map { $0.action.spec.list == nil ? $0.parent.rowActions : $0.action.spec.actions } ?? preset.actions }
+    /// The rows above, nearest first: their fields are names here (§5.3).
+    var above: [ToolRecord] { level.map { lv in (lv.row.map { [$0.record] } ?? []) + lv.parent.above } ?? [] }
 
     /// `columns` (§6.2), else the row's title, its state and its detail; a launcher's: the action, what it runs, its key.
     var columns: [ListColumn] {
-        if preset.list == nil {
+        if list == nil {
             return [ListColumn(title: "Action", field: .title, width: 170), ListColumn(title: "Runs", field: .subtitle, width: 330), ListColumn(title: "Key", field: .detail, width: 60)]
         }
-        guard let cs = preset.list?.view.columns else {
+        guard let cs = list?.view.columns else {
             return [ListColumn(title: "Name", field: .title, width: 170), ListColumn(title: "State", field: .subtitle, width: 170, state: true),
                     ListColumn(title: "Detail", field: .detail, width: 160)]
         }
@@ -59,15 +87,20 @@ final class ToolListSource: ListSource {
     /// What reads the list, off the main thread: the tool, the names its templates have there.
     struct Lister: Sendable {
         let tool: LoadedTool
-        let scope: ToolTemplate.Scope
+        var list: ToolList?
+        /// What goes above its rows (`header`).
+        var heading: ToolRun?
+        var scope: ToolTemplate.Scope
+        /// A level's rows above, nearest first (`ToolRow.above`).
+        var above: [ToolRecord] = []
         let target: SFTPTarget
         let server: String
         let facts: ToolFacts?
         /// The vars' values set on this server (`tools/servers.json`): over what their commands find.
         let saved: [String: String]
-        let findVars: Bool
+        var findVars: Bool
         /// The program's version is known already this session: not asked again.
-        let versionKnown: Bool
+        var versionKnown: Bool
 
         /// The vars' commands first if they're due, the list, then (`header`) its header line (up to 200 characters)
         /// and what it warns about: rows past `limit`, a server clock off by over a minute, a version outside `tested`
@@ -87,7 +120,7 @@ final class ToolListSource: ListSource {
                 scope.levels[scope.levels.count - 2] = p.varValues(saved: saved, found: found)
             }
             // The header and the version (once a session) say something above the rows.
-            let extra = header ? [p.list?.view.header ?? p.header, versionKnown ? nil : p.version.map { ToolRun(command: .one($0.command)) }] : []
+            let extra = header ? [heading, versionKnown ? nil : p.version.map { ToolRun(command: .one($0.command)) }] : []
             var said = extra.map { _ in String?.none }
             func first(_ text: String) -> String? { text.split(whereSeparator: \.isNewline).first.map { String($0.prefix(200)) } }
             func one(_ run: ToolRun) -> String? {
@@ -95,7 +128,7 @@ final class ToolListSource: ListSource {
                       r.stopped == nil, run.succeeded(r.status) else { return nil }
                 return first(r.text)
             }
-            guard let list = p.list, rows else {   // a launcher: its actions are its rows
+            guard let list, rows else {   // a launcher: its actions are its rows
                 for (i, run) in extra.enumerated() { said[i] = run.flatMap(one) }
                 return note(Read(rows: [], total: 0, vars: vars), said: said, total: 0, skew: nil)
             }
@@ -128,7 +161,7 @@ final class ToolListSource: ListSource {
                 throw Failed(message: "\(title) on \(server): the output didn't match — " + (records.unmatched.first { !$0.isEmpty } ?? ""), output: output)
             }
             let now = Date().addingTimeInterval(r.skew ?? 0)   // `ago` by the server's clock
-            let read = Read(rows: records.rows.map { list.view.row($0, scope, now: now) }, total: records.total, vars: vars)
+            let read = Read(rows: records.rows.map { var r = list.view.row($0, scope, now: now); r.above = above; return r }, total: records.total, vars: vars)
             return header ? note(read, said: said, total: records.rows.count, skew: r.skew) : read
         }
 
@@ -147,37 +180,78 @@ final class ToolListSource: ListSource {
         }
     }
 
-    func lister() -> Lister { Self.lister(app, tool, server, target) }
+    /// A level's reads its action's run, with its form's values and the rows above; no vars or version again.
+    func lister() -> Lister {
+        var l = Self.lister(app, tool, server, target)
+        guard level != nil else { return l }
+        (l.list, l.heading, l.above, l.findVars, l.versionKnown) = (list, list?.view.header, above, false, true)
+        l.scope = app.tools.scope(preset, on: server, target, rows: above)
+        l.scope.levels[0] = (values ?? [:]).mapValues { .string($0) }
+        return l
+    }
+
+    /// What reads it again after a change on one of its rows: none for a launcher, nor for a level whose own run
+    /// changes something (⌘R asks first).
+    var relister: Lister? { list == nil || level.map({ !ToolRunner.looks($0.action) }) == true ? nil : lister() }
 
     /// What reads `tool`'s list on `target` now: an action's `verify` needs it whether its list still shows or not.
     static func lister(_ app: AppDelegate, _ tool: LoadedTool, _ server: SavedServer, _ target: SFTPTarget) -> Lister {
         let key = ServerRow.key(target.asUser) + " " + tool.preset.id
-        return Lister(tool: tool, scope: app.tools.scope(tool.preset, on: server, target), target: target.asUser, server: server.title,
+        return Lister(tool: tool, list: tool.preset.list, heading: tool.preset.list?.view.header ?? tool.preset.header, scope: app.tools.scope(tool.preset, on: server, target),
+                      target: target.asUser, server: server.title,
                       facts: app.tools.answer(target)?.answer.facts, saved: app.tools.settings.vars(tool.preset.id, on: app.tools.serverID(target)), findVars: app.tools.found[key] == nil, versionKnown: app.tools.versions[key] != nil)
     }
 
     /// As any look: a locked server asks first, then the login if one is due — to the server as it was reached (its
     /// place's) — then the list's runs. Its connection is kept for its ControlPersist (`noteLook`).
     func read(_ cancel: CancelFlag) async throws -> ListContent {
-        if await !ServerLock.authorize(target, "look at the \(title.lowercased()) of") { throw AppDelegate.Locked(message: "\(server.title) stays locked") }
+        var willRun: String?
+        if let level { willRun = try await ready(level) }
+        else if await !ServerLock.authorize(target, "look at the \(title.lowercased()) of") { throw AppDelegate.Locked(message: "\(server.title) stays locked") }
         let t = target, env = SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For “\(title)” on \(server.title)"]) { $1 }
         try await Blocking.run { try SFTP.startMaster(t, env: env) }
         app.noteLook(t)
         if cancel.isCancelled { throw CancellationError() }
         let lister = lister()
-        return show(try await Blocking.run { try lister.read(env, cancel) })
+        let read: Read
+        do { read = try await Blocking.run { try lister.read(env, cancel) } } catch {
+            changed(willRun, error)
+            throw error
+        }
+        changed(willRun, nil)
+        return show(read)
+    }
+
+    /// A level's action as any (§7.2): the lock, its form, production's question — over the list it's shown in. What it runs.
+    private func ready(_ lv: Level) async throws -> String {
+        let verb = (lv.action.spec.title ?? lv.action.spec.id).replacingOccurrences(of: "…", with: "")
+        switch await app.tools.ready(lv.action, of: tool, app.tools.scope(preset, on: server, target, rows: above), row: lv.row?.title, on: target, asked: false,
+                                     window: app.rowLists(base).first?.sheetWindow, values: values) {
+        case .stop(let why): throw JobErrorMessage("\(verb): " + (why == "cancelled" ? "cancelled — nothing ran" : "\(why); nothing ran"))
+        case .go(let scope, _, let willRun, _):
+            values = scope.levels[0].mapValues(\.text)
+            return willRun
+        }
+    }
+
+    /// A level whose run changes something is in the production log, as any run is; a look isn't.
+    private func changed(_ willRun: String?, _ error: Error?) {
+        guard let lv = level, let willRun, !ToolRunner.looks(lv.action) else { return }
+        AuditLog.write(target, "tool \(preset.id) \(lv.action.spec.id)", paths: [], command: willRun, exit: error == nil ? 0 : nil, error: error?.localizedDescription)
     }
 
     /// A read's rows as items, the line above them, what an empty list says; the place counts them.
     func show(_ r: Read) -> ListContent {
-        if let v = r.vars { app.tools.found[key] = v }
-        if let v = r.version { app.tools.versions[key] = .some(v) }
-        app.tools.counts[key] = r.total
+        if level == nil {   // the tool's: a level's read says nothing of the tool's list
+            if let v = r.vars { app.tools.found[key] = v }
+            if let v = r.version { app.tools.versions[key] = .some(v) }
+            app.tools.counts[key] = r.total
+        }
         _ = app.tools.answer(target)   // connected now: what the server has, if not asked yet
-        let scope = app.tools.scope(preset, on: server, target)
-        let header = [r.header, app.tools.versions[key] ?? nil].compactMap { $0 }.joined(separator: " · ")
-        let primary = preset.primary.flatMap { id in preset.toolActions?.first { $0.spec.id == id } }.map { $0.spec.title ?? $0.spec.id }
-        let c = ListContent(rows: preset.list == nil ? launcherRows() : r.rows.map(item), header: header.isEmpty ? nil : header, empty: preset.list?.view.empty.map { ToolTemplate.text($0, scope) } ?? "Nothing here",
+        let scope = app.tools.scope(preset, on: server, target, rows: above)
+        let header = [r.header, level == nil ? app.tools.versions[key] ?? nil : nil].compactMap { $0 }.joined(separator: " · ")
+        let primary = level == nil ? preset.primary.flatMap { id in preset.toolActions?.first { $0.spec.id == id } }.map { $0.spec.title ?? $0.spec.id } : nil
+        let c = ListContent(rows: list == nil ? launcherRows() : r.rows.map(item), header: header.isEmpty ? nil : header, empty: list?.view.empty.map { ToolTemplate.text($0, scope) } ?? "Nothing here",
                             primary: primary.flatMap { title in listActions(nil).first { $0.title == title } },
                             actions: { [weak self] in self?.listActions(nil) ?? [] })
         content = c
@@ -186,7 +260,7 @@ final class ToolListSource: ListSource {
 
     // MARK: A row
 
-    func rowID(_ key: String) -> String { Self.rowID(key, tool: preset.id, on: target) }
+    func rowID(_ key: String) -> String { base + " " + key }
     static func rowID(_ key: String, tool: String, on t: SFTPTarget) -> String { ServerRow.key(t.asUser) + " tool:\(tool) " + key }
 
     /// ok ●, warn ○, bad ◆, off a grey dot (§6.2); busy is a spinner.
@@ -255,8 +329,8 @@ final class ToolListSource: ListSource {
         let known = app.tools.answers[ServerRow.key(target)]?.answer, id = row.map { rowID($0.key) } ?? listID!
         func actions(_ all: [ToolAction]?, onRow: Bool, group: Int) -> [ListAction] {
             // A launcher's action runs on its own row: that row spins while it runs.
-            func runID(_ a: ToolAction) -> String { preset.list == nil && group == 1 ? rowID(a.spec.title ?? a.spec.id) : id }
-            let all = (all ?? []).filter { ToolRunner.runs($0, of: preset) }
+            func runID(_ a: ToolAction) -> String { list == nil && group == 1 ? rowID(a.spec.title ?? a.spec.id) : id }
+            let all = (all ?? []).filter { a in ToolRunner.runs(a, of: preset) && (!onRow || row.map { a.offered(on: $0.record) } != false) }
             let shown = known.map { $0.visible(all, of: preset) } ?? all.filter { $0.spec.requires == nil }
             var seen = Set<String>(), out: [ListAction] = []
             for a in all {
@@ -277,7 +351,7 @@ final class ToolListSource: ListSource {
                 return nil
             }
         }
-        return (row == nil ? [] : actions(preset.actions, onRow: true, group: 0)) + actions(preset.toolActions, onRow: false, group: 1) + [copy].compactMap { $0 } + [
+        return (row == nil ? [] : actions(rowActions, onRow: true, group: 0)) + (level == nil ? actions(preset.toolActions, onRow: false, group: 1) : []) + [copy].compactMap { $0 } + [
             ListAction(title: "Show \((path as NSString).lastPathComponent)", key: nil, group: 2, closes: true, why: nil) { _ in
                 Viewer.show(URL(fileURLWithPath: path))
                 return nil
@@ -289,7 +363,7 @@ final class ToolListSource: ListSource {
     /// a window's closes a Picker first. `multi`: it runs on marked rows, else only the cursor's (Q15).
     func action(_ a: ToolAction, row: ToolRow?, onRow: Bool, id: String, group: Int, keyed: Bool) -> ListAction {
         let mac = (a.run.where ?? preset.where) == .mac, sudo = (a.run.sudo ?? preset.sudo ?? false) && !mac
-        let scope = app.tools.scope(preset, on: server, target, rows: onRow ? row.map { [$0.record] } ?? [] : [])
+        let scope = app.tools.scope(preset, on: server, target, rows: onRow ? row?.records ?? [] : above)
         let why = keyed ? app.tools.why(a, of: tool, row: row, onRow: onRow, id: id, on: server, target)
             : app.tools.why(a, of: tool, row: row, onRow: onRow, id: id, on: server, target) ?? "\(a.spec.title ?? a.spec.id) doesn't run here"
         let asks: ListAction.Asks = a.spec.readonly == true ? .never : a.spec.dangerous == true || a.spec.confirm == true ? .always : .prod

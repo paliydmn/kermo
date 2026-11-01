@@ -16,7 +16,7 @@ import Testing
 /// with `slow-<server>`; with `event-<server>`, an `_event` in each line (a critical one with `boom-<server>`); two `procs` rows in every other line (as
 /// System spaces its heavier reads) — its pid in `pulse-<server>.pid`. `pulse2`: the same under another name. Its
 /// dashboard has every block; its actions: Folder (`open` what `pulse-dir` prints), Stop… (dangerous), Deeper (a
-/// level: not run yet), Log (`{from}` / `{to}` into `pulse-log`), Terminal and Services (`goto`).
+/// level, only on the row of `first`), Log (`{from}` / `{to}` into `pulse-log`), Terminal and Services (`goto`).
 @MainActor private func pulse(_ bench: ToolsBench, _ ids: [String] = ["pulse"]) throws {
     for id in ids {
         try Data("""
@@ -57,7 +57,8 @@ import Testing
               "actions": [
                 { "id": "folder", "title": "Folder", "rows": "procs", "readonly": true, "command": "pulse-dir {pid}", "open": "{stdout}" },
                 { "id": "stop", "title": "Stop…", "rows": "procs", "dangerous": true, "command": "pulse-log stop {pid}" },
-                { "id": "deeper", "title": "Deeper", "rows": "procs", "readonly": true, "command": "echo {pid}", "output": "list", "list": { "format": "lines", "key": "{line}" } },
+                { "id": "deeper", "title": "Deeper", "rows": "procs", "readonly": true, "only": { "command": ["first"] }, "command": "echo {pid} {command}", "output": "list",
+                  "list": { "format": "lines", "key": "{line}", "empty": "nothing in {command}" }, "actions": [ { "id": "here", "title": "Here", "key": "return", "readonly": true, "command": "pulse-log here {pid} {line}" } ] },
                 { "id": "log", "title": "Log", "readonly": true, "command": "pulse-log {from} {to}" } ],
               "toolActions": [ { "id": "ssh", "title": "Terminal", "goto": "ssh" }, { "id": "svc", "title": "Services", "goto": "services:{server}.service" } ] }
             """.utf8).write(to: URL(fileURLWithPath: bench.dir + "/own/\(id).json"))
@@ -476,9 +477,9 @@ extension ServerLockTests {
         #expect(table.rows.map(\.key) == ["1", "2"] && table.rows.map(\.title) == ["first", "second"] && table.rows[1].cells.map(\.text) == ["second", "20 %", "2"], "\(table.rows)")
         #expect(table.table.numberOfRows == 2 && table.table.tableColumns.map(\.title) == ["Command", "Cpu", "Pid", ""], "\(table.table.numberOfRows) \(table.table.tableColumns.map(\.title))")
         let first = rowButtons(table, 0)
-        #expect(first.map(\.title) == ["Folder", "Stop…", "Deeper"] && rowButtons(table, 1).map(\.title) == first.map(\.title), "\(first.map(\.title))")
+        #expect(first.map(\.title) == ["Folder", "Stop…", "Deeper"] && rowButtons(table, 1).map(\.title) == ["Folder", "Stop…"], "only: Deeper on first's row \(first.map(\.title))")
         try #require(first.count == 3)
-        #expect(first[0].isEnabled && first[1].isEnabled && !first[2].isEnabled && first[2].toolTip?.contains("later release") == true)
+        #expect(first.allSatisfy { $0.isEnabled }, "a level runs now")
         #expect(first[1].attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == Palette.fail, "dangerous: red")
         #expect(counts.numbers.map(\.stringValue) == ["2"] && buttons(counts).map(\.title) == ["Services…"])
         #expect(buttons(events).map(\.title) == ["Services…"] && events.subviews.first.map { labels($0) }?.contains("hot: 99") == true, "\(events.subviews.first.map(labels) ?? [])")
@@ -536,6 +537,30 @@ extension ServerLockTests {
         await toolsUntil { touched == 1 }
         try await Task.sleep(for: .milliseconds(200))
         #expect(touched == 1 && shown.count == 1, "locked: Touch ID first, and nothing without it")
+    }
+
+    /// A table row's level (Biggest Folders) opens in a Picker over the Tools window, the level its first: where it is
+    /// as its chip, the action's rows read with the row's fields, a row's action down there with its parent's too; ⎋
+    /// closes it.
+    @Test func aTableRowsLevelOpensInAPickerOverTheToolsWindow() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app)
+        defer { quick.done(); bench.done(); done(); app.savedServers = []; Picker.dismiss() }
+        try await watching(app, bench)
+        ToolsWindow.show(app, server: .local())
+        let w = try #require(ToolsWindow.main), page = try #require(w.page)
+        page.select("pulse")
+        await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 2 }
+        let table = try #require(live(page)?.blocks.compactMap { $0 as? ToolsTable }.first)
+        press(rowButtons(table, 0).first { $0.title == "Deeper" })
+        let p = try #require(Picker.current)
+        await toolsUntil { !p.rows.isEmpty }
+        #expect(p.panel.parent === w.window && p.scopeNames == ["localhost › Pulse › first"], "\(p.scopeNames)")
+        #expect(p.rows.map(\.title) == ["1 first"] && bench.calls.contains("pulse-log here 1 1 first") == false, "\(p.rows.map(\.title))")
+        p.highlighted?.run()
+        await toolsUntil { bench.calls.contains("pulse-log here 1 1 first") }
+        #expect(bench.calls.contains("pulse-log here 1 1 first"), "the parent row's pid with the level's line: \(bench.calls)")
+        #expect(p.actionBar.last?.label == "Close", "its first level: ⎋ closes")
     }
 
     /// `goto` and the chart's click: an event's Services… and a count's open the server's services in the search;

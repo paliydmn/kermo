@@ -274,6 +274,10 @@ public struct ToolRow: Sendable, Hashable {
     /// `columns`, each value in its format; `state`, `bar` and `spark` columns hold the raw value for the view to draw.
     public var cells: [Cell]
     public var record: ToolRecord
+    /// One level down (§7.5): the rows above it, nearest first.
+    public var above: [ToolRecord] = []
+    /// What its actions' templates see of it: its fields, then its parents' (§5.3).
+    public var records: [ToolRecord] { [record] + above }
 
     public struct Cell: Sendable, Hashable {
         public var field: String

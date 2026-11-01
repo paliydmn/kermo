@@ -23,12 +23,19 @@ import DFMCore
     /// What a change of the whole list is said about, as a row's id (a Tools action with no row): a list showing it
     /// has it. nil: none.
     var listID: String? { get }
+    /// Where it is after the server's chip, a crumb each: "Firewall"; one level down (a Tools action's rows)
+    /// "System › /var".
+    var trail: [String] { get }
+    /// One level down: the list above and its row this came from — ⌫ goes back there. nil: the server's place.
+    var up: (source: ListSource, row: String?)? { get }
 }
 
 extension ListSource {
     func peek(_ row: Picker.Item) -> ListPeek? { nil }
     var keepsOrder: Bool { false }
     var listID: String? { nil }
+    var trail: [String] { [title] }
+    var up: (source: ListSource, row: String?)? { nil }
 }
 
 /// A list's read that failed, with what the server said: a Picker offers it (Output…).

@@ -270,8 +270,8 @@ struct OneChart: View {
 
 /// A `table` block: a row set as the latest sample that carried it, in the block's columns (§5.2's formats, a `bar`
 /// as one), each row with the block's actions as buttons — down the one path every action takes
-/// (`ToolListSource.action`: the lock, production's question, the line on the page, red for what can't be undone).
-/// An action this version doesn't run (Biggest Folders: a level) is greyed, saying so.
+/// (`ToolListSource.action`: the lock, production's question, the line on the page, red for what can't be undone);
+/// one `only` keeps off a row isn't on it. An action this version doesn't run is greyed, saying so.
 @MainActor final class ToolsTable: NSView, NSTableViewDataSource, NSTableViewDelegate, ToolsBlock {
     let block: ToolBlock
     let table = NSTableView()
@@ -399,7 +399,7 @@ struct OneChart: View {
     /// The row's buttons: one an action; pressed, it waits for its run.
     private func buttons(_ row: ToolRow) -> NSView {
         let p = source.preset, id = source.rowID(row.key), known = source.app.tools.answers[ServerRow.key(source.target)]?.answer, monitor = source.app.tools.monitor
-        let views = actions.map { a -> NSButton in
+        let views = actions.filter { $0.offered(on: row.record) }.map { a -> NSButton in
             let title = (a.spec.title ?? a.spec.id)
             let b = NSButton(title: title, target: nil, action: nil)
             b.controlSize = .small
@@ -411,7 +411,7 @@ struct OneChart: View {
             }
             guard ToolRunner.runs(a, of: p) else {
                 b.isEnabled = false
-                b.toolTip = "\(title): levels of a list come with a later release"
+                b.toolTip = "\(title): this version doesn't run it yet"
                 return b
             }
             let action = source.action(a, row: row, onRow: true, id: id, group: 0, keyed: known?.has(a, of: p) ?? (a.spec.requires == nil))

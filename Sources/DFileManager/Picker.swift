@@ -461,6 +461,19 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         let name = SavedServer.name(for: s.target.asUser), chips = Chip.of(s.target)
         let here = source.map { ServerRow.key($0.target) == ServerRow.key(s.target) } == true   // its server's place is the level above
         push(s is PlaceSource ? (name, chips) : here ? (s.title, []) : ("\(name) › \(s.title)", chips), placeholder: "Filter \(s.title.lowercased())")
+        enter(s, query: query, select: select, onLeave: onLeave)
+    }
+
+    /// `s` as a picker's own first level — ⎋ closes from there — its chip `scope`: a dashboard's Biggest Folders over
+    /// the Tools window.
+    @discardableResult
+    static func show(over window: NSWindow, _ s: ListSource, scope: (name: String, chips: [Chip])) -> Picker {
+        let p = show(over: window, placeholder: "Filter \(s.title.lowercased())", scope: scope, items: [])
+        p.enter(s, query: "", select: nil, onLeave: nil)
+        return p
+    }
+
+    private func enter(_ s: ListSource, query: String, select: String?, onLeave: ((String, String?) -> Void)?) {
         (source, field.stringValue, selectID, self.onLeave) = (s, query, select, onLeave)
         rank = { item, q in Fuzzy.score(q, item.title + " " + item.subtitle + " " + item.detail) }
         let inOther = listInOther   // not self: ⌘↩ runs it after the picker closed and went

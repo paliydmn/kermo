@@ -77,8 +77,7 @@
       "actions": [
         { "id": "open", "title": "Show in Panel", "key": "return", "open": "{path}" },
         { "id": "inside", "title": "Biggest Folders Inside", "key": "cmd+down", "readonly": true, "sudo": true,
-          "command": "du -xk -d1 {path} 2>/dev/null | sort -rn | head -15", "output": "list", "list": { "format": "regex", "pattern": "^(?<kb>\\d+)\\s+(?<path>.+)$", "key": "{path}", "title": "{path}", "detail": "{kb:kbytes}" },
-          "actions": [ { "id": "inside-open", "title": "Show in Panel", "key": "return", "open": "{path}" } ] } ] },
+          "command": "du -xk -d1 {path} 2>/dev/null | sort -rn | head -15", "output": "list" } ] },
     { "id": "log",    "title": "Log for This Time", "readonly": true, "command": "journalctl --no-pager -o short-iso --since @{from} --until @{to} -p warning..emerg; journalctl --no-pager -q --since @{from} --until @{to} -k | tail -50", "output": "window",
       "note": "Without the adm or systemd-journal group, journalctl shows only your own services." }
   ],

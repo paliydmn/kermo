@@ -441,6 +441,11 @@ public struct ToolAction: Sendable, Hashable, Codable {
     public init(from d: Decoder) throws { (run, spec) = (try ToolRun(from: d), try Spec(from: d)) }
     public func encode(to e: Encoder) throws { try run.encode(to: e); try spec.encode(to: e) }
     init(run: ToolRun, spec: Spec) { (self.run, self.spec) = (run, spec) }
+
+    /// `only` (§7.1): offered on a row only where each field it names has one of its values.
+    public func offered(on record: ToolRecord) -> Bool {
+        (spec.only ?? [:]).allSatisfy { field, values in values.contains(ToolTemplate.Scope(rows: [record]).value(field)?.text ?? "") }
+    }
 }
 
 public struct ToolPreset: Sendable, Hashable, Codable {

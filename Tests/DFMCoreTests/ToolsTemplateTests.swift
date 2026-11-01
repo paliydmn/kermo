@@ -131,3 +131,13 @@ func aValueIsAlwaysOneArgument(_ value: String) throws {
 @Test func aBoolIsNoTime() {
     #expect(ToolTemplate.date(.bool(true)) == nil && ToolValue.bool(true).number == 1 && ToolValue.bool(false).number == 0)
 }
+
+/// `only`: an action is offered on a row where each field it names has one of its values — a number as its text, a
+/// dotted path into the row; none named: on every row.
+@Test func onlyOffersAnActionOnTheRowsItNames() throws {
+    let a = try JSONDecoder().decode(ToolAction.self, from: Data(#"{ "id": "deploy", "command": "true", "only": { "kind": ["app", "job"], "n.port": ["80"] } }"#.utf8))
+    #expect(a.offered(on: ["kind": "app", "n": .object(["port": 80])]))
+    #expect(!a.offered(on: ["kind": "site", "n": .object(["port": 80])]) && !a.offered(on: ["kind": "job"]) && !a.offered(on: [:]))
+    let any = try JSONDecoder().decode(ToolAction.self, from: Data(#"{ "id": "logs", "command": "true" }"#.utf8))
+    #expect(any.offered(on: [:]))
+}
