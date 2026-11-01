@@ -718,6 +718,7 @@ extension ServerLockTests {
         try await watching(app, bench, servers: [saved])
         let monitor = app.tools.monitor
         await toolsUntil { app.tools.here(.local())?.tools.contains { $0.preset.id == "sites" } == true }
+        #expect(app.tools.here(.local())?.tools.last?.preset.id == "sites", "last with addresses too: Watch… is another tool's")
         monitor.watch(try toolNamed(app, "sites"), on: .local(), true)
         await toolsUntil { monitor.tool("sites", on: .local())?.history.rows("urls").count == 2 }
         let s = try #require(monitor.server(.local())), t = try #require(s.tools["sites"])

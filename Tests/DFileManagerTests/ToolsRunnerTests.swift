@@ -77,6 +77,10 @@ extension ServerLockTests {
         let open = ToolAction(run: ToolRun(command: .one("open {url}"), where: .mac), spec: .init(id: "open")), ufw = try toolNamed(app, "ufw").preset
         #expect(ToolRunner.refusal(open, of: ufw, ToolTemplate.Scope(rows: [["url": "https://example.com/search?q=a&page=2#top"]])) == nil, "a web address's query and fragment")
         #expect(ToolRunner.refusal(open, of: ufw, ToolTemplate.Scope(rows: [["url": "https://example.com/?a=1;b"]])) != nil && ToolRunner.refusal(open, of: ufw, ToolTemplate.Scope(rows: [["url": "x?y&z"]])) != nil)
+        func mac(_ command: String) -> ToolAction { ToolAction(run: ToolRun(command: .one(command), where: .mac), spec: .init(id: "a")) }
+        let query = ToolTemplate.Scope(rows: [["url": "https://example.com/health?full=1&x"]])
+        #expect(ToolRunner.refusal(mac("curl -sSI --max-time 10 {url}"), of: ufw, query) == nil, "Headers: one word, as Open")
+        #expect(ToolRunner.refusal(mac("sh -c \"curl {url}\""), of: ufw, query) != nil, "inside the author's quotes a nested shell would read the & ")
         _ = try action(l, "-h", "Unban").run(false)
         #expect(!bench.calls.contains { $0.contains("unbanip") })
     }

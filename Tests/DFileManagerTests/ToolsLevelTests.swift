@@ -145,6 +145,11 @@ extension ServerLockTests {
         await toolsUntil { ((try? String(contentsOfFile: bench.dir + "/audit.jsonl", encoding: .utf8)) ?? "").contains("tool deep scan") }
         #expect(((try? String(contentsOfFile: bench.dir + "/audit.jsonl", encoding: .utf8)) ?? "").contains("tool deep scan"), "in the production log")
         let level = try #require(a.list)
+        ToolRunner.filling = { _ in forms += 1; return nil }
+        a.readList()   // ⌘R: its form again, filled in — Cancel keeps the rows
+        await toolsUntil { forms == 3 }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(a.list === level && level.shown.count == 3, "⌘R then Cancel: still the level, its rows")
         app.runList(try #require(level.actions.first { $0.title == "Zap" }), in: level)
         try await Task.sleep(for: .milliseconds(300))
         #expect(asked.count == 1 && !bench.calls.contains { $0.hasPrefix("deep-show zap") }, "not checked, not run: \(asked)")
@@ -155,5 +160,29 @@ extension ServerLockTests {
         ServerLock.authenticate = { _ in false }
         let scan = try #require(level.source as? ToolListSource)
         do { _ = try await scan.read(CancelFlag()); Issue.record("read while locked") } catch { #expect(error is AppDelegate.Locked, "\(error)") }
+    }
+
+    /// In a Picker, a level's Cancel goes back up — the first read's — or, on ⌘R, keeps its rows.
+    @Test func aLevelsCancelInAPicker() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done(); ToolRunner.filling = nil }
+        try deep(app, bench)
+        let source = ToolListSource(app, try toolNamed(app, "deep"), SavedServer(target: .local()), .local())
+        _ = try await source.read(CancelFlag())
+        app.showInSearch(source)
+        let p = try #require(Picker.current)
+        var forms = 0
+        ToolRunner.filling = { _ in forms += 1; return nil }
+        _ = p.highlighted?.listActions?().first { $0.title == "Scan…" }?.run(false)
+        await toolsUntil { forms == 1 && p.scopeNames.last == "Deep" && p.rows.count == 2 }
+        #expect(p.scopeNames.last == "Deep" && p.rows.map(\.title) == ["api", "www"], "back up: \(p.scopeNames)")
+        ToolRunner.filling = { _ in forms += 1; return ["depth": "1"] }
+        _ = p.highlighted?.listActions?().first { $0.title == "Scan…" }?.run(false)
+        await toolsUntil { p.scopeNames.last == "api" && p.rows.count == 3 }
+        ToolRunner.filling = { _ in forms += 1; return nil }
+        p.reread()
+        await toolsUntil { forms == 3 && p.rows.count == 3 }
+        #expect(p.scopeNames.last == "api" && p.rows.count == 3, "⌘R then Cancel: the rows as they were")
     }
 }

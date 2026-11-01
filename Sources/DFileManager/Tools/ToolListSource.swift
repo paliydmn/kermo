@@ -242,7 +242,8 @@ final class ToolListSource: ListSource {
     /// A level's run is in the production log, as any action's is.
     private func changed(_ willRun: String?, _ error: Error?) {
         guard let lv = level, let willRun else { return }
-        AuditLog.write(target, "tool \(preset.id) \(lv.action.spec.id)", paths: [], command: willRun, exit: error == nil ? 0 : nil, error: error?.localizedDescription)
+        AuditLog.write(target, "tool \(preset.id) \(lv.action.spec.id)", paths: [], command: willRun, exit: error == nil ? 0 : nil,
+                       error: error is CancellationError ? "cancelled, may have run" : error?.localizedDescription)
     }
 
     /// A read's rows as items, the line above them, what an empty list says; the place counts them.
