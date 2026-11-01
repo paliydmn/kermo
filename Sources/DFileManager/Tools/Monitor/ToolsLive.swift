@@ -194,7 +194,7 @@ import DFMCore
         for tile in tiles {
             let texts = tile.metrics.map { id -> String in   // two in one tile, in the label's order ("In · Out")
                 let latest = t?.history.latest(id) ?? [:]
-                if p.metrics?[id]?.count != nil, let all = latest["all"] { return "\(Int(latest["ok"] ?? 0)) of \(Int(all))" }   // "3 of 4" ready
+                if p.metrics?[id]?.count != nil, let all = latest["all"] { return latest["ok"].map { "\(Int($0)) of \(Int(all))" } ?? "\(Int(all))" }   // "3 of 4" ready
                 guard let m = p.metrics?[id], let v = ToolMetric.one(latest, of: tile.of) else { return "—" }
                 return m.text(v)
             }

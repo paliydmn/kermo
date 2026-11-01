@@ -1195,6 +1195,12 @@ extension ServerLockTests {
         try Data("a\nb\nc\n".utf8).write(to: URL(fileURLWithPath: bench.dir + "/jobs"))
         await toolsUntil { tool.events.contains { $0.message == "c new" } }
         #expect(tool.events.map(\.message) == ["c new"] && tool.history.latest("n")["all"] == 3, "\(tool.events.map(\.message))")
+        try FileManager.default.removeItem(atPath: bench.dir + "/jobs")   // the list's run fails: a gap that says why, not zero rows
+        await toolsUntil { tool.listError != nil }
+        #expect(tool.listError == "exit 1" && tool.history.latest("n").isEmpty, "\(tool.listError ?? "-") \(tool.history.latest("n"))")
+        try Data("a\nb\nc\nd\n".utf8).write(to: URL(fileURLWithPath: bench.dir + "/jobs"))
+        await toolsUntil { tool.events.contains { $0.message == "d new" } }
+        #expect(tool.events.map(\.message) == ["d new", "c new"] && tool.listError == nil, "after the gap only what's new: \(tool.events.map(\.message))")
         app.tools.monitor.watch(tool.loaded, on: .local(), false)
     }
 }

@@ -37,7 +37,7 @@ Release:
 
 ### Fixed
 - **＋ New Tunnel…** over a server's tunnels in a panel did nothing.
-- Tools: a long job that ended with a code its tool counts as success (`exitOk`) showed ✕; a list of files told "ago" by this Mac's clock, not the server's; the Tools window, opened anew on a server whose first tab is live (Deployments), drew that tab without starting it.
+- Tools: a long job that ended with a code its tool counts as success (`exitOk`) showed ✕; a list of files with a header told "ago" by this Mac's clock, not the server's; the Tools window, opened anew on a server whose first tab is live (Deployments), drew that tab without starting it.
 - In search and a server's overview, a long subtitle no longer wraps into the row below, and a long description no longer pushes a row's name out.
 
 ## [1.6] - 2026-10-28

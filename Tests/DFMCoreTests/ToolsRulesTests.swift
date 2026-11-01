@@ -72,6 +72,15 @@ private func systemSamples() throws -> [ToolSample] {
     #expect(h.latest("rpm") == ["a": 12] && h.last?.at == at(10) && h.previous?.at == at(0) && h.rows("list").count == 4)
     h.mark(.noAnswer, at: at(12), metrics: ["apps"])
     #expect(h.latest("apps").isEmpty && h.latest("rpm") == ["a": 12], "the list's gap, not the stream's")
+
+    // The list's gap leaves the stream's alerts holding: 5 minutes over is 5 minutes, whatever the list did meanwhile.
+    let slow = ToolAlert(id: "busy", metric: "rpm", warn: 10, for: .init(warn: .text("5m")))
+    var alerts = ToolAlerts()
+    _ = alerts.judge(["rpm": ["a": 12]], alerts: [slow], metrics: metrics, sample: sample(0, [:]), now: at(0))
+    alerts.gap(["units"])
+    #expect(alerts.judge(["rpm": ["a": 12]], alerts: [slow], metrics: metrics, sample: sample(300, [:]), now: at(300)).count == 1, "held across another alert's gap")
+    alerts.gap()
+    #expect(alerts.judge(["rpm": ["a": 12]], alerts: [slow], metrics: metrics, sample: sample(301, [:]), now: at(301)).isEmpty && alerts.worst == .warning, "a whole gap keeps it, and starts its count over")
 }
 
 @Test func framesByBlankLinesAndByAFirstLine() throws {

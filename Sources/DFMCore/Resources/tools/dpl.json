@@ -88,7 +88,7 @@
     { "id": "slow",   "metric": "p95", "warn": 1500, "for": { "warn": "5m" }, "message": "{host}: the slowest 5 % take {value} ms" }
   ],
   "events": [
-    { "id": "deployed", "rows": "list", "key": "unit", "path": "active_version", "when": "increased", "level": "info", "message": "{unit} v{active_version} serving" },
+    { "id": "deployed", "rows": "list", "key": "unit", "path": "active_version", "when": "increased", "unless": "failure.stage", "level": "info", "message": "{unit} v{active_version} serving" },
     { "id": "failed",   "rows": "list", "key": "unit", "when": "is", "field": "last_status", "value": "failed", "level": "critical", "message": "{unit}: v{last_version} failed at {failure.stage}", "goto": "row" }
   ],
   "dashboard": [

@@ -353,9 +353,10 @@ public struct ToolAlerts: Sendable {
         return changes
     }
 
-    /// A gap (§2): nothing recovers; durations and streaks start over after it.
-    public mutating func gap() {
-        for (id, keys) in states {
+    /// A gap (§2): nothing recovers; durations and streaks start over after it — `ids`' only, where one source of
+    /// several stopped.
+    public mutating func gap(_ ids: Set<String>? = nil) {
+        for (id, keys) in states where ids?.contains(id) ?? true {
             for key in keys.keys { (states[id]![key]!.over, states[id]![key]!.streak) = ([:], [:]) }
         }
     }

@@ -53,13 +53,18 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         var listFrames = ToolFrames(split: nil, poll: true)
         /// Why its list wasn't read the last time.
         var listError: String?
-        init(_ t: LoadedTool) { (loaded, frames, slots) = (t, Self.frames(t.preset), ToolSlots(tool: t.preset.id)) }
+        /// Its list as watching reads it: its files from this Mac, or its command polled in the channel.
+        let readsFiles: Bool, pollsList: Bool
+        init(_ t: LoadedTool) {
+            (loaded, frames, slots) = (t, Self.frames(t.preset), ToolSlots(tool: t.preset.id))
+            let list = t.preset.watchesList ? t.preset.list : nil
+            (readsFiles, pollsList) = (list?.run.files != nil, list.map { $0.run.files == nil } ?? false)
+        }
         static func frames(_ p: ToolPreset) -> ToolFrames { ToolFrames(split: p.source?.parse.split, poll: p.stream == nil) }
+        /// Its list's poll's lines in the channel: its id and this.
+        static let listTag = " list"
         var preset: ToolPreset { loaded.preset }
         var wanted: Bool { watched || live }
-        /// Its list as watching reads it: its files from this Mac, or its command polled in the channel.
-        var readsFiles: Bool { preset.watchesList && preset.list?.run.files != nil }
-        var pollsList: Bool { preset.watchesList && preset.list?.run.files == nil }
         /// The metrics its list feeds (`rows: "list"`), or the others.
         func metrics(list: Bool) -> Set<String> { Set((preset.metrics ?? [:]).filter { ($0.value.rows == "list") == list }.keys) }
         /// The channel ended: a frame half-read stays there.
@@ -268,7 +273,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
             var scope = app.tools.scope(p, on: s.saved, t)
             scope.levels[scope.levels.count - 1]["every"] = .number(every)   // a stream's `{every}`, as paced
             if let source = p.source { sources.append(.init(tool: p, run: source.run, every: p.stream == nil ? every : nil, scope: scope, scripts: tool.loaded.scripts)) }
-            if tool.pollsList, let list = p.list { sources.append(.init(tool: p, run: list.run, every: every, scope: scope, scripts: tool.loaded.scripts, tag: p.id + " list")) }
+            if tool.pollsList, let list = p.list { sources.append(.init(tool: p, run: list.run, every: every, scope: scope, scripts: tool.loaded.scripts, tag: p.id + Tool.listTag)) }
         }
         // ponytail: sources that can't share a channel (sudo differs), a value missing, and sudo that wants a password
         // (`sudo -n` is refused, retried each minute) wait for a later PR; the built-ins share one and run as you.
@@ -325,7 +330,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         (s.channel, s.hold) = (nil, nil)
         channelSources[s.key] = nil
         (s.retryAt, s.retries) = (nil, 0)
-        if why == .notWatched { s.since = nil; s.closeKept() }
+        if why == .notWatched { s.since = nil }
         s.tools.values.forEach { $0.reset() }
         gap(s, why)
     }
@@ -343,11 +348,12 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         let now = Date().addingTimeInterval(skew)
         for line in lines {
             guard let tagged = ToolPayload.watchLine(line) else { continue }
-            if tagged.tool.hasSuffix(" list"), let t = s.tools[String(tagged.tool.dropLast(5))], let list = t.preset.list {
+            if tagged.tool.hasSuffix(Tool.listTag), let t = s.tools[String(tagged.tool.dropLast(Tool.listTag.count))], let list = t.preset.list {
                 for frame in t.listFrames.feed(tagged.line) {   // its list's poll: each run the list's rows, beside the stream's
-                    let (out, exit) = ToolPayload.ran(frame)
-                    guard list.run.succeeded(exit ?? 0, format: list.parse.format) else { gap(t, on: s, .noAnswer, metrics: t.metrics(list: true)); continue }
-                    take(ToolSample(at: now, record: ["rows": .array(list.parse.records(Data(out.utf8), exit: exit).rows.map(ToolValue.object))]), of: t, on: s, list: true)
+                    let (out, exit) = ToolPayload.ran(frame), r = list.parse.records(Data(out.utf8), exit: exit)
+                    t.listError = !list.run.succeeded(exit ?? 0, format: list.parse.format) ? "exit \(exit ?? 0)"
+                        : r.matched ? nil : "the output didn't match — " + (r.unmatched.first { !$0.isEmpty } ?? "")
+                    if t.listError != nil { listGap(t, on: s) } else { take(ToolSample(at: now, record: ["rows": .array(r.rows.map(ToolValue.object))]), of: t, on: s, list: true) }
                 }
                 continue
             }
@@ -421,12 +427,16 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
     /// A `files` list (§8.7): read from this Mac every `watch.every` over the server's kept SFTP session, its rows a
     /// sample. Never a dialog: a tab reads over a connection that's up, a watched server logs in quietly, a sudo that
     /// wants a password says so. One that fails is a gap of the list's metrics, said on the tab; the next in a minute.
+    /// ponytail: a tool with a files list alone has no channel, so a login that would ask is retried quietly each
+    /// minute, said on its tab, never "needs login"; none of the built-ins.
     func read(_ t: Tool, on s: Server) {
         guard let list = t.preset.list, !t.checking else { return }
         let p = t.preset, root = list.run.sudo ?? p.sudo ?? false, target = s.target, watched = t.watched, key = s.key
         let kept = s.kept[root] ?? KeptSession(target.asRoot(root))
         s.kept[root] = kept
         let scope = app.tools.scope(p, on: s.saved, target), login = Self.login, has = ToolRunner.hasMaster, env = SSHAskpass.quietEnv
+        let cancel = CancelFlag(), timeout = list.run.timeout ?? 30
+        Timeouts.queue.asyncAfter(deadline: .now() + timeout) { cancel.cancel() }   // a hung read closes its session
         (t.checking, t.due) = (true, Date().addingTimeInterval((p.watch?.every ?? 60) * (slow ? 3 : 1)))
         Task { [weak self] in
             var rows: [ToolRecord] = [], said: String?
@@ -436,22 +446,28 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
                         guard watched else { throw JobErrorMessage("not connected") }
                         try login(target, true)
                     }
-                    let r = try ToolExec.files(list, of: p, scope, on: target, env: env, cancel: CancelFlag(), kept: kept)
+                    let r = try ToolExec.files(list, of: p, scope, on: target, env: env, cancel: cancel, kept: kept)
                     guard r.matched else { throw JobErrorMessage("the output didn't match — " + (r.unmatched.first { !$0.isEmpty } ?? "")) }
                     return r.rows
                 }
-            } catch { said = error.localizedDescription }
+            } catch { said = cancel.isCancelled ? "it took over \(Int(timeout)) s" : error.localizedDescription }
             t.checking = false
             guard let self, let s = servers[key], s.tools[p.id] === t, t.wanted else { return }
             t.listError = said
             if said == nil {
                 take(ToolSample(at: Date().addingTimeInterval(s.skew), record: ["rows": .array(rows.map(ToolValue.object))]), of: t, on: s, list: true)
             } else {
-                gap(t, on: s, .noAnswer, metrics: t.metrics(list: true))
+                listGap(t, on: s)
                 t.due = Date().addingTimeInterval(60)
             }
             changed()
         }
+    }
+
+    /// `t`'s list wasn't read: a gap of its metrics, not on disk — the whole tool's where the list is all it has.
+    private func listGap(_ t: Tool, on s: Server) {
+        guard t.preset.source != nil else { return gap(t, on: s, .noAnswer) }
+        gap(t, on: s, .noAnswer, metrics: t.metrics(list: true), disk: false)
     }
 
     private func ended(_ key: String, _ why: String, cancel: CancelFlag) {
@@ -499,14 +515,14 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         for t in s.tools.values where t.preset.http == nil || !channel { gap(t, on: s, why, metrics: channel && t.readsFiles ? t.metrics(list: false) : nil) }
     }
 
-    /// No data from `t` from now on: a band on its series — `metrics`' only, where one of its sources stopped —, its
-    /// alerts' durations start over, the gap on disk.
-    /// ponytail: one source's gap isn't on disk — its slot just has fewer values.
-    private func gap(_ t: Tool, on s: Server, _ why: ToolGap, metrics: Set<String>? = nil) {
+    /// No data from `t` from now on: a band on its series and its alerts' durations started over — `metrics`' only,
+    /// where one of its sources stopped —, the gap on disk (`disk`).
+    /// ponytail: the list's own gap isn't on disk — its slot just has fewer values.
+    private func gap(_ t: Tool, on s: Server, _ why: ToolGap, metrics: Set<String>? = nil, disk: Bool = true) {
         let at = Date().addingTimeInterval(s.skew)
         t.history.mark(why, at: at, metrics: metrics)
-        t.alerts.gap()
-        if t.watched, metrics == nil { record(s, t.slots.mark(why, at: at)) }
+        t.alerts.gap(metrics.map { m in Set(alerts(t, on: s).filter { m.contains($0.metric ?? "") }.map { $0.id ?? $0.metric ?? "" }) })
+        if t.watched, disk { record(s, t.slots.mark(why, at: at)) }
     }
 
     // MARK: Power
