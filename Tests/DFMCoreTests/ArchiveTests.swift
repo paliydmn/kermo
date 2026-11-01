@@ -104,6 +104,13 @@ private func read(_ path: String) -> String? {
     try FileManager.default.createDirectory(atPath: a, withIntermediateDirectories: true)
     sh("tar -xzf ../repo.tar.gz", in: a)
     #expect(read(a + "/a.txt") == "A", "as committed, not as changed since")
+
+    // A repository whose own config could run a command in `git archive` isn't archived by git: the folder as it is.
+    sh("git config tar.tar.gz.command 'touch \(root)/ran; gzip -cn'", in: root + "/proj")
+    #expect(!ArchiveIndex.isRepository(root + "/proj"))
+    try ArchiveIndex.pack(root + "/proj", to: root + "/untrusted.tar.gz")
+    #expect(!FileManager.default.fileExists(atPath: root + "/ran"))
+    #expect(names(try ArchiveIndex.read(root + "/untrusted.tar.gz").list("")) == ["a.txt", "sub"])
 }
 
 @Test func archiveDetectionAndUnsafePaths() throws {
