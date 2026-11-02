@@ -26,7 +26,7 @@ A server shows the tools whose program it has (and that you [use there](#where-a
 
 ## The Tools window
 
-**Window ▸ Tools** (⌃⌘T) opens it on the active panel's server; **Open in Tools Window**, last in a server's **Tools ▸**, on that server. Its sidebar lists your saved servers (production in its color, a locked one with its lock), then servers connected now, and the library: **Built into Kermo**, **My Tools** and **[New Tool…](#new-tool)**; drag its edge to make it wider or narrower (Kermo keeps the width). ↩ or a double-click on a library row opens the tool's page: who made it, its version and the sha256 its trust goes by; what it runs, grouped as **Use the tool “…”?** shows it (a dangerous action in red); and each saved server — whether it has the program, whether the tool is used there, its values set or **Set Up…**. Its buttons: **Use on Servers…**, **Show File**, and **Edit** for yours, **[Customize](#customize-a-built-in-tool)** for a built-in one.
+**Window ▸ Tools** (⌃⌘T) opens it on the active panel's server; **Open in Tools Window**, last in a server's **Tools ▸**, on that server. Its sidebar lists your saved servers (production in its color, a locked one with its lock), then servers connected now, and the library: **[Catalog](#the-catalog)**, **My Tools** and **[New Tool…](#new-tool)**; drag its edge to make it wider or narrower (Kermo keeps the width). ↩ or a double-click on a library row opens the tool's page: who made it, its version and the sha256 its trust goes by; what it runs, grouped as **Use the tool “…”?** shows it (a dangerous action in red); and each saved server — whether it has the program, whether the tool is used there, its values set or **Set Up…**. Its buttons: **Use on Servers…**, **Show File**, and **Edit** for yours, **[Customize](#customize-a-built-in-tool)** for a built-in one; **Remove…** for a file in your folder; **Get** or **Update to v…** for [a catalog's](#the-catalog).
 
 A server's page has its name, the open tab's line from the program (`jails: sshd · 1.0.2`, a version outside what the tool was tested with), **Terminal** (an SSH tab in the main window) and **⋯**. Its tabs are the tools it shows, ⌘1…⌘9:
 
@@ -196,6 +196,24 @@ macOS asks whether Kermo may notify the first time you watch a server. If you sa
 - **As root:** a tool that needs root runs through the server's `sudo`, `sudo -n` first. When sudo wants a password, Kermo asks for it as a [root panel](root-panel.md) does; the password goes to sudo on its input, never on a command line, and is shown as `•••` anywhere it could appear.
 - **The production log:** each run on a production server is a line in the [production log](safety.md#production-log): `"action": "tool ufw delete"`, what was sent and its exit status.
 - **Nothing stays on the server** but a long job's log: no other files, nothing installed. A run ends with its connection; only a [long job](#long-jobs) runs on, and its log stays in `~/.cache/kermo/` there for 7 days; a folder uploaded for it goes when it ends.
+
+## The catalog
+
+**Catalog** in the Tools window's library lists the tools built into Kermo, those you got from a catalog, and the others a catalog has — each with where it's used and what the catalog has of it: its version, **verified** (reviewed and tested by the catalog's CI) or **community**, **update: v5** when it has a newer one, **yours changed** when you edited yours. Kermo's own catalog is [kermo-tools](https://github.com/paliydmn/kermo-tools).
+
+**Kermo reaches a catalog only when you ask**: when the Catalog opens, by its **Check for Updates** button, and by **Kermo ▸ Check for Updates…**, which then names the tools the catalogs have newer. The daily check for a new Kermo never fetches one. What came last is kept till Kermo quits; everything you got works offline.
+
+**What Kermo takes from a catalog:** its index (`catalog.json`), only signed with the catalog's Ed25519 key (`catalog.json.sig`) — Kermo's own key is built into Kermo, so whoever could swap the files on GitHub couldn't sign them — and never an index older than one it already took from there (a number in it only grows). Each file of a tool comes only with the sha256 the signed index gives it. A catalog's index can't name a file outside its folder, and a tool's files are its `.json` and the scripts it names, nothing else.
+
+A catalog's tool not got yet opens its page from its files, checked: what it runs, grouped as the question shows it. Then:
+
+- **Get** asks **Use the tool “…”?** with where it's from and everything it can run; **Use This Tool** puts its files in `~/.config/dfilemanager/tools/`, readable only by you, and it shows on the servers where its check finds what it needs. It takes a built-in tool's place as [one of yours](#your-own-tools) does.
+- **Update to v…** asks only about **what changes in what it can run**: `+` what it runs now, `−` what it no longer runs. A tool you wrote, or changed since you got it, is replaced only if you say so: **Replace** keeps yours next to it as `….json.bak`, **Compare** shows the two, **Keep Mine** leaves it.
+- **Remove…** moves its file and its scripts (those no other tool of yours names) to the Trash; a built-in tool of its id is back in its place.
+
+**Suggested**, under the Catalog's title: a catalog's tool you don't have whose program is on a server connected now — "restic is on web-01: the catalog has a tool for it". Kermo looks with its own `command -v`, in one run per server over the connection that's up; a catalog's own commands run nothing before you get its tool.
+
+**Settings › Tools** lists the catalogs: each on or off, **Add…** (a name, the `https://` address of its folder — or `file://` for a folder on a disk — and its Ed25519 public key, base64), **Remove…** (the tools you got from it stay). When two catalogs have a tool of the same `id`, the first one's is taken. A team's own catalog is a folder with the same layout as kermo-tools: `catalog.json` lists each tool's `id`, `title`, `version`, its program (`tool`), `about` and its `files` (`path` under the folder, `sha256`), with a `serial` that grows; `catalog.json.sig` is the base64 Ed25519 signature of `catalog.json` (`openssl pkeyutl -sign -rawin`).
 
 ## Your own tools
 
