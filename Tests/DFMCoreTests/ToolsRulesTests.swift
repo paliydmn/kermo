@@ -235,17 +235,21 @@ private func systemSamples() throws -> [ToolSample] {
     #expect(raised.map(\.found) == [true, true], "the first sample: how things stood, not a change")
     let more: ToolRecord = ["rows": .array([.object(["unit": "web", "last_status": "failed"]), .object(["unit": "db", "last_status": "failed"])])]
     #expect(ToolEvents.raised([down], in: sample(5, more), previous: sample(0, rows)).map { "\($0.message) \($0.found)" } == ["db is down false"], "a row that comes failed is a change")
-    // A row set seen before a sleep longer than the hour (its sample trimmed) isn't first again; watching anew, it is.
+    // Across a sleep longer than the hour (the table's rows trimmed): what failed meanwhile is a change, what had
+    // failed before raises nothing again; watching anew, it's how things stand.
+    func web(_ s: Double, _ status: String) -> ToolSample { sample(s, ["rows": .array([.object(["unit": "web", "last_status": .string(status)])])]) }
     var h = ToolHistory()
-    _ = h.add(sample(0, ["rows": .array([.object(["unit": "web", "last_status": "ready"])])]), metrics: [:], now: at(0))
+    _ = h.add(web(0, "ready"), metrics: [:], now: at(0))
     h.mark(.asleep, at: at(4000))
-    let woke = sample(4005, ["rows": .array([.object(["unit": "web", "last_status": "failed"])])])
-    _ = h.add(woke, metrics: [:], now: at(4005))
-    #expect(h.carriedBefore.isEmpty && ToolEvents.raised([down], in: woke, previous: h.previous, carrying: h.carriedBefore, seen: h.seenBefore).map(\.found) == [false],
+    _ = h.add(web(4005, "failed"), metrics: [:], now: at(4005))
+    #expect(h.rows("list").count == 1 && ToolEvents.raised([down], in: web(4005, "failed"), previous: h.previous, carrying: h.carriedBefore).map(\.found) == [false],
             "it failed while the Mac slept: a change")
+    h.mark(.asleep, at: at(9000))
+    _ = h.add(web(9005, "failed"), metrics: [:], now: at(9005))
+    #expect(ToolEvents.raised([down], in: web(9005, "failed"), previous: h.previous, carrying: h.carriedBefore).isEmpty, "still failed after another sleep: nothing again")
     h.forgetLast()
-    _ = h.add(woke, metrics: [:], now: at(4010))
-    #expect(h.last?.at == at(4005) && h.previous == nil && ToolEvents.raised([down], in: woke, previous: h.previous, carrying: h.carriedBefore, seen: h.seenBefore).map(\.found) == [true])
+    _ = h.add(web(9010, "failed"), metrics: [:], now: at(9010))
+    #expect(h.previous == nil && ToolEvents.raised([down], in: web(9010, "failed"), previous: h.previous, carrying: h.carriedBefore).map(\.found) == [true])
     let state = ToolEvent(id: "state", path: "state", when: "is", level: "critical", value: "down")
     #expect(ToolEvents.raised([state], in: sample(0, ["state": "down"]), previous: nil).map(\.found) == [true]
             && ToolEvents.raised([state], in: sample(5, ["state": "down"]), previous: sample(0, ["state": "up"])).map(\.found) == [false])

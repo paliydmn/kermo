@@ -388,7 +388,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
             }
         }
         let raised = ToolEvents.raised((p.events ?? []).filter { ($0.rows == "list") == list }, in: sample, previous: t.history.previous,
-                                       carrying: t.history.carriedBefore, seen: t.history.seenBefore, scope: app.tools.scope(p, on: s.saved, s.target))
+                                       carrying: t.history.carriedBefore, scope: app.tools.scope(p, on: s.saved, s.target))
         for e in raised where e.level == "critical" && !e.found { deliver(s, tool: t, id: "\(s.key) \(p.id) \(e.id)", e.message) }   // a change, not how it was
         fresh += raised
         if let e = ToolEvents.scripted(sample) {
