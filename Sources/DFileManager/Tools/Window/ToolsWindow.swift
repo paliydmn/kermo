@@ -278,6 +278,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
                     bar.controlSize = .mini
                     bar.isEditable = false
                     bar.widthAnchor.constraint(equalToConstant: 17).isActive = true
+                    bar.heightAnchor.constraint(equalToConstant: 8).isActive = true   // half its own: a line, not a block
                     bar.toolTip = "\(item.label) \(item.text)"
                     bar.setAccessibilityLabel("\(item.label) \(item.text)")
                     let label = Self.small(item.label.lowercased())

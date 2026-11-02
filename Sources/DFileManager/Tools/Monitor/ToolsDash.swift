@@ -419,6 +419,7 @@ struct OneChart: View {
             bar.controlSize = .mini
             bar.isEditable = false
             bar.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            bar.heightAnchor.constraint(equalToConstant: 8).isActive = true
             let s = NSStackView(views: [bar, label(ToolTemplate.show(.number(v), "%"), right: true)])
             s.spacing = 4
             return s
