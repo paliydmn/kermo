@@ -64,17 +64,23 @@ enum Updates {
         return String(latest.trimmingPrefix("v"))
     }
 
+    private static let session: URLSession = {
+        let c = URLSessionConfiguration.ephemeral
+        c.timeoutIntervalForResource = 60
+        return URLSession(configuration: c)
+    }()
+
     static func fetch() async throws -> Release {
         try JSONDecoder().decode(Release.self, from: await get(api, accept: "application/vnd.github+json"))
     }
 
-    /// One GET: no cache on disk, no cookies, nothing in it but Kermo's own version (in User-Agent). Over `limit` bytes
-    /// it stops. A file URL (a catalog on a disk) is read the same way.
+    /// One GET: no cache on disk, no cookies, nothing in it but Kermo's own version (in User-Agent). Over `limit` bytes,
+    /// or past 15 s without a byte or a minute in all, it stops. A file URL (a catalog on a disk) is read the same way.
     static func get(_ url: URL, accept: String? = nil, limit: Int = 4 << 20) async throws -> Data {
         var request = URLRequest(url: url, timeoutInterval: 15)
         request.setValue(accept, forHTTPHeaderField: "Accept")
         request.setValue("Kermo/\(current)", forHTTPHeaderField: "User-Agent")
-        let (bytes, response) = try await URLSession(configuration: .ephemeral).bytes(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
         guard url.isFileURL || (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
         var data = Data()
         for try await b in bytes {
@@ -123,6 +129,7 @@ extension AppDelegate {
     /// By itself: silent when GitHub can't be reached (offline, a closed network), and a newer version is said once.
     /// By hand: an alert either way, which says too what the tool catalogs have newer (they're fetched by hand only).
     func checkForUpdates(byHand: Bool) async {
+        let catalogs = byHand ? Task { await tools.catalogs.fetch() } : nil   // alongside Kermo's own
         let release: Updates.Release
         do { release = try await Updates.fetch() } catch {
             if byHand { _ = await Self.sheet(Self.alert("Couldn't check for updates", info: error.localizedDescription, ["OK"]), on: window) }
@@ -132,7 +139,7 @@ extension AppDelegate {
         defaults.set(Date(), forKey: "updateChecked")
         defaults.set(release.tag_name, forKey: "updateLatest")
         if byHand {
-            await tools.catalogs.fetch()
+            await catalogs?.value
             return await showUpdate(release)
         }
         if release.tag_name != was, let v = updateOffered { active.flash("Kermo \(v) is available: Kermo ▸ Kermo \(v) Available…") }

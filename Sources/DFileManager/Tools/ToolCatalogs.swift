@@ -11,7 +11,7 @@ final class ToolCatalogs {
     unowned let app: AppDelegate
     var sources = ToolCatalogs.start
     private(set) var fetched = ToolFetched()
-    /// Each tool's newest version this Kermo reads, from the first source that has it: the last fetch's.
+    /// Each source's newest version of each tool this Kermo reads, the sources in their order: the last fetch's.
     private(set) var offers: [Offer] = []
     /// What a source said instead of its index, the last fetch: "Kermo: …".
     private(set) var problems: [String] = []
@@ -25,8 +25,11 @@ final class ToolCatalogs {
 
     init(_ app: AppDelegate) { self.app = app }
 
+    /// Kermo's own catalog: its key is the one built into this Kermo, whatever `catalogs.json` says (a key saved by an
+    /// older Kermo, or written there by hand). Tests: a catalog of their own as Kermo's.
+    static var kermo = ToolCatalog.kermo
     /// The catalogs with no `tools/catalogs.json`: Kermo's — none under tests, which never reach GitHub.
-    static let start = Config.isTestRun ? [] : [ToolCatalog.kermo]
+    static var start: [ToolCatalog.Source] { Config.isTestRun ? [] : [kermo] }
 
     /// The ids of the tools built into Kermo: the Catalog lists them, and one comes back when yours of its id goes.
     static let builtIns = Set(((try? FileManager.default.contentsOfDirectory(atPath: ToolPreset.builtInFolder.path)) ?? [])
@@ -37,7 +40,12 @@ final class ToolCatalogs {
         guard let dir = ToolRunner.own?.path else { return [] }
         let s = Config.loadKeeping("catalogs.json", as: [ToolCatalog.Source].self, in: dir)
         let f = Config.loadKeeping("fetched.json", as: ToolFetched.self, in: dir)
-        (sources, fetched) = (s.value ?? Self.start, f.value ?? ToolFetched())
+        sources = (s.value ?? Self.start).map { s in
+            var s = s
+            if s.address == Self.kermo.address { s.key = Self.kermo.key }
+            return s
+        }
+        fetched = f.value ?? ToolFetched()
         return [s.problem, f.problem].compactMap { $0.map { "tools/" + $0 } }
     }
 
@@ -49,15 +57,27 @@ final class ToolCatalogs {
         if let dir = ToolRunner.own?.path { Config.save("fetched.json", fetched, in: dir) }
     }
 
-    /// The offer of a newer version of `tool` than it is (a built-in's or yours by `catalogVersion`); nil: none known.
+    /// A newer version of `tool` from where it comes from: the catalog it was got from, or for a built-in (and yours
+    /// in its place) Kermo's own; nil for one of yours of another id, or none newer. Another catalog's tool of the same
+    /// id is no update: a team's v99 never stands in for Kermo's own.
     func update(for tool: LoadedTool) -> Offer? {
-        offers.first { $0.entry.id == tool.preset.id && $0.entry.version > tool.preset.catalogVersion ?? 0 }
+        let id = tool.preset.id, got = fetched.tools[id]
+        guard let from = got?.source ?? (Self.builtIns.contains(id) ? Self.kermo.address : nil) else { return nil }
+        let have = got?.version ?? tool.preset.catalogVersion ?? 0
+        return offers.first { $0.entry.id == id && $0.source.address == from && $0.entry.version > have }
     }
 
+    /// The first catalog's version of `id`.
     func offer(_ id: String) -> Offer? { offers.first { $0.entry.id == id } }
 
-    /// Each source that's on: its index, taken only signed by its key and no older than one seen; then the offers. A
-    /// second call while one runs waits for it.
+    /// A catalog turned off or removed: its offers go at once, though fetched before.
+    func forget(_ s: ToolCatalog.Source) {
+        offers.removeAll { $0.source.address == s.address }
+        ToolsWindow.refresh()
+    }
+
+    /// Each source that's on, all at once: its index, taken only signed by its key and no older than one seen; then the
+    /// offers. A second call while one runs waits for it; `Updates.get` gives each request a minute at most.
     func fetch() async {
         if let fetching { return await fetching.value }
         let task = Task {
@@ -69,16 +89,32 @@ final class ToolCatalogs {
     }
 
     private func fetchNow() async {
+        let on = sources.filter { $0.off != true }, seen = fetched.serials
+        let got = await withTaskGroup(of: (Int, Result<ToolCatalog.Index, Error>).self) { group in
+            for (i, s) in on.enumerated() {
+                group.addTask {
+                    do {
+                        guard let base = s.base else { throw Self.notAnAddress }
+                        guard s.publicKey != nil else { throw ToolCatalog.keyRefusal }   // nothing fetched for an index never taken
+                        async let data = Updates.get(base.appendingPathComponent("catalog.json"), limit: 1 << 20)
+                        async let sig = Updates.get(base.appendingPathComponent("catalog.json.sig"), limit: 1 << 10)
+                        return (i, .success(try ToolCatalog.index(try await data, signature: try await sig, source: s, seen: seen[s.address])))
+                    } catch { return (i, .failure(error)) }
+                }
+            }
+            var all: [Int: Result<ToolCatalog.Index, Error>] = [:]
+            for await (i, r) in group { all[i] = r }
+            return all
+        }
         var indexes: [(ToolCatalog.Source, ToolCatalog.Index)] = [], said: [String] = []
-        for s in sources where s.off != true {
-            do {
-                guard let base = s.base else { throw ToolCatalog.Refusal("its address is neither https:// nor file://") }
-                async let data = Updates.get(base.appendingPathComponent("catalog.json"), limit: 1 << 20)
-                async let sig = Updates.get(base.appendingPathComponent("catalog.json.sig"), limit: 1 << 10)
-                let index = try ToolCatalog.index(try await data, signature: try await sig, source: s, seen: fetched.serials[s.url])
-                fetched.serials[s.url] = index.serial
+        for (i, s) in on.enumerated() {
+            switch got[i] {
+            case .success(let index)?:
+                fetched.serials[s.address] = index.serial
                 indexes.append((s, index))
-            } catch { said.append("\(s.name): \(Self.why(error))") }
+            case .failure(let error)?: said.append("\(s.name): \(Self.why(error))")
+            case nil: break
+            }
         }
         offers = ToolCatalog.newest(indexes) { e in e.minKermo.map { !Updates.isNewer($0, than: Updates.current) } ?? true }.map(Offer.init)
         (problems, at) = (said, Date())
@@ -88,6 +124,8 @@ final class ToolCatalogs {
 
     /// The tools you have that the catalogs have newer: Check for Updates… names them.
     var updates: [LoadedTool] { app.tools.library.tools.filter { update(for: $0) != nil } }
+
+    nonisolated static let notAnAddress = ToolCatalog.Refusal("its address is neither https:// nor file://")
 
     static func why(_ error: Error) -> String {
         (error as? ToolCatalog.Refusal)?.description ?? error.localizedDescription.trimmingCharacters(in: CharacterSet(charactersIn: "."))
@@ -99,7 +137,7 @@ final class ToolCatalogs {
     /// and the scripts it names, its id the entry's — for "Use the tool…?" to show and Open File to open before anything
     /// lands in your folder. The caller removes `dir`.
     func download(_ o: Offer) async throws -> (tool: LoadedTool, files: [String: Data], dir: URL) {
-        guard let base = o.source.base else { throw ToolCatalog.Refusal("its address is neither https:// nor file://") }
+        guard let base = o.source.base else { throw Self.notAnAddress }
         let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("kermo-catalog-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         do {
@@ -128,17 +166,17 @@ final class ToolCatalogs {
         do {
             let (tool, files, dir) = try await download(o)
             defer { try? FileManager.default.removeItem(at: dir) }
-            let lead = "\(o.entry.id).json v\(o.entry.version) from the \(o.source.name) catalog: signed, each file checked"
-                + (o.entry.verified == true ? ", reviewed and tested by its CI." : ", not reviewed.") + " Here is everything it can run:"
+            let lead = "\(o.entry.id).json v\(o.entry.version) from the \(o.source.name) catalog: signed, each file checked; "
+                + (o.entry.verified == true ? "the catalog says it's reviewed and tested by its CI." : "the catalog doesn't say it's reviewed.") + " Here is everything it can run:"
             guard await app.tools.trustAsk(tool, window: window, lead: lead) else { return "\(name): not got" }
-            try place(files, o, hash: tool.hash, keep: false)
-            return "\(name) v\(o.entry.version) is in your tools: Tools ▸ shows it on servers where it's found"
+            let kept = try place(files, o, hash: tool.hash)
+            return "\(name) v\(o.entry.version) is in your tools: Tools ▸ shows it on servers where it's found" + Self.said(kept)
         } catch { return "\(name) wasn't got: \(Self.why(error))" }
     }
 
     /// Update: the newer version's files, checked. Yours — written by you, or changed since you got it — is replaced
     /// only if you say so (Compare shows the two; Keep Mine leaves it), and kept as `.bak`. Then "Use the tool…?" with
-    /// only what changes in what it runs.
+    /// only what changes in what it runs — all it runs if the one there isn't in use.
     func update(_ o: Offer, window: NSWindow?) async -> String {
         guard let now = app.tools.library.tools.first(where: { $0.preset.id == o.entry.id }) else { return await get(o, window: window) }
         let name = o.entry.title, file = o.entry.id + ".json"
@@ -158,35 +196,44 @@ final class ToolCatalogs {
                     }
                 }
             }
-            let changes = ToolRuns.changes(from: now.runs, to: tool.runs)
+            let trusted = app.tools.trust.trusts(now), changes = trusted ? tool.changes(from: now) : ""
             let lead = "\(file) v\(o.entry.version) from the \(o.source.name) catalog, signed and checked, in place of "
-                + (now.builtIn ? "the built-in" : yours ? "yours" : "v\(now.preset.catalogVersion ?? 0)") + (changes.isEmpty ? ": what it runs stays the same." : ". What changes in what it can run:")
+                + (now.builtIn ? "the built-in" : yours ? "yours" : "v\(fetched.tools[o.entry.id]?.version ?? 0)")
+                + (!trusted ? ". Here is everything it can run:" : changes.isEmpty ? ": what it runs stays the same." : ". What changes in what it can run:")
             guard await app.tools.trustAsk(tool, window: window, lead: lead, runs: changes.isEmpty ? nil : changes) else { return "\(name): not updated" }
-            try place(files, o, hash: tool.hash, keep: yours)
-            return "\(name) is v\(o.entry.version) now"
+            let kept = try place(files, o, hash: tool.hash)
+            return "\(name) is v\(o.entry.version) now" + Self.said(kept)
         } catch { return "\(name) wasn't updated: \(Self.why(error))" }
     }
 
-    /// The files written into your tools folder — each whole or not at all, owner-only; yours of a name kept as `.bak`
-    /// first when `keep` — and where it came from noted; then the tools read again.
-    private func place(_ files: [String: Data], _ o: Offer, hash: String, keep: Bool) throws {
+    /// The files written into your tools folder, each in one piece, owner-only. A file there that isn't the one Kermo
+    /// wrote for this tool last — yours, one you changed, one that doesn't load — is kept as `.bak` first, decided now:
+    /// you may have saved it while the questions were up. Where it came from noted; then the tools read again. The
+    /// names kept.
+    private func place(_ files: [String: Data], _ o: Offer, hash: String) throws -> [String] {
         guard let own = ToolRunner.own else { throw ToolCatalog.Refusal("there's no tools folder") }
         try FileManager.default.createDirectory(at: own, withIntermediateDirectories: true)
         chmod(own.path, 0o700)
-        for (name, data) in files {
+        let wrote = fetched.tools[o.entry.id]?.files ?? [:]
+        var kept: [String] = []
+        for (name, data) in files.sorted(by: { $0.key < $1.key }) {
             let to = own.appendingPathComponent(name)
-            if keep, FileManager.default.fileExists(atPath: to.path) {
+            if let there = FileManager.default.contents(atPath: to.path), there != data, ToolCatalog.sum(there) != wrote[name] {
                 let bak = own.appendingPathComponent(name + ".bak")
                 try? FileManager.default.removeItem(at: bak)
                 try FileManager.default.copyItem(at: to, to: bak)
+                kept.append(bak.lastPathComponent)
             }
             try data.write(to: to, options: .atomic)
             chmod(to.path, 0o600)
         }
-        fetched.tools[o.entry.id] = .init(source: o.source.url, version: o.entry.version, hash: hash)
+        fetched.tools[o.entry.id] = .init(source: o.source.address, version: o.entry.version, hash: hash, files: files.mapValues(ToolCatalog.sum))
         saveFetched()
         reloadTools()
+        return kept
     }
+
+    private static func said(_ kept: [String]) -> String { kept.isEmpty ? "" : " — what was there is kept as " + kept.joined(separator: ", ") }
 
     /// Remove: one of yours, or one got from a catalog — its file and its scripts no other tool of yours names, to the
     /// Trash; what you trusted of it and where it came from, forgotten. A built-in of its id is back.
@@ -200,12 +247,13 @@ final class ToolCatalogs {
         c.items = files.map { Confirm.Item(name: $0) }
         c.runs = "Its files go to the Trash" + (builtIn ? "; the one built into Kermo is back in its place." : ".")
         guard await app.confirm(c, on: window) == 0 else { return "\(name): kept" }
-        for f in files { try? FileManager.default.trashItem(at: own.appendingPathComponent(f), resultingItemURL: nil) }
+        let stuck = files.filter { (try? FileManager.default.trashItem(at: own.appendingPathComponent($0), resultingItemURL: nil)) == nil }
         app.tools.trust.hashes[p.id] = nil
         Config.save("trust.json", app.tools.trust, in: own.path)
         fetched.tools[p.id] = nil
         saveFetched()
         reloadTools()
+        guard stuck.isEmpty else { return "\(name): " + stuck.joined(separator: ", ") + " couldn't go to the Trash" }
         return "\(name) is removed" + (builtIn ? ": the built-in one is back" : "")
     }
 
@@ -224,20 +272,23 @@ final class ToolCatalogs {
             .filter { AppDelegate.connected($0.1) && seen.insert(ServerRow.key($0.1)).inserted }
     }
 
-    /// Suggested (§10.2): the catalog's tools you don't have whose program is on one of `servers` — one `command -v`
-    /// each, in one round trip over its connection, never a login. Kermo's own check: a catalog's `requires` runs
-    /// nothing before you get its tool. Each offer with the servers that have it.
+    /// Suggested (§10.2): the catalogs' tools you don't have whose program is on one of `servers` — `command -v` with
+    /// its name as a variable, all in one round trip over a server's connection, never a login. Kermo's own check: a
+    /// catalog's `requires` runs nothing before you get its tool. Each offer (the first catalog's) with the servers.
     func suggested(on servers: [(name: String, target: SFTPTarget)]) async -> [(offer: Offer, servers: [String])] {
-        let have = Set(app.tools.library.tools.map(\.preset.id))
+        var ids = Set(app.tools.library.tools.map(\.preset.id))
         let wanted = offers.filter { o in
-            !have.contains(o.entry.id) && o.entry.tool.map { !$0.isEmpty && $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "._+-".contains($0)) } } == true
+            ids.insert(o.entry.id).inserted && o.entry.tool.map { !$0.isEmpty && $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "._+-".contains($0)) } } == true
         }
         guard !wanted.isEmpty else { return [] }
-        let items = wanted.map { ToolBatch.Item(tool: $0.entry.id, action: nil, run: ToolRun(command: .one("command -v " + $0.entry.tool!))) }
+        let program = Dictionary(wanted.map { ($0.entry.id, ToolValue.string($0.entry.tool!)) }) { a, _ in a }
+        let items = wanted.map { ToolBatch.Item(tool: $0.entry.id, action: nil, run: ToolRun(command: .one("command -v {program}"))) }
         var found: [String: [String]] = [:]
         let command = ToolRunner.command, live = ToolRunner.hasMaster
         for (name, t) in servers {
-            let a = await Blocking.run { ToolBatch.ask(t, items, scope: { _ in .init() }, scripts: { _ in [:] }, hasMaster: live, command: command) }
+            let a = await Blocking.run {
+                ToolBatch.ask(t, items, scope: { .init(vars: ["program": program[$0] ?? .string("")]) }, scripts: { _ in [:] }, hasMaster: live, command: command)
+            }
             for id in a?.passed ?? [] { found[id, default: []].append(name) }
         }
         return wanted.compactMap { o in found[o.entry.id].map { (o, $0) } }

@@ -56,7 +56,7 @@ final class ToolSourcesPane: NSView, NSTableViewDataSource, NSTableViewDelegate 
     func add(_ s: ToolCatalog.Source) -> String? {
         if s.name.trimmingCharacters(in: .whitespaces).isEmpty { return "A catalog needs a name." }
         guard let base = s.base else { return "Its address starts with https:// (or file:// for a folder on a disk)." }
-        if s.publicKey == nil { return "Its key is the catalog's Ed25519 public key: 32 bytes, base64." }
+        if s.publicKey == nil { return "Its key is the catalog's Ed25519 public key in base64, as `openssl pkey -pubout` writes it." }
         if catalogs.sources.contains(where: { $0.base == base }) { return "That catalog is in the list already." }
         catalogs.sources.append(s)
         catalogs.saveSources()
@@ -64,9 +64,18 @@ final class ToolSourcesPane: NSView, NSTableViewDataSource, NSTableViewDelegate 
         return nil
     }
 
-    func setOn(_ row: Int, _ on: Bool) {
-        catalogs.sources[row].off = on ? nil : true
+    /// On or off; off, what it offered goes at once.
+    func setOn(_ s: ToolCatalog.Source, _ on: Bool) {
+        guard let i = catalogs.sources.firstIndex(where: { $0.address == s.address }) else { return }
+        catalogs.sources[i].off = on ? nil : true
         catalogs.saveSources()
+        if !on { catalogs.forget(s) }
+    }
+
+    @objc private func toggled(_ box: NSButton) {
+        let row = table.row(for: box)
+        guard catalogs.sources.indices.contains(row) else { return }
+        setOn(catalogs.sources[row], box.state == .on)
     }
 
     private func addAsked() async {
@@ -96,8 +105,9 @@ final class ToolSourcesPane: NSView, NSTableViewDataSource, NSTableViewDelegate 
         var c = Confirm("Remove the catalog “\(s.name)”?", action: "Remove")
         c.runs = "Tools you got from it stay, and keep working; Kermo just won't look there for updates."
         guard await app.confirm(c, on: window) == 0 else { return }
-        catalogs.sources.remove(at: r)
+        catalogs.sources.removeAll { $0.address == s.address }   // by address: Reload Config may have changed the list meanwhile
         catalogs.saveSources()
+        catalogs.forget(s)
         table.reloadData()
     }
 
@@ -107,10 +117,9 @@ final class ToolSourcesPane: NSView, NSTableViewDataSource, NSTableViewDelegate 
         let s = catalogs.sources[row]
         switch tableColumn?.identifier.rawValue {
         case "on":
-            let box = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+            let box = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggled))
             box.state = s.off == true ? .off : .on
             box.setAccessibilityLabel("\(s.name) on")
-            kept.append(MenuAction.attach(to: box) { [unowned self, unowned box] in setOn(row, box.state == .on) })
             return box
         case "name": return NSStackView(views: [NSTextField(labelWithString: s.name)])   // centred in the row
         default:

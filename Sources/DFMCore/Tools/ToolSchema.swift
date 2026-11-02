@@ -345,12 +345,15 @@ public enum ToolSchema {
                 if s.contains("/") { error(path, "a script is a file next to the preset: no “/”") }
                 else if !hasScript(s) { error(path, "\(s) isn't next to the preset") }
             case .key: if !ToolSchema.isKey(s) { error(path, "“\(s)” isn't a key (cmd+e, shift+f6, return…)") }
-            case .id: if s.isEmpty || !s.allSatisfy({ $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "-") }) { error(path, "only a–z, 0–9 and “-”") }
+            case .id: if !ToolSchema.isID(s) { error(path, "only a–z, 0–9 and “-”") }
             case .symbol: if !hasSymbol(s) { warn(path, "this macOS has no SF Symbol “\(s)”: Kermo shows a wrench") }
             case .plain: break
             }
         }
     }
+
+    /// A tool's id (§12): a–z, 0–9 and "-".
+    public static func isID(_ s: String) -> Bool { !s.isEmpty && s.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "-") } }
 
     static func isEnvName(_ s: String) -> Bool {
         guard let f = s.first, !f.isNumber, !s.hasPrefix("KERMO_") else { return false }

@@ -125,8 +125,7 @@ public struct ToolLibrary: Sendable {
                     hash.update(data: s)
                     scripts[name] = String(decoding: s, as: UTF8.self)
                 }
-                return LoadedTool(preset: preset, path: path, builtIn: builtIn, scripts: scripts,
-                                  hash: hash.finalize().map { String(format: "%02x", $0) }.joined(), warnings: found)
+                return LoadedTool(preset: preset, path: path, builtIn: builtIn, scripts: scripts, hash: hash.finalize().hex, warnings: found)
             }
         }
         var tools = read(builtIn, builtIn: true)

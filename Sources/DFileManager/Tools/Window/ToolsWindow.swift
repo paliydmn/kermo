@@ -405,7 +405,7 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
         let tools = app.tools.library.tools.filter(ToolRunner.shows), c = app.tools.catalogs
         if mine { return tools.filter { !$0.builtIn && c.fetched.tools[$0.preset.id] == nil }.map { Row(id: $0.preset.id, tool: $0, offer: nil) } }
         var ids = tools.map(\.preset.id).filter { ToolCatalogs.builtIns.contains($0) || c.fetched.tools[$0] != nil }
-        ids += c.offers.map(\.entry.id).filter { !ids.contains($0) }
+        for o in c.offers where !ids.contains(o.entry.id) { ids.append(o.entry.id) }
         return ids.map { id in Row(id: id, tool: tools.first { $0.preset.id == id }, offer: c.offer(id)) }
     }
 
@@ -464,10 +464,12 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
     func fetch() {
         said.stringValue = "Fetching the catalogs…"
         suggested.isHidden = true
-        Task {
-            await app.tools.catalogs.fetch()
+        Task { [weak self] in
+            guard let catalogs = self?.app.tools.catalogs else { return }
+            await catalogs.fetch()
+            guard let self, window != nil else { return }   // closed meanwhile: no server is asked
             refresh()
-            let s = await app.tools.catalogs.suggested(on: app.tools.catalogs.connected)
+            let s = await catalogs.suggested(on: catalogs.connected)
             suggested.stringValue = s.map { "\($0.offer.entry.tool!) is on \($0.servers.joined(separator: ", ")): the catalog has a tool for it — \($0.offer.entry.title)" }
                 .joined(separator: "\n")
             suggested.isHidden = s.isEmpty
@@ -536,11 +538,11 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
     /// What the catalog has of it: its version there, an update, your changes.
     func catalog(_ r: Row) -> String {
         let c = app.tools.catalogs
-        guard let o = r.offer else { return r.tool?.builtIn == true ? "built in" : "—" }
-        let kind = o.entry.verified == true ? "verified" : "community"
-        guard let t = r.tool else { return "v\(o.entry.version) · \(kind)" }
-        if c.update(for: t) != nil { return "update: v\(o.entry.version)" + (t.builtIn || c.fetched.pristine(t) ? "" : " · yours changed") }
-        return t.builtIn ? "built in" : c.fetched.pristine(t) ? "v\(o.entry.version) · \(kind)" : "yours changed"
+        if let t = r.tool, let u = c.update(for: t) { return "update: v\(u.entry.version)" + (t.builtIn || c.fetched.pristine(t) ? "" : " · yours changed") }
+        guard let t = r.tool else { return r.offer.map { "v\($0.entry.version) · " + ($0.entry.verified == true ? "verified" : "community") } ?? "—" }
+        if t.builtIn { return "built in" }
+        guard let got = c.fetched.tools[t.preset.id] else { return "yours" }
+        return c.fetched.pristine(t) ? "v\(got.version)" : "yours changed"
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
