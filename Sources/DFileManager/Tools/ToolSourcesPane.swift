@@ -69,7 +69,7 @@ final class ToolSourcesPane: NSView, NSTableViewDataSource, NSTableViewDelegate 
         guard let i = catalogs.sources.firstIndex(where: { $0.address == s.address }) else { return }
         catalogs.sources[i].off = on ? nil : true
         catalogs.saveSources()
-        if !on { catalogs.forget(s) }
+        ToolsWindow.refresh()   // off: what it offered goes at once
     }
 
     @objc private func toggled(_ box: NSButton) {
@@ -107,13 +107,14 @@ final class ToolSourcesPane: NSView, NSTableViewDataSource, NSTableViewDelegate 
         guard await app.confirm(c, on: window) == 0 else { return }
         catalogs.sources.removeAll { $0.address == s.address }   // by address: Reload Config may have changed the list meanwhile
         catalogs.saveSources()
-        catalogs.forget(s)
+        ToolsWindow.refresh()
         table.reloadData()
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { catalogs.sources.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard catalogs.sources.indices.contains(row) else { return nil }   // Reload Config changed the list under it
         let s = catalogs.sources[row]
         switch tableColumn?.identifier.rawValue {
         case "on":

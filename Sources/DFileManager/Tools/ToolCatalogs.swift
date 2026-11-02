@@ -11,8 +11,13 @@ final class ToolCatalogs {
     unowned let app: AppDelegate
     var sources = ToolCatalogs.start
     private(set) var fetched = ToolFetched()
-    /// Each source's newest version of each tool this Kermo reads, the sources in their order: the last fetch's.
-    private(set) var offers: [Offer] = []
+    /// Each source's newest version of each tool this Kermo reads, the sources in their order: the last fetch's, of the
+    /// catalogs on now — one turned off or removed meanwhile offers nothing.
+    var offers: [Offer] {
+        let on = Set(sources.filter { $0.off != true }.map(\.address))
+        return fetchedOffers.filter { on.contains($0.source.address) }
+    }
+    private var fetchedOffers: [Offer] = []
     /// What a source said instead of its index, the last fetch: "Kermo: …".
     private(set) var problems: [String] = []
     private(set) var at: Date?
@@ -70,11 +75,6 @@ final class ToolCatalogs {
     /// The first catalog's version of `id`.
     func offer(_ id: String) -> Offer? { offers.first { $0.entry.id == id } }
 
-    /// A catalog turned off or removed: its offers go at once, though fetched before.
-    func forget(_ s: ToolCatalog.Source) {
-        offers.removeAll { $0.source.address == s.address }
-        ToolsWindow.refresh()
-    }
 
     /// Each source that's on, all at once: its index, taken only signed by its key and no older than one seen; then the
     /// offers. A second call while one runs waits for it; `Updates.get` gives each request a minute at most.
@@ -116,7 +116,7 @@ final class ToolCatalogs {
             case nil: break
             }
         }
-        offers = ToolCatalog.newest(indexes) { e in e.minKermo.map { !Updates.isNewer($0, than: Updates.current) } ?? true }.map(Offer.init)
+        fetchedOffers = ToolCatalog.newest(indexes) { e in e.minKermo.map { !Updates.isNewer($0, than: Updates.current) } ?? true }.map(Offer.init)
         (problems, at) = (said, Date())
         saveFetched()
         ToolsWindow.refresh()
@@ -199,7 +199,9 @@ final class ToolCatalogs {
             let trusted = app.tools.trust.trusts(now), changes = trusted ? tool.changes(from: now) : ""
             let lead = "\(file) v\(o.entry.version) from the \(o.source.name) catalog, signed and checked, in place of "
                 + (now.builtIn ? "the built-in" : yours ? "yours" : "v\(fetched.tools[o.entry.id]?.version ?? 0)")
-                + (!trusted ? ". Here is everything it can run:" : changes.isEmpty ? ": what it runs stays the same." : ". What changes in what it can run:")
+                + (!trusted ? ". Here is everything it can run:" : !changes.isEmpty ? ". What changes in what it can run:"
+                   : tool.differs(from: now) ? ": its commands are the same, but not all the rest (an environment, a path, an address — Open File shows it). Here is everything it can run:"
+                   : ": what it runs stays the same.")
             guard await app.tools.trustAsk(tool, window: window, lead: lead, runs: changes.isEmpty ? nil : changes) else { return "\(name): not updated" }
             let kept = try place(files, o, hash: tool.hash)
             return "\(name) is v\(o.entry.version) now" + Self.said(kept)

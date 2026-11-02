@@ -56,7 +56,7 @@ private func signed(_ index: ToolCatalog.Index) throws -> (Data, Data) {
                 entry("x", 1, files: ["tools/x/x.sh"]), entry("x", 1, files: ["a/x.json", "b/x.json"]),
                 entry("x", 1, files: ["t/x.json", "t/catalogs.json"]), entry("x", 1, files: ["t/x.json", "t/trust.json"]), entry("x", 1, files: ["t/x.json", "t/y.sh"]),
                 entry("x", 1, files: ["t/x.json", "t/x.more.json"]), entry("x", 1, files: ["t/x.json", "t/x.sh.bak"]), entry("trust", 1, files: ["t/trust.json"]),
-                entry("x", 1, files: ["t/x.json", "t/x.A.sh", "t/x.a.sh"]), entry("x", 1, files: ["t/x.json"] + (1...20).map { "t/x.\($0).sh" })] {
+                entry("x", 1, files: ["t/x.json", "t/x.A.sh", "t/x.a.sh"]), entry("x", 1, files: ["t/x.json", "t/x.sh.BAK"]), entry("x", 1, files: ["t/x.json"] + (1...20).map { "t/x.\($0).sh" })] {
         let (data, sig) = try signed(ToolCatalog.Index(serial: 1, tools: [bad]))
         #expect(throws: ToolCatalog.Refusal("its entry “\(bad.id)” isn't well-formed: not taken"), "\(bad.files.map(\.path))") {
             try ToolCatalog.index(data, signature: sig, source: source, seen: nil)
@@ -147,6 +147,13 @@ private func tool(_ list: String, _ actions: String, scripts: [String: String] =
     let script = try tool(#"{ "script": "x.list.sh" }"#, delete, scripts: ["x.list.sh": "df -P\n"])
     #expect(try tool(#"{ "script": "x.list.sh" }"#, delete, scripts: ["x.list.sh": "rm -rf /\n"]).changes(from: script)
             == "Scripts whose text changed (Open File shows them):\n~ x.list.sh")
+
+    // An environment that makes the same command run something else has no line: it differs all the same; new words don't.
+    let env = try tool(#"{ "command": "ufw status", "env": { "PATH": "/tmp" } }"#, delete)
+    #expect(env.changes(from: old).isEmpty && env.differs(from: old))
+    var words = old
+    (words.preset.title, words.preset.about, words.preset.catalogVersion) = ("Firewall", "Rules", 2)
+    #expect(!words.differs(from: old))
 }
 
 @Test func whatCameFromACatalogAsItCame() throws {
@@ -158,6 +165,8 @@ private func tool(_ list: String, _ actions: String, scripts: [String: String] =
     changed.hash = "h2"
     #expect(!f.pristine(changed))
     #expect(try JSONDecoder().decode(ToolFetched.self, from: Data("{}".utf8)) == ToolFetched())
+    let without = try JSONDecoder().decode(ToolFetched.self, from: Data(#"{"tools":{"x":{"source":"s","version":1,"hash":"h"}}}"#.utf8))
+    #expect(without.tools["x"]?.files == [:], "its files kept as .bak on its next update, not the whole file lost")
 }
 
 /// Kermo's own catalog's key is a stand-in till its key ceremony: until then every Catalog says Kermo's key isn't one.

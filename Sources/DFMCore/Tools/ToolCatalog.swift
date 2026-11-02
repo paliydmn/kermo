@@ -73,7 +73,7 @@ public enum ToolCatalog {
         var named: Bool {
             let names = files.map(\.name)
             return !ToolLibrary.kermosOwn.contains(id + ".json") && names.filter { $0 == id + ".json" }.count == 1 && names.count <= Self.maxFiles
-                && names.allSatisfy { $0 == id + ".json" || ($0.hasPrefix(id + ".") && !$0.hasSuffix(".json") && !$0.hasSuffix(".bak")) }
+                && names.map { $0.lowercased() }.allSatisfy { $0 == id + ".json" || ($0.hasPrefix(id + ".") && !$0.hasSuffix(".json") && !$0.hasSuffix(".bak")) }
                 && Set(names.map { $0.lowercased() }).count == names.count
         }
 
@@ -164,6 +164,13 @@ public struct ToolFetched: Sendable, Codable, Hashable {
         public init(source: String, version: Int, hash: String, files: [String: String] = [:]) {
             (self.source, self.version, self.hash, self.files) = (source, version, hash, files)
         }
+
+        /// One written without its files' sums keeps every file there as `.bak` on its next update.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            (source, version, hash) = (try c.decode(String.self, forKey: .source), try c.decode(Int.self, forKey: .version), try c.decode(String.self, forKey: .hash))
+            files = try c.decodeIfPresent([String: String].self, forKey: .files) ?? [:]
+        }
     }
     public var tools: [String: Got] = [:]
     /// By the source's `address`.
@@ -196,6 +203,17 @@ extension LoadedTool {
         }
         let changed = scripts.keys.sorted().filter { old.scripts[$0] != nil && old.scripts[$0] != scripts[$0] }
         return (runs + (changed.isEmpty ? [] : ["Scripts whose text changed (Open File shows them):"] + changed.map { "~ " + $0 })).joined(separator: "\n")
+    }
+
+    /// Whether it differs from `old` in more than its words, its look and its version — in what `changes` has no line
+    /// for too (an `env`, a `files` path, an address): an update with no changes may still not run the same.
+    public func differs(from old: LoadedTool) -> Bool {
+        func bare(_ p: ToolPreset) -> ToolPreset {
+            var p = p
+            (p.title, p.tool, p.about, p.icon, p.group, p.author, p.minKermo, p.catalogVersion, p.notes, p.schemaURL) = ("", nil, nil, nil, nil, nil, nil, nil, nil, nil)
+            return p
+        }
+        return bare(preset) != bare(old.preset) || scripts != old.scripts
     }
 }
 
