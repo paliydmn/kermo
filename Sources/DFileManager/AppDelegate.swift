@@ -354,7 +354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let inUse = Set(panels.flatMap { $0.heldServers + [$0.connecting].compactMap { $0 } }.map(ServerRow.key)
                         + (terminal?.tabs ?? []).filter { $0.exitStatus == nil }.compactMap(\.target).map(ServerRow.key))   // starting or running
             .union(tunnels.inUse)   // else the next client would log in again
-            .union(tools.monitor.inUse)   // a watched server stays connected, locked or not (decision 23)
+            .union(tools.monitor.inUse)   // a watched server stays connected, locked or not (decision 23); a live tab's too
             .union(looked.keys)
         return masters.filter { !inUse.contains(ServerRow.key($0)) }
     }

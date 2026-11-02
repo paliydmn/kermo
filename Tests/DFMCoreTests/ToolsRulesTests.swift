@@ -232,6 +232,27 @@ private func systemSamples() throws -> [ToolSample] {
     let rows: ToolRecord = ["rows": .array([.object(["unit": "api", "last_status": "failed", "active_version": 12]), .object(["unit": "web", "last_status": "failed"])])]
     let raised = ToolEvents.raised([down, failed], in: sample(0, rows), previous: nil)
     #expect(raised.map { "\($0.id) \($0.message)" } == ["down web is down", "failed api: v12 still serves"])
+    #expect(raised.map(\.found) == [true, true], "the first sample: how things stood, not a change")
+    let more: ToolRecord = ["rows": .array([.object(["unit": "web", "last_status": "failed"]), .object(["unit": "db", "last_status": "failed"])])]
+    #expect(ToolEvents.raised([down], in: sample(5, more), previous: sample(0, rows)).map { "\($0.message) \($0.found)" } == ["db is down false"], "a row that comes failed is a change")
+    // Across a sleep longer than the hour (the table's rows trimmed): what failed meanwhile is a change, what had
+    // failed before raises nothing again; watching anew, it's how things stand.
+    func web(_ s: Double, _ status: String) -> ToolSample { sample(s, ["rows": .array([.object(["unit": "web", "last_status": .string(status)])])]) }
+    var h = ToolHistory()
+    _ = h.add(web(0, "ready"), metrics: [:], now: at(0))
+    h.mark(.asleep, at: at(4000))
+    _ = h.add(web(4005, "failed"), metrics: [:], now: at(4005))
+    #expect(h.rows("list").count == 1 && ToolEvents.raised([down], in: web(4005, "failed"), previous: h.previous, carrying: h.carriedBefore).map(\.found) == [false],
+            "it failed while the Mac slept: a change")
+    h.mark(.asleep, at: at(9000))
+    _ = h.add(web(9005, "failed"), metrics: [:], now: at(9005))
+    #expect(ToolEvents.raised([down], in: web(9005, "failed"), previous: h.previous, carrying: h.carriedBefore).isEmpty, "still failed after another sleep: nothing again")
+    h.forgetLast()
+    _ = h.add(web(9010, "failed"), metrics: [:], now: at(9010))
+    #expect(h.previous == nil && ToolEvents.raised([down], in: web(9010, "failed"), previous: h.previous, carrying: h.carriedBefore).map(\.found) == [true])
+    let state = ToolEvent(id: "state", path: "state", when: "is", level: "critical", value: "down")
+    #expect(ToolEvents.raised([state], in: sample(0, ["state": "down"]), previous: nil).map(\.found) == [true]
+            && ToolEvents.raised([state], in: sample(5, ["state": "down"]), previous: sample(0, ["state": "up"])).map(\.found) == [false])
     let changed = ToolEvent(id: "v", path: "active_version", rows: "list", key: "unit", when: "increased", message: "{unit} v{active_version}")
     let later: ToolRecord = ["rows": .array([.object(["unit": "api", "last_status": "ready", "active_version": 13])])]
     #expect(ToolEvents.raised([changed], in: sample(5, later), previous: sample(0, rows)).map(\.message) == ["api v13"])

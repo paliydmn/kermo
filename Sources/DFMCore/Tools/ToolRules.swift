@@ -188,8 +188,10 @@ public struct ToolHistory: Sendable {
     /// reads every few lines (System's processes every 3rd, its disks every 6th), so a table, a count and an
     /// `added` event go by the last sample that had the rows, not by the last line.
     public private(set) var carrying: [String: ToolSample] = [:]
-    /// `carrying` as it stood before `last` came: what `last`'s rows are compared with.
+    /// Each row set's latest sample since watching started as it stood before `last` came — the hour's trim aside: what
+    /// `last`'s rows are compared with, so a long sleep makes no row "first" again.
     public private(set) var carriedBefore: [String: ToolSample] = [:]
+    private var untrimmed: [String: ToolSample] = [:]
     public var keep: TimeInterval = 3600
 
     public init(keep: TimeInterval = 3600) { self.keep = keep }
@@ -204,8 +206,9 @@ public struct ToolHistory: Sendable {
             for (key, n) in v { series[id, default: [:]][key, default: []].append(ToolPoint(at: sample.at, value: n)) }
         }
         if !list { (previous, last) = (last, sample) }
-        carriedBefore = carrying
+        carriedBefore = untrimmed
         for (k, v) in sample.record { if case .array = v { carrying[k] = sample } }
+        untrimmed.merge(carrying) { _, new in new }
         trim(before: sample.at.addingTimeInterval(-keep))
         return all
     }
@@ -214,6 +217,11 @@ public struct ToolHistory: Sendable {
     public func carried(_ path: String) -> ToolSample? { carrying[path == "list" ? "rows" : path] }
     /// The rows of `path` as the latest sample that carried them had them.
     public func rows(_ path: String) -> [ToolRecord] { carried(path)?.rows(path) ?? [] }
+
+    /// Watching stopped: the next sample is a first one again — its events say how things stood (`found`); the series stay.
+    public mutating func forgetLast() {
+        (last, previous, carrying, carriedBefore, untrimmed) = (nil, nil, [:], [:], [:])
+    }
 
     /// No data from `at` on: a gap point on every series (one per stretch) — `metrics`' only, where one source of
     /// several stopped — till the next value.
@@ -400,15 +408,17 @@ public struct ToolEventRecord: Sendable, Equatable {
     public var level: String
     public var message: String
     public var goto: String?
-    public init(at: Date, id: String, level: String, message: String, goto: String? = nil) {
-        (self.at, self.id, self.level, self.message, self.goto) = (at, id, level, message, goto)
+    /// How things stood when watching first saw them (an `is` on the first sample), not a change: listed, not notified.
+    public var found = false
+    public init(at: Date, id: String, level: String, message: String, goto: String? = nil, found: Bool = false) {
+        (self.at, self.id, self.level, self.message, self.goto, self.found) = (at, id, level, message, goto, found)
     }
 }
 
 public enum ToolEvents {
     /// The events `sample` raises against `previous` (§8.4): `changed` and `increased` of `path`, `added` and `left`
     /// of `rows` by `key`, `is` of `path` or a row's `field` — the first sample raises `is` alone (the state is so;
-    /// nothing was added to nothing). `if` / `unless`: a field that must be non-empty / empty. `scope`: the names
+    /// nothing was added to nothing), marked `found`. `if` / `unless`: a field that must be non-empty / empty. `scope`: the names
     /// around the sample (vars, Kermo's). `carrying`: for each row set, the last sample before this one that had it
     /// (`ToolHistory.carriedBefore`) — rows that come every few lines are compared with the last that came, else a
     /// failed unit would be "added" again each time the set came round; nil: `previous` is it.
@@ -420,12 +430,12 @@ public enum ToolEvents {
             s.levels.insert(r, at: 1)
             return (e.if.map { !s.isEmpty($0) } ?? true) && (e.unless.map { s.isEmpty($0) } ?? true)
         }
-        func raise(_ e: ToolEvent, _ r: ToolRecord) {
+        func raise(_ e: ToolEvent, _ r: ToolRecord, found: Bool = false) {
             var s = scope
             s.levels.insert(r, at: 1)
             if r != sample.record { s.levels.insert(sample.record, at: 2) }
             out.append(ToolEventRecord(at: sample.at, id: e.id ?? e.when ?? "", level: e.level ?? "info",
-                                       message: e.message.map { ToolTemplate.text($0, s) } ?? (e.id ?? ""), goto: e.goto.map { ToolTemplate.text($0, s) }))
+                                       message: e.message.map { ToolTemplate.text($0, s) } ?? (e.id ?? ""), goto: e.goto.map { ToolTemplate.text($0, s) }, found: found))
         }
         for e in events {
             if let rows = e.rows, let key = e.key {
@@ -439,7 +449,7 @@ public enum ToolEvents {
                     switch e.when {
                     case "added": if was != nil, old == nil { raise(e, r) }
                     case "left": if let old, let f = e.field, old[f] == e.from, value != e.from { raise(e, r) }
-                    case "is": if value == e.value, old.map({ $0[e.field ?? ""] != e.value }) ?? true { raise(e, r) }
+                    case "is": if value == e.value, old.map({ $0[e.field ?? ""] != e.value }) ?? true { raise(e, r, found: was == nil) }
                     case "changed": if let old, let p = e.path, old[p] != r[p] { raise(e, r) }
                     case "increased": if let old, let p = e.path, let a = r[p]?.number, let b = old[p]?.number, a > b { raise(e, r) }
                     default: break
@@ -452,7 +462,7 @@ public enum ToolEvents {
             switch e.when {
             case "changed": if let old, old != nil, old != value { raise(e, sample.record) }
             case "increased": if let a = value?.number, let b = old??.number, a > b { raise(e, sample.record) }
-            case "is": if value == e.value, (old ?? nil) != e.value || previous == nil { raise(e, sample.record) }
+            case "is": if value == e.value, (old ?? nil) != e.value || previous == nil { raise(e, sample.record, found: previous == nil) }
             default: break
             }
         }

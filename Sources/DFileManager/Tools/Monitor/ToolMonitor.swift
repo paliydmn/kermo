@@ -180,8 +180,8 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         }, nil).takeRetainedValue(), .defaultMode)
     }()
 
-    /// Watched servers' keys: in use, so their connections stay up (`AppDelegate.idleServers`).
-    var inUse: Set<String> { Set(servers.values.filter(\.watched).map(\.key)) }
+    /// Watched servers' keys, and those a live tab shows: in use, so their connections stay up (`AppDelegate.idleServers`).
+    var inUse: Set<String> { Set(servers.values.filter { $0.watched || $0.tools.values.contains { $0.live && $0.preset.http == nil } }.map(\.key)) }   // Sites' checks need no SSH
 
     func server(_ t: SFTPTarget) -> Server? { servers[ServerRow.key(t.asUser)] }
     func tool(_ id: String, on t: SFTPTarget) -> Tool? { server(t)?.tools[id] }
@@ -219,7 +219,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
                 if was, !t.watched { record(s, t.slots.mark(.notWatched, at: Date().addingTimeInterval(s.skew))) }
                 t.live = w?.2.contains { $0.0.preset.id == id && !$0.1 } ?? false
                 if !t.watched { t.open = [] }
-                if !t.wanted { t.alerts.clear() }   // a stop is no recovery, and nothing to say
+                if !t.wanted { t.alerts.clear(); t.history.forgetLast() }   // a stop is no recovery, and nothing to say; watched again, it starts afresh
             }
             if !s.watched { s.quiet = false }   // watched again later: nothing of before is "still standing"
             if !s.tools.values.contains(where: { $0.wanted && $0.readsFiles }) { s.closeKept() }
@@ -389,7 +389,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         }
         let raised = ToolEvents.raised((p.events ?? []).filter { ($0.rows == "list") == list }, in: sample, previous: t.history.previous,
                                        carrying: t.history.carriedBefore, scope: app.tools.scope(p, on: s.saved, s.target))
-        for e in raised where e.level == "critical" { deliver(s, tool: t, id: "\(s.key) \(p.id) \(e.id)", e.message) }
+        for e in raised where e.level == "critical" && !e.found { deliver(s, tool: t, id: "\(s.key) \(p.id) \(e.id)", e.message) }   // a change, not how it was
         fresh += raised
         if let e = ToolEvents.scripted(sample) {
             if e.level == "ok" { t.open.remove(e.id) }
