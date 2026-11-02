@@ -103,7 +103,7 @@ extension ServerLockTests {
         #expect(asked == ["Use the tool “Disk”?"] && info.hasPrefix("disk.json v1 from the Team catalog: signed, each file checked, reviewed and tested by its CI.")
                 && info.contains("list: the script disk.sh (1 lines)"), "\(info)")
         AppDelegate.answering = { _, _, _ in 0 }
-        #expect(await c.get(o, window: nil) == "Disk v1 is yours: Tools ▸ shows it on servers where it's found")
+        #expect(await c.get(o, window: nil) == "Disk v1 is in your tools: Tools ▸ shows it on servers where it's found")
         let t = try toolNamed(app, "disk")
         #expect(!t.builtIn && app.tools.trust.trusts(t) && c.fetched.pristine(t) && c.fetched.tools["disk"]?.version == 1)
         #expect(mode(bench.dir + "/own/disk.json") == 0o600 && mode(bench.dir + "/own/disk.sh") == 0o600)

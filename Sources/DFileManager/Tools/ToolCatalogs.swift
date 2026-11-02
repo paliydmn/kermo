@@ -132,7 +132,7 @@ final class ToolCatalogs {
                 + (o.entry.verified == true ? ", reviewed and tested by its CI." : ", not reviewed.") + " Here is everything it can run:"
             guard await app.tools.trustAsk(tool, window: window, lead: lead) else { return "\(name): not got" }
             try place(files, o, hash: tool.hash, keep: false)
-            return "\(name) v\(o.entry.version) is yours: Tools ▸ shows it on servers where it's found"
+            return "\(name) v\(o.entry.version) is in your tools: Tools ▸ shows it on servers where it's found"
         } catch { return "\(name) wasn't got: \(Self.why(error))" }
     }
 

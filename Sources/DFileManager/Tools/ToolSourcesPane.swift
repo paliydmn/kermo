@@ -70,15 +70,12 @@ final class ToolSourcesPane: NSView, NSTableViewDataSource, NSTableViewDelegate 
     }
 
     private func addAsked() async {
-        let fields = ["Name", "Address", "Public key"].map { placeholder -> NSTextField in
+        let fields = ["Name", "Address: https://… or file://…", "Public key (base64)"].map { placeholder -> NSTextField in
             let f = NSTextField(string: "")
             f.placeholderString = placeholder
-            f.frame.size.width = 380
             return f
         }
-        let box = NSStackView(views: fields)
-        (box.orientation, box.spacing) = (.vertical, 6)
-        box.frame.size = NSSize(width: 380, height: 84)
+        let box = Confirm.stack(fields, width: 380)
         var said = ""
         while true {
             let alert = AppDelegate.alert("Add a Catalog", info: said.isEmpty ? "Its tools come in only signed with this key." : said, ["Add", "Cancel"])
@@ -115,12 +112,13 @@ final class ToolSourcesPane: NSView, NSTableViewDataSource, NSTableViewDelegate 
             box.setAccessibilityLabel("\(s.name) on")
             kept.append(MenuAction.attach(to: box) { [unowned self, unowned box] in setOn(row, box.state == .on) })
             return box
-        case "name": return NSTextField(labelWithString: s.name)
+        case "name": return NSStackView(views: [NSTextField(labelWithString: s.name)])   // centred in the row
         default:
             let l = NSTextField(labelWithString: s.url)
             l.lineBreakMode = .byTruncatingMiddle
+            l.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             l.toolTip = s.url + "\nkey " + s.key
-            return l
+            return NSStackView(views: [l])
         }
     }
 }

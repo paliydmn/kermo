@@ -412,7 +412,9 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
     init(_ app: AppDelegate, mine: Bool) {
         (self.app, self.mine) = (app, mine)
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
-        for (id, title, width) in [("tool", "Tool", 190.0), ("about", "About", 250), ("where", "Used", 170)] + (mine ? [] : [("catalog", "Catalog", 130.0)]) {
+        let columns = mine ? [("tool", "Tool", 200.0), ("about", "About", 260), ("where", "Used", 200)]
+            : [("tool", "Tool", 180.0), ("about", "About", 200), ("where", "Used", 120), ("catalog", "Catalog", 110)]
+        for (id, title, width) in columns {
             let c = NSTableColumn(identifier: .init(id))
             (c.title, c.width) = (title, width)
             table.addTableColumn(c)
