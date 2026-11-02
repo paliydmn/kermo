@@ -39,6 +39,8 @@ final class ToolRunner {
     private(set) lazy var jobs = ToolJobs(app)
     /// Watching (§8): the streams and polls of watched tools and open tabs, their series, alerts and events.
     private(set) lazy var monitor = ToolMonitor(app)
+    /// Catalogs (§12): their sources and indexes, Get, Update, Remove.
+    private(set) lazy var catalogs = ToolCatalogs(app)
 
     /// Tests: how a payload starts (in a session of its own), sudo's stand-in, your folder, a connection that answers.
     nonisolated(unsafe) static var command: @Sendable (ToolPayload) -> String = { $0.command }
@@ -67,9 +69,10 @@ final class ToolRunner {
         known = Self.own.flatMap { try? Config.load("known.json", as: [String: Known].self, in: $0.path) } ?? [:]
         let read = Self.own.map { Config.loadKeeping("servers.json", as: ToolServers.self, in: $0.path) }
         settings = read?.value ?? ToolServers()
+        let catalogsSaid = catalogs.reload()
         monitor.reconcile()   // watched servers, as the file says now (at launch: watching resumes by itself)
         ToolsWindow.refresh()
-        return library.problems + [read?.problem.map { "tools/" + $0 }].compactMap { $0 }
+        return library.problems + [read?.problem.map { "tools/" + $0 }].compactMap { $0 } + catalogsSaid
     }
 
     func saveSettings() {

@@ -191,9 +191,8 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         case .watched(let s, let t):
             return Self.watchedRow(app, s, t)
         case .library(let mine):
-            let count = mine ? app.tools.library.tools.filter { !$0.builtIn && ToolRunner.shows($0) }.count : ToolsLibrary.tools(app, mine: false).count
-            views = [NSImageView(image: (mine ? Symbol.folder : Symbol.archive).image(nil)), NSTextField(labelWithString: mine ? "My Tools" : "Built into Kermo"),
-                     Self.spacer(), Self.small("\(count)")]
+            views = [NSImageView(image: (mine ? Symbol.folder : Symbol.archive).image(nil)), NSTextField(labelWithString: mine ? "My Tools" : "Catalog"),
+                     Self.spacer(), Self.small("\(ToolsLibrary.rows(app, mine: mine).count)")]
         case .newTool:
             views = [NSImageView(image: Symbol.plus.image(nil)), NSTextField(labelWithString: "New Tool…"), Self.spacer()]
         }
@@ -228,16 +227,29 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         }
     }
 
-    /// A library row's page, over the library; ‹ goes back to it.
-    func open(_ t: LoadedTool) {
+    /// A library row's page, over the library; ‹ goes back to it. A catalog's tool not got yet: its files first, checked,
+    /// for the page to say what it runs.
+    func open(_ r: ToolsLibrary.Row) {
         guard let l = library else { return }
-        let page = ToolsTool(app, t, from: l.mine ? "My Tools" : "Built into Kermo") { [unowned self, unowned l] in
-            tool = nil
-            l.refresh()
-            place(l)
+        func show(_ t: LoadedTool) {
+            let page = ToolsTool(app, t, offer: r.offer, from: l.mine ? "My Tools" : "Catalog") { [unowned self, unowned l] in
+                tool = nil
+                l.refresh()
+                place(l)
+            }
+            tool = page
+            place(page)
         }
-        tool = page
-        place(page)
+        if let t = r.tool { return show(t) }
+        guard let o = r.offer else { return }
+        l.said.stringValue = "Fetching \(o.entry.title)…"
+        Task {
+            do {
+                let (t, _, dir) = try await app.tools.catalogs.download(o)
+                try? FileManager.default.removeItem(at: dir)
+                if library === l, tool == nil { show(t) }
+            } catch { l.said.stringValue = "\(o.entry.title): \(ToolCatalogs.why(error))" }
+        }
     }
 
     private func place(_ view: NSView) {
@@ -361,30 +373,46 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
     }
 }
 
-/// The library: the tools built into Kermo, or yours from ~/.config/dfilemanager/tools — each with where it's used, Use
-/// on Servers… and Show File; ↩ or a double-click opens its page (`open`). Yours that don't load are listed under the
+/// The library: the Catalog — the tools built into Kermo, those got from a catalog and those a catalog has (fetched as
+/// it opens, and by Check for Updates) — or yours from ~/.config/dfilemanager/tools; each with where it's used, Use on
+/// Servers… and Show File; ↩ or a double-click opens its page (`open`). Yours that don't load are listed under the
 /// table, each opening in the editor with its problems.
 @MainActor
 final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
     unowned let app: AppDelegate
     let mine: Bool
     let table = NSTableView()
-    private(set) var tools: [LoadedTool] = []
-    /// A tool's page.
-    var open: ((LoadedTool) -> Void)?
+    /// A tool here, a catalog's, or both (one here with a newer version there).
+    struct Row {
+        let id: String
+        let tool: LoadedTool?
+        let offer: ToolCatalogs.Offer?
+        var title: String { tool?.preset.title ?? offer?.entry.title ?? id }
+    }
+    private(set) var rows: [Row] = []
+    /// A row's page.
+    var open: ((Row) -> Void)?
     private var kept: [AnyObject] = []
     /// Yours that don't load: the file and why.
     let broken = NSStackView()
+    /// The Catalog's: where its tools come from and when; what a source said instead; servers that have a program it
+    /// has a tool for.
+    let said = ToolsPage.text("", color: .secondaryLabelColor, size: 11)
+    let suggested = ToolsPage.text("", size: 11)
 
-    /// Built-ins this version runs; or yours, in use or not yet.
-    static func tools(_ app: AppDelegate, mine: Bool) -> [LoadedTool] {
-        app.tools.library.tools.filter { $0.builtIn != mine && ToolRunner.shows($0) }
+    /// Yours not got from a catalog; or the Catalog's: built-ins, those got, then the catalogs' others.
+    static func rows(_ app: AppDelegate, mine: Bool) -> [Row] {
+        let tools = app.tools.library.tools.filter(ToolRunner.shows), c = app.tools.catalogs
+        if mine { return tools.filter { !$0.builtIn && c.fetched.tools[$0.preset.id] == nil }.map { Row(id: $0.preset.id, tool: $0, offer: nil) } }
+        var ids = tools.map(\.preset.id).filter { ToolCatalogs.builtIns.contains($0) || c.fetched.tools[$0] != nil }
+        ids += c.offers.map(\.entry.id).filter { !ids.contains($0) }
+        return ids.map { id in Row(id: id, tool: tools.first { $0.preset.id == id }, offer: c.offer(id)) }
     }
 
     init(_ app: AppDelegate, mine: Bool) {
         (self.app, self.mine) = (app, mine)
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
-        for (id, title, width) in [("tool", "Tool", 200.0), ("about", "About", 260), ("where", "Used", 200)] {
+        for (id, title, width) in [("tool", "Tool", 190.0), ("about", "About", 250), ("where", "Used", 170)] + (mine ? [] : [("catalog", "Catalog", 130.0)]) {
             let c = NSTableColumn(identifier: .init(id))
             (c.title, c.width) = (title, width)
             table.addTableColumn(c)
@@ -394,21 +422,27 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
         table.usesAlternatingRowBackgroundColors = true
         table.target = self
         table.doubleAction = #selector(openSelected)
-        table.setAccessibilityLabel(mine ? "My Tools" : "Built into Kermo")
+        table.setAccessibilityLabel(mine ? "My Tools" : "Catalog")
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
-        let heading = ToolsPage.text(mine ? "My Tools" : "Built into Kermo", size: 18, bold: true)
+        let heading = ToolsPage.text(mine ? "My Tools" : "Catalog", size: 18, bold: true)
         let about = ToolsPage.text((mine ? "~/.config/dfilemanager/tools — yours, not reviewed by anyone. One new or changed asks “Use the tool…?” first."
-                                         : "Part of Kermo: they need nothing on a server but the program each one is for.") + " ↩ or a double-click opens a tool's page.",
+                                         : "Built into Kermo, and from the catalogs in Settings → Tools: signed, fetched only when this opens.") + " ↩ or a double-click opens a tool's page.",
                                    color: .secondaryLabelColor)
         let use = NSButton(title: "Use on Servers…", target: self, action: #selector(useOn))
         let show = NSButton(title: "Show File", target: nil, action: nil)
-        kept.append(MenuAction.attach(to: show) { [unowned self] in selected.map { Viewer.show(URL(fileURLWithPath: $0.path)) } })
+        kept.append(MenuAction.attach(to: show) { [unowned self] in selected?.tool.map { Viewer.show(URL(fileURLWithPath: $0.path)) } })
+        var buttons = [use, show]
+        if !mine {
+            let check = NSButton(title: "Check for Updates", target: nil, action: nil)
+            kept.append(MenuAction.attach(to: check) { [unowned self] in fetch() })
+            buttons.append(check)
+        }
         broken.orientation = .vertical
         broken.alignment = .leading
         broken.spacing = 2
-        let stack = NSStackView(views: [heading, about, scroll, NSStackView(views: [use, show]), broken])
+        let stack = NSStackView(views: [heading, about] + (mine ? [] : [said, suggested]) + [scroll, NSStackView(views: buttons), broken])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
@@ -417,15 +451,37 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
         addSubview(stack)
         NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
                                      stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor)])
-        for v in [heading, about, scroll, broken] { v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36).isActive = true }
+        for v in [heading, about, scroll, broken] + (mine ? [] : [said, suggested]) { v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36).isActive = true }
         refresh()
+        if !mine { fetch() }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// The catalogs' indexes, then what servers connected now have of their programs.
+    func fetch() {
+        said.stringValue = "Fetching the catalogs…"
+        suggested.isHidden = true
+        Task {
+            await app.tools.catalogs.fetch()
+            refresh()
+            let s = await app.tools.catalogs.suggested(on: app.tools.catalogs.connected)
+            suggested.stringValue = s.map { "\($0.offer.entry.tool!) is on \($0.servers.joined(separator: ", ")): the catalog has a tool for it — \($0.offer.entry.title)" }
+                .joined(separator: "\n")
+            suggested.isHidden = s.isEmpty
+        }
+    }
+
     func refresh() {
-        tools = Self.tools(app, mine: mine)
+        rows = Self.rows(app, mine: mine)
         table.reloadData()
+        if !mine {
+            let c = app.tools.catalogs, on = c.sources.filter { $0.off != true }
+            said.stringValue = on.isEmpty ? "No catalog is on: Settings → Tools lists them." : c.at.map { at in
+                ([on.map(\.name).joined(separator: ", ") + ": checked \(at.formatted(date: .omitted, time: .shortened))"] + c.problems).joined(separator: "\n")
+            } ?? said.stringValue
+            said.textColor = c.problems.isEmpty ? .secondaryLabelColor : Palette.fail
+        }
         guard mine, let dir = ToolRunner.own else { return }
         // "tools/x.json: line 3: …": x.json opens in the editor, its Problems saying the same.
         let files = app.tools.library.problems.compactMap { p -> (String, String)? in
@@ -443,11 +499,11 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
         }, in: .top)
     }
 
-    private var selected: LoadedTool? { tools.indices.contains(table.selectedRow) ? tools[table.selectedRow] : nil }
+    private var selected: Row? { rows.indices.contains(table.selectedRow) ? rows[table.selectedRow] : nil }
 
     @objc private func openSelected() {
-        guard let tool = selected else { return }
-        open?(tool)
+        guard let row = selected else { return }
+        open?(row)
     }
 
     /// ↩: the tool's page.
@@ -456,7 +512,7 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     @objc private func useOn() {
-        guard let tool = selected else { return NSSound.beep() }
+        guard let tool = selected?.tool else { return NSSound.beep() }
         Task {
             await app.tools.useOnServers(tool, window: window)
             refresh()
@@ -475,18 +531,30 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
         return "wherever found" + (hidden > 0 ? " · hidden on \(hidden)" : "")
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { tools.count }
+    /// What the catalog has of it: its version there, an update, your changes.
+    func catalog(_ r: Row) -> String {
+        let c = app.tools.catalogs
+        guard let o = r.offer else { return r.tool?.builtIn == true ? "built in" : "—" }
+        let kind = o.entry.verified == true ? "verified" : "community"
+        guard let t = r.tool else { return "v\(o.entry.version) · \(kind)" }
+        if c.update(for: t) != nil { return "update: v\(o.entry.version)" + (t.builtIn || c.fetched.pristine(t) ? "" : " · yours changed") }
+        return t.builtIn ? "built in" : c.fetched.pristine(t) ? "v\(o.entry.version) · \(kind)" : "yours changed"
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let p = tools[row].preset
+        let r = rows[row], p = r.tool?.preset
         switch tableColumn?.identifier.rawValue {
         case "tool":
-            let l = NSTextField(labelWithString: p.tool.map { "\(p.title) (\($0))" } ?? p.title)
-            let stack = NSStackView(views: [NSImageView(image: Symbol.preset(p.icon)), l])
+            let tool = p?.tool ?? r.offer?.entry.tool
+            let l = NSTextField(labelWithString: tool.map { "\(r.title) (\($0))" } ?? r.title)
+            let stack = NSStackView(views: [NSImageView(image: Symbol.preset(p?.icon ?? r.offer?.entry.icon)), l])
             stack.spacing = 5
             return stack
-        case "about": return label(p.about ?? "")
-        default: return label(used(tools[row]))
+        case "about": return label(p?.about ?? r.offer?.entry.about ?? "")
+        case "catalog": return label(catalog(r))
+        default: return label(r.tool.map(used) ?? "not got")
         }
     }
 

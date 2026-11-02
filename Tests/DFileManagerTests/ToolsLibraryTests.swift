@@ -40,12 +40,12 @@ extension ServerLockTests {
         let w = try #require(ToolsWindow.main)
         try choose(w, .library(mine: false))
         let lib = try #require(w.library)
-        lib.table.selectRowIndexes([try #require(lib.tools.firstIndex { $0.preset.id == "ufw" })], byExtendingSelection: false)
+        lib.table.selectRowIndexes([try #require(lib.rows.firstIndex { $0.id == "ufw" })], byExtendingSelection: false)
         lib.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
                                            characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!)
         let page = try #require(w.tool)
         let all = texts(page)
-        #expect(all.contains("Firewall (ufw)") && all.contains("‹ Built into Kermo") && all.contains("Customize") && !all.contains("Edit"))
+        #expect(all.contains("Firewall (ufw)") && all.contains("‹ Catalog") && all.contains("Customize") && !all.contains("Edit"))
         #expect(page.facts.first == "built into Kermo" && page.facts.contains("trusted as part of Kermo"))
         let runs = try #require(app.tools.library.tools.first { $0.preset.id == "ufw" }).runs
         #expect(all.contains("Runs by itself") && all.contains("Runs when you choose"))
@@ -55,7 +55,7 @@ extension ServerLockTests {
         let red = fields(page.stack).filter { $0.textColor == Palette.fail }.map(\.stringValue)
         #expect(!red.isEmpty && red.allSatisfy { line in runs.chosen.contains { $0.dangerous && $0.text.trimmingCharacters(in: .whitespaces) == line } })
         #expect(all.contains("ufw found") && all.contains("not checked yet"), "localhost has ufw (the stand-in); web-01 was never connected: \(all)")
-        press(buttons(page).first { $0.title == "‹ Built into Kermo" })
+        press(buttons(page).first { $0.title == "‹ Catalog" })
         #expect(w.tool == nil && lib.superview != nil)
     }
 

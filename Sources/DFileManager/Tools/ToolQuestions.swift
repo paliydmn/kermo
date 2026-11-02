@@ -43,13 +43,14 @@ extension ToolRunner {
     /// "Use the tool …?" (§12) for a tool of yours that's new, or changed since you said to use it: what it runs by
     /// itself (with no question, maybe as root) and what it runs when you choose, root marked; a `readonly` action
     /// whose command looks destructive, warned of; Open File shows the file and its scripts. True: trusted now, and
-    /// kept so (`tools/trust.json`). Built-ins are trusted.
-    func trustAsk(_ tool: LoadedTool, window: NSWindow?) async -> Bool {
+    /// kept so (`tools/trust.json`). Built-ins are trusted. A catalog's says where it's from (`lead`), an update only
+    /// what changes (`runs`).
+    func trustAsk(_ tool: LoadedTool, window: NSWindow?, lead: String? = nil, runs: String? = nil) async -> Bool {
         guard !trust.trusts(tool) else { return true }
         let p = tool.preset, file = (tool.path as NSString).lastPathComponent
         var c = Confirm("Use the tool “\(p.tool.map { "\(p.title) (\($0))" } ?? p.title)”?", action: "Use This Tool")
-        c.runs = "\(file) " + (trust.hashes[p.id] == nil ? "is new here." : "changed since you said to use it.") + " Here is everything it can run:"
-        c.command = tool.runs.text
+        c.runs = lead ?? ("\(file) " + (trust.hashes[p.id] == nil ? "is new here." : "changed since you said to use it.") + " Here is everything it can run:")
+        c.command = runs ?? tool.runs.text
         let long = p.allActions.contains { $0.action.spec.long == true }
         c.note = (Self.cautions(tool) + ["Kermo asks once for each new or changed tool. A value goes into a command as a variable, scripts go on stdin, and nothing is left on the server"
             + (long ? " but a long job's: it runs on after Kermo quits, and its log stays in ~/.cache/kermo/ there for 7 days." : ".")]).joined(separator: "\n")

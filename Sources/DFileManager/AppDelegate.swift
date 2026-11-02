@@ -1776,8 +1776,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return await Self.sheet(Self.alert(message, info: info, buttons, default: `default`), on: sheetWindow ?? window)
     }
 
-    /// Tests: answers `choose` instead of a sheet (the message, the buttons, the one ↩ presses); `answeredInfo` is what
-    /// the last one said under its title.
+    /// Tests: answers `choose` and `confirm` instead of a sheet (the message, the buttons, the one ↩ presses);
+    /// `answeredInfo` is what the last one said under its title.
     static var answering: (@MainActor (String, [String], Int?) -> Int)?
     static var answeredInfo = ""
 
@@ -1847,7 +1847,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// one); the index in `c.buttons` — the action 0, Cancel the last. Tests answer it through `answering`, ↩ being
     /// Cancel's index where `c.safe`.
     func confirm(_ c: Confirm, on sheetWindow: NSWindow? = nil) async -> Int {
-        if let answer = Self.answering { return answer(c.title, c.buttons, c.safe ? c.buttons.count - 1 : nil) }
+        if let answer = Self.answering {
+            Self.answeredInfo = [c.runs, c.command, c.note].compactMap { $0 }.joined(separator: "\n")
+            return answer(c.title, c.buttons, c.safe ? c.buttons.count - 1 : nil)
+        }
         if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }
         return await Self.sheet(c.alert(), on: sheetWindow ?? window)
     }

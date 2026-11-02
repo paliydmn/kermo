@@ -3,19 +3,26 @@ import DFMCore
 
 /// A tool's page in the Tools window (Tools PR 4), from a library row: who made it, its version and the hash trust goes
 /// by; what it runs, grouped as "Use the tool…?" shows it; your saved servers — found there or not, used or hidden,
-/// its values set or not (Set Up…). Use on Servers…, Show File, and Edit for yours, Customize for a built-in.
+/// its values set or not (Set Up…). Use on Servers…, Show File, and Edit for yours, Customize for a built-in; Remove
+/// for one in your folder. A catalog's (PR 8): Get, or Update to a newer version there.
 @MainActor
 final class ToolsTool: NSView {
     unowned let app: AppDelegate
     private(set) var tool: LoadedTool
+    /// The catalog's version of it; with a tool not here (`local` false), what Get takes.
+    let offer: ToolCatalogs.Offer?
+    private(set) var local: Bool
     /// ‹ back to the library it came from, named so.
     let back: @MainActor () -> Void
     let from: String
     let stack = NSStackView()
+    /// How Get, Update or Remove went.
+    private(set) var said = ""
     private var kept: [AnyObject] = []
 
-    init(_ app: AppDelegate, _ tool: LoadedTool, from: String, back: @escaping @MainActor () -> Void) {
-        (self.app, self.tool, self.from, self.back) = (app, tool, from, back)
+    init(_ app: AppDelegate, _ tool: LoadedTool, offer: ToolCatalogs.Offer? = nil, from: String, back: @escaping @MainActor () -> Void) {
+        (self.app, self.tool, self.offer, self.from, self.back) = (app, tool, offer, from, back)
+        local = app.tools.library.tools.contains { $0.preset.id == tool.preset.id }
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -43,11 +50,12 @@ final class ToolsTool: NSView {
 
     private final class Flipped: NSView { override var isFlipped: Bool { true } }
 
-    /// Drawn again from the library as it is now (a save, a trust, Use on Servers…) — a customized built-in as yours
-    /// now; a tool gone from it: back.
+    /// Drawn again from the library as it is now (a save, a trust, Use on Servers…, Get) — a customized built-in as
+    /// yours now; a tool gone from it: back.
     func refresh() {
-        guard let now = app.tools.library.tools.first(where: { $0.preset.id == tool.preset.id }) else { return back() }
-        tool = now
+        if let now = app.tools.library.tools.first(where: { $0.preset.id == tool.preset.id }) {
+            (tool, local) = (now, true)
+        } else if local { return back() }
         let p = tool.preset
         kept = []
         let backButton = button("‹ " + from) { [unowned self] in back() }
@@ -62,9 +70,21 @@ final class ToolsTool: NSView {
         edit.toolTip = tool.builtIn ? "A copy of its file in ~/.config/dfilemanager/tools, under the same id: yours takes its place once saved" : nil
         let spacer = NSView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
-        let top = NSStackView(views: [icon, name, spacer, use, file, edit])
+        let catalogs = app.tools.catalogs
+        var buttons = [use, file, edit]
+        if !local, let o = offer {
+            buttons = [button("Get") { [unowned self] in act { await catalogs.get(o, window: $0) } }]
+            buttons[0].keyEquivalent = "\r"
+        } else {
+            if let o = catalogs.update(for: tool) {
+                buttons.insert(button("Update to v\(o.entry.version)") { [unowned self] in act { await catalogs.update(o, window: $0) } }, at: 0)
+                buttons[0].keyEquivalent = "\r"
+            }
+            if !tool.builtIn { buttons.append(button("Remove…") { [unowned self, tool] in act { await catalogs.remove(tool, window: $0) } }) }
+        }
+        let top = NSStackView(views: [icon, name, spacer] + buttons)
         (top.spacing, top.distribution) = (8, .fill)
-        var views: [NSView] = [backButton, top]
+        var views: [NSView] = [backButton, top] + (said.isEmpty ? [] : [ToolsPage.text(said)])
         if let about = p.about { views.append(ToolsPage.text(about, color: .secondaryLabelColor)) }
         views.append(ToolsPage.text(facts.joined(separator: " · "), color: .secondaryLabelColor, size: 11))
         if !tool.warnings.isEmpty {
@@ -79,21 +99,41 @@ final class ToolsTool: NSView {
             views.append(lines)
         }
         views.append(Self.heading("Servers"))
+        guard local else {
+            views.append(ToolsPage.text("Get it to use it: it shows on the servers where its requires finds what it needs.", color: .secondaryLabelColor))
+            return show(views, backButton, top)
+        }
         views.append(servers())
         views.append(ToolsPage.text(p.requires.map { _ in "Found by its requires, in one batch over connections Kermo already has — never a login for it." }
                                     ?? "It has no requires: it shows on every server.", color: .secondaryLabelColor, size: 11))
+        show(views, backButton, top)
+    }
+
+    private func show(_ views: [NSView], _ backButton: NSView, _ top: NSView) {
         stack.setViews(views, in: .top)
         for v in views where v !== backButton { v.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor, constant: -36).isActive = true }
         top.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36).isActive = true
     }
 
-    /// Built in or yours, by whom, its version, and the hash its trust goes by.
+    /// Built in, a catalog's or yours, by whom, its version, and the hash its trust goes by.
     var facts: [String] {
-        let p = tool.preset, hash = String(tool.hash.prefix(12))
-        let trust = tool.builtIn ? "trusted as part of Kermo" : app.tools.trust.trusts(tool) ? "in use — sha256 \(hash)"
+        let p = tool.preset, hash = String(tool.hash.prefix(12)), c = app.tools.catalogs
+        let trust = tool.builtIn ? "trusted as part of Kermo" : !local ? "not got yet" : app.tools.trust.trusts(tool) ? "in use — sha256 \(hash)"
             : app.tools.trust.hashes[p.id] == nil ? "not in use yet — sha256 \(hash)" : "changed since you said to use it — sha256 \(hash)"
-        return [tool.builtIn ? "built into Kermo" : "yours, not reviewed by anyone", p.author.map { "by \($0)" }, p.catalogVersion.map { "version \($0)" },
-                p.sudo == true ? "needs root (sudo)" : nil, trust].compactMap { $0 }
+        let got = c.fetched.tools[p.id].map { g in
+            "from the \(c.sources.first { $0.url == g.source }?.name ?? g.source) catalog" + (c.fetched.pristine(tool) ? "" : ", changed since you got it")
+        }
+        let whose = tool.builtIn ? "built into Kermo" : !local ? offer.map { "in the \($0.source.name) catalog" + ($0.entry.verified == true ? ", verified" : ", community") }
+            : got ?? "yours, not reviewed by anyone"
+        return [whose, p.author.map { "by \($0)" }, p.catalogVersion.map { "version \($0)" }, p.sudo == true ? "needs root (sudo)" : nil, trust].compactMap { $0 }
+    }
+
+    /// Get, Update or Remove; then how it went, over the page drawn again.
+    private func act(_ run: @escaping @MainActor (NSWindow?) async -> String) {
+        Task {
+            said = await run(window)
+            refresh()
+        }
     }
 
     /// A line of what it runs: mono, root and this Mac said after it, a dangerous one red.

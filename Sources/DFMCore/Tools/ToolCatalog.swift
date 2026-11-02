@@ -71,7 +71,7 @@ public enum ToolCatalog {
 
     public struct Refusal: Error, CustomStringConvertible, Equatable {
         public var description: String
-        init(_ s: String) { description = s }
+        public init(_ s: String) { description = s }
     }
 
     /// A path under the folder: plain names — no "..", no hidden file, nothing that means something to a URL.
