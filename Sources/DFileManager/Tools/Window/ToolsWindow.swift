@@ -413,7 +413,7 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
         (self.app, self.mine) = (app, mine)
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
         let columns = mine ? [("tool", "Tool", 200.0), ("about", "About", 260), ("where", "Used", 200)]
-            : [("tool", "Tool", 180.0), ("about", "About", 200), ("where", "Used", 120), ("catalog", "Catalog", 110)]
+            : [("tool", "Tool", 175.0), ("about", "About", 180), ("where", "Used", 115), ("catalog", "Catalog", 120)]
         for (id, title, width) in columns {
             let c = NSTableColumn(identifier: .init(id))
             (c.title, c.width) = (title, width)
@@ -538,7 +538,7 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
     /// What the catalog has of it: its version there, an update, your changes.
     func catalog(_ r: Row) -> String {
         let c = app.tools.catalogs
-        if let t = r.tool, let u = c.update(for: t) { return "update: v\(u.entry.version)" + (t.builtIn || c.fetched.pristine(t) ? "" : " · yours changed") }
+        if let t = r.tool, let u = c.update(for: t) { return "update: v\(u.entry.version)" + (t.builtIn || c.fetched.pristine(t) ? "" : " · changed") }
         guard let t = r.tool else { return r.offer.map { "v\($0.entry.version) · " + ($0.entry.verified == true ? "verified" : "community") } ?? "—" }
         if t.builtIn { return "built in" }
         guard let got = c.fetched.tools[t.preset.id] else { return "yours" }

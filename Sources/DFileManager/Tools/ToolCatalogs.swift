@@ -185,14 +185,14 @@ final class ToolCatalogs {
             defer { try? FileManager.default.removeItem(at: dir) }
             let yours = !now.builtIn && !fetched.pristine(now)
             if yours {
-                var c = Confirm("Replace your “\(name)” with v\(o.entry.version) from the \(o.source.name) catalog?", action: "Replace")
+                var c = Confirm("Replace your “\(now.preset.title)” with v\(o.entry.version) from the \(o.source.name) catalog?", action: "Replace")
                 c.runs = "Your \(file) " + (fetched.tools[o.entry.id] == nil ? "is your own" : "has your changes") + ": it's kept as \(file).bak."
                 (c.others, c.cancel) = (["Compare"], "Keep Mine")
                 ask: while true {
                     switch await app.confirm(c, on: window) {
                     case 0: break ask
                     case 1: await app.diff(.init(path: now.path, name: "yours: \(file)"), .init(path: tool.path, name: "v\(o.entry.version): \(file)"), in: app.active)
-                    default: return "\(name): yours kept"
+                    default: return "\(now.preset.title): yours kept"
                     }
                 }
             }

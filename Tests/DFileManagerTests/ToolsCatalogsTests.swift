@@ -221,7 +221,7 @@ extension ServerLockTests {
         let v3 = try need(c.update(for: mine), "v3")
         asked = []
         AppDelegate.answering = { m, b, _ in asked.append(m); info = AppDelegate.answeredInfo; return b.count - 1 }
-        #expect(await c.update(v3, window: nil) == "Disk: yours kept" && asked == ["Replace your “Disk” with v3 from the Team catalog?"])
+        #expect(await c.update(v3, window: nil) == "My Disk: yours kept" && asked == ["Replace your “My Disk” with v3 from the Team catalog?"])
         #expect(info == "Your disk.json has your changes: it's kept as disk.json.bak." && app.tools.library.tools.contains { $0.preset.title == "My Disk" })
         AppDelegate.answering = { _, _, _ in 0 }
         #expect(await c.update(v3, window: nil) == "Disk is v3 now — what was there is kept as disk.json.bak")
