@@ -235,6 +235,17 @@ private func systemSamples() throws -> [ToolSample] {
     #expect(raised.map(\.found) == [true, true], "the first sample: how things stood, not a change")
     let more: ToolRecord = ["rows": .array([.object(["unit": "web", "last_status": "failed"]), .object(["unit": "db", "last_status": "failed"])])]
     #expect(ToolEvents.raised([down], in: sample(5, more), previous: sample(0, rows)).map { "\($0.message) \($0.found)" } == ["db is down false"], "a row that comes failed is a change")
+    // A row set seen before a sleep longer than the hour (its sample trimmed) isn't first again; watching anew, it is.
+    var h = ToolHistory()
+    _ = h.add(sample(0, ["rows": .array([.object(["unit": "web", "last_status": "ready"])])]), metrics: [:], now: at(0))
+    h.mark(.asleep, at: at(4000))
+    let woke = sample(4005, ["rows": .array([.object(["unit": "web", "last_status": "failed"])])])
+    _ = h.add(woke, metrics: [:], now: at(4005))
+    #expect(h.carriedBefore.isEmpty && ToolEvents.raised([down], in: woke, previous: h.previous, carrying: h.carriedBefore, seen: h.seenBefore).map(\.found) == [false],
+            "it failed while the Mac slept: a change")
+    h.forgetLast()
+    _ = h.add(woke, metrics: [:], now: at(4010))
+    #expect(h.last?.at == at(4005) && h.previous == nil && ToolEvents.raised([down], in: woke, previous: h.previous, carrying: h.carriedBefore, seen: h.seenBefore).map(\.found) == [true])
     let state = ToolEvent(id: "state", path: "state", when: "is", level: "critical", value: "down")
     #expect(ToolEvents.raised([state], in: sample(0, ["state": "down"]), previous: nil).map(\.found) == [true]
             && ToolEvents.raised([state], in: sample(5, ["state": "down"]), previous: sample(0, ["state": "up"])).map(\.found) == [false])

@@ -190,6 +190,10 @@ public struct ToolHistory: Sendable {
     public private(set) var carrying: [String: ToolSample] = [:]
     /// `carrying` as it stood before `last` came: what `last`'s rows are compared with.
     public private(set) var carriedBefore: [String: ToolSample] = [:]
+    /// The row sets carried since watching started, as they stood before `last` came — kept through the hour's trim,
+    /// so a row set comes "first" only once a watch (`ToolEvents.raised`'s `found`).
+    public private(set) var seenBefore: Set<String> = []
+    private var seen: Set<String> = []
     public var keep: TimeInterval = 3600
 
     public init(keep: TimeInterval = 3600) { self.keep = keep }
@@ -204,8 +208,12 @@ public struct ToolHistory: Sendable {
             for (key, n) in v { series[id, default: [:]][key, default: []].append(ToolPoint(at: sample.at, value: n)) }
         }
         if !list { (previous, last) = (last, sample) }
-        carriedBefore = carrying
-        for (k, v) in sample.record { if case .array = v { carrying[k] = sample } }
+        (carriedBefore, seenBefore) = (carrying, seen)
+        for (k, v) in sample.record {
+            guard case .array = v else { continue }
+            carrying[k] = sample
+            seen.insert(k)
+        }
         trim(before: sample.at.addingTimeInterval(-keep))
         return all
     }
@@ -214,6 +222,11 @@ public struct ToolHistory: Sendable {
     public func carried(_ path: String) -> ToolSample? { carrying[path == "list" ? "rows" : path] }
     /// The rows of `path` as the latest sample that carried them had them.
     public func rows(_ path: String) -> [ToolRecord] { carried(path)?.rows(path) ?? [] }
+
+    /// Watching stopped: the next sample is a first one again — its events say how things stood (`found`); the series stay.
+    public mutating func forgetLast() {
+        (last, previous, carrying, carriedBefore, seen, seenBefore) = (nil, nil, [:], [:], [], [])
+    }
 
     /// No data from `at` on: a gap point on every series (one per stretch) — `metrics`' only, where one source of
     /// several stopped — till the next value.
@@ -413,9 +426,11 @@ public enum ToolEvents {
     /// nothing was added to nothing), marked `found`. `if` / `unless`: a field that must be non-empty / empty. `scope`: the names
     /// around the sample (vars, Kermo's). `carrying`: for each row set, the last sample before this one that had it
     /// (`ToolHistory.carriedBefore`) — rows that come every few lines are compared with the last that came, else a
-    /// failed unit would be "added" again each time the set came round; nil: `previous` is it.
+    /// failed unit would be "added" again each time the set came round; nil: `previous` is it. `seen`: the row sets
+    /// carried since watching started (`ToolHistory.seenBefore`) — a set not among them comes first now; nil: one
+    /// with no earlier sample does.
     public static func raised(_ events: [ToolEvent], in sample: ToolSample, previous: ToolSample?, carrying: [String: ToolSample]? = nil,
-                              scope: ToolTemplate.Scope = .init()) -> [ToolEventRecord] {
+                              seen: Set<String>? = nil, scope: ToolTemplate.Scope = .init()) -> [ToolEventRecord] {
         var out: [ToolEventRecord] = []
         func fits(_ e: ToolEvent, _ r: ToolRecord) -> Bool {
             var s = scope
@@ -441,7 +456,7 @@ public enum ToolEvents {
                     switch e.when {
                     case "added": if was != nil, old == nil { raise(e, r) }
                     case "left": if let old, let f = e.field, old[f] == e.from, value != e.from { raise(e, r) }
-                    case "is": if value == e.value, old.map({ $0[e.field ?? ""] != e.value }) ?? true { raise(e, r, found: was == nil) }
+                    case "is": if value == e.value, old.map({ $0[e.field ?? ""] != e.value }) ?? true { raise(e, r, found: seen.map { !$0.contains(rows == "list" ? "rows" : rows) } ?? (was == nil)) }
                     case "changed": if let old, let p = e.path, old[p] != r[p] { raise(e, r) }
                     case "increased": if let old, let p = e.path, let a = r[p]?.number, let b = old[p]?.number, a > b { raise(e, r) }
                     default: break

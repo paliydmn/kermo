@@ -1207,7 +1207,8 @@ extension ServerLockTests {
     }
 
     /// A critical event that only says how things stood when watching started — a unit failed days ago — is listed
-    /// and not notified, at every launch and every Watch; the same state coming later is a change, and notifies.
+    /// and not notified, at every launch and every Watch (a second one too); the same state coming later is a change,
+    /// and notifies.
     @Test func howThingsStoodIsListedNotNotified() async throws {
         let (app, _, _, done) = try toolsApp()
         let bench = try ToolsBench(), quick = Quick(app), posts = Posts()
@@ -1225,13 +1226,19 @@ extension ServerLockTests {
         app.tools.monitor.watch(try toolNamed(app, "state"), on: .local(), true)
         await toolsUntil { app.tools.monitor.tool("state", on: .local())?.events.isEmpty == false }
         guard let t = app.tools.monitor.tool("state", on: .local()) else { Issue.record("not watched"); return }   // #require would reflect the app
-        try await Task.sleep(for: .milliseconds(300))
+        try await Task.sleep(for: .milliseconds(700))
         #expect(t.events.map(\.message) == ["it's down"] && t.events.first?.found == true && posts.sent.isEmpty, "\(posts.sent.map(\.body))")
         try Data("up".utf8).write(to: URL(fileURLWithPath: bench.dir + "/state"))
         try await Task.sleep(for: .milliseconds(700))
         try Data("down".utf8).write(to: URL(fileURLWithPath: bench.dir + "/state"))
         await toolsUntil { !posts.sent.isEmpty }
         #expect(posts.sent.map(\.body) == ["State: it's down"] && t.events.first?.found == false, "\(posts.sent.map(\.body))")
+        app.tools.monitor.watch(t.loaded, on: .local(), false)   // stopped and watched again, still down: how it stood
+        let listed = t.events.count
+        app.tools.monitor.watch(t.loaded, on: .local(), true)
+        await toolsUntil { t.events.count > listed }
+        try await Task.sleep(for: .milliseconds(700))
+        #expect(t.events.first?.found == true && posts.sent.count == 1, "\(posts.sent.map(\.body))")
         app.tools.monitor.watch(t.loaded, on: .local(), false)
     }
 }
