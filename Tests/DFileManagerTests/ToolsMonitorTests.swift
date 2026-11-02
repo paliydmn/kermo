@@ -513,8 +513,9 @@ extension ServerLockTests {
         func kept() -> Any? { UserDefaults.standard.dictionary(forKey: "toolsTableHeights")?["pulse.procs"] }
         let rowsTall = scroll.frame.height
         grip.mouseDown(with: mouse(.leftMouseDown, 300))
-        grip.mouseUp(with: mouse(.leftMouseUp, 300))
-        #expect(kept() == nil, "a click keeps nothing")
+        grip.mouseDragged(with: mouse(.leftMouseDragged, 299))
+        grip.mouseUp(with: mouse(.leftMouseUp, 299))
+        #expect(kept() == nil, "a click, though it wobbled a point, keeps nothing")
         grip.mouseDown(with: mouse(.leftMouseDown, 300))
         grip.mouseDragged(with: mouse(.leftMouseDragged, 280))
         grip.mouseDragged(with: mouse(.leftMouseDragged, 260))

@@ -289,8 +289,10 @@ struct OneChart: View {
     private let name: String
     /// The height you dragged it to; nil: as tall as its rows.
     private var chosen: CGFloat?
-    /// The height when the drag began.
-    private var dragFrom: CGFloat?
+    /// The height when the press began.
+    private var dragFrom: CGFloat = 0
+    /// The legacy scroller's height under a table wider than the block, the last layout.
+    private var bar: CGFloat = 0
     private var kept: [AnyObject] = []
     private var tasks: [String: Task<Void, Never>] = [:]
 
@@ -337,15 +339,14 @@ struct OneChart: View {
         scroll.hasHorizontalScroller = true   // a narrow window: the buttons stay reachable
         scroll.autohidesScrollers = true
         scroll.verticalScrollElasticity = .none
+        grip.began = { [unowned self] in dragFrom = height.constant }
         grip.drag = { [unowned self] by, done in
-            let from = dragFrom ?? height.constant
-            dragFrom = done ? nil : from
-            chosen = max(oneRow, from + by)
+            chosen = max(oneRow, dragFrom + by)
             if done { keep() }
             needsLayout = true
         }
         grip.reset = { [unowned self] in
-            (chosen, dragFrom) = (nil, nil)
+            chosen = nil
             keep()
             needsLayout = true
         }
@@ -370,7 +371,7 @@ struct OneChart: View {
         let rest = table.tableColumns.dropFirst().reduce(0) { $0 + $1.width } + CGFloat(table.tableColumns.count) * table.intercellSpacing.width
         let width = max(first.minWidth, scroll.contentView.bounds.width - rest)
         if abs(first.width - width) > 0.5 { first.width = width }
-        let bar: CGFloat = width + rest > scroll.contentView.bounds.width + 0.5 && scroll.scrollerStyle == .legacy
+        bar = width + rest > scroll.contentView.bounds.width + 0.5 && scroll.scrollerStyle == .legacy
             ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
         let want = chosen ?? fit + bar
         scroll.hasVerticalScroller = want < fit + bar - 0.5
@@ -378,10 +379,7 @@ struct OneChart: View {
     }
 
     /// The least a drag leaves: the header and one row, and a scroller under them where one shows.
-    private var oneRow: CGFloat {
-        let bar = table.enclosingScrollView?.horizontalScroller.map { $0.isHidden ? 0 : $0.frame.height } ?? 0
-        return (table.headerView?.frame.height ?? 23) + table.rowHeight + table.intercellSpacing.height + 2 + bar
-    }
+    private var oneRow: CGFloat { (table.headerView?.frame.height ?? 23) + table.rowHeight + table.intercellSpacing.height + 2 + bar }
 
     /// The dragged height kept for the next time (once, as the drag ends), or dropped.
     private func keep() {
@@ -598,13 +596,14 @@ struct OneChart: View {
 
 /// The handle under a dashboard table: dragged up or down, the table's height goes with it — by how far the pointer
 /// went since the press, so no step is lost however few layouts there are; a double-click, back to its rows (the
-/// rest of that click drags nothing).
+/// rest of that click drags nothing). A press that moves less than 3 pt is a click: it keeps nothing.
 @MainActor final class ToolsGrip: NSView {
+    /// A press: the height to drag from.
+    var began: (() -> Void)?
     /// How much taller than at the press; `done`: let go.
     var drag: ((_ by: CGFloat, _ done: Bool) -> Void)?
     var reset: (() -> Void)?
     private var start: CGFloat?
-    /// A press that didn't move keeps nothing.
     private var moved = false
 
     override init(frame: NSRect) {
@@ -625,12 +624,14 @@ struct OneChart: View {
 
     override func mouseDown(with e: NSEvent) {
         (start, moved) = (e.clickCount >= 2 ? nil : e.locationInWindow.y, false)
-        if e.clickCount >= 2 { reset?() }
+        if e.clickCount >= 2 { reset?() } else { began?() }
     }
     override func mouseDragged(with e: NSEvent) {
         guard let start else { return }
+        let by = start - e.locationInWindow.y   // the window's y grows up: down is taller
+        guard moved || abs(by) >= 3 else { return }
         moved = true
-        drag?(start - e.locationInWindow.y, false)   // the window's y grows up: down is taller
+        drag?(by, false)
     }
     override func mouseUp(with e: NSEvent) {
         if let start, moved { drag?(start - e.locationInWindow.y, true) }
