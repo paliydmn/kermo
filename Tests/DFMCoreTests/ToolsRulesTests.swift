@@ -232,6 +232,12 @@ private func systemSamples() throws -> [ToolSample] {
     let rows: ToolRecord = ["rows": .array([.object(["unit": "api", "last_status": "failed", "active_version": 12]), .object(["unit": "web", "last_status": "failed"])])]
     let raised = ToolEvents.raised([down, failed], in: sample(0, rows), previous: nil)
     #expect(raised.map { "\($0.id) \($0.message)" } == ["down web is down", "failed api: v12 still serves"])
+    #expect(raised.map(\.found) == [true, true], "the first sample: how things stood, not a change")
+    let more: ToolRecord = ["rows": .array([.object(["unit": "web", "last_status": "failed"]), .object(["unit": "db", "last_status": "failed"])])]
+    #expect(ToolEvents.raised([down], in: sample(5, more), previous: sample(0, rows)).map { "\($0.message) \($0.found)" } == ["db is down false"], "a row that comes failed is a change")
+    let state = ToolEvent(id: "state", path: "state", when: "is", level: "critical", value: "down")
+    #expect(ToolEvents.raised([state], in: sample(0, ["state": "down"]), previous: nil).map(\.found) == [true]
+            && ToolEvents.raised([state], in: sample(5, ["state": "down"]), previous: sample(0, ["state": "up"])).map(\.found) == [false])
     let changed = ToolEvent(id: "v", path: "active_version", rows: "list", key: "unit", when: "increased", message: "{unit} v{active_version}")
     let later: ToolRecord = ["rows": .array([.object(["unit": "api", "last_status": "ready", "active_version": 13])])]
     #expect(ToolEvents.raised([changed], in: sample(5, later), previous: sample(0, rows)).map(\.message) == ["api v13"])

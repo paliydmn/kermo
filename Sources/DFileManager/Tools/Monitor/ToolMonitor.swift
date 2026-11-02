@@ -180,8 +180,8 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         }, nil).takeRetainedValue(), .defaultMode)
     }()
 
-    /// Watched servers' keys: in use, so their connections stay up (`AppDelegate.idleServers`).
-    var inUse: Set<String> { Set(servers.values.filter(\.watched).map(\.key)) }
+    /// Watched servers' keys, and those a live tab shows: in use, so their connections stay up (`AppDelegate.idleServers`).
+    var inUse: Set<String> { Set(servers.values.filter(\.wanted).map(\.key)) }
 
     func server(_ t: SFTPTarget) -> Server? { servers[ServerRow.key(t.asUser)] }
     func tool(_ id: String, on t: SFTPTarget) -> Tool? { server(t)?.tools[id] }
@@ -389,7 +389,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         }
         let raised = ToolEvents.raised((p.events ?? []).filter { ($0.rows == "list") == list }, in: sample, previous: t.history.previous,
                                        carrying: t.history.carriedBefore, scope: app.tools.scope(p, on: s.saved, s.target))
-        for e in raised where e.level == "critical" { deliver(s, tool: t, id: "\(s.key) \(p.id) \(e.id)", e.message) }
+        for e in raised where e.level == "critical" && !e.found { deliver(s, tool: t, id: "\(s.key) \(p.id) \(e.id)", e.message) }   // a change, not how it was
         fresh += raised
         if let e = ToolEvents.scripted(sample) {
             if e.level == "ok" { t.open.remove(e.id) }
