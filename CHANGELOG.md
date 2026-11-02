@@ -40,6 +40,7 @@ Release:
 - **＋ New Tunnel…** over a server's tunnels in a panel did nothing.
 - Tools: a long job that ended with a code its tool counts as success (`exitOk`) showed ✕; a list of files with a header told "ago" by this Mac's clock, not the server's; the Tools window, opened anew on a server whose first tab is live (Deployments), drew that tab without starting it.
 - In search and a server's overview, a long subtitle no longer wraps into the row below, and a long description no longer pushes a row's name out.
+- Tools window: a dashboard's table showed one or two of its rows when scroll bars are always shown — the scroll bar hid the rest; each table now shows all its rows, and a grip under it makes it taller or shorter. The sidebar can be made wider or narrower, and WATCHED's bars take half the room, so “disk” fits; the page of a server that isn't connected starts at the top instead of spreading down the window.
 
 ## [1.6] - 2026-10-28
 

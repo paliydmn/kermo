@@ -92,6 +92,7 @@ final class ToolsPage: NSView, RowList {
         outputButton.isHidden = true
         let foot = NSStackView(views: [result, outputButton])
         body.setContentHuggingPriority(.init(1), for: .vertical)   // the body takes the height: a live tab's dashboard fills it, scrolling inside
+        for v in [top, line, tabRow, foot] { v.setContentHuggingPriority(.required, for: .vertical) }   // none of the rest
         let stack = NSStackView(views: [top, line, tabRow, body, foot])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -226,8 +227,14 @@ final class ToolsPage: NSView, RowList {
             views = [Self.text("No tools on \(server.title).", size: 15, bold: true),
                      Self.text("＋ above uses one of the library's here; Use on Servers… in the library chooses where each one is used.", color: .secondaryLabelColor)]
         }
-        body.setViews(views, in: .top)
-        if let v = views.first as? ToolsLive { NSLayoutConstraint.activate(v.fit) }   // back from another tab: its constraints went with it
+        if let v = views.first as? ToolsLive {
+            body.setViews(views, in: .top)
+            NSLayoutConstraint.activate(v.fit)   // back from another tab: its constraints went with it
+        } else {
+            let rest = NSView()   // the height left under them: they start at the top
+            rest.setContentHuggingPriority(.init(1), for: .vertical)
+            body.setViews(views + [rest], in: .top)
+        }
     }
 
     private func live(_ tool: LoadedTool) -> ToolsLive {

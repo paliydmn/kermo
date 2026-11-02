@@ -502,6 +502,15 @@ extension ServerLockTests {
         weak var hosting = charts.hosting
         page?.window?.layoutIfNeeded()
         #expect(view.frame.height > 200 && view.frame.width > 300, "the live tab takes the page's body: \(view.frame)")
+        // Its grip: dragged, the table as tall as left (kept); a double-click, back to its rows.
+        let grip = try #require(table.subviews.first?.subviews.compactMap { $0 as? ToolsGrip }.first), scroll = try #require(table.table.enclosingScrollView)
+        let rowsTall = scroll.frame.height
+        grip.dragged?(40)
+        page?.window?.layoutIfNeeded()
+        #expect(abs(scroll.frame.height - rowsTall - 40) < 1 && UserDefaults.standard.dictionary(forKey: "toolsTableHeights")?["pulse.procs"] != nil, "\(scroll.frame.height) \(rowsTall)")
+        grip.reset?()
+        page?.window?.layoutIfNeeded()
+        #expect(abs(scroll.frame.height - rowsTall) < 1 && UserDefaults.standard.dictionary(forKey: "toolsTableHeights")?["pulse.procs"] == nil)
         #expect(hosting?.window != nil && charts.range.segmentCount == 3 && charts.range.selectedSegment == 0)
         let d = charts.model.data
         #expect(d.charts.map(\.title) == ["CPU", "Ticks"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95 && d.charts[1].warn == nil)

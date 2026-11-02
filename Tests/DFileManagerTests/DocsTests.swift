@@ -38,7 +38,7 @@ private func text(_ path: String) throws -> String { try String(contentsOf: root
 private let keptByTheApp: Set<String> = [
     "folderSort", "lastMask", "listSort", "monitorSnooze", "panelPaths", "placeLastList", "panelSession", "panelTabIndex", "panelTabs", "recentFilters", "recentServers", "recentTags",
     "runOnServers", "runOnServersCommand", "searchCase", "searchHidden", "searchFrecency", "searchName", "searchRecent", "searchSpotlight",
-    "searchTag", "searchText", "showHidden", "showPerms", "sidebarFolded", "sidebarVisible", "splitSize", "sshTabs", "terminalGroups", "theme",
+    "searchTag", "searchText", "showHidden", "showPerms", "sidebarFolded", "sidebarVisible", "splitSize", "sshTabs", "terminalGroups", "theme", "toolsTableHeights",
     "updateChecked", "updateLatest", "updateSkipped",
     "viewerLineNumbers",
 ]

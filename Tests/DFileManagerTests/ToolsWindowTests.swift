@@ -39,6 +39,11 @@ extension ServerLockTests {
         #expect(w.rows.first == .header("SERVERS") && w.rows.contains(.library(mine: true)))
         #expect(page.body.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue }.first == "localhost isn't connected.")
         #expect(buttons(page.body).map(\.title) == ["Connect"] && bench.trips == 0, "nothing logs in to draw a page")
+        w.window.setContentSize(NSSize(width: 900, height: 800))
+        w.window.contentView?.layoutSubtreeIfNeeded()
+        let said = try #require(page.body.arrangedSubviews.first), plus = page.add
+        #expect(page.bounds.height > 700 && page.convert(said.bounds, from: said).maxY > page.bounds.height - 140
+                && page.convert(plus.bounds, from: plus).maxY > page.bounds.height - 110, "from the top left, not spread down the page")
 
         up = true
         page.refresh()

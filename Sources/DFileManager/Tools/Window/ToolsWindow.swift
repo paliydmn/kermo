@@ -7,7 +7,7 @@ import DFMCore
 /// watched in the background, problems first, each with its tools' summary; the rest under OTHER SERVERS. The windows
 /// open at quit come back after a restart (`Session.tools`).
 @MainActor
-final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
+final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSplitViewDelegate {
     /// The Tools window; and servers' pages in windows of their own.
     private(set) static var main: ToolsWindow?
     private(set) static var alone: [ToolsWindow] = []
@@ -117,20 +117,22 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
             scroll.documentView = sidebar
             scroll.hasVerticalScroller = true
             scroll.drawsBackground = false
-            let side = NSVisualEffectView()
+            let side = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 230, height: 560))
             side.material = .sidebar
             side.blendingMode = .behindWindow
-            for (v, inside) in [(scroll, side as NSView)] {
-                v.translatesAutoresizingMaskIntoConstraints = false
-                inside.addSubview(v)
-                NSLayoutConstraint.activate([v.leadingAnchor.constraint(equalTo: inside.leadingAnchor), v.trailingAnchor.constraint(equalTo: inside.trailingAnchor),
-                                             v.topAnchor.constraint(equalTo: inside.topAnchor), v.bottomAnchor.constraint(equalTo: inside.bottomAnchor)])
-            }
-            let root = NSStackView(views: [side, content])
-            (root.spacing, root.distribution) = (0, .fill)
-            content.setContentHuggingPriority(.init(1), for: .horizontal)
-            side.widthAnchor.constraint(equalToConstant: 230).isActive = true
-            window.contentView = root
+            scroll.translatesAutoresizingMaskIntoConstraints = false
+            side.addSubview(scroll)
+            NSLayoutConstraint.activate([scroll.leadingAnchor.constraint(equalTo: side.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: side.trailingAnchor),
+                                         scroll.topAnchor.constraint(equalTo: side.topAnchor), scroll.bottomAnchor.constraint(equalTo: side.bottomAnchor)])
+            // The sidebar as wide as you drag it (kept by its autosave name); a wider window widens the page.
+            let split = NSSplitView(frame: NSRect(x: 0, y: 0, width: 900, height: 560))
+            (split.isVertical, split.dividerStyle, split.delegate) = (true, .thin, self)
+            content.frame = NSRect(x: 231, y: 0, width: 669, height: 560)
+            split.addSubview(side)
+            split.addSubview(content)
+            split.autosaveName = "ToolsSidebar"
+            if !(180...420).contains(side.frame.width) || content.frame.width < 200 { split.setPosition(230, ofDividerAt: 0) }   // a kept width out of bounds
+            window.contentView = split
             reload()
         }
         window.center()
@@ -170,6 +172,11 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         default: nil
         }
     }
+
+    func splitView(_ s: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { 180 }
+    func splitView(_ s: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { 420 }
+    /// A resized window keeps the sidebar's width: the page takes the change.
+    func splitView(_ s: NSSplitView, shouldAdjustSizeOfSubview v: NSView) -> Bool { v === content }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool { if case .header = rows[row] { true } else { false } }
@@ -278,7 +285,7 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
                     bar.criticalValue = item.crit ?? item.max + 1
                     bar.controlSize = .mini
                     bar.isEditable = false
-                    bar.widthAnchor.constraint(equalToConstant: 34).isActive = true
+                    bar.widthAnchor.constraint(equalToConstant: 17).isActive = true
                     bar.toolTip = "\(item.label) \(item.text)"
                     bar.setAccessibilityLabel("\(item.label) \(item.text)")
                     let label = Self.small(item.label.lowercased())
