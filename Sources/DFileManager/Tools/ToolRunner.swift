@@ -591,7 +591,7 @@ final class ToolRunner {
                                           action: a.spec.id, title: title, row: row?.title, rowID: id, record: row?.record,
                                           values: scope.levels[0].filter { inputs.contains($0.key) }.mapValues(\.text)
                                             .merging(uploads.map { ($0.input, $0.local) }) { $1 }, root: root, pid: pid, started: Date(),
-                                          skew: ran.skew), payload: job, show: output == .window || output == .follow)
+                                          skew: ran.skew, exitOk: a.run.exitOk), payload: job, show: output == .window || output == .follow)
                     return said
                 },
                 read: nil as (@Sendable ([String: String], CancelFlag) throws -> Bool)?,

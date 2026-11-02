@@ -394,4 +394,29 @@ extension ServerLockTests {
         let none = try await source.read(CancelFlag())
         #expect(none.rows.isEmpty && none.empty == "No units in \(base)")
     }
+
+    /// A list of files has no run of its own: its `ago` goes by the server's clock as its header's run tells it — a
+    /// server two hours behind shows a file written three hours ago (here) as an hour ago — and the header says the
+    /// clock is off.
+    @Test func aListOfFilesTellsAgoByTheServersClock() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done() }
+        let dir = bench.dir + "/units/api", fm = FileManager.default
+        try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let written = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-3 * 3600 - 60))
+        try Data(#"{"updated_at": "\#(written)"}"#.utf8).write(to: URL(fileURLWithPath: dir + "/state.json"))
+        try Data("#!/bin/sh\necho $(( $(/bin/date +%s) - 7200 ))\n".utf8).write(to: URL(fileURLWithPath: bench.dir + "/bin/date"))
+        chmod(bench.dir + "/bin/date", 0o755)
+        try fm.createDirectory(atPath: bench.dir + "/own", withIntermediateDirectories: true)
+        try Data(#"""
+            { "schema": 1, "id": "units", "title": "Units", "header": "echo serving",
+              "list": { "files": "\#(bench.dir)/units/*/state.json", "format": "json", "name": "unit", "key": "{unit}", "title": "{unit}", "subtitle": ["{updated_at:ago}"] } }
+            """#.utf8).write(to: URL(fileURLWithPath: bench.dir + "/own/units.json"))
+        _ = app.tools.reload()
+        app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == "units" }))
+        let t = SFTPTarget.local()
+        let c = try await ToolListSource(app, try toolNamed(app, "units"), SavedServer(target: t), t).read(CancelFlag())
+        #expect(c.rows.map(\.subtitle) == ["1 h ago"] && c.header == "serving · ⚠ the server's clock is 120 min behind", "\(c.rows.map(\.subtitle)) \(c.header ?? "")")
+    }
 }

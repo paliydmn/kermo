@@ -503,9 +503,14 @@ public struct ToolPreset: Sendable, Hashable, Codable {
 
     /// Its stream or poll (§8.1): what watching runs.
     public var source: ToolSource? { stream ?? poll }
-    /// Whether it can be watched, or live on a tab: a stream, a poll or checks from this Mac (`http`), and `watch`
-    /// saying how often.
-    public var watchable: Bool { watch != nil && (source != nil || http != nil) }
+    /// Whether it can be watched, or live on a tab: a stream, a poll, checks from this Mac (`http`) or a list watching
+    /// reads, and `watch` saying how often.
+    public var watchable: Bool { watch != nil && (source != nil || http != nil || watchesList) }
+    /// Whether watching reads its list (§8.7): a metric, an event or a dashboard block takes its rows (`rows: "list"`).
+    public var watchesList: Bool {
+        func takes(_ blocks: [ToolBlock]) -> Bool { blocks.contains { $0.table == "list" || ($0.counts ?? []).contains { $0.rows == "list" } || takes($0.row ?? []) } }
+        return list != nil && ((metrics ?? [:]).values.contains { $0.rows == "list" } || (events ?? []).contains { $0.rows == "list" } || takes(dashboard ?? []))
+    }
 
     /// A one-command tool's (§1) command as an action — what its Tools ▸ item and its place row run; nil for others.
     public var commandAction: ToolAction? {

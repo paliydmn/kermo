@@ -56,9 +56,10 @@ public enum ToolExec {
 
     /// A `files` list read over SFTP (§3.1), in one session that counts as a channel: as root where the tool runs as
     /// root — dpl's `deploy.json` is 0600 — through the server's sudo, as a root panel's. A file or folder that can't be
-    /// read throws with its path; one that isn't there is left out.
+    /// read throws with its path; one that isn't there is left out. `kept`: watching's session, kept from one read to
+    /// the next (its target is the session's: as root or not).
     public static func files(_ list: ToolList, of p: ToolPreset, _ scope: ToolTemplate.Scope, on t: SFTPTarget, env: [String: String],
-                             cancel: CancelFlag) throws -> ToolRecords {
+                             cancel: CancelFlag, kept: KeptSession? = nil) throws -> ToolRecords {
         func gone<T>(_ path: String, _ body: () throws -> T) throws -> T? {
             do {
                 return try body()
@@ -69,7 +70,7 @@ public enum ToolExec {
             }
         }
         return try channel(t.asRoot(false), cancel: cancel) {
-            try SFTP.session(t.asRoot(list.run.sudo ?? p.sudo ?? false), env: env, cancel: cancel, on: nil) { c in
+            try SFTP.session(t.asRoot(list.run.sudo ?? p.sudo ?? false), env: env, cancel: cancel, on: kept) { c in
                 try list.records(scope, list: { dir in try gone(dir) { try c.list(dir).map { ($0.name, $0.attrs.kind) } } },
                                  read: { path in try gone(path) { try c.read(path, max: 1 << 20) } })   // ponytail: a file's first MB — state files are small
             }

@@ -124,11 +124,12 @@ final class ToolListSource: ListSource {
             }
             // The header and the version (once a session) say something above the rows.
             let extra = header ? [heading, versionKnown ? nil : p.version.map { ToolRun(command: .one($0.command)) }] : []
-            var said = extra.map { _ in String?.none }
+            var said = extra.map { _ in String?.none }, heard: TimeInterval?
             func first(_ text: String) -> String? { text.split(whereSeparator: \.isNewline).first.map { String($0.prefix(200)) } }
             func one(_ run: ToolRun) -> String? {
                 guard let r = try? ToolRunner.exec(run, of: tool, scope, on: target, timeout: run.timeout ?? 10, env: env, cancel: cancel).ran,
                       r.stopped == nil, run.succeeded(r.status) else { return nil }
+                heard = heard ?? r.skew   // the server's clock, for a list of files (no run of its own)
                 return first(r.text)
             }
             guard let list, rows else {   // a launcher: its actions are its rows
@@ -140,8 +141,8 @@ final class ToolListSource: ListSource {
                 do { records = try ToolExec.files(list, of: p, scope, on: target, env: env, cancel: cancel) } catch let e as SFTPError where e.code != nil {
                     throw Failed(message: "\(title) on \(server): \(e.localizedDescription)", output: "")
                 }
-                (output, skew) = (records.unmatched.joined(separator: "\n"), nil)
                 for (i, run) in extra.enumerated() { said[i] = run.flatMap(one) }
+                (output, skew) = (records.unmatched.joined(separator: "\n"), heard)
             } else {
                 var r: ToolExec.Ran
                 let together = [list.run] + extra.compactMap { $0 }

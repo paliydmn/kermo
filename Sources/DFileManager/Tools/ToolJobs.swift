@@ -24,6 +24,8 @@ struct ToolJob: Codable, Equatable {
     /// The server's clock minus this Mac's at the start.
     var skew: Double?
     var exit: Int32?
+    /// The action's `exitOk`: the codes that are ✓ (0 when none).
+    var exitOk: [Int]?
     var ended: Date?
     /// How it went, as the card and the line under the list say it.
     var said: String?
@@ -33,7 +35,7 @@ struct ToolJob: Codable, Equatable {
     var unseen: Bool?
 
     var running: Bool { ended == nil }
-    var ok: Bool { exit == 0 }   // ponytail: `exitOk` of the action isn't kept; 0 is ✓
+    var ok: Bool { exit.map { (exitOk ?? [0]).contains(Int($0)) } ?? false }
     /// "Upgrade dpl", "Deploy api": the action, its row.
     var name: String { title.replacingOccurrences(of: "…", with: "") + (row.map { " \($0)" } ?? "") }
 }

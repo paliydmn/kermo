@@ -21,6 +21,12 @@ private func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
     _ = s.add(["cpu": ["": 5]], at: at(5000))
     #expect(s.mark(.reconnecting, at: at(5001)).count == 2, "values came: a new stretch")
     #expect(s.flush().isEmpty)
+
+    // A list read beside a silent stream (dpl): its values go into the slot, the stream's gap stays one line.
+    var dpl = ToolSlots(tool: "dpl")
+    #expect(dpl.mark(.noAnswer, at: at(10)).map(\.gap) == [.noAnswer])
+    _ = dpl.add(["apps": ["all": 7]], at: at(20), ends: false)
+    #expect(dpl.mark(.noAnswer, at: at(30)).isEmpty && dpl.flush().first?.v?["apps"]?["all"] == [7, 7, 7], "one gap line a stretch; the list's values kept")
 }
 
 @Test func slotsGoToADayFileAndAWeekIsKept() throws {
