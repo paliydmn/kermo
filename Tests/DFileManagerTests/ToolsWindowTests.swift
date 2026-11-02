@@ -44,6 +44,14 @@ extension ServerLockTests {
         let said = try #require(page.body.arrangedSubviews.first), plus = page.add
         #expect(page.bounds.height > 700 && page.convert(said.bounds, from: said).maxY > page.bounds.height - 140
                 && page.convert(plus.bounds, from: plus).maxY > page.bounds.height - 110, "from the top left, not spread down the page")
+        // The sidebar keeps its width as the window widens; a narrow window narrows it before the page.
+        let side = try #require(w.sidebar.enclosingScrollView), wide = side.frame.width
+        w.window.setContentSize(NSSize(width: 1300, height: 800))
+        w.window.contentView?.layoutSubtreeIfNeeded()
+        #expect(abs(side.frame.width - wide) < 1 && (180...420).contains(side.frame.width), "\(side.frame.width) \(wide)")
+        w.window.setContentSize(NSSize(width: 520, height: 800))
+        w.window.contentView?.layoutSubtreeIfNeeded()
+        #expect(page.frame.width >= 299 && side.frame.width >= 179, "\(page.frame.width) \(side.frame.width)")
 
         up = true
         page.refresh()

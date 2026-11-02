@@ -283,13 +283,14 @@ struct OneChart: View {
     private let height: NSLayoutConstraint
     /// The header and the rows; a legacy horizontal scroller adds its height (`layout`).
     private var fit: CGFloat = 48
-    /// "<tool>.<table>": what its dragged height is kept by.
+    /// Under the table: its height as you drag it.
+    let grip = ToolsGrip()
+    /// "<tool>.<table>": what its dragged height is kept by (`toolsTableHeights`).
     private let name: String
-    /// Dragged heights, by `name` (`toolsTableHeights`).
-    private static var heights: [String: Double] {
-        get { UserDefaults.standard.dictionary(forKey: "toolsTableHeights") as? [String: Double] ?? [:] }
-        set { UserDefaults.standard.set(newValue, forKey: "toolsTableHeights") }
-    }
+    /// The height you dragged it to; nil: as tall as its rows.
+    private var chosen: CGFloat?
+    /// The height when the drag began.
+    private var dragFrom: CGFloat?
     private var kept: [AnyObject] = []
     private var tasks: [String: Task<Void, Never>] = [:]
 
@@ -301,6 +302,7 @@ struct OneChart: View {
         view = ToolListView(columns: block.columns, key: block.key)
         source = ToolListSource(live.app, live.tool, live.server, live.target)
         name = live.tool.preset.id + "." + (block.table ?? "")
+        chosen = (UserDefaults.standard.dictionary(forKey: "toolsTableHeights")?[name] as? Double).map { CGFloat($0) }
         let scroll = NSScrollView()
         height = scroll.heightAnchor.constraint(equalToConstant: 48)
         super.init(frame: .zero)
@@ -325,26 +327,29 @@ struct OneChart: View {
         }
         table.dataSource = self
         table.delegate = self
-        table.style = .plain   // no inset: the columns fill the block exactly, and a scroller shows only for a table wider
+        table.style = .plain   // no inset: the columns fill the block exactly; a scroller shows only for a table wider than it
         table.rowHeight = 22
         table.usesAlternatingRowBackgroundColors = true
         table.selectionHighlightStyle = .none
         table.setAccessibilityLabel(heading.stringValue)
         scroll.documentView = table
-        scroll.hasVerticalScroller = true   // dragged shorter than its rows
+        scroll.hasVerticalScroller = false   // the dashboard scrolls; the table only when dragged shorter than its rows (`layout`)
         scroll.hasHorizontalScroller = true   // a narrow window: the buttons stay reachable
         scroll.autohidesScrollers = true
         scroll.verticalScrollElasticity = .none
-        let grip = ToolsGrip()
-        grip.dragged = { [unowned self] by in
-            guard let scroll = table.enclosingScrollView else { return }
-            Self.heights[name] = max(table.headerView?.frame.height ?? 23, scroll.frame.height + by)
+        grip.drag = { [unowned self] by, done in
+            let from = dragFrom ?? height.constant
+            dragFrom = done ? nil : from
+            chosen = max(oneRow, from + by)
+            if done { keep() }
             needsLayout = true
         }
         grip.reset = { [unowned self] in
-            Self.heights[name] = nil
+            (chosen, dragFrom) = (nil, nil)
+            keep()
             needsLayout = true
         }
+        grip.setAccessibilityLabel("\(heading.stringValue) height")
         let stack = NSStackView(views: [heading, scroll, grip])
         (stack.orientation, stack.alignment, stack.spacing) = (.vertical, .leading, 4)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -367,8 +372,22 @@ struct OneChart: View {
         if abs(first.width - width) > 0.5 { first.width = width }
         let bar: CGFloat = width + rest > scroll.contentView.bounds.width + 0.5 && scroll.scrollerStyle == .legacy
             ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
-        let want = Self.heights[name].map { CGFloat($0) } ?? fit + bar
+        let want = chosen ?? fit + bar
+        scroll.hasVerticalScroller = want < fit + bar - 0.5
         if abs(height.constant - want) > 0.5 { height.constant = want }
+    }
+
+    /// The least a drag leaves: the header and one row, and a scroller under them where one shows.
+    private var oneRow: CGFloat {
+        let bar = table.enclosingScrollView?.horizontalScroller.map { $0.isHidden ? 0 : $0.frame.height } ?? 0
+        return (table.headerView?.frame.height ?? 23) + table.rowHeight + table.intercellSpacing.height + 2 + bar
+    }
+
+    /// The dragged height kept for the next time (once, as the drag ends), or dropped.
+    private func keep() {
+        var all = UserDefaults.standard.dictionary(forKey: "toolsTableHeights") ?? [:]
+        all[name] = chosen.map(Double.init)
+        UserDefaults.standard.set(all, forKey: "toolsTableHeights")
     }
 
     private var actions: [ToolAction] { (block.actions ?? []).compactMap { id in source.preset.actions?.first { $0.spec.id == id } } }
@@ -577,11 +596,24 @@ struct OneChart: View {
     }
 }
 
-/// The handle under a dashboard table: dragged up or down, the table's height goes with it; a double-click, back to
-/// its rows.
+/// The handle under a dashboard table: dragged up or down, the table's height goes with it — by how far the pointer
+/// went since the press, so no step is lost however few layouts there are; a double-click, back to its rows (the
+/// rest of that click drags nothing).
 @MainActor final class ToolsGrip: NSView {
-    var dragged: ((CGFloat) -> Void)?
+    /// How much taller than at the press; `done`: let go.
+    var drag: ((_ by: CGFloat, _ done: Bool) -> Void)?
     var reset: (() -> Void)?
+    private var start: CGFloat?
+    /// A press that didn't move keeps nothing.
+    private var moved = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.splitter)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
 
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 8) }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeUpDown) }
@@ -591,6 +623,17 @@ struct OneChart: View {
         NSBezierPath(roundedRect: NSRect(x: bounds.midX - 16, y: bounds.midY - 1, width: 32, height: 2), xRadius: 1, yRadius: 1).fill()
     }
 
-    override func mouseDown(with e: NSEvent) { if e.clickCount == 2 { reset?() } }
-    override func mouseDragged(with e: NSEvent) { dragged?(e.deltaY) }   // down: deltaY > 0, taller
+    override func mouseDown(with e: NSEvent) {
+        (start, moved) = (e.clickCount >= 2 ? nil : e.locationInWindow.y, false)
+        if e.clickCount >= 2 { reset?() }
+    }
+    override func mouseDragged(with e: NSEvent) {
+        guard let start else { return }
+        moved = true
+        drag?(start - e.locationInWindow.y, false)   // the window's y grows up: down is taller
+    }
+    override func mouseUp(with e: NSEvent) {
+        if let start, moved { drag?(start - e.locationInWindow.y, true) }
+        start = nil
+    }
 }

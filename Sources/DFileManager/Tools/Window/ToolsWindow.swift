@@ -7,7 +7,7 @@ import DFMCore
 /// watched in the background, problems first, each with its tools' summary; the rest under OTHER SERVERS. The windows
 /// open at quit come back after a restart (`Session.tools`).
 @MainActor
-final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSplitViewDelegate {
+final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
     /// The Tools window; and servers' pages in windows of their own.
     private(set) static var main: ToolsWindow?
     private(set) static var alone: [ToolsWindow] = []
@@ -32,6 +32,8 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
     private(set) var tool: ToolsTool?
     private(set) var starter: ToolsNew?
     private let content = NSView()
+    /// The sidebar and the page, the sidebar as wide as you drag it — as the main window's.
+    private lazy var split = NSSplitViewController()
     /// A server's page alone: no sidebar.
     private let isAlone: Bool
     /// Servers as a Tools ▸ (or ⌃⌘T) opened them here — an alias, `.local()` — their pages go there; one not saved is
@@ -117,22 +119,17 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
             scroll.documentView = sidebar
             scroll.hasVerticalScroller = true
             scroll.drawsBackground = false
-            let side = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 230, height: 560))
-            side.material = .sidebar
-            side.blendingMode = .behindWindow
-            scroll.translatesAutoresizingMaskIntoConstraints = false
-            side.addSubview(scroll)
-            NSLayoutConstraint.activate([scroll.leadingAnchor.constraint(equalTo: side.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: side.trailingAnchor),
-                                         scroll.topAnchor.constraint(equalTo: side.topAnchor), scroll.bottomAnchor.constraint(equalTo: side.bottomAnchor)])
-            // The sidebar as wide as you drag it (kept by its autosave name); a wider window widens the page.
-            let split = NSSplitView(frame: NSRect(x: 0, y: 0, width: 900, height: 560))
-            (split.isVertical, split.dividerStyle, split.delegate) = (true, .thin, self)
-            content.frame = NSRect(x: 231, y: 0, width: 669, height: 560)
-            split.addSubview(side)
-            split.addSubview(content)
-            split.autosaveName = "ToolsSidebar"
-            if !(180...420).contains(side.frame.width) || content.frame.width < 200 { split.setPosition(230, ofDividerAt: 0) }   // a kept width out of bounds
-            window.contentView = split
+            let side = NSViewController(), page = NSViewController()
+            (side.view, page.view) = (scroll, content)
+            split.splitView.autosaveName = "ToolsSidebar"   // its width kept; a wider window widens the page
+            let item = NSSplitViewItem(sidebarWithViewController: side)
+            (item.minimumThickness, item.maximumThickness, item.canCollapse) = (180, 420, false)
+            let pageItem = NSSplitViewItem(viewController: page)
+            pageItem.minimumThickness = 300   // a narrow window narrows the sidebar first
+            split.addSplitViewItem(item)
+            split.addSplitViewItem(pageItem)
+            split.view.frame = NSRect(x: 0, y: 0, width: 900, height: 560)
+            window.contentView = split.view
             reload()
         }
         window.center()
@@ -172,11 +169,6 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
         default: nil
         }
     }
-
-    func splitView(_ s: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { 180 }
-    func splitView(_ s: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { 420 }
-    /// A resized window keeps the sidebar's width: the page takes the change.
-    func splitView(_ s: NSSplitView, shouldAdjustSizeOfSubview v: NSView) -> Bool { v === content }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
     func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool { if case .header = rows[row] { true } else { false } }

@@ -92,7 +92,6 @@ final class ToolsPage: NSView, RowList {
         outputButton.isHidden = true
         let foot = NSStackView(views: [result, outputButton])
         body.setContentHuggingPriority(.init(1), for: .vertical)   // the body takes the height: a live tab's dashboard fills it, scrolling inside
-        for v in [top, line, tabRow, foot] { v.setContentHuggingPriority(.required, for: .vertical) }   // none of the rest
         let stack = NSStackView(views: [top, line, tabRow, body, foot])
         stack.orientation = .vertical
         stack.alignment = .leading
