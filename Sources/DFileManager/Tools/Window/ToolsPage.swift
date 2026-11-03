@@ -31,6 +31,8 @@ final class ToolsPage: NSView, RowList {
     let title = NSTextField(labelWithString: "")
     let chips = NSStackView()
     let line = NSTextField(labelWithString: "")
+    /// "Installed by Kermo: dpl 0.7.1, 2 Nov" (§10.6).
+    let installed = NSTextField(labelWithString: "")
     let tabs = NSSegmentedControl()
     let add = NSButton(title: "", target: nil, action: nil)
     let more = NSButton(title: "", target: nil, action: nil)
@@ -50,6 +52,10 @@ final class ToolsPage: NSView, RowList {
         line.textColor = .secondaryLabelColor
         line.lineBreakMode = .byTruncatingTail
         line.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        installed.textColor = .secondaryLabelColor
+        installed.font = .systemFont(ofSize: 11.5)
+        installed.lineBreakMode = .byTruncatingTail
+        installed.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         terminal.image = Symbol.ssh.image("Terminal")
         terminal.imagePosition = .imageLeading
         terminal.toolTip = "An SSH tab on \(server.title) in the main window"
@@ -92,7 +98,7 @@ final class ToolsPage: NSView, RowList {
         outputButton.isHidden = true
         let foot = NSStackView(views: [result, outputButton])
         body.setContentHuggingPriority(.init(1), for: .vertical)   // the body takes the height: a live tab's dashboard fills it, scrolling inside
-        let stack = NSStackView(views: [top, line, tabRow, body, foot])
+        let stack = NSStackView(views: [top, line, installed, tabRow, body, foot])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.distribution = .fill
@@ -103,7 +109,7 @@ final class ToolsPage: NSView, RowList {
         addSubview(stack)
         NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
                                      stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor)])
-        for v in [top, line, body, foot] { v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36).isActive = true }
+        for v in [top, line, installed, body, foot] { v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36).isActive = true }
         refresh()
     }
 
@@ -141,7 +147,9 @@ final class ToolsPage: NSView, RowList {
         tabs.isEnabled = up || shown.contains(where: watched)
         if current == nil { tab = (shown.first(where: watched) ?? shown.first)?.preset.id }   // a watched server opens on what's watched
         tabs.selectedSegment = shown.firstIndex { $0.preset.id == tab } ?? -1
-        more.isEnabled = current != nil
+        let mine = app.tools.installedSaid(on: server)
+        installed.stringValue = mine.isEmpty ? "" : "Installed by Kermo: " + mine.joined(separator: " · ")
+        installed.isHidden = mine.isEmpty
         showBody(known?.at)
         heads()
         showHeader()
@@ -385,12 +393,21 @@ final class ToolsPage: NSView, RowList {
         }
     }
 
-    /// ⋯: this page in a window of its own, where the tool is used, its file, Hide.
+    /// ⋯: this page in a window of its own, Clean Up Kermo Files; where the tool is used, its file, Hide.
     func moreMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
         if let openAlone { menu.addItem(MenuAction.item("Open in New Window", openAlone)) }
+        let clean = MenuAction.item("Clean Up Kermo Files on \(server.title)…") { [weak self, app, server, target] in
+            Task {   // the page may be gone by the time it's done (another server picked meanwhile): the panel says it then
+                let r = await app.tools.cleanUp(on: server, target, window: self?.window)
+                if let self { self.say(r.line, failed: r.failed) } else { app.active.flash(r.line, error: r.failed) }
+            }
+        }
+        clean.toolTip = "~/.cache/kermo there: long jobs' logs and uploads. Its size first, then asked"
+        menu.addItem(clean)
         guard let tool = current else { return menu }
+        menu.addItem(.separator())
         let p = tool.preset
         if p.watchable {
             let on = watched(tool)

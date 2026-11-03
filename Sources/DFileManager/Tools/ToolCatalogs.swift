@@ -238,17 +238,38 @@ final class ToolCatalogs {
     private static func said(_ kept: [String]) -> String { kept.isEmpty ? "" : " — what was there is kept as " + kept.joined(separator: ", ") }
 
     /// Remove: one of yours, or one got from a catalog — its file and its scripts no other tool of yours names, to the
-    /// Trash; what you trusted of it and where it came from, forgotten. A built-in of its id is back.
+    /// Trash; what you trusted of it and where it came from, forgotten. A built-in of its id is back. Where Kermo
+    /// installed its program: Remove from Kermo Only, or Also Uninstall from those servers first (§10.6).
     func remove(_ tool: LoadedTool, window: NSWindow?) async -> String {
         let p = tool.preset, name = p.title
         guard !tool.builtIn, let own = ToolRunner.own else { return "\(name) is built into Kermo" }
         let others = app.tools.library.tools.filter { !$0.builtIn && $0.preset.id != p.id }.flatMap(\.preset.scriptNames)
         let files = [(tool.path as NSString).lastPathComponent] + p.scriptNames.subtracting(others).sorted()
         let builtIn = Self.builtIns.contains(p.id)
-        var c = Confirm("Remove “\(name)”?", action: "Remove")
+        // Where Kermo's Install put its program (§10.6), with the login it ran as — on servers still saved, still there.
+        let on = app.tools.installed.filter { $0.tool == p.id }.compactMap { r in
+            app.savedServers.first { $0.id.uuidString == r.server && ServerLock.same($0.target, r.target) }.map { ($0, r.target) }
+        }
+        let uninstalls = p.uninstall != nil && on.allSatisfy { app.tools.whyNoInstall(tool, on: $0.0, $0.1, uninstall: true) == nil }
+        var c = Confirm("Remove “\(name)”?", action: on.isEmpty ? "Remove" : "Remove from Kermo Only")
         c.items = files.map { Confirm.Item(name: $0) }
         c.runs = "Its files go to the Trash" + (builtIn ? "; the one built into Kermo is back in its place." : ".")
-        guard await app.confirm(c, on: window) == 0 else { return "\(name): kept" }
+        if !on.isEmpty {
+            let servers = on.map(\.0.title).joined(separator: ", ")
+            c.note = "Kermo installed \(p.tool ?? name) on \(servers): it stays there" + (uninstalls ? " unless you uninstall it too." : p.uninstall == nil ? "; its docs say how to remove it." : ".")
+            if uninstalls { c.others = ["Also Uninstall from \(servers)…"] }
+        }
+        let answer = await app.confirm(c, on: window)
+        guard answer == 0 || (answer == 1 && !c.others.isEmpty) else { return "\(name): kept" }
+        // Each Uninstall asks as ever; the tool goes from Kermo only once each has started — one that didn't keeps it.
+        for (s, t) in answer == 1 ? on : [] {
+            let before = Set(app.tools.jobs.jobs.map(\.id))
+            let r = await app.tools.install(tool, on: s, t, uninstall: true)
+            await r.run?.value
+            guard r.stop == nil, app.tools.jobs.jobs.contains(where: { !before.contains($0.id) && $0.action == ToolInstall.uninstallID }) else {
+                return "\(name): kept — " + (r.stop ?? "Uninstall on \(s.title) didn't start")
+            }
+        }
         let stuck = files.filter { (try? FileManager.default.trashItem(at: own.appendingPathComponent($0), resultingItemURL: nil)) == nil }
         app.tools.trust.hashes[p.id] = nil
         Config.save("trust.json", app.tools.trust, in: own.path)

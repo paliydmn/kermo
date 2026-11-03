@@ -41,6 +41,8 @@ final class ToolRunner {
     private(set) lazy var monitor = ToolMonitor(app)
     /// Catalogs (§12): their sources and indexes, Get, Update, Remove.
     private(set) lazy var catalogs = ToolCatalogs(app)
+    /// What Kermo's own Install… put on which server (`tools/installed.json`, §10.6): Kermo answers only for these.
+    var installed: [ToolInstalled] = []
 
     /// Tests: how a payload starts (in a session of its own), sudo's stand-in, your folder, a connection that answers.
     nonisolated(unsafe) static var command: @Sendable (ToolPayload) -> String = { $0.command }
@@ -69,10 +71,12 @@ final class ToolRunner {
         known = Self.own.flatMap { try? Config.load("known.json", as: [String: Known].self, in: $0.path) } ?? [:]
         let read = Self.own.map { Config.loadKeeping("servers.json", as: ToolServers.self, in: $0.path) }
         settings = read?.value ?? ToolServers()
+        let made = Self.own.map { Config.loadKeeping("installed.json", as: [ToolInstalled].self, in: $0.path) }   // a broken one isn't saved over
+        installed = made?.value ?? []
         let catalogsSaid = catalogs.reload()
         monitor.reconcile()   // watched servers, as the file says now (at launch: watching resumes by itself)
         ToolsWindow.refresh()
-        return library.problems + [read?.problem.map { "tools/" + $0 }].compactMap { $0 } + catalogsSaid
+        return library.problems + [read?.problem, made?.problem].compactMap { $0.map { "tools/" + $0 } } + catalogsSaid
     }
 
     func saveSettings() {

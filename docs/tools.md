@@ -26,7 +26,7 @@ A server shows the tools whose program it has (and that you [use there](#where-a
 
 ## The Tools window
 
-**Window ▸ Tools** (⌃⌘T) opens it on the active panel's server; **Open in Tools Window**, last in a server's **Tools ▸**, on that server. Its sidebar lists your saved servers (production in its color, a locked one with its lock), then servers connected now, and the library: **[Catalog](#the-catalog)**, **My Tools** and **[New Tool…](#new-tool)**; drag its edge to make it wider or narrower (Kermo keeps the width). ↩ or a double-click on a library row opens the tool's page: who made it, its version and the sha256 its trust goes by; what it runs, grouped as **Use the tool “…”?** shows it (a dangerous action in red); and each saved server — whether it has the program, whether the tool is used there, its values set or **Set Up…**. Its buttons: **Use on Servers…**, **Show File**, and **Edit** for yours, **[Customize](#customize-a-built-in-tool)** for a built-in one; **Remove…** for a file in your folder; **Get** or **Update to v…** for [a catalog's](#the-catalog).
+**Window ▸ Tools** (⌃⌘T) opens it on the active panel's server; **Open in Tools Window**, last in a server's **Tools ▸**, on that server. Its sidebar lists your saved servers (production in its color, a locked one with its lock), then servers connected now, and the library: **[Catalog](#the-catalog)**, **My Tools** and **[New Tool…](#new-tool)**; drag its edge to make it wider or narrower (Kermo keeps the width). ↩ or a double-click on a library row opens the tool's page: who made it, its version and the sha256 its trust goes by; what it runs, grouped as **Use the tool “…”?** shows it (a dangerous action in red); and each saved server — whether it has the program, whether the tool is used there, its values set or **Set Up…**, and **[Install…](#install)** where it isn't there. Its buttons: **Use on Servers…**, **Show File**, and **Edit** for yours, **[Customize](#customize-a-built-in-tool)** for a built-in one; **Remove…** for a file in your folder; **Get** or **Update to v…** for [a catalog's](#the-catalog).
 
 A server's page has its name, the open tab's line from the program (`jails: sshd · 1.0.2`, a version outside what the tool was tested with), **Terminal** (an SSH tab in the main window) and **⋯**. Its tabs are the tools it shows, ⌘1…⌘9:
 
@@ -34,7 +34,7 @@ A server's page has its name, the open tab's line from the program (`jails: sshd
 - **Buttons** (Server Info): each runs its action as its row does — the question on production, the line under the buttons saying how it went, its window where it has one. One that can't run here is greyed, saying why.
 - **A one-command tool**: one button.
 
-A server that isn't connected shows the tools it had when Kermo last saw it, greyed, and **Connect**: Kermo doesn't log in to draw a page. **＋** after the tabs lists the library's other tools: one hidden on this server shows again, one the server hasn't got is greyed. **⋯** has **Open in New Window** (the page as a window of its own; several servers' at once), **Use … on Servers…**, the tool's file, and **Hide … on web-01**. The windows open when Kermo quits come back when it starts, each on its server and tab, in its place — not connected, as above; a server deleted meanwhile is left out. Sites comes back on the page's first tab instead: open, it would check the addresses at once.
+A server that isn't connected shows the tools it had when Kermo last saw it, greyed, and **Connect**: Kermo doesn't log in to draw a page. **＋** after the tabs lists the library's other tools: one hidden on this server shows again, one the server hasn't got is greyed. Under the title, what Kermo installed there: "Installed by Kermo: dpl 0.7.1, 3 Nov". **⋯** has **Open in New Window** (the page as a window of its own; several servers' at once), **[Clean Up Kermo Files](#install)**, **Use … on Servers…**, the tool's file, and **Hide … on web-01**. The windows open when Kermo quits come back when it starts, each on its server and tab, in its place — not connected, as above; a server deleted meanwhile is left out. Sites comes back on the page's first tab instead: open, it would check the addresses at once.
 
 ### Where a tool is used
 
@@ -195,7 +195,22 @@ macOS asks whether Kermo may notify the first time you watch a server. If you sa
 - **The same environment on every server:** the command goes to `sh` on its input, never to the login shell, with `LC_ALL=C` (no translated output) and `/usr/sbin` and `/sbin` on the `PATH`.
 - **As root:** a tool that needs root runs through the server's `sudo`, `sudo -n` first. When sudo wants a password, Kermo asks for it as a [root panel](root-panel.md) does; the password goes to sudo on its input, never on a command line, and is shown as `•••` anywhere it could appear.
 - **The production log:** each run on a production server is a line in the [production log](safety.md#production-log): `"action": "tool ufw delete"`, what was sent and its exit status.
-- **Nothing stays on the server** but a long job's log: no other files, nothing installed. A run ends with its connection; only a [long job](#long-jobs) runs on, and its log stays in `~/.cache/kermo/` there for 7 days; a folder uploaded for it goes when it ends.
+- **Nothing stays on the server** but a long job's log, and what you [install](#install): no other files. A run ends with its connection; only a [long job](#long-jobs) runs on, and its log stays in `~/.cache/kermo/` there for 7 days; a folder uploaded for it goes when it ends.
+
+## Install
+
+Most tools are **agentless**: they run commands, and nothing of theirs stays on the server. A tool that can install its program says **installs software** on its page, and its **What it runs** has a group for it: the command for each system, the vendor's script with its sha256, and what stays on the server after it (its services, paths and ports).
+
+On the tool's page, a server without the program has **Install…** — or why not: the server is read-only, installs are off there, its system has no command in the tool, or Kermo hasn't seen the server yet. **Installs allowed** in [Edit Server ▸ Safety](servers.md) is on, but off on production unless you turn it on there.
+
+1. The tool's checks run first, as your login, in one go: "Podman 4.8 or newer is needed (found 4.3)" stops it there.
+2. The command is the one for the server's package manager (`apt-get`, `dnf`, `apk`, `pacman`, `zypper`; `brew` not as root). A tool that installs with its vendor's script has it fetched on this Mac and checked against the sha256 the tool names; a script that isn't that one doesn't run, and nothing goes to the server as `curl | sh`. The script goes to the server as the command's input, its values (`DPL_VERSION=0.7.1`) as variables.
+3. The question, always — on any server, red on production: the exact command (**Show Exactly What Runs** shows the script), as root, and what stays on the server after it.
+4. It runs as a [long job](#long-jobs) in Activity. When it ends, Kermo looks at the server again: the tool shows there, and `tools/installed.json` keeps what was installed, where and when — the server's page says "Installed by Kermo: dpl 0.7.1, 3 Nov".
+
+Install turns on only what the program's own installer turns on. Where Kermo installed a program, the tool's page has **Uninstall…** (a tool with its own uninstall command; else **Docs**): asked as a change that can't be undone, with the command, when Kermo installed it, what Install left and what stays after it ("your repositories and their password files"). **Remove…** of a tool Kermo installed somewhere asks **Remove from Kermo Only** or **Also Uninstall from web-01…**: each Uninstall is asked and started first, and a server where it didn't start keeps the tool. Kermo answers only for its own Install: a program installed some other way has no Uninstall here.
+
+**Clean Up Kermo Files** in a server page's ⋯ shows the size of `~/.cache/kermo` there — long jobs' logs and what was uploaded for them, Kermo's only files on a server — and removes it once you say so; not while a long job runs from it.
 
 ## The catalog
 
@@ -265,6 +280,7 @@ The smallest tool is three fields; it's in **Tools ▸** on every server, and it
 | `inputs` | An action's sheet: `name`, `type` (`text`, `secret`, `choice`, `choice-from`, and for a long action `folder` or `file` on this Mac — see [Long jobs](#long-jobs)), `title`, `placeholder`, `default`, `pattern`, `optional`, `options`, `remember` (a folder or a file: the last one chosen on that server and row fills the sheet); a `choice-from` has a `command` and a `key` (`{line}`) |
 | `primary` | The tool action on the ＋ button |
 | `version` | `command`, `pattern` with a group `v`, `tested` (`>=0.36 <0.37`) |
+| `install`, `uninstall` | [Install](#install): a command per package manager — `apt` (apt-get's), `dnf`, `apk`, `pacman`, `zypper`, `brew` — or `script` (`url`, `env`, `sha256`, which it needs to run); `precheck` (`title`, `command`, `pattern` with a group `v`, `min`); `leaves` (`services`, `paths`, `ports`, `note`: what stays after Install); `docs`, `after` (the line it ends with); `uninstall` also `keeps` |
 | `vars` | Values per server, `{name}` in commands: `title`, `default`, `placeholder`, `pattern`, and one source — `command` (its first line, read once per connection) or `"ask": true` (asked on a saved server, kept in `tools/servers.json`; see [Where a tool is used](#where-a-tool-is-used)) |
 | `timeout`, `exitOk` | Seconds (30 by default); exit codes that count as success (`[0]`) |
 | `stream`, `poll`, `watch` | [Watching](#watching-a-server): a `stream` runs on and prints a record (a `jsonl` line, or a frame — `split`) every so often; a `poll` runs again every `watch.every` seconds; the tool's `list` is read that often too where `rows: "list"` takes its rows. `watch`: `every` (seconds, 1 or more), `down` (missed samples that make "not answering", 3) |
