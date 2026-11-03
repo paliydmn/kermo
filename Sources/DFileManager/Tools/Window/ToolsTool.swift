@@ -161,7 +161,7 @@ final class ToolsTool: NSView, RowList {
                 cells.append(app.tools.toSetUp(tool, on: srv.target).isEmpty ? Self.small("settings set")
                              : button("Set Up…") { [unowned self] in Task { _ = await app.tools.setUp(tool, on: srv.target, window: window); refresh() } })
             }
-            if let install = install(on: srv) { cells.append(install) }
+            if let install = install(on: srv) { cells.append(NSStackView(views: [install])) }   // a button its own width, not its column's
             return cells
         }
         let g = NSGridView(views: rows.map { $0 + Array(repeating: NSGridCell.emptyContentView, count: 5 - $0.count) })
