@@ -11,14 +11,15 @@ import DFMCore
     let eye = NSButton(image: Symbol.show.image("Show the password"), target: nil, action: nil)
     /// Only where there's one saved.
     let forget: NSButton?, forgetSudo: NSButton?
-    let prod = NSSwitch(), lock = NSSwitch(), readOnly = NSSwitch()
+    let prod = NSSwitch(), lock = NSSwitch(), readOnly = NSSwitch(), installs = NSSwitch()
     let preview = NSTextField(wrappingLabelWithString: "")
     let grid: NSGridView
-    /// Safety's rows: a row added here (Tools: "Allow installs") goes in without the rest moving.
+    /// Safety's rows, as the form and its tests list them.
     static func safety(_ f: ServerForm) -> [(label: String, control: NSView, hint: String)] {
         [("Production", f.prod, "Purple everywhere; changes on it ask first and go into the production log."),
          ("Lock", f.lock, "Touch ID or the Mac password before connecting, editing, duplicating or deleting."),
-         ("Read-only", f.readOnly, "Tools run only actions that change nothing.")]
+         ("Read-only", f.readOnly, "Tools run only actions that change nothing."),
+         ("Installs allowed", f.installs, "Tools may install a program here, each Install… asked first. Off on production unless turned on.")]
     }
     /// Something changed: the sheet re-lays itself out, its Save buttons follow `typed.issue`.
     var onChange: (() -> Void)?
@@ -52,6 +53,7 @@ import DFMCore
         prod.state = server.prod ? .on : .off
         lock.state = server.locked ? .on : .off
         readOnly.state = server.readOnly ? .on : .off
+        installs.state = server.allowsInstalls ? .on : .off
         preview.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
         preview.textColor = .secondaryLabelColor
         preview.isSelectable = true
@@ -60,7 +62,12 @@ import DFMCore
         super.init()
         build()
         for f in [host, user, port, name, key, password, shown, start, sites] { f.delegate = self }
-        for s in [prod, lock, readOnly] { actions.append(MenuAction.attach(to: s) { [weak self] in self?.changed() }) }
+        for s in [lock, readOnly, installs] { actions.append(MenuAction.attach(to: s) { [weak self] in self?.changed() }) }
+        actions.append(MenuAction.attach(to: prod) { [weak self] in
+            guard let self else { return }
+            if installs.state == prod.state { installs.state = prod.state == .on ? .off : .on }   // at the default it was: the new one's
+            changed()
+        })
         actions.append(MenuAction.attach(to: choose) { [weak self] in self?.chooseKey() })
         actions.append(MenuAction.attach(to: eye) { [weak self] in self?.reveal() })
         changed(layout: false)
@@ -143,6 +150,8 @@ import DFMCore
         s.prod = prod.state == .on
         s.locked = lock.state == .on
         s.readOnly = readOnly.state == .on
+        let allowed = installs.state == .on
+        s.installs = allowed == !s.prod ? nil : allowed   // only a choice against the default: marking it production later turns installs off
         return s
     }
     /// The password to store: as typed (spaces count); a saved one shown and left as it was isn't stored again (so it

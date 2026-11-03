@@ -53,7 +53,8 @@ extension ToolRunner {
         c.command = runs ?? tool.runs.text
         let long = p.allActions.contains { $0.action.spec.long == true }
         c.note = (Self.cautions(tool) + ["Kermo asks once for each new or changed tool. A value goes into a command as a variable, scripts go on stdin, and nothing is left on the server"
-            + (long ? " but a long job's: it runs on after Kermo quits, and its log stays in ~/.cache/kermo/ there for 7 days." : ".")]).joined(separator: "\n")
+            + (long ? " but a long job's: it runs on after Kermo quits, and its log stays in ~/.cache/kermo/ there for 7 days." : ".")]
+            + (p.install == nil ? [] : ["It installs software, only when you press Install… on a server: what stays there is listed above."])).joined(separator: "\n")
         c.others = ["Open File"]
         c.cancel = "Don't Use"
         c.returnCancels = false

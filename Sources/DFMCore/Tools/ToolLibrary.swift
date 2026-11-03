@@ -46,6 +46,7 @@ public struct LoadedTool: Sendable {
             l.every = p.watch?.every
             return l
         }
+        runs.installs = p.install?.lines ?? []
         return runs
     }
 }
@@ -75,12 +76,15 @@ public struct ToolRuns: Sendable, Hashable {
     public var chosen: [Line]
     /// In the background, when you watch it (§8.5, §12): its stream or poll.
     public var background: [Line] = []
+    /// What Install… runs and what stays on the server after it (§10.6): none for an agentless tool.
+    public var installs: [Line] = []
 
     /// A watched tool may notify (§8.7, §12): its alerts, its events, or a script's `_event` — which any stream or poll
     /// may carry — so the background group says so.
     public var groups: [(title: String, lines: [Line])] {
         [("Runs by itself", itself), ("Runs when you choose", chosen)]
             + (background.isEmpty ? [] : [("In the background, when you watch it — may send notifications", background)])
+            + (installs.isEmpty ? [] : [("Installs software, only when you press Install…", installs)])
     }
 
     /// The trust sheet's text: each group, its lines (or "nothing").

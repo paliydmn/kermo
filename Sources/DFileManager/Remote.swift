@@ -18,6 +18,7 @@ struct SavedServer: Codable, Equatable {
     var locked = false         // Touch ID / the Mac password to connect, edit or delete (ServerLock)
     var prod = false           // production: `color` in the sidebar and headers; delete, overwrite and move there ask first
     var readOnly = false       // Tools run only `readonly` actions there (D-098: the rest of Kermo doesn't look at it yet)
+    var installs: Bool?        // Tools' Install… may run there; nil: as production says (`allowsInstalls`)
     var tunnels: [Tunnel] = [] // ports on this Mac that lead to it, or past it (`Tunnels`)
     var sites: [String] = []   // web addresses Tools ▸ Sites checks from this Mac (`ToolHTTPCheck`)
 
@@ -55,6 +56,7 @@ struct SavedServer: Codable, Equatable {
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
         prod = try c.decodeIfPresent(Bool.self, forKey: .prod) ?? false
         readOnly = try c.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
+        installs = try c.decodeIfPresent(Bool.self, forKey: .installs)
         tunnels = try c.decodeIfPresent([Tunnel].self, forKey: .tunnels) ?? []
         sites = try c.decodeIfPresent([String].self, forKey: .sites) ?? []
     }
@@ -77,6 +79,8 @@ struct SavedServer: Codable, Equatable {
         SFTPTarget(host: user.map { "\($0)@\(host)" } ?? host, port: port, identity: identityFile, persist: locked ? 60 : nil)
     }
     var title: String { name.isEmpty ? target.host : name }
+    /// Tools' Install… may run here (protocol §10.6): off on production unless it's turned on, on elsewhere unless off.
+    var allowsInstalls: Bool { installs ?? !prod }
     /// Production and locked, as `Chip.of` says them for its target.
     var chips: [Chip] { [prod ? .prod : nil, locked ? .locked : nil].compactMap { $0 } }
 
