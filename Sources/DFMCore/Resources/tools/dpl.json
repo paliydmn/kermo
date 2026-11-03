@@ -22,10 +22,12 @@
     "unknown": ["0.0.1"]
   },
   "install": {
-    "script": { "url": "https://dpl.cesbo.com/install.sh", "env": { "DPL_VERSION": "0.7.1" } },
+    "script": { "url": "https://dpl.cesbo.com/install.sh", "env": { "DPL_VERSION": "0.7.1" },
+                "sha256": "ae3d1d903e0a5f15bb12e307245f4995765e5b8e52831a931e4d167cab72cd2e" },
     "precheck": [ { "title": "Podman 4.8 or newer", "command": "podman --version", "pattern": "(?<v>\\d+\\.\\d+)", "min": "4.8" } ],
+    "leaves": { "services": ["dpl"], "paths": ["/usr/local/bin/dpl", "/etc/systemd/system/dpl.service", "{base}"], "ports": [80, 443] },
     "docs": "https://dpl.cesbo.com",
-    "after": "Needs root. Put a unit in {base}/conf, then Deploy. Nothing is deployed or turned on for you."
+    "after": "dpl serve runs as the dpl service. Put a unit in {base}/conf, then Deploy: nothing is deployed for you."
   },
   "header": "printf '%s · serve %s' \"$(dpl --version)\" \"$(systemctl is-active dpl)\"",
 

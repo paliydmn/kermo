@@ -17,8 +17,14 @@
   "install": {
     "apt": "apt-get install -y fail2ban",
     "dnf": "dnf install -y fail2ban",
+    "leaves": { "services": ["fail2ban"], "paths": ["/etc/fail2ban"] },
     "docs": "https://github.com/fail2ban/fail2ban",
     "after": "Debian and Ubuntu turn the sshd jail on; elsewhere add it in /etc/fail2ban/jail.local."
+  },
+  "uninstall": {
+    "apt": "apt-get remove -y fail2ban",
+    "dnf": "dnf remove -y fail2ban",
+    "keeps": "its settings in /etc/fail2ban"
   },
   "header": "printf 'jails: %s · %s' \"$(fail2ban-client status | sed -n 's/.*Jail list:[[:space:]]*//p' | tr ',' '\\n' | tr -d ' ' | paste -sd ',' -)\" \"$(fail2ban-client version)\"",
   "list": {

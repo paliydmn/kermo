@@ -79,8 +79,8 @@ extension ToolRunner {
         if uninstall, let r = installed(p.id, on: s) {
             notes.append("Kermo installed \([name, r.version].compactMap { $0 }.joined(separator: " ")) here on \(r.at.formatted(date: .abbreviated, time: .omitted)).")
         }
-        if let stays = p.install?.lines.last(where: { $0.what == "stays on the server" }) {
-            notes.append((uninstall ? "Install left: " : "Stays on the server after it: ") + stays.how + ".")
+        if let stays = p.install?.lines.last(where: { $0.what == "stays on the server" }) {   // {base}: the server's own
+            notes.append((uninstall ? "Install left: " : "Stays on the server after it: ") + ToolTemplate.text(stays.how, scope(p, on: s, t)) + ".")
         }
         notes += [uninstall ? i.keeps.map { "Stays after it: \($0)." } : i.after.map { ToolTemplate.text($0, scope(p, on: s, t)) }].compactMap { $0 }
         a.spec.message = notes.joined(separator: "\n")

@@ -17,6 +17,7 @@
   "install": {
     "apt": "apt-get install -y ufw",
     "dnf": "dnf install -y ufw",
+    "leaves": { "services": ["ufw"], "paths": ["/etc/ufw"], "note": "the firewall stays off till you turn it on" },
     "docs": "https://launchpad.net/ufw",
     "after": "ufw starts off. Allow the SSH port first, then Turn Firewall On."
   },

@@ -40,6 +40,7 @@ Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`
 | `tools/runs.json` | The [long jobs](tools.md#long-jobs) Kermo started: where, what (never a secret) and how they ended; kept a week after they end | Kermo writes it |
 | `tools/catalogs.json` | The [catalogs](tools.md#the-catalog) Kermo takes tools from: each one's name, address, key and whether it's on; without the file, Kermo's own | Settings › Tools |
 | `tools/fetched.json` | What came from a catalog: each tool's catalog, version and sha256 as it came (so an update knows whether you changed it), and the newest index taken from each catalog | Kermo writes it |
+| `tools/installed.json` | What Kermo's own [Install…](tools.md#install) put on which server: the server, the login, the tool, its version then, the command, when | Kermo writes it |
 
 Kermo also writes `server-pins.json` (the order of pinned servers), `trash.json` (where trashed items came from, for Put Back) and `activity.json` (the last 100 finished jobs in [Activity](files.md#activity)).
 

@@ -32,6 +32,7 @@ The sheet has five groups — **Connection**, **Sign in**, **Safety**, **Open**,
 | **Production** | off | A switch; see [below](#mark-a-server-as-production). |
 | **Lock** | not locked | Touch ID or the Mac password; see below. |
 | **Read-only** | off | [Tools](tools.md) run only actions that change nothing there; the rest are greyed, saying so. Files and commands aren't limited yet. |
+| **Installs allowed** | on; off on production | A [tool's](tools.md#install) **Install…** and **Uninstall…** may run there, each asked first. Marking a server as production turns it off unless you turned it on there. |
 | **Start folder** | the login folder | Where SFTP opens. |
 | **Sites** | none | Web addresses (`https://example.com`, space between) that [Sites](tools.md#sites) checks from this Mac. Only `http://` and `https://` addresses. |
 
