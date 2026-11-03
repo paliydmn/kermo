@@ -22,12 +22,13 @@ private func run(_ p: ToolPayload, home: String) throws -> (out: String, status:
     return (String(decoding: out, as: UTF8.self), status)
 }
 
-/// A server's `pkg` fact picks the command — apt-get's is `apt`, yum's `dnf` — as root but brew's; where there's none,
+/// A server's `pkg` fact picks the command — apt-get's is `apt`; yum's none — as root but brew's; where there's none,
 /// the script; neither: nothing to install. Install… is `long` and always asked, `after` its line at the end.
 @Test func installPicksTheServersPackageManager() throws {
     let p = try tool(#""install": { "apt": "apt-get install -y thing", "dnf": "dnf install -y thing", "brew": "brew install thing", "after": "thing starts off" }"#)
     let i = try #require(p.install)
-    #expect(i.command(pkg: "apt-get") == "apt-get install -y thing" && i.command(pkg: "yum") == "dnf install -y thing")
+    #expect(i.command(pkg: "apt-get") == "apt-get install -y thing" && i.command(pkg: "dnf") == "dnf install -y thing")
+    #expect(i.command(pkg: "yum") == nil, "yum only where there's no dnf: a dnf command would fail there")
     #expect(i.command(pkg: "apk") == nil && i.run(pkg: "apk") == nil && i.action(pkg: "none", title: "thing") == nil)
     #expect(i.run(pkg: "apt-get")?.sudo == true && i.run(pkg: "brew")?.sudo == false, "brew won't run as root")
     let a = try #require(i.action(pkg: "dnf", title: "thing"))
@@ -97,7 +98,7 @@ private func run(_ p: ToolPayload, home: String) throws -> (out: String, status:
     let home = NSTemporaryDirectory() + "kermo-clean-" + UUID().uuidString, runs = home + "/.cache/kermo/runs"
     defer { try? FileManager.default.removeItem(atPath: home) }
     try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
-    #expect(ToolLong.cleanUp(try run(ToolLong.cleanUp(remove: false, shell: shell), home: home).out).bytes == nil)
+    #expect(ToolLong.cleanUpSaid(try run(ToolLong.cleanUp(remove: false, shell: shell), home: home).out).bytes == nil)
 
     try FileManager.default.createDirectory(atPath: runs, withIntermediateDirectories: true)
     try Data(repeating: 65, count: 20_000).write(to: URL(fileURLWithPath: runs + "/1-a.log"))
@@ -107,13 +108,13 @@ private func run(_ p: ToolPayload, home: String) throws -> (out: String, status:
     try sleeper.run()
     defer { sleeper.terminate() }
     try Data("\(sleeper.processIdentifier)\n".utf8).write(to: URL(fileURLWithPath: runs + "/1-a.pid"))
-    let looked = ToolLong.cleanUp(try run(ToolLong.cleanUp(remove: false, shell: shell), home: home).out)
+    let looked = ToolLong.cleanUpSaid(try run(ToolLong.cleanUp(remove: false, shell: shell), home: home).out)
     #expect(looked.running == 1 && (looked.bytes ?? 0) >= 20_000, "\(looked)")
     #expect(try run(ToolLong.cleanUp(remove: true, shell: shell), home: home).status == 3)
     #expect(FileManager.default.fileExists(atPath: runs + "/1-a.log"), "a running job's log stays")
 
     try Data("0\n".utf8).write(to: URL(fileURLWithPath: runs + "/1-a.exit"))   // it's over
     let r = try run(ToolLong.cleanUp(remove: true, shell: shell), home: home)
-    #expect(r.status == 0 && ToolLong.cleanUp(r.out).running == 0, "\(r)")
+    #expect(r.status == 0 && ToolLong.cleanUpSaid(r.out).running == 0, "\(r)")
     #expect(!FileManager.default.fileExists(atPath: home + "/.cache/kermo") && FileManager.default.fileExists(atPath: home))
 }

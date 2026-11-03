@@ -246,8 +246,8 @@ final class ToolCatalogs {
         let others = app.tools.library.tools.filter { !$0.builtIn && $0.preset.id != p.id }.flatMap(\.preset.scriptNames)
         let files = [(tool.path as NSString).lastPathComponent] + p.scriptNames.subtracting(others).sorted()
         let builtIn = Self.builtIns.contains(p.id)
-        // Where Kermo's Install put its program (§10.6), with the login it ran as.
-        let on = app.tools.installed.filter { $0.tool == p.id }.map { (app.savedServer(at: $0.target) ?? SavedServer(target: $0.target), $0.target) }
+        // Where Kermo's Install put its program (§10.6), with the login it ran as — on servers still saved.
+        let on = app.tools.installed.filter { $0.tool == p.id }.compactMap { r in app.savedServers.first { $0.id.uuidString == r.server }.map { ($0, r.target) } }
         var c = Confirm("Remove “\(name)”?", action: on.isEmpty ? "Remove" : "Remove from Kermo Only")
         c.items = files.map { Confirm.Item(name: $0) }
         c.runs = "Its files go to the Trash" + (builtIn ? "; the one built into Kermo is back in its place." : ".")

@@ -155,8 +155,7 @@ final class ToolsTool: NSView, RowList {
             let name = NSTextField(labelWithString: srv.title)
             name.textColor = srv.prod ? Palette.prod : .labelColor
             let used = !trusted ? "not in use yet" : s.uses(p.id, on: srv.id.uuidString) ? "used" : s.only[p.id] != nil ? "not on its list" : "hidden here"
-            let mine = app.tools.installed.first { $0.server == srv.id.uuidString && $0.tool == p.id }
-            let state = app.tools.state(tool, on: srv) + (mine.map { " · installed by Kermo, " + $0.at.formatted(.dateTime.day().month(.abbreviated)) } ?? "")
+            let state = app.tools.state(tool, on: srv) + (app.tools.installed(p.id, on: srv).map { " · installed by Kermo, " + $0.day } ?? "")
             var cells: [NSView] = [name, Self.small(state), Self.small(used)]
             if trusted, s.uses(p.id, on: srv.id.uuidString), !p.varsToAsk(saved: [:]).isEmpty {
                 cells.append(app.tools.toSetUp(tool, on: srv.target).isEmpty ? Self.small("settings set")

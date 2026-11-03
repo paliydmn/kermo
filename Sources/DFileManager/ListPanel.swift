@@ -739,7 +739,7 @@ extension AppDelegate {
 
     /// Who shows row `id` now: a Picker, lists in panels — a change updates it in each and says how it went there.
     func rowLists(_ id: String) -> [any RowList] {
-        ((Picker.current.map { [$0 as any RowList] } ?? []) + panels.compactMap(\.list) + ToolsWindow.pages + [ToolsWindow.main?.tool].compactMap { $0 })
+        ((Picker.current.map { [$0 as any RowList] } ?? []) + panels.compactMap(\.list) + ToolsWindow.pages + (ToolsWindow.main?.tool.map { [$0] } ?? []))
             .filter { $0.has(id) }
     }
 

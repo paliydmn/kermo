@@ -71,11 +71,12 @@ final class ToolRunner {
         known = Self.own.flatMap { try? Config.load("known.json", as: [String: Known].self, in: $0.path) } ?? [:]
         let read = Self.own.map { Config.loadKeeping("servers.json", as: ToolServers.self, in: $0.path) }
         settings = read?.value ?? ToolServers()
-        installed = Self.own.flatMap { try? Config.load("installed.json", as: [ToolInstalled].self, in: $0.path) } ?? []
+        let made = Self.own.map { Config.loadKeeping("installed.json", as: [ToolInstalled].self, in: $0.path) }   // a broken one isn't saved over
+        installed = made?.value ?? []
         let catalogsSaid = catalogs.reload()
         monitor.reconcile()   // watched servers, as the file says now (at launch: watching resumes by itself)
         ToolsWindow.refresh()
-        return library.problems + [read?.problem.map { "tools/" + $0 }].compactMap { $0 } + catalogsSaid
+        return library.problems + [read?.problem, made?.problem].compactMap { $0.map { "tools/" + $0 } } + catalogsSaid
     }
 
     func saveSettings() {

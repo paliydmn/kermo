@@ -235,6 +235,13 @@ extension ServerLockTests {
     #expect(form.installs.state == .off && form.typed.installs == nil, "production turns installs off with it: still the default")
     form.installs.state = .on
     #expect(form.typed.installs == true && form.typed.allowsInstalls, "turned on there: kept")
+    form.prod.state = .off
+    _ = (form.prod.target as? NSObject)?.perform(form.prod.action, with: form.prod)
+    #expect(form.installs.state == .on && form.typed.installs == nil, "a choice that's now the default: none kept")
+    form.installs.state = .off
+    form.prod.state = .on
+    _ = (form.prod.target as? NSObject)?.perform(form.prod.action, with: form.prod)
+    #expect(form.installs.state == .off && form.typed.installs == nil && !form.typed.allowsInstalls, "turned off, then production: off either way")
 
     var saved = SavedServer(address: "me@db.invalid:2200")!
     (saved.name, saved.prod, saved.locked, saved.startDir) = ("db", true, true, "/srv")

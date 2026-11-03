@@ -7,11 +7,12 @@ extension ToolInstall {
     /// The actions' ids: never a preset's (`[a-z0-9-]+`), so a job's `action` says it was Kermo's Install or Uninstall.
     public static let actionID = "kermo:install", uninstallID = "kermo:uninstall"
 
-    /// The command for a server whose `pkg` fact (§10.2) is `pkg`: `apt-get` takes `apt`, `yum` `dnf`. nil: none there.
+    /// The command for a server whose `pkg` fact (§10.2) is `pkg`: `apt-get` takes `apt`. nil: none there — `yum` too:
+    /// the fact says yum only where there's no dnf, so a dnf command would fail there.
     public func command(pkg: String) -> String? {
         switch pkg {
         case "apt-get": apt
-        case "dnf", "yum": dnf
+        case "dnf": dnf
         case "apk": apk
         case "pacman": pacman
         case "zypper": zypper
@@ -82,17 +83,25 @@ extension ToolInstall {
         let commands: [(String, String?)] = [("apt", apt), ("dnf", dnf), ("apk", apk), ("pacman", pacman), ("zypper", zypper), ("brew", brew)]
         var lines = commands.compactMap { name, c in c.map { ToolRuns.Line(what: name, how: $0, root: name != "brew") } }
         if let s = script {
-            let env = (s.env ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
-            lines.append(ToolRuns.Line(what: "script", how: ([s.url] + env).joined(separator: " ") + (s.sha256.map { " (sha256 \($0.prefix(12))…)" } ?? " (no sha256: not run)"),
-                                       root: true))
+            lines.append(ToolRuns.Line(what: "script", how: s.said + (s.sha256.map { " (sha256 \($0.prefix(12))…)" } ?? " (no sha256: not run)"), root: true))
         }
-        if let l = leaves {
-            let stays = [l.services.map { "services " + $0.joined(separator: ", ") }, l.paths.map { $0.joined(separator: ", ") },
-                         l.ports.map { "ports " + $0.map(String.init).joined(separator: ", ") }, l.note].compactMap { $0 }
-            if !stays.isEmpty { lines.append(ToolRuns.Line(what: "stays on the server", how: stays.joined(separator: "; "))) }
-        }
+        if let stays = leaves?.said { lines.append(ToolRuns.Line(what: "stays on the server", how: stays)) }
         if let k = keeps { lines.append(ToolRuns.Line(what: "stays after it", how: k)) }
         return lines
+    }
+}
+
+extension ToolInstall.Script {
+    /// "https://dpl.cesbo.com/install.sh DPL_VERSION=0.7.1": its address and its values, as people read them.
+    public var said: String { ([url] + (env ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }).joined(separator: " ") }
+}
+
+extension ToolInstall.Leaves {
+    /// "services dpl; /usr/local/bin/dpl, {base}; ports 80, 443": what stays after Install. nil: nothing said.
+    public var said: String? {
+        let stays = [services.map { "services " + $0.joined(separator: ", ") }, paths.map { $0.joined(separator: ", ") },
+                     ports.map { "ports " + $0.map(String.init).joined(separator: ", ") }, note].compactMap { $0 }
+        return stays.isEmpty ? nil : stays.joined(separator: "; ")
     }
 }
 
@@ -112,7 +121,7 @@ extension ToolLong {
     }
 
     /// What `cleanUp` said: the folder's size in bytes (nil: there's none) and the jobs running from it.
-    public static func cleanUp(_ out: String) -> (bytes: Int?, running: Int) {
+    public static func cleanUpSaid(_ out: String) -> (bytes: Int?, running: Int) {
         var bytes: Int?, running = 0
         for line in out.split(whereSeparator: \.isNewline) {
             if line.hasPrefix("kermo-size ") { bytes = Int(line.dropFirst("kermo-size ".count)).map { $0 * 1024 } }

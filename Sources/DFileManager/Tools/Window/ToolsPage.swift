@@ -398,10 +398,10 @@ final class ToolsPage: NSView, RowList {
         let menu = NSMenu()
         menu.autoenablesItems = false
         if let openAlone { menu.addItem(MenuAction.item("Open in New Window", openAlone)) }
-        let clean = MenuAction.item("Clean Up Kermo Files on \(server.title)…") { [unowned self] in
-            Task {
-                let r = await app.tools.cleanUp(on: server, target, window: window)
-                say(r.line, failed: r.failed)
+        let clean = MenuAction.item("Clean Up Kermo Files on \(server.title)…") { [unowned self, app, server, target] in
+            Task { [weak self] in   // the page may be gone by the time it's done: another server picked meanwhile
+                let r = await app.tools.cleanUp(on: server, target, window: self?.window)
+                self?.say(r.line, failed: r.failed)
             }
         }
         clean.toolTip = "~/.cache/kermo there: long jobs' logs and uploads. Its size first, then asked"
