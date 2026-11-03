@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 // Settings (⌘,): one window of tabs, each tab groups of rows. A row is an option the code already reads — its
 // `defaults` key at its right, written where the code reads it and applied the way the menu or Reload Config does —
-// or a button that runs a command. A new tab is one entry in `settingsTabs` (Monitor is; Tools' tab will be).
+// or a button that runs a command. A new tab is one entry in `settingsTabs` (Monitor is, and Tools').
 
 struct SettingsTab {
     let title: String, symbol: Symbol
@@ -128,6 +128,7 @@ extension AppDelegate {
                             status: { _ in ToolMonitor.loginSaid() }),
             ]),
         ]),
+        SettingsTab(title: "Tools", symbol: .tool, groups: [], view: { ToolSourcesPane(app: $0) }),
         SettingsTab(title: "Advanced", symbol: .advanced, groups: [
             ("Files", [
                 SettingsRow(title: "keymap.json", note: "Your shortcuts", control: .buttons([("Edit…", "app.keymap")])),

@@ -37,12 +37,15 @@ extension ServerLockTests {
         let unban = try action(l, "203.0.113.7", "Unban")
         #expect(unban.asks == .prod && unban.command == "fail2ban-client set sshd unbanip 203.0.113.7" && !unban.dangerous)
 
-        var asked: [String] = []
-        AppDelegate.answering = { m, b, _ in asked.append(m); return asked.count == 1 ? b.firstIndex(of: "Show Exactly What Runs") ?? 9 : 0 }
+        var asked: [String] = [], shown = ""
+        AppDelegate.answering = { m, b, _ in
+            asked.append(m)
+            if m.hasPrefix("Exactly") { shown = AppDelegate.answeredInfo }
+            return asked.count == 1 ? b.firstIndex(of: "Show Exactly What Runs") ?? 9 : 0
+        }
         _ = unban.run(false)
         await toolsUntil { !l.resultLines.isEmpty }
         #expect(asked == ["Unban on localhost?", "Exactly what runs on localhost", "Unban on localhost?"])
-        let shown = AppDelegate.answeredInfo
         #expect(shown.contains("K_ip=203.0.113.7") && shown.contains("K_jail=sshd") && shown.contains(#"fail2ban-client set "$K_jail" unbanip "$K_ip""#))
         #expect(l.resultLines.first?.hasPrefix("\u{FFFC} Unbanned 203.0.113.7 (sshd) on localhost at ") == true, "\(l.resultLines)")
         #expect(bench.calls.contains("fail2ban-client set sshd unbanip 203.0.113.7"))

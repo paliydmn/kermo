@@ -5,9 +5,9 @@
   "where": "server",
   "about": "For support: a report of the machine (OS, CPU, RAM, disks, GPU, network), load now and live, traffic, top processes.",
   "icon": "gauge",
-  "catalogVersion": 1,
+  "catalogVersion": 2,
   "sudo": false,
-  "header": "printf '%s · %s · up %s' \"$(hostname)\" \"$(uname -sr)\" \"$(uptime -p 2>/dev/null | sed 's/^up //')\"",
+  "header": "printf '%s · %s · up %s' \"$(uname -n)\" \"$(uname -sr)\" \"$(uptime -p 2>/dev/null | sed 's/^up //')\"",
   "toolActions": [
     {
       "id": "report",

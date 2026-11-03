@@ -4,10 +4,10 @@
 h() { printf '\n== %s ==\n' "$1"; }
 na() { echo "$1: not available here"; }
 h Host
-hostname
+uname -n
 sed -n 's/^PRETTY_NAME=//p' /etc/os-release 2>/dev/null | tr -d '"'
 uname -srm
-uptime
+uptime 2>/dev/null || na uptime
 h CPU
 if command -v lscpu >/dev/null 2>&1; then
   lscpu | grep -E '^(Model name|CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|Socket\(s\)|CPU max MHz):'

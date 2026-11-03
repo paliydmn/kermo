@@ -60,6 +60,7 @@ public enum ToolBatch {
         public var run: ToolRun
         /// "ufw", or "dpl/deploy" for an action.
         public var name: String { action.map { "\(tool)/\($0)" } ?? tool }
+        public init(tool: String, action: String?, run: ToolRun) { (self.tool, self.action, self.run) = (tool, action, run) }
     }
 
     /// What a server said: its facts, and the tools and actions whose `requires` passed.

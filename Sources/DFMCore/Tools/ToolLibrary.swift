@@ -125,8 +125,7 @@ public struct ToolLibrary: Sendable {
                     hash.update(data: s)
                     scripts[name] = String(decoding: s, as: UTF8.self)
                 }
-                return LoadedTool(preset: preset, path: path, builtIn: builtIn, scripts: scripts,
-                                  hash: hash.finalize().map { String(format: "%02x", $0) }.joined(), warnings: found)
+                return LoadedTool(preset: preset, path: path, builtIn: builtIn, scripts: scripts, hash: hash.finalize().hex, warnings: found)
             }
         }
         var tools = read(builtIn, builtIn: true)
@@ -137,8 +136,9 @@ public struct ToolLibrary: Sendable {
         return ToolLibrary(tools: tools, problems: problems)
     }
 
-    /// Kermo's own files in your tools folder — what you trusted, what servers had — never a tool.
-    public static let kermosOwn: Set<String> = ["trust.json", "known.json", "servers.json", "runs.json", "installed.json"]
+    /// Kermo's own files in your tools folder — what you trusted, what servers had, your catalogs and what came from
+    /// them — never a tool.
+    public static let kermosOwn: Set<String> = ["trust.json", "known.json", "servers.json", "runs.json", "installed.json", "catalogs.json", "fetched.json"]
 
     /// Why a file of yours isn't read (as mc has it): someone else owns it, or its group or others may write it. The
     /// file a link leads to counts.

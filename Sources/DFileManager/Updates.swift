@@ -64,14 +64,30 @@ enum Updates {
         return String(latest.trimmingPrefix("v"))
     }
 
-    /// No cache on disk, no cookies: the request carries nothing but Kermo's own version (in User-Agent).
+    private static let session: URLSession = {
+        let c = URLSessionConfiguration.ephemeral
+        c.timeoutIntervalForResource = 60
+        return URLSession(configuration: c)
+    }()
+
     static func fetch() async throws -> Release {
-        var request = URLRequest(url: api, timeoutInterval: 15)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        try JSONDecoder().decode(Release.self, from: await get(api, accept: "application/vnd.github+json"))
+    }
+
+    /// One GET: no cache on disk, no cookies, nothing in it but Kermo's own version (in User-Agent). Over `limit` bytes,
+    /// or past 15 s without a byte or a minute in all, it stops. A file URL (a catalog on a disk) is read the same way.
+    static func get(_ url: URL, accept: String? = nil, limit: Int = 4 << 20) async throws -> Data {
+        var request = URLRequest(url: url, timeoutInterval: 15)
+        request.setValue(accept, forHTTPHeaderField: "Accept")
         request.setValue("Kermo/\(current)", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession(configuration: .ephemeral).data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-        return try JSONDecoder().decode(Release.self, from: data)
+        let (bytes, response) = try await session.bytes(for: request)
+        guard url.isFileURL || (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        var data = Data()
+        for try await b in bytes {
+            data.append(b)
+            if data.count > limit { throw URLError(.dataLengthExceedsMaximum) }
+        }
+        return data
     }
 
     /// The release notes (GitHub Markdown) as the alert shows them: headings bold, list items with bullets.
@@ -111,8 +127,9 @@ extension AppDelegate {
     }
 
     /// By itself: silent when GitHub can't be reached (offline, a closed network), and a newer version is said once.
-    /// By hand: an alert either way.
+    /// By hand: an alert either way, which says too what the tool catalogs have newer (they're fetched by hand only).
     func checkForUpdates(byHand: Bool) async {
+        let catalogs = byHand ? Task { await tools.catalogs.fetch() } : nil   // alongside Kermo's own
         let release: Updates.Release
         do { release = try await Updates.fetch() } catch {
             if byHand { _ = await Self.sheet(Self.alert("Couldn't check for updates", info: error.localizedDescription, ["OK"]), on: window) }
@@ -121,22 +138,32 @@ extension AppDelegate {
         let was = defaults.string(forKey: "updateLatest")
         defaults.set(Date(), forKey: "updateChecked")
         defaults.set(release.tag_name, forKey: "updateLatest")
-        if byHand { return await showUpdate(release) }
+        if byHand {
+            await catalogs?.value
+            return await showUpdate(release)
+        }
         if release.tag_name != was, let v = updateOffered { active.flash("Kermo \(v) is available: Kermo ▸ Kermo \(v) Available…") }
     }
 
+    /// The tools the catalogs have newer, and a catalog that couldn't be read.
+    var toolUpdates: String {
+        let c = tools.catalogs, names = c.updates.map(\.preset.title)
+        return ((names.isEmpty ? [] : ["Tools ▸ Catalog has newer " + names.joined(separator: ", ") + "."]) + c.problems.map { "Catalog " + $0 })
+            .joined(separator: "\n")
+    }
+
     private func showUpdate(_ release: Updates.Release) async {
-        let current = Updates.current
+        let current = Updates.current, tools = toolUpdates.isEmpty ? "" : "\n\n" + toolUpdates
         guard let v = Updates.offered(latest: release.tag_name, skipped: nil, current: current) else {
-            _ = await Self.sheet(Self.alert("Kermo \(current) is the latest version", info: "", ["OK"]), on: window)
+            _ = await Self.sheet(Self.alert("Kermo \(current) is the latest version", info: toolUpdates, ["OK"]), on: window)
             return
         }
         let zip = Updates.archive(release)
         let alert = zip == nil
-            ? Self.alert("Kermo \(v) is available", info: "You have \(current). Download it, then replace Kermo in Applications.",
+            ? Self.alert("Kermo \(v) is available", info: "You have \(current). Download it, then replace Kermo in Applications." + tools,
                          ["Download", "Later", "Skip This Version"])
             : Self.alert("Kermo \(v) is available", info: "You have \(current). Kermo downloads it, checks it's signed as this one is, "
-                         + "puts it in place of this one and opens it again.", ["Install and Relaunch", "Later", "Skip This Version"])
+                         + "puts it in place of this one and opens it again." + tools, ["Install and Relaunch", "Later", "Skip This Version"])
         alert.alertStyle = .informational
         alert.buttons[1].keyEquivalent = "\u{1b}"   // ⎋: Later
         if let body = release.body, !body.isEmpty {
