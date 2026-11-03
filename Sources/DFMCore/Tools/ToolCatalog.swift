@@ -37,7 +37,7 @@ public enum ToolCatalog {
     }
 
     /// Kermo's own: the one `tools/catalogs.json` starts with.
-    public static let kermo = Source(name: "Kermo", url: "https://raw.githubusercontent.com/paliydmn/kermo-tools/main/",
+    public static let kermo = Source(name: "Kermo", url: "https://raw.githubusercontent.com/paliydmn/kermo-tools/master/",
                                      key: "MCowBQYDK2VwAyEArE7Xgq4hVRlyai1MbZDGfCaWEKSDDzmfu6QJrMTF4j0=")
 
     /// `catalog.json`. `serial` grows with each index signed: one lower than an index seen before is an old one served
