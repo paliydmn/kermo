@@ -169,9 +169,7 @@ private func tool(_ list: String, _ actions: String, scripts: [String: String] =
     #expect(without.tools["x"]?.files == [:], "its files kept as .bak on its next update, not the whole file lost")
 }
 
-/// Kermo's own catalog's key is a stand-in till its key ceremony: until then every Catalog says Kermo's key isn't one.
+/// Kermo's own catalog's key is an Ed25519 public key: with anything else every Catalog says Kermo's key isn't one.
 @Test func kermosOwnCatalogHasItsKey() {
-    withKnownIssue("Kermo's catalog key: the key ceremony is still to come") {
-        #expect(ToolCatalog.kermo.publicKey != nil)
-    }
+    #expect(ToolCatalog.kermo.publicKey != nil)
 }
