@@ -138,6 +138,7 @@ import DFMCore
         (cell.orientation, cell.alignment, cell.spacing) = (.vertical, .leading, 3)
         cell.widthAnchor.constraint(lessThanOrEqualToConstant: 170).isActive = true   // five tiles fit a 900-pt window; wider ones stay readable
         t.bar?.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
+        t.bar?.heightAnchor.constraint(equalToConstant: 8).isActive = true   // half its own, as WATCHED's
         t.detail.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
         cell.setAccessibilityLabel(title)
         return cell

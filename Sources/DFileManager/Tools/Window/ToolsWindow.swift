@@ -32,6 +32,8 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
     private(set) var tool: ToolsTool?
     private(set) var starter: ToolsNew?
     private let content = NSView()
+    /// The sidebar and the page, the sidebar as wide as you drag it — as the main window's.
+    private lazy var split = NSSplitViewController()
     /// A server's page alone: no sidebar.
     private let isAlone: Bool
     /// Servers as a Tools ▸ (or ⌃⌘T) opened them here — an alias, `.local()` — their pages go there; one not saved is
@@ -117,20 +119,17 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
             scroll.documentView = sidebar
             scroll.hasVerticalScroller = true
             scroll.drawsBackground = false
-            let side = NSVisualEffectView()
-            side.material = .sidebar
-            side.blendingMode = .behindWindow
-            for (v, inside) in [(scroll, side as NSView)] {
-                v.translatesAutoresizingMaskIntoConstraints = false
-                inside.addSubview(v)
-                NSLayoutConstraint.activate([v.leadingAnchor.constraint(equalTo: inside.leadingAnchor), v.trailingAnchor.constraint(equalTo: inside.trailingAnchor),
-                                             v.topAnchor.constraint(equalTo: inside.topAnchor), v.bottomAnchor.constraint(equalTo: inside.bottomAnchor)])
-            }
-            let root = NSStackView(views: [side, content])
-            (root.spacing, root.distribution) = (0, .fill)
-            content.setContentHuggingPriority(.init(1), for: .horizontal)
-            side.widthAnchor.constraint(equalToConstant: 230).isActive = true
-            window.contentView = root
+            let side = NSViewController(), page = NSViewController()
+            (side.view, page.view) = (scroll, content)
+            split.splitView.autosaveName = "ToolsSidebar"   // its width kept; a wider window widens the page
+            let item = NSSplitViewItem(sidebarWithViewController: side)
+            (item.minimumThickness, item.maximumThickness, item.canCollapse) = (180, 420, false)
+            let pageItem = NSSplitViewItem(viewController: page)
+            pageItem.minimumThickness = 300   // a narrow window narrows the sidebar first
+            split.addSplitViewItem(item)
+            split.addSplitViewItem(pageItem)
+            split.view.frame = NSRect(x: 0, y: 0, width: 900, height: 560)
+            window.contentView = split.view
             reload()
         }
         window.center()
@@ -278,7 +277,8 @@ final class ToolsWindow: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTa
                     bar.criticalValue = item.crit ?? item.max + 1
                     bar.controlSize = .mini
                     bar.isEditable = false
-                    bar.widthAnchor.constraint(equalToConstant: 34).isActive = true
+                    bar.widthAnchor.constraint(equalToConstant: 17).isActive = true
+                    bar.heightAnchor.constraint(equalToConstant: 8).isActive = true   // half its own: a line, not a block
                     bar.toolTip = "\(item.label) \(item.text)"
                     bar.setAccessibilityLabel("\(item.label) \(item.text)")
                     let label = Self.small(item.label.lowercased())

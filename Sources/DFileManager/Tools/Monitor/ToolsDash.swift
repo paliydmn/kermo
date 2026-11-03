@@ -271,7 +271,8 @@ struct OneChart: View {
 /// A `table` block: a row set as the latest sample that carried it, in the block's columns (§5.2's formats, a `bar`
 /// as one), each row with the block's actions as buttons — down the one path every action takes
 /// (`ToolListSource.action`: the lock, production's question, the line on the page, red for what can't be undone);
-/// one `only` keeps off a row isn't on it. An action this version doesn't run is greyed, saying so.
+/// one `only` keeps off a row isn't on it. An action this version doesn't run is greyed, saying so. As tall as its rows,
+/// or as you drag its grip (kept per tool and table; a double-click goes back to its rows).
 @MainActor final class ToolsTable: NSView, NSTableViewDataSource, NSTableViewDelegate, ToolsBlock {
     let block: ToolBlock
     let table = NSTableView()
@@ -282,6 +283,16 @@ struct OneChart: View {
     private let height: NSLayoutConstraint
     /// The header and the rows; a legacy horizontal scroller adds its height (`layout`).
     private var fit: CGFloat = 48
+    /// Under the table: its height as you drag it.
+    let grip = ToolsGrip()
+    /// "<tool>.<table>": what its dragged height is kept by (`toolsTableHeights`).
+    private let name: String
+    /// The height you dragged it to; nil: as tall as its rows.
+    private var chosen: CGFloat?
+    /// The height when the press began.
+    private var dragFrom: CGFloat = 0
+    /// The legacy scroller's height under a table wider than the block, the last layout.
+    private var bar: CGFloat = 0
     private var kept: [AnyObject] = []
     private var tasks: [String: Task<Void, Never>] = [:]
 
@@ -292,6 +303,8 @@ struct OneChart: View {
         // ponytail: a table with no `key` names its rows by their record, so a row's id changes with its numbers; System's say `{pid}` / `{mount}`.
         view = ToolListView(columns: block.columns, key: block.key)
         source = ToolListSource(live.app, live.tool, live.server, live.target)
+        name = live.tool.preset.id + "." + (block.table ?? "")
+        chosen = (UserDefaults.standard.dictionary(forKey: "toolsTableHeights")?[name] as? Double).map { CGFloat($0) }
         let scroll = NSScrollView()
         height = scroll.heightAnchor.constraint(equalToConstant: 48)
         super.init(frame: .zero)
@@ -316,37 +329,63 @@ struct OneChart: View {
         }
         table.dataSource = self
         table.delegate = self
+        table.style = .plain   // no inset: the columns fill the block exactly; a scroller shows only for a table wider than it
         table.rowHeight = 22
         table.usesAlternatingRowBackgroundColors = true
         table.selectionHighlightStyle = .none
         table.setAccessibilityLabel(heading.stringValue)
         scroll.documentView = table
-        scroll.hasVerticalScroller = false
+        scroll.hasVerticalScroller = false   // the dashboard scrolls; the table only when dragged shorter than its rows (`layout`)
         scroll.hasHorizontalScroller = true   // a narrow window: the buttons stay reachable
         scroll.autohidesScrollers = true
         scroll.verticalScrollElasticity = .none
-        let stack = NSStackView(views: [heading, scroll])
+        grip.began = { [unowned self] in dragFrom = height.constant }
+        grip.drag = { [unowned self] by, done in
+            chosen = max(oneRow, dragFrom + by)
+            if done { keep() }
+            needsLayout = true
+        }
+        grip.reset = { [unowned self] in
+            chosen = nil
+            keep()
+            needsLayout = true
+        }
+        grip.setAccessibilityLabel("\(heading.stringValue) height")
+        let stack = NSStackView(views: [heading, scroll, grip])
         (stack.orientation, stack.alignment, stack.spacing) = (.vertical, .leading, 4)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
                                      stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-                                     scroll.widthAnchor.constraint(equalTo: stack.widthAnchor), height])
+                                     scroll.widthAnchor.constraint(equalTo: stack.widthAnchor), grip.widthAnchor.constraint(equalTo: stack.widthAnchor), height])
+        stack.setCustomSpacing(0, after: scroll)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     /// The first column as wide as the block leaves it, the others as set; a legacy scroller under a table wider
-    /// than the block gets its height.
+    /// than the block gets its height, so it hides no row. Your height, if you dragged one.
     override func layout() {
         super.layout()
         guard let first = table.tableColumns.first, let scroll = table.enclosingScrollView else { return }
         let rest = table.tableColumns.dropFirst().reduce(0) { $0 + $1.width } + CGFloat(table.tableColumns.count) * table.intercellSpacing.width
         let width = max(first.minWidth, scroll.contentView.bounds.width - rest)
         if abs(first.width - width) > 0.5 { first.width = width }
-        let bar: CGFloat = width + rest > scroll.contentView.bounds.width + 0.5 && NSScroller.preferredScrollerStyle == .legacy
+        bar = width + rest > scroll.contentView.bounds.width + 0.5 && scroll.scrollerStyle == .legacy
             ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
-        if abs(height.constant - (fit + bar)) > 0.5 { height.constant = fit + bar }
+        let want = chosen ?? fit + bar
+        scroll.hasVerticalScroller = want < fit + bar - 0.5
+        if abs(height.constant - want) > 0.5 { height.constant = want }
+    }
+
+    /// The least a drag leaves: the header and one row, and a scroller under them where one shows.
+    private var oneRow: CGFloat { (table.headerView?.frame.height ?? 23) + table.rowHeight + table.intercellSpacing.height + 2 + bar }
+
+    /// The dragged height kept for the next time (once, as the drag ends), or dropped.
+    private func keep() {
+        var all = UserDefaults.standard.dictionary(forKey: "toolsTableHeights") ?? [:]
+        all[name] = chosen.map(Double.init)
+        UserDefaults.standard.set(all, forKey: "toolsTableHeights")
     }
 
     private var actions: [ToolAction] { (block.actions ?? []).compactMap { id in source.preset.actions?.first { $0.spec.id == id } } }
@@ -380,6 +419,7 @@ struct OneChart: View {
             bar.controlSize = .mini
             bar.isEditable = false
             bar.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            bar.heightAnchor.constraint(equalToConstant: 8).isActive = true
             let s = NSStackView(views: [bar, label(ToolTemplate.show(.number(v), "%"), right: true)])
             s.spacing = 4
             return s
@@ -552,5 +592,50 @@ struct OneChart: View {
         for (n, c) in zip(numbers, block.counts ?? []) {
             n.stringValue = live.known?.history.carried(c.rows).map { "\($0.rows(c.rows).count)" } ?? "—"
         }
+    }
+}
+
+/// The handle under a dashboard table: dragged up or down, the table's height goes with it — by how far the pointer
+/// went since the press, so no step is lost however few layouts there are; a double-click, back to its rows (the
+/// rest of that click drags nothing). A press that moves less than 3 pt is a click: it keeps nothing.
+@MainActor final class ToolsGrip: NSView {
+    /// A press: the height to drag from.
+    var began: (() -> Void)?
+    /// How much taller than at the press; `done`: let go.
+    var drag: ((_ by: CGFloat, _ done: Bool) -> Void)?
+    var reset: (() -> Void)?
+    private var start: CGFloat?
+    private var moved = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.splitter)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 8) }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeUpDown) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.tertiaryLabelColor.setFill()
+        NSBezierPath(roundedRect: NSRect(x: bounds.midX - 16, y: bounds.midY - 1, width: 32, height: 2), xRadius: 1, yRadius: 1).fill()
+    }
+
+    override func mouseDown(with e: NSEvent) {
+        (start, moved) = (e.clickCount >= 2 ? nil : e.locationInWindow.y, false)
+        if e.clickCount >= 2 { reset?() } else { began?() }
+    }
+    override func mouseDragged(with e: NSEvent) {
+        guard let start else { return }
+        let by = start - e.locationInWindow.y   // the window's y grows up: down is taller
+        guard moved || abs(by) >= 3 else { return }
+        moved = true
+        drag?(by, false)
+    }
+    override func mouseUp(with e: NSEvent) {
+        if let start, moved { drag?(start - e.locationInWindow.y, true) }
+        start = nil
     }
 }

@@ -488,7 +488,8 @@ extension ServerLockTests {
     @Test func theDashboardDrawsItsBlocksFromTheStream() async throws {
         let (app, _, _, done) = try toolsApp()
         let bench = try ToolsBench(), quick = Quick(app)
-        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        UserDefaults.standard.removeObject(forKey: "toolsTableHeights")   // an earlier run's drag
+        defer { quick.done(); bench.done(); done(); app.savedServers = []; UserDefaults.standard.removeObject(forKey: "toolsTableHeights") }
         try await watching(app, bench)
         bench.flag("hot-localhost")
         ToolsWindow.show(app, server: .local())
@@ -502,6 +503,36 @@ extension ServerLockTests {
         weak var hosting = charts.hosting
         page?.window?.layoutIfNeeded()
         #expect(view.frame.height > 200 && view.frame.width > 300, "the live tab takes the page's body: \(view.frame)")
+        // Its grip: dragged down 40 pt, 40 pt taller, kept as the drag ends; up past its rows, a row and the header
+        // stay; a click that doesn't move keeps nothing; a double-click (its jitter after) goes back to its rows.
+        let scroll = try #require(table.table.enclosingScrollView), grip = table.grip, wn = page?.window?.windowNumber ?? 0
+        func mouse(_ type: NSEvent.EventType, _ y: CGFloat, clicks: Int = 1) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: NSPoint(x: 10, y: y), modifierFlags: [], timestamp: 0, windowNumber: wn, context: nil, eventNumber: 0,
+                               clickCount: clicks, pressure: 1)!
+        }
+        func kept() -> Any? { UserDefaults.standard.dictionary(forKey: "toolsTableHeights")?["pulse.procs"] }
+        let rowsTall = scroll.frame.height
+        grip.mouseDown(with: mouse(.leftMouseDown, 300))
+        grip.mouseDragged(with: mouse(.leftMouseDragged, 299))
+        grip.mouseUp(with: mouse(.leftMouseUp, 299))
+        #expect(kept() == nil, "a click, though it wobbled a point, keeps nothing")
+        grip.mouseDown(with: mouse(.leftMouseDown, 300))
+        grip.mouseDragged(with: mouse(.leftMouseDragged, 280))
+        grip.mouseDragged(with: mouse(.leftMouseDragged, 260))
+        page?.window?.layoutIfNeeded()
+        #expect(abs(scroll.frame.height - rowsTall - 40) < 1 && kept() == nil, "taller as it goes, kept only at the end: \(scroll.frame.height) \(rowsTall)")
+        grip.mouseUp(with: mouse(.leftMouseUp, 260))
+        #expect(kept() != nil)
+        grip.mouseDown(with: mouse(.leftMouseDown, 300))
+        grip.mouseDragged(with: mouse(.leftMouseDragged, 900))   // up a long way
+        grip.mouseUp(with: mouse(.leftMouseUp, 900))
+        page?.window?.layoutIfNeeded()
+        #expect(scroll.frame.height > (table.table.headerView?.frame.height ?? 23) + table.table.rowHeight && scroll.hasVerticalScroller)
+        grip.mouseDown(with: mouse(.leftMouseDown, 300, clicks: 2))
+        grip.mouseDragged(with: mouse(.leftMouseDragged, 297, clicks: 2))
+        grip.mouseUp(with: mouse(.leftMouseUp, 297, clicks: 2))
+        page?.window?.layoutIfNeeded()
+        #expect(abs(scroll.frame.height - rowsTall) < 1 && kept() == nil && !scroll.hasVerticalScroller)
         #expect(hosting?.window != nil && charts.range.segmentCount == 3 && charts.range.selectedSegment == 0)
         let d = charts.model.data
         #expect(d.charts.map(\.title) == ["CPU", "Ticks"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95 && d.charts[1].warn == nil)
