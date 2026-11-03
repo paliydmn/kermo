@@ -53,7 +53,7 @@ extension ToolRunner {
         if let why = whyNoInstall(tool, on: s, t, uninstall: uninstall) { return stop(why) }
         guard let i = uninstall ? p.uninstall : p.install, let pkg = answer(t)?.answer.facts.pkg,
               var a = i.action(pkg: pkg, title: name, uninstall: uninstall) else { return (nil, nil) }
-        guard await ServerLock.authorize(t, "\(verb.lowercased()) \(name) on") else { return stop("it stays locked") }
+        guard await ServerLock.authorize(t, "\(verb.lowercased()) \(name) on") else { return stop("the server stays locked") }
         if let why = await prechecked(i, of: p, name, on: s, t) { return stop(why) }
         var copy = tool
         copy.preset.env = nil   // the tool's own values (a repository, a password file) aren't the installer's
@@ -66,7 +66,9 @@ extension ToolRunner {
                 notes.append("The vendor's script, fetched on this Mac and checked: sha256 \(sum.prefix(12))… — \(sc.said). Show Exactly What Runs shows it.")
             }
         }
-        if uninstall, let r = installed(p.id, on: s) { notes.append("Kermo installed \([name, r.version].compactMap { $0 }.joined(separator: " ")) here on \(r.day).") }
+        if uninstall, let r = installed(p.id, on: s) {
+            notes.append("Kermo installed \([name, r.version].compactMap { $0 }.joined(separator: " ")) here on \(r.at.formatted(date: .abbreviated, time: .omitted)).")
+        }
         if let stays = p.install?.leaves?.said { notes.append((uninstall ? "Install left: " : "Stays on the server after it: ") + stays + ".") }
         notes += [uninstall ? i.keeps.map { "Stays after it: \($0)." } : i.after].compactMap { $0 }
         a.spec.message = notes.joined(separator: "\n")
@@ -146,7 +148,7 @@ extension ToolRunner {
     func cleanUp(on s: SavedServer, _ t: SFTPTarget, window: NSWindow?) async -> (line: String, failed: Bool) {
         let t = t.asUser, env = SSHAskpass.env, command = Self.command, panel = app.active
         let busy = { [app] in app.serviceRuns.keys.contains { $0.hasPrefix(ServerRow.key(t) + " ") } }
-        if busy() { return ("A change runs on \(s.title): Clean Up once it's done", false) }
+        if busy() { return ("A change is under way on \(s.title): Clean Up once it's done", false) }
         guard await ServerLock.authorize(t, "clean up Kermo's files on") else { return ("\(s.title) stays locked", false) }
         func run(_ remove: Bool) async -> ToolExec.Ran? {
             let r = await panel.busy("Kermo's files on \(s.title)…") { flag in
@@ -166,8 +168,11 @@ extension ToolRunner {
         c.irreversible = true
         guard await app.confirm(c, on: window) == 0 else { return ("Kermo's files on \(s.title): kept", false) }
         if busy() { return ("A change started on \(s.title) meanwhile: Kermo's files stay", false) }
+        // ponytail: a job asked for in the round trip of the rm itself can still upload into the folder going; a mark of
+        // Clean Up's own that `why` checks would close it.
         let removed = await run(true)
-        AuditLog.write(t, "tools clean up", paths: ["~/.cache/kermo"], command: c.command, exit: removed?.status, error: removed == nil ? "didn't run" : nil)
+        AuditLog.write(t, "tools clean up", paths: ["~/.cache/kermo"], command: c.command, exit: removed?.status,
+                       error: removed.map { $0.status == 0 ? nil : $0.status == 3 ? "a long job started meanwhile: kept" : $0.errors } ?? "didn't run")
         guard let ran = removed else { return ("Kermo's files on \(s.title) couldn't be removed", true) }
         switch ran.status {
         case 0: return ("Kermo's files on \(s.title) are removed (\(size))", false)

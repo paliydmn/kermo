@@ -246,15 +246,18 @@ final class ToolCatalogs {
         let others = app.tools.library.tools.filter { !$0.builtIn && $0.preset.id != p.id }.flatMap(\.preset.scriptNames)
         let files = [(tool.path as NSString).lastPathComponent] + p.scriptNames.subtracting(others).sorted()
         let builtIn = Self.builtIns.contains(p.id)
-        // Where Kermo's Install put its program (§10.6), with the login it ran as — on servers still saved.
-        let on = app.tools.installed.filter { $0.tool == p.id }.compactMap { r in app.savedServers.first { $0.id.uuidString == r.server }.map { ($0, r.target) } }
+        // Where Kermo's Install put its program (§10.6), with the login it ran as — on servers still saved, still there.
+        let on = app.tools.installed.filter { $0.tool == p.id }.compactMap { r in
+            app.savedServers.first { $0.id.uuidString == r.server && ServerLock.same($0.target, r.target) }.map { ($0, r.target) }
+        }
+        let uninstalls = p.uninstall != nil && on.allSatisfy { app.tools.whyNoInstall(tool, on: $0.0, $0.1, uninstall: true) == nil }
         var c = Confirm("Remove “\(name)”?", action: on.isEmpty ? "Remove" : "Remove from Kermo Only")
         c.items = files.map { Confirm.Item(name: $0) }
         c.runs = "Its files go to the Trash" + (builtIn ? "; the one built into Kermo is back in its place." : ".")
         if !on.isEmpty {
             let servers = on.map(\.0.title).joined(separator: ", ")
-            c.note = "Kermo installed \(p.tool ?? name) on \(servers): it stays there" + (p.uninstall == nil ? "; its docs say how to remove it." : " unless you uninstall it too.")
-            if p.uninstall != nil { c.others = ["Also Uninstall from \(servers)…"] }
+            c.note = "Kermo installed \(p.tool ?? name) on \(servers): it stays there" + (uninstalls ? " unless you uninstall it too." : p.uninstall == nil ? "; its docs say how to remove it." : ".")
+            if uninstalls { c.others = ["Also Uninstall from \(servers)…"] }
         }
         let answer = await app.confirm(c, on: window)
         guard answer == 0 || (answer == 1 && !c.others.isEmpty) else { return "\(name): kept" }
