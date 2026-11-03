@@ -242,7 +242,7 @@ struct ToolJob: Codable, Equatable {
             list.said(text, about: j.rowID, failed: !j.ok, output: nil)
         }
         reread(j.rowID, on: j.target)
-        if j.action == ToolInstall.actionID { app.tools.installEnded(j) }
+        if [ToolInstall.actionID, ToolInstall.uninstallID].contains(j.action) { app.tools.installEnded(j) }
         Task {
             let allowed = await Self.notices.allowed()
             switch Self.notice(took: took, front: front, allowed: allowed) {
@@ -296,7 +296,7 @@ struct ToolJob: Codable, Equatable {
 
     func action(_ j: ToolJob) -> ToolAction? {
         guard let p = app.tools.library.tools.first(where: { $0.preset.id == j.tool })?.preset else { return nil }
-        if j.action == ToolInstall.actionID { return app.tools.installAction(p, on: j.target) }
+        if [ToolInstall.actionID, ToolInstall.uninstallID].contains(j.action) { return app.tools.installAction(p, on: j.target, uninstall: j.action == ToolInstall.uninstallID) }
         return p.allActions.first { $0.action.spec.id == j.action }?.action ?? (j.action == "command" ? p.commandAction : nil)
     }
 
@@ -357,8 +357,8 @@ struct ToolJob: Codable, Equatable {
             return app.active.flash("\(j.name) can't run again: \(j.tool) isn't in use any more", error: true)
         }
         let s = app.savedServer(at: j.target) ?? SavedServer(target: j.target)
-        if j.action == ToolInstall.actionID {   // its checks and its script again: Install… as from the tool's page
-            Task { if let why = await app.tools.install(tool, on: s, j.target) { app.active.flash(why, error: true) } }
+        if [ToolInstall.actionID, ToolInstall.uninstallID].contains(j.action) {   // its checks and its script again: as from the tool's page
+            Task { if let why = await app.tools.install(tool, on: s, j.target, uninstall: j.action == ToolInstall.uninstallID).stop { app.active.flash(why, error: true) } }
             return
         }
         let row = j.record.flatMap { r in tool.preset.list?.view.row(r, app.tools.scope(tool.preset, on: s, j.target)) }

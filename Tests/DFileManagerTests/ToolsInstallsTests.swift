@@ -34,8 +34,14 @@ private func need<T>(_ v: T?, _ what: String) throws -> T {
         bench = try ToolsBench()
         let dir = bench.dir
         try FileManager.default.removeItem(atPath: dir + "/bin/tail")   // fail2ban's log stand-in: a follow reads with the real one
-        try Data("#!/bin/sh\necho \"apt-get $*\" >> \(dir)/calls.log\nprintf '#!/bin/sh\\necho thing 1.2\\n' > \(dir)/bin/thing; chmod +x \(dir)/bin/thing\necho Setting up thing\n".utf8)
-            .write(to: URL(fileURLWithPath: dir + "/bin/apt-get"))
+        try Data("""
+            #!/bin/sh
+            echo "apt-get $*" >> \(dir)/calls.log
+            case $1 in
+              install) printf '#!/bin/sh\\necho thing 1.2\\n' > \(dir)/bin/thing; chmod +x \(dir)/bin/thing; echo Setting up thing ;;
+              remove) rm -f \(dir)/bin/thing; echo Removing thing ;;
+            esac
+            """.utf8).write(to: URL(fileURLWithPath: dir + "/bin/apt-get"))
         chmod(dir + "/bin/apt-get", 0o755)
         try FileManager.default.createDirectory(atPath: dir + "/own", withIntermediateDirectories: true)
         try Data(preset.utf8).write(to: URL(fileURLWithPath: dir + "/own/thing.json"))
@@ -83,13 +89,13 @@ extension ServerLockTests {
         #expect(app.tools.whyNoInstall(tool, on: prod, .local()) == nil, "turned on there")
         var ro = ib.server
         ro.readOnly = true
-        #expect(await app.tools.install(tool, on: ro, .local()) == "Install thing: read-only: no installs — nothing ran")
+        #expect(await app.tools.install(tool, on: ro, .local()).stop == "Install thing: read-only: no installs — nothing ran")
 
         let page = ToolsTool(app, tool, from: "My Tools") {}
         #expect(page.buttons("Install…").count == 1, "its row: Install…")
         var asked: [String] = [], info = ""
         AppDelegate.answering = { m, _, _ in asked.append(m); info = AppDelegate.answeredInfo; return 0 }
-        #expect(await app.tools.install(tool, on: ib.server, .local()) == nil)
+        #expect(await app.tools.install(tool, on: ib.server, .local()).stop == nil)
         await toolsUntil { app.tools.jobs.jobs.first?.running == false }
         let j = try need(app.tools.jobs.jobs.first, "the job")
         #expect(asked == ["Install thing on localhost?"], "\(asked)")
@@ -117,7 +123,7 @@ extension ServerLockTests {
         _ = try await ib.asked(app)
         var asked = 0
         AppDelegate.answering = { _, _, _ in asked += 1; return 0 }
-        #expect(await app.tools.install(try toolNamed(app, "thing"), on: ib.server, .local()) == "Install thing on localhost: Podman 4.8 or newer is needed (found 4.3) — nothing ran")
+        #expect(await app.tools.install(try toolNamed(app, "thing"), on: ib.server, .local()).stop == "Install thing on localhost: Podman 4.8 or newer is needed (found 4.3) — nothing ran")
         #expect(asked == 0 && app.tools.jobs.jobs.isEmpty && !ib.bench.calls.contains { $0.hasPrefix("apt-get") })
     }
 
@@ -144,14 +150,55 @@ extension ServerLockTests {
         AppDelegate.answering = { _, _, _ in info = AppDelegate.answeredInfo; return 0 }
         _ = try await ib.asked(app)
         let wrong = try use(preset(String(repeating: "0", count: 64)))
-        #expect(await app.tools.install(wrong, on: ib.server, .local())?.contains("isn't the one the tool names (sha256 \(sum.prefix(12))…") == true)
+        #expect(await app.tools.install(wrong, on: ib.server, .local()).stop?.contains("isn't the one the tool names (sha256 \(sum.prefix(12))…") == true)
         #expect(app.tools.jobs.jobs.isEmpty)
         let right = try use(preset(sum))
         _ = try await ib.asked(app)
-        #expect(await app.tools.install(right, on: ib.server, .local()) == nil)
+        #expect(await app.tools.install(right, on: ib.server, .local()).stop == nil)
         await toolsUntil { app.tools.jobs.jobs.first?.running == false }
         #expect(app.tools.jobs.jobs.first?.ok == true && ib.bench.calls.contains("script 1.2"), "\(ib.bench.calls)")
         #expect(info.contains("sh -s < \(url.absoluteString)") && info.contains("fetched on this Mac and checked: sha256 \(sum.prefix(12))…, with THING_VERSION=1.2"), "\(info)")
+    }
+
+    /// Uninstall… only where Kermo installed it: asked as dangerous, with the exact command, when Kermo installed it, what
+    /// Install left and what `keeps`; at its end the record is gone and the server asked again. Remove… of the tool
+    /// offers Also Uninstall: each Uninstall asked and started first, then the tool's files go.
+    @Test func uninstallOnlyWhereKermoInstalledIt() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let preset = thing().replacingOccurrences(of: #"} } }"#, with: #"} }, "uninstall": { "apt": "apt-get remove -y thing", "keeps": "its settings in /etc/thing" } }"#)
+        let ib = try InstallBench(app, preset: preset)
+        defer { ib.done(app); done() }
+        _ = try await ib.asked(app)
+        let jobs = app.tools.jobs
+        func install(_ uninstall: Bool) async throws {
+            let r = await app.tools.install(try toolNamed(app, "thing"), on: ib.server, .local(), uninstall: uninstall)
+            #expect(r.stop == nil, "\(r.stop ?? "")")
+            await r.run?.value
+            await toolsUntil { jobs.jobs.first?.running == false }
+            await toolsUntil { (app.tools.installed("thing", on: ib.server) == nil) == uninstall && app.tools.answer(.local())?.answer.has(try! toolNamed(app, "thing").preset) == !uninstall }
+        }
+        var asked: [String] = [], info = ""
+        AppDelegate.answering = { m, _, _ in asked.append(m); info = AppDelegate.answeredInfo; return 0 }
+        let tool = try toolNamed(app, "thing")
+        #expect(app.tools.whyNoInstall(tool, on: ib.server, .local(), uninstall: true) == "Kermo didn't install it there")
+        try await install(false)
+        #expect(app.tools.whyNoInstall(tool, on: ib.server, .local(), uninstall: true) == nil)
+        #expect(ToolsTool(app, tool, from: "My Tools") {}.buttons("Uninstall…").count == 1)
+        try await install(true)
+        let j = try need(jobs.jobs.first, "the job")
+        #expect(asked.last == "Uninstall thing on localhost?" && j.action == ToolInstall.uninstallID && j.ok && j.said == "removed; its settings in /etc/thing stay", "\(asked) \(j)")
+        #expect(info.contains("apt-get remove -y thing") && info.contains("Kermo installed thing 1.2 here on") && info.contains("Install left: services thing; /usr/bin/thing.")
+                && info.contains("Stays after it: its settings in /etc/thing."), "\(info)")
+        #expect(app.tools.installed.isEmpty && !FileManager.default.fileExists(atPath: ib.bench.dir + "/bin/thing"))
+
+        try await install(false)
+        asked = []
+        AppDelegate.answering = { m, b, _ in asked.append(m); info = AppDelegate.answeredInfo; return m.hasPrefix("Remove") ? b.firstIndex { $0.hasPrefix("Also Uninstall") } ?? 99 : 0 }
+        let said = await app.tools.catalogs.remove(try toolNamed(app, "thing"), window: nil)
+        #expect(said == "Thing is removed" && asked == ["Remove “Thing”?", "Uninstall thing on localhost?"], "\(said) \(asked)")
+        #expect(!FileManager.default.fileExists(atPath: ib.bench.dir + "/own/thing.json"))
+        await toolsUntil { jobs.jobs.first?.running == false && app.tools.installed.isEmpty }
+        #expect(jobs.jobs.first?.ok == true && app.tools.installed.isEmpty, "the record goes with the tool gone from Kermo: \(jobs.jobs) \(app.tools.installed)")
     }
 
     /// Clean Up Kermo Files: the folder's size, asked, then gone; nothing there — said so.

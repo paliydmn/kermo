@@ -1,11 +1,11 @@
 import Foundation
 
-/// Install (protocol §10.6): the preset's `install` as an action Kermo makes for a server — its package manager's
-/// command, or the vendor's script fetched and checked on this Mac — always `long` and always asked, as root; its
-/// `precheck` in one run before the question.
+/// Install and Uninstall (protocol §10.6): the preset's `install` or `uninstall` as an action Kermo makes for a server —
+/// its package manager's command, or the vendor's script fetched and checked on this Mac — always `long` and always
+/// asked, as root (Uninstall `dangerous` too); its `precheck` in one run before the question.
 extension ToolInstall {
-    /// The action's id: never a preset's (`[a-z0-9-]+`), so a job's `action` says it was Kermo's Install.
-    public static let actionID = "kermo:install"
+    /// The actions' ids: never a preset's (`[a-z0-9-]+`), so a job's `action` says it was Kermo's Install or Uninstall.
+    public static let actionID = "kermo:install", uninstallID = "kermo:uninstall"
 
     /// The command for a server whose `pkg` fact (§10.2) is `pkg`: `apt-get` takes `apt`, `yum` `dnf`. nil: none there.
     public func command(pkg: String) -> String? {
@@ -28,12 +28,13 @@ extension ToolInstall {
         return script.map { ToolRun(script: $0.url, sudo: true, env: $0.env) }
     }
 
-    /// Install… on a server whose `pkg` fact is `pkg`: `long`, asked even off production (`confirm`), `after` the line
-    /// it ends with. nil: nothing for this system.
-    public func action(pkg: String, title: String) -> ToolAction? {
+    /// Install… (Uninstall… for `uninstall`) on a server whose `pkg` fact is `pkg`: `long`, asked even off production
+    /// (`confirm`) — Uninstall as `dangerous` — ending with `after`, or what `keeps`. nil: nothing for this system.
+    public func action(pkg: String, title: String, uninstall: Bool = false) -> ToolAction? {
         guard let run = run(pkg: pkg) else { return nil }
-        var spec = ToolAction.Spec(id: Self.actionID)
-        (spec.title, spec.long, spec.confirm, spec.output, spec.done) = ("Install \(title)…", true, true, .line, after ?? "installed")
+        var spec = ToolAction.Spec(id: uninstall ? Self.uninstallID : Self.actionID)
+        (spec.title, spec.long, spec.confirm, spec.output) = ((uninstall ? "Uninstall " : "Install ") + title + "…", true, true, .line)
+        (spec.dangerous, spec.done) = uninstall ? (true, "removed" + (keeps.map { "; \($0) stay" } ?? "")) : (nil, after ?? "installed")
         return ToolAction(run: run, spec: spec)
     }
 
@@ -90,6 +91,7 @@ extension ToolInstall {
                          l.ports.map { "ports " + $0.map(String.init).joined(separator: ", ") }, l.note].compactMap { $0 }
             if !stays.isEmpty { lines.append(ToolRuns.Line(what: "stays on the server", how: stays.joined(separator: "; "))) }
         }
+        if let k = keeps { lines.append(ToolRuns.Line(what: "stays after it", how: k)) }
         return lines
     }
 }

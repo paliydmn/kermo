@@ -3,9 +3,9 @@ import DFMCore
 
 /// A tool's page in the Tools window (Tools PR 4), from a library row: who made it, its version and the hash trust goes
 /// by; what it runs, grouped as "Use the tool…?" shows it; your saved servers — found there or not, used or hidden,
-/// its values set or not (Set Up…), Install… where it isn't there and can be installed (§10.6). Use on Servers…, Show
-/// File, and Edit for yours, Customize for a built-in; Remove for one in your folder. A catalog's (PR 8): Get, or
-/// Update to a newer version there.
+/// its values set or not (Set Up…), Install… where it isn't there, Uninstall… where Kermo installed it (§10.6). Use
+/// on Servers…, Show File, and Edit for yours, Customize for a built-in; Remove for one in your folder. A catalog's
+/// (PR 8): Get, or Update to a newer version there.
 @MainActor
 final class ToolsTool: NSView, RowList {
     unowned let app: AppDelegate
@@ -172,19 +172,32 @@ final class ToolsTool: NSView, RowList {
         return g
     }
 
-    /// Install… where the program isn't there and the tool installs it (§10.6), else why not; nil where it's there,
-    /// not checked yet, or the tool isn't in use (Install runs a tool's command: trust first).
+    /// Install… where the program isn't there and the tool installs it; Uninstall… where Kermo installed it — its docs
+    /// where it has no `uninstall` (§10.6); else why not. nil: nothing to offer, or the tool isn't in use (Install runs
+    /// a tool's command: trust first).
     private func install(on srv: SavedServer) -> NSView? {
         let p = tool.preset, runner = app.tools
-        guard p.install != nil, runner.trust.trusts(tool), let a = runner.answer(srv.target)?.answer, a.checked(p), !a.has(p) else { return nil }
-        if runner.jobs.running(rowID: ToolRunner.installRow(p.id, on: srv.target)) != nil { return Self.small("installing — Activity (⌥⌘J)") }
-        if let why = runner.whyNoInstall(tool, on: srv, srv.target) { return Self.small(why) }
-        return button("Install…") { [unowned self, tool] in act { [app] _ in await app.tools.install(tool, on: srv, srv.target) ?? "" } }
+        guard p.install != nil, runner.trust.trusts(tool), let a = runner.answer(srv.target)?.answer, a.checked(p) else { return nil }
+        let uninstall = a.has(p)
+        if uninstall, runner.installed(p.id, on: srv) == nil { return nil }   // there, not by Kermo's Install: not Kermo's to remove
+        if runner.jobs.running(rowID: ToolRunner.installRow(p.id, on: srv.target, uninstall: uninstall)) != nil {
+            return Self.small((uninstall ? "uninstalling" : "installing") + " — Activity (⌥⌘J)")
+        }
+        if uninstall, p.uninstall == nil {
+            guard let url = p.install?.docs.flatMap(URL.init(string:)), url.scheme == "https" else { return nil }
+            let docs = button("Docs") { NSWorkspace.shared.open(url) }
+            docs.toolTip = "How to remove it: " + url.absoluteString
+            return docs
+        }
+        if let why = runner.whyNoInstall(tool, on: srv, srv.target, uninstall: uninstall) { return Self.small(why) }
+        return button(uninstall ? "Uninstall…" : "Install…") { [unowned self, tool] in
+            act { [app] _ in await app.tools.install(tool, on: srv, srv.target, uninstall: uninstall).stop ?? "" }
+        }
     }
 
     // MARK: RowList — how Install… went
 
-    func has(_ id: String) -> Bool { window != nil && local && id.hasSuffix(" install:" + tool.preset.id) }
+    func has(_ id: String) -> Bool { window != nil && local && [" install:", " uninstall:"].contains { id.hasSuffix($0 + tool.preset.id) } }
     func update(_ item: Picker.Item) {}
     func reload(_ c: ListContent, having id: String) {}
     var sheetWindow: NSWindow? { window }
