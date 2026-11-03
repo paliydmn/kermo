@@ -212,7 +212,7 @@ extension ServerLockTests {
     let form = ServerForm(SavedServer(), hasPassword: false, hasSudo: false)
     let words = (0..<form.grid.numberOfRows).compactMap { (form.grid.cell(atColumnIndex: 0, rowIndex: $0).contentView as? NSTextField)?.stringValue }
         .filter { !$0.isEmpty && !$0.hasPrefix("ssh") }
-    #expect(words == ["Connection", "Host", "User · Port", "Name", "Sign in", "Key", "Password", "Safety", "Production", "Lock", "Read-only", "Open", "Start folder", "Tools", "Sites"])
+    #expect(words == ["Connection", "Host", "User · Port", "Name", "Sign in", "Key", "Password", "Safety", "Production", "Lock", "Read-only", "Installs allowed", "Open", "Start folder", "Tools", "Sites"])
     #expect(form.preview.stringValue == "ssh …" && form.typed.issue?.field == .host)
     form.host.stringValue = "web-01.example.net"
     form.user.stringValue = "deploy"
@@ -228,14 +228,19 @@ extension ServerLockTests {
     let shown = (0..<form.grid.numberOfRows).filter { !form.grid.row(at: $0).isHidden }
         .compactMap { (form.grid.cell(atColumnIndex: 1, rowIndex: $0).contentView as? NSTextField)?.stringValue }
     #expect(form.typed.issue?.field == .port && shown.contains("The port must be 1–65535."), "under the port, not an alert")
+    #expect(form.installs.state == .on && form.typed.installs == nil, "installs: on off production, the default kept as none")
     form.prod.state = .on
+    _ = (form.prod.target as? NSObject)?.perform(form.prod.action, with: form.prod)
     #expect(form.typed.prod && !form.typed.locked, "the same flag Mark as Production sets")
+    #expect(form.installs.state == .off && form.typed.installs == nil, "production turns installs off with it: still the default")
+    form.installs.state = .on
+    #expect(form.typed.installs == true && form.typed.allowsInstalls, "turned on there: kept")
 
     var saved = SavedServer(address: "me@db.invalid:2200")!
     (saved.name, saved.prod, saved.locked, saved.startDir) = ("db", true, true, "/srv")
     let edit = ServerForm(saved, hasPassword: false, hasSudo: true)
     #expect([edit.host, edit.user, edit.port, edit.name, edit.start].map(\.stringValue) == ["db.invalid", "me", "2200", "db", "/srv"])
-    #expect(edit.prod.state == .on && edit.lock.state == .on && edit.forgetSudo != nil && edit.forget == nil)
+    #expect(edit.prod.state == .on && edit.lock.state == .on && edit.installs.state == .off && edit.forgetSudo != nil && edit.forget == nil)
     #expect(edit.typed.prod && edit.typed.locked && edit.typed.id == saved.id)
 }
 
