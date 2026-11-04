@@ -358,7 +358,7 @@ extension AppDelegate {
         try Containers.state($0, tool: $1, on: $2, env: $3, cancel: $4)
     }
 
-    private static let clock: DateFormatter = {
+    static let clock: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss"
         return f

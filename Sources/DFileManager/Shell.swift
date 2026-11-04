@@ -217,6 +217,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     static func start(_ command: String, in dir: String, on server: SFTPTarget?, diff: Bool, follow: Bool = false, title: String?,
                       failed: String? = nil, onExit: @escaping @MainActor (Int32) -> Void) {
         let w = OutputWindow(command, dir, server, diff, follow, failed, onExit)
+        w.target = server?.asUser
         if let title { w.window?.title = title.bidiVisible }
         open.append(w)
         w.showWindow(nil)
@@ -234,11 +235,12 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     }
 
     /// A run that's over already (a Tools action's `window`): what it said, stderr in red, how it ended. `save`: the
-    /// name Save… offers (the action's `save`).
-    static func show(_ out: String, errors: String, title: String, status: Int32, ok: Bool, save: String? = nil) {
+    /// name Save… offers (the action's `save`). `target`: the server it's about (Send To…).
+    static func show(_ out: String, errors: String, title: String, status: Int32, ok: Bool, save: String? = nil, target: SFTPTarget? = nil) {
         let w = OutputWindow(out: out, errors: errors, status: status, ok: ok)
         w.window?.title = title.bidiVisible
         w.saveName = save
+        w.target = target?.asUser
         open.append(w)
         w.showWindow(nil)
         w.window?.listInWindowsMenu()
@@ -246,9 +248,10 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
 
     /// A Tools long job's log (§7.6): what Kermo has of it, more as it comes (`add`), how it went (`said`). Closing it
     /// stops nothing: the job runs on, and Activity follows it.
-    static func log(_ text: Data, title: String, status: String) -> OutputWindow {
+    static func log(_ text: Data, title: String, status: String, target: SFTPTarget? = nil) -> OutputWindow {
         let w = OutputWindow(out: "", errors: "", status: 0, ok: true)
         w.window?.title = title.bidiVisible
+        w.target = target?.asUser
         w.add(text)
         w.said(status)
         open.append(w)
@@ -265,9 +268,11 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     /// closing the window ends ssh, and the watcher there the run. It holds one of the server's channels while it
     /// runs (`ToolExec.channel`). `embedded`: a panel shows its text next door, its window never shown.
     @discardableResult
-    static func follow(_ p: ToolPayload, password: String?, on server: SFTPTarget, title: String, cri: Bool, embedded: Bool = false) -> OutputWindow {
+    static func follow(_ p: ToolPayload, password: String?, on server: SFTPTarget, title: String, cri: Bool, embedded: Bool = false,
+                       target: SFTPTarget? = nil) -> OutputWindow {
         let w = OutputWindow(p, password: password, on: server, cri: cri)
         w.window?.title = title.bidiVisible
+        w.target = target?.asUser
         open.append(w)
         if embedded {
             w.embedded = true
@@ -485,7 +490,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     }
 
     /// Its keys, on its key bar and F1 over it: ⎋ stops what runs, then closes; ⌘R runs it again where it can; ⌘C with
-    /// nothing selected copies it all, ⌘S saves it.
+    /// nothing selected copies it all, ⌘S saves it; F2 sends it to a tool, where one takes text.
     static func keys(of window: NSWindow?) -> [AppDelegate.KeyRow]? {
         open.first { $0.window === window && window != nil }.map { o in
             let running = !o.stopAsked && o.alive
@@ -493,7 +498,29 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
                 + (o.again == nil || running ? [] : [AppDelegate.KeyRow(section: "Output", title: "Run Again", key: "⌘R") { o.runAgain() }])
                 + [AppDelegate.KeyRow(section: "Output", title: "Copy", key: "⌘C") { o.copyAll() },
                    AppDelegate.KeyRow(section: "Output", title: "Save…", key: "⌘S") { o.save() }]
+                + (o.receivers.isEmpty ? [] : [AppDelegate.KeyRow(section: "Output", title: "Send To…", key: "F2") { o.sendTo() }])
         }
+    }
+
+    /// The server its text is about: the tools in use there that take text are Send To…'s.
+    private(set) var target: SFTPTarget?
+    private var receivers: [(tool: LoadedTool, action: ToolAction)] { Self.app()?.tools.accepting(target) ?? [] }
+    /// Tests: the app whose tools Send To… offers (there's no app delegate there).
+    static var app: () -> AppDelegate? = { NSApp.delegate as? AppDelegate }
+
+    /// Send To… (F2): what's selected, else all of it, to one of the tools on its server that take text.
+    private func sendTo() {
+        guard let window, let tv, let app = Self.app(), let t = target else { return }
+        let range = tv.selectedRange(), text = range.length > 0 ? (tv.string as NSString).substring(with: range) : tv.string
+        guard !text.isEmpty else { return window.docFrame?.flash("Nothing to send: the window is empty") ?? () }
+        let items = receivers.map { r in
+            let p = r.tool.preset, mac = (r.action.run.where ?? p.where) == .mac
+            return Picker.Item(title: "\(p.title): \(r.action.spec.title ?? r.action.spec.id)", subtitle: r.action.run.command?.all.first ?? r.action.run.script ?? "",
+                               detail: mac ? "this Mac" : SavedServer.name(for: t), verb: "Send") { [weak window] in
+                app.tools.send(text, to: r.action, of: r.tool, on: t, from: window)
+            }
+        }
+        Picker.show(over: window, placeholder: range.length > 0 ? "Send the selection to" : "Send this output to", items: items)
     }
 
     /// Its delegate, and its keys — before the main menu's (Refresh, Copy, Save).
@@ -505,6 +532,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
             case Shortcut("cmd+r") where again != nil: runAgain()
             case Shortcut("cmd+c") where tv?.selectedRange().length == 0: copyAll()
             case Shortcut("cmd+s"): save()
+            case Shortcut("f2") where !receivers.isEmpty: sendTo()
             default: return false
             }
             return true

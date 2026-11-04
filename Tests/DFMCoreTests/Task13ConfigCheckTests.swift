@@ -76,7 +76,7 @@ import Testing
     for broken in ["[{\"match\": \"/etc/x\"", "{\"match\": \"/etc/x\", \"check\": \"true\"}", "[{\"check\": \"true\"}]",
                    "[{\"match\": \"/etc/x\", \"check\": \"true\", \"when\": \"later\"}]", ""] {
         let (r, p) = ConfigCheck.rules(Data(broken.utf8))
-        #expect(r == ConfigCheck.builtIn && p?.hasPrefix("validators.json: ") == true && p?.hasSuffix("Built-in checks only.") == true, "\(broken)")
+        #expect(r == ConfigCheck.builtIn && p?.hasPrefix("validators.json: ") == true && p?.hasSuffix("Your checks are left out.") == true, "\(broken)")
     }
 }
 

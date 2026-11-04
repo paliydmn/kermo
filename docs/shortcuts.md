@@ -141,6 +141,7 @@ In the command line, ↑↓ browse its history. On a local panel ↩ runs the li
 | Ports (Forward Port…): forward / copy address / in the other panel; in a panel: forward / copy address / menu | ↩ / ⌘C / ⌘↩; ↩ / ⌘C / ⌃↩ |
 | Viewer, files over 4 MB: go to (`50%`, `1.5G`, `end`) / start, end / search the whole file, next result | `g` / Home or ⌘↑, End or ⌘↓ / `/`, `n` |
 | Editor: save / find and replace / close | ⌘S / ⌘F / ⎋, ⌘W |
+| Output window: stop, then close / run again / copy all / save / [send to a tool](tools.md#send-to) | ⎋ / ⌘R / ⌘C / ⌘S / F2 |
 
 The keys for large files work only in text mode, not while the file is followed (`f`) or filtered (`&`); in hex mode only `g` works. More in [Viewer and editor](viewer-editor.md).
 

@@ -402,7 +402,7 @@ final class ToolsLibrary: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     /// Yours not got from a catalog; or the Catalog's: built-ins, those got, then the catalogs' others.
     static func rows(_ app: AppDelegate, mine: Bool) -> [Row] {
-        let tools = app.tools.library.tools.filter(ToolRunner.shows), c = app.tools.catalogs
+        let tools = app.tools.library.tools.filter(ToolRunner.usable), c = app.tools.catalogs
         if mine { return tools.filter { !$0.builtIn && c.fetched.tools[$0.preset.id] == nil }.map { Row(id: $0.preset.id, tool: $0, offer: nil) } }
         var ids = tools.map(\.preset.id).filter { ToolCatalogs.builtIns.contains($0) || c.fetched.tools[$0] != nil }
         for o in c.offers where !ids.contains(o.entry.id) { ids.append(o.entry.id) }

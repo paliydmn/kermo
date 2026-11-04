@@ -105,6 +105,52 @@ extension AppDelegate {
         tools.perform(a, of: tool, row: nil, onRow: false, id: ServerRow.key(t.asUser) + " tool:\(tool.preset.id)", from: nil, on: s, t.asUser)
     }
 
+    /// F2 on a server file (§11): the actions of each tool in use there whose `context` takes it — after the lock, its
+    /// list read (its vars found first, if due) for the row `row` names, those its list offers on that row. nil: ⎋ while
+    /// it read. A read that failed, or no such row, is said in the panel.
+    func contextItems(for path: String, on t: SFTPTarget, in panel: PanelViewController) async -> [Picker.Item]? {
+        let s = savedServer(at: t) ?? SavedServer(target: t.asUser), env = SSHAskpass.env, name = (path as NSString).lastPathComponent
+        let may = (tools.using(t)?.tools ?? []).contains { $0.preset.context?.contains { ToolPreset.mayTake(path, glob: $0.path) } == true }
+        guard may else { return [] }   // nothing runs for a file no tool's context could name
+        guard await ServerLock.authorize(t, "look at the tools of") else { return nil }
+        guard let near = await tools.near(path, on: t, in: panel)?.filter({ $0.preset.context != nil }) else { return nil }
+        var items: [Picker.Item] = []
+        for tool in near {
+            let p = tool.preset, scope = tools.scope(p, on: s, t)
+            let takes = (p.context ?? []).compactMap { c in ToolPreset.fileNames(path, glob: c.path, scope).map { (c, $0) } }
+            guard !takes.isEmpty else { continue }
+            let lister = ToolListSource.lister(self, tool, s, t)
+            switch await panel.busy("Reading \(p.title) on \(s.title)…", after: 0.3, { flag in try lister.read(env, flag, header: false) }) {
+            case .failure(is CancellationError): return nil
+            case .failure(let e): panel.flash(e.localizedDescription, error: true)
+            case .success(let read):
+                for (c, names) in takes {
+                    var cs = scope
+                    cs.levels[0] = names
+                    let key = ToolTemplate.text(c.row, cs)
+                    guard let row = read.rows.first(where: { $0.key == key }) else {
+                        panel.flash("\(name): \(p.title) on \(s.title) has no “\(key)” in its list")
+                        continue
+                    }
+                    let named = c.actions.compactMap { id in p.actions?.first { $0.spec.id == id } }.filter { ToolRunner.runs($0, of: p) && $0.offered(on: row.record) }
+                    let rs = tools.scope(p, on: s, t, rows: row.records)
+                    for a in tools.answer(t).map({ $0.answer.visible(named, of: p) }) ?? named.filter({ $0.spec.requires == nil }) {
+                        let title = a.spec.title ?? a.spec.id
+                        var it = Picker.Item(title: "\(p.title): \(title.replacingOccurrences(of: "…", with: "")) \(row.title)" + (title.hasSuffix("…") ? "…" : ""),
+                                             subtitle: a.spec.inputs == nil ? (try? ToolPayload.of(a.run, in: p, scope: rs, scripts: tool.scripts).willRun) ?? "" : "",
+                                             verb: "Run") { [unowned self] in
+                            tools.perform(a, of: tool, row: row, onRow: true, id: ToolListSource.rowID(row.key, tool: p.id, on: t), from: nil, on: s, t.asUser)
+                        }
+                        it.badges = [Symbol.preset(p.icon)]
+                        if a.spec.dangerous == true { it.titleColor = Palette.fail }
+                        items.append(it)
+                    }
+                }
+            }
+        }
+        return items
+    }
+
     /// Watch… / Stop Watching in a saved server's menu (decision 7): the first watched kind of tool it shows — System.
     func watchItem(for s: SavedServer?, at t: SFTPTarget) -> NSMenuItem? {
         guard let s, let tool = tools.here(t)?.tools.first(where: \.preset.watchable) else { return nil }

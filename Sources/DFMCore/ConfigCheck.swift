@@ -20,9 +20,14 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
     public var reload: String?
     /// The check works only as root (`nginx -t`, `sshd -t` …): a user's panel doesn't run it.
     public var root: Bool?
+    /// A tool's check (Tools, protocol §11): the lines that set its values as variables, run just before `check` — `%f`
+    /// in them too. Not a validators.json field.
+    public var setup: String?
 
-    public init(match: String, check: String?, when: When? = nil, reload: String? = nil, root: Bool? = nil) {
-        (self.match, self.check, self.when, self.reload, self.root) = (match, check, when, reload, root)
+    enum CodingKeys: String, CodingKey { case match, check, when, reload, root }
+
+    public init(match: String, check: String?, when: When? = nil, reload: String? = nil, root: Bool? = nil, setup: String? = nil) {
+        (self.match, self.check, self.when, self.reload, self.root, self.setup) = (match, check, when, reload, root, setup)
     }
 
     public var after: Bool { when == .after }
@@ -82,12 +87,13 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
     /// its compose plugin is no check, not a failure (exit 127).
     static let compose = #"docker compose version >/dev/null 2>&1 || { echo "no docker compose there"; exit 127; }; docker compose -f %f config -q"#
 
-    /// The rules for a save: the user's (`validators.json`'s bytes, nil: no file) first, then the built-in ones. A file
-    /// that isn't a list of rules: the built-in ones, and what's wrong with it.
-    public static func rules(_ data: Data?) -> (rules: [ConfigCheck], problem: String?) {
-        guard let data else { return (builtIn, nil) }
-        do { return (try JSONDecoder().decode([ConfigCheck].self, from: data) + builtIn, nil) } catch {
-            return (builtIn, "validators.json: \(error.localizedDescription) Built-in checks only.")
+    /// The rules for a save: the user's (`validators.json`'s bytes, nil: no file) first, then the built-in ones, then
+    /// `tools`' (a tool's in use on that server): a tool adds checks, it never takes the place of Kermo's own (sudoers,
+    /// sshd_config). A file that isn't a list of rules: the others, and what's wrong with it.
+    public static func rules(_ data: Data?, tools: [ConfigCheck] = []) -> (rules: [ConfigCheck], problem: String?) {
+        guard let data else { return (builtIn + tools, nil) }
+        do { return (try JSONDecoder().decode([ConfigCheck].self, from: data) + builtIn + tools, nil) } catch {
+            return (builtIn + tools, "validators.json: \(error.localizedDescription) Your checks are left out.")
         }
     }
 
@@ -131,25 +137,26 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
     /// What runs there, in `sh` (the login shell may be any): the sbin folders in PATH (a user's on Debian has none, and
     /// haproxy, apachectl live there), a line saying it runs — sudo let it, whatever its exit status — whether the
     /// program is there, then the command with its stderr on stdout, in order, apart from sudo's own words.
-    static func script(_ command: String) -> String {
+    static func script(_ command: String, setup: String? = nil) -> String {
         "PATH=\"$PATH:/usr/local/sbin:/usr/sbin:/sbin\"; echo \(ran); command -v \(ShellContext.quote(program(command))) >/dev/null 2>&1 || "
-            + "{ echo \(missing); exit 0; }; exec 2>&1; " + command
+            + "{ echo \(missing); exit 0; }; exec 2>&1; " + (setup.map { $0 + "\n" } ?? "") + command
     }
 
     /// Runs `command` (expanded) on `t`'s server — on a root panel's as root, through its sudo (`sudo -n`; where it wants
     /// a password, the one the panel's sudo took, kept or asked: on stdin, never in the command line); else as its user.
     /// `root`: the command works only as root — on a user's panel it doesn't run. One ssh command over the panel's
     /// connection; where sudo wants a password, two (`-n` first, every time: a password goes nowhere else).
-    public static func run(_ command: String, on t: SFTPTarget, root: Bool = false, env: [String: String] = [:], cancel: CancelFlag? = nil) throws -> Outcome {
+    public static func run(_ command: String, setup: String? = nil, on t: SFTPTarget, root: Bool = false, env: [String: String] = [:],
+                           cancel: CancelFlag? = nil) throws -> Outcome {
         if root && !t.sudo { return .needsRoot }
         let ranLine = Data((ran + "\n").utf8)
         let status: Int32, out: Data
         do {
             if t.sudo {
-                (status, out) = try SudoServer.run(t, script: script(command), env: env, cancel: cancel) { $0.range(of: ranLine) != nil }
+                (status, out) = try SudoServer.run(t, script: script(command, setup: setup), env: env, cancel: cancel) { $0.range(of: ranLine) != nil }
             } else {
                 var o = Data()
-                let (s, errors) = try SSHCommand.run(t, "sh -c " + ShellContext.quote(script(command)), env: env, cancel: cancel, options: ["-x", "-a"]) { o += $0 }
+                let (s, errors) = try SSHCommand.run(t, "sh -c " + ShellContext.quote(script(command, setup: setup)), env: env, cancel: cancel, options: ["-x", "-a"]) { o += $0 }
                 guard o.range(of: ranLine) != nil else { throw SFTPError(message: errors.isEmpty ? "exit \(s)" : errors) }
                 (status, out) = (s, o)
             }
@@ -197,7 +204,8 @@ extension SFTPClient {
         var outcome: ConfigCheck.Outcome?
         if !rule.after {
             let attrs = try upload(local, to: remote, baseline: baseline, force: force, cancel: cancel, replaced: replaced) { [target] partial in
-                let o = try ConfigCheck.run(ConfigCheck.expand(command, path: partial), on: target, root: rule.needsRoot, env: env, cancel: cancel)
+                let o = try ConfigCheck.run(ConfigCheck.expand(command, path: partial), setup: rule.setup.map { ConfigCheck.expand($0, path: partial) },
+                                            on: target, root: rule.needsRoot, env: env, cancel: cancel)
                 if case .failed(let status, let output) = o { throw CheckFailed(rule: rule, status: status, output: output) }
                 outcome = o
             }
@@ -212,7 +220,8 @@ extension SFTPClient {
         cancel?.hold()
         checking?()
         do {
-            outcome = try ConfigCheck.run(ConfigCheck.expand(command, path: remote), on: target, root: rule.needsRoot, env: env, cancel: cancel)
+            outcome = try ConfigCheck.run(ConfigCheck.expand(command, path: remote), setup: rule.setup.map { ConfigCheck.expand($0, path: remote) },
+                                          on: target, root: rule.needsRoot, env: env, cancel: cancel)
         } catch let e as ConfigCheck.NotRun {
             return (attrs, .notRun(e.message))
         } catch is CancellationError {   // the sudo password asked for the check: Cancel

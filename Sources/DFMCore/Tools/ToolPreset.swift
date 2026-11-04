@@ -390,7 +390,7 @@ public struct ToolBlock: Sendable, Hashable, Codable {
 
 public struct ToolContext: Sendable, Hashable, Codable {
     public var path: String
-    public var row: String?
+    public var row: String
     public var actions: [String]
 }
 

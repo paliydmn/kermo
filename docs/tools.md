@@ -155,7 +155,7 @@ The keys work in search. In a panel a row's key works where it's one of Kermo's 
 5. **How it went**, in a line under the list: "Deleted rule 3 (80/tcp) on web-01 at 14:02:11", or ✕ and the first line of what the program said, with **Output…** for all of it. With the list closed, the status line says it. A program that isn't on the server is said so: "apt-get isn't on web-01 (Fedora 44 · dnf)".
 6. **The list is read again** after a change, the cursor staying on its row, or going to the next one if that row is gone. A look reads nothing again.
 
-What opens a window or a tab of its own goes there instead of the line: a window of output, a log that follows (closing it ends the command on the server), a command in an SSH tab, a file in the editor (as any server file: history, checks, production's question on save). In a window of output, **⌘C** with nothing selected copies all of it, and **⌘S** saves it as a text file.
+What opens a window or a tab of its own goes there instead of the line: a window of output, a log that follows (closing it ends the command on the server), a command in an SSH tab, a file in the editor (as any server file: history, checks, production's question on save). In a window of output, **⌘C** with nothing selected copies all of it, **⌘S** saves it as a text file, and **F2** sends it to a tool that takes text ([Send To…](#send-to)).
 
 ⎋ stops the wait. A run that takes over 30 seconds, or gives over 16 MB of output, is stopped and says so; when the connection drops, the run ends on the server too, leaving nothing behind. Tools use at most 9 of a connection's sessions at once (OpenSSH allows 10; past them ssh would log in again): one more waits, and the status line says so.
 
@@ -187,6 +187,21 @@ What reaches you:
 - **Thresholds…** on the same tab: your own warning and critical value for each of the server's watched tools' alerts, for **All Servers** or **Only web-01** over those. An empty field leaves it to the value under it, shown in grey; **Restore Defaults** empties them. On one server, **Notify** unticked keeps an alert from notifying there (a notification's Mute does the same). They're kept by the alert's id, so a new version of the tool keeps them: in `tools/servers.json`, `"alerts": { "system": { "cpu": { "warn": 80 } } }` at the top for all servers, and `"alerts": { "cpu": { "crit": 98 } }` beside `"muted"` in a server's tool.
 
 macOS asks whether Kermo may notify the first time you watch a server. If you said no, **Settings › Monitor** says so, with **Open System Settings**; the menu bar and the Dock still show every problem. "Use the tool…?" says a watched tool may send notifications.
+
+## A tool's files: F2 and F4
+
+A tool can know some of a server's files: Deployments knows its units' configs, `conf/*.yaml` in dpl's folder (found on each server, `/opt/dpl` by default).
+
+- **F2** on such a file in a server panel lists the tool's actions for it above [your own commands](commands.md): on `web.yaml`, **Deployments: Deploy web…**, **Deployments: Check Config web**, **Deployments: Inspect web**. Kermo reads the tool's list first — the status line says so, ⎋ stops it — and offers what the list offers on that unit's row: Deploy only on an app. Each runs as it does from the list: Touch ID on a locked server, its sheet, the question, the line saying how it went in the panel's status line. A file whose unit isn't in the list (not deployed yet) gets none, and the status line says so.
+- **Saving** such a file (F4, then ⌘S) runs the tool's check — `dpl check web` once the file is in place, as root, the old text put back if it fails — as [config checks](config-checks.md) do. Your own `validators.json` rule for that path comes first, then Kermo's built-in ones: where Kermo has a check of its own for a file (sudoers, `sshd_config`, nginx's), the tool's isn't run there. **Use the tool “…”?** lists a tool's checks with what it runs by itself.
+
+Only tools in use on that server count. A tool's folder is the one its command found there this session — looked for once, the first time a file there could be the tool's (the status line says so; ⎋ stops it) — or yours set for the server; its default if that found nothing.
+
+## Send To…
+
+**F2** in a window of output — a command's output, a tool's, a log — lists the actions of the server's tools that take text; one gets what's selected in the window, or all of it, as its input. None of the built-in tools takes text: it's [one of yours](#tools-that-help) that does, say `grep -c error` on the server, or a program on this Mac. **Send To…** is on the window's key bar once such a tool is in use on the window's server.
+
+Sending always asks first: how many lines go, how they begin, and where. The text goes to the command's input inside the script itself, never on a command line; **Show Exactly What Runs** and the production log show how many lines it was, not the text. The output comes back as the action says: a line in the window's status line, or a window of its own.
 
 ## Safety
 
@@ -238,7 +253,7 @@ Put a tool's JSON file in `~/.config/dfilemanager/tools/`, with any script it na
 
 My Tools in [the Tools window](#the-tools-window) lists a file of yours that doesn't load under the table, with why; a click opens it in the editor.
 
-A tool of yours runs nothing — not even its check of the server — until you say to use it. **Tools ▸** lists it under **Not in use yet**; choosing it asks **Use the tool “…”?** with everything it can run: what runs by itself (its check, its header, its list, its choices) and what runs when you choose (its actions), each marked where it runs as root. A read-only action whose command looks destructive (`rm`, `kill`, `--force`, `>`…) is pointed out. **Open File** shows the file and its scripts. **Use This Tool** keeps your answer in `tools/trust.json`, by the file's and its scripts' sha256: a change to any of them asks again.
+A tool of yours runs nothing — not even its check of the server — until you say to use it. **Tools ▸** lists it under **Not in use yet**; choosing it asks **Use the tool “…”?** with everything it can run: what runs by itself (its check, its header, its list, its choices, its checks of a file you save) and what runs when you choose (its actions), each marked where it runs as root. A read-only action whose command looks destructive (`rm`, `kill`, `--force`, `>`…) is pointed out. **Open File** shows the file and its scripts. **Use This Tool** keeps your answer in `tools/trust.json`, by the file's and its scripts' sha256: a change to any of them asks again.
 
 ### New Tool…
 
@@ -281,6 +296,9 @@ The smallest tool is three fields; it's in **Tools ▸** on every server, and it
 | `primary` | The tool action on the ＋ button |
 | `version` | `command`, `pattern` with a group `v`, `tested` (`>=0.36 <0.37`) |
 | `install`, `uninstall` | [Install](#install): a command per package manager — `apt` (apt-get's), `dnf`, `apk`, `pacman`, `zypper`, `brew` — or `script` (`url`, `env`, `sha256`, which it needs to run); `precheck` (`title`, `command`, `pattern` with a group `v`, `min`); `leaves` (`services`, `paths`, `ports`, `note`: what stays after Install); `docs`, `after` (the line it ends with); `uninstall` also `keeps` |
+| `context` | [F2 on the server's files](#a-tools-files-f2-and-f4): `path` (a glob over the tool's vars, `*` within one folder: `{base}/conf/*.yaml`), `row` (the `key` of the list's row it's about, from the file: `{stem}` its name without the extension, `{file}` its path, `{dir}` its folder), `actions` (the row actions offered there, by id) |
+| `validators` | Checks when such a file is saved: `path` (as `context`'s), `check` (a command with `{stem}`, `{file}`, `{dir}` — `{file}` is the file checked: the new text next to it for a `before` check), `when` (`before`, the default: the new text is checked before it takes the file's place; `after`: the file in place, its old text put back if the check fails). As root where the tool is |
+| `accepts` | `"text"`, on a tool action: it's in [Send To…](#send-to), the text on its input; it has a `command` or `script`, its `output` a `line`, a `window` or `silent` |
 | `vars` | Values per server, `{name}` in commands: `title`, `default`, `placeholder`, `pattern`, and one source — `command` (its first line, read once per connection) or `"ask": true` (asked on a saved server, kept in `tools/servers.json`; see [Where a tool is used](#where-a-tool-is-used)) |
 | `timeout`, `exitOk` | Seconds (30 by default); exit codes that count as success (`[0]`) |
 | `stream`, `poll`, `watch` | [Watching](#watching-a-server): a `stream` runs on and prints a record (a `jsonl` line, or a frame — `split`) every so often; a `poll` runs again every `watch.every` seconds; the tool's `list` is read that often too where `rows: "list"` takes its rows. `watch`: `every` (seconds, 1 or more), `down` (missed samples that make "not answering", 3) |
@@ -290,3 +308,179 @@ The smallest tool is three fields; it's in **Tools ▸** on every server, and it
 | `summary`, `dashboard` | The server's row in WATCHED: `metric`, `as` (`bar`, `count`, `text`), `of` (`max`, `sum`, `min`, `avg`), `label`. `dashboard`: blocks top to bottom, a `row` side by side — `{ "stat": "cpu" }` a tile (`["rx", "tx"]` two in one, `of`, `also`); `{ "charts": [["cpu"], ["rx", "tx"]] }` small multiples on one time axis (`range`: the first is the hour in memory, the rest wait for the history on disk; `log`: the action a click runs with `{from}` / `{to}`); `{ "table": "procs" }` the rows of a row set as the last sample that had them (`title`, `key` — what names a row, `"{pid}"`, `columns` as a list's — `"cpu:%"`, or `{ "field": "pct:bar", "title": "Used" }` — `actions`: ids of actions with that `rows`); `{ "events": true }`; `{ "counts": [{ "rows", "title", "goto" }] }` |
 
 Placeholders in braces, `{ip}`, take a sheet's values first, then a row's fields; `{server}`, `{host}` and `{user}` are Kermo's. A command given as an array of parts, `["ufw allow {port}", "comment {comment}"]`, leaves out a part whose value is empty.
+
+### Recipes
+
+Each is a whole file for `~/.config/dfilemanager/tools/` (or **New Tool…**), short on purpose; the built-in tools' files (**Show File** on their pages) are longer examples.
+
+**A list with actions, a state and a sheet** — nginx's sites, which are on, and a new one:
+
+```json
+{
+  "schema": 1, "id": "nginx-sites", "title": "nginx Sites", "tool": "nginx", "sudo": true,
+  "about": "The sites in sites-available, which are on; turn one on or off, edit one, add one.",
+  "requires": "command -v nginx",
+  "list": {
+    "command": "cd /etc/nginx/sites-available && for f in *; do [ -e ../sites-enabled/\"$f\" ] && echo \"$f on\" || echo \"$f off\"; done",
+    "format": "regex", "pattern": "^(?<site>\\S+) (?<on>on|off)$",
+    "key": "{site}", "title": "{site}", "subtitle": "{on}",
+    "state": { "field": "on", "ok": ["on"], "off": ["off"] }
+  },
+  "actions": [
+    { "id": "edit", "title": "Edit", "key": "return", "edit": "/etc/nginx/sites-available/{site}" },
+    { "id": "on", "title": "Turn On", "only": { "on": ["off"] },
+      "command": "ln -s ../sites-available/{site} /etc/nginx/sites-enabled/ && nginx -t && systemctl reload nginx", "done": "{site} is on" },
+    { "id": "off", "title": "Turn Off…", "confirm": true, "only": { "on": ["on"] },
+      "command": "rm /etc/nginx/sites-enabled/{site} && systemctl reload nginx", "done": "{site} is off" }
+  ],
+  "toolActions": [
+    { "id": "new", "title": "New Site…", "key": "cmd+n",
+      "inputs": [ { "name": "name", "type": "text", "title": "Name", "placeholder": "example.com", "pattern": "[a-z0-9.-]+" } ],
+      "command": "cp /etc/nginx/sites-available/default /etc/nginx/sites-available/{name}", "done": "{name} added: Edit it, then Turn On" }
+  ],
+  "primary": "new"
+}
+```
+
+Edit opens the file as root, and saving it runs Kermo's own nginx check. A value goes into a command as one word, whatever it holds: `{site}` needs no quotes.
+
+**A long job** — an upgrade that runs on without Kermo, in Activity:
+
+```json
+{
+  "schema": 1, "id": "upgrade", "title": "Upgrade", "tool": "apt-get", "sudo": true,
+  "about": "What an upgrade would change, and the upgrade itself.",
+  "requires": "command -v apt-get",
+  "toolActions": [
+    { "id": "list", "title": "What Would Change", "key": "return", "readonly": true, "command": "apt-get -s upgrade | grep '^Inst'", "exitOk": [0, 1], "output": "window" },
+    { "id": "upgrade", "title": "Upgrade All…", "confirm": true, "long": true,
+      "command": "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y upgrade", "done": "Upgraded" }
+  ]
+}
+```
+
+**A number to watch** — a poll every minute, its chart, an alert:
+
+```json
+{
+  "schema": 1, "id": "mail-queue", "title": "Mail Queue", "tool": "postqueue",
+  "requires": "command -v postqueue",
+  "poll": { "command": "printf '{\"queued\": %d}\\n' \"$(postqueue -j | wc -l)\"", "format": "json" },
+  "watch": { "every": 60 },
+  "metrics": { "queued": { "title": "Queued mail", "path": "queued" } },
+  "alerts": [ { "id": "queued", "metric": "queued", "warn": 100, "crit": 1000, "for": { "warn": "10m" }, "message": "{value} messages queued" } ],
+  "summary": [ { "metric": "queued", "as": "text", "label": "{value} queued" } ],
+  "dashboard": [ { "row": [ { "stat": "queued" } ] }, { "charts": [["queued"]] } ]
+}
+```
+
+Its tab is live while open; **Watch in Background…** keeps it with the alert.
+
+**Install** — added to a tool, its program installed where it's missing, from the tool's page:
+
+```json
+"install": {
+  "apt": "apt-get install -y restic", "dnf": "dnf install -y restic", "apk": "apk add restic",
+  "leaves": { "paths": ["/usr/bin/restic"], "note": "Only the program: no service, no repository." }
+},
+"uninstall": { "apt": "apt-get remove -y restic", "dnf": "dnf remove -y restic", "apk": "apk del restic", "keeps": "your repositories" }
+```
+
+### Tools that help
+
+A tool can work in Kermo's own places instead of a list. Deployments' F2 actions and its check on save:
+
+```json
+"context": [ { "path": "{base}/conf/*.yaml", "row": "{stem}", "actions": ["deploy", "check", "inspect"] } ],
+"validators": [ { "path": "{base}/conf/*.yaml", "check": "dpl check {stem}", "when": "after" } ]
+```
+
+A tool like these has no list of its own, so Tools ▸ doesn't show it: **Use on Servers…** on its page (My Tools in the Tools window) puts it to use. And one with nothing but a Send To… target — the lines of an output window that say error or fail, found on the server:
+
+```json
+{
+  "schema": 1, "id": "errors", "title": "Errors",
+  "toolActions": [
+    { "id": "count", "title": "Errors and Failures", "accepts": "text", "readonly": true,
+      "command": "grep -inE 'error|fail' || echo 'none'", "output": "window" }
+  ]
+}
+```
+
+### With an AI assistant
+
+Any assistant can write a tool for you: give it this page from [The fields that work now](#the-fields-that-work-now) to here (the recipes and the example below show it the shape), the program's `--help`, and a few lines of its real output — what `--json` prints, if it has that — and say what you want: a list of what, which actions, which change things. Paste its answer into **New Tool…**: **Problems** says what doesn't fit, with its line, as you type; **Test on** a server runs its list there and shows the rows it made of the real output — and every line that didn't fit — before any of its actions can run. Saved, it still runs nothing until **Use the tool “…”?** has shown you everything it can run.
+
+Take out of the sample what you don't want to send: host names, paths, addresses.
+
+### Example: restic backups
+
+A whole tool of the kind you'd make with New Tool…: restic's snapshots on a server, a snapshot's files, a restore, a check of the repository, and an alert when the last backup is late. Its repository and password file are asked once per server (**Set Up on web-01…**) and go to restic as variables; nothing secret is in the file. Its commands follow restic's documentation and weren't run against a real repository: try it with **Test on** your server first.
+
+```json
+{
+  "schema": 1,
+  "id": "restic",
+  "title": "Backups",
+  "tool": "restic",
+  "where": "server",
+  "about": "restic snapshots on a server: when the last one was made, what's in it, restore files; alerts when a backup is late.",
+  "icon": "externaldrive.badge.timemachine",
+  "group": "Backup",
+  "author": "you (made with New Tool…)",
+  "requires": "command -v restic",
+  "sudo": true,
+
+  "vars": {
+    "repo": { "title": "Repository", "ask": true, "placeholder": "/backup/restic or sftp:backup@host:/srv/restic" },
+    "passfile": { "title": "Password file on the server", "ask": true, "default": "/root/.restic-password" }
+  },
+  "env": { "RESTIC_REPOSITORY": "{repo}", "RESTIC_PASSWORD_FILE": "{passfile}" },
+  "version": { "command": "restic version", "pattern": "restic (?<v>\\d+\\.\\d+\\.\\d+)", "tested": ">=0.16" },
+
+  "list": {
+    "command": "restic snapshots --json",
+    "format": "json",
+    "key": "{short_id}",
+    "title": "{time:datetime}",
+    "subtitle": ["{short_id}", "{paths}", "{tags}"],
+    "detail": "{hostname}",
+    "sort": "-time",
+    "columns": ["time:datetime", "short_id", "paths", "tags", "hostname"],
+    "empty": "No snapshots in {repo} yet"
+  },
+  "actions": [
+    { "id": "files", "title": "Files", "key": "return", "readonly": true, "command": "restic ls {short_id} | head -500", "output": "window" },
+    { "id": "restore", "title": "Restore to…", "key": "f5", "long": true, "confirm": true,
+      "inputs": [
+        { "name": "path", "type": "text", "title": "Only this path (empty: everything)", "optional": true, "placeholder": "/etc/nginx" },
+        { "name": "target", "type": "text", "title": "Into this folder on the server", "default": "/tmp/restore-{short_id}" }
+      ],
+      "command": ["restic restore {short_id} --target {target}", "--include {path}"],
+      "message": "Files are written into {target}; nothing in place is overwritten unless {target} is /.",
+      "output": "window", "done": "Restored {short_id} into {target}" }
+  ],
+  "toolActions": [
+    { "id": "check", "title": "Check Repository", "long": true, "readonly": true, "command": "restic check", "output": "window" }
+  ],
+
+  "poll": { "command": "restic snapshots --latest 1 --json", "format": "json" },
+  "watch": { "every": 3600 },
+  "metrics": {
+    "age": { "title": "Last backup", "rows": "poll", "key": "paths", "path": "time", "calc": "age", "unit": "h" }
+  },
+  "summary": [ { "metric": "age", "as": "text", "of": "max", "label": "last {value} h ago" } ],
+  "alerts": [
+    { "id": "late", "metric": "age", "warn": 26, "crit": 50, "message": "{paths}: the last backup was {value} h ago" }
+  ],
+  "dashboard": [
+    { "row": [ { "stat": "age", "of": "max" } ] },
+    { "table": "list", "title": "Snapshots", "columns": ["time:datetime", "short_id", "paths", "tags", "hostname"], "actions": ["files", "restore"] }
+  ]
+}
+```
+
+- **The list** is `restic snapshots --json`, newest first; ↩ **Files** lists a snapshot's first 500 paths in a window.
+- **Restore to…** (F5) asks for a folder on the server, and optionally one path to take; it always asks first, says it writes only into that folder, and runs as a long job.
+- **Check Repository** runs as a long job too: a big repository takes a while.
+- **Watching** reads the newest snapshot every hour; its age is a number (`calc: "age"`, by the server's clock), late after 26 hours, critical after 50.

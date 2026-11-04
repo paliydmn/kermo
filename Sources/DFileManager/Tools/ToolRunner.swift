@@ -92,11 +92,17 @@ final class ToolRunner {
     /// are kept with it (Edit Server), and its tab says when there are none yet — always last, not a server's first.
     /// Tools ▸, a place's rows (the search's too) and the Tools window show this.
     func here(_ t: SFTPTarget) -> (tools: [LoadedTool], at: Date)? {
+        guard let (all, at) = using(t) else { return nil }
+        let shown = all.filter(Self.shows)
+        return (shown.filter { $0.preset.http == nil } + shown.filter { $0.preset.http != nil }, at)   // Watch… is System's, the tabs keep their ⌘ numbers
+    }
+
+    /// The same, with the tools that only help (`helps`): those F2, F4 and Send To… look at.
+    func using(_ t: SFTPTarget) -> (tools: [LoadedTool], at: Date)? {
         guard let a = answer(t) else { return nil }
         let saved = app.savedServer(at: t), id = saved?.id.uuidString
-        let shown = tools.filter { a.answer.has($0.preset) && settings.uses($0.preset.id, on: id) && (id != nil || $0.preset.varsToAsk(saved: [:]).isEmpty)
-                && ($0.preset.http == nil || saved != nil) }
-        return (shown.filter { $0.preset.http == nil } + shown.filter { $0.preset.http != nil }, a.at)   // Watch… is System's, the tabs keep their ⌘ numbers
+        return (asked.filter { a.answer.has($0.preset) && settings.uses($0.preset.id, on: id) && (id != nil || $0.preset.varsToAsk(saved: [:]).isEmpty)
+                    && ($0.preset.http == nil || saved != nil) }, a.at)
     }
 
     /// The values `tool` asks for that aren't set on `t`'s server yet: Set Up… before it's used there.
@@ -107,6 +113,8 @@ final class ToolRunner {
     /// The tools this version shows: trusted, a list read by a command, a script or its files, a command of their own, or actions
     /// with no list (a launcher) this version runs. Which a server shows: `here`.
     var tools: [LoadedTool] { library.trusted(trust).filter(Self.shows) }
+    /// What a server is asked about: those, and the tools that only help.
+    private var asked: [LoadedTool] { library.trusted(trust).filter(Self.usable) }
     /// Your own tools not trusted yet, or changed since: Tools ▸ offers them, asking first.
     var untrusted: [LoadedTool] { library.tools.filter { !trust.trusts($0) && Self.shows($0) } }
 
@@ -117,11 +125,19 @@ final class ToolRunner {
             ?? p.toolActions?.contains { runs($0, of: p) } ?? false
     }
 
+    /// A tool with no list or button of its own still helps (§11): a check it adds to a save (F4), an action that takes
+    /// an output window's text (Send To…). Its `context` needs its list: it shows.
+    static func helps(_ t: LoadedTool) -> Bool {
+        t.preset.validators != nil || t.preset.toolActions?.contains { $0.spec.accepts != nil } == true
+    }
+    /// A tool this version does something with: one that shows, or helps — the library lists these.
+    static func usable(_ t: LoadedTool) -> Bool { shows(t) || helps(t) }
+
     /// What this version runs of an action: a command, a script, an `edit`, an `open` (a server path in the panel) or
     /// a `goto` (a place in Kermo); a form of text, secrets and choices; output as a line, a window, a log that
     /// follows, a terminal, rows one level down or nothing; a long job (Activity's).
-    /// ponytail: `accepts` (PR 9) and a terminal on this Mac are left out till then; `check` (Check Now) is the
-    /// watching's own (`ToolsTable`).
+    /// An action that `accepts` text runs only from Send To… (`send`), and a terminal on this Mac not at all;
+    /// `check` (Check Now) is the watching's own (`ToolsTable`).
     static func runs(_ a: ToolAction, of p: ToolPreset) -> Bool {
         (a.run.command != nil || a.run.script != nil || a.spec.edit != nil || a.spec.open != nil || a.spec.goto != nil)
             && a.spec.accepts == nil && a.spec.check == nil
@@ -191,7 +207,7 @@ final class ToolRunner {
     func askAgain() { (answers, round) = ([:], round + 1) }
 
     private func ask(_ t: SFTPTarget) {
-        let key = ServerRow.key(t), tools = tools
+        let key = ServerRow.key(t), tools = asked
         guard !tools.isEmpty, asking.insert(key).inserted else { return }
         let s = app.savedServer(at: t) ?? SavedServer(target: t)
         let scopes = Dictionary(tools.map { ($0.preset.id, scope($0.preset, on: s, t)) }) { a, _ in a }
@@ -212,6 +228,82 @@ final class ToolRunner {
         }
     }
 
+    // MARK: Send To… (§7.1 `accepts`)
+
+    /// The actions an output window's text can go to: of the tools in use on its server (`t`), those that accept text
+    /// and pass there. None for a window of no one server.
+    /// ponytail: this Mac's own output windows (⇧↩ here, Run on Servers) send nowhere — a tool is a server's; add when a
+    /// tool of this Mac's own is wanted.
+    func accepting(_ t: SFTPTarget?) -> [(tool: LoadedTool, action: ToolAction)] {
+        guard let t, let known = answer(t)?.answer else { return [] }
+        return (using(t)?.tools ?? []).flatMap { tool in
+            known.visible((tool.preset.toolActions ?? []).filter { $0.spec.accepts == "text" }, of: tool.preset).map { (tool, $0) }
+        }
+    }
+
+    /// Send To…: `text` — an output window's, or what's selected there — on the stdin of `a`, an action of `tool` on
+    /// `t`'s server (or this Mac), after the lock, its form and a question that says how much goes where; its output in a
+    /// window, or its line in `window`'s status line. The production log has the run, not the text.
+    func send(_ text: String, to a: ToolAction, of tool: LoadedTool, on t: SFTPTarget, from window: NSWindow?) {
+        let p = tool.preset, s = app.savedServer(at: t) ?? SavedServer(target: t.asUser), verb = (a.spec.title ?? a.spec.id).replacingOccurrences(of: "…", with: "")
+        let mac = (a.run.where ?? p.where) == .mac, place = mac ? "this Mac" : s.title, key = ServerRow.key(t.asUser) + " " + p.id, readonly = Self.looks(a)
+        func say(_ line: String, failed: Bool) {
+            if let frame = window?.docFrame { frame.flash(line) } else { app.active.flash(line, error: failed) }
+        }
+        if let why = why(a, of: tool, row: nil, onRow: false, id: key, on: s, t) { return say(why, failed: true) }
+        if !readonly { changing[key] = a.spec.title ?? a.spec.id }
+        Task {
+            defer { if !readonly { changing[key] = nil } }
+            let prepared = await ready(a, of: tool, scope(p, on: s, t), row: nil, on: t, asked: false, window: window, text: text)
+            guard case let .go(scope, secret, _, payload, _) = prepared else {
+                if case .stop(let why) = prepared { say("\(verb): " + (why == "cancelled" ? "cancelled — nothing ran" : "\(why) — nothing ran"), failed: why != "cancelled") }
+                return
+            }
+            let env = SSHAskpass.env, timeout = a.run.timeout ?? 30
+            let r = await app.active.busy("\(verb) on \(place)…") { flag in
+                try Self.exec(a.run, of: tool, scope, secret: secret, on: t, timeout: timeout, env: env, cancel: flag, text: text)
+            }
+            let how = ran(r, a, of: p, on: t, shown: payload?.shown ?? "")
+            if a.spec.output == .window, case .success(let (out, payload)) = r {
+                return OutputWindow.show(payload.mask(out.text, password: out.password), errors: out.stopped ?? out.errors, title: "\(verb) — \(place)",
+                                         status: out.status, ok: out.stopped == nil && a.run.succeeded(out.status),
+                                         save: a.spec.save.map { ToolTemplate.text($0, scope) }, target: t)
+            }
+            let said = line(AppDelegate.how(how).0, a, scope, place: place, at: AppDelegate.clock.string(from: Date()), readError: nil,
+                            facts: answer(t)?.answer.facts)
+            if !said.line.isEmpty { say(said.line, failed: said.outcome == .failed) }
+        }
+    }
+
+    // MARK: A server file (§11)
+
+    /// The check a tool in use on `t`'s server adds to a save of `path` (F4), with its vars as found there.
+    func check(for path: String, on t: SFTPTarget) -> ConfigCheck? {
+        let s = app.savedServer(at: t) ?? SavedServer(target: t.asUser)
+        return using(t)?.tools.lazy.compactMap { $0.preset.check(for: path, self.scope($0.preset, on: s, t)) }.first
+    }
+
+    /// The tools in use on `t`'s server whose `context` or validators could take `path`, their vars found first where
+    /// that's due this session — one round trip each, said in `panel`, only for a tool whose files look like it: a
+    /// folder of theirs that isn't the default (`{base}`) is known then. One that fails isn't asked again this session
+    /// (Reload Config asks again): its defaults then. nil: ⎋.
+    func near(_ path: String, on t: SFTPTarget, in panel: PanelViewController) async -> [LoadedTool]? {
+        let s = app.savedServer(at: t) ?? SavedServer(target: t.asUser), env = SSHAskpass.env
+        let near = (using(t)?.tools ?? []).filter { $0.preset.fileGlobs.contains { ToolPreset.mayTake(path, glob: $0) } }
+        for tool in near where !tool.preset.varCommands.isEmpty {
+            let key = ServerRow.key(t.asUser) + " " + tool.preset.id
+            guard found[key] == nil else { continue }
+            let lister = ToolListSource.lister(app, tool, s, t)
+            let r = await panel.busy("Finding \(tool.preset.title)'s folder on \(s.title)…", after: 0.3) { flag in
+                try lister.read(env, flag, header: false, rows: false).vars
+            }
+            if case .failure(is CancellationError) = r { return nil }
+            if case .failure(is ToolExec.NoPassword) = r { continue }   // sudo's password not given: asked again next time
+            found[key] = ((try? r.get()) ?? nil) ?? [:]
+        }
+        return near
+    }
+
     /// The names a tool's templates have on a server (§5.3) besides the row's: its vars, then Kermo's own.
     func scope(_ p: ToolPreset, on s: SavedServer, _ t: SFTPTarget, rows: [ToolRecord] = []) -> ToolTemplate.Scope {
         let key = ServerRow.key(t.asUser)
@@ -224,18 +316,20 @@ final class ToolRunner {
     /// `run` of `tool` with `scope`'s names, once (§2): its payload, as root if the tool says, on `t` or this Mac.
     /// `secret`: inputs that go into the payload only (§7.4).
     nonisolated static func exec(_ run: ToolRun, of tool: LoadedTool, _ scope: ToolTemplate.Scope, secret: Set<String> = [], on t: SFTPTarget,
-                                 timeout: Double, env: [String: String], cancel: CancelFlag) throws -> (ran: ToolExec.Ran, payload: ToolPayload) {
-        let (plain, wrapped) = try payloads(run, of: tool, scope, secret: secret)
+                                 timeout: Double, env: [String: String], cancel: CancelFlag, text: String? = nil) throws -> (ran: ToolExec.Ran, payload: ToolPayload) {
+        let (plain, wrapped) = try payloads(run, of: tool, scope, secret: secret, text: text)
         let mac = (run.where ?? tool.preset.where) == .mac
         let ran = try ToolExec.run({ $0 ? wrapped : plain }, on: mac ? .local() : t, timeout: timeout, cancel: cancel, env: env, command: command)
         return (ran, ran.password == nil ? plain : wrapped)
     }
 
-    /// `run`'s payload as `sudo -n` takes it, and with the password wrapper.
-    nonisolated static func payloads(_ run: ToolRun, of tool: LoadedTool, _ scope: ToolTemplate.Scope, secret: Set<String> = []) throws -> (ToolPayload, ToolPayload) {
-        let plain = try ToolPayload.of(run, in: tool.preset, scope: scope, scripts: tool.scripts, secret: secret, sudoProgram: sudoProgram).payload
+    /// `run`'s payload as `sudo -n` takes it, and with the password wrapper. `text`: on its stdin (`accepts`).
+    nonisolated static func payloads(_ run: ToolRun, of tool: LoadedTool, _ scope: ToolTemplate.Scope, secret: Set<String> = [],
+                                     text: String? = nil) throws -> (ToolPayload, ToolPayload) {
+        let plain = try ToolPayload.of(run, in: tool.preset, scope: scope, scripts: tool.scripts, secret: secret, text: text, sudoProgram: sudoProgram).payload
         guard plain.sudo == .noPassword else { return (plain, plain) }
-        return (plain, try ToolPayload.of(run, in: tool.preset, scope: scope, scripts: tool.scripts, secret: secret, password: true, sudoProgram: sudoProgram).payload)
+        return (plain, try ToolPayload.of(run, in: tool.preset, scope: scope, scripts: tool.scripts, secret: secret, text: text, password: true,
+                                          sudoProgram: sudoProgram).payload)
     }
 
     // MARK: An action
@@ -320,9 +414,10 @@ final class ToolRunner {
     /// The lock (not on this Mac), the form (its values, nil: Cancel), the values checked, the question (§7.3; `asked`:
     /// asked for several rows already) — over `window`. `values`: the form filled in so (Retry), else the folders and
     /// files last chosen there (`remember`). `job`: a long job's id — what runs is its start then (`ToolLong.start`),
-    /// as Show Exactly What Runs shows it, and a folder or a file its upload's path.
+    /// as Show Exactly What Runs shows it, and a folder or a file its upload's path. `text`: an output window's, on the
+    /// run's stdin (Send To…) — it always asks, saying how much goes.
     func ready(_ a: ToolAction, of tool: LoadedTool, _ scope: ToolTemplate.Scope, row: String?, on t: SFTPTarget, asked: Bool, window: NSWindow?,
-               values filled: [String: String]? = nil, job: String? = nil) async -> Ready {
+               values filled: [String: String]? = nil, job: String? = nil, text: String? = nil) async -> Ready {
         let p = tool.preset, verb = (a.spec.title ?? a.spec.id).replacingOccurrences(of: "…", with: "")
         let mac = (a.run.where ?? p.where) == .mac, sudo = (a.run.sudo ?? p.sudo ?? false) && !mac
         if !mac, await !ServerLock.authorize(t, "run “\(verb)” on") { return .stop("\(SavedServer.name(for: t.asUser)) stays locked") }
@@ -363,7 +458,7 @@ final class ToolRunner {
         if a.run.command != nil || a.run.script != nil {
             do {
                 if a.spec.output == .terminal { willRun = try ToolPayload.terminal(a.run, in: p, scope: scope, scripts: tool.scripts).willRun }
-                else { (payload, willRun) = try ToolPayload.of(a.run, in: p, scope: scope, scripts: tool.scripts, secret: secret) }
+                else { (payload, willRun) = try ToolPayload.of(a.run, in: p, scope: scope, scripts: tool.scripts, secret: secret, text: text) }
                 if let job {
                     let detached = try ToolPayload.of(a.run, in: p, scope: scope, scripts: tool.scripts, secret: secret, detached: true).payload
                     payload = ToolLong.start(detached, id: job, root: sudo ? .noPassword : .none, sudoProgram: Self.sudoProgram)
@@ -371,10 +466,11 @@ final class ToolRunner {
             } catch { return .stop("\(error)") }
         }
         let quietKey = ServerRow.key(t.asUser) + " " + p.id + " " + tool.hash
-        let always = a.spec.dangerous == true || a.spec.confirm == true
+        let always = a.spec.dangerous == true || a.spec.confirm == true || text != nil
         let prod = a.spec.readonly != true && payload != nil && SavedServer.isProd(t)   // `edit` asks as any file's save does
         guard !asked, always || prod && (quiet[quietKey] ?? .distantPast) < Date() else { return .go(scope, secret: secret, willRun: willRun, payload: payload, uploads: uploads) }
-        let notes = ([a.spec.message.map { ToolTemplate.text($0, scope) }] + uploads.map(\.said)).compactMap { $0 }
+        let notes = ([text.map { Self.sends($0, to: mac ? "this Mac" : SavedServer.name(for: t.asUser)) }, a.spec.message.map { ToolTemplate.text($0, scope) }]
+                     + uploads.map(\.said)).compactMap { $0 }
         let message = notes.isEmpty ? nil : notes.joined(separator: "\n\n")
         switch await ask(a, verb: verb, row: row, on: t, mac: mac, sudo: sudo, willRun: willRun, payload: payload, message: message,
                          quietFor: always ? nil : SavedServer.name(for: t.asUser), window: window) {
@@ -383,6 +479,14 @@ final class ToolRunner {
             if waved { quiet[quietKey] = Date().addingTimeInterval(600) }
             return .go(scope, secret: secret, willRun: willRun, payload: payload, uploads: uploads)
         }
+    }
+
+    /// What Send To…'s question says of `text`: how much goes where, and how it begins.
+    static func sends(_ text: String, to place: String) -> String {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false), n = ToolPayload.lines(text)
+        let size = ByteCountFormatter.string(fromByteCount: Int64(text.utf8.count), countStyle: .file)
+        return "Sends \(n == 1 ? "1 line" : "\(n) lines") (\(size)) of that window's text to its input on \(place):\n"
+            + lines.prefix(3).map { $0.count > 100 ? $0.prefix(100) + "…" : $0 }.joined(separator: "\n") + (n > 3 ? "\n…" : "")
     }
 
     /// `a` of `tool` on `t`'s server, started on `row` of a list (`source`) — acting on it if `onRow`, else a tool's
@@ -432,7 +536,7 @@ final class ToolRunner {
                     guard let payload else { return }
                     let password: String? = payload.sudo == .noPassword && ToolExec.wantsPassword(t) ? await Blocking.run { SFTP.sudoPassword?(t, false) } : nil
                     let p2 = password == nil ? payload : (try? Self.payloads(a.run, of: tool, scope, secret: secret).1) ?? payload
-                    OutputWindow.follow(p2, password: password, on: mac ? .local() : t, title: "\(verb) — \(place)", cri: a.spec.strip == "cri")
+                    OutputWindow.follow(p2, password: password, on: mac ? .local() : t, title: "\(verb) — \(place)", cri: a.spec.strip == "cri", target: t)
                     AuditLog.write(t, "tool \(p.id) \(a.spec.id)", paths: [], command: p2.mask(p2.shown, password: password), exit: nil)
                 case .terminal?:
                     guard let line = try? ToolPayload.terminal(a.run, in: p, scope: scope, scripts: tool.scripts).line else { return }
@@ -445,7 +549,8 @@ final class ToolRunner {
                     switch r {
                     case .success(let (ran, payload)):
                         OutputWindow.show(payload.mask(ran.text, password: ran.password), errors: ran.stopped ?? ran.errors, title: "\(verb) — \(place)",
-                                          status: ran.status, ok: ran.stopped == nil && a.run.succeeded(ran.status), save: a.spec.save.map { ToolTemplate.text($0, scope) })
+                                          status: ran.status, ok: ran.stopped == nil && a.run.succeeded(ran.status), save: a.spec.save.map { ToolTemplate.text($0, scope) },
+                                          target: t)
                     case .failure(is CancellationError): break
                     case .failure(is ToolExec.NoPassword): say("\(verb): no sudo password — nothing ran", to: lists, about: id, failed: false)
                     case .failure(let e): app.showError(e)
