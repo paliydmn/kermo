@@ -89,7 +89,7 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`, as the other tes
     try Data(old.utf8).write(to: URL(fileURLWithPath: a))
     let new = String(repeating: "new text\n", count: 2000)
     e.textView.insertText(new, replacementRange: NSRange(location: 0, length: (e.textView.string as NSString).length))
-    e.rewriteInPlace = { h, data in   // the disk fills up after 4 KB
+    e.writeText = { h, data in   // the disk fills up after 4 KB
         try h.write(contentsOf: data.prefix(4096))
         throw POSIXError(.ENOSPC)
     }

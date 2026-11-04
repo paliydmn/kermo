@@ -198,7 +198,7 @@ extension AppDelegate {
         cmd("mark.none", "Unmark All", ["cmd+shift+a"], menu: "Mark", group: 1, aliases: "deselect") { $0.active.unmarkAll() },
         cmd("mark.invert", "Invert Marks", ["shift+8", "kpstar"], menu: "Mark", group: 1, short: "Invert", aliases: "invert selection marks") { $0.active.invertMarks() },
         cmd("panel.compare", "Mark Differences", ["shift+f2"], menu: "Mark", group: 2, short: "Differences", aliases: "compare folders difference Compare Folders (mark differences)") { $0.compareFolders() },
-        cmd("panel.sync", "Synchronize Folders…", ["cmd+shift+s"], menu: "Mark", group: 2, short: "Synchronize", aliases: "synchronize mirror folders") { app in
+        cmd("panel.sync", "Synchronize Folders…", ["cmd+opt+s"], menu: "Mark", group: 2, short: "Synchronize", aliases: "synchronize mirror folders") { app in
             guard app.active.archive == nil, app.other.archive == nil, app.active.searchTitle == nil, app.other.searchTitle == nil
             else { return app.active.flash("Synchronize works between two folders") }
             let (l, r) = app.panels.firstIndex { $0 === app.active }! < app.panels.firstIndex { $0 === app.other }! ? (app.active, app.other) : (app.other, app.active)

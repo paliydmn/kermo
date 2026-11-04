@@ -1555,7 +1555,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return it
         }
         let head: [String: [NSMenuItem]] = [
-            "File": [item("Save", #selector(Editor.saveDocument(_:)), "s"),
+            "File": [item("Save", #selector(Editor.saveDocument(_:)), "s"), item("Save As…", #selector(Editor.saveDocumentAs(_:)), "s", [.command, .shift]),
                      item("Ensure Final Newline", #selector(Editor.toggleFinalNewline(_:)), ""), .separator()],
             // Standard responder-chain items: text fields handle them as text; panels as files.
             "Window": [item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"), item("Zoom", #selector(NSWindow.performZoom(_:)), ""),

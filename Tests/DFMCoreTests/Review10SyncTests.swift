@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import DFMCore
 
-// I7: Compare (⇧F2) and Synchronize (⌘⇧S) with a server — here this Mac's own sftp-server (`SFTPTarget.local()`).
+// I7: Compare (⇧F2) and Synchronize (⌥⌘S) with a server — here this Mac's own sftp-server (`SFTPTarget.local()`).
 
 private func tempDir() -> String {
     let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-r10sync-" + UUID().uuidString
@@ -18,7 +18,7 @@ private func read(_ path: String) -> String? { try? String(contentsOfFile: path,
 
 private let server = Endpoint.sftp(.local())
 
-/// Compares `l` (this Mac) with `r` listed over SFTP, as ⇧F2 and ⌘⇧S do.
+/// Compares `l` (this Mac) with `r` listed over SFTP, as ⇧F2 and ⌥⌘S do.
 private func compare(_ l: String, _ r: String) -> [DirSync.Item] {
     let (a, b) = (DirSync.lister(.local), DirSync.lister(server))
     defer { a.close(); b.close() }
@@ -40,7 +40,7 @@ private func compare(_ l: String, _ r: String) -> [DirSync.Item] {
     #expect(m.left == ["app"] && m.right == ["data"] && m.unreadable == 0)
 }
 
-/// ⌘⇧S between this Mac and a server copies each way, nested, through FileJob over SFTP; afterwards both match.
+/// ⌥⌘S between this Mac and a server copies each way, nested, through FileJob over SFTP; afterwards both match.
 @Test func syncWithAServerCopiesBothWays() {
     let d = tempDir()
     defer { try? FileManager.default.removeItem(atPath: d) }
