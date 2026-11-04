@@ -1860,10 +1860,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return await Self.sheet(c.alert(), on: sheetWindow ?? window)
     }
 
-    func showError(_ error: Error) {
+    /// On `sheetWindow` (an editor's, about its document), else the main window.
+    func showError(_ error: Error, on sheetWindow: NSWindow? = nil) {
         let alert = NSAlert(error: error)
         alert.messageText = alert.messageText.bidiVisible
-        alert.beginSheetModal(for: window)
+        alert.beginSheetModal(for: sheetWindow ?? window)
     }
 }
 

@@ -576,8 +576,9 @@ extension AppDelegate {
 
     /// A command that isn't the list's own and that a row's key rides (F3, F4, F8, ⌘L): named in the menu for that
     /// action, a click on it does that.
+    /// Not the app's own (New Editor Document clicked over a list with a ⌘N row is still a new document).
     static func titled(_ c: Command, _ actions: [ListAction]) -> ListAction? {
-        listOwn.contains(c.id) ? nil : actions.first { a in a.panelKey.map(c.keys.contains) == true }
+        listOwn.contains(c.id) || appWide.contains(c.id) ? nil : actions.first { a in a.panelKey.map(c.keys.contains) == true }
     }
 
     /// A command while the active panel shows a list (false: it runs as anywhere). A key the cursor's row has runs

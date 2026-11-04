@@ -228,6 +228,66 @@ private func umasked(_ m: mode_t) -> mode_t { let u = umask(0); umask(u); return
     #expect(FileManager.default.contents(atPath: dest.path) == text && e.url == dest)
 }
 
+/// The file the save panel asked about replacing is checked again right before the write: one changed meanwhile, or
+/// swapped for a link to another file of yours, isn't written over. Answering the encoding question looks again for a
+/// window that opened the destination meanwhile.
+@MainActor @Test func aReplacedFileIsCheckedAgainBeforeTheWrite() async throws {
+    _ = NSApplication.shared
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let cp = dir + "/old.conf"
+    try "# Коментар\n".data(using: .windowsCP1251)!.write(to: URL(fileURLWithPath: cp))
+    func asking(_ dest: String) async throws -> Editor {   // a Windows-1251 file: Save As asks first
+        let e = try Editor(URL(fileURLWithPath: cp))
+        #expect(await !e.saveAs(URL(fileURLWithPath: dest)))
+        try await waitUntil("asked") { e.window?.attachedSheet != nil }
+        return e
+    }
+
+    try put("theirs\n", dir + "/a.conf")
+    let a = try await asking(dir + "/a.conf")
+    defer { a.close() }
+    try put("theirs, newer\n", dir + "/a.conf")
+    try await answer(a.window, .alertFirstButtonReturn)   // Save
+    #expect(try await dismissed(a.window).contains("changed after you chose to replace it"))
+    #expect(read(dir + "/a.conf") == "theirs, newer\n" && a.url == URL(fileURLWithPath: cp))
+
+    try put("mine\n", dir + "/victim")
+    try put("theirs\n", dir + "/b.conf")
+    let b = try await asking(dir + "/b.conf")
+    defer { b.close() }
+    try FileManager.default.removeItem(atPath: dir + "/b.conf")
+    try FileManager.default.createSymbolicLink(atPath: dir + "/b.conf", withDestinationPath: dir + "/victim")
+    try await answer(b.window, .alertFirstButtonReturn)
+    _ = try await dismissed(b.window)
+    #expect(read(dir + "/victim") == "mine\n", "not written through the link swapped in")
+
+    let c = try await asking(dir + "/c.conf")
+    defer { c.close() }
+    try put("c\n", dir + "/c.conf")
+    Editor.open(URL(fileURLWithPath: dir + "/c.conf"))
+    try await waitUntil("c open") { Editor.window(for: URL(fileURLWithPath: dir + "/c.conf")) != nil }
+    let other = try #require(Editor.window(for: URL(fileURLWithPath: dir + "/c.conf")))
+    defer { other.close() }
+    try await answer(c.window, .alertFirstButtonReturn)
+    #expect(try await dismissed(other).contains("is open in this window"))
+    #expect(read(dir + "/c.conf") == "c\n")
+}
+
+/// A file deleted while it's open comes back with its own mode on ⌘S, not the umask's: a 0600 secret stays owner-only.
+@MainActor @Test func aDeletedFileComesBackWithItsMode() async throws {
+    _ = NSApplication.shared
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    try put("SECRET=1\n", dir + "/.env", mode: 0o600)
+    let e = try Editor(URL(fileURLWithPath: dir + "/.env"))
+    defer { e.close() }
+    try FileManager.default.removeItem(atPath: dir + "/.env")
+    e.textView.string = "SECRET=2\n"
+    #expect(await e.save())
+    #expect(mode(dir + "/.env") == 0o600 && read(dir + "/.env") == "SECRET=2\n")
+}
+
 /// Save As… is off for a tool's file (Kermo reads it where it is) and while a sheet is up (the save panel's own: a second
 /// ⇧⌘S opens no second panel); File ▸ Save As… is ⇧⌘S, and Synchronize Folders moved to ⌥⌘S.
 @MainActor @Test func saveAsIsShiftCommandSAndSyncMoved() async throws {
@@ -317,7 +377,7 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`
 }
 
 /// F4 on a server's file already open shows that window: one file, one window — the second download's copy goes.
-/// The same path as root is another document; this Mac's file by its path, however it's spelled.
+/// This Mac's file by its path, however it's spelled.
 @MainActor @Test func aServerFileOpensInOneWindow() async throws {
     _ = NSApplication.shared
     let dir = try tempDir()

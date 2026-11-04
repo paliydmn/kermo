@@ -1668,7 +1668,7 @@ extension AppDelegate {
 
     private func notSaved(_ saved: URL, to target: SFTPTarget, _ e: Error) -> Bool {
         Editor.markUnsaved(saved)
-        if let m = Self.notUploaded(saved, host: target.host, e, editorOpen: Editor.window(for: saved) != nil) { showError(JobErrorMessage(m)) }
+        if let m = Self.notUploaded(saved, host: target.host, e, editorOpen: Editor.window(for: saved) != nil) { showError(JobErrorMessage(m), on: Editor.asking(about: saved)) }
         return false
     }
 
