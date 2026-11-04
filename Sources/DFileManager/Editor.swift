@@ -14,7 +14,17 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     static var unsaved: [String] { open.filter(\.changed).map(\.url.lastPathComponent) }
     /// The save didn't reach where the file really lives (a server): still unsaved, so closing asks.
     static func markUnsaved(_ url: URL) { open.first { $0.url == url }.map { $0.dirty = true; $0.unsent = true } }
+    /// The window of the editor whose file `url` is now.
     static func window(for url: URL) -> NSWindow? { open.first { $0.url == url }?.window }
+    /// Where a question about `url`'s save goes — a server copy's upload that went on after Save As made it a local
+    /// file asks there too — shown first (`revealed`). nil: no editor has it (closed).
+    static func asking(about url: URL) -> NSWindow? { open.first { $0.url == url || $0.formerCopy == url }?.revealed() }
+    /// The editor of that file already open, if any: a server's by its server, user or root, and path; this Mac's by
+    /// its path. One file, one window.
+    private static func opened(_ url: URL, _ server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)?) -> Editor? {
+        if let server { return editing(server.target, server.path) }
+        return open.first { $0.url.standardizedFileURL.path == url.standardizedFileURL.path }
+    }
     /// The server's file an editor window edits through its local copy (Server File History… there).
     static func server(of window: NSWindow?) -> (target: SFTPTarget, path: String)? {
         open.first { $0.window === window && window != nil }?.server.map { ($0.target, $0.path) }
@@ -34,6 +44,9 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     var server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)? {   // its saves go up with `state`
         didSet { if (server == nil) != (oldValue == nil) { retitle() } }
     }
+    /// The server file's copy this edited before Save As made it a local file: an upload of it still going finds this
+    /// window for its questions. It goes when the window closes (`onClose`), after its last upload.
+    private var formerCopy: URL?
     let textView = EditorTextView(usingTextLayoutManager: false)   // TextKit 1: the line-number ruler needs it
     private var ruler: LineNumberRuler!
     private var language: Syntax.Language?
@@ -82,11 +95,11 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// `note`: said in its status line once it's open (`flash`).
     static func open(_ url: URL, remote: String? = nil, server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)? = nil,
                      note: String? = nil, onSaved: (@MainActor (URL) -> Void)? = nil, onClose: (@MainActor () -> Void)? = nil) {
-        if let existing = open.first(where: { $0.url == url }) { return existing.window!.makeKeyAndOrderFront(nil) }
+        if let existing = opened(url, server) { onClose?(); existing.revealed(); return }
         Task {
             let loaded = await Blocking.run(.userInitiated) { Result { try load(url) } }
-            // Opened meanwhile (↩ twice during a slow read): one window per file.
-            if let existing = open.first(where: { $0.url == url }) { return existing.window!.makeKeyAndOrderFront(nil) }
+            // Opened meanwhile (↩ twice during a slow read or download): one window per file, the other copy goes.
+            if let existing = opened(url, server) { onClose?(); existing.revealed(); return }
             do {
                 let e = try Editor(url, remote: remote, loaded: loaded.get())
                 e.onSaved = onSaved
@@ -246,7 +259,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
 
     /// Says something in its status line for a few seconds (a server save's "no history: …"): the panels' status line
     /// is behind this window.
-    static func flash(_ url: URL, _ text: String) { open.first { $0.url == url }?.flash(text) }
+    static func flash(_ url: URL, _ text: String) { open.first { $0.url == url || $0.formerCopy == url }?.flash(text) }
     func flash(_ text: String) { window?.docFrame?.flash(text) }
 
     /// The window, before a question about its document: out of the Dock, key, in front — a sheet on a window out of
@@ -627,6 +640,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
             alert("Couldn't save “\(name)”", why)
             return false
         case .written(let stamp, let digest):
+            if server != nil { formerCopy = url }
             url = dest
             (remote, onSaved, noticed) = (nil, nil, nil)
             server = nil   // else a revert from that file's server history would find this window and write over `dest`

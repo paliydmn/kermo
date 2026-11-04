@@ -1248,6 +1248,7 @@ extension AppDelegate {
     /// The same for a server's file by its path (⌘E on a service: its unit file). `listed`: its size and time as a
     /// panel listed it (another app's saves check against them); none, as downloaded.
     func remoteOpen(_ how: RemoteOpen, _ target: SFTPTarget, _ remotePath: String, listed: (Int64, Double)? = nil, in panel: PanelViewController) {
+        if how == .edit, let e = Editor.editing(target, remotePath) { e.revealed(); return }   // one file, one window: no second copy
         let name = (remotePath as NSString).lastPathComponent
         let tmp = NSTemporaryDirectory() + "dfm-sftp-" + UUID().uuidString
         mkdir(tmp, 0o700)
@@ -1270,7 +1271,7 @@ extension AppDelegate {
                 ServerCopies.add(.init(local, target, remotePath, listed: listed ?? (opened.size, opened.mtime), baseline: opened, preview: false))
                 Self.openInApp(local)
             case .view: Viewer.show(local, remote: (target, remotePath, max(0, opened.size - (last ?? opened.size)))) { TempCopies.remove(tmp) }
-            case .edit:
+            case .edit:   // opened meanwhile: that window (`Editor.open`), this copy goes
                 let state = RemoteEdit(baseline: opened)
                 let note = Self.rootsOnly(opened, for: target) ? "“\(name)” is root's: saving it needs the panel as root (⌃⌘R)" : nil
                 Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath, state), note: note, onSaved: { [self] saved in
@@ -1351,7 +1352,7 @@ extension AppDelegate {
         if state.asks(target) {
             var c = Confirm("Save “\(name)” to \(SavedServer.name(for: target))?", on: target, action: "Save")
             c.note = "This overwrites the file there."
-            guard await confirm(c, on: Editor.window(for: saved)) == 0 else {
+            guard await confirm(c, on: Editor.asking(about: saved)) == 0 else {
                 return notSaved(saved, to: target, CancellationError())   // the editor may be gone: says where the text is
             }
             state.prodConfirmed = true
@@ -1400,7 +1401,7 @@ extension AppDelegate {
             Editor.markUnsaved(saved)
             if let a = e.attrs { state.baseline = a }   // an "after" check: what's there now, put back or not
             let (message, info) = Self.checkFailed(e, name: name, host: target.host, kept: Editor.window(for: saved) == nil ? saved.path : nil)
-            _ = await choose(message, info: info, ["OK"], on: Editor.window(for: saved))
+            _ = await choose(message, info: info, ["OK"], on: Editor.asking(about: saved))
             return false
         case .failure(let e as SFTPClient.ChangedOnServer):
             Editor.markUnsaved(saved)
@@ -1413,7 +1414,7 @@ extension AppDelegate {
             var c = Confirm("“\(name)” changed on \(SavedServer.name(for: target)) since you opened it", on: target, action: "Overwrite")
             (c.note, c.others, c.irreversible) = (info, ["Compare"], true)   // ⌘S ↩ never writes over theirs
             while true {   // Compare asks again once the diff is up
-                switch await confirm(c, on: Editor.window(for: saved)) {
+                switch await confirm(c, on: Editor.asking(about: saved)) {
                 case 0:   // over what was shown, not whatever's there by now: another change meanwhile asks again
                     state.baseline = e.attrs
                     return await uploadNow(saved, to: remotePath, on: target, state, force: false, action: action)
@@ -1505,7 +1506,7 @@ extension AppDelegate {
         let name = (path as NSString).lastPathComponent, q = Self.reloadQuestion(command, name: name, on: target)
         var before: String?
         ask: while true {
-            switch await confirm(q, on: Editor.window(for: saved)) {
+            switch await confirm(q, on: Editor.asking(about: saved)) {
             case 0: break ask
             case 1:
                 guard let old else { panel.flash("Nothing to compare: the text before this save wasn't kept (over 5 MB, or a new file)"); continue }
@@ -1575,7 +1576,7 @@ extension AppDelegate {
         case .success(.failed(let status, let output)):
             let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
             _ = await choose("“\(command)” failed on \(target.host)", info: text.isEmpty ? "It exited with \(status)." : String(text.suffix(4000)), ["OK"],
-                             on: saved.flatMap(Editor.window(for:)))
+                             on: saved.flatMap(Editor.asking(about:)))
         case .success(.noProgram(let why)):
             panel.flash("“\(command)” didn't run on \(target.host): \(why)", error: true)
         case .success: break   // needs root, not run: only checks

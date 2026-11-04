@@ -65,7 +65,7 @@ private func umasked(_ m: mode_t) -> mode_t { let u = umask(0); umask(u); return
     _ = NSApplication.shared
     let dir = try tempDir()
     defer { chmod(dir + "/ro", 0o755); try? FileManager.default.removeItem(atPath: dir) }
-    let t = SFTPTarget(host: "me@web.invalid")
+    let t = SFTPTarget(host: "me@e1-failed.invalid")
     var uploads = 0
     let (e, copy) = try await serverEditor(dir, t, "/srv/app/.env") { _ in uploads += 1 }
     defer { e.close() }
@@ -73,7 +73,7 @@ private func umasked(_ m: mode_t) -> mode_t { let u = umask(0); umask(u); return
     e.textDidChange(Notification(name: NSText.didChangeNotification))
     func stillBound(_ why: String) {
         #expect(e.url == copy && Editor.editing(t, "/srv/app/.env") === e && e.server?.path == "/srv/app/.env", "\(why)")
-        #expect(e.window?.title == ".env" && e.window?.subtitle.contains("web") == true && e.window?.representedURL == nil, "\(why)")
+        #expect(e.window?.title == ".env" && e.window?.subtitle.contains("e1-failed") == true && e.window?.representedURL == nil, "\(why)")
         #expect(e.textView.string == "SECRET=2\n" && e.window?.isDocumentEdited == true, "\(why): the text stays, unsaved")
         #expect(read(copy.path) == "SECRET=1\n", "\(why)")
         #expect(try! FileManager.default.contentsOfDirectory(atPath: dir).sorted() == ["copy", "ro", "theirs.env"], "\(why): no temp file left")
@@ -126,7 +126,7 @@ private func umasked(_ m: mode_t) -> mode_t { let u = umask(0); umask(u); return
     let dir = try tempDir()
     defer { try? FileManager.default.removeItem(atPath: dir) }
     for (i, (there, want)) in [(UInt32?(0o600), mode_t(0o600)), (nil, 0o600), (0o4755, 0o755)].enumerated() {
-        let t = SFTPTarget(host: "me@web\(i).invalid")
+        let t = SFTPTarget(host: "me@e1-mode\(i).invalid")
         let (e, copy) = try await serverEditor(dir + "/\(i)", t, "/srv/app/.env", mode: there)
         defer { e.close() }
         e.window?.showChips([.root])   // as a root panel's file shows it
@@ -254,4 +254,90 @@ private func umasked(_ m: mode_t) -> mode_t { let u = umask(0); umask(u); return
     #expect(saveAs.keyEquivalent == "s" && saveAs.keyEquivalentModifierMask == [.command, .shift])
     #expect(app.commands.first { $0.id == "panel.sync" }?.keys.first == Shortcut("cmd+opt+s"))
     #expect(app.commands.allSatisfy { !$0.keys.contains(Shortcut("cmd+shift+s")!) }, "⇧⌘S is Save As's alone")
+}
+
+extension ServerLockTests {   // swaps `AppDelegate.answering`
+    /// An upload still going when Save As made the server file a local one asks in that editor's window (not on the
+    /// main window behind it), and says the text it couldn't send is kept in the copy — the editor's own file is saved,
+    /// not marked unsaved by the server's answer.
+    @MainActor @Test func anUploadAfterSaveAsAsksInItsEditor() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let file = dir + "/app.conf", copy = URL(fileURLWithPath: dir + "/copy/app.conf")
+        try put("v1\n", file)
+        try FileManager.default.createDirectory(atPath: dir + "/copy", withIntermediateDirectories: true)
+        try put("mine\n", copy.path)
+        let c = try SFTPClient(.local())
+        let state = AppDelegate.RemoteEdit(baseline: try #require(try c.stat(file)))
+        c.close()
+        Editor.open(copy, remote: "local:" + file, server: (.local(), file, state))
+        try await waitUntil("opened") { Editor.editing(.local(), file) != nil }
+        let e = try #require(Editor.editing(.local(), file))
+        defer { e.close() }
+        let mine = URL(fileURLWithPath: dir + "/mine.conf")
+        #expect(await e.saveAs(mine))
+        #expect(Editor.window(for: copy) == nil && Editor.asking(about: copy) === e.window, "its questions still find it")
+
+        try await Task.sleep(for: .milliseconds(1100))
+        try put("v2 from a deploy\n", file)
+        let app = AppDelegate()
+        app.panels = [PanelViewController(tabs: [dir], index: 0, showHidden: false)]
+        app.panels.forEach { $0.loadViewIfNeeded() }
+        defer { app.panels.forEach { $0.shutdown() } }
+        var asked: [String] = []
+        AppDelegate.answering = { m, _, _ in asked.append(m); return 2 }   // Cancel
+        defer { AppDelegate.answering = nil }
+        #expect(await !app.upload(copy, to: file, on: .local(), state))
+        #expect(asked.count == 1 && asked.first?.contains("changed on") == true, "\(asked)")
+        #expect(AppDelegate.answeredInfo.contains(copy.path), "the unsent text is in the copy: \(AppDelegate.answeredInfo)")
+        #expect(e.window?.isDocumentEdited == false && read(mine.path) == "mine\n" && read(file) == "v2 from a deploy\n")
+    }
+}
+
+/// A question about a document shows its window first: out of the Dock, key, in front — a sheet on a window out of sight
+/// waits unseen, and the upload behind it with it.
+@MainActor @Test func aQuestionShowsItsWindowFirst() async throws {
+    _ = NSApplication.shared
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let url = URL(fileURLWithPath: dir + "/a.conf")
+    try put("a\n", url.path)
+    Editor.open(url)
+    try await waitUntil("opened") { Editor.window(for: url) != nil }
+    let w = try #require(Editor.window(for: url))
+    defer { w.close() }
+    w.miniaturize(nil)
+    try await waitUntil("in the Dock") { w.isMiniaturized }
+    #expect(Editor.asking(about: url) === w)
+    try await waitUntil("back") { !w.isMiniaturized && w.isVisible }
+    w.orderOut(nil)
+    _ = Editor.asking(about: url)
+    #expect(w.isVisible)
+}
+
+/// F4 on a server's file already open shows that window: one file, one window — the second download's copy goes.
+/// The same path as root is another document; this Mac's file by its path, however it's spelled.
+@MainActor @Test func aServerFileOpensInOneWindow() async throws {
+    _ = NSApplication.shared
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let t = SFTPTarget(host: "me@e1-once.invalid")
+    let (e, _) = try await serverEditor(dir + "/1", t, "/etc/app.conf")
+    defer { e.close() }
+    let again = URL(fileURLWithPath: dir + "/2/app.conf")
+    try FileManager.default.createDirectory(atPath: dir + "/2", withIntermediateDirectories: true)
+    try put("x\n", again.path)
+    var dropped = false
+    Editor.open(again, server: (t, "/etc/app.conf", AppDelegate.RemoteEdit(baseline: .nothing)), onClose: { dropped = true })
+    #expect(dropped && Editor.window(for: again) == nil, "the second copy is let go")
+
+    let local = URL(fileURLWithPath: dir + "/2/app.conf")
+    Editor.open(local)
+    try await waitUntil("opened") { Editor.window(for: local) != nil }
+    let w = try #require(Editor.window(for: local))
+    defer { w.close() }
+    Editor.open(URL(fileURLWithPath: dir + "/2/../2/app.conf"))
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(NSApp.windows.filter { $0.representedURL?.standardizedFileURL == local.standardizedFileURL }.count == 1, "no second window")
 }
