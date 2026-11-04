@@ -14,6 +14,8 @@ Release:
 ## [Unreleased]
 
 ### Added
+- **File ▸ New Editor Document** (⌘N) opens an empty Untitled in the built-in editor from any Kermo window — the panels whatever they show, the viewer, Tools, the terminal. Nothing of it is on disk until you save it; its save starts in the active panel's folder on this Mac.
+- **File ▸ Save As…** (⇧⌘S) in the editor, any time, not only when the file changed on disk. It writes the whole text first and only then edits the new file; a file open in another editor window, a folder, another user's file or a link to nothing isn't written.
 - **Kermo ▸ Support Kermo…** (and a link in About) opens the ways to support Kermo's development.
 - **Tools**: a server's ufw rules (**Firewall**) and fail2ban's banned addresses (**Banned IPs**) as lists — in **Tools ▸** of a server's menus and **Server ▸ Tools**, a row each in its overview, in search and in a panel — with their actions: Status in Full, Delete Rule…, Turn Firewall On… / Off…; Who Is It?, Unban. A change asks on production (always for one that can't be undone), shows the command with its values, says how it went under the list and reads the list again; Delete Rule… checks the rule is still the one you saw. What a server has is asked once its connection is up, never logging in for a menu. Tools are JSON presets; Reload Config checks your own in `~/.config/dfilemanager/tools/`.
 - Tools: **Allow Port…**, **Block Address…**, **Ban Address…** and **Jail Status…** ask in a sheet, checked as you type, showing the command they'll run; **＋ Allow Port…** over the list. **fail2ban Log** follows in a window, or next door in a panel. Your own tools ask **Use the tool “…”?** with everything they run before they run anything. On production a tool's question can be put off for 10 minutes; a server marked **Read-only** (Edit Server ▸ Safety) runs only what changes nothing. A saved server's tools show in Tools ▸, greyed, while it isn't connected.
@@ -47,6 +49,15 @@ Release:
 - In search and a server's overview, a long subtitle no longer wraps into the row below, and a long description no longer pushes a row's name out.
 - Tools window: a dashboard's table showed one or two of its rows when scroll bars are always shown — the scroll bar hid the rest; each table now shows all its rows, and a grip under it makes it taller or shorter. The sidebar can be made wider or narrower, and the bars in WATCHED, the tiles and the tables are half as thick and WATCHED's half as wide, so “disk” fits; the page of a server that isn't connected starts at the top instead of spreading down the window.
 - Tools: Server Info's report and header said “command not found” on a server without `hostname` or `uptime` (a minimal image); the host's name now comes from `uname -n`, and a missing `uptime` is said as such.
+- Editor: **Save As** of a server's file no longer detaches it from the server when the write fails — the next ⌘S went only to this Mac — nor skips the encoding question, nor offers an administrator save into the new folder. A save still going up when Save As makes it a local file asks in its window, not on the main window behind it.
+- Editor: a question about a document (changed on disk, the encoding, saving, an upload's) brings its window out of the Dock and to the front first; a sheet on a hidden window waited unseen. F4 on a server file already open shows that window instead of a second copy.
+
+### Changed
+- **Synchronize Folders…** moved from ⇧⌘S to **⌥⌘S**: ⇧⌘S is the editor's Save As….
+- Editor: a save also flushes the folder to the disk after replacing the file, so a power cut right after a save doesn't bring the old file back.
+
+### Security
+- Editor: a file made by **Save As** gets no wider permissions than the text came from — a server's `.env` with `rw-------` stays owner-only on this Mac instead of readable by every user (owner-only when the server didn't say). A file you choose to replace keeps its own permissions.
 
 ## [1.6] - 2026-10-28
 

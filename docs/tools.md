@@ -134,7 +134,7 @@ Server Info has no list: its rows are what it can show, and ↩ on a row runs it
 
 A command that isn't on the server says so in its window (`lsblk: not available here`) instead of leaving it empty.
 
-The keys work in search. In a panel a row's key works where it's one of Kermo's own command keys (↩, F8, ⌘L, ⌘J); the others (⌘N, ⌘B) are on the ＋ button and in the row's menu (⌃↩).
+The keys work in search. In a panel a row's key works where it's one of Kermo's own command keys (↩, F8, ⌘L, ⌘J, ⌘N — there the row's ⌘N comes before New Editor Document); the others (⌘B, ⇧⌘S) are on the ＋ button and in the row's menu (⌃↩).
 
 ## How an action runs
 

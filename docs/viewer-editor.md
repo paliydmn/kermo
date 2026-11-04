@@ -39,21 +39,34 @@ These keys work in text mode only (`g` also in hex mode), and stop while `f` fol
 
 ## Editor
 
-Press F4 (⌥4) on a file. It opens text files up to 32 MB; a binary or larger file is refused, and the message points to the viewer.
+Press F4 (⌥4) on a file. It opens text files up to 32 MB; a binary or larger file is refused, and the message points to the viewer. F4 on a file that's already open, on this Mac or on the same server as the same user, brings its window forward: one file, one window.
 
 Its title is the file's name with where it is under it, as the viewer's; the status line says the encoding (and, for a few seconds, a save's note); the key bar shows ⎋ and the menu keys that work there. The toolbar has **Final Newline** (lit while on, as the menu's checkmark) and, for a server's file, **Server File History…**.
 
 - Line numbers show in the margin.
 - Syntax colors cover shell, Python, JSON, YAML, INI-style files (`.ini`, `.toml`, `.cfg`, `.properties`, `.service`), `.conf`, XML (plist, HTML, SVG), Dockerfile, Makefile and C-style languages (Swift, C, C++, JavaScript, TypeScript, Go, Rust, Java and others). The file name or a `#!` line picks the language. A text over 2 MB gets no colors. The viewer colors files by name the same way.
 - ⌘F opens the find bar, which also replaces. ⌘G finds the next match.
-- ⌘S (**File ▸ Save**) saves. Mode, owner, extended attributes, a UTF-8 BOM and CRLF line ends stay as they were. The new text goes into a temporary file that then replaces the old one whole. A hard-linked file, or someone else's in a folder you can write, is written into instead (so its links and owner stay): over the old text, cut to length only at the end, so a full disk never leaves it empty.
+- ⌘S (**File ▸ Save**) saves. Mode, owner, extended attributes, a UTF-8 BOM and CRLF line ends stay as they were. The new text goes into a temporary file that then replaces the old one whole, and the folder is flushed to the disk too, so a power cut right after doesn't bring the old file back. A hard-linked file, or someone else's in a folder you can write, is written into instead (so its links and owner stay): over the old text, cut to length only at the end, so a full disk never leaves it empty.
 
 > [!WARNING]
 > A file with some invalid UTF-8 bytes shows them as �, and saving writes � in their place. A file that is not UTF-8 is read and saved as Windows-1251; if it is really UTF-8, what you type will not read back correctly. The first save of either asks **Save** or **Cancel**.
 
+### Untitled and Save As
+
+⌘N (**File ▸ New Editor Document**) opens an empty **Untitled 1** (2, 3…) in the editor from any Kermo window — the panels, whatever they show, the viewer, Tools, the terminal, another editor. It's UTF-8 with LF line ends; **End with a newline** in Settings › Editor & Viewer decides its final newline. Nothing of it is on disk until you save it: ⌘S opens the save panel in the active panel's folder on this Mac (Documents when that panel is a server's, an archive or a list). The setting that sends F4 to another app doesn't apply to it, and ⇧F4 **New File…** still makes a file first.
+
+⇧⌘S (**File ▸ Save As…**) writes the text to a file you pick and then edits that file. The text is written first, whole: if that fails, or you cancel a question on the way (the encoding's, say), the editor stays on the file it had — a server's file stays a server's, and the next ⌘S still goes up.
+
+- A new file gets no wider permissions than the text came from: the mode of the file on this Mac, or of the server's file (owner-only when the server didn't say); an Untitled's new file follows your umask. A file you chose to replace keeps its own mode, as a save keeps it.
+- A file is replaced whole or not at all, never written into. Through a symbolic link it writes the file the link points to, and the link stays. A link to a file that isn't there, a folder, or another user's file isn't written; neither is a file that appeared there after the save panel closed.
+- Save As onto a file another editor window has open writes nothing: that window comes forward and says why.
+- A server's file saved as a file on this Mac is that file from then on: no server, no chips, no **Server File History…**. A save still going up to the server finishes, and asks in this window if it has to.
+
+A question about a document — changed on disk, the encoding, saving as administrator, closing with changes, or an upload's — first brings its window out of the Dock and to the front.
+
 ### Closing and changes on disk
 
-⎋ or ⌘W closes the editor. With unsaved changes it asks “Save changes to “nginx.conf” on web-01?” — **Save**, **Don't Save** (⌘D, discards your edits) or **Cancel**, one under another as macOS lays out three. For a server's file it says what Save does there besides writing: its [check](config-checks.md), the old version kept on this Mac, the production log; on a production server ↩ is Cancel and ⌘↩ saves. Typing and then undoing everything counts as no change. Quitting Kermo lists unsaved editors too.
+⎋ or ⌘W closes the editor. An empty Untitled closes without asking; one with text asks **Save…**, which opens the save panel. With unsaved changes it asks “Save changes to “nginx.conf” on web-01?” — **Save**, **Don't Save** (⌘D, discards your edits) or **Cancel**, one under another as macOS lays out three. For a server's file it says what Save does there besides writing: its [check](config-checks.md), the old version kept on this Mac, the production log; on a production server ↩ is Cancel and ⌘↩ saves. Typing and then undoing everything counts as no change. Quitting Kermo lists unsaved editors too.
 
 If the file changed on disk after you opened it, ⌘S asks **Overwrite**, **Reload** (drops your edits), **Save As…** (keeps both) or **Cancel**. ↩ picks **Cancel**; ⌘↩ overwrites. When you return to the window, it reloads a changed file silently if you have no edits; otherwise it asks **Keep Mine** or **Reload**. Keep Mine loses nothing — the next ⌘S asks before writing over the file — so ↩ and ⎋ keep your text, and ⌘↩ reloads.
 
