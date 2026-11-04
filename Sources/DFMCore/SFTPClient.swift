@@ -8,7 +8,7 @@ import Foundation
 /// Blocking calls, made by one worker thread at a time; a reader thread hands each response to its request.
 /// Reads and writes are pipelined (`window` requests in flight), as the `sftp` client does.
 public final class SFTPClient: @unchecked Sendable {
-    public struct Attrs: Sendable, Equatable {
+    public struct Attrs: Sendable, Equatable, Codable {   // Codable: the editor keeps a server file's baseline between launches
         public var kind: FileItem.Kind
         public var size: Int64
         public var mtime: Double
