@@ -57,7 +57,7 @@ private func revisions(_ dir: String) -> [String] { ((try? FileManager.default.c
     s.docs = [note, conf, hosts]
     s.active = conf.id
     s.windowOpen = true
-    store.submit(s, texts: [note.id: "TODO ✓ — привіт\n", conf.id: "server {\r\n}\r\n", hosts.id: "never written: unchanged"])
+    store.submit(s, texts: [note.id: "TODO ✓ — привіт\n", conf.id: "server {\r\n}\r\n", hosts.id: "never written: unchanged"], durable: true)   // as closing the window: synced, the folder too
 
     let (again, back, _) = try await reopen(store)
     #expect(back.seq == 1 && back.active == conf.id && back.windowOpen)
