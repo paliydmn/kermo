@@ -242,11 +242,7 @@ public final class DraftStore: @unchecked Sendable {   // `lock` guards what's w
         }
         try afterRevisions()
         try put(JSONEncoder().encode(s), "session.json", durable)
-        if durable {   // the renames too
-            let fd = Darwin.open(dir, O_RDONLY | O_CLOEXEC)
-            if fd >= 0, fcntl(fd, F_FULLFSYNC) != 0 { fsync(fd) }
-            if fd >= 0 { close(fd) }
-        }
+        if durable { FileInfo.syncFolder(dir) }   // the renames too
         last = s
         sweep()
     }

@@ -1,7 +1,7 @@
 import AppKit
 import DFMCore
 
-/// ⌘⇧S Synchronize Folders: compare the two panels recursively, review/adjust each row's direction,
+/// ⌥⌘S Synchronize Folders: compare the two panels recursively, review/adjust each row's direction,
 /// then copy through the normal job queue. The preview is the dry run. Mirror modes also send what exists
 /// only on the target side to the Trash (a server has none: deleted there). Either side may be a server.
 @MainActor

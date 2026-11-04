@@ -294,6 +294,21 @@ extension ServerLockTests {
         #expect(app.listRowKeys.isEmpty && title("file.trash") == "Move to Trash" && title("go.path") == "Go to Path…" && app.focusedKeys == nil)
     }
 
+    /// ⌘N on a list whose row has its own (fail2ban's Ban Address…) is the row's; New Editor Document from the menu
+    /// or search (no key) over that list is still a new document, never the row's action.
+    @Test func aRowsCommandNIsTheRowsButTheMenuItemIsANewDocument() async throws {
+        let (app, a, _, done) = try app()
+        defer { done() }
+        let ran = Later<[String]>([])
+        let ban = ListAction(title: "Ban Address…", key: Shortcut("cmd+n"), group: 0, closes: false, why: nil, listKey: nil, command: nil, runsOn: nil,
+                             asks: .never, dangerous: false, note: nil) { _ in ran.value.append("ban"); return nil }
+        a.showList(Stub(rows: [row("203.0.113.7", actions: { [ban] })]))
+        let list = try #require(a.list), new = try #require(app.commands.first { $0.id == "editor.new" })
+        #expect(AppDelegate.titled(new, list.actions) == nil && !app.listRun(new, key: nil, in: list), "clicked: runs as anywhere")
+        #expect(ran.value.isEmpty)
+        #expect(app.listRun(new, key: Shortcut("cmd+n"), in: list) && ran.value == ["ban"], "the key: the row's")
+    }
+
     /// Restart of two marked rows on production: one question for both — each command, the PROD strip, ↩ = Cancel —
     /// and nothing runs on Cancel; ⌘↩ runs each, already asked. A row the action can't run on says why and is left out.
     /// F5 into a list from the other panel is off, saying why.

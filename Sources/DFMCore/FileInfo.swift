@@ -16,6 +16,15 @@ public enum FileInfo {
         }
     }
 
+    /// A rename in `dir` on the disk itself, not only in its cache: after a power cut the folder doesn't name the old
+    /// file again. Plain fsync where F_FULLFSYNC isn't supported; nothing where the folder can't be opened.
+    public static func syncFolder(_ dir: String) {
+        let fd = open(dir, O_RDONLY | O_CLOEXEC)
+        guard fd >= 0 else { return }
+        if fcntl(fd, F_FULLFSYNC) != 0 { fsync(fd) }
+        close(fd)
+    }
+
     /// "-rwxr-xr-x", with s/S and t/T for setuid/setgid/sticky, like ls -l.
     public static func modeString(_ mode: mode_t) -> String {
         let type: Character = switch mode & S_IFMT {

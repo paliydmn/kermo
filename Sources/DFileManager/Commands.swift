@@ -198,7 +198,7 @@ extension AppDelegate {
         cmd("mark.none", "Unmark All", ["cmd+shift+a"], menu: "Mark", group: 1, aliases: "deselect") { $0.active.unmarkAll() },
         cmd("mark.invert", "Invert Marks", ["shift+8", "kpstar"], menu: "Mark", group: 1, short: "Invert", aliases: "invert selection marks") { $0.active.invertMarks() },
         cmd("panel.compare", "Mark Differences", ["shift+f2"], menu: "Mark", group: 2, short: "Differences", aliases: "compare folders difference Compare Folders (mark differences)") { $0.compareFolders() },
-        cmd("panel.sync", "Synchronize Folders…", ["cmd+shift+s"], menu: "Mark", group: 2, short: "Synchronize", aliases: "synchronize mirror folders") { app in
+        cmd("panel.sync", "Synchronize Folders…", ["cmd+opt+s"], menu: "Mark", group: 2, short: "Synchronize", aliases: "synchronize mirror folders") { app in
             guard app.active.archive == nil, app.other.archive == nil, app.active.searchTitle == nil, app.other.searchTitle == nil
             else { return app.active.flash("Synchronize works between two folders") }
             let (l, r) = app.panels.firstIndex { $0 === app.active }! < app.panels.firstIndex { $0 === app.other }! ? (app.active, app.other) : (app.other, app.active)
@@ -220,6 +220,8 @@ extension AppDelegate {
         cmd("file.compress", "Compress…", ["opt+f5"], menu: "File", group: 5, aliases: "zip tar archive pack") { $0.compressDialog() },
         cmd("file.extract", "Extract…", ["opt+f9"], menu: "File", group: 5, aliases: "unzip untar unpack archive") { $0.extractDialog() },
         cmd("file.edit", "Edit", ["f4", "opt+4"], menu: "File", group: 1, aliases: "editor") { $0.editFile() },
+        // In the built-in editor whatever F4 opens with; nothing on disk till its Save (Shift+F4 New File… makes one).
+        cmd("editor.new", "New Editor Document", ["cmd+n"], menu: "File", group: 0, aliases: "untitled new text document notepad scratch") { _ in Editor.untitled() },
         cmd("file.copy", "Copy To…", ["f5", "opt+5"], menu: "File", group: 2, short: "Copy") { $0.transferDialog(move: false) },
         cmd("file.move", "Move To…", ["f6", "opt+6"], menu: "File", group: 2, short: "Move") { $0.transferDialog(move: true) },
         cmd("file.rename", "Rename…", ["shift+f6", "shift+opt+6"], menu: "File", group: 2) { $0.renameDialog() },
@@ -1248,6 +1250,7 @@ extension AppDelegate {
     /// The same for a server's file by its path (⌘E on a service: its unit file). `listed`: its size and time as a
     /// panel listed it (another app's saves check against them); none, as downloaded.
     func remoteOpen(_ how: RemoteOpen, _ target: SFTPTarget, _ remotePath: String, listed: (Int64, Double)? = nil, in panel: PanelViewController) {
+        if how == .edit, let e = Editor.editing(target, remotePath) { e.revealed(); return }   // one file, one window: no second copy
         let name = (remotePath as NSString).lastPathComponent
         let tmp = NSTemporaryDirectory() + "dfm-sftp-" + UUID().uuidString
         mkdir(tmp, 0o700)
@@ -1270,7 +1273,7 @@ extension AppDelegate {
                 ServerCopies.add(.init(local, target, remotePath, listed: listed ?? (opened.size, opened.mtime), baseline: opened, preview: false))
                 Self.openInApp(local)
             case .view: Viewer.show(local, remote: (target, remotePath, max(0, opened.size - (last ?? opened.size)))) { TempCopies.remove(tmp) }
-            case .edit:
+            case .edit:   // opened meanwhile: that window (`Editor.open`), this copy goes
                 let state = RemoteEdit(baseline: opened)
                 let note = Self.rootsOnly(opened, for: target) ? "“\(name)” is root's: saving it needs the panel as root (⌃⌘R)" : nil
                 Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath, state), note: note, onSaved: { [self] saved in
@@ -1351,7 +1354,7 @@ extension AppDelegate {
         if state.asks(target) {
             var c = Confirm("Save “\(name)” to \(SavedServer.name(for: target))?", on: target, action: "Save")
             c.note = "This overwrites the file there."
-            guard await confirm(c, on: Editor.window(for: saved)) == 0 else {
+            guard await confirm(c, on: Editor.asking(about: saved)) == 0 else {
                 return notSaved(saved, to: target, CancellationError())   // the editor may be gone: says where the text is
             }
             state.prodConfirmed = true
@@ -1400,7 +1403,7 @@ extension AppDelegate {
             Editor.markUnsaved(saved)
             if let a = e.attrs { state.baseline = a }   // an "after" check: what's there now, put back or not
             let (message, info) = Self.checkFailed(e, name: name, host: target.host, kept: Editor.window(for: saved) == nil ? saved.path : nil)
-            _ = await choose(message, info: info, ["OK"], on: Editor.window(for: saved))
+            _ = await choose(message, info: info, ["OK"], on: Editor.asking(about: saved))
             return false
         case .failure(let e as SFTPClient.ChangedOnServer):
             Editor.markUnsaved(saved)
@@ -1413,7 +1416,7 @@ extension AppDelegate {
             var c = Confirm("“\(name)” changed on \(SavedServer.name(for: target)) since you opened it", on: target, action: "Overwrite")
             (c.note, c.others, c.irreversible) = (info, ["Compare"], true)   // ⌘S ↩ never writes over theirs
             while true {   // Compare asks again once the diff is up
-                switch await confirm(c, on: Editor.window(for: saved)) {
+                switch await confirm(c, on: Editor.asking(about: saved)) {
                 case 0:   // over what was shown, not whatever's there by now: another change meanwhile asks again
                     state.baseline = e.attrs
                     return await uploadNow(saved, to: remotePath, on: target, state, force: false, action: action)
@@ -1505,7 +1508,7 @@ extension AppDelegate {
         let name = (path as NSString).lastPathComponent, q = Self.reloadQuestion(command, name: name, on: target)
         var before: String?
         ask: while true {
-            switch await confirm(q, on: Editor.window(for: saved)) {
+            switch await confirm(q, on: Editor.asking(about: saved)) {
             case 0: break ask
             case 1:
                 guard let old else { panel.flash("Nothing to compare: the text before this save wasn't kept (over 5 MB, or a new file)"); continue }
@@ -1575,7 +1578,7 @@ extension AppDelegate {
         case .success(.failed(let status, let output)):
             let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
             _ = await choose("“\(command)” failed on \(target.host)", info: text.isEmpty ? "It exited with \(status)." : String(text.suffix(4000)), ["OK"],
-                             on: saved.flatMap(Editor.window(for:)))
+                             on: saved.flatMap(Editor.asking(about:)))
         case .success(.noProgram(let why)):
             panel.flash("“\(command)” didn't run on \(target.host): \(why)", error: true)
         case .success: break   // needs root, not run: only checks
@@ -1665,7 +1668,7 @@ extension AppDelegate {
 
     private func notSaved(_ saved: URL, to target: SFTPTarget, _ e: Error) -> Bool {
         Editor.markUnsaved(saved)
-        if let m = Self.notUploaded(saved, host: target.host, e, editorOpen: Editor.window(for: saved) != nil) { showError(JobErrorMessage(m)) }
+        if let m = Self.notUploaded(saved, host: target.host, e, editorOpen: Editor.window(for: saved) != nil) { showError(JobErrorMessage(m), on: Editor.asking(about: saved)) }
         return false
     }
 

@@ -11,10 +11,20 @@ import DFMCore
 final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NSMenuItemValidation, NSToolbarDelegate {
     private static var open: [Editor] = []
     /// Names of the files with unsaved changes (asked about at quit).
-    static var unsaved: [String] { open.filter(\.changed).map(\.url.lastPathComponent) }
+    static var unsaved: [String] { open.filter(\.changed).map(\.name) }
     /// The save didn't reach where the file really lives (a server): still unsaved, so closing asks.
     static func markUnsaved(_ url: URL) { open.first { $0.url == url }.map { $0.dirty = true; $0.unsent = true } }
+    /// The window of the editor whose file `url` is now.
     static func window(for url: URL) -> NSWindow? { open.first { $0.url == url }?.window }
+    /// Where a question about `url`'s save goes — a server copy's upload that went on after Save As made it a local
+    /// file asks there too — shown first (`revealed`). nil: no editor has it (closed).
+    static func asking(about url: URL) -> NSWindow? { open.first { $0.url == url || $0.formerCopy == url }?.revealed() }
+    /// The editor of that file already open, if any: a server's by its server, user or root, and path; this Mac's by
+    /// its path. One file, one window.
+    private static func opened(_ url: URL, _ server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)?) -> Editor? {
+        if let server { return editing(server.target, server.path) }
+        return open.first { $0.url?.standardizedFileURL.path == url.standardizedFileURL.path }
+    }
     /// The server's file an editor window edits through its local copy (Server File History… there).
     static func server(of window: NSWindow?) -> (target: SFTPTarget, path: String)? {
         open.first { $0.window === window && window != nil }?.server.map { ($0.target, $0.path) }
@@ -27,13 +37,20 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     static func editing(_ t: SFTPTarget, _ path: String) -> Editor? { open.first { $0.server?.target == t && $0.server?.path == path } }
     /// The root write behind Save as Administrator (tests swap it: the real one shows the password dialog).
     static var runAsAdmin: (String) async -> Admin.Outcome = Admin.run
-    /// Changes only on Save As.
-    private(set) var url: URL
+    /// Changes only on Save As. nil: an Untitled document (⌘N), on no disk until its Save picks where.
+    private(set) var url: URL?
+    /// An Untitled's N: one past the highest Untitled open when it was made.
+    private let number: Int?
+    /// The file's name; an Untitled's "Untitled N".
+    var name: String { url?.lastPathComponent ?? "Untitled \(number ?? 1)" }
     /// "host:/path" of a server's file edited through its local copy: the title, not the copy's temp folder.
     private var remote: String?
     var server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)? {   // its saves go up with `state`
         didSet { if (server == nil) != (oldValue == nil) { retitle() } }
     }
+    /// The server file's copy this edited before Save As made it a local file: an upload of it still going finds this
+    /// window for its questions. It goes when the window closes (`onClose`), after its last upload.
+    private var formerCopy: URL?
     let textView = EditorTextView(usingTextLayoutManager: false)   // TextKit 1: the line-number ruler needs it
     private var ruler: LineNumberRuler!
     private var language: Syntax.Language?
@@ -54,8 +71,12 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// Tests: runs between checking the file and opening it for an in-place rewrite (off the main thread). This
     /// window's own: tests run side by side, and a save no longer holds the main thread while it writes.
     var willRewriteInPlace: @Sendable (String) -> Void = { _ in }
-    /// Tests: writes the text into the file an in-place save opened (to fail it midway).
-    var rewriteInPlace: @Sendable (FileHandle, Data) throws -> Void = { try $0.write(contentsOf: $1) }
+    /// Tests: writes the text into what a save opened — its temp file, or the file itself in place (to fail it midway).
+    var writeText: @Sendable (FileHandle, Data) throws -> Void = { try $0.write(contentsOf: $1) }
+    /// Tests: runs with the temp file's path right before it's renamed over the file (to fail the rename).
+    var willRename: @Sendable (String) -> Void = { _ in }
+    /// A tool's file: Kermo reads it where it is, so Save As… is off.
+    private var fixedPlace = false
     /// A lossy or Windows-1251 file was asked about before its first save.
     private var encodingAsked = false
     /// The file as we last loaded or saved it; a save over anything else asks first.
@@ -78,11 +99,11 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// `note`: said in its status line once it's open (`flash`).
     static func open(_ url: URL, remote: String? = nil, server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)? = nil,
                      note: String? = nil, onSaved: (@MainActor (URL) -> Void)? = nil, onClose: (@MainActor () -> Void)? = nil) {
-        if let existing = open.first(where: { $0.url == url }) { return existing.window!.makeKeyAndOrderFront(nil) }
+        if let existing = opened(url, server) { onClose?(); existing.revealed(); return }
         Task {
             let loaded = await Blocking.run(.userInitiated) { Result { try load(url) } }
-            // Opened meanwhile (↩ twice during a slow read): one window per file.
-            if let existing = open.first(where: { $0.url == url }) { return existing.window!.makeKeyAndOrderFront(nil) }
+            // Opened meanwhile (↩ twice during a slow read or download): one window per file, the other copy goes.
+            if let existing = opened(url, server) { onClose?(); existing.revealed(); return }
             do {
                 let e = try Editor(url, remote: remote, loaded: loaded.get())
                 e.onSaved = onSaved
@@ -112,9 +133,22 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         let loaded = try text.map { t -> Loaded in (t, .utf8, false, false, false, nil, SHA256.hash(data: Data(t.utf8))) } ?? load(url)
         let e = Editor(url, remote: nil, loaded: loaded, side: side)
         e.onSaved = onSaved
+        e.fixedPlace = true
         open.append(e)
         e.showWindow(nil)
         e.window?.listInWindowsMenu()
+        return e
+    }
+
+    /// New Editor Document (⌘N): an empty “Untitled N” — N one past the highest open — in UTF-8 with LF, the text in
+    /// focus. Nothing of it is on disk until its Save picks where.
+    @discardableResult
+    static func untitled() -> Editor {
+        let e = Editor(nil, number: (open.compactMap { $0.url == nil ? $0.number : nil }.max() ?? 0) + 1, remote: nil, loaded: ("", .utf8, false, false, false, nil, SHA256.hash(data: Data())))
+        open.append(e)
+        e.showWindow(nil)
+        e.window?.listInWindowsMenu()
+        e.window?.makeFirstResponder(e.textView)
         return e
     }
 
@@ -122,22 +156,24 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         try self.init(url, remote: remote, loaded: Self.load(url))
     }
 
-    private init(_ url: URL, remote: String?, loaded: Loaded, side: NSView? = nil) {
+    private init(_ url: URL?, number: Int? = nil, remote: String?, loaded: Loaded, side: NSView? = nil) {
         let (text, encoding, lossy, bom, crlf, stamp, digest) = loaded
         self.url = url
+        self.number = number
         self.remote = remote
         self.encoding = encoding
         self.lossy = lossy
         self.bom = bom
         self.crlf = crlf
-        // A server copy goes by its path there ("host:/etc/x"), not the temp folder's.
+        // A server copy goes by its path there ("host:/etc/x"), not the temp folder's. An Untitled has nothing to judge by.
         finalNewline = Self.finalNewlineSetting()
-            ?? Self.isConfig(remote.flatMap { r in r.range(of: ":/").map { String(r[r.index(after: $0.lowerBound)...]) } } ?? url.path)
+            ?? url.map { u in Self.isConfig(remote.flatMap { r in r.range(of: ":/").map { String(r[r.index(after: $0.lowerBound)...]) } } ?? u.path) } ?? false
         self.stamp = stamp
         self.digest = digest
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
+        w.isRestorable = false   // the text never goes into the window's saved state on disk
         super.init(window: w)
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
@@ -181,7 +217,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         scroll.verticalRulerView = ruler
         scroll.hasVerticalRuler = true
         scroll.rulersVisible = true
-        language = Syntax.language(forFileName: url.lastPathComponent, firstLine: String(text.prefix(200).split(separator: "\n").first ?? ""))
+        language = url.flatMap { Syntax.language(forFileName: $0.lastPathComponent, firstLine: String(text.prefix(200).split(separator: "\n").first ?? "")) }
         highlight(after: 0)
         w.center()
         w.setFrameAutosaveName("Editor")
@@ -193,8 +229,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     private func retitle() {
         let (host, path): (String?, String) = if let server { (SavedServer.name(for: server.target), server.path) }
             else if let r = remote, let c = r.range(of: ":/") { (String(r[..<c.lowerBound]), String(r[r.index(after: c.lowerBound)...])) }   // "host:/path"
-            else { (nil, url.path) }
-        window?.title = (path as NSString).lastPathComponent.bidiVisible
+            else { (nil, url?.path ?? "") }
+        window?.title = url == nil ? name : (path as NSString).lastPathComponent.bidiVisible
         window?.subtitle = DocFrame.place((path as NSString).deletingLastPathComponent, host: host)
         window?.docFrame?.text = encodingName
         window?.representedURL = remote == nil ? url : nil
@@ -232,8 +268,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// unless this editor has changes of its own, which stay (their save then asks: the server's file changed).
     /// False if not shown.
     func reverted(to data: Data, attrs: SFTPClient.Attrs) async -> Bool {
-        guard !changed, let server else { return false }
-        let url = url
+        guard !changed, let server, let url else { return false }
         guard await Blocking.run(.userInitiated, { (try? data.write(to: url)) != nil }) else { return false }
         server.state.baseline = attrs
         return await reload()
@@ -241,8 +276,17 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
 
     /// Says something in its status line for a few seconds (a server save's "no history: …"): the panels' status line
     /// is behind this window.
-    static func flash(_ url: URL, _ text: String) { open.first { $0.url == url }?.flash(text) }
+    static func flash(_ url: URL, _ text: String) { open.first { $0.url == url || $0.formerCopy == url }?.flash(text) }
     func flash(_ text: String) { window?.docFrame?.flash(text) }
+
+    /// The window, before a question about its document: out of the Dock, key, in front — a sheet on a window out of
+    /// sight waits unseen (and the save behind it with it).
+    @discardableResult func revealed() -> NSWindow {
+        let w = window!
+        if w.isMiniaturized { w.deminiaturize(nil) }
+        if !w.isKeyWindow { w.makeKeyAndOrderFront(nil) }
+        return w
+    }
 
     private var encodingName: String { encoding == .utf8 ? lossy ? "UTF-8 (damaged)" : "UTF-8" : "Windows-1251" }
 
@@ -292,14 +336,16 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         throw JobErrorMessage("Can't decode “\(url.lastPathComponent)” as text.")
     }
 
-    /// Which file is at a path and its size and mtime (through symlinks).
+    /// Which file is at a path and its size and mtime (through symlinks); and its permissions, which a change of only
+    /// them doesn't count as (a file deleted meanwhile comes back with them).
     struct Stamp: Equatable, Sendable {
-        let dev: dev_t, ino: ino_t, size: off_t, sec: Int, nsec: Int
+        let dev: dev_t, ino: ino_t, size: off_t, sec: Int, nsec: Int, mode: mode_t
         init?(_ path: String) {
             var s = stat()
             guard stat(path, &s) == 0 else { return nil }
-            (dev, ino, size, sec, nsec) = (s.st_dev, s.st_ino, s.st_size, s.st_mtimespec.tv_sec, s.st_mtimespec.tv_nsec)
+            (dev, ino, size, sec, nsec, mode) = (s.st_dev, s.st_ino, s.st_size, s.st_mtimespec.tv_sec, s.st_mtimespec.tv_nsec, s.st_mode & 0o777)
         }
+        static func == (a: Stamp, b: Stamp) -> Bool { (a.dev, a.ino, a.size, a.sec, a.nsec) == (b.dev, b.ino, b.size, b.sec, b.nsec) }
     }
 
     /// What's on disk at `path` if someone else replaced or wrote it since `stamp` / `digest` (another file, size,
@@ -361,12 +407,17 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     // MARK: - Saving
 
     @objc func saveDocument(_ sender: Any?) { Task { await save() } }
+    @objc func saveDocumentAs(_ sender: Any?) { Task { await saveAs() } }
     @objc func toggleFinalNewline(_ sender: Any?) { finalNewline.toggle() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(toggleFinalNewline(_:)) { item.state = finalNewline ? .on : .off }
+        if item.action == #selector(saveDocumentAs(_:)) { return canSaveAs && window?.attachedSheet == nil }   // a second ⇧⌘S: no second panel
         return true
     }
+
+    /// Not a tool's file, nor while a save runs.
+    private var canSaveAs: Bool { !fixedPlace && !saving }
 
     /// What saving writes: the text in its encoding, with the final newline if that's on, CRLF line ends and the BOM
     /// if the file had them.
@@ -380,13 +431,17 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// Writes all of `data` to `fd`, makes it reach the disk itself (plain fsync where F_FULLFSYNC isn't supported) and closes it.
     /// From the start over what's there, and only then cut to length: a file written into in place is never shorter
     /// than the old text or the new one, even if the write stops midway (a full disk, a crash).
-    nonisolated private static func write(_ data: Data, to fd: Int32,
-                                          writing: (FileHandle, Data) throws -> Void = { try $0.write(contentsOf: $1) }) throws {
+    nonisolated private static func write(_ data: Data, to fd: Int32, writing: (FileHandle, Data) throws -> Void) throws {
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         try writing(h, data)
         if ftruncate(fd, off_t(data.count)) != 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        if fcntl(fd, F_FULLFSYNC) != 0 { fsync(fd) }
+        // Not on the disk (EIO): it never takes the original's place. A file system that can't sync like that: plain
+        // fsync, or as it is where it can't sync at all.
+        let unsupported: Set<Int32> = [ENOTSUP, ENOTTY, EINVAL, ENOSYS]
+        if fcntl(fd, F_FULLFSYNC) != 0, !unsupported.contains(errno) || fsync(fd) != 0 && !unsupported.contains(errno) {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
         try h.close()
     }
 
@@ -410,24 +465,17 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// edited until it's done, and a second ⌘S meanwhile does nothing.
     @discardableResult
     func save(force: Bool = false, then: (@MainActor () -> Void)? = nil) async -> Bool {
-        guard !saving else { return false }
-        guard let text = fileText.data(using: encoding) else {
-            alert("Can't save as \(encodingName)", "The text contains characters this encoding can't store.")
-            return false
-        }
-        let data = bom ? Data([0xEF, 0xBB, 0xBF]) + text : text
-        if !force, !encodingAsked, lossy || encoding != .utf8 {
-            askEncoding(then: then)
-            return false
-        }
+        guard let url, let path = realPath else { return await saveAs() }   // an Untitled: where to, first
+        guard !saving, let data = fileData(asking: !force, retry: { [weak self] in if await self?.save() == true { then?() } }) else { return false }
         saving = true
         textView.isEditable = false
         defer {
             saving = false
             textView.isEditable = true
         }
-        let path = realPath, name = url.lastPathComponent, base = force ? nil : (stamp, digest), hook = willRewriteInPlace, rewrite = rewriteInPlace
-        switch await Blocking.run(.userInitiated, { Self.write(data, to: path, name: name, unlessChangedFrom: base, hook: hook, rewrite: rewrite) }) {
+        let name = url.lastPathComponent, base = force ? nil : (stamp, digest), hook = willRewriteInPlace, text = writeText, renaming = willRename
+        let mode = stamp?.mode ?? 0o666   // deleted meanwhile: it comes back as it was, not wider
+        switch await Blocking.run(.userInitiated, { Self.write(data, to: path, name: name, unlessChangedFrom: base, newMode: mode, hook: hook, writing: text, willRename: renaming) }) {
         case .changed(let now):
             askOverwrite(now)
             return false
@@ -448,22 +496,24 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     }
 
     /// The write behind `save`, off the main thread: checks the file is still the one opened (unless `base` is nil:
-    /// Overwrite), writes it, and says what's on disk then.
+    /// Overwrite), writes it, and says what's on disk then. `newMode`: a file that isn't there yet gets it (less the
+    /// umask). `inPlace` false (Save As): never written into — the file is either as it was or ours whole.
     nonisolated private static func write(_ data: Data, to path: String, name: String,
-                                          unlessChangedFrom base: (stamp: Stamp?, digest: SHA256.Digest?)?,
-                                          hook: (String) -> Void, rewrite: (FileHandle, Data) throws -> Void) -> Written {
+                                          unlessChangedFrom base: (stamp: Stamp?, digest: SHA256.Digest?)?, newMode: mode_t = 0o666, inPlace: Bool = true,
+                                          hook: (String) -> Void, writing: (FileHandle, Data) throws -> Void, willRename: (String) -> Void) -> Written {
         if let base, let now = changed(path, from: base.stamp, base.digest) { return .changed(now) }
         let fm = FileManager.default
         let dir = (path as NSString).deletingLastPathComponent
-        var st = stat()
-        let exists = stat(path, &st) == 0
+        var st = stat(), entry = stat()
+        // Nothing there now (not even a link): a file that appears there meanwhile isn't replaced.
+        let exists = stat(path, &st) == 0, vacant = lstat(path, &entry) != 0
         do {
-            // A rename would split a hard-linked file's links, and make someone else's file ours: those are rewritten in place.
-            if fm.isWritableFile(atPath: dir), !exists || st.st_nlink == 1 && st.st_uid == geteuid() {
+            // A rename would split a hard-linked file's links, and make someone else's file ours: a save rewrites those in place.
+            if !inPlace || fm.isWritableFile(atPath: dir) && (!exists || st.st_nlink == 1 && st.st_uid == geteuid()) {
                 sweepSaves(in: dir)
                 let tmp = (dir as NSString).appendingPathComponent(".dfm-save-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString)")
                 // 0600 until the original's mode is copied on: a secret is never briefly world-readable.
-                do { try Self.write(data, to: Darwin.open(tmp, O_WRONLY | O_CREAT | O_EXCL, exists ? 0o600 : 0o666)) } catch { unlink(tmp); throw error }
+                do { try Self.write(data, to: Darwin.open(tmp, O_WRONLY | O_CREAT | O_EXCL, exists ? 0o600 : newMode), writing: writing) } catch { unlink(tmp); throw error }
                 if exists {
                     // Mode, owner, ACL, xattrs, flags from the original (STAT also copies times, so reset them after),
                     // then its creation date, which copyfile doesn't carry.
@@ -473,12 +523,21 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
                                           volattr: 0, dirattr: 0, fileattr: 0, forkattr: 0)
                     setattrlist(tmp, &crtime, &st.st_birthtimespec, MemoryLayout<timespec>.size, 0)
                 }
-                guard rename(tmp, path) == 0 else {
-                    let err = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                willRename(tmp)
+                var failed = vacant ? renamex_np(tmp, path, UInt32(RENAME_EXCL)) != 0 : rename(tmp, path) != 0
+                if failed, vacant, errno == ENOTSUP || errno == EINVAL {   // a disk that can't rename only where nothing is
+                    // ponytail: looked at once more, then renamed — a file appearing in between is replaced; link() + unlink
+                    // would close that where hard links work (not FAT, not every share).
+                    failed = lstat(path, &entry) == 0 ? { errno = EEXIST; return true }() : rename(tmp, path) != 0
+                }
+                if failed {
+                    let err: Error = vacant && errno == EEXIST ? JobErrorMessage("“\(name)” appeared there meanwhile — nothing was written.")
+                        : POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
                     chflags(tmp, 0)   // a locked original's uchg came along, and would keep the temp file
                     unlink(tmp)
                     throw err
                 }
+                FileInfo.syncFolder(dir)   // else after a power cut the folder may name the old file again
             } else {
                 // Not through a symlink, and only the file just checked: in a shared folder its owner could swap it
                 // for a link to one of ours meanwhile. Never emptied first: written over, then cut to length.
@@ -489,7 +548,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
                     Darwin.close(fd)
                     throw JobErrorMessage("“\(name)” was replaced while saving — nothing was written.")
                 }
-                try Self.write(data, to: fd, writing: rewrite)
+                try Self.write(data, to: fd, writing: writing)
             }
         } catch {
             let fm = FileManager.default
@@ -502,20 +561,15 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     private func askOverwrite(_ now: Stamp?) {
         noticed = now
         guard let app = NSApp.delegate as? AppDelegate else { return }
-        var c = Confirm("“\(url.lastPathComponent)” changed on disk since you opened it", action: "Overwrite")
+        var c = Confirm("“\(name)” changed on disk since you opened it", action: "Overwrite")
         c.note = "Something else wrote it" + (now.map { ": " + Self.when($0) } ?? "") + ". Overwriting replaces those changes with yours. "
-            + "Reload drops your edits and shows the file as it is now. Save As keeps both. Cancel keeps your text unsaved here."
-        (c.others, c.irreversible) = (["Reload", "Save As…"], true)   // ↩: Cancel
+            + "Reload drops your edits and shows the file as it is now. " + (fixedPlace ? "" : "Save As keeps both. ") + "Cancel keeps your text unsaved here."
+        (c.others, c.irreversible) = (fixedPlace ? ["Reload"] : ["Reload", "Save As…"], true)   // ↩: Cancel
         Task {
-            switch await app.confirm(c, on: window) {
+            switch await app.confirm(c, on: revealed()) {
             case 0: await save(force: true)
             case 1: await reload()
-            case 2:
-                let panel = NSSavePanel()
-                panel.directoryURL = TempCopies.holds(url)   // a server copy's folder goes when the editor closes
-                    ? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first : url.deletingLastPathComponent()
-                panel.nameFieldStringValue = url.lastPathComponent
-                if await panel.beginSheetModal(for: window!) == .OK, let dest = panel.url { await saveAs(dest) }
+            case 2 where !fixedPlace: await saveAs()
             default: break
             }
         }
@@ -526,47 +580,155 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         DateColumn().text(Date(timeIntervalSince1970: TimeInterval(s.sec))) + ", \(ByteCountFormatter.short(Int64(s.size))) now"
     }
 
+    /// The bytes saving writes: the text in its encoding, the BOM if the file had one. nil when the encoding can't store
+    /// the text (said so), or when this first asks about the encoding — `retry` runs once that's answered Save. Not
+    /// `asking`: Overwrite, after a save that asked.
+    private func fileData(asking: Bool = true, retry: @escaping @MainActor () async -> Void) -> Data? {
+        guard let text = fileText.data(using: encoding) else {
+            alert("Can't save as \(encodingName)", "The text contains characters this encoding can't store.")
+            return nil
+        }
+        if asking, !encodingAsked, lossy || encoding != .utf8 {
+            askEncoding(then: retry)
+            return nil
+        }
+        return bom ? Data([0xEF, 0xBB, 0xBF]) + text : text
+    }
+
     /// Saving would change bytes the user can't see (damaged UTF-8 becomes U+FFFD) or write Windows-1251, which is
-    /// wrong if the file is really UTF-8: asked before the first save until answered Save.
-    private func askEncoding(then: (@MainActor () -> Void)?) {
+    /// wrong if the file is really UTF-8: asked before the first save (Save As too) until answered Save.
+    private func askEncoding(then retry: @escaping @MainActor () async -> Void) {
         let a = NSAlert()
-        a.messageText = "Save “\(url.lastPathComponent.bidiVisible)” as \(lossy ? "UTF-8" : "Windows-1251")?"
+        a.messageText = "Save “\(name.bidiVisible)” as \(lossy ? "UTF-8" : "Windows-1251")?"
         a.informativeText = lossy
             ? "Some bytes in it aren't valid UTF-8; they show as \u{FFFD} and saving writes \u{FFFD} in their place."
             : "It isn't valid UTF-8, so it was read as Windows-1251 and saving writes Windows-1251. "
                 + "If it is really UTF-8, what you typed won't read back right in it."
         a.addButton(withTitle: "Save")
         a.addButton(withTitle: "Cancel")
-        a.beginSheetModal(for: window!) { [weak self] r in
+        a.beginSheetModal(for: revealed()) { [weak self] r in
             guard let self, r == .alertFirstButtonReturn else { return }
             encodingAsked = true
-            Task { if await self.save() { then?() } }
+            Task { await retry() }
         }
     }
 
-    /// Writes the text to `dest`, and from then on the editor edits that file (a server copy stops uploading).
+    /// File ▸ Save As… (and the conflict's Save As…, an Untitled's Save): where to, in the save panel — a server file's
+    /// copy from Downloads (its own folder goes when the editor closes), a file from its folder, an Untitled from the
+    /// active panel's folder on this Mac (else Documents) — then `saveAs(_:)`.
+    @discardableResult
+    func saveAs() async -> Bool {
+        guard canSaveAs else { return false }
+        let panel = NSSavePanel(), fm = FileManager.default
+        panel.directoryURL = if let url { TempCopies.holds(url) ? fm.urls(for: .downloadsDirectory, in: .userDomainMask).first : url.deletingLastPathComponent() }
+            else { (NSApp.delegate as? AppDelegate)?.activePanel.flatMap(\.localFolder) ?? fm.urls(for: .documentDirectory, in: .userDomainMask).first }
+        panel.nameFieldStringValue = name
+        guard await panel.beginSheetModal(for: revealed()) == .OK, let dest = panel.url else { return false }
+        return await saveAs(dest)
+    }
+
+    /// Writes the text to `dest` — a new file, or the one the save panel asked to replace — and only once it's there
+    /// does this editor edit `dest`: a failure, or Cancel on a question, leaves it as it was (a server's file still
+    /// saves there, checked against the same version). `dest` is this file: a plain Save. Open in another editor
+    /// window: nothing is written, that window comes forward and says why — one file, one window.
     @discardableResult
     func saveAs(_ dest: URL) async -> Bool {
-        url = dest
-        onSaved = nil
-        remote = nil
-        server = nil   // else a revert from that file's server history would find this window and write over `dest`
-        noticed = nil
-        retitle()
-        return await save(force: true)
+        guard !saving else { return false }
+        // What the panel saw there, off the main thread: the one file it asked about replacing, as it was then, or
+        // nothing. A file that appears, changes or is swapped for a link meanwhile isn't written over.
+        let seen = await Blocking.run(.userInitiated) { () -> (stamp: Stamp?, digest: SHA256.Digest?) in
+            let path = dest.resolvingSymlinksInPath().path, stamp = Stamp(path)
+            // Not a FIFO's or a device's bytes (one waits for good, one never ends): Save As refuses those anyway.
+            return (stamp, stamp == nil || FileInfo.notRegular(path) != nil ? nil : (try? Data(contentsOf: URL(fileURLWithPath: path))).map(SHA256.hash))
+        }
+        return await saveAs(dest, base: seen)
+    }
+
+    private func saveAs(_ dest: URL, base: (stamp: Stamp?, digest: SHA256.Digest?)) async -> Bool {
+        guard !saving else { return false }
+        // This file (a plain Save) or another editor window's (nothing written), through links — every time, the
+        // encoding question's Save too (F4 on it meanwhile). Off the main thread: a share that stopped answering.
+        let others = Self.open.filter { $0 !== self }, urls = others.map(\.url), mine = url
+        let (own, other) = await Blocking.run(.userInitiated) { () -> (Bool, Int?) in
+            func real(_ u: URL?) -> String? { u?.resolvingSymlinksInPath().path }
+            let d = real(dest)
+            return (real(mine) == d, urls.firstIndex { real($0) == d })
+        }
+        if own { return await save() }
+        if let other {
+            others[other].alert("“\(others[other].name)” is open in this window",
+                                "Save As from “\(name)” wrote nothing: one file is edited in one window. Save your text here, or close this window first.")
+            return false
+        }
+        guard !saving, let data = fileData(retry: { [weak self] in _ = await self?.saveAs(dest, base: base) }) else { return false }
+        saving = true
+        textView.isEditable = false
+        defer {
+            saving = false
+            textView.isEditable = true
+        }
+        // The new file's mode, no wider than where the text came from: a server's file's mode there (unknown: owner
+        // only), this Mac's file's (read with the write, off the main thread); an Untitled's, the umask's.
+        let serverMode = server.map { mode_t(($0.state.baseline.mode ?? 0o600) & 0o777) }, text = writeText, renaming = willRename
+        let written = await Blocking.run(.userInitiated) { () -> Written in
+            var st = stat()
+            let mode = serverMode ?? mine.map { stat($0.resolvingSymlinksInPath().path, &st) == 0 ? st.st_mode & 0o777 : 0o600 } ?? 0o666
+            return Self.writeAs(data, to: dest.path, base: base, mode: mode, writing: text, willRename: renaming)
+        }
+        let name = dest.lastPathComponent
+        switch written {
+        case .changed:
+            alert("“\(name)” " + (base.stamp == nil ? "appeared there meanwhile" : "changed after you chose to replace it"), "Nothing was written. Save As again to replace it.")
+            return false
+        case .failed(let why, _):
+            alert("Couldn't save “\(name)”", why)
+            return false
+        case .written(let stamp, let digest):
+            if server != nil { formerCopy = url }
+            url = dest
+            (remote, onSaved, noticed) = (nil, nil, nil)
+            server = nil   // else a revert from that file's server history would find this window and write over `dest`
+            window?.showChips([])
+            saved(stamp, digest)
+            retitle()
+            if language == nil {   // an Untitled saved as a script, say
+                language = Syntax.language(forFileName: name, firstLine: String(textView.string.prefix(200).split(separator: "\n").first ?? ""))
+                highlight(after: 0)
+            }
+            return true
+        }
+    }
+
+    /// Save As's write, off the main thread. Through a symlink into its target, as a save — but not to a link to
+    /// nothing, nor over a folder or another user's file. Never in place: `dest` is the file it was, or ours whole.
+    nonisolated private static func writeAs(_ data: Data, to dest: String, base: (stamp: Stamp?, digest: SHA256.Digest?), mode: mode_t,
+                                            writing: (FileHandle, Data) throws -> Void, willRename: (String) -> Void) -> Written {
+        let name = (dest as NSString).lastPathComponent
+        var st = stat()
+        if lstat(dest, &st) == 0, st.st_mode & S_IFMT == S_IFLNK, stat(dest, &st) != 0 {
+            let to = (try? FileManager.default.destinationOfSymbolicLink(atPath: dest)).map { " (\($0))" } ?? ""
+            return .failed("“\(name)” is a link to a file that isn't there\(to). Nothing was written: pick another name.", protected: false)
+        }
+        let path = URL(fileURLWithPath: dest).resolvingSymlinksInPath().path
+        if stat(path, &st) == 0 {
+            if let what = FileInfo.notRegular(path) { return .failed("“\(name)” is \(what), not a file to replace. Nothing was written.", protected: false) }
+            if st.st_uid != geteuid() { return .failed("“\(name)” is another user's file. Nothing was written: Save As replaces only files of yours.", protected: false) }
+        }
+        return write(data, to: path, name: name, unlessChangedFrom: base, newMode: mode, inPlace: false,
+                     hook: { _ in }, writing: writing, willRename: willRename)
     }
 
     /// What saving writes: the symlink's target, so a linked dotfile stays a link instead of being replaced by a copy.
-    private var realPath: String { url.resolvingSymlinksInPath().path }
+    private var realPath: String? { url?.resolvingSymlinksInPath().path }
 
     /// Writes the text over the target as root, in place — so the file keeps its owner, mode and hard links (what you
     /// want for /etc/hosts and friends). See `AdminCommand.writeContents`.
     private func offerAdminSave(_ data: Data, reason: String, force: Bool) {
-        var c = Confirm("Save “\(url.lastPathComponent)” as administrator?", action: "Save as Administrator")
+        var c = Confirm("Save “\(name)” as administrator?", action: "Save as Administrator")
         (c.chips, c.place, c.runs) = ([.root], "this Mac", AppDelegate.asAdmin)
         c.note = reason + " It's written in place, keeping its owner and mode."
         Task {
-            guard await AppDelegate.sheet(c.alert(), on: window!) == 0 else { return }
+            guard await AppDelegate.sheet(c.alert(), on: revealed()) == 0 else { return }
             _ = await adminSave(data, force: force)
         }
     }
@@ -574,7 +736,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// The file may have changed while the sheet was up: checks again before asking for the password, and root checks
     /// it once more right before writing (a change while the password was asked asks the same way).
     func adminSave(_ data: Data, force: Bool) async -> Bool {
-        let path = realPath, stamp = stamp, digest = digest
+        guard let path = realPath else { return false }
+        let stamp = stamp, digest = digest
         let seen = await Blocking.run(.userInitiated) { (changed: force ? nil : Self.changed(path, from: stamp, digest), now: Stamp(path)) }
         if let now = seen.changed {
             askOverwrite(now)
@@ -593,7 +756,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
             (cmd, tmp) = (c, nil)
         } else {
             let t = NSTemporaryDirectory() + "dfm-admin-save-" + UUID().uuidString   // swept a day later (TempCopies)
-            guard (try? Self.write(data, to: Darwin.open(t, O_WRONLY | O_CREAT | O_EXCL, 0o600))) != nil else { unlink(t); return false }   // a root file's text: ours only
+            guard (try? Self.write(data, to: Darwin.open(t, O_WRONLY | O_CREAT | O_EXCL, 0o600), writing: { try $0.write(contentsOf: $1) })) != nil else { unlink(t); return false }   // a root file's text: ours only
             (cmd, tmp) = (command(.file(t)), t)
         }
         defer { if let tmp { unlink(tmp) } }
@@ -621,7 +784,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         let a = NSAlert()
         a.messageText = message.bidiVisible
         a.informativeText = info.bidiVisible
-        a.beginSheetModal(for: window!)
+        a.beginSheetModal(for: revealed())
     }
 
     // MARK: - Window lifecycle
@@ -634,7 +797,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
 
     func windowDidBecomeKey(_ notification: Notification) {
         window?.docFrame?.showKeys()   // the menu's keys work by the key window
-        let url = url
+        guard let url else { return }   // an Untitled: no file to have changed
         Task {
             guard let now = await Self.stamps.run(url.path, .userInitiated, { Stamp(url.resolvingSymlinksInPath().path) }), url == self.url, window?.isVisible == true,
                   now != stamp, now != noticed, !saving else { return }
@@ -650,11 +813,11 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// Keep Mine is the safe one — nothing is lost, and the next ⌘S asks before writing over theirs: ↩ and ⎋; Reload ⌘↩.
     private func askReload(_ now: Stamp) {
         noticed = now
-        var c = Confirm("“\(url.lastPathComponent)” changed on disk", action: "Reload")
+        var c = Confirm("“\(name)” changed on disk", action: "Reload")
         (c.cancel, c.irreversible) = ("Keep Mine", true)
         c.note = "Something else wrote it: \(Self.when(now)). Reload it and lose your unsaved changes, or keep editing your version?"
         Task {
-            guard await AppDelegate.sheet(c.alert(), on: window!) == 0 else { return }
+            guard await AppDelegate.sheet(c.alert(), on: revealed()) == 0 else { return }
             await reload()
         }
     }
@@ -662,7 +825,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// Fails (and says why) when the file is gone, too big, binary or not text any more; the text stays as it was.
     /// Reads off the main thread (a share that stopped answering).
     @discardableResult func reload() async -> Bool {
-        let url = url
+        guard let url else { return false }
         let (loaded, now) = await Blocking.run(.userInitiated) { (Result { try Self.load(url) }, Stamp(url.resolvingSymlinksInPath().path)) }
         return url == self.url && apply(loaded, onDisk: now)
     }
@@ -672,7 +835,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         let text: String, enc: String.Encoding, lossy: Bool, stamp: Stamp?, digest: SHA256.Digest
         do { (text, enc, lossy, bom, crlf, stamp, digest) = try loaded.get() } catch {
             noticed = onDisk   // say it once per version, not on every focus
-            alert("Couldn't reload “\(url.lastPathComponent)”", error.localizedDescription)
+            alert("Couldn't reload “\(name)”", error.localizedDescription)
             return false
         }
         if enc != encoding || lossy != self.lossy { encodingAsked = false }   // read differently now: ask again
@@ -704,7 +867,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// Save, Don't Save (⌘D), Cancel — one under another, as macOS stacks three; on production ↩ is Cancel.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard changed else { return true }
-        AppDelegate.sheet(unsavedQuestion().alert(), on: sender) { [weak self] r in
+        AppDelegate.sheet(unsavedQuestion().alert(), on: revealed()) { [weak self] r in
             guard let self else { return }
             if r == 0 { Task { if await self.save(then: { sender.close() }) { sender.close() } } }
             if r == 1 { dirty = false; sender.close() }
@@ -713,8 +876,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     }
 
     func unsavedQuestion() -> Confirm {
-        var c = Confirm("Save changes to “\(url.lastPathComponent)”" + (server.map { " on \(SavedServer.name(for: $0.target.asUser))" } ?? "") + "?",
-                        on: server?.target, action: "Save")
+        var c = Confirm("Save changes to “\(name)”" + (server.map { " on \(SavedServer.name(for: $0.target.asUser))" } ?? "") + "?",
+                        on: server?.target, action: url == nil ? "Save…" : "Save")
         c.others = ["Don't Save"]
         c.note = server.flatMap { (NSApp.delegate as? AppDelegate)?.saveSays($0.target, $0.path) }
         return c

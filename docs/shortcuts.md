@@ -93,7 +93,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Action | Keys |
 |---|---|
 | Compare folders recursively (marks differences) | ⇧F2 |
-| Synchronize folders (two-way or mirror → / ←; also with a server) | ⇧⌘S |
+| Synchronize folders (two-way or mirror → / ←; also with a server) | ⌥⌘S |
 | Diff two files (two marked, the cursor and the same name in the other panel, or both cursors; also a server's) | ⇧⌘D |
 | Git: only changes / all changes as a list / diff against HEAD | ⌃G / ⌃⇧G / ⌃D |
 | Git: log of the file / blame (in the viewer) | ⌃L / ⌃⇧L |
@@ -140,7 +140,7 @@ In the command line, ↑↓ browse its history. On a local panel ↩ runs the li
 | A list in a panel: its keys / another list of its server / its log next door / a command on its server | ⇧/ (?) / ⇧; (:) / ⌘L / ⌘E |
 | Ports (Forward Port…): forward / copy address / in the other panel; in a panel: forward / copy address / menu | ↩ / ⌘C / ⌘↩; ↩ / ⌘C / ⌃↩ |
 | Viewer, files over 4 MB: go to (`50%`, `1.5G`, `end`) / start, end / search the whole file, next result | `g` / Home or ⌘↑, End or ⌘↓ / `/`, `n` |
-| Editor: save / find and replace / close | ⌘S / ⌘F / ⎋, ⌘W |
+| Editor: new document (Untitled, from any Kermo window) / save / save as / find and replace / close | ⌘N / ⌘S / ⇧⌘S / ⌘F / ⎋, ⌘W |
 | Output window: stop, then close / run again / copy all / save / [send to a tool](tools.md#send-to) | ⎋ / ⌘R / ⌘C / ⌘S / F2 |
 
 The keys for large files work only in text mode, not while the file is followed (`f`) or filtered (`&`); in hex mode only `g` works. More in [Viewer and editor](viewer-editor.md).

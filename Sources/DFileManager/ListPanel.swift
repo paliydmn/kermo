@@ -569,15 +569,16 @@ extension AppDelegate {
     static func runsInList(_ id: String) -> Bool {
         listOwn.contains(id) || id.hasPrefix("panel.focus")
             || ["panel.switch", "panel.add", "panel.close", "admin.auditLog", "admin.rootPanel", "admin.userPanel", "usermenu.edit", "validators.edit"].contains(id)
-            || !listRefuses.contains(id) && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term"].contains(String(id.prefix { $0 != "." }))
+            || !listRefuses.contains(id) && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term", "editor"].contains(String(id.prefix { $0 != "." }))
     }
     static let listRefuses: Set<String> = ["go.tree", "go.linktarget", "go.bookmark", "go.path", "view.dirsizes", "view.filterPresets", "view.gitOnly",
                                            "view.sort.name", "view.sort.size", "view.sort.mtime", "view.sort.reverse", "server.history"]
 
     /// A command that isn't the list's own and that a row's key rides (F3, F4, F8, ⌘L): named in the menu for that
     /// action, a click on it does that.
+    /// Not the app's own (New Editor Document clicked over a list with a ⌘N row is still a new document).
     static func titled(_ c: Command, _ actions: [ListAction]) -> ListAction? {
-        listOwn.contains(c.id) ? nil : actions.first { a in a.panelKey.map(c.keys.contains) == true }
+        listOwn.contains(c.id) || appWide.contains(c.id) ? nil : actions.first { a in a.panelKey.map(c.keys.contains) == true }
     }
 
     /// A command while the active panel shows a list (false: it runs as anywhere). A key the cursor's row has runs
