@@ -62,8 +62,8 @@ private let keptByTheApp: Set<String> = [
 /// Every whole tool in docs/tools.md — the recipes, the restic example — loads as Kermo reads a tool, with no problem.
 @Test func theToolsInTheDocsLoad() throws {
     let page = try text("docs/tools.md")
-    let tools = page.matches(of: /```json\n(\{\n  "schema": 1[\s\S]*?)```/).map { String($0.1) }
-    #expect(tools.count >= 5)
+    let tools = page.matches(of: /```json\n(\{\s*"schema": 1[\s\S]*?)```/).map { String($0.1) }
+    #expect(tools.count == 6, "the smallest, four recipes, restic")
     for t in tools {
         let id = try #require(t.firstMatch(of: /"id": "([a-z0-9-]+)"/)?.1)
         let problems = ToolSchema.validate(Data(t.utf8), file: "\(id).json").problems

@@ -106,8 +106,9 @@ extension ServerLockTests {
         defer { ServerLock.authenticate = auth }
         (ServerLock.servers, ServerLock.authenticate) = ({ [locked] }, { _ in false })
         let before = bench.calls.count
+        app.tools.found = [:]   // its folder to find again: that waits for the lock too
         p = try #require(await f2("web.yaml"))
-        #expect(p.rows.first?.title == "Disk usage" && bench.calls.count == before, "\(p.rows.prefix(2).map(\.title))")
+        #expect(p.rows.first?.title == "Disk usage" && bench.calls.count == before && app.tools.found.isEmpty, "\(p.rows.prefix(2).map(\.title))")
     }
 
     /// Send To… (F2) in an output window about a server: the tools there that take text — the selection, else all of

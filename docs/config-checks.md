@@ -60,7 +60,7 @@ Once a config passed its check, **Reload after saving …?** names the command a
 
 ## Your own rules
 
-Choose **Kermo ▸ Configuration ▸ Edit Validators…** (or search) to open `~/.config/dfilemanager/validators.json`, which starts with an example. Your rules are looked at before the built-in ones; the first that matches wins. After both come the checks of a [tool in use on that server](tools.md#a-tools-files-f2-and-f4), for its own files.
+Choose **Kermo ▸ Configuration ▸ Edit Validators…** (or search) to open `~/.config/dfilemanager/validators.json`, which starts with an example. Your rules are looked at before the built-in ones; the first that matches wins. After both come the checks of a [tool in use on that server](tools.md#a-tools-files-f2-and-f4), for its own files: where one of yours or Kermo's matches, the tool's isn't run.
 
 | Key | Meaning |
 |---|---|

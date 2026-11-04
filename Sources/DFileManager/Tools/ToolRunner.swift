@@ -298,6 +298,7 @@ final class ToolRunner {
                 try lister.read(env, flag, header: false, rows: false).vars
             }
             if case .failure(is CancellationError) = r { return nil }
+            if case .failure(is ToolExec.NoPassword) = r { continue }   // sudo's password not given: asked again next time
             found[key] = ((try? r.get()) ?? nil) ?? [:]
         }
         return near
