@@ -130,7 +130,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
     func close(_ e: Editor) {
         guard tabbed, drafts != nil else { return remove(e) }
         Task {
-            if let why = await commit(without: e) { return e.flash("Not closed: the editor's session couldn't be saved (\(why))") }
+            if let why = await commit(closing: e) { return e.flash("Not closed: the editor's session couldn't be saved (\(why))") }
             remove(e)
         }
     }
@@ -139,6 +139,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
     func remove(_ e: Editor) {
         guard let i = docs.firstIndex(where: { $0 === e }) else { return }
         docs.remove(at: i)
+        closing.remove(ObjectIdentifier(e))
         e.frame.removeFromSuperview()
         e.closed()
         guard tabbed else { window?.close(); return }
@@ -157,7 +158,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
         guard tabbed else { e.closeAsking(); return }
         if e.isEdited { return hide() }
         Task {
-            if drafts != nil, let why = await commit(without: e) { return e.flash("Not closed: the editor's session couldn't be saved (\(why))") }
+            if drafts != nil, let why = await commit(closing: e) { return e.flash("Not closed: the editor's session couldn't be saved (\(why))") }
             remove(e)
             if window?.isVisible == true { hide() }   // its last tab took the window with it
         }
@@ -271,7 +272,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
             let b = PanelViewController.tabButton(tabTitle(e, among: names).bidiVisible, lead: lead.length > 0 ? lead : nil, tint: Chip.tint(e.chips), tip: e.tip, index: i,
                                                   current: e === active, target: self, action: #selector(tabClicked(_:)), close: #selector(closeTabClicked(_:)),
                                                   italic: e.cover != nil)
-            b.widthAnchor.constraint(greaterThanOrEqualToConstant: 118).isActive = true
+            b.widthAnchor.constraint(greaterThanOrEqualToConstant: max(118, b.intrinsicContentSize.width + 12)).isActive = true   // the × clear of a bold name
             b.widthAnchor.constraint(lessThanOrEqualToConstant: 260).isActive = true
             strip.addArrangedSubview(b)
         }
@@ -358,6 +359,8 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
     private var notes: [String] = []
     private var due: (since: Date, item: DispatchWorkItem)?, retry: DispatchWorkItem?
     private var lastDurable = Date.distantPast, submitted = 0, applied = 0
+    /// Tabs being closed: no commit names them again (a Don't Save mustn't come back by a commit that overtook its own).
+    private var closing: Set<ObjectIdentifier> = []
 
     /// A text or a tab changed: a commit once typing pauses, and while it goes on at most `most` after the first change
     /// since the last commit — later for a big text (it's written whole each time). `now`: right away (a Save).
@@ -378,17 +381,20 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
     /// Writes the session — the tabs in order, the shown one, the window's state — with the texts changed since the last
     /// commit, and says why if it couldn't. The texts are taken here on the main thread; the store writes them in its
     /// own queue, one commit after another, a newer one never under an older. `durable`: on the disk itself (hiding the
-    /// window, quitting), and no more than every 30 s otherwise. `without`: a tab closing — kept until this is written.
-    @discardableResult func commit(durable: Bool = false, windowOpen: Bool? = nil, without: Editor? = nil) async -> String? {
+    /// window, quitting), and no more than every 30 s otherwise. `closing`: a tab that goes once this is written — left
+    /// out of every commit from now on, and back in if this one fails.
+    @discardableResult func commit(durable: Bool = false, windowOpen: Bool? = nil, closing gone: Editor? = nil) async -> String? {
         guard let store = drafts else { return nil }
+        if let gone { closing.insert(ObjectIdentifier(gone)) }
         due?.item.cancel()
         due = nil
         let durable = durable || Date().timeIntervalSince(lastDurable) >= 30
         if durable { lastDurable = Date() }
         var s = EditorSession(), texts: [UUID: String] = [:], sent: [(Editor, Int)] = []
         s.windowOpen = windowOpen ?? (window?.isVisible == true)
-        s.active = (active === without ? nil : active)?.id
-        for e in docs where e !== without {
+        let kept = docs.filter { !closing.contains(ObjectIdentifier($0)) }
+        s.active = active.flatMap { a in kept.contains { $0 === a } ? a.id : nil }
+        for e in kept {
             guard let d = e.sessionDoc else { continue }
             s.docs.append(d)
             if !d.dirty { e.sent = -1 }   // its revision goes: once it changes again, the whole text
@@ -400,6 +406,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
         let ticket = submitted
         var why: String?
         do { try await store.flush() } catch { why = Self.why(error) }
+        if why != nil, let gone { closing.remove(ObjectIdentifier(gone)) }   // not closed: named again
         guard ticket > applied else { return why }   // a newer commit's answer came first: it says what's on disk
         applied = ticket
         let now = Date(), marks = docs.map { $0.mark?.string }

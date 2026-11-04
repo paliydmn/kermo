@@ -193,7 +193,7 @@ extension EditorWindowTests {
         type(a, "mine\n")
         h.select(u)
         #expect(await h.commit() == nil)
-        #expect(u.frame.text.contains("Unsaved changes · Draft saved ") && u.drafted && !Editor.unsaved.contains(u.name))
+        #expect(u.frame.text.contains("Unsaved changes · Draft saved ") && u.keepsDrafts && !Editor.unsaved.contains(u.name))
         let session = try manifest(dir + "/drafts")
         #expect(session.docs.map(\.kind) == [.untitled, .local] && session.docs.allSatisfy(\.dirty) && session.active == u.id)
         let fm = FileManager.default
@@ -204,6 +204,7 @@ extension EditorWindowTests {
         try await waitUntil("restored") { h.docs.count == 2 && h.docs.allSatisfy { $0.cover == nil } }
         let (u2, a2) = (h.docs[0], h.docs[1])
         #expect(u2.name == u.name && u2.textView.string == "notes ✓\nline 2" && u2.isEdited && h.active === u2)
+        #expect(u2.frame.text == "UTF-8 · Unsaved changes", "its state from the start, not only its mark")
         #expect(a2.url?.path == dir + "/a.conf" && a2.textView.string == "orig\nmine\n" && a2.isEdited && a2.frame.banner == nil)
         #expect(read(dir + "/a.conf") == "orig\n", "the file is as it was")
         let next = Editor.untitled()
@@ -249,7 +250,10 @@ extension EditorWindowTests {
         store.release()
 
         let h = launch(drafts)
+        let reading = try #require(h.docs.first { $0.id == same.id })
+        #expect(reading.cover == .loading && !reading.textView.isEditable && reading.frame.cover != nil, "nothing typed into a text still being read")
         try await waitUntil("all read") { h.docs.allSatisfy { $0.cover != .loading } && h.docs.count == 10 }
+        #expect(reading.textView.isEditable)
         func doc(_ d: EditorSession.Doc) -> Editor? { h.docs.first { $0.id == d.id } }
         #expect(h.docs.map(\.id) == s.docs.filter { $0.id != gone.id }.map(\.id), "in order; the clean file that's gone has no tab")
         #expect(h.active === doc(same) && h.window?.isVisible == false, "the shown one; the window waits for Show Editor")
@@ -295,7 +299,7 @@ extension EditorWindowTests {
         type(u, " and newer")
         #expect(await h.commit() == "no permission to write there")
         #expect(u.mark?.string == "!" && u.frame.text.contains("Draft not saved: no permission to write there · Save As… keeps the text"))
-        #expect(Editor.unsaved.contains(u.name) && !u.drafted && other.mark == nil)
+        #expect(u.draftFailed != nil && other.mark == nil && !Editor.unsaved.contains(u.name), "Quit asks about it itself (finishQuit)")
         let s = try manifest(dir + "/drafts")
         let kept = try #require(s.docs.first { $0.id == u.id }?.revision)
         #expect(read(dir + "/drafts/rev/\(u.id.uuidString).\(kept.n)") == "good", "the last good draft is there")
@@ -304,8 +308,8 @@ extension EditorWindowTests {
 
         chmod(dir + "/drafts", 0o500)
         other.closeAsking()
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(h.docs.contains { $0 === other } && other.frame.text.contains("Not closed"), "not written without it: stays")
+        try await waitUntil("said") { other.frame.text.contains("Not closed") }
+        #expect(h.docs.contains { $0 === other }, "not written without it: stays")
         chmod(dir + "/drafts", 0o700)
         chmod(dir + "/drafts/rev", 0o700)
         #expect(await h.commit() == nil)
@@ -335,6 +339,26 @@ extension EditorWindowTests {
         #expect(h.docs.isEmpty)
     }
 
+    /// A commit that overtakes a closing tab's own — a tab switch, another app in front, the retry — doesn't name the
+    /// tab again: the session on disk is the one without it.
+    @Test func aClosingTabIsntNamedByACommitThatOvertakesIt() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { crash(); try? FileManager.default.removeItem(atPath: dir) }
+        let h = launch(dir + "/drafts")
+        let u = Editor.untitled(), keep = Editor.untitled()
+        type(u, "throw away")
+        type(keep, "keep")
+        #expect(await h.commit() == nil)
+        h.close(u)   // Don't Save's way: its commit is queued
+        h.checkpoint()   // and another right behind it
+        try await waitUntil("closed") { !h.docs.contains { $0 === u } }
+        #expect(await h.commit() == nil)
+        let s = try manifest(dir + "/drafts")
+        #expect(s.docs.map(\.id) == [keep.id], "\(s.docs.map(\.number))")
+        keep.close()
+    }
+
     /// Close Editor Window (⇧⌘W, the close button) writes every draft and hides the window: no question, no tab closed
     /// (a server file's copy isn't let go), the session says the window was hidden. If that can't be written the window
     /// stays and says why. Show Editor brings it back.
@@ -349,8 +373,8 @@ extension EditorWindowTests {
         type(u, "draft")
         chmod(dir + "/drafts", 0o500)
         #expect(!h.windowShouldClose(w))
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(w.isVisible && u.frame.text.contains("The window stays"), "the drafts couldn't be saved: it stays")
+        try await waitUntil("said") { u.frame.text.contains("The window stays") }
+        #expect(w.isVisible, "the drafts couldn't be saved: it stays")
         chmod(dir + "/drafts", 0o700)
         h.hide()
         try await waitUntil("hidden") { !w.isVisible }
@@ -427,6 +451,11 @@ extension EditorWindowTests {
         let e = try #require(h.docs.first)
         try await waitUntil("locked \(String(describing: e.cover))") { e.cover == .locked }
         #expect(e.textView.string == "" && e.heading == ("secrets.yml", "localhost") && asked == 0, "nothing of it before Unlock")
+        let saveAs = NSMenuItem(title: "Save As…", action: #selector(Editor.saveDocumentAs(_:)), keyEquivalent: "")
+        #expect(e.changed && !e.validateMenuItem(saveAs), "its draft is the change, though the text isn't shown; no Save As of nothing")
+        #expect(!e.closeAsking())
+        try await answer(e.window, .alertThirdButtonReturn)   // Cancel
+        #expect(h.docs.first === e)
         e.connect()
         try await waitUntil("asked") { asked == 1 }
         #expect(e.cover == .locked && e.textView.string == "")

@@ -293,6 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ArchiveIndex.discardLiveStaging()   // after tar is gone: an extract cut short leaves no hidden copy behind
         ServerCopies.quit()   // the server files' copies on the server go; the others are kept
         TempCopies.remove(TextCopies.dir)
+        Editor.comparisons.forEach(TempCopies.remove)   // Compare's copies of drafts
         SFTP.removeControlDir()   // after the masters and tunnels: their sockets and the askpass script are in it
         Config.flush()   // the session, frecency and the last production lines are on disk before the app goes
     }
@@ -301,7 +302,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// confirmation for all of it (⌘Q and closing the last window). Then the editor's drafts go on the disk itself
     /// before Kermo does (off the main thread: `.terminateLater`, answered on every way out).
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard !quitting else { return .terminateCancel }   // a second ⌘Q while the drafts are written: the first one goes on
+        if quitting {   // a second ⌘Q while the drafts are written: the first one goes on, and says so
+            if let h = EditorHost.shared, let a = h.active { h.reveal(a); a.flash("Writing the drafts before Kermo quits…") }
+            return .terminateCancel
+        }
         guard confirmQuit() else { return .terminateCancel }
         guard EditorHost.shared?.drafts != nil else { return .terminateNow }
         quitting = true
@@ -357,7 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if let n = ops?.pending, n > 0 {
             lost.append("\(n) file operation\(n == 1 ? "" : "s") running or queued (a copy to a server stops part way)")
         }
-        if RemoteEdit.uploading > 0 { lost.append("Edited server text still uploading (its local copy is kept)") }
+        if RemoteEdit.uploading > 0 { lost.append("Edited server text still uploading (its text is kept on this Mac)") }
         let notUp = ServerCopies.unsynced.filter { $0.pending == 0 }   // still uploading: said above
         if !notUp.isEmpty { lost.append("Saved in another app, not on the server: " + notUp.map { "“\($0.url.lastPathComponent)” (kept in \($0.dir))" }.joined(separator: ", ")) }
         let editing = ServerCopies.editing

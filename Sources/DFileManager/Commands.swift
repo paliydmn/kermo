@@ -1308,6 +1308,7 @@ extension AppDelegate {
             if case .success = r, case .failure(let error) = loaded { e.flash(error.localizedDescription) }
             return false
         }
+        guard Editor.editing(target, remotePath) === e else { TempCopies.remove(tmp); return false }   // its tab closed meanwhile
         let state = RemoteEdit(baseline: attrs), (onSaved, onClose) = remoteEditing(target, remotePath, state, in: tmp)
         e.opened(local, text, state: state, onSaved: onSaved, onClose: onClose)
         return true

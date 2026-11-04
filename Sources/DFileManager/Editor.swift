@@ -11,11 +11,11 @@ import DFMCore
 @MainActor
 final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     private static var open: [Editor] = []
-    /// Names of the files whose unsaved changes quitting would lose: a tool's, and those whose draft isn't kept (drafts
-    /// off, or it couldn't be written).
-    static var unsaved: [String] { open.filter { $0.changed && !$0.drafted }.map(\.name) }
+    /// Names of the files whose unsaved changes quitting would lose: a tool's, and the editor window's while drafts are
+    /// off. With drafts on, Quit writes them and asks only about one that couldn't be (`AppDelegate.finishQuit`).
+    static var unsaved: [String] { open.filter { $0.changed && !$0.keepsDrafts }.map(\.name) }
     /// The save didn't reach where the file really lives (a server): still unsaved, so closing asks.
-    static func markUnsaved(_ url: URL) { open.first { $0.url == url }.map { $0.dirty = true; $0.unsent = true; $0.showState() } }
+    static func markUnsaved(_ url: URL) { open.first { $0.url == url }.map { $0.dirty = true; $0.unsent = true; $0.showState(); $0.host?.changed($0) } }
     /// The window of the editor whose file `url` is now.
     static func window(for url: URL) -> NSWindow? { open.first { $0.url == url }?.window }
     /// Where a question about `url`'s save goes — a server copy's upload that went on after Save As made it a local
@@ -57,7 +57,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     /// "host:/path" of a server's file edited through its local copy: the title, not the copy's temp folder.
     private var remote: String?
     var server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)? {   // its saves go up with `state`
-        didSet { if (server == nil) != (oldValue == nil) { retitle() } }
+        didSet { if (server == nil) != (oldValue == nil) { showState() } }
     }
     /// A server's file's PROD / ROOT / LOCKED: its tab's, and the window's while it shows.
     var chips: [Chip] = [] { didSet { host?.update(self) } }
@@ -79,7 +79,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     private var bom = false, crlf = false
     /// Saving ends the text with a newline (crontab ignores a last line without one). On for config files
     /// (see `isConfig`) unless the `editorFinalNewline` setting says always or never; File ▸ toggles it per document.
-    var finalNewline: Bool { didSet { host?.update(self) } }
+    var finalNewline: Bool { didSet { host?.update(self); host?.changed(self) } }
     static var finalNewlineSetting: () -> Bool? = { UserDefaults.standard.object(forKey: "editorFinalNewline") as? Bool }
     /// Tests: runs between checking the file and opening it for an in-place rewrite (off the main thread). This
     /// document's own: tests run side by side, and a save no longer holds the main thread while it writes.
@@ -226,18 +226,13 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Its status line, its tab and — while it shows — the window's title.
-    private func retitle() {
-        showState()
-    }
-
     /// What the window says while its tab shows: the file's name and where it is ("web-01 · /etc/nginx"). A locked
     /// server's draft: its name and server only, till it's unlocked.
     var heading: (title: String, subtitle: String) {
         let (host, path): (String?, String) = if let server { (SavedServer.name(for: server.target), server.path) }
             else if let r = remote, let c = r.range(of: ":/") { (String(r[..<c.lowerBound]), String(r[r.index(after: c.lowerBound)...])) }   // "host:/path"
             else { (nil, url?.path ?? "") }
-        if cover == .locked { return (name.bidiVisible, host ?? "") }
+        if cover == .locked || cover == .loading && server != nil { return (name.bidiVisible, host ?? "") }   // locked, or not known yet
         return (url == nil ? name : (path as NSString).lastPathComponent.bidiVisible, DocFrame.place((path as NSString).deletingLastPathComponent, host: host))
     }
     /// The window's proxy icon: this Mac's file, not a server copy's temp file.
@@ -347,7 +342,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     private func saved(_ stamp: Stamp?, _ digest: Data) {
         dirty = false
         unsent = false
-        if lossy { lossy = false; retitle() }   // the damaged bytes are U+FFFD now: clean UTF-8
+        if lossy { lossy = false; showState() }   // the damaged bytes are U+FFFD now: clean UTF-8
         self.stamp = stamp
         self.digest = digest
         frame.banner = nil
@@ -413,7 +408,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     /// Not a tool's file, nor while a save runs.
-    private var canSaveAs: Bool { !fixedPlace && !saving }
+    private var canSaveAs: Bool { !fixedPlace && !saving && cover == nil }
 
     /// What saving writes of `text`: in its encoding, with the final newline if that's on, CRLF line ends and the BOM
     /// if the file had them; nil if the encoding can't hold it.
@@ -463,6 +458,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     @discardableResult
     func save(force: Bool = false, then: (@MainActor () -> Void)? = nil) async -> Bool {
         if cover != nil { connect(); return false }   // a parked or locked tab: opened, or unlocked, first
+        host?.changed(self, now: true)   // a crash during the save: the draft has what was typed till now
         guard let url, let path = realPath else { return await saveAs() }   // an Untitled: where to, first
         // A server draft back from the last launch has no local copy yet: its folder now, ours only.
         if server != nil { mkdir(url.deletingLastPathComponent().path, 0o700) }
@@ -690,7 +686,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
             server = nil   // else a revert from that file's server history would find this window and write over `dest`
             chips = []
             saved(stamp, digest)
-            retitle()
+            showState()
             if language == nil {   // an Untitled saved as a script, say
                 language = Syntax.language(forFileName: name, firstLine: String(textView.string.prefix(200).split(separator: "\n").first ?? ""))
                 highlight(after: 0)
@@ -844,13 +840,14 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         if enc != encoding || lossy != self.lossy { encodingAsked = false }   // read differently now: ask again
         encoding = enc
         self.lossy = lossy
-        retitle()
+        showState()
         self.stamp = stamp
         self.digest = digest
         let sel = textView.selectedRange()
         textView.string = text
         undo.removeAllActions()   // the old text's edits: ⌘Z would apply them to the new one; other tabs keep theirs
         frame.banner = nil
+        host?.changed(self)   // its draft goes: the file's text is what it shows
         ruler.invalidate()
         highlight(after: 0)
         textView.setSelectedRange(NSRange(location: min(sel.location, (text as NSString).length), length: 0))
@@ -863,6 +860,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     /// Unsaved, and saving would write other bytes than are there: typing and undoing it all isn't a change.
     var changed: Bool {
         guard dirty else { return false }
+        guard cover == nil else { return true }   // its text isn't in the view (locked, being read): the draft is the change
         guard !unsent, let data = fileData(of: textView.string) else { return true }
         return Self.sha(data) != digest
     }
@@ -885,7 +883,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
                         on: server?.target, action: url == nil ? "Save…" : "Save")
         c.others = ["Don't Save"]
         let says = server.flatMap { (NSApp.delegate as? AppDelegate)?.saveSays($0.target, $0.path) }
-        let note = [says, drafted ? "Don't Save discards them, the draft too." : nil].compactMap { $0 }.joined(separator: " ")
+        let note = [says, keepsDrafts ? "Don't Save discards them, the draft too." : nil].compactMap { $0 }.joined(separator: " ")
         c.note = note.isEmpty ? nil : note
         return c
     }
@@ -910,8 +908,8 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     var edits = 0, sent = -1, onDisk = -1
     /// Why its last draft wasn't written (a "!" on its tab); when the last one was.
     var draftFailed: String?, draftSaved: Date?
-    /// Its changes are in a draft that'll be there after a restart: the editor window's, drafts on, the last write fine.
-    var drafted: Bool { host?.tabbed == true && host.drafts != nil && draftFailed == nil }
+    /// A tab of the editor window with drafts on: its changes are written as a draft, and Quit waits for that.
+    var keepsDrafts: Bool { host?.tabbed == true && host.drafts != nil }
 
     /// Instead of the text: a server's file not opened yet (no connection without a click), a locked server's draft not
     /// shown till it's unlocked, one that couldn't be read, or one being read.
@@ -922,8 +920,8 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     /// What has the keys in its tab: the text, or the cover (↩ its button).
     var focus: NSView { frame.cover ?? textView }
 
-    /// ⎋ over its cover (a parked tab): back to the panels too.
-    override func cancelOperation(_ sender: Any?) { escape() }
+    /// ⎋ over its cover (a parked tab): back to the panels too. Not from a tool's Problems or Test fields.
+    override func cancelOperation(_ sender: Any?) { if cover != nil { escape() } }
 
     /// The text a draft keeps; nil while it isn't there (a cover).
     var draftText: String? { cover == nil ? textView.string : nil }
@@ -974,6 +972,8 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
             (onSaved, onClose) = onServer(target, s.path, state, url.deletingLastPathComponent().path)
         }
         cover = d.kind == .untitled && d.revision == nil ? nil : .loading
+        showCover()   // in an initializer `didSet` doesn't run
+        showState()
         Self.open.append(self)
     }
 
@@ -1073,16 +1073,17 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         fill(loaded.0, stamp: loaded.5, digest: loaded.6, apply: loaded)
     }
 
+    /// Compare's copies of drafts: removed at quit (the launch sweep takes one a crash left).
+    static var comparisons: [String] = []
+
     /// The draft's bytes against the file's now, as saving would write them (its encoding, CRLF, BOM): a diff of the
     /// text alone would differ on every line of a CRLF file. Through a 0600 file of ours, gone with the diff's temp files.
     private func compareWithDisk() {
         guard let url, let app = NSApp.delegate as? AppDelegate, let data = fileData(of: textView.string) else { return }
-        let tmp = NSTemporaryDirectory() + "dfm-draft-" + UUID().uuidString
+        let tmp = NSTemporaryDirectory() + "dfm-text-draft-" + UUID().uuidString   // diff reads it after it starts: gone at quit
         guard mkdir(tmp, 0o700) == 0, FileManager.default.createFile(atPath: tmp + "/" + name, contents: data, attributes: [.posixPermissions: 0o600]) else { return }
-        Task {
-            await app.diff(AppDelegate.DiffSide(path: tmp + "/" + name, name: "\(name) (your draft)"), AppDelegate.DiffSide(path: url.path), in: app.active)
-            TempCopies.remove(tmp)
-        }
+        Self.comparisons.append(tmp)
+        Task { await app.diff(AppDelegate.DiffSide(path: tmp + "/" + name, name: "\(name) (your draft)"), AppDelegate.DiffSide(path: url.path), in: app.active) }
     }
 
     /// The cover over its text, with what it says and its button (↩).
