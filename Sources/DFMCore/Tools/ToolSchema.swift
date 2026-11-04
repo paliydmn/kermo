@@ -124,7 +124,7 @@ public enum ToolSchema {
                                  "per": .text(.plain), "log": .text(.plain), "table": .text(.plain), "title": .text(.plain), "key": .text(.display),
                                  "columns": .list(.column), "actions": .list(.text(.plain)), "events": .bool, "counts": .list(.object("count"))]),
         "count": Object(fields: ["rows": .text(.plain), "title": .text(.plain), "goto": .text(.display)], required: ["rows", "title"]),
-        "context": Object(fields: ["path": .text(.path), "row": .text(.display), "actions": .list(.text(.plain))], required: ["path", "actions"]),
+        "context": Object(fields: ["path": .text(.path), "row": .text(.display), "actions": .list(.text(.plain))], required: ["path", "row", "actions"]),
         "validator": Object(fields: ["path": .text(.path), "check": .text(.command), "when": .oneOf(["before", "after"])],
                             required: ["path", "check"]),
         "state": Object(fields: ["field": .text(.plain), "ok": .list(.text(.plain)), "warn": .list(.text(.plain)), "bad": .list(.text(.plain)),
@@ -418,6 +418,13 @@ extension ToolSchema.Check {
                 error(path + [.key("inputs")], "a secret doesn't go into a level's run: its read isn't masked")
             }
             if s.output != .list, s.list != nil || s.actions != nil { error(path + [.key("output")], "an action with its own list and actions has output “list”") }
+            if s.accepts != nil {   // Send To… (§7.1): text on a command's stdin, from an output window — no row there
+                if !onTool { error(path + [.key("accepts")], "Send To… has no row: an action that accepts text is one of toolActions") }
+                if a.run.command == nil, a.run.script == nil { error(path + [.key("accepts")], "the text goes to a command's stdin: it needs a command or script") }
+                if s.long == true || ![nil, .line, .window, .silent].contains(s.output) || s.edit != nil || s.open != nil || s.goto != nil {
+                    error(path + [.key("accepts")], "an action that accepts text shows its output as a line or in a window")
+                }
+            }
             if let pat = s.progress?.pattern, !groups(pat).contains("percent") {
                 error(path + [.key("progress"), .key("pattern")], "needs a group (?<percent>…)")
             }

@@ -51,16 +51,19 @@ public struct ToolPayload: Sendable {
         }
         for e in env { both("export \(e.name)=\(e.text)") }
         // The body's stdin: /dev/null, or an `accepts` action's text in a heredoc — inside the script, never after it.
+        // Shown and logged as how many lines it was: an output window's text, not what runs.
         let redirect = text == nil ? "</dev/null" : "<<'\(end)'"
         let heredoc = text.map { "\n" + $0 + ($0.hasSuffix("\n") ? "" : "\n") + end } ?? ""
+        let said = text.map { t in "\n[\(t.split(separator: "\n", omittingEmptySubsequences: false).count - (t.hasSuffix("\n") ? 1 : 0)) lines of text]\n" + end } ?? ""
+        func group(_ s: String) { real.append(s + heredoc); masked.append(s + said) }
         if `where` == .mac || detached {
-            both("{ \(body)\n} \(redirect)\(heredoc)")
+            group("{ \(body)\n} \(redirect)")
             both("exit $?")   // stdin may be held open: `sh -s` mustn't wait there for more script
         } else {
             both("exec 3<&0")
             // The body keeps fd 3 (a read end: it can't hold the watcher's end of file back). Closing it there aborts
             // macOS's bash 3.2 — a macOS server's /bin/sh — with a heredoc on the group, and `3<&- </dev/null` too.
-            both("{ \(body)\n} \(redirect) &\(heredoc)")
+            group("{ \(body)\n} \(redirect) &")
             both("p=$!")
             // stdin's end = ssh gone: the whole session goes. fd 3 is the pipe the script comes from, so the watcher is
             // the last line: nothing of the script is left there for its `cat` to take.
