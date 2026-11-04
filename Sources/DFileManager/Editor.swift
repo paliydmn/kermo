@@ -436,8 +436,12 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         try writing(h, data)
         if ftruncate(fd, off_t(data.count)) != 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        // Not on the disk (EIO): it never takes the original's place. A file system that can't sync at all: as it is.
-        if fcntl(fd, F_FULLFSYNC) != 0, fsync(fd) != 0, errno != ENOTSUP, errno != EINVAL { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        // Not on the disk (EIO): it never takes the original's place. A file system that can't sync like that: plain
+        // fsync, or as it is where it can't sync at all.
+        let unsupported: Set<Int32> = [ENOTSUP, ENOTTY, EINVAL, ENOSYS]
+        if fcntl(fd, F_FULLFSYNC) != 0, !unsupported.contains(errno) || fsync(fd) != 0 && !unsupported.contains(errno) {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
         try h.close()
     }
 
@@ -634,7 +638,8 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
         // nothing. A file that appears, changes or is swapped for a link meanwhile isn't written over.
         let seen = await Blocking.run(.userInitiated) { () -> (stamp: Stamp?, digest: SHA256.Digest?) in
             let path = dest.resolvingSymlinksInPath().path, stamp = Stamp(path)
-            return (stamp, stamp == nil ? nil : (try? Data(contentsOf: URL(fileURLWithPath: path))).map(SHA256.hash))
+            // Not a FIFO's or a device's bytes (one waits for good, one never ends): Save As refuses those anyway.
+            return (stamp, stamp == nil || FileInfo.notRegular(path) != nil ? nil : (try? Data(contentsOf: URL(fileURLWithPath: path))).map(SHA256.hash))
         }
         return await saveAs(dest, base: seen)
     }
