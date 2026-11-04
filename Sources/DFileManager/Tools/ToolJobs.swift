@@ -317,13 +317,13 @@ struct ToolJob: Codable, Equatable {
                     return try? ToolExec.run({ _ in p }, on: t, timeout: 30, cancel: CancelFlag(), env: env, command: command)
                 }
                 guard let r, r.started else { return app.active.flash("Connect to \(j.place) to see the log: ~/.cache/kermo/runs/\(j.id).log there") }
-                OutputWindow.show(r.text, errors: r.errors, title: title, status: j.exit ?? 0, ok: j.ok, save: "\(j.place)-\(j.id).log")
+                OutputWindow.show(r.text, errors: r.errors, title: title, status: j.exit ?? 0, ok: j.ok, save: "\(j.place)-\(j.id).log", target: t)
             }
             return
         }
         let status = !j.running ? (j.ok ? "done" : j.said ?? "") : l.follow != nil ? "running…"
             : l.lost ? "connection lost — the job runs on" : "connect to \(j.place) to see how it goes"
-        l.windows = l.windows.filter { $0.window?.isVisible == true } + [OutputWindow.log(l.text, title: title, status: status)]
+        l.windows = l.windows.filter { $0.window?.isVisible == true } + [OutputWindow.log(l.text, title: title, status: status, target: j.target)]
     }
 
     /// Stop… (§7.6): asked on production; the job's group killed — root's through sudo. The follow then says how it ended.

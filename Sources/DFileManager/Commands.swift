@@ -556,9 +556,19 @@ extension AppDelegate {
         Viewer.show(URL(fileURLWithPath: AuditLog.path))
     }
 
+    /// F2: your commands — on a server's file, first the actions tools in use there offer on it (§11).
     func showUserMenu() {
+        guard let (t, dir, it) = active.remoteCursor else { return showUserMenu(tools: []) }
+        let panel = active
+        Task {
+            guard let found = await contextItems(for: (dir as NSString).appendingPathComponent(it.name), on: t.asUser, in: panel) else { return }
+            showUserMenu(tools: found)
+        }
+    }
+
+    private func showUserMenu(tools: [Picker.Item]) {
         let mine = userCommands()
-        let items = Self.userCommands(mine, onServer: active.remote != nil).map { c in
+        let items = tools + Self.userCommands(mine, onServer: active.remote != nil).map { c in
             let builtIn = !mine.contains { $0.command == c.command && $0.title == c.title }   // a server entry the file doesn't have
             return Picker.Item(title: c.title, subtitle: c.command,
                                detail: ([c.terminal == true ? "Terminal" : nil, builtIn ? "built in" : nil].compactMap { $0 }).joined(separator: " · "), verb: "Run") { [unowned self] in
@@ -1346,8 +1356,8 @@ extension AppDelegate {
             state.prodConfirmed = true
         }
         let env = SSHAskpass.env, baseline = state.baseline, history = serverHistory
-        let (rules, problem) = ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath))
-        let rule = ConfigCheck.rule(for: remotePath, in: rules)
+        _ = await tools.near(remotePath, on: target)   // a tool's folder there (`{base}`), if it's its file
+        let (rule, problem) = checkRule(for: remotePath, on: target)
         // No panel of its own: the one showing that server (else the active one) says it's saving; ⎋ there cancels.
         let panel = panels.first { $0.remote?.target == target } ?? active
         let kept = Self.keptSession(of: target, in: panels)
@@ -1573,10 +1583,17 @@ extension AppDelegate {
         return false
     }
 
+    /// The check a save of `path` on `t`'s server gets: your validators.json's rule, then a tool's in use there (§11),
+    /// then Kermo's built-in one; and what's wrong with validators.json.
+    func checkRule(for path: String, on t: SFTPTarget) -> (rule: ConfigCheck?, problem: String?) {
+        let (rules, problem) = ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath), tools: [tools.check(for: path, on: t)].compactMap { $0 })
+        return (ConfigCheck.rule(for: path, in: rules), problem)
+    }
+
     /// What saving a server's `path` does besides writing it, for the unsaved changes' question: its check, the old
     /// version kept, the production log — only what will happen; nil when nothing.
     func saveSays(_ t: SFTPTarget, _ path: String) -> String? {
-        let rule = ConfigCheck.rule(for: path, in: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules)
+        let rule = checkRule(for: path, on: t).rule
         let does = [rule?.check.map { "checks it with \(ConfigCheck.program($0))" + (rule?.after == true ? " once it's there (the old text goes back if that fails)" : " first") },
                     serverHistory == nil ? nil : "keeps the old version on this Mac", SavedServer.isProd(t) ? "goes into the production log" : nil].compactMap { $0 }
         guard !does.isEmpty else { return nil }
@@ -2670,7 +2687,8 @@ extension AppDelegate {
     }
 
     /// Files a copy or move puts where a save is checked before it takes the file's place (sudoers, sshd_config …): they
-    /// go in as they are — said in the production question. ponytail: the items it names, not what's inside a folder.
+    /// go in as they are — said in the production question. ponytail: the items it names, not what's inside a folder;
+    /// and not a tool's checks (§11) — dpl's runs once the file is in place, which a copy doesn't claim.
     nonisolated static func uncheckedNote(_ paths: [String], rules: [ConfigCheck]) -> String {
         let hit = paths.filter { ConfigCheck.rule(for: $0, in: rules).map { $0.check != nil && !$0.after } == true }
         guard let first = hit.first else { return "" }
