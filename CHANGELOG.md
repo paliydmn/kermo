@@ -14,6 +14,8 @@ Release:
 ## [Unreleased]
 
 ### Added
+- **The editor's tabs**: every document F4, ⌘N or a server's file opens is a tab of one editor window, with its own Undo; ⌘T, ⌘W and ⌃Tab work on them there. **View ▸ Tabs ▸ Move Tab Left / Right** and **All Tabs…**, **File ▸ Show Editor** and **Close Editor Window** (⇧⌘W). A mark before a tab's name says ● changed, ↑ not uploaded, **!** its draft couldn't be written; two tabs of one name say where each is.
+- **Drafts**: what you type in the editor is kept in `~/.config/dfilemanager/editor.noindex/` as you go, and the tabs come back after a quit or a crash — a file changed or gone since its draft says so, a server's file comes back unconnected and connects only on its ⌘S, a locked server's draft shows after Touch ID. Drafts never write the file or upload; a draft that can't be written is shown, not lost quietly.
 - **File ▸ New Editor Document** (⌘N) opens an empty Untitled in the built-in editor from any Kermo window — the panels whatever they show, the viewer, Tools, the terminal. Nothing of it is on disk until you save it; its save starts in the active panel's folder on this Mac.
 - **File ▸ Save As…** (⇧⌘S) in the editor, any time, not only when the file changed on disk. It writes the whole text first and only then edits the new file; a file open in another editor window, a folder, another user's file or a link to nothing isn't written.
 - **Kermo ▸ Support Kermo…** (and a link in About) opens the ways to support Kermo's development.
@@ -55,8 +57,12 @@ Release:
 ### Changed
 - **Synchronize Folders…** moved from ⇧⌘S to **⌥⌘S**: ⇧⌘S is the editor's Save As….
 - Editor: a save also flushes the folder to the disk after replacing the file, so a power cut right after a save doesn't bring the old file back.
+- Editor: ⌘W closes the tab, not the window; ⎋ goes back to the panels — an unchanged tab closes, a changed one stays as a draft and the window hides. The window's close button hides it with its tabs, asking nothing.
+- Quitting no longer asks about editor changes kept as drafts; it waits until they're written to the disk, and asks only about one that couldn't be.
 
 ### Security
+- Editor: drafts (`editor.noindex`) are owner-only and out of Spotlight and Time Machine; a draft of a server file never uploads, and after a restart a server's file connects only on its ⌘S — Touch ID again for a locked server, production's question again. A locked server's draft isn't shown until it's unlocked.
+- Editor: a file deleted while its draft was kept comes back with its own permissions on ⌘S, not the umask's.
 - Editor: a file made by **Save As** gets no wider permissions than the text came from — a server's `.env` with `rw-------` stays owner-only on this Mac instead of readable by every user (owner-only when the server didn't say). A file you choose to replace keeps its own permissions.
 
 ## [1.6] - 2026-10-28

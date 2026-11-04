@@ -263,7 +263,7 @@ A tool of yours runs nothing — not even its check of the server — until you 
 - **Buttons**: commands that run when pressed, each its own button (`uptime`, `free -h`);
 - **One Command**: one command, its output in a window (`who`).
 
-Each starter works as it is on most Linux servers. It opens in Kermo's editor, not yet on disk; **⌘S** (or **Save** beside the text) writes it to `~/.config/dfilemanager/tools/` readable only by you, reads your tools again and asks **Use the tool “…”?** — then, for a new tool, **Use on Servers…**. Saving again asks again: it's a new version of the file. A tool with no script needs nothing else; one that names a script needs that file next to it.
+Each starter works as it is on most Linux servers. It opens in Kermo's editor — a window of its own, not a tab: no draft is kept, and closing it with changes asks — not yet on disk; **⌘S** (or **Save** beside the text) writes it to `~/.config/dfilemanager/tools/` readable only by you, reads your tools again and asks **Use the tool “…”?** — then, for a new tool, **Use on Servers…**. Saving again asks again: it's a new version of the file. A tool with no script needs nothing else; one that names a script needs that file next to it.
 
 Beside the text:
 

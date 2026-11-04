@@ -34,6 +34,7 @@ Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`
 | `frecency.json` | Sidebar Frequent and ⌘P | Kermo writes it |
 | `audit.jsonl` | The [production log](safety.md#production-log) | **Server ▸ Production Log** |
 | `history.noindex/` | [Versions of server files](server-files.md#file-history) | Kermo writes it |
+| `editor.noindex/` | The editor's tabs and [drafts](viewer-editor.md#drafts); `damaged/` keeps what couldn't be read | Kermo writes it |
 | `tools/` | [Your own tools](tools.md#your-own-tools): a JSON file each, with its scripts | By hand; **Reload Config** checks them |
 | `tools/trust.json`, `tools/known.json` | Your own tools you said to use; what each saved server had | Kermo writes them |
 | `tools/servers.json` | [Where each tool is used](tools.md#where-a-tool-is-used), hidden on which saved server, the values it asks for there | Use on Servers…, Hide, Set Up… |
