@@ -229,6 +229,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     var parkedHint: String? {
         parked.map { "Not connected — ↩ Connect to \(SavedServer.name(for: $0.target))".bidiVisible }
     }
+    /// The folder it shows on this Mac: nil on a server, in an archive or a list, or parked (an Untitled's save starts here).
+    var localFolder: URL? { remote == nil && archive == nil && parked == nil && list == nil ? URL(fileURLWithPath: path, isDirectory: true) : nil }
 
     /// A list in place of the folder (`showList`): a server's services, containers, ports — its rows, its columns, its
     /// keys. Nothing of the folder behind it is on screen, nor acted on.

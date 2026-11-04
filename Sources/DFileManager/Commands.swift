@@ -220,6 +220,8 @@ extension AppDelegate {
         cmd("file.compress", "Compress…", ["opt+f5"], menu: "File", group: 5, aliases: "zip tar archive pack") { $0.compressDialog() },
         cmd("file.extract", "Extract…", ["opt+f9"], menu: "File", group: 5, aliases: "unzip untar unpack archive") { $0.extractDialog() },
         cmd("file.edit", "Edit", ["f4", "opt+4"], menu: "File", group: 1, aliases: "editor") { $0.editFile() },
+        // In the built-in editor whatever F4 opens with; nothing on disk till its Save (Shift+F4 New File… makes one).
+        cmd("editor.new", "New Editor Document", ["cmd+n"], menu: "File", group: 0, aliases: "untitled new text document notepad scratch") { _ in Editor.untitled() },
         cmd("file.copy", "Copy To…", ["f5", "opt+5"], menu: "File", group: 2, short: "Copy") { $0.transferDialog(move: false) },
         cmd("file.move", "Move To…", ["f6", "opt+6"], menu: "File", group: 2, short: "Move") { $0.transferDialog(move: true) },
         cmd("file.rename", "Rename…", ["shift+f6", "shift+opt+6"], menu: "File", group: 2) { $0.renameDialog() },

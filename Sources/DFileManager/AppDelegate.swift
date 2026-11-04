@@ -1261,7 +1261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// app's windows; ↩ connects. The rest would act on the local folder behind it.
     static func runsParked(_ id: String) -> Bool {
         parkedRuns.contains(id) || id.hasPrefix("panel.focus")
-            || !parkedRefuses.contains(id) && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term"].contains(String(id.prefix { $0 != "." }))
+            || !parkedRefuses.contains(id) && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term", "editor"].contains(String(id.prefix { $0 != "." }))
     }
     static let parkedRuns: Set<String> = ["open", "open.inside", "panel.switch", "panel.add", "panel.close", "admin.rootPanel", "admin.userPanel",
                                           "admin.auditLog", "admin.sudoTouchID", "usermenu.edit", "validators.edit"]
@@ -1272,7 +1272,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                                        "admin.move", "file.extract", "file.compress", "file.symlink", "file.hardlink"]
 
     private func perform(_ c: Command, key: Shortcut? = nil) {
-        if !terminalActive {
+        // The app's own from another window (⌘N in an editor) run as they are, not as a list's row.
+        if !terminalActive, !Self.appWide.contains(c.id) || Self.windowToClose(key: NSApp.keyWindow, main: window) == nil {
             if let list = active.list, listRun(c, key: key, in: list) { return keyBar.commandRan(c.id) }
             if let hint = active.parkedHint, !Self.runsParked(c.id) { return active.flash(hint) }
             if let hint = other.parkedHint ?? other.listHint, Self.toOther.contains(c.id) { return active.flash("The other panel: " + hint) }
@@ -1315,7 +1316,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     /// The app's own items, not the panels': from a viewer, an editor or over the terminal too.
-    static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "app.support", "app.settings", "app.tools", "app.monitor", "help.docs", "help.issue"]
+    static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "app.support", "app.settings", "app.tools", "app.monitor", "help.docs", "help.issue",
+                                       "editor.new"]
 
     /// A disabled menu item still takes its key: AppKit says it handled it and runs nothing, so F3 never reached a viewer
     /// (D-101); by the same path ⌘↑ or ⌃B could miss an editor or a text field. A command's item keeps its key only while
@@ -1335,7 +1337,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// A list's row keys (⌘R Restart, F8 Stop…): off the menu, they go to the panel, which knows the key — not through
     /// View ▸ Refresh's ⌘R.
-    var listRowKeys: Set<Shortcut> { Set((terminalActive ? nil : activePanel?.list?.actions)?.compactMap(\.panelKey) ?? []) }
+    /// Not while another window (an editor) is key: there ⌘N is New Editor Document, not a list's row's.
+    var listRowKeys: Set<Shortcut> {
+        Set((terminalActive || Self.windowToClose(key: NSApp.keyWindow, main: window) != nil ? nil : activePanel?.list?.actions)?.compactMap(\.panelKey) ?? [])
+    }
 
     /// ⌘W (Close Tab) in a viewer, editor or other document window closes that window, through its delegate, so
     /// the editor still asks about unsaved changes. In the main window, or a sheet / picker over it, it closes a tab.
