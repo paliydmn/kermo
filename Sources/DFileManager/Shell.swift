@@ -512,6 +512,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     private func sendTo() {
         guard let window, let tv, let app = Self.app(), let t = target else { return }
         let range = tv.selectedRange(), text = range.length > 0 ? (tv.string as NSString).substring(with: range) : tv.string
+        guard !text.isEmpty else { return window.docFrame?.flash("Nothing to send: the window is empty") ?? () }
         let items = receivers.map { r in
             let p = r.tool.preset, mac = (r.action.run.where ?? p.where) == .mac
             return Picker.Item(title: "\(p.title): \(r.action.spec.title ?? r.action.spec.id)", subtitle: r.action.run.command?.all.first ?? r.action.run.script ?? "",

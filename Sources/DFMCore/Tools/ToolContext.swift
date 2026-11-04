@@ -7,6 +7,7 @@ extension ToolPreset {
     /// The names a server `path` gives where `glob` (a `context`'s or validator's `path`, its placeholders filled from
     /// `scope`: `{base}/conf/*.yaml`) takes it: `{file}` the path, `{dir}` its folder, `{stem}` its name without the
     /// last extension. nil: it doesn't. A `*` stays within one folder.
+    /// ponytail: a var's value is put in as it is — a `*` or `[` in a tool's folder is the glob's too.
     public static func fileNames(_ path: String, glob: String, _ scope: ToolTemplate.Scope) -> [String: ToolValue]? {
         guard fnmatch(ToolTemplate.text(glob, scope), path, FNM_PATHNAME) == 0 else { return nil }
         let name = (path as NSString).lastPathComponent
@@ -38,18 +39,20 @@ extension ToolPreset {
             var s = scope
             s.levels[0] = names
             var taken: [String: String] = [:]
-            guard let body = try? ToolTemplate.command(.one(v.check), s, vars: &taken) else { return nil }
-            let file = taken["file"]
+            guard let body = try? ToolTemplate.command(.one(v.check), s, vars: &taken) else { continue }
             var values = body.values, lines: [String] = []
             for (name, t) in (env ?? [:]).sorted(by: { $0.key < $1.key }) {
                 let e = ToolTemplate.value(t, s, vars: &taken)
                 values += e.values.filter { !values.contains($0) }
                 lines.append("export \(name)=\(e.text)")
             }
+            let file = taken["file"]
+            // ponytail: no check at all, said nowhere but in the save's line (no "checked:"): a file named "-x" isn't a unit's
             if values.contains(where: { $0.name != file && ToolTemplate.refusal($0.value, pattern: nil) != nil }) { return nil }
             // `%` is ConfigCheck.expand's: `%f` the file checked, `%%` a "%".
             let set = values.map { $0.name == file ? "\($0.name)=%f" : "\($0.name)=" + ShellContext.quote($0.value).replacingOccurrences(of: "%", with: "%%") }
-            return ConfigCheck(match: path, check: body.text.replacingOccurrences(of: "%", with: "%%"), when: v.when == "after" ? .after : nil,
+            // `match` is a glob: the path itself, its `*`, `?`, `[` and `\` taken as they are.
+            return ConfigCheck(match: path.replacing(/[*?\[\\]/) { "\\" + $0.output }, check: body.text.replacingOccurrences(of: "%", with: "%%"), when: v.when == "after" ? .after : nil,
                                root: sudo == true ? true : nil,
                                setup: (set + lines.map { $0.replacingOccurrences(of: "%", with: "%%") }).joined(separator: "\n"))
         }

@@ -31,7 +31,8 @@ import Testing
         """#.utf8).write(to: URL(fileURLWithPath: bench.dir + "/own/ctx.json"))
     try Data(#"""
         { "schema": 1, "id": "snd", "title": "Snd",
-          "toolActions": [ { "id": "count", "title": "Count Errors", "accepts": "text", "readonly": true, "command": "snd-count", "output": "window" } ] }
+          "toolActions": [ { "id": "count", "title": "Count Errors", "accepts": "text", "readonly": true, "command": "snd-count", "output": "window" },
+                           { "id": "keep", "title": "Keep", "accepts": "text", "readonly": true, "command": "cat > \#(bench.dir)/kept", "done": "Kept" } ] }
         """#.utf8).write(to: URL(fileURLWithPath: bench.dir + "/own/snd.json"))
     _ = app.tools.reload()
     for id in ["ctx", "snd"] { app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == id })) }
@@ -49,7 +50,7 @@ extension ServerLockTests {
     /// F4: a save of a tool's file gets its check once the tool's folder is known there — found by its var's command,
     /// not its default — with the file's stem as a variable; your validators.json's rule for that file comes first.
     @Test func aToolsValidatorChecksItsFilesOnSave() async throws {
-        let (app, _, _, done) = try toolsApp()
+        let (app, a, _, done) = try toolsApp()
         let bench = try ToolsBench(), was = AppDelegate.validatorsPath
         defer { bench.done(); done(); AppDelegate.validatorsPath = was }
         AppDelegate.validatorsPath = bench.dir + "/validators.json"
@@ -59,8 +60,8 @@ extension ServerLockTests {
                 "snd only helps: Tools ▸ doesn't list it")
         #expect(ToolsLibrary.rows(app, mine: true).map(\.id).sorted() == ["ctx", "snd"], "My Tools does: Use on Servers… is on its page")
         #expect(app.checkRule(for: file, on: .local()).rule == nil, "its folder isn't known yet: the default's is somewhere else")
-        let near = await app.tools.near(file, on: .local())
-        #expect(near.map(\.preset.id) == ["ctx"] && bench.calls.isEmpty, "its var's command ran, nothing of the tool's")
+        let near = await app.tools.near(file, on: .local(), in: a)
+        #expect(near?.map(\.preset.id) == ["ctx"] && bench.calls.isEmpty, "its var's command ran, nothing of the tool's")
         let rule = try #require(app.checkRule(for: file, on: .local()).rule)
         #expect(rule.check == #"ctx-check "$K_stem""# && rule.setup == "K_stem=web" && rule.after && !rule.needsRoot)
         #expect(app.saveSays(.local(), file)?.hasPrefix("Saving checks it with ctx-check once it's there (the old text goes back if that fails)") == true)
@@ -97,6 +98,16 @@ extension ServerLockTests {
         #expect(p.rows.first?.title == "Ctx: Show api" && !p.rows.contains { $0.title.hasPrefix("Ctx: Deploy") }, "only: an app's")
         p = try #require(await f2("new.yaml"))
         #expect(p.rows.first?.title == "Disk usage" && a.statusText == "new.yaml: Ctx on localhost has no “new” in its list", "\(a.statusText)")
+
+        // A locked server whose Touch ID is cancelled: nothing of the tool's runs, your commands are still there.
+        var locked = SavedServer(address: "localhost")!
+        locked.locked = true
+        let auth = ServerLock.authenticate
+        defer { ServerLock.authenticate = auth }
+        (ServerLock.servers, ServerLock.authenticate) = ({ [locked] }, { _ in false })
+        let before = bench.calls.count
+        p = try #require(await f2("web.yaml"))
+        #expect(p.rows.first?.title == "Disk usage" && bench.calls.count == before, "\(p.rows.prefix(2).map(\.title))")
     }
 
     /// Send To… (F2) in an output window about a server: the tools there that take text — the selection, else all of
@@ -126,7 +137,7 @@ extension ServerLockTests {
         }
         send.run()
         let p = try #require(Picker.current)
-        #expect(p.rows.map(\.title) == ["Snd: Count Errors"] && p.rows[0].subtitle == "snd-count" && p.rows[0].detail == "localhost")
+        #expect(p.rows.map(\.title) == ["Snd: Count Errors", "Snd: Keep"] && p.rows[0].subtitle == "snd-count" && p.rows[0].detail == "localhost")
         p.rows[0].run()
         await toolsUntil { NSApp.windows.contains { $0.title == "Count Errors — localhost" } }
         let out = try #require(NSApp.windows.first { $0.title == "Count Errors — localhost" })
@@ -135,5 +146,15 @@ extension ServerLockTests {
         #expect(asked == ["Count Errors on localhost?", "Exactly what runs on localhost", "Count Errors on localhost?"], "it always asks: the text leaves the window")
         #expect(info.contains("Sends 3 lines (") && info.contains("of that window's text to its input on localhost:\nok\nerror one\nerror two"), "\(info)")
         #expect(shown.contains("[3 lines of text]") && !shown.contains("error one"), "shown — and logged on production — as how much it was: \(shown)")
+
+        // The selection only; a line's output in that window's status line.
+        let tv = try #require(log.docFrame?.scroll.documentView as? NSTextView)
+        tv.setSelectedRange(NSRange(location: 3, length: 9))   // "error one"
+        AppDelegate.answering = { _, _, _ in info = AppDelegate.answeredInfo; return 0 }
+        send.run()
+        try #require(Picker.current).rows[1].run()
+        await toolsUntil { log.docFrame?.text.hasPrefix("Kept on localhost at ") == true }
+        #expect(log.docFrame?.text.hasPrefix("Kept on localhost at ") == true, "\(log.docFrame?.text ?? "")")
+        #expect(info.contains("Sends 1 line (") && (try? String(contentsOfFile: bench.dir + "/kept", encoding: .utf8)) == "error one\n")
     }
 }

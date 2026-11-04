@@ -33,6 +33,17 @@ private func base(_ b: String) -> ToolTemplate.Scope { ToolTemplate.Scope(vars: 
     #expect(dpl.check(for: "/srv/dpl/conf/-web.yaml", base("/srv/dpl")) == nil, "a value that begins with - gives no check (§3.2 rule 5)")
     let json = try JSONEncoder().encode(c)
     #expect(!String(decoding: json, as: UTF8.self).contains("setup"), "not a validators.json field")
+    let odd = "/srv/dpl/conf/w[1]*?.yaml", r = try #require(dpl.check(for: odd, base("/srv/dpl")))
+    #expect(ConfigCheck.rule(for: odd, in: [r]) == r && ConfigCheck.rule(for: "/srv/dpl/conf/w1x.yaml", in: [r]) == nil, "its own path, as it is")
+    let shown = LoadedTool(preset: dpl, path: "dpl.json", builtIn: true, scripts: [:], hash: "", warnings: []).runs.text
+    #expect(shown.contains("on saving {base}/conf/*.yaml: dpl check {stem}   — as root"), "Use the tool…? lists it with what runs by itself")
+}
+
+/// A tool adds checks, never takes the place of Kermo's own: a tool's rule for sudoers comes after visudo's.
+@Test func aToolsCheckComesAfterTheBuiltInOnes() {
+    let mine = ConfigCheck(match: "/etc/sudoers", check: "true")
+    #expect(ConfigCheck.rule(for: "/etc/sudoers", in: ConfigCheck.rules(nil, tools: [mine]).rules)?.check == "visudo -cf %f")
+    #expect(ConfigCheck.rule(for: "/etc/sudoers", in: ConfigCheck.rules(Data(#"[ { "match": "/etc/sudoers", "check": "x %f" } ]"#.utf8), tools: [mine]).rules)?.check == "x %f")
 }
 
 /// A `before` validator runs on the new text next to the file: `{file}` is that one, `{stem}` and `{dir}` the file's;

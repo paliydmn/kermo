@@ -561,8 +561,9 @@ extension AppDelegate {
         guard let (t, dir, it) = active.remoteCursor else { return showUserMenu(tools: []) }
         let panel = active
         Task {
-            guard let found = await contextItems(for: (dir as NSString).appendingPathComponent(it.name), on: t.asUser, in: panel) else { return }
-            showUserMenu(tools: found)
+            let found = await contextItems(for: (dir as NSString).appendingPathComponent(it.name), on: t.asUser, in: panel)
+            guard active === panel else { return }   // another panel meanwhile: its menu would be another one
+            showUserMenu(tools: found ?? [])   // locked or ⎋: your commands still
         }
     }
 
@@ -1356,10 +1357,11 @@ extension AppDelegate {
             state.prodConfirmed = true
         }
         let env = SSHAskpass.env, baseline = state.baseline, history = serverHistory
-        _ = await tools.near(remotePath, on: target)   // a tool's folder there (`{base}`), if it's its file
-        let (rule, problem) = checkRule(for: remotePath, on: target)
         // No panel of its own: the one showing that server (else the active one) says it's saving; ⎋ there cancels.
         let panel = panels.first { $0.remote?.target == target } ?? active
+        // A tool's folder there (`{base}`), if this may be its file.
+        guard await tools.near(remotePath, on: target, in: panel) != nil else { return notSaved(saved, to: target, CancellationError()) }
+        let (rule, problem) = checkRule(for: remotePath, on: target)
         let kept = Self.keptSession(of: target, in: panels)
         let r = await panel.busy("Saving “\(name)” to \(target.host)…") { flag in
             try SFTP.session(target, env: env, cancel: flag, on: kept) { c in
@@ -1583,8 +1585,9 @@ extension AppDelegate {
         return false
     }
 
-    /// The check a save of `path` on `t`'s server gets: your validators.json's rule, then a tool's in use there (§11),
-    /// then Kermo's built-in one; and what's wrong with validators.json.
+    /// The check a save of `path` on `t`'s server gets: your validators.json's rule, then Kermo's built-in one, then a
+    /// tool's in use there (§11), its folder as known now; and what's wrong with validators.json.
+    /// ponytail: the unsaved-changes question (`saveSays`) doesn't look for a tool's folder first — the save does.
     func checkRule(for path: String, on t: SFTPTarget) -> (rule: ConfigCheck?, problem: String?) {
         let (rules, problem) = ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath), tools: [tools.check(for: path, on: t)].compactMap { $0 })
         return (ConfigCheck.rule(for: path, in: rules), problem)

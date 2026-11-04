@@ -110,9 +110,10 @@ extension AppDelegate {
     /// it read. A read that failed, or no such row, is said in the panel.
     func contextItems(for path: String, on t: SFTPTarget, in panel: PanelViewController) async -> [Picker.Item]? {
         let s = savedServer(at: t) ?? SavedServer(target: t.asUser), env = SSHAskpass.env, name = (path as NSString).lastPathComponent
-        let near = await tools.near(path, on: t).filter { $0.preset.context != nil }
-        guard !near.isEmpty else { return [] }
+        let may = (tools.using(t)?.tools ?? []).contains { $0.preset.context?.contains { ToolPreset.mayTake(path, glob: $0.path) } == true }
+        guard may else { return [] }   // nothing runs for a file no tool's context could name
         guard await ServerLock.authorize(t, "look at the tools of") else { return nil }
+        guard let near = await tools.near(path, on: t, in: panel)?.filter({ $0.preset.context != nil }) else { return nil }
         var items: [Picker.Item] = []
         for tool in near {
             let p = tool.preset, scope = tools.scope(p, on: s, t)

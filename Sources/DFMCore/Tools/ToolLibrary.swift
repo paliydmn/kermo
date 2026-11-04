@@ -33,6 +33,7 @@ public struct LoadedTool: Sendable {
             + p.varCommands.map { line("vars.\($0.name)", $0.run) }
             + p.allActions.flatMap { _, a in (a.spec.inputs ?? []).filter { $0.info.type == .choiceFrom }.map { line("\(a.spec.title ?? a.spec.id) choices", $0.run) } }
             + p.allActions.map { _, a in line("\(a.spec.title ?? a.spec.id) requires", a.spec.requires, requires: true) }
+            + (p.validators ?? []).map { line("on saving \($0.path)", ToolRun(command: .one($0.check))) }   // F4 runs it, no question asked
         let chosen = [line(p.title, p.commandAction?.run)] + p.allActions.map { _, a in
             var l = line(a.spec.title ?? a.spec.id, a.run.sources.isEmpty ? nil : a.run)
                 ?? a.spec.edit.map { ToolRuns.Line(what: a.spec.title ?? a.spec.id, how: "edit \($0)") }

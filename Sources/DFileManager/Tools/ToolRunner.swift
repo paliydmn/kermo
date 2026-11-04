@@ -136,8 +136,8 @@ final class ToolRunner {
     /// What this version runs of an action: a command, a script, an `edit`, an `open` (a server path in the panel) or
     /// a `goto` (a place in Kermo); a form of text, secrets and choices; output as a line, a window, a log that
     /// follows, a terminal, rows one level down or nothing; a long job (Activity's).
-    /// ponytail: `accepts` (PR 9) and a terminal on this Mac are left out till then; `check` (Check Now) is the
-    /// watching's own (`ToolsTable`).
+    /// An action that `accepts` text runs only from Send To… (`send`), and a terminal on this Mac not at all;
+    /// `check` (Check Now) is the watching's own (`ToolsTable`).
     static func runs(_ a: ToolAction, of p: ToolPreset) -> Bool {
         (a.run.command != nil || a.run.script != nil || a.spec.edit != nil || a.spec.open != nil || a.spec.goto != nil)
             && a.spec.accepts == nil && a.spec.check == nil
@@ -284,15 +284,21 @@ final class ToolRunner {
     }
 
     /// The tools in use on `t`'s server whose `context` or validators could take `path`, their vars found first where
-    /// that's due this session — one round trip each, only for a tool whose files look like it: a folder of theirs that
-    /// isn't the default (`{base}`) is known then.
-    func near(_ path: String, on t: SFTPTarget) async -> [LoadedTool] {
+    /// that's due this session — one round trip each, said in `panel`, only for a tool whose files look like it: a
+    /// folder of theirs that isn't the default (`{base}`) is known then. One that fails isn't asked again this session
+    /// (Reload Config asks again): its defaults then. nil: ⎋.
+    func near(_ path: String, on t: SFTPTarget, in panel: PanelViewController) async -> [LoadedTool]? {
         let s = app.savedServer(at: t) ?? SavedServer(target: t.asUser), env = SSHAskpass.env
         let near = (using(t)?.tools ?? []).filter { $0.preset.fileGlobs.contains { ToolPreset.mayTake(path, glob: $0) } }
-        for tool in near where found[ServerRow.key(t.asUser) + " " + tool.preset.id] == nil && !tool.preset.varCommands.isEmpty {
+        for tool in near where !tool.preset.varCommands.isEmpty {
+            let key = ServerRow.key(t.asUser) + " " + tool.preset.id
+            guard found[key] == nil else { continue }
             let lister = ToolListSource.lister(app, tool, s, t)
-            let read = try? await Blocking.run { () throws -> [String: String]? in try lister.read(env, CancelFlag(), header: false, rows: false).vars }
-            if let v = read ?? nil { found[ServerRow.key(t.asUser) + " " + tool.preset.id] = v }
+            let r = await panel.busy("Finding \(tool.preset.title)'s folder on \(s.title)…", after: 0.3) { flag in
+                try lister.read(env, flag, header: false, rows: false).vars
+            }
+            if case .failure(is CancellationError) = r { return nil }
+            found[key] = ((try? r.get()) ?? nil) ?? [:]
         }
         return near
     }
@@ -476,7 +482,7 @@ final class ToolRunner {
 
     /// What Send To…'s question says of `text`: how much goes where, and how it begins.
     static func sends(_ text: String, to place: String) -> String {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false), n = lines.count - (text.hasSuffix("\n") ? 1 : 0)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false), n = ToolPayload.lines(text)
         let size = ByteCountFormatter.string(fromByteCount: Int64(text.utf8.count), countStyle: .file)
         return "Sends \(n == 1 ? "1 line" : "\(n) lines") (\(size)) of that window's text to its input on \(place):\n"
             + lines.prefix(3).map { $0.count > 100 ? $0.prefix(100) + "…" : $0 }.joined(separator: "\n") + (n > 3 ? "\n…" : "")

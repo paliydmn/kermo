@@ -193,9 +193,9 @@ macOS asks whether Kermo may notify the first time you watch a server. If you sa
 A tool can know some of a server's files: Deployments knows its units' configs, `conf/*.yaml` in dpl's folder (found on each server, `/opt/dpl` by default).
 
 - **F2** on such a file in a server panel lists the tool's actions for it above [your own commands](commands.md): on `web.yaml`, **Deployments: Deploy web…**, **Deployments: Check Config web**, **Deployments: Inspect web**. Kermo reads the tool's list first — the status line says so, ⎋ stops it — and offers what the list offers on that unit's row: Deploy only on an app. Each runs as it does from the list: Touch ID on a locked server, its sheet, the question, the line saying how it went in the panel's status line. A file whose unit isn't in the list (not deployed yet) gets none, and the status line says so.
-- **Saving** such a file (F4, then ⌘S) runs the tool's check — `dpl check web` once the file is in place, as root, the old text put back if it fails — as [config checks](config-checks.md) do. Your own `validators.json` rule for that path comes first, Kermo's built-in rules after.
+- **Saving** such a file (F4, then ⌘S) runs the tool's check — `dpl check web` once the file is in place, as root, the old text put back if it fails — as [config checks](config-checks.md) do. Your own `validators.json` rule for that path comes first, then Kermo's built-in ones: a tool adds checks, it never takes the place of Kermo's own (sudoers, `sshd_config`). **Use the tool “…”?** lists a tool's checks with what it runs by itself.
 
-Only tools in use on that server count. A tool's folder is the one its command found there this session, or yours set for the server; its default till then.
+Only tools in use on that server count. A tool's folder is the one its command found there this session — looked for once, the first time a file there could be the tool's (the status line says so; ⎋ stops it) — or yours set for the server; its default if that found nothing.
 
 ## Send To…
 
@@ -253,7 +253,7 @@ Put a tool's JSON file in `~/.config/dfilemanager/tools/`, with any script it na
 
 My Tools in [the Tools window](#the-tools-window) lists a file of yours that doesn't load under the table, with why; a click opens it in the editor.
 
-A tool of yours runs nothing — not even its check of the server — until you say to use it. **Tools ▸** lists it under **Not in use yet**; choosing it asks **Use the tool “…”?** with everything it can run: what runs by itself (its check, its header, its list, its choices) and what runs when you choose (its actions), each marked where it runs as root. A read-only action whose command looks destructive (`rm`, `kill`, `--force`, `>`…) is pointed out. **Open File** shows the file and its scripts. **Use This Tool** keeps your answer in `tools/trust.json`, by the file's and its scripts' sha256: a change to any of them asks again.
+A tool of yours runs nothing — not even its check of the server — until you say to use it. **Tools ▸** lists it under **Not in use yet**; choosing it asks **Use the tool “…”?** with everything it can run: what runs by itself (its check, its header, its list, its choices, its checks of a file you save) and what runs when you choose (its actions), each marked where it runs as root. A read-only action whose command looks destructive (`rm`, `kill`, `--force`, `>`…) is pointed out. **Open File** shows the file and its scripts. **Use This Tool** keeps your answer in `tools/trust.json`, by the file's and its scripts' sha256: a change to any of them asks again.
 
 ### New Tool…
 

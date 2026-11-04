@@ -54,7 +54,7 @@ public struct ToolPayload: Sendable {
         // Shown and logged as how many lines it was: an output window's text, not what runs.
         let redirect = text == nil ? "</dev/null" : "<<'\(end)'"
         let heredoc = text.map { "\n" + $0 + ($0.hasSuffix("\n") ? "" : "\n") + end } ?? ""
-        let said = text.map { t in "\n[\(t.split(separator: "\n", omittingEmptySubsequences: false).count - (t.hasSuffix("\n") ? 1 : 0)) lines of text]\n" + end } ?? ""
+        let said = text.map { "\n[\(Self.lines($0)) lines of text]\n" + end } ?? ""
         func group(_ s: String) { real.append(s + heredoc); masked.append(s + said) }
         if `where` == .mac || detached {
             group("{ \(body)\n} \(redirect)")
@@ -83,6 +83,11 @@ public struct ToolPayload: Sendable {
         case .password: "\(q(sudoProgram)) -S -p '' -k \(shell) -c " + q("IFS= read -r l; [ \"$l\" = KERMO-\(nonce) ] || IFS= read -r l; "
                                                                        + "[ \"$l\" = KERMO-\(nonce) ] || exit 97; exec \(shell) -s")
         }
+    }
+
+    /// How many lines `text` has, a last one without its line break counted.
+    public static func lines(_ text: String) -> Int {
+        text.split(separator: "\n", omittingEmptySubsequences: false).count - (text.hasSuffix("\n") ? 1 : 0)
     }
 
     /// The sudo wrapper's exit when no marker came: sudo didn't take the password, and nothing ran.

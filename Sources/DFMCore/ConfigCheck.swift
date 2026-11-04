@@ -87,12 +87,13 @@ public struct ConfigCheck: Codable, Sendable, Equatable {
     /// its compose plugin is no check, not a failure (exit 127).
     static let compose = #"docker compose version >/dev/null 2>&1 || { echo "no docker compose there"; exit 127; }; docker compose -f %f config -q"#
 
-    /// The rules for a save: the user's (`validators.json`'s bytes, nil: no file) first, then `tools`' (a tool's in use
-    /// on that server), then the built-in ones. A file that isn't a list of rules: the others, and what's wrong with it.
+    /// The rules for a save: the user's (`validators.json`'s bytes, nil: no file) first, then the built-in ones, then
+    /// `tools`' (a tool's in use on that server): a tool adds checks, it never takes the place of Kermo's own (sudoers,
+    /// sshd_config). A file that isn't a list of rules: the others, and what's wrong with it.
     public static func rules(_ data: Data?, tools: [ConfigCheck] = []) -> (rules: [ConfigCheck], problem: String?) {
-        guard let data else { return (tools + builtIn, nil) }
-        do { return (try JSONDecoder().decode([ConfigCheck].self, from: data) + tools + builtIn, nil) } catch {
-            return (tools + builtIn, "validators.json: \(error.localizedDescription) Built-in checks only.")
+        guard let data else { return (builtIn + tools, nil) }
+        do { return (try JSONDecoder().decode([ConfigCheck].self, from: data) + builtIn + tools, nil) } catch {
+            return (builtIn + tools, "validators.json: \(error.localizedDescription) Your checks are left out.")
         }
     }
 
