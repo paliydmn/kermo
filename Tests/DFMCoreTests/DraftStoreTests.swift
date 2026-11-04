@@ -228,6 +228,15 @@ private func revisions(_ dir: String) -> [String] { ((try? FileManager.default.c
     #expect(throws: DraftStore.Failure.damaged(nil)) { try again.text(of: back.docs[1]) }
 }
 
+/// A file's mode goes with its stamp (a draft of a deleted 0600 file brings it back 0600); a manifest from before it
+/// had none still reads.
+@Test func aStampKeepsTheModeAndOldManifestsStillRead() throws {
+    let stamp = EditorSession.Stamp(dev: 1, ino: 2, size: 3, sec: 4, nsec: 5, mode: 0o600)
+    #expect(try JSONDecoder().decode(EditorSession.Stamp.self, from: JSONEncoder().encode(stamp)) == stamp)
+    let old = try JSONDecoder().decode(EditorSession.Stamp.self, from: Data(#"{"dev":1,"ino":2,"size":3,"sec":4,"nsec":5}"#.utf8))
+    #expect(old.mode == nil && old.ino == 2)
+}
+
 /// A big text is committed less often: each commit writes all of it.
 @Test func bigTextsWaitLonger() {
     #expect(DraftStore.delay(forBytes: 0) == (0.5, 2) && DraftStore.delay(forBytes: 1 << 20) == (0.5, 2))
