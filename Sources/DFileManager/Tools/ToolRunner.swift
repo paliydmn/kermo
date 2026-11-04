@@ -114,7 +114,7 @@ final class ToolRunner {
     /// with no list (a launcher) this version runs. Which a server shows: `here`.
     var tools: [LoadedTool] { library.trusted(trust).filter(Self.shows) }
     /// What a server is asked about: those, and the tools that only help.
-    private var asked: [LoadedTool] { library.trusted(trust).filter { Self.shows($0) || Self.helps($0) } }
+    private var asked: [LoadedTool] { library.trusted(trust).filter(Self.usable) }
     /// Your own tools not trusted yet, or changed since: Tools ▸ offers them, asking first.
     var untrusted: [LoadedTool] { library.tools.filter { !trust.trusts($0) && Self.shows($0) } }
 
@@ -130,6 +130,8 @@ final class ToolRunner {
     static func helps(_ t: LoadedTool) -> Bool {
         t.preset.validators != nil || t.preset.toolActions?.contains { $0.spec.accepts != nil } == true
     }
+    /// A tool this version does something with: one that shows, or helps — the library lists these.
+    static func usable(_ t: LoadedTool) -> Bool { shows(t) || helps(t) }
 
     /// What this version runs of an action: a command, a script, an `edit`, an `open` (a server path in the panel) or
     /// a `goto` (a place in Kermo); a form of text, secrets and choices; output as a line, a window, a log that

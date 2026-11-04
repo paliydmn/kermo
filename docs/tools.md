@@ -395,7 +395,7 @@ A tool can work in Kermo's own places instead of a list. Deployments' F2 actions
 "validators": [ { "path": "{base}/conf/*.yaml", "check": "dpl check {stem}", "when": "after" } ]
 ```
 
-And a tool with nothing but a Send To… target — what in an output window is an error, counted on the server:
+A tool like these has no list of its own, so Tools ▸ doesn't show it: **Use on Servers…** on its page (My Tools in the Tools window) puts it to use. And one with nothing but a Send To… target — the lines of an output window that say error or fail, found on the server:
 
 ```json
 {

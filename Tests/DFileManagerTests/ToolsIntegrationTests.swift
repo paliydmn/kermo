@@ -57,6 +57,7 @@ extension ServerLockTests {
         await connected(app)
         #expect(app.tools.using(.local())?.tools.map(\.preset.id).contains("ctx") == true && app.tools.here(.local())?.tools.map(\.preset.id).contains("snd") == false,
                 "snd only helps: Tools ▸ doesn't list it")
+        #expect(ToolsLibrary.rows(app, mine: true).map(\.id).sorted() == ["ctx", "snd"], "My Tools does: Use on Servers… is on its page")
         #expect(app.checkRule(for: file, on: .local()).rule == nil, "its folder isn't known yet: the default's is somewhere else")
         let near = await app.tools.near(file, on: .local())
         #expect(near.map(\.preset.id) == ["ctx"] && bench.calls.isEmpty, "its var's command ran, nothing of the tool's")
