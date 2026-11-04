@@ -1,7 +1,7 @@
 import Foundation
 
 public struct FileItem: Sendable, Equatable {
-    public enum Kind: UInt8, Sendable { case file, dir, link, other }
+    public enum Kind: UInt8, Sendable, Codable { case file, dir, link, other }   // kept by number (the editor's drafts): add at the end
 
     public let name: String
     public let kind: Kind
