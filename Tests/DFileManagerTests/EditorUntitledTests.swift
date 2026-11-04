@@ -81,6 +81,7 @@ private func tempDir() throws -> String {
 
         let other = Editor.untitled()
         defer { other.close() }
+        #expect(other.name == "Untitled 1", "the one saved as hi.sh is a file now: it doesn't count")
         other.textView.insertText("notes", replacementRange: NSRange(location: 0, length: 0))
         FileManager.default.createFile(atPath: dir + "/notes.txt", contents: Data("old".utf8), attributes: [.posixPermissions: 0o640])
         #expect(await other.saveAs(URL(fileURLWithPath: dir + "/notes.txt")))

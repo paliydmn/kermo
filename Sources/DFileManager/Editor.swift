@@ -39,7 +39,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     static var runAsAdmin: (String) async -> Admin.Outcome = Admin.run
     /// Changes only on Save As. nil: an Untitled document (⌘N), on no disk until its Save picks where.
     private(set) var url: URL?
-    /// An Untitled's N: one past the highest open when it was made.
+    /// An Untitled's N: one past the highest Untitled open when it was made.
     private let number: Int?
     /// The file's name; an Untitled's "Untitled N".
     var name: String { url?.lastPathComponent ?? "Untitled \(number ?? 1)" }
@@ -144,7 +144,7 @@ final class Editor: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NS
     /// focus. Nothing of it is on disk until its Save picks where.
     @discardableResult
     static func untitled() -> Editor {
-        let e = Editor(nil, number: (open.compactMap(\.number).max() ?? 0) + 1, remote: nil, loaded: ("", .utf8, false, false, false, nil, SHA256.hash(data: Data())))
+        let e = Editor(nil, number: (open.compactMap { $0.url == nil ? $0.number : nil }.max() ?? 0) + 1, remote: nil, loaded: ("", .utf8, false, false, false, nil, SHA256.hash(data: Data())))
         open.append(e)
         e.showWindow(nil)
         e.window?.listInWindowsMenu()
