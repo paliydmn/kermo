@@ -353,7 +353,7 @@ extension EditorWindowTests {
         h.close(u)   // Don't Save's way: its commit is queued
         h.checkpoint()   // and another right behind it
         try await waitUntil("closed") { !h.docs.contains { $0 === u } }
-        #expect(await h.commit() == nil)
+        try await h.drafts!.flush()   // what's on disk now: the overtaking commit's session, before the tab's removal writes another
         let s = try manifest(dir + "/drafts")
         #expect(s.docs.map(\.id) == [keep.id], "\(s.docs.map(\.number))")
         keep.close()

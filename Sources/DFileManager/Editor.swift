@@ -860,6 +860,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     /// Unsaved, and saving would write other bytes than are there: typing and undoing it all isn't a change.
     var changed: Bool {
         guard dirty else { return false }
+        if case .unreadable? = cover { return false }   // its draft is in damaged/, not the session: closing loses nothing
         guard cover == nil else { return true }   // its text isn't in the view (locked, being read): the draft is the change
         guard !unsent, let data = fileData(of: textView.string) else { return true }
         return Self.sha(data) != digest

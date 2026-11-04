@@ -137,9 +137,9 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
 
     /// Without asking or writing anything (a tab that's closed, a test's cleanup).
     func remove(_ e: Editor) {
+        closing.remove(ObjectIdentifier(e))
         guard let i = docs.firstIndex(where: { $0 === e }) else { return }
         docs.remove(at: i)
-        closing.remove(ObjectIdentifier(e))
         e.frame.removeFromSuperview()
         e.closed()
         guard tabbed else { window?.close(); return }
@@ -272,7 +272,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
             let b = PanelViewController.tabButton(tabTitle(e, among: names).bidiVisible, lead: lead.length > 0 ? lead : nil, tint: Chip.tint(e.chips), tip: e.tip, index: i,
                                                   current: e === active, target: self, action: #selector(tabClicked(_:)), close: #selector(closeTabClicked(_:)),
                                                   italic: e.cover != nil)
-            b.widthAnchor.constraint(greaterThanOrEqualToConstant: max(118, b.intrinsicContentSize.width + 12)).isActive = true   // the × clear of a bold name
+            b.widthAnchor.constraint(greaterThanOrEqualToConstant: min(260, max(118, b.intrinsicContentSize.width + 12))).isActive = true   // the × clear of a bold name
             b.widthAnchor.constraint(lessThanOrEqualToConstant: 260).isActive = true
             strip.addArrangedSubview(b)
         }
@@ -406,7 +406,11 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
         let ticket = submitted
         var why: String?
         do { try await store.flush() } catch { why = Self.why(error) }
-        if why != nil, let gone { closing.remove(ObjectIdentifier(gone)) }   // not closed: named again
+        if why != nil, let gone {   // not closed: named again, its whole text with it (a commit that went meanwhile left it out)
+            closing.remove(ObjectIdentifier(gone))
+            gone.sent = -1
+            checkpoint()
+        }
         guard ticket > applied else { return why }   // a newer commit's answer came first: it says what's on disk
         applied = ticket
         let now = Date(), marks = docs.map { $0.mark?.string }
