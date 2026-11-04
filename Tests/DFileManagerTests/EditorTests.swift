@@ -382,7 +382,7 @@ private func tempDir() throws -> String {
     e.textView.string = "original\n"
     e.textDidChange(Notification(name: NSText.didChangeNotification))
     #expect(!e.changed)
-    #expect(e.windowShouldClose(try #require(e.window)))
+    #expect(e.closeAsking(), "closed, nothing asked")
 }
 
 /// Line starts moved along by edits are the ones counted afresh: random inserts and deletes anywhere, with "\n",

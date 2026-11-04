@@ -16,8 +16,8 @@ private func tempDir() throws -> String {
     #expect(cond(), "\(what)")
 }
 
-/// The finalNewline setting is global: these take turns.
-@Suite(.serialized) @MainActor struct UntitledTests {
+/// The finalNewline setting is global: these take turns (with the other tests of the editor window).
+extension EditorWindowTests {
     /// ⌘N makes “Untitled N”, N one past the highest open; UTF-8, LF, the final newline as the setting says (nothing to
     /// judge by otherwise), the text in focus, no file and no saved window state. An empty one closes without asking; one
     /// with text asks Save… / Don't Save and is named at quit.
@@ -29,16 +29,16 @@ private func tempDir() throws -> String {
         let a = Editor.untitled(), b = Editor.untitled()
         defer { a.close() }
         let n = try #require(Int(a.name.dropFirst("Untitled ".count)))
-        #expect(a.window?.title == "Untitled \(n)" && b.window?.title == "Untitled \(n + 1)")
-        #expect(a.url == nil && a.window?.representedURL == nil && a.window?.isRestorable == false && !a.finalNewline)
-        #expect(a.window?.firstResponder === a.textView && a.window?.statusText.contains("UTF-8") == true)
-        #expect(a.windowShouldClose(a.window!), "empty: no question")
+        #expect(b.name == "Untitled \(n + 1)" && b.window?.title == b.name && a.window === b.window, "tabs of one window, the new one shown")
+        #expect(a.url == nil && b.window?.representedURL == nil && a.window?.isRestorable == false && !a.finalNewline)
+        #expect(b.window?.firstResponder === b.textView && b.window?.statusText.contains("UTF-8") == true)
+        #expect(a.closeAsking(), "empty: no question")
 
         b.textView.insertText("todo\n", replacementRange: NSRange(location: 0, length: 0))
-        #expect(b.window?.isDocumentEdited == true && Editor.unsaved.contains(b.name))
+        #expect(b.isEdited && b.window?.isDocumentEdited == true && Editor.unsaved.contains(b.name))
         var closed = false
         b.onClose = { closed = true }
-        #expect(!b.windowShouldClose(b.window!))
+        #expect(!b.closeAsking())
         let sheet = try #require(b.window?.attachedSheet)
         let buttons = (sheet.contentView.map(Self.buttons) ?? []).map(\.title)
         #expect(buttons.contains("Save…") && buttons.contains("Don't Save"), "\(buttons)")
@@ -49,7 +49,7 @@ private func tempDir() throws -> String {
         Editor.finalNewlineSetting = { true }
         let c = Editor.untitled()
         defer { c.close() }
-        #expect(c.finalNewline && c.window?.title == "Untitled \(n + 1)", "one past the highest open now")
+        #expect(c.finalNewline && c.window?.title == "Untitled \(n)", "one past the highest open now: \(n) again, both closed")
     }
 
     private static func buttons(_ v: NSView) -> [NSButton] { ((v as? NSButton).map { [$0] } ?? []) + v.subviews.flatMap(buttons) }
@@ -74,7 +74,7 @@ private func tempDir() throws -> String {
         umask(mask)
         #expect(st.st_mode & 0o777 == 0o666 & ~mask)
         #expect(FileManager.default.contents(atPath: dest.path) == Data("#!/bin/sh\necho hi".utf8))
-        #expect(u.url == dest && u.window?.title == "hi.sh" && u.window?.representedURL == dest && u.window?.isDocumentEdited == false)
+        #expect(u.url == dest && u.window?.title == "hi.sh" && u.window?.representedURL == dest && !u.isEdited)
         u.textView.insertText("\n", replacementRange: NSRange(location: (u.textView.string as NSString).length, length: 0))
         #expect(await u.save())
         #expect(FileManager.default.contents(atPath: dest.path) == Data("#!/bin/sh\necho hi\n".utf8))

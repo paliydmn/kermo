@@ -99,7 +99,7 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     defer { if !closed { e.close() } }
     e.textView.insertText("ключ = 1\n", replacementRange: NSRange(location: 0, length: 0))
     #expect(e.window?.isDocumentEdited == true)
-    #expect(e.windowShouldClose(e.window!) == false)
+    #expect(e.closeAsking() == false)
     try await answer(e.window, .alertFirstButtonReturn)   // Save changes? Save
     try await answer(e.window, .alertFirstButtonReturn)   // Save as Windows-1251? Save
     try await waitUntil("closed") { closed }
