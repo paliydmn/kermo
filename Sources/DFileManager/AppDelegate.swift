@@ -214,6 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.updateMenuKeys() }   // a viewer in front: F3 is its key
         }
         if !configProblems.isEmpty { showError(JobErrorMessage(configProblems.joined(separator: "\n"))) }
+        sayCutShortSaves()
         show(pendingOpen)
     }
 
@@ -272,6 +273,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 else { panel.navigate(to: url.deletingLastPathComponent().path, select: url.lastPathComponent) }
             }
         }
+    }
+
+    /// A save written into a file in place that a crash or a power cut stopped midway left the file's text from before
+    /// it in `Editor.keptDir`: said at each launch until the copy is deleted.
+    private func sayCutShortSaves() {
+        let cut = Editor.cutShortSaves()
+        guard !cut.isEmpty else { return }
+        let names = cut.map { "“" + (Editor.keptOriginal($0) as NSString).abbreviatingWithTildeInPath + "”" }.joined(separator: ", ")
+        let a = NSAlert()
+        a.messageText = cut.count == 1 ? "A save was cut short" : "\(cut.count) saves were cut short"
+        a.informativeText = "A save into \(names) didn't finish, so " + (cut.count == 1 ? "that file" : "those files") + " may be cut short. The text from "
+            + "before that save is kept in " + (Editor.keptDir as NSString).abbreviatingWithTildeInPath + ". Delete a copy once you no longer need it."
+        a.addButton(withTitle: "OK")
+        a.addButton(withTitle: "Show in Finder")
+        Self.sheet(a, on: window) { if $0 == 1 { NSWorkspace.shared.activateFileViewerSelecting(cut.map { URL(fileURLWithPath: $0) }) } }
     }
 
     /// Window ▸ Main Window (⌘0) and `fm`: back to the panels from a viewer or editor, or after closing them.

@@ -431,12 +431,17 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
 
     /// "the disk is full": why a draft wasn't written, as a status line says it.
     static func why(_ error: Error) -> String {
-        let ns = error as NSError, posix = ns.domain == NSPOSIXErrorDomain ? ns : ns.userInfo[NSUnderlyingErrorKey] as? NSError
-        switch posix.map({ Int32($0.code) }) {
+        switch posix(error) {
         case ENOSPC?, EDQUOT?: return "the disk is full"
         case EROFS?: return "the disk is read-only"
         case EACCES?, EPERM?: return "no permission to write there"
-        default: return ns.localizedDescription
+        default: return error.localizedDescription
         }
+    }
+
+    /// The errno an error is, or wraps (Foundation's file errors carry it underneath).
+    nonisolated static func posix(_ error: Error) -> Int32? {
+        let ns = error as NSError
+        return (ns.domain == NSPOSIXErrorDomain ? ns : ns.userInfo[NSUnderlyingErrorKey] as? NSError).map { Int32($0.code) }
     }
 }

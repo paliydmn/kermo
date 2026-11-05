@@ -478,15 +478,16 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         case .failed(let why, let protected):
             if protected { offerAdminSave(data, reason: why, force: force) } else { alert("Couldn't save “\(name)”", why) }
             return false
-        case .written(let stamp, let digest):
+        case .written(let stamp, let digest, let note):
             saved(stamp, digest)
             onSaved?(url)
+            if let note { flash(note) }
             return true
         }
     }
 
     enum Written: Sendable {
-        case written(Stamp?, Data)
+        case written(Stamp?, Data, note: String? = nil)   // `note`: said after (written in place without a copy)
         case changed(Stamp)   // someone else wrote it meanwhile: nothing was
         case failed(String, protected: Bool)   // `protected`: the file or its folder isn't ours to write (admin save)
     }
@@ -500,7 +501,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         if let base, let now = changed(path, from: base.stamp, base.digest) { return .changed(now) }
         let fm = FileManager.default
         let dir = (path as NSString).deletingLastPathComponent
-        var st = stat(), entry = stat()
+        var st = stat(), entry = stat(), note: String?
         // Nothing there now (not even a link): a file that appears there meanwhile isn't replaced.
         let exists = stat(path, &st) == 0, vacant = lstat(path, &entry) != 0
         do {
@@ -536,21 +537,101 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
                 FileInfo.syncFolder(dir)   // else after a power cut the folder may name the old file again
             } else {
                 // Not through a symlink, and only the file just checked: in a shared folder its owner could swap it
-                // for a link to one of ours meanwhile. Never emptied first: written over, then cut to length.
+                // for a link to one of ours meanwhile. Its old text kept first (`rewriteInPlace`).
                 hook(path)
-                let fd = Darwin.open(path, O_WRONLY | O_NOFOLLOW)
+                let fd = Darwin.open(path, O_RDWR | O_NOFOLLOW)
                 var now = stat()
                 if fd >= 0, fstat(fd, &now) != 0 || now.st_dev != st.st_dev || now.st_ino != st.st_ino {
                     Darwin.close(fd)
                     throw JobErrorMessage("“\(name)” was replaced while saving — nothing was written.")
                 }
-                try Self.write(data, to: fd, writing: writing)
+                // Read whole first: not a FIFO swapped in (it would never end), nor a file grown past what the editor opens.
+                if fd >= 0, now.st_mode & S_IFMT != S_IFREG || now.st_size > 32 << 20 {
+                    Darwin.close(fd)
+                    throw JobErrorMessage("“\(name)” isn't a text file of up to 32 MB any more — nothing was written.")
+                }
+                note = try Self.rewriteInPlace(data, fd, path: path, writing: writing)
             }
         } catch {
             let fm = FileManager.default
             return .failed(error.localizedDescription, protected: !fm.isWritableFile(atPath: path) || !fm.isWritableFile(atPath: dir))
         }
-        return .written(Stamp(path), sha(data))
+        return .written(Stamp(path), sha(data), note: note)
+    }
+
+    /// Where an in-place save keeps the text a file had until its new one is whole: ours only, out of Spotlight and
+    /// Time Machine. A crash midway leaves the copy here; the next launch names it (`cutShortSaves`).
+    nonisolated static var keptDir: String { Config.path("saves.noindex") }
+
+    /// Writes `data` into the file `fd` is open on (read and write) — a hard-linked file, someone else's: its links and
+    /// owner stay. Its old text goes first into a copy of ours, on the disk itself; then the new text over it, cut to
+    /// length. A failure on the way puts the old text back and says whether it could; the copy goes once the file is
+    /// whole again. Returns why there was no copy (written anyway), or nil. A full disk writes nothing: the write and
+    /// its put-back could stop midway there too.
+    nonisolated static func rewriteInPlace(_ data: Data, _ fd: Int32, path: String, writing: (FileHandle, Data) throws -> Void,
+                                           keep: (Data, String) throws -> String = keepCopy) throws -> String? {
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { Darwin.close(fd) }
+        let old = try FileHandle(fileDescriptor: fd, closeOnDealloc: false).readToEnd() ?? Data()
+        var kept: String?, uncopied: String?
+        do { kept = try keep(old, path) } catch where [ENOSPC, EDQUOT].contains(EditorHost.posix(error)) {
+            throw JobErrorMessage("No room to keep a copy of its old text first (the disk is full), so nothing was written. Free some space, or use Save As… to another disk.")
+        } catch { uncopied = error.localizedDescription }
+        do {
+            lseek(fd, 0, SEEK_SET)
+            try write(data, to: dup(fd), writing: writing)   // never emptied first: written over, then cut to length
+        } catch {
+            lseek(fd, 0, SEEK_SET)   // the old text back the same way, its sync as strict
+            let back = (try? write(old, to: dup(fd), writing: { try $0.write(contentsOf: $1) })) != nil
+            if back, let kept { unlink(kept) }
+            let said = back ? "The file is as it was before this save."
+                : "The file may be cut short. " + (kept.map { "Its text before this save is kept in \(($0 as NSString).abbreviatingWithTildeInPath)." } ?? "Its text before this save couldn't be kept.")
+            throw JobErrorMessage(error.localizedDescription + ". " + said)
+        }
+        if let kept { unlink(kept) }
+        return uncopied.map { "Saved in place without a copy of its old text first (\($0))" }
+    }
+
+    /// `old` (the text of the file at `original`) in a new file of `keptDir`, on the disk itself, the folder too: its
+    /// path. Named by the time and the file's name — no text in it; the file's own path in an attribute, for the launch's
+    /// message.
+    nonisolated static func keepCopy(_ old: Data, of original: String) throws -> String {
+        let dir = keptDir
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        var url = URL(fileURLWithPath: dir), v = URLResourceValues()
+        v.isExcludedFromBackup = true
+        try? url.setResourceValues(v)
+        let f = DateFormatter()
+        (f.locale, f.dateFormat) = (Locale(identifier: "en_US_POSIX"), "yyyy-MM-dd_HH-mm-ss")   // fixed width: `cutShortSaves` reads past it
+        let name = String(decoding: (original as NSString).lastPathComponent.utf8.prefix(200), as: UTF8.self)
+        let path = dir + "/" + f.string(from: Date()) + "-" + UUID().uuidString.prefix(8) + "-" + name
+        let fd = Darwin.open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        do { try write(old, to: fd, writing: { try $0.write(contentsOf: $1) }) } catch {
+            unlink(path)
+            throw error
+        }
+        _ = original.withCString { setxattr(path, keptFrom, $0, strlen($0), 0, XATTR_NOFOLLOW) }
+        FileInfo.syncFolder(dir)   // else after a power cut the copy may not be there
+        return path
+    }
+    nonisolated private static let keptFrom = "com.kermo.original"
+
+    /// A copy's file: the path its attribute says, else the name after "<time>-<id>-".
+    nonisolated static func keptOriginal(_ copy: String) -> String {
+        var buf = [CChar](repeating: 0, count: 4096)
+        let n = getxattr(copy, keptFrom, &buf, buf.count - 1, 0, XATTR_NOFOLLOW)
+        return n > 0 ? String(cString: buf) : String((copy as NSString).lastPathComponent.dropFirst(29))
+    }
+
+    /// Copies of old texts an in-place save cut short left (a crash, the power, a put-back that failed), a minute old
+    /// or more: a save running now in another Kermo has a newer one.
+    static func cutShortSaves() -> [String] {
+        let fm = FileManager.default, dir = keptDir
+        return ((try? fm.contentsOfDirectory(atPath: dir)) ?? []).sorted().filter { name in
+            guard !name.hasPrefix("."), name.count > 29, let a = try? fm.attributesOfItem(atPath: dir + "/" + name) else { return false }   // not Finder's .DS_Store
+            return a[.type] as? FileAttributeType == .typeRegular && (a[.modificationDate] as? Date).map { $0 < Date().addingTimeInterval(-60) } ?? false
+        }.map { dir + "/" + $0 }
     }
 
     /// The same question a server file asks when it changed there (see `upload` in Commands), plus Save As.
@@ -679,7 +760,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         case .failed(let why, _):
             alert("Couldn't save “\(name)”", why)
             return false
-        case .written(let stamp, let digest):
+        case .written(let stamp, let digest, _):
             if server != nil { formerCopy = url }
             url = dest
             (remote, onSaved, noticed) = (nil, nil, nil)
