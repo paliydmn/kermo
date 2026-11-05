@@ -280,11 +280,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func sayCutShortSaves() {
         let cut = Editor.cutShortSaves()
         guard !cut.isEmpty else { return }
-        let names = cut.map { "“" + String(($0 as NSString).lastPathComponent.dropFirst(29)) + "”" }.joined(separator: ", ")   // after "<time>-<id>-"
+        let names = cut.map { "“" + (Editor.keptOriginal($0) as NSString).abbreviatingWithTildeInPath + "”" }.joined(separator: ", ")
         let a = NSAlert()
         a.messageText = cut.count == 1 ? "A save was cut short" : "\(cut.count) saves were cut short"
-        a.informativeText = "Kermo stopped while it wrote into \(names), so it may be cut short. Its text from before that save is kept in "
-            + (Editor.keptDir as NSString).abbreviatingWithTildeInPath + ". Delete the copy once you no longer need it."
+        a.informativeText = "A save into \(names) didn't finish, so " + (cut.count == 1 ? "that file" : "those files") + " may be cut short. The text from "
+            + "before that save is kept in " + (Editor.keptDir as NSString).abbreviatingWithTildeInPath + ". Delete a copy once you no longer need it."
         a.addButton(withTitle: "OK")
         a.addButton(withTitle: "Show in Finder")
         Self.sheet(a, on: window) { if $0 == 1 { NSWorkspace.shared.activateFileViewerSelecting(cut.map { URL(fileURLWithPath: $0) }) } }
