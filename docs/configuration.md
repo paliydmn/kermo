@@ -33,6 +33,7 @@ Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`
 | `bookmarks.json` | Sidebar Favorites | ⌘D, drag and drop |
 | `frecency.json` | Sidebar Frequent and ⌘P | Kermo writes it |
 | `audit.jsonl` | The [production log](safety.md#production-log) | **Server ▸ Production Log** |
+| `saves.noindex/` | A file's old text while the editor [writes into it in place](viewer-editor.md#editor); a copy stays only if that save was cut short | Kermo writes it; delete what's left |
 | `history.noindex/` | [Versions of server files](server-files.md#file-history) | Kermo writes it |
 | `editor.noindex/` | The editor's tabs and [drafts](viewer-editor.md#drafts); `damaged/` keeps what couldn't be read | Kermo writes it |
 | `tools/` | [Your own tools](tools.md#your-own-tools): a JSON file each, with its scripts | By hand; **Reload Config** checks them |

@@ -68,8 +68,8 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`, as the other tes
 }
 
 /// F-02: a hard-linked file is saved in place (a rename would split its links). A shorter text leaves exactly the new
-/// length, the same inode, the link whole. A write that stops midway (a full disk) leaves the file no shorter than the
-/// old text or the new one — before, it was emptied first — and says so, the text still unsaved in the window.
+/// length, the same inode, the link whole, and no copy of the old text behind. A write that stops midway (a full disk)
+/// puts the old text back — the same inode, both names — and says so, the text still unsaved in the window.
 @MainActor @Test func aSaveInPlaceNeverEmptiesTheFile() async throws {
     _ = NSApplication.shared
     let dir = try folder()
@@ -85,6 +85,7 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`, as the other tes
     e.textView.insertText("short\n", replacementRange: NSRange(location: 0, length: (old as NSString).length))
     #expect(await e.save())
     #expect(read(a) == "short\n" && read(b) == "short\n" && FileJob.lstat(a)?.st_ino == inode)
+    #expect(!copies("a.conf").contains { _ in true }, "the copy of the old text goes once the file is whole")
 
     try Data(old.utf8).write(to: URL(fileURLWithPath: a))
     let new = String(repeating: "new text\n", count: 2000)
@@ -94,10 +95,10 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`, as the other tes
         throw POSIXError(.ENOSPC)
     }
     #expect(await !e.save(force: true))
-    let now = try #require(read(a))
-    #expect(now.utf8.count >= min(old.utf8.count, new.utf8.count), "\(now.utf8.count) bytes")
-    #expect(now.hasPrefix(String(new.prefix(4096))) && read(b) == now && FileJob.lstat(a)?.st_ino == inode)
-    #expect(e.window?.attachedSheet != nil, "says it couldn't save")
+    #expect(read(a) == old && read(b) == old && FileJob.lstat(a)?.st_ino == inode, "put back")
+    let said = (e.window?.attachedSheet?.contentView.map(allText) ?? []).joined(separator: " ")
+    #expect(said.contains("No space left on device") && said.contains("The file is as it was before this save."), "\(said)")
+    #expect(copies("a.conf").isEmpty, "put back whole: no copy left")
     #expect(e.window?.isDocumentEdited == true && e.textView.string == new, "the text stays, unsaved")
 }
 
@@ -200,4 +201,45 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`, as the other tes
     let real = (NSHomeDirectory() as NSString).appendingPathComponent(".config/dfilemanager")
     #expect(Config.isTestRun && Config.dir != real && !Config.dir.hasPrefix(real), "\(Config.dir)")
     #expect(Config.path("audit.jsonl").hasPrefix(Config.dir + "/") && Config.dir.hasSuffix("kermo-config-\(getpid())"))
+}
+
+/// The copies of old texts in-place saves keep (`Editor.keptDir`) with this file's name.
+private func copies(_ name: String) -> [String] {
+    ((try? FileManager.default.contentsOfDirectory(atPath: Editor.keptDir)) ?? []).filter { $0.hasSuffix("-" + name) }
+}
+
+@MainActor private func allText(_ v: NSView) -> [String] { ((v as? NSTextField).map { [$0.stringValue] } ?? []) + v.subviews.flatMap(allText) }
+
+/// D-178: with nowhere to keep the old text, an in-place save writes anyway and says so; a copy a crash left — a minute
+/// old or more — is what the next launch names (one being written now isn't), owner-only, out of Time Machine.
+@MainActor @Test func anInPlaceSaveWithoutACopySaysSoAndACrashsCopyIsNamed() async throws {
+    _ = NSApplication.shared
+    let dir = try folder()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let a = dir + "/linked.conf"
+    try Data("old\n".utf8).write(to: URL(fileURLWithPath: a))
+    #expect(link(a, dir + "/twin.conf") == 0)
+    let e = try Editor(URL(fileURLWithPath: a))
+    defer { e.close() }
+    try FileManager.default.createDirectory(atPath: Editor.keptDir, withIntermediateDirectories: true)
+    chmod(Editor.keptDir, 0o500)
+    e.textView.string = "new\n"
+    e.textDidChange(Notification(name: NSText.didChangeNotification))
+    let saved = await e.save()
+    chmod(Editor.keptDir, 0o700)
+    #expect(saved && read(a) == "new\n" && read(dir + "/twin.conf") == "new\n")
+    #expect(e.window?.statusText.hasPrefix("Saved in place without a copy of its old text first") == true, "\(e.window?.statusText ?? "")")
+    e.textView.string = "newer\n"
+    e.textDidChange(Notification(name: NSText.didChangeNotification))
+    #expect(await e.save())
+    #expect(read(dir + "/twin.conf") == "newer\n" && copies("linked.conf").isEmpty, "with a copy again, gone once whole")
+
+    let stale = Editor.keptDir + "/2026-01-01_00-00-00-abcd1234-crashed.conf", fresh = Editor.keptDir + "/2026-01-01_00-00-01-abcd1235-running.conf"
+    for p in [stale, fresh] { FileManager.default.createFile(atPath: p, contents: Data("before\n".utf8), attributes: [.posixPermissions: 0o600]) }
+    defer { unlink(stale); unlink(fresh) }
+    try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-120)], ofItemAtPath: stale)
+    let cut = Editor.cutShortSaves()
+    #expect(cut.contains(stale) && !cut.contains(fresh), "\(cut)")
+    #expect((try FileManager.default.attributesOfItem(atPath: Editor.keptDir)[.posixPermissions] as? Int) == 0o700)
+    #expect((try URL(fileURLWithPath: Editor.keptDir).resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup) == true)
 }

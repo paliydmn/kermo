@@ -52,6 +52,7 @@ Read the log with `grep` or `jq`, or choose **Server ▸ Production Log** (or se
 | Where | What | Protection |
 |---|---|---|
 | `~/.config/dfilemanager/` | Settings, saved servers (no passwords), the production log | Folder `0700`, files `0600` |
+| `~/.config/dfilemanager/saves.noindex/` | A file's text from before an [in-place save](viewer-editor.md#editor), while that save runs; left only when it was cut short | Owner-only, out of Spotlight and Time Machine; each launch names a copy left there |
 | `~/.config/dfilemanager/history.noindex/` | Versions of the server files you saved, `.env` and keys included | Owner-only, out of Spotlight and Time Machine; [turn it off](server-files.md#file-history) |
 | `~/.config/dfilemanager/editor.noindex/` | The editor's tabs (paths, servers, never a password) and the [drafts](viewer-editor.md#drafts) of what isn't saved yet — a secret you typed included, until you save it or Don't Save | Owner-only (folder `0700`, files `0600`), out of Spotlight and Time Machine; not encrypted. Don't Save removes the file, not what an SSD or a snapshot may keep |
 | Login Keychain | "Kermo: host" (ssh password), "Kermo sudo: host" (sudo password) | Keychain; each only if you chose to save it |
