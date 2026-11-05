@@ -566,13 +566,17 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     /// Writes `data` into the file `fd` is open on (read and write) — a hard-linked file, someone else's: its links and
     /// owner stay. Its old text goes first into a copy of ours, on the disk itself; then the new text over it, cut to
     /// length. A failure on the way puts the old text back and says whether it could; the copy goes once the file is
-    /// whole again. Returns why there was no copy (written anyway), or nil.
-    nonisolated static func rewriteInPlace(_ data: Data, _ fd: Int32, path: String, writing: (FileHandle, Data) throws -> Void) throws -> String? {
+    /// whole again. Returns why there was no copy (written anyway), or nil. A full disk writes nothing: the write and
+    /// its put-back could stop midway there too.
+    nonisolated static func rewriteInPlace(_ data: Data, _ fd: Int32, path: String, writing: (FileHandle, Data) throws -> Void,
+                                           keep: (Data, String) throws -> String = keepCopy) throws -> String? {
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         defer { Darwin.close(fd) }
         let old = try FileHandle(fileDescriptor: fd, closeOnDealloc: false).readToEnd() ?? Data()
         var kept: String?, uncopied: String?
-        do { kept = try keepCopy(old, of: path) } catch { uncopied = error.localizedDescription }
+        do { kept = try keep(old, path) } catch where [ENOSPC, EDQUOT].contains(EditorHost.posix(error)) {
+            throw JobErrorMessage("No room to keep a copy of its old text first (the disk is full), so nothing was written. Free some space, or use Save As… to another disk.")
+        } catch { uncopied = error.localizedDescription }
         do {
             lseek(fd, 0, SEEK_SET)
             try write(data, to: dup(fd), writing: writing)   // never emptied first: written over, then cut to length
@@ -591,7 +595,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     /// `old` (the text of the file at `original`) in a new file of `keptDir`, on the disk itself, the folder too: its
     /// path. Named by the time and the file's name — no text in it; the file's own path in an attribute, for the launch's
     /// message.
-    nonisolated private static func keepCopy(_ old: Data, of original: String) throws -> String {
+    nonisolated static func keepCopy(_ old: Data, of original: String) throws -> String {
         let dir = keptDir
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         var url = URL(fileURLWithPath: dir), v = URLResourceValues()

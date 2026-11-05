@@ -64,7 +64,7 @@ Release:
 - Editor: drafts (`editor.noindex`) are owner-only and out of Spotlight and Time Machine; a draft of a server file never uploads, and after a restart a server's file connects only on its ⌘S — Touch ID again for a locked server, production's question again. A locked server's draft isn't shown until it's unlocked.
 - Editor: a file deleted while its draft was kept comes back with its own permissions on ⌘S, not the umask's.
 - Editor: a file made by **Save As** gets no wider permissions than the text came from — a server's `.env` with `rw-------` stays owner-only on this Mac instead of readable by every user (owner-only when the server didn't say). A file you choose to replace keeps its own permissions.
-- Editor: a save written into a file in place (a hard-linked file, someone else's) keeps the file's old text first, in `~/.config/dfilemanager/saves.noindex/`, and puts it back if the write fails. A full disk no longer leaves the file half new, half old; a copy left by a crash midway is named at the next launch.
+- Editor: a save written into a file in place (a hard-linked file, someone else's) keeps the file's old text first, in `~/.config/dfilemanager/saves.noindex/`, and puts it back if the write fails. A full disk no longer leaves the file half new, half old, and one too full for the copy writes nothing; a copy left by a crash midway is named at the next launch.
 
 ## [1.6] - 2026-10-28
 

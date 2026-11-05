@@ -230,7 +230,7 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`, as the other tes
         #expect(kept.count == 1 && kept.first.flatMap { FileManager.default.contents(atPath: $0) } == Data(old.utf8) && read(a) == old, "the old text is kept")
     }
 
-    /// With nowhere to keep the old text, an in-place save writes anyway and says so. A copy a crash left — a minute old
+    /// With nowhere to keep the old text, an in-place save writes anyway and says so — except on a full disk. A copy a crash left — a minute old
     /// or more, a regular file of ours — is what the next launch names, by the file's path (one being written now isn't,
     /// nor Finder's .DS_Store).
     @Test func anInPlaceSaveWithoutACopySaysSoAndACrashsCopyIsNamed() async throws {
@@ -250,6 +250,16 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`, as the other tes
         chmod(Editor.keptDir, 0o700)
         #expect(saved && read(a) == "new\n" && read(dir + "/inplace-twin.conf") == "new\n")
         #expect(e.window?.statusText.hasPrefix("Saved in place without a copy of its old text first") == true, "\(e.window?.statusText ?? "")")
+
+        // No copy for a full disk (Foundation's error, its errno underneath): nothing is written at all.
+        let full = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError, userInfo: [NSUnderlyingErrorKey: POSIXError(.EDQUOT) as NSError])
+        do {
+            _ = try Editor.rewriteInPlace(Data("newer\n".utf8), open(a, O_RDWR), path: a, writing: { try $0.write(contentsOf: $1) }) { _, _ in throw full }
+            Issue.record("written with no room for the copy")
+        } catch {
+            #expect(error.localizedDescription.contains("the disk is full), so nothing was written"), "\(error.localizedDescription)")
+        }
+        #expect(read(a) == "new\n")
 
         let stale = Editor.keptDir + "/2026-01-01_00-00-00-abcd1234-crashed.conf", fresh = Editor.keptDir + "/2026-01-01_00-00-01-abcd1235-running.conf"
         let finder = Editor.keptDir + "/.DS_Store"
