@@ -173,6 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ToolsWindow.restore(self, session.tools ?? [])   // behind the main window, nothing connected for them
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(active.table)
+        EditorHost.restore(Config.path("editor.noindex"), onServer: remoteEditing)   // its tabs and drafts; the window, if it was up
         updatePanelStates()
         updatePrompt()
         Task {   // a locked server's alias saved too must not listen unasked
@@ -292,14 +293,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ArchiveIndex.discardLiveStaging()   // after tar is gone: an extract cut short leaves no hidden copy behind
         ServerCopies.quit()   // the server files' copies on the server go; the others are kept
         TempCopies.remove(TextCopies.dir)
+        Editor.comparisons.forEach(TempCopies.remove)   // Compare's copies of drafts
         SFTP.removeControlDir()   // after the masters and tunnels: their sockets and the askpass script are in it
         Config.flush()   // the session, frecency and the last production lines are on disk before the app goes
     }
 
     /// What quitting would lose — unsaved editors, running copies, SSH sessions, programs in shells: one
-    /// confirmation for all of it (⌘Q and closing the last window).
+    /// confirmation for all of it (⌘Q and closing the last window). Then the editor's drafts go on the disk itself
+    /// before Kermo does (off the main thread: `.terminateLater`, answered on every way out).
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        confirmQuit() ? .terminateNow : .terminateCancel
+        if quitting {   // a second ⌘Q while the drafts are written: the first one goes on, and says so
+            if let h = EditorHost.shared, let a = h.active { h.reveal(a); a.flash("Writing the drafts before Kermo quits…") }
+            return .terminateCancel
+        }
+        guard confirmQuit() else { return .terminateCancel }
+        guard EditorHost.shared?.drafts != nil else { return .terminateNow }
+        quitting = true
+        Task {
+            let go = await finishQuit()
+            quitting = false
+            if !go { quitConfirmed = false }
+            Self.replyToQuit(go)
+        }
+        return .terminateLater
+    }
+    private var quitting = false
+    /// Tests answer for AppKit, which waits for it after `.terminateLater`.
+    static var replyToQuit: @MainActor (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
+
+    /// The editor's last drafts, on the disk itself. One that can't be written asks: Show Editor, Quit Anyway (its
+    /// changes lost) or Cancel — no quiet timeout. False: Kermo stays.
+    func finishQuit() async -> Bool {
+        guard let host = EditorHost.shared else { return true }
+        guard let why = await host.commit(durable: true) else {
+            // A server draft's copy kept after a failed upload: its text is in the draft now, so the launch sweep may take it.
+            for e in host.docs where e.server != nil { e.url.map { TempCopies.unkeep($0.deletingLastPathComponent().path) } }
+            return true
+        }
+        let lost = host.docs.filter { $0.isEdited && $0.draftFailed != nil }
+        guard !lost.isEmpty else { return true }
+        var c = Confirm("Quit Kermo?", action: "Quit Anyway")
+        c.items = lost.map { Confirm.Item(name: "“\($0.name)” — its draft couldn't be saved (\(why)): quitting loses its changes") }
+        (c.others, c.irreversible) = (["Show Editor"], true)
+        switch Self.answering.map({ $0(c.title, c.buttons, c.buttons.count - 1) }) ?? Self.modal(c.alert()) {
+        case 0: return true
+        case 1: host.reveal(lost[0]); return false
+        default: return false
+        }
     }
 
     /// Another window (viewer, editor) keeps the app alive: the main window just hides and sessions go on.
@@ -318,10 +358,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         var lost: [String] = []
         let unsaved = Editor.unsaved
         if !unsaved.isEmpty { lost.append("Unsaved changes: " + unsaved.joined(separator: ", ")) }
-        if ops.pending > 0 {
-            lost.append("\(ops.pending) file operation\(ops.pending == 1 ? "" : "s") running or queued (a copy to a server stops part way)")
+        if let n = ops?.pending, n > 0 {
+            lost.append("\(n) file operation\(n == 1 ? "" : "s") running or queued (a copy to a server stops part way)")
         }
-        if RemoteEdit.uploading > 0 { lost.append("Edited server text still uploading (its local copy is kept)") }
+        if RemoteEdit.uploading > 0 { lost.append("Edited server text still uploading (its text is kept on this Mac)") }
         let notUp = ServerCopies.unsynced.filter { $0.pending == 0 }   // still uploading: said above
         if !notUp.isEmpty { lost.append("Saved in another app, not on the server: " + notUp.map { "“\($0.url.lastPathComponent)” (kept in \($0.dir))" }.joined(separator: ", ")) }
         let editing = ServerCopies.editing
@@ -1301,6 +1341,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if ["file.view", "file.edit", "go.path"].contains(id) { item.title = c?.title ?? item.title }   // a list names them for its rows (below)
         if id == "file.trash" { item.title = (activePanel.map { ($0.remote ?? $0.parked) != nil } ?? false) ? "Delete…" : c?.title ?? item.title }   // no Trash on a server
         if id == "file.copy" { item.title = activePanel?.archive != nil ? "Extract To…" : c?.title ?? item.title }   // F5 in an archive
+        if id.hasPrefix("tab.") || Self.editorTabs.contains(id) {   // the editor window's tabs: its own (D-101: none from another)
+            if editorKey != nil { item.title = c?.title ?? item.title; return true }
+            if Self.editorTabs.contains(id) { return false }
+        }
         if id == "tab.close" {
             let closes = Self.windowToClose(key: NSApp.keyWindow, main: window) != nil
             item.title = closes ? "Close Window" : c?.title ?? item.title
@@ -1317,7 +1361,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// The app's own items, not the panels': from a viewer, an editor or over the terminal too.
     static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "app.support", "app.settings", "app.tools", "app.monitor", "help.docs", "help.issue",
-                                       "editor.new"]
+                                       "editor.new", "editor.show"]
+    /// What works only in the editor window: its tabs, hiding it.
+    static let editorTabs: Set<String> = ["editor.close", "editor.tab.left", "editor.tab.right", "editor.tabs"]
+    /// The editor window, while it's key (its tabs take ⌘T, ⌘W, ⌃Tab).
+    var editorKey: EditorHost? { Self.editor(key: NSApp.keyWindow) }
+    static func editor(key: NSWindow?) -> EditorHost? { (key?.windowController as? EditorHost).flatMap { $0.tabbed ? $0 : nil } }
 
     /// A disabled menu item still takes its key: AppKit says it handled it and runs nothing, so F3 never reached a viewer
     /// (D-101); by the same path ⌘↑ or ⌃B could miss an editor or a text field. A command's item keeps its key only while

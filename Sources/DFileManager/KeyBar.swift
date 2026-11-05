@@ -519,12 +519,89 @@ final class DocFrame: NSView {
     func showKeys() {
         if let w = window { keys.show(Self.rows(w)) }
     }
+
+    /// A line over the text (a restored draft whose file changed or went): the text below it.
+    var banner: NSView? {
+        didSet {
+            if let old = oldValue { scroll.frame.size.height += old.frame.height; old.removeFromSuperview() }
+            guard let b = banner else { return }
+            scroll.frame.size.height -= b.frame.height
+            b.frame = NSRect(x: scroll.frame.minX, y: scroll.frame.maxY, width: scroll.frame.width, height: b.frame.height)
+            b.autoresizingMask = [.width, .minYMargin]
+            addSubview(b)
+        }
+    }
+
+    /// In place of the text, why there's none to show (a parked server's file, a locked server's draft).
+    var cover: NSView? {
+        didSet {
+            oldValue?.removeFromSuperview()
+            scroll.isHidden = cover != nil
+            guard let cover else { return }
+            cover.frame = scroll.frame
+            cover.autoresizingMask = [.width, .height]
+            addSubview(cover)
+        }
+    }
+}
+
+/// A line of words and buttons over a document's text; `cover:` in place of the text, centered, its first button on ↩.
+final class Banner: NSView {
+    init(_ text: String, _ actions: [(String, @MainActor () -> Void)]) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 30))
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.14).cgColor
+        let row = NSStackView(views: [Self.label(text)] + actions.map { Self.button($0) })
+        row.spacing = 8
+        row.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+        row.frame = bounds
+        row.autoresizingMask = [.width, .height]
+        row.setHuggingPriority(.defaultLow, for: .horizontal)
+        addSubview(row)
+    }
+
+    /// The cover's: ↩ presses it, the cover having the keys (a button needs Full Keyboard Access for that).
+    private var button: NSButton?
+
+    init(cover text: String, _ actions: [(String, @MainActor () -> Void)]) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        let buttons = actions.map { Self.button($0) }
+        button = buttons.first
+        button?.keyEquivalent = "\r"
+        let column = NSStackView(views: [Self.label(text)] + buttons)
+        column.orientation = .vertical
+        column.spacing = 12
+        column.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(column)
+        NSLayoutConstraint.activate([column.centerXAnchor.constraint(equalTo: centerXAnchor), column.centerYAnchor.constraint(equalTo: centerYAnchor)])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var acceptsFirstResponder: Bool { button != nil }
+    override func keyDown(with e: NSEvent) {
+        if [36, 76].contains(e.keyCode), let button { button.performClick(nil) } else { super.keyDown(with: e) }   // ↩, ⌤
+    }
+
+    private static func label(_ text: String) -> NSTextField {
+        let l = NSTextField(labelWithString: text.bidiVisible)
+        l.textColor = .secondaryLabelColor
+        l.lineBreakMode = .byTruncatingMiddle
+        l.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return l
+    }
+
+    private static func button(_ a: (String, @MainActor () -> Void)) -> NSButton {
+        let b = ClosureButton(title: a.0) { MainActor.assumeIsolated { a.1() } }
+        b.bezelStyle = .rounded
+        b.controlSize = .small
+        return b
+    }
 }
 
 extension NSWindow {
     /// A document window's status line.
-    var statusText: String { (contentView as? DocFrame)?.text ?? "" }
-    var docFrame: DocFrame? { contentView as? DocFrame }
+    var statusText: String { docFrame?.text ?? "" }
+    var docFrame: DocFrame? { contentView as? DocFrame ?? (windowController as? EditorHost)?.active?.frame }
 
     /// Its line in the Window menu: the title and where it is, so two "app.log" of two servers read apart there (the
     /// menu has no subtitles).

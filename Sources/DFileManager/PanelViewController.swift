@@ -2380,15 +2380,16 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// A tab: `action` on click, `close` on its × (both get the button with `tag` = index). The terminal's tabs use it too.
     /// The current tab: bold title and an accent line under it; the others' titles are dimmed. `dot`: a state mark before the title.
+    /// `italic`: a tab with nothing loaded yet (the editor's parked server file).
     static func tabButton(_ title: String, lead: NSAttributedString? = nil, tint: NSColor? = nil, tip: String, index i: Int, current: Bool,
-                          target: AnyObject, action: Selector, close: Selector, closeTip: String = "Close Tab  ⌘W") -> NSButton {
-        tabButton([(lead, title)], tint: tint, tip: tip, index: i, current: current, target: target, action: action, close: close, closeTip: closeTip)
+                          target: AnyObject, action: Selector, close: Selector, closeTip: String = "Close Tab  ⌘W", italic: Bool = false) -> NSButton {
+        tabButton([(lead, title)], tint: tint, tip: tip, index: i, current: current, target: target, action: action, close: close, closeTip: closeTip, italic: italic)
     }
 
     /// A tab of several terminal panes: their titles side by side, each after its `lead` (its state, its chips). `tint`:
     /// the line's color (production's, root's) instead of the accent.
     static func tabButton(_ parts: [(NSAttributedString?, String)], tint: NSColor? = nil, tip: String, index i: Int, current: Bool,
-                          target: AnyObject, action: Selector, close: Selector, closeTip: String = "Close Tab  ⌘W") -> NSButton {
+                          target: AnyObject, action: Selector, close: Selector, closeTip: String = "Close Tab  ⌘W", italic: Bool = false) -> NSButton {
         let b = NSButton(title: "", target: target, action: action)
         b.setButtonType(.pushOnPushOff)
         b.bezelStyle = .accessoryBarAction
@@ -2398,7 +2399,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         style.alignment = .center
         style.lineBreakMode = .byTruncatingMiddle
         let text = NSMutableAttributedString(string: "     ")   // padding keeps the title clear of the ×
-        let font = current ? NSFont.boldSystemFont(ofSize: size) : NSFont.systemFont(ofSize: size)
+        let plain = current ? NSFont.boldSystemFont(ofSize: size) : NSFont.systemFont(ofSize: size)
+        let font = italic ? NSFontManager.shared.convert(plain, toHaveTrait: .italicFontMask) : plain
         for (n, (lead, title)) in parts.enumerated() {
             if n > 0 { text.append(NSAttributedString(string: "  │  ", attributes: [.foregroundColor: NSColor.tertiaryLabelColor])) }
             if let lead { text.append(lead); text.append(NSAttributedString(string: " ")) }

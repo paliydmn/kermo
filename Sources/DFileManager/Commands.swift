@@ -113,20 +113,25 @@ extension AppDelegate {
         cmd("app.palette", "Search…", ["cmd+shift+p", "f9", "opt+9"], menu: "Go", group: 4, aliases: "palette all commands") { $0.palette() },
 
         // Tabs
-        // While the keys go to the terminal (⌃O) these act on its tabs.
+        // In the editor window these act on its tabs; while the keys go to the terminal (⌃O), on its tabs.
         cmd("tab.new", "New Tab", ["cmd+t"], menu: "View/Tabs", group: 2) { app in
-            if app.terminalActive { app.terminal.newShell(cwd: app.active.path) } else { app.active.newTab() }
+            if app.editorKey != nil { Editor.untitled() } else if app.terminalActive { app.terminal.newShell(cwd: app.active.path) } else { app.active.newTab() }
         },
         cmd("tab.close", "Close Tab", ["cmd+w"], menu: "View/Tabs", group: 2) { app in
-            if let w = AppDelegate.windowToClose(key: NSApp.keyWindow, main: app.window) { w.performClose(nil) }
+            if let h = app.editorKey { h.active?.closeAsking() }
+            else if let w = AppDelegate.windowToClose(key: NSApp.keyWindow, main: app.window) { w.performClose(nil) }
             else if app.terminalActive { app.terminal.close() } else { app.active.closeTab() }
         },
         cmd("tab.next", "Next Tab", ["ctrl+tab", "cmd+shift+]"], menu: "View/Tabs", group: 2) { app in
-            if app.terminalActive { app.terminal.switchTab(by: 1) } else { app.active.switchTab(by: 1) }
+            if let h = app.editorKey { h.switchTab(by: 1) } else if app.terminalActive { app.terminal.switchTab(by: 1) } else { app.active.switchTab(by: 1) }
         },
         cmd("tab.prev", "Previous Tab", ["ctrl+shift+tab", "cmd+shift+["], menu: "View/Tabs", group: 2) { app in
-            if app.terminalActive { app.terminal.switchTab(by: -1) } else { app.active.switchTab(by: -1) }
+            if let h = app.editorKey { h.switchTab(by: -1) } else if app.terminalActive { app.terminal.switchTab(by: -1) } else { app.active.switchTab(by: -1) }
         },
+        // The editor window's own: no keys of their own but Close Editor Window's.
+        cmd("editor.tab.left", "Move Tab Left", [], menu: "View/Tabs", group: 2, aliases: "editor reorder") { $0.editorKey?.moveTab(by: -1) },
+        cmd("editor.tab.right", "Move Tab Right", [], menu: "View/Tabs", group: 2, aliases: "editor reorder") { $0.editorKey?.moveTab(by: 1) },
+        cmd("editor.tabs", "All Tabs…", [], menu: "View/Tabs", group: 2, aliases: "editor list documents") { $0.editorKey?.allTabs() },
         // The terminal's panes (as VS Code's split): while it's up.
         cmd("term.split.right", "Split Terminal Right", ["cmd+\\"], menu: "View/Tabs", group: 3, aliases: "pane side by side") { $0.terminal.split(vertical: true) },
         cmd("term.split.down", "Split Terminal Down", ["cmd+shift+\\"], menu: "View/Tabs", group: 3, aliases: "pane above below") { $0.terminal.split(vertical: false) },
@@ -222,6 +227,9 @@ extension AppDelegate {
         cmd("file.edit", "Edit", ["f4", "opt+4"], menu: "File", group: 1, aliases: "editor") { $0.editFile() },
         // In the built-in editor whatever F4 opens with; nothing on disk till its Save (Shift+F4 New File… makes one).
         cmd("editor.new", "New Editor Document", ["cmd+n"], menu: "File", group: 0, aliases: "untitled new text document notepad scratch") { _ in Editor.untitled() },
+        cmd("editor.show", "Show Editor", [], menu: "File", group: 0, aliases: "editor tabs drafts notepad") { _ in EditorHost.tabs.showEditor() },
+        // Hides it, its tabs kept as drafts (Show Editor brings it back).
+        cmd("editor.close", "Close Editor Window", ["cmd+shift+w"], menu: "File", group: 0, aliases: "hide editor") { $0.editorKey?.hide() },
         cmd("file.copy", "Copy To…", ["f5", "opt+5"], menu: "File", group: 2, short: "Copy") { $0.transferDialog(move: false) },
         cmd("file.move", "Move To…", ["f6", "opt+6"], menu: "File", group: 2, short: "Move") { $0.transferDialog(move: true) },
         cmd("file.rename", "Rename…", ["shift+f6", "shift+opt+6"], menu: "File", group: 2) { $0.renameDialog() },
@@ -1250,7 +1258,7 @@ extension AppDelegate {
     /// The same for a server's file by its path (⌘E on a service: its unit file). `listed`: its size and time as a
     /// panel listed it (another app's saves check against them); none, as downloaded.
     func remoteOpen(_ how: RemoteOpen, _ target: SFTPTarget, _ remotePath: String, listed: (Int64, Double)? = nil, in panel: PanelViewController) {
-        if how == .edit, let e = Editor.editing(target, remotePath) { e.revealed(); return }   // one file, one window: no second copy
+        if how == .edit, let e = Editor.editing(target, remotePath) { e.revealed(); e.connect(); return }   // one file, one tab: no second copy (a parked one opens)
         let name = (remotePath as NSString).lastPathComponent
         let tmp = NSTemporaryDirectory() + "dfm-sftp-" + UUID().uuidString
         mkdir(tmp, 0o700)
@@ -1273,14 +1281,52 @@ extension AppDelegate {
                 ServerCopies.add(.init(local, target, remotePath, listed: listed ?? (opened.size, opened.mtime), baseline: opened, preview: false))
                 Self.openInApp(local)
             case .view: Viewer.show(local, remote: (target, remotePath, max(0, opened.size - (last ?? opened.size)))) { TempCopies.remove(tmp) }
-            case .edit:   // opened meanwhile: that window (`Editor.open`), this copy goes
+            case .edit:   // opened meanwhile: that tab (`Editor.open`), this copy goes
                 let state = RemoteEdit(baseline: opened)
                 let note = Self.rootsOnly(opened, for: target) ? "“\(name)” is root's: saving it needs the panel as root (⌃⌘R)" : nil
-                Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath, state), note: note, onSaved: { [self] saved in
-                    state.save(in: tmp) { await self.upload(saved, to: remotePath, on: target, state) }
-                }, onClose: { state.closed(removing: tmp) })
+                let (onSaved, onClose) = remoteEditing(target, remotePath, state, in: tmp)
+                Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath, state), note: note, onSaved: onSaved, onClose: onClose)
             }
         }
+    }
+
+    /// A parked editor tab's server file (restored from the last launch), downloaded into it — after `ServerLock`, as a
+    /// panel's would be. False if it couldn't be (said).
+    func remoteOpen(into e: Editor, _ target: SFTPTarget, _ remotePath: String) async -> Bool {
+        let tmp = NSTemporaryDirectory() + "dfm-sftp-" + UUID().uuidString, env = SSHAskpass.env
+        mkdir(tmp, 0o700)
+        let local = URL(fileURLWithPath: tmp).appendingPathComponent((remotePath as NSString).lastPathComponent)
+        let panel = panels.first { $0.remote?.target == target } ?? active
+        let r = await panel.busy("Downloading “\(local.lastPathComponent)”…") { flag in
+            try SFTPClient.session(target, env: env, cancel: flag) { try $0.download(remotePath, to: local.path) }
+        }
+        var loaded: Result<Editor.Loaded, Error> = .failure(CancellationError())
+        if case .success = r { loaded = await Blocking.run(.userInitiated) { Result { try Editor.load(local) } } }
+        guard case .success(let attrs) = r, case .success(let text) = loaded else {
+            TempCopies.remove(tmp)
+            if case .failure(let error) = r, !(error is CancellationError) { e.flash(error.localizedDescription) }
+            if case .success = r, case .failure(let error) = loaded { e.flash(error.localizedDescription) }
+            return false
+        }
+        guard Editor.editing(target, remotePath) === e else { TempCopies.remove(tmp); return false }   // its tab closed meanwhile
+        let state = RemoteEdit(baseline: attrs), (onSaved, onClose) = remoteEditing(target, remotePath, state, in: tmp)
+        e.opened(local, text, state: state, onSaved: onSaved, onClose: onClose)
+        return true
+    }
+
+    /// What a server file's editor does on Save and when its tab closes (F4's, a restored draft's): the copy in `tmp`
+    /// goes up after the saves before it; the folder goes after the last upload. A restored draft's copy is made by its
+    /// first Save.
+    func remoteEditing(_ target: SFTPTarget, _ remotePath: String, _ state: RemoteEdit, in tmp: String) -> (onSaved: @MainActor (URL) -> Void, onClose: @MainActor () -> Void) {
+        ({ [self] saved in
+            state.save(in: tmp) {
+                if state.unlockFirst {
+                    guard await ServerLock.authorize(target, "save a file to") else { return self.notSaved(saved, to: target, CancellationError()) }
+                    state.unlockFirst = false
+                }
+                return await self.upload(saved, to: remotePath, on: target, state)
+            }
+        }, { state.closed(removing: tmp) })
     }
 
     /// A server file only root may write — root's, no write bit for group or others — opened by another user: one
@@ -1300,6 +1346,10 @@ extension AppDelegate {
         @MainActor func asks(_ t: SFTPTarget) -> Bool { !prodConfirmed && SavedServer.isProd(t) }
         /// Saves of all editors not yet through (running or waiting): quitting stops them.
         static private(set) var uploading = 0
+        /// This one's: its draft keeps the text meanwhile (a crash mid-upload leaves it ↑, not in a temp copy only).
+        private(set) var sending = 0
+        /// A draft back from the last launch: no connection made for it yet, so its first save asks to unlock a locked server.
+        var unlockFirst = false
         init(baseline: SFTPClient.Attrs) { self.baseline = baseline }
 
         /// A save goes up after the ones before it. Until it's on the server, and no later save waits, the copy is
@@ -1308,9 +1358,10 @@ extension AppDelegate {
             TempCopies.keep(dir)
             saves += 1
             Self.uploading += 1
+            sending += 1
             let previous = upload, n = saves
             upload = Task {
-                defer { Self.uploading -= 1 }
+                defer { Self.uploading -= 1; sending -= 1 }
                 _ = await previous?.value
                 let ok = await send()
                 if ok && saves == n { TempCopies.unkeep(dir) }

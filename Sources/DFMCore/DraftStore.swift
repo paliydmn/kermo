@@ -56,9 +56,13 @@ public struct EditorSession: Codable, Sendable, Equatable {
         public init(stamp: Stamp? = nil, digest: Data? = nil, attrs: SFTPClient.Attrs? = nil) { (self.stamp, self.digest, self.attrs) = (stamp, digest, attrs) }
     }
 
+    /// `mode`: its permissions, which a file deleted meanwhile comes back with (none in a manifest from before it).
     public struct Stamp: Codable, Sendable, Equatable {
         public var dev: Int32, ino: UInt64, size: Int64, sec: Int, nsec: Int
-        public init(dev: Int32, ino: UInt64, size: Int64, sec: Int, nsec: Int) { (self.dev, self.ino, self.size, self.sec, self.nsec) = (dev, ino, size, sec, nsec) }
+        public var mode: UInt16?
+        public init(dev: Int32, ino: UInt64, size: Int64, sec: Int, nsec: Int, mode: UInt16? = nil) {
+            (self.dev, self.ino, self.size, self.sec, self.nsec, self.mode) = (dev, ino, size, sec, nsec, mode)
+        }
     }
 
     /// How the text goes back into bytes. `encoding`: a `String.Encoding` raw value.

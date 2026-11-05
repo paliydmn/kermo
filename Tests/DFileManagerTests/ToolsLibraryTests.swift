@@ -14,11 +14,11 @@ import Testing
 @MainActor private func buttons(_ v: NSView) -> [NSButton] { ((v as? NSButton).map { [$0] } ?? []) + v.subviews.flatMap(buttons) }
 @MainActor private func closeAll() {
     ToolsWindow.main?.window.close()
-    for w in NSApp.windows where w.windowController is Editor { w.close() }
+    for w in NSApp.windows where w.windowController is EditorHost { w.close() }
 }
 /// The pane beside the open tool editor's text.
 @MainActor private func pane(_ name: String) throws -> ToolEditor {
-    let w = try #require(NSApp.windows.first { $0.windowController is Editor && $0.title == name && $0.isVisible }, "\(NSApp.windows.map(\.title))")
+    let w = try #require(NSApp.windows.first { $0.windowController is EditorHost && $0.title == name && $0.isVisible }, "\(NSApp.windows.map(\.title))")
     return try #require(w.docFrame?.subviews.compactMap { $0 as? ToolEditor }.first)
 }
 @MainActor private func choose(_ w: ToolsWindow, _ row: ToolsWindow.Row) throws {

@@ -58,91 +58,6 @@ private func umasked(_ m: mode_t) -> mode_t { let u = umask(0); umask(u); return
     return (try #require(Editor.editing(t, path)), copy)
 }
 
-/// Every way a Save As of a server file can fail before the text is whole in `dest` — the folder read-only, the write
-/// stopping midway, the rename refused, a file appearing there meanwhile — leaves it bound to the server: same copy,
-/// same title, its chips, and the next ⌘S goes up again. The window keeps the text; nothing is left half-written.
-@MainActor @Test func aFailedSaveAsLeavesTheServerFileBound() async throws {
-    _ = NSApplication.shared
-    let dir = try tempDir()
-    defer { chmod(dir + "/ro", 0o755); try? FileManager.default.removeItem(atPath: dir) }
-    let t = SFTPTarget(host: "me@e1-failed.invalid")
-    var uploads = 0
-    let (e, copy) = try await serverEditor(dir, t, "/srv/app/.env") { _ in uploads += 1 }
-    defer { e.close() }
-    e.textView.string = "SECRET=2\n"
-    e.textDidChange(Notification(name: NSText.didChangeNotification))
-    func stillBound(_ why: String) {
-        #expect(e.url == copy && Editor.editing(t, "/srv/app/.env") === e && e.server?.path == "/srv/app/.env", "\(why)")
-        #expect(e.window?.title == ".env" && e.window?.subtitle.contains("e1-failed") == true && e.window?.representedURL == nil, "\(why)")
-        #expect(e.textView.string == "SECRET=2\n" && e.window?.isDocumentEdited == true, "\(why): the text stays, unsaved")
-        #expect(read(copy.path) == "SECRET=1\n", "\(why)")
-        #expect(try! FileManager.default.contentsOfDirectory(atPath: dir).sorted() == ["copy", "ro", "theirs.env"], "\(why): no temp file left")
-    }
-
-    try FileManager.default.createDirectory(atPath: dir + "/ro", withIntermediateDirectories: true)
-    try put("THEIRS=1\n", dir + "/theirs.env")
-    chmod(dir + "/ro", 0o555)
-    #expect(await !e.saveAs(URL(fileURLWithPath: dir + "/ro/.env")))
-    #expect(try await dismissed(e.window).contains("Couldn't save"))
-    stillBound("read-only folder")
-
-    e.writeText = { h, data in   // the disk fills up halfway
-        try h.write(contentsOf: data.prefix(4))
-        throw POSIXError(.ENOSPC)
-    }
-    #expect(await !e.saveAs(URL(fileURLWithPath: dir + "/mine.env")))
-    _ = try await dismissed(e.window)
-    #expect(!FileManager.default.fileExists(atPath: dir + "/mine.env"))
-    #expect(await !e.saveAs(URL(fileURLWithPath: dir + "/theirs.env")), "over a file the panel asked to replace")
-    _ = try await dismissed(e.window)
-    #expect(read(dir + "/theirs.env") == "THEIRS=1\n", "never cut short")
-    stillBound("write stopped midway")
-    e.writeText = { try $0.write(contentsOf: $1) }
-
-    e.willRename = { _ in try? FileManager.default.removeItem(atPath: dir + "/theirs.env"); mkdir(dir + "/theirs.env", 0o755) }   // the rename can't replace a folder
-    #expect(await !e.saveAs(URL(fileURLWithPath: dir + "/theirs.env")))
-    _ = try await dismissed(e.window)
-    rmdir(dir + "/theirs.env")
-    try put("THEIRS=1\n", dir + "/theirs.env")
-    stillBound("rename refused")
-
-    e.willRename = { _ in try? put("APPEARED=1\n", dir + "/mine.env") }   // between the panel and the rename
-    #expect(await !e.saveAs(URL(fileURLWithPath: dir + "/mine.env")))
-    #expect(try await dismissed(e.window).contains("appeared"))
-    #expect(read(dir + "/mine.env") == "APPEARED=1\n", "not written over")
-    try FileManager.default.removeItem(atPath: dir + "/mine.env")
-    e.willRename = { _ in }
-    stillBound("a file appeared")
-
-    #expect(await e.save())
-    try await waitUntil("uploaded") { uploads == 1 }
-    #expect(read(copy.path) == "SECRET=2\n", "⌘S still saves the server's copy and sends it up")
-}
-
-/// Save As of a server file: once written, the editor edits the new local file — no server, no chips, its own title —
-/// with the mode it had there (an `.env` 0600 stays 0600; unknown: owner only), and the next ⌘S writes it, not the copy.
-@MainActor @Test func saveAsOfAServerFileKeepsItsModeAndLeavesTheServer() async throws {
-    _ = NSApplication.shared
-    let dir = try tempDir()
-    defer { try? FileManager.default.removeItem(atPath: dir) }
-    for (i, (there, want)) in [(UInt32?(0o600), mode_t(0o600)), (nil, 0o600), (0o4755, 0o755)].enumerated() {
-        let t = SFTPTarget(host: "me@e1-mode\(i).invalid")
-        let (e, copy) = try await serverEditor(dir + "/\(i)", t, "/srv/app/.env", mode: there)
-        defer { e.close() }
-        e.window?.showChips([.root])   // as a root panel's file shows it
-        #expect(e.window?.titlebarAccessoryViewControllers.count == 1)
-        e.textView.string = "SECRET=3\n"
-        let mine = URL(fileURLWithPath: dir + "/\(i)/mine.env")
-        #expect(await e.saveAs(mine))
-        #expect(e.url == mine && e.server == nil && Editor.editing(t, "/srv/app/.env") == nil)
-        #expect(e.window?.title == "mine.env" && e.window?.representedURL == mine && e.window?.titlebarAccessoryViewControllers.isEmpty == true)
-        #expect(mode(mine.path) == umasked(want), "mode \(String(there ?? 0, radix: 8)) there")
-        e.textView.string = "SECRET=4\n"
-        #expect(await e.save())
-        #expect(read(mine.path) == "SECRET=4\n" && read(copy.path) == "SECRET=1\n")
-    }
-}
-
 /// A local file's Save As: a new file gets the source's mode (a 0600 secret isn't readable by others after it); a file
 /// the panel asked to replace keeps its own mode, as a save keeps it. Through a symlink into its target, the link stays;
 /// a link to nothing, or a folder, isn't written. Save As onto this very file is a save.
@@ -184,26 +99,6 @@ private func umasked(_ m: mode_t) -> mode_t { let u = umask(0); umask(u); return
     #expect(e.url == URL(fileURLWithPath: dir + "/link.conf"), "still the same file")
 }
 
-/// Save As onto a file another editor window has open writes nothing — two windows on one file would each save over
-/// the other — and that window comes forward, saying why.
-@MainActor @Test func saveAsOntoAFileOpenElsewhereWritesNothing() async throws {
-    _ = NSApplication.shared
-    let dir = try tempDir()
-    defer { try? FileManager.default.removeItem(atPath: dir) }
-    try put("a\n", dir + "/a.txt")
-    try put("b\n", dir + "/b.txt")
-    Editor.open(URL(fileURLWithPath: dir + "/b.txt"))
-    try await waitUntil("b open") { Editor.window(for: URL(fileURLWithPath: dir + "/b.txt")) != nil }
-    let other = try #require(Editor.window(for: URL(fileURLWithPath: dir + "/b.txt")))
-    defer { other.close() }
-    let e = try Editor(URL(fileURLWithPath: dir + "/a.txt"))
-    defer { e.close() }
-    e.textView.string = "mine\n"
-    #expect(await !e.saveAs(URL(fileURLWithPath: dir + "/b.txt")))
-    #expect(try await dismissed(other).contains("is open in this window"))
-    #expect(read(dir + "/b.txt") == "b\n" && e.url == URL(fileURLWithPath: dir + "/a.txt"))
-}
-
 /// The encoding question counts for Save As too: Cancel there writes nothing and keeps the file; a file that appeared
 /// at `dest` while it was up isn't written over; Save writes Windows-1251.
 @MainActor @Test func saveAsAsksAboutTheEncoding() async throws {
@@ -229,52 +124,6 @@ private func umasked(_ m: mode_t) -> mode_t { let u = umask(0); umask(u); return
     try FileManager.default.removeItem(atPath: dest.path)
     #expect(await e.saveAs(dest), "answered Save once")
     #expect(FileManager.default.contents(atPath: dest.path) == text && e.url == dest)
-}
-
-/// The file the save panel asked about replacing is checked again right before the write: one changed meanwhile, or
-/// swapped for a link to another file of yours, isn't written over. Answering the encoding question looks again for a
-/// window that opened the destination meanwhile.
-@MainActor @Test func aReplacedFileIsCheckedAgainBeforeTheWrite() async throws {
-    _ = NSApplication.shared
-    let dir = try tempDir()
-    defer { try? FileManager.default.removeItem(atPath: dir) }
-    let cp = dir + "/old.conf"
-    try "# Коментар\n".data(using: .windowsCP1251)!.write(to: URL(fileURLWithPath: cp))
-    func asking(_ dest: String) async throws -> Editor {   // a Windows-1251 file: Save As asks first
-        let e = try Editor(URL(fileURLWithPath: cp))
-        #expect(await !e.saveAs(URL(fileURLWithPath: dest)))
-        try await waitUntil("asked") { e.window?.attachedSheet != nil }
-        return e
-    }
-
-    try put("theirs\n", dir + "/a.conf")
-    let a = try await asking(dir + "/a.conf")
-    defer { a.close() }
-    try put("theirs, newer\n", dir + "/a.conf")
-    try await answer(a.window, .alertFirstButtonReturn)   // Save
-    #expect(try await dismissed(a.window).contains("changed after you chose to replace it"))
-    #expect(read(dir + "/a.conf") == "theirs, newer\n" && a.url == URL(fileURLWithPath: cp))
-
-    try put("mine\n", dir + "/victim")
-    try put("theirs\n", dir + "/b.conf")
-    let b = try await asking(dir + "/b.conf")
-    defer { b.close() }
-    try FileManager.default.removeItem(atPath: dir + "/b.conf")
-    try FileManager.default.createSymbolicLink(atPath: dir + "/b.conf", withDestinationPath: dir + "/victim")
-    try await answer(b.window, .alertFirstButtonReturn)
-    _ = try await dismissed(b.window)
-    #expect(read(dir + "/victim") == "mine\n", "not written through the link swapped in")
-
-    let c = try await asking(dir + "/c.conf")
-    defer { c.close() }
-    try put("c\n", dir + "/c.conf")
-    Editor.open(URL(fileURLWithPath: dir + "/c.conf"))
-    try await waitUntil("c open") { Editor.window(for: URL(fileURLWithPath: dir + "/c.conf")) != nil }
-    let other = try #require(Editor.window(for: URL(fileURLWithPath: dir + "/c.conf")))
-    defer { other.close() }
-    try await answer(c.window, .alertFirstButtonReturn)
-    #expect(try await dismissed(other).contains("is open in this window"))
-    #expect(read(dir + "/c.conf") == "c\n")
 }
 
 /// A file deleted while it's open comes back with its own mode on ⌘S, not the umask's: a 0600 secret stays owner-only.
@@ -354,53 +203,206 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`
         #expect(await !app.upload(copy, to: file, on: .local(), state))
         #expect(asked.count == 1 && asked.first?.contains("changed on") == true, "\(asked)")
         #expect(AppDelegate.answeredInfo.contains(copy.path), "the unsent text is in the copy: \(AppDelegate.answeredInfo)")
-        #expect(e.window?.isDocumentEdited == false && read(mine.path) == "mine\n" && read(file) == "v2 from a deploy\n")
+        #expect(!e.isEdited && read(mine.path) == "mine\n" && read(file) == "v2 from a deploy\n")
     }
 }
 
-/// A question about a document shows its window first: out of the Dock, key, in front — a sheet on a window out of sight
-/// waits unseen, and the upload behind it with it.
-@MainActor @Test func aQuestionShowsItsWindowFirst() async throws {
-    _ = NSApplication.shared
-    let dir = try tempDir()
-    defer { try? FileManager.default.removeItem(atPath: dir) }
-    let url = URL(fileURLWithPath: dir + "/a.conf")
-    try put("a\n", url.path)
-    Editor.open(url)
-    try await waitUntil("opened") { Editor.window(for: url) != nil }
-    let w = try #require(Editor.window(for: url))
-    defer { w.close() }
-    w.miniaturize(nil)
-    try await waitUntil("in the Dock") { w.isMiniaturized }
-    #expect(Editor.asking(about: url) === w)
-    try await waitUntil("back") { !w.isMiniaturized && w.isVisible }
-    w.orderOut(nil)
-    _ = Editor.asking(about: url)
-    #expect(w.isVisible)
-}
+extension EditorWindowTests {   // the editor window: one for the app, its tabs
+    /// Every way a Save As of a server file can fail before the text is whole in `dest` — the folder read-only, the write
+    /// stopping midway, the rename refused, a file appearing there meanwhile — leaves it bound to the server: same copy,
+    /// same title, its chips, and the next ⌘S goes up again. The window keeps the text; nothing is left half-written.
+    @Test func aFailedSaveAsLeavesTheServerFileBound() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { chmod(dir + "/ro", 0o755); try? FileManager.default.removeItem(atPath: dir) }
+        let t = SFTPTarget(host: "me@e1-failed.invalid")
+        var uploads = 0
+        let (e, copy) = try await serverEditor(dir, t, "/srv/app/.env") { _ in uploads += 1 }
+        defer { e.close() }
+        e.textView.string = "SECRET=2\n"
+        e.textDidChange(Notification(name: NSText.didChangeNotification))
+        func stillBound(_ why: String) {
+            #expect(e.url == copy && Editor.editing(t, "/srv/app/.env") === e && e.server?.path == "/srv/app/.env", "\(why)")
+            #expect(e.window?.title == ".env" && e.window?.subtitle.contains("e1-failed") == true && e.window?.representedURL == nil, "\(why)")
+            #expect(e.textView.string == "SECRET=2\n" && e.isEdited, "\(why): the text stays, unsaved")
+            #expect(read(copy.path) == "SECRET=1\n", "\(why)")
+            #expect(try! FileManager.default.contentsOfDirectory(atPath: dir).sorted() == ["copy", "ro", "theirs.env"], "\(why): no temp file left")
+        }
 
-/// F4 on a server's file already open shows that window: one file, one window — the second download's copy goes.
-/// This Mac's file by its path, however it's spelled.
-@MainActor @Test func aServerFileOpensInOneWindow() async throws {
-    _ = NSApplication.shared
-    let dir = try tempDir()
-    defer { try? FileManager.default.removeItem(atPath: dir) }
-    let t = SFTPTarget(host: "me@e1-once.invalid")
-    let (e, _) = try await serverEditor(dir + "/1", t, "/etc/app.conf")
-    defer { e.close() }
-    let again = URL(fileURLWithPath: dir + "/2/app.conf")
-    try FileManager.default.createDirectory(atPath: dir + "/2", withIntermediateDirectories: true)
-    try put("x\n", again.path)
-    var dropped = false
-    Editor.open(again, server: (t, "/etc/app.conf", AppDelegate.RemoteEdit(baseline: .nothing)), onClose: { dropped = true })
-    #expect(dropped && Editor.window(for: again) == nil, "the second copy is let go")
+        try FileManager.default.createDirectory(atPath: dir + "/ro", withIntermediateDirectories: true)
+        try put("THEIRS=1\n", dir + "/theirs.env")
+        chmod(dir + "/ro", 0o555)
+        #expect(await !e.saveAs(URL(fileURLWithPath: dir + "/ro/.env")))
+        #expect(try await dismissed(e.window).contains("Couldn't save"))
+        stillBound("read-only folder")
 
-    let local = URL(fileURLWithPath: dir + "/2/app.conf")
-    Editor.open(local)
-    try await waitUntil("opened") { Editor.window(for: local) != nil }
-    let w = try #require(Editor.window(for: local))
-    defer { w.close() }
-    Editor.open(URL(fileURLWithPath: dir + "/2/../2/app.conf"))
-    try await Task.sleep(for: .milliseconds(200))
-    #expect(NSApp.windows.filter { $0.representedURL?.standardizedFileURL == local.standardizedFileURL }.count == 1, "no second window")
+        e.writeText = { h, data in   // the disk fills up halfway
+            try h.write(contentsOf: data.prefix(4))
+            throw POSIXError(.ENOSPC)
+        }
+        #expect(await !e.saveAs(URL(fileURLWithPath: dir + "/mine.env")))
+        _ = try await dismissed(e.window)
+        #expect(!FileManager.default.fileExists(atPath: dir + "/mine.env"))
+        #expect(await !e.saveAs(URL(fileURLWithPath: dir + "/theirs.env")), "over a file the panel asked to replace")
+        _ = try await dismissed(e.window)
+        #expect(read(dir + "/theirs.env") == "THEIRS=1\n", "never cut short")
+        stillBound("write stopped midway")
+        e.writeText = { try $0.write(contentsOf: $1) }
+
+        e.willRename = { _ in try? FileManager.default.removeItem(atPath: dir + "/theirs.env"); mkdir(dir + "/theirs.env", 0o755) }   // the rename can't replace a folder
+        #expect(await !e.saveAs(URL(fileURLWithPath: dir + "/theirs.env")))
+        _ = try await dismissed(e.window)
+        rmdir(dir + "/theirs.env")
+        try put("THEIRS=1\n", dir + "/theirs.env")
+        stillBound("rename refused")
+
+        e.willRename = { _ in try? put("APPEARED=1\n", dir + "/mine.env") }   // between the panel and the rename
+        #expect(await !e.saveAs(URL(fileURLWithPath: dir + "/mine.env")))
+        #expect(try await dismissed(e.window).contains("appeared"))
+        #expect(read(dir + "/mine.env") == "APPEARED=1\n", "not written over")
+        try FileManager.default.removeItem(atPath: dir + "/mine.env")
+        e.willRename = { _ in }
+        stillBound("a file appeared")
+
+        #expect(await e.save())
+        try await waitUntil("uploaded") { uploads == 1 }
+        #expect(read(copy.path) == "SECRET=2\n", "⌘S still saves the server's copy and sends it up")
+    }
+
+    /// Save As of a server file: once written, the editor edits the new local file — no server, no chips, its own title —
+    /// with the mode it had there (an `.env` 0600 stays 0600; unknown: owner only), and the next ⌘S writes it, not the copy.
+    @Test func saveAsOfAServerFileKeepsItsModeAndLeavesTheServer() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        for (i, (there, want)) in [(UInt32?(0o600), mode_t(0o600)), (nil, 0o600), (0o4755, 0o755)].enumerated() {
+            let t = SFTPTarget(host: "me@e1-mode\(i).invalid")
+            let (e, copy) = try await serverEditor(dir + "/\(i)", t, "/srv/app/.env", mode: there)
+            defer { e.close() }
+            e.chips = [.root]   // as a root panel's file shows it
+            #expect(e.window?.titlebarAccessoryViewControllers.count == 1)
+            e.textView.string = "SECRET=3\n"
+            let mine = URL(fileURLWithPath: dir + "/\(i)/mine.env")
+            #expect(await e.saveAs(mine))
+            #expect(e.url == mine && e.server == nil && Editor.editing(t, "/srv/app/.env") == nil)
+            #expect(e.window?.title == "mine.env" && e.window?.representedURL == mine && e.window?.titlebarAccessoryViewControllers.isEmpty == true)
+            #expect(mode(mine.path) == umasked(want), "mode \(String(there ?? 0, radix: 8)) there")
+            e.textView.string = "SECRET=4\n"
+            #expect(await e.save())
+            #expect(read(mine.path) == "SECRET=4\n" && read(copy.path) == "SECRET=1\n")
+        }
+    }
+
+    /// Save As onto a file another editor window has open writes nothing — two windows on one file would each save over
+    /// the other — and that window comes forward, saying why.
+    @Test func saveAsOntoAFileOpenElsewhereWritesNothing() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        try put("a\n", dir + "/a.txt")
+        try put("b\n", dir + "/b.txt")
+        Editor.open(URL(fileURLWithPath: dir + "/b.txt"))
+        try await waitUntil("b open") { Editor.window(for: URL(fileURLWithPath: dir + "/b.txt")) != nil }
+        let other = try #require(Editor.window(for: URL(fileURLWithPath: dir + "/b.txt")))
+        defer { editorDoc(URL(fileURLWithPath: dir + "/b.txt"))?.close() }
+        let e = try Editor(URL(fileURLWithPath: dir + "/a.txt"))
+        defer { e.close() }
+        e.textView.string = "mine\n"
+        #expect(await !e.saveAs(URL(fileURLWithPath: dir + "/b.txt")))
+        #expect(try await dismissed(other).contains("is open in this window"))
+        #expect(read(dir + "/b.txt") == "b\n" && e.url == URL(fileURLWithPath: dir + "/a.txt"))
+    }
+
+    /// The file the save panel asked about replacing is checked again right before the write: one changed meanwhile, or
+    /// swapped for a link to another file of yours, isn't written over. Answering the encoding question looks again for a
+    /// window that opened the destination meanwhile.
+    @Test func aReplacedFileIsCheckedAgainBeforeTheWrite() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let cp = dir + "/old.conf"
+        try "# Коментар\n".data(using: .windowsCP1251)!.write(to: URL(fileURLWithPath: cp))
+        func asking(_ dest: String) async throws -> Editor {   // a Windows-1251 file: Save As asks first
+            let e = try Editor(URL(fileURLWithPath: cp))
+            #expect(await !e.saveAs(URL(fileURLWithPath: dest)))
+            try await waitUntil("asked") { e.window?.attachedSheet != nil }
+            return e
+        }
+
+        try put("theirs\n", dir + "/a.conf")
+        let a = try await asking(dir + "/a.conf")
+        defer { a.close() }
+        try put("theirs, newer\n", dir + "/a.conf")
+        try await answer(a.window, .alertFirstButtonReturn)   // Save
+        #expect(try await dismissed(a.window).contains("changed after you chose to replace it"))
+        #expect(read(dir + "/a.conf") == "theirs, newer\n" && a.url == URL(fileURLWithPath: cp))
+
+        try put("mine\n", dir + "/victim")
+        try put("theirs\n", dir + "/b.conf")
+        let b = try await asking(dir + "/b.conf")
+        defer { b.close() }
+        try FileManager.default.removeItem(atPath: dir + "/b.conf")
+        try FileManager.default.createSymbolicLink(atPath: dir + "/b.conf", withDestinationPath: dir + "/victim")
+        try await answer(b.window, .alertFirstButtonReturn)
+        _ = try await dismissed(b.window)
+        #expect(read(dir + "/victim") == "mine\n", "not written through the link swapped in")
+
+        let c = try await asking(dir + "/c.conf")
+        defer { c.close() }
+        try put("c\n", dir + "/c.conf")
+        Editor.open(URL(fileURLWithPath: dir + "/c.conf"))
+        try await waitUntil("c open") { Editor.window(for: URL(fileURLWithPath: dir + "/c.conf")) != nil }
+        let other = try #require(Editor.window(for: URL(fileURLWithPath: dir + "/c.conf")))
+        defer { editorDoc(URL(fileURLWithPath: dir + "/c.conf"))?.close() }
+        try await answer(c.window, .alertFirstButtonReturn)
+        #expect(try await dismissed(other).contains("is open in this window"))
+        #expect(read(dir + "/c.conf") == "c\n")
+    }
+
+    /// A question about a document shows its window first: out of the Dock, key, in front — a sheet on a window out of sight
+    /// waits unseen, and the upload behind it with it.
+    @Test func aQuestionShowsItsWindowFirst() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let url = URL(fileURLWithPath: dir + "/a.conf")
+        try put("a\n", url.path)
+        Editor.open(url)
+        try await waitUntil("opened") { Editor.window(for: url) != nil }
+        let w = try #require(Editor.window(for: url))
+        defer { editorDoc(url)?.close() }
+        w.miniaturize(nil)
+        try await waitUntil("in the Dock") { w.isMiniaturized }
+        #expect(Editor.asking(about: url) === w)
+        try await waitUntil("back") { !w.isMiniaturized && w.isVisible }
+        w.orderOut(nil)
+        _ = Editor.asking(about: url)
+        #expect(w.isVisible)
+    }
+
+    /// F4 on a server's file already open shows that window: one file, one window — the second download's copy goes.
+    /// This Mac's file by its path, however it's spelled.
+    @Test func aServerFileOpensInOneWindow() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let t = SFTPTarget(host: "me@e1-once.invalid")
+        let (e, _) = try await serverEditor(dir + "/1", t, "/etc/app.conf")
+        defer { e.close() }
+        let again = URL(fileURLWithPath: dir + "/2/app.conf")
+        try FileManager.default.createDirectory(atPath: dir + "/2", withIntermediateDirectories: true)
+        try put("x\n", again.path)
+        var dropped = false
+        Editor.open(again, server: (t, "/etc/app.conf", AppDelegate.RemoteEdit(baseline: .nothing)), onClose: { dropped = true })
+        #expect(dropped && Editor.window(for: again) == nil, "the second copy is let go")
+
+        let local = URL(fileURLWithPath: dir + "/2/app.conf")
+        Editor.open(local)
+        try await waitUntil("opened") { Editor.window(for: local) != nil }
+        _ = try #require(Editor.window(for: local))
+        defer { editorDoc(local)?.close() }
+        Editor.open(URL(fileURLWithPath: dir + "/2/../2/app.conf"))
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(EditorHost.tabs.docs.filter { $0.url?.standardizedFileURL == local.standardizedFileURL }.count == 1, "no second tab")
+    }
 }

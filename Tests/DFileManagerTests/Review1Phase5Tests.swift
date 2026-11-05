@@ -147,8 +147,8 @@ private func sourceLines() throws -> [(file: String, n: Int, text: String)] {
     }
     #expect(found.isEmpty, "\(found.joined(separator: "\n"))")
     let modal = try sourceLines().filter { $0.text.contains("AppDelegate.modal(") || $0.text.contains("Self.modal(") }.map { "\($0.file)" }
-    #expect(Set(modal) == ["AppDelegate.swift", "Editor.swift", "EmbeddedTerminal.swift", "PanelViewController.swift"],
-            "Quit; an editor that failed to open, a terminal question, Disconnect SFTP and Paste — each only with no window")
+    #expect(Set(modal) == ["AppDelegate.swift", "Editor.swift", "EditorHost.swift", "EmbeddedTerminal.swift", "PanelViewController.swift"],
+            "Quit; an editor that failed to open, the editor's session unreadable at launch, a terminal question, Disconnect SFTP and Paste — each only with no window")
 }
 
 /// R-55: a taken name — two cards with the panel's sizes and dates, "Newer" on the newer by date; Replace, Skip, Keep
