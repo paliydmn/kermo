@@ -211,8 +211,9 @@ final class GlobalKeyRecorder: NSObject {
     }
 
     @objc private func switched() {
+        let on = toggle.state == .on   // before `stop`, whose refresh sets the switch back
         stop(resuming: false)   // switched while recording: no key there was to put back first
-        GlobalKey.use(toggle.state == .on ? GlobalKey.saved(defaults) ?? GlobalKey.proposed : nil, app, defaults)
+        GlobalKey.use(on ? GlobalKey.saved(defaults) ?? GlobalKey.proposed : nil, app, defaults)
         refresh()
     }
 

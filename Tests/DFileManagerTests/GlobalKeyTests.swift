@@ -154,6 +154,11 @@ extension EditorWindowTests {
         r.startRecording()
         r.pressed(Shortcut("backspace")!)
         #expect(o.registered == nil && r.toggle.state == .off && o.defaults.object(forKey: "editorHotKey") == nil)
+        GlobalKey.use(odd, app, o.defaults)
+        r.startRecording()
+        r.toggle.state = .off   // flipped while it waits for a key
+        (r.toggle.target as? NSObject)?.perform(r.toggle.action)
+        #expect(o.registered == nil && !r.recording && GlobalKey.current == nil && r.toggle.state == .off)
         r.toggle.state = .on
         (r.toggle.target as? NSObject)?.perform(r.toggle.action)
         #expect(o.registered == GlobalKey.proposed && GlobalKey.proposed.display == "⌃⌘E")
@@ -183,6 +188,9 @@ extension EditorWindowTests {
         keys.reset(connect.id)
         #expect(keys.said == "⌃⌘K is Kermo's New editor document from any app: pick another or change that one in Settings ▸ General.")
         #expect(try AppDelegate.readKeymap()[connect.id] == [odd2.spec])
+        app.writeKeymap([:])   // its entry deleted by hand: Reload Config says so
+        #expect(app.configProblems.contains("keymap.json: \(connect.id): ⌃⌘K is Kermo's New editor document from any app: pick another or change that one in Settings ▸ General."),
+                "\(app.configProblems)")
         GlobalKey.use(nil, app, o.defaults)
         app.writeKeymap([:])
     }
@@ -248,7 +256,7 @@ extension EditorWindowTests {
     }
 
     /// With the shortcut on, closing the main window hides it — unasked, the quit question not answered for nothing —
-    /// and the last window closed leaves Kermo in the Dock; ⌘Q still asks. Off: as before. Nothing watched: no menu bar.
+    /// and the last window closed leaves Kermo in the Dock; ⌘Q still asks. Off: as before.
     @Test func theGlobalKeyKeepsKermoWithNoWindows() throws {
         _ = NSApplication.shared
         noEditor()

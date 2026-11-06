@@ -448,7 +448,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    private var configProblems: [String] = []
+    private(set) var configProblems: [String] = []
 
     /// Where keymap.json is (tests: a folder of their own).
     static var keymapDir = Config.dir
@@ -506,6 +506,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         updateMenuKeys(menu)
         let fixed = Self.fixedKeys(menu)
         problems += overrides.flatMap { Self.keymapProblems($0.id, $0.keys, was: $0.was, fixed: fixed) }
+        if let g = GlobalKey.current, let c = keymap[g], !overrides.contains(where: { $0.id == c.id }) {   // its own key back (an entry deleted)
+            problems += GlobalKey.clash([g]).map { ["keymap.json: \(c.id): " + $0] } ?? []
+        }
         configProblems = Config.unreadable + problems   // the state files' once, at launch
         Config.unreadable = []
         if reportProblems {
@@ -1876,6 +1879,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if let w { return w }
         guard !window.isVisible else { return window }
         if NSApp.isActive { bringBack(window) } else {
+            if NSApp.isHidden { NSApp.unhideWithoutActivation() }   // ⌘H: else nothing of Kermo shows
             Self.activation(.regular, nil)
             if window.isMiniaturized { window.deminiaturize(nil) }
             window.orderFront(nil)
