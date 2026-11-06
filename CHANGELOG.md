@@ -54,6 +54,7 @@ Release:
 - Tools: Server Info's report and header said “command not found” on a server without `hostname` or `uptime` (a minimal image); the host's name now comes from `uname -n`, and a missing `uptime` is said as such.
 - Editor: **Save As** of a server's file no longer detaches it from the server when the write fails — the next ⌘S went only to this Mac — nor skips the encoding question, nor offers an administrator save into the new folder. A save still going up when Save As makes it a local file asks in its window, not on the main window behind it.
 - Editor: a question about a document (changed on disk, the encoding, saving, an upload's) brings its window out of the Dock and to the front first; a sheet on a hidden window waited unseen. F4 on a server file already open shows that window instead of a second copy.
+- `fm` passes nothing on to `open` as an option: `fm --new` used to start a second Kermo; an argument starting with `-` now gets the usage line.
 - A question asked on the main window while it was closed or in the Dock — an upload's from an editor tab closed meanwhile — waited unseen, and the upload with it; the main window now comes back with it.
 
 ### Changed
