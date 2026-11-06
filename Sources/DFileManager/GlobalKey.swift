@@ -18,11 +18,11 @@ enum GlobalKey {
     /// Tests: Carbon's register and unregister — a test registers for real only an odd key, never the user's.
     nonisolated(unsafe) static var system: (register: @MainActor (Shortcut) -> OSStatus, unregister: @MainActor () -> Void) = (carbonRegister, carbonUnregister)
 
-    /// At launch, before the keymap (its reverse check reads `current`): the key saved, if any. Taken by another copy
-    /// of Kermo, it's off till set again (said in Settings).
-    static func start(_ defaults: UserDefaults = .standard) {
+    /// At launch, after the keymap: the key saved, if any, checked as Record… checks it (a `defaults write`, a new
+    /// Kermo whose command took it). Refused, or taken by another Kermo: off till set again, said in Settings.
+    static func start(_ app: AppDelegate, _ defaults: UserDefaults = .standard) {
         guard let k = saved(defaults) else { return }
-        if let why = unusable(k) { refused = why } else { take(k) }
+        if let why = unusable(k) ?? taken(k, app) { refused = why } else { take(k) }
     }
 
     /// The switch, Record… or ⌫: what's wrong before macOS is asked, else registered and saved. A refusal keeps the
@@ -42,8 +42,8 @@ enum GlobalKey {
         }
         let old = current
         guard take(k) else {
-            let why = refused
-            if let old { take(old) }   // the one before back
+            var why = refused ?? ""
+            if let old, !take(old) { why += " \(old.display), the one before, couldn't be taken back: it's off." }   // grabbed during Record…
             refused = why
             return why
         }
@@ -75,6 +75,11 @@ enum GlobalKey {
         return k.takenByMacOS.map { "\(k.display) can't be used: macOS takes it first (\($0))." }
     }
 
+    /// The other way round: a command given the shortcut (Keys, keymap.json) never gets it — the hot key takes it first.
+    static func clash(_ keys: [Shortcut]) -> String? {
+        current.flatMap { g in keys.contains(g) ? "\(g.display) is Kermo's New editor document from any app: pick another or change that one in Settings ▸ General." : nil }
+    }
+
     /// Kermo's own: a command's key (Keys can move it), or a menu item's.
     static func taken(_ k: Shortcut, _ app: AppDelegate) -> String? {
         if let c = app.keymap[k] { return "\(k.display) is Kermo's \(c.title): pick another or change that one in Keys." }
@@ -87,12 +92,13 @@ enum GlobalKey {
     private static var handler: EventHandlerRef?
 
     private static func carbonRegister(_ k: Shortcut) -> OSStatus {
-        if handler == nil {
+        if handler == nil {   // else a key registered with nothing to answer it
             var press = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-            InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
+            let status = InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
                 MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.editorFromOutside(new: true) }
                 return noErr
             }, 1, &press, nil, &handler)
+            guard status == noErr else { return status }
         }
         let flags = k.flags
         let mods = [(NSEvent.ModifierFlags.command, cmdKey), (.shift, shiftKey), (.option, optionKey), (.control, controlKey)]
@@ -120,20 +126,20 @@ extension AppDelegate {
     /// Dock's Show Editor (not `new`): the editor window in front, Kermo active, the text in focus. `new` makes an
     /// Untitled unless the tab shown is one with nothing in it yet (a page opening kermo://new again and again adds no
     /// tabs, a second press while the window comes up neither). The main window stays as it was.
-    /// Nothing new while Kermo quits (the last drafts are being written: a tab made now would be lost), nor under a
-    /// question (app-modal, or a sheet on the editor): Kermo comes forward with it.
+    /// Nothing new under a question (app-modal — Quit's too —, or a sheet on the editor): Kermo comes forward with it;
+    /// nor while Kermo quits (the last drafts are being written: a tab made now would be lost).
     func editorFromOutside(new: Bool) {
+        if let asking = NSApp.modalWindow ?? EditorHost.shared?.window.flatMap({ $0.attachedSheet != nil ? $0 : nil }) { return bringBack(asking) }
         if quitting {
             if let h = EditorHost.shared, h.window?.isVisible == true { h.active?.flash("Writing the drafts before Kermo quits…") }
             return
         }
-        if let asking = NSApp.modalWindow ?? EditorHost.shared?.window.flatMap({ $0.attachedSheet != nil ? $0 : nil }) { return bringBack(asking) }
         let h = EditorHost.tabs
-        if let a = h.active, !new || a.url == nil && !a.isEdited && a.textView.string.isEmpty {
-            h.reveal(a)
-            h.window?.makeFirstResponder(a.focus)
-        } else {
+        if new, !(h.active.map { $0.url == nil && !$0.isEdited && $0.textView.string.isEmpty } ?? false) {
             Editor.untitled()
+        } else {
+            h.showEditor()
+            if let a = h.active { h.window?.makeFirstResponder(a.focus) }   // out of the find bar
         }
         h.window.map(bringBack)
     }
@@ -205,6 +211,7 @@ final class GlobalKeyRecorder: NSObject {
     }
 
     @objc private func switched() {
+        stop(resuming: false)   // switched while recording: no key there was to put back first
         GlobalKey.use(toggle.state == .on ? GlobalKey.saved(defaults) ?? GlobalKey.proposed : nil, app, defaults)
         refresh()
     }

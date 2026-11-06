@@ -90,8 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false   // AppKit's Show Tab Bar in View read as Kermo's tabs (D-125)
-        GlobalKey.start()
         applyConfig(reportProblems: false)
+        GlobalKey.start(self)
         SFTP.password = { SSHPasswords.get($0) }
         SFTP.hasPassword = { SSHPasswords.has($0) }
         SFTP.sudoPassword = { SudoPasswords.password($0, wrong: $1) }
@@ -519,6 +519,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Search Files in a panel, so taking them from those two doesn't move them either.
     static func keymapProblems(_ id: String, _ keys: [Shortcut], was: [Shortcut], fixed: [Shortcut: String]) -> [String] {
         keys.compactMap { k in k.takenByMacOS.map { "keymap.json: \(id): \(k.display) never arrives — macOS takes it first (\($0))" } }
+            + (GlobalKey.clash(keys).map { ["keymap.json: \(id): " + $0] } ?? [])
             + fixed.filter { keys.contains($0.key) != was.contains($0.key) }.map { "keymap.json: \(id): \($0.key.display) stays \($0.value)" }.sorted()
     }
 
@@ -533,7 +534,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 out[k] = "\(m.title) ▸ \(it.title)'s" + (it.action.flatMap { inPanel[$0] }.map { ", which in a panel does \($0)" } ?? "")
             }
         }
-        if let g = GlobalKey.current { out[g] = "Settings ▸ General's New editor document from any app" }   // the hot key takes it before any menu
         return out
     }
 
@@ -1864,15 +1864,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// `default`: the button ↩ answers (else the first). Esc still answers Cancel when ↩ took its key.
     func choose(_ message: String, info: String, _ buttons: [String], default: Int? = nil, on sheetWindow: NSWindow? = nil) async -> Int {
         if let answer = Self.answering { Self.answeredInfo = info; return answer(message, buttons, `default`) }
+        let on = sheetHost(sheetWindow)
         if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }   // asked by a save in another app: the Dock icon bounces
-        return await Self.sheet(Self.alert(message, info: info, buttons, default: `default`), on: sheetHost(sheetWindow))
+        return await Self.sheet(Self.alert(message, info: info, buttons, default: `default`), on: on)
     }
 
-    /// Where a sheet goes: `w`, else the main window — brought back first if it's out of sight (closed, in the Dock,
-    /// Kermo in the menu bar alone): a sheet there would wait unseen, and an upload behind it (D-179).
+    /// Where a sheet goes: `w`, else the main window — back first if it's out of sight (closed, in the Dock, Kermo in
+    /// the menu bar alone): a sheet there would wait unseen, and an upload behind it (D-179). Asked while another app is
+    /// in front (a save there): shown, and the Dock icon back to bounce, but not in front — keys typed there stay there.
     private func sheetHost(_ w: NSWindow?) -> NSWindow {
         if let w { return w }
-        if !window.isVisible { bringBack(window) }
+        guard !window.isVisible else { return window }
+        if NSApp.isActive { bringBack(window) } else {
+            Self.activation(.regular, nil)
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.orderFront(nil)
+        }
         return window
     }
 
@@ -1951,8 +1958,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             Self.answeredInfo = [c.runs, c.command, c.note].compactMap { $0 }.joined(separator: "\n")
             return answer(c.title, c.buttons, c.safe ? c.buttons.count - 1 : nil)
         }
+        let on = sheetHost(sheetWindow)
         if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }
-        return await Self.sheet(c.alert(), on: sheetHost(sheetWindow))
+        return await Self.sheet(c.alert(), on: on)
     }
 
     /// On `sheetWindow` (an editor's, about its document), else the main window.

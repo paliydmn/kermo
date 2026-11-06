@@ -207,6 +207,7 @@ extension AppDelegate {
         let bounce = NSApp.isActive && NSApp.activationPolicy() != .regular
         NSApp.setActivationPolicy(policy)
         guard let w else { return }
+        if w.isMiniaturized { w.deminiaturize(nil) }
         w.makeKeyAndOrderFront(nil)
         guard bounce else { return NSApp.activate() }
         NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first?.activate()

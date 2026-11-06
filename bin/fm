@@ -5,8 +5,8 @@
 if [ $# -eq 1 ] && [ "$1" = --new ]; then
     exec open -b com.dmn.dfilemanager kermo://new   # this fixed URL only: nothing of yours goes with it
 fi
-case "$1" in
---*) echo "usage: fm [path [path2]] | fm --new" >&2; exit 2 ;;
-esac
+for a; do
+    case "$a" in -*) echo "usage: fm [path [path2]] | fm --new" >&2; exit 2 ;; esac   # never one of open's options (-n: a second Kermo)
+done
 [ $# -eq 0 ] && set -- .
 exec open -b com.dmn.dfilemanager "$@"

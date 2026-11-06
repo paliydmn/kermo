@@ -184,7 +184,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     private let defaults: UserDefaults
     private var refreshers: [() -> Void] = []   // controls re-read their keys (⇧⌘. may have changed one meanwhile)
     private var actions: [ClosureTarget] = []
-    private(set) var globalKey: GlobalKeyRecorder?
+    private var globalKey: GlobalKeyRecorder?
 
     /// Something a row's note says changed meanwhile (`SettingsRow.status`).
     static func refreshShown() { shared?.refresh() }
@@ -221,7 +221,10 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
         window.autorecalculatesKeyViewLoop = true
         window.delegate = self
         window.center()
-        tabs.selected = { [unowned self] in refresh() }
+        tabs.selected = { [unowned self] in
+            globalKey?.stop()   // Record… is General's: keys typed on another tab are theirs
+            refresh()
+        }
     }
 
     final class Tabs: NSTabViewController {
@@ -306,18 +309,18 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             note.textColor = .secondaryLabelColor
             note.preferredMaxLayoutWidth = 330
             left.append(note)
-            if case .globalKey = r.control {   // what went wrong, in red under the note
-                let g = GlobalKeyRecorder(app: app, defaults: defaults)
-                globalKey = g
-                refreshers.append { g.refresh() }
-                left.append(g.error)
-            }
             if let status = r.status {
                 refreshers.append { [unowned self, weak note] in
                     let app = app   // the window may be gone by the answer
                     Task { let said = await status(app); note?.stringValue = said.isEmpty ? r.note : said }   // nothing to say: the row's own note
                 }
             }
+        }
+        if case .globalKey = r.control {   // what went wrong, in red under the note
+            let g = GlobalKeyRecorder(app: app, defaults: defaults)
+            globalKey = g
+            refreshers.append { g.refresh() }
+            left.append(g.error)
         }
         let text = NSStackView(views: left)
         text.orientation = .vertical

@@ -185,6 +185,7 @@ final class KeysPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSear
     /// One command back to its own keys.
     func reset(_ id: String) {
         guard file[id] != nil else { return }
+        if let why = GlobalKey.clash(defaults[id] ?? []) { return say(why) }
         file[id] = nil
         app.writeKeymap(file)
         reload()
@@ -195,6 +196,7 @@ final class KeysPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSear
     /// Every entry goes, after a question whose ↩ is Cancel (it can't be undone).
     func resetAll() async {
         guard !file.isEmpty else { return say("Every command has Kermo's keys already.") }
+        if let why = GlobalKey.clash(file.keys.flatMap { defaults[$0] ?? [] }) { return say(why) }
         var c = Confirm("Reset all shortcuts?", action: "Reset All")
         c.irreversible = true
         c.note = "keymap.json loses its \(file.count) \(file.count == 1 ? "entry" : "entries"): every command gets Kermo's keys back."

@@ -95,7 +95,7 @@ Set an option in [Settings](#settings), or with `defaults write com.dmn.dfileman
 | `terminalRightClickPaste` | `-bool` | `true` | A right-click in the terminal pastes, as in PuTTY (⇧-right-click in mc, htop and the like); `false`: it doesn't |
 | `terminalBundleID` | bundle id | `com.apple.Terminal` | App used by ⌥⌘T and ⌘↩, for example `com.googlecode.iterm2` |
 | `editorBundleID` | bundle id | built-in editor | External editor used instead of the [built-in one](viewer-editor.md) for files on this Mac (server files always open in the built-in editor) |
-| `editorHotKey` | shortcut, as in [`keymap.json`](#keymap) | none (off) | A shortcut for a [new editor document from any app](viewer-editor.md#from-any-app), for example `ctrl+cmd+e`: it needs ⌃ or ⌘. Set it in Settings, which says when macOS refuses it |
+| `editorHotKey` | shortcut, as in [`keymap.json`](#keymap) | none (off) | A shortcut for a [new editor document from any app](viewer-editor.md#from-any-app), for example `ctrl+cmd+e`: it needs ⌃ or ⌘. Read at launch; Settings sets it at once and says when it's refused |
 | `editorFinalNewline` | `-bool` | config files only | Whether new editor windows end saved text with a newline; **File ▸ Ensure Final Newline** overrides it per window |
 | `diffCommand` | command | built-in diff | Tool for [comparing files](search-compare.md), for example `'code --diff %1 %2'` (a server's file comes as its local copy) |
 | `serverHistory` | `-bool` | `true` | `false` keeps no [versions of server files](server-files.md#file-history) |

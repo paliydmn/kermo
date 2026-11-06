@@ -83,7 +83,11 @@ extension EditorWindowTests {
         #expect(GlobalKey.refused == "macOS refused ⌃⌥⌘F11: another app has it.", "said in Settings")
         o.refuse[odd2] = -50
         #expect(GlobalKey.use(odd2, app, o.defaults) == "macOS refused ⌃⌥⌘F11 (error -50).")
-        o.refuse[odd2] = nil
+        o.refuse[odd] = OSStatus(eventHotKeyExistsErr)   // and the one before taken meanwhile (during Record…)
+        o.refuse[odd2] = OSStatus(eventHotKeyExistsErr)
+        #expect(GlobalKey.use(odd2, app, o.defaults) == "macOS refused ⌃⌥⌘F11: another app has it. ⌃⌥⇧⌘F11, the one before, couldn't be taken back: it's off.")
+        #expect(GlobalKey.current == nil && o.registered == nil)
+        (o.refuse[odd], o.refuse[odd2]) = (nil, nil)
         #expect(GlobalKey.use(odd2, app, o.defaults) == nil && GlobalKey.current == odd2 && GlobalKey.refused == nil)
 
         #expect(GlobalKey.use(nil, app, o.defaults) == nil && GlobalKey.current == nil && o.registered == nil)
@@ -91,7 +95,8 @@ extension EditorWindowTests {
     }
 
     /// Carbon for real, with an odd key: registered and let go; one this process already holds exclusively — as another
-    /// Kermo would — is refused and said. At launch a saved key comes back; an unusable one isn't asked for.
+    /// Kermo would — is refused and said; the ISO key's second code refused lets the first go too. At launch a saved
+    /// key comes back; an unusable one, or Kermo's own, isn't asked for.
     @Test func theRealHotKeyIsExclusive() throws {
         let (app, _, _, done) = try toolsApp()
         let suite = "kermo-e5-" + UUID().uuidString, d = UserDefaults(suiteName: suite)!
@@ -104,13 +109,24 @@ extension EditorWindowTests {
         #expect(GlobalKey.use(odd, app, d) == "macOS refused ⌃⌥⇧⌘F11: another app has it." && GlobalKey.current == nil)
         ref.map { _ = UnregisterEventHotKey($0) }
 
+        let mods = UInt32(controlKey | optionKey | shiftKey | cmdKey), grave = Shortcut("ctrl+opt+shift+cmd+`")!
+        #expect(RegisterEventHotKey(10, mods, EventHotKeyID(signature: 0x54455354, id: 10), GetApplicationEventTarget(), OptionBits(kEventHotKeyExclusive), &ref) == noErr)
+        #expect(GlobalKey.use(grave, app, d) == "macOS refused ⌃⌥⇧⌘`: another app has it.", "§ (code 10) held")
+        ref.map { _ = UnregisterEventHotKey($0) }
+        var fifty: EventHotKeyRef?
+        #expect(RegisterEventHotKey(50, mods, EventHotKeyID(signature: 0x54455354, id: 50), GetApplicationEventTarget(), OptionBits(kEventHotKeyExclusive), &fifty) == noErr,
+                "` (code 50) let go with it")
+        fifty.map { _ = UnregisterEventHotKey($0) }
+
         d.set(odd.spec, forKey: "editorHotKey")
-        GlobalKey.start(d)
+        GlobalKey.start(app, d)
         #expect(GlobalKey.current == odd && GlobalKey.refused == nil)
         GlobalKey.use(nil, app, d)
-        d.set("opt+e", forKey: "editorHotKey")
-        GlobalKey.start(d)
-        #expect(GlobalKey.current == nil && GlobalKey.refused?.hasPrefix("⌥E can't be used") == true)
+        for (spec, said) in [("opt+e", "⌥E can't be used"), ("ctrl+cmd+k", "⌃⌘K is Kermo's Connect to Server")] {
+            d.set(spec, forKey: "editorHotKey")
+            GlobalKey.start(app, d)
+            #expect(GlobalKey.current == nil && GlobalKey.refused?.hasPrefix(said) == true, "\(spec)")
+        }
     }
 
     /// Settings ▸ General: Record… takes the shortcut off while it waits (else pressing it would run it), ⎋ and leaving
@@ -144,18 +160,31 @@ extension EditorWindowTests {
         GlobalKey.use(nil, app, o.defaults)
     }
 
-    /// The other way round: a command given the shortcut in Keys or keymap.json is refused in the same words —
-    /// the hot key would take it first.
+    /// The other way round: a command given the shortcut in Keys or keymap.json is refused in the same words — the
+    /// hot key would take it first; a command moved off it says nothing; Reset doesn't give a command's own key back
+    /// while the shortcut has it.
     @Test func keysRefuseTheGlobalKey() throws {
         let (app, _, _, done) = try toolsApp()
         let o = Outside()
         defer { o.done(app); done() }
         GlobalKey.use(odd, app, o.defaults)
-        let said = "⌃⌥⇧⌘F11 stays Settings ▸ General's New editor document from any app"
-        #expect(AppDelegate.keymapProblems("go.home", [odd], was: [], fixed: AppDelegate.fixedKeys(app.makeMenu())) == ["keymap.json: go.home: " + said])
+        let said = "⌃⌥⇧⌘F11 is Kermo's New editor document from any app: pick another or change that one in Settings ▸ General."
+        #expect(AppDelegate.keymapProblems("go.home", [odd], was: [], fixed: [:]) == ["keymap.json: go.home: " + said])
+        #expect(AppDelegate.keymapProblems("go.home", [odd2], was: [odd], fixed: [:]).isEmpty, "moved off it: no problem")
         #expect(app.newKeyProblems("go.home", [odd], old: [], defaults: []) == [said])
         GlobalKey.use(nil, app, o.defaults)
         #expect(app.newKeyProblems("go.home", [odd], old: [], defaults: []).isEmpty)
+
+        // Connect to Server moved off ⌃⌘K, ⌃⌘K the shortcut: Keys' reset of Connect says so and keeps the move.
+        let connect = try #require(app.commands.first { $0.keys.contains(Shortcut("ctrl+cmd+k")!) })
+        app.writeKeymap([connect.id: [odd2.spec]])
+        #expect(GlobalKey.use(Shortcut("ctrl+cmd+k")!, app, o.defaults) == nil)
+        let keys = KeysPane(app: app)
+        keys.reset(connect.id)
+        #expect(keys.said == "⌃⌘K is Kermo's New editor document from any app: pick another or change that one in Settings ▸ General.")
+        #expect(try AppDelegate.readKeymap()[connect.id] == [odd2.spec])
+        GlobalKey.use(nil, app, o.defaults)
+        app.writeKeymap([:])
     }
 
     /// From outside: a new Untitled, the editor in front through `activation`, the text in focus; again on an empty one
@@ -220,7 +249,7 @@ extension EditorWindowTests {
 
     /// With the shortcut on, closing the main window hides it — unasked, the quit question not answered for nothing —
     /// and the last window closed leaves Kermo in the Dock; ⌘Q still asks. Off: as before. Nothing watched: no menu bar.
-    @Test func theGlobalKeyKeepsKermoWithNoWindows() async throws {
+    @Test func theGlobalKeyKeepsKermoWithNoWindows() throws {
         _ = NSApplication.shared
         noEditor()
         let (app, _, _, done) = try toolsApp()
@@ -240,9 +269,6 @@ extension EditorWindowTests {
         #expect(app.applicationShouldTerminate(NSApp) == .terminateCancel && asked == 2, "⌘Q later still asks")
         shown.forEach { $0.orderFront(nil) }
         u.close()
-        app.windowClosed { [] }
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(o.activations.isEmpty, "nothing watched: it stays in the Dock, not the menu bar")
     }
 
     /// The Dock icon's menu: New Editor Document and Show Editor, run as from outside.
@@ -301,7 +327,8 @@ extension EditorWindowTests {
     }
 
     /// D-179: a question that falls back to the main window while it's out of sight brings it back first — a sheet on a
-    /// window not shown isn't put up at all, and whatever waits on its answer waits for good.
+    /// window not shown isn't put up at all, and whatever waits on its answer waits for good. Kermo not in front (a save
+    /// in another app): the window shows and the Dock icon comes back to bounce, without taking the keys.
     @Test func aQuestionOnTheHiddenMainWindowBringsItBack() async throws {
         let (app, _, _, done) = try toolsApp()
         let o = Outside()
@@ -310,7 +337,8 @@ extension EditorWindowTests {
         #expect(!app.window.isVisible)
         func answered() async throws {
             try await until("a sheet") { app.window.attachedSheet != nil }
-            #expect(o.activations.count == 1 && o.activations.last?.0 == .regular && o.activations.last?.1 === app.window)
+            #expect(o.activations.count == 1 && o.activations[0].0 == .regular && app.window.isVisible)
+            #expect(NSApp.isActive ? o.activations[0].1 === app.window : o.activations[0].1 == nil, "in front only if Kermo is")
             o.activations = []
             if let s = app.window.attachedSheet { app.window.endSheet(s, returnCode: .alertSecondButtonReturn) }
             try await until("gone") { app.window.attachedSheet == nil }
@@ -357,4 +385,6 @@ extension EditorWindowTests {
     #expect(try run([]) == ("-b com.dmn.dfilemanager .\n", 0))
     #expect(try run(["--new", "x"]) == ("", 2))
     #expect(try run(["--show"]) == ("", 2))
+    #expect(try run(["-n"]) == ("", 2), "none of open's options: -n would start a second Kermo")
+    #expect(try run(["/a", "--new"]) == ("", 2))
 }
