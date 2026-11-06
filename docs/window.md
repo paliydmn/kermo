@@ -144,6 +144,8 @@ Every command is in the menu bar, in groups, with its first shortcut. Switches h
 - **Git:** Switch Branch…, New Branch…, Commit…; Sync, Publish Branch, Pull, Push, Fetch; Changes, Show Only Changes, Diff, Log of File, Blame, Stage, Unstage; Go to Repository Root, Copy Branch Name, Initialize Repository….
 - **Window**, then **Help**: its search field finds any menu item by name (type `services` for **Server ▸ Services…**); Keyboard Shortcuts (F1), Kermo Documentation, Report an Issue….
 
+The Dock icon's menu has **New Editor Document** and **Show Editor** ([from any app](viewer-editor.md#from-any-app)).
+
 A few commands are keys by nature and are on F1 only: Tab between panels, ↩, ⇧↑ / ⇧↓, the terminal panes' ⌥⌘ arrows and ⌃⌘ arrows, ⇧F10, ⌃↩ and ⌃⇧↩.
 
 ## Cheat sheet

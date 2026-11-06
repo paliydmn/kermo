@@ -20,6 +20,7 @@ struct SettingsRow {
         case number(ClosedRange<Double>, step: Double, value: Double, unit: String)
         case buttons([(title: String, command: String)])
         case themes
+        case globalKey                                     // GlobalKeyRecorder: the switch, the key, Record…
         case info
     }
     let title: String
@@ -33,6 +34,13 @@ struct SettingsRow {
 extension AppDelegate {
     var settingsTabs: [SettingsTab] { [
         SettingsTab(title: "General", symbol: .general, groups: [
+            ("From any app", [
+                SettingsRow(title: "New editor document from any app",
+                            note: "Works while Kermo is running, even with no windows open. macOS doesn't always say when another app uses the same keys.",
+                            key: "editorHotKey", control: .globalKey),
+                SettingsRow(title: "Open Kermo at login", note: "Kermo is there after you log in: the shortcut above works, and watching starts again by itself.",
+                            control: .command("monitor.openAtLogin"), status: { _ in ToolMonitor.loginSaid() }),
+            ]),
             ("Lists", [
                 SettingsRow(title: "Show hidden files", note: "⇧⌘. switches it anywhere", key: "showHidden", control: .command("view.hidden")),
                 SettingsRow(title: "Dates", note: "The Modified column", key: "isoDates",
@@ -124,8 +132,6 @@ extension AppDelegate {
                             key: "monitorKeepAwake", control: .command("monitor.keepAwake")),
                 SettingsRow(title: "Watch three times less often on battery", note: "And in Low Power Mode: fewer wake-ups, longer battery",
                             key: "monitorSlowOnBattery", control: .command("monitor.slowOnBattery")),
-                SettingsRow(title: "Open Kermo at login", note: "Watching starts again by itself", control: .command("monitor.openAtLogin"),
-                            status: { _ in ToolMonitor.loginSaid() }),
             ]),
         ]),
         SettingsTab(title: "Tools", symbol: .tool, groups: [], view: { ToolSourcesPane(app: $0) }),
@@ -178,6 +184,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
     private let defaults: UserDefaults
     private var refreshers: [() -> Void] = []   // controls re-read their keys (⇧⌘. may have changed one meanwhile)
     private var actions: [ClosureTarget] = []
+    private(set) var globalKey: GlobalKeyRecorder?
 
     /// Something a row's note says changed meanwhile (`SettingsRow.status`).
     static func refreshShown() { shared?.refresh() }
@@ -299,6 +306,12 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             note.textColor = .secondaryLabelColor
             note.preferredMaxLayoutWidth = 330
             left.append(note)
+            if case .globalKey = r.control {   // what went wrong, in red under the note
+                let g = GlobalKeyRecorder(app: app, defaults: defaults)
+                globalKey = g
+                refreshers.append { g.refresh() }
+                left.append(g.error)
+            }
             if let status = r.status {
                 refreshers.append { [unowned self, weak note] in
                     let app = app   // the window may be gone by the answer
@@ -422,6 +435,9 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             h.spacing = 6
             h.setHuggingPriority(.required, for: .horizontal)
             return h
+        case .globalKey:
+            globalKey?.toggle.setAccessibilityLabel(r.title)
+            return globalKey?.controls
         case .themes, .info:
             return nil
         }

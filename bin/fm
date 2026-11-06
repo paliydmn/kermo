@@ -1,5 +1,12 @@
 #!/bin/sh
 # fm [path [path2]] — show a folder (default: the current one) in Kermo; path2 goes to the other panel.
-# A file opens its folder with the cursor on it. Install: Kermo ▸ Install “fm” Command.
+# A file opens its folder with the cursor on it. fm --new — a new editor document.
+# Install: Kermo ▸ Install “fm” Command.
+if [ $# -eq 1 ] && [ "$1" = --new ]; then
+    exec open -b com.dmn.dfilemanager kermo://new   # this fixed URL only: nothing of yours goes with it
+fi
+case "$1" in
+--*) echo "usage: fm [path [path2]] | fm --new" >&2; exit 2 ;;
+esac
 [ $# -eq 0 ] && set -- .
 exec open -b com.dmn.dfilemanager "$@"

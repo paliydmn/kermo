@@ -79,6 +79,17 @@ The [tools' editor](tools.md#your-own-tools) is a window of its own, as before: 
 
 A question about a document — changed on disk, the encoding, saving as administrator, closing with changes, or an upload's — first shows its tab and brings the window out of the Dock (or back, if it was closed) and to the front.
 
+### From any app
+
+**New editor document from any app** in Settings › General (off at first) is a shortcut that works in every app while Kermo is running, with or without windows open: ⌃⌘E unless you record another. It brings the editor window forward, with Kermo, on a new Untitled with the text in focus. If the tab shown is an Untitled you haven't typed in yet, it just goes there, so pressing it twice gives one tab. The main window stays as it was. Kermo needs no permission for it (no Accessibility, no Input Monitoring): macOS hands it that one shortcut and no other key.
+
+- **Record…**, then press the shortcut; ⎋ cancels, ⌫ turns it off. It needs ⌃ or ⌘. A key Kermo's menus use (⌃⌘K is Connect to Server) or macOS takes first is refused, and so is one macOS refuses (another Kermo has it); the row says why in red and the shortcut you had stays. macOS doesn't always say when another app uses the same keys: if yours does nothing, record another.
+- While it's on, the shortcut is Kermo's in every app, Kermo too: **Settings › Keys** refuses it for a command, and **Reload Config** names a `keymap.json` entry that has it.
+- With the shortcut on, closing every window leaves Kermo running with its icon in the Dock; watching a server puts it in the menu bar, as before. ⌘Q asks about what it would lose and writes the drafts, as with windows open.
+- The Dock icon's menu has **New Editor Document** and **Show Editor** too. A click on the icon brings the main window back.
+- `fm --new` in a terminal and the address `kermo://new` do the same; `kermo://show` shows the editor as it was. They take nothing else — no file, no text — so a page or an app that opens one can only open an empty document. While Kermo quits, or a question is up, they only bring Kermo forward.
+- After **Quit**, the shortcut is gone with Kermo. To start Kermo by a key too, make a shortcut in the **Shortcuts** app with the action **Open URLs** and `kermo://new`, and give it a key of its own in its details (**Add Keyboard Shortcut**).
+
 ### Drafts
 
 What you type in the editor window is kept as a draft, not saved to the file: about half a second after you stop typing (every 2 seconds at most while you go on; a big text less often, since each draft is the whole text — 10 seconds over 1 MB, 30 over 8 MB), when you switch tabs, when another app comes to the front, and right after a save. The status line says **Unsaved changes · Draft saved 14:02**. A draft never writes the file and never uploads, checks or reloads a server's file: only ⌘S does.
@@ -102,7 +113,7 @@ Only one Kermo keeps drafts at a time. Another one (a test build beside the app)
 
 ⎋ (outside the find bar, which it closes first) goes back to the panels: an unchanged tab closes, a changed one stays as a draft, and the window hides. F4, then ⎋, leaves no tab behind.
 
-**File ▸ Close Editor Window** (⇧⌘W) and the window's close button hide the window with all its tabs, asking nothing: their drafts are written to the disk itself first, and if that fails the window stays and says why. **File ▸ Show Editor** brings it back as it was; so do F4 and ⌘N. A hidden editor window doesn't keep Kermo running: closing the main window then quits, as with no other window open.
+**File ▸ Close Editor Window** (⇧⌘W) and the window's close button hide the window with all its tabs, asking nothing: their drafts are written to the disk itself first, and if that fails the window stays and says why. **File ▸ Show Editor** brings it back as it was; so do F4 and ⌘N. A hidden editor window doesn't keep Kermo running: closing the main window then quits, as with no other window open — unless the [shortcut from any app](#from-any-app) is on.
 
 Quitting writes the last drafts to the disk and asks nothing about them. It names a document only when its draft couldn't be written — **Quit Anyway** (its changes are lost), **Show Editor** or **Cancel** — or while drafts are off. Its other warnings (uploads, copies, SSH sessions, terminals) are as before.
 

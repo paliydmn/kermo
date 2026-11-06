@@ -112,7 +112,7 @@ private func titles(_ nodes: [AppDelegate.MenuNode]) -> [String] {
     let app = app()
     let switches = ["view.sidebar", "view.quickview", "view.terminal", "view.terminalFull", "view.activity", "view.hidden", "view.perms",
                     "view.gitOnly", "go.bookmark", "view.sort.name", "view.sort.size", "view.sort.mtime", "view.sort.reverse", "app.update.auto",
-                    "monitor.keepAwake", "monitor.slowOnBattery", "monitor.openAtLogin"]   // Settings ▸ Monitor's
+                    "monitor.keepAwake", "monitor.slowOnBattery", "monitor.openAtLogin"]   // Settings' switches
     #expect(Set(app.commands.filter { $0.on != nil }.map(\.id)) == Set(switches))
     let item = NSMenuItem(title: "", action: NSSelectorFromString("menuCommand:"), keyEquivalent: "")
     item.representedObject = "view.quickview"

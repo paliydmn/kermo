@@ -65,3 +65,5 @@ A file from a server or an archive that **↩** opens in another app is quaranti
 ## What listens on this Mac
 
 Only [SSH tunnels](tunnels.md) listen, temporary ones too, and only on `127.0.0.1` and `::1`. Any program or user on this Mac can connect to such a port, so keep a tunnel to a production database off when you don't need it.
+
+Any page or app can open a `kermo://` address. Kermo answers only `kermo://new` (an empty editor document) and `kermo://show` (the editor as it was): no path, text or setting rides on one, and any other address does nothing. The [shortcut from any app](viewer-editor.md#from-any-app) is that one key, registered with macOS: Kermo asks for no Accessibility or Input Monitoring permission and sees no other key.

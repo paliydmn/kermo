@@ -47,6 +47,10 @@ cat > $APP/Contents/Info.plist <<EOF
     <key>LSHandlerRank</key><string>Alternate</string>
     <key>LSItemContentTypes</key><array><string>public.folder</string></array>
   </dict></array>
+  <key>CFBundleURLTypes</key><array><dict>
+    <key>CFBundleURLName</key><string>com.dmn.dfilemanager</string>
+    <key>CFBundleURLSchemes</key><array><string>kermo</string></array>
+  </dict></array>
 </dict></plist>
 EOF
 ID="DFileManager Local Signing"   # created once by ./cert.sh

@@ -90,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false   // AppKit's Show Tab Bar in View read as Kermo's tabs (D-125)
+        GlobalKey.start()
         applyConfig(reportProblems: false)
         SFTP.password = { SSHPasswords.get($0) }
         SFTP.hasPassword = { SSHPasswords.has($0) }
@@ -215,7 +216,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         if !configProblems.isEmpty { showError(JobErrorMessage(configProblems.joined(separator: "\n"))) }
         sayCutShortSaves()
+        openPending()
+    }
+
+    /// At the end of the launch, after the editor's restore (no second "Untitled 1" beside it): what `fm`, Finder or
+    /// kermo:// asked for before.
+    func openPending() {
         show(pendingOpen)
+        pendingKermo.forEach { editorFromOutside(new: $0) }
+        pendingKermo = []
     }
 
     /// Focus moving into a text field, the terminal or a panel enables / disables the bar's slots and the menu's keys.
@@ -248,9 +257,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     // MARK: - Opening paths (`fm`, Finder's Open With)
 
     private var pendingOpen: [URL] = []
+    private var pendingKermo: [Bool] = []   // kermo://new (true) and kermo://show at launch
 
+    /// Paths (`fm`, Finder) to the panels; kermo:// to the editor, never to the panels or the main window.
     func application(_ application: NSApplication, open urls: [URL]) {
-        if panels.isEmpty { pendingOpen = urls } else { show(urls) }   // at launch this comes before didFinishLaunching
+        let kermo = urls.filter { $0.scheme?.lowercased() == "kermo" }, files = urls.filter { $0.scheme?.lowercased() != "kermo" }
+        let actions = kermo.compactMap(Self.kermoAction)
+        if panels.isEmpty {   // at launch this comes before didFinishLaunching
+            if !files.isEmpty { pendingOpen = files }
+            pendingKermo += actions
+            return
+        }
+        if !files.isEmpty { show(files) }
+        actions.forEach { editorFromOutside(new: $0) }
     }
 
     /// First path in the active panel, second in the other one; a file opens its folder with the cursor on it.
@@ -333,7 +352,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         return .terminateLater
     }
-    private var quitting = false
+    private(set) var quitting = false
     /// Tests answer for AppKit, which waits for it after `.terminateLater`.
     static var replyToQuit: @MainActor (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
 
@@ -358,9 +377,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// Another window (viewer, editor) keeps the app alive: the main window just hides and sessions go on.
+    /// Another window (viewer, editor) keeps the app alive: the main window just hides and sessions go on. So does the
+    /// global shortcut, before the quit question (an answer here for nothing would let ⌘Q later go unasked).
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        NSApp.windows.contains { Self.keepsAlive($0, besides: sender) } || !tools.monitor.watched.isEmpty || confirmQuit()   // watching: to the menu bar
+        NSApp.windows.contains { Self.keepsAlive($0, besides: sender) } || !tools.monitor.watched.isEmpty   // watching: to the menu bar
+            || GlobalKey.current != nil || confirmQuit()
     }
     /// One in the Dock counts too: it isn't visible, the app lives on with it — and the quit question, answered here
     /// for nothing, was never asked again: ⌘Q later lost its unsaved text unasked.
@@ -512,6 +533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 out[k] = "\(m.title) ▸ \(it.title)'s" + (it.action.flatMap { inPanel[$0] }.map { ", which in a panel does \($0)" } ?? "")
             }
         }
+        if let g = GlobalKey.current { out[g] = "Settings ▸ General's New editor document from any app" }   // the hot key takes it before any menu
         return out
     }
 
@@ -577,8 +599,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                        dividers: w > 0 ? panels.dropLast().map { Double($0.view.frame.maxX / w) } : [], tools: ToolsWindow.saved(self))
     }
 
-    /// Something watched: Kermo stays in the menu bar (decision 2).
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { tools.monitor.watched.isEmpty }
+    /// Something watched: Kermo stays in the menu bar (decision 2); the global shortcut on: in the Dock (decision 8).
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { tools.monitor.watched.isEmpty && GlobalKey.current == nil }
 
     /// Dock click with the main window closed (a viewer kept the app alive), or Kermo opened again from the menu bar
     /// alone: bring it back — a moment later, and not for a notification's click, which brings a reopen too (S1) and
@@ -1843,7 +1865,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func choose(_ message: String, info: String, _ buttons: [String], default: Int? = nil, on sheetWindow: NSWindow? = nil) async -> Int {
         if let answer = Self.answering { Self.answeredInfo = info; return answer(message, buttons, `default`) }
         if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }   // asked by a save in another app: the Dock icon bounces
-        return await Self.sheet(Self.alert(message, info: info, buttons, default: `default`), on: sheetWindow ?? window)
+        return await Self.sheet(Self.alert(message, info: info, buttons, default: `default`), on: sheetHost(sheetWindow))
+    }
+
+    /// Where a sheet goes: `w`, else the main window — brought back first if it's out of sight (closed, in the Dock,
+    /// Kermo in the menu bar alone): a sheet there would wait unseen, and an upload behind it (D-179).
+    private func sheetHost(_ w: NSWindow?) -> NSWindow {
+        if let w { return w }
+        if !window.isVisible { bringBack(window) }
+        return window
     }
 
     /// Tests: answers `choose` and `confirm` instead of a sheet (the message, the buttons, the one ↩ presses);
@@ -1922,14 +1952,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return answer(c.title, c.buttons, c.safe ? c.buttons.count - 1 : nil)
         }
         if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }
-        return await Self.sheet(c.alert(), on: sheetWindow ?? window)
+        return await Self.sheet(c.alert(), on: sheetHost(sheetWindow))
     }
 
     /// On `sheetWindow` (an editor's, about its document), else the main window.
     func showError(_ error: Error, on sheetWindow: NSWindow? = nil) {
         let alert = NSAlert(error: error)
         alert.messageText = alert.messageText.bidiVisible
-        alert.beginSheetModal(for: sheetWindow ?? window)
+        alert.beginSheetModal(for: sheetHost(sheetWindow))
     }
 }
 
