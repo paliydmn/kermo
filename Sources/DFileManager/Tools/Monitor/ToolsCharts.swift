@@ -60,7 +60,7 @@ import SwiftUI
         /// Days on the axis: the week's.
         var days: Bool { data.to.timeIntervalSince(data.from) > 2 * 86400 }
         /// The slots on disk (24h, 7d), not the hour's samples.
-        var history: Bool { every == ToolSlots.length }
+        var history = false
 
         /// `t` as the charts say it: a sample's time to the second; the 15 minutes of its slot on the history.
         func time(_ t: Date) -> String {
@@ -131,6 +131,7 @@ import SwiftUI
         if window == nil {
             hosting?.removeFromSuperview()
             hosting = nil
+            (model.hover, model.hovered) = (nil, nil)   // gone with the pointer over it: no hover's end comes
         } else if hosting == nil {
             let h = NSHostingView(rootView: ChartsView(model: model))
             h.sizingOptions = []
@@ -189,7 +190,8 @@ import SwiftUI
             }
             let alert = alerts.first { $0.metric == first.id && $0.below != true }   // the first metric's: CPU's beside I/O wait
             return Chart(id: ids.joined(separator: "+"), title: metrics.map { $0.metric.title ?? $0.id }.joined(separator: " · "), metric: first.metric,
-                         top: ToolChart.top(lines.flatMap { $0.points.flatMap { [$0.value, $0.high].compactMap { $0 } } },
+                         // by the averages: a burst's high would flatten every line; its band is cut at the top, the tip says it
+                         top: ToolChart.top(lines.flatMap { $0.points.compactMap(\.value) },
                                             max: first.metric.max ?? (first.metric.unit == "%" ? 100 : nil)),
                          lines: lines, bands: (lines.map(\.chart.bands).max { $0.count < $1.count } ?? []) + maintenance, warn: alert?.warn, crit: alert?.crit,
                          of: of)
@@ -197,6 +199,7 @@ import SwiftUI
         d.events = ((t?.events ?? []) + (live.state?.events ?? [])).filter { $0.at >= d.from && $0.level != "ok" }
         d.click = span <= 3600 && live.showsMoments ? "Click: the tables at this time" : model.log.map { "Click: \($0.title)" }
         model.every = slots == nil ? (p.watch?.every ?? 60) * (live.app.tools.monitor.slow ? 3 : 1) : ToolSlots.length
+        model.history = slots != nil
         model.data = d
     }
 }
@@ -248,43 +251,45 @@ struct OneChart: View {
         }
     }
 
-    /// The header: the latest values "Now" — on the history, the last slot's, with its time —, else at the time under
-    /// the pointer or "At" the moment the tables show; or why there are none (a gap).
+    /// The header's when — "Now", on the history the last slot's time, the time under the pointer, "At" the moment the
+    /// tables show — and its values, or the gap that has none.
+    private var header: (when: String, gap: ToolGap?, values: [String]) {
+        if let t = when { return ((model.hover == nil ? "At " : "") + model.time(t), chart.gap(at: t), values(at: t)) }
+        guard model.history else { return ("Now", chart.gapNow, values(at: nil)) }
+        return (chart.lines.compactMap { $0.points.last { $0.value != nil }?.at }.max().map(model.time) ?? "", nil, values(at: nil))
+    }
+
+    /// The header as shown: "Now 24%", "9:28:45 PM · 24% · 3%", "Now · Mac asleep".
     var said: String {
-        if let t = when {
-            let time = (model.hover == nil ? "At " : "") + model.time(t)
-            return time + " · " + (chart.gap(at: t).map(Self.word) ?? values(at: t).joined(separator: " · "))
-        }
-        guard model.history else { return chart.gapNow.map { "Now · " + Self.word($0) } ?? "Now " + values(at: nil).joined(separator: " · ") }
-        guard let last = chart.lines.compactMap({ $0.points.last { $0.value != nil }?.at }).max() else { return "—" }
-        return model.time(last) + " · " + values(at: nil).joined(separator: " · ")
+        let h = header, v = h.gap.map(Self.word) ?? h.values.joined(separator: " · ")
+        return h.when == "Now" && h.gap == nil ? "Now " + v : [h.when, v].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     /// The header as VoiceOver says it: each value with its series' name.
     var spoken: String {
-        let prefix = when.map { (model.hover == nil ? "At " : "") + model.time($0) } ?? (model.history ? "Last slot" : "Now")
-        if let gap = when.map(chart.gap(at:)) ?? (model.history ? nil : chart.gapNow) { return prefix + ", " + Self.word(gap) }
-        let v = values(at: when)
-        return prefix + ", " + (chart.lines.count == 1 ? v.first ?? "—" : zip(chart.lines, v).map { "\($0.name) \($1)" }.joined(separator: ", "))
+        let h = header
+        let v = h.gap.map(Self.word) ?? (chart.lines.count == 1 ? h.values.first ?? "—" : zip(chart.lines, h.values).map { "\($0.name) \($1)" }.joined(separator: ", "))
+        return [h.when, v].filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
     /// The tip at `t`: the time; a row a series — its color's index, name and value (on the history a slot's lowest,
     /// average and highest); notes: why there are none, the events near, the lines not drawn, what a click does.
     static func tip(_ chart: ToolsCharts.Chart, _ model: ToolsCharts.Model, at t: Date) -> (time: String, rows: [(color: Int, name: String, value: String)], notes: [String]) {
         let gap = chart.gap(at: t)
-        var rows: [(color: Int, name: String, value: String)] = []
+        var rows: [(color: Int, name: String, value: String)] = [], spread = false
         for (i, line) in chart.lines.enumerated() where gap == nil {
             let p = ToolChart.nearest(line.points, to: t, within: model.every * 1.5), text = chart.metric.text
-            if let p, let v = p.value, let lo = p.low, let hi = p.high { rows.append((i, line.name, "\(text(lo)) – \(text(v)) – \(text(hi))")) }
+            if let p, let v = p.value, let lo = p.low, let hi = p.high { rows.append((i, line.name, "\(text(lo)) – \(text(v)) – \(text(hi))")); spread = true }
             else { rows.append((i, line.name, p?.value.map(text) ?? "—")) }
         }
         var notes: [String] = []
         if let gap { notes.append(word(gap).prefix(1).uppercased() + word(gap).dropFirst()) }
-        if model.history, gap == nil { notes.append("Lowest – average – highest") }
+        if chart.bands.contains(where: { $0.gap == .maintenance && $0.from <= t && t < $0.to }) { notes.append("Maintenance") }
+        if spread { notes.append("Lowest – average – highest") }
         let near = max(model.every * 1.5, model.data.to.timeIntervalSince(model.data.from) / 100)
         let events = model.data.events.filter { abs($0.at.timeIntervalSince(t)) <= near }
         notes += events.prefix(3).map { "\($0.level.prefix(1).uppercased() + $0.level.dropFirst()) \($0.at.formatted(date: .omitted, time: .shortened)) · \($0.message)" }
-        if events.count > 3 { notes.append("and \(events.count - 3) more events") }
+        if events.count > 3 { notes.append("and \(events.count - 3) more") }
         if chart.of > chart.lines.count { notes.append("\(chart.lines.count) of \(chart.of) drawn: the first by name") }
         if let click = model.data.click { notes.append(click) }
         return (model.time(t), rows, notes)
@@ -397,42 +402,49 @@ struct OneChart: View {
     }
 
     private var plot: some View {
-        Chart { gapMarks; spreadMarks; lineMarks; ruleMarks }
-            .chartXScale(domain: model.data.from...model.data.to)
-            .chartYScale(domain: 0...chart.top)
-            .chartForegroundStyleScale(domain: chart.lines.map(\.name), range: Array(Self.colors.prefix(max(1, chart.lines.count))))
-            .chartLegend(chart.lines.count > 1 ? .visible : .hidden)
-            .chartYAxis {
-                AxisMarks(position: .leading, values: [0, chart.top / 2, chart.top]) { v in
-                    AxisGridLine()
-                    AxisValueLabel { if let d = v.as(Double.self) { Text(chart.metric.text(d)) } }
+        Chart {
+            gapMarks
+            if model.history { spreadMarks }
+            lineMarks
+            ruleMarks
+        }
+        .chartXScale(domain: model.data.from...model.data.to)
+        .chartYScale(domain: 0...chart.top)
+        .chartForegroundStyleScale(domain: chart.lines.map(\.name), range: chart.lines.indices.map(Self.color))
+        .chartLegend(chart.lines.count > 1 ? .visible : .hidden)
+        .chartYAxis {
+            AxisMarks(position: .leading, values: [0, chart.top / 2, chart.top]) { v in
+                AxisGridLine()
+                AxisValueLabel {   // one width, so the charts one under another share their time axis
+                    if let d = v.as(Double.self) { Text(chart.metric.text(d)).frame(minWidth: 50, alignment: .trailing) }
                 }
             }
-            .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 4)) { _ in AxisGridLine(); AxisValueLabel(format: model.days ? .dateTime.weekday().hour() : .dateTime.hour().minute()) }
-            }
-            .chartOverlay { proxy in
-                GeometryReader { g in
-                    Rectangle().fill(.clear).contentShape(Rectangle())
-                        .onContinuousHover { phase in   // snapped to a sample, published only when it moves to another: a move redraws the block
-                            switch phase {
-                            case .active(let p):
-                                guard let f = proxy.plotFrame, let d = proxy.value(atX: p.x - g[f].origin.x, as: Date.self) else { return }
-                                let at = Date(timeIntervalSince1970: (d.timeIntervalSince1970 / model.every).rounded() * model.every)
-                                if model.hover != at { (model.hover, model.lastHover) = (at, at) }
-                                if model.hovered != chart.id { model.hovered = chart.id }
-                            case .ended:   // into the next chart, its active may come first
-                                if model.hovered == chart.id { (model.hover, model.hovered) = (nil, nil) }
-                            }
+        }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 4)) { _ in AxisGridLine(); AxisValueLabel(format: model.days ? .dateTime.weekday().hour() : .dateTime.hour().minute()) }
+        }
+        .chartOverlay { proxy in
+            GeometryReader { g in
+                Rectangle().fill(.clear).contentShape(Rectangle())
+                    .onContinuousHover { phase in   // snapped to a sample, published only when it moves to another: a move redraws the block
+                        switch phase {
+                        case .active(let p):
+                            guard let f = proxy.plotFrame, let d = proxy.value(atX: p.x - g[f].origin.x, as: Date.self) else { return }
+                            let at = Date(timeIntervalSince1970: (d.timeIntervalSince1970 / model.every).rounded() * model.every)
+                            if model.hover != at { (model.hover, model.lastHover) = (at, at) }
+                            if model.hovered != chart.id { model.hovered = chart.id }
+                        case .ended:   // into the next chart, its active may come first
+                            if model.hovered == chart.id { (model.hover, model.hovered) = (nil, nil) }
                         }
-                        .gesture(SpatialTapGesture().onEnded { v in
-                            guard let f = proxy.plotFrame, let d = proxy.value(atX: v.location.x - g[f].origin.x, as: Date.self) else { return }
-                            model.clicked(d, chart.gap(at: d))
-                        })
-                        .contextMenu {   // the hovered time's log, wherever a click goes
-                            if let log = model.log, let h = model.hover ?? model.lastHover { Button("\(log.title) · \(h.formatted(date: .omitted, time: .standard))") { log.run(h) } }
-                        }
-                }
+                    }
+                    .gesture(SpatialTapGesture().onEnded { v in
+                        guard let f = proxy.plotFrame, let d = proxy.value(atX: v.location.x - g[f].origin.x, as: Date.self) else { return }
+                        model.clicked(d, chart.gap(at: d))
+                    })
+                    .contextMenu {   // the hovered time's log, wherever a click goes
+                        if let log = model.log, let h = model.hover ?? model.lastHover { Button("\(log.title) · \(h.formatted(date: .omitted, time: .standard))") { log.run(h) } }
+                    }
             }
+        }
     }
 }

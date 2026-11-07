@@ -70,7 +70,7 @@ import Testing
               "alerts": [ { "id": "cpu", "metric": "cpu", "warn": 85, "crit": 95, "checks": 2 }, { "id": "pmem", "metric": "pmem", "warn": 50, "crit": 95 } ],
               "events": [ { "id": "hot", "path": "cpu.pct", "when": "is", "value": 99, "level": "warning", "message": "hot: {cpu.pct}", "goto": "services:hot.service" } ],
               "dashboard": [ { "row": [ { "stat": "cpu" }, { "stat": "n" } ] },
-                             { "charts": [ ["cpu"], ["n"] ], "range": ["1h", "24h", "7d"], "log": "log" },
+                             { "charts": [ ["cpu"], ["n"], ["pmem", "cpu"] ], "range": ["1h", "24h", "7d"], "log": "log" },
                              { "row": [ { "table": "procs", "title": "Processes", "key": "{pid}", \(list ? #""list": "All Processes…","# : "")
                                           "columns": [{ "field": "command", "tip": "{args}" }, { "field": "cpu:%", "help": "% of one core" }, "mem:bar", "pid"], "actions": ["folder", "stop", "deeper", "pidcopy"] },
                                         { "counts": [ { "rows": "procs", "title": "processes", "goto": "services" } ] } ] },
@@ -563,7 +563,9 @@ extension ServerLockTests {
         #expect(abs(scroll.frame.height - rowsTall) < 1 && kept() == nil && !scroll.hasVerticalScroller)
         #expect(hosting?.window != nil && charts.range.segmentCount == 3 && charts.range.selectedSegment == 0)
         let d = charts.model.data
-        #expect(d.charts.map(\.title) == ["CPU", "Ticks"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95 && d.charts[1].warn == nil)
+        #expect(d.charts.map(\.title) == ["CPU", "Ticks", "Process memory · CPU"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95 && d.charts[1].warn == nil)
+        // Two metrics in one chart: the first one's thresholds; a key named with its metric; every series counted.
+        #expect(d.charts[2].warn == 50 && d.charts[2].lines.map(\.name) == ["Process memory 1", "Process memory 2", "CPU"] && d.charts[2].of == 3, "\(d.charts[2].lines.map(\.name))")
         #expect(d.charts[0].lines.first?.chart.runs.last?.last?.value == 99 && d.to.timeIntervalSince(d.from) == 3600, "\(d.charts[0].lines.first?.points.suffix(2) ?? [])")
         let model = ToolsCharts.Model()   // its own: the pointer may be over the window's charts, hovering
         (model.data, model.every) = (d, charts.model.every)
@@ -988,6 +990,12 @@ extension ServerLockTests {
         #expect(tip.rows.map(\.name) == ["a.example", "b.example"] && tip.rows.map(\.value) == [ms.text(10), ms.text(30)] && tip.rows.map(\.color) == [0, 1])
         #expect(tip.notes == ["Warning \(at(1).formatted(date: .omitted, time: .shortened)) · a.example is slow", "2 of 8 drawn: the first by name",
                               "Click: the tables at this time"], "\(tip.notes)")
+        var busy = model.data
+        busy.events += (2...4).map { ToolEventRecord(at: at(Double($0)), id: "e\($0)", level: "critical", message: "e\($0)") }
+        model.data = busy
+        let four = OneChart.tip(chart, model, at: at(0)).notes
+        #expect(four.count == 6 && four[1].hasPrefix("Critical ") && four[3] == "and 1 more", "three events and a count: \(four)")
+        model.data.events = Array(model.data.events.prefix(1))
         let asleep = OneChart.tip(chart, model, at: at(12))
         #expect(asleep.rows.isEmpty && asleep.notes.first == "Mac asleep", "a gap: why, no values")
         model.hover = at(12)
@@ -1003,7 +1011,7 @@ extension ServerLockTests {
         #expect(OneChart(chart: gone.charts[0], model: model).said == "Now · Mac asleep" && OneChart(chart: gone.charts[0], model: model).spoken == "Now, Mac asleep",
                 "in a gap now: why, not dashes")
         // The history: a slot's lowest, average and highest, its 15 minutes.
-        model.every = ToolSlots.length
+        (model.every, model.history) = (ToolSlots.length, true)
         let slot = line("a.example", [.init(at: t0, value: 10, low: 2, high: 99)])
         let week = ToolsCharts.Chart(id: "latency", title: "Response", metric: ms, top: 100, lines: [slot], bands: [], of: 1)
         let h = OneChart.tip(week, model, at: t0)
