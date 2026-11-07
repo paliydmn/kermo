@@ -36,6 +36,7 @@ Kermo checks for a new version once a day and installs it with **Install and Rel
 - **Servers.** SFTP panels and SSH sessions through the system OpenSSH. A server opens as a place: its overview of files, services, containers, ports and tunnels. Saved servers with Touch ID locks, your SSH key copied to a server in one step, copy between this Mac and servers. → [Servers and SSH](docs/servers.md), [The server as a place](docs/servers.md#the-server-as-a-place), [Files on a server](docs/server-files.md)
 - **Services and containers.** A server's systemd services and its docker or podman containers, failed first, in search or in a panel with columns. Each has its actions: status and Quick View, live logs in the panel next door, start, restart, stop, reload, enable at boot; a container's logs and restart. → [Services and containers](docs/servers.md#services-and-containers)
 - **Safe server edits.** Open files as root through the server's own `sudo`, check a config with the server's tool before it is saved, reload the service, and get earlier versions back. → [Server files as root](docs/root-panel.md), [Checks on save](docs/config-checks.md)
+- **Tools and watching.** A server's load as a live dashboard — CPU, memory, disks, traffic and the busiest processes as charts and tables, with a week of history — watched in the background with alerts, notifications and a menu bar item. Sites checks your web addresses from this Mac; Deployments, Firewall, Banned IPs and Server Info are lists with their actions. Every tool is a JSON preset: get more from the catalog or write your own. → [Tools](docs/tools.md)
 - **Tunnels.** Forward a server's database or web admin to `localhost`, or pick from the ports it listens on; its ports and tunnels are lists in a panel too. → [SSH tunnels](docs/tunnels.md)
 - **Terminal.** A shell in a drawer under the panels, the active one following its `cd`; SSH tabs, each split into up to four sessions side by side; Claude Code and other programs that use the mouse scroll and copy; a user menu, one command on several servers at once, and the `fm` command. → [Terminal](docs/terminal.md), [Commands](docs/commands.md)
 - **Production safety.** A production server is purple, asks before changes and logs what you did. Every question before a change reads the same way: the place in a PROD or ROOT strip, what changes, and the command exactly as it will run. → [Safety on servers](docs/safety.md)
@@ -77,7 +78,7 @@ Mac function keys control media by default: ⌥ plus the digit does the same (�
 
 **Servers and administration**
 - [Servers and SSH](docs/servers.md): connect, save, lock, mark as production, copy your SSH key; a server's overview, services and containers.
-- [Tools](docs/tools.md): a server's firewall rules and banned addresses as lists with actions; your own tools.
+- [Tools](docs/tools.md): watching a server — its dashboard, alerts and history; Sites, Deployments, Firewall, Banned IPs, Server Info; the catalog and your own tools.
 - [Files on a server](docs/server-files.md): copy, edit, preview, compare, file history.
 - [Server files as root](docs/root-panel.md): a root panel through `sudo`.
 - [Checks on save and reloads](docs/config-checks.md): `visudo`, `nginx -t` and the like before a bad save.
