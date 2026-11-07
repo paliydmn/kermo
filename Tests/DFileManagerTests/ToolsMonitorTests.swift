@@ -575,10 +575,11 @@ extension ServerLockTests {
         #expect(one.said.hasSuffix(" · 99%") && !one.said.hasPrefix("Now"), "\(one.said)")
         #expect(d.click == "Click: the tables at this time", "a table to show the moment in")
         // Two to a row where each gets 300 pt, else one.
-        for (width, columns) in [(400.0, 1), (700.0, 2)] {
-            charts.setFrameSize(NSSize(width: width, height: charts.frame.height))
-            charts.layout()
-            #expect(charts.model.columns == columns, "\(width) pt: \(charts.model.columns)")
+        let single = ToolsCharts(view, try JSONDecoder().decode(ToolBlock.self, from: Data(#"{ "charts": [["cpu"]] }"#.utf8)))
+        for (block, width, columns) in [(charts, 400.0, 1), (charts, 700.0, 2), (single, 900.0, 1)] {
+            block.setFrameSize(NSSize(width: width, height: 400))
+            block.layout()
+            #expect(block.model.columns == columns, "\(width) pt: \(block.model.columns)")
         }
         page?.window?.layoutIfNeeded()
         #expect(table.rows.map(\.key) == ["1", "2"] && table.rows.map(\.title) == ["first", "second"] && table.rows[1].cells.map(\.text) == ["second", "20 %", "40", "2"], "\(table.rows)")
