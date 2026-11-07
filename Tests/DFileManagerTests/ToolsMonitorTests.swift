@@ -665,6 +665,14 @@ extension ServerLockTests {
         bench.flag("lone-localhost", false)
         await toolsUntil { keys() == ["2", "1"] }
 
+        // A move over a row — no entry came: the window became key with the pointer there — holds the rows and shows
+        // that row's buttons; a move's event names no tracking area.
+        let p = t.convert(NSPoint(x: 5, y: t.rect(ofRow: 1).midY), to: nil)
+        table.mouseMoved(with: NSEvent.mouseEvent(with: .mouseMoved, location: p, modifierFlags: [], timestamp: 0, windowNumber: t.window?.windowNumber ?? 0,
+                                                  context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!)
+        #expect(table.pointerInside && table.hover == 1 && rowButtons(table, 1).first?.title == "Folder", "\(String(describing: table.hover))")
+        table.pointerInside = false
+
         // Held: the pointer over the rows. A new order and a new set wait; values change in place.
         table.pointerInside = true
         bench.flag("swap-localhost", false)
@@ -701,7 +709,8 @@ extension ServerLockTests {
         for _ in 0..<3 {
             let was = table.rows[1].cells[1].text, drawn = table.drawn
             await toolsUntil { table.rows[1].cells[1].text != was }
-            #expect(table.drawn - drawn == t.numberOfColumns - 1, "one row's cells drawn again: \(table.drawn - drawn)")
+            let n = t.numberOfColumns - 1, d = table.drawn - drawn   // a sample or two came: one row's cells each
+            #expect(d > 0 && d % n == 0 && d <= 2 * n, "one row's cells drawn again: \(d)")
             let now = cells()
             (samples, newViews, made) = (samples + 1, newViews + now.subtracting(made).count, made.union(now))
         }

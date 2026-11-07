@@ -320,6 +320,8 @@ struct OneChart: View {
     private var buttoned = IndexSet()
     /// Rows came that wait for the pointer or the menu to go.
     private(set) var holding = false
+    /// Held, rows changed under buttons left as drawn: they're drawn again once it lets go.
+    private var buttonsBehind = false
     /// The alerts with your thresholds, and how they stand: the bars' and the cells' colors.
     private var alerts: [ToolAlert] = []
     private var standing = ToolAlerts()
@@ -392,6 +394,11 @@ struct OneChart: View {
         (table.target, table.doubleAction) = (self, #selector(doubleClicked))
         table.onKey = { [unowned self] in key($0) }
         table.onCopy = { [unowned self] in copyRow() }
+        table.onShowMenu = { [unowned self] in
+            guard rows.indices.contains(table.selectedRow) else { return false }
+            popUpMenu(table.selectedRow)
+            return true
+        }
         scroll.documentView = table
         scroll.hasVerticalScroller = false   // the dashboard scrolls; the table only when dragged shorter than its rows (`layout`)
         scroll.hasHorizontalScroller = true   // a narrow window: the buttons stay reachable
@@ -466,9 +473,9 @@ struct OneChart: View {
     override func mouseEntered(with e: NSEvent) { if e.trackingArea === area { mouseMoved(with: e) } }
     override func mouseExited(with e: NSEvent) { if e.trackingArea === area { pointerInside = false } }
     /// The pointer over the rows: they hold — a move says so too, as no entry comes for a pointer already there when
-    /// the window became key — and the row under it shows its buttons.
+    /// the window became key — and the row under it shows its buttons. By where it is: a move's event names no area.
     override func mouseMoved(with e: NSEvent) {
-        guard e.trackingArea === area else { return }
+        guard let scroll = table.enclosingScrollView, scroll.bounds.contains(scroll.convert(e.locationInWindow, from: nil)) else { return }
         pointerInside = true
         let r = table.row(at: table.convert(e.locationInWindow, from: nil))
         hover = r >= 0 ? r : nil
@@ -485,7 +492,9 @@ struct OneChart: View {
         }
         // A new time is new rows: the time since the rows before, how often they come (procs every 15 s, disks 30 s) —
         // unknown after a gap (the Mac asleep, the tab away) till the next rows say it again.
-        if let came = live.known?.history.carried(block.table ?? "")?.at, came != at {
+        let came = live.known?.history.carried(block.table ?? "")?.at
+        if came == nil { (at, every) = (nil, nil) }   // no rows since watching started again: no time to tell
+        if let came, came != at {
             let since = at.map { came.timeIntervalSince($0) }
             every = since.flatMap { s in every.map { s <= 3 * $0 } ?? true ? s : nil }
             at = came
@@ -516,12 +525,19 @@ struct OneChart: View {
             rows = next
             // Held, the buttons under the pointer stay as drawn — the same row's — so a press isn't lost to a sample.
             var columns = IndexSet(integersIn: 0..<table.numberOfColumns), buttons = table.column(withIdentifier: .init("actions"))
-            if held, buttons >= 0 { columns.remove(buttons) }
+            if held, buttons >= 0 {
+                columns.remove(buttons)
+                buttonsBehind = buttonsBehind || !changed.isEmpty
+            }
             if !changed.isEmpty { table.reloadData(forRowIndexes: changed, columnIndexes: columns) }
+            if !held, buttonsBehind, buttons >= 0 {
+                buttonsBehind = false
+                table.reloadData(forRowIndexes: buttoned, columnIndexes: [buttons])
+            }
             return
         }
         let was = cursor
-        (rows, buttoned) = (next, [])
+        (rows, buttoned, buttonsBehind) = (next, [], false)
         table.reloadData()
         let i = was.flatMap { k in rows.firstIndex { $0.key == k } }
         table.selectRowIndexes(i.map { IndexSet(integer: $0) } ?? [], byExtendingSelection: false)   // its row gone: no cursor — a neighbour is another process
@@ -754,16 +770,30 @@ struct OneChart: View {
         if window?.attachedSheet != nil { return true }
         let k = Shortcut(event: e), r = table.selectedRow
         guard rows.indices.contains(r) else { return false }
-        if Picker.menuKeys.contains(k) {
-            let rect = table.rect(ofRow: r)
-            rowMenu(rows[r]).popUp(positioning: nil, at: NSPoint(x: rect.minX + 12, y: rect.maxY), in: table)
-            return true
-        }
+        if Picker.menuKeys.contains(k) { popUpMenu(r); return true }
         if k == Shortcut("return") { open(r, beep: true); return true }
         // ↑↓ held down: no row's actions made for each repeat
         guard actions.contains(where: { $0.spec.key.flatMap(Shortcut.init) == k }), let a = rowActions(rows[r]).first(where: { $0.key == k }) else { return false }
         run(a, rows[r])
         return true
+    }
+
+    /// Row `r`'s menu, by the row — ⌃↩'s, VoiceOver's Show Menu — not wherever the pointer is.
+    private func popUpMenu(_ r: Int) {
+        guard rows.indices.contains(r) else { return }
+        let rect = table.rect(ofRow: r)
+        rowMenu(rows[r]).popUp(positioning: nil, at: NSPoint(x: rect.minX + 12, y: rect.maxY), in: table)
+    }
+
+    /// Rows VoiceOver's Show Menu opens the menu of: the cursor goes there.
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let v = ToolsRowView()
+        v.showMenu = { [weak self, weak v] in
+            guard let self, let v, case let r = table.row(for: v), rows.indices.contains(r) else { return }
+            table.selectRowIndexes([r], byExtendingSelection: false)
+            popUpMenu(r)
+        }
+        return v
     }
 
     @objc private func doubleClicked() { open(table.clickedRow, beep: false) }
@@ -851,8 +881,20 @@ struct OneChart: View {
     /// A key: true, it was the row's.
     var onKey: ((NSEvent) -> Bool)?
     var onCopy: (() -> Void)?
+    /// VoiceOver's Show Menu on the table: the cursor row's, by it; true, it was.
+    var onShowMenu: (() -> Bool)?
     override func keyDown(with e: NSEvent) { if onKey?(e) != true { super.keyDown(with: e) } }
     @objc func copy(_ sender: Any?) { onCopy?() }
+    override func accessibilityPerformShowMenu() -> Bool { onShowMenu?() == true || super.accessibilityPerformShowMenu() }
+}
+
+/// A dashboard table's row: VoiceOver's Show Menu on it opens its menu, as ⌃↩ does.
+@MainActor final class ToolsRowView: NSTableRowView {
+    var showMenu: (() -> Void)?
+    override func accessibilityPerformShowMenu() -> Bool {
+        showMenu?()
+        return showMenu != nil
+    }
 }
 
 /// A row's buttons, holding what they run while they live.
