@@ -160,18 +160,7 @@ extension AppDelegate {
     func serviceMenu(_ actions: @escaping () -> [ServiceAction]) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        var group: Int?
-        for a in actions() {
-            if let group, group != a.group { menu.addItem(.separator()) }
-            group = a.group
-            let item = MenuAction.item(a.title) { [unowned self] in perform(a.title, actions) }
-            // Not ↩: in an open menu it would run Status, not the highlighted item.
-            if let key = a.key, !key.flags.isEmpty { (item.keyEquivalent, item.keyEquivalentModifierMask) = (key.menuKey, key.flags) }
-            if a.dangerous { item.attributedTitle = NSAttributedString(string: a.title, attributes: [.foregroundColor: Palette.fail]) }
-            item.isEnabled = a.why == nil
-            item.toolTip = a.why
-            menu.addItem(item)
-        }
+        Self.actionItems(actions(), key: \.key) { [unowned self] a in perform(a.title, actions) }.forEach(menu.addItem)
         return menu
     }
 

@@ -380,6 +380,11 @@ public struct ToolAlerts: Sendable {
         alerts.first { $0.metric == metric }.flatMap { states[$0.id ?? metric]?.values.compactMap(\.level).max() }
     }
 
+    /// The level standing on one series of `metric` — a row's (a dashboard table's cell), by the alert that watches it.
+    public func level(metric: String, key: String, alerts: [ToolAlert]) -> ToolLevel? {
+        alerts.first { $0.metric == metric }.flatMap { states[$0.id ?? metric]?[key]?.level }
+    }
+
     /// Every series past a threshold: alert id, key, standing.
     public var standing: [(alert: String, key: String, state: ToolAlertState)] {
         states.flatMap { id, keys in keys.compactMap { $0.value.level == nil ? nil : (id, $0.key, $0.value) } }.sorted { ($0.alert, $0.key) < ($1.alert, $1.key) }

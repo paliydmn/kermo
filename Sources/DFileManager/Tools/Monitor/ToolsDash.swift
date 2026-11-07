@@ -268,24 +268,34 @@ struct OneChart: View {
 
 // MARK: Table
 
-/// A `table` block: a row set as the latest sample that carried it, in the block's columns (§5.2's formats, a `bar`
-/// as one), each row with the block's actions as buttons — down the one path every action takes
-/// (`ToolListSource.action`: the lock, production's question, the line on the page, red for what can't be undone);
-/// one `only` keeps off a row isn't on it. An action this version doesn't run is greyed, saying so. As tall as its rows,
-/// or as you drag its grip (kept per tool and table; a double-click goes back to its rows).
-@MainActor final class ToolsTable: NSView, NSTableViewDataSource, NSTableViewDelegate, ToolsBlock {
+/// A `table` block (§6.3): a row set as the latest sample that carried it, in the block's columns (§5.2's formats, a
+/// `bar` as one) — a list's ways (review 3): one row is the cursor, kept on its key through a sample or a sort; its row
+/// gone, no cursor (a neighbour is another process). A header click sorts. The row's menu — a right-click, ⌃↩, ⇧F10,
+/// its ⋯ — and its keys as its actions have them; ↩ and a double-click its `return` one; ⌘C the row as shown, Copy
+/// Table all of it. Every action of a row goes down the one path (`ToolListSource.action`: the lock, production's
+/// question, red for what can't be undone) with the row as it was shown when pressed. Under the pointer or a menu the
+/// rows hold still: values change in place; a new order or set waits. Buttons only on the cursor's row and the one
+/// under the pointer: two that can be undone, ⋯ the rest. The alerts' thresholds on its bars and cells; by its heading,
+/// how often its rows come and when they came — dimmed once stale. Its sort and your columns (shown, order, widths)
+/// kept per tool and table, as its height: as tall as its rows, or as you drag its grip (a double-click: its rows).
+@MainActor final class ToolsTable: NSView, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, ToolsBlock {
     let block: ToolBlock
-    let table = NSTableView()
+    let table = ToolsTableView()
+    /// As shown: sorted, held while the pointer or a menu is over them.
     private(set) var rows: [ToolRow] = []
+    /// As the latest sample has them, in its order.
+    private var latest: [ToolRow] = []
     private let view: ToolListView
     private let source: ToolListSource
     private let heading = NSTextField(labelWithString: "")
+    /// By the heading: how often its rows come, when they came; held, or stale.
+    let note = NSTextField(labelWithString: "")
     private let height: NSLayoutConstraint
     /// The header and the rows; a legacy horizontal scroller adds its height (`layout`).
     private var fit: CGFloat = 48
     /// Under the table: its height as you drag it.
     let grip = ToolsGrip()
-    /// "<tool>.<table>": what its dragged height is kept by (`toolsTableHeights`).
+    /// "<tool>.<table>": what its height, sort and columns are kept by.
     private let name: String
     /// The height you dragged it to; nil: as tall as its rows.
     private var chosen: CGFloat?
@@ -293,8 +303,32 @@ struct OneChart: View {
     private var dragFrom: CGFloat = 0
     /// The legacy scroller's height under a table wider than the block, the last layout.
     private var bar: CGFloat = 0
-    private var kept: [AnyObject] = []
     private var tasks: [String: Task<Void, Never>] = [:]
+    /// The cursor's row, by key.
+    private var cursor: String?
+    /// The pointer is over the rows (a test sets it): they hold still.
+    var pointerInside = false {
+        didSet {
+            if !pointerInside { hover = nil }
+            if oldValue != pointerInside { show() }
+        }
+    }
+    private var menuOpen = false
+    /// The row under the pointer: its buttons show.
+    var hover: Int? { didSet { if hover != oldValue { redrawButtons() } } }
+    /// The rows whose buttons show.
+    private var buttoned = IndexSet()
+    /// Rows came that wait for the pointer or the menu to go.
+    private(set) var holding = false
+    /// The alerts with your thresholds, and how they stand: the bars' and the cells' colors.
+    private var alerts: [ToolAlert] = []
+    private var standing = ToolAlerts()
+    /// A column's metric — the preset's over these rows at that field — whose alert colors it.
+    private let metricOf: [String: (id: String, metric: ToolMetric)]
+    /// When its rows came, and how long after the rows before.
+    private var at: Date?, every: TimeInterval?, stale = false
+    /// Where ⌘C and Copy Table put the text.
+    var pasteboard = NSPasteboard.general
 
     private static let numbers: Set<String> = ["%", "bytes", "kbytes", "ms", "days"]
 
@@ -304,41 +338,64 @@ struct OneChart: View {
         view = ToolListView(columns: block.columns, key: block.key)
         source = ToolListSource(live.app, live.tool, live.server, live.target)
         name = live.tool.preset.id + "." + (block.table ?? "")
+        metricOf = Dictionary((live.tool.preset.metrics ?? [:]).compactMap { id, m in
+            m.rows == block.table && m.key != nil ? m.path.map { ($0, (id: id, metric: m)) } : nil
+        }) { a, _ in a }
         chosen = (UserDefaults.standard.dictionary(forKey: "toolsTableHeights")?[name] as? Double).map { CGFloat($0) }
         let scroll = NSScrollView()
         height = scroll.heightAnchor.constraint(equalToConstant: 48)
         super.init(frame: .zero)
         heading.font = .systemFont(ofSize: 12, weight: .semibold)
         heading.stringValue = block.title ?? block.table ?? ""
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.lineBreakMode = .byTruncatingTail
+        note.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         table.columnAutoresizingStyle = .noColumnAutoresizing   // before the columns: the first takes the slack (`layout`); past the width, it scrolls
         for c in block.columns ?? [] {
             let (field, format) = c.field, number = Self.numbers.contains(format ?? "")
             let col = NSTableColumn(identifier: .init(field))
             (col.title, col.width, col.minWidth) = (c.title, c.width ?? (number ? 56 : format == "bar" ? 100 : 64), table.tableColumns.isEmpty ? 80 : 40)   // the first names the row
             if number { col.headerCell.alignment = .right }
+            col.sortDescriptorPrototype = NSSortDescriptor(key: field, ascending: !(number || ["bar", "ago"].contains(format ?? "")))   // a number: the most first, as %CPU in Activity Monitor
             table.addTableColumn(col)
         }
-        if !actions.isEmpty {   // as wide as its buttons
+        restoreColumns()
+        if !actions.isEmpty {   // as wide as the two widest buttons a row shows, and ⋯
             let probe = NSButton(title: "", target: nil, action: nil)
             (probe.controlSize, probe.font) = (.small, .systemFont(ofSize: 11))
+            func width(_ title: String) -> CGFloat { probe.title = title; return probe.intrinsicContentSize.width + 4 }
+            let two = actions.filter { $0.spec.dangerous != true }.map { width($0.spec.title ?? $0.spec.id) }.sorted(by: >).prefix(2)
             let col = NSTableColumn(identifier: .init("actions"))
             col.title = ""
-            col.width = actions.reduce(6) { w, a in probe.title = a.spec.title ?? a.spec.id; return w + probe.intrinsicContentSize.width + 4 }
+            col.width = two.reduce(6, +) + (actions.count > two.count ? width("⋯") : 0)
             col.minWidth = col.width
             table.addTableColumn(col)
+        }
+        if let saved = (UserDefaults.standard.dictionary(forKey: "toolsTableSort")?[name] as? String)?.split(separator: ":"), saved.count == 2,
+           table.column(withIdentifier: .init(String(saved[0]))) >= 0 {   // a field the preset has no more: as the rows come
+            table.sortDescriptors = [NSSortDescriptor(key: String(saved[0]), ascending: saved[1] == "1")]
         }
         table.dataSource = self
         table.delegate = self
         table.style = .plain   // no inset: the columns fill the block exactly; a scroller shows only for a table wider than it
         table.rowHeight = 22
         table.usesAlternatingRowBackgroundColors = true
-        table.selectionHighlightStyle = .none
         table.setAccessibilityLabel(heading.stringValue)
+        table.menu = NSMenu()   // a row's, made as it opens (`menuNeedsUpdate`)
+        table.headerView?.menu = NSMenu()
+        table.menu?.delegate = self
+        table.headerView?.menu?.delegate = self
+        (table.target, table.doubleAction) = (self, #selector(doubleClicked))
+        table.onKey = { [unowned self] in key($0) }
+        table.onCopy = { [unowned self] in copyRow() }
         scroll.documentView = table
         scroll.hasVerticalScroller = false   // the dashboard scrolls; the table only when dragged shorter than its rows (`layout`)
         scroll.hasHorizontalScroller = true   // a narrow window: the buttons stay reachable
         scroll.autohidesScrollers = true
         scroll.verticalScrollElasticity = .none
+        // In the key window only: a pointer left over the window while you work elsewhere holds nothing.
+        scroll.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self))
         grip.began = { [unowned self] in dragFrom = height.constant }
         grip.drag = { [unowned self] by, done in
             chosen = max(oneRow, dragFrom + by)
@@ -351,13 +408,15 @@ struct OneChart: View {
             needsLayout = true
         }
         grip.setAccessibilityLabel("\(heading.stringValue) height")
-        let stack = NSStackView(views: [heading, scroll, grip])
+        let head = NSStackView(views: [heading, ToolsWindow.spacer(), note])
+        let stack = NSStackView(views: [head, scroll, grip])
         (stack.orientation, stack.alignment, stack.spacing) = (.vertical, .leading, 4)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
                                      stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-                                     scroll.widthAnchor.constraint(equalTo: stack.widthAnchor), grip.widthAnchor.constraint(equalTo: stack.widthAnchor), height])
+                                     head.widthAnchor.constraint(equalTo: stack.widthAnchor), scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+                                     grip.widthAnchor.constraint(equalTo: stack.widthAnchor), height])
         stack.setCustomSpacing(0, after: scroll)
     }
 
@@ -368,7 +427,8 @@ struct OneChart: View {
     override func layout() {
         super.layout()
         guard let first = table.tableColumns.first, let scroll = table.enclosingScrollView else { return }
-        let rest = table.tableColumns.dropFirst().reduce(0) { $0 + $1.width } + CGFloat(table.tableColumns.count) * table.intercellSpacing.width
+        let shown = table.tableColumns.filter { !$0.isHidden }
+        let rest = shown.dropFirst().reduce(0) { $0 + $1.width } + CGFloat(shown.count) * table.intercellSpacing.width
         let width = max(first.minWidth, scroll.contentView.bounds.width - rest)
         if abs(first.width - width) > 0.5 { first.width = width }
         bar = width + rest > scroll.contentView.bounds.width + 0.5 && scroll.scrollerStyle == .legacy
@@ -390,86 +450,419 @@ struct OneChart: View {
 
     private var actions: [ToolAction] { (block.actions ?? []).compactMap { id in source.preset.actions?.first { $0.spec.id == id } } }
 
+    /// Its window no longer key: the rows don't hold for a window you've left.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
+        if let window { NotificationCenter.default.addObserver(self, selector: #selector(left), name: NSWindow.didResignKeyNotification, object: window) }
+    }
+    @objc private func left() { pointerInside = false }
+
+    override func mouseEntered(with e: NSEvent) {
+        pointerInside = true
+        mouseMoved(with: e)
+    }
+    override func mouseExited(with e: NSEvent) { pointerInside = false }
+    override func mouseMoved(with e: NSEvent) {
+        let r = table.row(at: table.convert(e.locationInWindow, from: nil))
+        hover = r >= 0 ? r : nil
+    }
+
+    // MARK: Rows
+
     func update(_ live: ToolsLive) {
         let scope = live.app.tools.scope(live.tool.preset, on: live.server, live.target), now = live.now
-        let fresh = (live.known?.history.rows(block.table ?? "") ?? []).map { record -> ToolRow in
+        latest = (live.known?.history.rows(block.table ?? "") ?? []).map { record -> ToolRow in
             var r = view.row(record, scope, now: now)
             r.title = r.cells.first?.text ?? r.title   // the first column names the row in a question ("sleep"), its record is its key
             return r
         }
-        guard fresh != rows else { return }
-        rows = fresh
-        kept = []
+        // A new time is new rows: the time since the rows before, how often they come (procs every 15 s, disks 30 s).
+        if let came = live.known?.history.carried(block.table ?? "")?.at, came != at {
+            every = at.map { came.timeIntervalSince($0) }
+            at = came
+        }
+        stale = live.state?.down != nil || (at.flatMap { a in every.map { now.timeIntervalSince(a) > 3 * $0 } } ?? false)
+        let alerts = live.alerts, standing = live.known?.alerts ?? ToolAlerts()
+        func marks(_ s: ToolAlerts) -> [String] { s.standing.map { "\($0.alert) \($0.key) \($0.state.level?.rawValue ?? 0)" } }
+        let recolor = alerts != self.alerts || marks(standing) != marks(self.standing)
+        (self.alerts, self.standing) = (alerts, standing)
+        show(recolor: recolor)
+    }
+
+    /// The latest rows, sorted, into the table. Held — the pointer or a menu over them — the rows shown get their new
+    /// values in place, the order and the set stay (a row gone keeps its last values: its action finds it ended);
+    /// `thaw`: a sort you chose goes now anyway. Only what changed is drawn again.
+    private func show(recolor: Bool = false, thaw: Bool = false) {
+        let fresh = Self.sorted(latest, by: table.sortDescriptors.first)
+        var next = fresh
+        if !thaw, pointerInside || menuOpen, !rows.isEmpty {
+            let now = Dictionary(fresh.map { ($0.key, $0) }) { a, _ in a }
+            next = rows.map { now[$0.key] ?? $0 }
+        }
+        holding = next != fresh
+        say()
+        if next.map(\.key) == rows.map(\.key) {
+            let changed = IndexSet(rows.indices.filter { recolor || rows[$0] != next[$0] })
+            rows = next
+            if !changed.isEmpty { table.reloadData(forRowIndexes: changed, columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns)) }
+            return
+        }
+        let was = cursor
+        (rows, buttoned) = (next, [])
         table.reloadData()
+        let i = was.flatMap { k in rows.firstIndex { $0.key == k } }
+        table.selectRowIndexes(i.map { IndexSet(integer: $0) } ?? [], byExtendingSelection: false)   // its row gone: no cursor — a neighbour is another process
+        cursor = i.map { rows[$0].key }
+        redrawButtons()
         fit = (table.headerView?.frame.height ?? 23) + CGFloat(max(1, rows.count)) * (table.rowHeight + table.intercellSpacing.height) + 2
         needsLayout = true
+    }
+
+    /// `rows` by the field `d` sorts on: numbers by value, text as Finder sorts names, nothing last either way; equal ones
+    /// by key, so the order doesn't flicker from sample to sample. No sort: as the stream sent them.
+    static func sorted(_ rows: [ToolRow], by d: NSSortDescriptor?) -> [ToolRow] {
+        guard let d, let field = d.key else { return rows }
+        func cell(_ r: ToolRow) -> ToolRow.Cell? { r.cells.first { $0.field == field } }
+        return rows.sorted { a, b in
+            let (x, y) = (cell(a), cell(b)), (ex, ey) = ((x?.text ?? "").isEmpty, (y?.text ?? "").isEmpty)
+            if ex != ey { return ey }
+            let c: ComparisonResult = if let p = x?.value?.number, let q = y?.value?.number { p < q ? .orderedAscending : p > q ? .orderedDescending : .orderedSame }
+                else { (x?.text ?? "").localizedStandardCompare(y?.text ?? "") }
+            return c == .orderedSame ? a.key.localizedStandardCompare(b.key) == .orderedAscending : d.ascending == (c == .orderedAscending)
+        }
+    }
+
+    /// By the heading: "every 15 s · 11:31:05", "… · held under the pointer"; stale — no rows for three times their
+    /// interval, or the server not answering — "as of 11:31:05", and the rows dimmed.
+    private func say() {
+        let time = at?.formatted(date: .omitted, time: .standard)
+        note.stringValue = time.map { t in stale ? "as of \(t)" : [every.map { "every " + ToolAlerts.minutes($0.rounded()) }, t, holding ? "held under the pointer" : nil].compactMap { $0 }.joined(separator: " · ") } ?? ""
+        table.enclosingScrollView?.alphaValue = stale ? 0.5 : 1
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let id = tableColumn?.identifier.rawValue, rows.indices.contains(row) else { return nil }
-        let r = rows[row]
-        if id == "actions" { return buttons(r) }
-        let cell = r.cells.first { $0.field == id }
-        if cell?.format == "bar", let v = cell?.value?.number {
-            let bar = NSLevelIndicator()
-            bar.levelIndicatorStyle = .continuousCapacity
-            (bar.minValue, bar.maxValue, bar.doubleValue) = (0, 100, v)
-            bar.controlSize = .mini
-            bar.isEditable = false
-            bar.widthAnchor.constraint(equalToConstant: 44).isActive = true
-            bar.heightAnchor.constraint(equalToConstant: 8).isActive = true
-            let s = NSStackView(views: [bar, label(ToolTemplate.show(.number(v), "%"), right: true)])
-            s.spacing = 4
-            return s
+        guard let column = tableColumn, rows.indices.contains(row) else { return nil }
+        let r = rows[row], id = column.identifier
+        if id.rawValue == "actions" { return buttoned.contains(row) ? buttons(r) : nil }
+        let cell = r.cells.first { $0.field == id.rawValue }, level = level(id.rawValue, r)
+        let color = level == .critical ? Palette.fail : level == .warning ? Palette.warn : NSColor.labelColor
+        if cell?.format == "bar" {
+            let v = tableView.makeView(withIdentifier: id, owner: nil) as? ToolsBarCell ?? ToolsBarCell(id)
+            v.bar.isHidden = cell?.value?.number == nil
+            v.bar.doubleValue = cell?.value?.number ?? 0
+            let a = metricOf[id.rawValue].flatMap { m in alerts.first { $0.metric == m.id && $0.below != true } }   // as a tile's: yours, as Thresholds… set them
+            (v.bar.warningValue, v.bar.criticalValue) = (a?.warn ?? v.bar.maxValue + 1, a?.crit ?? v.bar.maxValue + 1)
+            (v.text.stringValue, v.text.textColor) = (Self.shown(cell), color)
+            return v
         }
-        return label(cell?.text ?? "", right: Self.numbers.contains(cell?.format ?? ""))
-    }
-
-    private func label(_ text: String, right: Bool) -> NSTextField {
-        let l = NSTextField(labelWithString: text)
-        l.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-        l.lineBreakMode = .byTruncatingTail
-        l.alignment = right ? .right : .left
-        l.toolTip = text
+        let l = tableView.makeView(withIdentifier: id, owner: nil) as? NSTextField ?? label(id, right: column.headerCell.alignment == .right)
+        (l.stringValue, l.textColor) = (cell?.text ?? "", color)
+        l.toolTip = l.stringValue
         return l
     }
 
-    /// The row's buttons: one an action; pressed, it waits for its run.
-    private func buttons(_ row: ToolRow) -> NSView {
+    private func label(_ id: NSUserInterfaceItemIdentifier, right: Bool) -> NSTextField {
+        let l = NSTextField(labelWithString: "")
+        l.identifier = id
+        l.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        l.lineBreakMode = .byTruncatingTail
+        l.alignment = right ? .right : .left
+        return l
+    }
+
+    /// A cell's text as shown: a bar's, its number.
+    static func shown(_ c: ToolRow.Cell?) -> String {
+        if c?.format == "bar", let n = c?.value?.number { return ToolTemplate.show(.number(n), "%") }
+        return c?.text ?? ""
+    }
+
+    /// How the alert on `field`'s metric stands for row `r` — by the series its key names — as the tiles and events
+    /// judge it (`below` too).
+    private func level(_ field: String, _ r: ToolRow) -> ToolLevel? {
+        guard let m = metricOf[field], let k = m.metric.key, let key = r.record[k]?.text else { return nil }
+        return standing.level(metric: m.id, key: key, alerts: alerts)
+    }
+
+    // MARK: The cursor, buttons, menus and keys
+
+    /// One row is the cursor, as in a list.
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        cursor = rows.indices.contains(table.selectedRow) ? rows[table.selectedRow].key : nil
+        redrawButtons()
+    }
+
+    /// Buttons on the cursor's row and the one under the pointer; only the rows that gain or lose them are drawn again.
+    private func redrawButtons() {
+        let col = table.column(withIdentifier: .init("actions"))
+        guard col >= 0 else { return }
+        let now = IndexSet([table.selectedRow, hover ?? -1].filter(rows.indices.contains))
+        guard now != buttoned else { return }
+        let redraw = now.symmetricDifference(buttoned).filteredIndexSet { $0 < rows.count }
+        buttoned = now
+        table.reloadData(forRowIndexes: redraw, columnIndexes: [col])
+    }
+
+    /// The row's actions, as `row` has them — the one source of its buttons, its menu and its keys: each runs down the
+    /// path every action takes with this row's fields. An action this version doesn't run is greyed, saying so; one
+    /// that's running, greyed till it's done.
+    func rowActions(_ row: ToolRow) -> [ListAction] {
         let p = source.preset, id = source.rowID(row.key), known = source.app.tools.answers[ServerRow.key(source.target)]?.answer, monitor = source.app.tools.monitor
-        let views = actions.filter { $0.offered(on: row.record) }.map { a -> NSButton in
-            let title = (a.spec.title ?? a.spec.id)
+        return actions.filter { $0.offered(on: row.record) }.map { a in
+            let title = a.spec.title ?? a.spec.id
+            if a.spec.check == true, let s = monitor.server(source.target), let t = s.tools[p.id] {   // Check Now: the checks, at once
+                return ListAction(title: title, key: a.spec.key.flatMap(Shortcut.init), group: 0, closes: false, why: nil,
+                                  note: "Check every address now, from this Mac") { [weak s, weak t] _ in
+                    if let s, let t { monitor.check(t, on: s) }
+                    return nil
+                }
+            }
+            guard ToolRunner.runs(a, of: p) else { return ListAction(title: title, group: 0, closes: false, why: "\(title): this version doesn't run it yet") { _ in nil } }
+            var x = source.action(a, row: row, onRow: true, id: id, group: 0, keyed: known?.has(a, of: p) ?? (a.spec.requires == nil))
+            if tasks[id + title] != nil { x.why = "\(title) is running" }
+            return x
+        }
+    }
+
+    /// `a` on `row` — the row as shown when its button, item or key was pressed. What can't run now beeps; what runs
+    /// keeps its button greyed till it's done.
+    private func run(_ a: ListAction, _ row: ToolRow) {
+        guard a.why == nil else { return NSSound.beep() }
+        let k = source.rowID(row.key) + a.title
+        guard let task = a.run(false) else { return }
+        tasks[k] = task
+        DispatchQueue.main.async { [weak self] in self?.redraw(row.key) }   // not under the pressed button's own action
+        Task { [weak self] in
+            await task.value
+            self?.tasks[k] = nil
+            self?.redraw(row.key)
+        }
+    }
+
+    /// The buttons of row `key` again: one of its actions started or ended.
+    private func redraw(_ key: String) {
+        let col = table.column(withIdentifier: .init("actions"))
+        guard col >= 0, let i = rows.firstIndex(where: { $0.key == key }), buttoned.contains(i) else { return }
+        table.reloadData(forRowIndexes: [i], columnIndexes: [col])
+    }
+
+    /// The row's buttons: its first two actions that can be undone; ⋯ the rest — its menu — when there are more.
+    private func buttons(_ row: ToolRow) -> NSView {
+        let all = rowActions(row), shown = all.filter { !$0.dangerous }.prefix(2)
+        let v = ToolsButtons()
+        v.spacing = 4
+        func button(_ title: String) -> NSButton {
             let b = NSButton(title: title, target: nil, action: nil)
             b.controlSize = .small
             b.font = .systemFont(ofSize: 11)
-            if a.spec.check == true, let s = monitor.server(source.target), let t = s.tools[p.id] {   // Check Now: the checks, at once
-                b.toolTip = "Check every address now, from this Mac"
-                kept.append(MenuAction.attach(to: b) { [weak s, weak t] in if let s, let t { monitor.check(t, on: s) } })
-                return b
-            }
-            guard ToolRunner.runs(a, of: p) else {
-                b.isEnabled = false
-                b.toolTip = "\(title): this version doesn't run it yet"
-                return b
-            }
-            let action = source.action(a, row: row, onRow: true, id: id, group: 0, keyed: known?.has(a, of: p) ?? (a.spec.requires == nil))
-            b.isEnabled = action.why == nil && tasks[id + title] == nil
-            b.toolTip = action.why ?? action.command
-            if action.dangerous { b.attributedTitle = NSAttributedString(string: title, attributes: [.foregroundColor: Palette.fail]) }
-            kept.append(MenuAction.attach(to: b) { [weak self, weak b] in
-                guard let task = action.run(false) else { return }
-                b?.isEnabled = false
-                self?.tasks[id + title] = task
-                Task { await task.value; self?.tasks[id + title] = nil; b?.isEnabled = true }
-            })
+            v.addArrangedSubview(b)
             return b
         }
-        let s = NSStackView(views: views)
-        s.spacing = 4
-        return s
+        for a in shown {
+            let b = button(a.title)
+            b.isEnabled = a.why == nil
+            b.toolTip = a.why ?? a.command ?? a.note
+            v.kept.append(MenuAction.attach(to: b) { [weak self] in self?.run(a, row) })
+        }
+        if all.count > shown.count {
+            let more = button("⋯")
+            more.toolTip = "More actions"
+            more.setAccessibilityLabel("More actions")
+            v.kept.append(MenuAction.attach(to: more) { [weak self, weak more] in
+                guard let self, let more else { return }
+                rowMenu(row).popUp(positioning: nil, at: NSPoint(x: 0, y: more.bounds.maxY + 4), in: more)
+            })
+        }
+        return v
     }
+
+    /// The row's menu — ⋯'s, ⌃↩'s: its actions, then Copy and Copy Table.
+    func rowMenu(_ row: ToolRow) -> NSMenu {
+        let menu = NSMenu()
+        menu.delegate = self
+        fill(menu, row)
+        return menu
+    }
+
+    /// A row's actions as a list's menu has them (`AppDelegate.actionItems`), then Copy and Copy Table; no row: Copy Table.
+    private func fill(_ menu: NSMenu, _ row: ToolRow?) {
+        menu.autoenablesItems = false
+        if let row {
+            let all = rowActions(row)
+            AppDelegate.actionItems(all, key: \.key) { [weak self] in self?.run($0, row) }.forEach(menu.addItem)
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            let copy = MenuAction.item("Copy") { [weak self] in self?.copy([row], header: false) }
+            if !all.contains(where: { $0.key == Shortcut("cmd+c") }) { (copy.keyEquivalent, copy.keyEquivalentModifierMask) = ("c", .command) }
+            menu.addItem(copy)
+        }
+        menu.addItem(MenuAction.item("Copy Table") { [weak self] in self?.copyTable() })
+    }
+
+    /// The header's menu: each column but the first (it names the row) to show or hide, then Copy Table.
+    func fillHeader(_ menu: NSMenu) {
+        menu.autoenablesItems = false
+        for c in table.tableColumns.dropFirst() where c.identifier.rawValue != "actions" {
+            let item = MenuAction.item(c.title) { [weak self] in
+                c.isHidden.toggle()
+                self?.keepColumns()
+                self?.needsLayout = true
+            }
+            item.state = c.isHidden ? .off : .on
+            menu.addItem(item)
+        }
+        if !menu.items.isEmpty { menu.addItem(.separator()) }
+        menu.addItem(MenuAction.item("Copy Table") { [weak self] in self?.copyTable() })
+    }
+
+    /// A right-click's menu, on the row clicked — the cursor goes there — or the header's.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === table.menu {
+            menu.removeAllItems()
+            let r = table.clickedRow
+            if rows.indices.contains(r) { table.selectRowIndexes([r], byExtendingSelection: false) }
+            fill(menu, rows.indices.contains(r) ? rows[r] : nil)
+        } else if menu === table.headerView?.menu {
+            menu.removeAllItems()
+            fillHeader(menu)
+        }
+    }
+    func menuWillOpen(_ menu: NSMenu) { menuOpen = true }
+    func menuDidClose(_ menu: NSMenu) {
+        menuOpen = false
+        show()
+    }
+
+    /// A key on the cursor's row: ⌃↩ or ⇧F10 its menu; ↩ its `return` action; another action's key that action; the
+    /// rest the table's own (↑↓). A question over the window: nothing.
+    private func key(_ e: NSEvent) -> Bool {
+        if window?.attachedSheet != nil { return true }
+        let k = Shortcut(event: e), r = table.selectedRow
+        guard rows.indices.contains(r) else { return false }
+        if Picker.menuKeys.contains(k) {
+            let rect = table.rect(ofRow: r)
+            rowMenu(rows[r]).popUp(positioning: nil, at: NSPoint(x: rect.minX + 12, y: rect.maxY), in: table)
+            return true
+        }
+        if k == Shortcut("return") { open(r, beep: true); return true }
+        guard let a = rowActions(rows[r]).first(where: { $0.key == k }) else { return false }
+        run(a, rows[r])
+        return true
+    }
+
+    @objc private func doubleClicked() { open(table.clickedRow, beep: false) }
+
+    /// ↩ or a double-click on row `r`: its `return` action; none — ↩ beeps, a click does nothing.
+    func open(_ r: Int, beep: Bool) {
+        guard rows.indices.contains(r), let a = rowActions(rows[r]).first(where: { $0.key == Shortcut("return") }) else { return beep ? NSSound.beep() : () }
+        run(a, rows[r])
+    }
+
+    // MARK: Copy
+
+    /// ⌘C: the cursor row's `cmd+c` action if it has one, as a list's; else the row as shown.
+    private func copyRow() {
+        guard rows.indices.contains(table.selectedRow) else { return NSSound.beep() }
+        let row = rows[table.selectedRow]
+        if let a = rowActions(row).first(where: { $0.key == Shortcut("cmd+c") }) { return run(a, row) }
+        copy([row], header: false)
+    }
+
+    func copyTable() { copy(rows, header: true) }
+
+    /// `rows` as shown — the columns shown, in their order, no buttons; a field no column shows never — tab-separated;
+    /// `header`: the columns' titles above.
+    func copy(_ rows: [ToolRow], header: Bool) {
+        let cols = table.tableColumns.filter { !$0.isHidden && $0.identifier.rawValue != "actions" }
+        let lines = (header ? [cols.map(\.title)] : []) + rows.map { r in cols.map { c in Self.shown(r.cells.first { $0.field == c.identifier.rawValue }) } }
+        pasteboard.clearContents()
+        pasteboard.setString(ListPanel.tsv(lines), forType: .string)
+    }
+
+    // MARK: Columns
+
+    func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+        var all = UserDefaults.standard.dictionary(forKey: "toolsTableSort") ?? [:]
+        all[name] = tableView.sortDescriptors.first.map { "\($0.key ?? ""):\($0.ascending ? 1 : 0)" }
+        UserDefaults.standard.set(all, forKey: "toolsTableSort")
+        show(thaw: true)   // the order you chose, now — under the pointer too
+    }
+
+    /// The first column names the row and stays first; the buttons stay last.
+    func tableView(_ tableView: NSTableView, shouldReorderColumn columnIndex: Int, toColumn newColumnIndex: Int) -> Bool {
+        let end = table.column(withIdentifier: .init("actions")) >= 0 ? table.numberOfColumns - 1 : table.numberOfColumns
+        return columnIndex > 0 && columnIndex < end && newColumnIndex != 0 && newColumnIndex < end
+    }
+
+    func tableViewColumnDidMove(_ notification: Notification) { keepColumns() }
+    func tableViewColumnDidResize(_ notification: Notification) {
+        if notification.userInfo?["NSTableColumn"] as? NSTableColumn !== table.tableColumns.first { keepColumns() }   // the first's is what the others leave (`layout`)
+    }
+
+    /// Your columns kept, a moment after the last change (a drag resizes many times).
+    private func keepColumns() {
+        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(saveColumns), object: nil)
+        perform(#selector(saveColumns), with: nil, afterDelay: 0.5)
+    }
+
+    /// Per tool and table (`toolsTableColumns`), after the first: in their order, "-cpu:56" — hidden, 56 pt.
+    @objc private func saveColumns() {
+        var all = UserDefaults.standard.dictionary(forKey: "toolsTableColumns") ?? [:]
+        all[name] = table.tableColumns.dropFirst().filter { $0.identifier.rawValue != "actions" }.map { ($0.isHidden ? "-" : "") + $0.identifier.rawValue + ":\(Int($0.width))" }
+        UserDefaults.standard.set(all, forKey: "toolsTableColumns")
+    }
+
+    /// Your columns as kept; a field the preset has no more is left out, a new one stays where the preset put it.
+    private func restoreColumns() {
+        var at = 1
+        for s in UserDefaults.standard.dictionary(forKey: "toolsTableColumns")?[name] as? [String] ?? [] {
+            let hidden = s.hasPrefix("-"), parts = s.dropFirst(hidden ? 1 : 0).split(separator: ":")
+            let i = table.column(withIdentifier: .init(String(parts.first ?? "")))
+            guard i > 0 else { continue }
+            let c = table.tableColumns[i]
+            c.isHidden = hidden
+            if parts.count > 1, let w = Double(parts[1]) { c.width = max(c.minWidth, w) }
+            table.moveColumn(i, toColumn: at)
+            at += 1
+        }
+    }
+}
+
+/// A dashboard table's own keys, and Edit ▸ Copy (`ToolsTable`).
+@MainActor final class ToolsTableView: NSTableView {
+    /// A key: true, it was the row's.
+    var onKey: ((NSEvent) -> Bool)?
+    var onCopy: (() -> Void)?
+    override func keyDown(with e: NSEvent) { if onKey?(e) != true { super.keyDown(with: e) } }
+    @objc func copy(_ sender: Any?) { onCopy?() }
+}
+
+/// A row's buttons, holding what they run while they live.
+@MainActor final class ToolsButtons: NSStackView {
+    var kept: [AnyObject] = []
+}
+
+/// A `bar` cell: the level in its thresholds' colors, the number by it.
+@MainActor final class ToolsBarCell: NSStackView {
+    let bar = NSLevelIndicator(), text = NSTextField(labelWithString: "")
+
+    init(_ id: NSUserInterfaceItemIdentifier) {
+        super.init(frame: .zero)
+        identifier = id
+        bar.levelIndicatorStyle = .continuousCapacity
+        (bar.minValue, bar.maxValue) = (0, 100)
+        bar.controlSize = .mini
+        bar.isEditable = false
+        bar.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        bar.heightAnchor.constraint(equalToConstant: 8).isActive = true
+        text.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        text.alignment = .right
+        spacing = 4
+        [bar, text].forEach(addArrangedSubview)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
 }
 
 // MARK: Events

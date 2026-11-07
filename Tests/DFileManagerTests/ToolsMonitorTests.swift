@@ -14,9 +14,11 @@ import Testing
 
 /// A stream on this Mac: a JSON line every 0.3 s — cpu 10, or 99 while the flag `hot-<server>` is there; every 1.3 s
 /// with `slow-<server>`; with `event-<server>`, an `_event` in each line (a critical one with `boom-<server>`); two `procs` rows in every other line (as
-/// System spaces its heavier reads) — its pid in `pulse-<server>.pid`. `pulse2`: the same under another name. Its
-/// dashboard has every block; its actions: Folder (`open` what `pulse-dir` prints), Stop… (dangerous), Deeper (a
-/// level, only on the row of `first`), Log (`{from}` / `{to}` into `pulse-log`), Terminal and Services (`goto`).
+/// System spaces its heavier reads) — `second` first with `swap-<server>`, alone with `lone-<server>`, its cpu new each
+/// time with `busy-<server>`, its mem 60 (past `pmem`'s warning) with `warm-<server>` — its pid in `pulse-<server>.pid`.
+/// `pulse2`: the same under another name. Its dashboard has every block; its actions: Folder (`open` what `pulse-dir`
+/// prints), Stop… (dangerous), Deeper (a level on ↩, only on the row of `first`), Copy PID (⌘C, only on `second`'s), Log
+/// (`{from}` / `{to}` into `pulse-log`), Terminal and Services (`goto`).
 @MainActor private func pulse(_ bench: ToolsBench, _ ids: [String] = ["pulse"]) throws {
     for id in ids {
         try Data("""
@@ -28,7 +30,11 @@ import Testing
               cpu=10; [ -f \(bench.dir)/hot-$2 ] && cpu=99
               ev=''; [ -f \(bench.dir)/event-$2 ] && ev=',"_event":{"id":"tick","level":"info","message":"tick"}'
               [ -f \(bench.dir)/boom-$2 ] && ev=',"_event":{"id":"boom","level":"critical","message":"boom"}'
-              procs=''; [ $((i % 2)) -eq 0 ] && procs=',"procs":[{"pid":1,"command":"first","cpu":1.5},{"pid":2,"command":"second","cpu":20}]'
+              c2=20; [ -f \(bench.dir)/busy-$2 ] && c2=$((21 + i % 9))
+              m2=40; [ -f \(bench.dir)/warm-$2 ] && m2=60
+              p1='{"pid":1,"command":"first","cpu":1.5,"mem":30}'; p2=$(printf '{"pid":2,"command":"second","cpu":%s,"mem":%s}' "$c2" "$m2")
+              rows="$p1,$p2"; [ -f \(bench.dir)/swap-$2 ] && rows="$p2,$p1"; [ -f \(bench.dir)/lone-$2 ] && rows="$p2"
+              procs=''; [ $((i % 2)) -eq 0 ] && procs=',"procs":['"$rows"']'
               printf '{"cpu":{"pct":%s},"n":%s%s%s}\\n' "$cpu" "$i" "$ev" "$procs"
               i=$((i+1))
               if [ -f \(bench.dir)/slow-$2 ]; then sleep 1.3; else sleep 0.3; fi
@@ -45,20 +51,22 @@ import Testing
             { "schema": 1, "id": "\(id)", "title": "\(id.capitalized)",
               "stream": { "command": "\(id) {every} {server}", "format": "jsonl" },
               "watch": { "every": 1, "down": 2 },
-              "metrics": { "cpu": { "title": "CPU", "path": "cpu.pct", "unit": "%", "max": 100 }, "n": { "title": "Ticks", "path": "n" } },
+              "metrics": { "cpu": { "title": "CPU", "path": "cpu.pct", "unit": "%", "max": 100 }, "n": { "title": "Ticks", "path": "n" },
+                           "pmem": { "title": "Process memory", "rows": "procs", "key": "pid", "path": "mem", "unit": "%", "max": 100 } },
               "summary": [ { "metric": "cpu", "as": "bar" } ],
-              "alerts": [ { "id": "cpu", "metric": "cpu", "warn": 85, "crit": 95, "checks": 2 } ],
+              "alerts": [ { "id": "cpu", "metric": "cpu", "warn": 85, "crit": 95, "checks": 2 }, { "id": "pmem", "metric": "pmem", "warn": 50, "crit": 95 } ],
               "events": [ { "id": "hot", "path": "cpu.pct", "when": "is", "value": 99, "level": "warning", "message": "hot: {cpu.pct}", "goto": "services:hot.service" } ],
               "dashboard": [ { "row": [ { "stat": "cpu" }, { "stat": "n" } ] },
                              { "charts": [ ["cpu"], ["n"] ], "range": ["1h", "24h", "7d"], "log": "log" },
-                             { "row": [ { "table": "procs", "title": "Processes", "key": "{pid}", "columns": ["command", "cpu:%", "pid"], "actions": ["folder", "stop", "deeper"] },
+                             { "row": [ { "table": "procs", "title": "Processes", "key": "{pid}", "columns": ["command", "cpu:%", "mem:bar", "pid"], "actions": ["folder", "stop", "deeper", "pidcopy"] },
                                         { "counts": [ { "rows": "procs", "title": "processes", "goto": "services" } ] } ] },
                              { "events": true } ],
               "actions": [
                 { "id": "folder", "title": "Folder", "rows": "procs", "readonly": true, "command": "pulse-dir {pid}", "open": "{stdout}" },
                 { "id": "stop", "title": "Stop…", "rows": "procs", "dangerous": true, "command": "pulse-log stop {pid}" },
-                { "id": "deeper", "title": "Deeper", "rows": "procs", "readonly": true, "only": { "command": ["first"] }, "command": "echo {pid} {command}", "output": "list",
+                { "id": "deeper", "title": "Deeper", "rows": "procs", "key": "return", "readonly": true, "only": { "command": ["first"] }, "command": "echo {pid} {command}", "output": "list",
                   "list": { "format": "lines", "key": "{line}", "empty": "nothing in {command}" }, "actions": [ { "id": "here", "title": "Here", "key": "return", "readonly": true, "command": "pulse-log here {pid} {line}" } ] },
+                { "id": "pidcopy", "title": "Copy PID", "rows": "procs", "key": "cmd+c", "readonly": true, "only": { "command": ["second"] }, "command": "pulse-log copy {pid}" },
                 { "id": "log", "title": "Log", "readonly": true, "command": "pulse-log {from} {to}" } ],
               "toolActions": [ { "id": "ssh", "title": "Terminal", "goto": "ssh" }, { "id": "svc", "title": "Services", "goto": "services:{server}.service" } ] }
             """.utf8).write(to: URL(fileURLWithPath: bench.dir + "/own/\(id).json"))
@@ -154,11 +162,16 @@ private final class LocalWeb: @unchecked Sendable {
 @MainActor private func live(_ page: ToolsPage) -> ToolsLive? { page.body.arrangedSubviews.first as? ToolsLive }
 @MainActor private func buttons(_ v: NSView) -> [NSButton] { ((v as? NSButton).map { [$0] } ?? []) + v.subviews.flatMap(buttons) }
 @MainActor private func labels(_ v: NSView) -> [String] { ((v as? NSTextField).map { [$0.stringValue] } ?? []) + v.subviews.flatMap(labels) }
-/// A dashboard table's row buttons (its last column), the row's view made if the table hasn't drawn yet.
+/// A dashboard table's row buttons (its last column), the row's view made if the table hasn't drawn yet: only the
+/// cursor's row and the one under the pointer have them.
 @MainActor private func rowButtons(_ t: ToolsTable, _ row: Int) -> [NSButton] {
     t.table.view(atColumn: t.table.numberOfColumns - 1, row: row, makeIfNecessary: true).map(buttons) ?? []
 }
 @MainActor private func press(_ b: NSButton?) { _ = (b?.target as? NSObject)?.perform(b?.action, with: b) }
+/// A menu's item by its title, chosen.
+@MainActor private func choose(_ m: NSMenu, _ title: String) {
+    if let i = m.items.firstIndex(where: { $0.title == title }) { m.performActionForItem(at: i) } else { Issue.record("no \(title) in \(m.items.map(\.title))") }
+}
 
 /// dpl's state folder under `base` (`{unit}/deploy.json`, api's YAML), a `dpl` that says its version, and a sudo for
 /// the root SFTP session: it lets `-n --` through, or (`refuses`) wants a password — its calls in `sftp-sudo.log`.
@@ -543,13 +556,25 @@ extension ServerLockTests {
         #expect(one.said == "99%", "\(one.said)")
         model.hover = d.charts[0].lines.first?.points.last?.at
         #expect(one.said.hasPrefix("99% · "), "\(one.said)")
-        #expect(table.rows.map(\.key) == ["1", "2"] && table.rows.map(\.title) == ["first", "second"] && table.rows[1].cells.map(\.text) == ["second", "20 %", "2"], "\(table.rows)")
-        #expect(table.table.numberOfRows == 2 && table.table.tableColumns.map(\.title) == ["Command", "Cpu", "Pid", ""], "\(table.table.numberOfRows) \(table.table.tableColumns.map(\.title))")
+        #expect(table.rows.map(\.key) == ["1", "2"] && table.rows.map(\.title) == ["first", "second"] && table.rows[1].cells.map(\.text) == ["second", "20 %", "40", "2"], "\(table.rows)")
+        #expect(table.table.numberOfRows == 2 && table.table.tableColumns.map(\.title) == ["Command", "Cpu", "Mem", "Pid", ""], "\(table.table.numberOfRows) \(table.table.tableColumns.map(\.title))")
+        // Buttons only on the cursor's row and the one under the pointer: two that can be undone, ⋯ the rest; Stop…
+        // (dangerous) never a button — red in the row's menu, with every action of the row.
+        #expect(rowButtons(table, 0).isEmpty && rowButtons(table, 1).isEmpty, "no cursor, no pointer: no buttons")
+        table.table.selectRowIndexes([0], byExtendingSelection: false)
+        table.hover = 1
         let first = rowButtons(table, 0)
-        #expect(first.map(\.title) == ["Folder", "Stop…", "Deeper"] && rowButtons(table, 1).map(\.title) == ["Folder", "Stop…"], "only: Deeper on first's row \(first.map(\.title))")
+        #expect(first.map(\.title) == ["Folder", "Deeper", "⋯"] && rowButtons(table, 1).map(\.title) == ["Folder", "Copy PID", "⋯"], "only: Deeper on first's row \(first.map(\.title))")
         try #require(first.count == 3)
         #expect(first.allSatisfy { $0.isEnabled }, "a level runs now")
-        #expect(first[1].attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == Palette.fail, "dangerous: red")
+        let menus = table.rows.map { table.rowMenu($0) }
+        #expect(menus.map { $0.items.map(\.title) } == [["Folder", "Stop…", "Deeper", "", "Copy", "Copy Table"], ["Folder", "Stop…", "Copy PID", "", "Copy", "Copy Table"]],
+                "\(menus.map { $0.items.map(\.title) })")
+        #expect(menus[0].items[1].attributedTitle?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == Palette.fail, "dangerous: red")
+        #expect(menus[0].items[4].keyEquivalent == "c" && menus[1].items[2].keyEquivalent == "c" && menus[1].items[4].keyEquivalent == "",
+                "⌘C: Copy, or the row's own ⌘C action")
+        table.hover = nil
+        table.table.deselectAll(nil)
         #expect(counts.numbers.map(\.stringValue) == ["2"] && buttons(counts).map(\.title) == ["Services…"])
         #expect(buttons(events).map(\.title) == ["Services…"] && events.subviews.first.map { labels($0) }?.contains("hot: 99") == true, "\(events.subviews.first.map(labels) ?? [])")
 
@@ -582,11 +607,12 @@ extension ServerLockTests {
         let table = try #require(live(page)?.blocks.compactMap { $0 as? ToolsTable }.first)
         var asked: [(String, [String], Int?)] = []
         AppDelegate.answering = { m, b, d in asked.append((m, b, d)); return asked.count == 1 ? 2 : 0 }
-        press(rowButtons(table, 0).first { $0.title == "Stop…" })
+        table.table.selectRowIndexes([0], byExtendingSelection: false)   // the cursor's row has the buttons; Stop… is in its menu
+        choose(table.rowMenu(table.rows[0]), "Stop…")
         await toolsUntil { !page.result.stringValue.isEmpty }
         #expect(asked.first?.0 == "Stop on localhost?" && asked.first?.1 == ["Stop", "Show Exactly What Runs", "Cancel"] && asked.first?.2 == 2, "\(asked)")
         #expect(page.result.stringValue == "Stop: cancelled — nothing ran")
-        press(rowButtons(table, 0).first { $0.title == "Stop…" })
+        choose(table.rowMenu(table.rows[0]), "Stop…")
         await toolsUntil { page.result.stringValue.contains("Stop: done") }
         #expect(page.result.stringValue.contains("Stop: done on localhost at ") && asked.count == 2, "\(page.result.stringValue) \(asked.map(\.0))")
         #expect(bench.calls.contains("pulse-log stop 1"), "the row's pid in the command: \(bench.calls)")
@@ -608,6 +634,179 @@ extension ServerLockTests {
         #expect(touched == 1 && shown.count == 1, "locked: Touch ID first, and nothing without it")
     }
 
+    /// A dashboard table keeps its cursor on its row's key (review 3, PR A): through a sample that reorders the rows,
+    /// and gone with its row — never on the neighbour. Under the pointer the rows hold still: values change in place,
+    /// the order and the set wait, the note says so; the pointer gone, the latest go at once. A sample that changes one
+    /// row draws that row alone. The alert on a column colors its bar and number, yours as Thresholds… set them. The
+    /// note says how often and when; a server that stops answering dims the rows, "as of".
+    @Test func aDashboardTableKeepsItsCursorAndHoldsStillUnderThePointer() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app)
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("pulse")
+        await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 2 }
+        let table = try #require(live(page)?.blocks.compactMap { $0 as? ToolsTable }.first), t = table.table
+        func keys() -> [String] { table.rows.map(\.key) }
+        func cursor() -> String? { table.rows.indices.contains(t.selectedRow) ? table.rows[t.selectedRow].key : nil }
+        try #require(keys() == ["1", "2"])
+
+        t.selectRowIndexes([0], byExtendingSelection: false)
+        bench.flag("swap-localhost")
+        await toolsUntil { keys() == ["2", "1"] }
+        #expect(keys() == ["2", "1"] && cursor() == "1" && t.selectedRow == 1, "the cursor follows its row's key")
+        #expect(rowButtons(table, 1).first?.title == "Folder" && rowButtons(table, 0).isEmpty, "its buttons with it")
+        bench.flag("lone-localhost")
+        await toolsUntil { keys() == ["2"] }
+        #expect(keys() == ["2"] && t.selectedRow == -1 && cursor() == nil, "its row gone: no cursor — not the neighbour")
+        bench.flag("lone-localhost", false)
+        await toolsUntil { keys() == ["2", "1"] }
+
+        // Held: the pointer over the rows. A new order and a new set wait; values change in place.
+        table.pointerInside = true
+        bench.flag("swap-localhost", false)
+        bench.flag("lone-localhost")
+        bench.flag("busy-localhost")
+        await toolsUntil { table.rows[0].cells[1].text != "20 %" }
+        #expect(keys() == ["2", "1"] && table.rows[0].cells[1].text != "20 %" && table.holding && table.note.stringValue.hasSuffix(" · held under the pointer"),
+                "\(keys()) \(table.note.stringValue)")
+        bench.flag("lone-localhost", false)
+        for _ in 0..<2 {   // two samples after: one has both rows again
+            let was = table.rows[0].cells[1].text
+            await toolsUntil { table.rows[0].cells[1].text != was }
+        }
+        #expect(keys() == ["2", "1"] && table.holding)
+        table.pointerInside = false
+        #expect(keys() == ["1", "2"] && !table.holding && !table.note.stringValue.contains("held"), "the pointer gone: the latest at once \(keys())")
+
+        // A sample that changes the second row draws it alone: the first row's views stay.
+        let firstViews = (0..<t.numberOfColumns - 1).map { t.view(atColumn: $0, row: 0, makeIfNecessary: true) }
+        var made = Set<ObjectIdentifier>()
+        func cells() -> Set<ObjectIdentifier> { Set((0..<t.numberOfRows).flatMap { r in (0..<t.numberOfColumns - 1).compactMap { t.view(atColumn: $0, row: r, makeIfNecessary: false).map(ObjectIdentifier.init) } }) }
+        made = cells()
+        var samples = 0, newViews = 0
+        for _ in 0..<3 {
+            let was = table.rows[1].cells[1].text
+            await toolsUntil { table.rows[1].cells[1].text != was }
+            let now = cells()
+            (samples, newViews, made) = (samples + 1, newViews + now.subtracting(made).count, made.union(now))
+        }
+        #expect(zip(firstViews, (0..<t.numberOfColumns - 1).map { t.view(atColumn: $0, row: 0, makeIfNecessary: false) }).allSatisfy { $0 != nil && $0 === $1 },
+                "the first row's cells weren't made again")
+        print("ToolsTable: \(newViews) cell views made over \(samples) samples")
+
+        // The alert on Mem: its bar's thresholds and, past one, the number's color; yours as Thresholds… set them.
+        bench.flag("busy-localhost", false)
+        func mem(_ key: String) -> ToolsBarCell? { table.rows.firstIndex { $0.key == key }.flatMap { t.view(atColumn: 2, row: $0, makeIfNecessary: true) as? ToolsBarCell } }
+        #expect(mem("2")?.bar.warningValue == 50 && mem("2")?.bar.criticalValue == 95 && mem("2")?.text.textColor == .labelColor && mem("2")?.text.stringValue == "40 %",
+                "\(String(describing: mem("2")?.text.stringValue))")
+        bench.flag("warm-localhost")
+        await toolsUntil { mem("2")?.text.textColor == Palette.warn }
+        #expect(mem("2")?.text.textColor == Palette.warn && mem("1")?.text.textColor == .labelColor, "past 50: the second's number in the warning's color, the first's not")
+        app.tools.settings.setThreshold(.init(warn: 70, crit: 90), alert: "pmem", of: "pulse", on: nil)
+        await toolsUntil { mem("2")?.bar.warningValue == 70 && mem("2")?.text.textColor == .labelColor }
+        #expect(mem("2")?.bar.warningValue == 70 && mem("2")?.bar.criticalValue == 90 && mem("2")?.text.textColor == .labelColor, "yours: 60 is under your 70")
+
+        // How often and when; not answering: dimmed, "as of".
+        #expect(table.note.stringValue.hasPrefix("every ") && table.table.enclosingScrollView?.alphaValue == 1, "\(table.note.stringValue)")
+        let s = try #require(app.tools.monitor.server(.local()))
+        kill(try #require(pid(bench)), SIGSTOP)
+        await toolsUntil { s.down != nil && table.note.stringValue.hasPrefix("as of ") }
+        #expect(table.note.stringValue.hasPrefix("as of ") && table.table.enclosingScrollView?.alphaValue == 0.5, "\(table.note.stringValue)")
+        kill(try #require(pid(bench)), SIGCONT)
+        await toolsUntil { s.down == nil && !table.note.stringValue.hasPrefix("as of ") }
+        #expect(table.table.enclosingScrollView?.alphaValue == 1, "\(table.note.stringValue)")
+    }
+
+    /// A header click sorts — a number by its value, the most first — and the sort is kept for the table; the header's
+    /// menu hides a column, kept with its width; ⌘C copies the cursor's row as shown (the columns shown, tab-separated),
+    /// or runs the row's own ⌘C action; Copy Table all of it with the headers; ↩ and a double-click its `return` action.
+    @Test func aDashboardTableSortsCopiesAndKeepsItsColumns() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), keys = ["toolsTableSort", "toolsTableColumns"]
+        keys.forEach(UserDefaults.standard.removeObject)
+        defer { quick.done(); bench.done(); done(); app.savedServers = []; keys.forEach(UserDefaults.standard.removeObject); Picker.dismiss() }
+        try await watching(app, bench)
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("pulse")
+        await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 2 }
+        let view = try #require(live(page)), table = try #require(view.blocks.compactMap { $0 as? ToolsTable }.first), t = table.table
+        func col(_ id: String) -> NSTableColumn? { t.tableColumn(withIdentifier: .init(id)) }
+        #expect(col("cpu")?.sortDescriptorPrototype?.ascending == false && col("mem")?.sortDescriptorPrototype?.ascending == false
+                && col("command")?.sortDescriptorPrototype?.ascending == true && col("actions")?.sortDescriptorPrototype == nil, "a number's first click: the most first")
+        t.sortDescriptors = [try #require(col("cpu")?.sortDescriptorPrototype)]   // a click on CPU
+        #expect(table.rows.map(\.key) == ["2", "1"] && UserDefaults.standard.dictionary(forKey: "toolsTableSort")?["pulse.procs"] as? String == "cpu:0")
+        try await Task.sleep(for: .milliseconds(700))   // samples come: the order stays
+        #expect(table.rows.map(\.key) == ["2", "1"])
+
+        // The header's menu: every column but the first; Pid hidden, Cpu wider — kept a moment later.
+        let header = NSMenu()
+        table.fillHeader(header)
+        #expect(header.items.map(\.title) == ["Cpu", "Mem", "Pid", "", "Copy Table"] && header.items[0].state == .on)
+        choose(header, "Pid")
+        col("cpu")?.width = 90
+        #expect(table.tableView(t, shouldReorderColumn: 0, toColumn: 2) == false && table.tableView(t, shouldReorderColumn: 1, toColumn: 0) == false
+                && table.tableView(t, shouldReorderColumn: 1, toColumn: 4) == false && table.tableView(t, shouldReorderColumn: 2, toColumn: 1), "the first stays first, the buttons last")
+        await toolsUntil { (UserDefaults.standard.dictionary(forKey: "toolsTableColumns")?["pulse.procs"] as? [String]) != nil }
+        #expect(UserDefaults.standard.dictionary(forKey: "toolsTableColumns")?["pulse.procs"] as? [String] == ["cpu:90", "mem:100", "-pid:64"])
+
+        // ⌘C: the cursor's row as shown — no Pid, no buttons; the second's own ⌘C action instead; Copy Table.
+        table.pasteboard = NSPasteboard(name: .init("kermo-tests-\(UUID().uuidString)"))
+        defer { table.pasteboard.releaseGlobally() }
+        let first = try #require(table.rows.firstIndex { $0.key == "1" }), second = 1 - first
+        t.selectRowIndexes([first], byExtendingSelection: false)
+        t.copy(nil)
+        let one = table.rows[first].cells
+        #expect(table.pasteboard.string(forType: .string) == "first\t\(one[1].text)\t30 %", "\(table.pasteboard.string(forType: .string) ?? "")")
+        t.selectRowIndexes([second], byExtendingSelection: false)
+        table.pasteboard.clearContents()
+        t.copy(nil)
+        await toolsUntil { bench.calls.contains("pulse-log copy 2") }
+        #expect(bench.calls.contains("pulse-log copy 2") && table.pasteboard.string(forType: .string) == nil, "the row's ⌘C action: \(bench.calls)")
+        table.copyTable()
+        #expect(table.pasteboard.string(forType: .string) == "Command\tCpu\tMem\nsecond\t20 %\t40 %\nfirst\t\(one[1].text)\t30 %", "\(table.pasteboard.string(forType: .string) ?? "")")
+        #expect(ListPanel.tsv([["a\tb", "c\nd\r\ne"], ["f"]]) == "a b\tc d e\nf", "a tab or a line break in a text: a space")
+
+        // ↩ and a double-click: the row's `return` action (Deeper, a level, on first's row); none on second's.
+        t.selectRowIndexes([first], byExtendingSelection: false)
+        t.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+                                         characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!)
+        let p = try #require(Picker.current)
+        await toolsUntil { !p.rows.isEmpty }
+        #expect(p.scopeNames == ["localhost › Pulse › first"], "\(p.scopeNames)")
+        Picker.dismiss()
+        table.open(second, beep: false)
+        #expect(Picker.current == nil, "second's row: no ↩ action")
+        table.open(first, beep: false)
+        #expect(Picker.current?.scopeNames == ["localhost › Pulse › first"], "a double-click as ↩")
+        Picker.dismiss()
+
+        // Made again (the window reopened): the sort, the hidden column and the width as kept.
+        let again = ToolsTable(view, table.block)
+        #expect(again.table.sortDescriptors.first?.key == "cpu" && again.table.sortDescriptors.first?.ascending == false)
+        #expect(again.table.tableColumns.map { "\($0.identifier.rawValue) \(Int($0.width)) \($0.isHidden)" }.dropFirst()
+                == ["cpu 90 false", "mem 100 false", "pid 64 true", "actions \(Int(col("actions")?.width ?? 0)) false"], "\(again.table.tableColumns.map(\.width))")
+    }
+
+    /// The sort: numbers by value ("1,25" before "1,5"; 2 KB before 1 MB), text as Finder sorts names, nothing last
+    /// either way, equal values by key.
+    @Test func aDashboardTableSortsNumbersByValue() {
+        func row(_ key: String, _ text: String, _ value: Double?) -> ToolRow {
+            var r = ToolRow(key: key, title: key, record: [:])
+            r.cells = [.init(field: "v", format: "%", text: text, value: value.map { .number($0) })]
+            return r
+        }
+        let rows = [row("a", "1,5 %", 1.5), row("b", "1,25 %", 1.25), row("c", "", nil), row("d", "10 %", 10), row("e", "9 %", 9), row("f", "9 %", 9)]
+        func keys(_ up: Bool) -> String { ToolsTable.sorted(rows, by: NSSortDescriptor(key: "v", ascending: up)).map(\.key).joined() }
+        #expect(keys(true) == "baefdc" && keys(false) == "defabc", "\(keys(true)) \(keys(false))")
+        #expect(ToolsTable.sorted(rows, by: nil).map(\.key).joined() == "abcdef", "no sort: as they came")
+        let sizes = [row("x", "1 MB", 1_048_576), row("y", "2 KB", 2048), row("z", "b", nil)]
+        #expect(ToolsTable.sorted(sizes, by: NSSortDescriptor(key: "v", ascending: true)).map(\.key) == ["y", "x", "z"], "text with no number after numbers")
+    }
+
     /// A table row's level (Biggest Folders) opens in a Picker over the Tools window, the level its first: where it is
     /// as its chip, the action's rows read with the row's fields, a row's action down there with its parent's too; ⎋
     /// closes it.
@@ -621,6 +820,7 @@ extension ServerLockTests {
         page.select("pulse")
         await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 2 }
         let table = try #require(live(page)?.blocks.compactMap { $0 as? ToolsTable }.first)
+        table.table.selectRowIndexes([0], byExtendingSelection: false)
         press(rowButtons(table, 0).first { $0.title == "Deeper" })
         let p = try #require(Picker.current)
         await toolsUntil { !p.rows.isEmpty }
@@ -800,6 +1000,8 @@ extension ServerLockTests {
         await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 2 }
         let view = try #require(live(page)), table = try #require(view.blocks.compactMap { $0 as? ToolsTable }.first)
         #expect(view.foot.stringValue.hasSuffix("checked from this Mac · no SSH") && !view.addButton.isHidden && view.banner.isHidden, "\(view.foot.stringValue)")
+        table.table.selectRowIndexes([1], byExtendingSelection: false)
+        #expect(rowButtons(table, 1).map(\.title) == ["Open", "Check Now", "⋯"], "\(rowButtons(table, 1).map(\.title))")
         press(rowButtons(table, 1).first { $0.title == "Check Now" })
         await toolsUntil { posts.sent.count == 1 }
         #expect(posts.sent.first?.body == "Sites: \(web.url)/down is down: 503" && monitor.worst(s).state == .critical, "\(posts.sent)")
@@ -1102,7 +1304,7 @@ extension ServerLockTests {
             }
         }
         await app.tools.thresholds(on: .local(), window: nil)
-        #expect(asked.filter { $0.tool == "pulse" }.map { "\($0.alert) \($0.scope == nil ? "all" : "this")" } == ["cpu all", "cpu this"], "\(asked)")
+        #expect(asked.filter { $0.tool == "pulse" }.map { "\($0.alert) \($0.scope == nil ? "all" : "this")" } == ["cpu all", "cpu this", "pmem all", "pmem this"], "\(asked)")
         #expect(app.tools.settings.alerts(t.preset, on: id).first?.crit == 98 && app.tools.settings.mutes("cpu", of: "pulse", on: id))
         #expect(monitor.summary(t, on: s).first?.crit == 98, "WATCHED's bar by your threshold")
         bench.flag("hot-localhost")
@@ -1175,8 +1377,13 @@ extension ServerLockTests {
         #expect(app.tools.monitor.summary(tool, on: s).first?.text == "3 of 4 ready")
         #expect(table.rows.map(\.title) == ["api", "first", "shop", "web"] && table.rows[0].cells.map(\.text).prefix(5) == ["api", "app", "ready", "v3", "parallel"],
                 "\(table.rows.map { $0.cells.map(\.text) })")
-        #expect(rowButtons(table, 0).map(\.title) == ["Inspect", "Logs", "Deploy…", "Roll Back…", "Edit Config", "Undeploy…"], "\(rowButtons(table, 0).map(\.title))")
-        #expect(rowButtons(table, 2).map(\.title) == ["Inspect", "Edit Config", "Undeploy…"], "a domain: \(rowButtons(table, 2).map(\.title))")
+        #expect(table.rowMenu(table.rows[0]).items.map(\.title) == ["Inspect", "Logs", "Deploy…", "Roll Back…", "Edit Config", "Undeploy…", "", "Copy", "Copy Table"],
+                "\(table.rowMenu(table.rows[0]).items.map(\.title))")
+        #expect(table.rowMenu(table.rows[2]).items.map(\.title) == ["Inspect", "Edit Config", "Undeploy…", "", "Copy", "Copy Table"], "a domain: \(table.rowMenu(table.rows[2]).items.map(\.title))")
+        table.table.selectRowIndexes([0], byExtendingSelection: false)
+        table.hover = 2
+        #expect(rowButtons(table, 0).map(\.title) == ["Inspect", "Logs", "⋯"] && rowButtons(table, 2).map(\.title) == ["Inspect", "Edit Config", "⋯"] && rowButtons(table, 1).isEmpty,
+                "\(rowButtons(table, 0).map(\.title)) \(rowButtons(table, 2).map(\.title))")
         #expect(tool.events.map(\.message) == ["first: v1 failed at build"] && tool.events.first?.level == "critical", "\(tool.events.map(\.message))")
         let sudoRuns = { ((try? String(contentsOfFile: bench.dir + "/sftp-sudo.log", encoding: .utf8)) ?? "").split(separator: "\n").count }
         let before = sudoRuns()
