@@ -394,9 +394,10 @@ struct OneChart: View {
         (table.target, table.doubleAction) = (self, #selector(doubleClicked))
         table.onKey = { [unowned self] in key($0) }
         table.onCopy = { [unowned self] in copyRow() }
-        table.onShowMenu = { [unowned self] in
+        table.onShowMenu = { [unowned self] in   // after the request's answer: an open menu holds the main thread
             guard rows.indices.contains(table.selectedRow) else { return false }
-            popUpMenu(table.selectedRow)
+            let row = rows[table.selectedRow]   // the row as it is now, not whatever sits there by then
+            DispatchQueue.main.async { [weak self] in self?.popUpMenu(row) }
             return true
         }
         scroll.documentView = table
@@ -770,7 +771,7 @@ struct OneChart: View {
         if window?.attachedSheet != nil { return true }
         let k = Shortcut(event: e), r = table.selectedRow
         guard rows.indices.contains(r) else { return false }
-        if Picker.menuKeys.contains(k) { popUpMenu(r); return true }
+        if Picker.menuKeys.contains(k) { popUpMenu(rows[r]); return true }
         if k == Shortcut("return") { open(r, beep: true); return true }
         // ↑↓ held down: no row's actions made for each repeat
         guard actions.contains(where: { $0.spec.key.flatMap(Shortcut.init) == k }), let a = rowActions(rows[r]).first(where: { $0.key == k }) else { return false }
@@ -778,22 +779,11 @@ struct OneChart: View {
         return true
     }
 
-    /// Row `r`'s menu, by the row — ⌃↩'s, VoiceOver's Show Menu — not wherever the pointer is.
-    private func popUpMenu(_ r: Int) {
-        guard rows.indices.contains(r) else { return }
+    /// `row`'s menu, by the row — ⌃↩'s, VoiceOver's Show Menu — not wherever the pointer is; its row gone, none.
+    private func popUpMenu(_ row: ToolRow) {
+        guard let r = rows.firstIndex(where: { $0.key == row.key }) else { return }
         let rect = table.rect(ofRow: r)
-        rowMenu(rows[r]).popUp(positioning: nil, at: NSPoint(x: rect.minX + 12, y: rect.maxY), in: table)
-    }
-
-    /// Rows VoiceOver's Show Menu opens the menu of: the cursor goes there.
-    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        let v = ToolsRowView()
-        v.showMenu = { [weak self, weak v] in
-            guard let self, let v, case let r = table.row(for: v), rows.indices.contains(r) else { return }
-            table.selectRowIndexes([r], byExtendingSelection: false)
-            popUpMenu(r)
-        }
-        return v
+        rowMenu(row).popUp(positioning: nil, at: NSPoint(x: rect.minX + 12, y: rect.maxY), in: table)
     }
 
     @objc private func doubleClicked() { open(table.clickedRow, beep: false) }
@@ -881,21 +871,13 @@ struct OneChart: View {
     /// A key: true, it was the row's.
     var onKey: ((NSEvent) -> Bool)?
     var onCopy: (() -> Void)?
-    /// VoiceOver's Show Menu on the table: the cursor row's, by it; true, it was.
+    /// VoiceOver's Show Menu on the table (its rows have none of their own): the cursor row's, by it; true, it was.
     var onShowMenu: (() -> Bool)?
     override func keyDown(with e: NSEvent) { if onKey?(e) != true { super.keyDown(with: e) } }
     @objc func copy(_ sender: Any?) { onCopy?() }
     override func accessibilityPerformShowMenu() -> Bool { onShowMenu?() == true || super.accessibilityPerformShowMenu() }
 }
 
-/// A dashboard table's row: VoiceOver's Show Menu on it opens its menu, as ⌃↩ does.
-@MainActor final class ToolsRowView: NSTableRowView {
-    var showMenu: (() -> Void)?
-    override func accessibilityPerformShowMenu() -> Bool {
-        showMenu?()
-        return showMenu != nil
-    }
-}
 
 /// A row's buttons, holding what they run while they live.
 @MainActor final class ToolsButtons: NSStackView {
