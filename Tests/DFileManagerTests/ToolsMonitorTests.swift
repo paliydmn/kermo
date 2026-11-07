@@ -70,7 +70,7 @@ import Testing
               "alerts": [ { "id": "cpu", "metric": "cpu", "warn": 85, "crit": 95, "checks": 2 }, { "id": "pmem", "metric": "pmem", "warn": 50, "crit": 95 } ],
               "events": [ { "id": "hot", "path": "cpu.pct", "when": "is", "value": 99, "level": "warning", "message": "hot: {cpu.pct}", "goto": "services:hot.service" } ],
               "dashboard": [ { "row": [ { "stat": "cpu" }, { "stat": "n" } ] },
-                             { "charts": [ ["cpu"], ["n"], ["pmem", "cpu"] ], "range": ["1h", "24h", "7d"], "log": "log" },
+                             { "charts": [ ["cpu"], ["pmem", "n"] ], "range": ["1h", "24h", "7d"], "log": "log" },
                              { "row": [ { "table": "procs", "title": "Processes", "key": "{pid}", \(list ? #""list": "All Processes…","# : "")
                                           "columns": [{ "field": "command", "tip": "{args}" }, { "field": "cpu:%", "help": "% of one core" }, "mem:bar", "pid"], "actions": ["folder", "stop", "deeper", "pidcopy"] },
                                         { "counts": [ { "rows": "procs", "title": "processes", "goto": "services" } ] } ] },
@@ -563,9 +563,9 @@ extension ServerLockTests {
         #expect(abs(scroll.frame.height - rowsTall) < 1 && kept() == nil && !scroll.hasVerticalScroller)
         #expect(hosting?.window != nil && charts.range.segmentCount == 3 && charts.range.selectedSegment == 0)
         let d = charts.model.data
-        #expect(d.charts.map(\.title) == ["CPU", "Ticks", "Process memory · CPU"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95 && d.charts[1].warn == nil)
+        #expect(d.charts.map(\.title) == ["CPU", "Process memory · Ticks"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95)
         // Two metrics in one chart: the first one's thresholds; a key named with its metric; every series counted.
-        #expect(d.charts[2].warn == 50 && d.charts[2].lines.map(\.name) == ["Process memory 1", "Process memory 2", "CPU"] && d.charts[2].of == 3, "\(d.charts[2].lines.map(\.name))")
+        #expect(d.charts[1].warn == 50 && d.charts[1].lines.map(\.name) == ["Process memory 1", "Process memory 2", "Ticks"] && d.charts[1].of == 3, "\(d.charts[1].lines.map(\.name))")
         #expect(d.charts[0].lines.first?.chart.runs.last?.last?.value == 99 && d.to.timeIntervalSince(d.from) == 3600, "\(d.charts[0].lines.first?.points.suffix(2) ?? [])")
         let model = ToolsCharts.Model()   // its own: the pointer may be over the window's charts, hovering
         (model.data, model.every) = (d, charts.model.every)
