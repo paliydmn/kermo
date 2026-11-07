@@ -51,6 +51,8 @@ Release:
 - Tools: **who was it?** — a click on a dashboard's chart of the last hour shows its tables as they were at that moment (System: the busiest processes and the disks then), read only, the moment marked on the charts, with **Back to Live** (⎋). Kermo keeps the hour's rows in memory only, never on disk.
 - Tools: **All Processes…** by System's Top processes — every process as a list (also Tools ▸ System and a panel): sorted, filtered with `/`, the same actions, up to 2000 and saying when there were more, read every 15 seconds only while it shows. Deployments' Units have **All Units…**. Presets: a table's `list`, and a list's `every` now works.
 - Tools: a list in a panel shows a column's `tip` over its cell (a process's command line, never copied) and its `help` over the heading.
+- Tools: **charts say when and what** — a tip beside the pointer names each series with its value, says why a gap has none, lists the events near and what a click does; each chart's header says **Now**, the time under the pointer, or **At** the moment the tables show. On **24h** and **7d** a band round each line shows each 15 minutes' lowest and highest, so a short peak isn't lost in the average. Charts go two to a row where there's room, else one; a chart with more series than it draws says "6 of 18".
+- Tools: **System's charts** show what it already reads — CPU with I/O wait and Steal, Memory with Swap, Network, Disk I/O, **Load per core** and **Disk usage** by mount. Nothing more runs on the server.
 
 ### Fixed
 - **＋ New Tunnel…** over a server's tunnels in a panel did nothing.

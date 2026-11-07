@@ -96,8 +96,10 @@ public struct ToolSlots: Sendable {
     // MARK: A chart
 
     /// `metric`'s series `key` in `lines` (oldest first) as a chart's points from `from`: each slot's average at its
-    /// start (a slot written early — at a sleep, a stop — never lands past now), and the gaps: the ones written, and
-    /// "not watched" where slots are missing (Kermo not running, the server not watched) and before the first.
+    /// start with its min and max (a slot written early — at a sleep, a stop — never lands past now; filled again after
+    /// a short sleep, it's two points at one time, each its own: averages without their counts don't merge), and the
+    /// gaps: the ones written, and "not watched" where slots are missing (Kermo not running, the server not watched)
+    /// and before the first.
     public static func points(_ lines: [Line], metric: String, key: String, from: Date) -> [ToolPoint] {
         var out: [ToolPoint] = []
         var end = from.timeIntervalSince1970   // where the last slot ended
@@ -108,7 +110,7 @@ public struct ToolSlots: Sendable {
             }
             guard let v = l.v?[metric]?[key], v.count == 3 else { continue }
             if l.t > end + 1, out.last?.gap == nil { out.append(ToolPoint(at: Date(timeIntervalSince1970: end), gap: .notWatched)) }
-            out.append(ToolPoint(at: Date(timeIntervalSince1970: l.t), value: v[1]))
+            out.append(ToolPoint(at: Date(timeIntervalSince1970: l.t), value: v[1], low: v[0], high: v[2]))
             end = l.t + length
         }
         return out

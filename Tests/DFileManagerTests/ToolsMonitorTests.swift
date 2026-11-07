@@ -70,7 +70,7 @@ import Testing
               "alerts": [ { "id": "cpu", "metric": "cpu", "warn": 85, "crit": 95, "checks": 2 }, { "id": "pmem", "metric": "pmem", "warn": 50, "crit": 95 } ],
               "events": [ { "id": "hot", "path": "cpu.pct", "when": "is", "value": 99, "level": "warning", "message": "hot: {cpu.pct}", "goto": "services:hot.service" } ],
               "dashboard": [ { "row": [ { "stat": "cpu" }, { "stat": "n" } ] },
-                             { "charts": [ ["cpu"], ["n"] ], "range": ["1h", "24h", "7d"], "log": "log" },
+                             { "charts": [ ["cpu"], ["pmem", "n"] ], "range": ["1h", "24h", "7d"], "log": "log" },
                              { "row": [ { "table": "procs", "title": "Processes", "key": "{pid}", \(list ? #""list": "All Processes…","# : "")
                                           "columns": [{ "field": "command", "tip": "{args}" }, { "field": "cpu:%", "help": "% of one core" }, "mem:bar", "pid"], "actions": ["folder", "stop", "deeper", "pidcopy"] },
                                         { "counts": [ { "rows": "procs", "title": "processes", "goto": "services" } ] } ] },
@@ -563,14 +563,25 @@ extension ServerLockTests {
         #expect(abs(scroll.frame.height - rowsTall) < 1 && kept() == nil && !scroll.hasVerticalScroller)
         #expect(hosting?.window != nil && charts.range.segmentCount == 3 && charts.range.selectedSegment == 0)
         let d = charts.model.data
-        #expect(d.charts.map(\.title) == ["CPU", "Ticks"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95 && d.charts[1].warn == nil)
+        #expect(d.charts.map(\.title) == ["CPU", "Process memory · Ticks"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95)
+        // Two metrics in one chart: the first one's thresholds; a key named with its metric; every series counted.
+        #expect(d.charts[1].warn == 50 && d.charts[1].lines.map(\.name) == ["Process memory 1", "Process memory 2", "Ticks"] && d.charts[1].of == 3, "\(d.charts[1].lines.map(\.name))")
         #expect(d.charts[0].lines.first?.chart.runs.last?.last?.value == 99 && d.to.timeIntervalSince(d.from) == 3600, "\(d.charts[0].lines.first?.points.suffix(2) ?? [])")
         let model = ToolsCharts.Model()   // its own: the pointer may be over the window's charts, hovering
         (model.data, model.every) = (d, charts.model.every)
         let one = OneChart(chart: d.charts[0], model: model)
-        #expect(one.said == "99%", "\(one.said)")
+        #expect(one.said == "Now 99%" && one.spoken == "Now, 99%", "\(one.said)")
         model.hover = d.charts[0].lines.first?.points.last?.at
-        #expect(one.said.hasPrefix("99% · "), "\(one.said)")
+        #expect(one.said.hasSuffix(" · 99%") && !one.said.hasPrefix("Now"), "\(one.said)")
+        #expect(d.click == "Click: the tables at this time", "a table to show the moment in")
+        // Two to a row where each gets 300 pt, else one.
+        let single = ToolsCharts(view, try JSONDecoder().decode(ToolBlock.self, from: Data(#"{ "charts": [["cpu"]] }"#.utf8)))
+        for (block, width, columns) in [(charts, 400.0, 1), (charts, 700.0, 2), (single, 900.0, 1)] {
+            block.setFrameSize(NSSize(width: width, height: 400))
+            block.layout()
+            #expect(block.model.columns == columns, "\(width) pt: \(block.model.columns)")
+        }
+        page?.window?.layoutIfNeeded()
         #expect(table.rows.map(\.key) == ["1", "2"] && table.rows.map(\.title) == ["first", "second"] && table.rows[1].cells.map(\.text) == ["second", "20 %", "40", "2"], "\(table.rows)")
         #expect(table.table.numberOfRows == 2 && table.table.tableColumns.map(\.title) == ["Command", "Cpu", "Mem", "Pid", ""], "\(table.table.numberOfRows) \(table.table.tableColumns.map(\.title))")
         // Buttons only on the cursor's row and the one under the pointer: two that can be undone, ⋯ the rest; Stop…
@@ -957,6 +968,57 @@ extension ServerLockTests {
         #expect(pb.string(forType: .string)?.hasPrefix("first\t") == true && pb.string(forType: .string)?.contains("s3cret") == false, "\(pb.string(forType: .string) ?? "")")
     }
 
+    /// A chart's header and tip (review 4): "Now" and the latest — why there are none in a gap —, the time under the
+    /// pointer, "At" the moment the tables show; the tip names each series with its value — a slot's lowest, average and
+    /// highest on the history —, says the gap, the events near, the lines not drawn and what a click does.
+    @Test func aChartsHeaderAndTipSayWhenAndWhat() throws {
+        let ms = try JSONDecoder().decode(ToolMetric.self, from: Data(#"{ "title": "Response", "unit": "ms" }"#.utf8))
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)   // a slot's start
+        func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
+        func line(_ name: String, _ pts: [ToolPoint]) -> ToolsCharts.Line { .init(id: "latency \(name)", name: name, points: pts, chart: ToolChart(pts, now: at(60))) }
+        let lines = [line("a.example", [.init(at: at(0), value: 10), .init(at: at(5), gap: .asleep), .init(at: at(20), value: 20)]),
+                     line("b.example", [.init(at: at(0), value: 30), .init(at: at(5), gap: .asleep), .init(at: at(20), value: 40)])]
+        let chart = ToolsCharts.Chart(id: "latency", title: "Response", metric: ms, top: 50, lines: lines, bands: lines[0].chart.bands, of: 8)
+        let model = ToolsCharts.Model()
+        model.every = 5
+        model.data = .init(charts: [chart], from: at(-3540), to: at(60), events: [.init(at: at(1), id: "slow", level: "warning", message: "a.example is slow")],
+                           click: "Click: the tables at this time")
+        let one = OneChart(chart: chart, model: model)
+        #expect(one.said == "Now \(ms.text(20)) · \(ms.text(40))" && one.spoken == "Now, a.example \(ms.text(20)), b.example \(ms.text(40))", "\(one.said) | \(one.spoken)")
+        model.hover = at(0)
+        #expect(one.said == model.time(at(0)) + " · \(ms.text(10)) · \(ms.text(30))", "\(one.said)")
+        let tip = OneChart.tip(chart, model, at: at(0))
+        #expect(tip.rows.map(\.name) == ["a.example", "b.example"] && tip.rows.map(\.value) == [ms.text(10), ms.text(30)] && tip.rows.map(\.color) == [0, 1])
+        #expect(tip.notes == ["Warning \(at(1).formatted(date: .omitted, time: .shortened)) · a.example is slow", "2 of 8 drawn: the first by name",
+                              "Click: the tables at this time"], "\(tip.notes)")
+        var busy = model.data
+        busy.events += (2...4).map { ToolEventRecord(at: at(Double($0)), id: "e\($0)", level: "critical", message: "e\($0)") }
+        model.data = busy
+        let four = OneChart.tip(chart, model, at: at(0)).notes
+        #expect(four.count == 6 && four[1].hasPrefix("Critical ") && four[3] == "and 1 more", "three events and a count: \(four)")
+        model.data.events = Array(model.data.events.prefix(1))
+        let asleep = OneChart.tip(chart, model, at: at(12))
+        #expect(asleep.rows.isEmpty && asleep.notes.first == "Mac asleep", "a gap: why, no values")
+        model.hover = at(12)
+        #expect(one.said == model.time(at(12)) + " · Mac asleep")
+        (model.hover, model.moment) = (nil, at(20))
+        #expect(one.said == "At " + model.time(at(20)) + " · \(ms.text(20)) · \(ms.text(40))", "the moment the tables show: \(one.said)")
+        model.moment = nil
+        var gone = model.data
+        gone.to = at(60)
+        let sleeping = line("a.example", [.init(at: at(0), value: 10), .init(at: at(5), gap: .asleep)])
+        gone.charts = [ToolsCharts.Chart(id: "latency", title: "Response", metric: ms, top: 50, lines: [sleeping], bands: sleeping.chart.bands)]
+        model.data = gone
+        #expect(OneChart(chart: gone.charts[0], model: model).said == "Now · Mac asleep" && OneChart(chart: gone.charts[0], model: model).spoken == "Now, Mac asleep",
+                "in a gap now: why, not dashes")
+        // The history: a slot's lowest, average and highest, its 15 minutes.
+        (model.every, model.history) = (ToolSlots.length, true)
+        let slot = line("a.example", [.init(at: t0, value: 10, low: 2, high: 99)])
+        let week = ToolsCharts.Chart(id: "latency", title: "Response", metric: ms, top: 100, lines: [slot], bands: [], of: 1)
+        let h = OneChart.tip(week, model, at: t0)
+        #expect(h.rows.map(\.value) == ["\(ms.text(2)) – \(ms.text(10)) – \(ms.text(99))"] && h.notes.first == "Lowest – average – highest" && h.time.contains("–"), "\(h)")
+    }
+
     /// The sort: numbers by value ("1,25" before "1,5"; 2 KB before 1 MB), text as Finder sorts names, nothing last
     /// either way, equal values by key.
     @Test func aDashboardTableSortsNumbersByValue() {
@@ -1338,6 +1400,9 @@ extension ServerLockTests {
         #expect(cpu.lines.first?.points.compactMap(\.value).isEmpty == false && cpu.lines.first?.points.compactMap(\.value).allSatisfy { $0 == 10 } == true
                 && cpu.bands.first?.gap == .notWatched && cpu.bands.last?.gap == .notWatched,
                 "before it, and since: \(cpu.bands)")
+        #expect(cpu.lines.first?.points.filter { $0.value != nil }.allSatisfy { $0.low == 10 && $0.high == 10 } == true, "each slot's lowest and highest")
+        let said = OneChart(chart: cpu, model: charts.model).said
+        #expect(said.hasSuffix(" · 10%") && said.contains("–") && !said.hasPrefix("Now"), "the last slot's 15 minutes, not now: \(said)")
         charts.range.selectedSegment = 0
         _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
         #expect(charts.model.data.to.timeIntervalSince(charts.model.data.from) == 3600 && charts.model.every == 1)

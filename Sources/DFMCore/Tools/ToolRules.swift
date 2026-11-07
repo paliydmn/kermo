@@ -30,12 +30,18 @@ public struct ToolSample: Sendable, Equatable {
 /// `maintenance` is a band over values: the server's own time (`ToolMonitor`), never a point of a series.
 public enum ToolGap: String, Sendable, Codable { case asleep, noAnswer, reconnecting, notWatched, maintenance }
 
-/// A point of a series: a value, or the start of a gap (till the next value).
+/// A point of a series: a value, or the start of a gap (till the next value). From the history on disk, a slot's
+/// average with its lowest and highest (`low`, `high`): a short peak stays seen.
+/// ponytail: the hour in memory pays the two for nothing — 56 bytes a point, not 24 (≈0.3 MB a watched System); a
+/// type of the slots' own if memory comes to matter.
 public struct ToolPoint: Sendable, Equatable {
     public var at: Date
     public var value: Double?
     public var gap: ToolGap?
-    public init(at: Date, value: Double? = nil, gap: ToolGap? = nil) { (self.at, self.value, self.gap) = (at, value, gap) }
+    public var low, high: Double?
+    public init(at: Date, value: Double? = nil, gap: ToolGap? = nil, low: Double? = nil, high: Double? = nil) {
+        (self.at, self.value, self.gap, self.low, self.high) = (at, value, gap, low, high)
+    }
 }
 
 /// One metric's values in one sample, by series key: "" for a scalar; a row's `key` for `rows`; a count's `all`
