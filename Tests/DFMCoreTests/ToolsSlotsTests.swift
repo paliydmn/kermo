@@ -56,10 +56,14 @@ private func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
         .init(t: at(18000).timeIntervalSince1970, tool: "s", v: ["cpu": ["": [1, 40, 50]], "disk": ["/": [5, 5, 5]]]),
     ]
     let p = ToolSlots.points(lines, metric: "cpu", key: "", from: t0)
-    let want: [ToolPoint] = [.init(at: t0, gap: .notWatched), .init(at: at(900), value: 10), .init(at: at(1800), value: 12),
-                             .init(at: at(2000), gap: .asleep), .init(at: at(9000), value: 30), .init(at: at(9900), gap: .notWatched), .init(at: at(18000), value: 40)]
+    let want: [ToolPoint] = [.init(at: t0, gap: .notWatched), .init(at: at(900), value: 10, low: 1, high: 20), .init(at: at(1800), value: 12, low: 1, high: 20),
+                             .init(at: at(2000), gap: .asleep), .init(at: at(9000), value: 30, low: 1, high: 40), .init(at: at(9900), gap: .notWatched),
+                             .init(at: at(18000), value: 40, low: 1, high: 50)]
     #expect(p == want, "\(p)")
+    // A slot written at a sleep and filled again after a short one: two lines with one time — two points, each its own.
+    let again = [lines[1], .init(t: at(1800).timeIntervalSince1970, tool: "s", v: ["cpu": ["": [8, 9, 99]]])]
+    #expect(ToolSlots.points(again, metric: "cpu", key: "", from: at(1800)) == [.init(at: at(1800), value: 12, low: 1, high: 20), .init(at: at(1800), value: 9, low: 8, high: 99)])
     let twice = [lines[1], .init(t: at(2000).timeIntervalSince1970, tool: "s", gap: .asleep), .init(t: at(2100).timeIntervalSince1970, tool: "s", gap: .reconnecting)]
     #expect(ToolSlots.points(twice, metric: "cpu", key: "", from: at(1800)).compactMap(\.gap) == [.asleep, .reconnecting], "a gap of another kind is a band of its own")
-    #expect(ToolSlots.keys(lines, metric: "disk") == ["/"] && ToolSlots.points(Array(lines.suffix(1)), metric: "disk", key: "/", from: at(18000)) == [.init(at: at(18000), value: 5)])
+    #expect(ToolSlots.keys(lines, metric: "disk") == ["/"] && ToolSlots.points(Array(lines.suffix(1)), metric: "disk", key: "/", from: at(18000)) == [.init(at: at(18000), value: 5, low: 5, high: 5)])
 }
