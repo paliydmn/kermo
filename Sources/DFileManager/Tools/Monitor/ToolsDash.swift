@@ -48,6 +48,8 @@ import SwiftUI
         var clicked: (Date, ToolGap?) -> Void = { _, _ in }
         /// The context menu's Log for This Time: its title, and the run; nil: the block has no `log`.
         var log: (title: String, run: (Date) -> Void)?
+        /// The last time under the pointer: the context menu's, should the hover have ended as it opened.
+        var lastHover: Date?
         /// Days on the axis: the week's.
         var days: Bool { data.to.timeIntervalSince(data.from) > 2 * 86400 }
     }
@@ -271,7 +273,7 @@ struct OneChart: View {
                         case .active(let p):
                             guard let f = proxy.plotFrame, let d = proxy.value(atX: p.x - g[f].origin.x, as: Date.self) else { return }
                             let at = Date(timeIntervalSince1970: (d.timeIntervalSince1970 / model.every).rounded() * model.every)
-                            if model.hover != at { model.hover = at }
+                            if model.hover != at { (model.hover, model.lastHover) = (at, at) }
                         case .ended: if model.hover != nil { model.hover = nil }
                         }
                     }
@@ -280,7 +282,7 @@ struct OneChart: View {
                         model.clicked(d, chart.bands.first { $0.gap != .maintenance && $0.from <= d && d <= $0.to }?.gap)
                     })
                     .contextMenu {   // the hovered time's log, wherever a click goes
-                        if let log = model.log, let h = model.hover { Button("\(log.title) · \(h.formatted(date: .omitted, time: .standard))") { log.run(h) } }
+                        if let log = model.log, let h = model.hover ?? model.lastHover { Button("\(log.title) · \(h.formatted(date: .omitted, time: .standard))") { log.run(h) } }
                     }
             }
         }
@@ -547,7 +549,10 @@ struct OneChart: View {
         func marks(_ s: ToolAlerts) -> [String] { s.standing.map { "\($0.alert) \($0.key) \($0.state.level?.rawValue ?? 0)" } }
         let recolor = alerts != self.alerts || marks(standing) != marks(self.standing)
         (self.alerts, self.standing) = (alerts, standing)
-        show(recolor: recolor, thaw: was != past?.moment)   // to a moment or back: its rows now, under the pointer too
+        let moved = was != past?.moment   // to a moment or back: its rows now, under the pointer too, every row's buttons drawn again
+        if moved { buttoned = [] }
+        show(recolor: recolor || moved, thaw: moved)
+        if moved { redrawButtons() }
     }
 
     /// The latest rows, sorted, into the table. Held — the pointer or a menu over them — the rows shown get their new
@@ -714,7 +719,7 @@ struct OneChart: View {
     /// `a` on `row` — the row as shown when its button, item or key was pressed. What can't run now beeps; what runs
     /// keeps its button greyed till it's done.
     private func run(_ a: ListAction, _ row: ToolRow) {
-        guard a.why == nil else { return NSSound.beep() }
+        guard a.why == nil, past == nil else { return NSSound.beep() }   // a moment's rows: whatever was drawn before it, nothing runs
         let k = source.rowID(row.key) + a.title
         guard let task = a.run(false) else { return }
         tasks[k] = task

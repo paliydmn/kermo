@@ -93,8 +93,12 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     private var reading: CancelFlag?
     /// This level's rows read again while it shows (`every`).
     private var poll: ListPoll?
+    /// How many times a level's rows were shown: a poll that finds a newer read drops its own.
+    private var shows = 0
     /// This level's rows shown of more (`ListContent.cut`): "No matches among the 2000 shown".
     private var cut: Int?
+    /// The line about the list as its source said it (`setHeader`).
+    private var headerText: String?
     private var scopes: [(name: String, chips: [Chip])]
     private let top = NSStackView()
 
@@ -492,17 +496,27 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
 
     private func show(_ c: ListContent) {
         cut = c.cut
+        shows += 1
         items = (source?.keepsOrder == true ? c.rows : ListPanel.problemsFirst(c.rows)).map(keyed)
         setHeader(c.rows.isEmpty ? nil : c.header)
         emptyText = c.empty
         filter()
+        follow()
+    }
+
+    /// This level's list read again while it shows, if it has `every`: the same row stays highlighted; its row gone
+    /// (ended, or past the 300 shown), none — a neighbour is another process.
+    private func follow() {
         guard let s = source, poll?.source !== s else { return }
         poll?.stop()
         poll = ListPoll(s, shown: { [weak self] in self.map { Self.current === $0 && $0.source === s && $0.panel.isVisible && $0.reading == nil } ?? false },
+                        stamp: { [weak self] in self?.shows ?? 0 },
                         got: { [weak self] c in
                             guard let self, source === s else { return }
-                            selectID = highlighted?.id   // the same row stays highlighted
+                            let id = highlighted?.id
+                            selectID = id
                             show(c)
+                            if let id, highlighted?.id != id { table.deselectAll(nil) }
                         })
     }
 
@@ -596,7 +610,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         pending?.cancel()
         ranking?.cancel()
         above.append(Level(placeholder: field.placeholderString ?? "", items: items, rank: rank, results: results, freeText: freeText,
-                           header: header.isHidden ? nil : header.stringValue, empty: emptyText, other: other, source: source,
+                           header: headerText, empty: emptyText, other: other, source: source,
                            actionsOf: actionsOf, onLeave: onLeave, query: field.stringValue, select: highlighted?.id))
         scopes.append(chip)
         showScopes()
@@ -618,6 +632,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         (field.stringValue, field.placeholderString, selectID) = (l.query, l.placeholder, l.select)
         setHeader(l.header)
         filter()
+        follow()   // back to a list that's read again while it shows
     }
 
     /// The chips of where the list is, before the field: "web-01 › Services ›". The field stays where it is, typing on:
@@ -629,8 +644,17 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     }
 
     private func setHeader(_ text: String?) {
-        header.stringValue = text ?? ""
-        header.isHidden = text == nil
+        headerText = text
+        showHeader()
+    }
+
+    /// The list's line — and, past the 300 rows a list shows unfiltered, that the rest are a filter (or ⌘↩) away.
+    private func showHeader() {
+        let more = source != nil && results == nil && field.stringValue.trimmingCharacters(in: .whitespaces).isEmpty && items.count > shown.count
+            ? "the first \(shown.count) of \(items.count) here: type to find the rest" : nil
+        let text = [headerText, more].compactMap { $0 }.joined(separator: " · ")
+        header.stringValue = text
+        header.isHidden = text.isEmpty
     }
 
     /// Where the palette is (tests): its chips, as shown.
@@ -688,6 +712,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         select(first)
         emptyLabel.stringValue = (results == nil ? items.isEmpty : field.stringValue.isEmpty) ? emptyText : "No matches" + (cut.map { " among the \($0) shown" } ?? "")
         emptyLabel.isHidden = !shown.isEmpty
+        showHeader()
         updateBar()
     }
 

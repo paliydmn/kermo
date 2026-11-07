@@ -116,10 +116,7 @@ import DFMCore
     /// Rows of tiles alone: not stretched to the width.
     private var tileRows: [NSView] = []
     /// The charts' `log` action: Log for This Time.
-    var chartLog: String? {
-        func find(_ blocks: [ToolBlock]) -> String? { blocks.lazy.compactMap { $0.log ?? find($0.row ?? []) }.first }
-        return find(tool.preset.dashboard ?? [])
-    }
+    var chartLog: String? { tool.preset.chartLogs.first }
     /// Whether a chart's click has tables to show a moment in: else it runs the log, as on 24h and 7d.
     var showsMoments: Bool { momentBar.superview != nil }
 

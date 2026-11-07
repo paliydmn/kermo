@@ -427,10 +427,14 @@ extension ServerLockTests {
     final class Every: ListSource {
         let title = "Every", target = SFTPTarget.local(), columns: [ListColumn] = []
         var content: ListContent?
-        var reads = 0, quiet = true
+        var reads = 0, quiet = true, newer = false, stamp = 0
         var every: TimeInterval? { 0.15 }
         var readsQuietly: Bool { quiet }
-        func read(_ cancel: CancelFlag) async throws -> ListContent { reads += 1; return ListContent(rows: []) }
+        func read(_ cancel: CancelFlag) async throws -> ListContent {
+            reads += 1
+            if newer { stamp += 1 }   // another read showed rows meanwhile (⌘R, an action's re-read)
+            return ListContent(rows: [])
+        }
     }
     let was = ListPoll.connected
     nonisolated(unsafe) var up = true
@@ -438,10 +442,15 @@ extension ServerLockTests {
     defer { ListPoll.connected = was }
     let s = Every()
     var shown = true, got = 0
-    let made = ListPoll(s, shown: { shown }, got: { _ in got += 1 })
+    let made = ListPoll(s, shown: { shown }, stamp: { s.stamp }, got: { _ in got += 1 })
     let poll = try #require(made)
-    try await Task.sleep(for: .seconds(0.7))
+    await toolsUntil { s.reads >= 2 && got == s.reads }   // a busy run's main thread ticks late: wait, don't time
     #expect(s.reads >= 2 && got == s.reads, "\(s.reads) \(got)")
+    s.newer = true
+    let seen = got
+    await toolsUntil { s.reads >= seen + 2 }
+    #expect(got == seen, "a read that finds rows read since is dropped: \(got) after \(seen)")
+    s.newer = false
     for (why, change) in [("hidden", { shown = false }), ("locked", { shown = true; s.quiet = false }), ("not connected", { s.quiet = true; up = false })] as [(String, () -> Void)] {
         change()
         try await Task.sleep(for: .seconds(0.2))   // a read under way ends
@@ -458,6 +467,33 @@ extension ServerLockTests {
         var content: ListContent?
         func read(_ cancel: CancelFlag) async throws -> ListContent { ListContent(rows: []) }
     }
-    let none = ListPoll(Once(), shown: { true }, got: { _ in })
+    let none = ListPoll(Once(), shown: { true }, stamp: { 0 }, got: { _ in })
     #expect(s.reads == n && none == nil, "stopped; no `every`, no poll")
+
+    // A poll's rows: the cursor stays on its row; its row gone, no cursor — not the neighbour, another process.
+    func rows(_ ids: [String]) -> ListContent { ListContent(rows: ids.map { id in var it = Picker.Item(title: id) {}; it.id = id; return it }) }
+    let l = ListPanel(Once(), content: rows(["a", "b", "c"]), select: "b")
+    l.polled(rows(["c", "b"]))
+    #expect(l.cursorID == "b")
+    l.polled(rows(["a", "c"]))
+    #expect(l.cursorID == nil, "\(l.cursorID ?? "")")
+}
+
+extension ServerLockTests {   // shows a Picker: `Picker.current` is global
+    /// A list of more rows than a picker shows unfiltered (300) says so above them, and that typing finds the rest;
+    /// typing, it doesn't.
+    @MainActor @Test func aPickerSaysItShowsTheFirst300() {
+        final class Many: ListSource {
+            let title = "Many", target = SFTPTarget.local(), columns: [ListColumn] = []
+            var content: ListContent? = ListContent(rows: (1...305).map { i in Picker.Item(title: "p\(i)") {} }, header: "the top 305 of 400 by CPU", cut: 305)
+            func read(_ cancel: CancelFlag) async throws -> ListContent { content! }
+        }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        defer { Picker.dismiss() }
+        let p = Picker.show(over: window, Many(), scope: ("localhost › Many", [])) { _, _, _, _ in }
+        #expect(p.rows.count == 300 && p.headerSaid == "the top 305 of 400 by CPU · the first 300 of 305 here: type to find the rest", "\(p.headerSaid)")
+        p.field.stringValue = "p30"
+        p.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: p.field))
+        #expect(p.headerSaid == "the top 305 of 400 by CPU" && p.rows.first?.title == "p30", "\(p.headerSaid)")
+    }
 }

@@ -880,7 +880,13 @@ extension ServerLockTests {
         #expect(view.showsMoments && view.momentBar.isHidden && view.chartLog == "log")
         bench.flag("lone-localhost")
         await toolsUntil { table.rows.map(\.key) == ["2"] }
+        table.table.selectRowIndexes([0], byExtendingSelection: false)
+        let drawn = rowButtons(table, 0)   // the live row's, drawn before the moment
+        try #require(drawn.contains { $0.title == "Folder" })
         charts.model.clicked(then, nil)
+        press(drawn.first { $0.title == "Folder" })
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(!bench.calls.contains { $0.hasPrefix("pulse-dir") }, "a button drawn before the moment runs nothing in it: \(bench.calls)")
         #expect(view.moment != nil && !view.momentBar.isHidden && view.momentText.stringValue.hasPrefix("As of "), "\(view.momentText.stringValue)")
         #expect(table.rows.map(\.key) == ["1", "2"] && table.note.stringValue.hasPrefix("as of "), "the rows then: \(table.note.stringValue)")
         #expect(charts.model.moment == view.moment, "a line at that moment on the charts")

@@ -484,6 +484,9 @@ extension ToolSchema.Check {
             error([.key("metrics"), .key(id), .key("calc")], "\(m.calc!) works on a number at path, not on a count")
         }
         if let w = p.watch, w.every < 1 { error([.key("watch"), .key("every")], "a second or more") }   // `sleep 0` would spin, and a tick divides by it
+        for (path, l) in [([ToolPath.key("list")], p.list)] + p.allActions.map({ ($0.path + [.key("list")], $0.action.spec.list) }) where (l?.view.every ?? 2) < 2 {
+            error(path + [.key("every")], "2 seconds or more: a list read again sooner would read all the time")
+        }
 
         // Names: Kermo's own hidden, placeholders nothing fills.
         for name in (p.vars ?? [:]).keys where ToolTemplate.kermoNames.contains(name) {

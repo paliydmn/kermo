@@ -512,9 +512,14 @@ public struct ToolPreset: Sendable, Hashable, Codable {
     /// The actions on its list's rows (§6.2): of no `rows`, of `rows: "list"`, and of the set the list's parse reads
     /// — System's `procs`, top processes and all of them alike — but not a chart's `log` (its `{from}` and `{to}`).
     public var listActions: [ToolAction] {
-        func logs(_ blocks: [ToolBlock]) -> [String] { blocks.flatMap { [$0.log].compactMap { $0 } + logs($0.row ?? []) } }
-        let own = list?.parse.rows, charts = Set(logs(dashboard ?? []))
+        let own = list?.parse.rows, charts = Set(chartLogs)
         return (actions ?? []).filter { a in [nil, "list", own].contains(a.spec.rows) && !charts.contains(a.spec.id) }
+    }
+
+    /// The charts' `log` actions, top to bottom: what a click on a chart runs.
+    public var chartLogs: [String] {
+        func logs(_ blocks: [ToolBlock]) -> [String] { blocks.flatMap { [$0.log].compactMap { $0 } + logs($0.row ?? []) } }
+        return logs(dashboard ?? [])
     }
 
     /// Its stream or poll (§8.1): what watching runs.

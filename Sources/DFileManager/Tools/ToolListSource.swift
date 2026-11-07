@@ -181,7 +181,7 @@ final class ToolListSource: ListSource {
                 (records, skew) = (list.parse.records(r.out, exit: r.status), r.skew)
             }
             guard records.matched else {
-                throw Failed(message: "\(title) on \(server): the output didn't match — " + (records.unmatched.first { !$0.isEmpty } ?? ""), output: output)
+                throw Failed(message: "\(title) on \(server): the output didn't match — " + String((records.unmatched.first { !$0.isEmpty } ?? "").prefix(100)), output: output)   // a JSON line may hold every command line
             }
             let now = Date().addingTimeInterval(skew ?? 0)   // `ago` by the server's clock
             let read = Read(rows: records.rows.map { var r = list.view.row($0, scope, now: now); r.above = above; return r }, total: records.total, vars: vars)

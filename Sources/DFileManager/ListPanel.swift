@@ -44,9 +44,10 @@ extension ListSource {
     var readsQuietly: Bool { true }
 }
 
-/// A list read again every `every` seconds while it shows (§6.2): quietly — over the connection already there, only
-/// when nothing would be asked, no spinner; a read that fails leaves the rows as they were. Timers don't fire while a
-/// menu is open. Stops with `stop` or once its owner is gone.
+/// A list read again every `every` seconds (2 at least) while it shows (§6.2): quietly — over the connection already
+/// there, when nothing would be asked (checked before the read and again once the connection is known up), no spinner;
+/// a read that fails leaves the rows as they were, one that finds them read since (⌘R, an action's re-read) is
+/// dropped. Timers don't fire while a menu is open. Stops with `stop` or once its owner is gone.
 @MainActor final class ListPoll {
     /// Whether the connection is up already (`ssh -O check`); tests' own.
     nonisolated(unsafe) static var connected: @Sendable (SFTPTarget) -> Bool = SFTP.isConnected
@@ -55,26 +56,27 @@ extension ListSource {
     private var reading: CancelFlag?
 
     /// nil: the list has no `every`.
-    init?(_ source: ListSource, shown: @escaping @MainActor () -> Bool, got: @escaping @MainActor (ListContent) -> Void) {
+    /// `stamp`: what changes whenever the owner shows rows (a poll's read since is stale).
+    init?(_ source: ListSource, shown: @escaping @MainActor () -> Bool, stamp: @escaping @MainActor () -> Int, got: @escaping @MainActor (ListContent) -> Void) {
         guard let every = source.every else { return nil }
         self.source = source
-        timer = Timer.scheduledTimer(withTimeInterval: every, repeats: true) { [weak self] t in
+        timer = Timer.scheduledTimer(withTimeInterval: max(every, 2), repeats: true) { [weak self] t in
             let alive = MainActor.assumeIsolated { () -> Bool in
-                self?.tick(shown, got)
+                self?.tick(shown, stamp, got)
                 return self != nil
             }
             if !alive { t.invalidate() }   // its owner went without `stop`
         }
     }
 
-    private func tick(_ shown: @escaping @MainActor () -> Bool, _ got: @escaping @MainActor (ListContent) -> Void) {
+    private func tick(_ shown: @escaping @MainActor () -> Bool, _ stamp: @escaping @MainActor () -> Int, _ got: @escaping @MainActor (ListContent) -> Void) {
         guard reading == nil, source.readsQuietly, shown() else { return }
-        let flag = CancelFlag(), source = source, target = source.target
+        let flag = CancelFlag(), source = source, target = source.target, before = stamp()
         reading = flag
         Task { [weak self] in
             defer { if self?.reading === flag { self?.reading = nil } }
-            guard await Blocking.run(.utility, { Self.connected(target) }), !flag.isCancelled, shown(),
-                  let c = try? await source.read(flag), !flag.isCancelled, shown() else { return }
+            guard await Blocking.run(.utility, { Self.connected(target) }), !flag.isCancelled, shown(), source.readsQuietly,
+                  let c = try? await source.read(flag), !flag.isCancelled, shown(), stamp() == before else { return }
             got(c)
         }
     }
@@ -220,6 +222,10 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
     var resultTime: TimeInterval = 5
     /// Its rows read again while it shows on its table (`every`).
     private var poll: ListPoll?
+    /// How many times rows were shown: a poll that finds a newer read drops its own.
+    private var shows = 0
+    /// A poll's rows going in: the view stays where you scrolled it.
+    private var polled = false
 
     /// `content`: rows already there (a tab's copy); else the source's as last read.
     init(_ source: ListSource, content: ListContent? = nil, filter: String = "", select: String? = nil) {
@@ -269,10 +275,10 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         (table.dataSource, table.delegate) = (self, self)
         if let o = order { table.sortDescriptors = [NSSortDescriptor(key: "\(o.column)", ascending: o.ascending)] }   // its header shows the order
         reloadTable()
-        poll = ListPoll(source, shown: { [weak self] in
-            guard let w = self?.table?.window else { return false }
-            return w.occlusionState.contains(.visible) && w.attachedSheet == nil
-        }, got: { [weak self] c in self?.reload(c, having: "") })
+        poll = ListPoll(source, shown: { [weak self] in   // on screen: not under a full-height terminal, nor a question
+            guard let t = self?.table, let w = t.window else { return false }
+            return w.occlusionState.contains(.visible) && w.attachedSheet == nil && !t.isHiddenOrHasHiddenAncestor && !t.visibleRect.isEmpty
+        }, stamp: { [weak self] in self?.shows ?? 0 }, got: { [weak self] c in self?.polled(c) })
     }
 
     /// Gives the table back as it was.
@@ -308,6 +314,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
     /// A read's rows: the marks of rows gone go, the cursor stays on its row (by id).
     func set(_ c: ListContent) {
         content = c
+        shows += 1
         marked.formIntersection(c.rows.map(\.id))
         headerLine.stringValue = c.header ?? ""
         headerLine.isHidden = c.header == nil
@@ -331,6 +338,19 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
 
     /// What the keys and the menu do now: the cursor row's actions, else the list's own (`ListContent.actions`).
     var actions: [ListAction] { cursor?.listActions?() ?? content?.actions?() ?? [] }
+
+    /// A poll's rows: the cursor stays on its row; its row gone, no cursor — a neighbour is another process.
+    func polled(_ c: ListContent) {
+        let gone = cursorID.map { id in !c.rows.contains { $0.id == id } } ?? false
+        polled = true
+        set(c)
+        polled = false
+        if gone {
+            cursorID = nil
+            table?.deselectAll(nil)
+            onCursor?()
+        }
+    }
 
     func reload(_ c: ListContent, having id: String) {
         cursorID = Self.stay(cursorID, in: shown.map(\.id), now: Set(c.rows.map(\.id)))
@@ -408,7 +428,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         let r = cursorRow ?? (shown.isEmpty ? nil : 0)
         if let r {
             table.selectRowIndexes([r], byExtendingSelection: false)
-            table.scrollRowToVisible(r)
+            if !polled { table.scrollRowToVisible(r) }
         }
         cursorID = r.map { shown[$0].id }
     }

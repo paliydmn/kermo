@@ -77,7 +77,8 @@ END {
   }
   for (i = 1; i <= n; i++) {
     if (!(F[i] in size) || !stat(P[i], s)) continue
-    nm = name; kd = kind(P[i], s[7], s[3], s[5])   # kind may read other processes: then name is theirs
+    nm = name; if (!(P[i] in KD)) KD[P[i]] = kind(P[i], s[7], s[3], s[5])   # once a process: kind may read others (then name is theirs)
+    kd = KD[P[i]]
     printf "{\"path\":\"%s\",\"size\":%.0f,\"pid\":%d,\"fd\":%d,\"start\":\"%s\",\"boot\":\"%s\",\"command\":\"%s\",\"kind\":\"%s\"}\n", \
       esc(T[i]), size[F[i]], P[i], D[i], s[20], substr(boot, 1, 8), esc(nm), kd
   }
