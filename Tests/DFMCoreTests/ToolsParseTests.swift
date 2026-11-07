@@ -225,6 +225,14 @@ private func parse(_ format: ToolFormat, _ text: String, _ change: (inout ToolPa
     #expect(ToolTemplate.Scope(rows: [r.rows[1], ["mount": "/"]]).value("mount") == "/")
 }
 
+/// A column's `tip`: filled in, at most 200 characters; a field of it empty, none.
+@Test func aColumnsTip() {
+    let view = ToolListView(columns: [.object(.init(field: "last_status", tip: "at {failure.stage}: {failure.error}"))])
+    let failed: ToolRecord = ["last_status": "failed", "failure": .object(["stage": "startup", "error": .string(String(repeating: "x", count: 300))])]
+    #expect(view.row(failed).cells[0].tip?.count == 200 && view.row(failed).cells[0].tip?.hasPrefix("at startup: xx") == true)
+    #expect(view.row(["last_status": "ready"]).cells[0].tip == nil)
+}
+
 /// `strip: "cri"`: a container runtime's log line as its message; one that isn't stays; a line comes whole.
 @Test func criLinesAreTheirMessage() {
     var cri = ToolCRI()

@@ -29,7 +29,7 @@ public enum ToolSchema {
         case runOrText                  // a Run, or a string that is its command
         case duration                   // "5m" or seconds
         case scalar                     // a string, number or bool
-        case column                     // "field:format" or { field, title, width }
+        case column                     // "field:format" or { field, title, width, tip, help }
     }
 
     /// The kinds of strings, by what's checked in them.
@@ -302,7 +302,8 @@ public enum ToolSchema {
                 if !(v is String) { walk(v, .object("column"), path) }
             case .object(let name):
                 guard let o = v as? [String: Any] else { return wrong("an object") }
-                let spec = name == "column" ? Object(fields: ["field": .text(.plain), "title": .text(.plain), "width": .number], required: ["field"])
+                let spec = name == "column" ? Object(fields: ["field": .text(.plain), "title": .text(.plain), "width": .number, "tip": .text(.display),
+                                                         "help": .text(.plain)], required: ["field"])
                     : objects[name]!
                 for (k, x) in o {
                     if let field = spec.fields[k] { walk(x, field, path + [.key(k)]) }
@@ -504,9 +505,12 @@ extension ToolSchema.Check {
         }
     }
 
-    /// Actions in one list (one level) sharing a key: an error, unless each has its own `requires` (same-key variants).
+    /// Actions in one list (one level, or one dashboard table: its `rows`) sharing a key: an error, unless each has its
+    /// own `requires` (same-key variants).
     mutating func sameKeys(_ all: [([ToolPath], ToolAction)]) {
-        for (key, group) in Dictionary(grouping: all.filter { $0.1.spec.key != nil }, by: { $0.1.spec.key! }) where group.count > 1 {
+        let keyed = all.filter { $0.1.spec.key != nil }
+        for (_, group) in Dictionary(grouping: keyed, by: { [$0.1.spec.key!, $0.1.spec.rows ?? ""] }) where group.count > 1 {
+            let key = group[0].1.spec.key!
             guard !group.allSatisfy({ $0.1.spec.requires != nil }) else { continue }
             for (path, _) in group.dropFirst() { error(path + [.key("key")], "“\(key)” is another action's key in this list too") }
         }
@@ -590,7 +594,8 @@ extension ToolSchema {
             case .duration: return ["anyOf": [["type": "string", "pattern": "^[0-9.]+[smhd]?$"], ["type": "number"]]]
             case .scalar: return ["type": ["string", "number", "boolean"]]
             case .column: return ["anyOf": [["type": "string"], ["type": "object", "properties": ["field": ["type": "string"], "title": ["type": "string"],
-                                                                                                 "width": ["type": "number"]],
+                                                                                                 "width": ["type": "number"], "tip": ["type": "string"],
+                                                                                                 "help": ["type": "string"]],
                                                                   "required": ["field"], "additionalProperties": false]]]
             }
         }

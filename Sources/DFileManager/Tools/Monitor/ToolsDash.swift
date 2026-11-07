@@ -362,6 +362,7 @@ struct OneChart: View {
             let col = NSTableColumn(identifier: .init(field))
             (col.title, col.width, col.minWidth) = (c.title, c.width ?? (number ? 56 : format == "bar" ? 100 : 64), table.tableColumns.isEmpty ? 80 : 40)   // the first names the row
             if number { col.headerCell.alignment = .right }
+            col.headerToolTip = c.object?.help
             col.sortDescriptorPrototype = NSSortDescriptor(key: field, ascending: !(number || ["bar", "ago"].contains(format ?? "")))   // a number: the most first, as %CPU in Activity Monitor
             table.addTableColumn(col)
         }
@@ -590,8 +591,8 @@ struct OneChart: View {
             return v
         }
         let l = tableView.makeView(withIdentifier: id, owner: nil) as? NSTextField ?? label(id, right: column.headerCell.alignment == .right)
-        (l.stringValue, l.textColor) = (cell?.text ?? "", color)
-        l.toolTip = l.stringValue
+        (l.stringValue, l.textColor) = (Self.display(cell), color)
+        l.toolTip = cell?.tip ?? cell?.text   // the column's `tip` (a process's command line): never copied
         return l
     }
 
@@ -602,6 +603,12 @@ struct OneChart: View {
         l.lineBreakMode = .byTruncatingTail
         l.alignment = right ? .right : .left
         return l
+    }
+
+    /// A cell's text in its label: a number column with no value, "—" — not blank, not 0 (inodes on btrfs).
+    static func display(_ c: ToolRow.Cell?) -> String {
+        let text = c?.text ?? ""
+        return text.isEmpty && numbers.contains(c?.format ?? "") ? "—" : text
     }
 
     /// A cell's text as shown: a bar's, its number.

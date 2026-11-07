@@ -80,10 +80,10 @@ public enum ToolBatch {
         }
 
         /// The actions shown on this server, in order: those whose `requires` passed, and of same-key variants only the
-        /// first that did (§10.3).
+        /// first that did (§10.3) — variants of one list: actions of two dashboard tables (`rows`) never are.
         public func visible(_ actions: [ToolAction], of tool: ToolPreset) -> [ToolAction] {
-            var keys = Set<String>()
-            return actions.filter { a in has(a, of: tool) && (a.spec.key.map { keys.insert($0).inserted } ?? true) }
+            var keys = Set<[String]>()
+            return actions.filter { a in has(a, of: tool) && (a.spec.key.map { keys.insert([$0, a.spec.rows ?? ""]).inserted } ?? true) }
         }
     }
 

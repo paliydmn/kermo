@@ -68,6 +68,8 @@ private let setsid = "/usr/bin/perl -e 'use POSIX; setsid(); exec @ARGV' -- "
     #expect(answer.facts.os == "darwin")
     #expect(tools.map { answer.has($0) } == [true, false, true, true, true])
     #expect(answer.visible(upgrade.toolActions!, of: upgrade).map(\.spec.id) == ["up-sh", "status"])   // the first variant that passed
+    let tables = try ["procs", "disks"].map { try JSONDecoder().decode(ToolAction.self, from: Data(#"{ "id": "\#($0)", "rows": "\#($0)", "key": "return", "command": "x" }"#.utf8)) }
+    #expect(answer.visible(tables, of: upgrade).count == 2, "↩ on two tables: no variants of each other")
 }
 
 @Test func anAnswerNamesOnlyItsOwnItems() {

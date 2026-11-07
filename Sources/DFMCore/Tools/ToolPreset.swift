@@ -193,15 +193,22 @@ public struct ToolStateMap: Sendable, Hashable, Codable {
 /// A panel column: "field:format", or an object.
 public enum ToolColumn: Sendable, Hashable, Codable {
     case spec(String)
-    case object(field: String, title: String?, width: Double?)
+    case object(Object)
 
-    private enum CodingKeys: String, CodingKey { case field, title, width }
+    /// `{ field, title, width, tip, help }`. `tip`: a template — the cell's tooltip in a dashboard table, which ⌘C, Copy
+    /// Table, events and history never see (System: a process's whole command line); `help`: the heading's tooltip.
+    public struct Object: Sendable, Hashable, Codable {
+        public var field: String
+        public var title, tip, help: String?
+        public var width: Double?
+        public init(field: String, title: String? = nil, width: Double? = nil, tip: String? = nil, help: String? = nil) {
+            (self.field, self.title, self.width, self.tip, self.help) = (field, title, width, tip, help)
+        }
+    }
 
     public init(from d: Decoder) throws {
         if let s = try? d.singleValueContainer().decode(String.self) { self = .spec(s); return }
-        let c = try d.container(keyedBy: CodingKeys.self)
-        self = .object(field: try c.decode(String.self, forKey: .field), title: try c.decodeIfPresent(String.self, forKey: .title),
-                       width: try c.decodeIfPresent(Double.self, forKey: .width))
+        self = .object(try Object(from: d))
     }
 
     public func encode(to e: Encoder) throws {
@@ -209,29 +216,28 @@ public enum ToolColumn: Sendable, Hashable, Codable {
         case .spec(let s):
             var c = e.singleValueContainer()
             try c.encode(s)
-        case .object(let field, let title, let width):
-            var c = e.container(keyedBy: CodingKeys.self)
-            try c.encode(field, forKey: .field)
-            try c.encodeIfPresent(title, forKey: .title)
-            try c.encodeIfPresent(width, forKey: .width)
+        case .object(let o): try o.encode(to: e)
         }
     }
 
+    /// The object, if it is one.
+    public var object: Object? { if case .object(let o) = self { o } else { nil } }
+
     /// The field it shows and its display format ("updated_at:ago" → updated_at, ago), in either form.
     public var field: (name: String, format: String?) {
-        let s = switch self { case .spec(let s): s; case .object(let f, _, _): f }
+        let s = switch self { case .spec(let s): s; case .object(let o): o.field }
         guard let i = s.firstIndex(of: ":") else { return (s, nil) }
         return (String(s[..<i]), String(s[s.index(after: i)...]))
     }
 
     /// Its heading: the object's `title`, else the field's words ("inodes_pct" → "Inodes pct").
     public var title: String {
-        if case .object(_, let t?, _) = self { return t }
+        if let t = object?.title { return t }
         let words = field.name.replacingOccurrences(of: "_", with: " ")
         return words.prefix(1).uppercased() + words.dropFirst()
     }
     /// The object's `width`, if given.
-    public var width: Double? { if case .object(_, _, let w) = self { w } else { nil } }
+    public var width: Double? { object?.width }
 }
 
 /// `list.also`: fields read from another file by regex.
