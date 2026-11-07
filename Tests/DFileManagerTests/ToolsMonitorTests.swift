@@ -641,8 +641,9 @@ extension ServerLockTests {
     /// note says how often and when; a server that stops answering dims the rows, "as of".
     @Test func aDashboardTableKeepsItsCursorAndHoldsStillUnderThePointer() async throws {
         let (app, _, _, done) = try toolsApp()
-        let bench = try ToolsBench(), quick = Quick(app)
-        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        let bench = try ToolsBench(), quick = Quick(app), kept = ["toolsTableSort", "toolsTableColumns"]
+        kept.forEach(UserDefaults.standard.removeObject)   // an earlier run's sort or columns
+        defer { quick.done(); bench.done(); done(); app.savedServers = []; kept.forEach(UserDefaults.standard.removeObject) }
         try await watching(app, bench)
         ToolsWindow.show(app, server: .local())
         let page = try #require(ToolsWindow.main?.page)
@@ -680,6 +681,16 @@ extension ServerLockTests {
         #expect(keys() == ["2", "1"] && table.holding)
         table.pointerInside = false
         #expect(keys() == ["1", "2"] && !table.holding && !table.note.stringValue.contains("held"), "the pointer gone: the latest at once \(keys())")
+        // An open menu holds them too.
+        let menu = table.rowMenu(table.rows[0])
+        table.menuWillOpen(menu)
+        bench.flag("swap-localhost")
+        await toolsUntil { table.holding }
+        #expect(keys() == ["1", "2"] && table.note.stringValue.hasSuffix(" · held while its menu is open"), "\(table.note.stringValue)")
+        table.menuDidClose(menu)
+        #expect(keys() == ["2", "1"] && !table.holding)
+        bench.flag("swap-localhost", false)
+        await toolsUntil { keys() == ["1", "2"] }
 
         // A sample that changes the second row draws it alone: the first row's views stay.
         let firstViews = (0..<t.numberOfColumns - 1).map { t.view(atColumn: $0, row: 0, makeIfNecessary: true) }
@@ -688,8 +699,9 @@ extension ServerLockTests {
         made = cells()
         var samples = 0, newViews = 0
         for _ in 0..<3 {
-            let was = table.rows[1].cells[1].text
+            let was = table.rows[1].cells[1].text, drawn = table.drawn
             await toolsUntil { table.rows[1].cells[1].text != was }
+            #expect(table.drawn - drawn == t.numberOfColumns - 1, "one row's cells drawn again: \(table.drawn - drawn)")
             let now = cells()
             (samples, newViews, made) = (samples + 1, newViews + now.subtracting(made).count, made.union(now))
         }
@@ -804,7 +816,8 @@ extension ServerLockTests {
         #expect(keys(true) == "baefdc" && keys(false) == "defabc", "\(keys(true)) \(keys(false))")
         #expect(ToolsTable.sorted(rows, by: nil).map(\.key).joined() == "abcdef", "no sort: as they came")
         let sizes = [row("x", "1 MB", 1_048_576), row("y", "2 KB", 2048), row("z", "b", nil)]
-        #expect(ToolsTable.sorted(sizes, by: NSSortDescriptor(key: "v", ascending: true)).map(\.key) == ["y", "x", "z"], "text with no number after numbers")
+        #expect(ToolsTable.sorted(sizes, by: NSSortDescriptor(key: "v", ascending: true)).map(\.key) == ["y", "x", "z"]
+                && ToolsTable.sorted(sizes, by: NSSortDescriptor(key: "v", ascending: false)).map(\.key) == ["x", "y", "z"], "text with no number after the numbers, either way")
     }
 
     /// A table row's level (Biggest Folders) opens in a Picker over the Tools window, the level its first: where it is

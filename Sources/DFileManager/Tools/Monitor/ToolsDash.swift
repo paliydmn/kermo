@@ -329,6 +329,9 @@ struct OneChart: View {
     private var at: Date?, every: TimeInterval?, stale = false
     /// Where ⌘C and Copy Table put the text.
     var pasteboard = NSPasteboard.general
+    /// Its rows' cells drawn so far (tests: a sample draws only the rows it changed).
+    private(set) var drawn = 0
+    private var area: NSTrackingArea?
 
     private static let numbers: Set<String> = ["%", "bytes", "kbytes", "ms", "days"]
 
@@ -395,7 +398,8 @@ struct OneChart: View {
         scroll.autohidesScrollers = true
         scroll.verticalScrollElasticity = .none
         // In the key window only: a pointer left over the window while you work elsewhere holds nothing.
-        scroll.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self))
+        area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self)
+        scroll.addTrackingArea(area!)
         grip.began = { [unowned self] in dragFrom = height.constant }
         grip.drag = { [unowned self] by, done in
             chosen = max(oneRow, dragFrom + by)
@@ -458,12 +462,14 @@ struct OneChart: View {
     }
     @objc private func left() { pointerInside = false }
 
-    override func mouseEntered(with e: NSEvent) {
-        pointerInside = true
-        mouseMoved(with: e)
-    }
-    override func mouseExited(with e: NSEvent) { pointerInside = false }
+    // Its own area's only: a button's or a row's own come up the responder chain too.
+    override func mouseEntered(with e: NSEvent) { if e.trackingArea === area { mouseMoved(with: e) } }
+    override func mouseExited(with e: NSEvent) { if e.trackingArea === area { pointerInside = false } }
+    /// The pointer over the rows: they hold — a move says so too, as no entry comes for a pointer already there when
+    /// the window became key — and the row under it shows its buttons.
     override func mouseMoved(with e: NSEvent) {
+        guard e.trackingArea === area else { return }
+        pointerInside = true
         let r = table.row(at: table.convert(e.locationInWindow, from: nil))
         hover = r >= 0 ? r : nil
     }
@@ -477,9 +483,11 @@ struct OneChart: View {
             r.title = r.cells.first?.text ?? r.title   // the first column names the row in a question ("sleep"), its record is its key
             return r
         }
-        // A new time is new rows: the time since the rows before, how often they come (procs every 15 s, disks 30 s).
+        // A new time is new rows: the time since the rows before, how often they come (procs every 15 s, disks 30 s) —
+        // unknown after a gap (the Mac asleep, the tab away) till the next rows say it again.
         if let came = live.known?.history.carried(block.table ?? "")?.at, came != at {
-            every = at.map { came.timeIntervalSince($0) }
+            let since = at.map { came.timeIntervalSince($0) }
+            every = since.flatMap { s in every.map { s <= 3 * $0 } ?? true ? s : nil }
             at = came
         }
         stale = live.state?.down != nil || (at.flatMap { a in every.map { now.timeIntervalSince(a) > 3 * $0 } } ?? false)
@@ -496,7 +504,8 @@ struct OneChart: View {
     private func show(recolor: Bool = false, thaw: Bool = false) {
         let fresh = Self.sorted(latest, by: table.sortDescriptors.first)
         var next = fresh
-        if !thaw, pointerInside || menuOpen, !rows.isEmpty {
+        let held = !thaw && (pointerInside || menuOpen) && !rows.isEmpty
+        if held {
             let now = Dictionary(fresh.map { ($0.key, $0) }) { a, _ in a }
             next = rows.map { now[$0.key] ?? $0 }
         }
@@ -505,7 +514,10 @@ struct OneChart: View {
         if next.map(\.key) == rows.map(\.key) {
             let changed = IndexSet(rows.indices.filter { recolor || rows[$0] != next[$0] })
             rows = next
-            if !changed.isEmpty { table.reloadData(forRowIndexes: changed, columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns)) }
+            // Held, the buttons under the pointer stay as drawn — the same row's — so a press isn't lost to a sample.
+            var columns = IndexSet(integersIn: 0..<table.numberOfColumns), buttons = table.column(withIdentifier: .init("actions"))
+            if held, buttons >= 0 { columns.remove(buttons) }
+            if !changed.isEmpty { table.reloadData(forRowIndexes: changed, columnIndexes: columns) }
             return
         }
         let was = cursor
@@ -519,14 +531,16 @@ struct OneChart: View {
         needsLayout = true
     }
 
-    /// `rows` by the field `d` sorts on: numbers by value, text as Finder sorts names, nothing last either way; equal ones
-    /// by key, so the order doesn't flicker from sample to sample. No sort: as the stream sent them.
+    /// `rows` by the field `d` sorts on: numbers by value, then text with no number as Finder sorts names, then nothing —
+    /// those two after the numbers either way; equal ones by key, so the order doesn't flicker from sample to sample. No
+    /// sort: as the stream sent them.
     static func sorted(_ rows: [ToolRow], by d: NSSortDescriptor?) -> [ToolRow] {
         guard let d, let field = d.key else { return rows }
         func cell(_ r: ToolRow) -> ToolRow.Cell? { r.cells.first { $0.field == field } }
+        func rank(_ c: ToolRow.Cell?) -> Int { (c?.text ?? "").isEmpty ? 2 : c?.value?.number == nil ? 1 : 0 }
         return rows.sorted { a, b in
-            let (x, y) = (cell(a), cell(b)), (ex, ey) = ((x?.text ?? "").isEmpty, (y?.text ?? "").isEmpty)
-            if ex != ey { return ey }
+            let (x, y) = (cell(a), cell(b))
+            if rank(x) != rank(y) { return rank(x) < rank(y) }
             let c: ComparisonResult = if let p = x?.value?.number, let q = y?.value?.number { p < q ? .orderedAscending : p > q ? .orderedDescending : .orderedSame }
                 else { (x?.text ?? "").localizedStandardCompare(y?.text ?? "") }
             return c == .orderedSame ? a.key.localizedStandardCompare(b.key) == .orderedAscending : d.ascending == (c == .orderedAscending)
@@ -537,7 +551,7 @@ struct OneChart: View {
     /// interval, or the server not answering — "as of 11:31:05", and the rows dimmed.
     private func say() {
         let time = at?.formatted(date: .omitted, time: .standard)
-        note.stringValue = time.map { t in stale ? "as of \(t)" : [every.map { "every " + ToolAlerts.minutes($0.rounded()) }, t, holding ? "held under the pointer" : nil].compactMap { $0 }.joined(separator: " · ") } ?? ""
+        note.stringValue = time.map { t in stale ? "as of \(t)" : [every.map { "every " + ToolAlerts.minutes($0.rounded()) }, t, holding ? (menuOpen ? "held while its menu is open" : "held under the pointer") : nil].compactMap { $0 }.joined(separator: " · ") } ?? ""
         table.enclosingScrollView?.alphaValue = stale ? 0.5 : 1
     }
 
@@ -547,14 +561,14 @@ struct OneChart: View {
         guard let column = tableColumn, rows.indices.contains(row) else { return nil }
         let r = rows[row], id = column.identifier
         if id.rawValue == "actions" { return buttoned.contains(row) ? buttons(r) : nil }
+        drawn += 1
         let cell = r.cells.first { $0.field == id.rawValue }, level = level(id.rawValue, r)
         let color = level == .critical ? Palette.fail : level == .warning ? Palette.warn : NSColor.labelColor
         if cell?.format == "bar" {
             let v = tableView.makeView(withIdentifier: id, owner: nil) as? ToolsBarCell ?? ToolsBarCell(id)
             v.bar.isHidden = cell?.value?.number == nil
             v.bar.doubleValue = cell?.value?.number ?? 0
-            let a = metricOf[id.rawValue].flatMap { m in alerts.first { $0.metric == m.id && $0.below != true } }   // as a tile's: yours, as Thresholds… set them
-            (v.bar.warningValue, v.bar.criticalValue) = (a?.warn ?? v.bar.maxValue + 1, a?.crit ?? v.bar.maxValue + 1)
+            ToolsLive.thresholds(metricOf[id.rawValue].flatMap { m in alerts.first { $0.metric == m.id && $0.below != true } }, on: v.bar)   // as a tile's: yours, as Thresholds… set them
             (v.text.stringValue, v.text.textColor) = (Self.shown(cell), color)
             return v
         }
@@ -746,7 +760,8 @@ struct OneChart: View {
             return true
         }
         if k == Shortcut("return") { open(r, beep: true); return true }
-        guard let a = rowActions(rows[r]).first(where: { $0.key == k }) else { return false }
+        // ↑↓ held down: no row's actions made for each repeat
+        guard actions.contains(where: { $0.spec.key.flatMap(Shortcut.init) == k }), let a = rowActions(rows[r]).first(where: { $0.key == k }) else { return false }
         run(a, rows[r])
         return true
     }
@@ -797,7 +812,9 @@ struct OneChart: View {
 
     func tableViewColumnDidMove(_ notification: Notification) { keepColumns() }
     func tableViewColumnDidResize(_ notification: Notification) {
-        if notification.userInfo?["NSTableColumn"] as? NSTableColumn !== table.tableColumns.first { keepColumns() }   // the first's is what the others leave (`layout`)
+        guard notification.userInfo?["NSTableColumn"] as? NSTableColumn !== table.tableColumns.first else { return }   // the first's is what the others leave (`layout`)
+        keepColumns()
+        needsLayout = true
     }
 
     /// Your columns kept, a moment after the last change (a drag resizes many times).
@@ -819,7 +836,7 @@ struct OneChart: View {
         for s in UserDefaults.standard.dictionary(forKey: "toolsTableColumns")?[name] as? [String] ?? [] {
             let hidden = s.hasPrefix("-"), parts = s.dropFirst(hidden ? 1 : 0).split(separator: ":")
             let i = table.column(withIdentifier: .init(String(parts.first ?? "")))
-            guard i > 0 else { continue }
+            guard i > 0, at < table.numberOfColumns else { continue }
             let c = table.tableColumns[i]
             c.isHidden = hidden
             if parts.count > 1, let w = Double(parts[1]) { c.width = max(c.minWidth, w) }
