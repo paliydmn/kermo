@@ -109,6 +109,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Server panel as root / as its user again | ⌃⌘R / ⌃⇧⌘R |
 | The Tools window (on the active panel's server); in it, a server's tab N | ⌃⌘T; ⌘1…⌘9 |
 | Monitor: the Tools window on the watched servers, problems first | ⌃⌘M |
+| A dashboard table's row: its menu / its ↩ action (a double-click too) / copy it as shown | ⌃↩ or ⇧F10 / ↩ / ⌘C |
 | The terminal in a drawer under the panels (the active panel follows `cd`): open, go to it from a panel, hide it from the terminal; press ⌃O twice quickly to send ⌃O to the terminal | ⌃O |
 | The terminal over the panels' room too, and back into its drawer | ⌃⇧O |
 | Terminal text bigger / smaller | ⌘+ or ⌘= / ⌘− |
