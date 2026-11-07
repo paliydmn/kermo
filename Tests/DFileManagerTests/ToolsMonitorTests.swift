@@ -15,10 +15,11 @@ import Testing
 /// A stream on this Mac: a JSON line every 0.3 s — cpu 10, or 99 while the flag `hot-<server>` is there; every 1.3 s
 /// with `slow-<server>`; with `event-<server>`, an `_event` in each line (a critical one with `boom-<server>`); two `procs` rows in every other line (as
 /// System spaces its heavier reads) — `second` first with `swap-<server>`, alone with `lone-<server>`, its cpu new each
-/// time with `busy-<server>`, its mem 60 (past `pmem`'s warning) with `warm-<server>` — its pid in `pulse-<server>.pid`.
+/// time with `busy-<server>`, its mem 60 (past `pmem`'s warning) with `warm-<server>`, of this connection (`kind: self`)
+/// with `self-<server>` — its pid in `pulse-<server>.pid`. `first` has a command line (`args`), its command's tip.
 /// `pulse2`: the same under another name. Its dashboard has every block; its actions: Folder (`open` what `pulse-dir`
-/// prints), Stop… (dangerous), Deeper (a level on ↩, only on the row of `first`), Copy PID (⌘C, only on `second`'s), Log
-/// (`{from}` / `{to}` into `pulse-log`), Terminal and Services (`goto`), Calm… (`confirm`).
+/// prints), Stop… (dangerous, only on a user's process), Deeper (a level on ↩, only on the row of `first`), Copy PID
+/// (⌘C, only on `second`'s), Log (`{from}` / `{to}` into `pulse-log`), Terminal and Services (`goto`), Calm… (`confirm`).
 @MainActor private func pulse(_ bench: ToolsBench, _ ids: [String] = ["pulse"]) throws {
     for id in ids {
         try Data("""
@@ -32,7 +33,9 @@ import Testing
               [ -f \(bench.dir)/boom-$2 ] && ev=',"_event":{"id":"boom","level":"critical","message":"boom"}'
               c2=20; [ -f \(bench.dir)/busy-$2 ] && c2=$((21 + i % 9))
               m2=40; [ -f \(bench.dir)/warm-$2 ] && m2=60
-              p1='{"pid":1,"command":"first","cpu":1.5,"mem":30}'; p2=$(printf '{"pid":2,"command":"second","cpu":%s,"mem":%s}' "$c2" "$m2")
+              k2=user; [ -f \(bench.dir)/self-$2 ] && k2=self
+              p1='{"pid":1,"command":"first","cpu":1.5,"mem":30,"kind":"user","args":"first --name \\"a b\\""}'
+              p2=$(printf '{"pid":2,"command":"second","cpu":%s,"mem":%s,"kind":"%s"}' "$c2" "$m2" "$k2")
               rows="$p1,$p2"; [ -f \(bench.dir)/swap-$2 ] && rows="$p2,$p1"; [ -f \(bench.dir)/lone-$2 ] && rows="$p2"
               procs=''; [ $((i % 2)) -eq 0 ] && procs=',"procs":['"$rows"']'
               printf '{"cpu":{"pct":%s},"n":%s%s%s}\\n' "$cpu" "$i" "$ev" "$procs"
@@ -58,12 +61,13 @@ import Testing
               "events": [ { "id": "hot", "path": "cpu.pct", "when": "is", "value": 99, "level": "warning", "message": "hot: {cpu.pct}", "goto": "services:hot.service" } ],
               "dashboard": [ { "row": [ { "stat": "cpu" }, { "stat": "n" } ] },
                              { "charts": [ ["cpu"], ["n"] ], "range": ["1h", "24h", "7d"], "log": "log" },
-                             { "row": [ { "table": "procs", "title": "Processes", "key": "{pid}", "columns": ["command", "cpu:%", "mem:bar", "pid"], "actions": ["folder", "stop", "deeper", "pidcopy"] },
+                             { "row": [ { "table": "procs", "title": "Processes", "key": "{pid}",
+                                          "columns": [{ "field": "command", "tip": "{args}" }, { "field": "cpu:%", "help": "% of one core" }, "mem:bar", "pid"], "actions": ["folder", "stop", "deeper", "pidcopy"] },
                                         { "counts": [ { "rows": "procs", "title": "processes", "goto": "services" } ] } ] },
                              { "events": true } ],
               "actions": [
                 { "id": "folder", "title": "Folder", "rows": "procs", "readonly": true, "command": "pulse-dir {pid}", "open": "{stdout}" },
-                { "id": "stop", "title": "Stop…", "rows": "procs", "dangerous": true, "command": "pulse-log stop {pid}" },
+                { "id": "stop", "title": "Stop…", "rows": "procs", "only": { "kind": ["user"] }, "dangerous": true, "command": "pulse-log stop {pid}" },
                 { "id": "deeper", "title": "Deeper", "rows": "procs", "key": "return", "readonly": true, "only": { "command": ["first"] }, "command": "echo {pid} {command}", "output": "list",
                   "list": { "format": "lines", "key": "{line}", "empty": "nothing in {command}" }, "actions": [ { "id": "here", "title": "Here", "key": "return", "readonly": true, "command": "pulse-log here {pid} {line}" } ] },
                 { "id": "pidcopy", "title": "Copy PID", "rows": "procs", "key": "cmd+c", "readonly": true, "only": { "command": ["second"] }, "command": "pulse-log copy {pid}" },
@@ -819,6 +823,34 @@ extension ServerLockTests {
                 == ["cpu 90 false", "mem 100 false", "pid 64 true", "actions \(Int(col("actions")?.width ?? 0)) false"], "\(again.table.tableColumns.map(\.width))")
     }
 
+    /// A column's `tip` and `help` (review 3, PR B): the command line over the command — the text stays the command,
+    /// ⌘C and Copy Table never take it; a row without one, its text. The heading's help. Stop… only on a user's
+    /// process: a row of this connection (`kind: self`) has none in its menu.
+    @Test func aDashboardTablesTipsHelpAndKinds() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app)
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("pulse")
+        await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 2 }
+        let table = try #require(live(page)?.blocks.compactMap { $0 as? ToolsTable }.first), t = table.table
+        try #require(table.rows.map(\.key) == ["1", "2"])
+        func label(_ r: Int) -> NSTextField? { t.view(atColumn: 0, row: r, makeIfNecessary: true) as? NSTextField }
+        #expect(label(0)?.stringValue == "first" && label(0)?.toolTip == #"first --name "a b""# && label(1)?.toolTip == "second", "\(label(0)?.toolTip ?? "")")
+        #expect(t.tableColumns[1].headerToolTip == "% of one core" && t.tableColumns[0].headerToolTip == nil)
+        table.pasteboard = NSPasteboard(name: .init("kermo-tests-\(UUID().uuidString)"))
+        defer { table.pasteboard.releaseGlobally() }
+        table.copyTable()
+        #expect(table.pasteboard.string(forType: .string)?.contains("--name") == false, "\(table.pasteboard.string(forType: .string) ?? "")")
+        func items(_ r: Int) -> [String] { table.rowMenu(table.rows[r]).items.map(\.title) }
+        #expect(items(0).contains("Stop…") && items(1).contains("Stop…"))
+        bench.flag("self-localhost")
+        await toolsUntil { table.rows.last?.record["kind"] == "self" }
+        #expect(items(0).contains("Stop…") && !items(1).contains("Stop…"), "\(items(1))")
+    }
+
     /// The sort: numbers by value ("1,25" before "1,5"; 2 KB before 1 MB), text as Finder sorts names, nothing last
     /// either way, equal values by key.
     @Test func aDashboardTableSortsNumbersByValue() {
@@ -831,6 +863,7 @@ extension ServerLockTests {
         func keys(_ up: Bool) -> String { ToolsTable.sorted(rows, by: NSSortDescriptor(key: "v", ascending: up)).map(\.key).joined() }
         #expect(keys(true) == "baefdc" && keys(false) == "defabc", "\(keys(true)) \(keys(false))")
         #expect(ToolsTable.sorted(rows, by: nil).map(\.key).joined() == "abcdef", "no sort: as they came")
+        #expect(ToolsTable.display(rows[2].cells.first) == "—" && ToolsTable.display(rows[0].cells.first) == "1,5 %", "no number: a dash, not blank")
         let sizes = [row("x", "1 MB", 1_048_576), row("y", "2 KB", 2048), row("z", "b", nil)]
         #expect(ToolsTable.sorted(sizes, by: NSSortDescriptor(key: "v", ascending: true)).map(\.key) == ["y", "x", "z"]
                 && ToolsTable.sorted(sizes, by: NSSortDescriptor(key: "v", ascending: false)).map(\.key) == ["x", "y", "z"], "text with no number after the numbers, either way")
@@ -1031,9 +1064,12 @@ extension ServerLockTests {
         #expect(view.foot.stringValue.hasSuffix("checked from this Mac · no SSH") && !view.addButton.isHidden && view.banner.isHidden, "\(view.foot.stringValue)")
         table.table.selectRowIndexes([1], byExtendingSelection: false)
         #expect(rowButtons(table, 1).map(\.title) == ["Open", "Check Now", "⋯"], "\(rowButtons(table, 1).map(\.title))")
+        let checked = table.rows[1].record["checked"]
         press(rowButtons(table, 1).first { $0.title == "Check Now" })
         await toolsUntil { posts.sent.count == 1 }
         #expect(posts.sent.first?.body == "Sites: \(web.url)/down is down: 503" && monitor.worst(s).state == .critical, "\(posts.sent)")
+        await toolsUntil { table.rows[1].record["checked"] != checked }
+        #expect(table.rows[1].key == "\(web.url)/down" && table.table.selectedRow == 1, "a row is its address: the cursor stays through new numbers")
     }
 
     /// Sites is on every saved server: with no addresses its tab — the last — says so beside Add Address…, with no empty

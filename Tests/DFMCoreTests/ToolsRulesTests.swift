@@ -27,7 +27,7 @@ private func systemSamples() throws -> [ToolSample] {
     #expect(m["mem"]!.values(in: samples[0], previous: nil, now: at(0)) == ["": 39.4])
     #expect(m["load"]!.values(in: samples[0], previous: nil, now: at(0)) == ["": 0.2])
     #expect(m["disk"]!.values(in: samples[0], previous: nil, now: at(0)) == ["/": 26, "/boot/efi": 2])
-    #expect(m["inodes"]!.values(in: samples[0], previous: nil, now: at(0)) == ["/": 4, "/boot/efi": 0])
+    #expect(m["inodes"]!.values(in: samples[0], previous: nil, now: at(0)) == ["/": 4], "vfat counts no inodes: no value, not 0")
     #expect(m["disk"]!.values(in: samples[1], previous: samples[0], now: at(5)) == [:], "disks come every 6th line")
     #expect(m["rx"]!.text(1968170) == "2 MB/s" && m["cpu"]!.text(8.26) == "8%" && m["load"]!.text(0.2) == "0.2")
 }

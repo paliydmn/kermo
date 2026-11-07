@@ -336,6 +336,8 @@ public struct ToolRow: Sendable, Hashable {
         public var format: String?
         public var text: String
         public var value: ToolValue?
+        /// The column's `tip` filled in, at most 200 characters; nil: none, or a field it names is empty.
+        public var tip: String? = nil
     }
 }
 
@@ -362,7 +364,11 @@ extension ToolListView {
             let (field, format) = c.field
             let v = s.value(field)
             let raw = ["state", "bar", "spark"].contains(format ?? "")
-            return ToolRow.Cell(field: field, format: format, text: v.map { raw ? $0.text : ToolTemplate.show($0, format, now: now) } ?? "", value: v)
+            let tip = c.object?.tip.flatMap { t in   // a field of it empty: none, as a subtitle's part
+                ToolTemplate.placeholders(in: t).contains { s.isEmpty($0.name) } ? nil : String(ToolTemplate.text(t, s, now: now).prefix(200))
+            }
+            return ToolRow.Cell(field: field, format: format, text: v.map { raw ? $0.text : ToolTemplate.show($0, format, now: now) } ?? "", value: v,
+                                tip: tip)
         }
         return ToolRow(key: keyText, title: title.map { ToolTemplate.text($0, s, now: now) } ?? keyText,
                        subtitle: ToolTemplate.parts(subtitle?.all ?? [], s, now: now), detail: detail.map { ToolTemplate.text($0, s, now: now) } ?? "",

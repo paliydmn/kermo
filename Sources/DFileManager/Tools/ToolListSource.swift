@@ -50,7 +50,10 @@ final class ToolListSource: ListSource {
         l?.run = lv.action.run
         return l
     }
-    var rowActions: [ToolAction]? { level.map { $0.action.spec.list == nil ? $0.parent.rowActions : $0.action.spec.actions } ?? preset.actions }
+    /// The rows' actions here: a level's own, or the list's — not a dashboard table's (`rows`: that table's alone).
+    var rowActions: [ToolAction]? {
+        level.map { $0.action.spec.list == nil ? $0.parent.rowActions : $0.action.spec.actions } ?? preset.actions?.filter { [nil, "list"].contains($0.spec.rows) }
+    }
     /// The rows above, nearest first: their fields are names here (§5.3).
     var above: [ToolRecord] { level.map { lv in (lv.row.map { [$0.record] } ?? []) + lv.parent.above } ?? [] }
 

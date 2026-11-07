@@ -57,6 +57,12 @@ struct Case: CustomTestStringConvertible, Sendable {
          says: "“a” is another action's id too"),
     Case(name: "a key twice in a list", json: "{ \(head), \"list\": { \"command\": \"x\" }, \"actions\": [ { \"id\": \"a\", \"key\": \"f8\", \"command\": \"x\" } ], "
          + "\"toolActions\": [ { \"id\": \"b\", \"key\": \"f8\", \"command\": \"y\" } ] }", says: "“f8” is another action's key"),
+    Case(name: "a column's tip that isn't text", json: "{ \(head), \"dashboard\": [ { \"table\": \"x\", \"columns\": [ { \"field\": \"a\", \"tip\": 5 } ] } ] }",
+         says: "tip: should be a string"),
+    Case(name: "a column's unknown field", json: "{ \(head), \"dashboard\": [ { \"table\": \"x\", \"columns\": [ { \"field\": \"a\", \"hint\": \"b\" } ] } ] }",
+         says: "hint: unknown field"),
+    Case(name: "a key twice on one table", json: "{ \(head), \"actions\": [ { \"id\": \"a\", \"rows\": \"t\", \"key\": \"return\", \"command\": \"x\" }, "
+         + "{ \"id\": \"b\", \"rows\": \"t\", \"key\": \"return\", \"command\": \"y\" } ] }", says: "“return” is another action's key"),
     Case(name: "a Run without a source", json: "{ \(head), \"requires\": { \"sudo\": true } }", says: "requires: needs a command, script"),
     Case(name: "a Run with two sources", json: "{ \(head), \"list\": { \"command\": \"x\", \"script\": \"x.sh\" } }", says: "one source, not command and script"),
     Case(name: "an action that does nothing", json: "{ \(head), \"toolActions\": [ { \"id\": \"a\" } ] }", says: "needs a command or script, or edit"),
