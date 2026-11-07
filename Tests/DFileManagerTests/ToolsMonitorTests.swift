@@ -1064,9 +1064,12 @@ extension ServerLockTests {
         #expect(view.foot.stringValue.hasSuffix("checked from this Mac · no SSH") && !view.addButton.isHidden && view.banner.isHidden, "\(view.foot.stringValue)")
         table.table.selectRowIndexes([1], byExtendingSelection: false)
         #expect(rowButtons(table, 1).map(\.title) == ["Open", "Check Now", "⋯"], "\(rowButtons(table, 1).map(\.title))")
+        let checked = table.rows[1].record["checked"]
         press(rowButtons(table, 1).first { $0.title == "Check Now" })
         await toolsUntil { posts.sent.count == 1 }
         #expect(posts.sent.first?.body == "Sites: \(web.url)/down is down: 503" && monitor.worst(s).state == .critical, "\(posts.sent)")
+        await toolsUntil { table.rows[1].record["checked"] != checked }
+        #expect(table.rows[1].key == "\(web.url)/down" && table.table.selectedRow == 1, "a row is its address: the cursor stays through new numbers")
     }
 
     /// Sites is on every saved server: with no addresses its tab — the last — says so beside Add Address…, with no empty

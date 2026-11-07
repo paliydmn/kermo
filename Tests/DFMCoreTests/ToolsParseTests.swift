@@ -225,6 +225,33 @@ private func parse(_ format: ToolFormat, _ text: String, _ change: (inout ToolPa
     #expect(ToolTemplate.Scope(rows: [r.rows[1], ["mount": "/"]]).value("mount") == "/")
 }
 
+/// System's stream (review 3, PR B): each process with its kind, state, memory in bytes, unit and command line; a disk
+/// with free space and, where the file system counts none (vfat), no inodes — "—", not 0 %.
+@Test func systemProcessesAndDisks() throws {
+    let system = try preset("system"), rows = try #require(system.stream).parse.records(try fixture("system.stream.jsonl")).rows
+    guard case .array(let procs)? = rows[3]["procs"], case .array(let disks)? = rows[0]["disks"] else { Issue.record("no procs or disks"); return }
+    let p = procs.compactMap { if case .object(let o) = $0 { o } else { nil } }
+    #expect(p.map { $0["kind"]?.text ?? "" } == ["user", "self", "kernel", "init", "user", "user", "user", "self"])
+    #expect(p[0]["rss"] == 336855040 && p[0]["state"] == "R" && p[0]["unit"] == "nginx.service" && p[0]["unit_type"] == "service")
+    #expect(p[2]["args"] == nil, "a kernel thread has no command line")
+    #expect(p[5]["args"]?.text == #"python3 -m worker --queue "a b" --token-file /run/secrets/x\y"#)
+    #expect(disks.first?["free"] == 356608126976 && disks.last?["inodes_pct"] == nil)
+
+    // As the dashboard's table shows them: the command line is the command's tip, never its text; none, the text.
+    let block = try #require(system.dashboard?.first { $0.table == "procs" }), view = ToolListView(columns: block.columns, key: block.key)
+    let shown = p.map { view.row($0) }, command = shown.map { $0.cells[0] }
+    #expect(command[0].text == "nginx" && command[0].tip == "nginx: worker process")
+    #expect(command[2].tip == nil && shown[0].key == "2311.5828026")
+    #expect(block.columns?.first { $0.field.name == "cpu" }?.object?.help?.contains("one core") == true)
+
+    // Stop and Kill only on a user's process: never pid 1, a kernel thread, this connection or a row without a kind.
+    let by = Dictionary(uniqueKeysWithValues: (system.actions ?? []).map { ($0.spec.id, $0) })
+    func offers(_ id: String) -> [String] { (p + [[:]]).map { by[id]!.offered(on: $0) ? "y" : "-" } }
+    #expect(offers("stop") == ["y", "-", "-", "-", "y", "y", "y", "-", "-"] && offers("kill") == offers("stop"))
+    #expect(offers("files") == ["y", "y", "-", "y", "y", "y", "y", "y", "-"] && offers("folder") == offers("files"))
+    #expect(offers("service") == ["y", "-", "-", "-", "y", "-", "-", "-", "-"])
+}
+
 /// A column's `tip`: filled in, at most 200 characters; a field of it empty, none.
 @Test func aColumnsTip() {
     let view = ToolListView(columns: [.object(.init(field: "last_status", tip: "at {failure.stage}: {failure.error}"))])

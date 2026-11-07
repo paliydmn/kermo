@@ -25,7 +25,7 @@ private let mine = #"{ "schema": 1, "id": "mine", "title": "Mine", "list": { "sc
     #expect(lib.tools.map(\.preset.id).sorted() == ["dpl", "fail2ban", "mine", "sites", "sysinfo", "system", "ufw"])
     let t = try #require(lib.tools.first { $0.preset.id == "mine" })
     #expect(!t.builtIn && t.scripts == ["mine.sh": "echo a\n"])
-    #expect(try #require(lib.tools.first { $0.preset.id == "system" }).scripts.keys.sorted() == ["system.stream.sh"])
+    #expect(try #require(lib.tools.first { $0.preset.id == "system" }).scripts.keys.sorted() == ["system.deleted.sh", "system.stream.sh"])
     #expect(try #require(lib.tools.first { $0.preset.id == "sysinfo" }).scripts.keys.sorted() == ["sysinfo.report.sh", "sysinfo.traffic.sh"])
 }
 

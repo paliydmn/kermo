@@ -5,7 +5,8 @@
   "where": "mac",
   "about": "Is the site up: status, response time and the TLS certificate's days left, checked from this Mac for the addresses you saved on the server.",
   "icon": "globe",
-  "catalogVersion": 1,
+  "catalogVersion": 2,
+  "minKermo": "2.0",
 
   "http": { "urls": "server", "timeout": 10, "method": "GET" },
   "watch": { "every": 60 },
@@ -25,8 +26,9 @@
   ],
 
   "dashboard": [
-    { "table": "urls", "title": "Addresses",
-      "columns": [{ "field": "url", "title": "Address" }, "status", { "field": "ms:ms", "title": "Response" }, { "field": "tls_days:days", "title": "Certificate" }, { "field": "checked:ago", "title": "Checked" }],
+    { "table": "urls", "title": "Addresses", "key": "{url}",
+      "columns": [{ "field": "url", "title": "Address" }, "status", { "field": "ms:ms", "title": "Response" },
+                  { "field": "tls_days:days", "title": "Certificate", "help": "Days till the TLS certificate ends" }, { "field": "checked:ago", "title": "Checked" }],
       "actions": ["browser", "now", "headers", "errors"] },
     { "charts": [ ["latency"] ], "range": ["1h", "24h", "7d"], "per": "url" }
   ],
