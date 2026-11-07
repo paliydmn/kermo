@@ -519,7 +519,7 @@ extension EditorWindowTests {
 }
 
 extension EditorWindowTests {
-    /// "Changed on the server since you opened it": Overwrite sends the text, and its tab is saved — it stayed ↑ "Not
+    /// "Changed on the server since you opened it": ↑ while it asks; Overwrite sends the text, and its tab is saved — it stayed ↑ "Not
     /// uploaded" with the server already holding it (and after a launch asked again). Cancel leaves it ↑.
     @Test func overwritingAChangedServerFileLeavesItsTabSaved() async throws {
         _ = NSApplication.shared
@@ -537,16 +537,17 @@ extension EditorWindowTests {
         app.panels = [PanelViewController(tabs: [dir], index: 0, showHidden: false)]
         app.panels.forEach { $0.loadViewIfNeeded() }
         defer { app.panels.forEach { $0.shutdown() } }
-        try await Task.sleep(for: .milliseconds(1100))
-        try put("v2 from a deploy\n", file)
-        AppDelegate.answering = { _, _, _ in 2 }   // Cancel
+        try put("v2 from a deploy\n", file)   // another size: a change
+        var whileAsked: [Bool] = []
+        AppDelegate.answering = { _, _, _ in whileAsked.append(e.isEdited); return 2 }   // Cancel
         #expect(await !app.upload(copy, to: file, on: .local(), state))
         #expect(e.isEdited && read(file) == "v2 from a deploy\n", "Cancel: still to send")
         #expect(await e.save(), "⌘S again: the copy first")
-        AppDelegate.answering = { _, _, _ in 0 }   // Overwrite
+        AppDelegate.answering = { _, _, _ in whileAsked.append(e.isEdited); return 0 }   // Overwrite
         #expect(await app.upload(copy, to: file, on: .local(), state))
         #expect(read(file) == "mine\n")
         #expect(!e.isEdited, "sent: not ↑")
+        #expect(whileAsked == [true, true], "↑ while it asks (Compare too): closing the tab then asks")
     }
 
     /// A ↑ tab saved again: its ↑ goes from the tab itself, not only from its state — the tab was drawn while the ↑

@@ -16,6 +16,14 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     static var unsaved: [String] { open.filter { $0.changed && !$0.keepsDrafts }.map(\.name) }
     /// The save didn't reach where the file really lives (a server): still unsaved, so closing asks.
     static func markUnsaved(_ url: URL) { open.first { $0.url == url }.map { $0.dirty = true; $0.unsent = true; $0.showState(); $0.host?.changed($0) } }
+    /// Its copy's text reached the server: not ↑ any more — still ● if it was typed on since.
+    static func markSent(_ url: URL) {
+        guard let e = open.first(where: { $0.url == url }), e.unsent else { return }
+        e.unsent = false
+        e.dirty = e.changed
+        e.showState()
+        e.host?.changed(e)
+    }
     /// The window of the editor whose file `url` is now.
     static func window(for url: URL) -> NSWindow? { open.first { $0.url == url }?.window }
     /// Where a question about `url`'s save goes — a server copy's upload that went on after Save As made it a local

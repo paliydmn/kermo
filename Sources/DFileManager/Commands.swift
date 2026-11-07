@@ -1436,6 +1436,7 @@ extension AppDelegate {
         switch r {
         case .success(let (attrs, note, outcome, reload)):
             AuditLog.write(target, action, paths: [remotePath], exit: 0)
+            Editor.markSent(saved)   // a question's Overwrite, or an earlier save that failed: on the server now
             state.baseline = attrs
             for p in panels where p.remote?.target.asUser == target.asUser { p.reload() }   // root's or user's: one server
             let notes = [note.map { "no history: \($0)" }, outcome.map { Self.checkNote($0, of: rule) }, Self.reloadNote(rule, outcome, on: target), problem]
@@ -1457,6 +1458,7 @@ extension AppDelegate {
             _ = await choose(message, info: info, ["OK"], on: Editor.asking(about: saved))
             return false
         case .failure(let e as SFTPClient.ChangedOnServer):
+            Editor.markUnsaved(saved)   // ↑ while it asks (and Compare runs): closing its tab asks first
             let keeps = Editor.window(for: saved) == nil ? "in \(saved.path)" : "unsaved here"   // the editor may be gone
             let fmt = DateFormatter()
             fmt.dateFormat = "HH:mm:ss"
@@ -1472,9 +1474,7 @@ extension AppDelegate {
                     return await uploadNow(saved, to: remotePath, on: target, state, force: false, action: action)
                 case 1: await diff(DiffSide(path: saved.path, name: "\(name) (yours)"),
                                    DiffSide(path: remotePath, server: target, size: e.attrs.size, mtime: e.attrs.mtime), in: panel)
-                default:   // not before the answer: Overwrite sends it, and its tab is then saved, not ↑
-                    Editor.markUnsaved(saved)
-                    return false
+                default: return false
                 }
             }
         case .failure(let e):
