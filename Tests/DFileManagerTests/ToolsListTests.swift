@@ -420,3 +420,85 @@ extension ServerLockTests {
         #expect(c.rows.map(\.subtitle) == ["1 h ago"] && c.header == "serving · ⚠ the server's clock is 120 min behind", "\(c.rows.map(\.subtitle)) \(c.header ?? "")")
     }
 }
+
+/// A list's `every` (§6.2): read again while it shows and a read would ask nothing, over a connection already up —
+/// never while hidden, locked or not connected; `stop` ends it.
+@MainActor @Test func aListIsReadAgainWhileItShows() async throws {
+    final class Every: ListSource {
+        let title = "Every", target = SFTPTarget.local(), columns: [ListColumn] = []
+        var content: ListContent?
+        var reads = 0, quiet = true, newer = false, stamp = 0
+        var every: TimeInterval? { 0.15 }
+        var readsQuietly: Bool { quiet }
+        func read(_ cancel: CancelFlag) async throws -> ListContent {
+            reads += 1
+            if newer { stamp += 1 }   // another read showed rows meanwhile (⌘R, an action's re-read)
+            return ListContent(rows: [])
+        }
+    }
+    let was = (ListPoll.connected, ListPoll.least)
+    nonisolated(unsafe) var up = true
+    (ListPoll.connected, ListPoll.least) = ({ _ in up }, 0.1)
+    defer { (ListPoll.connected, ListPoll.least) = was }
+    let s = Every()
+    var shown = true, got = 0
+    let made = ListPoll(s, shown: { shown }, stamp: { s.stamp }, got: { _ in got += 1 })
+    let poll = try #require(made)
+    await toolsUntil { s.reads >= 2 && got == s.reads }   // a busy run's main thread ticks late: wait, don't time
+    #expect(s.reads >= 2 && got == s.reads, "\(s.reads) \(got)")
+    s.newer = true
+    let seen = got
+    await toolsUntil { s.reads >= seen + 2 }
+    #expect(got == seen, "a read that finds rows read since is dropped: \(got) after \(seen)")
+    s.newer = false
+    for (why, change) in [("hidden", { shown = false }), ("locked", { shown = true; s.quiet = false }), ("not connected", { s.quiet = true; up = false })] as [(String, () -> Void)] {
+        change()
+        try await Task.sleep(for: .seconds(0.2))   // a read under way ends
+        let n = s.reads
+        try await Task.sleep(for: .seconds(0.5))
+        #expect(s.reads == n, "\(why): \(s.reads) after \(n)")
+    }
+    up = true
+    poll.stop()
+    let n = s.reads
+    try await Task.sleep(for: .seconds(0.5))
+    final class Once: ListSource {
+        let title = "Once", target = SFTPTarget.local(), columns: [ListColumn] = []
+        var content: ListContent?
+        func read(_ cancel: CancelFlag) async throws -> ListContent { ListContent(rows: []) }
+    }
+    let none = ListPoll(Once(), shown: { true }, stamp: { 0 }, got: { _ in })
+    #expect(s.reads == n && none == nil, "stopped; no `every`, no poll")
+
+    // A poll's rows: the cursor stays on its row; its row gone, no cursor — not the neighbour, another process.
+    func rows(_ ids: [String]) -> ListContent { ListContent(rows: ids.map { id in var it = Picker.Item(title: id) {}; it.id = id; return it }) }
+    let l = ListPanel(Once(), content: rows(["a", "b", "c"]), select: "b")
+    let table = NSTableView()
+    l.attach(to: table)
+    l.polled(rows(["c", "b"]))
+    #expect(l.cursorID == "b" && table.selectedRow == 1)
+    l.polled(rows(["a", "c"]))
+    #expect(l.cursorID == nil && table.selectedRow == -1, "\(l.cursorID ?? "")")
+    l.polled(rows(["a", "c", "d"]))
+    #expect(l.cursorID == nil && table.selectedRow == -1, "the next poll leaves it so: \(l.cursorID ?? "")")
+    l.detach()
+}
+
+extension ServerLockTests {   // shows a Picker: `Picker.current` is global
+    /// A list of more rows than a picker shows unfiltered (300) says so above them, and that typing finds the rest;
+    /// typing, it doesn't.
+    @MainActor @Test func aPickerSaysItShowsTheFirst300() {
+        final class Many: ListSource {
+            let title = "Many", target = SFTPTarget.local(), columns: [ListColumn] = []
+            var content: ListContent? = ListContent(rows: (1...305).map { i in Picker.Item(title: "p\(i)") {} }, header: "the top 305 of 400 by CPU", cut: 305)
+            func read(_ cancel: CancelFlag) async throws -> ListContent { content! }
+        }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        defer { Picker.dismiss() }
+        let p = Picker.show(over: window, Many(), scope: ("localhost › Many", [])) { _, _, _, _ in }
+        #expect(p.rows.count == 300 && p.headerSaid == "the top 305 of 400 by CPU · the first 300 of 305 here: type to find the rest", "\(p.headerSaid)")
+        p.field.stringValue = "p30"
+        p.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: p.field))
+        #expect(p.headerSaid == "the top 305 of 400 by CPU" && p.rows.first?.title == "p30", "\(p.headerSaid)")
+    }
+}

@@ -252,6 +252,31 @@ private func parse(_ format: ToolFormat, _ text: String, _ change: (inout ToolPa
     #expect(offers("service") == ["y", "-", "-", "-", "y", "-", "-", "-", "-"])
 }
 
+/// Review 3, T12: System's list — every process, from the stream script's one-off read (`ONCE=1 TOP=0`): the busiest by
+/// CPU first, at most `limit`; a pid given to another process another row; the command line only as the command's
+/// tip; the top processes' own actions (pid, start and boot checked by the command, no `verify`: CPU differs in every
+/// read), not the chart's log nor a disk's.
+@Test func allProcessesAsTheList() throws {
+    let system = try preset("system"), list = try #require(system.list), data = try fixture("system.list.json")
+    let r = list.parse.records(data)
+    #expect(r.total == 13 && r.rows.count == 13 && r.rows.first?["command"] == "api", "sorted by CPU, the busiest first")
+    #expect(Set(r.rows.map { $0["kind"]?.text ?? "" }) == ["init", "kernel", "self", "user"] && r.rows.allSatisfy { $0["boot"] == "3f0c2a8e" })
+    #expect(r.rows.contains { $0["user"] == "systemd-resolve" }, "a user's whole name, not procps' 8 characters")
+    var cut = list.parse
+    cut.limit = 5
+    #expect(cut.records(data).rows.count == 5 && cut.records(data).total == 13 && cut.records(data).rows.first?["command"] == "api", "cut after the sort")
+    let api = list.view.row(r.rows[0])
+    #expect(api.key == "1122.\(r.rows[0]["start"]!.text)" && api.title == "api" && api.detail == "pid 1122" && api.subtitle.hasPrefix("root · "))
+    #expect(api.cells.first?.text == "api" && api.cells.first?.tip?.contains("--password=hunter2") == true, "the command line is a tip: shown, never the text")
+    #expect(system.listActions.map(\.spec.id) == ["folder", "files", "service", "stop", "kill"])
+    #expect(system.actions?.first { $0.spec.id == "kill" }?.spec.verify == false)
+    #expect(system.actions?.filter { ["stop", "kill"].contains($0.spec.id) }.allSatisfy { $0.run.command?.all.joined().contains("= {boot} ]") == true } == true)
+    #expect(system.dashboard?.first { $0.table == "procs" }?.list == "All Processes…" && !system.watchesList, "a list nothing watches: read only while it shows")
+    // A byte that isn't UTF-8 (a command line cut mid-letter by a C-locale awk) costs one letter, not the read.
+    let bad = Data(#"{"procs":[{"pid":7,"args":"caf"#.utf8) + Data([0xC3]) + Data(#""}]}"#.utf8)
+    #expect(list.parse.records(bad).rows.first?["pid"] == 7)
+}
+
 /// A column's `tip`: filled in, at most 200 characters; a field of it empty, none.
 @Test func aColumnsTip() {
     let view = ToolListView(columns: [.object(.init(field: "last_status", tip: "at {failure.stage}: {failure.error}"))])

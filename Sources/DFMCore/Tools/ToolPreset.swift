@@ -387,6 +387,8 @@ public struct ToolBlock: Sendable, Hashable, Codable {
     public var range: [ToolDuration]?
     public var per, log: String?
     public var table, title, key: String?
+    /// A table's button to the tool's `list`, its title: "All Processes…".
+    public var list: String?
     public var columns: [ToolColumn]?
     public var actions: [String]?
     public var events: Bool?
@@ -505,6 +507,19 @@ public struct ToolPreset: Sendable, Hashable, Codable {
             (list ?? []).enumerated().flatMap { i, a in [(at + [.index(i)], a)] + walk(a.spec.actions, at + [.index(i), .key("actions")]) }
         }
         return walk(actions, [.key("actions")]) + walk(toolActions, [.key("toolActions")])
+    }
+
+    /// The actions on its list's rows (§6.2): of no `rows`, of `rows: "list"`, and of the set the list's parse reads
+    /// — System's `procs`, top processes and all of them alike — but not a chart's `log` (its `{from}` and `{to}`).
+    public var listActions: [ToolAction] {
+        let own = list?.parse.rows, charts = Set(chartLogs)
+        return (actions ?? []).filter { a in [nil, "list", own].contains(a.spec.rows) && !charts.contains(a.spec.id) }
+    }
+
+    /// The charts' `log` actions, top to bottom: what a click on a chart runs.
+    public var chartLogs: [String] {
+        func logs(_ blocks: [ToolBlock]) -> [String] { blocks.flatMap { [$0.log].compactMap { $0 } + logs($0.row ?? []) } }
+        return logs(dashboard ?? [])
     }
 
     /// Its stream or poll (§8.1): what watching runs.

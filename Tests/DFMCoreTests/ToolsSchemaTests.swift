@@ -63,6 +63,14 @@ struct Case: CustomTestStringConvertible, Sendable {
          says: "hint: unknown field"),
     Case(name: "a key twice on one table", json: "{ \(head), \"actions\": [ { \"id\": \"a\", \"rows\": \"t\", \"key\": \"return\", \"command\": \"x\" }, "
          + "{ \"id\": \"b\", \"rows\": \"t\", \"key\": \"return\", \"command\": \"y\" } ] }", says: "“return” is another action's key"),
+    Case(name: "a key twice on a list and the table of its rows", json: "{ \(head), \"list\": { \"command\": \"x\", \"format\": \"json\", \"rows\": \"t\" }, "
+         + "\"actions\": [ { \"id\": \"a\", \"key\": \"f8\", \"command\": \"x\" }, { \"id\": \"b\", \"rows\": \"t\", \"key\": \"f8\", \"command\": \"y\" } ] }",
+         says: "“f8” is another action's key"),
+    Case(name: "a list read again too often", json: "{ \(head), \"list\": { \"command\": \"x\", \"every\": 0.5 } }", says: "every: 2 seconds or more"),
+    Case(name: "a block's list off a table", json: "{ \(head), \"list\": { \"command\": \"x\" }, \"dashboard\": [ { \"events\": true, \"list\": \"All…\" } ] }",
+         says: "only a table opens the tool's list"),
+    Case(name: "a table's list with no list", json: "{ \(head), \"dashboard\": [ { \"table\": \"t\", \"columns\": [\"a\"], \"list\": \"All…\" } ] }",
+         says: "the tool has no list to open"),
     Case(name: "a Run without a source", json: "{ \(head), \"requires\": { \"sudo\": true } }", says: "requires: needs a command, script"),
     Case(name: "a Run with two sources", json: "{ \(head), \"list\": { \"command\": \"x\", \"script\": \"x.sh\" } }", says: "one source, not command and script"),
     Case(name: "an action that does nothing", json: "{ \(head), \"toolActions\": [ { \"id\": \"a\" } ] }", says: "needs a command or script, or edit"),

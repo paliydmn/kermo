@@ -122,7 +122,7 @@ public enum ToolSchema {
         "block": Object(fields: ["row": .list(.object("block")), "stat": .strings(.plain), "of": .oneOf(["max", "sum", "min", "avg"]),
                                  "also": .text(.plain), "charts": .list(.list(.text(.plain))), "range": .list(.duration),
                                  "per": .text(.plain), "log": .text(.plain), "table": .text(.plain), "title": .text(.plain), "key": .text(.display),
-                                 "columns": .list(.column), "actions": .list(.text(.plain)), "events": .bool, "counts": .list(.object("count"))]),
+                                 "columns": .list(.column), "actions": .list(.text(.plain)), "list": .text(.plain), "events": .bool, "counts": .list(.object("count"))]),
         "count": Object(fields: ["rows": .text(.plain), "title": .text(.plain), "goto": .text(.display)], required: ["rows", "title"]),
         "context": Object(fields: ["path": .text(.path), "row": .text(.display), "actions": .list(.text(.plain))], required: ["path", "row", "actions"]),
         "validator": Object(fields: ["path": .text(.path), "check": .text(.command), "when": .oneOf(["before", "after"])],
@@ -446,7 +446,7 @@ extension ToolSchema.Check {
             }
         }
         sameKeys((p.actions ?? []).enumerated().map { ([.key("actions"), .index($0)], $1) }
-                 + (p.toolActions ?? []).enumerated().map { ([.key("toolActions"), .index($0)], $1) })
+                 + (p.toolActions ?? []).enumerated().map { ([.key("toolActions"), .index($0)], $1) }, listRows: p.list?.parse.rows)
         for (path, a) in p.allActions where a.spec.actions != nil {
             sameKeys(a.spec.actions!.enumerated().map { (path + [.key("actions"), .index($0)], $1) })
         }
@@ -464,6 +464,8 @@ extension ToolSchema.Check {
                     error(bp, "a block is one of row, stat, charts, table, events, counts")
                 }
                 if b.table != nil, b.columns?.isEmpty ?? true { error(bp + [.key("columns")], "a table needs its columns") }
+                if b.list != nil, b.table == nil { error(bp + [.key("list")], "only a table opens the tool's list") }
+                if b.list != nil, p.list == nil { error(bp + [.key("list")], "the tool has no list to open") }
                 for x in b.actions ?? [] where !rowActions.contains(x) { error(bp + [.key("actions")], "“\(x)” isn't one of the actions") }
                 for x in b.actions ?? [] { if let rows = actionRows[x] ?? nil, let table = b.table, rows != table { error(bp + [.key("actions")], "“\(x)” acts on rows of \(rows), not \(table)") } }
                 if let log = b.log, !rowActions.contains(log) { error(bp + [.key("log")], "“\(log)” isn't one of the actions") }
@@ -482,6 +484,9 @@ extension ToolSchema.Check {
             error([.key("metrics"), .key(id), .key("calc")], "\(m.calc!) works on a number at path, not on a count")
         }
         if let w = p.watch, w.every < 1 { error([.key("watch"), .key("every")], "a second or more") }   // `sleep 0` would spin, and a tick divides by it
+        for (path, l) in [([ToolPath.key("list")], p.list)] + p.allActions.map({ ($0.path + [.key("list")], $0.action.spec.list) }) where (l?.view.every ?? 2) < 2 {
+            error(path + [.key("every")], "2 seconds or more: a list read again sooner would read all the time")
+        }
 
         // Names: Kermo's own hidden, placeholders nothing fills.
         for name in (p.vars ?? [:]).keys where ToolTemplate.kermoNames.contains(name) {
@@ -507,9 +512,11 @@ extension ToolSchema.Check {
 
     /// Actions in one list (one level, or one dashboard table: its `rows`) sharing a key: an error, unless each has its
     /// own `requires` (same-key variants).
-    mutating func sameKeys(_ all: [([ToolPath], ToolAction)]) {
+    mutating func sameKeys(_ all: [([ToolPath], ToolAction)], listRows: String? = nil) {
         let keyed = all.filter { $0.1.spec.key != nil }
-        for (_, group) in Dictionary(grouping: keyed, by: { [$0.1.spec.key!, $0.1.spec.rows ?? ""] }) where group.count > 1 {
+        // The list's rows have the actions of no rows, of "list" and of the set its parse reads (`listActions`): one group.
+        func rows(_ a: ToolAction) -> String { [nil, "list", listRows].contains(a.spec.rows) ? "" : a.spec.rows! }
+        for (_, group) in Dictionary(grouping: keyed, by: { [$0.1.spec.key!, rows($0.1)] }) where group.count > 1 {
             let key = group[0].1.spec.key!
             guard !group.allSatisfy({ $0.1.spec.requires != nil }) else { continue }
             for (path, _) in group.dropFirst() { error(path + [.key("key")], "“\(key)” is another action's key in this list too") }

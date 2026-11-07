@@ -28,6 +28,10 @@ import DFMCore
     var trail: [String] { get }
     /// One level down: the list above and its row this came from — ⌫ goes back there. nil: the server's place.
     var up: (source: ListSource, row: String?)? { get }
+    /// Read again every so many seconds while it shows (a Tools list's `every`, §6.2); nil: only when asked.
+    var every: TimeInterval? { get }
+    /// A read now would ask nothing — no Touch ID, no password: what such a read waits for.
+    var readsQuietly: Bool { get }
 }
 
 extension ListSource {
@@ -36,6 +40,54 @@ extension ListSource {
     var listID: String? { nil }
     var trail: [String] { [title] }
     var up: (source: ListSource, row: String?)? { nil }
+    var every: TimeInterval? { nil }
+    var readsQuietly: Bool { true }
+}
+
+/// A list read again every `every` seconds (2 at least) while it shows (§6.2): quietly — over the connection already
+/// there, when nothing would be asked (checked before the read and again once the connection is known up), no spinner;
+/// a read that fails leaves the rows as they were, one that finds them read since (⌘R, an action's re-read) is
+/// dropped. Timers don't fire while a menu is open. Stops with `stop` or once its owner is gone.
+@MainActor final class ListPoll {
+    /// Whether the connection is up already (`ssh -O check`); tests' own.
+    nonisolated(unsafe) static var connected: @Sendable (SFTPTarget) -> Bool = SFTP.isConnected
+    /// The shortest interval (§6.2: 2 s); tests' own.
+    nonisolated(unsafe) static var least: TimeInterval = 2
+    let source: ListSource
+    private var timer: Timer?
+    private var reading: CancelFlag?
+
+    /// nil: the list has no `every`.
+    /// `stamp`: what changes whenever the owner shows rows (a poll's read since is stale).
+    init?(_ source: ListSource, shown: @escaping @MainActor () -> Bool, stamp: @escaping @MainActor () -> Int, got: @escaping @MainActor (ListContent) -> Void) {
+        guard let every = source.every else { return nil }
+        self.source = source
+        timer = Timer.scheduledTimer(withTimeInterval: max(every, Self.least), repeats: true) { [weak self] t in
+            let alive = MainActor.assumeIsolated { () -> Bool in
+                self?.tick(shown, stamp, got)
+                return self != nil
+            }
+            if !alive { t.invalidate() }   // its owner went without `stop`
+        }
+    }
+
+    private func tick(_ shown: @escaping @MainActor () -> Bool, _ stamp: @escaping @MainActor () -> Int, _ got: @escaping @MainActor (ListContent) -> Void) {
+        guard reading == nil, source.readsQuietly, shown() else { return }
+        let flag = CancelFlag(), source = source, target = source.target, before = stamp()
+        reading = flag
+        Task { [weak self] in
+            defer { if self?.reading === flag { self?.reading = nil } }
+            guard await Blocking.run(.utility, { Self.connected(target) }), !flag.isCancelled, shown(), source.readsQuietly,
+                  let c = try? await source.read(flag), !flag.isCancelled, shown(), stamp() == before else { return }
+            got(c)
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        reading?.cancel()
+    }
 }
 
 /// A list's read that failed, with what the server said: a Picker offers it (Output…).
@@ -58,6 +110,8 @@ struct ListColumn {
     let field: Field
     var width: CGFloat = 120
     var state = false
+    /// The header's tooltip (a Tools column's `help`).
+    var help: String? = nil
 }
 
 /// What a read gives: the rows, a line about them all above ("10 units · 1 failed"), what's said when there are none,
@@ -68,6 +122,8 @@ struct ListContent {
     var rows: [Picker.Item]
     var header: String? = nil
     var empty = "Nothing here"
+    /// The rows shown of more that were read (a list's `limit`): what a filter looks among.
+    var cut: Int? = nil
     var primary: ListAction? = nil
     var actions: (@MainActor () -> [ListAction])? = nil
 }
@@ -166,6 +222,12 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
     private var resultGen = 0
     /// How long a line saying something went well stays.
     var resultTime: TimeInterval = 5
+    /// Its rows read again while it shows on its table (`every`).
+    private var poll: ListPoll?
+    /// How many times rows were shown: a poll that finds a newer read drops its own.
+    private var shows = 0
+    /// A poll's rows going in: the view stays where you scrolled it.
+    private var polled = false
 
     /// `content`: rows already there (a tab's copy); else the source's as last read.
     init(_ source: ListSource, content: ListContent? = nil, filter: String = "", select: String? = nil) {
@@ -206,6 +268,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
             (col.headerCell as? PanelHeaderCell)?.fill = theme.background
             col.title = c.title
             col.width = c.width
+            col.headerToolTip = c.help
             col.sortDescriptorPrototype = NSSortDescriptor(key: "\(i)", ascending: true)
             table.addTableColumn(col)
         }
@@ -214,10 +277,16 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         (table.dataSource, table.delegate) = (self, self)
         if let o = order { table.sortDescriptors = [NSSortDescriptor(key: "\(o.column)", ascending: o.ascending)] }   // its header shows the order
         reloadTable()
+        poll = ListPoll(source, shown: { [weak self] in   // on screen: not under a full-height terminal, nor a question
+            guard let t = self?.table, let w = t.window else { return false }
+            return w.occlusionState.contains(.visible) && w.attachedSheet == nil && !t.isHiddenOrHasHiddenAncestor && !t.visibleRect.isEmpty
+        }, stamp: { [weak self] in self?.shows ?? 0 }, got: { [weak self] c in self?.polled(c) })
     }
 
     /// Gives the table back as it was.
     func detach() {
+        poll?.stop()
+        poll = nil
         guard let table, let b = before else { return }
         (table.dataSource, table.delegate) = (nil, nil)
         table.tableColumns.forEach(table.removeTableColumn)
@@ -247,6 +316,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
     /// A read's rows: the marks of rows gone go, the cursor stays on its row (by id).
     func set(_ c: ListContent) {
         content = c
+        shows += 1
         marked.formIntersection(c.rows.map(\.id))
         headerLine.stringValue = c.header ?? ""
         headerLine.isHidden = c.header == nil
@@ -270,6 +340,16 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
 
     /// What the keys and the menu do now: the cursor row's actions, else the list's own (`ListContent.actions`).
     var actions: [ListAction] { cursor?.listActions?() ?? content?.actions?() ?? [] }
+
+    /// A poll's rows: the cursor stays on its row; its row gone (or filtered out), no cursor — a neighbour is another
+    /// process — and none comes back on the next poll.
+    func polled(_ c: ListContent) {
+        let was = cursorID
+        polled = true
+        set(c)
+        polled = false
+        if cursorID != was { onCursor?() }
+    }
 
     func reload(_ c: ListContent, having id: String) {
         cursorID = Self.stay(cursorID, in: shown.map(\.id), now: Set(c.rows.map(\.id)))
@@ -344,11 +424,11 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
     private func reloadTable() {
         guard let table else { return }
         table.reloadData()
-        let r = cursorRow ?? (shown.isEmpty ? nil : 0)
+        let r = cursorRow ?? (polled || shown.isEmpty ? nil : 0)   // a poll never puts the cursor on another row
         if let r {
             table.selectRowIndexes([r], byExtendingSelection: false)
-            table.scrollRowToVisible(r)
-        }
+            if !polled { table.scrollRowToVisible(r) }
+        } else if polled { table.deselectAll(nil) }
         cursorID = r.map { shown[$0].id }
     }
 
@@ -478,7 +558,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         cell.check.isHidden = !(first && isMarked)
         cell.textField?.font = font
         cell.textField?.setAccessibilityLabel(first && isMarked ? "marked" : nil)
-        cell.toolTip = words.isEmpty ? nil : words
+        if case .cell(let k) = col.field, let tip = it.tips[k] { cell.toolTip = tip } else { cell.toolTip = words.isEmpty ? nil : words }   // the column's `tip`: shown, never copied
         if col.state, let mark = it.busy ? (Symbol.pending, NSColor.secondaryLabelColor, "busy") : it.state.map({ ($0.symbol, $0.color, "\($0)") }) {
             let s = NSMutableAttributedString(attributedString: mark.0.text(mark.1, font: font, label: mark.2))
             s.append(NSAttributedString(string: " " + words, attributes: [.font: font, .foregroundColor: cell.color]))

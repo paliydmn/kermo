@@ -192,6 +192,13 @@ public struct ToolHistory: Sendable {
     /// `last`'s rows are compared with, so a long sleep makes no row "first" again.
     public private(set) var carriedBefore: [String: ToolSample] = [:]
     private var untrimmed: [String: ToolSample] = [:]
+    /// Each row set → its rows in every sample of the hour that carried it, oldest first, as JSON: what a table showed at a
+    /// moment (review 3, T11 "who was it?"). Memory only — the week on disk (`ToolSlots`) has metrics, never rows; as
+    /// JSON, an hour of System's processes and disks is about 1 MB, where the records were 7.
+    private var past: [String: [(at: Date, rows: Data)]] = [:]
+    /// When the whole tool's gaps began, one a stretch: rows from before one aren't what a table showed in it.
+    private var gaps: [Date] = []
+    private var inGap = false
     public var keep: TimeInterval = 3600
 
     public init(keep: TimeInterval = 3600) { self.keep = keep }
@@ -207,7 +214,12 @@ public struct ToolHistory: Sendable {
         }
         if !list { (previous, last) = (last, sample) }
         carriedBefore = untrimmed
-        for (k, v) in sample.record { if case .array = v { carrying[k] = sample } }
+        for (k, v) in sample.record {
+            guard case .array = v else { continue }
+            carrying[k] = sample
+            if let rows = try? JSONEncoder().encode(v) { past[k, default: []].append((sample.at, rows)) }
+        }
+        inGap = false
         untrimmed.merge(carrying) { _, new in new }
         trim(before: sample.at.addingTimeInterval(-keep))
         return all
@@ -218,14 +230,28 @@ public struct ToolHistory: Sendable {
     /// The rows of `path` as the latest sample that carried them had them.
     public func rows(_ path: String) -> [ToolRecord] { carried(path)?.rows(path) ?? [] }
 
-    /// Watching stopped: the next sample is a first one again — its events say how things stood (`found`); the series stay.
+    /// The sample whose rows of `path` a table showed at `t`: the latest at or before it that carried them — none
+    /// before the hour's first, across a gap, or over three of the set's intervals since (the lower median of its
+    /// spacings this hour: lines that came at once after a busy moment, or a stall, don't make it).
+    public func carried(_ path: String, at t: Date) -> ToolSample? {
+        let key = path == "list" ? "rows" : path, all = past[key] ?? []
+        guard let i = all.lastIndex(where: { $0.at <= t }) else { return nil }
+        let s = all[i], spacings = zip(all.dropFirst(), all).map { $0.at.timeIntervalSince($1.at) }.sorted()
+        if !spacings.isEmpty, t.timeIntervalSince(s.at) > 3 * spacings[(spacings.count - 1) / 2] { return nil }
+        guard !gaps.contains(where: { $0 > s.at && $0 <= t }), let rows = try? JSONDecoder().decode(ToolValue.self, from: s.rows) else { return nil }
+        return ToolSample(at: s.at, record: [key: rows])
+    }
+
+    /// Watching stopped: the next sample is a first one again — its events say how things stood (`found`); the series
+    /// stay, the rows of the hour go.
     public mutating func forgetLast() {
-        (last, previous, carrying, carriedBefore, untrimmed) = (nil, nil, [:], [:], [:])
+        (last, previous, carrying, carriedBefore, untrimmed, past, gaps) = (nil, nil, [:], [:], [:], [:], [])
     }
 
     /// No data from `at` on: a gap point on every series (one per stretch) — `metrics`' only, where one source of
     /// several stopped — till the next value.
     public mutating func mark(_ gap: ToolGap, at: Date, metrics: Set<String>? = nil) {
+        if metrics == nil, !inGap { inGap = true; gaps.append(at) }
         for (id, keys) in series where metrics?.contains(id) ?? true {
             for (key, points) in keys where points.last?.gap != gap { series[id]![key]!.append(ToolPoint(at: at, gap: gap)) }
         }
@@ -242,6 +268,11 @@ public struct ToolHistory: Sendable {
 
     private mutating func trim(before: Date) {
         carrying = carrying.filter { $0.value.at >= before }   // a row set that stopped coming isn't shown for ever
+        for (k, all) in past where all.first.map({ $0.at < before }) == true {
+            let kept = all.drop { $0.at < before }
+            past[k] = kept.isEmpty ? nil : Array(kept)
+        }
+        gaps.removeAll { $0 < before }
         for (id, keys) in series {
             for (key, points) in keys where points.first.map({ $0.at < before }) == true {
                 series[id]![key] = Array(points.drop { $0.at < before })

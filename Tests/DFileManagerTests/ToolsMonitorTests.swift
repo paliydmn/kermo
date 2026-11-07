@@ -20,7 +20,17 @@ import Testing
 /// `pulse2`: the same under another name. Its dashboard has every block; its actions: Folder (`open` what `pulse-dir`
 /// prints), Stop… (dangerous, only on a user's process), Deeper (a level on ↩, only on the row of `first`), Copy PID
 /// (⌘C, only on `second`'s), Log (`{from}` / `{to}` into `pulse-log`), Terminal and Services (`goto`), Calm… (`confirm`).
-@MainActor private func pulse(_ bench: ToolsBench, _ ids: [String] = ["pulse"]) throws {
+/// `list`: also a list of three processes (`pulse-list`), the busiest two shown — `second` of this connection — and the
+/// table's All Processes… to it.
+@MainActor private func pulse(_ bench: ToolsBench, _ ids: [String] = ["pulse"], list: Bool = false) throws {
+    try Data("""
+        #!/bin/sh
+        echo "pulse-list $*" >> \(bench.dir)/calls.log
+        echo '{"procs":[{"pid":1,"command":"first","cpu":1.5,"kind":"user","args":"first --token=s3cret"},{"pid":2,"command":"second","cpu":20,"kind":"self"},{"pid":3,"command":"third","cpu":0.5,"kind":"user"}]}'
+
+        """.utf8).write(to: URL(fileURLWithPath: bench.dir + "/bin/pulse-list"))
+    chmod(bench.dir + "/bin/pulse-list", 0o755)
+    let listed = list ? #""list": { "command": "pulse-list", "format": "json", "rows": "procs", "key": "{pid}", "sort": "-cpu", "limit": 2, "title": "{command}", "detail": "pid {pid}", "columns": [{ "field": "command", "tip": "{args}" }, { "field": "cpu:%", "title": "CPU", "help": "% of one core" }, "pid"] },"# : ""
     for id in ids {
         try Data("""
             #!/bin/sh
@@ -53,7 +63,7 @@ import Testing
         try Data("""
             { "schema": 1, "id": "\(id)", "title": "\(id.capitalized)",
               "stream": { "command": "\(id) {every} {server}", "format": "jsonl" },
-              "watch": { "every": 1, "down": 2 },
+              "watch": { "every": 1, "down": 2 }, \(listed)
               "metrics": { "cpu": { "title": "CPU", "path": "cpu.pct", "unit": "%", "max": 100 }, "n": { "title": "Ticks", "path": "n" },
                            "pmem": { "title": "Process memory", "rows": "procs", "key": "pid", "path": "mem", "unit": "%", "max": 100 } },
               "summary": [ { "metric": "cpu", "as": "bar" } ],
@@ -61,7 +71,7 @@ import Testing
               "events": [ { "id": "hot", "path": "cpu.pct", "when": "is", "value": 99, "level": "warning", "message": "hot: {cpu.pct}", "goto": "services:hot.service" } ],
               "dashboard": [ { "row": [ { "stat": "cpu" }, { "stat": "n" } ] },
                              { "charts": [ ["cpu"], ["n"] ], "range": ["1h", "24h", "7d"], "log": "log" },
-                             { "row": [ { "table": "procs", "title": "Processes", "key": "{pid}",
+                             { "row": [ { "table": "procs", "title": "Processes", "key": "{pid}", \(list ? #""list": "All Processes…","# : "")
                                           "columns": [{ "field": "command", "tip": "{args}" }, { "field": "cpu:%", "help": "% of one core" }, "mem:bar", "pid"], "actions": ["folder", "stop", "deeper", "pidcopy"] },
                                         { "counts": [ { "rows": "procs", "title": "processes", "goto": "services" } ] } ] },
                              { "events": true } ],
@@ -153,8 +163,8 @@ private final class LocalWeb: @unchecked Sendable {
 }
 
 /// The app with `pulse` loaded and trusted, localhost saved; its tools known once connected.
-@MainActor private func watching(_ app: AppDelegate, _ bench: ToolsBench, ids: [String] = ["pulse"], servers: [SavedServer]? = nil) async throws {
-    try pulse(bench, ids)
+@MainActor private func watching(_ app: AppDelegate, _ bench: ToolsBench, ids: [String] = ["pulse"], servers: [SavedServer]? = nil, list: Bool = false) async throws {
+    try pulse(bench, ids, list: list)
     app.tools.monitor.ready = true
     _ = app.tools.reload()
     for id in ids { app.tools.trust.trust(try #require(app.tools.library.tools.first { $0.preset.id == id })) }
@@ -849,6 +859,102 @@ extension ServerLockTests {
         bench.flag("self-localhost")
         await toolsUntil { table.rows.last?.record["kind"] == "self" }
         #expect(items(0).contains("Stop…") && !items(1).contains("Stop…"), "\(items(1))")
+    }
+
+    /// Review 3, T11 "who was it?": a click on the last hour's chart shows every table as it was then — the nearest
+    /// rows at or before it, read only (Copy, Copy Table, Back to Live; no buttons, ↩ runs nothing), held there as new
+    /// samples come, a line at that moment on the charts — till Back to Live (⎋). A click in a band or before watching
+    /// began: nothing recorded then. On 24h and 7d (no rows kept) a click is the log, as before.
+    @Test func aChartsClickShowsTheTablesAsTheyWereThen() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app)
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("pulse")
+        await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 2 }
+        let view = try #require(live(page)), table = try #require(view.blocks.compactMap { $0 as? ToolsTable }.first)
+        let charts = try #require(view.blocks.compactMap { $0 as? ToolsCharts }.first)
+        let then = try #require(app.tools.monitor.tool("pulse", on: .local())?.history.carried("procs")?.at)
+        #expect(view.showsMoments && view.momentBar.isHidden && view.chartLog == "log")
+        bench.flag("lone-localhost")
+        await toolsUntil { table.rows.map(\.key) == ["2"] }
+        table.table.selectRowIndexes([0], byExtendingSelection: false)
+        let drawn = rowButtons(table, 0)   // the live row's, drawn before the moment
+        try #require(drawn.contains { $0.title == "Folder" })
+        charts.model.clicked(then, nil)
+        press(drawn.first { $0.title == "Folder" })
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(!bench.calls.contains { $0.hasPrefix("pulse-dir") }, "a button drawn before the moment runs nothing in it: \(bench.calls)")
+        #expect(view.moment != nil && !view.momentBar.isHidden && view.momentText.stringValue.hasPrefix("As of "), "\(view.momentText.stringValue)")
+        #expect(table.rows.map(\.key) == ["1", "2"] && table.note.stringValue.hasPrefix("as of "), "the rows then: \(table.note.stringValue)")
+        #expect(charts.model.moment == view.moment, "a line at that moment on the charts")
+        #expect(table.rowMenu(table.rows[0]).items.map(\.title).filter { !$0.isEmpty } == ["Copy", "Copy Table", "Back to Live"], "a moment's rows: no action")
+        let calls = bench.calls.count
+        table.table.selectRowIndexes([0], byExtendingSelection: false)
+        table.open(0, beep: false)   // ↩: Deeper, live; nothing on a moment's row
+        #expect(rowButtons(table, 0).isEmpty && bench.calls.count == calls)
+        try await Task.sleep(for: .seconds(1))
+        #expect(table.rows.map(\.key) == ["1", "2"], "new samples don't move a moment")
+        #expect(view.liveButton.keyEquivalent == "\u{1b}")
+        press(view.liveButton)
+        #expect(view.moment == nil && view.momentBar.isHidden && table.rows.map(\.key) == ["2"] && charts.model.moment == nil, "Back to Live: the rows now")
+        charts.model.clicked(then, .asleep)
+        #expect(view.momentText.stringValue.hasPrefix("Mac asleep at ") && view.momentText.stringValue.hasSuffix("nothing recorded then"), "\(view.momentText.stringValue)")
+        charts.model.clicked(then.addingTimeInterval(-3600), nil)
+        #expect(table.rows.isEmpty && table.note.stringValue.hasPrefix("nothing recorded at") && view.momentText.stringValue.hasPrefix("Nothing recorded at "),
+                "before watching began: \(table.note.stringValue) — \(view.momentText.stringValue)")
+        press(view.liveButton)
+        charts.range.selectedSegment = 1   // 24h
+        charts.model.clicked(Date(timeIntervalSince1970: 1_800_000_000), nil)
+        await toolsUntil { bench.calls.contains("pulse-log 1799999850 1800000150") }
+        #expect(view.moment == nil && bench.calls.contains("pulse-log 1799999850 1800000150"), "on 24h a click is the log: \(bench.calls)")
+    }
+
+    /// Review 3, T12: a table's All Processes… opens the tool's list in a Picker over the Tools window — the busiest
+    /// by CPU first, the line above saying how many were cut, a filter's "No matches" too; the list's rows have the table's
+    /// actions by their `kind` (none on this connection's), never the chart's log. In a panel the command line is the
+    /// command's tooltip and the CPU heading's help its own, ⌘C without them. A table's action reads no list after it.
+    @Test func allProcessesOpensTheToolsList() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app)
+        defer { quick.done(); bench.done(); done(); app.savedServers = []; Picker.dismiss() }
+        try await watching(app, bench, list: true)
+        ToolsWindow.show(app, server: .local())
+        let w = try #require(ToolsWindow.main), page = try #require(w.page)
+        page.select("pulse")
+        await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsTable }.first?.rows.count ?? 0) == 2 }
+        let table = try #require(live(page)?.blocks.compactMap { $0 as? ToolsTable }.first)
+        press(buttons(table).first { $0.title == "All Processes…" })
+        let p = try #require(Picker.current)
+        await toolsUntil { !p.rows.isEmpty }
+        #expect(p.panel.parent === w.window && p.scopeNames == ["localhost › Pulse"], "\(p.scopeNames)")
+        #expect(p.rows.map(\.title) == ["second", "first"] && p.headerSaid == "the top 2 of 3 by CPU", "\(p.rows.map(\.title)) \(p.headerSaid)")
+        func titles(_ t: String) -> [String] { p.rows.first { $0.title == t }?.listActions?().map(\.title) ?? [] }
+        #expect(titles("first").contains("Stop…") && titles("first").contains("Deeper") && !titles("first").contains("Log"), "\(titles("first"))")
+        #expect(!titles("second").contains("Stop…") && titles("second").contains("Folder"), "this connection's: no Stop… — \(titles("second"))")
+        p.field.stringValue = "zzz"
+        p.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: p.field))
+        #expect(p.emptySaid == "No matches among the 2 shown", "\(p.emptySaid)")
+        Picker.dismiss()
+
+        let tool = try #require(app.tools.library.tools.first { $0.preset.id == "pulse" }), server = try #require(app.savedServers.first)
+        let source = ToolListSource(app, tool, server, .local())
+        #expect(source.relister != nil && source.every == nil)
+        source.table = "procs"
+        #expect(source.relister == nil, "a table's action: its rows come from watching, nothing reads the list after it")
+        app.active.showList(ToolListSource(app, tool, server, .local()))
+        await toolsUntil { app.active.list?.content != nil }
+        let t = app.active.table
+        let first = try #require(app.active.list?.shown.firstIndex { $0.title == "first" })
+        #expect(t.view(atColumn: 0, row: first, makeIfNecessary: true)?.toolTip == "first --token=s3cret")
+        #expect(t.tableColumns[1].headerToolTip == "% of one core")
+        t.selectRowIndexes([first], byExtendingSelection: false)
+        let pb = NSPasteboard(name: .init("kermo-tests-\(UUID().uuidString)"))
+        defer { pb.releaseGlobally() }
+        app.listKey(Shortcut("cmd+c")!, in: app.active, pasteboard: pb)
+        #expect(pb.string(forType: .string)?.hasPrefix("first\t") == true && pb.string(forType: .string)?.contains("s3cret") == false, "\(pb.string(forType: .string) ?? "")")
     }
 
     /// The sort: numbers by value ("1,25" before "1,5"; 2 KB before 1 MB), text as Finder sorts names, nothing last

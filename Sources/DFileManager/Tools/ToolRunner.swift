@@ -610,11 +610,7 @@ final class ToolRunner {
         let list = app.rowLists(id).first
         if let p = list as? Picker { return p.go(into: level) }
         if let l = list as? ListPanel, let panel = app.panels.first(where: { $0.list === l }) { return panel.showList(level) }
-        Picker.show(over: (list as? ToolsPage)?.window ?? app.window, level,
-                    scope: ("\(SavedServer.name(for: level.target)) › " + level.trail.joined(separator: " › "), Chip.of(level.target))) { [app] s, q, id, rows in
-            app.showMainWindow(nil)   // ⌘↩: that level in the main window's other panel, the keys there
-            app.openInOther(s, query: q, select: id, rows: rows)
-        }
+        level.pick(over: (list as? ToolsPage)?.window ?? app.window)
     }
 
     /// `goto`: there, after the lock. `open`: the server path — the command's first output line as `{stdout}`, else the

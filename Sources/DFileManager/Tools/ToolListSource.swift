@@ -22,6 +22,9 @@ final class ToolListSource: ListSource {
     let level: Level?
     /// A level's form as filled in: ⌘R shows it so.
     private var values: [String: String]?
+    /// A dashboard table's rows set (`procs`): its rows come from watching, so after an action there nothing reads the
+    /// list again or checks a row by it (`verify`) — its own command guards it. "list": the table is the list.
+    var table: String?
 
     init(_ app: AppDelegate, _ tool: LoadedTool, _ server: SavedServer, _ target: SFTPTarget, level: Level? = nil) {
         (self.app, self.tool, self.server, self.target, self.level) = (app, tool, server, target.asUser, level)
@@ -50,10 +53,14 @@ final class ToolListSource: ListSource {
         l?.run = lv.action.run
         return l
     }
-    /// The rows' actions here: a level's own, or the list's — not a dashboard table's (`rows`: that table's alone).
+    /// The rows' actions here: a level's own, or the list's (`ToolPreset.listActions`) — not another table's.
     var rowActions: [ToolAction]? {
-        level.map { $0.action.spec.list == nil ? $0.parent.rowActions : $0.action.spec.actions } ?? preset.actions?.filter { [nil, "list"].contains($0.spec.rows) }
+        level.map { $0.action.spec.list == nil ? $0.parent.rowActions : $0.action.spec.actions } ?? preset.listActions
     }
+    /// `list.every` (§6.2): the tool's own list's — a level's read runs its action.
+    var every: TimeInterval? { level == nil ? list?.view.every : nil }
+    /// Not locked, and sudo with no password to ask.
+    var readsQuietly: Bool { !ServerLock.needsUnlock(target) && !((list?.run.sudo ?? preset.sudo ?? false) && ToolExec.wantsPassword(target)) }
     /// The rows above, nearest first: their fields are names here (§5.3).
     var above: [ToolRecord] { level.map { lv in (lv.row.map { [$0.record] } ?? []) + lv.parent.above } ?? [] }
 
@@ -66,7 +73,7 @@ final class ToolListSource: ListSource {
             return [ListColumn(title: "Name", field: .title, width: 170), ListColumn(title: "State", field: .subtitle, width: 170, state: true),
                     ListColumn(title: "Detail", field: .detail, width: 160)]
         }
-        return cs.map { c in ListColumn(title: c.title, field: .cell(c.field.name), width: CGFloat(c.width ?? 120), state: c.field.format == "state") }
+        return cs.map { c in ListColumn(title: c.title, field: .cell(c.field.name), width: CGFloat(c.width ?? 120), state: c.field.format == "state", help: c.object?.help) }
     }
 
     // MARK: Reading it
@@ -174,18 +181,27 @@ final class ToolListSource: ListSource {
                 (records, skew) = (list.parse.records(r.out, exit: r.status), r.skew)
             }
             guard records.matched else {
-                throw Failed(message: "\(title) on \(server): the output didn't match — " + (records.unmatched.first { !$0.isEmpty } ?? ""), output: output)
+                throw Failed(message: "\(title) on \(server): the output didn't match — " + String((records.unmatched.first { !$0.isEmpty } ?? "").prefix(100)), output: output)   // a JSON line may hold every command line
             }
             let now = Date().addingTimeInterval(skew ?? 0)   // `ago` by the server's clock
             let read = Read(rows: records.rows.map { var r = list.view.row($0, scope, now: now); r.above = above; return r }, total: records.total, vars: vars)
             return header ? note(read, said: said, total: records.rows.count, skew: skew) : read
         }
 
+        /// Rows past `limit` (§4.1), as the line above says it: "the top 2000 of 2417 by CPU" — by the column's title
+        /// for the sorted field, if one shows it; "shown 2000 of 2417" with no sort.
+        static func cut(_ shown: Int, of total: Int, by sort: String?, columns: [ToolColumn]?) -> String {
+            guard let sort else { return "shown \(shown) of \(total)" }
+            let field = sort.hasPrefix("-") ? String(sort.dropFirst()) : sort
+            let name = columns?.first { $0.field.name == field }.map(\.title) ?? field
+            return "the \(sort.hasPrefix("-") ? "top" : "first") \(shown) of \(total) by \(name)"
+        }
+
         /// The line above the rows: the header's first line, "shown N of M", a clock off by over a minute; and what the
         /// version says.
         private func note(_ read: Read, said: [String?], total shown: Int, skew: TimeInterval?) -> Read {
             var read = read, notes = [said.first ?? nil].compactMap { $0 }
-            if read.total > shown { notes.append("shown \(shown) of \(read.total)") }
+            if read.total > shown { notes.append(Self.cut(shown, of: read.total, by: list?.parse.sort, columns: list?.view.columns)) }
             if let skew, abs(skew) > 60 { notes.append("⚠ the server's clock is \(Int(abs(skew) / 60)) min \(skew > 0 ? "ahead" : "behind")") }
             if let v = tool.preset.version, !versionKnown, said.count > 1 {
                 let found = said[1].flatMap(v.found)
@@ -207,8 +223,18 @@ final class ToolListSource: ListSource {
     }
 
     /// What reads it again after a change on one of its rows: none for a launcher, nor for a level whose own run
-    /// changes something (⌘R asks first).
-    var relister: Lister? { list == nil || level.map({ !ToolRunner.looks($0.action) }) == true ? nil : lister() }
+    /// changes something (⌘R asks first), nor for a dashboard table of other rows than the list's (`table`).
+    var relister: Lister? { list == nil || level.map({ !ToolRunner.looks($0.action) }) == true || ![nil, "list"].contains(table) ? nil : lister() }
+
+    /// In a Picker of its own over `window` — a dashboard's All Processes…, a table's level (§7.5) — ⌘↩ taking it to the
+    /// main window's other panel with its keys.
+    func pick(over window: NSWindow) {
+        let app = app
+        Picker.show(over: window, self, scope: ("\(SavedServer.name(for: target)) › " + trail.joined(separator: " › "), Chip.of(target))) { s, q, id, rows in
+            app.showMainWindow(nil)
+            app.openInOther(s, query: q, select: id, rows: rows)
+        }
+    }
 
     /// What reads `tool`'s list on `target` now: an action's `verify` needs it whether its list still shows or not.
     static func lister(_ app: AppDelegate, _ tool: LoadedTool, _ server: SavedServer, _ target: SFTPTarget) -> Lister {
@@ -271,6 +297,7 @@ final class ToolListSource: ListSource {
         let header = [r.header, level == nil ? app.tools.versions[key] ?? nil : nil].compactMap { $0 }.joined(separator: " · ")
         let primary = level == nil ? preset.primary.flatMap { id in preset.toolActions?.first { $0.spec.id == id } }.map { $0.spec.title ?? $0.spec.id } : nil
         let c = ListContent(rows: list == nil ? launcherRows() : r.rows.map(item), header: header.isEmpty ? nil : header, empty: list?.view.empty.map { ToolTemplate.text($0, scope) } ?? "Nothing here",
+                            cut: r.total > r.rows.count ? r.rows.count : nil,
                             primary: primary.flatMap { title in listActions(nil).first { $0.title == title } },
                             actions: { [weak self] in self?.listActions(nil) ?? [] })
         content = c
@@ -307,6 +334,7 @@ final class ToolListSource: ListSource {
         it.subtitleColor = running == nil && row.state == .bad ? Palette.fail : nil
         it.badges = running == nil && row.state == .bad ? [StateMark.failed.image("failed", size: 9)] : []   // a shape, not only red
         it.cells = Dictionary(row.cells.map { ($0.field, $0.text) }) { a, _ in a }
+        it.tips = Dictionary(row.cells.compactMap { c in c.tip.map { (c.field, $0) } }) { a, _ in a }
         it.listActions = actions
         it.menu = {
             let menu = app.serviceMenu(actions)

@@ -216,6 +216,32 @@ private func systemSamples() throws -> [ToolSample] {
     #expect(poll.rows("list").count == 2 && poll.carried("list")?.at == at(5))
 }
 
+/// Review 3, T11 "who was it?": each row set's samples of the hour, in memory — what a table showed at a moment is the
+/// latest sample at or before it, none past three of the set's intervals, across a gap or before the first; older
+/// than the hour trimmed; a stop forgets them.
+@Test func rowsOfTheHourAtAMoment() {
+    var h = ToolHistory(keep: 120)
+    func procs(_ s: Double, _ name: String) -> ToolRecord { ["procs": .array([.object(["pid": 7, "command": .string(name)])]), "cpu": .object(["pct": 1])] }
+    func name(_ t: Double) -> String? { h.carried("procs", at: at(t))?.rows("procs").first?["command"]?.text }
+    for s in stride(from: 0.0, through: 60, by: 5) { _ = h.add(sample(s, s.truncatingRemainder(dividingBy: 15) == 0 ? procs(s, "p\(Int(s))") : cpu(1)), metrics: [:], now: at(s)) }
+    #expect(name(30) == "p30" && h.carried("procs", at: at(30))?.at == at(30), "at a sample: that one")
+    #expect(name(44) == "p30", "between samples: the one before")
+    #expect(name(-1) == nil, "before the first: nothing recorded")
+    #expect(name(105) == "p60" && name(106) == nil, "past three intervals (15 s) since the last: nothing recorded")
+    h.mark(.asleep, at: at(70))
+    h.mark(.asleep, at: at(75))
+    #expect(name(69) == "p60" && name(71) == nil, "across a gap: nothing recorded")
+    _ = h.add(sample(200, procs(200, "p200")), metrics: [:], now: at(200))
+    #expect(name(30) == nil && name(60) == nil, "older than the hour (here 120 s): trimmed")
+    #expect(name(200) == "p200" && name(230) == "p200", "one sample: no interval to judge by")
+    h.forgetLast()
+    #expect(name(200) == nil, "watching stopped: the rows go, as the last sample does")
+    for s in [300.0, 315, 330, 420] { _ = h.add(sample(s, procs(s, "p\(Int(s))")), metrics: [:], now: at(s)) }
+    #expect(name(340) == "p330" && name(400) == nil, "a stall after it (90 s): three of the usual spacing (15 s)")
+    _ = h.add(sample(420.01, procs(420.01, "p420b")), metrics: [:], now: at(420.01))
+    #expect(name(420.5) == "p420b", "two lines at once (a busy moment) don't make the interval 0.01 s")
+}
+
 @Test func aChartHasRunsBandsAndATop() {
     let pts = [ToolPoint(at: at(0), value: 1), ToolPoint(at: at(5), value: 2), ToolPoint(at: at(10), gap: .asleep), ToolPoint(at: at(60), gap: .reconnecting),
                ToolPoint(at: at(65), value: 3), ToolPoint(at: at(70), gap: .noAnswer)]
