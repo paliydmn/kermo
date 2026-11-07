@@ -548,4 +548,27 @@ extension EditorWindowTests {
         #expect(read(file) == "mine\n")
         #expect(!e.isEdited, "sent: not ↑")
     }
+
+    /// A ↑ tab saved again: its ↑ goes from the tab itself, not only from its state — the tab was drawn while the ↑
+    /// still stood, and stayed so till something else redrew the tabs.
+    @Test func aSavedTabLosesItsUpArrow() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let url = URL(fileURLWithPath: dir + "/f.conf")
+        try put("a\n", url.path)
+        Editor.open(url)
+        try await waitUntil("open") { editorDoc(url) != nil }
+        let e = try #require(editorDoc(url))
+        defer { e.close() }
+        func drawn() -> String {
+            func titles(_ v: NSView) -> [String] { ((v as? NSButton).map { [$0.attributedTitle.string] } ?? []) + v.subviews.flatMap(titles) }
+            return (e.window?.contentView.map(titles) ?? []).first { $0.contains("f.conf") } ?? ""
+        }
+        Editor.markUnsaved(url)   // an upload that failed
+        #expect(drawn().contains("↑"))
+        #expect(await e.save())
+        #expect(!drawn().contains("↑") && !drawn().contains("●"), "\(drawn())")
+    }
 }
+

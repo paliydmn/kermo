@@ -340,8 +340,8 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     private func saved(_ stamp: Stamp?, _ digest: Data) {
+        unsent = false   // first: `dirty`'s change redraws the tab, its ↑ must be gone by then
         dirty = false
-        unsent = false
         if lossy { lossy = false; showState() }   // the damaged bytes are U+FFFD now: clean UTF-8
         self.stamp = stamp
         self.digest = digest
