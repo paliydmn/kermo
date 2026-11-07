@@ -420,3 +420,44 @@ extension ServerLockTests {
         #expect(c.rows.map(\.subtitle) == ["1 h ago"] && c.header == "serving · ⚠ the server's clock is 120 min behind", "\(c.rows.map(\.subtitle)) \(c.header ?? "")")
     }
 }
+
+/// A list's `every` (§6.2): read again while it shows and a read would ask nothing, over a connection already up —
+/// never while hidden, locked or not connected; `stop` ends it.
+@MainActor @Test func aListIsReadAgainWhileItShows() async throws {
+    final class Every: ListSource {
+        let title = "Every", target = SFTPTarget.local(), columns: [ListColumn] = []
+        var content: ListContent?
+        var reads = 0, quiet = true
+        var every: TimeInterval? { 0.15 }
+        var readsQuietly: Bool { quiet }
+        func read(_ cancel: CancelFlag) async throws -> ListContent { reads += 1; return ListContent(rows: []) }
+    }
+    let was = ListPoll.connected
+    nonisolated(unsafe) var up = true
+    ListPoll.connected = { _ in up }
+    defer { ListPoll.connected = was }
+    let s = Every()
+    var shown = true, got = 0
+    let made = ListPoll(s, shown: { shown }, got: { _ in got += 1 })
+    let poll = try #require(made)
+    try await Task.sleep(for: .seconds(0.7))
+    #expect(s.reads >= 2 && got == s.reads, "\(s.reads) \(got)")
+    for (why, change) in [("hidden", { shown = false }), ("locked", { shown = true; s.quiet = false }), ("not connected", { s.quiet = true; up = false })] as [(String, () -> Void)] {
+        change()
+        try await Task.sleep(for: .seconds(0.2))   // a read under way ends
+        let n = s.reads
+        try await Task.sleep(for: .seconds(0.5))
+        #expect(s.reads == n, "\(why): \(s.reads) after \(n)")
+    }
+    up = true
+    poll.stop()
+    let n = s.reads
+    try await Task.sleep(for: .seconds(0.5))
+    final class Once: ListSource {
+        let title = "Once", target = SFTPTarget.local(), columns: [ListColumn] = []
+        var content: ListContent?
+        func read(_ cancel: CancelFlag) async throws -> ListContent { ListContent(rows: []) }
+    }
+    let none = ListPoll(Once(), shown: { true }, got: { _ in })
+    #expect(s.reads == n && none == nil, "stopped; no `every`, no poll")
+}

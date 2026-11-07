@@ -20,6 +20,14 @@ import DFMCore
     /// Sites: the addresses are the server's (Edit Server).
     let addButton = NSButton(title: "Add Address…", target: nil, action: nil)
     let foot = NSTextField(labelWithString: "")
+    /// A chart's click on the last hour (review 3, T11 "who was it?"): the moment the tables show — their rows then,
+    /// read only — till Back to Live or ⎋. nil: live.
+    private(set) var moment: Date?
+    /// Over the tables while a moment shows: when, the log of that time, Back to Live.
+    let momentBar = NSStackView()
+    let momentText = NSTextField(labelWithString: "")
+    let logButton = NSButton(title: "Log", target: nil, action: nil)
+    let liveButton = NSButton(title: "Back to Live", target: nil, action: nil)
     private(set) var tiles: [Tile] = []
     private(set) var blocks: [any ToolsBlock] = []
     /// Its size in the page's body (`ToolsPage.live`): activated again each time the tab comes back, since AppKit
@@ -59,9 +67,23 @@ import DFMCore
                 MenuAction.attach(to: addButton) { [unowned self] in
                     app.showMainWindow(nil)
                     app.editServer(app.savedServers.first { $0.id == server.id } ?? server, title: "Edit Server")
-                }]
+                },
+                MenuAction.attach(to: logButton) { [unowned self] in if let moment { log(chartLog, at: moment) } },
+                MenuAction.attach(to: liveButton) { [unowned self] in show(moment: nil) }]
         // The dashboard's blocks; none: the summary's metrics as a row of tiles.
-        let shown = p.dashboard.map { $0.map(make) } ?? [row((p.summary ?? []).map { tile([$0.metric], of: $0.of, also: nil) })]
+        var shown = p.dashboard.map { $0.map(make) } ?? [row((p.summary ?? []).map { tile([$0.metric], of: $0.of, also: nil) })]
+        momentText.font = .systemFont(ofSize: 12)
+        momentText.lineBreakMode = .byTruncatingTail
+        momentText.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        for b in [logButton, liveButton] { b.controlSize = .small }
+        liveButton.keyEquivalent = "\u{1b}"   // ⎋, while the bar shows
+        liveButton.toolTip = "The tables' rows as they are now (⎋)"
+        logButton.isHidden = chartLog == nil
+        if let id = chartLog, let a = p.actions?.first(where: { $0.spec.id == id }) { logButton.title = a.spec.title ?? id }
+        momentBar.setViews([momentText, ToolsWindow.spacer(), logButton, liveButton], in: .leading)
+        momentBar.isHidden = true
+        momentBar.setAccessibilityLabel("Moment")
+        if let i = shown.firstIndex(where: { v in v is ToolsTable || (v as? NSStackView)?.arrangedSubviews.contains { $0 is ToolsTable } == true }) { shown.insert(momentBar, at: i) }
         dash = shown
         let stripRow = NSStackView(views: [strip, watchButton]), bannerRow = NSStackView(views: [banner, connectButton, endButton, addButton])
         strip.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -93,6 +115,26 @@ import DFMCore
 
     /// Rows of tiles alone: not stretched to the width.
     private var tileRows: [NSView] = []
+    /// The charts' `log` action: Log for This Time.
+    var chartLog: String? {
+        func find(_ blocks: [ToolBlock]) -> String? { blocks.lazy.compactMap { $0.log ?? find($0.row ?? []) }.first }
+        return find(tool.preset.dashboard ?? [])
+    }
+    /// Whether a chart's click has tables to show a moment in: else it runs the log, as on 24h and 7d.
+    var showsMoments: Bool { momentBar.superview != nil }
+
+    /// The tables as they were at `at` (a chart's click on the last hour), read only, the moment marked on the charts;
+    /// `gap`: the click fell in one of a chart's bands (the Mac asleep, no answer) — nothing was recorded then. nil:
+    /// live again.
+    func show(moment at: Date?, gap: ToolGap? = nil) {
+        moment = at
+        if let m = moment {
+            let time = m.formatted(date: .omitted, time: .standard)
+            momentText.stringValue = gap.map { "\(OneChart.word($0).prefix(1).uppercased() + OneChart.word($0).dropFirst()) at \(time): nothing recorded then" }
+                ?? "As of \(time): the tables as they were then"
+        }
+        update()
+    }
     /// The dashboard's blocks: hidden while Sites has no addresses to show.
     private var dash: [NSView] = []
     private var noAddresses: Bool { tool.preset.http != nil && (app.savedServers.first { $0.id == server.id } ?? server).sites.isEmpty }
@@ -163,6 +205,7 @@ import DFMCore
         let locked = ServerLock.server(for: target)?.locked == true
         let none = noAddresses
         (dash + [foot]).forEach { $0.isHidden = none }
+        momentBar.isHidden = none || moment == nil
         let (text, color): (String, NSColor) = if none {
             ("No addresses yet: add \(server.title)'s web addresses to check them from this Mac — status, response time, certificate.", NSColor.secondaryLabelColor)
         } else if let s, s.needsLogin {

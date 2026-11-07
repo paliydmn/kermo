@@ -1007,7 +1007,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 return Empty(symbol: .warn, title: "Can't read \(l.source.title.lowercased())", detail: e, keys: [retry])
             }
             guard let c = l.content, busyMessage == nil else { return nil }
-            return c.rows.isEmpty ? Empty(symbol: .server, title: c.empty) : Empty(symbol: .filter, title: "No matches", keys: [slot("view.filter", "Filter", "/")])
+            return c.rows.isEmpty ? Empty(symbol: .server, title: c.empty) : Empty(symbol: .filter, title: "No matches" + (c.cut.map { " among the \($0) shown" } ?? ""), keys: [slot("view.filter", "Filter", "/")])
         }
         if let e = loadError {
             let refresh = slot("view.refresh", "Refresh", "⌘R")

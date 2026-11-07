@@ -28,6 +28,10 @@ import DFMCore
     var trail: [String] { get }
     /// One level down: the list above and its row this came from — ⌫ goes back there. nil: the server's place.
     var up: (source: ListSource, row: String?)? { get }
+    /// Read again every so many seconds while it shows (a Tools list's `every`, §6.2); nil: only when asked.
+    var every: TimeInterval? { get }
+    /// A read now would ask nothing — no Touch ID, no password: what such a read waits for.
+    var readsQuietly: Bool { get }
 }
 
 extension ListSource {
@@ -36,6 +40,50 @@ extension ListSource {
     var listID: String? { nil }
     var trail: [String] { [title] }
     var up: (source: ListSource, row: String?)? { nil }
+    var every: TimeInterval? { nil }
+    var readsQuietly: Bool { true }
+}
+
+/// A list read again every `every` seconds while it shows (§6.2): quietly — over the connection already there, only
+/// when nothing would be asked, no spinner; a read that fails leaves the rows as they were. Timers don't fire while a
+/// menu is open. Stops with `stop` or once its owner is gone.
+@MainActor final class ListPoll {
+    /// Whether the connection is up already (`ssh -O check`); tests' own.
+    nonisolated(unsafe) static var connected: @Sendable (SFTPTarget) -> Bool = SFTP.isConnected
+    let source: ListSource
+    private var timer: Timer?
+    private var reading: CancelFlag?
+
+    /// nil: the list has no `every`.
+    init?(_ source: ListSource, shown: @escaping @MainActor () -> Bool, got: @escaping @MainActor (ListContent) -> Void) {
+        guard let every = source.every else { return nil }
+        self.source = source
+        timer = Timer.scheduledTimer(withTimeInterval: every, repeats: true) { [weak self] t in
+            let alive = MainActor.assumeIsolated { () -> Bool in
+                self?.tick(shown, got)
+                return self != nil
+            }
+            if !alive { t.invalidate() }   // its owner went without `stop`
+        }
+    }
+
+    private func tick(_ shown: @escaping @MainActor () -> Bool, _ got: @escaping @MainActor (ListContent) -> Void) {
+        guard reading == nil, source.readsQuietly, shown() else { return }
+        let flag = CancelFlag(), source = source, target = source.target
+        reading = flag
+        Task { [weak self] in
+            defer { if self?.reading === flag { self?.reading = nil } }
+            guard await Blocking.run(.utility, { Self.connected(target) }), !flag.isCancelled, shown(),
+                  let c = try? await source.read(flag), !flag.isCancelled, shown() else { return }
+            got(c)
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        reading?.cancel()
+    }
 }
 
 /// A list's read that failed, with what the server said: a Picker offers it (Output…).
@@ -58,6 +106,8 @@ struct ListColumn {
     let field: Field
     var width: CGFloat = 120
     var state = false
+    /// The header's tooltip (a Tools column's `help`).
+    var help: String? = nil
 }
 
 /// What a read gives: the rows, a line about them all above ("10 units · 1 failed"), what's said when there are none,
@@ -68,6 +118,8 @@ struct ListContent {
     var rows: [Picker.Item]
     var header: String? = nil
     var empty = "Nothing here"
+    /// The rows shown of more that were read (a list's `limit`): what a filter looks among.
+    var cut: Int? = nil
     var primary: ListAction? = nil
     var actions: (@MainActor () -> [ListAction])? = nil
 }
@@ -166,6 +218,8 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
     private var resultGen = 0
     /// How long a line saying something went well stays.
     var resultTime: TimeInterval = 5
+    /// Its rows read again while it shows on its table (`every`).
+    private var poll: ListPoll?
 
     /// `content`: rows already there (a tab's copy); else the source's as last read.
     init(_ source: ListSource, content: ListContent? = nil, filter: String = "", select: String? = nil) {
@@ -206,6 +260,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
             (col.headerCell as? PanelHeaderCell)?.fill = theme.background
             col.title = c.title
             col.width = c.width
+            col.headerToolTip = c.help
             col.sortDescriptorPrototype = NSSortDescriptor(key: "\(i)", ascending: true)
             table.addTableColumn(col)
         }
@@ -214,10 +269,16 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         (table.dataSource, table.delegate) = (self, self)
         if let o = order { table.sortDescriptors = [NSSortDescriptor(key: "\(o.column)", ascending: o.ascending)] }   // its header shows the order
         reloadTable()
+        poll = ListPoll(source, shown: { [weak self] in
+            guard let w = self?.table?.window else { return false }
+            return w.occlusionState.contains(.visible) && w.attachedSheet == nil
+        }, got: { [weak self] c in self?.reload(c, having: "") })
     }
 
     /// Gives the table back as it was.
     func detach() {
+        poll?.stop()
+        poll = nil
         guard let table, let b = before else { return }
         (table.dataSource, table.delegate) = (nil, nil)
         table.tableColumns.forEach(table.removeTableColumn)
@@ -478,7 +539,7 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         cell.check.isHidden = !(first && isMarked)
         cell.textField?.font = font
         cell.textField?.setAccessibilityLabel(first && isMarked ? "marked" : nil)
-        cell.toolTip = words.isEmpty ? nil : words
+        if case .cell(let k) = col.field, let tip = it.tips[k] { cell.toolTip = tip } else { cell.toolTip = words.isEmpty ? nil : words }   // the column's `tip`: shown, never copied
         if col.state, let mark = it.busy ? (Symbol.pending, NSColor.secondaryLabelColor, "busy") : it.state.map({ ($0.symbol, $0.color, "\($0)") }) {
             let s = NSMutableAttributedString(attributedString: mark.0.text(mark.1, font: font, label: mark.2))
             s.append(NSAttributedString(string: " " + words, attributes: [.font: font, .foregroundColor: cell.color]))

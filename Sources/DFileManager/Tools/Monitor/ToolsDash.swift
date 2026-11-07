@@ -41,8 +41,13 @@ import SwiftUI
     @MainActor final class Model: ObservableObject {
         @Published var data = Data()
         @Published var hover: Date?
+        /// The moment the tables show (`ToolsLive.moment`): a line across each chart.
+        @Published var moment: Date?
         var every: TimeInterval = 5
-        var clicked: (Date) -> Void = { _ in }
+        /// A click at that time, in the clicked chart's band if it fell in one.
+        var clicked: (Date, ToolGap?) -> Void = { _, _ in }
+        /// The context menu's Log for This Time: its title, and the run; nil: the block has no `log`.
+        var log: (title: String, run: (Date) -> Void)?
         /// Days on the axis: the week's.
         var days: Bool { data.to.timeIntervalSince(data.from) > 2 * 86400 }
     }
@@ -62,7 +67,13 @@ import SwiftUI
         super.init(frame: .zero)
         let n = block.charts?.count ?? 0
         place.heightAnchor.constraint(equalToConstant: CGFloat((n + 1) / 2) * 176).isActive = true
-        model.clicked = { [unowned live] at in live.log(block.log, at: at) }
+        // On the last hour, with tables to show it in, a click is the moment; else (24h, 7d: no rows kept) its log.
+        model.clicked = { [weak self, unowned live] at, gap in
+            if (self?.span ?? 3600) <= 3600, live.showsMoments { live.show(moment: at, gap: gap) } else { live.log(block.log, at: at) }
+        }
+        if let id = block.log, let a = live.tool.preset.actions?.first(where: { $0.spec.id == id }) {
+            model.log = (a.spec.title ?? id, { [unowned live] at in live.log(id, at: at) })
+        }
         var views: [NSView] = [place]
         if let ranges = block.range, ranges.count > 1 {
             range.segmentCount = ranges.count
@@ -107,9 +118,12 @@ import SwiftUI
         }
     }
 
+    /// The span the range control picked: the last hour unless longer.
+    var span: Double { block.range.flatMap { $0.indices.contains(range.selectedSegment) ? $0[range.selectedSegment].seconds : nil } ?? 3600 }
+
     func update(_ live: ToolsLive) {
-        let p = live.tool.preset, t = live.known, now = live.now, alerts = live.alerts
-        let span = block.range.flatMap { $0.indices.contains(range.selectedSegment) ? $0[range.selectedSegment].seconds : nil } ?? 3600
+        let p = live.tool.preset, t = live.known, now = live.now, alerts = live.alerts, span = span
+        if model.moment != live.moment { model.moment = live.moment }
         var d = Data()
         (d.to, d.from) = (now, now.addingTimeInterval(-max(span, t?.history.keep ?? 3600)))
         // Past the hour: the slots on disk, read again once a slot has passed since.
@@ -229,6 +243,9 @@ struct OneChart: View {
             ForEach(Array(model.data.events.enumerated()), id: \.offset) { _, e in
                 PointMark(x: .value("Time", e.at), y: .value("Bottom", 0)).foregroundStyle(Self.level(e.level)).symbolSize(24)
             }
+            if let m = model.moment, model.data.from <= m {   // the moment the tables show
+                RuleMark(x: .value("Moment", m)).foregroundStyle(Color(nsColor: Palette.accent)).lineStyle(StrokeStyle(lineWidth: 1.5))
+            }
             if let h = model.hover {
                 RuleMark(x: .value("Time", h)).foregroundStyle(Color(nsColor: .secondaryLabelColor)).lineStyle(StrokeStyle(lineWidth: 1))
             }
@@ -259,8 +276,12 @@ struct OneChart: View {
                         }
                     }
                     .gesture(SpatialTapGesture().onEnded { v in
-                        if let f = proxy.plotFrame, let d = proxy.value(atX: v.location.x - g[f].origin.x, as: Date.self) { model.clicked(d) }
+                        guard let f = proxy.plotFrame, let d = proxy.value(atX: v.location.x - g[f].origin.x, as: Date.self) else { return }
+                        model.clicked(d, chart.bands.first { $0.gap != .maintenance && $0.from <= d && d <= $0.to }?.gap)
                     })
+                    .contextMenu {   // the hovered time's log, wherever a click goes
+                        if let log = model.log, let h = model.hover { Button("\(log.title) · \(h.formatted(date: .omitted, time: .standard))") { log.run(h) } }
+                    }
             }
         }
     }
@@ -304,6 +325,7 @@ struct OneChart: View {
     /// The legacy scroller's height under a table wider than the block, the last layout.
     private var bar: CGFloat = 0
     private var tasks: [String: Task<Void, Never>] = [:]
+    private var kept: [AnyObject] = []
     /// The cursor's row, by key.
     private var cursor: String?
     /// The pointer is over the rows (a test sets it): they hold still.
@@ -329,6 +351,9 @@ struct OneChart: View {
     private let metricOf: [String: (id: String, metric: ToolMetric)]
     /// When its rows came, and how long after the rows before.
     private var at: Date?, every: TimeInterval?, stale = false
+    /// A moment shows (`ToolsLive.moment`): its rows then — when they came, nil: nothing recorded — read only.
+    private var past: (moment: Date, at: Date?)?
+    private weak var live: ToolsLive?
     /// Where ⌘C and Copy Table put the text.
     var pasteboard = NSPasteboard.general
     /// Its rows' cells drawn so far (tests: a sample draws only the rows it changed).
@@ -342,6 +367,8 @@ struct OneChart: View {
         // ponytail: a table with no `key` names its rows by their record, so a row's id changes with its numbers; System's say `{pid}` / `{mount}`.
         view = ToolListView(columns: block.columns, key: block.key)
         source = ToolListSource(live.app, live.tool, live.server, live.target)
+        source.table = block.table
+        self.live = live
         name = live.tool.preset.id + "." + (block.table ?? "")
         metricOf = Dictionary((live.tool.preset.metrics ?? [:]).compactMap { id, m in
             m.rows == block.table && m.key != nil ? m.path.map { ($0, (id: id, metric: m)) } : nil
@@ -422,7 +449,17 @@ struct OneChart: View {
             needsLayout = true
         }
         grip.setAccessibilityLabel("\(heading.stringValue) height")
-        let head = NSStackView(views: [heading, ToolsWindow.spacer(), note])
+        var top = [heading, ToolsWindow.spacer(), note]
+        if let title = block.list {   // the tool's list, all its rows: All Processes…
+            let all = NSButton(title: title, target: nil, action: nil)
+            (all.controlSize, all.font) = (.small, .systemFont(ofSize: 11))
+            let tool = live.tool, server = live.server, target = live.target, app = live.app
+            kept.append(MenuAction.attach(to: all) { [weak self] in
+                ToolListSource(app, tool, server, target).pick(over: self?.window ?? app.window)
+            })
+            top.insert(all, at: 1)
+        }
+        let head = NSStackView(views: top)
         let stack = NSStackView(views: [head, scroll, grip])
         (stack.orientation, stack.alignment, stack.spacing) = (.vertical, .leading, 4)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -487,15 +524,18 @@ struct OneChart: View {
     // MARK: Rows
 
     func update(_ live: ToolsLive) {
-        let scope = live.app.tools.scope(live.tool.preset, on: live.server, live.target), now = live.now
-        latest = (live.known?.history.rows(block.table ?? "") ?? []).map { record -> ToolRow in
+        let scope = live.app.tools.scope(live.tool.preset, on: live.server, live.target), now = live.now, path = block.table ?? "", history = live.known?.history
+        let was = past?.moment
+        let then: ToolSample? = if let m = live.moment { history?.carried(path, at: m) } else { history?.carried(path) }
+        past = live.moment.map { ($0, then?.at) }
+        latest = (then?.rows(path) ?? []).map { record -> ToolRow in
             var r = view.row(record, scope, now: now)
             r.title = r.cells.first?.text ?? r.title   // the first column names the row in a question ("sleep"), its record is its key
             return r
         }
         // A new time is new rows: the time since the rows before, how often they come (procs every 15 s, disks 30 s) —
         // unknown after a gap (the Mac asleep, the tab away) till the next rows say it again.
-        let came = live.known?.history.carried(block.table ?? "")?.at
+        let came = history?.carried(path)?.at
         if came == nil { (at, every) = (nil, nil) }   // no rows since watching started again: no time to tell
         if let came, came != at {
             let since = at.map { came.timeIntervalSince($0) }
@@ -507,7 +547,7 @@ struct OneChart: View {
         func marks(_ s: ToolAlerts) -> [String] { s.standing.map { "\($0.alert) \($0.key) \($0.state.level?.rawValue ?? 0)" } }
         let recolor = alerts != self.alerts || marks(standing) != marks(self.standing)
         (self.alerts, self.standing) = (alerts, standing)
-        show(recolor: recolor)
+        show(recolor: recolor, thaw: was != past?.moment)   // to a moment or back: its rows now, under the pointer too
     }
 
     /// The latest rows, sorted, into the table. Held — the pointer or a menu over them — the rows shown get their new
@@ -569,6 +609,11 @@ struct OneChart: View {
     /// By the heading: "every 15 s · 11:31:05", "… · held under the pointer"; stale — no rows for three times their
     /// interval, or the server not answering — "as of 11:31:05", and the rows dimmed.
     private func say() {
+        if let past {   // a moment: when its rows came, or that none did
+            note.stringValue = past.at.map { "as of " + $0.formatted(date: .omitted, time: .standard) } ?? "nothing recorded at " + past.moment.formatted(date: .omitted, time: .standard)
+            table.enclosingScrollView?.alphaValue = 1
+            return
+        }
         let time = at?.formatted(date: .omitted, time: .standard)
         note.stringValue = time.map { t in stale ? "as of \(t)" : [every.map { "every " + ToolAlerts.minutes($0.rounded()) }, t, holding ? (menuOpen ? "held while its menu is open" : "held under the pointer") : nil].compactMap { $0 }.joined(separator: " · ") } ?? ""
         table.enclosingScrollView?.alphaValue = stale ? 0.5 : 1
@@ -648,6 +693,7 @@ struct OneChart: View {
     /// path every action takes with this row's fields. An action this version doesn't run is greyed, saying so; one
     /// that's running, greyed till it's done.
     func rowActions(_ row: ToolRow) -> [ListAction] {
+        guard past == nil else { return [] }   // a moment's rows are what was: no place for a signal
         let p = source.preset, id = source.rowID(row.key), known = source.app.tools.answers[ServerRow.key(source.target)]?.answer, monitor = source.app.tools.monitor
         return actions.filter { $0.offered(on: row.record) }.map { a in
             let title = a.spec.title ?? a.spec.id
@@ -737,6 +783,10 @@ struct OneChart: View {
             menu.addItem(copy)
         }
         menu.addItem(MenuAction.item("Copy Table") { [weak self] in self?.copyTable() })
+        if past != nil {
+            menu.addItem(.separator())
+            menu.addItem(MenuAction.item("Back to Live") { [weak self] in self?.live?.show(moment: nil) })
+        }
     }
 
     /// The header's menu: each column but the first (it names the row) to show or hide, then Copy Table.

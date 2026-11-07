@@ -119,8 +119,8 @@ extension ToolParse {
         switch format ?? .lines {
         case .text: r.text = text; return r
         case .lines: r.rows = units(text).map { ["line": .string($0)] }
-        case .json:
-            guard let doc = try? JSONSerialization.jsonObject(with: out, options: .fragmentsAllowed) else {
+        case .json:   // from the text, as jsonl: a byte that isn't UTF-8 (a command line cut mid-letter) is one "�", not the whole read lost
+            guard let doc = try? JSONSerialization.jsonObject(with: Data(text.utf8), options: .fragmentsAllowed) else {
                 r.unmatched = units(text)
                 break
             }

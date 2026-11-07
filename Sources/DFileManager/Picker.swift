@@ -30,6 +30,8 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         // In a panel (`ListPanel`), not here: its columns besides title, subtitle and detail; its state as a shape (and
         // problems first); what its keys and menu do there — the list `actions`, `run` and `menu` are made of.
         var cells: [String: String] = [:]
+        /// A cell's tip (a Tools column's `tip`: a process's command line), by field: a panel shows it over the cell — never copied.
+        var tips: [String: String] = [:]
         var state: StateMark? = nil
         var listActions: (@MainActor () -> [ListAction])? = nil
         // The palette's (⇧⌘P): the group whose header it comes under, its chips and its one key on the right, and how
@@ -89,6 +91,10 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     private var actionsOf: Item?   // the row whose actions this level lists
     private var onLeave: ((String, String?) -> Void)?   // this level's: what was typed and highlighted as it goes
     private var reading: CancelFlag?
+    /// This level's rows read again while it shows (`every`).
+    private var poll: ListPoll?
+    /// This level's rows shown of more (`ListContent.cut`): "No matches among the 2000 shown".
+    private var cut: Int?
     private var scopes: [(name: String, chips: [Chip])]
     private let top = NSStackView()
 
@@ -358,6 +364,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         pending?.cancel()   // a ranking still running mustn't show rows
         ranking?.cancel()
         reading?.cancel()
+        poll?.stop()
         onLeave?(field.stringValue, highlighted?.id)
         panel.delegate = nil
         parent?.removeChildWindow(panel)
@@ -484,10 +491,19 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     }
 
     private func show(_ c: ListContent) {
+        cut = c.cut
         items = (source?.keepsOrder == true ? c.rows : ListPanel.problemsFirst(c.rows)).map(keyed)
         setHeader(c.rows.isEmpty ? nil : c.header)
         emptyText = c.empty
         filter()
+        guard let s = source, poll?.source !== s else { return }
+        poll?.stop()
+        poll = ListPoll(s, shown: { [weak self] in self.map { Self.current === $0 && $0.source === s && $0.panel.isVisible && $0.reading == nil } ?? false },
+                        got: { [weak self] c in
+                            guard let self, source === s else { return }
+                            selectID = highlighted?.id   // the same row stays highlighted
+                            show(c)
+                        })
     }
 
     private func read(_ s: ListSource) {
@@ -670,7 +686,7 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         }
         table.reloadData()
         select(first)
-        emptyLabel.stringValue = (results == nil ? items.isEmpty : field.stringValue.isEmpty) ? emptyText : "No matches"
+        emptyLabel.stringValue = (results == nil ? items.isEmpty : field.stringValue.isEmpty) ? emptyText : "No matches" + (cut.map { " among the \($0) shown" } ?? "")
         emptyLabel.isHidden = !shown.isEmpty
         updateBar()
     }
