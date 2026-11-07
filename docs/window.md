@@ -110,7 +110,7 @@ Press ⇧⌘P (or F9, ⌥9; from the terminal ⇧⌘P), or click **Search or jum
 - **folders:** Favorites, frequent folders and volumes;
 - **files** in the active panel.
 
-![Search for web-01: the server with its PROD chip, then its overview's rows under On Servers — Files, Ports, Tunnels, Services, Containers, File History — each a ⇥ away](images/search-servers.png)
+![Search for web-01: the server with its PROD chip, then its overview's rows under On Servers — /, Home, Files, Ports, Sites, System, Tunnels, Services](images/search-servers.png)
 
 ↑↓ choose, ↩ runs a command or opens the rest: a folder, a server as a double-click on its sidebar row does (its files), an overview's row in the active panel. ⌘↩ opens a folder, a server's files or an overview's row in the other panel. ⎋ closes. The action bar along the bottom says what the keys do on the highlighted row. The last row searches the disk (⌘F), and says so when nothing else matches.
 
