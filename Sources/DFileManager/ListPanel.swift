@@ -82,7 +82,7 @@ struct ListAction {
     var key: Shortcut?
     let group: Int
     let closes: Bool
-    let why: String?
+    var why: String?
     /// Its key in a panel when that isn't `key` (Stop… on F8, which a Picker leaves alone).
     var listKey: Shortcut? = nil
     /// What it runs, as it runs, and where, as whom (a root target: through the server's sudo): the question for several
@@ -312,6 +312,12 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
         case .detail: r.detail
         case .cell(let k): r.cells[k] ?? ""
         }
+    }
+
+    /// Rows of texts as a spreadsheet takes them: a tab between cells, a line each; a tab or a line break inside a
+    /// text, a space.
+    static func tsv(_ lines: [[String]]) -> String {
+        lines.map { $0.map { $0.split(omittingEmptySubsequences: false) { $0.isNewline || $0 == "\t" }.joined(separator: " ") }.joined(separator: "\t") }.joined(separator: "\n")
     }
 
     private func apply() {
@@ -600,10 +606,14 @@ extension AppDelegate {
         return true
     }
 
-    /// The panel's ↩ or ⌘C by the mouse (a double-click, Edit ▸ Copy): the cursor row's action on that key.
-    func listKey(_ key: Shortcut, in panel: PanelViewController) {
-        guard let l = panel.list, let a = l.actions.first(where: { $0.panelKey == key }) else { return NSSound.beep() }
-        runList(a, in: l)
+    /// The panel's ↩ or ⌘C by the mouse (a double-click, Edit ▸ Copy): the cursor row's action on that key. ⌘C with
+    /// none: the marked rows, else the cursor's, as their columns say — tab-separated, as a dashboard table's.
+    func listKey(_ key: Shortcut, in panel: PanelViewController, pasteboard: NSPasteboard = .general) {
+        guard let l = panel.list else { return NSSound.beep() }
+        if let a = l.actions.first(where: { $0.panelKey == key }) { return runList(a, in: l) }
+        guard key == Shortcut("cmd+c"), !l.targets.isEmpty else { return NSSound.beep() }
+        pasteboard.clearContents()
+        pasteboard.setString(ListPanel.tsv(l.targets.map { r in l.source.columns.map { ListPanel.text(r, $0.field) } }), forType: .string)
     }
 
     /// The keys that reach a list as a row's (`listRun`): a registry command's, or Edit ▸ Copy's ⌘C (to the panel's
@@ -639,20 +649,28 @@ extension AppDelegate {
     /// run now greyed, saying why; red what can't be undone. It acts as the keys do: on the marked rows, or the cursor's.
     func fillListMenu(_ menu: NSMenu, _ l: ListPanel) {
         menu.autoenablesItems = false
-        var group: Int?
-        for a in l.actions {
-            if let group, group != a.group { menu.addItem(.separator()) }
+        // Its key where the panel takes it (not ⌘O: no command has it here).
+        Self.actionItems(l.actions, key: { [unowned self] in $0.panelKey.flatMap { reachesList($0) ? $0 : nil } }) { [unowned self] in runList($0, in: l) }.forEach(menu.addItem)
+        if !menu.items.isEmpty { menu.addItem(.separator()) }
+        menu.addItem(MenuAction.item("Refresh") { [unowned self] in if active.list === l { active.readList() } })
+    }
+
+    /// A row's actions as menu items — a list's, a service's, a dashboard table's: a line between groups; the key `key`
+    /// gives, where it has a modifier (not ↩, F8: the open menu would take them); red what can't be undone; what can't
+    /// run now greyed, saying why.
+    static func actionItems(_ actions: [ListAction], key: (ListAction) -> Shortcut?, run: @escaping @MainActor (ListAction) -> Void) -> [NSMenuItem] {
+        var items: [NSMenuItem] = [], group: Int?
+        for a in actions {
+            if let group, group != a.group { items.append(.separator()) }
             group = a.group
-            let item = MenuAction.item(a.title) { [unowned self] in runList(a, in: l) }
-            // Its key where the panel takes it (not ↩, F8: the open menu's; not ⌘O: no command has it here).
-            if let k = a.panelKey, !k.flags.isEmpty, reachesList(k) { (item.keyEquivalent, item.keyEquivalentModifierMask) = (k.menuKey, k.flags) }
+            let item = MenuAction.item(a.title) { run(a) }
+            if let k = key(a), !k.flags.isEmpty { (item.keyEquivalent, item.keyEquivalentModifierMask) = (k.menuKey, k.flags) }
             if a.dangerous { item.attributedTitle = NSAttributedString(string: a.title, attributes: [.foregroundColor: Palette.fail]) }
             item.isEnabled = a.why == nil
             item.toolTip = a.why
-            menu.addItem(item)
+            items.append(item)
         }
-        if !menu.items.isEmpty { menu.addItem(.separator()) }
-        menu.addItem(MenuAction.item("Refresh") { [unowned self] in if active.list === l { active.readList() } })
+        return items
     }
 
     /// `a` — an action of the cursor's row — on the marked rows, else the cursor's. One row: as a Picker runs it (its

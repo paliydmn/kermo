@@ -241,7 +241,7 @@ extension ServerLockTests {
     /// Delete (Move to Trash's other keys) do nothing; ⌘L is Live Logs, ⇧⌘G isn't; F4 edits (⌘E there being the command
     /// line). ⌘R from the keyboard restarts, View ▸ Refresh clicked reads the list again. A file's command is off.
     @Test func aRowsKeysRideTheRegistryOnlyOnTheirOwnKey() async throws {
-        let (app, a, _, done) = try app()
+        let (app, a, b, done) = try app()
         defer { done() }
         let ran = Later<[String]>([])
         let s = Stub(rows: [serviceRow("nginx", ran)])
@@ -261,6 +261,12 @@ extension ServerLockTests {
         #expect(ran.value == ["Stop… nginx", "Live Logs nginx", "Edit Unit File… nginx", "Status nginx", "Restart nginx"])
         a.copy(nil)   // Edit ▸ Copy, ⌘C
         #expect(ran.value.last == "Copy Service Name nginx")
+        let plain = Stub(rows: [row("cron", detail: "Daily\tjobs")])   // no ⌘C of its own: the row as its columns say, tab-separated
+        let pb = NSPasteboard(name: .init("kermo-tests-\(UUID().uuidString)"))
+        defer { pb.releaseGlobally() }
+        b.showList(plain)
+        app.listKey(Shortcut("cmd+c")!, in: b, pasteboard: pb)
+        #expect(pb.string(forType: .string) == "cron\tactive · running\tenabled\tDaily jobs", "\(pb.string(forType: .string) ?? "")")
         #expect(s.reads == 0)
         app.run("view.refresh")   // the menu item clicked
         await until { s.reads == 1 }

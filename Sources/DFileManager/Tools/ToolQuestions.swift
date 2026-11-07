@@ -19,6 +19,7 @@ extension ToolRunner {
         c.note = [message, a.spec.long == true ? Self.longNote : nil].compactMap { $0 }.joined(separator: "\n").nilIfEmpty
         if payload != nil { c.others = ["Show Exactly What Runs"] }
         c.irreversible = a.spec.dangerous == true
+        if a.spec.confirm == true { c.returnCancels = true }   // one that always asks: ↩ is Cancel, as for what can't be undone
         let box = quietFor.map { NSButton(checkboxWithTitle: "Don't ask again for this tool on \($0) for 10 minutes", target: nil, action: nil) }
         c.extra = box
         while true {

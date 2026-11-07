@@ -205,8 +205,7 @@ import DFMCore
             tile.value.textColor = level == .critical ? Palette.fail : level == .warning ? Palette.warn : .labelColor
             if let bar = tile.bar {
                 bar.doubleValue = ToolMetric.one(t?.history.latest(tile.metrics[0]) ?? [:], of: tile.of) ?? 0
-                let a = alerts.first { $0.metric == tile.metrics[0] && $0.below != true }   // yours, as Thresholds… set them
-                (bar.warningValue, bar.criticalValue) = (a?.warn ?? bar.maxValue + 1, a?.crit ?? bar.maxValue + 1)
+                Self.thresholds(alerts.first { $0.metric == tile.metrics[0] && $0.below != true }, on: bar)   // yours, as Thresholds… set them
             }
             var detail = m?.detail.map { ToolTemplate.text($0, scope) } ?? ""
             if let also = tile.also, let am = p.metrics?[also], let v = ToolMetric.one(t?.history.latest(also) ?? [:], of: nil) {
@@ -222,6 +221,13 @@ import DFMCore
         let running = p.http != nil ? t?.wanted == true : s?.channel != nil
         foot.stringValue = (running ? "Live" : "Paused") + " · \(last) · every \(every) s · "
             + (p.http != nil ? "checked from this Mac · no SSH" : p.stream?.run.sudo ?? p.sudo ?? false ? "over SSH as root" : "over SSH · read-only")
+    }
+
+    /// A bar's colors by alert `a`: none, none; a critical alone, red past it — NSLevelIndicator reads a critical under
+    /// the warning as the other way round (a bar at 30 % went red), so the warning sits just under it.
+    static func thresholds(_ a: ToolAlert?, on bar: NSLevelIndicator) {
+        let none = bar.maxValue + 1
+        (bar.warningValue, bar.criticalValue) = (a?.warn ?? a?.crit?.nextDown ?? none, a?.crit ?? none)
     }
 
     /// A chart's click: the `log` action with `{from}` / `{to}` five minutes around `at` — epochs by the server's
