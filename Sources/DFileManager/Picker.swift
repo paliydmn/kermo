@@ -509,14 +509,16 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     private func follow() {
         guard let s = source, poll?.source !== s else { return }
         poll?.stop()
-        poll = ListPoll(s, shown: { [weak self] in self.map { Self.current === $0 && $0.source === s && $0.panel.isVisible && $0.reading == nil } ?? false },
+        poll = ListPoll(s, shown: { [weak self] in   // shown, not under a question
+            self.map { Self.current === $0 && $0.source === s && $0.panel.isVisible && $0.reading == nil && $0.panel.attachedSheet == nil && $0.parent?.attachedSheet == nil } ?? false
+        },
                         stamp: { [weak self] in self?.shows ?? 0 },
                         got: { [weak self] c in
                             guard let self, source === s else { return }
                             let id = highlighted?.id
                             selectID = id
                             show(c)
-                            if let id, highlighted?.id != id { table.deselectAll(nil) }
+                            if highlighted?.id != id { table.deselectAll(nil) }   // none before, none now: not row 0
                         })
     }
 

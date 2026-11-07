@@ -51,6 +51,8 @@ extension ListSource {
 @MainActor final class ListPoll {
     /// Whether the connection is up already (`ssh -O check`); tests' own.
     nonisolated(unsafe) static var connected: @Sendable (SFTPTarget) -> Bool = SFTP.isConnected
+    /// The shortest interval (§6.2: 2 s); tests' own.
+    nonisolated(unsafe) static var least: TimeInterval = 2
     let source: ListSource
     private var timer: Timer?
     private var reading: CancelFlag?
@@ -60,7 +62,7 @@ extension ListSource {
     init?(_ source: ListSource, shown: @escaping @MainActor () -> Bool, stamp: @escaping @MainActor () -> Int, got: @escaping @MainActor (ListContent) -> Void) {
         guard let every = source.every else { return nil }
         self.source = source
-        timer = Timer.scheduledTimer(withTimeInterval: max(every, 2), repeats: true) { [weak self] t in
+        timer = Timer.scheduledTimer(withTimeInterval: max(every, Self.least), repeats: true) { [weak self] t in
             let alive = MainActor.assumeIsolated { () -> Bool in
                 self?.tick(shown, stamp, got)
                 return self != nil
@@ -339,17 +341,14 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
     /// What the keys and the menu do now: the cursor row's actions, else the list's own (`ListContent.actions`).
     var actions: [ListAction] { cursor?.listActions?() ?? content?.actions?() ?? [] }
 
-    /// A poll's rows: the cursor stays on its row; its row gone, no cursor — a neighbour is another process.
+    /// A poll's rows: the cursor stays on its row; its row gone (or filtered out), no cursor — a neighbour is another
+    /// process — and none comes back on the next poll.
     func polled(_ c: ListContent) {
-        let gone = cursorID.map { id in !c.rows.contains { $0.id == id } } ?? false
+        let was = cursorID
         polled = true
         set(c)
         polled = false
-        if gone {
-            cursorID = nil
-            table?.deselectAll(nil)
-            onCursor?()
-        }
+        if cursorID != was { onCursor?() }
     }
 
     func reload(_ c: ListContent, having id: String) {
@@ -425,11 +424,11 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
     private func reloadTable() {
         guard let table else { return }
         table.reloadData()
-        let r = cursorRow ?? (shown.isEmpty ? nil : 0)
+        let r = cursorRow ?? (polled || shown.isEmpty ? nil : 0)   // a poll never puts the cursor on another row
         if let r {
             table.selectRowIndexes([r], byExtendingSelection: false)
             if !polled { table.scrollRowToVisible(r) }
-        }
+        } else if polled { table.deselectAll(nil) }
         cursorID = r.map { shown[$0].id }
     }
 

@@ -436,10 +436,10 @@ extension ServerLockTests {
             return ListContent(rows: [])
         }
     }
-    let was = ListPoll.connected
+    let was = (ListPoll.connected, ListPoll.least)
     nonisolated(unsafe) var up = true
-    ListPoll.connected = { _ in up }
-    defer { ListPoll.connected = was }
+    (ListPoll.connected, ListPoll.least) = ({ _ in up }, 0.1)
+    defer { (ListPoll.connected, ListPoll.least) = was }
     let s = Every()
     var shown = true, got = 0
     let made = ListPoll(s, shown: { shown }, stamp: { s.stamp }, got: { _ in got += 1 })
@@ -473,10 +473,15 @@ extension ServerLockTests {
     // A poll's rows: the cursor stays on its row; its row gone, no cursor — not the neighbour, another process.
     func rows(_ ids: [String]) -> ListContent { ListContent(rows: ids.map { id in var it = Picker.Item(title: id) {}; it.id = id; return it }) }
     let l = ListPanel(Once(), content: rows(["a", "b", "c"]), select: "b")
+    let table = NSTableView()
+    l.attach(to: table)
     l.polled(rows(["c", "b"]))
-    #expect(l.cursorID == "b")
+    #expect(l.cursorID == "b" && table.selectedRow == 1)
     l.polled(rows(["a", "c"]))
-    #expect(l.cursorID == nil, "\(l.cursorID ?? "")")
+    #expect(l.cursorID == nil && table.selectedRow == -1, "\(l.cursorID ?? "")")
+    l.polled(rows(["a", "c", "d"]))
+    #expect(l.cursorID == nil && table.selectedRow == -1, "the next poll leaves it so: \(l.cursorID ?? "")")
+    l.detach()
 }
 
 extension ServerLockTests {   // shows a Picker: `Picker.current` is global
