@@ -199,13 +199,15 @@ extension ToolMonitor.State {
 
 extension AppDelegate {
     /// Tests: how the app goes to the menu bar alone, and back with `window` in front — the test runner's own policy
-    /// mustn't change.
+    /// mustn't change, nor may it take the focus: in a test run this does nothing unless a test swaps it.
     nonisolated(unsafe) static var activation: @MainActor (NSApplication.ActivationPolicy, NSWindow?) -> Void = { policy, w in
+        guard !Config.isTestRun else { return }
         // An app already active in the menu bar alone keeps the previous app's menus after `.regular` unless activation
         // bounces off the Dock (S2); `deactivate()` first didn't help.
         let bounce = NSApp.isActive && NSApp.activationPolicy() != .regular
         NSApp.setActivationPolicy(policy)
         guard let w else { return }
+        if w.isMiniaturized { w.deminiaturize(nil) }
         w.makeKeyAndOrderFront(nil)
         guard bounce else { return NSApp.activate() }
         NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first?.activate()

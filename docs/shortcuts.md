@@ -141,6 +141,7 @@ In the command line, ↑↓ browse its history. On a local panel ↩ runs the li
 | Ports (Forward Port…): forward / copy address / in the other panel; in a panel: forward / copy address / menu | ↩ / ⌘C / ⌘↩; ↩ / ⌘C / ⌃↩ |
 | Viewer, files over 4 MB: go to (`50%`, `1.5G`, `end`) / start, end / search the whole file, next result | `g` / Home or ⌘↑, End or ⌘↓ / `/`, `n` |
 | Editor: new document (Untitled, from any Kermo window) / save / save as / find and replace | ⌘N / ⌘S / ⇧⌘S / ⌘F |
+| Editor: new document from any app (off at first: Settings › General) | ⌃⌘E, or the key you record ([from any app](viewer-editor.md#from-any-app)) |
 | Editor: new tab / close tab / next, previous tab / hide the window (tabs kept) / back to the panels | ⌘T / ⌘W / ⌃Tab or ⇧⌘], ⌃⇧Tab or ⇧⌘[ / ⇧⌘W / ⎋ |
 | Output window: stop, then close / run again / copy all / save / [send to a tool](tools.md#send-to) | ⎋ / ⌘R / ⌘C / ⌘S / F2 |
 

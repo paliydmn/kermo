@@ -80,5 +80,8 @@ Choose **Kermo ▸ Install “fm” Command** to create a link in `/usr/local/bi
 | `fm` | Opens the current directory |
 | `fm ~/a ~/b` | Opens both directories in two panels |
 | `fm /etc/hosts` | Reveals the file in its directory |
+| `fm --new` | A new editor document ([from any app](viewer-editor.md#from-any-app)) |
+
+Any other argument starting with `-` prints the usage line and does nothing.
 
 Kermo also appears in Finder's **Open With** menu for folders.
