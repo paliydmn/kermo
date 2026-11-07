@@ -66,6 +66,7 @@ Release:
 - Editor: ⌘W closes the tab, not the window; ⎋ goes back to the panels — an unchanged tab closes, a changed one stays as a draft and the window hides. The window's close button hides it with its tabs, asking nothing.
 - Quitting no longer asks about editor changes kept as drafts; it waits until they're written to the disk, and asks only about one that couldn't be.
 - **Open Kermo at login** moved from Settings › Monitor to **Settings › General**. While the shortcut from any app is on, closing every window leaves Kermo running with its icon in the Dock.
+- Tools: in the question of an action that always asks — System's **Stop…**, Deployments' **Roll Back…** — ↩ is Cancel, as for one that can't be undone; ↩ used to run it on a server that isn't production.
 - Tools: in a dashboard's tables, a row's buttons show only on the selected row and the one under the pointer — two at most, the rest in **⋯** and the row's menu; **Kill…** (and anything else that can't be undone) is only in the menu. While the pointer is over a table its rows don't move: their numbers change in place, a new order waits till the pointer leaves, and the table says it's held. Disks' bars and a number past an alert's threshold are amber or red, as the tiles (yours from Thresholds…). A table says how often its rows come and when they last did, and dims, "as of 11:31:05", once they're late or the server isn't answering.
 
 ### Security

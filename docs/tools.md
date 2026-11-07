@@ -147,6 +147,7 @@ The keys work in search. In a panel a row's key works where it's one of Kermo's 
    | Action | Asks |
    |---|---|
    | One that can't be undone (Delete Rule…, Turn Firewall Off…) | Always. Its button is red, ↩ is Cancel |
+   | One its tool says always asks (System's Stop…, Deployments' Roll Back…) | Always. ↩ is Cancel |
    | Any other change, on a [production server](safety.md#production-servers) | Yes — with **Don't ask again for this tool on web-01 for 10 minutes** |
    | Any change on a server marked **Read-only** | Doesn't run: only looks do there, the rest greyed, saying so |
    | A look (Status in Full, Who Is It?) | Never, production included |

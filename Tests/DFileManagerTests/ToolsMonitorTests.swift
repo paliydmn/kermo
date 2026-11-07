@@ -18,7 +18,7 @@ import Testing
 /// time with `busy-<server>`, its mem 60 (past `pmem`'s warning) with `warm-<server>` — its pid in `pulse-<server>.pid`.
 /// `pulse2`: the same under another name. Its dashboard has every block; its actions: Folder (`open` what `pulse-dir`
 /// prints), Stop… (dangerous), Deeper (a level on ↩, only on the row of `first`), Copy PID (⌘C, only on `second`'s), Log
-/// (`{from}` / `{to}` into `pulse-log`), Terminal and Services (`goto`).
+/// (`{from}` / `{to}` into `pulse-log`), Terminal and Services (`goto`), Calm… (`confirm`).
 @MainActor private func pulse(_ bench: ToolsBench, _ ids: [String] = ["pulse"]) throws {
     for id in ids {
         try Data("""
@@ -68,7 +68,8 @@ import Testing
                   "list": { "format": "lines", "key": "{line}", "empty": "nothing in {command}" }, "actions": [ { "id": "here", "title": "Here", "key": "return", "readonly": true, "command": "pulse-log here {pid} {line}" } ] },
                 { "id": "pidcopy", "title": "Copy PID", "rows": "procs", "key": "cmd+c", "readonly": true, "only": { "command": ["second"] }, "command": "pulse-log copy {pid}" },
                 { "id": "log", "title": "Log", "readonly": true, "command": "pulse-log {from} {to}" } ],
-              "toolActions": [ { "id": "ssh", "title": "Terminal", "goto": "ssh" }, { "id": "svc", "title": "Services", "goto": "services:{server}.service" } ] }
+              "toolActions": [ { "id": "ssh", "title": "Terminal", "goto": "ssh" }, { "id": "svc", "title": "Services", "goto": "services:{server}.service" },
+                               { "id": "calm", "title": "Calm…", "confirm": true, "command": "pulse-log calm" } ] }
             """.utf8).write(to: URL(fileURLWithPath: bench.dir + "/own/\(id).json"))
     }
 }
@@ -616,12 +617,18 @@ extension ServerLockTests {
         await toolsUntil { page.result.stringValue.contains("Stop: done") }
         #expect(page.result.stringValue.contains("Stop: done on localhost at ") && asked.count == 2, "\(page.result.stringValue) \(asked.map(\.0))")
         #expect(bench.calls.contains("pulse-log stop 1"), "the row's pid in the command: \(bench.calls)")
+        // One that always asks (`confirm`) is asked with ↩ = Cancel too, as one that can't be undone.
+        let calm = ToolListSource(app, try toolNamed(app, "pulse"), app.savedServers[0], .local()).listActions(nil).first { $0.title == "Calm…" }
+        AppDelegate.answering = { m, b, d in asked.append((m, b, d)); return d ?? 0 }   // ↩
+        _ = try #require(calm).run(false)
+        await toolsUntil { asked.count == 3 }
+        #expect(asked.last?.1 == ["Calm", "Show Exactly What Runs", "Cancel"] && asked.last?.2 == 2 && !bench.calls.contains("pulse-log calm"), "\(asked.last.map { "\($0)" } ?? "")")
 
         nonisolated(unsafe) var shown: [(SFTPTarget, String)] = []
         ToolRunner.reveal = { _, t, path in shown.append((t, path)) }
         press(rowButtons(table, 0).first { $0.title == "Folder" })
         await toolsUntil { !shown.isEmpty }
-        #expect(shown.map(\.1) == ["/tmp/pulse-1"] && bench.calls.contains("pulse-dir 1") && asked.count == 2, "readonly: no question; what it printed opens")
+        #expect(shown.map(\.1) == ["/tmp/pulse-1"] && bench.calls.contains("pulse-dir 1") && asked.count == 3, "readonly: no question; what it printed opens")
 
         var locked = app.savedServers[0]
         locked.locked = true
