@@ -360,7 +360,8 @@ struct OneChart: View {
         for c in block.columns ?? [] {
             let (field, format) = c.field, number = Self.numbers.contains(format ?? "")
             let col = NSTableColumn(identifier: .init(field))
-            (col.title, col.width, col.minWidth) = (c.title, c.width ?? (number ? 56 : format == "bar" ? 100 : 64), table.tableColumns.isEmpty ? 80 : 40)   // the first names the row
+            let fits = ["bytes", "kbytes"].contains(format ?? "") ? 72 : number ? 56 : format == "bar" ? 100 : 64   // "502.39 GB" whole
+            (col.title, col.width, col.minWidth) = (c.title, c.width ?? Double(fits), table.tableColumns.isEmpty ? 80 : 40)   // the first names the row
             if number { col.headerCell.alignment = .right }
             col.headerToolTip = c.object?.help
             col.sortDescriptorPrototype = NSSortDescriptor(key: field, ascending: !(number || ["bar", "ago"].contains(format ?? "")))   // a number: the most first, as %CPU in Activity Monitor

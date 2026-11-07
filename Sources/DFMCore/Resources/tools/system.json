@@ -63,7 +63,7 @@
                   { "field": "mem:%", "title": "Mem", "help": "Memory the process holds in RAM, of all the server has" },
                   { "field": "rss:bytes", "title": "RSS", "help": "Memory the process holds in RAM (resident set)" },
                   { "field": "state", "title": "State", "width": 44, "help": "R running · S sleeping · D waiting for I/O · Z zombie: its parent hasn't collected it · T stopped · I idle kernel thread" },
-                  { "field": "unit", "title": "Unit", "help": "The systemd unit it runs in. A service set to restart starts a killed process again: manage the service instead" },
+                  { "field": "unit", "title": "Unit", "width": 100, "help": "The systemd unit it runs in. A service set to restart starts a killed process again: manage the service instead" },
                   { "field": "pid", "title": "PID" }] },
     { "table": "disks", "title": "Disks", "key": "{mount}", "actions": ["biggest", "deleted"],
       "columns": ["mount", { "field": "pct:bar", "title": "Used" }, { "field": "free:bytes", "title": "Free" }, { "field": "inodes_pct:%", "title": "Inodes" }, { "field": "size:bytes", "title": "Size" }] },
