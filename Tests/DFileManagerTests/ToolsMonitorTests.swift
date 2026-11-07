@@ -903,7 +903,8 @@ extension ServerLockTests {
         charts.model.clicked(then, .asleep)
         #expect(view.momentText.stringValue.hasPrefix("Mac asleep at ") && view.momentText.stringValue.hasSuffix("nothing recorded then"), "\(view.momentText.stringValue)")
         charts.model.clicked(then.addingTimeInterval(-3600), nil)
-        #expect(table.rows.isEmpty && table.note.stringValue.hasPrefix("nothing recorded at"), "before watching began: \(table.note.stringValue)")
+        #expect(table.rows.isEmpty && table.note.stringValue.hasPrefix("nothing recorded at") && view.momentText.stringValue.hasPrefix("Nothing recorded at "),
+                "before watching began: \(table.note.stringValue) — \(view.momentText.stringValue)")
         press(view.liveButton)
         charts.range.selectedSegment = 1   // 24h
         charts.model.clicked(Date(timeIntervalSince1970: 1_800_000_000), nil)

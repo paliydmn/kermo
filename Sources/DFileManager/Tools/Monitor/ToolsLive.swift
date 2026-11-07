@@ -125,12 +125,12 @@ import DFMCore
     /// live again.
     func show(moment at: Date?, gap: ToolGap? = nil) {
         moment = at
-        if let m = moment {
-            let time = m.formatted(date: .omitted, time: .standard)
-            momentText.stringValue = gap.map { "\(OneChart.word($0).prefix(1).uppercased() + OneChart.word($0).dropFirst()) at \(time): nothing recorded then" }
-                ?? "As of \(time): the tables as they were then"
-        }
         update()
+        guard let m = moment else { return }
+        let time = m.formatted(date: .omitted, time: .standard), tables = blocks.compactMap { $0 as? ToolsTable }
+        momentText.stringValue = if let gap { "\(OneChart.word(gap).prefix(1).uppercased() + OneChart.word(gap).dropFirst()) at \(time): nothing recorded then" }
+            else if tables.allSatisfy({ !$0.recorded }) { "Nothing recorded at \(time)" }   // before watching began, or the hour's rows trimmed
+            else { "As of \(time): the tables as they were then" }
     }
     /// The dashboard's blocks: hidden while Sites has no addresses to show.
     private var dash: [NSView] = []

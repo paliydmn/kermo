@@ -356,6 +356,8 @@ struct OneChart: View {
     /// A moment shows (`ToolsLive.moment`): its rows then — when they came, nil: nothing recorded — read only.
     private var past: (moment: Date, at: Date?)?
     private weak var live: ToolsLive?
+    /// A moment shows rows of its own: some sample had them then.
+    var recorded: Bool { past?.at != nil }
     /// Where ⌘C and Copy Table put the text.
     var pasteboard = NSPasteboard.general
     /// Its rows' cells drawn so far (tests: a sample draws only the rows it changed).
