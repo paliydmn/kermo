@@ -517,3 +517,35 @@ extension EditorWindowTests {
     func text(_ v: NSView) -> [String] { ((v as? NSTextField).map { [$0.stringValue] } ?? []) + v.subviews.flatMap(text) }
     return text(v).joined(separator: " ")
 }
+
+extension EditorWindowTests {
+    /// "Changed on the server since you opened it": Overwrite sends the text, and its tab is saved — it stayed ↑ "Not
+    /// uploaded" with the server already holding it (and after a launch asked again). Cancel leaves it ↑.
+    @Test func overwritingAChangedServerFileLeavesItsTabSaved() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { AppDelegate.answering = nil; try? FileManager.default.removeItem(atPath: dir) }
+        let file = dir + "/app.conf", copy = URL(fileURLWithPath: dir + "/copy.conf")
+        try put("v1\n", file)
+        let c = try SFTPClient(.local())
+        let state = AppDelegate.RemoteEdit(baseline: try #require(try c.stat(file)))
+        c.close()
+        try put("mine\n", copy.path)
+        let e = try Editor.open(copy, text: nil, beside: NSView()) { _ in }
+        defer { e.close() }
+        let app = AppDelegate()
+        app.panels = [PanelViewController(tabs: [dir], index: 0, showHidden: false)]
+        app.panels.forEach { $0.loadViewIfNeeded() }
+        defer { app.panels.forEach { $0.shutdown() } }
+        try await Task.sleep(for: .milliseconds(1100))
+        try put("v2 from a deploy\n", file)
+        AppDelegate.answering = { _, _, _ in 2 }   // Cancel
+        #expect(await !app.upload(copy, to: file, on: .local(), state))
+        #expect(e.isEdited && read(file) == "v2 from a deploy\n", "Cancel: still to send")
+        #expect(await e.save(), "⌘S again: the copy first")
+        AppDelegate.answering = { _, _, _ in 0 }   // Overwrite
+        #expect(await app.upload(copy, to: file, on: .local(), state))
+        #expect(read(file) == "mine\n")
+        #expect(!e.isEdited, "sent: not ↑")
+    }
+}

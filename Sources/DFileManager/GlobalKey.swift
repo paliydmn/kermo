@@ -82,7 +82,7 @@ enum GlobalKey {
 
     /// Kermo's own: a command's key (Keys can move it), or a menu item's.
     static func taken(_ k: Shortcut, _ app: AppDelegate) -> String? {
-        if let c = app.keymap[k] { return "\(k.display) is Kermo's \(c.title): pick another or change that one in Keys." }
+        if let c = app.keymap[k] { return "\(k.display) is Kermo's \(c.title.replacingOccurrences(of: "…", with: "")): pick another or change that one in Keys." }
         return AppDelegate.fixedKeys(NSApp.mainMenu ?? app.makeMenu())[k].map { "\(k.display) stays \($0): pick another." }
     }
 

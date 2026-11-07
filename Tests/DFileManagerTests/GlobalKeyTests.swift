@@ -73,7 +73,7 @@ extension EditorWindowTests {
         }
         #expect(GlobalKey.use(Shortcut("ctrl+cmd+space")!, app, o.defaults) == "⌃⌘Space can't be used: macOS takes it first (emoji).")
         let connect = try #require(GlobalKey.use(Shortcut("ctrl+cmd+k")!, app, o.defaults))
-        #expect(connect.hasPrefix("⌃⌘K is Kermo's Connect to Server") && connect.hasSuffix(": pick another or change that one in Keys."), "\(connect)")
+        #expect(connect == "⌃⌘K is Kermo's Connect to Server: pick another or change that one in Keys.", "\(connect)")
         let copy = try #require(GlobalKey.use(Shortcut("cmd+c")!, app, o.defaults))
         #expect(copy.hasPrefix("⌘C stays Edit ▸ Copy's"), "\(copy)")
 

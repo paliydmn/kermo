@@ -1457,7 +1457,6 @@ extension AppDelegate {
             _ = await choose(message, info: info, ["OK"], on: Editor.asking(about: saved))
             return false
         case .failure(let e as SFTPClient.ChangedOnServer):
-            Editor.markUnsaved(saved)
             let keeps = Editor.window(for: saved) == nil ? "in \(saved.path)" : "unsaved here"   // the editor may be gone
             let fmt = DateFormatter()
             fmt.dateFormat = "HH:mm:ss"
@@ -1473,7 +1472,9 @@ extension AppDelegate {
                     return await uploadNow(saved, to: remotePath, on: target, state, force: false, action: action)
                 case 1: await diff(DiffSide(path: saved.path, name: "\(name) (yours)"),
                                    DiffSide(path: remotePath, server: target, size: e.attrs.size, mtime: e.attrs.mtime), in: panel)
-                default: return false
+                default:   // not before the answer: Overwrite sends it, and its tab is then saved, not ↑
+                    Editor.markUnsaved(saved)
+                    return false
                 }
             }
         case .failure(let e):
