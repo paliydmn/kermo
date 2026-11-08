@@ -58,8 +58,8 @@ import SwiftUI
         let points: [ToolPoint]
         let chart: ToolChart
         var color = 0
-        /// Its own metric, for its values' words; nil: the chart's.
-        var metric: ToolMetric?
+        /// Its own metric, for its values' words: a chart's metrics may differ in unit.
+        let metric: ToolMetric
     }
     @MainActor final class Model: ObservableObject {
         @Published var data = Data()
@@ -96,12 +96,14 @@ import SwiftUI
         private(set) var picks: [String: [String: Int]] = [:]
         /// Each chart's series hidden by a click on their chips: this window's, not kept.
         private(set) var hidden: [String: Set<String>] = [:]
-        /// Where the picks are kept: "<server id> <tool id>"; nil (a test's model): nowhere.
+        /// Where the picks are kept: "<server id> <tool id>"; nil (a test's model): nowhere. A color out of range (a
+        /// hand edit) drops that pick.
+        // ponytail: read once a block; two windows on one server and tool don't see each other's picks till rebuilt.
         var keep: String? {
             didSet {
                 guard let keep else { return }
                 for (k, v) in UserDefaults.standard.dictionary(forKey: Self.defaultsKey) ?? [:] where k.hasPrefix(keep + " ") {
-                    if let v = v as? [String: Int] { picks[String(k.dropFirst(keep.count + 1))] = v }
+                    if let v = v as? [String: Int] { picks[String(k.dropFirst(keep.count + 1))] = v.filter { (0..<ToolsCharts.most).contains($0.value) } }
                 }
             }
         }
@@ -159,7 +161,7 @@ import SwiftUI
 
         /// Focus on a chart, or (nil) back to all of them.
         func show(focus id: String?) {
-            (focus, showData, choosing) = (id, false, nil)
+            (focus, showData, choosing, query) = (id, false, nil, "")
         }
     }
 
@@ -280,7 +282,7 @@ import SwiftUI
             var series: [Series] = [], source: [String: (metric: String, key: String)] = [:]
             for (id, m) in metrics {
                 let keys = slots.map { ToolSlots.keys($0, metric: id) } ?? t?.history.series[id]?.keys.sorted() ?? []
-                for key in keys.isEmpty ? [""] : keys {
+                for key in keys.isEmpty ? [""] : keys where source["\(id) \(key)"] == nil {   // a metric named twice: once
                     let name = key.isEmpty ? m.title ?? id : metrics.count > 1 ? "\(m.title ?? id) \(key)" : key   // two metrics' same key: two names
                     series.append(Series(id: "\(id) \(key)", name: name, metric: m))
                     source["\(id) \(key)"] = (id, key)
@@ -296,8 +298,8 @@ import SwiftUI
                 series[i].color = colors[s.id]
                 series[i].hidden = colors[s.id] != nil && hidden.contains(s.id)
                 guard let color = series[i].color, !series[i].hidden else {   // not drawn: its latest only, for the list
-                    series[i].latest = slots.map { $0.last { $0.v?[metric]?[key] != nil }?.v?[metric]?[key]?[1] }
-                        ?? t?.history.series[metric]?[key]?.last?.value
+                    series[i].latest = slots.map { $0.last { $0.v?[metric]?[key]?.count == 3 }?.v?[metric]?[key]?[1] }
+                        ?? t?.history.series[metric]?[key]?.last { $0.value != nil }?.value
                     continue
                 }
                 let pts = slots.map { ToolSlots.points($0, metric: metric, key: key, from: d.from) } ?? t?.history.points(metric, key) ?? []
@@ -381,10 +383,14 @@ struct SeriesList: View {
     let id: String
     @ObservedObject var model: ToolsCharts.Model
 
+    /// The series the search finds: all of them up to eight, where there's no search field.
+    static func found(_ chart: ToolsCharts.Chart, _ q: String) -> [ToolsCharts.Series] {
+        chart.series.count <= 8 || q.isEmpty ? chart.series : chart.series.filter { $0.name.localizedCaseInsensitiveContains(q) }
+    }
+
     var body: some View {
         if let chart = model.data.charts.first(where: { $0.id == id }) {
-            let picked = chart.picked.count, q = model.query.trimmingCharacters(in: .whitespaces)
-            let found = q.isEmpty ? chart.series : chart.series.filter { $0.name.localizedCaseInsensitiveContains(q) }
+            let picked = chart.picked.count, q = model.query.trimmingCharacters(in: .whitespaces), found = Self.found(chart, q)
             VStack(alignment: .leading, spacing: 6) {
                 if chart.series.count > 8 { TextField("Find among \(chart.series.count)", text: $model.query).textFieldStyle(.roundedBorder) }
                 ScrollView {
@@ -500,22 +506,24 @@ struct OneChart: View {
             if chart.series.count > chart.picked.count, !big {
                 Button("+\(chart.series.count - chart.picked.count) more…") { (model.query, model.choosing) = ("", chart.id) }
                     .buttonStyle(.plain).font(.caption).foregroundStyle(Color.accentColor).padding(.horizontal, 4)
-                    .popover(isPresented: Binding(get: { model.choosing == chart.id }, set: { if !$0, model.choosing == chart.id { model.choosing = nil } }),
-                             arrowEdge: .bottom) {
-                        SeriesList(id: chart.id, model: model)
-                            .frame(width: 320, height: min(300, CGFloat(chart.series.count) * 24 + (chart.series.count > 8 ? 100 : 64))).padding(10)
-                    }
             }
+        }
+        // On the legend, not the button: the last series ticked takes the button away, not the list under the pointer.
+        .popover(isPresented: Binding(get: { model.choosing == chart.id && !big }, set: { if !$0, model.choosing == chart.id { model.choosing = nil } }),
+                 arrowEdge: .bottom) {
+            SeriesList(id: chart.id, model: model)
+                .frame(width: 320, height: min(300, CGFloat(chart.series.count) * 24 + (chart.series.count > 8 ? 100 : 64))).padding(10)
         }
     }
 
     private func chip(_ s: ToolsCharts.Series) -> some View {
-        Button { model.toggle(s.id, in: chart, only: NSEvent.modifierFlags.contains(.option)) } label: {
+        let v = s.hidden ? "" : value(s)
+        return Button { model.toggle(s.id, in: chart, only: NSEvent.modifierFlags.contains(.option)) } label: {
             HStack(spacing: 4) {
                 RoundedRectangle(cornerRadius: 1).fill(Self.color(s.color ?? 0)).frame(width: 10, height: 3)
                 Text(Self.short(s.name)).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
                 if !s.hidden {   // as wide as the widest value it may say: the chips hold still as the pointer moves
-                    ZStack(alignment: .leading) { Text(Self.widest(s.metric, chart.top)).hidden(); Text(value(s)) }.monospacedDigit()
+                    ZStack(alignment: .leading) { Text(Self.widest(s.metric, chart.top)).hidden(); Text(v) }.monospacedDigit()
                 }
             }
             .opacity(s.hidden ? 0.45 : 1)
@@ -528,9 +536,9 @@ struct OneChart: View {
         .contextMenu {
             Button("Only This") { model.toggle(s.id, in: chart, only: true) }
             Button("Show All") { model.showAll(in: chart) }
-            Button("Choose Series…") { (model.query, model.choosing) = ("", chart.id) }
+            if !big { Button("Choose Series…") { (model.query, model.choosing) = ("", chart.id) } }
         }
-        .accessibilityLabel(s.hidden ? "\(s.name), hidden" : "\(s.name) \(value(s))")
+        .accessibilityLabel(s.hidden ? "\(s.name), hidden" : "\(s.name) \(v)")
     }
 
     /// A series' name where room is short: an address without its http(s)://; the whole in its tooltip.
@@ -551,31 +559,32 @@ struct OneChart: View {
     private func value(_ line: ToolsCharts.Line, at t: Date?) -> String {
         let v = t.map { ToolChart.nearest(line.points, to: $0, within: model.every * 1.5)?.value }
             ?? (model.history ? line.points.last { $0.value != nil } : line.points.last)?.value
-        return v.map((line.metric ?? chart.metric).text) ?? "—"
+        return v.map(line.metric.text) ?? "—"
     }
 
     /// A chip's value: its line's when the header says.
     func value(_ s: ToolsCharts.Series) -> String { chart.lines.first { $0.id == s.id }.map { value($0, at: when) } ?? "—" }
 
     /// The header's when — "Now", on the history the last slot's time, the time under the pointer, "At" the moment the
-    /// tables show — and the values, or the gap that has none.
-    private var header: (when: String, gap: ToolGap?, values: [String]) {
-        if let t = when { return ((model.hover == nil ? "At " : "") + model.time(t), chart.gap(at: t), chart.lines.map { value($0, at: t) }) }
-        guard model.history else { return ("Now", chart.gapNow, chart.lines.map { value($0, at: nil) }) }
-        return (chart.lines.compactMap { $0.points.last { $0.value != nil }?.at }.max().map(model.time) ?? "", nil, chart.lines.map { value($0, at: nil) })
+    /// tables show — the time its values are at (nil: the latest), and the gap that has none.
+    private var header: (when: String, at: Date?, gap: ToolGap?) {
+        if let t = when { return ((model.hover == nil ? "At " : "") + model.time(t), t, chart.gap(at: t)) }
+        guard model.history else { return ("Now", nil, chart.gapNow) }
+        return (chart.lines.compactMap { $0.points.last { $0.value != nil }?.at }.max().map(model.time) ?? "", nil, nil)
     }
 
     /// The header as shown: "Now 24%", "9:28:45 PM · Mac asleep" — a chart of several series, only when: its chips
     /// have the values.
     var said: String {
-        let h = header, v = h.gap.map(Self.word) ?? (chart.series.count > 1 ? "" : h.values.joined(separator: " · "))
+        let h = header, v = h.gap.map(Self.word) ?? (chart.series.count > 1 ? "" : chart.lines.map { value($0, at: h.at) }.joined(separator: " · "))
         return h.when == "Now" && h.gap == nil && !v.isEmpty ? "Now " + v : [h.when, v].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     /// The header as VoiceOver says it: each value with its series' name.
     var spoken: String {
         let h = header
-        let v = h.gap.map(Self.word) ?? (chart.lines.count == 1 ? h.values.first ?? "—" : zip(chart.lines, h.values).map { "\($0.name) \($1)" }.joined(separator: ", "))
+        let v = h.gap.map(Self.word) ?? (chart.lines.count == 1 ? chart.lines.first.map { value($0, at: h.at) } ?? "—"
+                                         : chart.lines.map { "\($0.name) \(value($0, at: h.at))" }.joined(separator: ", "))
         return [h.when, v].filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
@@ -585,7 +594,7 @@ struct OneChart: View {
         let gap = chart.gap(at: t)
         var rows: [(color: Int, name: String, value: String)] = [], spread = false
         for line in chart.lines where gap == nil {
-            let p = ToolChart.nearest(line.points, to: t, within: model.every * 1.5), text = (line.metric ?? chart.metric).text
+            let p = ToolChart.nearest(line.points, to: t, within: model.every * 1.5), text = line.metric.text
             if let p, let v = p.value, let lo = p.low, let hi = p.high { rows.append((line.color, line.name, "\(text(lo)) – \(text(v)) – \(text(hi))")); spread = true }
             else { rows.append((line.color, line.name, p?.value.map(text) ?? "—")) }
         }
@@ -767,7 +776,7 @@ struct DataTable: View {
         return Set(chart.lines.flatMap { $0.points.map(\.at) }).sorted(by: >).map { t in
             let pts = byTime.map { $0[t] }
             let values = zip(chart.lines, pts).map { line, p -> String in
-                let text = (line.metric ?? chart.metric).text
+                let text = line.metric.text
                 guard let p, let v = p.value else { return "—" }
                 if let lo = p.low, let hi = p.high { return "\(text(lo)) – \(text(v)) – \(text(hi))" }
                 return text(v)

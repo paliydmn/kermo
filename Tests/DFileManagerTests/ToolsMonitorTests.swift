@@ -632,16 +632,22 @@ extension ServerLockTests {
         let reread = ToolsCharts.Model()
         reread.keep = key
         #expect(reread.picks["pmem+n"] == ["n ": 2], "kept for this server and tool")
-        charts.model.pick("pmem 1", in: mixed(), true)
-        charts.model.pick("pmem 2", in: mixed(), true)
+        // Kept picks of series gone, or a color out of range (a hand edit): the first six by name again.
+        var all = UserDefaults.standard.dictionary(forKey: ToolsCharts.Model.defaultsKey) ?? [:]
+        all[key + " pmem+n"] = ["gone 1": 0, "n ": -1]
+        UserDefaults.standard.set(all, forKey: ToolsCharts.Model.defaultsKey)
+        charts.model.keep = key
+        charts.model.reload()
+        #expect(charts.model.picks["pmem+n"] == ["gone 1": 0] && mixed().lines.map(\.color) == [0, 1, 2], "\(mixed().lines.map(\.name))")
         page?.window?.layoutIfNeeded()
         let grid = charts.frame.height
         charts.model.show(focus: "pmem+n")
         await toolsUntil { page?.window?.layoutIfNeeded(); return charts.frame.height > grid + 100 }
-        #expect(charts.frame.height > grid + 100 && charts.model.focus == "pmem+n", "Focus: one chart, taller: \(grid) → \(charts.frame.height)")
+        let focused = charts.frame.height
+        #expect(focused > grid + 100 && charts.model.focus == "pmem+n", "Focus: one chart, taller: \(grid) → \(focused)")
         charts.model.show(focus: nil)
-        await toolsUntil { page?.window?.layoutIfNeeded(); return abs(charts.frame.height - grid) < 1 }
-        #expect(abs(charts.frame.height - grid) < 1, "back to all of them: \(charts.frame.height)")
+        await toolsUntil { page?.window?.layoutIfNeeded(); return charts.frame.height < focused - 100 }
+        #expect(charts.frame.height < focused - 100, "back to all of them: \(charts.frame.height)")
 
         page?.select("fail2ban")   // away: the charts leave the tree and go; back: the same tab, its size again, charts anew
         await toolsUntil { hosting == nil }
@@ -1014,7 +1020,7 @@ extension ServerLockTests {
         let ms = try JSONDecoder().decode(ToolMetric.self, from: Data(#"{ "title": "Response", "unit": "ms" }"#.utf8))
         let t0 = Date(timeIntervalSince1970: 1_800_000_000)   // a slot's start
         func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
-        func line(_ name: String, _ pts: [ToolPoint]) -> ToolsCharts.Line { .init(id: "latency \(name)", name: name, points: pts, chart: ToolChart(pts, now: at(60))) }
+        func line(_ name: String, _ pts: [ToolPoint]) -> ToolsCharts.Line { .init(id: "latency \(name)", name: name, points: pts, chart: ToolChart(pts, now: at(60)), metric: ms) }
         let made = [line("a.example", [.init(at: at(0), value: 10), .init(at: at(5), gap: .asleep), .init(at: at(20), value: 20)]),
                      line("b.example", [.init(at: at(0), value: 30), .init(at: at(5), gap: .asleep), .init(at: at(20), value: 40)])]
         let lines = [made[0], { var b = made[1]; b.color = 1; return b }()]   // colors as picked
@@ -1066,6 +1072,37 @@ extension ServerLockTests {
         let h = OneChart.tip(week, model, at: t0)
         #expect(h.rows.map(\.value) == ["\(ms.text(2)) – \(ms.text(10)) – \(ms.text(99))"] && h.notes.first == "Lowest – average – highest" && h.time.contains("–"), "\(h)")
         #expect(DataTable.rows(week, time: model.time).map(\.values) == [["\(ms.text(2)) – \(ms.text(10)) – \(ms.text(99))"]])
+    }
+
+    /// A chart's picks: six at most — a seventh refused till one goes —, a new one in the first color free, one always
+    /// stays; Show All undoes the hides; the list's search only past eight series, where its field is.
+    @Test func aChartsPicksStopAtSixAndKeepTheirColors() throws {
+        let pct = try JSONDecoder().decode(ToolMetric.self, from: Data(#"{ "unit": "%" }"#.utf8))
+        func chart(_ colors: [String: Int], _ n: Int = 8) -> ToolsCharts.Chart {
+            .init(id: "disk", title: "Disk", metric: pct, top: 100, lines: [],
+                  series: (1...n).map { ToolsCharts.Series(id: "disk /m\($0)", name: "/m\($0)", metric: pct, color: colors["disk /m\($0)"]) }, bands: [])
+        }
+        let model = ToolsCharts.Model()
+        let six = Dictionary(uniqueKeysWithValues: (1...6).map { ("disk /m\($0)", $0 - 1) })
+        model.pick("disk /m7", in: chart(six), true)
+        #expect(model.picks["disk"] == nil, "a seventh: refused")
+        model.pick("disk /m2", in: chart(six), false)
+        var five = six
+        five["disk /m2"] = nil
+        #expect(model.picks["disk"] == five)
+        model.pick("disk /m7", in: chart(five), true)
+        #expect(model.picks["disk"]?["disk /m7"] == 1, "the first color free")
+        let before = model.picks["disk"]
+        model.pick("disk /m1", in: chart(["disk /m1": 0]), false)
+        #expect(model.picks["disk"] == before, "the last one drawn stays")
+        model.toggle("disk /m1", in: chart(six), only: true)
+        #expect(model.hidden["disk"]?.count == 5)
+        model.showAll(in: chart(six))
+        #expect(model.hidden["disk"] == nil)
+        #expect(SeriesList.found(chart(six), "m7").count == 8 && SeriesList.found(chart(six, 9), "m7").map(\.name) == ["/m7"], "a search only where its field is")
+        model.query = "m7"
+        model.show(focus: "disk")
+        #expect(model.query.isEmpty && model.focus == "disk", "Focus starts its list unsearched")
     }
 
     /// The sort: numbers by value ("1,25" before "1,5"; 2 KB before 1 MB), text as Finder sorts names, nothing last

@@ -131,11 +131,22 @@ struct Case: CustomTestStringConvertible, Sendable {
     Case(name: "sudo without about", json: "{ \(head), \"sudo\": true, \"command\": \"id\" }", says: "runs as root but has no “about”", level: .warning),
     Case(name: "a chart of two units", json: "{ \(head), \"metrics\": { \"a\": { \"path\": \"a\", \"unit\": \"%\" }, \"b\": { \"path\": \"b\", \"unit\": \"ms\" } }, "
          + "\"dashboard\": [ { \"charts\": [[\"a\", \"b\"]] } ] }", says: "its metrics' units differ (a: %, b: ms): one axis, in a's", level: .warning),
+    Case(name: "a metric twice in a chart", json: "{ \(head), \"metrics\": { \"a\": { \"path\": \"a\" } }, \"dashboard\": [ { \"charts\": [[\"a\", \"a\"]] } ] }",
+         says: "“a” twice in one chart"),
 ])
 func everyCheckOfTheProtocol(_ c: Case) {
     let (preset, problems) = check(c.json, hasScript: { $0 != "gone.sh" })
     #expect(problems.contains { $0.level == c.level && $0.text.contains(c.says) }, "\(problems)")
     #expect((preset != nil) == (c.level == .warning), "\(problems)")
+}
+
+/// A chart's units go by the metrics there are: a typo is its own error, not a unit of its own.
+@Test func aChartsUnitsSkipAMetricThatIsntThere() {
+    let (_, problems) = check("{ \(head), \"metrics\": { \"a\": { \"path\": \"a\", \"unit\": \"%\" }, \"b\": { \"path\": \"b\" }, \"c\": { \"path\": \"c\", \"unit\": \"%\" } }, "
+                              + "\"dashboard\": [ { \"charts\": [[\"x\", \"a\", \"b\"], [\"y\", \"a\", \"c\"]] } ] }")
+    let units = problems.map(\.text).filter { $0.contains("units differ") }
+    #expect(units.count == 1 && units[0].hasSuffix("charts[0]: its metrics' units differ (a: %, b: no unit): one axis, in a's")
+            && problems.contains { $0.text.contains("“x” isn't one of the metrics") }, "\(problems)")
 }
 
 @Test func anUnknownSymbolIsAWarning() {
