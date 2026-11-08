@@ -14,6 +14,7 @@ Release:
 ## [Unreleased]
 
 ### Fixed
+- Search (⇧⌘P) keeps a row's chips (PROD, ROOT, LOCKED), its key and ⇥ beside a long description: **System — web-01** and **Sites — web-01** of a production server had lost their PROD chip. The description pushed them out of the row.
 - Server connections no longer drop on the same Wi-Fi. Kermo took small changes in the Mac's network report for a new network and stopped every shared SSH connection, on one Mac as often as every half hour. Panels then logged in again (a locked server could ask for Touch ID), a watched server's charts got a gap, and a tab that wasn't watched could be left saying "Connecting…". Now only a network that comes, goes or gets another interface or gateway counts.
 
 ## [2.0] - 2026-11-08

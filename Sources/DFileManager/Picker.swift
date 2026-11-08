@@ -888,6 +888,8 @@ final class PickerCell: NSTableCellView {
     let title = NSTextField(labelWithString: "")
     private let lead = NSStackView()   // the badges, then the title
     let detail = NSTextField(labelWithString: "")
+    /// Chips, a key, ⇥ (the palette's rows): never squeezed out, so a production row says so whatever its subtitle.
+    let marks = NSTextField(labelWithString: "")
     let remove = NSButton()   // hidden unless the row can be taken out of a list (the search's Recent)
     let spinner = NSProgressIndicator()   // hidden unless something runs on the row
 
@@ -902,6 +904,9 @@ final class PickerCell: NSTableCellView {
         // A long detail (a tool's `about` in a server's overview) gives way before the title does.
         detail.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
         detail.lineBreakMode = .byTruncatingTail
+        marks.maximumNumberOfLines = 1   // an attributed value drops the label's own no-wrap mode
+        marks.setContentHuggingPriority(.required, for: .horizontal)
+        marks.setContentCompressionResistancePriority(.required, for: .horizontal)
         remove.image = Symbol.remove.image("Remove")
         remove.isBordered = false
         remove.contentTintColor = .tertiaryLabelColor
@@ -909,7 +914,7 @@ final class PickerCell: NSTableCellView {
         spinner.style = .spinning
         spinner.controlSize = .small
         spinner.isDisplayedWhenStopped = false
-        let end = NSStackView(views: [spinner, detail, remove])   // a hidden ✕ takes no room
+        let end = NSStackView(views: [spinner, detail, marks, remove])   // a hidden ✕ takes no room
         end.spacing = 6
         lead.spacing = 4
         lead.addArrangedSubview(title)
@@ -958,10 +963,12 @@ final class PickerCell: NSTableCellView {
         title.attributedStringValue = s
         let d = NSMutableAttributedString(string: end.detail, attributes: [.font: NSFont.systemFont(ofSize: 12),
                                                                           .foregroundColor: on ? white.withAlphaComponent(0.8) : NSColor.secondaryLabelColor])
-        if let marks = end.marks { if d.length > 0 { d.append(NSAttributedString(string: "  ")) }; d.append(marks) }
         let tail = NSMutableParagraphStyle()
         tail.lineBreakMode = .byTruncatingTail
         d.addAttribute(.paragraphStyle, value: tail, range: NSRange(location: 0, length: d.length))
         detail.attributedStringValue = d
+        detail.isHidden = d.length == 0
+        marks.attributedStringValue = end.marks ?? NSAttributedString()
+        marks.isHidden = end.marks == nil
     }
 }
