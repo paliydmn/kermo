@@ -904,6 +904,7 @@ final class PickerCell: NSTableCellView {
         // A long detail (a tool's `about` in a server's overview) gives way before the title does.
         detail.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
         detail.lineBreakMode = .byTruncatingTail
+        marks.maximumNumberOfLines = 1   // an attributed value drops the label's own no-wrap mode
         marks.setContentHuggingPriority(.required, for: .horizontal)
         marks.setContentCompressionResistancePriority(.required, for: .horizontal)
         remove.image = Symbol.remove.image("Remove")
