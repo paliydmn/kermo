@@ -257,13 +257,16 @@ extension ServerLockTests {
     }
 
     /// A path counts as another network by whether there's one, its interfaces and its gateways only: the same Wi-Fi
-    /// listed twice (two links of one interface) is the same network; another gateway, an interface joining, or none
-    /// at all is another.
+    /// listed twice (two links of one interface), or its gateways in another order, is the same network; another
+    /// gateway, an interface joining, or none at all is another.
     @Test func aNetworkIsItsInterfacesAndGateways() {
         typealias N = Masters.Network
         let wifi = N(up: true, interfaces: ["en0 wifi"], gateways: ["192.168.0.1:0"])
         #expect(N(up: true, interfaces: ["en0 wifi", "en0 wifi"], gateways: ["192.168.0.1:0"]) == wifi)
         #expect(N(up: true, interfaces: ["en0 wifi"], gateways: ["10.0.0.1:0"]) != wifi)
+        let both = N(up: true, interfaces: ["en0 wifi"], gateways: ["192.168.0.1:0", "fe80::1%en0.0"])
+        #expect(N(up: true, interfaces: ["en0 wifi"], gateways: ["fe80::1%en0.0", "192.168.0.1:0", "fe80::1%en0.0"]) == both,
+                "gateways in another order, or one listed twice")
         #expect(N(up: true, interfaces: ["en7 wiredEthernet", "en0 wifi"], gateways: ["192.168.0.1:0"]) != wifi)
         #expect(N(up: false, interfaces: [], gateways: []) != wifi)
         let fired = Stops(), t = SFTPTarget(host: "x")

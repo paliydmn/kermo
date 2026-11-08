@@ -340,17 +340,17 @@ enum Masters {
     }
 
     /// What of a path makes another network: whether there's one, the interfaces it may go through (each once, in
-    /// their order) and its gateways. Not the whole `NWPath`: its `==` moves with things that are no new network (the
-    /// link's quality is in its description) — on 2026-11-08 it changed every half hour or so on one Wi-Fi with the
-    /// same interfaces and gateway, and each time every connection was stopped. Low Data Mode, an expensive link and
-    /// an IPv6 address coming or going aren't new networks either.
+    /// their order: the first is the one used) and its gateways (each once, in any order). Not the whole `NWPath`: its
+    /// `==` can say "changed" with every field and even its description the same — on 2026-11-08, on one Wi-Fi, every
+    /// half hour or so — and each time every connection was stopped. Low Data Mode, an expensive link and an IPv6
+    /// address coming or going aren't new networks either.
     /// ponytail: two networks with one gateway address, switched with no moment of none between, look the same — ssh
     /// then notices a dead link itself; a Wi-Fi switch drops the address first, so the path is unsatisfied meanwhile.
     struct Network: Equatable, Sendable {
-        var up: Bool, interfaces: [String], gateways: [String]
+        let up: Bool, interfaces: [String], gateways: [String]
         init(up: Bool, interfaces: [String], gateways: [String]) {
             var seen = Set<String>()
-            (self.up, self.interfaces, self.gateways) = (up, interfaces.filter { seen.insert($0).inserted }, gateways)
+            (self.up, self.interfaces, self.gateways) = (up, interfaces.filter { seen.insert($0).inserted }, Set(gateways).sorted())
         }
         init(_ p: NWPath) {
             self.init(up: p.status == .satisfied, interfaces: p.availableInterfaces.map { "\($0.name) \($0.type)" },
