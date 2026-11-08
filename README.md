@@ -8,6 +8,8 @@ macOS 14 or later · Apple Silicon and Intel · [MIT license](LICENSE)
 
 ![Kermo with a Git project on this Mac and a production server's folder over SFTP; the sidebar lists favorites, frequent folders, servers and the Git branch](docs/images/main-window.png)
 
+![Tools: a production server's System dashboard — CPU, memory, load, disk and traffic as tiles, then the last hour as six charts](docs/images/tools-dashboard.png)
+
 ![Search gone into a production server (web-01 › Services › nginx ›): nginx's actions, each with its key; Start greyed because nginx is running already, and the systemctl command each runs](docs/images/service-actions.png)
 
 ## Install
