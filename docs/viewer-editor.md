@@ -64,6 +64,8 @@ A mark before each name says where its text is:
 
 Two tabs of one name say where each is — `nginx.conf — web-01`, `run.sh — scripts` — and a tab's tooltip has the whole path. An italic name has no text yet: a server's file not opened since Kermo started, or a locked server's draft.
 
+![The editor with four tabs — README.md — weather-app, README.md — landing-page, config.yaml and deploy.sh with ● — deploy.sh's shell script highlighted, and the status line: Unsaved changes · Draft saved 11:04](images/editor-tabs.png)
+
 The [tools' editor](tools.md#your-own-tools) is a window of its own, as before: no tabs, no drafts; ⎋ and ⌘W close it, asking about changes.
 
 ### Untitled and Save As
