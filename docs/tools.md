@@ -75,7 +75,7 @@ How watching behaves:
 
 ![web-01's System tab in the Tools window: tiles for CPU, memory, load per core, disk and traffic, then the last hour as six charts two to a row — CPU with I/O wait and Steal, memory with swap, in and out, reads and writes, the load per core and the disk's use](images/tools-dashboard.png)
 
-![Who was it? on web-01: a click on the CPU chart at 3:41:45 PM — its tip (CPU 77 %, I/O wait 17 %), a line across every chart, the bar "As of 3:41:42 PM: the tables as they were then" with Log for This Time and Back to Live, and the busiest processes of that moment with gzip on top at 51.5 %](images/tools-moment.png)
+![Who was it? on web-01: a click near the CPU chart's right end — its tip under the pointer (3:41:45 PM: CPU 77 %, I/O wait 17 %), a line across every chart, the bar "As of 3:41:42 PM: the tables as they were then" with Log for This Time and Back to Live, and the busiest processes of that moment with gzip on top at 51.5 %](images/tools-moment.png)
 
 ![System's charts on 7d: a week of web-01 kept on this Mac — each 15 minutes' average as the line inside a band from those minutes' lowest to their highest, busy days and a quieter weekend, short bursts in the band, and a grey band where nothing was recorded](images/tools-history.png)
 
