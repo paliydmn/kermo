@@ -160,10 +160,11 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         let ws = NSWorkspace.shared.notificationCenter
         ws.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.sleeping() } }
         ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.woke() } }
-        network.pathUpdateHandler = Masters.changes { [weak self] (p: NWPath) in
-            let on = p.status == .satisfied
+        let changed = Masters.changes { [weak self] (n: Masters.Network) in
+            let on = n.up
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.online = on; self?.wokeAt = Date(); self?.restart() } }
         }
+        network.pathUpdateHandler = { changed(Masters.Network($0)) }
         network.start(queue: DispatchQueue(label: "dfm.monitor.network"))
         // The power source and Low Power Mode (spike S5).
         _ = Self.powerSource
