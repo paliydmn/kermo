@@ -13,6 +13,8 @@ Release:
 
 ## [Unreleased]
 
+## [2.0] - 2026-11-08
+
 ### Added
 - **The editor's tabs**: every document F4, ⌘N or a server's file opens is a tab of one editor window, with its own Undo; ⌘T, ⌘W and ⌃Tab work on them there. **View ▸ Tabs ▸ Move Tab Left / Right** and **All Tabs…**, **File ▸ Show Editor** and **Close Editor Window** (⇧⌘W). A mark before a tab's name says ● changed, ↑ not uploaded, **!** its draft couldn't be written; two tabs of one name say where each is.
 - **Drafts**: what you type in the editor is kept in `~/.config/dfilemanager/editor.noindex/` as you go, and the tabs come back after a quit or a crash — a file changed or gone since its draft says so, a server's file comes back unconnected and connects only on its ⌘S, a locked server's draft shows after Touch ID. Drafts never write the file or upload; a draft that can't be written is shown, not lost quietly.
@@ -428,7 +430,8 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v1.6...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v2.0...HEAD
+[2.0]: https://github.com/paliydmn/kermo/releases/tag/v2.0
 [1.6]: https://github.com/paliydmn/kermo/releases/tag/v1.6
 [1.5]: https://github.com/paliydmn/kermo/releases/tag/v1.5
 [1.4.1]: https://github.com/paliydmn/kermo/releases/tag/v1.4.1

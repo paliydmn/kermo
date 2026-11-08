@@ -125,11 +125,12 @@ A server's **overview** in a panel lists what's there, as rows that ↩ goes int
 | **Files** | its files in its start folder (only for a server with one) |
 | **Home**, **/** | its files in the login folder, or in `/` |
 | **Services**, **Containers**, **Ports** | [the list in this panel](#in-a-panel), read as it opens |
-| **Firewall**, **Banned IPs** | a [tool's](tools.md) list in this panel, for a server that has ufw or fail2ban; how many rows it had when last read |
+| **Server Info**, **System**, **Firewall**, **Banned IPs** | the [tool's](tools.md) rows in this panel — System's processes, Firewall's rules — with how many the list had when last read; Server Info has no list, its rows are what it can show. Firewall and Banned IPs show on a server that has ufw or fail2ban |
+| **Sites** | its tab in the [Tools window](tools.md#the-tools-window) |
 | **Tunnels** | its tunnels as a list in this panel, from this Mac: ↩ turns one on or off, ⌘C copies its address, F4 edits, F8 deletes, **＋ New Tunnel…** over the columns ([tunnels](tunnels.md)) |
 | **File History** | the versions of its files kept on this Mac ([file history](server-files.md#file-history)) |
 
-![web-01's overview in a panel: Files, Home, /, then Services with 1 failed and 79 units, Containers, Ports, Tunnels and File History](images/server-overview.png)
+![web-01's overview in a panel: Files, Home, /, then Services with 1 failed and 80 units, Containers, Ports, Tunnels, the tools Server Info, System and Sites, and File History](images/server-overview.png)
 
 Opening it sends nothing to the server, production and locked ones included: no Touch ID, no login, no command. Its counts — `10 units`, `1 failed` (◆), `4 containers`, `6 listening` — are what the lists last read, shown while a connection to the server is up; else `—`, until you open that row. Tunnels says how many are on, from this Mac. The first row that goes to the server asks for Touch ID on a locked one, as any connection does.
 
