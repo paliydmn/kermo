@@ -13,6 +13,8 @@ Release:
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-08
+
 ### Fixed
 - Search (⇧⌘P) keeps a row's chips (PROD, ROOT, LOCKED), its key and ⇥ beside a long description: **System — web-01** and **Sites — web-01** of a production server had lost their PROD chip. The description pushed them out of the row.
 - Server connections no longer drop on the same Wi-Fi. Kermo took small changes in the Mac's network report for a new network and stopped every shared SSH connection, on one Mac as often as every half hour. Panels then logged in again (a locked server could ask for Touch ID), a watched server's charts got a gap, and a tab that wasn't watched could be left saying "Connecting…". Now only a network that comes, goes or gets another interface or gateway counts.
@@ -434,7 +436,8 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v2.0...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/paliydmn/kermo/releases/tag/v2.0.1
 [2.0]: https://github.com/paliydmn/kermo/releases/tag/v2.0
 [1.6]: https://github.com/paliydmn/kermo/releases/tag/v1.6
 [1.5]: https://github.com/paliydmn/kermo/releases/tag/v1.5
