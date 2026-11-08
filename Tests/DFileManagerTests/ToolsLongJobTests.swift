@@ -348,3 +348,18 @@ extension ServerLockTests {
     #expect(style?.lineBreakMode == .byTruncatingMiddle)
     #expect(cell.detail.contentCompressionResistancePriority(for: .horizontal) < cell.title.contentCompressionResistancePriority(for: .horizontal))
 }
+
+/// D-192: a search row of a production server keeps its chip and ⇥ whatever its subtitle — a tool's long `about`
+/// squeezed them out ("System — web-01" without PROD); the title gives way instead.
+@MainActor @Test func aPickerRowKeepsItsChipsBesideALongSubtitle() {
+    let cell = PickerCell()
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 26), styleMask: [.borderless], backing: .buffered, defer: true)
+    w.contentView = cell
+    let marks = NSMutableAttributedString()
+    for c in [Chip.prod] { marks.append(c.text); marks.append(NSAttributedString(string: " ")) }
+    marks.append(KeyCap.text("⇥", font: .systemFont(ofSize: 12)))
+    cell.show(title: "System — web-01", subtitle: String(repeating: "Live CPU, memory, load, disks, network and disk I/O. ", count: 5), detail: "", marks: marks)
+    cell.layoutSubtreeIfNeeded()
+    #expect(!cell.marks.isHidden && cell.marks.frame.width >= cell.marks.intrinsicContentSize.width - 0.5, "\(cell.marks.frame) \(cell.marks.intrinsicContentSize)")
+    #expect(cell.marks.convert(cell.marks.bounds, to: cell).maxX <= 500 && cell.title.convert(cell.title.bounds, to: cell).maxX <= cell.marks.convert(cell.marks.bounds, to: cell).minX)
+}
