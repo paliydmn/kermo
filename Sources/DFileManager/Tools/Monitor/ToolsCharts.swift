@@ -6,15 +6,17 @@ import SwiftUI
 // MARK: Charts
 
 /// A `charts` block: small multiples of the tool's series, two to a row where each gets 300 pt, else one — a line per
-/// series key (six a metric, the first by name: "6 of 18" says the rest), never across a gap; the gaps as bands saying
-/// why; the first metric's alert thresholds as lines; the events of the hour on the time axis; one time axis and one
-/// crosshair for the block, the values under it in each chart's header — "Now", the moment the tables show, or the
-/// time under the pointer — and beside it in the chart under the pointer, a tip with each series' name and value, the
-/// gap, the events near and what a click does. On the last hour a click shows the tables then (`ToolsLive.show`),
-/// else runs the `log` action with `{from}` / `{to}` five minutes around that moment. Swift Charts in an
-/// NSHostingView over an ObservableObject the tab's update feeds (SwiftUI's @State is a macro the Command Line Tools
-/// haven't). The hour in memory; `range`'s longer spans from the history on disk (`ToolSlots`): each 15-minute slot's
-/// average with its min–max as a band round it, the gaps it wrote, "not watched" where it has nothing.
+/// series picked (the first six by name till you pick, six at most a chart, each keeping its color), never across a
+/// gap; the gaps as bands saying why; the first metric's alert thresholds as lines; the events of the hour on the
+/// time axis; one time axis and one crosshair for the block. Under a chart of several series, a chip a series picked
+/// with its value — "Now", the moment the tables show, or the time under the pointer, as the header says — a click
+/// hides it, ⌥-click shows only it, "+N more…" lists the rest to pick; beside the pointer a tip with each series'
+/// value, the gap, the events near and what a click does. Focus (⤢, a double-click on the header) shows one chart
+/// big with all its series beside it, and its numbers as a table. On the last hour a click shows the tables then
+/// (`ToolsLive.show`), else runs the `log` action with `{from}` / `{to}` five minutes around that moment. Swift Charts
+/// in an NSHostingView over an ObservableObject the tab's update feeds (SwiftUI's @State is a macro the Command Line
+/// Tools haven't). The hour in memory; `range`'s longer spans from the history on disk (`ToolSlots`): each 15-minute
+/// slot's average with its min–max as a band round it, the gaps it wrote, "not watched" where it has nothing.
 @MainActor final class ToolsCharts: NSView, ToolsBlock {
     /// What the charts draw: changed as one, so a sample draws the block once.
     struct Data {
@@ -26,20 +28,38 @@ import SwiftUI
     }
     struct Chart: Identifiable {
         let id: String, title: String, metric: ToolMetric, top: Double
+        /// What's drawn: the series picked and not hidden, in their colors' order.
         var lines: [Line]
+        /// Every series the chart has — its metrics in order, each one's keys by name — picked or not.
+        var series: [Series] = []
         var bands: [ToolChart.Band]
         var warn, crit: Double?
-        /// The series there are, drawn or not: more than `lines` past six a metric.
-        var of = 0
+        /// Its metrics' units differ: the axis is the first one's.
+        var mixed = false
+        /// The series picked — drawn, or hidden by a click on its chip — in their colors' order.
+        var picked: [Series] { series.filter { $0.color != nil }.sorted { $0.color! < $1.color! } }
         /// Why `at` has no values: the gap it's in (maintenance has values; at its end they're back).
         func gap(at t: Date) -> ToolGap? { bands.first { $0.gap != .maintenance && $0.from <= t && t < $0.to }?.gap }
         /// Why there are none now: the gap every line is in.
         var gapNow: ToolGap? { lines.allSatisfy { $0.points.last?.gap != nil } ? lines.first?.points.last?.gap : nil }
     }
+    /// One series a chart can draw: a metric's key — its line's id.
+    struct Series: Identifiable {
+        let id: String, name: String, metric: ToolMetric
+        /// Its color's place in `OneChart.colors`: picked; nil: not.
+        var color: Int?
+        /// Picked, and hidden by a click on its chip.
+        var hidden = false
+        /// Its latest value: what the series list says beside it.
+        var latest: Double?
+    }
     struct Line: Identifiable {
         let id: String, name: String
         let points: [ToolPoint]
         let chart: ToolChart
+        var color = 0
+        /// Its own metric, for its values' words; nil: the chart's.
+        var metric: ToolMetric?
     }
     @MainActor final class Model: ObservableObject {
         @Published var data = Data()
@@ -50,6 +70,16 @@ import SwiftUI
         @Published var moment: Date?
         /// Charts to a row: two where each gets `ToolsCharts.narrowest`.
         @Published var columns = 2
+        /// Room for two charts a row: Focus puts its series list beside the chart, not under it.
+        @Published var wide = true
+        /// The chart shown alone and big (Focus); nil: all of them.
+        @Published var focus: String?
+        /// Focus shows its chart's numbers as a table.
+        @Published var showData = false
+        /// The chart whose "+N more…" list is open.
+        @Published var choosing: String?
+        /// The series list's search.
+        @Published var query = ""
         var every: TimeInterval = 5
         /// A click at that time, in the clicked chart's band if it fell in one.
         var clicked: (Date, ToolGap?) -> Void = { _, _ in }
@@ -61,6 +91,26 @@ import SwiftUI
         var days: Bool { data.to.timeIntervalSince(data.from) > 2 * 86400 }
         /// The slots on disk (24h, 7d), not the hour's samples.
         var history = false
+        /// Each chart's picks — a series' id → its color — as you made them; none (or none there now): the first six
+        /// by name. Kept in the defaults under `keep`.
+        private(set) var picks: [String: [String: Int]] = [:]
+        /// Each chart's series hidden by a click on their chips: this window's, not kept.
+        private(set) var hidden: [String: Set<String>] = [:]
+        /// Where the picks are kept: "<server id> <tool id>"; nil (a test's model): nowhere.
+        var keep: String? {
+            didSet {
+                guard let keep else { return }
+                for (k, v) in UserDefaults.standard.dictionary(forKey: Self.defaultsKey) ?? [:] where k.hasPrefix(keep + " ") {
+                    if let v = v as? [String: Int] { picks[String(k.dropFirst(keep.count + 1))] = v }
+                }
+            }
+        }
+        /// ponytail: one dictionary for every server's picks; a server deleted leaves its few lines there.
+        static let defaultsKey = "toolsChartSeries"
+        /// The block's update, again: after a pick or a hide.
+        var reload: () -> Void = {}
+        /// The charts' height as laid out: the block takes it.
+        var sized: (CGFloat) -> Void = { _ in }
 
         /// `t` as the charts say it: a sample's time to the second; the 15 minutes of its slot on the history.
         func time(_ t: Date) -> String {
@@ -69,12 +119,56 @@ import SwiftUI
             return t.formatted(days ? .dateTime.weekday().hour().minute() : .dateTime.hour().minute()) + "–"
                 + t.addingTimeInterval(ToolSlots.length).formatted(.dateTime.hour().minute())
         }
+
+        /// A chip's click: the series hidden or shown; `only`, every other picked one hidden — or, if it's that way
+        /// already, all shown again.
+        func toggle(_ id: String, in chart: Chart, only: Bool) {
+            var h = hidden[chart.id] ?? []
+            let picked = chart.picked.map(\.id)
+            if only { h = picked.allSatisfy { ($0 == id) != h.contains($0) } ? [] : Set(picked.filter { $0 != id }) }
+            else if h.contains(id) { h.remove(id) } else { h.insert(id) }
+            hidden[chart.id] = h
+            reload()
+        }
+
+        func showAll(in chart: Chart) {
+            hidden[chart.id] = nil
+            reload()
+        }
+
+        /// The series list's checkbox: `id` drawn in the first color free — six at most — or not drawn; one stays.
+        /// Kept for this server and tool.
+        func pick(_ id: String, in chart: Chart, _ on: Bool) {
+            var p = Dictionary(uniqueKeysWithValues: chart.picked.map { ($0.id, $0.color!) })
+            if on {
+                guard p[id] == nil, p.count < ToolsCharts.most else { return }
+                p[id] = (0...).first { c in !p.values.contains(c) }
+            } else {
+                guard p.count > 1 else { return }
+                p[id] = nil
+                hidden[chart.id]?.remove(id)
+            }
+            picks[chart.id] = p
+            if let keep {
+                var all = UserDefaults.standard.dictionary(forKey: Self.defaultsKey) ?? [:]
+                all["\(keep) \(chart.id)"] = p
+                UserDefaults.standard.set(all, forKey: Self.defaultsKey)
+            }
+            reload()
+        }
+
+        /// Focus on a chart, or (nil) back to all of them.
+        func show(focus id: String?) {
+            (focus, showData, choosing) = (id, false, nil)
+        }
     }
 
     /// The narrowest a chart is drawn two to a row.
     static let narrowest: CGFloat = 300
-    /// A row of charts: its header, its plot, the space under it.
-    static let row: CGFloat = 176
+    /// A chart's plot: in the grid, in Focus.
+    static let plotHeight: CGFloat = 150, focusHeight: CGFloat = 320
+    /// The series a chart draws at most: more lines than this can't be told apart.
+    static let most = 6
     let block: ToolBlock
     let model = Model()
     /// The charts, while this block is on screen (`viewDidMoveToWindow`).
@@ -88,7 +182,8 @@ import SwiftUI
 
     init(_ live: ToolsLive, _ block: ToolBlock) {
         self.block = block
-        height = place.heightAnchor.constraint(equalToConstant: CGFloat(((block.charts?.count ?? 0) + 1) / 2) * Self.row)
+        // Till the charts say how tall they are: a row of header, plot and chips each two charts.
+        height = place.heightAnchor.constraint(equalToConstant: CGFloat(((block.charts?.count ?? 0) + 1) / 2) * (Self.plotHeight + 46))
         super.init(frame: .zero)
         height.isActive = true
         // On the last hour, with tables to show it in, a click is the moment; else (24h, 7d: no rows kept) its log.
@@ -97,6 +192,11 @@ import SwiftUI
         }
         if let id = block.log, let a = live.tool.preset.actions?.first(where: { $0.spec.id == id }) {
             model.log = (a.spec.title ?? id, { [unowned live] at in live.log(id, at: at) })
+        }
+        model.keep = "\(live.server.id.uuidString) \(live.tool.preset.id)"
+        model.reload = { [weak self, unowned live] in self?.update(live) }
+        model.sized = { [weak self] tall in   // the content's own height: chips may wrap, Focus is taller
+            if let self, abs(height.constant - tall) > 0.5 { height.constant = tall }
         }
         var views: [NSView] = [place]
         if let ranges = block.range, ranges.count > 1 {
@@ -131,7 +231,7 @@ import SwiftUI
         if window == nil {
             hosting?.removeFromSuperview()
             hosting = nil
-            (model.hover, model.hovered) = (nil, nil)   // gone with the pointer over it: no hover's end comes
+            (model.hover, model.hovered, model.choosing) = (nil, nil, nil)   // gone with the pointer over it: no hover's end comes
         } else if hosting == nil {
             let h = NSHostingView(rootView: ChartsView(model: model))
             h.sizingOptions = []
@@ -143,14 +243,13 @@ import SwiftUI
         }
     }
 
-    /// Two charts to a row where each gets `narrowest`, else one — one alone takes the row; as tall as its rows.
-    /// The width comes from the page, never from the height: one more pass at most.
+    /// Two charts to a row where each gets `narrowest`, else one — one alone takes the row. The width comes from the
+    /// page; the height from what the charts lay out (`model.sized`).
     override func layout() {
         super.layout()
-        let n = block.charts?.count ?? 0, columns = n > 1 && bounds.width >= 2 * Self.narrowest + 14 ? 2 : 1
+        let wide = bounds.width >= 2 * Self.narrowest + 14, columns = (block.charts?.count ?? 0) > 1 && wide ? 2 : 1
+        if model.wide != wide { model.wide = wide }
         if model.columns != columns { model.columns = columns }
-        let tall = CGFloat((n + columns - 1) / columns) * Self.row
-        if height.constant != tall { height.constant = tall }
     }
 
     /// The span the range control picked: the last hour unless longer.
@@ -176,25 +275,43 @@ import SwiftUI
         d.charts = (block.charts ?? []).compactMap { ids -> Chart? in
             let metrics = ids.compactMap { id in p.metrics?[id].map { (id: id, metric: $0) } }
             guard let first = metrics.first else { return nil }
-            var lines: [Line] = [], of = 0
+            let chartID = ids.joined(separator: "+")
+            // Every series there is — a metric's keys by name; a metric with none, one line of its own.
+            var series: [Series] = [], source: [String: (metric: String, key: String)] = [:]
             for (id, m) in metrics {
-                // ponytail: a line per series key, six a metric, the first by name (a set and colors that hold still)
-                // — "6 of 18" says the rest; picking which, a design pass after 2.0 (D-191).
                 let keys = slots.map { ToolSlots.keys($0, metric: id) } ?? t?.history.series[id]?.keys.sorted() ?? []
-                of += max(1, keys.count)
-                for key in (keys.isEmpty ? [""] : keys).prefix(6) {
-                    let pts = slots.map { ToolSlots.points($0, metric: id, key: key, from: d.from) } ?? t?.history.points(id, key) ?? []
+                for key in keys.isEmpty ? [""] : keys {
                     let name = key.isEmpty ? m.title ?? id : metrics.count > 1 ? "\(m.title ?? id) \(key)" : key   // two metrics' same key: two names
-                    lines.append(Line(id: "\(id) \(key)", name: name, points: pts, chart: ToolChart(pts, now: now)))
+                    series.append(Series(id: "\(id) \(key)", name: name, metric: m))
+                    source["\(id) \(key)"] = (id, key)
                 }
             }
+            // The picks there are now; none: the first six by name, their colors by place.
+            let saved = (model.picks[chartID] ?? [:]).filter { source[$0.key] != nil }
+            let colors = saved.isEmpty ? Dictionary(uniqueKeysWithValues: series.prefix(Self.most).enumerated().map { ($1.id, $0) }) : saved
+            let hidden = model.hidden[chartID] ?? []
+            var lines: [Line] = []
+            for i in series.indices {
+                let s = series[i], (metric, key) = source[s.id]!
+                series[i].color = colors[s.id]
+                series[i].hidden = colors[s.id] != nil && hidden.contains(s.id)
+                guard let color = series[i].color, !series[i].hidden else {   // not drawn: its latest only, for the list
+                    series[i].latest = slots.map { $0.last { $0.v?[metric]?[key] != nil }?.v?[metric]?[key]?[1] }
+                        ?? t?.history.series[metric]?[key]?.last?.value
+                    continue
+                }
+                let pts = slots.map { ToolSlots.points($0, metric: metric, key: key, from: d.from) } ?? t?.history.points(metric, key) ?? []
+                series[i].latest = pts.last { $0.value != nil }?.value
+                lines.append(Line(id: s.id, name: s.name, points: pts, chart: ToolChart(pts, now: now), color: color, metric: s.metric))
+            }
+            lines.sort { $0.color < $1.color }
             let alert = alerts.first { $0.metric == first.id && $0.below != true }   // the first metric's: CPU's beside I/O wait
-            return Chart(id: ids.joined(separator: "+"), title: metrics.map { $0.metric.title ?? $0.id }.joined(separator: " · "), metric: first.metric,
+            return Chart(id: chartID, title: metrics.map { $0.metric.title ?? $0.id }.joined(separator: " · "), metric: first.metric,
                          // by the averages: a burst's high would flatten every line; its band is cut at the top, the tip says it
                          top: ToolChart.top(lines.flatMap { $0.points.compactMap(\.value) },
                                             max: first.metric.max ?? (first.metric.unit == "%" ? 100 : nil)),
-                         lines: lines, bands: (lines.map(\.chart.bands).max { $0.count < $1.count } ?? []) + maintenance, warn: alert?.warn, crit: alert?.crit,
-                         of: of)
+                         lines: lines, series: series, bands: (lines.map(\.chart.bands).max { $0.count < $1.count } ?? []) + maintenance,
+                         warn: alert?.warn, crit: alert?.crit, mixed: Set(metrics.map { $0.metric.unit ?? "" }).count > 1)
         }
         d.events = ((t?.events ?? []) + (live.state?.events ?? [])).filter { $0.at >= d.from && $0.level != "ok" }
         d.click = span <= 3600 && live.showsMoments ? "Click: the tables at this time" : model.log.map { "Click: \($0.title)" }
@@ -204,13 +321,128 @@ import SwiftUI
     }
 }
 
+/// The charts' height as laid out, for the block's constraint.
+private struct ChartsHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 struct ChartsView: View {
     @ObservedObject var model: ToolsCharts.Model
 
     var body: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: model.columns), alignment: .leading, spacing: 10) {
-            ForEach(model.data.charts) { OneChart(chart: $0, model: model) }
+        charts
+            .fixedSize(horizontal: false, vertical: true)
+            .background(GeometryReader { g in Color.clear.preference(key: ChartsHeight.self, value: g.size.height) })
+            .onPreferenceChange(ChartsHeight.self) { tall in MainActor.assumeIsolated { model.sized(tall) } }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder private var charts: some View {
+        if let id = model.focus, let chart = model.data.charts.first(where: { $0.id == id }) {
+            FocusView(chart: chart, model: model)
+        } else {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14, alignment: .top), count: model.columns), alignment: .leading, spacing: 10) {
+                ForEach(model.data.charts) { OneChart(chart: $0, model: model) }
+            }
         }
+    }
+}
+
+/// One chart alone and big, its series beside it (under it where the block is narrow); Data: its numbers.
+struct FocusView: View {
+    let chart: ToolsCharts.Chart
+    @ObservedObject var model: ToolsCharts.Model
+
+    var body: some View {
+        if model.wide {
+            HStack(alignment: .top, spacing: 12) { OneChart(chart: chart, model: model, big: true); Divider(); side.frame(width: 220) }
+        } else {
+            VStack(alignment: .leading, spacing: 10) { OneChart(chart: chart, model: model, big: true); side }
+        }
+    }
+
+    private var side: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                SwiftUI.Picker("Show", selection: $model.showData) { Text("Chart").tag(false); Text("Data").tag(true) }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                Spacer()
+                Text("\(chart.picked.count) of \(chart.series.count) drawn").font(.caption).foregroundStyle(.secondary)
+            }
+            SeriesList(id: chart.id, model: model)
+        }
+        .frame(height: model.wide ? ToolsCharts.focusHeight + 22 : 260, alignment: .top)
+    }
+}
+
+/// A chart's series to pick: a checkbox each with its color and latest value, found by a search past eight.
+struct SeriesList: View {
+    let id: String
+    @ObservedObject var model: ToolsCharts.Model
+
+    var body: some View {
+        if let chart = model.data.charts.first(where: { $0.id == id }) {
+            let picked = chart.picked.count, q = model.query.trimmingCharacters(in: .whitespaces)
+            let found = q.isEmpty ? chart.series : chart.series.filter { $0.name.localizedCaseInsensitiveContains(q) }
+            VStack(alignment: .leading, spacing: 6) {
+                if chart.series.count > 8 { TextField("Find among \(chart.series.count)", text: $model.query).textFieldStyle(.roundedBorder) }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(found) { s in
+                            Toggle(isOn: Binding(get: { s.color != nil }, set: { model.pick(s.id, in: chart, $0) })) {
+                                HStack(spacing: 6) {
+                                    RoundedRectangle(cornerRadius: 1).fill(s.color.map(OneChart.color) ?? .clear).frame(width: 10, height: 3)
+                                    Text(OneChart.short(s.name)).lineLimit(1).truncationMode(.middle)
+                                    Spacer(minLength: 8)
+                                    Text(s.hidden ? "hidden" : s.latest.map(s.metric.text) ?? "—").monospacedDigit().foregroundStyle(.secondary)
+                                }
+                            }
+                            .toggleStyle(.checkbox)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .disabled(s.color == nil ? picked >= ToolsCharts.most : picked == 1)
+                            .help(s.name)
+                        }
+                        if found.isEmpty { Text("No series match “\(q)”").foregroundStyle(.secondary) }
+                    }
+                }
+                Text("Six drawn at most: uncheck one to draw another. One not drawn is still watched, and still alerts.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            .font(.callout)
+        }
+    }
+}
+
+/// Chips side by side, onto the next line where the width ends.
+struct Flow: Layout {
+    var spacing: CGFloat = 2
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = rows(subviews, width: proposal.width ?? .infinity)
+        return CGSize(width: rows.map(\.width).max() ?? 0, height: rows.last.map { $0.y + $0.height } ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for row in rows(subviews, width: bounds.width) {
+            for (i, x, size) in row.items { subviews[i].place(at: CGPoint(x: bounds.minX + x, y: bounds.minY + row.y), proposal: ProposedViewSize(size)) }
+        }
+    }
+
+    private func rows(_ subviews: Subviews, width: CGFloat) -> [(y: CGFloat, width: CGFloat, height: CGFloat, items: [(Int, CGFloat, CGSize)])] {
+        var rows: [(y: CGFloat, width: CGFloat, height: CGFloat, items: [(Int, CGFloat, CGSize)])] = []
+        var x: CGFloat = 0, y: CGFloat = 0, height: CGFloat = 0, items: [(Int, CGFloat, CGSize)] = []
+        for i in subviews.indices {
+            let size = subviews[i].sizeThatFits(ProposedViewSize(width: width, height: nil))   // a long name is cut, not wider than the row
+            if !items.isEmpty, x + size.width > width {
+                rows.append((y, x - spacing, height, items))
+                (x, y, height, items) = (0, y + height + spacing, 0, [])
+            }
+            items.append((i, x, size))
+            (x, height) = (x + size.width + spacing, max(height, size.height))
+        }
+        if !items.isEmpty { rows.append((y, x - spacing, height, items)) }
+        return rows
     }
 }
 
@@ -218,51 +450,126 @@ struct ChartsView: View {
 struct OneChart: View {
     let chart: ToolsCharts.Chart
     @ObservedObject var model: ToolsCharts.Model
+    /// In Focus: taller, its series in the list beside it, Data in place of the plot.
+    var big = false
     /// Series colors in a fixed order (the first two: In · Out, read · write); red, orange, purple and green mean
     /// something else in Kermo.
     static let colors: [Color] = [.accentColor, Color(nsColor: .secondaryLabelColor), .teal, .indigo, .brown, .mint]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text(chart.title).font(.caption.weight(.medium)).lineLimit(1)
-                if chart.of > chart.lines.count {
-                    Text("\(chart.lines.count) of \(chart.of)").font(.caption).foregroundStyle(.secondary)
-                        .help("Lines for the first \(chart.lines.count) by name; the other \(chart.of - chart.lines.count) aren't drawn")
-                }
-                Spacer()
-                Text(said).font(.caption.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
+        VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
+                head
+                if big && model.showData { DataTable(chart: chart, model: model).frame(height: ToolsCharts.focusHeight) }
+                else { plot.frame(height: big ? ToolsCharts.focusHeight : ToolsCharts.plotHeight) }
             }
-            plot.frame(height: 150)
+            .accessibilityElement(children: .ignore)   // the marks and the tip aren't walked: an AX walk of them stalls
+            .accessibilityLabel("\(chart.title): \(spoken)")
+            .accessibilityAction(named: big ? "Show All Charts" : "Focus") { model.show(focus: big ? nil : chart.id) }
+            if chart.series.count > 1 { legend }
         }
-        .accessibilityElement(children: .ignore)   // the marks and the tip aren't walked: an AX walk of them stalls
-        .accessibilityLabel("\(chart.title): \(spoken)")
+    }
+
+    private var head: some View {
+        HStack(spacing: 6) {
+            Text(chart.title).font(.caption.weight(.medium)).lineLimit(1)
+            if chart.series.count > chart.picked.count {
+                Text("\(chart.picked.count) of \(chart.series.count)").font(.caption).foregroundStyle(.secondary)
+                    .help("\(chart.picked.count) of \(chart.series.count) series drawn: “+\(chart.series.count - chart.picked.count) more…” under the chart picks others")
+            }
+            if chart.mixed {
+                Text("units differ").font(.caption).foregroundStyle(.secondary)
+                    .help("Its series aren't in one unit: the axis is \(chart.metric.title ?? "the first")'s; each value is said in its own")
+            }
+            Spacer()
+            Text(said).font(.caption.monospacedDigit()).foregroundStyle(model.hover == nil && model.moment != nil ? Color.accentColor : .secondary).lineLimit(1)
+            Button { model.show(focus: big ? nil : chart.id) } label: {
+                Image(systemName: big ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right").font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .help(big ? "Back to all the charts" : "Focus: this chart big, with all its series")
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { model.show(focus: big ? nil : chart.id) }
+    }
+
+    /// A chip a series picked — its color, name and value when the header says — then "+N more…" (Focus: its list beside).
+    private var legend: some View {
+        Flow {
+            ForEach(chart.picked) { s in chip(s) }
+            if chart.series.count > chart.picked.count, !big {
+                Button("+\(chart.series.count - chart.picked.count) more…") { (model.query, model.choosing) = ("", chart.id) }
+                    .buttonStyle(.plain).font(.caption).foregroundStyle(Color.accentColor).padding(.horizontal, 4)
+                    .popover(isPresented: Binding(get: { model.choosing == chart.id }, set: { if !$0, model.choosing == chart.id { model.choosing = nil } }),
+                             arrowEdge: .bottom) {
+                        SeriesList(id: chart.id, model: model)
+                            .frame(width: 320, height: min(300, CGFloat(chart.series.count) * 24 + (chart.series.count > 8 ? 100 : 64))).padding(10)
+                    }
+            }
+        }
+    }
+
+    private func chip(_ s: ToolsCharts.Series) -> some View {
+        Button { model.toggle(s.id, in: chart, only: NSEvent.modifierFlags.contains(.option)) } label: {
+            HStack(spacing: 4) {
+                RoundedRectangle(cornerRadius: 1).fill(Self.color(s.color ?? 0)).frame(width: 10, height: 3)
+                Text(Self.short(s.name)).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+                if !s.hidden {   // as wide as the widest value it may say: the chips hold still as the pointer moves
+                    ZStack(alignment: .leading) { Text(Self.widest(s.metric, chart.top)).hidden(); Text(value(s)) }.monospacedDigit()
+                }
+            }
+            .opacity(s.hidden ? 0.45 : 1)
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .font(.caption)
+        .help(s.hidden ? "\(s.name): hidden — a click shows it" : "\(s.name) — a click hides it, ⌥-click shows only it")
+        .contextMenu {
+            Button("Only This") { model.toggle(s.id, in: chart, only: true) }
+            Button("Show All") { model.showAll(in: chart) }
+            Button("Choose Series…") { (model.query, model.choosing) = ("", chart.id) }
+        }
+        .accessibilityLabel(s.hidden ? "\(s.name), hidden" : "\(s.name) \(value(s))")
+    }
+
+    /// A series' name where room is short: an address without its http(s)://; the whole in its tooltip.
+    static func short(_ name: String) -> String {
+        for scheme in ["https://", "http://"] where name.hasPrefix(scheme) { return String(name.dropFirst(scheme.count)) }
+        return name
+    }
+
+    /// The widest text a value of `metric` under `top` may take, roughly: its top's, each digit an 8, one more.
+    static func widest(_ metric: ToolMetric, _ top: Double) -> String {
+        "8" + String(metric.text(top).map { $0.isNumber ? "8" : $0 })
     }
 
     /// When the header's values are: under the pointer, the moment the tables show — or none, the latest.
     private var when: Date? { model.hover ?? model.moment }
 
-    /// Each line's value at `t` (nil: the latest — on the history, the last slot's), as the metric says it.
-    private func values(at t: Date?) -> [String] {
-        chart.lines.map { line in
-            let v = t.map { ToolChart.nearest(line.points, to: $0, within: model.every * 1.5)?.value }
-                ?? (model.history ? line.points.last { $0.value != nil } : line.points.last)?.value
-            return v.map(chart.metric.text) ?? "—"
-        }
+    /// `line`'s value at `t` (nil: the latest — on the history, the last slot's), in its metric's words.
+    private func value(_ line: ToolsCharts.Line, at t: Date?) -> String {
+        let v = t.map { ToolChart.nearest(line.points, to: $0, within: model.every * 1.5)?.value }
+            ?? (model.history ? line.points.last { $0.value != nil } : line.points.last)?.value
+        return v.map((line.metric ?? chart.metric).text) ?? "—"
     }
+
+    /// A chip's value: its line's when the header says.
+    func value(_ s: ToolsCharts.Series) -> String { chart.lines.first { $0.id == s.id }.map { value($0, at: when) } ?? "—" }
 
     /// The header's when — "Now", on the history the last slot's time, the time under the pointer, "At" the moment the
-    /// tables show — and its values, or the gap that has none.
+    /// tables show — and the values, or the gap that has none.
     private var header: (when: String, gap: ToolGap?, values: [String]) {
-        if let t = when { return ((model.hover == nil ? "At " : "") + model.time(t), chart.gap(at: t), values(at: t)) }
-        guard model.history else { return ("Now", chart.gapNow, values(at: nil)) }
-        return (chart.lines.compactMap { $0.points.last { $0.value != nil }?.at }.max().map(model.time) ?? "", nil, values(at: nil))
+        if let t = when { return ((model.hover == nil ? "At " : "") + model.time(t), chart.gap(at: t), chart.lines.map { value($0, at: t) }) }
+        guard model.history else { return ("Now", chart.gapNow, chart.lines.map { value($0, at: nil) }) }
+        return (chart.lines.compactMap { $0.points.last { $0.value != nil }?.at }.max().map(model.time) ?? "", nil, chart.lines.map { value($0, at: nil) })
     }
 
-    /// The header as shown: "Now 24%", "9:28:45 PM · 24% · 3%", "Now · Mac asleep".
+    /// The header as shown: "Now 24%", "9:28:45 PM · Mac asleep" — a chart of several series, only when: its chips
+    /// have the values.
     var said: String {
-        let h = header, v = h.gap.map(Self.word) ?? h.values.joined(separator: " · ")
-        return h.when == "Now" && h.gap == nil ? "Now " + v : [h.when, v].filter { !$0.isEmpty }.joined(separator: " · ")
+        let h = header, v = h.gap.map(Self.word) ?? (chart.series.count > 1 ? "" : h.values.joined(separator: " · "))
+        return h.when == "Now" && h.gap == nil && !v.isEmpty ? "Now " + v : [h.when, v].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     /// The header as VoiceOver says it: each value with its series' name.
@@ -272,15 +579,15 @@ struct OneChart: View {
         return [h.when, v].filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
-    /// The tip at `t`: the time; a row a series — its color's index, name and value (on the history a slot's lowest,
-    /// average and highest); notes: why there are none, the events near, the lines not drawn, what a click does.
+    /// The tip at `t`: the time; a row a series drawn — its color, name and value (on the history a slot's lowest,
+    /// average and highest); notes: why there are none, the events near, the series not drawn, what a click does.
     static func tip(_ chart: ToolsCharts.Chart, _ model: ToolsCharts.Model, at t: Date) -> (time: String, rows: [(color: Int, name: String, value: String)], notes: [String]) {
         let gap = chart.gap(at: t)
         var rows: [(color: Int, name: String, value: String)] = [], spread = false
-        for (i, line) in chart.lines.enumerated() where gap == nil {
-            let p = ToolChart.nearest(line.points, to: t, within: model.every * 1.5), text = chart.metric.text
-            if let p, let v = p.value, let lo = p.low, let hi = p.high { rows.append((i, line.name, "\(text(lo)) – \(text(v)) – \(text(hi))")); spread = true }
-            else { rows.append((i, line.name, p?.value.map(text) ?? "—")) }
+        for line in chart.lines where gap == nil {
+            let p = ToolChart.nearest(line.points, to: t, within: model.every * 1.5), text = (line.metric ?? chart.metric).text
+            if let p, let v = p.value, let lo = p.low, let hi = p.high { rows.append((line.color, line.name, "\(text(lo)) – \(text(v)) – \(text(hi))")); spread = true }
+            else { rows.append((line.color, line.name, p?.value.map(text) ?? "—")) }
         }
         var notes: [String] = []
         if let gap { notes.append(word(gap).prefix(1).uppercased() + word(gap).dropFirst()) }
@@ -290,7 +597,7 @@ struct OneChart: View {
         let events = model.data.events.filter { abs($0.at.timeIntervalSince(t)) <= near }
         notes += events.prefix(3).map { "\($0.level.prefix(1).uppercased() + $0.level.dropFirst()) \($0.at.formatted(date: .omitted, time: .shortened)) · \($0.message)" }
         if events.count > 3 { notes.append("and \(events.count - 3) more") }
-        if chart.of > chart.lines.count { notes.append("\(chart.lines.count) of \(chart.of) drawn: the first by name") }
+        if chart.series.count > chart.picked.count { notes.append("\(chart.picked.count) of \(chart.series.count) drawn: “more…” under the chart picks others") }
         if let click = model.data.click { notes.append(click) }
         return (model.time(t), rows, notes)
     }
@@ -307,7 +614,7 @@ struct OneChart: View {
         s == "critical" ? Color(nsColor: Palette.fail) : s == "warning" ? Color(nsColor: Palette.warn) : Color(nsColor: .secondaryLabelColor)
     }
 
-    private static func color(_ i: Int) -> Color { colors[i % colors.count] }
+    static func color(_ i: Int) -> Color { colors[i % colors.count] }
 
     private func tipView(_ t: Date) -> some View {
         let tip = Self.tip(chart, model, at: t)
@@ -316,7 +623,7 @@ struct OneChart: View {
             ForEach(Array(tip.rows.enumerated()), id: \.offset) { _, r in
                 HStack(spacing: 4) {
                     Circle().fill(Self.color(r.color)).frame(width: 6, height: 6)
-                    Text(r.name).lineLimit(1).truncationMode(.middle).frame(maxWidth: 160, alignment: .leading)
+                    Text(Self.short(r.name)).lineLimit(1).truncationMode(.middle).frame(maxWidth: 160, alignment: .leading)
                     Spacer(minLength: 8)
                     Text(r.value).monospacedDigit()
                 }
@@ -348,13 +655,13 @@ struct OneChart: View {
 
     /// A slot's lowest to highest round its average (the history): under the lines, out of the legend.
     @ChartContentBuilder private var spreadMarks: some ChartContent {
-        ForEach(Array(chart.lines.enumerated()), id: \.offset) { n, line in
+        ForEach(chart.lines) { line in
             ForEach(Array(line.chart.runs.enumerated()), id: \.offset) { i, run in
                 ForEach(Array(run.enumerated()), id: \.offset) { _, p in
                     if let lo = p.low, let hi = p.high {
                         AreaMark(x: .value("Time", p.at), yStart: .value("Lowest", min(lo, chart.top)), yEnd: .value("Highest", min(hi, chart.top)),
                                  series: .value("Band", "\(line.id) \(i) band"))
-                            .foregroundStyle(Self.color(n).opacity(0.15))
+                            .foregroundStyle(Self.color(line.color).opacity(0.15))
                     }
                 }
             }
@@ -363,10 +670,10 @@ struct OneChart: View {
 
     /// A line a run of each series; a lone value as a point.
     @ChartContentBuilder private var lineMarks: some ChartContent {
-        ForEach(Array(chart.lines.enumerated()), id: \.offset) { n, line in
+        ForEach(chart.lines) { line in
             ForEach(Array(line.chart.runs.enumerated()), id: \.offset) { i, run in
                 if run.count == 1, let p = run.first {   // a lone value between gaps: a line of one point draws nothing
-                    PointMark(x: .value("Time", p.at), y: .value(chart.title, min(p.value ?? 0, chart.top))).foregroundStyle(Self.color(n)).symbolSize(10)
+                    PointMark(x: .value("Time", p.at), y: .value(chart.title, min(p.value ?? 0, chart.top))).foregroundStyle(Self.color(line.color)).symbolSize(10)
                 }
                 ForEach(Array(run.enumerated()), id: \.offset) { _, p in   // by place: lines read together share one time
                     LineMark(x: .value("Time", p.at), y: .value(chart.title, min(p.value ?? 0, chart.top)), series: .value("Run", "\(line.id) \(i)"))
@@ -410,8 +717,8 @@ struct OneChart: View {
         }
         .chartXScale(domain: model.data.from...model.data.to)
         .chartYScale(domain: 0...chart.top)
-        .chartForegroundStyleScale(domain: chart.lines.map(\.name), range: chart.lines.indices.map(Self.color))
-        .chartLegend(chart.lines.count > 1 ? .visible : .hidden)
+        .chartForegroundStyleScale(domain: chart.lines.map(\.name), range: chart.lines.map { Self.color($0.color) })
+        .chartLegend(.hidden)   // the chips under it, or Focus's list
         .chartYAxis {
             AxisMarks(position: .leading, values: [0, chart.top / 2, chart.top]) { v in
                 AxisGridLine()
@@ -421,7 +728,7 @@ struct OneChart: View {
             }
         }
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 4)) { _ in AxisGridLine(); AxisValueLabel(format: model.days ? .dateTime.weekday().hour() : .dateTime.hour().minute()) }
+            AxisMarks(values: .automatic(desiredCount: big ? 5 : 4)) { _ in AxisGridLine(); AxisValueLabel(format: model.days ? .dateTime.weekday().hour() : .dateTime.hour().minute()) }
         }
         .chartOverlay { proxy in
             GeometryReader { g in
@@ -446,5 +753,52 @@ struct OneChart: View {
                     }
             }
         }
+    }
+}
+
+/// Focus's Data: the chart's numbers, newest first — a row a time any series drawn has a value or a gap at, a column a
+/// series (on the history a slot's lowest – average – highest), and why there's none.
+struct DataTable: View {
+    let chart: ToolsCharts.Chart
+    @ObservedObject var model: ToolsCharts.Model
+
+    static func rows(_ chart: ToolsCharts.Chart, time: (Date) -> String) -> [(time: String, values: [String], note: String)] {
+        let byTime = chart.lines.map { Dictionary($0.points.map { ($0.at, $0) }) { a, _ in a } }
+        return Set(chart.lines.flatMap { $0.points.map(\.at) }).sorted(by: >).map { t in
+            let pts = byTime.map { $0[t] }
+            let values = zip(chart.lines, pts).map { line, p -> String in
+                let text = (line.metric ?? chart.metric).text
+                guard let p, let v = p.value else { return "—" }
+                if let lo = p.low, let hi = p.high { return "\(text(lo)) – \(text(v)) – \(text(hi))" }
+                return text(v)
+            }
+            return (time(t), values, pts.compactMap { $0?.gap }.first.map(OneChart.word) ?? "")
+        }
+    }
+
+    var body: some View {
+        let rows = Self.rows(chart, time: model.time)
+        ScrollView([.vertical, .horizontal]) {   // more series than the width holds: sideways
+            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: .sectionHeaders) {
+                Section(header: row(model.history ? "15 minutes" : "Time", chart.lines.map { OneChart.short($0.name) }, "", head: true)) {
+                    ForEach(rows.indices, id: \.self) { i in row(rows[i].time, rows[i].values, rows[i].note).background(i % 2 == 1 ? Color(nsColor: .alternatingContentBackgroundColors[1]) : .clear) }
+                }
+            }
+        }
+        .font(.caption.monospacedDigit())
+        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color(nsColor: .separatorColor)))
+    }
+
+    private func row(_ time: String, _ values: [String], _ note: String, head: Bool = false) -> some View {
+        HStack(spacing: 8) {
+            Text(time).frame(width: model.history ? 150 : 90, alignment: .leading)
+            ForEach(Array(values.enumerated()), id: \.offset) { _, v in
+                Text(v).lineLimit(1).truncationMode(.middle).frame(width: model.history ? 130 : 80, alignment: .trailing)
+            }
+            Text(note).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+        }
+        .fontWeight(head ? .medium : .regular)
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background(head ? Color(nsColor: .windowBackgroundColor) : .clear)
     }
 }

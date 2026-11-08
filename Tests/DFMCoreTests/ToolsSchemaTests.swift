@@ -129,6 +129,8 @@ struct Case: CustomTestStringConvertible, Sendable {
     Case(name: "> in a readonly action", json: "{ \(head), \"toolActions\": [ { \"id\": \"a\", \"readonly\": true, \"command\": \"ls 2>/dev/null > /tmp/x\" } ] }",
          says: "writes to a file", level: .warning),
     Case(name: "sudo without about", json: "{ \(head), \"sudo\": true, \"command\": \"id\" }", says: "runs as root but has no “about”", level: .warning),
+    Case(name: "a chart of two units", json: "{ \(head), \"metrics\": { \"a\": { \"path\": \"a\", \"unit\": \"%\" }, \"b\": { \"path\": \"b\", \"unit\": \"ms\" } }, "
+         + "\"dashboard\": [ { \"charts\": [[\"a\", \"b\"]] } ] }", says: "its metrics' units differ (a: %, b: ms): one axis, in a's", level: .warning),
 ])
 func everyCheckOfTheProtocol(_ c: Case) {
     let (preset, problems) = check(c.json, hasScript: { $0 != "gone.sh" })

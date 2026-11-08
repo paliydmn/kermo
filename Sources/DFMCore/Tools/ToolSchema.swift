@@ -470,6 +470,12 @@ extension ToolSchema.Check {
                 for x in b.actions ?? [] { if let rows = actionRows[x] ?? nil, let table = b.table, rows != table { error(bp + [.key("actions")], "“\(x)” acts on rows of \(rows), not \(table)") } }
                 if let log = b.log, !rowActions.contains(log) { error(bp + [.key("log")], "“\(log)” isn't one of the actions") }
                 for m in (b.stat?.all ?? []) + (b.charts ?? []).flatMap({ $0 }) where !metrics.contains(m) { error(bp, "“\(m)” isn't one of the metrics") }
+                for (j, chart) in (b.charts ?? []).enumerated() {   // one axis: the first's unit; the chart says so, this says it first
+                    let units = chart.compactMap { m in p.metrics?[m].map { "\(m): \($0.unit ?? "no unit")" } }
+                    if Set(chart.compactMap { p.metrics?[$0]?.unit ?? "" }).count > 1 {
+                        warn(bp + [.key("charts"), .index(j)], "its metrics' units differ (\(units.joined(separator: ", "))): one axis, in \(chart[0])'s")
+                    }
+                }
                 blocks(b.row ?? [], bp + [.key("row")])
             }
         }
