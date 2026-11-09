@@ -210,7 +210,7 @@ import SwiftUI
         /// on the history the slot's numbers; `gap`: the band the click fell in.
         func inspect(at t: Date, gap: ToolGap? = nil) {
             hold()
-            selection = nil
+            if selection != nil { selection = nil }   // a key press publishes once
             put(history ? Date(timeIntervalSince1970: ToolSlots.slot(t)) : t, gap)
         }
 
@@ -247,7 +247,9 @@ import SwiftUI
 
         /// Back to Live: the window follows the latest again; the moment, the selection and the Zoom let go.
         func backToLive() {
-            (held, selection, zoomed) = (nil, nil, false)
+            if held != nil { held = nil }
+            if selection != nil { selection = nil }
+            zoomed = false
             put(nil)
         }
 

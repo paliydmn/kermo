@@ -1014,6 +1014,18 @@ extension ServerLockTests {
         try await Task.sleep(for: .seconds(2.5))
         #expect(tool.history.points("cpu").count < shown.count && charts.model.data.charts[0].lines[0].points.map(\.at) == shown.map(\.at),
                 "\(tool.history.points("cpu").count) \(shown.count)")
+        // The block's keys: ⇧→ a minute (here to the edge), ← a sample, F Focus.
+        func key(_ code: UInt16, _ c: String, _ mods: NSEvent.ModifierFlags = []) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: mods, timestamp: 0, windowNumber: 0, context: nil,
+                             characters: c, charactersIgnoringModifiers: c, isARepeat: false, keyCode: code)!
+        }
+        let m0 = try #require(charts.model.moment), last = try #require(charts.model.samples.last)
+        charts.keyDown(with: key(124, "\u{F703}", .shift))
+        #expect(charts.model.moment == last && m0 < last, "⇧→: the edge")
+        charts.keyDown(with: key(123, "\u{F702}"))
+        #expect(charts.model.moment == m0, "←")
+        charts.keyDown(with: key(3, "f"))
+        #expect(charts.model.focus == charts.model.data.charts.first?.id, "F")
     }
 
     /// Review 3, T12: a table's All Processes… opens the tool's list in a Picker over the Tools window — the busiest
