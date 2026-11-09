@@ -517,7 +517,6 @@ import SwiftUI
         s.append(NSAttributedString(string: text, attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
         s.addAttribute(.font, value: status.font!, range: NSRange(location: 0, length: s.length))
         status.attributedStringValue = s
-        status.setAccessibilityValue(text)
         liveButton.isHidden = !inspecting
         sub.stringValue = [Self.length(d.to.timeIntervalSince(d.from)), m.history ? "each point a slot's average, the band its lowest to highest" : nil,
                            m.history ? "recorded only while watched" : "recorded only while open or watched", Self.zone(d.to)].compactMap { $0 }.joined(separator: " · ")
@@ -969,7 +968,13 @@ struct OneChart: View {
             }
         }
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: big ? 5 : 4)) { _ in AxisGridLine(); AxisValueLabel(format: model.days ? .dateTime.weekday().hour() : .dateTime.hour().minute()) }
+            AxisMarks(values: .automatic(desiredCount: big ? 5 : 4)) { v in
+                AxisGridLine()
+                // none at the right edge (15m, a Zoom): there it's cut to "…"
+                if let t = v.as(Date.self), model.data.to.timeIntervalSince(t) > model.data.to.timeIntervalSince(model.data.from) / 15 {
+                    AxisValueLabel(format: model.days ? .dateTime.weekday().hour() : .dateTime.hour().minute())
+                }
+            }
         }
         .chartOverlay { proxy in
             GeometryReader { g in
