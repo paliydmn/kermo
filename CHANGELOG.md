@@ -16,10 +16,15 @@ Release:
 ### Added
 - **Chart chips**: under a Tools chart of several series, a chip each with its color, name and value — now, at the moment the tables show, or under the pointer. A click hides that line, ⌥-click shows only it, a right-click has **Only This**, **Show All** and **Choose Series…**.
 - **Pick the series a chart draws**: past six, **+N more…** under the chart lists them all with their latest values and a search, to tick which six. Kermo keeps the pick, and each series' color, for that server and tool.
-- **Focus** (⤢ in a chart's header, or a double-click on it): one chart alone and taller, its series beside it, and **Data** — its numbers as a table.
+- **Focus** (⤢ in a chart's header, a double-click on it, or F): one chart alone and taller, its series beside it, and **Data** — its numbers as a table.
+- **A stretch of time on the charts**: drag across a Tools chart to mark it on every chart, then **Zoom** to it or open **Log for This Time** for it (up to 24 hours). While you look the charts hold still — samples and alerts go on, the right edge and the scale stay — and the line beside the range says what you're inspecting, how many samples came since, with **Back to Live**.
+- **15m** beside a chart's 1h: the hour's last quarter.
+- **Keys on a chart**, once clicked: ← / → a sample, ⇧← / ⇧→ a minute (an hour on 24h and 7d), ↩ Log for This Time, F Focus, ⎋ a step back. VoiceOver has them as the chart's actions.
 
 ### Changed
 - A chart of several series says only *when* in its header; the values moved to its chips. A chart whose metrics' units differ says so, and a tool's Problems warn about it.
+- A click on a chart's **24h** or **7d** is a moment, as on the last hour: the charts' numbers for those 15 minutes, the journal a button away (**Log for This Time**). It used to open the journal.
+- ⎋ on a server's Tools tab steps back one thing at a time: the series list, the stretch, Focus, then Back to Live.
 
 ## [2.0.1] - 2026-11-08
 

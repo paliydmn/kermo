@@ -73,8 +73,9 @@ import DFMCore
     private let metricOf: [String: (id: String, metric: ToolMetric)]
     /// When its rows came, and how long after the rows before.
     private var at: Date?, every: TimeInterval?, stale = false
-    /// A moment shows (`ToolsLive.moment`): its rows then — when they came, nil: nothing recorded — read only.
-    private var past: (moment: Date, at: Date?)?
+    /// A moment shows (`ToolsLive.moment`): its rows then — when they came, nil: nothing recorded — read only; `gone`:
+    /// before the hour the rows are kept for (a moment on the history).
+    private var past: (moment: Date, at: Date?, gone: Bool)?
     private weak var live: ToolsLive?
     /// A moment shows rows of its own: some sample had them then.
     var recorded: Bool { past?.at != nil }
@@ -251,7 +252,7 @@ import DFMCore
         let scope = live.app.tools.scope(live.tool.preset, on: live.server, live.target), now = live.now, path = block.table ?? "", history = live.known?.history
         let was = past?.moment
         let then: ToolSample? = if let m = live.moment { history?.carried(path, at: m) } else { history?.carried(path) }
-        past = live.moment.map { ($0, then?.at) }
+        past = live.moment.map { ($0, then?.at, $0 < now.addingTimeInterval(-(history?.keep ?? 3600))) }
         latest = (then?.rows(path) ?? []).map { record -> ToolRow in
             var r = view.row(record, scope, now: now)
             r.title = r.cells.first?.text ?? r.title   // the first column names the row in a question ("sleep"), its record is its key
@@ -337,7 +338,8 @@ import DFMCore
     /// interval, or the server not answering — "as of 11:31:05", and the rows dimmed.
     private func say() {
         if let past {   // a moment: when its rows came, or that none did
-            note.stringValue = past.at.map { "as of " + $0.formatted(date: .omitted, time: .standard) } ?? "nothing recorded at " + past.moment.formatted(date: .omitted, time: .standard)
+            note.stringValue = past.at.map { "as of " + $0.formatted(date: .omitted, time: .standard) }
+                ?? (past.gone ? "not kept past the last hour" : "nothing recorded at " + past.moment.formatted(date: .omitted, time: .standard))
             table.enclosingScrollView?.alphaValue = 1
             return
         }
@@ -512,7 +514,7 @@ import DFMCore
         menu.addItem(MenuAction.item("Copy Table") { [weak self] in self?.copyTable() })
         if past != nil {
             menu.addItem(.separator())
-            menu.addItem(MenuAction.item("Back to Live") { [weak self] in self?.live?.show(moment: nil) })
+            menu.addItem(MenuAction.item("Back to Live") { [weak self] in self?.live?.backToLive() })
         }
     }
 

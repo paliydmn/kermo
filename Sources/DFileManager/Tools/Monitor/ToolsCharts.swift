@@ -11,12 +11,15 @@ import SwiftUI
 /// time axis; one time axis and one crosshair for the block. Under a chart of several series, a chip a series picked
 /// with its value — "Now", the moment the tables show, or the time under the pointer, as the header says — a click
 /// hides it, ⌥-click shows only it, "+N more…" lists the rest to pick; beside the pointer a tip with each series'
-/// value, the gap, the events near and what a click does. Focus (⤢, a double-click on the header) shows one chart
-/// big with all its series beside it, and its numbers as a table. On the last hour a click shows the tables then
-/// (`ToolsLive.show`), else runs the `log` action with `{from}` / `{to}` five minutes around that moment. Swift Charts
-/// in an NSHostingView over an ObservableObject the tab's update feeds (SwiftUI's @State is a macro the Command Line
-/// Tools haven't). The hour in memory; `range`'s longer spans from the history on disk (`ToolSlots`): each 15-minute
-/// slot's average with its min–max as a band round it, the gaps it wrote, "not watched" where it has nothing.
+/// value, the gap, the events near and what a click does. Focus (⤢, a double-click on the header, F) shows one chart
+/// big with all its series beside it, and its numbers as a table. Time (review 4 PR 2): a click is a moment — the
+/// tables then (`ToolsLive.show`) on the last hour, a slot's numbers on the history —, a drag a stretch on every chart
+/// with Zoom and its `log` under it; while you look the window holds still (new samples past its right edge, its scale
+/// as it was) till Back to Live. Each gesture is a `Model` method the pointer, the keys (←/→, ⇧, ↩, F, ⎋ by
+/// `ToolsLive.cancelOperation`) and the AX actions call alike. Swift Charts in an NSHostingView over an
+/// ObservableObject the tab's update feeds (SwiftUI's @State is a macro the Command Line Tools haven't). The hour in
+/// memory (15m its last quarter); `range`'s longer spans from the history on disk (`ToolSlots`): each 15-minute slot's
+/// average with its min–max as a band round it, the gaps it wrote, "not watched" where it has nothing.
 @MainActor final class ToolsCharts: NSView, ToolsBlock {
     /// What the charts draw: changed as one, so a sample draws the block once.
     struct Data {
@@ -81,10 +84,25 @@ import SwiftUI
         /// The series list's search.
         @Published var query = ""
         var every: TimeInterval = 5
-        /// A click at that time, in the clicked chart's band if it fell in one.
-        var clicked: (Date, ToolGap?) -> Void = { _, _ in }
-        /// The context menu's Log for This Time: its title, and the run; nil: the block has no `log`.
-        var log: (title: String, run: (Date) -> Void)?
+        /// The window that stands while you look — a moment, a selection, Zoom: new samples come past its right edge
+        /// and its scale stays (§6.3); nil: live, the latest at the right.
+        @Published var held: ClosedRange<Date>?
+        /// The stretch dragged across: on every chart of the block, its Zoom and log under the chart dragged on.
+        @Published var selection: ClosedRange<Date>?
+        /// The window held is a Zoom's: ⎋ on a selection keeps it.
+        private(set) var zoomed = false
+        /// The chart last clicked or dragged on: the selection's bar is under it, F focuses it.
+        var active: String?
+        /// The moment shows tables then (`ToolsLive.showsMoments`).
+        var tables = false
+        /// The moment to the tables (`ToolsLive.show`): the band it fell in, on the history its slot in words.
+        var shown: (Date?, ToolGap?, String?) -> Void = { _, _, _ in }
+        /// A click or a drag on a chart: the block takes the keys.
+        var touched: () -> Void = {}
+        /// Log for This Time: its title, and the run over a stretch; nil: the block has no `log`.
+        var log: (title: String, run: (ClosedRange<Date>) -> Void)?
+        /// The longest stretch Log for This Time runs over (decision 2026-11-09): past it, zoom in first.
+        static let longestLog: TimeInterval = 86400
         /// The last time under the pointer: the context menu's, should the hover have ended as it opened.
         var lastHover: Date?
         /// Days on the axis: the week's.
@@ -163,6 +181,111 @@ import SwiftUI
         func show(focus id: String?) {
             (focus, showData, choosing, query) = (id, false, nil, "")
         }
+
+        // MARK: Time — the pointer, the keys, the AX actions and the tests call these alike
+
+        /// A stretch as the charts say it: to the second on the hour's samples, the slots' edges on the history.
+        func words(_ r: ClosedRange<Date>) -> String {
+            let f: Date.FormatStyle = !history ? .dateTime.hour().minute().second() : days ? .dateTime.weekday().hour().minute() : .dateTime.hour().minute()
+            return r.lowerBound.formatted(f) + "–" + r.upperBound.formatted(f)
+        }
+
+        /// The times in the window with a value drawn, oldest first: what ←/→ step through.
+        var samples: [Date] {
+            Set(data.charts.flatMap(\.lines).flatMap { $0.points.compactMap { $0.value != nil && data.from <= $0.at && $0.at <= data.to ? $0.at : nil } }).sorted()
+        }
+
+        /// ⇧←/⇧→: a minute's samples, on the history an hour's slots.
+        var minute: Int { max(1, Int((history ? 3600 : 60) / every)) }
+
+        /// The window as it is now, held: new samples come past its right edge.
+        private func hold() { if held == nil { held = data.from...data.to } }
+
+        private func put(_ m: Date?, _ gap: ToolGap? = nil) {
+            moment = m
+            shown(m, gap, m.flatMap { history ? time($0) : nil })
+        }
+
+        /// A moment — a click, a key, an AX action: the window held; the tables as they were then on the last hour,
+        /// on the history the slot's numbers; `gap`: the band the click fell in.
+        func inspect(at t: Date, gap: ToolGap? = nil) {
+            hold()
+            selection = nil
+            put(history ? Date(timeIntervalSince1970: ToolSlots.slot(t)) : t, gap)
+        }
+
+        /// `n` samples on from the moment (none: from the latest), slots on the history; over a gap to the next sample
+        /// with values; at the window's edge it stays (decision 2026-11-09).
+        func step(_ n: Int) {
+            let times = samples
+            guard let last = times.last, n != 0 else { return }
+            let m = moment ?? last
+            let i = n > 0 ? (times.firstIndex { $0 > m } ?? times.count) + n - 1 : (times.lastIndex { $0 < m } ?? -1) + n + 1
+            inspect(at: times[min(max(i, 0), times.count - 1)])
+        }
+
+        /// A drag from `a` to `b` (either way): the stretch on every chart, the window held.
+        func select(from a: Date, to b: Date) {
+            hold()
+            selection = min(a, b)...max(a, b)
+            reload()
+        }
+
+        /// The selection gone — the window let go too, unless a moment or a Zoom holds it.
+        func unselect() {
+            selection = nil
+            if moment == nil, !zoomed { held = nil }
+            reload()
+        }
+
+        /// The selection as the window: what was recorded there, no finer (a slot stays a slot); the moment let go.
+        func zoom() {
+            guard let s = selection else { return }
+            (held, zoomed, selection) = (s, true, nil)
+            put(nil)
+        }
+
+        /// Back to Live: the window follows the latest again; the moment, the selection and the Zoom let go.
+        func backToLive() {
+            (held, selection, zoomed) = (nil, nil, false)
+            put(nil)
+        }
+
+        /// ⎋, one step back: the series list, else the selection, else Focus, else Back to Live; false: nothing to undo.
+        @discardableResult func escape() -> Bool {
+            if choosing != nil { choosing = nil }
+            else if selection != nil { unselect() }
+            else if focus != nil { show(focus: nil) }
+            else if held != nil || moment != nil { backToLive() }
+            else { return false }
+            return true
+        }
+
+        /// The time a log covers for `t`: its slot on the history, else five minutes round it.
+        func around(_ t: Date) -> ClosedRange<Date> {
+            guard history else { return t.addingTimeInterval(-ToolsLive.around)...t.addingTimeInterval(ToolsLive.around) }
+            let s = Date(timeIntervalSince1970: ToolSlots.slot(t))
+            return s...s.addingTimeInterval(ToolSlots.length)
+        }
+
+        /// The `log` over `r`; false: no `log`, no stretch, or one over a day.
+        @discardableResult func runLog(_ r: ClosedRange<Date>?) -> Bool {
+            guard let log, let r, r.upperBound.timeIntervalSince(r.lowerBound) <= Self.longestLog else { return false }
+            log.run(r)
+            return true
+        }
+
+        /// ↩, the AX action: the selection's log, else the moment's.
+        @discardableResult func logNow() -> Bool { runLog(selection ?? moment.map(around)) }
+
+        /// F: Focus on the chart under the pointer, else the one last clicked, else the first — or back to all of them.
+        func focusKey() {
+            let id = [hovered, active].compactMap { $0 }.first { id in data.charts.contains { $0.id == id } } ?? data.charts.first?.id
+            show(focus: focus == nil ? id : nil)
+        }
+
+        /// The chart the selection's bar is under: the one shown in Focus, the one dragged on, or the first.
+        var barChart: String? { focus ?? (data.charts.contains { $0.id == active } ? active : data.charts.first?.id) }
     }
 
     /// The narrowest a chart is drawn two to a row.
@@ -178,42 +301,60 @@ import SwiftUI
     private let place = NSView()
     private let height: NSLayoutConstraint
     let range = NSSegmentedControl()
-    /// The longer span's lines as last read, and the slot they were read in: a new slot may be on disk since.
-    private var disk: (span: Double, slot: Double, lines: [ToolSlots.Line])?
-    private var kept: AnyObject?
+    /// The range control's spans: the preset's, and 15m before its 1h — the hour's last quarter, no new data.
+    let ranges: [ToolDuration]
+    /// Live or inspecting, beside the range; Back to Live while inspecting; under them the window's length, what's
+    /// recorded when, the zone.
+    let status = NSTextField(labelWithString: "")
+    let liveButton = NSButton(title: "Back to Live", target: nil, action: nil)
+    let sub = NSTextField(labelWithString: "")
+    /// The longer span's lines as last read — from `from`, in the slot they were read in: a new slot may be on disk since.
+    private var disk: (from: Date, slot: Double, lines: [ToolSlots.Line])?
+    private var kept: [AnyObject] = []
 
     init(_ live: ToolsLive, _ block: ToolBlock) {
         self.block = block
+        var ranges = block.range ?? []
+        if let i = ranges.firstIndex(where: { $0.seconds == 3600 }) { ranges.insert(.text("15m"), at: i) }
+        self.ranges = ranges
         // Till the charts say how tall they are: a row of header, plot and chips each two charts.
         height = place.heightAnchor.constraint(equalToConstant: CGFloat(((block.charts?.count ?? 0) + 1) / 2) * (Self.plotHeight + 46))
         super.init(frame: .zero)
         height.isActive = true
-        // On the last hour, with tables to show it in, a click is the moment; else (24h, 7d: no rows kept) its log.
-        model.clicked = { [weak self, unowned live] at, gap in
-            if (self?.span ?? 3600) <= 3600, live.showsMoments { live.show(moment: at, gap: gap) } else { live.log(block.log, at: at) }
-        }
+        model.shown = { [unowned live] at, gap, slot in live.show(moment: at, gap: gap, slot: slot) }
         if let id = block.log, let a = live.tool.preset.actions?.first(where: { $0.spec.id == id }) {
-            model.log = (a.spec.title ?? id, { [unowned live] at in live.log(id, at: at) })
+            model.log = (a.spec.title ?? id, { [unowned live] r in live.log(id, from: r.lowerBound, to: r.upperBound) })
         }
         model.keep = "\(live.server.id.uuidString) \(live.tool.preset.id)"
         model.reload = { [weak self, unowned live] in self?.update(live) }
+        model.touched = { [weak self] in if let self { window?.makeFirstResponder(self) } }
         model.sized = { [weak self] tall in   // the content's own height: chips may wrap, Focus is taller
             if let self, abs(height.constant - tall) > 0.5 { height.constant = tall }
         }
-        var views: [NSView] = [place]
-        if let ranges = block.range, ranges.count > 1 {
+        if ranges.count > 1 {
             range.segmentCount = ranges.count
             for (i, r) in ranges.enumerated() {
-                let text: String = switch r { case .text(let s): s; case .seconds(let s): ToolAlerts.minutes(s) }
+                let text: String = switch r { case .text(let s): s; case .seconds(let s): ToolAlerts.minutes(s) }, s = r.seconds ?? 0
                 range.setLabel(text, forSegment: i)
-                range.setToolTip((r.seconds ?? 0) <= 3600 ? "The last hour, as watched" : "From the history on this Mac: 15-minute averages with their lowest and highest, while watched", forSegment: i)
+                range.setToolTip(s < 3600 ? "The last \(ToolAlerts.minutes(s)) of the hour, as watched" : s == 3600 ? "The last hour, as watched"
+                                 : "From the history on this Mac: 15-minute averages with their lowest and highest, while watched", forSegment: i)
             }
-            range.selectedSegment = 0
+            range.selectedSegment = ranges.firstIndex { $0.seconds == 3600 } ?? 0
             range.controlSize = .small
-            kept = MenuAction.attach(to: range) { [weak self, unowned live] in self?.update(live) }
-            let head = NSStackView(views: [ToolsWindow.spacer(), range])
-            views.insert(head, at: 0)
+            kept.append(MenuAction.attach(to: range) { [weak self] in self?.model.backToLive() })   // another range starts live (decision 2026-11-09)
         }
+        status.font = .systemFont(ofSize: 11)
+        status.lineBreakMode = .byTruncatingTail
+        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        liveButton.controlSize = .small
+        liveButton.toolTip = "The latest again, at the right (⎋)"
+        kept.append(MenuAction.attach(to: liveButton) { [weak self] in self?.model.backToLive() })
+        sub.font = .systemFont(ofSize: 10)
+        sub.textColor = .tertiaryLabelColor
+        sub.lineBreakMode = .byTruncatingTail
+        sub.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let head = NSStackView(views: (ranges.count > 1 ? [range] : []) + [status, liveButton, ToolsWindow.spacer()])
+        let views: [NSView] = [head, sub, place]
         let stack = NSStackView(views: views)
         (stack.orientation, stack.alignment, stack.spacing) = (.vertical, .leading, 4)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -252,26 +393,62 @@ import SwiftUI
         let wide = bounds.width >= 2 * Self.narrowest + 14, columns = (block.charts?.count ?? 0) > 1 && wide ? 2 : 1
         if model.wide != wide { model.wide = wide }
         if model.columns != columns { model.columns = columns }
+        noteFocusRingMaskChanged()
     }
 
-    /// The span the range control picked: the last hour unless longer.
-    var span: Double { block.range.flatMap { $0.indices.contains(range.selectedSegment) ? $0[range.selectedSegment].seconds : nil } ?? 3600 }
+    // MARK: Keys — only while the block is first responder (a click on a chart, Tab); none global
+
+    override var acceptsFirstResponder: Bool { true }
+    override var focusRingMaskBounds: NSRect { convert(place.bounds, from: place) }
+    override func drawFocusRingMask() { NSBezierPath(roundedRect: focusRingMaskBounds, xRadius: 4, yRadius: 4).fill() }
+
+    /// ←/→ a sample, ⇧ a minute (an hour on the history), ↩ Log for This Time, F Focus; the rest up the chain — ⎋ to
+    /// `ToolsLive.cancelOperation`, its one owner.
+    override func keyDown(with e: NSEvent) {
+        let mods = e.modifierFlags.intersection([.command, .option, .control, .shift]), c = e.charactersIgnoringModifiers?.lowercased()
+        if [123, 124].contains(e.keyCode), mods.isEmpty || mods == .shift { model.step((e.keyCode == 123 ? -1 : 1) * (mods.isEmpty ? 1 : model.minute)) }
+        else if [36, 76].contains(e.keyCode), mods.isEmpty { if !model.logNow() { NSSound.beep() } }
+        else if mods.isEmpty, c == "f" || (c?.first?.isASCII != true && e.keyCode == 3) { model.focusKey() }   // F in another script: its key
+        else { super.keyDown(with: e) }
+    }
+
+    /// The span the range control picked: the last hour unless another.
+    var span: Double { ranges.indices.contains(range.selectedSegment) ? ranges[range.selectedSegment].seconds ?? 3600 : 3600 }
+
+    /// A window's length in words: "15 min", "1 h", "7 d".
+    static func length(_ s: TimeInterval) -> String { s >= 2 * 86400 ? "\(Int((s / 86400).rounded())) d" : ToolAlerts.minutes(s.rounded()) }
+
+    /// The zone the charts' times are in, with its offset then (decision 6: this Mac's, no switch): "UTC+02:00".
+    static func zone(_ at: Date) -> String {
+        let s = TimeZone.current.secondsFromGMT(for: at)
+        return String(format: "UTC%@%02d:%02d", s < 0 ? "−" : "+", abs(s) / 3600, abs(s) % 3600 / 60)
+    }
+
+    /// `points` in the window, and the gap the window opens in — its band and its "why" reach in.
+    static func within(_ points: [ToolPoint], _ w: ClosedRange<Date>) -> [ToolPoint] {
+        let i = points.firstIndex { $0.at >= w.lowerBound } ?? points.endIndex
+        return (i > 0 && points[i - 1].gap != nil ? [points[i - 1]] : []) + points[i...].prefix { $0.at <= w.upperBound }
+    }
 
     func update(_ live: ToolsLive) {
         let p = live.tool.preset, t = live.known, now = live.now, alerts = live.alerts, span = span
         if model.moment != live.moment { model.moment = live.moment }
+        model.tables = live.showsMoments
         var d = Data()
-        (d.to, d.from) = (now, now.addingTimeInterval(-max(span, t?.history.keep ?? 3600)))
-        // Past the hour: the slots on disk, read again once a slot has passed since.
+        // The window: held while you look; else up to now — the hour in memory (15m its last quarter), or the history.
+        (d.from, d.to) = model.held.map { ($0.lowerBound, $0.upperBound) } ?? (now.addingTimeInterval(-(span < 3600 ? span : max(span, t?.history.keep ?? 3600))), now)
+        let window = d.from...d.to
+        // Past the hour: the slots on disk from the range's start or the held window's, read again once a slot has passed.
         let slots: [ToolSlots.Line]? = span <= 3600 ? nil : {
-            if let disk, disk.span == span, disk.slot == ToolSlots.slot(Date()) { return disk.lines }
-            let lines = ToolSlots.read(ToolMonitor.history(live.server.id), tool: p.id, from: d.from)
-            disk = (span, ToolSlots.slot(Date()), lines)
+            let since = min(d.from, now.addingTimeInterval(-span))
+            if let disk, disk.slot == ToolSlots.slot(Date()), disk.from <= since { return disk.lines }
+            let lines = ToolSlots.read(ToolMonitor.history(live.server.id), tool: p.id, from: since)
+            disk = (since, ToolSlots.slot(Date()), lines)
             return lines
         }()
         // Maintenance over the values: by the server's clock, as the series are.
         let maintenance = live.state?.maintenance.flatMap { m -> [ToolChart.Band] in
-            let skew = live.state?.skew ?? 0, from = max(m.from.addingTimeInterval(skew), d.from), to = min(m.until.addingTimeInterval(skew), now)
+            let skew = live.state?.skew ?? 0, from = max(m.from.addingTimeInterval(skew), d.from), to = min(m.until.addingTimeInterval(skew), d.to)
             return from < to ? [ToolChart.Band(from: from, to: to, gap: .maintenance)] : []
         } ?? []
         d.charts = (block.charts ?? []).compactMap { ids -> Chart? in
@@ -302,24 +479,48 @@ import SwiftUI
                         ?? t?.history.series[metric]?[key]?.last { $0.value != nil }?.value
                     continue
                 }
-                let pts = slots.map { ToolSlots.points($0, metric: metric, key: key, from: d.from) } ?? t?.history.points(metric, key) ?? []
-                series[i].latest = pts.last { $0.value != nil }?.value
-                lines.append(Line(id: s.id, name: s.name, points: pts, chart: ToolChart(pts, now: now), color: color, metric: s.metric))
+                let all = slots.map { ToolSlots.points($0, metric: metric, key: key, from: d.from) } ?? t?.history.points(metric, key) ?? []
+                let pts = Self.within(all, window)
+                series[i].latest = all.last { $0.value != nil }?.value
+                lines.append(Line(id: s.id, name: s.name, points: pts, chart: ToolChart(pts, now: d.to), color: color, metric: s.metric))
             }
             lines.sort { $0.color < $1.color }
             let alert = alerts.first { $0.metric == first.id && $0.below != true }   // the first metric's: CPU's beside I/O wait
+            let bands = (lines.map(\.chart.bands).max { $0.count < $1.count } ?? []).map { ToolChart.Band(from: max($0.from, d.from), to: $0.to, gap: $0.gap) }
             return Chart(id: chartID, title: metrics.map { $0.metric.title ?? $0.id }.joined(separator: " · "), metric: first.metric,
-                         // by the averages: a burst's high would flatten every line; its band is cut at the top, the tip says it
+                         // by the window's averages: a burst's high would flatten every line; its band is cut at the top, the tip says it
                          top: ToolChart.top(lines.flatMap { $0.points.compactMap(\.value) },
                                             max: first.metric.max ?? (first.metric.unit == "%" ? 100 : nil)),
-                         lines: lines, series: series, bands: (lines.map(\.chart.bands).max { $0.count < $1.count } ?? []) + maintenance,
+                         lines: lines, series: series, bands: bands + maintenance,
                          warn: alert?.warn, crit: alert?.crit, mixed: Set(metrics.map { $0.metric.unit ?? "" }).count > 1)
         }
-        d.events = ((t?.events ?? []) + (live.state?.events ?? [])).filter { $0.at >= d.from && $0.level != "ok" }
-        d.click = span <= 3600 && live.showsMoments ? "Click: the tables at this time" : model.log.map { "Click: \($0.title)" }
+        d.events = ((t?.events ?? []) + (live.state?.events ?? [])).filter { window.contains($0.at) && $0.level != "ok" }
+        d.click = (slots != nil ? "Click: this slot's numbers" : live.showsMoments ? "Click: the tables at this time" : "Click: the values at this time") + " · drag: a stretch"
         model.every = slots == nil ? (p.watch?.every ?? 60) * (live.app.tools.monitor.slow ? 3 : 1) : ToolSlots.length
         model.history = slots != nil
         model.data = d
+        say(now: now, running: live.running)
+    }
+
+    /// The status beside the range — live, or what's inspected and the samples come since — and under it the window's
+    /// length, what's recorded when, and the zone the times are in.
+    private func say(now: Date, running: Bool) {
+        let m = model, d = m.data, inspecting = m.held != nil || m.moment != nil, text: String
+        if inspecting {
+            let since = m.zoomed ? 0 : Int(now.timeIntervalSince(m.held?.upperBound ?? now) / m.every)
+            text = "Inspecting " + (m.moment.map { "at " + m.time($0) } ?? m.words(d.from...d.to))
+                + (since > 0 ? " · \(since) new \(m.history ? "slot" : "sample")\(since == 1 ? "" : "s") since" : "")
+        } else {
+            text = (running ? "Live · " : "Paused · ") + (m.history ? "15-minute slots from this Mac's history" : "a sample every \(Int(m.every)) s")
+        }
+        let s = NSMutableAttributedString(string: inspecting ? "◼ " : "● ", attributes: [.foregroundColor: inspecting ? Palette.accent : running ? Palette.ok : NSColor.tertiaryLabelColor])
+        s.append(NSAttributedString(string: text, attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
+        s.addAttribute(.font, value: status.font!, range: NSRange(location: 0, length: s.length))
+        status.attributedStringValue = s
+        status.setAccessibilityValue(text)
+        liveButton.isHidden = !inspecting
+        sub.stringValue = [Self.length(d.to.timeIntervalSince(d.from)), m.history ? "each point a slot's average, the band its lowest to highest" : nil,
+                           m.history ? "recorded only while watched" : "recorded only while open or watched", Self.zone(d.to)].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
@@ -471,9 +672,34 @@ struct OneChart: View {
             }
             .accessibilityElement(children: .ignore)   // the marks and the tip aren't walked: an AX walk of them stalls
             .accessibilityLabel("\(chart.title): \(spoken)")
-            .accessibilityAction(named: big ? "Show All Charts" : "Focus") { model.show(focus: big ? nil : chart.id) }
+            .accessibilityActions {   // a chart's click and keys without the pointer (D-166 (6))
+                Button(big ? "Show All Charts" : "Focus") { model.show(focus: big ? nil : chart.id) }
+                Button("Previous Sample") { model.step(-1) }
+                Button("Next Sample") { model.step(1) }
+                if model.tables, !model.history, let t = model.hover ?? model.moment ?? model.samples.last {
+                    Button("Show Tables at This Time") { model.inspect(at: t, gap: chart.gap(at: t)) }
+                }
+                if model.log != nil, model.selection != nil || model.moment != nil { Button("Log for This Time") { model.logNow() } }
+                if model.held != nil || model.moment != nil { Button("Back to Live") { model.backToLive() } }
+            }
+            if let s = model.selection, model.barChart == chart.id { selected(s) }
             if chart.series.count > 1 { legend }
         }
+    }
+
+    /// Under the chart dragged on: the stretch and how long, Zoom, its log — a day at most —, ✕.
+    private func selected(_ s: ClosedRange<Date>) -> some View {
+        let long = s.upperBound.timeIntervalSince(s.lowerBound)
+        return HStack(spacing: 6) {
+            Text("\(model.words(s)) · \(ToolsCharts.length(long))").font(.caption.monospacedDigit()).lineLimit(1)
+            Button("Zoom") { model.zoom() }.help("This stretch across the charts — as recorded, no finer")
+            if let log = model.log {
+                Button(log.title) { model.runLog(s) }.disabled(long > ToolsCharts.Model.longestLog)
+                    .help(long > ToolsCharts.Model.longestLog ? "Zoom in to 24 hours or less" : "\(log.title) for this stretch")
+            }
+            Button { model.unselect() } label: { Image(systemName: "xmark").font(.caption) }.buttonStyle(.borderless).help("Clear (⎋)")
+        }
+        .controlSize(.small)
     }
 
     private var head: some View {
@@ -555,21 +781,22 @@ struct OneChart: View {
     /// When the header's values are: under the pointer, the moment the tables show — or none, the latest.
     private var when: Date? { model.hover ?? model.moment }
 
-    /// `line`'s value at `t` (nil: the latest — on the history, the last slot's), in its metric's words.
+    /// `line`'s value at `t` (nil: the latest — on the history, or a window held, the last value in it), in its
+    /// metric's words.
     private func value(_ line: ToolsCharts.Line, at t: Date?) -> String {
         let v = t.map { ToolChart.nearest(line.points, to: $0, within: model.every * 1.5)?.value }
-            ?? (model.history ? line.points.last { $0.value != nil } : line.points.last)?.value
+            ?? (model.history || model.held != nil ? line.points.last { $0.value != nil } : line.points.last)?.value
         return v.map(line.metric.text) ?? "—"
     }
 
     /// A chip's value: its line's when the header says.
     func value(_ s: ToolsCharts.Series) -> String { chart.lines.first { $0.id == s.id }.map { value($0, at: when) } ?? "—" }
 
-    /// The header's when — "Now", on the history the last slot's time, the time under the pointer, "At" the moment the
-    /// tables show — the time its values are at (nil: the latest), and the gap that has none.
+    /// The header's when — "Now", on the history or a window held its last value's time, the time under the pointer,
+    /// "At" the moment the tables show — the time its values are at (nil: the latest), and the gap that has none.
     private var header: (when: String, at: Date?, gap: ToolGap?) {
         if let t = when { return ((model.hover == nil ? "At " : "") + model.time(t), t, chart.gap(at: t)) }
-        guard model.history else { return ("Now", nil, chart.gapNow) }
+        guard model.history || model.held != nil else { return ("Now", nil, chart.gapNow) }
         return (chart.lines.compactMap { $0.points.last { $0.value != nil }?.at }.max().map(model.time) ?? "", nil, nil)
     }
 
@@ -704,7 +931,12 @@ struct OneChart: View {
         ForEach(Array(model.data.events.enumerated()), id: \.offset) { _, e in
             PointMark(x: .value("Time", e.at), y: .value("Bottom", 0)).foregroundStyle(Self.level(e.level)).symbolSize(24)
         }
-        if let m = model.moment, model.data.from <= m {   // the moment the tables show
+        if let s = model.selection {   // the stretch dragged across, on every chart
+            RectangleMark(xStart: .value("From", max(s.lowerBound, model.data.from)), xEnd: .value("To", min(s.upperBound, model.data.to)),
+                          yStart: .value("Bottom", 0), yEnd: .value("Top", chart.top))
+                .foregroundStyle(Color(nsColor: Palette.accent).opacity(0.15))
+        }
+        if let m = model.moment, model.data.from <= m, m <= model.data.to {   // the moment the tables show
             RuleMark(x: .value("Moment", m)).foregroundStyle(Color(nsColor: Palette.accent)).lineStyle(StrokeStyle(lineWidth: 1.5))
         }
         if let h = model.hover {   // the tip on the side with room: the pointer on the line stays clear
@@ -741,24 +973,38 @@ struct OneChart: View {
         }
         .chartOverlay { proxy in
             GeometryReader { g in
+                // The time at `x`, in the window — snapped to a sample (a slot's edge on the history), or as it is.
+                let at = { (x: CGFloat, snap: Bool) -> Date? in
+                    guard let f = proxy.plotFrame, let d = proxy.value(atX: x - g[f].origin.x, as: Date.self) else { return nil }
+                    let t = snap ? Date(timeIntervalSince1970: (d.timeIntervalSince1970 / model.every).rounded() * model.every) : d
+                    return min(max(t, model.data.from), model.data.to)
+                }
                 Rectangle().fill(.clear).contentShape(Rectangle())
                     .onContinuousHover { phase in   // snapped to a sample, published only when it moves to another: a move redraws the block
                         switch phase {
                         case .active(let p):
-                            guard let f = proxy.plotFrame, let d = proxy.value(atX: p.x - g[f].origin.x, as: Date.self) else { return }
-                            let at = Date(timeIntervalSince1970: (d.timeIntervalSince1970 / model.every).rounded() * model.every)
-                            if model.hover != at { (model.hover, model.lastHover) = (at, at) }
+                            guard let t = at(p.x, true) else { return }
+                            if model.hover != t { (model.hover, model.lastHover) = (t, t) }
                             if model.hovered != chart.id { model.hovered = chart.id }
                         case .ended:   // into the next chart, its active may come first
                             if model.hovered == chart.id { (model.hover, model.hovered) = (nil, nil) }
                         }
                     }
-                    .gesture(SpatialTapGesture().onEnded { v in
-                        guard let f = proxy.plotFrame, let d = proxy.value(atX: v.location.x - g[f].origin.x, as: Date.self) else { return }
-                        model.clicked(d, chart.gap(at: d))
-                    })
+                    // Under 4 pt a click — the moment; past it a drag — the stretch, published only as a snapped end moves.
+                    .gesture(DragGesture(minimumDistance: 0)
+                        .onChanged { v in
+                            guard abs(v.translation.width) >= 4, let a = at(v.startLocation.x, true), let b = at(v.location.x, true), a != b else { return }
+                            model.active = chart.id
+                            if model.selection != min(a, b)...max(a, b) { model.selection = min(a, b)...max(a, b) }
+                        }
+                        .onEnded { v in
+                            model.active = chart.id
+                            model.touched()
+                            if abs(v.translation.width) >= 4, let a = at(v.startLocation.x, true), let b = at(v.location.x, true), a != b { model.select(from: a, to: b) }
+                            else if let t = at(v.location.x, false) { model.inspect(at: t, gap: chart.gap(at: t)) }
+                        })
                     .contextMenu {   // the hovered time's log, wherever a click goes
-                        if let log = model.log, let h = model.hover ?? model.lastHover { Button("\(log.title) · \(h.formatted(date: .omitted, time: .standard))") { log.run(h) } }
+                        if let log = model.log, let h = model.hover ?? model.lastHover { Button("\(log.title) · \(model.time(h))") { log.run(model.around(h)) } }
                     }
             }
         }

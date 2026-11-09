@@ -20,8 +20,8 @@ import DFMCore
     /// Sites: the addresses are the server's (Edit Server).
     let addButton = NSButton(title: "Add Address…", target: nil, action: nil)
     let foot = NSTextField(labelWithString: "")
-    /// A chart's click on the last hour (review 3, T11 "who was it?"): the moment the tables show — their rows then,
-    /// read only — till Back to Live or ⎋. nil: live.
+    /// A chart's click (review 3, T11 "who was it?"): the moment the tables show — their rows then, read only — till
+    /// Back to Live or ⎋. nil: live.
     private(set) var moment: Date?
     /// Over the tables while a moment shows: when, the log of that time, Back to Live.
     let momentBar = NSStackView()
@@ -68,15 +68,14 @@ import DFMCore
                     app.showMainWindow(nil)
                     app.editServer(app.savedServers.first { $0.id == server.id } ?? server, title: "Edit Server")
                 },
-                MenuAction.attach(to: logButton) { [unowned self] in if let moment { log(chartLog, at: moment) } },
-                MenuAction.attach(to: liveButton) { [unowned self] in show(moment: nil) }]
+                MenuAction.attach(to: logButton) { [unowned self] in if let m = charts.first?.model { m.runLog(m.moment.map(m.around)) } },
+                MenuAction.attach(to: liveButton) { [unowned self] in backToLive() }]
         // The dashboard's blocks; none: the summary's metrics as a row of tiles.
         var shown = p.dashboard.map { $0.map(make) } ?? [row((p.summary ?? []).map { tile([$0.metric], of: $0.of, also: nil) })]
         momentText.font = .systemFont(ofSize: 12)
         momentText.lineBreakMode = .byTruncatingTail
         momentText.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         for b in [logButton, liveButton] { b.controlSize = .small }
-        liveButton.keyEquivalent = "\u{1b}"   // ⎋, while the bar shows
         liveButton.toolTip = "The tables' rows as they are now (⎋)"
         logButton.isHidden = chartLog == nil
         if let id = chartLog, let a = p.actions?.first(where: { $0.spec.id == id }) { logButton.title = a.spec.title ?? id }
@@ -120,18 +119,33 @@ import DFMCore
     /// Whether a chart's click has tables to show a moment in: else it runs the log, as on 24h and 7d.
     var showsMoments: Bool { momentBar.superview != nil }
 
-    /// The tables as they were at `at` (a chart's click on the last hour), read only, the moment marked on the charts;
-    /// `gap`: the click fell in one of a chart's bands (the Mac asleep, no answer) — nothing was recorded then. nil:
-    /// live again.
-    func show(moment at: Date?, gap: ToolGap? = nil) {
+    /// The tables as they were at `at` (a chart's click), read only, the moment marked on the charts; `gap`: the click
+    /// fell in one of a chart's bands (the Mac asleep, no answer) — nothing was recorded then; `slot`: a slot of the
+    /// history in words — the charts have its numbers, the tables' rows aren't kept that long. nil: live again.
+    func show(moment at: Date?, gap: ToolGap? = nil, slot: String? = nil) {
         moment = at
         update()
         guard let m = moment else { return }
         let time = m.formatted(date: .omitted, time: .standard), tables = blocks.compactMap { $0 as? ToolsTable }
-        momentText.stringValue = if let gap { "\(OneChart.word(gap).prefix(1).uppercased() + OneChart.word(gap).dropFirst()) at \(time): nothing recorded then" }
+        momentText.stringValue = if let slot { "\(slot): the charts' numbers for these 15 minutes — the tables' rows are kept for the last hour only" }
+            else if let gap { "\(OneChart.word(gap).prefix(1).uppercased() + OneChart.word(gap).dropFirst()) at \(time): nothing recorded then" }
             else if tables.allSatisfy({ !$0.recorded }) { "Nothing recorded at \(time)" }   // before watching began, or the hour's rows trimmed
             else { "As of \(time): the tables as they were then" }
     }
+    /// Back to Live — its button, a table's menu, the last ⎋: the charts follow the latest again, the tables show their
+    /// rows now.
+    func backToLive() {
+        charts.forEach { $0.model.backToLive() }
+        if moment != nil { show(moment: nil) }
+    }
+
+    /// ⎋ — its one owner on the tab, whatever in it has the keys: the charts' step back (the series list, the
+    /// selection, Focus, Back to Live); nothing to undo, nothing — the window stays.
+    override func cancelOperation(_ sender: Any?) {
+        for c in charts where c.model.escape() { return }
+    }
+
+    private var charts: [ToolsCharts] { blocks.compactMap { $0 as? ToolsCharts } }
     /// The dashboard's blocks: hidden while Sites has no addresses to show.
     private var dash: [NSView] = []
     private var noAddresses: Bool { tool.preset.http != nil && (app.savedServers.first { $0.id == server.id } ?? server).sites.isEmpty }
@@ -189,6 +203,8 @@ import DFMCore
     var known: ToolMonitor.Tool? { app.tools.monitor.tool(tool.preset.id, on: target) }
     /// Now by the server's clock, as the series are.
     var now: Date { Date().addingTimeInterval(state?.skew ?? 0) }
+    /// Samples come: Sites' checks wanted, a tool's channel open.
+    var running: Bool { tool.preset.http != nil ? known?.wanted == true : state?.channel != nil }
 
     /// What the monitor knows now, into the strip, the banner, the tiles, the blocks and the line.
     func update() {
@@ -258,7 +274,6 @@ import DFMCore
         }
         blocks.forEach { $0.update(self) }
         let last = t?.history.last.map { "last sample " + $0.at.formatted(date: .omitted, time: .standard) } ?? "no sample yet"
-        let running = p.http != nil ? t?.wanted == true : s?.channel != nil
         foot.stringValue = (running ? "Live" : "Paused") + " · \(last) · every \(every) s · "
             + (p.http != nil ? "checked from this Mac · no SSH" : p.stream?.run.sudo ?? p.sudo ?? false ? "over SSH as root" : "over SSH · read-only")
     }
@@ -270,11 +285,16 @@ import DFMCore
         (bar.warningValue, bar.criticalValue) = (a?.warn ?? a?.crit?.nextDown ?? none, a?.crit ?? none)
     }
 
-    /// A chart's click: the `log` action with `{from}` / `{to}` five minutes around `at` — epochs by the server's
-    /// clock, as the series are — down the path every action takes, its window over this one.
-    func log(_ id: String?, at: Date) {
+    /// A moment's log: five minutes round it, each side this.
+    static let around: TimeInterval = 150
+
+    /// A moment's log: the `log` action five minutes around `at`.
+    func log(_ id: String?, at: Date) { log(id, from: at.addingTimeInterval(-Self.around), to: at.addingTimeInterval(Self.around)) }
+
+    /// Log for This Time: the `log` action with `{from}` / `{to}` — epochs by the server's clock, as the series are —
+    /// down the path every action takes, its window over this one.
+    func log(_ id: String?, from: Date, to: Date) {
         guard let id, let a = tool.preset.actions?.first(where: { $0.spec.id == id }) else { return }
-        let from = at.addingTimeInterval(-150), to = at.addingTimeInterval(150)
         let row = ToolRow(key: "log \(Int(from.timeIntervalSince1970))", title: from.formatted(date: .omitted, time: .shortened) + "–" + to.formatted(date: .omitted, time: .shortened),
                           record: ["from": .number(from.timeIntervalSince1970.rounded()), "to": .number(to.timeIntervalSince1970.rounded())])
         app.tools.perform(a, of: tool, row: row, onRow: true, id: ToolListSource.rowID(row.key, tool: tool.preset.id, on: target), from: nil, on: server, target)
