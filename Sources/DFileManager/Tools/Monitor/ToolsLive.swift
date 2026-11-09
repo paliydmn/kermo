@@ -68,7 +68,7 @@ import DFMCore
                     app.showMainWindow(nil)
                     app.editServer(app.savedServers.first { $0.id == server.id } ?? server, title: "Edit Server")
                 },
-                MenuAction.attach(to: logButton) { [unowned self] in if let m = charts.first?.model { m.runLog(m.moment.map(m.around)) } },
+                MenuAction.attach(to: logButton) { [unowned self] in if let m = charts.first(where: { $0.model.log != nil })?.model { m.runLog(m.moment.map(m.around)) } },
                 MenuAction.attach(to: liveButton) { [unowned self] in backToLive() }]
         // The dashboard's blocks; none: the summary's metrics as a row of tiles.
         var shown = p.dashboard.map { $0.map(make) } ?? [row((p.summary ?? []).map { tile([$0.metric], of: $0.of, also: nil) })]
@@ -116,7 +116,7 @@ import DFMCore
     private var tileRows: [NSView] = []
     /// The charts' `log` action: Log for This Time.
     var chartLog: String? { tool.preset.chartLogs.first }
-    /// Whether a chart's click has tables to show a moment in: else it runs the log, as on 24h and 7d.
+    /// Whether a chart's click has tables to show a moment in: else the moment is only on the charts.
     var showsMoments: Bool { momentBar.superview != nil }
 
     /// The tables as they were at `at` (a chart's click), read only, the moment marked on the charts; `gap`: the click
@@ -127,7 +127,9 @@ import DFMCore
         update()
         guard let m = moment else { return }
         let time = m.formatted(date: .omitted, time: .standard), tables = blocks.compactMap { $0 as? ToolsTable }
-        momentText.stringValue = if let slot { "\(slot): the charts' numbers for these 15 minutes — the tables' rows are kept for the last hour only" }
+        momentText.stringValue = if let slot {   // the rows of the slot's start, if the hour still has them
+            "\(slot): the charts' numbers for these 15 minutes — " + (tables.allSatisfy { !$0.recorded } ? "the tables' rows are kept for the last hour only" : "the tables as they were at its start")
+        }
             else if let gap { "\(OneChart.word(gap).prefix(1).uppercased() + OneChart.word(gap).dropFirst()) at \(time): nothing recorded then" }
             else if tables.allSatisfy({ !$0.recorded }) { "Nothing recorded at \(time)" }   // before watching began, or the hour's rows trimmed
             else { "As of \(time): the tables as they were then" }
@@ -287,9 +289,6 @@ import DFMCore
 
     /// A moment's log: five minutes round it, each side this.
     static let around: TimeInterval = 150
-
-    /// A moment's log: the `log` action five minutes around `at`.
-    func log(_ id: String?, at: Date) { log(id, from: at.addingTimeInterval(-Self.around), to: at.addingTimeInterval(Self.around)) }
 
     /// Log for This Time: the `log` action with `{from}` / `{to}` — epochs by the server's clock, as the series are —
     /// down the path every action takes, its window over this one.

@@ -576,7 +576,7 @@ extension ServerLockTests {
         model.hover = d.charts[0].lines.first?.points.last?.at
         #expect(one.said.hasSuffix(" · 99%") && !one.said.hasPrefix("Now"), "\(one.said)")
         #expect(d.click == "Click: the tables at this time · drag: a stretch", "a table to show the moment in")
-        #expect(charts.status.stringValue == "● Live · a sample every 1 s" && charts.liveButton.isHidden && charts.sub.stringValue.hasPrefix("1 h · recorded only while open or watched · UTC"),
+        #expect(charts.status.stringValue == "Live · a sample every 1 s" && charts.liveButton.isHidden && charts.sub.stringValue.hasPrefix("1 h · recorded only while open or watched · UTC"),
                 "\(charts.status.stringValue) | \(charts.sub.stringValue)")
         // 15m: the hour's last quarter, from the same samples; only where the preset has 1h.
         charts.range.selectedSegment = 0
@@ -967,7 +967,7 @@ extension ServerLockTests {
         let held = try #require(charts.model.held)
         try await Task.sleep(for: .seconds(1.5))
         #expect(table.rows.map(\.key) == ["1", "2"], "new samples don't move a moment")
-        #expect(charts.model.held == held && charts.model.data.to == held.upperBound && charts.status.stringValue.hasPrefix("◼ Inspecting at ")
+        #expect(charts.model.held == held && charts.model.data.to == held.upperBound && charts.status.stringValue.hasPrefix("Inspecting at ")
                 && charts.status.stringValue.contains(" new sample") && !charts.liveButton.isHidden, "the window holds still: \(charts.status.stringValue)")
         #expect(view.liveButton.keyEquivalent.isEmpty && charts.liveButton.keyEquivalent.isEmpty, "⎋ has one owner: the tab's cancelOperation")
         press(view.liveButton)
@@ -979,11 +979,14 @@ extension ServerLockTests {
         charts.model.inspect(at: began.addingTimeInterval(-1))
         #expect(table.rows.isEmpty && table.note.stringValue.hasPrefix("nothing recorded at") && view.momentText.stringValue.hasPrefix("Nothing recorded at "),
                 "before watching began: \(table.note.stringValue) — \(view.momentText.stringValue)")
-        table.table.selectRowIndexes([0], byExtendingSelection: false)   // the keys in a table
-        page.window?.makeFirstResponder(table.table)
-        view.cancelOperation(nil)   // ⎋
+        // ⎋ up the responder chain from whatever has the keys: the tab's cancelOperation, its one owner.
+        func escape(from r: NSResponder) { if page.window?.makeFirstResponder(r) == true { _ = page.window?.firstResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: nil) } }
+        escape(from: table.table)
         #expect(view.moment == nil && charts.model.held == nil && view.momentBar.isHidden, "⎋ from the table: Back to Live")
-        view.cancelOperation(nil)
+        charts.model.inspect(at: then)
+        escape(from: charts)
+        #expect(page.window?.firstResponder === charts && view.moment == nil && charts.model.held == nil, "⎋ from the charts too")
+        escape(from: charts)
         #expect(page.window?.isVisible == true && view.moment == nil, "nothing to undo: nothing, the window stays")
         // 24h: a click is the slot's moment, not the log; ↩ logs the slot's 15 minutes.
         charts.range.selectedSegment = 2
@@ -999,8 +1002,18 @@ extension ServerLockTests {
         let log = "pulse-log \(Int(slot.timeIntervalSince1970)) \(Int(slot.timeIntervalSince1970 + ToolSlots.length))"
         await toolsUntil { bench.calls.contains(log) }
         #expect(bench.calls.contains(log), "the slot's 15 minutes: \(bench.calls)")
-        _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)   // another range: live
-        #expect(view.moment == nil && charts.model.held == nil)
+        charts.range.selectedSegment = 1   // another range: live
+        _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
+        #expect(view.moment == nil && charts.model.held == nil && !charts.model.history)
+        // A held hour keeps what the hour in memory trims meanwhile: the line, the scale, the moment's values stay.
+        let tool = try #require(app.tools.monitor.tool("pulse", on: .local()))
+        defer { tool.history.keep = 3600 }
+        charts.model.step(-1)
+        let shown = charts.model.data.charts[0].lines[0].points
+        tool.history.keep = 1
+        try await Task.sleep(for: .seconds(2.5))
+        #expect(tool.history.points("cpu").count < shown.count && charts.model.data.charts[0].lines[0].points.map(\.at) == shown.map(\.at),
+                "\(tool.history.points("cpu").count) \(shown.count)")
     }
 
     /// Review 3, T12: a table's All Processes… opens the tool's list in a Picker over the Tools window — the busiest
@@ -1212,8 +1225,8 @@ extension ServerLockTests {
         (model.history, model.every) = (true, ToolSlots.length)
         model.inspect(at: at(1000))
         #expect(model.moment == at(900) && model.minute == 4 && model.around(at(1000)) == at(900)...at(1800))
-        // The window's points: what's in it, and the gap it opens in (its band and why), never a value from before.
-        #expect(ToolsCharts.within(pts, at(12)...at(31)).map(\.at) == [at(10), at(30)] && ToolsCharts.within(pts, at(1)...at(31)).map(\.at) == [at(5), at(10), at(30)])
+        // The window's points: what's in it, and the gap it opens in at its start (its band and why), never a value from before.
+        #expect(ToolsCharts.within(pts, at(12)...at(31)).map(\.at) == [at(12), at(30)] && ToolsCharts.within(pts, at(12)...at(31)).first?.gap == .asleep && ToolsCharts.within(pts, at(1)...at(31)).map(\.at) == [at(5), at(10), at(30)])
         #expect(ToolsCharts.length(900) == "15 min" && ToolsCharts.length(86400) == "24 h" && ToolsCharts.length(7 * 86400) == "7 d")
     }
 
@@ -1268,8 +1281,8 @@ extension ServerLockTests {
         #expect(other.list?.source is PlaceSource && other.list?.cursor?.title == "Pulse", "\(other.list?.cursor?.title ?? "")")
     }
 
-    /// `goto` and the chart's click: an event's Services… and a count's open the server's services in the search;
-    /// a click on a chart runs the `log` action with five minutes around that moment, by the server's clock.
+    /// `goto` and Log for This Time: an event's Services… and a count's open the server's services in the search; the
+    /// `log` action runs over its stretch by the server's clock.
     @Test func gotoAndAChartsClickFromTheDashboard() async throws {
         let (app, _, _, done) = try toolsApp()
         let bench = try ToolsBench(), quick = Quick(app)
@@ -1288,7 +1301,7 @@ extension ServerLockTests {
                 && ToolRunner.Goto("ssh") == .ssh && ToolRunner.Goto("mail") == nil)
 
         let at = Date(timeIntervalSince1970: 1_800_000_000)
-        view.log("log", at: at)
+        view.log("log", from: at.addingTimeInterval(-150), to: at.addingTimeInterval(150))
         await toolsUntil { bench.calls.contains { $0.hasPrefix("pulse-log") } }
         #expect(bench.calls.contains("pulse-log 1799999850 1800000150"), "\(bench.calls)")
         await toolsUntil { page.result.stringValue.contains("Log: done") }

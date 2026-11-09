@@ -516,7 +516,7 @@ public struct ToolPreset: Sendable, Hashable, Codable {
         return (actions ?? []).filter { a in [nil, "list", own].contains(a.spec.rows) && !charts.contains(a.spec.id) }
     }
 
-    /// The charts' `log` actions, top to bottom: what a click on a chart runs.
+    /// The charts' `log` actions, top to bottom: their Log for This Time.
     public var chartLogs: [String] {
         func logs(_ blocks: [ToolBlock]) -> [String] { blocks.flatMap { [$0.log].compactMap { $0 } + logs($0.row ?? []) } }
         return logs(dashboard ?? [])
