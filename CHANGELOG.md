@@ -13,6 +13,14 @@ Release:
 
 ## [Unreleased]
 
+### Added
+- **Chart chips**: under a Tools chart of several series, a chip each with its color, name and value — now, at the moment the tables show, or under the pointer. A click hides that line, ⌥-click shows only it, a right-click has **Only This**, **Show All** and **Choose Series…**.
+- **Pick the series a chart draws**: past six, **+N more…** under the chart lists them all with their latest values and a search, to tick which six. Kermo keeps the pick, and each series' color, for that server and tool.
+- **Focus** (⤢ in a chart's header, or a double-click on it): one chart alone and taller, its series beside it, and **Data** — its numbers as a table.
+
+### Changed
+- A chart of several series says only *when* in its header; the values moved to its chips. A chart whose metrics' units differ says so, and a tool's Problems warn about it.
+
 ## [2.0.1] - 2026-11-08
 
 ### Fixed
