@@ -868,10 +868,10 @@ import DFMCore
 
     /// Why an event at `at` isn't in the charts' time, and what brings it there: the shortest range that reaches it.
     static func outside(_ at: Date, _ c: ToolsCharts, now: Date) -> String {
-        let reach = c.ranges.compactMap(\.seconds).filter { $0 >= now.timeIntervalSince(at) }.min()
-        guard let reach else { return "Older than the charts reach" }
-        if reach <= c.span { return "Not in the time shown — Back to Live first" }   // held: live again, it's there
-        return "Not in the charts' time — pick " + ToolsCharts.label(c.ranges.first { $0.seconds == reach }!)
+        let age = now.timeIntervalSince(at)
+        guard let reach = c.ranges.filter({ ($0.seconds ?? 0) >= age }).min(by: { ($0.seconds ?? 0) < ($1.seconds ?? 0) }) else { return "Older than the charts reach" }
+        if (reach.seconds ?? 0) <= c.span { return "Not in the time shown — Back to Live first" }   // held: live again, it's there
+        return "Not in the charts' time — pick " + ToolsCharts.label(reach)
     }
 
     private final class FlippedDoc: NSView { override var isFlipped: Bool { true } }
