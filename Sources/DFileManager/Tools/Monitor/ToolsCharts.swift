@@ -7,9 +7,9 @@ import SwiftUI
 
 /// A `charts` block: small multiples of the tool's series, two to a row where each gets 300 pt, else one — a line per
 /// series picked (the first six by name till you pick, six at most a chart, each keeping its color), never across a
-/// gap; the gaps as bands saying why; the first metric's alert thresholds as lines; the window's events as marks at the
-/// bottom of every chart — their level as a shape and a color, a faint line up, those closer than ~10 pt as one with
-/// their count — and Events N ▾ listing them (review 4 PR 3); one time axis and one crosshair for the block. Under a chart of several series, a chip a series picked
+/// gap; the gaps as bands saying why; the first metric's alert thresholds as lines; the window's events as marks at
+/// the bottom of every chart — their level as a shape and a color, a faint line up, those closer than ~10 pt as one
+/// with their count — and Events N ▾ listing them (review 4 PR 3); one time axis and one crosshair for the block. Under a chart of several series, a chip a series picked
 /// with its value — "Now", the moment the tables show, or the time under the pointer, as the header says — a click
 /// hides it, ⌥-click shows only it, "+N more…" lists the rest to pick; beside the pointer a tip with each series'
 /// value, the gap, the events near and what a click does. Focus (⤢, a double-click on the header, F) shows one chart
@@ -251,9 +251,11 @@ import SwiftUI
             reload()
         }
 
-        /// The mark nearest `t` within `d` — a click ≈6 pt from it (decision 2026-11-10): its time; nil: none that near.
-        func mark(near t: Date, within d: TimeInterval) -> Date? {
-            data.marks.map(\.at).filter { abs($0.timeIntervalSince(t)) <= d }.min { abs($0.timeIntervalSince(t)) < abs($1.timeIntervalSince(t)) }
+        /// A click on `chart` at `raw`, `t` as the tip says it (on the history a slot's edge): a mark within `d` of `raw` —
+        /// ≈6 pt (decision 2026-11-10) — is the moment at its time, its slot on the history; else `t`.
+        func click(at t: Date, raw: Date, within d: TimeInterval, on chart: Chart) {
+            let m = data.marks.map(\.at).filter { abs($0.timeIntervalSince(raw)) <= d }.min { abs($0.timeIntervalSince(raw)) < abs($1.timeIntervalSince(raw)) } ?? t
+            inspect(at: m, gap: chart.gap(at: m))
         }
 
         /// The selection as the window: what was recorded there, no finer (a slot stays a slot); the moment let go.
@@ -330,7 +332,7 @@ import SwiftUI
     let liveButton = NSButton(title: "Back to Live", target: nil, action: nil)
     /// At the right of the status: the window's events as a list.
     let eventsButton = NSButton(title: "Events 0", target: nil, action: nil)
-    let events = ToolsEventList()
+    private let events = ToolsEventList()
     let sub = NSTextField(labelWithString: "")
     /// The longer span's lines as last read — from `from`, in the slot they were read in: a new slot may be on disk since.
     private var disk: (from: Date, slot: Double, lines: [ToolSlots.Line])?
@@ -739,7 +741,7 @@ struct OneChart: View {
                 else { plot.frame(height: big ? ToolsCharts.focusHeight : ToolsCharts.plotHeight) }
             }
             .accessibilityElement(children: .ignore)   // the marks and the tip aren't walked: an AX walk of them stalls
-            .accessibilityLabel("\(chart.title): \(spoken)" + (model.data.events.isEmpty ? "" : ", \(model.data.events.count) event\(model.data.events.count == 1 ? "" : "s")"))
+            .accessibilityLabel("\(chart.title): \(spoken)" + { n in n == 0 ? "" : ", \(n) event\(n == 1 ? "" : "s")" }(model.data.events.count))
             .accessibilityActions {   // a chart's click and keys without the pointer (D-166 (6))
                 Button(big ? "Show All Charts" : "Focus") { model.show(focus: big ? nil : chart.id) }
                 Button("Previous Sample") { model.step(-1) }
@@ -1095,10 +1097,9 @@ struct OneChart: View {
                             model.active = chart.id
                             model.touched()
                             if abs(v.translation.width) >= 4, let a = at(v.startLocation.x, true), let b = at(v.location.x, true), a != b { model.select(from: a, to: b) }
-                            else if let t = at(v.location.x, model.history) {   // a mark ≈6 pt off: the event's time; else the slot the tip says
+                            else if let t = at(v.location.x, model.history), let raw = at(v.location.x, false) {   // a mark ≈6 pt off: its time
                                 let perPoint = proxy.plotFrame.map { model.data.to.timeIntervalSince(model.data.from) / max(1, g[$0].width) } ?? 0
-                                let m = at(v.location.x, false).flatMap { model.mark(near: $0, within: 6 * perPoint) } ?? t
-                                model.inspect(at: m, gap: chart.gap(at: m))
+                                model.click(at: t, raw: raw, within: 6 * perPoint, on: chart)
                             }
                         })
                     .contextMenu {   // the hovered time's log, wherever a click goes
@@ -1157,10 +1158,9 @@ struct DataTable: View {
 }
 
 private extension ChartContent {
-    /// Beside a mark of several events, how many.
-    func count(_ n: Int) -> some ChartContent {
-        annotation(position: .trailing, alignment: .center, spacing: 1) {
-            if n > 1 { Text("\(n)").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary) }
-        }
+    /// Beside a mark of several events, how many; a mark of one has no annotation.
+    @ChartContentBuilder func count(_ n: Int) -> some ChartContent {
+        if n > 1 { annotation(position: .trailing, alignment: .center, spacing: 1) { Text("\(n)").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary) } }
+        else { self }
     }
 }

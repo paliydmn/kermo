@@ -705,7 +705,7 @@ import DFMCore
     /// Every event kept, newest first: what Show All lists.
     private var all: [ToolEventRecord] = []
     let showAll = NSButton(title: "Show All…", target: nil, action: nil)
-    let events = ToolsEventList()
+    private let events = ToolsEventList()
     /// The rows' buttons' actions; Show All's.
     private var kept: [AnyObject] = [], showAllAction: AnyObject?
 
@@ -717,9 +717,6 @@ import DFMCore
         showAll.font = .systemFont(ofSize: 11)
         showAll.isHidden = true
         showAll.toolTip = "Every event kept — a click on one in the charts' time: the charts at that time"
-        let attach = MenuAction.attach(to: showAll) { [weak self, unowned live] in
-            if let self { events.show(all, empty: "No events yet", under: showAll, live: live, charts: live.charts.first) }   // a dashboard has one charts block
-        }
         (list.orientation, list.alignment, list.spacing) = (.vertical, .leading, 3)
         let top = NSStackView(views: [heading, ToolsWindow.spacer(), showAll])
         let stack = NSStackView(views: [top, list])
@@ -730,7 +727,9 @@ import DFMCore
                                      stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
                                      list.widthAnchor.constraint(equalTo: stack.widthAnchor), top.widthAnchor.constraint(equalTo: stack.widthAnchor)])
         setAccessibilityLabel("Events")
-        showAllAction = attach
+        showAllAction = MenuAction.attach(to: showAll) { [weak self, unowned live] in
+            if let self { events.show(all, empty: "No events yet", under: showAll, live: live, charts: live.charts.first) }   // a dashboard has one charts block
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -744,7 +743,7 @@ import DFMCore
         guard first != shown else { return }
         shown = first
         kept = []
-        list.setViews(first.isEmpty ? [ToolsWindow.small("Nothing yet")] : first.map { row($0, live) }, in: .top)
+        list.setViews(first.isEmpty ? [ToolsWindow.small("Nothing yet")] : first.map { Self.row($0, live: live) { kept.append($0) } }, in: .top)
         for v in list.arrangedSubviews { v.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true }
     }
 
@@ -758,21 +757,32 @@ import DFMCore
         }
     }
 
-    private func row(_ e: ToolEventRecord, _ live: ToolsLive) -> NSView {
-        let time = ToolsWindow.small(e.at.formatted(date: .omitted, time: .shortened))
+    /// An event's row: the time (its weekday if not today), the level as a shape with its color, the words — a borderless
+    /// button when `pick` is given (a click: the moment there), else a label; whole in the tooltip with `why` under them —
+    /// and `goto`'s button. `done` runs before a button's action (the list closes); `keep` keeps the actions.
+    static func row(_ e: ToolEventRecord, live: ToolsLive, pick: (() -> Void)? = nil, why: String? = nil, done: @escaping () -> Void = {},
+                    keep: (AnyObject) -> Void) -> NSView {
+        let time = ToolsWindow.small(ToolsEventList.time(e.at))
         time.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         time.setContentCompressionResistancePriority(.required, for: .horizontal)
-        let text = NSTextField(labelWithString: e.message)
+        let text: NSControl
+        if let pick {
+            let b = NSButton(title: e.message, target: nil, action: nil)
+            (b.isBordered, b.alignment) = (false, .left)
+            keep(MenuAction.attach(to: b) { done(); pick() })
+            text = b
+        } else { text = NSTextField(labelWithString: e.message) }
+        text.toolTip = [e.message, why].compactMap { $0 }.joined(separator: "\n")
         text.font = .systemFont(ofSize: 12)
         text.lineBreakMode = .byTruncatingTail
-        text.toolTip = e.message
         text.setContentCompressionResistancePriority(.init(250), for: .horizontal)
-        var views: [NSView] = [time, NSImageView(image: Self.mark(e.level)), text, ToolsWindow.spacer()]
+        text.setContentHuggingPriority(.init(1), for: .horizontal)   // the row's width: a click anywhere along it
+        var views: [NSView] = [time, NSImageView(image: mark(e.level)), text]
         if let g = e.goto.flatMap(ToolRunner.Goto.init) {
             let b = NSButton(title: g.title, target: nil, action: nil)
             b.controlSize = .small
             b.font = .systemFont(ofSize: 11)
-            kept.append(MenuAction.attach(to: b) { [unowned live] in live.app.tools.go(g, on: live.target) })
+            keep(MenuAction.attach(to: b) { [unowned live] in done(); live.app.tools.go(g, on: live.target) })
             views.append(b)
         }
         let s = NSStackView(views: views)
@@ -788,13 +798,14 @@ import DFMCore
 /// time is the moment there (`ToolsCharts.Model.inspect`): the tables as they were then, on the history its slot. Built
 /// as it opens, never updated; ⎋ or a click outside closes it — the charts' ⎋ steps aren't touched.
 @MainActor final class ToolsEventList: NSObject, NSPopoverDelegate {
-    private(set) var popover: NSPopover?
+    private var popover: NSPopover?
     private var closedAt = Date.distantPast
     private var kept: [AnyObject] = []
     static let width: CGFloat = 460
 
-    /// Opens under `button` — unless its own click just closed it.
+    /// Opens under `button` — unless its own click just closed it; open, closes.
     func show(_ events: [ToolEventRecord], empty: String, under button: NSView, live: ToolsLive, charts: ToolsCharts?) {
+        if popover?.isShown == true { popover?.performClose(nil); return }
         guard Date().timeIntervalSince(closedAt) > 0.3 else { return }
         let p = NSPopover(), vc = NSViewController()
         p.behavior = .transient
@@ -813,7 +824,15 @@ import DFMCore
     /// The list: its rows in a scroll, under them what Kermo keeps.
     func view(_ events: [ToolEventRecord], empty: String, live: ToolsLive, charts: ToolsCharts?, close: @escaping () -> Void) -> NSView {
         kept = []
-        let rows = NSStackView(views: events.isEmpty ? [ToolsWindow.small(empty)] : events.map { row($0, live: live, charts: charts, close: close) })
+        let window = charts.map { $0.model.data.from...$0.model.data.to }, now = live.now
+        let rows = NSStackView(views: events.isEmpty ? [ToolsWindow.small(empty)] : events.map { e in
+            guard let charts, window?.contains(e.at) == true else {
+                return ToolsEvents.row(e, live: live, why: charts.map { Self.outside(e.at, $0, now: now) }, done: close) { kept.append($0) }
+            }
+            let model = charts.model
+            return ToolsEvents.row(e, live: live, pick: { model.inspect(at: e.at, gap: model.data.charts.first?.gap(at: e.at)) }, why: "Click: the charts at this time",
+                                   done: close) { kept.append($0) }
+        })
         (rows.orientation, rows.alignment, rows.spacing) = (.vertical, .leading, 3)
         rows.translatesAutoresizingMaskIntoConstraints = false
         for v in rows.arrangedSubviews { v.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true }
@@ -826,7 +845,7 @@ import DFMCore
                                      rows.topAnchor.constraint(equalTo: doc.topAnchor), rows.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
                                      doc.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
                                      scroll.heightAnchor.constraint(equalToConstant: min(320, rows.fittingSize.height))])
-        let clickable = charts != nil && events.contains { charts!.model.data.from <= $0.at && $0.at <= charts!.model.data.to }
+        let clickable = events.contains { window?.contains($0.at) == true }
         let foot = NSTextField(wrappingLabelWithString: (clickable ? "Click one: the charts at that time. " : "")
             + "Kept in memory since Kermo started: this tool's last \(ToolMonitor.eventsKept) events and watching's last \(ToolMonitor.eventsKept) — older ones aren't kept.")
         foot.font = .systemFont(ofSize: 11)
@@ -847,45 +866,12 @@ import DFMCore
             : now.timeIntervalSince(t) < 6 * 86400 ? t.formatted(.dateTime.weekday().hour().minute()) : t.formatted(.dateTime.month().day().hour().minute())
     }
 
-    /// Why an event isn't in the charts' time, and what brings it there.
-    static func outside(_ c: ToolsCharts) -> String {
-        if c.model.held != nil { return "Not in the time shown — Back to Live first" }
-        let longer = c.ranges.filter { ($0.seconds ?? 0) > c.span }.map(ToolsCharts.label)
-        return longer.isEmpty ? "Before the charts' time" : "Not in the charts' time — pick " + longer.joined(separator: " or ")
-    }
-
-    private func row(_ e: ToolEventRecord, live: ToolsLive, charts: ToolsCharts?, close: @escaping () -> Void) -> NSView {
-        let time = ToolsWindow.small(Self.time(e.at))
-        time.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        time.setContentCompressionResistancePriority(.required, for: .horizontal)
-        let text: NSControl
-        if let model = charts?.model, model.data.from <= e.at, e.at <= model.data.to {
-            let b = NSButton(title: e.message, target: nil, action: nil)
-            b.isBordered = false
-            b.alignment = .left
-            b.toolTip = e.message + "\nClick: the charts at this time"
-            kept.append(MenuAction.attach(to: b) { close(); model.inspect(at: e.at, gap: model.data.charts.first?.gap(at: e.at)) })
-            text = b
-        } else {
-            text = NSTextField(labelWithString: e.message)
-            text.toolTip = e.message + (charts.map { "\n" + Self.outside($0) } ?? "")
-        }
-        text.font = .systemFont(ofSize: 12)
-        text.lineBreakMode = .byTruncatingTail
-        text.setContentCompressionResistancePriority(.init(250), for: .horizontal)
-        text.setContentHuggingPriority(.init(1), for: .horizontal)   // the row's width: a click anywhere along it
-        var views: [NSView] = [time, NSImageView(image: ToolsEvents.mark(e.level)), text]
-        if let g = e.goto.flatMap(ToolRunner.Goto.init) {
-            let b = NSButton(title: g.title, target: nil, action: nil)
-            b.controlSize = .small
-            b.font = .systemFont(ofSize: 11)
-            kept.append(MenuAction.attach(to: b) { [unowned live] in close(); live.app.tools.go(g, on: live.target) })
-            views.append(b)
-        }
-        let s = NSStackView(views: views)
-        s.spacing = 6
-        s.setAccessibilityLabel("\(e.level) \(e.message)")
-        return s
+    /// Why an event at `at` isn't in the charts' time, and what brings it there: the shortest range that reaches it.
+    static func outside(_ at: Date, _ c: ToolsCharts, now: Date) -> String {
+        let reach = c.ranges.compactMap(\.seconds).filter { $0 >= now.timeIntervalSince(at) }.min()
+        guard let reach else { return "Older than the charts reach" }
+        if reach <= c.span { return "Not in the time shown — Back to Live first" }   // held: live again, it's there
+        return "Not in the charts' time — pick " + ToolsCharts.label(c.ranges.first { $0.seconds == reach }!)
     }
 
     private final class FlippedDoc: NSView { override var isFlipped: Bool { true } }
