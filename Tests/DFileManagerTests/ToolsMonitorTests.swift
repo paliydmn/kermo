@@ -615,7 +615,53 @@ extension ServerLockTests {
         table.hover = nil
         table.table.deselectAll(nil)
         #expect(counts.numbers.map(\.stringValue) == ["2"] && buttons(counts).map(\.title) == ["Services…"])
-        #expect(buttons(events).map(\.title) == ["Services…"] && events.subviews.first.map { labels($0) }?.contains("hot: 99") == true, "\(events.subviews.first.map(labels) ?? [])")
+        #expect(buttons(events).map(\.title).first?.hasPrefix("Show All ") == true && buttons(events).dropFirst().map(\.title) == ["Services…"]
+                && events.subviews.first.map { labels($0) }?.contains("hot: 99") == true, "\(buttons(events).map(\.title)) \(events.subviews.first.map(labels) ?? [])")
+
+        // Events (review 4 PR 3): a mark for each of the tool's but how things stood at the first sample, and for
+        // watching's not answering and answers again; Events N ▾ lists them all, newest first — a held window's alone.
+        let tool = try #require(view.known), server = try #require(view.state), now = view.now
+        func event(_ ago: Double, _ level: String, _ message: String, found: Bool = false) -> ToolEventRecord {
+            .init(at: now.addingTimeInterval(-ago), id: "test", level: level, message: message, found: found)
+        }
+        let found = event(400, "warning", "as it stood", found: true), slept = event(500, "info", "Paused while this Mac slept"),
+            back = event(600, "ok", "Answers again · after 2 min"), down = event(700, "critical", "Not answering — 3 checks in a row"),
+            old = event(7200, "warning", "two hours ago")
+        tool.events += [found, old]
+        server.events += [slept, back, down]
+        charts.model.plotWidth = 1e6   // nothing merged
+        charts.update(view)
+        let marked = Set(charts.model.data.marks.map(\.at)), listed = charts.model.data.events
+        #expect(marked.isSuperset(of: [down.at, back.at]) && marked.isDisjoint(with: [found.at, slept.at, old.at])
+                && charts.model.data.marks.first { $0.at == back.at }?.level == "ok", "\(charts.model.data.marks)")
+        #expect(listed.map(\.at) == listed.map(\.at).sorted(by: >) && [found, slept, back, down].allSatisfy(listed.contains) && !listed.contains(old)
+                && charts.eventsButton.title == "Events \(listed.count)", "\(charts.eventsButton.title) \(listed.map(\.message))")
+        charts.model.select(from: down.at.addingTimeInterval(-1), to: back.at.addingTimeInterval(1))
+        charts.model.zoom()
+        #expect(charts.model.data.events == [back, down] && charts.model.data.marks.map(\.at) == [down.at, back.at] && charts.eventsButton.title == "Events 2",
+                "a Zoom: its own events \(charts.model.data.events.map(\.message))")
+        charts.model.backToLive()
+        // The list: a row an event; one in the charts' time sets the moment there, one before it says how to reach it.
+        func fields(_ v: NSView) -> [NSTextField] { ((v as? NSTextField).map { [$0] } ?? []) + v.subviews.flatMap(fields) }
+        let kept = ([old] + charts.model.data.events).sorted { $0.at > $1.at }   // Show All's: every one kept
+        let owner = ToolsEventList()   // the block's: it keeps the rows' actions
+        var list = owner.view(kept, empty: "No events yet", live: view, charts: charts) {}
+        let rows = buttons(list).filter { b in kept.contains { $0.message == b.title } }
+        #expect(rows.map(\.title) == kept.filter { $0 != old }.map(\.message), "\(rows.map(\.title))")
+        #expect(fields(list).first { $0.stringValue == old.message }?.toolTip == "two hours ago\nNot in the charts' time — pick 24h or 7d"
+                && labels(list).last?.hasSuffix("this tool's last 40 events and watching's last 40 — older ones aren't kept.") == true, "\(labels(list))")
+        press(rows.first { $0.title == down.message })
+        #expect(charts.model.moment == down.at && view.moment == down.at, "a row: the moment at its time")
+        charts.range.selectedSegment = 2   // 24h: the row's slot
+        _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
+        list = owner.view(charts.model.data.events, empty: "", live: view, charts: charts) {}
+        press(buttons(list).first { $0.title == down.message })
+        #expect(charts.model.history && charts.model.moment == Date(timeIntervalSince1970: ToolSlots.slot(down.at)), "\(String(describing: charts.model.moment))")
+        charts.range.selectedSegment = 1
+        _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
+        #expect(owner.view([], empty: "No events in this time", live: view, charts: charts) {}.subviews.flatMap(labels).contains("No events in this time"))
+        view.update()
+        #expect(!events.showAll.isHidden && events.showAll.title == "Show All \(tool.events.count + server.events.count)…", "\(events.showAll.title)")
 
         // Series: a chip's click hides one, ⌥ shows only it (again: all of them); a pick takes the first color free and
         // is kept for this server and tool — a new block reads it —, one always stays; Focus shows one chart, taller.
@@ -1240,6 +1286,35 @@ extension ServerLockTests {
         // The window's points: what's in it, and the gap it opens in at its start (its band and why), never a value from before.
         #expect(ToolsCharts.within(pts, at(12)...at(31)).map(\.at) == [at(12), at(30)] && ToolsCharts.within(pts, at(12)...at(31)).first?.gap == .asleep && ToolsCharts.within(pts, at(1)...at(31)).map(\.at) == [at(5), at(10), at(30)])
         #expect(ToolsCharts.length(900) == "15 min" && ToolsCharts.length(86400) == "24 h" && ToolsCharts.length(7 * 86400) == "7 d")
+    }
+
+    /// Events as marks (review 4 PR 3): those closer than the threshold (10 pt of the plot) are one mark at the first
+    /// one's time with their count and the worst level — critical, warning, back to normal, info —, a recovery has
+    /// its own; a click ≈6 pt from a mark is its moment (a slot on the history); the list's times say the day past today.
+    @Test func aChartsEventsAreMarksMergedByDistance() {
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)   // a slot's start
+        func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
+        func e(_ s: Double, _ level: String) -> ToolEventRecord { .init(at: at(s), id: "e\(s)", level: level, message: "\(level) at \(s)") }
+        let events = [e(30, "ok"), e(0, "info"), e(5, "critical"), e(8, "warning"), e(60, "info"), e(65, "ok")]
+        #expect(ToolsCharts.marks(events, within: 10) == [.init(at: at(0), level: "critical", count: 3), .init(at: at(30), level: "ok", count: 1),
+                                                          .init(at: at(60), level: "ok", count: 2)], "\(ToolsCharts.marks(events, within: 10))")
+        #expect(ToolsCharts.marks(events, within: 1).count == 6 && ToolsCharts.marks([], within: 10).isEmpty, "apart: one each")
+        #expect(ToolsCharts.marks([e(0, "info"), e(9.9, "warning"), e(10, "info")], within: 10).map(\.count) == [2, 1], "from the first of a mark, not chained")
+        let model = ToolsCharts.Model()
+        model.data = .init(from: at(-600), to: at(600), marks: ToolsCharts.marks(events, within: 10))
+        #expect(model.mark(near: at(4), within: 6) == at(0) && model.mark(near: at(26), within: 6) == at(30) && model.mark(near: at(45), within: 6) == nil,
+                "the nearest within 6 pt's time")
+        var shown: [Date?] = []
+        model.shown = { m, _, _ in shown.append(m) }
+        model.inspect(at: model.mark(near: at(27), within: 6) ?? at(27))
+        #expect(model.moment == at(30) && shown == [at(30)])
+        (model.history, model.every) = (true, ToolSlots.length)
+        model.inspect(at: model.mark(near: at(62), within: 6) ?? at(62))
+        #expect(model.moment == at(0), "on the history the mark's slot")
+        let now = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
+        #expect(ToolsEventList.time(now.addingTimeInterval(-60), now: now) == now.addingTimeInterval(-60).formatted(date: .omitted, time: .shortened))
+        #expect(ToolsEventList.time(now.addingTimeInterval(-86400), now: now) == now.addingTimeInterval(-86400).formatted(.dateTime.weekday().hour().minute()))
+        #expect(ToolsEventList.time(now.addingTimeInterval(-8 * 86400), now: now) == now.addingTimeInterval(-8 * 86400).formatted(.dateTime.month().day().hour().minute()))
     }
 
     /// The sort: numbers by value ("1,25" before "1,5"; 2 KB before 1 MB), text as Finder sorts names, nothing last

@@ -147,7 +147,7 @@ import DFMCore
         for c in charts where c.model.escape() { return }
     }
 
-    private var charts: [ToolsCharts] { blocks.compactMap { $0 as? ToolsCharts } }
+    var charts: [ToolsCharts] { blocks.compactMap { $0 as? ToolsCharts } }
     /// The dashboard's blocks: hidden while Sites has no addresses to show.
     private var dash: [NSView] = []
     private var noAddresses: Bool { tool.preset.http != nil && (app.savedServers.first { $0.id == server.id } ?? server).sites.isEmpty }
@@ -156,7 +156,7 @@ import DFMCore
     private func make(_ b: ToolBlock) -> NSView {
         if let blocks = b.row { return row(blocks.map(make), tiles: blocks.allSatisfy { $0.stat != nil }) }
         if let stat = b.stat { return tile(stat.all, of: b.of, also: b.also) }
-        let v: any ToolsBlock = if b.charts != nil { ToolsCharts(self, b) } else if b.table != nil { ToolsTable(self, b) } else if b.events == true { ToolsEvents() } else { ToolsCounts(self, b) }
+        let v: any ToolsBlock = if b.charts != nil { ToolsCharts(self, b) } else if b.table != nil { ToolsTable(self, b) } else if b.events == true { ToolsEvents(self) } else { ToolsCounts(self, b) }
         blocks.append(v)
         return v
     }
