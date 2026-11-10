@@ -561,7 +561,8 @@ extension ServerLockTests {
         grip.mouseUp(with: mouse(.leftMouseUp, 297, clicks: 2))
         page?.window?.layoutIfNeeded()
         #expect(abs(scroll.frame.height - rowsTall) < 1 && kept() == nil && !scroll.hasVerticalScroller)
-        #expect(hosting?.window != nil && charts.range.segmentCount == 3 && charts.range.selectedSegment == 0)
+        #expect(hosting?.window != nil && (0..<charts.range.segmentCount).map { charts.range.label(forSegment: $0) } == ["15m", "1h", "24h", "7d"]
+                && charts.range.selectedSegment == 1, "15m before the preset's 1h, the hour picked")
         let d = charts.model.data
         #expect(d.charts.map(\.title) == ["CPU", "Process memory · Ticks"] && d.charts[0].top == 100 && d.charts[0].warn == 85 && d.charts[0].crit == 95)
         // Two metrics in one chart: the first one's thresholds; a key named with its metric; every series counted.
@@ -574,7 +575,18 @@ extension ServerLockTests {
         #expect(one.said == "Now 99%" && one.spoken == "Now, 99%", "\(one.said)")
         model.hover = d.charts[0].lines.first?.points.last?.at
         #expect(one.said.hasSuffix(" · 99%") && !one.said.hasPrefix("Now"), "\(one.said)")
-        #expect(d.click == "Click: the tables at this time", "a table to show the moment in")
+        #expect(d.click == "Click: the tables at this time · drag: a stretch", "a table to show the moment in")
+        #expect(charts.status.stringValue == "Live · a sample every 1 s" && charts.liveButton.isHidden && charts.sub.stringValue.hasPrefix("1 h · recorded only while open or watched · UTC"),
+                "\(charts.status.stringValue) | \(charts.sub.stringValue)")
+        // 15m: the hour's last quarter, from the same samples; only where the preset has 1h.
+        charts.range.selectedSegment = 0
+        _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
+        #expect(charts.span == 900 && charts.model.data.to.timeIntervalSince(charts.model.data.from) == 900 && charts.model.data.charts[0].lines[0].points.allSatisfy { $0.at >= charts.model.data.from }
+                && charts.sub.stringValue.hasPrefix("15 min · "), "\(charts.sub.stringValue)")
+        charts.range.selectedSegment = 1
+        _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
+        let days = ToolsCharts(view, try JSONDecoder().decode(ToolBlock.self, from: Data(#"{ "charts": [["cpu"]], "range": ["24h", "7d"] }"#.utf8)))
+        #expect(days.ranges.count == 2 && days.range.segmentCount == 2, "no 1h: no 15m")
         // Two to a row where each gets 300 pt, else one.
         let single = ToolsCharts(view, try JSONDecoder().decode(ToolBlock.self, from: Data(#"{ "charts": [["cpu"]] }"#.utf8)))
         for (block, width, columns) in [(charts, 400.0, 1), (charts, 700.0, 2), (single, 900.0, 1)] {
@@ -919,8 +931,9 @@ extension ServerLockTests {
 
     /// Review 3, T11 "who was it?": a click on the last hour's chart shows every table as it was then — the nearest
     /// rows at or before it, read only (Copy, Copy Table, Back to Live; no buttons, ↩ runs nothing), held there as new
-    /// samples come, a line at that moment on the charts — till Back to Live (⎋). A click in a band or before watching
-    /// began: nothing recorded then. On 24h and 7d (no rows kept) a click is the log, as before.
+    /// samples come, a line at that moment on the charts, their window held still — till Back to Live or ⎋, whose one
+    /// owner is the tab. A click in a band or before watching began: nothing recorded then. On 24h a click is a slot's
+    /// moment too (decision 3, review 4): the tables say their rows aren't kept that long, ↩ logs the slot.
     @Test func aChartsClickShowsTheTablesAsTheyWereThen() async throws {
         let (app, _, _, done) = try toolsApp()
         let bench = try ToolsBench(), quick = Quick(app)
@@ -939,7 +952,7 @@ extension ServerLockTests {
         table.table.selectRowIndexes([0], byExtendingSelection: false)
         let drawn = rowButtons(table, 0)   // the live row's, drawn before the moment
         try #require(drawn.contains { $0.title == "Folder" })
-        charts.model.clicked(then, nil)
+        charts.model.inspect(at: then)
         press(drawn.first { $0.title == "Folder" })
         try await Task.sleep(for: .milliseconds(300))
         #expect(!bench.calls.contains { $0.hasPrefix("pulse-dir") }, "a button drawn before the moment runs nothing in it: \(bench.calls)")
@@ -951,21 +964,68 @@ extension ServerLockTests {
         table.table.selectRowIndexes([0], byExtendingSelection: false)
         table.open(0, beep: false)   // ↩: Deeper, live; nothing on a moment's row
         #expect(rowButtons(table, 0).isEmpty && bench.calls.count == calls)
-        try await Task.sleep(for: .seconds(1))
+        let held = try #require(charts.model.held)
+        try await Task.sleep(for: .seconds(1.5))
         #expect(table.rows.map(\.key) == ["1", "2"], "new samples don't move a moment")
-        #expect(view.liveButton.keyEquivalent == "\u{1b}")
+        #expect(charts.model.held == held && charts.model.data.to == held.upperBound && charts.status.stringValue.hasPrefix("Inspecting at ")
+                && charts.status.stringValue.contains(" new sample") && !charts.liveButton.isHidden, "the window holds still: \(charts.status.stringValue)")
+        #expect(view.liveButton.keyEquivalent.isEmpty && charts.liveButton.keyEquivalent.isEmpty, "⎋ has one owner: the tab's cancelOperation")
         press(view.liveButton)
-        #expect(view.moment == nil && view.momentBar.isHidden && table.rows.map(\.key) == ["2"] && charts.model.moment == nil, "Back to Live: the rows now")
-        charts.model.clicked(then, .asleep)
+        #expect(view.moment == nil && view.momentBar.isHidden && table.rows.map(\.key) == ["2"] && charts.model.moment == nil && charts.model.held == nil,
+                "Back to Live: the rows now, the charts' window live")
+        charts.model.inspect(at: then, gap: .asleep)
         #expect(view.momentText.stringValue.hasPrefix("Mac asleep at ") && view.momentText.stringValue.hasSuffix("nothing recorded then"), "\(view.momentText.stringValue)")
-        charts.model.clicked(then.addingTimeInterval(-3600), nil)
+        let began = try #require(app.tools.monitor.tool("pulse", on: .local())?.history.points("cpu").first?.at)
+        charts.model.inspect(at: began.addingTimeInterval(-1))
         #expect(table.rows.isEmpty && table.note.stringValue.hasPrefix("nothing recorded at") && view.momentText.stringValue.hasPrefix("Nothing recorded at "),
                 "before watching began: \(table.note.stringValue) — \(view.momentText.stringValue)")
-        press(view.liveButton)
-        charts.range.selectedSegment = 1   // 24h
-        charts.model.clicked(Date(timeIntervalSince1970: 1_800_000_000), nil)
-        await toolsUntil { bench.calls.contains("pulse-log 1799999850 1800000150") }
-        #expect(view.moment == nil && bench.calls.contains("pulse-log 1799999850 1800000150"), "on 24h a click is the log: \(bench.calls)")
+        // ⎋ up the responder chain from whatever has the keys: the tab's cancelOperation, its one owner.
+        func escape(from r: NSResponder) { if page.window?.makeFirstResponder(r) == true { _ = page.window?.firstResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: nil) } }
+        escape(from: table.table)
+        #expect(view.moment == nil && charts.model.held == nil && view.momentBar.isHidden, "⎋ from the table: Back to Live")
+        charts.model.inspect(at: then)
+        escape(from: charts)
+        #expect(page.window?.firstResponder === charts && view.moment == nil && charts.model.held == nil, "⎋ from the charts too")
+        escape(from: charts)
+        #expect(page.window?.isVisible == true && view.moment == nil, "nothing to undo: nothing, the window stays")
+        // 24h: a click is the slot's moment, not the log; ↩ logs the slot's 15 minutes.
+        charts.range.selectedSegment = 2
+        _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
+        let slot = Date(timeIntervalSince1970: ToolSlots.slot(view.now) - 3 * 3600)
+        charts.model.inspect(at: slot.addingTimeInterval(100))
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(charts.model.history && view.moment == slot && view.momentText.stringValue.hasSuffix("the tables' rows are kept for the last hour only")
+                && table.note.stringValue == "not kept past the last hour" && !bench.calls.contains { $0.hasPrefix("pulse-log") },
+                "\(view.momentText.stringValue) | \(table.note.stringValue) | \(bench.calls)")
+        charts.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+                                              characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!)   // ↩
+        let log = "pulse-log \(Int(slot.timeIntervalSince1970)) \(Int(slot.timeIntervalSince1970 + ToolSlots.length))"
+        await toolsUntil { bench.calls.contains(log) }
+        #expect(bench.calls.contains(log), "the slot's 15 minutes: \(bench.calls)")
+        charts.range.selectedSegment = 1   // another range: live
+        _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
+        #expect(view.moment == nil && charts.model.held == nil && !charts.model.history)
+        // A held hour keeps what the hour in memory trims meanwhile: the line, the scale, the moment's values stay.
+        let tool = try #require(app.tools.monitor.tool("pulse", on: .local()))
+        defer { tool.history.keep = 3600 }
+        charts.model.step(-1)
+        let shown = charts.model.data.charts[0].lines[0].points
+        tool.history.keep = 1
+        try await Task.sleep(for: .seconds(2.5))
+        #expect(tool.history.points("cpu").count < shown.count && charts.model.data.charts[0].lines[0].points.map(\.at) == shown.map(\.at),
+                "\(tool.history.points("cpu").count) \(shown.count)")
+        // The block's keys: ⇧→ a minute (here to the edge), ← a sample, F Focus.
+        func key(_ code: UInt16, _ c: String, _ mods: NSEvent.ModifierFlags = []) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: mods, timestamp: 0, windowNumber: 0, context: nil,
+                             characters: c, charactersIgnoringModifiers: c, isARepeat: false, keyCode: code)!
+        }
+        let m0 = try #require(charts.model.moment), last = try #require(charts.model.samples.last)
+        charts.keyDown(with: key(124, "\u{F703}", .shift))
+        #expect(charts.model.moment == last && m0 < last, "⇧→: the edge")
+        charts.keyDown(with: key(123, "\u{F702}"))
+        #expect(charts.model.moment == m0, "←")
+        charts.keyDown(with: key(3, "f"))
+        #expect(charts.model.focus == charts.model.data.charts.first?.id, "F")
     }
 
     /// Review 3, T12: a table's All Processes… opens the tool's list in a Picker over the Tools window — the busiest
@@ -1105,6 +1165,83 @@ extension ServerLockTests {
         #expect(model.query.isEmpty && model.focus == "disk", "Focus starts its list unsearched")
     }
 
+    /// Time on the charts (review 4 PR 2), each gesture a model method the pointer, the keys and the AX actions call: a
+    /// moment holds the window; ←/→ a sample — over a gap to the next with values, at the edge it stays —, ⇧ a minute;
+    /// a drag's stretch, Zoom to it; ⎋ one step back at a time; Log for This Time over the moment's five minutes or the
+    /// stretch, a day at most; F the chart under the pointer, else the one clicked. On the history a moment is a slot.
+    @Test func aChartsTimeHoldsStillWhileYouLook() throws {
+        let pct = try JSONDecoder().decode(ToolMetric.self, from: Data(#"{ "unit": "%" }"#.utf8))
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)   // a slot's start
+        func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
+        let pts: [ToolPoint] = [.init(at: at(0), value: 1), .init(at: at(5), value: 2), .init(at: at(10), gap: .asleep), .init(at: at(30), value: 3), .init(at: at(35), value: 4)]
+        let line = ToolsCharts.Line(id: "cpu ", name: "CPU", points: pts, chart: ToolChart(pts, now: at(40)), metric: pct)
+        let charts = ["cpu", "mem"].map { ToolsCharts.Chart(id: $0, title: $0, metric: pct, top: 100, lines: [line], bands: line.chart.bands) }
+        let model = ToolsCharts.Model()
+        var shown: [Date?] = [], logged: [ClosedRange<Date>] = []
+        model.shown = { m, _, _ in shown.append(m) }
+        model.log = ("Log", { logged.append($0) })
+        (model.every, model.data) = (5, .init(charts: charts, from: at(0), to: at(40)))
+        // ←/→: from live the sample before the latest, the window held; over the gap; at an edge it stays.
+        model.step(-1)
+        #expect(model.moment == at(30) && model.held == at(0)...at(40) && shown == [at(30)], "\(String(describing: model.moment))")
+        model.step(-1)
+        #expect(model.moment == at(5), "over the gap: the sample before it")
+        model.step(-5)
+        #expect(model.moment == at(0), "the left edge: it stays")
+        for _ in 1...5 { model.step(1) }
+        #expect(model.moment == at(35) && model.minute == 12, "the right edge: it stays; ⇧ a minute of 5-second samples")
+        model.inspect(at: at(31))
+        model.step(-1)
+        #expect(model.moment == at(30), "a click between samples: ← the one before it")
+        model.backToLive()
+        #expect(model.held == nil && model.moment == nil && shown.last == .some(nil))
+        // A drag: the stretch on every chart, the window held; ⎋ lets both go — unless a moment holds the window.
+        model.select(from: at(30), to: at(5))
+        #expect(model.selection == at(5)...at(30) && model.held == at(0)...at(40))
+        #expect(model.escape() && model.selection == nil && model.held == nil, "a stretch alone: ⎋, live")
+        model.inspect(at: at(30))
+        model.select(from: at(5), to: at(30))
+        #expect(model.moment == at(30) && model.escape() && model.selection == nil && model.held != nil, "a moment holds it")
+        // Zoom: the stretch as the window, the moment let go.
+        model.select(from: at(5), to: at(30))
+        model.zoom()
+        #expect(model.held == at(5)...at(30) && model.zoomed && model.moment == nil && model.selection == nil && shown.last == .some(nil))
+        // ⎋, one step back: the series list, the selection — a Zoom's window stays —, Focus, Back to Live; then nothing.
+        model.select(from: at(5), to: at(10))
+        model.focusKey()
+        model.choosing = "cpu"
+        #expect(model.focus == "cpu" && model.escape() && model.choosing == nil && model.selection != nil)
+        #expect(model.escape() && model.selection == nil && model.held == at(5)...at(30))
+        #expect(model.escape() && model.focus == nil && model.held != nil)
+        #expect(model.escape() && model.held == nil && !model.zoomed)
+        #expect(!model.escape(), "nothing to undo")
+        // F: the chart under the pointer, else the one clicked, else the first; again: all of them.
+        model.active = "mem"
+        model.focusKey()
+        #expect(model.focus == "mem" && model.barChart == "mem")
+        model.focusKey()
+        model.hovered = "cpu"
+        model.focusKey()
+        #expect(model.focus == "cpu")
+        model.show(focus: nil)
+        // Log for This Time: the moment's five minutes, the stretch, a day at most (decision 2026-11-09).
+        model.inspect(at: at(30))
+        #expect(model.logNow() && logged.last == at(-120)...at(180))
+        model.select(from: at(0), to: at(40))
+        #expect(model.logNow() && logged.last == at(0)...at(40), "the stretch, over the moment")
+        #expect(!model.runLog(at(0)...at(86401)) && model.runLog(at(0)...at(86400)) && logged.count == 3, "over a day: zoom in first")
+        model.log = nil
+        #expect(!model.logNow(), "no `log`: nothing (↩ beeps)")
+        // The history: a moment is its slot, ⇧ an hour of them, a log the slot's 15 minutes.
+        model.backToLive()
+        (model.history, model.every) = (true, ToolSlots.length)
+        model.inspect(at: at(1000))
+        #expect(model.moment == at(900) && model.minute == 4 && model.around(at(1000)) == at(900)...at(1800))
+        // The window's points: what's in it, and the gap it opens in at its start (its band and why), never a value from before.
+        #expect(ToolsCharts.within(pts, at(12)...at(31)).map(\.at) == [at(12), at(30)] && ToolsCharts.within(pts, at(12)...at(31)).first?.gap == .asleep && ToolsCharts.within(pts, at(1)...at(31)).map(\.at) == [at(5), at(10), at(30)])
+        #expect(ToolsCharts.length(900) == "15 min" && ToolsCharts.length(86400) == "24 h" && ToolsCharts.length(7 * 86400) == "7 d")
+    }
+
     /// The sort: numbers by value ("1,25" before "1,5"; 2 KB before 1 MB), text as Finder sorts names, nothing last
     /// either way, equal values by key.
     @Test func aDashboardTableSortsNumbersByValue() {
@@ -1156,8 +1293,8 @@ extension ServerLockTests {
         #expect(other.list?.source is PlaceSource && other.list?.cursor?.title == "Pulse", "\(other.list?.cursor?.title ?? "")")
     }
 
-    /// `goto` and the chart's click: an event's Services… and a count's open the server's services in the search;
-    /// a click on a chart runs the `log` action with five minutes around that moment, by the server's clock.
+    /// `goto` and Log for This Time: an event's Services… and a count's open the server's services in the search; the
+    /// `log` action runs over its stretch by the server's clock.
     @Test func gotoAndAChartsClickFromTheDashboard() async throws {
         let (app, _, _, done) = try toolsApp()
         let bench = try ToolsBench(), quick = Quick(app)
@@ -1176,7 +1313,7 @@ extension ServerLockTests {
                 && ToolRunner.Goto("ssh") == .ssh && ToolRunner.Goto("mail") == nil)
 
         let at = Date(timeIntervalSince1970: 1_800_000_000)
-        view.log("log", at: at)
+        view.log("log", from: at.addingTimeInterval(-150), to: at.addingTimeInterval(150))
         await toolsUntil { bench.calls.contains { $0.hasPrefix("pulse-log") } }
         #expect(bench.calls.contains("pulse-log 1799999850 1800000150"), "\(bench.calls)")
         await toolsUntil { page.result.stringValue.contains("Log: done") }
@@ -1478,8 +1615,8 @@ extension ServerLockTests {
         page.select("pulse")
         await toolsUntil { live(page)?.blocks.contains { $0 is ToolsCharts } == true }
         let charts = try #require(live(page)?.blocks.compactMap { $0 as? ToolsCharts }.first)
-        #expect((0..<3).allSatisfy(charts.range.isEnabled(forSegment:)))
-        charts.range.selectedSegment = 1
+        #expect((0..<4).allSatisfy(charts.range.isEnabled(forSegment:)))
+        charts.range.selectedSegment = 2
         _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
         let d = charts.model.data, cpu = try #require(d.charts.first)
         #expect(d.to.timeIntervalSince(d.from) == 86400 && charts.model.every == 900 && charts.model.days == false)
@@ -1489,7 +1626,7 @@ extension ServerLockTests {
         #expect(cpu.lines.first?.points.filter { $0.value != nil }.allSatisfy { $0.low == 10 && $0.high == 10 } == true, "each slot's lowest and highest")
         let said = OneChart(chart: cpu, model: charts.model).said
         #expect(said.hasSuffix(" · 10%") && said.contains("–") && !said.hasPrefix("Now"), "the last slot's 15 minutes, not now: \(said)")
-        charts.range.selectedSegment = 0
+        charts.range.selectedSegment = 1
         _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
         #expect(charts.model.data.to.timeIntervalSince(charts.model.data.from) == 3600 && charts.model.every == 1)
     }
