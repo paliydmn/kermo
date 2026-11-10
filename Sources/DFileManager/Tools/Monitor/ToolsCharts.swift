@@ -380,8 +380,7 @@ import SwiftUI
         liveButton.toolTip = "The latest again, at the right (⎋)"
         kept.append(MenuAction.attach(to: liveButton) { [weak self] in self?.model.backToLive() })
         eventsButton.controlSize = .small
-        eventsButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 8, weight: .semibold))
+        eventsButton.image = Symbol.collapse.image().withSymbolConfiguration(.init(pointSize: 8, weight: .semibold))
         eventsButton.imagePosition = .imageTrailing
         eventsButton.toolTip = "The events in this time — a click on one: the charts at that time"
         kept.append(MenuAction.attach(to: eventsButton) { [weak self, unowned live] in
@@ -1002,7 +1001,7 @@ struct OneChart: View {
             RuleMark(x: .value("Event", m.at)).foregroundStyle(Self.level(m.level).opacity(0.5)).lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 2]))
             if m.level == "ok" {
                 PointMark(x: .value("Event", m.at), y: .value("Bottom", 0))
-                    .symbol { Image(systemName: "checkmark").font(.system(size: 8, weight: .heavy)).foregroundStyle(Self.level(m.level)) }
+                    .symbol { Image(systemName: Symbol.check.rawValue).font(.system(size: 8, weight: .heavy)).foregroundStyle(Self.level(m.level)) }
                     .offset(y: -5).count(m.count)
             } else {
                 PointMark(x: .value("Event", m.at), y: .value("Bottom", 0))
