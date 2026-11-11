@@ -50,7 +50,7 @@ extension ToolsCharts {
             return twoDays && !m.days ? s.lowerBound.formatted(f) + "–" + s.upperBound.formatted(f) : m.words(s)
         }
         var out = ["\(server)\(production ? " production" : "") · \(tool) · \(when(m, r)) (\(zone(r.upperBound)))",   // as the picture says it
-                   "Source: Kermo on this Mac, " + (m.history ? "15-minute slots: each one's average, lowest and highest; recorded only while watched."
+                   "Source: Kermo on this Mac, " + (m.history ? "15-minute slots: each one's average, lowest and highest\(m.data.tail.map { r.overlaps($0) } == true ? ", the last one so far" : ""); recorded only while watched."
                                                     : "a sample every \(Int(m.every)) s; recorded only while open or watched."), ""]
         for c in charts where !c.lines.isEmpty {
             out.append("\(c.title): " + c.lines.map { l in
@@ -136,7 +136,7 @@ extension ToolsCharts {
         return ToolExport.csv(charts.flatMap { c in c.lines.map { l in
             let metric = l.id.prefix { $0 != " " }
             return ToolExport.Series(chart: c.title, metric: String(metric), key: String(l.id.dropFirst(metric.count + 1)), unit: l.metric.unit ?? "", points: within(l.points, r))
-        } }, slot: m.history ? ToolSlots.length : nil, zone: zone)
+        } }, slot: m.history ? ToolSlots.length : nil, until: m.data.tail?.upperBound ?? .distantFuture, zone: zone)
     }
 
     /// "web-01-System-20261110-1400.csv": the server, the tool, where the time starts; no "/" or ":".

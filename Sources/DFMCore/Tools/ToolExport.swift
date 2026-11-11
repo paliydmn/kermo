@@ -18,9 +18,10 @@ public enum ToolExport {
     public static let header = "interval_start,interval_end,chart,metric,series,unit,value,min,avg,max,quality"
 
     /// `series` as CSV — UTF-8, CRLF, the header first. A sample: its time and `value`, `sample`; a slot of the history
-    /// (`slot`: its length): its start and end — where a gap begins, if one does before (a slot written early, at a
-    /// sleep) —, `min`, `avg`, `max`, `slot`; a gap: its start and why.
-    public static func csv(_ series: [Series], slot: TimeInterval?, zone: TimeZone) -> String {
+    /// (`slot`: its length): its point's time and where it ends — the slot's end, or the next point's time if that's
+    /// before (a slot written early at a sleep, filled again after it), never past `until` (the slot being filled:
+    /// now) —, `min`, `avg`, `max`, `slot`; a gap: its start and why.
+    public static func csv(_ series: [Series], slot: TimeInterval?, until: Date = .distantFuture, zone: TimeZone) -> String {
         let iso = ISO8601DateFormatter()   // once: a week of six charts is ~24,000 rows
         iso.timeZone = zone
         var lines = [header]
@@ -30,8 +31,9 @@ public enum ToolExport {
                 let start = iso.string(from: p.at)
                 if let gap = p.gap { lines.append("\(start),,\(named),,,,,\(field(quality(gap)))") }
                 else if let v = p.value, let slot {
-                    let next = s.points.indices.contains(i + 1) ? s.points[i + 1] : nil, cut = next.flatMap { $0.gap != nil && $0.at > p.at ? $0.at : nil }
-                    lines.append("\(start),\(iso.string(from: min(p.at.addingTimeInterval(slot), cut ?? .distantFuture))),\(named),,\(number(p.low)),\(number(v)),\(number(p.high)),slot")
+                    let over = Date(timeIntervalSince1970: (floor(p.at.timeIntervalSince1970 / slot) + 1) * slot)
+                    let next = s.points.indices.contains(i + 1) ? s.points[i + 1].at : nil, cut = next.flatMap { $0 > p.at ? $0 : nil }
+                    lines.append("\(start),\(iso.string(from: max(p.at, min(over, cut ?? .distantFuture, until)))),\(named),,\(number(p.low)),\(number(v)),\(number(p.high)),slot")
                 } else if let v = p.value { lines.append("\(start),,\(named),\(number(v)),,,,sample") }
             }
         }

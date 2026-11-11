@@ -1854,6 +1854,28 @@ extension ServerLockTests {
         #expect(cpu.lines.first?.points.filter { $0.value != nil }.allSatisfy { $0.low == 10 && $0.high == 10 } == true, "each slot's lowest and highest")
         let said = OneChart(chart: cpu, model: charts.model).said
         #expect(said.hasSuffix(" · 10%") && said.contains("–") && !said.hasPrefix("Now"), "the last slot's 15 minutes, not now: \(said)")
+        #expect(charts.model.data.tail == nil && !charts.sub.stringValue.contains("so far"), "not watched: nothing being filled")
+        // Watched again: the slot being filled is drawn past the ones written — in the slot the stop was written in,
+        // after its part, at the stop's time, with no "not watched" band to now —, its time to now, and the line under
+        // the charts says so; the CSV's slot ends now, not in 15 minutes.
+        let stop = try #require(lines.last).t
+        monitor.watch(pulse, on: .local(), true)
+        defer { monitor.watch(pulse, on: .local(), false) }
+        await toolsUntil { monitor.tool("pulse", on: .local())?.slots.current != nil }
+        charts.update(try #require(live(page)))
+        let tail = try #require(charts.model.data.tail), drawn = try #require(charts.model.data.charts.first?.lines.first?.points)
+        let last = try #require(drawn.last), again = ToolSlots.slot(Date(timeIntervalSince1970: stop)) == tail.lowerBound.timeIntervalSince1970
+        #expect(last.value == 10 && ToolSlots.slot(last.at) == tail.lowerBound.timeIntervalSince1970
+                && (again ? last.at.timeIntervalSince1970 == stop && drawn.dropLast().last?.at == tail.lowerBound : last.at == tail.lowerBound)
+                && charts.model.time(tail.lowerBound).hasSuffix("–now") && charts.sub.stringValue.contains("the band its lowest to highest, the last one so far"),
+                "\(drawn.suffix(3)) | \(charts.sub.stringValue)")
+        // the tip, the moment and the keys at the slot: its last part's numbers, the newer; a part's row from its own minute
+        #expect(charts.model.point(drawn, at: tail.lowerBound)?.at == last.at && charts.model.samples.last == tail.lowerBound
+                && charts.model.time(last.at).hasPrefix(last.at.formatted(.dateTime.hour().minute()) + "–"), "\(charts.model.samples.suffix(2))")
+        let row = try #require(ToolsCharts.csv(charts.model).components(separatedBy: "\r\n").last { $0.contains(",cpu,") })
+        let iso = ISO8601DateFormatter()
+        iso.timeZone = .current
+        #expect(row.hasPrefix(iso.string(from: last.at) + "," + iso.string(from: tail.upperBound) + ",") && row.hasSuffix(",slot"), "\(row)")
         charts.range.selectedSegment = 1
         _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
         #expect(charts.model.data.to.timeIntervalSince(charts.model.data.from) == 3600 && charts.model.every == 1)

@@ -20,7 +20,8 @@ import SwiftUI
 /// `ToolsLive.cancelOperation`) and the AX actions call alike. Swift Charts in an NSHostingView over an
 /// ObservableObject the tab's update feeds (SwiftUI's @State is a macro the Command Line Tools haven't). The hour in
 /// memory (15m its last quarter); `range`'s longer spans from the history on disk (`ToolSlots`): each 15-minute slot's
-/// average with its min–max as a band round it, the gaps it wrote, "not watched" where it has nothing.
+/// average with its min–max as a band round it, the gaps it wrote, "not watched" where it has nothing — and, watched,
+/// the slot being filled (a ring at the line's end).
 @MainActor final class ToolsCharts: NSView, ToolsBlock {
     /// What the charts draw: changed as one, so a sample draws the block once.
     struct Data {
@@ -33,6 +34,8 @@ import SwiftUI
         var marks: [EventMark] = []
         /// What a click on a chart does, in words; nil: nothing.
         var click: String?
+        /// On the history, in the window: the slot being filled, from its start to now — drawn past the slots written.
+        var tail: ClosedRange<Date>?
     }
     struct Chart: Identifiable {
         let id: String, title: String, metric: ToolMetric, top: Double
@@ -150,9 +153,16 @@ import SwiftUI
         /// `t` as the charts say it: a sample's time to the second; the 15 minutes of its slot on the history.
         func time(_ t: Date) -> String {
             guard history else { return t.formatted(.dateTime.hour().minute().second()) }
-            let t = Date(timeIntervalSince1970: ToolSlots.slot(t))
+            let s = Date(timeIntervalSince1970: ToolSlots.slot(t))   // from `t`: a part of a slot filled again starts later
             return t.formatted(days ? .dateTime.weekday().hour().minute() : .dateTime.hour().minute()) + "–"
-                + t.addingTimeInterval(ToolSlots.length).formatted(.dateTime.hour().minute())
+                + (s == data.tail?.lowerBound ? "now" : s.addingTimeInterval(ToolSlots.length).formatted(.dateTime.hour().minute()))
+        }
+
+        /// The value drawn at `t`: the nearest sample's; on the history its slot's — the last part of one filled again
+        /// after a sleep, the newer numbers.
+        func point(_ points: [ToolPoint], at t: Date) -> ToolPoint? {
+            if history, let p = points.last(where: { $0.value != nil && ToolSlots.slot($0.at) == ToolSlots.slot(t) }) { return p }
+            return ToolChart.nearest(points, to: t, within: every * 1.5)
         }
 
         /// A chip's click: the series hidden or shown; `only`, every other picked one hidden — or, if it's that way
@@ -206,8 +216,10 @@ import SwiftUI
         }
 
         /// The times in the window with a value drawn, oldest first: what ←/→ step through.
-        var samples: [Date] {
-            Set(data.charts.flatMap(\.lines).flatMap { $0.points.compactMap { $0.value != nil && data.from <= $0.at && $0.at <= data.to ? $0.at : nil } }).sorted()
+        var samples: [Date] {   // on the history the slots' starts: a slot filled again after a sleep is one step
+            Set(data.charts.flatMap(\.lines).flatMap { $0.points.compactMap { p in
+                p.value != nil && data.from <= p.at && p.at <= data.to ? history ? Date(timeIntervalSince1970: ToolSlots.slot(p.at)) : p.at : nil
+            } }).sorted()
         }
 
         /// ⇧←/⇧→: a minute's samples, on the history an hour's slots.
@@ -350,8 +362,9 @@ import SwiftUI
     /// Its tab: the server, the tool, the page's result line.
     private(set) weak var live: ToolsLive?
     let sub = NSTextField(labelWithString: "")
-    /// The longer span's lines as last read — from `from`, in the slot they were read in: a new slot may be on disk since.
-    private var disk: (from: Date, slot: Double, lines: [ToolSlots.Line])?
+    /// The longer span's lines as last read — from `from`, in the server's slot they were read in, with the slot being
+    /// filled then: past either, a line may be on disk since.
+    private var disk: (from: Date, slot: Double, under: Double?, lines: [ToolSlots.Line])?
     /// The hour as it was when you began to look at it: a held window keeps what the hour in memory trims meanwhile
     /// (≈1 MB, only while inspecting).
     private var frozen: ToolHistory?
@@ -518,15 +531,21 @@ import SwiftUI
         if model.held == nil || span > 3600 { frozen = nil } else if frozen == nil { frozen = t?.history }
         let hour = frozen ?? t?.history
         // Past the hour: the slots on disk from the range's start or the held window's, read again once a slot has passed.
-        let slots: [ToolSlots.Line]? = span <= 3600 ? nil : {
+        let written: [ToolSlots.Line]? = span <= 3600 ? nil : {
             let since = min(d.from, now.addingTimeInterval(-span))
-            if let disk, disk.slot == ToolSlots.slot(Date()), disk.from <= since {   // 7d's lines serve 24h: from its start only
-                return Array(disk.lines.drop { $0.t < since.timeIntervalSince1970 - ToolSlots.length })
+            if let disk, disk.slot == ToolSlots.slot(now), disk.under == t?.slots.current?.t, disk.from <= since {   // 7d's lines serve 24h: from its start only
+                let first = floor(since.timeIntervalSince1970 / ToolSlots.length) - 1   // as `read` keeps them: a slot's lines together
+                return Array(disk.lines.drop { floor($0.t / ToolSlots.length) < first })
             }
-            let lines = ToolSlots.read(ToolMonitor.history(live.server.id), tool: p.id, from: since)
-            disk = (since, ToolSlots.slot(Date()), lines)
+            let lines = live.app.tools.monitor.written(live.server.id, tool: p.id, from: since)
+            disk = (since, ToolSlots.slot(now), t?.slots.current?.t, lines)
             return lines
         }()
+        // and the slot being filled, past the ones written, as its line will be (D-191 (8))
+        var tail = written == nil ? nil : t?.slots.current
+        if let c = tail, let last = written?.last, ToolSlots.slot(Date(timeIntervalSince1970: last.t)) > c.t { tail = nil }   // the server's clock went back past it
+        let slots = written.map { lines in tail.map { lines + [$0] } ?? lines }
+        d.tail = tail.map { Date(timeIntervalSince1970: $0.t) }.flatMap { $0 <= d.to ? $0...max($0, now) : nil }   // a Zoom inside it too
         // Maintenance over the values: by the server's clock, as the series are.
         let maintenance = live.state?.maintenance.flatMap { m -> [ToolChart.Band] in
             let skew = live.state?.skew ?? 0, from = max(m.from.addingTimeInterval(skew), d.from), to = min(m.until.addingTimeInterval(skew), d.to)
@@ -565,7 +584,9 @@ import SwiftUI
                 let fresh = slots.map { ToolSlots.points($0, metric: metric, key: key, from: d.from) } ?? t?.history.points(metric, key) ?? []
                 let pts = Self.within(slots == nil ? hour?.points(metric, key) ?? [] : fresh, window)
                 series[i].latest = fresh.last { $0.value != nil }?.value
-                if let held = model.held { since = max(since, fresh.count(where: { held.upperBound < $0.at && $0.value != nil })) }
+                if let held = model.held {   // on the history slots, not a slot's parts
+                    since = max(since, Set(fresh.compactMap { held.upperBound < $0.at && $0.value != nil ? slots == nil ? $0.at.timeIntervalSince1970 : ToolSlots.slot($0.at) : nil }).count)
+                }
                 lines.append(Line(id: s.id, name: s.name, points: pts, chart: ToolChart(pts, now: d.to), color: color, metric: s.metric))
             }
             lines.sort { $0.color < $1.color }
@@ -615,7 +636,7 @@ import SwiftUI
         if dot.textColor != color { dot.textColor = color }
         if status.stringValue != text { status.stringValue = text }
         if liveButton.isHidden == inspecting { liveButton.isHidden = !inspecting }
-        let below = [Self.length(d.to.timeIntervalSince(d.from)), m.history ? "each point a slot's average, the band its lowest to highest" : nil,
+        let below = [Self.length(d.to.timeIntervalSince(d.from)), m.history ? "each point a slot's average, the band its lowest to highest" + (d.tail == nil ? "" : ", the last one so far") : nil,
                      m.history ? "recorded only while watched" : "recorded only while open or watched", Self.zone(d.to)].compactMap { $0 }.joined(separator: " · ")
         if sub.stringValue != below { sub.stringValue = below }
     }
@@ -891,7 +912,7 @@ struct OneChart: View {
     /// `line`'s value at `t` (nil: the latest — on the history, or a window held, the last value in it), in its
     /// metric's words.
     private func value(_ line: ToolsCharts.Line, at t: Date?) -> String {
-        let v = t.map { ToolChart.nearest(line.points, to: $0, within: model.every * 1.5)?.value }
+        let v = t.map { model.point(line.points, at: $0)?.value }
             ?? (model.history || model.held != nil ? line.points.last { $0.value != nil } : line.points.last)?.value
         return v.map(line.metric.text) ?? "—"
     }
@@ -928,7 +949,7 @@ struct OneChart: View {
         let gap = chart.gap(at: t)
         var rows: [(color: Int, name: String, value: String)] = [], spread = false
         for line in chart.lines where gap == nil {
-            let p = ToolChart.nearest(line.points, to: t, within: model.every * 1.5), text = line.metric.text
+            let p = model.point(line.points, at: t), text = line.metric.text
             if let p, let v = p.value, let lo = p.low, let hi = p.high { rows.append((line.color, line.name, "\(text(lo)) – \(text(v)) – \(text(hi))")); spread = true }
             else { rows.append((line.color, line.name, p?.value.map(text) ?? "—")) }
         }
@@ -1021,6 +1042,10 @@ struct OneChart: View {
                 if run.count == 1, let p = run.first {   // a lone value between gaps: a line of one point draws nothing
                     PointMark(x: .value("Time", p.at), y: .value(chart.title, min(p.value ?? 0, chart.top))).foregroundStyle(Self.color(line.color)).symbolSize(10)
                 }
+                if let p = run.last, Date(timeIntervalSince1970: ToolSlots.slot(p.at)) == model.data.tail?.lowerBound {   // the slot being filled: a ring — it isn't over
+                    PointMark(x: .value("Time", p.at), y: .value(chart.title, min(p.value ?? 0, chart.top)))
+                        .symbol { Circle().strokeBorder(Self.color(line.color), lineWidth: 1.5).frame(width: 7, height: 7) }
+                }
                 ForEach(Array(run.enumerated()), id: \.offset) { _, p in   // by place: lines read together share one time
                     LineMark(x: .value("Time", p.at), y: .value(chart.title, min(p.value ?? 0, chart.top)), series: .value("Run", "\(line.id) \(i)"))
                         .foregroundStyle(by: .value("Series", line.name))
@@ -1087,7 +1112,8 @@ struct OneChart: View {
         .chartYAxis {
             AxisMarks(position: .leading, values: [0, chart.top / 2, chart.top]) { v in
                 AxisGridLine()
-                AxisValueLabel {   // one width, so the charts one under another share their time axis
+                // one width, so the charts one under another share their time axis; the top one under its line, clear of the title
+                AxisValueLabel(anchor: v.index == v.count - 1 ? .topTrailing : nil) {
                     if let d = v.as(Double.self) { Text(chart.metric.text(d)).frame(minWidth: 50, alignment: .trailing) }
                 }
             }

@@ -111,6 +111,26 @@ private func systemSamples() throws -> [ToolSample] {
     #expect(h.points("cpu").last == ToolPoint(at: at(80), gap: .noAnswer) && h.latest("cpu") == [:], "no value through a gap")
     _ = h.add(sample(100, cpu(5)), metrics: m, now: at(100))
     #expect(h.latest("cpu") == ["": 5] && h.previous?.at == at(70) && h.last?.at == at(100))
+    // A gap longer than the hour: its mark stays before the hour, so the window opens in it — till values fill the hour.
+    h.mark(.asleep, at: at(110))
+    _ = h.add(sample(300, cpu(6)), metrics: m, now: at(300))
+    #expect(h.points("cpu") == [ToolPoint(at: at(110), gap: .asleep), ToolPoint(at: at(300), value: 6)], "\(h.points("cpu"))")
+    _ = h.add(sample(330, cpu(7)), metrics: m, now: at(330))
+    #expect(h.points("cpu").filter { $0.gap != nil } == [ToolPoint(at: at(110), gap: .asleep)], "the same mark, once")
+    _ = h.add(sample(400, cpu(8)), metrics: m, now: at(400))
+    #expect(h.points("cpu").map(\.at) == [at(400)], "an hour of values since: the mark goes")
+    // A series that stopped coming (a disk unmounted) and then a gap: its mark goes with the hour once the others are
+    // back — it would be a band over the whole window —, and stays while the whole tool is still in the gap.
+    var d = ToolHistory(keep: 60)
+    let disk = ["disk": ToolMetric(path: "pct", rows: "disks", key: "mount")]
+    func disks(_ s: Double, _ mounts: [String]) -> ToolSample { sample(s, ["disks": .array(mounts.map { .object(["mount": .string($0), "pct": .number(5)]) })]) }
+    _ = d.add(disks(0, ["/", "/mnt"]), metrics: disk, now: at(0))
+    _ = d.add(disks(10, ["/"]), metrics: disk, now: at(10))
+    d.mark(.asleep, at: at(20))
+    d.mark(.asleep, at: at(200))
+    #expect(d.points("disk", "/mnt") == [ToolPoint(at: at(20), gap: .asleep)] && d.points("disk", "/") == [ToolPoint(at: at(20), gap: .asleep)], "still asleep: kept")
+    _ = d.add(disks(300, ["/"]), metrics: disk, now: at(300))
+    #expect(d.points("disk", "/mnt") == [] && d.points("disk", "/") == [ToolPoint(at: at(20), gap: .asleep), ToolPoint(at: at(300), value: 5)], "\(d.series)")
 }
 
 @Test func alertsHoldForATimeOrACount() {
