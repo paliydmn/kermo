@@ -7,8 +7,9 @@ import SwiftUI
 
 /// A `charts` block: small multiples of the tool's series, two to a row where each gets 300 pt, else one — a line per
 /// series picked (the first six by name till you pick, six at most a chart, each keeping its color), never across a
-/// gap; the gaps as bands saying why; the first metric's alert thresholds as lines; the events of the hour on the
-/// time axis; one time axis and one crosshair for the block. Under a chart of several series, a chip a series picked
+/// gap; the gaps as bands saying why; the first metric's alert thresholds as lines; the window's events as marks at
+/// the bottom of every chart — their level as a shape and a color, a faint line up, those closer than ~10 pt as one
+/// with their count — and Events N ▾ listing them (review 4 PR 3); one time axis and one crosshair for the block. Under a chart of several series, a chip a series picked
 /// with its value — "Now", the moment the tables show, or the time under the pointer, as the header says — a click
 /// hides it, ⌥-click shows only it, "+N more…" lists the rest to pick; beside the pointer a tip with each series'
 /// value, the gap, the events near and what a click does. Focus (⤢, a double-click on the header, F) shows one chart
@@ -25,7 +26,11 @@ import SwiftUI
     struct Data {
         var charts: [Chart] = []
         var from = Date(), to = Date()
+        /// The window's events, newest first: the tool's and watching's own — what Events N ▾ lists and the tip says.
         var events: [ToolEventRecord] = []
+        /// What of them is drawn (decision 2026-11-10: the tool's but how things stood at the first sample, and watching's
+        /// not answering and answers again), the close ones merged.
+        var marks: [EventMark] = []
         /// What a click on a chart does, in words; nil: nothing.
         var click: String?
     }
@@ -55,6 +60,10 @@ import SwiftUI
         var hidden = false
         /// Its latest value: what the series list says beside it.
         var latest: Double?
+    }
+    /// Events drawn as one mark: the first one's time, the worst level, how many.
+    struct EventMark: Equatable {
+        let at: Date, level: String, count: Int
     }
     struct Line: Identifiable {
         let id: String, name: String
@@ -131,6 +140,10 @@ import SwiftUI
         var reload: () -> Void = {}
         /// The charts' height as laid out: the block takes it.
         var sized: (CGFloat) -> Void = { _ in }
+        /// A chart's plot as wide as the grid lays it out (`layout()`): marks closer than 10 pt of it are one. Not
+        /// published — a resize merges them anew on the next sample.
+        // ponytail: the grid's width — Focus's wider plot merges as the grid does.
+        var plotWidth: CGFloat = 400
 
         /// `t` as the charts say it: a sample's time to the second; the 15 minutes of its slot on the history.
         func time(_ t: Date) -> String {
@@ -238,6 +251,13 @@ import SwiftUI
             reload()
         }
 
+        /// A click on `chart` at `raw`, `t` as the tip says it (on the history a slot's edge): a mark within `d` of `raw` —
+        /// ≈6 pt (decision 2026-11-10) — is the moment at its time, its slot on the history; else `t`.
+        func click(at t: Date, raw: Date, within d: TimeInterval, on chart: Chart) {
+            let m = data.marks.map(\.at).filter { abs($0.timeIntervalSince(raw)) <= d }.min { abs($0.timeIntervalSince(raw)) < abs($1.timeIntervalSince(raw)) } ?? t
+            inspect(at: m, gap: chart.gap(at: m))
+        }
+
         /// The selection as the window: what was recorded there, no finer (a slot stays a slot); the moment let go.
         func zoom() {
             guard let s = selection else { return }
@@ -310,6 +330,9 @@ import SwiftUI
     let status = NSTextField(labelWithString: "")
     private let dot = NSTextField(labelWithString: "●")
     let liveButton = NSButton(title: "Back to Live", target: nil, action: nil)
+    /// At the right of the status: the window's events as a list.
+    let eventsButton = NSButton(title: "Events 0", target: nil, action: nil)
+    private let events = ToolsEventList()
     let sub = NSTextField(labelWithString: "")
     /// The longer span's lines as last read — from `from`, in the slot they were read in: a new slot may be on disk since.
     private var disk: (from: Date, slot: Double, lines: [ToolSlots.Line])?
@@ -340,8 +363,8 @@ import SwiftUI
         if ranges.count > 1 {
             range.segmentCount = ranges.count
             for (i, r) in ranges.enumerated() {
-                let text: String = switch r { case .text(let s): s; case .seconds(let s): ToolAlerts.minutes(s) }, s = r.seconds ?? 0
-                range.setLabel(text, forSegment: i)
+                let s = r.seconds ?? 0
+                range.setLabel(Self.label(r), forSegment: i)
                 range.setToolTip(s < 3600 ? "The last \(ToolAlerts.minutes(s)) of the hour, as watched" : s == 3600 ? "The last hour, as watched"
                                  : "From the history on this Mac: 15-minute averages with their lowest and highest, while watched", forSegment: i)
             }
@@ -356,13 +379,20 @@ import SwiftUI
         liveButton.controlSize = .small
         liveButton.toolTip = "The latest again, at the right (⎋)"
         kept.append(MenuAction.attach(to: liveButton) { [weak self] in self?.model.backToLive() })
+        eventsButton.controlSize = .small
+        eventsButton.image = Symbol.collapse.image().withSymbolConfiguration(.init(pointSize: 8, weight: .semibold))
+        eventsButton.imagePosition = .imageTrailing
+        eventsButton.toolTip = "The events in this time — a click on one: the charts at that time"
+        kept.append(MenuAction.attach(to: eventsButton) { [weak self, unowned live] in
+            if let self { events.show(model.data.events, empty: "No events in this time", under: eventsButton, live: live, charts: self) }
+        })
         sub.font = .systemFont(ofSize: 10)
         sub.textColor = .tertiaryLabelColor
         sub.lineBreakMode = .byTruncatingTail
         sub.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         dot.font = .systemFont(ofSize: 9)
         dot.setAccessibilityElement(false)
-        let head = NSStackView(views: (ranges.count > 1 ? [range] : []) + [dot, status, liveButton, ToolsWindow.spacer()])
+        let head = NSStackView(views: (ranges.count > 1 ? [range] : []) + [dot, status, liveButton, ToolsWindow.spacer(), eventsButton])
         head.setCustomSpacing(3, after: dot)
         let views: [NSView] = [head, sub, place]
         let stack = NSStackView(views: views)
@@ -403,6 +433,7 @@ import SwiftUI
         let wide = bounds.width >= 2 * Self.narrowest + 14, columns = (block.charts?.count ?? 0) > 1 && wide ? 2 : 1
         if model.wide != wide { model.wide = wide }
         if model.columns != columns { model.columns = columns }
+        model.plotWidth = max(100, (bounds.width - CGFloat(columns - 1) * 14) / CGFloat(columns) - 60)   // the y axis's labels: ~60 pt
         if window?.firstResponder === self { noteFocusRingMaskChanged() }
     }
 
@@ -421,6 +452,9 @@ import SwiftUI
         else if mods.isEmpty, c == "f" || (c?.first?.isASCII != true && e.keyCode == 3) { model.focusKey() }   // F in another script: its key
         else { super.keyDown(with: e) }
     }
+
+    /// A range's segment: "15m", "1h", "24h".
+    static func label(_ r: ToolDuration) -> String { switch r { case .text(let s): s; case .seconds(let s): ToolAlerts.minutes(s) } }
 
     /// The span the range control picked: the last hour unless another.
     var span: Double { ranges.indices.contains(range.selectedSegment) ? ranges[range.selectedSegment].seconds ?? 3600 : 3600 }
@@ -515,12 +549,26 @@ import SwiftUI
                          lines: lines, series: series, bands: (lines.map(\.chart.bands).max { $0.count < $1.count } ?? []) + maintenance,
                          warn: alert?.warn, crit: alert?.crit, mixed: Set(metrics.map { $0.metric.unit ?? "" }).count > 1)
         }
-        d.events = ((t?.events ?? []) + (live.state?.events ?? [])).filter { window.contains($0.at) && $0.level != "ok" }
+        let tool = (t?.events ?? []).filter { window.contains($0.at) }, server = (live.state?.events ?? []).filter { window.contains($0.at) }
+        d.events = (tool + server).sorted { $0.at > $1.at }
+        d.marks = Self.marks(tool.filter { !$0.found } + server.filter { $0.level == "critical" || $0.level == "ok" },
+                             within: d.to.timeIntervalSince(d.from) * 10 / model.plotWidth)
         d.click = (slots != nil ? "Click: this slot's numbers" : live.showsMoments ? "Click: the tables at this time" : "Click: the values at this time") + " · drag: a stretch"
         model.every = slots == nil ? (p.watch?.every ?? 60) * (live.app.tools.monitor.slow ? 3 : 1) : ToolSlots.length
         model.history = slots != nil
         model.data = d
         say(since: model.zoomed ? 0 : since, running: live.running)
+        let n = "Events \(d.events.count)"
+        if eventsButton.title != n { eventsButton.title = n }
+    }
+
+    /// The marks `events` make: oldest first, each one closer than `within` to the first of a mark merged into it.
+    static func marks(_ events: [ToolEventRecord], within: TimeInterval) -> [EventMark] {
+        var groups: [[ToolEventRecord]] = []
+        for e in events.sorted(by: { $0.at < $1.at }) {
+            if let first = groups.last?.first, e.at.timeIntervalSince(first.at) < within { groups[groups.count - 1].append(e) } else { groups.append([e]) }
+        }
+        return groups.map { g in EventMark(at: g[0].at, level: ["critical", "warning", "ok"].first { l in g.contains { $0.level == l } } ?? "info", count: g.count) }
     }
 
     /// The status beside the range — live, or what's inspected and the samples come since — and under it the window's
@@ -692,7 +740,7 @@ struct OneChart: View {
                 else { plot.frame(height: big ? ToolsCharts.focusHeight : ToolsCharts.plotHeight) }
             }
             .accessibilityElement(children: .ignore)   // the marks and the tip aren't walked: an AX walk of them stalls
-            .accessibilityLabel("\(chart.title): \(spoken)")
+            .accessibilityLabel("\(chart.title): \(spoken)" + { n in n == 0 ? "" : ", \(n) event\(n == 1 ? "" : "s")" }(model.data.events.count))
             .accessibilityActions {   // a chart's click and keys without the pointer (D-166 (6))
                 Button(big ? "Show All Charts" : "Focus") { model.show(focus: big ? nil : chart.id) }
                 Button("Previous Sample") { model.step(-1) }
@@ -855,7 +903,7 @@ struct OneChart: View {
         if spread { notes.append("Lowest – average – highest") }
         let near = max(model.every * 1.5, model.data.to.timeIntervalSince(model.data.from) / 100)
         let events = model.data.events.filter { abs($0.at.timeIntervalSince(t)) <= near }
-        notes += events.prefix(3).map { "\($0.level.prefix(1).uppercased() + $0.level.dropFirst()) \($0.at.formatted(date: .omitted, time: .shortened)) · \($0.message)" }
+        notes += events.prefix(3).map { "\($0.level == "ok" ? "Recovery" : $0.level.prefix(1).uppercased() + $0.level.dropFirst()) \($0.at.formatted(date: .omitted, time: .shortened)) · \($0.message)" }
         if events.count > 3 { notes.append("and \(events.count - 3) more") }
         if chart.series.count > chart.picked.count { notes.append("\(chart.picked.count) of \(chart.series.count) drawn: “more…” under the chart picks others") }
         if let click = model.data.click { notes.append(click) }
@@ -871,8 +919,11 @@ struct OneChart: View {
     }
 
     private static func level(_ s: String) -> Color {
-        s == "critical" ? Color(nsColor: Palette.fail) : s == "warning" ? Color(nsColor: Palette.warn) : Color(nsColor: .secondaryLabelColor)
+        Color(nsColor: s == "critical" ? Palette.fail : s == "warning" ? Palette.warn : s == "ok" ? Palette.ok : .tertiaryLabelColor)
     }
+
+    /// An event mark's shape — its level told without the color: ◆ critical, ▲ warning, ● info (✓ back to normal: a symbol).
+    private static func shape(_ s: String) -> BasicChartSymbolShape { s == "critical" ? .diamond : s == "warning" ? .triangle : .circle }
 
     static func color(_ i: Int) -> Color { colors[i % colors.count] }
 
@@ -944,16 +995,29 @@ struct OneChart: View {
         }
     }
 
-    /// The thresholds, the events, the moment the tables show, the crosshair with its tip.
+    /// The events at the bottom, a faint line up from each; a merged mark's count beside it.
+    @ChartContentBuilder private var eventMarks: some ChartContent {
+        ForEach(Array(model.data.marks.enumerated()), id: \.offset) { _, m in
+            RuleMark(x: .value("Event", m.at)).foregroundStyle(Self.level(m.level).opacity(0.5)).lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 2]))
+            if m.level == "ok" {
+                PointMark(x: .value("Event", m.at), y: .value("Bottom", 0))
+                    .symbol { Image(systemName: Symbol.check.rawValue).font(.system(size: 8, weight: .heavy)).foregroundStyle(Self.level(m.level)) }
+                    .offset(y: -5).count(m.count)
+            } else {
+                PointMark(x: .value("Event", m.at), y: .value("Bottom", 0))
+                    .symbol(Self.shape(m.level)).symbolSize(m.level == "info" ? 16 : 40).foregroundStyle(Self.level(m.level))
+                    .offset(y: -5).count(m.count)
+            }
+        }
+    }
+
+    /// The thresholds, the moment the tables show, the crosshair with its tip.
     @ChartContentBuilder private var ruleMarks: some ChartContent {
         if let w = chart.warn, w <= chart.top {
             RuleMark(y: .value("Warning", w)).foregroundStyle(Color(nsColor: Palette.warn)).lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
         }
         if let c = chart.crit, c <= chart.top {
             RuleMark(y: .value("Critical", c)).foregroundStyle(Color(nsColor: Palette.fail)).lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-        }
-        ForEach(Array(model.data.events.enumerated()), id: \.offset) { _, e in
-            PointMark(x: .value("Time", e.at), y: .value("Bottom", 0)).foregroundStyle(Self.level(e.level)).symbolSize(24)
         }
         if let s = model.selection {   // the stretch dragged across, on every chart
             RectangleMark(xStart: .value("From", max(s.lowerBound, model.data.from)), xEnd: .value("To", min(s.upperBound, model.data.to)),
@@ -978,6 +1042,7 @@ struct OneChart: View {
             gapMarks
             if model.history { spreadMarks }
             lineMarks
+            eventMarks
             ruleMarks
         }
         .chartXScale(domain: model.data.from...model.data.to)
@@ -1031,7 +1096,10 @@ struct OneChart: View {
                             model.active = chart.id
                             model.touched()
                             if abs(v.translation.width) >= 4, let a = at(v.startLocation.x, true), let b = at(v.location.x, true), a != b { model.select(from: a, to: b) }
-                            else if let t = at(v.location.x, model.history) { model.inspect(at: t, gap: chart.gap(at: t)) }   // the slot the tip says
+                            else if let t = at(v.location.x, model.history), let raw = at(v.location.x, false) {   // a mark ≈6 pt off: its time
+                                let perPoint = proxy.plotFrame.map { model.data.to.timeIntervalSince(model.data.from) / max(1, g[$0].width) } ?? 0
+                                model.click(at: t, raw: raw, within: 6 * perPoint, on: chart)
+                            }
                         })
                     .contextMenu {   // the hovered time's log, wherever a click goes
                         if let log = model.log, let h = model.hover ?? model.lastHover { Button("\(log.title) · \(model.time(h))") { log.run(model.around(h)) } }
@@ -1085,5 +1153,13 @@ struct DataTable: View {
         .fontWeight(head ? .medium : .regular)
         .padding(.horizontal, 6).padding(.vertical, 2)
         .background(head ? Color(nsColor: .windowBackgroundColor) : .clear)
+    }
+}
+
+private extension ChartContent {
+    /// Beside a mark of several events, how many; a mark of one has no annotation.
+    @ChartContentBuilder func count(_ n: Int) -> some ChartContent {
+        if n > 1 { annotation(position: .trailing, alignment: .center, spacing: 1) { Text("\(n)").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary) } }
+        else { self }
     }
 }

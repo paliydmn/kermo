@@ -26,6 +26,8 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         try SFTP.startMaster(t, env: quiet ? SSHAskpass.quietEnv : SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For watching \(t.shown)"]) { $1 })
     }
     nonisolated(unsafe) static var tick: TimeInterval = 1
+    /// The events kept, in memory only: a tool's last this many, and its server's own (watching) as many.
+    static let eventsKept = 40
     /// Tests: a saved server's target (a local stand-in's way of running isn't in servers.json).
     nonisolated(unsafe) static var target: @MainActor (SavedServer) -> SFTPTarget = { $0.target }
     /// A minute after a wake, and while this Mac has no network, no answer isn't "down" (§8.1). Tests: shorter.
@@ -38,7 +40,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         /// Watched: its 15-minute slots on the way to the disk (24h, 7d).
         var slots: ToolSlots
         var alerts = ToolAlerts()
-        /// Newest first, the last 40.
+        /// Newest first, the last `eventsKept`.
         var events: [ToolEventRecord] = []
         var budget = ToolEventBudget()
         /// A script's critical `_event`s notified and not closed yet (`level: "ok"`): one notification each (§8.7).
@@ -404,7 +406,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
                 }
             }
         }
-        t.events = Array((fresh.reversed() + t.events).prefix(40))
+        t.events = Array((fresh.reversed() + t.events).prefix(Self.eventsKept))
     }
 
     /// `http` (§8.6): each of the server's addresses checked from this Mac at once, the answers one sample — rows
@@ -615,7 +617,7 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
     }
 
     func note(_ s: Server, _ text: String, level: String = "info") {
-        s.events = Array(([ToolEventRecord(at: Date().addingTimeInterval(s.skew), id: "watch", level: level, message: text)] + s.events).prefix(40))
+        s.events = Array(([ToolEventRecord(at: Date().addingTimeInterval(s.skew), id: "watch", level: level, message: text)] + s.events).prefix(Self.eventsKept))
     }
 
     private var lastTock = Date()
