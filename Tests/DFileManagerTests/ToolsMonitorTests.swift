@@ -1396,7 +1396,8 @@ extension ServerLockTests {
     /// still copy of the model — no pointer, no tip — as wide as asked at the scale asked, the model as it was.
     @Test func aChartsHandOnWhatsDrawn() throws {
         let pct = try JSONDecoder().decode(ToolMetric.self, from: Data(#"{ "title": "Disk", "unit": "%" }"#.utf8))
-        let t0 = Date(timeIntervalSince1970: 1_800_000_000), zone = try #require(TimeZone(secondsFromGMT: 7200))   // a slot's start
+        // noon here: a slot's start in any zone, no midnight near (its words would take their days)
+        let t0 = try #require(Calendar.current.date(from: DateComponents(year: 2027, month: 1, day: 15, hour: 12))), zone = try #require(TimeZone(secondsFromGMT: 7200))
         func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
         func line(_ id: String, _ name: String, _ pts: [ToolPoint], _ color: Int, now: Double = 60) -> ToolsCharts.Line {
             .init(id: id, name: name, points: pts, chart: ToolChart(pts, now: at(now)), color: color, metric: pct)
@@ -1412,7 +1413,9 @@ extension ServerLockTests {
         (model.every, model.data) = (5, .init(charts: [cpu, disks], from: at(0), to: at(60), events: events))
         model.selection = at(0)...at(30)
         // The CSV: the drawn series over the selection; a hidden one never.
-        let iso = { ToolExport.time($0, zone: zone) }, csv = ToolsCharts.csv(model, zone: zone)
+        let f = ISO8601DateFormatter()
+        f.timeZone = zone
+        let iso = { f.string(from: $0) }, csv = ToolsCharts.csv(model, zone: zone)
         #expect(csv == [ToolExport.header, "\(iso(at(0))),,CPU,cpu,,%,12,,,,sample", "\(iso(at(5))),,CPU,cpu,,%,12,,,,sample",
                         "\(iso(at(0))),,Disks,disk,/,%,40,,,,sample", "\(iso(at(5))),,Disks,disk,/,%,42.5,,,,sample", "\(iso(at(10))),,Disks,disk,/,%,,,,,no answer",
                         "\(iso(at(30))),,Disks,disk,/,%,41,,,,sample", "\(iso(at(0))),,Disks,disk,'=cmd|' /C calc'!A0,%,7,,,,sample",
@@ -1454,14 +1457,17 @@ extension ServerLockTests {
         // The image: from a still copy — the pointer over the charts or not, the same picture —; the model untouched.
         model.columns = 2
         let aqua = try #require(NSAppearance(named: .aqua))
-        func picture() throws -> Data {
+        func picture() throws -> [UInt8] {
             let image = try #require(ToolsCharts.picture(model, server: "web-01", production: true, about: "System", width: 640, scale: 2, appearance: aqua))
             #expect(image.width == 1280 && image.height > Int(ToolsCharts.plotHeight * 2), "\(image.width)×\(image.height)")
-            return try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            let rep = NSBitmapImageRep(cgImage: image)
+            return Array(UnsafeBufferPointer(start: rep.bitmapData, count: rep.bytesPerRow * rep.pixelsHigh))
         }
         let calm = try picture()
         (model.hover, model.hovered, model.choosing) = (at(5), "disk", "disk")
-        #expect(try picture() == calm && model.hover == at(5) && model.hovered == "disk" && model.choosing == "disk", "no crosshair, no tip, no list; the model as it was")
+        let hovered = try picture()
+        #expect(calm.count == hovered.count && zip(calm, hovered).allSatisfy { abs(Int($0) - Int($1)) <= 2 } && model.hover == at(5) && model.hovered == "disk"
+                && model.choosing == "disk", "no crosshair, no tip, no list — the same but for a rounding of the edges; the model as it was")
     }
 
     /// The sort: numbers by value ("1,25" before "1,5"; 2 KB before 1 MB), text as Finder sorts names, nothing last

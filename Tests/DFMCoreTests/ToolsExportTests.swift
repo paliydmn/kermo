@@ -7,6 +7,12 @@ import Testing
 
 private let t0 = Date(timeIntervalSince1970: 1_800_000_000 - 1_800_000_000.truncatingRemainder(dividingBy: 900))   // a slot's start
 private func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
+/// A time as the CSV writes it in `zone`.
+private func isoTime(_ d: Date, _ zone: TimeZone) -> String {
+    let f = ISO8601DateFormatter()
+    f.timeZone = zone
+    return f.string(from: d)
+}
 
 @Test func aCSVFieldIsQuotedAndNeverAFormula() {
     #expect(ToolExport.field("plain") == "plain" && ToolExport.field("") == "")
@@ -25,15 +31,18 @@ private func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
 
 @Test func aCSVTimeHasItsOffset() throws {
     let d = try #require(ISO8601DateFormatter().date(from: "2026-11-10T12:19:30Z"))
-    #expect(ToolExport.time(d, zone: try #require(TimeZone(secondsFromGMT: 7200))) == "2026-11-10T14:19:30+02:00")
-    #expect(ToolExport.time(d, zone: try #require(TimeZone(secondsFromGMT: -(3 * 3600 + 1800)))) == "2026-11-10T08:49:30-03:30")
-    #expect(ToolExport.time(d, zone: try #require(TimeZone(identifier: "UTC"))) == "2026-11-10T12:19:30Z")
+    func row(_ zone: TimeZone?) throws -> String {
+        try ToolExport.csv([.init(chart: "c", metric: "m", key: "", unit: "", points: [.init(at: d, value: 1)])], slot: nil, zone: #require(zone)).components(separatedBy: "\r\n")[1]
+    }
+    #expect(try row(TimeZone(secondsFromGMT: 7200)) == "2026-11-10T14:19:30+02:00,,c,m,,,1,,,,sample")
+    #expect(try row(TimeZone(secondsFromGMT: -(3 * 3600 + 1800))).hasPrefix("2026-11-10T08:49:30-03:30,"))
+    #expect(try row(TimeZone(identifier: "UTC")).hasPrefix("2026-11-10T12:19:30Z,"))
 }
 
 /// A row a point: a sample's value, a slot's lowest, average and highest with its 15 minutes, a gap's reason with
 /// nothing for its numbers — never a 0; names guarded, the unit with each row.
 @Test func aCSVHasARowAPoint() throws {
-    let zone = try #require(TimeZone(secondsFromGMT: 7200)), iso = { ToolExport.time($0, zone: zone) }
+    let zone = try #require(TimeZone(secondsFromGMT: 7200)), iso = { isoTime($0, zone) }
     let samples = ToolExport.Series(chart: "Disks", metric: "disk", key: "=cmd|' /C calc'!A0", unit: "%",
                                     points: [.init(at: at(0), value: 40.5), .init(at: at(5), gap: .asleep), .init(at: at(60), value: 0), .init(at: at(65), gap: .noAnswer)])
     let csv = ToolExport.csv([samples], slot: nil, zone: zone)
@@ -48,13 +57,15 @@ private func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
     #expect(lines.dropFirst().first == "\(iso(at(0))),\(iso(at(900))),CPU · I/O wait,cpu,,%,,3,12.25,97.5,slot" && lines[2] == "\(iso(at(900))),,CPU · I/O wait,cpu,,%,,,,,not watched"
             && lines.count == 4 && lines.last == "", "\(lines)")
     #expect(ToolExport.csv([], slot: nil, zone: zone) == ToolExport.header + "\r\n", "nothing drawn: the header")
+    let early = ToolExport.Series(chart: "CPU", metric: "cpu", key: "", unit: "%", points: [.init(at: at(0), value: 5, low: 1, high: 9), .init(at: at(420), gap: .asleep)])
+    #expect(ToolExport.csv([early], slot: 900, zone: zone).components(separatedBy: "\r\n")[1].hasPrefix("\(iso(at(0))),\(iso(at(420))),"), "a slot written early at a sleep ends where the gap begins")
 }
 
 /// A series' numbers without its gaps; on the history a slot's highest at the slot's start, its lowest the lowest low.
 @Test func aSeriesStatsLeaveTheGapsOut() throws {
     #expect(ToolExport.stats([]) == nil && ToolExport.stats([.init(at: at(0), gap: .asleep)]) == nil, "nothing recorded: no numbers, not zeros")
     let s = try #require(ToolExport.stats([.init(at: at(0), value: 10), .init(at: at(5), gap: .asleep), .init(at: at(30), value: 30), .init(at: at(35), value: 30), .init(at: at(40), value: 2)]))
-    #expect(s == .init(average: 18, lowest: 2, highest: 30, highestAt: at(30), count: 4), "the first time it was highest")
+    #expect(s == .init(average: 18, highest: 30, highestAt: at(30)), "the first time it was highest")
     let h = try #require(ToolExport.stats([.init(at: at(0), value: 20, low: 5, high: 90), .init(at: at(900), value: 40, low: 30, high: 50)]))
-    #expect(h == .init(average: 30, lowest: 5, highest: 90, highestAt: at(0), count: 2), "the history: the slot whose highest was highest")
+    #expect(h == .init(average: 30, highest: 90, highestAt: at(0)), "the history: the slot whose highest was highest")
 }

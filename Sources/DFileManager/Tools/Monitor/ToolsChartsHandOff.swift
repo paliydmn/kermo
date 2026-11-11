@@ -66,7 +66,8 @@ extension ToolsCharts {
         var said: Set<String> = []
         // Each chart has the tool's gaps: one each, to where values came back first — a series with none since has its band to now.
         for b in charts.flatMap(\.bands).sorted(by: { ($0.from, $0.to) < ($1.from, $1.to) })
-        where b.gap != .maintenance && b.from < r.upperBound && r.lowerBound < b.to && said.insert("\(b.from.timeIntervalSince1970) \(b.gap)").inserted {
+        where b.gap != .maintenance && b.from <= b.to && b.from < r.upperBound && r.lowerBound < b.to   // backwards: the server's clock stepped back
+            && said.insert("\(b.from.timeIntervalSince1970) \(b.gap)").inserted {
             gaps.append("\(OneChart.word(b.gap)) \(words(max(b.from, r.lowerBound)...min(b.to, r.upperBound)))")
         }
         out += ["", "Gaps: " + (gaps.isEmpty ? "none" : gaps.joined(separator: "; "))]
@@ -152,16 +153,16 @@ extension ToolsCharts {
     func copyImage() {
         guard let window, let live else { return }
         let d = model.data, n = model.handed.charts.count
+        guard n > 0 else { say("Copy Image: no charts drawn — nothing copied", failed: true); return }
         let about = "\(live.tool.preset.title) · \(Self.when(model, d.from...d.to)) · \(Self.zone(d.to))"
         guard let image = Self.picture(model, server: live.server.title, production: live.server.prod, about: about, width: bounds.width,
                                        scale: window.backingScaleFactor, appearance: effectiveAppearance),
-              let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]),
-              let tiff = NSBitmapImageRep(cgImage: image).tiffRepresentation else {
+              case let rep = NSBitmapImageRep(cgImage: image), let png = rep.representation(using: .png, properties: [:]),
+              let tiff = rep.tiffRepresentation(using: .lzw, factor: 0) else {
             say("Copy Image: the charts couldn't be drawn — nothing copied", failed: true)
             return
         }
-        pasteboard.clearContents()
-        pasteboard.declareTypes([.png, .tiff], owner: nil)
+        pasteboard.declareTypes([.png, .tiff], owner: nil)   // clears what was there
         pasteboard.setData(png, forType: .png)
         pasteboard.setData(tiff, forType: .tiff)
         say("Copy Image: copied · \(Self.length(d.to.timeIntervalSince(d.from))) · \(n) chart\(n == 1 ? "" : "s")")

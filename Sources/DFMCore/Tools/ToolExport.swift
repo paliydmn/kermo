@@ -18,18 +18,20 @@ public enum ToolExport {
     public static let header = "interval_start,interval_end,chart,metric,series,unit,value,min,avg,max,quality"
 
     /// `series` as CSV — UTF-8, CRLF, the header first. A sample: its time and `value`, `sample`; a slot of the history
-    /// (`slot`: its length): its start and end, `min`, `avg`, `max`, `slot`; a gap: its start and why.
+    /// (`slot`: its length): its start and end — where a gap begins, if one does before (a slot written early, at a
+    /// sleep) —, `min`, `avg`, `max`, `slot`; a gap: its start and why.
     public static func csv(_ series: [Series], slot: TimeInterval?, zone: TimeZone) -> String {
         let iso = ISO8601DateFormatter()   // once: a week of six charts is ~24,000 rows
         iso.timeZone = zone
         var lines = [header]
         for s in series {
             let named = [s.chart, s.metric, s.key, s.unit].map(field).joined(separator: ",")
-            for p in s.points {
+            for (i, p) in s.points.enumerated() {
                 let start = iso.string(from: p.at)
                 if let gap = p.gap { lines.append("\(start),,\(named),,,,,\(field(quality(gap)))") }
                 else if let v = p.value, let slot {
-                    lines.append("\(start),\(iso.string(from: p.at.addingTimeInterval(slot))),\(named),,\(number(p.low)),\(number(v)),\(number(p.high)),slot")
+                    let next = s.points.indices.contains(i + 1) ? s.points[i + 1] : nil, cut = next.flatMap { $0.gap != nil && $0.at > p.at ? $0.at : nil }
+                    lines.append("\(start),\(iso.string(from: min(p.at.addingTimeInterval(slot), cut ?? .distantFuture))),\(named),,\(number(p.low)),\(number(v)),\(number(p.high)),slot")
                 } else if let v = p.value { lines.append("\(start),,\(named),\(number(v)),,,,sample") }
             }
         }
@@ -52,13 +54,6 @@ public enum ToolExport {
         return v == v.rounded() && abs(v) < 1e15 ? String(Int64(v)) : "\(v)"
     }
 
-    /// `d` in ISO 8601 with `zone`'s offset then: 2026-11-10T14:19:30+02:00 (UTC: Z).
-    public static func time(_ d: Date, zone: TimeZone) -> String {
-        let iso = ISO8601DateFormatter()
-        iso.timeZone = zone
-        return iso.string(from: d)
-    }
-
     /// A gap's reason in a CSV's `quality`.
     public static func quality(_ g: ToolGap) -> String {
         switch g { case .asleep: "asleep"; case .noAnswer: "no answer"; case .reconnecting: "reconnecting"; case .notWatched: "not watched"; case .maintenance: "maintenance" }
@@ -67,15 +62,13 @@ public enum ToolExport {
     /// What a series did over its points: gaps don't count. On the history each point is a slot — the average is the
     /// slots' averages' (a slot doesn't keep how many samples it had), the highest a slot's highest at its start.
     public struct Stats: Sendable, Equatable {
-        public let average, lowest, highest: Double
+        public let average, highest: Double
         public let highestAt: Date
-        public let count: Int
     }
 
     public static func stats(_ points: [ToolPoint]) -> Stats? {
         let values = points.filter { $0.gap == nil && $0.value != nil }
         guard let top = values.max(by: { ($0.high ?? $0.value!) < ($1.high ?? $1.value!) }) else { return nil }
-        return Stats(average: values.reduce(0) { $0 + $1.value! } / Double(values.count), lowest: values.map { $0.low ?? $0.value! }.min()!,
-                     highest: top.high ?? top.value!, highestAt: top.at, count: values.count)
+        return Stats(average: values.reduce(0) { $0 + $1.value! } / Double(values.count), highest: top.high ?? top.value!, highestAt: top.at)
     }
 }

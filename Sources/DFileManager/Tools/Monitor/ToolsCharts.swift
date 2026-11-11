@@ -728,8 +728,8 @@ struct Flow: Layout {
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        for row in rows(subviews, width: bounds.width) {
-            for (i, x, size) in row.items { subviews[i].place(at: CGPoint(x: bounds.minX + x, y: bounds.minY + row.y), proposal: ProposedViewSize(size)) }
+        for row in rows(subviews, width: bounds.width) {   // centered in its row: a caption beside a button
+            for (i, x, size) in row.items { subviews[i].place(at: CGPoint(x: bounds.minX + x, y: bounds.minY + row.y + (row.height - size.height) / 2), proposal: ProposedViewSize(size)) }
         }
     }
 
@@ -789,10 +789,11 @@ struct OneChart: View {
         }
     }
 
-    /// Under the chart dragged on: the stretch and how long, Zoom, its log — a day at most —, ✕.
+    /// Under the chart dragged on: the stretch and how long, Zoom, its log — a day at most —, Copy Summary…, ✕; onto a
+    /// second line where the chart is narrow.
     private func selected(_ s: ClosedRange<Date>) -> some View {
         let long = s.upperBound.timeIntervalSince(s.lowerBound)
-        return HStack(spacing: 6) {
+        return Flow(spacing: 6) {
             Text("\(model.words(s)) · \(ToolsCharts.length(long))").font(.caption.monospacedDigit()).lineLimit(1)
             Button("Zoom") { model.zoom() }.help("This stretch across the charts — as recorded, no finer")
             if let log = model.log {
