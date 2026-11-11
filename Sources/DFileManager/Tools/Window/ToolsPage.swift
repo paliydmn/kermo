@@ -502,7 +502,7 @@ final class ToolsPage: NSView, RowList {
         (outputButton.isHidden, self.output) = (output == nil, output)
     }
 
-    private func say(_ text: String, failed: Bool) {
+    func say(_ text: String, failed: Bool) {
         said(NSAttributedString(string: text, attributes: [.foregroundColor: failed ? Palette.fail : NSColor.labelColor, .font: NSFont.systemFont(ofSize: 12)]),
              about: "", failed: failed, output: nil)
     }

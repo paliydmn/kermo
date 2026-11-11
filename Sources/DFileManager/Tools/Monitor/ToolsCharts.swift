@@ -110,6 +110,8 @@ import SwiftUI
         var touched: () -> Void = {}
         /// Log for This Time: its title, and the run over a stretch; nil: the block has no `log`.
         var log: (title: String, run: (ClosedRange<Date>) -> Void)?
+        /// Copy Summary… — the status row's, the selection's, the AX action's.
+        var summarize: () -> Void = {}
         /// The longest stretch Log for This Time runs over (decision 2026-11-09): past it, zoom in first.
         static let longestLog: TimeInterval = 86400
         /// The last time under the pointer: the context menu's, should the hover have ended as it opened.
@@ -306,6 +308,13 @@ import SwiftUI
             show(focus: focus == nil ? id : nil)
         }
 
+        /// What Copy Summary…, Export CSV… and Copy Image hand on (decision 2026-11-11: what's drawn): the selection,
+        /// else the window; in Focus its chart alone, else all of them — each with its series drawn (`lines`).
+        var handed: (range: ClosedRange<Date>, charts: [Chart]) {
+            let focused = data.charts.filter { $0.id == focus }
+            return (selection ?? data.from...data.to, focused.isEmpty ? data.charts : focused)
+        }
+
         /// The chart the selection's bar is under: the one shown in Focus, the one dragged on, or the first.
         var barChart: String? { focus ?? (data.charts.contains { $0.id == active } ? active : data.charts.first?.id) }
     }
@@ -333,6 +342,13 @@ import SwiftUI
     /// At the right of the status: the window's events as a list.
     let eventsButton = NSButton(title: "Events 0", target: nil, action: nil)
     private let events = ToolsEventList()
+    /// At the right: Copy Summary… and ⋯ (Export CSV…, Copy Image of the Charts).
+    let summaryButton = NSButton(title: "Copy Summary…", target: nil, action: nil)
+    let moreButton = NSButton(title: "", target: nil, action: nil)
+    /// Where Copy Summary and Copy Image put what they copy (tests: their own).
+    var pasteboard = NSPasteboard.general
+    /// Its tab: the server, the tool, the page's result line.
+    private(set) weak var live: ToolsLive?
     let sub = NSTextField(labelWithString: "")
     /// The longer span's lines as last read — from `from`, in the slot they were read in: a new slot may be on disk since.
     private var disk: (from: Date, slot: Double, lines: [ToolSlots.Line])?
@@ -343,6 +359,7 @@ import SwiftUI
 
     init(_ live: ToolsLive, _ block: ToolBlock) {
         self.block = block
+        self.live = live
         var ranges = block.range ?? []
         if let i = ranges.firstIndex(where: { $0.seconds == 3600 }), !ranges.contains(where: { ($0.seconds ?? 3600) < 3600 }) { ranges.insert(.text("15m"), at: i) }
         self.ranges = ranges
@@ -386,13 +403,24 @@ import SwiftUI
         kept.append(MenuAction.attach(to: eventsButton) { [weak self, unowned live] in
             if let self { events.show(model.data.events, empty: "No events in this time", under: eventsButton, live: live, charts: self) }
         })
+        summaryButton.controlSize = .small
+        summaryButton.toolTip = "A short text of what the charts show — the selection's, else this time's — to edit, then copy"
+        kept.append(MenuAction.attach(to: summaryButton) { [weak self] in self?.copySummary() })
+        model.summarize = { [weak self] in self?.copySummary() }
+        moreButton.controlSize = .small
+        moreButton.image = Symbol.more.image("More")
+        moreButton.toolTip = "Export CSV…, Copy Image of the Charts"
+        moreButton.menu = moreMenu()   // AXShowMenu's too
+        kept.append(MenuAction.attach(to: moreButton) { [weak self] in
+            if let self, let menu = moreButton.menu { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: moreButton.bounds.height + 4), in: moreButton) }
+        })
         sub.font = .systemFont(ofSize: 10)
         sub.textColor = .tertiaryLabelColor
         sub.lineBreakMode = .byTruncatingTail
         sub.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         dot.font = .systemFont(ofSize: 9)
         dot.setAccessibilityElement(false)
-        let head = NSStackView(views: (ranges.count > 1 ? [range] : []) + [dot, status, liveButton, ToolsWindow.spacer(), eventsButton])
+        let head = NSStackView(views: (ranges.count > 1 ? [range] : []) + [dot, status, liveButton, ToolsWindow.spacer(), eventsButton, summaryButton, moreButton])
         head.setCustomSpacing(3, after: dot)
         let views: [NSView] = [head, sub, place]
         let stack = NSStackView(views: views)
@@ -728,6 +756,8 @@ struct OneChart: View {
     @ObservedObject var model: ToolsCharts.Model
     /// In Focus: taller, its series in the list beside it, Data in place of the plot.
     var big = false
+    /// Copy Image's: no buttons — ⤢, the selection's bar, "+N more…".
+    var still = false
     /// Series colors in a fixed order (the first two: In · Out, read · write); red, orange, purple and green mean
     /// something else in Kermo.
     static let colors: [Color] = [.accentColor, Color(nsColor: .secondaryLabelColor), .teal, .indigo, .brown, .mint]
@@ -751,9 +781,10 @@ struct OneChart: View {
                     }
                 }
                 if model.log != nil, model.selection != nil || model.moment != nil { Button("Log for This Time") { model.logNow() } }
+                Button("Copy Summary") { model.summarize() }
                 if model.held != nil || model.moment != nil { Button("Back to Live") { model.backToLive() } }
             }
-            if let s = model.selection, model.barChart == chart.id { selected(s) }
+            if let s = model.selection, model.barChart == chart.id, !still { selected(s) }
             if chart.series.count > 1 { legend }
         }
     }
@@ -768,6 +799,7 @@ struct OneChart: View {
                 Button(log.title) { model.runLog(s) }.disabled(long > ToolsCharts.Model.longestLog)
                     .help(long > ToolsCharts.Model.longestLog ? "Zoom in to 24 hours or less" : "\(log.title) for this stretch")
             }
+            Button("Copy Summary…") { model.summarize() }.help("A short text of what the charts show in this stretch, to edit, then copy")
             Button { model.unselect() } label: { Image(systemName: "xmark").font(.caption) }.buttonStyle(.borderless).help("Clear (⎋)")
                 .accessibilityLabel("Clear Selection")
         }
@@ -787,11 +819,13 @@ struct OneChart: View {
             }
             Spacer()
             Text(said).font(.caption.monospacedDigit()).foregroundStyle(model.hover == nil && model.moment != nil ? Color.accentColor : .secondary).lineLimit(1)
-            Button { model.show(focus: big ? nil : chart.id) } label: {
-                Image(systemName: big ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right").font(.caption)
+            if !still {
+                Button { model.show(focus: big ? nil : chart.id) } label: {
+                    Image(systemName: big ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right").font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .help(big ? "Back to all the charts" : "Focus: this chart big, with all its series")
             }
-            .buttonStyle(.borderless)
-            .help(big ? "Back to all the charts" : "Focus: this chart big, with all its series")
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { model.show(focus: big ? nil : chart.id) }
@@ -801,7 +835,7 @@ struct OneChart: View {
     private var legend: some View {
         Flow {
             ForEach(chart.picked) { s in chip(s) }
-            if chart.series.count > chart.picked.count, !big {
+            if chart.series.count > chart.picked.count, !big, !still {
                 Button("+\(chart.series.count - chart.picked.count) more…") { (model.query, model.choosing) = ("", chart.id) }
                     .buttonStyle(.plain).font(.caption).foregroundStyle(Color.accentColor).padding(.horizontal, 4)
             }
