@@ -775,12 +775,11 @@ extension ServerLockTests {
                 && csv.contains(",Process memory · Ticks,n,,,") && !csv.contains("--name"), "\(csv.prefix(400))")
         chmod(locked.path, 0o500)
         defer { chmod(locked.path, 0o700) }
-        page.say("", failed: false)
         ToolsCharts.saving = { locked.appendingPathComponent($0) }
         choose(menu, "Export CSV…")
         await toolsUntil { page.window?.attachedSheet != nil }
         let refused = try fm.contentsOfDirectory(atPath: locked.path)
-        #expect(page.window?.attachedSheet != nil && refused.isEmpty && page.result.stringValue.isEmpty, "an error, no file, no saved: \(refused)")
+        #expect(page.window?.attachedSheet != nil && refused.isEmpty && page.result.stringValue.hasPrefix("Export CSV: not saved — "), "an error, no file, no saved: \(refused) \(page.result.stringValue)")
         if let sheet = page.window?.attachedSheet { page.window?.endSheet(sheet) }
         // Copy Image: a PNG and a TIFF, the block's width at the screen's scale.
         choose(menu, "Copy Image of the Charts")
@@ -1430,6 +1429,11 @@ extension ServerLockTests {
                 "the window's, oldest first")
         model.data.events = []
         #expect(ToolsCharts.summary(model, server: "web-01", production: false, tool: "System").hasSuffix("\nEvents: none in this time (a tool keeps its last 40)"))
+        model.data.from = at(-600)   // the window opened before the first sample: no band says so, the summary does
+        #expect(ToolsCharts.summary(model, server: "", production: false, tool: "").contains("\nGaps: nothing recorded \(model.words(at(-600)...at(0))); no answer \(model.words(at(10)...at(30)))\n"))
+        model.data.from = at(0)
+        #expect(ToolsCharts.when(model, at(-86400)...at(0)) == at(-86400).formatted(.dateTime.year().month().day().hour().minute().second()) + " – "
+                + at(0).formatted(.dateTime.year().month().day().hour().minute().second()), "over midnight: each end's day")
         // Focus: its chart alone.
         model.show(focus: "cpu")
         #expect(ToolsCharts.csv(model, zone: zone).components(separatedBy: "\r\n").count == 4 && !ToolsCharts.summary(model, server: "", production: false, tool: "").contains("Disks"))
@@ -1441,9 +1445,11 @@ extension ServerLockTests {
                                     .init(id: "disk", title: "Disks", metric: pct, top: 100, lines: [line("disk /", "/", [.init(at: at(0), gap: .asleep)], 0)], bands: [])],
                            from: at(0), to: at(1800))
         #expect(ToolsCharts.csv(slots, zone: zone).components(separatedBy: "\r\n")[1...2] == ["\(iso(at(0))),\(iso(at(900))),CPU,cpu,,%,,2,12.5,90,slot", "\(iso(at(900))),,CPU,cpu,,%,,,,,not watched"])
+        slots.data.to = at(2700)   // values back at 1800 on CPU; a series with none since has its band to now
+        slots.data.charts[1].bands = [.init(from: at(900), to: at(2700), gap: .notWatched)]
         let said = ToolsCharts.summary(slots, server: "web-01", production: false, tool: "System")
         #expect(said.contains("15-minute slots: each one's average, lowest and highest; recorded only while watched.") && said.contains("CPU: average 13%, highest 90% in \(slots.time(at(0)))")
-                && said.contains("Disks: nothing recorded"), "\(said)")
+                && said.contains("Disks: nothing recorded") && said.contains("\nGaps: not watched \(slots.words(at(900)...at(1800)))\n"), "one gap once: \(said)")
         #expect(ToolsCharts.fileName(server: "user@web/01", tool: "A:B", at: at(0)).wholeMatch(of: #/user@web-01-A-B-\d{8}-\d{4}\.csv/#) != nil)
         // The image: from a still copy — the pointer over the charts or not, the same picture —; the model untouched.
         model.columns = 2

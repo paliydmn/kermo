@@ -42,28 +42,45 @@ extension ToolsCharts {
     /// What the charts show, as a person would say it: where and when, where the numbers come from; a line a chart —
     /// each series drawn with its average and highest, and when — ; the gaps, the events. No reasons made up.
     static func summary(_ m: Model, server: String, production: Bool, tool: String) -> String {
-        let (r, charts) = m.handed
-        var out = ["\(server)\(production ? " (production)" : "") · \(tool) · \(r.lowerBound.formatted(date: .abbreviated, time: .omitted)) \(m.words(r)) (\(zone(r.upperBound)))",
+        let (r, charts) = m.handed, twoDays = !Calendar.current.isDate(r.lowerBound, inSameDayAs: r.upperBound)
+        // over midnight each time with its day (7d's have theirs)
+        func time(_ t: Date) -> String { twoDays && !m.days ? t.formatted(.dateTime.weekday()) + " " + m.time(t) : m.time(t) }
+        func words(_ s: ClosedRange<Date>) -> String {
+            let f: Date.FormatStyle = m.history ? .dateTime.weekday().hour().minute() : .dateTime.weekday().hour().minute().second()
+            return twoDays && !m.days ? s.lowerBound.formatted(f) + "–" + s.upperBound.formatted(f) : m.words(s)
+        }
+        var out = ["\(server)\(production ? " (production)" : "") · \(tool) · \(when(m, r)) (\(zone(r.upperBound)))",
                    "Source: Kermo on this Mac, " + (m.history ? "15-minute slots: each one's average, lowest and highest; recorded only while watched."
                                                     : "a sample every \(Int(m.every)) s; recorded only while open or watched."), ""]
         for c in charts where !c.lines.isEmpty {
             out.append("\(c.title): " + c.lines.map { l in
                 let name = c.series.count > 1 ? OneChart.short(l.name) + " " : "", text = l.metric.text
                 guard let s = ToolExport.stats(within(l.points, r)) else { return name + "nothing recorded" }
-                return name + (text(s.lowest) == text(s.highest) ? text(s.average)   // flat: one value
-                               : "average \(text(s.average)), highest \(text(s.highest)) \(m.history ? "in" : "at") \(m.time(s.highestAt))")
+                return name + (text(s.average) == text(s.highest) ? text(s.average)   // no higher than it reads: one value
+                               : "average \(text(s.average)), highest \(text(s.highest)) \(m.history ? "in" : "at") \(time(s.highestAt))")
             }.joined(separator: "; "))
         }
-        var gaps: [String] = []
-        for b in charts.flatMap(\.bands).sorted(by: { $0.from < $1.from }) where b.gap != .maintenance && b.from < r.upperBound && r.lowerBound < b.to {
-            let g = "\(OneChart.word(b.gap)) \(m.words(max(b.from, r.lowerBound)...min(b.to, r.upperBound)))"
-            if !gaps.contains(g) { gaps.append(g) }   // each chart has the tool's gaps
+        // nothing at the start — before watching began, the tab opened —: no band says so on the chart
+        let first = charts.flatMap(\.lines).compactMap { within($0.points, r).first?.at }.min()
+        var gaps = first.map { $0 > r.lowerBound.addingTimeInterval(m.every * 1.5) ? ["nothing recorded \(words(r.lowerBound...$0))"] : [] } ?? ["nothing recorded"]
+        var said: Set<String> = []
+        // Each chart has the tool's gaps: one each, to where values came back first — a series with none since has its band to now.
+        for b in charts.flatMap(\.bands).sorted(by: { ($0.from, $0.to) < ($1.from, $1.to) })
+        where b.gap != .maintenance && b.from < r.upperBound && r.lowerBound < b.to && said.insert("\(b.from.timeIntervalSince1970) \(b.gap)").inserted {
+            gaps.append("\(OneChart.word(b.gap)) \(words(max(b.from, r.lowerBound)...min(b.to, r.upperBound)))")
         }
         out += ["", "Gaps: " + (gaps.isEmpty ? "none" : gaps.joined(separator: "; "))]
         let events = m.data.events.filter { r.contains($0.at) }.reversed()
         out.append("Events:" + (events.isEmpty ? " none in this time (a tool keeps its last 40)" : ""))
-        out += events.map { "  \($0.at.formatted(m.days ? .dateTime.weekday().hour().minute().second() : .dateTime.hour().minute().second())) \($0.level == "ok" ? "recovery" : $0.level) · \($0.message)" }
+        out += events.map { "  \($0.at.formatted(twoDays ? .dateTime.weekday().hour().minute().second() : .dateTime.hour().minute().second())) \($0.level == "ok" ? "recovery" : $0.level) · \($0.message)" }
         return out.joined(separator: "\n")
+    }
+
+    /// `r` with its day — each end's where it spans two: "Nov 10, 2026 2:00:00 PM–3:00:00 PM", "Nov 10, 2026 at 9:55 AM – Nov 11, 2026 at 9:55 AM".
+    static func when(_ m: Model, _ r: ClosedRange<Date>) -> String {
+        guard !Calendar.current.isDate(r.lowerBound, inSameDayAs: r.upperBound) else { return r.lowerBound.formatted(date: .abbreviated, time: .omitted) + " " + m.words(r) }
+        let f: Date.FormatStyle = m.history ? .dateTime.year().month().day().hour().minute() : .dateTime.year().month().day().hour().minute().second()
+        return r.lowerBound.formatted(f) + " – " + r.upperBound.formatted(f)
     }
 
     private static func summarySheet(_ text: String, on window: NSWindow) async -> String? {
@@ -95,7 +112,11 @@ extension ToolsCharts {
         Task {
             let url = if let saving = Self.saving { saving(name) } else { await Self.savePanel(name, on: window) }
             guard let url else { return }
-            do { try Foundation.Data(text.utf8).write(to: url, options: .atomic) } catch { live.app.showError(error, on: window); return }
+            do { try Foundation.Data(text.utf8).write(to: url, options: .atomic) } catch {
+                say("Export CSV: not saved — \(error.localizedDescription)", failed: true)   // over an earlier "saved"
+                live.app.showError(error, on: window)
+                return
+            }
             say("Export CSV: saved \(url.lastPathComponent) · \(Self.length(r.upperBound.timeIntervalSince(r.lowerBound))) · \(n) series")
         }
     }
@@ -131,7 +152,7 @@ extension ToolsCharts {
     func copyImage() {
         guard let window, let live else { return }
         let d = model.data, n = model.handed.charts.count
-        let about = "\(live.tool.preset.title) · \(d.from.formatted(date: .abbreviated, time: .omitted)) \(model.words(d.from...d.to)) · \(Self.zone(d.to))"
+        let about = "\(live.tool.preset.title) · \(Self.when(model, d.from...d.to)) · \(Self.zone(d.to))"
         guard let image = Self.picture(model, server: live.server.title, production: live.server.prod, about: about, width: bounds.width,
                                        scale: window.backingScaleFactor, appearance: effectiveAppearance),
               let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]),
