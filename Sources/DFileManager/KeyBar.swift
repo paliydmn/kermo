@@ -41,7 +41,7 @@ enum KeyBarModel {
         func label(_ c: Command) -> String {
             server && c.id == "file.trash" ? "Delete…" : archive && c.id == "file.copy" ? "Extract" : terminal && c.id == "view.terminal" ? "Hide Terminal" : Self.label(c)
         }
-        for c in commands where terminal || !c.id.hasPrefix("term.pane.") && !c.id.hasPrefix("term.resize.") {
+        for c in commands where !c.id.hasPrefix("text.") && (terminal || !c.id.hasPrefix("term.pane.") && !c.id.hasPrefix("term.resize.")) {   // text.*: an editor's
             for k in c.keys {
                 let m = k.flags, f = fNumber(k.name)
                 if m.isEmpty && f == nil { continue }

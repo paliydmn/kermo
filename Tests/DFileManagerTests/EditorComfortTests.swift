@@ -8,7 +8,9 @@ import Testing
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-comfort-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     try Data(text.utf8).write(to: URL(fileURLWithPath: dir + "/" + name))
-    return (try Editor(URL(fileURLWithPath: dir + "/" + name)), dir)
+    let e = try Editor(URL(fileURLWithPath: dir + "/" + name))
+    e.window?.makeFirstResponder(e.textView)   // the line commands act only while the text has the keys
+    return (e, dir)
 }
 
 @MainActor private func key(_ e: Editor, _ s: Selector) { e.textView.doCommand(by: s) }   // as a key does: the delegate first
@@ -60,18 +62,30 @@ import Testing
     #expect(e.textView.string == "\ttwo\none\nthree\n" && e.isEdited && e.textView.selectedRange().location == 6)
     e.textView.undoManager?.undo()
     #expect(e.textView.string == "one\n\ttwo\nthree\n")
+    // Each one ⌘Z (undone at once: a test has no run loop to end an Undo group between two commands).
     e.textView.setSelectedRange(NSRange(location: 1, length: 0))
-    e.duplicateLines()
+    e.duplicateLines(up: false)
     #expect(e.textView.string == "one\none\n\ttwo\nthree\n" && e.textView.selectedRange().location == 5)
+    e.textView.undoManager?.undo()
+    #expect(e.textView.string == "one\n\ttwo\nthree\n")
+    e.textView.setSelectedRange(NSRange(location: 5, length: 0))
     e.deleteLines()
-    #expect(e.textView.string == "one\n\ttwo\nthree\n" && e.textView.selectedRange().location == 4)
+    #expect(e.textView.string == "one\nthree\n" && e.textView.selectedRange().location == 4)
+    e.textView.undoManager?.undo()
+    #expect(e.textView.string == "one\n\ttwo\nthree\n")
+    e.textView.setSelectedRange(NSRange(location: 5, length: 0))
     e.toggleComment()
     #expect(e.textView.string == "one\n\t# two\nthree\n", "at the line's indent")
-    e.toggleComment()
+    e.textView.undoManager?.undo()
     #expect(e.textView.string == "one\n\ttwo\nthree\n")
 
-    e.go(to: "2:3")
-    #expect(e.textView.selectedRange() == NSRange(location: 6, length: 0))
+    e.window?.makeFirstResponder(nil)   // the find bar's field, say, has the keys
+    e.deleteLines()
+    #expect(e.textView.string == "one\n\ttwo\nthree\n", "no line goes behind it")
+    e.window?.makeFirstResponder(e.textView)
+
+    e.go(to: "2:6")
+    #expect(e.textView.selectedRange() == NSRange(location: 6, length: 0), "column 6: past the tab's four and the t")
     e.sayPosition()
     #expect(e.frame.position == "Ln 2, Col 6 · Tabs", "a tab is four columns")
     e.textView.setSelectedRange(NSRange(location: 2, length: 8))

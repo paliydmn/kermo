@@ -52,12 +52,12 @@ The window's title is the shown tab's file name with where it is under it, as th
 
 These work in the editor window and in the [tools' editor](tools.md#your-own-tools). Each change is one ⌘Z.
 
-- ⌘L (**Go to Line…** in the Go menu, where the panels have Go to Path…) asks for a line, `120`, or a line and its character, `120:8`, and flashes it.
+- ⌘L (**Go to Line…** in the Go menu, where the panels have Go to Path…) asks for a line, `120`, or a line and its column, `120:8` (counted as the status line's Col: a tab takes four), and flashes it.
 - ↩ starts the new line at the indent of the one before, one step further after `{`, `[` or `(` — and in YAML and Python after a `:` that ends the line. Between a pair of brackets the closing one goes to a line of its own.
 - Tab puts in what the file indents with: tabs, or spaces up to the next step (2 or 4, by its lines). A file with no indented lines follows its language: 2 spaces in YAML and JSON, a tab in a Makefile, else 4 spaces. YAML never gets a tab. **View ▸ Indentation** picks **Tabs**, **2 Spaces** or **4 Spaces** for the shown tab. A tab takes four columns.
 - Tab on lines selected indents them all; ⇧Tab takes one step off the caret's line or the lines selected.
-- ⌘/ (**Toggle Comment** in the View menu, where the panels have Filter Presets…) comments the lines out at their least indent — `#` in shell, Python, YAML, INI and config files and in a text of no known language, `//` in C-style languages, `<!-- -->` around the lines in XML — or takes it off when every line has it. JSON has no comments: it beeps.
-- ⌥↑ and ⌥↓ move the lines up or down, ⌥⇧↓ duplicates them, ⇧⌘K deletes them (**Edit ▸ Lines**).
+- ⌘/ (**Toggle Comment** in the View menu, where the panels have Filter Presets…) comments the lines out at their least indent — `#` in shell, Python, YAML, INI-style and config files and in a file with no extension (`hosts`, a crontab, an Untitled), `;` in an `.ini` file, `//` in C-style languages, `<!-- -->` in XML — or takes it off when every line that isn't blank has it. XML lines commented one by one come off one by one. JSON has no comments, and a file of an extension Kermo has no colors for gets no guess: it beeps.
+- ⌥↑ and ⌥↓ move the lines up or down, ⌥⇧↓ and ⌥⇧↑ duplicate them below or above, ⇧⌘K deletes them (**Edit ▸ Lines**). With several selections (⌘-drag) they take the first one's lines. A line of a file with mixed line ends keeps its own.
 - ⌘+ and ⌘− make the text bigger or smaller in every editor, line numbers too (the terminal's own keys elsewhere); Kermo remembers the size.
 - ⌥Z (**View ▸ Wrap Lines**) wraps long lines at the window's edge, or lets them run on to the right; on at first, and remembered.
 - **View ▸ Show Invisibles** marks spaces and tabs (→), to tell them apart in YAML or a Makefile.

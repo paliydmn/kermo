@@ -893,20 +893,7 @@ extension Viewer {
 
     // MARK: Go to / find in the whole file
 
-    private func ask(_ message: String, value: String, then: @escaping (String) -> Void) {
-        guard let window else { return }
-        let alert = NSAlert()
-        alert.messageText = message
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(string: value)
-        field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        alert.beginSheetModal(for: window) { r in
-            MainActor.assumeIsolated { if r == .alertFirstButtonReturn { then(field.stringValue) } }
-        }
-    }
+    private func ask(_ message: String, value: String, then: @escaping (String) -> Void) { window?.ask(message, value: value, then: then) }
 
     fileprivate func goToDialog() {
         let size = big?.count ?? ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0)
@@ -1035,5 +1022,24 @@ final class TextPeek: NSScrollView {
         }
         rulersVisible = numbers
         ruler?.invalidate()
+    }
+}
+
+extension NSWindow {
+    /// A sheet with one field (the viewer's `g`, `&`, `/`; the editor's Go to Line); `then` gets what was typed on OK.
+    func ask(_ message: String, info: String = "", value: String = "", placeholder: String = "", ok: String = "OK", then: @escaping (String) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = info
+        alert.addButton(withTitle: ok)
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: value)
+        field.placeholderString = placeholder
+        field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: self) { r in
+            MainActor.assumeIsolated { if r == .alertFirstButtonReturn { then(field.stringValue) } }
+        }
     }
 }

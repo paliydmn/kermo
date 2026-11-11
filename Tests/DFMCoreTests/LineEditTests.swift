@@ -52,6 +52,8 @@ private func run(_ s: String, _ f: (NSString, NSRange) -> LineEdit.Edit?) -> Str
     let xml = { (t: NSString, r: NSRange) in LineEdit.toggleComment(t, r, open: "<!--", close: "-->") }
     #expect(run("«  <a/>\n  <b/>»", xml) == "«  <!-- <a/>\n  <b/> -->»")
     #expect(run("«  <!-- <a/>\n  <b/> -->»", xml) == "«  <a/>\n  <b/>»")
+    #expect(run("«<!-- a -->\n\n  <!-- b -->»", xml) == "«a\n\n  b»", "each line commented on its own: each comes off")
+    #expect(run("«<!-- a -->\nb»", xml) == nil, "no comment inside a comment")
     #expect(run("  |", xml) == nil)
 }
 
@@ -61,11 +63,14 @@ private func run(_ s: String, _ f: (NSString, NSRange) -> LineEdit.Edit?) -> Str
     #expect(run("a|\nb\nc", { LineEdit.move($0, $1, up: false) }) == "b\na|\nc")
     #expect(run("a\nb|\nc", { LineEdit.move($0, $1, up: false) }) == "a\nc\nb|")
     #expect(run("«a\nb»\nc", { LineEdit.move($0, $1, up: false) }) == "c\n«a\nb»")
+    #expect(run("a\n«b\n»c", { LineEdit.move($0, $1, up: false) }) == "a\nc\n«b»", "the last line has no \\n to select")
     #expect(run("a|\nb", { LineEdit.move($0, $1, up: true) }) == nil)
     #expect(run("a\nb|", { LineEdit.move($0, $1, up: false) }) == nil)
     #expect(run("a\n|", { LineEdit.move($0, $1, up: true) }) == nil)   // the empty line after the last "\n"
     #expect(run("a|b\nc", { LineEdit.duplicate($0, $1) }) == "ab\na|b\nc")
     #expect(run("a\nb|", { LineEdit.duplicate($0, $1) }) == "a\nb\nb|")
+    #expect(run("a\nb|\nc", { LineEdit.duplicate($0, $1, up: true) }) == "a\nb|\nb\nc")
+    #expect(run("a\nb|", { LineEdit.duplicate($0, $1, up: true) }) == "a\nb|\nb")
     #expect(run("a\nb|\nc", { LineEdit.delete($0, $1) }) == "a\n|c")
     #expect(run("a\nb|", { LineEdit.delete($0, $1) }) == "|a")
     #expect(run("a|", { LineEdit.delete($0, $1) }) == "|")
@@ -76,7 +81,7 @@ private func run(_ s: String, _ f: (NSString, NSRange) -> LineEdit.Edit?) -> Str
 @Test func newlineKeepsTheIndentAndOpensBlocks() {
     func nl(_ s: String, colon: Bool = false) -> String {
         let t = s.replacingOccurrences(of: "|", with: "") as NSString, p = (s as NSString).range(of: "|").location
-        let (ins, caret) = LineEdit.newline(t, at: p, unit: "  ", colon: colon)
+        let (ins, caret) = LineEdit.newline(t, over: NSRange(location: p, length: 0), unit: "  ", colon: colon)
         return (t.replacingCharacters(in: NSRange(location: p, length: 0), with: ins) as NSString)
             .replacingCharacters(in: NSRange(location: p + caret, length: 0), with: "|")
     }
@@ -87,6 +92,19 @@ private func run(_ s: String, _ f: (NSString, NSRange) -> LineEdit.Edit?) -> Str
     #expect(nl("  key:|", colon: true) == "  key:\n    |")
     #expect(nl("  key:|") == "  key:\n  |")
     #expect(nl("  # note:|", colon: true) == "  # note:\n  |")
+    // Over a selection: the closing bracket is the one after it.
+    let t = "{abc}" as NSString, (ins, _) = LineEdit.newline(t, over: NSRange(location: 1, length: 3), unit: "  ", colon: false)
+    #expect(ins == "\n  \n")
+}
+
+/// A file with mixed line ends keeps its "\r\n" in the text: a line keeps its "\r", nothing is joined or added.
+@Test func linesWithCarriageReturnsMoveWhole() {
+    #expect(run("a\r\nb|\r\nc\n", { LineEdit.move($0, $1, up: true) }) == "b|\r\na\r\nc\n")
+    #expect(run("a|\r\nb\n", { LineEdit.duplicate($0, $1) }) == "a\r\na|\r\nb\n")
+    #expect(run("«a\r\nb»\r\n", { LineEdit.indent($0, $1, unit: "  ") }) == "«  a\r\n  b»\r\n")
+    #expect(run("a\r\n|\r\nb", { LineEdit.toggleComment($0, $1, token: "#") }) == "a\r\n# |\r\nb")
+    #expect(run("a|\r\nb\r\n", { LineEdit.delete($0, $1) }) == "|b\r\n")
+    #expect(LineEdit.detect("a\r\n\tb\r\n\tc\r\n") == .tabs)
 }
 
 @Test func indentationIsReadFromTheText() {
@@ -99,6 +117,7 @@ private func run(_ s: String, _ f: (NSString, NSRange) -> LineEdit.Edit?) -> Str
     #expect(LineEdit.indent(for: .python, detected: .spaces(2)) == .spaces(2))
     #expect(LineEdit.indent(for: nil, detected: nil) == .spaces(4))
     #expect(LineEdit.column("\tab", tab: 4) == 6)
+    #expect(LineEdit.offset(ofColumn: 5, in: "\tab") == 2 && LineEdit.offset(ofColumn: 2, in: "\tab") == 1 && LineEdit.offset(ofColumn: 9, in: "ab") == 2)
 }
 
 @Test func bracketsPairAcrossNesting() {
@@ -108,5 +127,7 @@ private func run(_ s: String, _ f: (NSString, NSRange) -> LineEdit.Edit?) -> Str
     #expect(LineEdit.matchingBracket(t, at: 8) == 15)
     #expect(LineEdit.matchingBracket(t, at: 0) == nil)
     #expect(LineEdit.matchingBracket("((" as NSString, at: 0) == nil)
-    #expect(Syntax.Language.xml.comment?.close == "-->" && Syntax.Language.json.comment == nil && Syntax.Language.ini.comment?.open == "#")
+    #expect(LineEdit.comment(.xml, fileName: "a.plist")?.close == "-->" && LineEdit.comment(.json, fileName: "a.json") == nil)
+    #expect(LineEdit.comment(.ini, fileName: "php.ini")?.open == ";" && LineEdit.comment(.ini, fileName: "a.service")?.open == "#")
+    #expect(LineEdit.comment(nil, fileName: "hosts")?.open == "#" && LineEdit.comment(nil, fileName: nil)?.open == "#" && LineEdit.comment(nil, fileName: "a.sql") == nil)
 }

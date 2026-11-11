@@ -40,12 +40,7 @@ final class LineNumberRuler: NSRulerView {
     /// `delta` how much longer the text got. The lines from the one before the edit (a "\r" there may now pair with a
     /// "\n") are looked at again until a line start lines up with an old one past the edit: the rest only moves.
     static func lineStarts(_ starts: [Int], _ text: NSString, edited: NSRange, delta: Int) -> [Int] {
-        let from = max(0, edited.location - 1)
-        var lo = 0, hi = starts.count - 1   // the last start at or before `from`
-        while lo < hi {
-            let mid = (lo + hi + 1) / 2
-            if starts[mid] <= from { lo = mid } else { hi = mid - 1 }
-        }
+        let lo = line(of: max(0, edited.location - 1), in: starts)   // the last start at or before the edit's line
         let oldEnd = NSMaxRange(edited) - delta
         var j = lo + 1
         return scan(text, from: starts[lo], into: Array(starts[...lo])) { i in

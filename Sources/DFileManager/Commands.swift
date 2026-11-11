@@ -346,7 +346,8 @@ extension AppDelegate {
         cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", group: 1, aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetPaths) },
         cmd("text.line.up", "Move Line Up", ["opt+up"], menu: "Edit/Lines", group: 3, aliases: "editor swap") { $0.textEditor?.moveLines(up: true) },
         cmd("text.line.down", "Move Line Down", ["opt+down"], menu: "Edit/Lines", group: 3, aliases: "editor swap") { $0.textEditor?.moveLines(up: false) },
-        cmd("text.line.duplicate", "Duplicate Line", ["shift+opt+down"], menu: "Edit/Lines", group: 3, aliases: "editor copy line") { $0.textEditor?.duplicateLines() },
+        cmd("text.line.duplicate", "Duplicate Line", ["shift+opt+down"], menu: "Edit/Lines", group: 3, aliases: "editor copy line") { $0.textEditor?.duplicateLines(up: false) },
+        cmd("text.line.duplicateUp", "Duplicate Line Up", ["shift+opt+up"], menu: "Edit/Lines", group: 3, aliases: "editor copy line") { $0.textEditor?.duplicateLines(up: true) },
         cmd("text.line.delete", "Delete Line", ["cmd+shift+k"], menu: "Edit/Lines", group: 3, aliases: "editor remove line") { $0.textEditor?.deleteLines() },
         cmd("edit.copyName", "Copy Name", ["cmd+opt+c"], menu: "Edit", group: 1, aliases: "clipboard") {
             $0.copyToPasteboard($0.active.targetPaths.map { ($0 as NSString).lastPathComponent })
