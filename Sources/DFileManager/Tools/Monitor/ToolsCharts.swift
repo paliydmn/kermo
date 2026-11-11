@@ -153,9 +153,16 @@ import SwiftUI
         /// `t` as the charts say it: a sample's time to the second; the 15 minutes of its slot on the history.
         func time(_ t: Date) -> String {
             guard history else { return t.formatted(.dateTime.hour().minute().second()) }
-            let t = Date(timeIntervalSince1970: ToolSlots.slot(t))
+            let s = Date(timeIntervalSince1970: ToolSlots.slot(t))   // from `t`: a part of a slot filled again starts later
             return t.formatted(days ? .dateTime.weekday().hour().minute() : .dateTime.hour().minute()) + "–"
-                + (t == data.tail?.lowerBound ? "now" : t.addingTimeInterval(ToolSlots.length).formatted(.dateTime.hour().minute()))
+                + (s == data.tail?.lowerBound ? "now" : s.addingTimeInterval(ToolSlots.length).formatted(.dateTime.hour().minute()))
+        }
+
+        /// The value drawn at `t`: the nearest sample's; on the history its slot's — the last part of one filled again
+        /// after a sleep, the newer numbers.
+        func point(_ points: [ToolPoint], at t: Date) -> ToolPoint? {
+            if history, let p = points.last(where: { $0.value != nil && ToolSlots.slot($0.at) == ToolSlots.slot(t) }) { return p }
+            return ToolChart.nearest(points, to: t, within: every * 1.5)
         }
 
         /// A chip's click: the series hidden or shown; `only`, every other picked one hidden — or, if it's that way
@@ -538,7 +545,7 @@ import SwiftUI
         var tail = written == nil ? nil : t?.slots.current
         if let c = tail, let last = written?.last, ToolSlots.slot(Date(timeIntervalSince1970: last.t)) > c.t { tail = nil }   // the server's clock went back past it
         let slots = written.map { lines in tail.map { lines + [$0] } ?? lines }
-        d.tail = tail.map { Date(timeIntervalSince1970: $0.t) }.flatMap { window.contains($0) ? $0...max($0, now) : nil }
+        d.tail = tail.map { Date(timeIntervalSince1970: $0.t) }.flatMap { $0 <= d.to ? $0...max($0, now) : nil }   // a Zoom inside it too
         // Maintenance over the values: by the server's clock, as the series are.
         let maintenance = live.state?.maintenance.flatMap { m -> [ToolChart.Band] in
             let skew = live.state?.skew ?? 0, from = max(m.from.addingTimeInterval(skew), d.from), to = min(m.until.addingTimeInterval(skew), d.to)
@@ -577,7 +584,9 @@ import SwiftUI
                 let fresh = slots.map { ToolSlots.points($0, metric: metric, key: key, from: d.from) } ?? t?.history.points(metric, key) ?? []
                 let pts = Self.within(slots == nil ? hour?.points(metric, key) ?? [] : fresh, window)
                 series[i].latest = fresh.last { $0.value != nil }?.value
-                if let held = model.held { since = max(since, fresh.count(where: { held.upperBound < $0.at && $0.value != nil })) }
+                if let held = model.held {   // on the history slots, not a slot's parts
+                    since = max(since, Set(fresh.compactMap { held.upperBound < $0.at && $0.value != nil ? slots == nil ? $0.at.timeIntervalSince1970 : ToolSlots.slot($0.at) : nil }).count)
+                }
                 lines.append(Line(id: s.id, name: s.name, points: pts, chart: ToolChart(pts, now: d.to), color: color, metric: s.metric))
             }
             lines.sort { $0.color < $1.color }
@@ -903,7 +912,7 @@ struct OneChart: View {
     /// `line`'s value at `t` (nil: the latest — on the history, or a window held, the last value in it), in its
     /// metric's words.
     private func value(_ line: ToolsCharts.Line, at t: Date?) -> String {
-        let v = t.map { ToolChart.nearest(line.points, to: $0, within: model.every * 1.5)?.value }
+        let v = t.map { model.point(line.points, at: $0)?.value }
             ?? (model.history || model.held != nil ? line.points.last { $0.value != nil } : line.points.last)?.value
         return v.map(line.metric.text) ?? "—"
     }
@@ -940,7 +949,7 @@ struct OneChart: View {
         let gap = chart.gap(at: t)
         var rows: [(color: Int, name: String, value: String)] = [], spread = false
         for line in chart.lines where gap == nil {
-            let p = ToolChart.nearest(line.points, to: t, within: model.every * 1.5), text = line.metric.text
+            let p = model.point(line.points, at: t), text = line.metric.text
             if let p, let v = p.value, let lo = p.low, let hi = p.high { rows.append((line.color, line.name, "\(text(lo)) – \(text(v)) – \(text(hi))")); spread = true }
             else { rows.append((line.color, line.name, p?.value.map(text) ?? "—")) }
         }

@@ -1869,6 +1869,9 @@ extension ServerLockTests {
                 && (again ? last.at.timeIntervalSince1970 == stop && drawn.dropLast().last?.at == tail.lowerBound : last.at == tail.lowerBound)
                 && charts.model.time(tail.lowerBound).hasSuffix("–now") && charts.sub.stringValue.contains("the band its lowest to highest, the last one so far"),
                 "\(drawn.suffix(3)) | \(charts.sub.stringValue)")
+        // the tip, the moment and the keys at the slot: its last part's numbers, the newer; a part's row from its own minute
+        #expect(charts.model.point(drawn, at: tail.lowerBound)?.at == last.at && charts.model.samples.last == tail.lowerBound
+                && charts.model.time(last.at).hasPrefix(last.at.formatted(.dateTime.hour().minute()) + "–"), "\(charts.model.samples.suffix(2))")
         let row = try #require(ToolsCharts.csv(charts.model).components(separatedBy: "\r\n").last { $0.contains(",cpu,") })
         let iso = ISO8601DateFormatter()
         iso.timeZone = .current

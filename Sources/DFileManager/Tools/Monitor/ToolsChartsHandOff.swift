@@ -50,7 +50,7 @@ extension ToolsCharts {
             return twoDays && !m.days ? s.lowerBound.formatted(f) + "–" + s.upperBound.formatted(f) : m.words(s)
         }
         var out = ["\(server)\(production ? " production" : "") · \(tool) · \(when(m, r)) (\(zone(r.upperBound)))",   // as the picture says it
-                   "Source: Kermo on this Mac, " + (m.history ? "15-minute slots: each one's average, lowest and highest\(m.data.tail.map { r.contains($0.lowerBound) } == true ? ", the last one so far" : ""); recorded only while watched."
+                   "Source: Kermo on this Mac, " + (m.history ? "15-minute slots: each one's average, lowest and highest\(m.data.tail.map { r.overlaps($0) } == true ? ", the last one so far" : ""); recorded only while watched."
                                                     : "a sample every \(Int(m.every)) s; recorded only while open or watched."), ""]
         for c in charts where !c.lines.isEmpty {
             out.append("\(c.title): " + c.lines.map { l in

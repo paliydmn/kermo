@@ -88,7 +88,7 @@ public struct ToolSlots: Sendable {
     /// slot's after the slot's before; in a slot as they were written — a slot filled again after a gap that began in
     /// it after that gap. A line that doesn't read is left out.
     public static func read(_ dir: String, tool: String, from: Date) -> [Line] {
-        let first = name(from)
+        let first = name(from.addingTimeInterval(-length))   // the slot before `from` may be yesterday's
         let files = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []).filter { $0.hasSuffix(".jsonl") && $0 >= first }.sorted()
         let lines: [Line] = files.flatMap { f in
             (try? String(contentsOfFile: dir + "/" + f, encoding: .utf8))?.split(separator: "\n").compactMap { try? JSONDecoder().decode(Line.self, from: Data($0.utf8)) } ?? []
