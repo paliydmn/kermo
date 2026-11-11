@@ -1422,7 +1422,7 @@ extension ServerLockTests {
                         "\(iso(at(30))),,Disks,disk,'=cmd|' /C calc'!A0,%,7,,,,sample", ""].joined(separator: "\r\n"), "\(csv)")
         // The summary: where and when, a line a chart — a flat series one value —, the gaps and the events in its time.
         let text = ToolsCharts.summary(model, server: "web-01", production: true, tool: "System").components(separatedBy: "\n")
-        #expect(text.first == "web-01 (production) · System · \(at(0).formatted(date: .abbreviated, time: .omitted)) \(model.words(at(0)...at(30))) (\(ToolsCharts.zone(at(30))))", "\(text)")
+        #expect(text.first == "web-01 production · System · \(at(0).formatted(date: .abbreviated, time: .omitted)) \(model.words(at(0)...at(30))) (\(ToolsCharts.zone(at(30))))", "\(text)")
         #expect(text.dropFirst().first == "Source: Kermo on this Mac, a sample every 5 s; recorded only while open or watched.")
         #expect(text.contains("CPU: 12%") && text.contains("Disks: / average 41%, highest 43% at \(model.time(at(5))); =cmd|' /C calc'!A0 7%"), "\(text)")
         #expect(text.contains("Gaps: no answer \(model.words(at(10)...at(30)))") && text.suffix(2) == ["Events:", "  \(at(20).formatted(.dateTime.hour().minute().second())) critical · disk full"],
