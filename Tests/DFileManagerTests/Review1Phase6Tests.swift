@@ -112,7 +112,8 @@ private func titles(_ nodes: [AppDelegate.MenuNode]) -> [String] {
     let app = app()
     let switches = ["view.sidebar", "view.quickview", "view.terminal", "view.terminalFull", "view.activity", "view.hidden", "view.perms",
                     "view.gitOnly", "go.bookmark", "view.sort.name", "view.sort.size", "view.sort.mtime", "view.sort.reverse", "app.update.auto",
-                    "monitor.keepAwake", "monitor.slowOnBattery", "monitor.openAtLogin"]   // Settings' switches
+                    "monitor.keepAwake", "monitor.slowOnBattery", "monitor.openAtLogin",   // Settings' switches
+                    "text.wrap", "text.invisibles", "text.indent.tabs", "text.indent.2", "text.indent.4"]   // an editor's
     #expect(Set(app.commands.filter { $0.on != nil }.map(\.id)) == Set(switches))
     let item = NSMenuItem(title: "", action: NSSelectorFromString("menuCommand:"), keyEquivalent: "")
     item.representedObject = "view.quickview"
@@ -124,7 +125,7 @@ private func titles(_ nodes: [AppDelegate.MenuNode]) -> [String] {
     for id in switches {   // no window, no panels yet (launch): off, not a crash
         item.representedObject = id
         _ = app.validateMenuItem(item)
-        #expect(["app.update.auto", "view.hidden", "view.perms", "monitor.slowOnBattery"].contains(id) || item.state == .off, "\(id)")   // as defaults have them
+        #expect(["app.update.auto", "view.hidden", "view.perms", "monitor.slowOnBattery", "text.wrap"].contains(id) || item.state == .off, "\(id)")   // as defaults have them
     }
 }
 

@@ -447,6 +447,7 @@ final class ModChip: NSButton {
 final class DocFrame: NSView {
     let scroll: NSScrollView
     private let status = NSTextField(labelWithString: "")
+    private let place = NSTextField(labelWithString: "")
     let keys = KeyBarView(chips: false)
     private var said = ""
     private var flashed = 0
@@ -468,12 +469,16 @@ final class DocFrame: NSView {
         status.lineBreakMode = .byTruncatingTail
         status.frame = NSRect(x: 10, y: bar + 3, width: size.width - 20, height: line - 6)
         status.autoresizingMask = [.width, .maxYMargin]
+        place.font = status.font
+        place.textColor = .secondaryLabelColor
+        place.frame = NSRect(x: size.width - 10, y: bar + 3, width: 0, height: line - 6)
+        place.autoresizingMask = [.minXMargin, .maxYMargin]
         let rule = NSBox(frame: NSRect(x: 0, y: bar + line - 1, width: size.width, height: 1))
         rule.boxType = .separator
         rule.autoresizingMask = [.width, .maxYMargin]
         scroll.frame = NSRect(x: 0, y: bar + line, width: size.width - width, height: size.height - bar - line)
         scroll.autoresizingMask = [.width, .height]
-        for v in [scroll, rule, status, keys] as [NSView] { addSubview(v) }
+        for v in [scroll, rule, status, place, keys] as [NSView] { addSubview(v) }
         if let side {
             side.frame = NSRect(x: size.width - width, y: bar + line, width: width, height: size.height - bar - line)
             side.autoresizingMask = [.minXMargin, .height]
@@ -492,6 +497,18 @@ final class DocFrame: NSView {
         set {
             said = newValue
             if flashed == 0 { status.stringValue = newValue }
+        }
+    }
+
+    /// Right of the status line, which ends before it: the editor's "Ln 12, Col 5 · Spaces: 4".
+    var position: String {
+        get { place.stringValue }
+        set {
+            guard newValue != place.stringValue else { return }
+            place.stringValue = newValue
+            let w = newValue.isEmpty ? 0 : place.intrinsicContentSize.width
+            place.frame = NSRect(x: bounds.width - 10 - w, y: status.frame.minY, width: w, height: status.frame.height)
+            status.frame.size.width = place.frame.minX - (w > 0 ? 16 : 0) - status.frame.minX
         }
     }
 

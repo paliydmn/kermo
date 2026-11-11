@@ -46,7 +46,9 @@ extension AppDelegate {
         cmd("list.go", "Go to List…", ["shift+;"], aliases: "services containers ports tunnels overview :") { $0.goToList() },
         cmd("go.home", "Home", ["cmd+shift+h"], menu: "Go", group: 2) { $0.active.navigate(to: NSHomeDirectory()) },
         cmd("go.root", "Computer Root", ["cmd+shift+up"], menu: "Go", group: 2, short: "Root") { $0.active.navigate(to: "/") },
-        cmd("go.path", "Go to Path…", ["cmd+l", "cmd+shift+g"], menu: "Go", group: 2, aliases: "path location") { $0.active.beginPathEditing() },
+        cmd("go.path", "Go to Path…", ["cmd+l", "cmd+shift+g"], menu: "Go", group: 2, aliases: "path location") { app in
+            if let e = app.textEditor { e.goToLine() } else { app.active.beginPathEditing() }   // an editor's: Go to Line… (`editorTitles`)
+        },
         cmd("go.jump", "Jump to Folder…", ["cmd+p"], menu: "Go", group: 2, short: "Jump", aliases: "go to folder recent frecency") { $0.showJump() },
         cmd("go.tree", "Folder Tree…", ["f10", "opt+0", "opt+f10", "cmd+shift+t"], menu: "Go", group: 2, short: "Tree", aliases: "folder tree") { app in
             let panel = app.active
@@ -168,7 +170,9 @@ extension AppDelegate {
         cmd("view.refresh", "Refresh", ["cmd+r"], menu: "View", group: 5) { $0.active.reload() },
         cmd("view.theme", "Theme…", [], menu: "View", group: 4, aliases: "colors dark midnight commander solarized") { $0.showThemes() },
         cmd("view.filter", "Quick Filter", ["/"], menu: "View", group: 3, short: "Filter", aliases: "filter glob regex") { $0.active.beginFilter() },
-        cmd("view.filterPresets", "Filter Presets…", ["cmd+/"], menu: "View", group: 3, aliases: "filter glob") { $0.showFilterPresets() },
+        cmd("view.filterPresets", "Filter Presets…", ["cmd+/"], menu: "View", group: 3, aliases: "filter glob") { app in
+            if let e = app.textEditor { e.toggleComment() } else { app.showFilterPresets() }
+        },
         cmd("view.filterPresets.edit", "Edit Filter Presets…", [], menu: "Kermo/Configuration", group: 3) {
             _ = $0.filterPresets()   // writes the example file on first use
             $0.openInEditor(URL(fileURLWithPath: Config.path("filters.json")))
@@ -182,11 +186,22 @@ extension AppDelegate {
         cmd("view.activity", "Activity", ["cmd+opt+j"], menu: "View", group: 1,
             aliases: "copies transfers operations queue progress history retry failed", on: { $0.ops?.activityShown == true }) { $0.ops.toggleActivity() },
         cmd("term.bigger", "Bigger Terminal Text", ["cmd+=", "cmd+shift+="], menu: "View", group: 4, aliases: "font size zoom in larger") { app in
-            if app.terminal.isShown { app.terminal.zoom(by: 1) } else { NSSound.beep() }
+            if app.textEditor != nil { Editor.zoom(by: 1) } else if app.terminal.isShown { app.terminal.zoom(by: 1) } else { NSSound.beep() }
         },
         cmd("term.smaller", "Smaller Terminal Text", ["cmd+-"], menu: "View", group: 4, aliases: "font size zoom out") { app in
-            if app.terminal.isShown { app.terminal.zoom(by: -1) } else { NSSound.beep() }
+            if app.textEditor != nil { Editor.zoom(by: -1) } else if app.terminal.isShown { app.terminal.zoom(by: -1) } else { NSSound.beep() }
         },
+        // The editor's text (its window's or a tool's): `text.*` work only while one is key (`textEditor`).
+        cmd("text.wrap", "Wrap Lines", ["opt+z"], menu: "View", group: 6, aliases: "word wrap long lines editor", on: { _ in Editor.wraps }) { _ in Editor.toggleWrap() },
+        cmd("text.invisibles", "Show Invisibles", [], menu: "View", group: 6, aliases: "whitespace tabs spaces editor", on: { _ in Editor.invisibles }) { _ in
+            Editor.toggleInvisibles()
+        },
+        cmd("text.indent.tabs", "Tabs", [], menu: "View/Indentation", group: 6, aliases: "indent with tabs editor",
+            on: { $0.textEditor?.indent == .tabs }) { $0.textEditor?.pickIndent(.tabs) },
+        cmd("text.indent.2", "2 Spaces", [], menu: "View/Indentation", group: 6, aliases: "indent with spaces editor",
+            on: { $0.textEditor?.indent == .spaces(2) }) { $0.textEditor?.pickIndent(.spaces(2)) },
+        cmd("text.indent.4", "4 Spaces", [], menu: "View/Indentation", group: 6, aliases: "indent with spaces editor",
+            on: { $0.textEditor?.indent == .spaces(4) }) { $0.textEditor?.pickIndent(.spaces(4)) },
         cmd("view.dirsizes", "Calculate Folder Sizes", ["opt+space"], menu: "View", group: 3, short: "Folder Sizes", aliases: "folder size disk usage du") { $0.active.computeAllDirSizes() },
         cmd("view.sort.name", "Name", [], menu: "View/Sort By", group: 3, aliases: "order Sort by Name", on: { $0.activePanel?.sortKey == .name }) { $0.active.sort(by: .name) },
         cmd("view.sort.size", "Size", [], menu: "View/Sort By", group: 3, aliases: "order biggest Sort by Size", on: { $0.activePanel?.sortKey == .size }) { $0.active.sort(by: .size) },
@@ -329,6 +344,10 @@ extension AppDelegate {
 
         // Clipboard
         cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", group: 1, aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetPaths) },
+        cmd("text.line.up", "Move Line Up", ["opt+up"], menu: "Edit/Lines", group: 3, aliases: "editor swap") { $0.textEditor?.moveLines(up: true) },
+        cmd("text.line.down", "Move Line Down", ["opt+down"], menu: "Edit/Lines", group: 3, aliases: "editor swap") { $0.textEditor?.moveLines(up: false) },
+        cmd("text.line.duplicate", "Duplicate Line", ["shift+opt+down"], menu: "Edit/Lines", group: 3, aliases: "editor copy line") { $0.textEditor?.duplicateLines() },
+        cmd("text.line.delete", "Delete Line", ["cmd+shift+k"], menu: "Edit/Lines", group: 3, aliases: "editor remove line") { $0.textEditor?.deleteLines() },
         cmd("edit.copyName", "Copy Name", ["cmd+opt+c"], menu: "Edit", group: 1, aliases: "clipboard") {
             $0.copyToPasteboard($0.active.targetPaths.map { ($0 as NSString).lastPathComponent })
         },

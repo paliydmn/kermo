@@ -672,18 +672,7 @@ final class Viewer: NSWindowController, NSWindowDelegate, NSToolbarDelegate, NSS
         sliding = true
         defer { sliding = wasSliding }
         wrap = on
-        if on {
-            scroll.hasHorizontalScroller = false
-            textView.isHorizontallyResizable = false
-            tc.widthTracksTextView = true
-            tc.containerSize = NSSize(width: scroll.contentSize.width, height: .greatestFiniteMagnitude)
-            textView.frame.size.width = scroll.contentSize.width
-        } else {
-            scroll.hasHorizontalScroller = true
-            textView.isHorizontallyResizable = true
-            tc.widthTracksTextView = false
-            tc.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
-        }
+        textView.setWraps(on)
         if let keep { scroll(toChar: keep, delta: 0, dx: -tc.lineFragmentPadding - textView.textContainerOrigin.x) }
         showSwitches()
     }

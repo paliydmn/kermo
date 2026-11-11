@@ -75,6 +75,9 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     let textView = EditorTextView(usingTextLayoutManager: false)   // TextKit 1: the line-number ruler needs it
     private var ruler: LineNumberRuler!
     private var language: Syntax.Language?
+    /// View ▸ Indentation's pick; else Tab follows the text's indent (`indent`), read once per text it replaced.
+    private var indentPick: LineEdit.Indent?
+    private var detected: (indent: LineEdit.Indent?, edits: Int)?
     private var highlightGen = 0
     /// The tokens the text wears now and its length then; and what's been edited since (from where, and how far
     /// from the end): the next tint paints only that and where tokens changed. nil: paint it all once it shows.
@@ -230,6 +233,8 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         scroll.hasVerticalRuler = true
         scroll.rulersVisible = true
         language = url.flatMap { Syntax.language(forFileName: $0.lastPathComponent, firstLine: String(text.prefix(200).split(separator: "\n").first ?? "")) }
+        applyFont()
+        applyView()
         showState()   // tinted once it shows (`shown`): twenty tabs restored aren't twenty tints at once
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -884,6 +889,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     func shown() {
         frame.showKeys()   // the menu's keys work by the key window
         if tinted == nil { highlight(after: 0) }
+        sayPosition()
         guard let url else { return }   // an Untitled: no file to have changed
         Task {
             guard cover == nil, let now = await Self.stamps.run(url.path, .userInitiated, { Stamp(url.resolvingSymlinksInPath().path) }), url == self.url,
@@ -934,6 +940,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         self.digest = digest
         let sel = textView.selectedRange()
         textView.string = text
+        detected = nil
         undo.removeAllActions()   // the old text's edits: ⌘Z would apply them to the new one; other tabs keep theirs
         frame.banner = nil
         host?.changed(self)   // its draft goes: the file's text is what it shows
@@ -1119,6 +1126,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     private func fill(_ text: String, clean: Bool = false, stamp: Stamp?? = nil, digest: Data? = nil, apply loaded: Loaded? = nil) {
         if let loaded { (encoding, lossy, bom, crlf) = (loaded.1, loaded.lossy, loaded.bom, loaded.crlf) }
         textView.string = text
+        detected = nil
         if let stamp { self.stamp = stamp }
         if let digest { self.digest = digest }
         if clean || loaded != nil { (dirty, unsent) = (false, false) }
@@ -1189,6 +1197,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
                                                  moved.map { m in [("Show in Finder", { @MainActor in NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: m)]) })] } ?? [])
         }
         if host?.active === self { window?.makeFirstResponder(focus) }
+        sayPosition()
     }
 
     /// The mark before its tab's name: ● changed, ↑ saved here but not on its server, ! its draft not written.
@@ -1218,7 +1227,8 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
 }
 
 /// ⎋ outside the find bar: back to the panels (`Editor.escape`) — NSTextView would otherwise show word completions.
-/// In the find bar it closes the bar.
+/// In the find bar it closes the bar. Under its text: the caret's line and a bracket with its pair; with Show
+/// Invisibles a mark on each tab (the layout manager's own marks spaces only).
 final class EditorTextView: NSTextView {
     override func cancelOperation(_ sender: Any?) {
         if enclosingScrollView?.isFindBarVisible == true {
@@ -1227,5 +1237,244 @@ final class EditorTextView: NSTextView {
             return performTextFinderAction(hide)
         }
         (delegate as? Editor)?.escape()
+    }
+
+    /// A bracket by the caret and its pair (`Editor.markBrackets`).
+    var brackets: [NSRange] = [] { didSet { relight() } }
+    var tabMarks = false { didSet { needsDisplay = true } }
+    /// Where they were last drawn: what to redraw when they move.
+    private var lit: [NSRect] = []
+
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting flag: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: flag)
+        relight()
+    }
+
+    private func relight() {
+        let now = lights()
+        for r in lit + [now.line].compactMap({ $0 }) + now.brackets { setNeedsDisplay(r) }
+    }
+
+    /// The caret's line (none while there's a selection) and the brackets' boxes, in the view.
+    private func lights() -> (line: NSRect?, brackets: [NSRect]) {
+        guard let lm = layoutManager, let tc = textContainer, let s = textStorage else { return (nil, []) }
+        let o = textContainerOrigin, sel = selectedRange()
+        var line: NSRect?
+        if sel.length == 0 {
+            var r = sel.location >= s.length && (s.length == 0 || s.mutableString.character(at: s.length - 1) == 10) ? lm.extraLineFragmentRect
+                : lm.lineFragmentRect(forGlyphAt: lm.glyphIndexForCharacter(at: min(sel.location, s.length - 1)), effectiveRange: nil)
+            (r.origin.x, r.size.width, r.origin.y) = (0, bounds.width, r.origin.y + o.y)
+            line = r
+        }
+        let boxes = brackets.filter { NSMaxRange($0) <= s.length }.map {
+            lm.boundingRect(forGlyphRange: lm.glyphRange(forCharacterRange: $0, actualCharacterRange: nil), in: tc).offsetBy(dx: o.x, dy: o.y)
+        }
+        return (line, boxes)
+    }
+
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        let now = lights()
+        lit = [now.line].compactMap { $0 } + now.brackets
+        if let line = now.line, line.intersects(rect) {
+            NSColor.labelColor.withAlphaComponent(0.06).setFill()
+            line.fill(using: .sourceOver)
+        }
+        NSColor.systemYellow.withAlphaComponent(0.35).setFill()
+        for b in now.brackets where b.intersects(rect) { b.fill(using: .sourceOver) }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard tabMarks, let lm = layoutManager, let tc = textContainer, let s = textStorage?.mutableString else { return }
+        let o = textContainerOrigin
+        let chars = lm.characterRange(forGlyphRange: lm.glyphRange(forBoundingRect: dirtyRect.offsetBy(dx: -o.x, dy: -o.y), in: tc), actualGlyphRange: nil)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font ?? .systemFont(ofSize: 12), .foregroundColor: NSColor.tertiaryLabelColor]
+        var i = chars.location
+        while i < NSMaxRange(chars) {
+            let r = s.range(of: "\t", options: .literal, range: NSRange(location: i, length: NSMaxRange(chars) - i))
+            guard r.location != NSNotFound else { break }
+            let box = lm.boundingRect(forGlyphRange: lm.glyphRange(forCharacterRange: r, actualCharacterRange: nil), in: tc)
+            ("→" as NSString).draw(at: NSPoint(x: box.minX + o.x, y: box.minY + o.y), withAttributes: attrs)
+            i = NSMaxRange(r)
+        }
+    }
+}
+
+// MARK: - Typing and moving around
+
+extension Editor {
+    /// Every editor's text size, wrap and invisibles, kept across launches (⌘= / ⌘−, ⌥Z, View ▸ Show Invisibles).
+    static var fontSize: CGFloat { CGFloat(UserDefaults.standard.object(forKey: "editorFontSize") as? Double ?? 12) }
+    static var wraps: Bool { UserDefaults.standard.object(forKey: "editorWrap") as? Bool ?? true }
+    static var invisibles: Bool { UserDefaults.standard.bool(forKey: "editorInvisibles") }
+
+    static func zoom(by step: CGFloat) {
+        let size = min(max(fontSize + step, 8), 36)   // 0: as Settings set it
+        if step != 0, size == fontSize { return NSSound.beep() }
+        UserDefaults.standard.set(Double(size), forKey: "editorFontSize")
+        open.forEach { $0.applyFont() }
+    }
+    static func toggleWrap() { UserDefaults.standard.set(!wraps, forKey: "editorWrap"); open.forEach { $0.applyView() } }
+    static func toggleInvisibles() { UserDefaults.standard.set(!invisibles, forKey: "editorInvisibles"); open.forEach { $0.applyView() } }
+
+    /// Its text at `fontSize`, a tab four columns wide, the line numbers to match.
+    private func applyFont() {
+        let font = NSFont.monospacedSystemFont(ofSize: Self.fontSize, weight: .regular), p = NSMutableParagraphStyle()
+        p.tabStops = []
+        p.defaultTabInterval = 4 * ("0" as NSString).size(withAttributes: [.font: font]).width
+        textView.font = font
+        textView.defaultParagraphStyle = p
+        textView.typingAttributes[.paragraphStyle] = p
+        if let s = textView.textStorage, s.length > 0 { s.addAttribute(.paragraphStyle, value: p, range: NSRange(location: 0, length: s.length)) }
+        ruler.fontSize = Self.fontSize * 10 / 12
+    }
+
+    private func applyView() {
+        textView.setWraps(Self.wraps)
+        textView.layoutManager?.showsInvisibleCharacters = Self.invisibles
+        textView.tabMarks = Self.invisibles
+    }
+
+    /// What Tab puts in: View ▸ Indentation's pick, else the text's way, else its language's (`LineEdit.indent(for:)`).
+    var indent: LineEdit.Indent {
+        if let indentPick { return indentPick }
+        if detected == nil || detected!.indent == nil && detected!.edits != edits {   // nothing indented yet: look again after a change
+            let s = textView.textStorage!.mutableString
+            detected = (LineEdit.detect(s.substring(to: min(s.length, 200_000))), edits)
+        }
+        return LineEdit.indent(for: language, detected: detected!.indent)
+    }
+
+    func pickIndent(_ i: LineEdit.Indent) {
+        guard i != .tabs || language != .yaml else { return NSSound.beep() }   // YAML takes no tab
+        indentPick = i
+        sayPosition()
+    }
+
+    /// "Ln 12, Col 5 · 3 lines, 120 selected · Spaces: 4", right of the status line. Col counts columns, a tab to the next four.
+    func sayPosition() {
+        guard cover == nil else { frame.position = ""; return }
+        let ns = textView.textStorage!.mutableString, sel = textView.selectedRange(), starts = ruler.starts
+        let line = LineNumberRuler.line(of: sel.location, in: starts), n = sel.location - starts[line]
+        let col = n > 10_000 ? n : LineEdit.column(ns.substring(with: NSRange(location: starts[line], length: n)), tab: 4)   // ponytail: a longer line's start counts characters
+        var words = ["Ln \(line + 1), Col \(col + 1)"]
+        if sel.length > 0 {
+            let lines = LineNumberRuler.line(of: NSMaxRange(sel) - 1, in: starts) - line + 1
+            words.append((lines > 1 ? "\(lines) lines, " : "") + "\(sel.length) selected")
+        }
+        words.append(indent == .tabs ? "Tabs" : "Spaces: \(indent.width)")
+        frame.position = words.joined(separator: " · ")
+    }
+
+    func textViewDidChangeSelection(_ notification: Notification) {
+        sayPosition()
+        markBrackets()
+    }
+
+    /// The bracket just before the caret (else just after it) and its pair, lit.
+    private func markBrackets() {
+        let sel = textView.selectedRange(), ns = textView.textStorage!.mutableString
+        let at = sel.length > 0 ? nil : [sel.location - 1, sel.location].lazy.compactMap { i in LineEdit.matchingBracket(ns, at: i).map { (i, $0) } }.first
+        textView.brackets = at.map { [NSRange(location: $0.0, length: 1), NSRange(location: $0.1, length: 1)] } ?? []
+    }
+
+    /// ↩ keeps the line's indent (one more after an opening bracket, or ":" in YAML and Python), Tab puts in the
+    /// indent (spaces to the next stop) or indents the lines selected, ⇧Tab takes one off.
+    func textView(_ view: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard view.isEditable, !view.hasMarkedText() else { return false }
+        let ns = view.textStorage!.mutableString, r = view.selectedRange()
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            let (text, caret) = LineEdit.newline(ns, at: r.location, unit: indent.unit, colon: language == .yaml || language == .python)
+            view.insertText(text, replacementRange: r)
+            view.setSelectedRange(NSRange(location: r.location + caret, length: 0))
+        case #selector(NSResponder.insertTab(_:)):
+            if ns.substring(with: r).contains("\n") { change(LineEdit.indent(ns, r, unit: indent.unit), named: "Indent"); return true }
+            guard case .spaces(let n) = indent else { return false }   // a tab, as typed
+            let start = ns.lineRange(for: NSRange(location: r.location, length: 0)).location
+            let col = LineEdit.column(ns.substring(with: NSRange(location: start, length: min(r.location - start, 10_000))), tab: 4)
+            view.insertText(String(repeating: " ", count: n - col % n), replacementRange: r)
+        case #selector(NSResponder.insertBacktab(_:)):
+            change(LineEdit.outdent(ns, r, width: indent.width), named: "Outdent")
+        default:
+            return false
+        }
+        return true
+    }
+
+    /// The lines every selection touches (⌘-click makes several): what the line commands act on.
+    private var lineSelection: NSRange { textView.selectedRanges.map(\.rangeValue).reduce(textView.selectedRange(), NSUnionRange) }
+
+    func moveLines(up: Bool) { change(LineEdit.move(textView.textStorage!.mutableString, lineSelection, up: up), named: up ? "Move Line Up" : "Move Line Down") }
+    func duplicateLines() { change(LineEdit.duplicate(textView.textStorage!.mutableString, lineSelection), named: "Duplicate Line") }
+    func deleteLines() { change(LineEdit.delete(textView.textStorage!.mutableString, lineSelection), named: "Delete Line") }
+
+    /// ⌘/: "#" for most configs and scripts (a text of no known language too), "//" for C-like ones, <!-- --> in
+    /// XML; JSON has none.
+    func toggleComment() {
+        let c: (open: String, close: String?)? = language.map(\.comment) ?? ("#", nil)
+        guard let c else { return NSSound.beep() }
+        let ns = textView.textStorage!.mutableString
+        change(c.close.map { LineEdit.toggleComment(ns, lineSelection, open: c.open, close: $0) } ?? LineEdit.toggleComment(ns, lineSelection, token: c.open),
+               named: "Toggle Comment")
+    }
+
+    /// A line command's change as one Undo step, through the text view: its draft, colors and line numbers follow.
+    private func change(_ e: LineEdit.Edit?, named: String) {
+        guard let e, textView.isEditable else { return NSSound.beep() }
+        textView.breakUndoCoalescing()
+        guard textView.shouldChangeText(in: e.range, replacementString: e.text) else { return }
+        let plain: [NSAttributedString.Key: Any] = [.font: textView.font as Any, .paragraphStyle: textView.defaultParagraphStyle as Any, .foregroundColor: NSColor.textColor]
+        textView.textStorage?.replaceCharacters(in: e.range, with: NSAttributedString(string: e.text, attributes: plain))
+        textView.didChangeText()
+        undo.setActionName(named)
+        textView.setSelectedRange(e.select)
+        textView.scrollRangeToVisible(e.select)
+    }
+
+    /// ⌘L: asks for a line ("120", or "120:8" for its 8th character) and goes there.
+    func goToLine() {
+        guard let window, cover == nil else { return NSSound.beep() }
+        let alert = NSAlert()
+        alert.messageText = "Go to Line"
+        alert.informativeText = "1–\(ruler.starts.count), or line:column"
+        alert.addButton(withTitle: "Go")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: "")
+        field.placeholderString = "\(LineNumberRuler.line(of: textView.selectedRange().location, in: ruler.starts) + 1)"
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] r in
+            MainActor.assumeIsolated { if r == .alertFirstButtonReturn { self?.go(to: field.stringValue) } }
+        }
+    }
+
+    /// "120" or "120:8": that line's start (or its 8th character), shown with a flash; out of range goes to the nearest.
+    func go(to spec: String) {
+        let parts = spec.split(separator: ":", omittingEmptySubsequences: false).map { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard let first = parts.first, let wanted = first else { return NSSound.beep() }
+        let starts = ruler.starts, ns = textView.textStorage!.mutableString
+        let start = starts[min(max(wanted, 1), starts.count) - 1]
+        var r = ns.lineRange(for: NSRange(location: start, length: 0))
+        if r.length > 0, ns.character(at: NSMaxRange(r) - 1) == 10 { r.length -= 1 }
+        let col = parts.count > 1 ? min(max((parts[1] ?? 1) - 1, 0), r.length) : 0
+        window?.makeFirstResponder(textView)
+        textView.setSelectedRange(NSRange(location: start + col, length: 0))
+        textView.scrollRangeToVisible(r)
+        if r.length > 0 { textView.showFindIndicator(for: r) }
+    }
+}
+
+extension NSTextView {
+    /// Long lines wrap at the view's edge, or run on to the right over a horizontal scroller.
+    func setWraps(_ on: Bool) {
+        guard let scroll = enclosingScrollView, let tc = textContainer else { return }
+        scroll.hasHorizontalScroller = !on
+        isHorizontallyResizable = !on
+        tc.widthTracksTextView = on
+        tc.containerSize = NSSize(width: on ? scroll.contentSize.width : .greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        if on { frame.size.width = scroll.contentSize.width }
     }
 }
