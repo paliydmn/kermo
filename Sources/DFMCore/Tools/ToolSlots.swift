@@ -54,8 +54,13 @@ public struct ToolSlots: Sendable {
     /// The slot so far as a line, and a new one begins.
     public mutating func flush() -> [Line] {
         defer { (start, sums) = (nil, [:]) }
-        guard let start, !sums.isEmpty else { return [] }
-        return [Line(t: start, tool: tool, v: sums.mapValues { $0.mapValues { a in [a.min, (a.sum / a.n * 100).rounded() / 100, a.max] } })]
+        return current.map { [$0] } ?? []
+    }
+
+    /// The slot being filled as the line it will be: what 24h and 7d draw past the last one written.
+    public var current: Line? {
+        guard let start, !sums.isEmpty else { return nil }
+        return Line(t: start, tool: tool, v: sums.mapValues { $0.mapValues { a in [a.min, (a.sum / a.n * 100).rounded() / 100, a.max] } })
     }
 
     // MARK: The files
@@ -79,13 +84,16 @@ public struct ToolSlots: Sendable {
         }
     }
 
-    /// `tool`'s lines in `dir` from `from` on, oldest first; a line that doesn't read is left out.
+    /// `tool`'s lines in `dir` from `from` on, a slot's after the slot's before; in a slot as they were written — a slot
+    /// filled again after a gap that began in it after that gap. A line that doesn't read is left out.
     public static func read(_ dir: String, tool: String, from: Date) -> [Line] {
         let first = name(from)
         let files = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []).filter { $0.hasSuffix(".jsonl") && $0 >= first }.sorted()
-        return files.flatMap { f in
+        let lines: [Line] = files.flatMap { f in
             (try? String(contentsOfFile: dir + "/" + f, encoding: .utf8))?.split(separator: "\n").compactMap { try? JSONDecoder().decode(Line.self, from: Data($0.utf8)) } ?? []
-        }.filter { $0.tool == tool && $0.t >= from.timeIntervalSince1970 - length }.sorted { $0.t < $1.t }
+        }.filter { $0.tool == tool && $0.t >= from.timeIntervalSince1970 - length }
+        let slot = lines.map { floor($0.t / length) }
+        return lines.indices.sorted { (slot[$0], $0) < (slot[$1], $1) }.map { lines[$0] }
     }
 
     static func name(_ d: Date) -> String {
@@ -95,24 +103,43 @@ public struct ToolSlots: Sendable {
 
     // MARK: A chart
 
-    /// `metric`'s series `key` in `lines` (oldest first) as a chart's points from `from`: each slot's average at its
-    /// start with its min and max (a slot written early — at a sleep, a stop — never lands past now; filled again after
-    /// a short sleep, it's two points at one time, each its own: averages without their counts don't merge), and the
-    /// gaps: the ones written, and "not watched" where slots are missing (Kermo not running, the server not watched)
-    /// and before the first.
+    /// `metric`'s series `key` in `lines` — as `read` gives them, a slot's together as written, and the slot being
+    /// filled last — as a chart's points from `from`: each slot's average at its start with its min and max (a slot
+    /// written early — at a sleep, a stop — never lands past now; filled again after a short sleep, its lines are one
+    /// point), and the gaps: the ones written, and "not watched" where slots are missing (Kermo not running, the server
+    /// not watched) and before the first. A gap that values of its own slot came after ended in that slot: at a point
+    /// a slot it isn't drawn — the hour draws it.
     public static func points(_ lines: [Line], metric: String, key: String, from: Date) -> [ToolPoint] {
         var out: [ToolPoint] = []
         var end = from.timeIntervalSince1970   // where the last slot ended
+        // The slot under way: its point in `out`, its averages' sum and count — ponytail: a line keeps no count of its
+        // samples, so a slot of two lines averages theirs (D-191 (8): a count in a line would change the files) —,
+        // and its gaps since its last values: drawn once the slot is over, unless values come again in it.
+        var slot = -Double.infinity, at: Int?, sum = 0.0, n = 0.0, held: [ToolPoint] = []
+        func close() {
+            for g in held where out.last?.gap != g.gap { out.append(g) }
+            held = []
+        }
         for l in lines {
-            if let gap = l.gap {
-                if out.last?.gap != gap { out.append(ToolPoint(at: Date(timeIntervalSince1970: l.t), gap: gap)) }
+            let s = floor(l.t / length)
+            if s != slot {
+                if !held.isEmpty { close() }
+                (slot, at, sum, n) = (s, nil, 0, 0)
+            }
+            if let gap = l.gap { held.append(ToolPoint(at: Date(timeIntervalSince1970: l.t), gap: gap)); continue }
+            guard let v = l.v?[metric]?[key], v.count == 3 else { continue }
+            held = []   // values again in the slot: its gaps so far ended in it
+            (sum, n) = (sum + v[1], n + 1)
+            if let at {
+                out[at] = ToolPoint(at: out[at].at, value: sum / n, low: Swift.min(out[at].low ?? v[0], v[0]), high: Swift.max(out[at].high ?? v[2], v[2]))
                 continue
             }
-            guard let v = l.v?[metric]?[key], v.count == 3 else { continue }
             if l.t > end + 1, out.last?.gap == nil { out.append(ToolPoint(at: Date(timeIntervalSince1970: end), gap: .notWatched)) }
+            at = out.count
             out.append(ToolPoint(at: Date(timeIntervalSince1970: l.t), value: v[1], low: v[0], high: v[2]))
             end = l.t + length
         }
+        close()
         return out
     }
 

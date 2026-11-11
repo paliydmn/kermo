@@ -19,6 +19,8 @@ private func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
     #expect(s.mark(.asleep, at: at(1100)).isEmpty && s.mark(.reconnecting, at: at(1200)).map(\.gap) == [.reconnecting], "once a stretch")
     #expect(s.mark(.maintenance, at: at(1300)).isEmpty, "maintenance is a band over values, not a gap")
     _ = s.add(["cpu": ["": 5]], at: at(5000))
+    _ = s.add(["cpu": ["": 7]], at: at(5010))
+    #expect(s.current == .init(t: ToolSlots.slot(at(5000)), tool: "system", v: ["cpu": ["": [5, 6, 7]]]), "the slot so far: the line it will be, still filling")
     #expect(s.mark(.reconnecting, at: at(5001)).count == 2, "values came: a new stretch")
     #expect(s.flush().isEmpty)
 
@@ -37,13 +39,14 @@ private func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
                       .init(t: day - 300, tool: "system", gap: .asleep)], to: dir)
     let old = ToolSlots.name(now.addingTimeInterval(-9 * 86400)), kept = ToolSlots.name(now.addingTimeInterval(-6 * 86400))
     for f in [old, kept] { FileManager.default.createFile(atPath: dir + "/" + f, contents: Data()) }
-    ToolSlots.append([.init(t: day, tool: "system", v: ["cpu": ["": [4, 5, 6]]])], to: dir)
+    ToolSlots.append([.init(t: day - 900, tool: "system", v: ["cpu": ["": [7, 8, 9]]]), .init(t: day, tool: "system", v: ["cpu": ["": [4, 5, 6]]])], to: dir)   // filled again after the sleep
     let today = dir + "/" + ToolSlots.name(Date(timeIntervalSince1970: day))
     #expect(!FileManager.default.fileExists(atPath: dir + "/" + old) && FileManager.default.fileExists(atPath: dir + "/" + kept), "past 7 days: gone")
     #expect((try FileManager.default.attributesOfItem(atPath: today)[.posixPermissions] as? Int) == 0o600)
     #expect((try FileManager.default.attributesOfItem(atPath: dir)[.posixPermissions] as? Int) == 0o700)
     let lines = ToolSlots.read(dir, tool: "system", from: Date(timeIntervalSince1970: day - 900))
-    #expect(lines.map(\.t) == [day - 900, day - 300, day] && lines[1].gap == .asleep && lines[2].v?["cpu"]?[""] == [4, 5, 6], "\(lines)")
+    #expect(lines.map(\.t) == [day - 900, day - 300, day - 900, day] && lines[1].gap == .asleep && lines[2].v?["cpu"]?[""] == [7, 8, 9] && lines[3].v?["cpu"]?[""] == [4, 5, 6],
+            "a slot after the one before, in it as written: \(lines)")
     #expect(ToolSlots.read(dir, tool: "system", from: Date(timeIntervalSince1970: day + 900)).map(\.t) == [day], "from: the slot that holds it on")
 }
 
@@ -60,9 +63,16 @@ private func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
                              .init(at: at(2000), gap: .asleep), .init(at: at(9000), value: 30, low: 1, high: 40), .init(at: at(9900), gap: .notWatched),
                              .init(at: at(18000), value: 40, low: 1, high: 50)]
     #expect(p == want, "\(p)")
-    // A slot written at a sleep and filled again after a short one: two lines with one time — two points, each its own.
-    let again = [lines[1], .init(t: at(1800).timeIntervalSince1970, tool: "s", v: ["cpu": ["": [8, 9, 99]]])]
-    #expect(ToolSlots.points(again, metric: "cpu", key: "", from: at(1800)) == [.init(at: at(1800), value: 12, low: 1, high: 20), .init(at: at(1800), value: 9, low: 8, high: 99)])
+    // A slot written at a sleep and filled again after a short one, as written: its two lines are one point — its
+    // lowest and highest the two's, its average theirs (a line keeps no count) —, and the sleep ended in the slot: no
+    // band. A second sleep in it that values didn't come after is one, the rest of the slot's.
+    let slept = ToolSlots.Line(t: at(2000).timeIntervalSince1970, tool: "s", gap: .asleep), again = ToolSlots.Line(t: at(1800).timeIntervalSince1970, tool: "s", v: ["cpu": ["": [8, 9, 99]]])
+    let next = ToolSlots.Line(t: at(2700).timeIntervalSince1970, tool: "s", v: ["cpu": ["": [2, 3, 4]]])
+    #expect(ToolSlots.points([lines[1], slept, again, next], metric: "cpu", key: "", from: at(1800)) == [.init(at: at(1800), value: 10.5, low: 1, high: 99), .init(at: at(2700), value: 3, low: 2, high: 4)])
+    let long = ToolSlots.Line(t: at(2100).timeIntervalSince1970, tool: "s", gap: .asleep)
+    #expect(ToolSlots.points([lines[1], slept, again, long, next], metric: "cpu", key: "", from: at(1800)) == [.init(at: at(1800), value: 10.5, low: 1, high: 99), .init(at: at(2100), gap: .asleep),
+                                                                                                        .init(at: at(2700), value: 3, low: 2, high: 4)])
+    #expect(ToolSlots.points([lines[1], slept, next], metric: "cpu", key: "", from: at(1800)).compactMap(\.gap) == [.asleep], "not filled again: the gap to the next slot")
     let twice = [lines[1], .init(t: at(2000).timeIntervalSince1970, tool: "s", gap: .asleep), .init(t: at(2100).timeIntervalSince1970, tool: "s", gap: .reconnecting)]
     #expect(ToolSlots.points(twice, metric: "cpu", key: "", from: at(1800)).compactMap(\.gap) == [.asleep, .reconnecting], "a gap of another kind is a band of its own")
     #expect(ToolSlots.keys(lines, metric: "disk") == ["/"] && ToolSlots.points(Array(lines.suffix(1)), metric: "disk", key: "/", from: at(18000)) == [.init(at: at(18000), value: 5, low: 5, high: 5)])

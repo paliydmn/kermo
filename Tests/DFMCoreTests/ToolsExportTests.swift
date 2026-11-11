@@ -59,6 +59,8 @@ private func isoTime(_ d: Date, _ zone: TimeZone) -> String {
     #expect(ToolExport.csv([], slot: nil, zone: zone) == ToolExport.header + "\r\n", "nothing drawn: the header")
     let early = ToolExport.Series(chart: "CPU", metric: "cpu", key: "", unit: "%", points: [.init(at: at(0), value: 5, low: 1, high: 9), .init(at: at(420), gap: .asleep)])
     #expect(ToolExport.csv([early], slot: 900, zone: zone).components(separatedBy: "\r\n")[1].hasPrefix("\(iso(at(0))),\(iso(at(420))),"), "a slot written early at a sleep ends where the gap begins")
+    let filling = ToolExport.Series(chart: "CPU", metric: "cpu", key: "", unit: "%", points: [.init(at: at(0), value: 5, low: 1, high: 9)])
+    #expect(ToolExport.csv([filling], slot: 900, until: at(300), zone: zone).components(separatedBy: "\r\n")[1].hasPrefix("\(iso(at(0))),\(iso(at(300))),"), "the slot being filled ends now")
 }
 
 /// A series' numbers without its gaps; on the history a slot's highest at the slot's start, its lowest the lowest low.

@@ -1854,6 +1854,21 @@ extension ServerLockTests {
         #expect(cpu.lines.first?.points.filter { $0.value != nil }.allSatisfy { $0.low == 10 && $0.high == 10 } == true, "each slot's lowest and highest")
         let said = OneChart(chart: cpu, model: charts.model).said
         #expect(said.hasSuffix(" · 10%") && said.contains("–") && !said.hasPrefix("Now"), "the last slot's 15 minutes, not now: \(said)")
+        #expect(charts.model.data.tail == nil && !charts.sub.stringValue.contains("so far"), "not watched: nothing being filled")
+        // Watched again: the slot being filled is drawn past the ones written — one point with a part written at a
+        // stop —, its time to now, and the line under the charts says so; the CSV's slot ends now, not in 15 minutes.
+        monitor.watch(pulse, on: .local(), true)
+        defer { monitor.watch(pulse, on: .local(), false) }
+        await toolsUntil { monitor.tool("pulse", on: .local())?.slots.current != nil }
+        charts.update(try #require(live(page)))
+        let tail = try #require(charts.model.data.tail), drawn = try #require(charts.model.data.charts.first?.lines.first?.points)
+        #expect(drawn.last?.at == tail.lowerBound && drawn.last?.value == 10 && drawn.filter { $0.at == tail.lowerBound }.count == 1
+                && charts.model.time(tail.lowerBound).hasSuffix("–now") && charts.sub.stringValue.contains("the band its lowest to highest, the last one so far"),
+                "\(drawn.suffix(3)) | \(charts.sub.stringValue)")
+        let row = try #require(ToolsCharts.csv(charts.model).components(separatedBy: "\r\n").last { $0.contains(",cpu,") })
+        let iso = ISO8601DateFormatter()
+        iso.timeZone = .current
+        #expect(row.hasPrefix(iso.string(from: tail.lowerBound) + "," + iso.string(from: tail.upperBound) + ",") && row.hasSuffix(",slot"), "\(row)")
         charts.range.selectedSegment = 1
         _ = (charts.range.target as? NSObject)?.perform(charts.range.action, with: charts.range)
         #expect(charts.model.data.to.timeIntervalSince(charts.model.data.from) == 3600 && charts.model.every == 1)

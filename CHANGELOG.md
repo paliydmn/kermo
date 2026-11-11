@@ -29,6 +29,12 @@ Release:
 - A click on a chart's **24h** or **7d** is a moment, as on the last hour: the charts' numbers for those 15 minutes, the journal a button away (**Log for This Time**). It used to open the journal.
 - ⎋ on a server's Tools tab steps back one thing at a time: the series list, the stretch, Focus, then Back to Live.
 - A chart's events were dots on its axis; they're marks by level now, and a recovery (back to normal, answers again) shows too.
+- A watched tool's **24h** and **7d** draw the 15 minutes under way too: the line goes on to now and ends in a ring, the tip says “2:30 PM–now”, and the summary and the CSV say those 15 minutes aren't over. They ended at the last 15 minutes on disk.
+
+### Fixed
+- A gap that began over an hour ago — the Mac asleep through the night — is a band with its reason from the left edge of the hour's charts. They began blank until the first value.
+- 15 minutes on 24h and 7d that Kermo wrote at a short sleep and filled again after it are one point, with no gap band after it running to the next 15 minutes — or to now.
+- A chart's top value on its scale (“100%”) sits under its line, clear of the chart's title.
 
 ## [2.0.1] - 2026-11-08
 

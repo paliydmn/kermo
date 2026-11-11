@@ -111,6 +111,14 @@ private func systemSamples() throws -> [ToolSample] {
     #expect(h.points("cpu").last == ToolPoint(at: at(80), gap: .noAnswer) && h.latest("cpu") == [:], "no value through a gap")
     _ = h.add(sample(100, cpu(5)), metrics: m, now: at(100))
     #expect(h.latest("cpu") == ["": 5] && h.previous?.at == at(70) && h.last?.at == at(100))
+    // A gap longer than the hour: its mark stays before the hour, so the window opens in it — till values fill the hour.
+    h.mark(.asleep, at: at(110))
+    _ = h.add(sample(300, cpu(6)), metrics: m, now: at(300))
+    #expect(h.points("cpu") == [ToolPoint(at: at(110), gap: .asleep), ToolPoint(at: at(300), value: 6)], "\(h.points("cpu"))")
+    _ = h.add(sample(330, cpu(7)), metrics: m, now: at(330))
+    #expect(h.points("cpu").first?.gap == .asleep, "the same mark, once")
+    _ = h.add(sample(400, cpu(8)), metrics: m, now: at(400))
+    #expect(h.points("cpu").map(\.at) == [at(400)], "an hour of values since: the mark goes")
 }
 
 @Test func alertsHoldForATimeOrACount() {

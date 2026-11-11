@@ -185,7 +185,7 @@ extension ToolMetric {
 
 /// A tool's series on one server: an hour of each metric's values, with the gaps (§8, decision 6).
 public struct ToolHistory: Sendable {
-    /// Metric → series key → its points, oldest first.
+    /// Metric → series key → its points, oldest first: the hour's, and the gap it opens in, if it does.
     public private(set) var series: [String: [String: [ToolPoint]]] = [:]
     public private(set) var last: ToolSample?
     /// The sample before `last`: rates and events go by the two.
@@ -281,7 +281,9 @@ public struct ToolHistory: Sendable {
         gaps.removeAll { $0 < before }
         for (id, keys) in series {
             for (key, points) in keys where points.first.map({ $0.at < before }) == true {
-                series[id]![key] = Array(points.drop { $0.at < before })
+                // the gap the hour opens in keeps its mark: its band and its "why" reach in (D-191 (11))
+                let i = points.firstIndex { $0.at >= before } ?? points.endIndex, from = i > 0 && points[i - 1].gap != nil ? i - 1 : i
+                if from > 0 { series[id]![key] = Array(points[from...]) }
             }
         }
     }
