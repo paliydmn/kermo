@@ -723,6 +723,71 @@ extension ServerLockTests {
         #expect(page == nil && again == nil, "the charts leave the view tree with the window: page \(page != nil), charts \(again != nil)")
     }
 
+    /// Hand it on, on the dashboard (review 4 PR 4): Copy Summary… and ⋯ (Export CSV…, Copy Image of the Charts) beside
+    /// Events; the summary's sheet — Cancel leaves the clipboard as it was, Copy puts the text there as edited —, the
+    /// charts in it and nothing of the processes' rows (a command line); Export CSV… writes the file whole into the
+    /// folder named, Cancel writes nothing, a folder it can't write to: an error, no file, no "saved"; Copy Image a
+    /// PNG and a TIFF as wide as the block.
+    @Test func theChartsHandOnWhatTheyDraw() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app), fm = FileManager.default
+        let pb = NSPasteboard(name: .init("kermo-test-" + UUID().uuidString)), dir = URL(fileURLWithPath: bench.dir + "/export"), locked = dir.appendingPathComponent("locked")
+        defer { closeWindows(); quick.done(); bench.done(); done(); app.savedServers = []; (ToolsCharts.saving, ToolsCharts.editing) = (nil, nil); pb.releaseGlobally() }
+        try await watching(app, bench)
+        ToolsWindow.show(app, server: .local())
+        let page = try #require(ToolsWindow.main?.page)
+        page.select("pulse")
+        await toolsUntil { (live(page)?.blocks.compactMap { $0 as? ToolsCharts }.first?.model.data.charts.last?.lines.count ?? 0) == 3 }
+        let charts = try #require(live(page)?.blocks.compactMap { $0 as? ToolsCharts }.first), menu = try #require(charts.moreButton.menu)
+        #expect(charts.summaryButton.superview === charts.eventsButton.superview && charts.moreButton.superview === charts.eventsButton.superview
+                && menu.items.map(\.title) == ["Export CSV…", "Copy Image of the Charts"])
+        charts.pasteboard = pb
+        pb.clearContents()
+        pb.setString("yours", forType: .string)
+        // Copy Summary…: Cancel, then Copy of the text edited.
+        var shown = ""
+        ToolsCharts.editing = { shown = $0; return nil }
+        press(charts.summaryButton)
+        await toolsUntil { !shown.isEmpty }
+        #expect(pb.string(forType: .string) == "yours" && page.result.stringValue.isEmpty, "Cancel: the clipboard as it was")
+        #expect(shown.hasPrefix("localhost · Pulse · ") && shown.contains("\nCPU: 10%\n") && shown.contains("\nProcess memory · Ticks: Process memory 1 ")
+                && !shown.contains("--name") && !shown.contains("first"), "no process row, no command line: \(shown)")
+        ToolsCharts.editing = { $0.replacingOccurrences(of: "localhost", with: "a server") }
+        charts.model.summarize()   // the selection's bar and the AX action: the same
+        await toolsUntil { !page.result.stringValue.isEmpty }
+        #expect(pb.string(forType: .string)?.hasPrefix("a server · Pulse · ") == true && page.result.stringValue == "Copy Summary: copied · 1 h", "\(page.result.stringValue)")
+        // Export CSV…: Cancel writes nothing; Save writes the file whole, nothing else; a folder it can't write to.
+        try fm.createDirectory(at: locked, withIntermediateDirectories: true)
+        var named = ""
+        ToolsCharts.saving = { named = $0; return nil }
+        choose(menu, "Export CSV…")
+        await toolsUntil { !named.isEmpty }
+        let cancelled = try fm.contentsOfDirectory(atPath: dir.path)
+        #expect(named.hasPrefix("localhost-Pulse-") && named.hasSuffix(".csv") && cancelled == ["locked"], "\(named) \(cancelled)")
+        ToolsCharts.saving = { named = $0; return dir.appendingPathComponent($0) }
+        choose(menu, "Export CSV…")
+        await toolsUntil { page.result.stringValue.hasPrefix("Export CSV") }
+        let saved = try fm.contentsOfDirectory(atPath: dir.path)
+        #expect(Set(saved) == ["locked", named] && page.result.stringValue == "Export CSV: saved \(named) · 1 h · 4 series",
+                "no temporary file left: \(saved) \(page.result.stringValue)")
+        let csv = try String(contentsOf: dir.appendingPathComponent(named), encoding: .utf8)
+        #expect(csv.hasPrefix(ToolExport.header + "\r\n") && csv.contains(",CPU,cpu,,%,10,,,,sample\r\n") && csv.contains(",Process memory · Ticks,pmem,1,%,30,,,,sample\r\n")
+                && csv.contains(",Process memory · Ticks,n,,,") && !csv.contains("--name"), "\(csv.prefix(400))")
+        chmod(locked.path, 0o500)
+        defer { chmod(locked.path, 0o700) }
+        ToolsCharts.saving = { locked.appendingPathComponent($0) }
+        choose(menu, "Export CSV…")
+        await toolsUntil { page.window?.attachedSheet != nil }
+        let refused = try fm.contentsOfDirectory(atPath: locked.path)
+        #expect(page.window?.attachedSheet != nil && refused.isEmpty && page.result.stringValue.hasPrefix("Export CSV: not saved — "), "an error, no file, no saved: \(refused) \(page.result.stringValue)")
+        if let sheet = page.window?.attachedSheet { page.window?.endSheet(sheet) }
+        // Copy Image: a PNG and a TIFF, the block's width at the screen's scale.
+        choose(menu, "Copy Image of the Charts")
+        let png = try #require(pb.data(forType: .png)), rep = try #require(NSBitmapImageRep(data: png)), scale = page.window?.backingScaleFactor ?? 1
+        #expect(pb.types?.contains(.tiff) == true && abs(CGFloat(rep.pixelsWide) - charts.bounds.width * scale) <= 1 && rep.pixelsHigh > Int(ToolsCharts.plotHeight * scale)
+                && page.result.stringValue == "Copy Image: copied · 1 h · 2 charts", "\(rep.pixelsWide)×\(rep.pixelsHigh) \(charts.bounds.width) \(page.result.stringValue)")
+    }
+
     /// A table row's action goes down the one path every action takes: Stop… asks everywhere (↩ = Cancel) and runs
     /// with the row's fields; Folder runs its command and shows what it printed in the panel; the line under the
     /// page says how each went. On a locked server the row's action asks Touch ID first — metrics never did.
@@ -1323,6 +1388,86 @@ extension ServerLockTests {
         #expect(ToolsEventList.time(now.addingTimeInterval(-60), now: now) == now.addingTimeInterval(-60).formatted(date: .omitted, time: .shortened))
         #expect(ToolsEventList.time(now.addingTimeInterval(-86400), now: now) == now.addingTimeInterval(-86400).formatted(.dateTime.weekday().hour().minute()))
         #expect(ToolsEventList.time(now.addingTimeInterval(-8 * 86400), now: now) == now.addingTimeInterval(-8 * 86400).formatted(.dateTime.month().day().hour().minute()))
+    }
+
+    /// Hand it on (review 4 PR 4, decision 2026-11-11): what's drawn — each chart's series picked and not hidden, in
+    /// Focus its chart alone —, over the selection, else the window. The CSV a row a sample, a slot or a gap, a name
+    /// kept from reading as a formula; the summary a line a chart, the gaps and the events in its time; the image off a
+    /// still copy of the model — no pointer, no tip — as wide as asked at the scale asked, the model as it was.
+    @Test func aChartsHandOnWhatsDrawn() throws {
+        let pct = try JSONDecoder().decode(ToolMetric.self, from: Data(#"{ "title": "Disk", "unit": "%" }"#.utf8))
+        // noon here: a slot's start in any zone, no midnight near (its words would take their days)
+        let t0 = try #require(Calendar.current.date(from: DateComponents(year: 2027, month: 1, day: 15, hour: 12))), zone = try #require(TimeZone(secondsFromGMT: 7200))
+        func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
+        func line(_ id: String, _ name: String, _ pts: [ToolPoint], _ color: Int, now: Double = 60) -> ToolsCharts.Line {
+            .init(id: id, name: name, points: pts, chart: ToolChart(pts, now: at(now)), color: color, metric: pct)
+        }
+        let root = line("disk /", "/", [.init(at: at(0), value: 40), .init(at: at(5), value: 42.5), .init(at: at(10), gap: .noAnswer), .init(at: at(30), value: 41)], 0)
+        let evil = line("disk =cmd|' /C calc'!A0", "=cmd|' /C calc'!A0", [.init(at: at(0), value: 7), .init(at: at(30), value: 7)], 1)
+        let cpuLine = line("cpu ", "CPU", [.init(at: at(0), value: 12), .init(at: at(5), value: 12)], 0)
+        var disks = ToolsCharts.Chart(id: "disk", title: "Disks", metric: pct, top: 100, lines: [root, evil], bands: root.chart.bands)
+        disks.series = [root, evil].map { .init(id: $0.id, name: $0.name, metric: pct, color: $0.color) } + [.init(id: "disk /hidden", name: "/hidden", metric: pct, color: 2, hidden: true)]
+        let cpu = ToolsCharts.Chart(id: "cpu", title: "CPU", metric: pct, top: 100, lines: [cpuLine], bands: [])
+        let events = [ToolEventRecord(at: at(50), id: "ok", level: "ok", message: "Answers again"), .init(at: at(20), id: "full", level: "critical", message: "disk full")]
+        let model = ToolsCharts.Model()
+        (model.every, model.data) = (5, .init(charts: [cpu, disks], from: at(0), to: at(60), events: events))
+        model.selection = at(0)...at(30)
+        // The CSV: the drawn series over the selection; a hidden one never.
+        let f = ISO8601DateFormatter()
+        f.timeZone = zone
+        let iso = { f.string(from: $0) }, csv = ToolsCharts.csv(model, zone: zone)
+        #expect(csv == [ToolExport.header, "\(iso(at(0))),,CPU,cpu,,%,12,,,,sample", "\(iso(at(5))),,CPU,cpu,,%,12,,,,sample",
+                        "\(iso(at(0))),,Disks,disk,/,%,40,,,,sample", "\(iso(at(5))),,Disks,disk,/,%,42.5,,,,sample", "\(iso(at(10))),,Disks,disk,/,%,,,,,no answer",
+                        "\(iso(at(30))),,Disks,disk,/,%,41,,,,sample", "\(iso(at(0))),,Disks,disk,'=cmd|' /C calc'!A0,%,7,,,,sample",
+                        "\(iso(at(30))),,Disks,disk,'=cmd|' /C calc'!A0,%,7,,,,sample", ""].joined(separator: "\r\n"), "\(csv)")
+        // The summary: where and when, a line a chart — a flat series one value —, the gaps and the events in its time.
+        let text = ToolsCharts.summary(model, server: "web-01", production: true, tool: "System").components(separatedBy: "\n")
+        #expect(text.first == "web-01 production · System · \(at(0).formatted(date: .abbreviated, time: .omitted)) \(model.words(at(0)...at(30))) (\(ToolsCharts.zone(at(30))))", "\(text)")
+        #expect(text.dropFirst().first == "Source: Kermo on this Mac, a sample every 5 s; recorded only while open or watched.")
+        #expect(text.contains("CPU: 12%") && text.contains("Disks: / average 41%, highest 43% at \(model.time(at(5))); =cmd|' /C calc'!A0 7%"), "\(text)")
+        #expect(text.contains("Gaps: no answer \(model.words(at(10)...at(30)))") && text.suffix(2) == ["Events:", "  \(at(20).formatted(.dateTime.hour().minute().second())) critical · disk full"],
+                "the selection's: \(text)")
+        model.selection = nil
+        #expect(ToolsCharts.summary(model, server: "web-01", production: false, tool: "System").hasSuffix("critical · disk full\n  \(at(50).formatted(.dateTime.hour().minute().second())) recovery · Answers again"),
+                "the window's, oldest first")
+        model.data.events = []
+        #expect(ToolsCharts.summary(model, server: "web-01", production: false, tool: "System").hasSuffix("\nEvents: none in this time (a tool keeps its last 40)"))
+        model.data.from = at(-600)   // the window opened before the first sample: no band says so, the summary does
+        #expect(ToolsCharts.summary(model, server: "", production: false, tool: "").contains("\nGaps: nothing recorded \(model.words(at(-600)...at(0))); no answer \(model.words(at(10)...at(30)))\n"))
+        model.data.from = at(0)
+        #expect(ToolsCharts.when(model, at(-86400)...at(0)) == at(-86400).formatted(.dateTime.year().month().day().hour().minute().second()) + " – "
+                + at(0).formatted(.dateTime.year().month().day().hour().minute().second()), "over midnight: each end's day")
+        // Focus: its chart alone.
+        model.show(focus: "cpu")
+        #expect(ToolsCharts.csv(model, zone: zone).components(separatedBy: "\r\n").count == 4 && !ToolsCharts.summary(model, server: "", production: false, tool: "").contains("Disks"))
+        model.show(focus: nil)
+        // The history: a slot's numbers with its 15 minutes; nothing recorded said so, never a 0.
+        let slots = ToolsCharts.Model(), slotLine = line("cpu ", "CPU", [.init(at: at(0), value: 12.5, low: 2, high: 90), .init(at: at(900), gap: .notWatched)], 0, now: 1800)
+        (slots.history, slots.every) = (true, ToolSlots.length)
+        slots.data = .init(charts: [.init(id: "cpu", title: "CPU", metric: pct, top: 100, lines: [slotLine], bands: slotLine.chart.bands),
+                                    .init(id: "disk", title: "Disks", metric: pct, top: 100, lines: [line("disk /", "/", [.init(at: at(0), gap: .asleep)], 0)], bands: [])],
+                           from: at(0), to: at(1800))
+        #expect(ToolsCharts.csv(slots, zone: zone).components(separatedBy: "\r\n")[1...2] == ["\(iso(at(0))),\(iso(at(900))),CPU,cpu,,%,,2,12.5,90,slot", "\(iso(at(900))),,CPU,cpu,,%,,,,,not watched"])
+        slots.data.to = at(2700)   // values back at 1800 on CPU; a series with none since has its band to now
+        slots.data.charts[1].bands = [.init(from: at(900), to: at(2700), gap: .notWatched)]
+        let said = ToolsCharts.summary(slots, server: "web-01", production: false, tool: "System")
+        #expect(said.contains("15-minute slots: each one's average, lowest and highest; recorded only while watched.") && said.contains("CPU: average 13%, highest 90% in \(slots.time(at(0)))")
+                && said.contains("Disks: nothing recorded") && said.contains("\nGaps: not watched \(slots.words(at(900)...at(1800)))\n"), "one gap once: \(said)")
+        #expect(ToolsCharts.fileName(server: "user@web/01", tool: "A:B", at: at(0)).wholeMatch(of: #/user@web-01-A-B-\d{8}-\d{4}\.csv/#) != nil)
+        // The image: from a still copy — the pointer over the charts or not, the same picture —; the model untouched.
+        model.columns = 2
+        let aqua = try #require(NSAppearance(named: .aqua))
+        func picture() throws -> [UInt8] {
+            let image = try #require(ToolsCharts.picture(model, server: "web-01", production: true, about: "System", width: 640, scale: 2, appearance: aqua))
+            #expect(image.width == 1280 && image.height > Int(ToolsCharts.plotHeight * 2), "\(image.width)×\(image.height)")
+            let rep = NSBitmapImageRep(cgImage: image)
+            return Array(UnsafeBufferPointer(start: rep.bitmapData, count: rep.bytesPerRow * rep.pixelsHigh))
+        }
+        let calm = try picture()
+        (model.hover, model.hovered, model.choosing) = (at(5), "disk", "disk")
+        let hovered = try picture()
+        #expect(calm.count == hovered.count && zip(calm, hovered).allSatisfy { abs(Int($0) - Int($1)) <= 2 } && model.hover == at(5) && model.hovered == "disk"
+                && model.choosing == "disk", "no crosshair, no tip, no list — the same but for a rounding of the edges; the model as it was")
     }
 
     /// The sort: numbers by value ("1,25" before "1,5"; 2 KB before 1 MB), text as Finder sorts names, nothing last
