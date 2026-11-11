@@ -281,8 +281,10 @@ public struct ToolHistory: Sendable {
         gaps.removeAll { $0 < before }
         for (id, keys) in series {
             for (key, points) in keys where points.first.map({ $0.at < before }) == true {
-                // the gap the hour opens in keeps its mark: its band and its "why" reach in (D-191 (11))
-                let i = points.firstIndex { $0.at >= before } ?? points.endIndex, from = i > 0 && points[i - 1].gap != nil ? i - 1 : i
+                // the gap the hour opens in keeps its mark — values after it, or the tool still in it —: its band and its
+                // "why" reach in (D-191 (11)); a series that stopped coming lets its mark go
+                let i = points.firstIndex { $0.at >= before } ?? points.endIndex
+                let from = i > 0 && points[i - 1].gap != nil && (i < points.endIndex || inGap) ? i - 1 : i
                 if from > 0 { series[id]![key] = Array(points[from...]) }
             }
         }

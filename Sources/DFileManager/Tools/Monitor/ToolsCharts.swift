@@ -209,8 +209,10 @@ import SwiftUI
         }
 
         /// The times in the window with a value drawn, oldest first: what ←/→ step through.
-        var samples: [Date] {
-            Set(data.charts.flatMap(\.lines).flatMap { $0.points.compactMap { $0.value != nil && data.from <= $0.at && $0.at <= data.to ? $0.at : nil } }).sorted()
+        var samples: [Date] {   // on the history the slots' starts: a slot filled again after a sleep is one step
+            Set(data.charts.flatMap(\.lines).flatMap { $0.points.compactMap { p in
+                p.value != nil && data.from <= p.at && p.at <= data.to ? history ? Date(timeIntervalSince1970: ToolSlots.slot(p.at)) : p.at : nil
+            } }).sorted()
         }
 
         /// ⇧←/⇧→: a minute's samples, on the history an hour's slots.
@@ -353,8 +355,9 @@ import SwiftUI
     /// Its tab: the server, the tool, the page's result line.
     private(set) weak var live: ToolsLive?
     let sub = NSTextField(labelWithString: "")
-    /// The longer span's lines as last read — from `from`, in the slot they were read in: a new slot may be on disk since.
-    private var disk: (from: Date, slot: Double, lines: [ToolSlots.Line])?
+    /// The longer span's lines as last read — from `from`, in the server's slot they were read in, with the slot being
+    /// filled then: past either, a line may be on disk since.
+    private var disk: (from: Date, slot: Double, under: Double?, lines: [ToolSlots.Line])?
     /// The hour as it was when you began to look at it: a held window keeps what the hour in memory trims meanwhile
     /// (≈1 MB, only while inspecting).
     private var frozen: ToolHistory?
@@ -523,14 +526,15 @@ import SwiftUI
         // Past the hour: the slots on disk from the range's start or the held window's, read again once a slot has passed.
         let written: [ToolSlots.Line]? = span <= 3600 ? nil : {
             let since = min(d.from, now.addingTimeInterval(-span))
-            if let disk, disk.slot == ToolSlots.slot(Date()), disk.from <= since {   // 7d's lines serve 24h: from its start only
-                return Array(disk.lines.drop { $0.t < since.timeIntervalSince1970 - ToolSlots.length })
+            if let disk, disk.slot == ToolSlots.slot(now), disk.under == t?.slots.current?.t, disk.from <= since {   // 7d's lines serve 24h: from its start only
+                let first = floor(since.timeIntervalSince1970 / ToolSlots.length) - 1   // as `read` keeps them: a slot's lines together
+                return Array(disk.lines.drop { floor($0.t / ToolSlots.length) < first })
             }
-            let lines = ToolSlots.read(ToolMonitor.history(live.server.id), tool: p.id, from: since)
-            disk = (since, ToolSlots.slot(Date()), lines)
+            let lines = live.app.tools.monitor.written(live.server.id, tool: p.id, from: since)
+            disk = (since, ToolSlots.slot(now), t?.slots.current?.t, lines)
             return lines
         }()
-        // and the slot being filled, past the ones written, as its line will be (D-191 (8)); a part written at a sleep is one with it
+        // and the slot being filled, past the ones written, as its line will be (D-191 (8))
         var tail = written == nil ? nil : t?.slots.current
         if let c = tail, let last = written?.last, ToolSlots.slot(Date(timeIntervalSince1970: last.t)) > c.t { tail = nil }   // the server's clock went back past it
         let slots = written.map { lines in tail.map { lines + [$0] } ?? lines }
@@ -1029,7 +1033,7 @@ struct OneChart: View {
                 if run.count == 1, let p = run.first {   // a lone value between gaps: a line of one point draws nothing
                     PointMark(x: .value("Time", p.at), y: .value(chart.title, min(p.value ?? 0, chart.top))).foregroundStyle(Self.color(line.color)).symbolSize(10)
                 }
-                if let p = run.last, p.at == model.data.tail?.lowerBound {   // the slot being filled: a ring — it isn't over
+                if let p = run.last, Date(timeIntervalSince1970: ToolSlots.slot(p.at)) == model.data.tail?.lowerBound {   // the slot being filled: a ring — it isn't over
                     PointMark(x: .value("Time", p.at), y: .value(chart.title, min(p.value ?? 0, chart.top)))
                         .symbol { Circle().strokeBorder(Self.color(line.color), lineWidth: 1.5).frame(width: 7, height: 7) }
                 }

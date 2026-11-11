@@ -63,15 +63,19 @@ private func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
                              .init(at: at(2000), gap: .asleep), .init(at: at(9000), value: 30, low: 1, high: 40), .init(at: at(9900), gap: .notWatched),
                              .init(at: at(18000), value: 40, low: 1, high: 50)]
     #expect(p == want, "\(p)")
-    // A slot written at a sleep and filled again after a short one, as written: its two lines are one point — its
-    // lowest and highest the two's, its average theirs (a line keeps no count) —, and the sleep ended in the slot: no
-    // band. A second sleep in it that values didn't come after is one, the rest of the slot's.
+    // A slot written at a sleep and filled again after a short one, as written: the part after is a point of its own
+    // numbers (a line keeps no count: they don't merge) at the sleep's time, the earliest they can be — no band, no two
+    // points at one time. A second sleep in it that values didn't come after is a band; of a sleep and the reconnect
+    // after it, the reconnect is where the values came again.
     let slept = ToolSlots.Line(t: at(2000).timeIntervalSince1970, tool: "s", gap: .asleep), again = ToolSlots.Line(t: at(1800).timeIntervalSince1970, tool: "s", v: ["cpu": ["": [8, 9, 99]]])
     let next = ToolSlots.Line(t: at(2700).timeIntervalSince1970, tool: "s", v: ["cpu": ["": [2, 3, 4]]])
-    #expect(ToolSlots.points([lines[1], slept, again, next], metric: "cpu", key: "", from: at(1800)) == [.init(at: at(1800), value: 10.5, low: 1, high: 99), .init(at: at(2700), value: 3, low: 2, high: 4)])
+    let parts: [ToolPoint] = [.init(at: at(1800), value: 12, low: 1, high: 20), .init(at: at(2000), value: 9, low: 8, high: 99)]
+    #expect(ToolSlots.points([lines[1], slept, again, next], metric: "cpu", key: "", from: at(1800)) == parts + [.init(at: at(2700), value: 3, low: 2, high: 4)])
     let long = ToolSlots.Line(t: at(2100).timeIntervalSince1970, tool: "s", gap: .asleep)
-    #expect(ToolSlots.points([lines[1], slept, again, long, next], metric: "cpu", key: "", from: at(1800)) == [.init(at: at(1800), value: 10.5, low: 1, high: 99), .init(at: at(2100), gap: .asleep),
-                                                                                                        .init(at: at(2700), value: 3, low: 2, high: 4)])
+    #expect(ToolSlots.points([lines[1], slept, again, long, next], metric: "cpu", key: "", from: at(1800)) == parts + [.init(at: at(2100), gap: .asleep), .init(at: at(2700), value: 3, low: 2, high: 4)])
+    let back = ToolSlots.Line(t: at(2100).timeIntervalSince1970, tool: "s", gap: .reconnecting)
+    #expect(ToolSlots.points([lines[1], slept, back, again], metric: "cpu", key: "", from: at(1800))
+            == [parts[0], .init(at: at(2000), gap: .asleep), .init(at: at(2100), value: 9, low: 8, high: 99)])
     #expect(ToolSlots.points([lines[1], slept, next], metric: "cpu", key: "", from: at(1800)).compactMap(\.gap) == [.asleep], "not filled again: the gap to the next slot")
     let twice = [lines[1], .init(t: at(2000).timeIntervalSince1970, tool: "s", gap: .asleep), .init(t: at(2100).timeIntervalSince1970, tool: "s", gap: .reconnecting)]
     #expect(ToolSlots.points(twice, metric: "cpu", key: "", from: at(1800)).compactMap(\.gap) == [.asleep, .reconnecting], "a gap of another kind is a band of its own")

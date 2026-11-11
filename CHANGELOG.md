@@ -33,7 +33,7 @@ Release:
 
 ### Fixed
 - A gap that began over an hour ago — the Mac asleep through the night — is a band with its reason from the left edge of the hour's charts. They began blank until the first value.
-- 15 minutes on 24h and 7d that Kermo wrote at a short sleep and filled again after it are one point, with no gap band after it running to the next 15 minutes — or to now.
+- 15 minutes on 24h and 7d that Kermo wrote at a short sleep and filled again after it are drawn in order — the part after the sleep where the sleep began — with no gap band running on to the next 15 minutes, or to now. They were two points at one time.
 - A chart's top value on its scale (“100%”) sits under its line, clear of the chart's title.
 
 ## [2.0.1] - 2026-11-08

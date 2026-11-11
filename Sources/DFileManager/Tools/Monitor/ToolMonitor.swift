@@ -597,6 +597,13 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
     static func history(_ id: UUID) -> String { Config.path("monitor/" + id.uuidString) }
     private let disk = DispatchQueue(label: "dfm.monitor.history")
 
+    /// A saved server's history of `tool` from `from` (`ToolSlots.read`), with every line on its way there: read on the
+    /// queue that writes them (it never waits on the main thread).
+    func written(_ id: UUID, tool: String, from: Date) -> [ToolSlots.Line] {
+        let dir = Self.history(id)
+        return disk.sync { ToolSlots.read(dir, tool: tool, from: from) }
+    }
+
     /// Lines to the server's day file, off the main thread, in order.
     private func record(_ s: Server, _ lines: [ToolSlots.Line]) {
         guard !lines.isEmpty else { return }
