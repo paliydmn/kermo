@@ -1478,7 +1478,7 @@ extension AppDelegate {
             case 1 where editing:   // this save doesn't happen (nothing written); the file there now beside the text: ⌘S asks again
                 _ = notSaved(saved, to: target, CancellationError())
                 let panel = panels.first { $0.remote?.target == target } ?? active
-                Task { await diff(Self.serverNow(remotePath, on: target), DiffSide(path: saved.path, name: "\(name) (yours)"), in: panel) }
+                Task { await diff(Self.serverNow(remotePath, on: target), DiffSide(path: saved.path, name: "\(name) (yours)", origin: (target, remotePath)), in: panel) }
                 return false
             default: return notSaved(saved, to: target, CancellationError())   // the editor may be gone: says where the text is
             }
@@ -1547,7 +1547,7 @@ extension AppDelegate {
                     state.baseline = e.attrs
                     return await uploadNow(saved, to: remotePath, on: target, state, force: false, action: action)
                 case 1:
-                    let yours = DiffSide(path: saved.path, name: "\(name) (yours)")
+                    let yours = DiffSide(path: saved.path, name: "\(name) (yours)", origin: (target, remotePath))
                     var there = Self.serverNow(remotePath, on: target)
                     (there.size, there.mtime, there.look) = (e.attrs.size, e.attrs.mtime, false)   // as the question says it is: its preview copy if there's one
                     if Editor.window(for: saved) != nil, builtInCompare {   // side by side, live: like Show Changes
@@ -2472,7 +2472,7 @@ extension AppDelegate {
         var look = false   // a link (its own size says nothing), or a size not known: the server is asked first
         var name: String? = nil   // what the diff calls it, if not its path ("host:/path" on a server)
         var now = false   // the file as it is there now, even with its document open (that's the other side)
-        var origin: (target: SFTPTarget, path: String)? = nil   // a kept version's: the server's file it's of
+        var origin: (target: SFTPTarget?, path: String)? = nil   // a copy's (a kept version, "yours", a draft): the file it's of
         var label: String { name ?? server.map { "\($0.host):\(path)" } ?? path }
         /// Its tab in the built-in Compare: the file's name, and what it is if the caller said ("nginx.conf @ 14:03").
         var title: String { ((name ?? path) as NSString).lastPathComponent + (name == nil ? server.map { " (\($0.host))" } ?? "" : "") }
@@ -2589,7 +2589,7 @@ extension AppDelegate {
             case .success(let loaded):
                 let e = Editor.snapshot(loaded, file: (d.path as NSString).lastPathComponent, title: d.title, place: d.place,
                                         source: d.now || d.name != nil ? nil : d,   // a real file, not its document's other side: Edit
-                                        from: d.origin.map { ($0.target, $0.path) } ?? (d.server != nil || d.name == nil ? (d.server, d.path) : nil))
+                                        from: d.origin ?? (d.server != nil || d.name == nil ? (d.server, d.path) : nil))
                 made.append(e)
                 return e
             case .failure(let error):

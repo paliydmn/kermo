@@ -257,8 +257,10 @@ extension EditorWindowTests {
         y.current.text.setSelectedRange(NSRange(location: 2, length: 0))   // in "X"
         c.caretMoved(y.current)
         #expect(xSide.arrow?.at == 2 && ySide.arrow?.at == 2, "both are documents: an arrow on each")
+        #expect(AppDelegate.editorPickOff("editor.compare.copyLeft", in: h.window) == "editor.compare.copyLeft", "its keys while it compares, whenever it began")
         into(x)   // changed: "2" → "X"
         #expect(x.textView.string == "1\nX\n3\n4\n5\n" && x.isEdited && y.textView.string == newText)
+        #expect(h.window?.firstResponder === x.current.text, "the keys where it went: ⌘Z there undoes it")
         #expect(x.textView.undoManager?.undoActionName == "Copy Change")
         x.textView.undoManager?.undo()
         #expect(x.textView.string == oldText, "one Undo: the text as it was")
@@ -286,6 +288,8 @@ extension EditorWindowTests {
         into(x)
         #expect(x.textView.string == before, "a stale result: nothing copied")
         a.run("editor.compare.stop")
+
+        #expect(AppDelegate.editorPickOff("editor.compare.copyLeft", in: h.window) == nil, "not comparing: the key goes on as it is")
 
         // A read-only copy is never written; its side has no arrow.
         let snap = copy("1\n2\n")
@@ -502,6 +506,15 @@ extension EditorWindowTests {
         let paste = { (s: String) in shell.bracketed ? "\u{1b}[200~" + s + "\u{1b}[201~" : s }
         #expect(typed.map(\.text) == [paste("echo one")], "no ^U, no ↩")
 
+        let menu = a.makeMenu()
+        a.updateMenuKeys(menu)
+        for id in ["editor.send", "editor.execute"] {
+            #expect(a.validateMenuItem(try #require(menu.allItems.first { $0.representedObject as? String == id })), "\(id): in the editor window, comparing or not")
+        }
+        e.current.text.setSelectedRanges([NSValue(range: NSRange(location: 0, length: 2)), NSValue(range: NSRange(location: 5, length: 2))], affinity: .downstream, stillSelecting: false)
+        a.editorToTerminal(run: true)
+        #expect(typed.count == 1, "several selections: nothing sent")
+
         // Execute from the editor: the same tab (its own: no cd), ^U … ↩, the caret to the next line with something on it.
         e.current.text.setSelectedRange(NSRange(location: 2, length: 0))
         a.editorToTerminal(run: true)
@@ -514,10 +527,19 @@ extension EditorWindowTests {
         #expect(await send("echo b", run: true, from: b, in: dir + "/two") != .notSent(""))
         #expect(typed.count == 4 && typed[2].text == "\u{15} cd \(ShellContext.quote(dir + "/two"))\r" && typed[3].text.hasSuffix("echo b" + (shell.bracketed ? "\u{1b}[201~\r" : "\r")))
 
+        // Send into a tab that isn't a document's: it doesn't become its own — its first Execute still `cd`s.
+        try FileManager.default.createDirectory(atPath: dir + "/three", withIntermediateDirectories: true)
+        try put("ls\n", dir + "/three/c.sh")
+        let c3 = try await opened(dir + "/three/c.sh")
+        #expect(await send("ls", run: false, from: c3, in: dir + "/three") != .notSent("") && typed.last?.tab == shell.id)
+        #expect(await send("ls", run: true, from: c3, in: dir + "/three") != .notSent(""))
+        #expect(typed[typed.count - 2].text == "\u{15} cd \(ShellContext.quote(dir + "/three"))\r", "in its folder, not where the Send found the shell")
+
         // Several lines: only as one bracketed paste.
         shell.view.feed(text: "\u{1b}[?2004l")
-        #expect(await send("make\nls", run: true, from: e, in: dir + "/one") == .notSent(TerminalText.Refusal.severalLines.words) && typed.count == 4)
-        #expect(await send("a\u{1b}[201~b", run: false, from: e, in: dir + "/one") == .notSent(TerminalText.Refusal.control.words) && typed.count == 4)
+        let k = typed.count
+        #expect(await send("make\nls", run: true, from: e, in: dir + "/one") == .notSent(TerminalText.Refusal.severalLines.words) && typed.count == k)
+        #expect(await send("a\u{1b}[201~b", run: false, from: e, in: dir + "/one") == .notSent(TerminalText.Refusal.control.words) && typed.count == k)
         shell.view.feed(text: "\u{1b}[?2004h")
         #expect(await send("make\nls", run: true, from: e, in: dir + "/one") != .notSent(""))
         #expect(typed.last?.text == "\u{15}\u{1b}[200~make\nls\u{1b}[201~\r")
@@ -605,15 +627,15 @@ extension EditorWindowTests {
         #expect(a.validateMenuItem(jump) && jump.title == "Quick Open…" && jump.keyEquivalent == "p")
         a.run("go.jump")
         let p = try #require(Picker.current)
-        #expect(p.groups == ["Tabs", "Recent"] && p.rows.map(\.title) == ["app.ts", "notes.txt", "README.md"], "at once: tabs and Recent, the open file once")
         try await until("the folder came in") { p.groups.count == 3 }
+        #expect(p.groups.prefix(2) == ["Tabs", "Recent"] && p.rows.prefix(3).map(\.title) == ["app.ts", "notes.txt", "README.md"], "tabs, then Recent; the open file once")
         #expect(p.groups[2] == "In " + (repo as NSString).abbreviatingWithTildeInPath, "the repository's root, not the file's folder")
         #expect(Set(p.rows.filter { $0.group.hasPrefix("In ") }.map(\.title)) == ["server.ts"], "\(p.rows.map(\.title))")
-        p.field.stringValue = "srvts"
-        p.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
-        #expect(p.rows.first?.title == "server.ts")
-        p.field.stringValue = "app"
-        p.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        func type(_ q: String) { p.field.stringValue = q; p.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification)) }
+        type("srvts")
+        try await until("ranked off the main thread") { p.rows.first?.title == "server.ts" }
+        type("app")
+        try await until("ranked") { p.rows.first?.title == "app.ts" }
         let tab = try #require(p.rows.first)
         #expect(tab.group == "Tabs")
         Picker.dismiss()
@@ -627,6 +649,7 @@ extension EditorWindowTests {
         a.editorRecent.visit(RecentFiles.Entry(path: dir + "/served.conf", server: t))
         a.run("go.jump")
         let q = try #require(Picker.current)
+        try await until("listed") { q.rows.contains { $0.title == "served.conf" } }
         let served = try #require(q.rows.first { $0.title == "served.conf" })
         Picker.dismiss()
         served.run()
@@ -651,6 +674,8 @@ extension EditorWindowTests {
         AppDelegate.quickOpenLimit = (files: 3, seconds: 5)
         for i in 0..<10 { try put("x\n", repo + "/src/f\(i).txt") }
         a.run("go.jump")
+        try await until("listed") { Picker.current?.groups.isEmpty == false }
+        try await Task.sleep(for: .milliseconds(300))
         #expect(Picker.current?.groups == ["Tabs", "Recent"], "a server's file shown: no folder walked")
         Picker.dismiss()
         h.select(e)

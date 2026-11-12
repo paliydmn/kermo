@@ -491,6 +491,8 @@ final class Comparison: NSObject {
         let c = TextDiff.carry(from: (from.doc.storage.mutableString, s.old ? r.newLines : r.oldLines, s.old ? b.new : b.old),
                                to: (v.doc.storage.mutableString, s.old ? r.oldLines : r.newLines, s.old ? b.old : b.new))
         guard v.doc.apply(c.text, over: c.range, in: v, named: "Copy Change") else { return NSSound.beep() }
+        v.frame.window?.makeFirstResponder(v.text)   // the keys where it went: ⌘Z there undoes it, not the other side's typing
+        v.text.setSelectedRange(NSRange(location: c.range.location, length: 0))
         due += 1   // its typing pause isn't waited for: worked out now
         recompute()
     }

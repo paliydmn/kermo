@@ -16,7 +16,7 @@ extension AppDelegate {
             rows.append(Picker.Item(title: e.name, subtitle: e.heading.subtitle, badges: e.chips.map(\.image), detail: "open", verb: "Show",
                                     id: "tab:" + e.id.uuidString, group: "Tabs") { [weak h] in h?.select(e) })
         }
-        for r in editorRecent.entries where seen.insert(Self.recentKey(r)).inserted {
+        for r in editorRecent.entries where (r.server.map { ServerLock.server(for: $0) == nil } ?? true) && seen.insert(Self.recentKey(r)).inserted {   // locked since: not listed
             let dir = (r.path as NSString).deletingLastPathComponent
             let t = r.server.map { $0.asRoot(r.root) }
             rows.append(Picker.Item(title: (r.path as NSString).lastPathComponent,
@@ -26,30 +26,56 @@ extension AppDelegate {
             })
         }
         let place = h.active?.terminalPlace
-        let start = place?.target == nil ? place?.folder ?? panels.first { $0 === active && $0.plainFolder != nil }?.plainFolder : nil   // this Mac only
-        let flag = CancelFlag()
-        let rank = { (it: Picker.Item, q: String) -> Int? in
-            guard let s = Fuzzy.score(q, it.subtitle + "/" + it.title) else { return nil }
-            return s + (Fuzzy.score(q, it.title) != nil ? 500 : 0) + (it.group == "Tabs" ? 300_000 : it.group == "Recent" ? 200_000 : 0)   // groups stay whole
+        let start = place?.target == nil ? place?.folder ?? active.plainFolder : nil   // this Mac only
+        let flag = CancelFlag(), all = Rows(rows)
+        // Ranked off the main thread (thousands of a repository's paths: a keystroke each held the field), the groups whole.
+        let results = { (q: String, cancel: CancelFlag) async -> [Picker.Item] in
+            let rows = all.rows, query = q.trimmingCharacters(in: .whitespaces)
+            guard !query.isEmpty else { return Array(rows.prefix(300)) }
+            let keys = rows.map { ($0.subtitle + "/" + $0.title, $0.title, $0.group == "Tabs" ? 300_000 : $0.group == "Recent" ? 200_000 : 0) }
+            let order = await Blocking.run(.userInitiated) { () -> [Int] in
+                var scored: [(score: Int, i: Int)] = []
+                for (i, k) in keys.enumerated() {
+                    if i % 512 == 0, cancel.isCancelled { return [] }
+                    guard let s = Fuzzy.score(query, k.0) else { continue }
+                    scored.append((s + (Fuzzy.score(query, k.1) != nil ? 500 : 0) + k.2, i))
+                }
+                return scored.sorted { $0.score != $1.score ? $0.score > $1.score : $0.i < $1.i }.prefix(300).map(\.i)
+            }
+            return order.map { rows[$0] }
         }
-        let p = Picker.show(over: w, placeholder: "Open a file by name", empty: "No tabs or recent files yet", items: rows, rank: rank,
-                            onClose: { _, _ in flag.cancel() })
+        let p = Picker.show(over: w, placeholder: "Open a file by name", empty: "No tabs or recent files yet", items: rows,
+                            onClose: { _, _ in flag.cancel() }, results: results)
         guard let start else { return }
         Task { [unowned self] in
             let root = await Blocking.run(.userInitiated) { Self.projectRoot(of: start) }
+            guard Self.walks(root) else { return }
             let shown = (root as NSString).abbreviatingWithTildeInPath, limit = Self.quickOpenLimit
             let (files, whole) = await Blocking.run(.userInitiated) { Self.files(under: root, limit: limit, cancel: flag) }
             guard Picker.current === p, !flag.isCancelled else { return }
-            let more = files.compactMap { rel -> Picker.Item? in
+            all.rows = rows + files.compactMap { rel -> Picker.Item? in
                 let path = (root as NSString).appendingPathComponent(rel)
                 guard seen.insert(Self.recentKey(RecentFiles.Entry(path: path))).inserted else { return nil }
                 return Picker.Item(title: (rel as NSString).lastPathComponent, subtitle: ((path as NSString).deletingLastPathComponent as NSString).abbreviatingWithTildeInPath,
                                    id: "file:" + path, group: "In " + shown) { Editor.open(URL(fileURLWithPath: path)) }
             }
-            p.replace(rows + more)
+            p.replace(all.rows)   // ranked again for what's typed
             p.say(NSAttributedString(string: "\(shown): " + (whole ? "\(files.count) file\(files.count == 1 ? "" : "s")" : "the first \(files.count) files"),
                                      attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: NSFont.systemFont(ofSize: 11)]))
         }
+    }
+
+    /// Quick Open's rows as they are now: the folder's come in after the Picker shows.
+    private final class Rows {
+        var rows: [Picker.Item]
+        init(_ rows: [Picker.Item]) { self.rows = rows }
+    }
+
+    /// A folder Quick Open walks: not the home folder or the root (no project, and Desktop, Documents… under them), and
+    /// only on a local disk — a share that stops answering would hold the walk past its time.
+    nonisolated static func walks(_ root: String) -> Bool {
+        var fs = statfs()
+        return root != NSHomeDirectory() && root != "/" && statfs(root, &fs) == 0 && fs.f_flags & UInt32(MNT_LOCAL) != 0
     }
 
     /// A Recent row: as F4 opens it — a server's after its lock, with F4's rules (one file, one tab).

@@ -104,8 +104,7 @@ public enum TerminalText {
     static let pasteStart: [UInt8] = [0x1b, 0x5b, 0x32, 0x30, 0x30, 0x7e], pasteEnd: [UInt8] = [0x1b, 0x5b, 0x32, 0x30, 0x31, 0x7e]
 
     /// Execute's command for a new SSH tab, which runs it itself (nothing is typed while ssh may ask a password in the
-    /// tab): in `dir`, then the user's shell. Several lines go as one block, all of them in `dir` or none.
-    public static func command(_ text: String, in dir: String) -> String {
-        SSHCommand.shell(in: dir, after: text.contains("\n") ? "{\n" + text + "\n}" : text)
-    }
+    /// tab): in `dir`, then the user's shell. One block on lines of its own, all of it in `dir` or none of it — a `;` list,
+    /// a trailing `&` or a `# comment` stay inside it and leave the shell after it alone.
+    public static func command(_ text: String, in dir: String) -> String { SSHCommand.shell(in: dir, after: "{\n" + text + "\n}") }
 }

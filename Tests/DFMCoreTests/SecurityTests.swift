@@ -156,6 +156,7 @@ final class QAFlag: @unchecked Sendable {
         #expect(TerminalText.bytes(bad, bracketed: true, run: true, clear: true) == .failure(.control), "\(bad.debugDescription)")
     }
     #expect(TerminalText.bytes("  \n", bracketed: true, run: true, clear: true) == .failure(.empty))
-    #expect(TerminalText.command("make", in: "/srv/a b") == "cd -- '/srv/a b' && make; exec \"$SHELL\" -l")
+    #expect(TerminalText.command("./serve & # in the background", in: "/srv/a b") == "cd -- '/srv/a b' && {\n./serve & # in the background\n}; exec \"$SHELL\" -l",
+            "a `&` or a comment can't reach the shell after it")
     #expect(TerminalText.command("cd x\nmake", in: "/srv") == "cd -- /srv && {\ncd x\nmake\n}; exec \"$SHELL\" -l", "all of it in the folder, or none")
 }

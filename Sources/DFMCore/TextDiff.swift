@@ -135,7 +135,8 @@ public enum TextDiff {
 
     /// Copy Change: what makes lines `to.range` of the target text read as lines `from.range` of the source — the range to
     /// replace there and the text to put in. Lines as `lines` gives them (without line ends): the source's lines with
-    /// what's between them; a block one side lacks goes in (or out) with one line end, at the end of the text before it.
+    /// what's between them over the target's; lines the target lacks go in before the line they stand at (after its last
+    /// one at the end), with one line end; lines only the target has go out with theirs (at the end: the one before).
     public static func carry(from: (text: NSString, lines: [NSRange], range: Range<Int>),
                              to: (text: NSString, lines: [NSRange], range: Range<Int>)) -> (range: NSRange, text: String) {
         let (src, dst, r) = (from.lines, to.lines, to.range)
