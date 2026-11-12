@@ -31,7 +31,7 @@ private func read(_ path: String) -> String? { FileManager.default.contents(atPa
 }
 
 /// A launch with the drafts in `dir`: the editor window as it comes back.
-@MainActor private func launch(_ dir: String, onServer: EditorHost.OnServer = { _, _, _, _ in ({ _ in }, {}) }) -> EditorHost {
+@MainActor private func launch(_ dir: String, onServer: @escaping EditorHost.OnServer = { _, _, _, _ in ({ _ in }, {}) }) -> EditorHost {
     crash()
     EditorHost.restore(dir, onServer: onServer)
     return EditorHost.tabs
@@ -573,3 +573,444 @@ extension EditorWindowTests {
     }
 }
 
+
+// Editor E6 PR 2: the tab strip — rename from the tab, its menu, Close Others, reopen a closed tab, the panels' keys there.
+
+/// A test's app for what an editor does through it (a server's rename, Reveal): a window and one panel in `dir`.
+@MainActor private func testApp(_ dir: String) -> AppDelegate {
+    let app = AppDelegate()
+    app.window = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: true)
+    app.panels = [PanelViewController(tabs: [dir], index: 0, showHidden: false)]
+    app.panels.forEach { $0.loadViewIfNeeded() }
+    Editor.app = { app }
+    return app
+}
+
+/// A server file open in a tab, over the local SFTP server: its copy in `dir/copy`.
+@MainActor private func openOnServer(_ path: String, in dir: String, host h: EditorHost) async throws -> Editor {
+    let t = SFTPTarget.local(), c = try SFTPClient(t)
+    let state = AppDelegate.RemoteEdit(baseline: try #require(try c.stat(path)))
+    c.close()
+    let copy = URL(fileURLWithPath: dir + "/copy-" + UUID().uuidString + "/" + (path as NSString).lastPathComponent)
+    try FileManager.default.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try FileManager.default.copyItem(atPath: path, toPath: copy.path)
+    let (onSaved, onClose) = h.onServer(t, path, state, copy.deletingLastPathComponent().path)
+    Editor.open(copy, remote: SavedServer.title(t, path), server: (t, path, state), onSaved: onSaved, onClose: onClose)
+    try await waitUntil("opened") { Editor.editing(t, path) != nil }
+    return try #require(Editor.editing(t, path))
+}
+
+extension EditorWindowTests {
+    /// A tab renames its file on this Mac: tab, title and colors follow, its changed text stays and the session names
+    /// the new path at once; ⌘S then writes there without asking. Not onto a file another tab has, a taken name, a
+    /// tool's file, nor while it saves. A panel's ⇧F6 (the same rename) takes the tab along.
+    @Test func aTabRenamesItsFileOnThisMac() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { crash(); try? FileManager.default.removeItem(atPath: dir) }
+        let h = launch(dir + "/drafts")
+        try put("key = 1\n", dir + "/app.conf")
+        try put("other\n", dir + "/taken.yaml")
+        try put("x\n", dir + "/b.conf")
+        let url = URL(fileURLWithPath: dir + "/app.conf"), b = URL(fileURLWithPath: dir + "/b.conf")
+        Editor.open(b)
+        try await waitUntil("b") { editorDoc(b) != nil }
+        Editor.open(url)
+        try await waitUntil("opened") { editorDoc(url) != nil }
+        let (e, eb) = (try #require(editorDoc(url)), try #require(editorDoc(b)))
+        type(e, "more = 2\n")
+        await e.rename(to: "app.yaml")
+        let new = URL(fileURLWithPath: dir + "/app.yaml")
+        #expect(e.url == new && read(new.path) == "key = 1\n" && read(url.path) == nil, "the file moved; what's typed isn't in it")
+        #expect(e.window?.title == "app.yaml" && h.tabTitle(e) == "app.yaml" && e.tip.hasSuffix("app.yaml") && e.language == .yaml)
+        #expect(e.isEdited && e.textView.string == "key = 1\nmore = 2\n")
+        #expect(try manifest(dir + "/drafts").docs.first { $0.id == e.id }?.path == new.path, "the draft follows it at once")
+        #expect(await e.save() && e.window?.attachedSheet == nil, "the same file: no “changed on disk”")
+        #expect(read(new.path) == "key = 1\nmore = 2\n" && read(url.path) == nil, "the old name isn't made again")
+
+        await eb.rename(to: "app.yaml")
+        #expect(eb.frame.text == "“app.yaml” is open in the editor — nothing was renamed." && eb.url == b)
+        await eb.rename(to: "taken.yaml")
+        #expect(try await answer(eb.window, .alertFirstButtonReturn).contains("already exists") && read(dir + "/taken.yaml") == "other\n" && eb.url == b)
+        let gate = DispatchSemaphore(value: 0)
+        eb.willRename = { _ in gate.wait() }
+        type(eb, "y\n")
+        let saving = Task { await eb.save() }
+        try await waitUntil("saving") { eb.saving }
+        await eb.rename(to: "c.conf")
+        #expect(eb.frame.text == "Not renamed: it's being saved")
+        gate.signal()
+        #expect(await saving.value && read(b.path) == "x\ny\n")
+        eb.willRename = { _ in }
+        let tool = try Editor.open(URL(fileURLWithPath: dir + "/t.json"), text: "{}\n", beside: NSView()) { _ in }
+        defer { tool.close() }
+        await tool.rename(to: "u.json")
+        #expect(tool.frame.text == "Not renamed: Kermo reads a tool's file where it is")
+
+        #expect(Editor.renameRefused(b.path, to: new.path) == "“app.yaml” is open in the editor — nothing was renamed.")
+        _ = try AppDelegate.rename(b.path, to: "notes")   // the panel's ⇧F6
+        await Editor.renamed(b.path, to: dir + "/notes")
+        #expect(eb.url?.path == dir + "/notes" && eb.language == nil && h.tabTitle(eb) == "notes")
+
+        h.beginRename(eb)   // the field on its tab, then ↩
+        let field = try #require(h.renameField)
+        #expect(field.stringValue == "notes" && h.renameField != nil)
+        field.stringValue = "notes.ini"
+        #expect(h.control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:))))
+        try await waitUntil("renamed by ↩") { eb.url?.lastPathComponent == "notes.ini" }
+        #expect(h.renameField == nil && read(dir + "/notes.ini") == "x\ny\n" && eb.language == .ini)
+    }
+
+    /// An Untitled takes a name and no file: its language by it, Save As offers it (`name`), the session keeps it and a
+    /// launch brings it back. A session without the field reads as before, one with a field an older Kermo doesn't
+    /// know reads too. Two Untitleds of one name are just that name.
+    @Test func anUntitledTakesANameAndNoFile() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { crash(); try? FileManager.default.removeItem(atPath: dir) }
+        let h = launch(dir + "/drafts")
+        let u = Editor.untitled(), v = Editor.untitled()
+        type(u, "a: 1\n")
+        await u.rename(to: "deploy.yaml")
+        await v.rename(to: "deploy.yaml")
+        #expect(u.name == "deploy.yaml" && u.url == nil && u.language == .yaml)
+        #expect(h.tabTitle(u) == "deploy.yaml" && h.tabTitle(v) == "deploy.yaml" && v.window?.title == "deploy.yaml")
+        await u.rename(to: "a/b")
+        #expect(u.name == "deploy.yaml" && u.frame.text == "Not renamed: A name can't contain “/”")
+        _ = await h.commit(durable: true)
+        let s = try manifest(dir + "/drafts")
+        #expect(s.docs.first { $0.id == u.id }?.name == "deploy.yaml" && !FileManager.default.fileExists(atPath: dir + "/deploy.yaml"))
+
+        let back = launch(dir + "/drafts")
+        let r = try #require(back.docs.first { $0.id == u.id })
+        try await waitUntil("restored") { r.textView.string == "a: 1\n" }
+        #expect(r.name == "deploy.yaml" && r.language == .yaml && r.isEdited)
+
+        var json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any])
+        var docs = try #require(json["docs"] as? [[String: Any]])
+        docs = docs.map { var d = $0; d.removeValue(forKey: "name"); d["fromANewerKermo"] = 1; return d }
+        json["docs"] = docs
+        let old = try JSONDecoder().decode(EditorSession.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(old.docs.count == s.docs.count && old.docs.allSatisfy { $0.name == nil } && old.version == EditorSession.current)
+    }
+
+    /// Close Other Tabs / to the Right ask each changed tab in turn (Don't Save, Save, Cancel as ⌘W); an unchanged one
+    /// just goes; Cancel keeps that tab and the rest. The tab's menu offers what fits it.
+    @Test func closeOthersAsksEachChangedTabInTurn() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { crash(); try? FileManager.default.removeItem(atPath: dir) }
+        let h = launch(dir + "/drafts")
+        let k = Editor.untitled(), a = Editor.untitled(), c = Editor.untitled(), d = Editor.untitled(), z = Editor.untitled()
+        type(a, "a")
+        type(d, "d")
+        func menu(_ e: Editor) -> [String] { h.tabMenu(for: e).map { $0.isSeparatorItem ? "—" : $0.title + ($0.isEnabled ? "" : " (off)") } }
+        #expect(menu(z) == ["Close Tab", "Close Other Tabs", "Close Tabs to the Right (off)", "—", "Rename…", "Copy Path (off)", "Reveal in Panel (off)"])
+        h.closeRight(of: k)
+        #expect(try await answer(h.window, .alertSecondButtonReturn).contains(a.name))   // Don't Save
+        #expect(try await answer(h.window, .alertThirdButtonReturn).contains(d.name))   // Cancel: d and z stay
+        try await waitUntil("a and c closed") { h.docs.map(\.id) == [k.id, d.id, z.id] }
+        _ = c
+        h.closeOthers(than: k)
+        #expect(try await answer(h.window, .alertSecondButtonReturn).contains(d.name))
+        try await waitUntil("all but k") { h.docs.map(\.id) == [k.id] && h.active === k }
+        type(k, "k")
+        h.middleClicked(0)   // the middle button: ⌘W's question
+        #expect(try await answer(h.window, .alertThirdButtonReturn).contains(k.name) && h.docs.map(\.id) == [k.id])
+        h.doubleClickedPastTabs()
+        #expect(h.docs.count == 2 && h.active?.url == nil && h.active !== k)
+        h.moveTab(from: 1, to: 0)
+        #expect(h.docs.last === k)
+        _ = await h.commit()
+        #expect(try manifest(dir + "/drafts").docs.last?.id == k.id, "a drag's order is the session's")
+    }
+
+    /// ⇧⌘T: the last closed tab first, back where it was with its caret — this Mac's file as it is now, a Don't Save's
+    /// text as it was; its file open meanwhile is only chosen; twenty at most.
+    @Test func reopenClosedTabBringsTabsBackWhereTheyWere() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { crash(); try? FileManager.default.removeItem(atPath: dir) }
+        let h = launch(dir + "/drafts")
+        try put("one\ntwo\n", dir + "/f.conf")
+        let f = URL(fileURLWithPath: dir + "/f.conf")
+        let u = Editor.untitled()
+        Editor.open(f)
+        try await waitUntil("f") { editorDoc(f) != nil }
+        let ef = try #require(editorDoc(f))
+        let w = Editor.untitled()
+        let at = try #require(h.docs.firstIndex { $0 === ef })
+        ef.textView.setSelectedRange(NSRange(location: 4, length: 0))
+        #expect(ef.closeAsking())
+        try await waitUntil("f closed") { editorDoc(f) == nil }
+        type(u, "scratch")
+        #expect(!u.closeAsking())
+        try await answer(h.window, .alertSecondButtonReturn)   // Don't Save
+        try await waitUntil("u closed") { !h.docs.contains { $0 === u } }
+        try put("one\ntwo\nthree\n", dir + "/f.conf")
+
+        h.reopenClosed()
+        let ru = try #require(h.docs.first { $0.id == u.id })
+        try await waitUntil("its text") { ru.textView.string == "scratch" }
+        #expect(ru.isEdited && ru.name == u.name && h.docs.firstIndex { $0 === ru } == at - 1)
+        _ = await h.commit()
+        let back = try #require(try manifest(dir + "/drafts").docs.first { $0.id == u.id })
+        #expect(back.dirty && back.revision != nil, "its text is a draft again, not only in memory")
+        h.reopenClosed()
+        let rf = try #require(editorDoc(f))
+        try await waitUntil("read") { rf.cover == nil }
+        #expect(rf.textView.string == "one\ntwo\nthree\n" && !rf.isEdited && h.docs.firstIndex { $0 === rf } == at && rf.textView.selectedRange().location == 4)
+        #expect(h.docs.firstIndex { $0 === w } == at + 1)
+
+        #expect(rf.closeAsking())
+        try await waitUntil("closed again") { editorDoc(f) == nil }
+        Editor.open(f)
+        try await waitUntil("open again") { editorDoc(f) != nil }
+        let again = try #require(editorDoc(f))
+        h.select(w)
+        h.reopenClosed()
+        #expect(h.docs.filter { $0.url == f }.count == 1 && h.active === again, "one file, one tab")
+
+        for _ in 0..<21 { Editor.untitled().closeAsking() }
+        try await waitUntil("21 closed") { h.docs.count == 3 }
+        for _ in 0..<21 { h.reopenClosed() }
+        #expect(h.docs.count == 23, "twenty kept")
+    }
+
+    /// A server's file renamed from its tab: production asks first with both names (↩ Cancel) and logs it; the tab, its
+    /// title and colors follow; the next save goes to the new path and the old name doesn't come back; the session has
+    /// it at once. Not while an upload is under way. A locked server: Touch ID before the field.
+    @Test func aTabRenamesItsFileOnItsServer() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        let wasLog = AuditLog.path
+        AuditLog.path = dir + "/audit.jsonl"
+        let app = testApp(dir)
+        defer {
+            Editor.app = { NSApp.delegate as? AppDelegate }
+            (AppDelegate.answering, AuditLog.path, ServerLock.servers) = (nil, wasLog, { [] })
+            ServerLock.relock()
+            app.panels.forEach { $0.shutdown() }
+            crash()
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        let h = launch(dir + "/drafts") { app.remoteEditing($0, $1, $2, in: $3) }
+        try FileManager.default.createDirectory(atPath: dir + "/srv", withIntermediateDirectories: true)
+        try put("v1\n", dir + "/srv/app.conf")
+        let from = dir + "/srv/app.conf", to = dir + "/srv/app.yaml"
+        let e = try await openOnServer(from, in: dir, host: h)
+        type(e, "v2\n")
+        var prod = SavedServer(address: "localhost")!
+        prod.prod = true
+        ServerLock.servers = { [prod] }
+        var asked: [String] = []
+        AppDelegate.answering = { m, _, ret in asked.append(m); return ret ?? 0 }   // ↩
+        await e.rename(to: "app.yaml")
+        #expect(asked.count == 1 && asked[0].contains("“app.conf” to “app.yaml”") && e.server?.path == from && read(from) == "v1\n")
+        AppDelegate.answering = { m, _, _ in asked.append(m); return 0 }   // Rename; then the save's Save
+        await e.rename(to: "app.yaml")
+        #expect(e.server?.path == to && read(to) == "v1\n" && read(from) == nil)
+        #expect(e.name == "app.yaml" && e.window?.title == "app.yaml" && e.language == .yaml && e.isEdited)
+        #expect(try manifest(dir + "/drafts").docs.first { $0.id == e.id }?.server?.path == to)
+        Config.flush()
+        let log = (try? String(contentsOfFile: AuditLog.path, encoding: .utf8)) ?? ""
+        #expect(log.contains("\"action\":\"rename\"") && log.contains("app.conf") && log.contains("app.yaml"), "\(log)")
+        #expect(await e.save())
+        #expect(await e.server?.state.upload?.value == true)
+        #expect(read(to) == "v1\nv2\n" && read(from) == nil, "the save went to the new name")
+
+        var locked = SavedServer(address: "localhost")!
+        locked.locked = true
+        ServerLock.servers = { [locked] }
+        ServerLock.relock()
+        var asks = 0, unlock = false, hold = true
+        ServerLock.authenticate = { _ in asks += 1; while hold { try? await Task.sleep(for: .milliseconds(20)) }; return unlock }
+        defer { ServerLock.authenticate = { _ in false } }
+        e.server?.state.unlockFirst = true
+        type(e, "v3\n")
+        #expect(await e.save())
+        try await waitUntil("uploading") { (e.server?.state.sending ?? 0) > 0 }
+        await e.rename(to: "app2.yaml")
+        #expect(e.frame.text == "Not renamed: an upload to localhost is still going" && e.server?.path == to)
+        hold = false
+        _ = await e.server?.state.upload?.value
+        if let sheet = e.window?.attachedSheet { e.window?.endSheet(sheet) }   // "wasn't saved": Touch ID refused
+        asks = 0
+        h.beginRename(e)
+        try await waitUntil("asked") { asks == 1 }
+        #expect(h.renameField == nil, "no field without Touch ID")
+        unlock = true
+        h.beginRename(e)
+        try await waitUntil("the field") { h.renameField != nil }
+        #expect(h.renameField?.stringValue == "app.yaml" && h.renameField?.currentEditor()?.selectedRange == NSRange(location: 0, length: 3))
+        h.endRename(nil)   // ⎋
+        #expect(h.renameField == nil && e.server?.path == to && e.window?.firstResponder === e.textView)
+
+        // A panel's ⇧F6 of it through another spelling of the server (its root panel's, a kept connection's): the tab follows.
+        let moved = dir + "/srv/app2.yaml"
+        #expect(await app.renameOnServer(SFTPTarget.local().persisting(60), to, to: moved, in: app.panels[0]) { _ in })
+        #expect(e.server?.path == moved && read(moved) == "v1\nv2\n" && e.name == "app2.yaml")
+    }
+
+    /// A server's file gone from the server since it was opened (deleted, or renamed elsewhere): a save asks before
+    /// making it again under its old name — ↩ is Cancel, nothing written; Save makes it. A file that wasn't there when it
+    /// was opened (a new one) is made without a question.
+    @Test func aSaveAsksBeforeMakingAGoneServerFileAgain() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        let app = testApp(dir)
+        defer {
+            Editor.app = { NSApp.delegate as? AppDelegate }
+            AppDelegate.answering = nil
+            app.panels.forEach { $0.shutdown() }
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        let file = dir + "/app.conf", copy = URL(fileURLWithPath: dir + "/copy/app.conf")
+        try put("v1\n", file)
+        try FileManager.default.createDirectory(atPath: dir + "/copy", withIntermediateDirectories: true)
+        try put("mine\n", copy.path)
+        let c = try SFTPClient(.local())
+        let state = AppDelegate.RemoteEdit(baseline: try #require(try c.stat(file)))
+        c.close()
+        try FileManager.default.removeItem(atPath: file)   // deleted there, or renamed outside its tab
+        var asked: [String] = []
+        AppDelegate.answering = { m, _, ret in asked.append(m); return ret ?? 0 }   // ↩
+        #expect(await app.upload(copy, to: file, on: .local(), state) == false)
+        #expect(asked == ["“app.conf” is gone from localhost since you opened it"] && read(file) == nil, "\(asked)")
+        AppDelegate.answering = { _, _, _ in 0 }   // Save
+        #expect(await app.upload(copy, to: file, on: .local(), state) && read(file) == "mine\n")
+        // A link whose file is gone (sites-enabled → sites-available): asked too, the link left as it is.
+        try put("v1\n", dir + "/real.conf")
+        try FileManager.default.createSymbolicLink(atPath: dir + "/link.conf", withDestinationPath: "real.conf")
+        let c2 = try SFTPClient(.local())
+        let linked = AppDelegate.RemoteEdit(baseline: try #require(try c2.stat(dir + "/link.conf")))
+        c2.close()
+        try FileManager.default.removeItem(atPath: dir + "/real.conf")
+        asked = []
+        AppDelegate.answering = { m, _, ret in asked.append(m); return ret ?? 0 }
+        #expect(await app.upload(copy, to: dir + "/link.conf", on: .local(), linked) == false && asked.count == 1 && read(dir + "/real.conf") == nil)
+        asked = []
+        AppDelegate.answering = { m, _, _ in asked.append(m); return 1 }
+        #expect(await app.upload(copy, to: dir + "/new.conf", on: .local(), AppDelegate.RemoteEdit(baseline: .nothing)) && asked.isEmpty)
+    }
+
+    /// ⇧⌘T on a server's tab: an unchanged one comes back parked — nothing downloaded, no Touch ID — and a Don't Save's
+    /// draft on a locked server stays locked till it's unlocked.
+    @Test func aReopenedServerTabConnectsOnlyOnAClick() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        let app = testApp(dir)
+        defer {
+            Editor.app = { NSApp.delegate as? AppDelegate }
+            ServerLock.servers = { [] }
+            ServerLock.relock()
+            app.panels.forEach { $0.shutdown() }
+            crash()
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        let h = launch(dir + "/drafts") { app.remoteEditing($0, $1, $2, in: $3) }
+        try put("v1\n", dir + "/a.conf")
+        let path = dir + "/a.conf"
+        let e = try await openOnServer(path, in: dir, host: h)
+        #expect(e.closeAsking())
+        try await waitUntil("closed") { Editor.editing(.local(), path) == nil }
+        var locked = SavedServer(address: "localhost")!
+        locked.locked = true
+        var asks = 0
+        ServerLock.servers = { [locked] }
+        ServerLock.authenticate = { _ in asks += 1; return false }
+        defer { ServerLock.authenticate = { _ in false } }
+        h.reopenClosed()
+        let r = try #require(Editor.editing(.local(), path))
+        try await waitUntil("parked") { r.cover == .parked }
+        #expect(asks == 0 && r.url.map { FileManager.default.fileExists(atPath: $0.path) } == false && r.heading.title == "a.conf")
+
+        #expect(r.closeAsking())
+        try await waitUntil("closed") { Editor.editing(.local(), path) == nil }
+        ServerLock.servers = { [] }
+        let open = try await openOnServer(path, in: dir, host: h)
+        type(open, "secret\n")
+        ServerLock.servers = { [locked] }
+        ServerLock.relock()
+        #expect(!open.closeAsking())
+        try await answer(h.window, .alertSecondButtonReturn)   // Don't Save
+        try await waitUntil("closed") { Editor.editing(.local(), path) == nil }
+        h.reopenClosed()
+        let back = try #require(Editor.editing(.local(), path))
+        try await waitUntil("locked") { back.cover == .locked }
+        #expect(back.textView.string == "" && asks == 0 && back.copyablePath == nil && !back.revealable)
+        ServerLock.authenticate = { _ in asks += 1; return true }
+        back.connect()
+        try await waitUntil("unlocked") { back.cover == nil }
+        #expect(back.textView.string.hasSuffix("secret\n") && back.isEdited && asks == 1)
+    }
+
+    /// The editor window takes the panels' ⇧F6, ⇧⌘C and ⇧⌘T for its tab — Rename…, Copy Path (an Untitled has none),
+    /// Reopen Closed Tab — on those keys; F10 and ⌥0 stay the text's. The panels keep them as they were. ⇧⌘T reopens over
+    /// a server panel or a parked one in the main window, where Folder Tree refuses; a tool's editor has no tabs.
+    @Test func theTabsKeysAreBranchesOfThePanelsCommands() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        let app = testApp(dir)
+        app.commands = app.makeCommands()
+        let menu = app.makeMenu()
+        let parent = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400)), panels = NSView(frame: parent.bounds)
+        parent.addSubview(panels)
+        app.terminal = EmbeddedTerminal(covering: panels)
+        defer {
+            AppDelegate.keyWindow = { NSApp.keyWindow }
+            Editor.app = { NSApp.delegate as? AppDelegate }
+            app.panels.forEach { $0.shutdown() }
+            crash()
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        func keys(_ id: String) -> [String] { app.commands.first { $0.id == id }?.keys.map(\.display) ?? [] }
+        func item(_ id: String) throws -> NSMenuItem { try #require(menu.allItems.first { $0.representedObject as? String == id }) }
+        #expect(keys("go.tree") == ["F10", "⌥0", "⌥F10", "⇧⌘T"] && keys("file.rename").first == "⇧F6" && keys("edit.copyPath").first == "⇧⌘C")
+        app.updateMenuKeys(menu)
+        #expect(try item("go.tree").title == "Folder Tree…" && item("file.rename").title == "Rename…")
+
+        let h = launch(dir + "/drafts")
+        try put("x\n", dir + "/f.conf")
+        let f = URL(fileURLWithPath: dir + "/f.conf")
+        Editor.open(f)
+        try await waitUntil("f") { editorDoc(f) != nil }
+        let e = try #require(editorDoc(f))
+        AppDelegate.keyWindow = { h.window }
+        app.updateMenuKeys(menu)
+        let tree = try item("go.tree"), rename = try item("file.rename"), copy = try item("edit.copyPath")
+        #expect(app.validateMenuItem(tree) && tree.title == "Reopen Closed Tab" && tree.keyEquivalent == "t" && tree.keyEquivalentModifierMask == [.command, .shift])
+        #expect(app.validateMenuItem(rename) && rename.keyEquivalent == Shortcut("shift+f6")!.menuKey && rename.keyEquivalentModifierMask == .shift)
+        #expect(app.validateMenuItem(copy) && copy.keyEquivalent == "c" && copy.keyEquivalentModifierMask == [.command, .shift])
+        #expect(!menu.allItems.contains { $0.keyEquivalent == Shortcut("f10")!.menuKey }, "F10 is no item's key there: nothing, as before")
+        let board = NSPasteboard(name: .init("kermo-test-" + UUID().uuidString))
+        e.copyPath(to: board)
+        #expect(board.string(forType: .string) == f.path)
+        let u = Editor.untitled()
+        let before = board.changeCount
+        u.copyPath(to: board)
+        #expect(app.validateMenuItem(copy) && board.changeCount == before, "its key stays as tabs change; an Untitled has no path to copy")
+
+        let remote = try #require(app.panels.first)
+        remote.loadRemote(.local(), dir: dir, select: nil)
+        try await waitUntil("connected") { remote.remote != nil && remote.connecting == nil }
+        let parked = PanelViewController(session: [Session.Tab(path: dir, cursor: "x", server: SFTPTarget(host: "me@web1.invalid"), dir: "/etc")], index: 0, showHidden: false)
+        parked.loadViewIfNeeded()
+        defer { parked.shutdown() }
+        for order in [[remote, parked], [parked, remote]] {
+            app.panels = order
+            let n = h.docs.count
+            #expect(h.active?.closeAsking() == true)
+            try await waitUntil("closed") { h.docs.count == n - 1 }
+            app.run("go.tree", key: Shortcut("cmd+shift+t"))
+            #expect(h.docs.count == n && !app.active.statusText.contains("Not available"), "\(app.active.statusText)")
+        }
+        app.panels = [remote, parked]
+
+        let tool = try Editor.open(URL(fileURLWithPath: dir + "/t.json"), text: "{}\n", beside: NSView()) { _ in }
+        defer { tool.close() }
+        AppDelegate.keyWindow = { tool.window }
+        app.updateMenuKeys(menu)
+        #expect(!app.validateMenuItem(tree) && tree.title == "Folder Tree…" && app.validateMenuItem(rename), "no tabs to reopen; Rename says why not")
+    }
+}

@@ -14,6 +14,7 @@ Release:
 ## [Unreleased]
 
 ### Added
+- **The editor's tabs**: a double-click on a tab's name renames its file in place — on this Mac, or on its server as the panel's ⇧F6 does (Touch ID first for a locked server, a question with both names on a production one, and a line in its log), never over a file that's there; an Untitled takes just a name, which picks its colors and is what Save As offers. ⇧F6 in the editor does the same. A tab's menu has **Close Tab**, **Close Other Tabs**, **Close Tabs to the Right**, **Rename…**, **Copy Path** (⇧⌘C there) and **Reveal in Panel**. Drag a tab to move it, the middle button closes it, a double-click past the tabs opens a new Untitled, and ⇧⌘T reopens the tab closed last, where it was — a server's file not connected until clicked, and a Don't Save's text, kept in memory until Quit.
 - **The editor, for everyday typing**: where the caret is at the status line's right (`Ln 12, Col 5`, what's selected, `Spaces: 4` or `Tabs`); ⌘L Go to Line (`120` or `120:8`); the caret's line lit, and a bracket with its pair; ↩ keeps the indent (one step more after `{` — and `:` in YAML and Python); Tab puts in what the file indents with (YAML never a tab; **View ▸ Indentation** to pick), and indents or outdents (⇧Tab) the lines selected; ⌘/ comments lines out and back by language; ⌥↑ / ⌥↓ move lines, ⌥⇧↓ / ⌥⇧↑ duplicate them, ⇧⌘K deletes them; ⌘+ / ⌘− text size, ⌥Z Wrap Lines and **Show Invisibles** — kept for every editor. The tools' editor has them too.
 - **Chart chips**: under a Tools chart of several series, a chip each with its color, name and value — now, at the moment the tables show, or under the pointer. A click hides that line, ⌥-click shows only it, a right-click has **Only This**, **Show All** and **Choose Series…**.
 - **Pick the series a chart draws**: past six, **+N more…** under the chart lists them all with their latest values and a search, to tick which six. Kermo keeps the pick, and each series' color, for that server and tool.
@@ -26,6 +27,7 @@ Release:
 - **Hand the charts on**: **Copy Summary…** over a server's Tools charts, and under a stretch you drag, writes what they show as a short text — the server, the time and its zone, each series' average and highest and when, the gaps, the events — in a sheet to edit first; only **Copy** puts it on the clipboard. ⋯ beside it: **Export CSV…** saves their numbers unrounded — a row a sample, or each 15 minutes' lowest, average and highest on 24h and 7d, a gap a row with its reason, times in ISO 8601 with the offset —, written whole or not at all; **Copy Image of the Charts** copies them as a picture with the server, the time and the zone, no pointer or tip. Each takes what's drawn — in Focus that chart alone —; the summary and the CSV the stretch you marked, else the window, the image the window with the stretch marked. None has a process row, a command line or a log.
 
 ### Changed
+- Saving a server's file that's gone from the server since you opened it — deleted, or renamed outside the editor — asks first: **Save** makes it again under that name, **Save As…** keeps your text on this Mac, **Cancel** (↩) writes nothing. It used to be made again without a word.
 - A chart of several series says only *when* in its header; the values moved to its chips. A chart whose metrics' units differ says so, and a tool's Problems warn about it.
 - A click on a chart's **24h** or **7d** is a moment, as on the last hour: the charts' numbers for those 15 minutes, the journal a button away (**Log for This Time**). It used to open the journal.
 - ⎋ on a server's Tools tab steps back one thing at a time: the series list, the stretch, Focus, then Back to Live.
@@ -33,6 +35,7 @@ Release:
 - A watched tool's **24h** and **7d** draw the 15 minutes under way too: the line goes on to now and ends in a ring, the tip says “2:30 PM–now”, and the summary and the CSV say those 15 minutes aren't over. They ended at the last 15 minutes on disk.
 
 ### Fixed
+- **Rename** (⇧F6) on this Mac no longer replaces a file that appears under the new name between the check and the rename. A file open in the editor follows its rename in a panel, on this Mac and on a server, so ⌘S there no longer makes the old name again.
 - A gap that began over an hour ago — the Mac asleep through the night — is a band with its reason from the left edge of the hour's charts. They began blank until the first value.
 - 15 minutes on 24h and 7d that Kermo wrote at a short sleep and filled again after it are drawn in order — the part after the sleep where the sleep began — with no gap band running on to the next 15 minutes, or to now. They were two points at one time.
 - A chart's top value on its scale (“100%”) sits under its line, clear of the chart's title.

@@ -1361,7 +1361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if let hint = active.parkedHint, !Self.runsParked(c.id) { return active.flash(hint) }
             if let hint = other.parkedHint ?? other.listHint, Self.toOther.contains(c.id) { return active.flash("The other panel: " + hint) }
         }
-        if active.remote != nil, !terminalActive, Self.localOnly.contains(c.id) { return active.flash("Not available on a server panel") }
+        if active.remote != nil, !terminalActive, Self.localOnly.contains(c.id), !inEditor(c.id) { return active.flash("Not available on a server panel") }
         c.run(self)
         keyBar.commandRan(c.id)
     }
@@ -1385,8 +1385,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if id == "file.trash" { item.title = (activePanel.map { ($0.remote ?? $0.parked) != nil } ?? false) ? "Delete…" : c?.title ?? item.title }   // no Trash on a server
         if id == "file.copy" { item.title = activePanel?.archive != nil ? "Extract To…" : c?.title ?? item.title }   // F5 in an archive
         if let t = Self.editorTitles[id] {   // a panel command's key in an editor: its branch there
-            item.title = textEditor != nil ? t : c?.title ?? item.title
-            if textEditor != nil { return true }
+            item.title = inEditor(id) ? t : c?.title ?? item.title
+            if inEditor(id) { return true }   // keys stay put as tabs change: Copy Path beeps for an Untitled or a locked draft
         }
         if id.hasPrefix("text.") { return textEditor != nil }
         if id.hasPrefix("tab.") || Self.editorTabs.contains(id) {   // the editor window's tabs: its own (D-101: none from another)
@@ -1411,13 +1411,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "app.support", "app.settings", "app.tools", "app.monitor", "help.docs", "help.issue",
                                        "editor.new", "editor.show"]
     /// What works only in the editor window: its tabs, hiding it.
-    static let editorTabs: Set<String> = ["editor.close", "editor.tab.left", "editor.tab.right", "editor.tabs"]
-    /// Panel commands whose keys an editor takes for its text, and what they're called there (D-101: one key, one command).
-    static let editorTitles = ["go.path": "Go to Line…", "view.filterPresets": "Toggle Comment", "term.bigger": "Bigger Text", "term.smaller": "Smaller Text"]
+    static let editorTabs: Set<String> = ["editor.close", "editor.tab.left", "editor.tab.right", "editor.tabs", "editor.closeOthers", "editor.closeRight"]
+    /// Panel commands whose keys an editor takes for its text or its tab, and what they're called there (D-101: one key,
+    /// one command).
+    static let editorTitles = ["go.path": "Go to Line…", "view.filterPresets": "Toggle Comment", "term.bigger": "Bigger Text", "term.smaller": "Smaller Text",
+                               "file.rename": "Rename…", "edit.copyPath": "Copy Path", "go.tree": "Reopen Closed Tab"]
+    /// An editor has that command's branch now (`editorTitles`): Reopen Closed Tab the editor window only, the rest a
+    /// tool's editor too.
+    func inEditor(_ id: String) -> Bool { Self.editorTitles[id] != nil && (id == "go.tree" ? editorKey != nil : textEditor != nil) }
     /// An editor while it's key — the editor window's shown tab, or a tool's: what `text.*` and `editorTitles` act on.
-    var textEditor: Editor? { EditorHost.shown(in: NSApp.keyWindow) }
+    var textEditor: Editor? { EditorHost.shown(in: Self.keyWindow()) }
     /// The editor window, while it's key (its tabs take ⌘T, ⌘W, ⌃Tab).
-    var editorKey: EditorHost? { Self.editor(key: NSApp.keyWindow) }
+    var editorKey: EditorHost? { Self.editor(key: Self.keyWindow()) }
+    /// The window keys go to (tests: an editor's, which isn't key in a test run).
+    static var keyWindow: () -> NSWindow? = { NSApp.keyWindow }
     static func editor(key: NSWindow?) -> EditorHost? { (key?.windowController as? EditorHost).flatMap { $0.tabbed ? $0 : nil } }
 
     /// A disabled menu item still takes its key: AppKit says it handled it and runs nothing, so F3 never reached a viewer
@@ -1429,7 +1436,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let byID = Dictionary(commands.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let rowKeys = listRowKeys
         for it in menu.allItems where it.action == #selector(menuCommand(_:)) {
-            let key = (it.representedObject as? String).flatMap { byID[$0]?.keys.first }
+            let id = it.representedObject as? String, keys = id.flatMap { byID[$0]?.keys } ?? []
+            // Reopen Closed Tab has Folder Tree's ⇧⌘T only: F10 and ⌥0 stay the text's, as before.
+            let key = id == "go.tree" && inEditor("go.tree") ? keys.first { $0.flags.contains(.command) } : keys.first
             let on = key != nil && !rowKeys.contains(key!) && validateMenuItem(it)
             it.keyEquivalent = on ? key!.menuKey : ""
             it.keyEquivalentModifierMask = on ? key!.flags : []

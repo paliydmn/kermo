@@ -5,7 +5,7 @@ import DFMCore
 /// their drafts (`DraftStore`, `editor.noindex`), and closing it only hides it. Or a tool's file alone in a window of its
 /// own, which closes as it always did.
 @MainActor
-final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
+final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate, NSTextFieldDelegate {
     /// The editor window, made at first use (one for now).
     static var tabs: EditorHost {
         if let shared { return shared }
@@ -20,7 +20,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
     let tabbed: Bool
     private(set) var docs: [Editor] = []
     private(set) var active: Editor?
-    private let strip = NSStackView(), body = NSView(), off = NSTextField(labelWithString: "")
+    private let strip = NSStackView(), body = NSView(), off = NSTextField(labelWithString: ""), row = TabRow()
     private let finalNewlineSwitch = NSSegmentedControl(labels: ["Final Newline"], trackingMode: .selectAny, target: nil, action: #selector(Editor.toggleFinalNewline(_:)))
 
     private init(tabbed: Bool) {
@@ -94,10 +94,27 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
 
     /// Move Tab Left / Right.
     func moveTab(by step: Int) {
-        guard let a = active, let i = docs.firstIndex(where: { $0 === a }), docs.indices.contains(i + step) else { return }
-        docs.swapAt(i, i + step)
+        guard let a = active, let i = docs.firstIndex(where: { $0 === a }) else { return }
+        moveTab(from: i, to: i + step)
+    }
+
+    /// A tab to another place in the strip (Move Tab, a drag): the session keeps the order.
+    func moveTab(from i: Int, to j: Int) {
+        guard i != j, docs.indices.contains(i), docs.indices.contains(j) else { return }
+        docs.insert(docs.remove(at: i), at: j)
         showTabs()
         changed()
+    }
+
+    /// Close Other Tabs / Close Tabs to the Right of `e`: one after another, a changed one asking as ⌘W does — its
+    /// Cancel (or a Save that didn't go through) keeps it and the rest. `e` is shown after.
+    func closeOthers(than e: Editor) { close(docs.filter { $0 !== e }, then: e) }
+    func closeRight(of e: Editor) { if let i = docs.firstIndex(where: { $0 === e }) { close(Array(docs[(i + 1)...]), then: e) } }
+    private func close(_ tabs: [Editor], then e: Editor) {
+        Task {
+            for t in tabs where docs.contains(where: { $0 === t }) { guard await t.closeAsked() else { return } }
+            if docs.contains(where: { $0 === e }) { select(e) }
+        }
     }
 
     /// All Tabs…: every tab by name and place, filtered as typed.
@@ -128,17 +145,23 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
     /// Close Tab (`Editor.closeAsking` asked first): gone once the session without it is written — Don't Save's draft
     /// with it. A failed write keeps the tab, its status line says why. A tool's window closes.
     func close(_ e: Editor) {
-        guard tabbed, drafts != nil else { return remove(e) }
+        let back = e.reopenable   // before the commit drops its draft
+        guard tabbed, drafts != nil else { return remove(e, back) }
         Task {
             if let why = await commit(closing: e) { return e.flash("Not closed: the editor's session couldn't be saved (\(why))") }
-            remove(e)
+            remove(e, back)
         }
     }
 
-    /// Without asking or writing anything (a tab that's closed, a test's cleanup).
-    func remove(_ e: Editor) {
+    /// Without asking or writing anything (a tab that's closed, a test's cleanup). `back`: what ⇧⌘T brings back of it.
+    func remove(_ e: Editor, _ back: (doc: EditorSession.Doc, text: String?)? = nil) {
         closing.remove(ObjectIdentifier(e))
         guard let i = docs.firstIndex(where: { $0 === e }) else { return }
+        if tabbed, let back {
+            closedTabs.append((back.doc, back.text, i))
+            // Twenty, and their texts 64 MB at most all told: the oldest go first.
+            while closedTabs.count > 20 || closedTabs.reduce(0, { $0 + ($1.text?.utf8.count ?? 0) }) > 64 << 20 { closedTabs.removeFirst() }
+        }
         docs.remove(at: i)
         e.frame.removeFromSuperview()
         e.closed()
@@ -157,9 +180,10 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
     func escape(_ e: Editor) {
         guard tabbed else { e.closeAsking(); return }
         if e.isEdited { return hide() }
+        let back = e.reopenable
         Task {
             if drafts != nil, let why = await commit(closing: e) { return e.flash("Not closed: the editor's session couldn't be saved (\(why))") }
-            remove(e)
+            remove(e, back)
             if window?.isVisible == true { hide() }   // its last tab took the window with it
         }
     }
@@ -207,7 +231,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
     }
 
     private func tabRow(_ r: NSRect) -> NSView {
-        let row = NSView(frame: r)
+        row.frame = r
         row.autoresizingMask = [.width, .minYMargin]
         let buttons: CGFloat = 54
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: r.width - buttons, height: r.height))
@@ -219,6 +243,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
         strip.edgeInsets = NSEdgeInsets(top: 2, left: 6, bottom: 2, right: 6)
         strip.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = strip
+        row.scroll = scroll
         NSLayoutConstraint.activate([
             strip.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             strip.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
@@ -251,12 +276,50 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
 
     @objc private func newTab() { Editor.untitled() }
     @objc private func listTabs() { allTabs() }
-    @objc private func tabClicked(_ b: NSButton) {
+    @objc func tabClicked(_ b: NSButton) {
         guard docs.indices.contains(b.tag) else { return }
         select(docs[b.tag])
         docs[b.tag].connect()   // a click: a parked server tab opens
     }
+    /// A tab pressed (`EditorTab`): chosen now; a parked one opens on the release unless it was dragged.
+    func tabPressed(_ i: Int) { if docs.indices.contains(i) { select(docs[i]) } }
     @objc private func closeTabClicked(_ b: NSButton) { if docs.indices.contains(b.tag) { docs[b.tag].closeAsking() } }
+
+    /// A tab dragged to `p` (in the window): it moves once the pointer is past a neighbour's middle — the strip is made
+    /// anew then, not at every move. Its index now.
+    func drag(_ i: Int, to p: NSPoint) -> Int {
+        let tabs = strip.arrangedSubviews, x = strip.convert(p, from: nil).x
+        guard tabs.count == docs.count, docs.indices.contains(i) else { return i }
+        let j = tabs.indices.filter { $0 != i && tabs[$0].frame.midX < x }.count
+        moveTab(from: i, to: j)
+        strip.layoutSubtreeIfNeeded()
+        return j
+    }
+
+    /// The mouse on the strip besides a click and a drag (`EditorTab`, `TabRow`): the middle button closes a tab as ⌘W
+    /// does, a double-click past the tabs opens a new Untitled.
+    func middleClicked(_ i: Int) { if docs.indices.contains(i) { docs[i].closeAsking() } }
+    func doubleClickedPastTabs() { Editor.untitled() }
+
+    /// A tab's menu, made as it opens (right click, ⌃-click, VoiceOver's Show Menu).
+    func tabMenu(for e: Editor) -> [NSMenuItem] {
+        let i = docs.firstIndex { $0 === e } ?? docs.count
+        let items: [(String, Bool, @MainActor () -> Void)] = [
+            ("Close Tab", true, { e.closeAsking() }),
+            ("Close Other Tabs", docs.count > 1, { [weak self] in self?.closeOthers(than: e) }),
+            ("Close Tabs to the Right", i < docs.count - 1, { [weak self] in self?.closeRight(of: e) }),
+            ("", false, {}),
+            ("Rename…", true, { [weak self] in self?.beginRename(e) }),
+            ("Copy Path", e.copyablePath != nil, { e.copyPath() }),
+            ("Reveal in Panel", e.revealable, { Editor.app()?.revealInPanel(e) }),
+        ]
+        return items.map { title, on, run in
+            guard !title.isEmpty else { return .separator() }
+            let it = MenuAction.item(title, run)
+            it.isEnabled = on
+            return it
+        }
+    }
 
     /// The tab buttons: a mark before each name (● changed, ↑ not uploaded, ! its draft not saved), its server's chips;
     /// a name two tabs share says where each is.
@@ -271,7 +334,10 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
             if let c = Chip.text(e.chips) { if lead.length > 0 { lead.append(NSAttributedString(string: " ")) }; lead.append(c) }
             let b = PanelViewController.tabButton(tabTitle(e, among: names).bidiVisible, lead: lead.length > 0 ? lead : nil, tint: Chip.tint(e.chips), tip: e.tip, index: i,
                                                   current: e === active, target: self, action: #selector(tabClicked(_:)), close: #selector(closeTabClicked(_:)),
-                                                  italic: e.cover != nil)
+                                                  italic: e.cover != nil, button: EditorTab(host: self))
+            let menu = LiveMenu(title: e.name) { [weak self, weak e] in e.flatMap { self?.tabMenu(for: $0) } ?? [] }
+            menu.autoenablesItems = false
+            b.menu = menu
             b.widthAnchor.constraint(greaterThanOrEqualToConstant: min(260, max(118, b.intrinsicContentSize.width + 12))).isActive = true   // the × clear of a bold name
             b.widthAnchor.constraint(lessThanOrEqualToConstant: 260).isActive = true
             strip.addArrangedSubview(b)
@@ -280,7 +346,91 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
 
     /// Its name; one another tab has too, with its server or folder after it ("nginx.conf — web-01").
     func tabTitle(_ e: Editor, among names: [String]? = nil) -> String {
-        (names ?? docs.map(\.name)).filter { $0 == e.name }.count > 1 ? e.name + " — " + e.whereShort : e.name
+        (names ?? docs.map(\.name)).filter { $0 == e.name }.count > 1 && !e.whereShort.isEmpty ? e.name + " — " + e.whereShort : e.name   // Untitleds named alike: no place to say
+    }
+
+    // MARK: Rename on the tab
+
+    /// The name field over a tab being renamed, and its document.
+    private var renaming: (e: Editor, field: NSTextField)?
+
+    /// Rename… (a double-click on its tab, its menu, ⇧F6): a field over its tab, the name's base selected as Finder does —
+    /// a locked server's after Touch ID. ↩ renames; ⎋ or a click elsewhere leaves it as it was.
+    func beginRename(_ e: Editor) {
+        if let why = e.renameRefusal { return e.flash(why) }
+        guard tabbed, renaming == nil else { return }
+        guard let s = e.server, e.cover == .locked || ServerLock.needsUnlock(s.target) else { return showRenameField(e) }
+        Task {
+            guard await ServerLock.authorize(s.target, "rename a file on") else { return }
+            guard docs.contains(where: { $0 === e }) else { return }   // closed during Touch ID
+            if e.cover == .locked { e.connect() }   // its draft shows too: unlocked now, nothing asked again (a parked one stays)
+            showRenameField(e)
+        }
+    }
+
+    private func showRenameField(_ e: Editor) {
+        guard renaming == nil, docs.contains(where: { $0 === e }) else { return }   // closed during Touch ID
+        select(e)
+        guard let i = docs.firstIndex(where: { $0 === e }), strip.arrangedSubviews.indices.contains(i) else { return }
+        let tab = strip.arrangedSubviews[i], r = row.convert(tab.bounds, from: tab)
+        let field = NSTextField(string: e.name)
+        field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        field.delegate = self
+        let width = min(max(r.width, min(300, field.intrinsicContentSize.width + 24)), row.bounds.width)   // the tab's at least, ~300 at most
+        field.frame = NSRect(x: max(0, min(r.minX, row.bounds.width - width)), y: r.midY - 11, width: width, height: 22)
+        row.addSubview(field)
+        renaming = (e, field)
+        window?.makeFirstResponder(field)
+        let base = (e.name as NSString).deletingPathExtension   // "nginx.conf": "nginx", as Finder selects it
+        field.currentEditor()?.selectedRange = NSRange(location: 0, length: (base.isEmpty ? e.name : base).utf16.count)
+    }
+
+    /// The field over the tab being renamed (tests).
+    var renameField: NSTextField? { renaming?.field }
+
+    /// The field gone, the text in focus again; `name`: ↩'s, renamed to.
+    func endRename(_ name: String?) {
+        guard let (e, field) = renaming else { return }
+        renaming = nil
+        if active === e { window?.makeFirstResponder(e.focus) }
+        field.removeFromSuperview()
+        if let name { Task { await e.rename(to: name) } }
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard control === renaming?.field else { return false }
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)): endRename((control as? NSTextField)?.stringValue)
+        case #selector(NSResponder.cancelOperation(_:)): endRename(nil)
+        default: return false
+        }
+        return true
+    }
+
+    /// A click elsewhere, Tab: as it was — only ↩ renames (on a server, production's too, a stray click changes nothing).
+    func controlTextDidEndEditing(_ n: Notification) { if n.object as? NSTextField === renaming?.field { endRename(nil) } }
+
+    // MARK: Reopen
+
+    /// Tabs closed, the last one last (⇧⌘T): each as the session kept it, its changes' text if it had any — in memory
+    /// only, gone at Quit — and where it was.
+    private var closedTabs: [(doc: EditorSession.Doc, text: String?, at: Int)] = []
+
+    /// ⇧⌘T: the tab closed last, back where it was with its caret — this Mac's file as it is now, a server's parked
+    /// (nothing connects), a Don't Save's text as it was. Its file open meanwhile: that tab is chosen. None: a beep.
+    func reopenClosed() {
+        guard let c = closedTabs.popLast() else { return NSSound.beep() }
+        if let open = c.doc.server.flatMap({ Editor.editing($0.target.asRoot($0.root), $0.path) }) ?? c.doc.path.flatMap(Editor.following) {
+            open.revealed()
+            if c.text != nil { open.flash("Open already: the text it was closed with isn't brought back") }
+            return
+        }
+        let e = Editor(restoring: c.doc, draft: c.text != nil, onServer: onServer)
+        e.host = self
+        docs.insert(e, at: min(c.at, docs.count))
+        reveal(e)
+        changed()
+        Task { await e.reopen(c.doc, text: c.text) }
     }
 
     // MARK: Toolbar: what there is to switch for the file shown
@@ -309,12 +459,18 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
     /// A server file's Save and closing (`AppDelegate.remoteEditing`): its server, path there, state, and the folder of
     /// its local copy.
     typealias OnServer = (SFTPTarget, String, AppDelegate.RemoteEdit, String) -> (onSaved: @MainActor (URL) -> Void, onClose: @MainActor () -> Void)
+    /// The launch's (`remoteEditing`; tests' own): a renamed server file's, and one ⇧⌘T brings back.
+    private(set) var onServer: OnServer = { t, path, state, dir in
+        guard let app = Editor.app() else { return ({ _ in }, {}) }
+        return app.remoteEditing(t, path, state, in: dir)
+    }
 
     /// Launch: the editor's session as it was — its tabs in order (a server's parked: nothing connects), their drafts, the
     /// shown one, the window if it was up. Another Kermo keeping the drafts, or a newer one's: none kept this time, and
     /// the window says so; one that couldn't be read is moved aside, said once, and the editor starts empty.
-    static func restore(_ dir: String, onServer: OnServer) {
+    static func restore(_ dir: String, onServer: @escaping OnServer) {
         let h = tabs
+        h.onServer = onServer
         let opened: (store: DraftStore, session: EditorSession, damaged: String?)
         do { opened = try DraftStore.open(dir) } catch {
             h.draftsOff = switch error {
@@ -443,5 +599,46 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate 
     nonisolated static func posix(_ error: Error) -> Int32? {
         let ns = error as NSError
         return (ns.domain == NSPOSIXErrorDomain ? ns : ns.userInfo[NSUnderlyingErrorKey] as? NSError).map { Int32($0.code) }
+    }
+}
+
+/// The editor window's row of tabs: a double-click past them opens a new Untitled.
+private final class TabRow: NSView {
+    weak var scroll: NSScrollView?
+    override func mouseDown(with e: NSEvent) { if e.clickCount == 2 { (window?.windowController as? EditorHost)?.doubleClickedPastTabs() } }
+    /// Clicks past the tabs (the strip's background, its scroll view) are the row's; the wheel still scrolls the tabs.
+    override func hitTest(_ p: NSPoint) -> NSView? {
+        let v = super.hitTest(p)
+        return v is NSClipView || v is NSScrollView || v is NSStackView ? self : v
+    }
+    override func scrollWheel(with e: NSEvent) { scroll?.scrollWheel(with: e) }
+}
+
+/// A tab of the editor window: chosen on the press (a parked one opens), dragged along the strip, renamed by a
+/// double-click; the middle button closes it.
+private final class EditorTab: NSButton {
+    private weak var host: EditorHost?
+    convenience init(host: EditorHost) {
+        self.init(frame: .zero)
+        self.host = host
+    }
+
+    override func mouseDown(with e: NSEvent) {
+        guard let host, let window, host.docs.indices.contains(tag) else { return super.mouseDown(with: e) }
+        if e.clickCount == 2 { return host.beginRename(host.docs[tag]) }   // the first click chose it
+        var at = tag, dragged = false
+        let doc = host.docs[tag]
+        host.tabPressed(tag)   // the strip is made anew: this button leaves it
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), next.type == .leftMouseDragged {
+            dragged = dragged || abs(next.locationInWindow.x - e.locationInWindow.x) > 4
+            if dragged { at = host.drag(at, to: next.locationInWindow) }
+        }
+        if !dragged { doc.connect() }   // a click: a parked server tab opens (no Touch ID mid-drag)
+    }
+
+    override func otherMouseDown(with e: NSEvent) { if e.buttonNumber != 2 { super.otherMouseDown(with: e) } }
+    override func otherMouseUp(with e: NSEvent) {
+        guard e.buttonNumber == 2, let host, bounds.contains(convert(e.locationInWindow, from: nil)) else { return super.otherMouseUp(with: e) }
+        host.middleClicked(tag)
     }
 }
