@@ -141,19 +141,31 @@ extension AppDelegate {
         cmd("editor.closeRight", "Close Tabs to the Right", [], menu: "View/Tabs", group: 2, aliases: "editor close") { app in
             if let h = app.editorKey, let a = h.active { h.closeRight(of: a) }
         },
-        // The terminal's panes (as VS Code's split): while it's up.
-        cmd("term.split.right", "Split Terminal Right", ["cmd+\\"], menu: "View/Tabs", group: 3, aliases: "pane side by side") { $0.terminal.split(vertical: true) },
-        cmd("term.split.down", "Split Terminal Down", ["cmd+shift+\\"], menu: "View/Tabs", group: 3, aliases: "pane above below") { $0.terminal.split(vertical: false) },
+        // The editor window's two panes: ⌘\ and ⇧⌘\ split it (`editorTitles`), these move a tab across or join them.
+        cmd("editor.moveToPane", "Move to Other Pane", [], menu: "View/Tabs", group: 2, aliases: "editor split pane move") { app in
+            if let h = app.editorKey, let a = h.active { h.move(a) }
+        },
+        cmd("editor.cloneToPane", "Clone to Other Pane", [], menu: "View/Tabs", group: 2, aliases: "editor split pane clone copy two views") { app in
+            if let h = app.editorKey, let a = h.active { h.clone(a) }
+        },
+        cmd("editor.joinPanes", "Join Panes", [], menu: "View/Tabs", group: 2, aliases: "editor unsplit merge panes") { $0.editorKey?.joinPanes() },
+        // The terminal's panes (as VS Code's split): while it's up. In the editor window, its own (`editorTitles`).
+        cmd("term.split.right", "Split Terminal Right", ["cmd+\\"], menu: "View/Tabs", group: 3, aliases: "pane side by side") { app in
+            if let h = app.editorKey { h.split(vertical: true) } else { app.terminal.split(vertical: true) }
+        },
+        cmd("term.split.down", "Split Terminal Down", ["cmd+shift+\\"], menu: "View/Tabs", group: 3, aliases: "pane above below") { app in
+            if let h = app.editorKey { h.split(vertical: false) } else { app.terminal.split(vertical: false) }
+        },
         cmd("term.join", "Join Tab…", [], menu: "View/Tabs", group: 3, aliases: "split merge combine pane terminal") { $0.joinTerminalTab() },
         cmd("term.unsplit", "Move Pane to New Tab", [], menu: "View/Tabs", group: 3, aliases: "unsplit pane terminal") { $0.terminal.unsplit() },
-        cmd("term.pane.left", "Focus Pane Left", ["cmd+opt+left"], aliases: "terminal split") { $0.terminal.focusPane(by: -1, vertical: true) },
-        cmd("term.pane.right", "Focus Pane Right", ["cmd+opt+right"], aliases: "terminal split") { $0.terminal.focusPane(by: 1, vertical: true) },
-        cmd("term.pane.up", "Focus Pane Above", ["cmd+opt+up"], aliases: "terminal split") { $0.terminal.focusPane(by: -1, vertical: false) },
-        cmd("term.pane.down", "Focus Pane Below", ["cmd+opt+down"], aliases: "terminal split") { $0.terminal.focusPane(by: 1, vertical: false) },
-        cmd("term.resize.left", "Move Pane Divider Left", ["ctrl+cmd+left"], aliases: "terminal split resize") { $0.terminal.resizePane(by: -1, vertical: true) },
-        cmd("term.resize.right", "Move Pane Divider Right", ["ctrl+cmd+right"], aliases: "terminal split resize") { $0.terminal.resizePane(by: 1, vertical: true) },
-        cmd("term.resize.up", "Move Pane Divider Up", ["ctrl+cmd+up"], aliases: "terminal split resize") { $0.terminal.resizePane(by: -1, vertical: false) },
-        cmd("term.resize.down", "Move Pane Divider Down", ["ctrl+cmd+down"], aliases: "terminal split resize") { $0.terminal.resizePane(by: 1, vertical: false) },
+        cmd("term.pane.left", "Focus Pane Left", ["cmd+opt+left"], aliases: "terminal split") { app in if let h = app.editorKey { h.focusPane(by: -1, vertical: true) } else { app.terminal.focusPane(by: -1, vertical: true) } },
+        cmd("term.pane.right", "Focus Pane Right", ["cmd+opt+right"], aliases: "terminal split") { app in if let h = app.editorKey { h.focusPane(by: 1, vertical: true) } else { app.terminal.focusPane(by: 1, vertical: true) } },
+        cmd("term.pane.up", "Focus Pane Above", ["cmd+opt+up"], aliases: "terminal split") { app in if let h = app.editorKey { h.focusPane(by: -1, vertical: false) } else { app.terminal.focusPane(by: -1, vertical: false) } },
+        cmd("term.pane.down", "Focus Pane Below", ["cmd+opt+down"], aliases: "terminal split") { app in if let h = app.editorKey { h.focusPane(by: 1, vertical: false) } else { app.terminal.focusPane(by: 1, vertical: false) } },
+        cmd("term.resize.left", "Move Pane Divider Left", ["ctrl+cmd+left"], aliases: "terminal split resize") { app in if let h = app.editorKey { h.resizePane(by: -1, vertical: true) } else { app.terminal.resizePane(by: -1, vertical: true) } },
+        cmd("term.resize.right", "Move Pane Divider Right", ["ctrl+cmd+right"], aliases: "terminal split resize") { app in if let h = app.editorKey { h.resizePane(by: 1, vertical: true) } else { app.terminal.resizePane(by: 1, vertical: true) } },
+        cmd("term.resize.up", "Move Pane Divider Up", ["ctrl+cmd+up"], aliases: "terminal split resize") { app in if let h = app.editorKey { h.resizePane(by: -1, vertical: false) } else { app.terminal.resizePane(by: -1, vertical: false) } },
+        cmd("term.resize.down", "Move Pane Divider Down", ["ctrl+cmd+down"], aliases: "terminal split resize") { app in if let h = app.editorKey { h.resizePane(by: 1, vertical: false) } else { app.terminal.resizePane(by: 1, vertical: false) } },
 
         // Panels & view
         cmd("panel.swap", "Swap Panels", ["cmd+u"], menu: "View/Panels", group: 2, short: "Swap", aliases: "swap panels") { $0.swapPanels() },

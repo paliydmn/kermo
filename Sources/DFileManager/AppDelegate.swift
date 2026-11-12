@@ -186,6 +186,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // The terminal eats control keys, so its commands (⌃O, ⌘T, ⌘W, ⌃⇥ …) are picked off here first.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [unowned self] e in
             let handled = MainActor.assumeIsolated { () -> Bool in
+                if Self.editor(key: e.window) != nil, let c = keymap[Shortcut(event: e)], Self.editorPaneKeys.contains(c.id) {   // ⌥⌘ / ⌃⌘ arrows
+                    run(c.id)
+                    return true
+                }
                 guard e.window === window else { return false }
                 if terminal.hasFocus {
                     if terminal.handleKey(e) { return true }
@@ -1411,14 +1415,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "app.support", "app.settings", "app.tools", "app.monitor", "help.docs", "help.issue",
                                        "editor.new", "editor.show"]
     /// What works only in the editor window: its tabs, hiding it.
-    static let editorTabs: Set<String> = ["editor.close", "editor.tab.left", "editor.tab.right", "editor.tabs", "editor.closeOthers", "editor.closeRight"]
+    static let editorTabs: Set<String> = ["editor.close", "editor.tab.left", "editor.tab.right", "editor.tabs", "editor.closeOthers", "editor.closeRight",
+                                          "editor.moveToPane", "editor.cloneToPane", "editor.joinPanes"]
     /// Panel commands whose keys an editor takes for its text or its tab, and what they're called there (D-101: one key,
     /// one command).
     static let editorTitles = ["go.path": "Go to Line…", "view.filterPresets": "Toggle Comment", "term.bigger": "Bigger Text", "term.smaller": "Smaller Text",
-                               "file.rename": "Rename…", "edit.copyPath": "Copy Path", "go.tree": "Reopen Closed Tab"]
-    /// An editor has that command's branch now (`editorTitles`): Reopen Closed Tab the editor window only, the rest a
-    /// tool's editor too.
-    func inEditor(_ id: String) -> Bool { Self.editorTitles[id] != nil && (id == "go.tree" ? editorKey != nil : textEditor != nil) }
+                               "file.rename": "Rename…", "edit.copyPath": "Copy Path", "go.tree": "Reopen Closed Tab",
+                               "term.split.right": "Split Editor Right", "term.split.down": "Split Editor Down"]
+    /// The editor window's own branches (its tabs, its panes; `editorPaneKeys` too), not a tool's editor's.
+    static let editorWindowOnly: Set<String> = ["go.tree", "term.split.right", "term.split.down"]
+    /// The terminal's pane keys that, in the editor window, move between its panes and their divider: keys only, no menu
+    /// items — picked off as the terminal's are.
+    static let editorPaneKeys: Set<String> = ["term.pane.left", "term.pane.right", "term.pane.up", "term.pane.down",
+                                              "term.resize.left", "term.resize.right", "term.resize.up", "term.resize.down"]
+    /// An editor has that command's branch now (`editorTitles`): the editor window's own only there, the rest a tool's
+    /// editor too.
+    func inEditor(_ id: String) -> Bool { Self.editorTitles[id] != nil && (Self.editorWindowOnly.contains(id) ? editorKey != nil : textEditor != nil) }
     /// An editor while it's key — the editor window's shown tab, or a tool's: what `text.*` and `editorTitles` act on.
     var textEditor: Editor? { EditorHost.shown(in: Self.keyWindow()) }
     /// The editor window, while it's key (its tabs take ⌘T, ⌘W, ⌃Tab).

@@ -14,8 +14,19 @@ public struct EditorSession: Codable, Sendable, Equatable {
     public var windowOpen = false
     public var active: UUID?
     public var docs: [Doc] = []
+    /// The window split in two; nil: one pane. Optional: an older Kermo skips it and shows `docs` in one strip.
+    public var panes: Panes?
 
     public init() {}
+
+    /// Each pane's tabs by id, in order (a document in both is one, shown twice); the tab each shows; side by side or
+    /// one above the other; the first pane's share of the window; the pane the keys were in.
+    public struct Panes: Codable, Sendable, Equatable {
+        public var tabs: [[UUID]], shown: [UUID?], vertical: Bool, split: Double, focused: Int
+        public init(tabs: [[UUID]], shown: [UUID?], vertical: Bool, split: Double, focused: Int) {
+            (self.tabs, self.shown, self.vertical, self.split, self.focused) = (tabs, shown, vertical, split, focused)
+        }
+    }
 
     public struct Doc: Codable, Sendable, Equatable {
         public enum Kind: String, Codable, Sendable { case untitled, local, server }

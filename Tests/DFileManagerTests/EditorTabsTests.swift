@@ -79,8 +79,8 @@ extension EditorWindowTests {
         let h = EditorHost.tabs
         #expect(a.window === b.window && h.active === b && h.docs.suffix(2).map { $0 } == [a, b])
         var chain: NSResponder? = b.textView, reaches = false
-        while let r = chain { reaches = reaches || r === b; chain = r.nextResponder }
-        #expect(reaches, "the shown document is in the responder chain")
+        while let r = chain { reaches = reaches || (r as? DocView)?.doc === b && r.responds(to: #selector(Editor.saveDocument(_:))); chain = r.nextResponder }
+        #expect(reaches, "the shown document's view is in the responder chain, and takes ⌘S to it")
 
         type(b, "bee")
         h.select(a)
@@ -705,7 +705,8 @@ extension EditorWindowTests {
         type(a, "a")
         type(d, "d")
         func menu(_ e: Editor) -> [String] { h.tabMenu(for: e).map { $0.isSeparatorItem ? "—" : $0.title + ($0.isEnabled ? "" : " (off)") } }
-        #expect(menu(z) == ["Close Tab", "Close Other Tabs", "Close Tabs to the Right (off)", "—", "Rename…", "Copy Path (off)", "Reveal in Panel (off)"])
+        #expect(menu(z) == ["Close Tab", "Close Other Tabs", "Close Tabs to the Right (off)", "—", "Move to Other Pane", "Clone to Other Pane", "—",
+                            "Rename…", "Copy Path (off)", "Reveal in Panel (off)"])
         h.closeRight(of: k)
         #expect(try await answer(h.window, .alertSecondButtonReturn).contains(a.name))   // Don't Save
         #expect(try await answer(h.window, .alertThirdButtonReturn).contains(d.name))   // Cancel: d and z stay
@@ -715,9 +716,9 @@ extension EditorWindowTests {
         #expect(try await answer(h.window, .alertSecondButtonReturn).contains(d.name))
         try await waitUntil("all but k") { h.docs.map(\.id) == [k.id] && h.active === k }
         type(k, "k")
-        h.middleClicked(0)   // the middle button: ⌘W's question
+        h.middleClicked(0, in: h.pane)   // the middle button: ⌘W's question
         #expect(try await answer(h.window, .alertThirdButtonReturn).contains(k.name) && h.docs.map(\.id) == [k.id])
-        h.doubleClickedPastTabs()
+        h.newTab(in: nil)   // a double-click past the tabs
         #expect(h.docs.count == 2 && h.active?.url == nil && h.active !== k)
         h.moveTab(from: 1, to: 0)
         #expect(h.docs.last === k)
@@ -1012,5 +1013,223 @@ extension EditorWindowTests {
         AppDelegate.keyWindow = { tool.window }
         app.updateMenuKeys(menu)
         #expect(!app.validateMenuItem(tree) && tree.title == "Folder Tree…" && app.validateMenuItem(rename), "no tabs to reopen; Rename says why not")
+    }
+}
+
+// Editor E6 PR 3: two panes — a clone is one document in two views; Split, Move, Clone, Join; the session keeps them.
+
+extension EditorWindowTests {
+    /// Clone to Other Pane is one document shown twice: one text, one Undo, one draft, one save — each view with its own
+    /// caret, line and column; a line command acts where the keys are. Its clone's tab closes unasked, the document
+    /// staying as it is, nothing for ⇧⌘T; its last view asks.
+    @Test func aCloneIsOneDocumentInTwoViews() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { crash(); try? FileManager.default.removeItem(atPath: dir) }
+        let h = launch(dir + "/drafts")
+        try put("one\ntwo\n", dir + "/a.conf")
+        let url = URL(fileURLWithPath: dir + "/a.conf")
+        Editor.open(url)
+        try await waitUntil("opened") { editorDoc(url) != nil }
+        let e = try #require(editorDoc(url)), w = try #require(h.window)
+        h.clone(e)
+        #expect(h.panes.count == 2 && h.panes.allSatisfy { $0.docs.contains { $0 === e } } && h.pane === h.panes[1] && h.active === e)
+        let v0 = try #require(e.views.first { $0.pane === h.panes[0] }), v1 = try #require(e.views.first { $0.pane === h.panes[1] })
+        #expect(v0.text.textStorage === v1.text.textStorage && v0.text.layoutManager !== v1.text.layoutManager && e.current === v1)
+        #expect(v0.frame.window === w && v1.frame.window === w, "both show")
+        type(e, "three\n")
+        #expect(v0.text.string == "one\ntwo\nthree\n" && e.isEdited, "typed in one, there in the other")
+        #expect(v0.text.undoManager === v1.text.undoManager)
+        v0.text.undoManager?.undo()
+        #expect(v1.text.string == "one\ntwo\n", "⌘Z in one view undoes the other's typing")
+        type(e, "three\n")
+        v0.text.setSelectedRange(NSRange(location: 0, length: 0))
+        v1.text.setSelectedRange(NSRange(location: 4, length: 0))
+        #expect(v0.frame.position.hasPrefix("Ln 1, Col 1 ") && v1.frame.position.hasPrefix("Ln 2, Col 1 "), "each its own caret")
+        w.makeFirstResponder(v0.text)
+        #expect(e.current === v0 && h.pane === h.panes[0], "the keys there: its view and its pane are current")
+        e.deleteLines()
+        #expect(v1.text.string == "two\nthree\n", "line 1: the caret where the keys are")
+
+        _ = await h.commit(durable: true)
+        let s = try manifest(dir + "/drafts")
+        #expect(s.docs.filter { $0.id == e.id }.count == 1 && s.docs.first { $0.id == e.id }?.revision != nil, "one draft")
+        #expect(s.panes?.tabs.map { $0.contains(e.id) } == [true, true])
+        #expect(v0.frame.text.hasPrefix("UTF-8 · Unsaved changes") && v1.frame.text == v0.frame.text)
+        #expect(await e.save() && read(url.path) == "two\nthree\n" && !e.isEdited)
+        #expect(v0.frame.text == "UTF-8" && v1.frame.text == "UTF-8", "saved for both")
+
+        type(e, "four\n")
+        #expect(e.closeAsking(in: h.panes[0]) && w.attachedSheet == nil)
+        #expect(h.panes.count == 1 && e.views == [v1] && e.current === v1 && h.docs.contains { $0 === e } && e.isEdited, "the clone's tab went; the document stays, changed")
+        #expect(v0.text.layoutManager?.textStorage == nil, "its layout let go")
+        let n = h.docs.count
+        h.reopenClosed()
+        #expect(h.docs.count == n, "nothing for ⇧⌘T")
+        e.closeAsking()
+        #expect(try await answer(w, .alertThirdButtonReturn).contains("a.conf"), "its last view asks")   // Cancel
+        #expect(h.docs.contains { $0 === e })
+    }
+
+    /// ⌘\ clones the tab shown into a pane beside it (⇧⌘\ under it), and again goes there; Move takes a tab across with
+    /// its view, onto its clone one tab; Close Others stays in its pane, a clone there going unasked; a pane's last tab
+    /// takes the pane; ⌘N goes where the keys are; Join Panes is one pane again; ⇧⌘T brings a tab back into its pane;
+    /// F4 on a file the other pane has chooses it there; the divider moves; a tab let go over the other pane moves
+    /// there, with ⌥ a clone goes.
+    @Test func panesSplitMoveCloseAndJoin() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { crash(); try? FileManager.default.removeItem(atPath: dir) }
+        let h = launch(dir + "/drafts")
+        let a = Editor.untitled(), b = Editor.untitled(), c = Editor.untitled()
+        func ids(_ i: Int) -> [UUID] { h.panes.indices.contains(i) ? h.panes[i].docs.map(\.id) : [] }
+        h.split(vertical: false)
+        #expect(h.panes.count == 2 && ids(1) == [c.id] && h.pane === h.panes[1] && c.views.count == 2)
+        _ = await h.commit()
+        #expect(try manifest(dir + "/drafts").panes?.vertical == false, "one above the other")
+        h.split(vertical: true)
+        #expect(h.panes.count == 2 && h.pane === h.panes[0], "split again: the keys go to the other pane")
+        h.move(a, from: h.panes[0])
+        #expect(ids(0) == [b.id, c.id] && ids(1) == [c.id, a.id] && a.views.count == 1 && a.views[0].pane === h.panes[1] && h.pane === h.panes[1])
+        h.move(c, from: h.panes[0])
+        #expect(ids(0) == [b.id] && ids(1) == [c.id, a.id] && c.views.count == 1, "onto its clone: one tab")
+        type(b, "b")
+        h.clone(b)
+        #expect(ids(1) == [c.id, a.id, b.id])
+        h.closeOthers(than: a, in: h.panes[1])
+        try await waitUntil("c and b's clone gone") { ids(1) == [a.id] }
+        #expect(ids(0) == [b.id] && h.window?.attachedSheet == nil && b.isEdited && b.views.count == 1, "nothing asked: b stays in its pane")
+        a.closeAsking()
+        try await waitUntil("its pane gone with its last tab") { h.panes.count == 1 }
+        #expect(ids(0) == [b.id] && h.pane === h.panes[0] && h.active === b)
+
+        h.split(vertical: true)
+        let d = Editor.untitled()
+        #expect(ids(1) == [b.id, d.id], "⌘N: where the keys are")
+        h.joinPanes()
+        #expect(h.panes.count == 1 && ids(0) == [b.id, d.id] && b.views.count == 1 && h.active === d)
+
+        h.clone(d)
+        let f = Editor.untitled()
+        f.closeAsking()
+        try await waitUntil("f closed") { !h.docs.contains { $0 === f } }
+        h.focusPane(by: -1, vertical: true)
+        #expect(h.pane === h.panes[0])
+        h.reopenClosed()
+        #expect(ids(1) == [d.id, f.id] && h.pane === h.panes[1], "back in its pane")
+
+        try put("x\n", dir + "/x.conf")
+        let x = URL(fileURLWithPath: dir + "/x.conf")
+        Editor.open(x)
+        try await waitUntil("x") { editorDoc(x) != nil }
+        let ex = try #require(editorDoc(x))
+        h.focusPane(by: -1, vertical: true)
+        Editor.open(x)
+        #expect(h.pane === h.panes[1] && h.active === ex && h.docs.filter { $0 === ex }.count == 1, "F4: chosen in its pane")
+        let width = h.panes[0].box.frame.width
+        h.resizePane(by: 1, vertical: true)
+        #expect(h.panes[0].box.frame.width > width)
+
+        let q = h.panes[0]
+        h.dropped(ex, from: h.panes[1], at: q.body.convert(NSPoint(x: q.body.bounds.midX, y: q.body.bounds.midY), to: nil), clone: false)
+        #expect(ids(0) == [b.id, d.id, ex.id] && ids(1) == [d.id, f.id] && ex.views.count == 1, "on its text: moved after its tabs")
+        q.row.layoutSubtreeIfNeeded()
+        let fe = try #require(h.panes[1].docs.last)
+        h.dropped(fe, from: h.panes[1], at: q.row.convert(NSPoint(x: 1, y: q.row.bounds.midY), to: nil), clone: true)
+        #expect(ids(0) == [f.id, b.id, d.id, ex.id] && ids(1) == [d.id, f.id] && fe.views.count == 2, "⌥ on its strip: a clone where it's let go")
+    }
+
+    /// The session keeps the panes — each one's tabs and what it shows, their way, where the keys were — and a clone once
+    /// in `docs`, which is what an older Kermo shows; a launch brings them back, the clone one document again. A session
+    /// without them (an older Kermo's) is one pane.
+    @Test func theSessionKeepsThePanes() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        defer { crash(); try? FileManager.default.removeItem(atPath: dir) }
+        var h = launch(dir + "/drafts")
+        try put("x\n", dir + "/x.conf")
+        let x = URL(fileURLWithPath: dir + "/x.conf")
+        Editor.open(x)
+        try await waitUntil("x") { editorDoc(x) != nil }
+        let ex = try #require(editorDoc(x)), u = Editor.untitled(), y = Editor.untitled()
+        type(u, "u\n")
+        h.move(y)
+        h.clone(u, from: h.panes[0], at: 0)
+        h.select(y, in: h.panes[1])
+        _ = await h.commit(durable: true)
+        let s = try manifest(dir + "/drafts")
+        #expect(s.docs.map(\.id) == [ex.id, u.id, y.id] && s.active == y.id)
+        #expect(s.panes == .init(tabs: [[ex.id, u.id], [u.id, y.id]], shown: [u.id, y.id], vertical: true, split: s.panes?.split ?? 0, focused: 1))
+        #expect(abs((s.panes?.split ?? 0) - 0.5) < 0.05)
+
+        h = launch(dir + "/drafts")
+        #expect(h.panes.map { $0.docs.map(\.id) } == [[ex.id, u.id], [u.id, y.id]] && h.panes.map { $0.active?.id } == [u.id, y.id])
+        #expect(h.pane === h.panes[1] && h.active?.id == y.id)
+        let back = try #require(h.docs.first { $0.id == u.id })
+        try await waitUntil("restored") { h.docs.allSatisfy { $0.cover == nil } && back.textView.string == "u\n" }
+        #expect(back.views.count == 1 && back.isEdited, "a view for a tab shown only")
+        h.select(back, in: h.panes[1])
+        #expect(back.views.count == 2 && back.views.allSatisfy { $0.text.string == "u\n" })
+
+        var json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: dir + "/drafts/session.json"))) as? [String: Any])
+        #expect(json["panes"] != nil && json["version"] as? Int == EditorSession.current, "no new version")
+        json.removeValue(forKey: "panes")
+        crash()
+        try JSONSerialization.data(withJSONObject: json).write(to: URL(fileURLWithPath: dir + "/drafts/session.json"))
+        h = launch(dir + "/drafts")
+        #expect(h.panes.count == 1 && h.docs.map(\.id) == [ex.id, u.id, y.id] && h.active?.id == y.id, "an older Kermo's session: one pane")
+        try await waitUntil("restored") { h.docs.allSatisfy { $0.cover == nil } }
+    }
+
+    /// ⌘\ and ⇧⌘\ are Split Editor Right / Down in the editor window, the terminal's anywhere else; ⌥⌘ and ⌃⌘ arrows
+    /// move between its panes and their divider; Move / Clone / Join are the window's own. A tool's editor splits nothing.
+    @Test func theSplitKeysAreBranchesOfTheTerminals() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        let app = testApp(dir)
+        app.commands = app.makeCommands()
+        let menu = app.makeMenu()
+        let parent = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400)), panels = NSView(frame: parent.bounds)
+        parent.addSubview(panels)
+        app.terminal = EmbeddedTerminal(covering: panels)
+        defer {
+            AppDelegate.keyWindow = { NSApp.keyWindow }
+            Editor.app = { NSApp.delegate as? AppDelegate }
+            app.panels.forEach { $0.shutdown() }
+            crash()
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        func item(_ id: String) throws -> NSMenuItem { try #require(menu.allItems.first { $0.representedObject as? String == id }) }
+        app.updateMenuKeys(menu)
+        let right = try item("term.split.right"), down = try item("term.split.down")
+        #expect(right.title == "Split Terminal Right" && down.title == "Split Terminal Down")
+
+        let h = launch(dir + "/drafts")
+        _ = Editor.untitled()
+        AppDelegate.keyWindow = { h.window }
+        app.updateMenuKeys(menu)
+        #expect(app.validateMenuItem(right) && right.title == "Split Editor Right" && right.keyEquivalent == "\\" && right.keyEquivalentModifierMask == .command)
+        #expect(app.validateMenuItem(down) && down.title == "Split Editor Down" && down.keyEquivalentModifierMask == [.command, .shift])
+        for id in ["editor.moveToPane", "editor.cloneToPane", "editor.joinPanes"] { #expect(app.validateMenuItem(try item(id)), "\(id)") }
+        app.run("term.split.right")
+        #expect(h.panes.count == 2 && h.pane === h.panes[1])
+        app.run("term.pane.left")
+        #expect(h.pane === h.panes[0])
+        let width = h.panes[0].box.frame.width
+        app.run("term.resize.right")
+        #expect(h.panes[0].box.frame.width > width)
+        app.run("editor.joinPanes")
+        #expect(h.panes.count == 1)
+        for id in AppDelegate.editorPaneKeys {
+            let k = app.commands.first { $0.id == id }?.keys.first
+            #expect(k.map { $0.flags.contains(.command) && !$0.flags.isDisjoint(with: [.option, .control]) } == true, "\(id): a key of its own")
+        }
+
+        let tool = try Editor.open(URL(fileURLWithPath: dir + "/t.json"), text: "{}\n", beside: NSView()) { _ in }
+        defer { tool.close() }
+        AppDelegate.keyWindow = { tool.window }
+        app.updateMenuKeys(menu)
+        let join = try item("editor.joinPanes")
+        #expect(!app.validateMenuItem(right) && right.title == "Split Terminal Right" && !app.validateMenuItem(join))
     }
 }
