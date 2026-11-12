@@ -10,7 +10,7 @@ import DFMCore
 /// the original, keeping mode, owner, ACL, xattrs, flags and creation date — or rewrites a hard-linked file or
 /// someone else's in place. A UTF-8 BOM and CRLF line ends are kept, new lines included.
 @MainActor
-final class Editor: NSResponder, NSTextViewDelegate, NSMenuItemValidation {
+final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     private static var open: [Editor] = []
     /// Names of the files whose unsaved changes quitting would lose: a tool's, and the editor window's while drafts are
     /// off. With drafts on, Quit writes them and asks only about one that couldn't be (`AppDelegate.finishQuit`).
@@ -232,7 +232,6 @@ final class Editor: NSResponder, NSTextViewDelegate, NSMenuItemValidation {
         applyView()
         showState()   // tinted once it shows (`shown`): twenty tabs restored aren't twenty tints at once
     }
-    required init?(coder: NSCoder) { fatalError() }
 
     /// What the window says while its tab shows: the file's name and where it is ("web-01 · /etc/nginx"). A locked
     /// server's draft: its name and server only, till it's unlocked.
@@ -1055,7 +1054,7 @@ final class Editor: NSResponder, NSTextViewDelegate, NSMenuItemValidation {
     var focus: NSView { frame.cover ?? textView }
 
     /// ⎋ over its cover (a parked tab): back to the panels too. Not from a tool's Problems or Test fields.
-    override func cancelOperation(_ sender: Any?) { if cover != nil { escape() } }
+    func cancelOperation(_ sender: Any?) { if cover != nil { escape() } }
 
     /// The text a draft keeps; nil while it isn't there (a cover).
     var draftText: String? { cover == nil ? textView.string : nil }
@@ -1408,13 +1407,6 @@ final class Editor: NSResponder, NSTextViewDelegate, NSMenuItemValidation {
 /// In the find bar it closes the bar. Under its text: the caret's line and a bracket with its pair; with Show
 /// Invisibles a mark on each tab (the layout manager's own marks spaces only).
 final class EditorTextView: NSTextView {
-    /// The keys here: its view is its document's current one, its pane the window's active one.
-    override func becomeFirstResponder() -> Bool {
-        guard super.becomeFirstResponder() else { return false }
-        (delegate as? Editor)?.focused(self)
-        return true
-    }
-
     override func cancelOperation(_ sender: Any?) {
         if enclosingScrollView?.isFindBarVisible == true {
             let hide = NSMenuItem()
@@ -1493,7 +1485,7 @@ final class EditorTextView: NSTextView {
 final class DocView: NSViewController, NSMenuItemValidation {
     unowned let doc: Editor
     let frame: DocFrame, text: EditorTextView, ruler: LineNumberRuler
-    /// The editor window's pane it shows in; nil: a tool's window, or not placed yet.
+    /// The pane it shows in (a tool's window has one); nil: not placed yet, or put by till its document shows again.
     weak var pane: EditorHost.Pane?
 
     init(_ doc: Editor, side: NSView? = nil) {
@@ -1566,20 +1558,16 @@ extension Editor {
         return v
     }
 
-    /// Its view in `pane` gone, with its layout — never its last: a clone's closed, a Join's.
+    /// Its view in `pane` gone, with its layout (a clone's closed, a Join's); its last is put by, for the pane it shows
+    /// in next.
     func dropView(in pane: EditorHost.Pane) {
-        guard views.count > 1, let i = views.firstIndex(where: { $0.pane === pane }) else { return }
-        let v = views.remove(at: i)
+        guard let i = views.firstIndex(where: { $0.pane === pane }) else { return }
+        let v = views[i]
         v.frame.removeFromSuperview()
+        guard views.count > 1 else { v.pane = nil; return }
+        views.remove(at: i)
         v.text.layoutManager.map(storage.removeLayoutManager)
         if current === v { current = views[0] }
-    }
-
-    /// `t` has the keys: its view is the current one, its pane the window's active one.
-    fileprivate func focused(_ t: NSTextView) {
-        guard let v = views.first(where: { $0.text === t }) else { return }
-        current = v
-        host?.focused(v)
     }
 }
 

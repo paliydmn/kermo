@@ -1048,6 +1048,12 @@ extension EditorWindowTests {
         #expect(v0.frame.position.hasPrefix("Ln 1, Col 1 ") && v1.frame.position.hasPrefix("Ln 2, Col 1 "), "each its own caret")
         w.makeFirstResponder(v0.text)
         #expect(e.current === v0 && h.pane === h.panes[0], "the keys there: its view and its pane are current")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 80, height: 20))
+        v1.frame.addSubview(field)
+        w.makeFirstResponder(field)
+        #expect(h.pane === h.panes[1] && e.current === v1 && w.title == "a.conf", "a field in a pane (its find bar's): that pane")
+        field.removeFromSuperview()
+        w.makeFirstResponder(v0.text)
         e.deleteLines()
         #expect(v1.text.string == "two\nthree\n", "line 1: the caret where the keys are")
 
@@ -1066,6 +1072,14 @@ extension EditorWindowTests {
         let n = h.docs.count
         h.reopenClosed()
         #expect(h.docs.count == n, "nothing for ⇧⌘T")
+        h.clone(e)
+        let v2 = try #require(e.views.first { $0.pane === h.panes[1] })
+        v2.text.insertText("zero\n", replacementRange: NSRange(location: 0, length: 0))   // apart from what v1 typed: not one Undo step with it
+        #expect(e.closeAsking(in: h.panes[1]) && h.panes.count == 1)
+        v1.text.undoManager?.undo()
+        #expect(!v1.text.string.hasPrefix("zero"), "⌘Z undoes what was typed in a view that's gone")
+        v1.text.undoManager?.redo()
+        #expect(v1.text.string.hasPrefix("zero\ntwo"))
         e.closeAsking()
         #expect(try await answer(w, .alertThirdButtonReturn).contains("a.conf"), "its last view asks")   // Cancel
         #expect(h.docs.contains { $0 === e })
@@ -1168,10 +1182,13 @@ extension EditorWindowTests {
         let back = try #require(h.docs.first { $0.id == u.id })
         try await waitUntil("restored") { h.docs.allSatisfy { $0.cover == nil } && back.textView.string == "u\n" }
         #expect(back.views.count == 1 && back.isEdited, "a view for a tab shown only")
+        var json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: dir + "/drafts/session.json"))) as? [String: Any])
+        #expect(back.closeAsking(in: h.panes[0]) && h.panes[0].docs.map(\.id) == [ex.id], "its clone's tab: it's in the other pane")
         h.select(back, in: h.panes[1])
+        #expect(back.views.count == 1 && back.views[0].pane === h.panes[1] && back.textView.string == "u\n", "its one view, put by and shown there")
+        h.clone(back)
         #expect(back.views.count == 2 && back.views.allSatisfy { $0.text.string == "u\n" })
 
-        var json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: dir + "/drafts/session.json"))) as? [String: Any])
         #expect(json["panes"] != nil && json["version"] as? Int == EditorSession.current, "no new version")
         json.removeValue(forKey: "panes")
         crash()

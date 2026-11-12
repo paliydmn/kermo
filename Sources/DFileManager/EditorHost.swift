@@ -43,7 +43,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
 
     private init(tabbed: Bool) {
         self.tabbed = tabbed
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
+        let w = EditorWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         w.isRestorable = false   // the text never goes into the window's saved state on disk
@@ -126,9 +126,14 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         if window?.isKeyWindow == true { e.shown() }
     }
 
-    /// A view took the keys (a click in its text): its pane is the active one now.
-    func focused(_ v: DocView) {
-        guard let p = v.pane, p !== pane, panes.contains(where: { $0 === p }), let e = p.active else { return }
+    /// The keys moved (a click in a pane's text, its find bar, its cover): that pane is the active one, its tab's view
+    /// the current one.
+    fileprivate func keysMoved() {
+        var v = window?.firstResponder as? NSView
+        if let t = v as? NSText, t.isFieldEditor { v = t.delegate as? NSView }   // a field's: the field
+        guard let v, let p = panes.first(where: { v.isDescendant(of: $0.body) }), let e = p.active else { return }
+        e.current = e.view(in: p)
+        guard p !== pane else { return }
         pane = p
         update(e)
         if window?.isKeyWindow == true { e.shown() }
@@ -392,7 +397,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         return false
     }
 
-    func windowDidBecomeKey(_ notification: Notification) { panes.compactMap(\.active).forEach { $0.shown() } }
+    func windowDidBecomeKey(_ notification: Notification) { docs.filter(shows).forEach { $0.shown() } }
 
     /// A tool's window closed: its document with it. The editor window only hides — its tabs stay.
     func windowWillClose(_ notification: Notification) {
@@ -733,19 +738,19 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         if lists.isEmpty { lists = [[]] }
         let placed = Set(lists.joined().map(\.id))
         lists[0] += docs.filter { !placed.contains($0.id) }
-        lists.removeAll { $0.isEmpty }
-        pane.docs = lists.first ?? []
-        if lists.count > 1, let s {
+        let kept = lists.indices.filter { !lists[$0].isEmpty }   // the session's pane of each, for what it shows
+        pane.docs = kept.first.map { lists[$0] } ?? []
+        if kept.count > 1, let s {
             let q = other(than: pane, vertical: s.vertical)
-            q.docs = lists[1]
+            q.docs = lists[kept[1]]
             let whole = split.isVertical ? split.bounds.width : split.bounds.height
             split.setPosition(min(max(CGFloat(s.split) * whole, Self.minPane), whole - Self.minPane), ofDividerAt: 0)
         }
-        for (i, p) in panes.enumerated() {
+        for (p, i) in zip(panes, kept) {
             let id = s.map { $0.shown.indices.contains(i) ? $0.shown[i] : nil } ?? active?.id
             if let e = p.docs.first(where: { $0.id == id }) ?? p.docs.first { show(e, in: p) }
         }
-        activate(s.map { panes.indices.contains($0.focused) ? panes[$0.focused] : pane } ?? pane)
+        activate(s.flatMap { kept.firstIndex(of: $0.focused) }.map { panes[$0] } ?? pane)
     }
 
     /// A restored tab that can't come back (its file is gone): closed, and said in the window.
@@ -851,6 +856,15 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
     nonisolated static func posix(_ error: Error) -> Int32? {
         let ns = error as NSError
         return (ns.domain == NSPOSIXErrorDomain ? ns : ns.userInfo[NSUnderlyingErrorKey] as? NSError).map { Int32($0.code) }
+    }
+}
+
+/// The editor's window: where the keys go makes a pane the active one — its text, its find bar or its cover.
+private final class EditorWindow: NSWindow {
+    override func makeFirstResponder(_ r: NSResponder?) -> Bool {
+        guard super.makeFirstResponder(r) else { return false }
+        (windowController as? EditorHost)?.keysMoved()
+        return true
     }
 }
 
