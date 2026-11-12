@@ -82,13 +82,24 @@ Two tabs of one name say where each is — `nginx.conf — web-01`, `run.sh — 
 
 ![The editor with four tabs — README.md — weather-app, README.md — landing-page, config.yaml and deploy.sh with ● — deploy.sh's shell script highlighted, and the status line: Unsaved changes · Draft saved 11:04](images/editor-tabs.png)
 
-A tab's menu (a right click, ⌃-click) has **Close Tab**, **Close Other Tabs**, **Close Tabs to the Right**, **Rename…**, **Copy Path** and **Reveal in Panel**. Close Other Tabs and Close Tabs to the Right (in **View ▸ Tabs** and search too) ask about each changed tab in turn, as ⌘W does; **Cancel** keeps that tab and the ones after it. Copy Path (⇧⌘C in the editor) gives a server's file as `web-01:/etc/nginx/nginx.conf`. Reveal in Panel shows the file under a panel's cursor in the main window: a server's in the panel showing that server, or the active one connects to it. An Untitled has neither, and a locked server's draft not until it's unlocked.
+A tab's menu (a right click, ⌃-click) has **Close Tab**, **Close Other Tabs**, **Close Tabs to the Right**, **Move to Other Pane**, **Clone to Other Pane** ([two panes](#two-panes)), **Rename…**, **Copy Path** and **Reveal in Panel**. Close Other Tabs and Close Tabs to the Right (in **View ▸ Tabs** and search too) ask about each changed tab in turn, as ⌘W does; **Cancel** keeps that tab and the ones after it. Copy Path (⇧⌘C in the editor) gives a server's file as `web-01:/etc/nginx/nginx.conf`. Reveal in Panel shows the file under a panel's cursor in the main window: a server's in the panel showing that server, or the active one connects to it. An Untitled has neither, and a locked server's draft not until it's unlocked.
 
 Drag a tab to move it along the strip; the middle button closes it as ⌘W does; a double-click where no tab is opens a new Untitled.
 
 ⇧⌘T (**Reopen Closed Tab**, in the Go menu while the editor is in front; Folder Tree's key in the panels) brings back the tab closed last, where it was, with its caret: this Mac's file as it is on disk now, a server's file not connected until you click it, and the text of a tab you closed with **Don't Save**. That text is kept in memory only, until Kermo quits. Kermo keeps the last twenty, with 64 MB of their texts at most; a file open again meanwhile just has its tab shown.
 
-The [tools' editor](tools.md#your-own-tools) is a window of its own, as before: no tabs, no drafts; ⎋ and ⌘W close it, asking about changes.
+The [tools' editor](tools.md#your-own-tools) is a window of its own, as before: no tabs, no panes, no drafts; ⎋ and ⌘W close it, asking about changes.
+
+### Two panes
+
+⌘\ (**Split Editor Right** in **View ▸ Tabs** while the editor is in front — the terminal's split in the main window) shows the tab you're in in a second pane beside it, ⇧⌘\ (**Split Editor Down**) under it; with two panes already, the keys go to the other one. Each pane has its own tabs: ⌘N, ⌘T and **＋** open a new Untitled in the pane you're in, and F4 on a file that's open already chooses its tab wherever it is. The title, PROD / ROOT / LOCKED and the toolbar are those of the pane you're typing in; the line under the other pane's tab is paler. ⌥⌘← and ⌥⌘→ (⌥⌘↑ and ⌥⌘↓ for panes one above the other) go to the other pane; ⌃⌘ with the arrows moves the divider, or drag it.
+
+- **Move to Other Pane** (a tab's menu, **View ▸ Tabs**, search) takes the tab across with its caret, scroll and find bar. Drag a tab onto the other pane's strip to put it where you let go, or onto its text to put it after its tabs.
+- **Clone to Other Pane**, or a drag with ⌥, shows the same document in both panes: one text, one Undo, one draft, one save. What you type in one is in the other at once, ⌘Z in either undoes it, ⌘S in either saves it; each pane has its own caret, scroll, find bar, and line and column in its status line. The mark (● ↑ !) is on both tabs, and a rename from either renames the file once.
+
+Closing one of a clone's two tabs asks nothing and keeps the changes: the document is still open in the other pane, and ⇧⌘T doesn't list it. Closing its last tab asks about changes, as always. A pane's last tab takes the pane with it; **View ▸ Tabs ▸ Join Panes** puts the second pane's tabs after the first's, a clone's two as one tab. Close Other Tabs and Close Tabs to the Right stay in their pane. ⇧⌘T brings a tab back into its pane, or into the one you're in if that pane is gone.
+
+The panes come back after a restart: their tabs, what each shows, side by side or one above the other, where the divider was. Kermo 2.0.x, opening that session, shows every tab once in one strip.
 
 ### Rename
 

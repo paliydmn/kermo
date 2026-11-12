@@ -4,12 +4,13 @@ import DFMCore
 
 /// F4 built-in editor for config files and scripts: plain text, undo, find & replace (⌘F), ⌘S saves, reloads when the
 /// file changes on disk. One document: a tab of the editor window (`EditorHost`), its text kept as a draft till it's
-/// saved — or a tool's file in a window of its own.
+/// saved — or a tool's file in a window of its own. The document is one text however many views show it (`DocView`:
+/// the editor window's two panes): one storage, one Undo, one draft, one save.
 /// Saving asks before overwriting a change made on disk meanwhile; it writes a temp file and renames it over
 /// the original, keeping mode, owner, ACL, xattrs, flags and creation date — or rewrites a hard-linked file or
 /// someone else's in place. A UTF-8 BOM and CRLF line ends are kept, new lines included.
 @MainActor
-final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
+final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     private static var open: [Editor] = []
     /// Names of the files whose unsaved changes quitting would lose: a tool's, and the editor window's while drafts are
     /// off. With drafts on, Quit writes them and asks only about one that couldn't be (`AppDelegate.finishQuit`).
@@ -60,8 +61,17 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     /// The window it shows in: the editor window's tab, or a tool's own.
     var host: EditorHost!
     var window: NSWindow? { host?.window }
-    /// Its text with the status line and key bar under it (a tool's Problems and Test beside): what its tab shows.
-    let frame: DocFrame
+    /// Its text, however many views show it.
+    let storage = NSTextStorage()
+    /// Where it shows: a view per pane of the editor window it's in (a tool's window: one). Never empty.
+    private(set) var views: [DocView] = []
+    /// The view that had the keys last: what the caret, Go to Line, the line commands and the session's caret go by.
+    var current: DocView!
+    /// The current view's text, and its text with the status line and key bar under it (a tool's Problems and Test
+    /// beside): what its tab shows.
+    var textView: EditorTextView { current.text }
+    var frame: DocFrame { current.frame }
+    private var ruler: LineNumberRuler { current.ruler }
     /// Its own: tabs in one window would share the window's, and a reload's reset would empty every tab's.
     private let undo = UndoManager()
     /// Changes only on Save As. nil: an Untitled document (⌘N), on no disk until its Save picks where.
@@ -86,8 +96,6 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     /// The server file's copy this edited before Save As made it a local file: an upload of it still going finds this
     /// tab for its questions. It goes when the tab closes (`onClose`), after its last upload.
     private var formerCopy: URL?
-    let textView = EditorTextView(usingTextLayoutManager: false)   // TextKit 1: the line-number ruler needs it
-    private var ruler: LineNumberRuler!
     private(set) var language: Syntax.Language?
     /// View ▸ Indentation's pick; else Tab follows the text's indent (`indent`), read once per text it replaced.
     private var indentPick: LineEdit.Indent?
@@ -213,47 +221,17 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
             ?? url.map { u in Self.isConfig(remote.flatMap { r in r.range(of: ":/").map { String(r[r.index(after: $0.lowerBound)...]) } } ?? u.path) } ?? false
         self.stamp = stamp
         self.digest = digest
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        frame = DocFrame(scroll, size: NSSize(width: 900, height: 640), side: side)
-        super.init(nibName: nil, bundle: nil)
-        view = frame
-
-        textView.frame = NSRect(origin: .zero, size: scroll.contentSize)
-        textView.minSize = NSSize(width: 0, height: scroll.contentSize.height)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
-        textView.isVerticallyResizable = true
-        // Lays out what's on screen, not the whole text first: typing at the top of a 30 MB log stays quick.
-        textView.layoutManager?.allowsNonContiguousLayout = true
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = true
-        textView.isRichText = false
-        textView.allowsUndo = true
-        textView.usesFindBar = true
-        textView.isIncrementalSearchingEnabled = true
+        super.init()
+        current = DocView(self, side: side)
+        views = [current]
         textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        textView.textContainerInset = NSSize(width: 4, height: 4)
-        // Config files and scripts must stay byte-exact: no smart quotes, dashes or autocorrect.
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.isAutomaticSpellingCorrectionEnabled = false
-        textView.isContinuousSpellCheckingEnabled = false
         textView.string = text
-        textView.delegate = self
-        NotificationCenter.default.addObserver(self, selector: #selector(storageEdited), name: NSTextStorage.didProcessEditingNotification,
-                                               object: textView.textStorage)
-        scroll.documentView = textView
-        ruler = LineNumberRuler(textView: textView)
-        scroll.verticalRulerView = ruler
-        scroll.hasVerticalRuler = true
-        scroll.rulersVisible = true
+        NotificationCenter.default.addObserver(self, selector: #selector(storageEdited), name: NSTextStorage.didProcessEditingNotification, object: storage)
         language = url.flatMap { Syntax.language(forFileName: $0.lastPathComponent, firstLine: String(text.prefix(200).split(separator: "\n").first ?? "")) }
         applyFont()
         applyView()
         showState()   // tinted once it shows (`shown`): twenty tabs restored aren't twenty tints at once
     }
-    required init?(coder: NSCoder) { fatalError() }
 
     /// What the window says while its tab shows: the file's name and where it is ("web-01 · /etc/nginx"). A locked
     /// server's draft: its name and server only, till it's unlocked.
@@ -290,7 +268,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     /// Says something in its status line for a few seconds (a server save's "no history: …"): the panels' status line
     /// is behind this window.
     static func flash(_ url: URL, _ text: String) { open.first { $0.url == url || $0.formerCopy == url }?.flash(text) }
-    func flash(_ text: String) { frame.flash(text) }
+    func flash(_ text: String) { views.forEach { $0.frame.flash(text) } }
 
     /// Its tab, shown in the window, before a question about it: out of the Dock, key, in front — a sheet on a window
     /// out of sight waits unseen (and the save behind it with it).
@@ -374,7 +352,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         if lossy { lossy = false; showState() }   // the damaged bytes are U+FFFD now: clean UTF-8
         self.stamp = stamp
         self.digest = digest
-        frame.banner = nil
+        notice = nil
         host?.changed(self, now: true)   // a crash right after: the draft goes, it's in the file
     }
 
@@ -398,7 +376,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     /// that doesn't show (all of it once it does).
     private func highlight(after delay: TimeInterval) {
         guard let lang = language else { return }
-        guard frame.window != nil else { tinted = nil; return }
+        guard onScreen else { tinted = nil; return }
         highlightGen += 1
         let gen = highlightGen
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -493,10 +471,10 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         if server != nil { mkdir(url.deletingLastPathComponent().path, 0o700) }
         guard !saving, let data = fileData(asking: !force, retry: { [weak self] in if await self?.save() == true { then?() } }) else { return false }
         saving = true
-        textView.isEditable = false
+        editable(false)
         defer {
             saving = false
-            textView.isEditable = true
+            editable(true)
         }
         let name = url.lastPathComponent, base = force ? nil : (stamp, digest), hook = willRewriteInPlace, text = writeText, renaming = willRename
         let mode = stamp?.mode ?? (server != nil ? 0o600 : 0o666)   // deleted meanwhile: it comes back as it was, not wider
@@ -768,10 +746,10 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         }
         guard !saving, let data = fileData(retry: { [weak self] in _ = await self?.saveAs(dest, base: base) }) else { return false }
         saving = true
-        textView.isEditable = false
+        editable(false)
         defer {
             saving = false
-            textView.isEditable = true
+            editable(true)
         }
         // The new file's mode, no wider than where the text came from: a server's file's mode there (unknown: owner
         // only), this Mac's file's (read with the write, off the main thread); an Untitled's, the umask's.
@@ -903,13 +881,13 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
 
     /// Its tab shows in the key window (made key, or chosen there): its keys, its tint, and a look at its file.
     func shown() {
-        frame.showKeys()   // the menu's keys work by the key window
+        views.forEach { $0.frame.showKeys() }   // the menu's keys work by the key window
         if tinted == nil { highlight(after: 0) }
         sayPosition()
         guard let url else { return }   // an Untitled: no file to have changed
         Task {
             guard cover == nil, let now = await Self.stamps.run(url.path, .userInitiated, { Stamp(url.resolvingSymlinksInPath().path) }), url == self.url,
-                  host.active === self, window?.isVisible == true,
+                  host.shows(self), window?.isVisible == true,
                   now != stamp, now != noticed, !saving else { return }
             guard dirty else {
                 let loaded = await Blocking.run(.userInitiated) { Result { try Self.load(url) } }
@@ -958,9 +936,9 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         textView.string = text
         detected = nil
         undo.removeAllActions()   // the old text's edits: ⌘Z would apply them to the new one; other tabs keep theirs
-        frame.banner = nil
+        notice = nil
         host?.changed(self)   // its draft goes: the file's text is what it shows
-        ruler.invalidate()
+        views.forEach { $0.ruler.invalidate() }
         highlight(after: 0)
         textView.setSelectedRange(NSRange(location: min(sel.location, (text as NSString).length), length: 0))
         textView.scrollRangeToVisible(textView.selectedRange())
@@ -980,8 +958,10 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
 
     /// Close Tab (⌘W): a changed one asks first — "Save changes to “nginx.conf” on web-01?", its strip, what Save does
     /// there besides (`AppDelegate.saveSays`); Save, Don't Save (⌘D), Cancel, one under another, as macOS stacks three;
-    /// on production ↩ is Cancel. True if it asked nothing. A failed or cancelled Save keeps it.
-    @discardableResult func closeAsking() -> Bool {
+    /// on production ↩ is Cancel. True if it asked nothing. A failed or cancelled Save keeps it. Its tab in `pane` while
+    /// the other pane shows it too: only that view goes, nothing asked (`EditorHost.closeClone`).
+    @discardableResult func closeAsking(in pane: EditorHost.Pane? = nil) -> Bool {
+        if host.closeClone(self, in: pane) { return true }
         guard changed else { host.close(self); return true }
         askToClose { _ in }
         return false
@@ -989,7 +969,8 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
 
     /// The same, waited for (Close Other Tabs asks one tab after another): true once it goes — false if it stays
     /// (Cancel, a Save that didn't go through or asks about the encoding first).
-    func closeAsked() async -> Bool {
+    func closeAsked(in pane: EditorHost.Pane? = nil) async -> Bool {
+        if host.closeClone(self, in: pane) { return true }
         guard changed else { host.close(self); return true }
         return await withCheckedContinuation { c in askToClose { c.resume(returning: $0) } }
     }
@@ -1073,7 +1054,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     var focus: NSView { frame.cover ?? textView }
 
     /// ⎋ over its cover (a parked tab): back to the panels too. Not from a tool's Problems or Test fields.
-    override func cancelOperation(_ sender: Any?) { if cover != nil { escape() } }
+    func cancelOperation(_ sender: Any?) { if cover != nil { escape() } }
 
     /// The text a draft keeps; nil while it isn't there (a cover).
     var draftText: String? { cover == nil ? textView.string : nil }
@@ -1183,12 +1164,12 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         fill(text)
         let place = (url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
         if disk == nil, stampNow == nil {
-            frame.banner = Banner("\(name) is no longer in \(place) — Save puts it back", [("Save As…", { [weak self] in Task { await self?.saveAs() } })])
+            notice = ("\(name) is no longer in \(place) — Save puts it back", [("Save As…", { [weak self] in Task { await self?.saveAs() } })])
         } else {
             noticed = stampNow   // asked here, not again on the next look
-            frame.banner = Banner("\(name) changed on disk since your draft", [("Compare", { [weak self] in self?.compareWithDisk() }),
-                                                                                ("Reload", { [weak self] in Task { await self?.reload() } }),
-                                                                                ("Save As…", { [weak self] in Task { await self?.saveAs() } })])
+            notice = ("\(name) changed on disk since your draft", [("Compare", { [weak self] in self?.compareWithDisk() }),
+                                                                    ("Reload", { [weak self] in Task { await self?.reload() } }),
+                                                                    ("Save As…", { [weak self] in Task { await self?.saveAs() } })])
         }
     }
 
@@ -1196,7 +1177,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     private func fill(_ text: String, clean: Bool = false, stamp: Stamp?? = nil, digest: Data? = nil, apply loaded: Loaded? = nil) {
         if let loaded { (encoding, lossy, bom, crlf) = (loaded.1, loaded.lossy, loaded.bom, loaded.crlf) }
         textView.string = text
-        detected = nil
+        (detected, tinted) = (nil, nil)   // a tint of the empty text it had while read (shown meanwhile): all of it again
         if let stamp { self.stamp = stamp }
         if let digest { self.digest = digest }
         if clean || loaded != nil { (dirty, unsent) = (false, false) }
@@ -1205,8 +1186,12 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         if reopened { reopened = false; host?.changed(self) }
         cover = nil
         if url != nil, language == nil { language = Syntax.language(forFileName: name, firstLine: String(text.prefix(200).split(separator: "\n").first ?? "")) }
-        if let d = lastSelection { textView.setSelectedRange(NSRange(location: min(d.0, (text as NSString).length), length: 0)); frame.scroll.contentView.scroll(to: NSPoint(x: 0, y: d.1)) }
-        if host.active === self, window?.isKeyWindow == true { shown() }
+        if let d = lastSelection {   // x as it is: the line numbers sit over the clip view, the text inset from them (x < 0)
+            let clip = frame.scroll.contentView
+            textView.setSelectedRange(NSRange(location: min(d.0, (text as NSString).length), length: 0))
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: d.1))
+        }
+        if host.shows(self), window?.isKeyWindow == true { shown() }
     }
     /// Where its caret and scroll were (restored).
     var lastSelection: (Int, CGFloat)?
@@ -1316,7 +1301,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         saving = true
         defer {
             saving = false
-            textView.isEditable = cover == nil
+            editable(cover == nil)
         }
         return await work()
     }
@@ -1365,11 +1350,17 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         Task { await app.diff(AppDelegate.DiffSide(path: tmp + "/" + name, name: "\(name) (your draft)"), AppDelegate.DiffSide(path: url.path), in: app.active) }
     }
 
-    /// The cover over its text, with what it says and its button (↩).
+    /// The cover over its text in every view, with what it says and its button (↩).
     private func showCover() {
-        textView.isEditable = cover == nil && !saving
+        editable(cover == nil && !saving)
+        views.forEach { $0.frame.cover = coverView() }
+        if host?.active === self { window?.makeFirstResponder(focus) }
+        sayPosition()
+    }
+
+    private func coverView() -> NSView? {
         let place = server.map { SavedServer.name(for: $0.target) } ?? ""
-        frame.cover = switch cover {
+        return switch cover {
             case nil: nil
             case .loading?: Banner(cover: "Reading “\(name)”…", [])
             case .parked?: Banner(cover: "Not connected to \(place)", [("Open", { [weak self] in self?.connect() })])
@@ -1377,9 +1368,15 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
             case .unreadable(let moved)?: Banner(cover: "This draft couldn't be read" + (moved.map { " · kept in \(($0 as NSString).abbreviatingWithTildeInPath)" } ?? ""),
                                                  moved.map { m in [("Show in Finder", { @MainActor in NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: m)]) })] } ?? [])
         }
-        if host?.active === self { window?.makeFirstResponder(focus) }
-        sayPosition()
     }
+
+    /// A line over its text in every view (a restored draft whose file changed or went), with its buttons.
+    private var notice: (text: String, actions: [(String, @MainActor () -> Void)])? {
+        didSet { views.forEach { $0.frame.banner = notice.map { Banner($0.text, $0.actions) } } }
+    }
+
+    /// Typing on or off in every view (a save, a rename, a cover).
+    private func editable(_ on: Bool) { views.forEach { $0.text.isEditable = on } }
 
     /// The mark before its tab's name: ● changed, ↑ saved here but not on its server, ! its draft not written.
     var mark: NSAttributedString? {
@@ -1404,7 +1401,10 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         host?.update(self)
     }
     /// The status line alone (after each draft written: the tabs once for all).
-    func sayState() { frame.text = [encodingName, stateWords].filter { !$0.isEmpty }.joined(separator: " · ") }
+    func sayState() {
+        let said = [encodingName, stateWords].filter { !$0.isEmpty }.joined(separator: " · ")
+        views.forEach { $0.frame.text = said }
+    }
 }
 
 /// ⎋ outside the find bar: back to the panels (`Editor.escape`) — NSTextView would otherwise show word completions.
@@ -1482,6 +1482,99 @@ final class EditorTextView: NSTextView {
     }
 }
 
+/// One view of a document: its text over the document's storage, with its own layout, caret, scroll, find bar, line
+/// numbers and status line. Its controller's place in the responder chain takes ⌘S, Save As… and Final Newline to the
+/// document, whichever view has the keys.
+@MainActor
+final class DocView: NSViewController, NSMenuItemValidation {
+    unowned let doc: Editor
+    let frame: DocFrame, text: EditorTextView, ruler: LineNumberRuler
+    /// The pane it shows in (a tool's window has one); nil: not placed yet, or put by till its document shows again.
+    weak var pane: EditorHost.Pane?
+
+    init(_ doc: Editor, side: NSView? = nil) {
+        self.doc = doc
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        frame = DocFrame(scroll, size: NSSize(width: 900, height: 640), side: side)
+        // TextKit 1 by hand — the line-number ruler needs it — over the document's storage, which another view may share.
+        let layout = NSLayoutManager(), box = NSTextContainer(size: NSSize(width: scroll.contentSize.width, height: .greatestFiniteMagnitude))
+        layout.allowsNonContiguousLayout = true   // lays out what's on screen, not the whole text first: typing at the top of a 30 MB log stays quick
+        layout.addTextContainer(box)
+        doc.storage.addLayoutManager(layout)
+        text = EditorTextView(frame: NSRect(origin: .zero, size: scroll.contentSize), textContainer: box)
+        text.minSize = NSSize(width: 0, height: scroll.contentSize.height)
+        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        text.isVerticallyResizable = true
+        text.autoresizingMask = [.width]
+        box.widthTracksTextView = true
+        text.isRichText = false
+        text.allowsUndo = true
+        text.usesFindBar = true
+        text.isIncrementalSearchingEnabled = true
+        text.textContainerInset = NSSize(width: 4, height: 4)
+        // Config files and scripts must stay byte-exact: no smart quotes, dashes or autocorrect.
+        text.isAutomaticQuoteSubstitutionEnabled = false
+        text.isAutomaticDashSubstitutionEnabled = false
+        text.isAutomaticTextReplacementEnabled = false
+        text.isAutomaticSpellingCorrectionEnabled = false
+        text.isContinuousSpellCheckingEnabled = false
+        text.delegate = doc   // its Undo is the document's (`undoManager(for:)`)
+        scroll.documentView = text
+        ruler = LineNumberRuler(textView: text)
+        scroll.verticalRulerView = ruler
+        scroll.hasVerticalRuler = true
+        scroll.rulersVisible = true
+        super.init(nibName: nil, bundle: nil)
+        view = frame
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc func saveDocument(_ sender: Any?) { doc.saveDocument(sender) }
+    @objc func saveDocumentAs(_ sender: Any?) { doc.saveDocumentAs(sender) }
+    @objc func toggleFinalNewline(_ sender: Any?) { doc.toggleFinalNewline(sender) }
+    func validateMenuItem(_ item: NSMenuItem) -> Bool { doc.validateMenuItem(item) }
+    override func cancelOperation(_ sender: Any?) { doc.cancelOperation(sender) }
+}
+
+// MARK: - Views
+
+extension Editor {
+    /// A view of it shows in a window: its pane's tab shown, or a tool's window.
+    var onScreen: Bool { views.contains { $0.frame.window != nil } }
+
+    /// Its view in `pane`, made if there's none: its first, not placed yet, goes there; else a new one over the same
+    /// text — the caret where the current one's is, the cover, line, state and settings as the others have them.
+    func view(in pane: EditorHost.Pane) -> DocView {
+        if let v = views.first(where: { $0.pane === pane }) { return v }
+        if let v = views.first(where: { $0.pane == nil }) { v.pane = pane; return v }
+        let v = DocView(self), was = current!
+        v.pane = pane
+        views.append(v)
+        applyFont(only: v)
+        applyView(only: v)
+        v.text.isEditable = was.text.isEditable
+        v.frame.cover = coverView()
+        v.frame.banner = notice.map { Banner($0.text, $0.actions) }
+        v.text.setSelectedRange(was.text.selectedRange())
+        sayState()
+        sayPosition(v)
+        return v
+    }
+
+    /// Its view in `pane` gone, with its layout (a clone's closed, a Join's); its last is put by, for the pane it shows
+    /// in next.
+    func dropView(in pane: EditorHost.Pane) {
+        guard let i = views.firstIndex(where: { $0.pane === pane }) else { return }
+        let v = views[i]
+        v.frame.removeFromSuperview()
+        guard views.count > 1 else { v.pane = nil; return }
+        views.remove(at: i)
+        v.text.layoutManager.map(storage.removeLayoutManager)
+        if current === v { current = views[0] }
+    }
+}
+
 // MARK: - Typing and moving around
 
 extension Editor {
@@ -1499,26 +1592,31 @@ extension Editor {
     static func toggleWrap() { UserDefaults.standard.set(!wraps, forKey: "editorWrap"); open.forEach { $0.applyView() } }
     static func toggleInvisibles() { UserDefaults.standard.set(!invisibles, forKey: "editorInvisibles"); open.forEach { $0.applyView() } }
 
-    /// Its text at `fontSize`, a tab `LineEdit.tabWidth` columns wide, the line numbers to match.
-    private func applyFont() {
+    /// Its text at `fontSize`, a tab `LineEdit.tabWidth` columns wide, the line numbers to match; `only`: a new view's
+    /// typing and numbers (the storage has them).
+    fileprivate func applyFont(only: DocView? = nil) {
         let font = NSFont.monospacedSystemFont(ofSize: Self.fontSize, weight: .regular), p = NSMutableParagraphStyle()
         p.tabStops = []
         p.defaultTabInterval = CGFloat(LineEdit.tabWidth) * ("0" as NSString).size(withAttributes: [.font: font]).width
-        textView.font = font
-        textView.defaultParagraphStyle = p
-        textView.typingAttributes[.paragraphStyle] = p
-        if text.length > 0 { textView.textStorage?.addAttribute(.paragraphStyle, value: p, range: NSRange(location: 0, length: text.length)) }
-        ruler.fontSize = Self.fontSize * 10 / 12
+        for v in only.map({ [$0] }) ?? views {
+            v.text.defaultParagraphStyle = p
+            v.text.typingAttributes[.font] = font
+            v.text.typingAttributes[.paragraphStyle] = p
+            v.ruler.fontSize = Self.fontSize * 10 / 12
+        }
+        if only == nil, text.length > 0 { storage.addAttributes([.font: font, .paragraphStyle: p], range: NSRange(location: 0, length: text.length)) }
     }
 
-    private func applyView() {
-        textView.setWraps(Self.wraps)
-        textView.layoutManager?.showsInvisibleCharacters = Self.invisibles
-        textView.tabMarks = Self.invisibles
+    fileprivate func applyView(only: DocView? = nil) {
+        for v in only.map({ [$0] }) ?? views {
+            v.text.setWraps(Self.wraps)
+            v.text.layoutManager?.showsInvisibleCharacters = Self.invisibles
+            v.text.tabMarks = Self.invisibles
+        }
     }
 
     /// Its text as the text view keeps it: no copy (`string` copies all of it).
-    private var text: NSMutableString { textView.textStorage!.mutableString }
+    private var text: NSMutableString { storage.mutableString }
 
     /// What Tab puts in: View ▸ Indentation's pick, else the text's way, else its language's (`LineEdit.indent(for:)`).
     var indent: LineEdit.Indent {
@@ -1533,10 +1631,12 @@ extension Editor {
         sayPosition()
     }
 
-    /// "Ln 12, Col 5 · 3 lines, 120 selected · Spaces: 4", right of the status line. Col counts columns, a tab to the next stop.
-    func sayPosition() {
-        guard cover == nil else { frame.position = ""; return }
-        let sel = textView.selectedRange(), starts = ruler.starts
+    /// "Ln 12, Col 5 · 3 lines, 120 selected · Spaces: 4", right of each view's status line. Col counts columns, a tab
+    /// to the next stop.
+    func sayPosition() { views.forEach(sayPosition) }
+    fileprivate func sayPosition(_ v: DocView) {
+        guard cover == nil else { v.frame.position = ""; return }
+        let sel = v.text.selectedRange(), starts = v.ruler.starts
         let line = LineNumberRuler.line(of: sel.location, in: starts), n = sel.location - starts[line]
         let col = n > 10_000 ? n : LineEdit.column(text.substring(with: NSRange(location: starts[line], length: n)))   // ponytail: a longer line's start counts characters
         var words = ["Ln \(line + 1), Col \(col + 1)"]
@@ -1545,20 +1645,21 @@ extension Editor {
             words.append((lines > 1 ? "\(lines) lines, " : "") + "\(sel.length) selected")
         }
         words.append(indent == .tabs ? "Tabs" : "Spaces: \(indent.width)")
-        frame.position = words.joined(separator: " · ")
+        v.frame.position = words.joined(separator: " · ")
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {
-        guard frame.window != nil else { return }   // a tab not shown (twenty restored at launch): `shown` says it
-        sayPosition()
-        markBrackets()
+        // A tab not shown (twenty restored at launch): `shown` says it.
+        guard let v = views.first(where: { $0.text === notification.object as? NSTextView }), v.frame.window != nil else { return }
+        sayPosition(v)
+        markBrackets(v)
     }
 
     /// The bracket just before the caret (else just after it) and its pair, lit.
-    private func markBrackets() {
-        let sel = textView.selectedRange(), text = text
+    private func markBrackets(_ v: DocView) {
+        let sel = v.text.selectedRange(), text = text
         let at = sel.length > 0 ? nil : [sel.location - 1, sel.location].lazy.compactMap { i in LineEdit.matchingBracket(text, at: i).map { (i, $0) } }.first
-        textView.brackets = at.map { [NSRange(location: $0.0, length: 1), NSRange(location: $0.1, length: 1)] } ?? []
+        v.text.brackets = at.map { [NSRange(location: $0.0, length: 1), NSRange(location: $0.1, length: 1)] } ?? []
     }
 
     /// ↩ keeps the line's indent (one more after an opening bracket, or ":" in YAML and Python), Tab puts in the
