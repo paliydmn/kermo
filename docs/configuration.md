@@ -14,7 +14,7 @@ Where Kermo keeps its settings, the formats of the files you can edit, and the `
 | Appearance | The themes, each with a preview: a click uses it (`theme`; **View ▸ Theme…** previews them as you move through the list); Permissions & Owner columns (`showPerms`); how long to hold a modifier before the key bar shows its keys (`keyBarHoldDelay`) |
 | Keys | Every command with its keys; see [Keymap](#keymap) |
 | Terminal | Font and size (`terminalFont`, `terminalFontSize`); the drawer's height (`terminalDrawerHeight`, by dragging its line); Option is Meta (`terminalOptionIsMeta`); Selecting text copies it and Right-click pastes (`terminalCopyOnSelect`, `terminalRightClickPaste`: both use the clipboard); the app for ⌥⌘T and ⌘↩ (`terminalBundleID`) |
-| Editor & Viewer | The editor for files on this Mac (`editorBundleID`); End with a newline (`editorFinalNewline`); Line numbers (`viewerLineNumbers`); the tool that compares files (`diffCommand`) |
+| Editor & Viewer | The editor for files on this Mac (`editorBundleID`); End with a newline (`editorFinalNewline`); the editor's text size (`editorFontSize`), Wrap lines (`editorWrap`), Show invisibles (`editorInvisibles`); Line numbers (`viewerLineNumbers`); the tool that compares files (`diffCommand`) |
 | Servers & Safety | Keep a production log (`auditLog`) and Show it; Keep earlier versions of saved server files (`serverHistory`); Checks before saving (**Edit…**); **Edit SSH Config…**; how long the sudo password is kept |
 | Monitor | Whether macOS lets Kermo [notify](tools.md#notifications) and **Open System Settings**; a command to run on critical alerts (`onAlert`) and **Send Test**; keep this Mac awake on power while something is watched (`monitorKeepAwake`); watch three times less often on battery (`monitorSlowOnBattery`). Thresholds are in the Tools window |
 | Advanced | **Edit…** for `keymap.json`, `usermenu.json`, `validators.json` and `filters.json`; **Open** the config folder; **Reload Config** |
@@ -97,6 +97,9 @@ Set an option in [Settings](#settings), or with `defaults write com.dmn.dfileman
 | `editorBundleID` | bundle id | built-in editor | External editor used instead of the [built-in one](viewer-editor.md) for files on this Mac (server files always open in the built-in editor) |
 | `editorHotKey` | shortcut, as in [`keymap.json`](#keymap) | none (off) | A shortcut for a [new editor document from any app](viewer-editor.md#from-any-app), for example `ctrl+cmd+e`: it needs ⌃ or ⌘. Read at launch; Settings sets it at once and says when it's refused |
 | `editorFinalNewline` | `-bool` | config files only | Whether new editor windows end saved text with a newline; **File ▸ Ensure Final Newline** overrides it per window |
+| `editorFontSize` | points | 12 | The editor's text size, 8–36 (⌘+ / ⌘− in an editor save it) |
+| `editorWrap` | `-bool` | `true` | Long lines wrap in the editor; `false` runs them on to the right (**View ▸ Wrap Lines**, ⌥Z) |
+| `editorInvisibles` | `-bool` | `false` | The editor marks spaces and tabs (**View ▸ Show Invisibles**) |
 | `diffCommand` | command | built-in diff | Tool for [comparing files](search-compare.md), for example `'code --diff %1 %2'` (a server's file comes as its local copy) |
 | `serverHistory` | `-bool` | `true` | `false` keeps no [versions of server files](server-files.md#file-history) |
 | `updateCheckOff` | `-bool` | `false` | `true`: Kermo doesn't [check for updates](install.md#updates) by itself (**Kermo ▸ Configuration ▸ Check for Updates Automatically** sets it) |

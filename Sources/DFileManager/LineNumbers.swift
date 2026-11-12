@@ -6,6 +6,8 @@ final class LineNumberRuler: NSRulerView {
     private var lineStarts: [Int]?   // UTF-16 offsets of line starts: moved along by edits, built in full when nil
     /// Lines before the text's first (a followed log's that dropped off the top): numbers go on from there.
     var firstLine = 0
+    /// Its numbers' size (the editor's text size follows ⌘= / ⌘−).
+    var fontSize: CGFloat = 10 { didSet { needsDisplay = true } }
 
     init(textView: NSTextView) {
         super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
@@ -38,12 +40,7 @@ final class LineNumberRuler: NSRulerView {
     /// `delta` how much longer the text got. The lines from the one before the edit (a "\r" there may now pair with a
     /// "\n") are looked at again until a line start lines up with an old one past the edit: the rest only moves.
     static func lineStarts(_ starts: [Int], _ text: NSString, edited: NSRange, delta: Int) -> [Int] {
-        let from = max(0, edited.location - 1)
-        var lo = 0, hi = starts.count - 1   // the last start at or before `from`
-        while lo < hi {
-            let mid = (lo + hi + 1) / 2
-            if starts[mid] <= from { lo = mid } else { hi = mid - 1 }
-        }
+        let lo = line(of: max(0, edited.location - 1), in: starts)   // the last start at or before the edit's line
         let oldEnd = NSMaxRange(edited) - delta
         var j = lo + 1
         return scan(text, from: starts[lo], into: Array(starts[...lo])) { i in
@@ -69,9 +66,22 @@ final class LineNumberRuler: NSRulerView {
         let s = lineStarts!
         // Widen the gutter for files with many lines.
         let digits = max(3, String(s.count).count)
-        let width = CGFloat(digits) * 8 + 14
+        let width = CGFloat(digits) * fontSize * 0.8 + 14
         if abs(ruleThickness - width) > 1 { ruleThickness = width }
         return s
+    }
+
+    /// Where its text's lines start, kept as edits come (the editor's Ln and Go to Line).
+    var starts: [Int] { (clientView as? NSTextView)?.textStorage.map { starts($0.mutableString) } ?? [0] }
+
+    /// The index in `starts` of the line `offset` is on.
+    static func line(of offset: Int, in starts: [Int]) -> Int {
+        var lo = 0, hi = starts.count - 1
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if starts[mid] <= offset { lo = mid } else { hi = mid - 1 }
+        }
+        return lo
     }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
@@ -82,15 +92,9 @@ final class LineNumberRuler: NSRulerView {
         let lines = starts(text)
         let glyphs = lm.glyphRange(forBoundingRect: tv.visibleRect, in: tc)
         let chars = lm.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
-        // First visible line: binary search in line starts.
-        var lo = 0, hi = lines.count - 1
-        while lo < hi {
-            let mid = (lo + hi + 1) / 2
-            if lines[mid] <= chars.location { lo = mid } else { hi = mid - 1 }
-        }
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor]
-        var line = lo
+            .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor]
+        var line = Self.line(of: chars.location, in: lines)   // the first one shown
         while line < lines.count, lines[line] <= NSMaxRange(chars) {
             let y: CGFloat
             if lines[line] < text.length {

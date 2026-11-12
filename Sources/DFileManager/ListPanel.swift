@@ -655,7 +655,7 @@ extension AppDelegate {
     static func runsInList(_ id: String) -> Bool {
         listOwn.contains(id) || id.hasPrefix("panel.focus")
             || ["panel.switch", "panel.add", "panel.close", "admin.auditLog", "admin.rootPanel", "admin.userPanel", "usermenu.edit", "validators.edit"].contains(id)
-            || !listRefuses.contains(id) && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term", "editor"].contains(String(id.prefix { $0 != "." }))
+            || !listRefuses.contains(id) && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term", "editor", "text"].contains(String(id.prefix { $0 != "." }))
     }
     static let listRefuses: Set<String> = ["go.tree", "go.linktarget", "go.bookmark", "go.path", "view.dirsizes", "view.filterPresets", "view.gitOnly",
                                            "view.sort.name", "view.sort.size", "view.sort.mtime", "view.sort.reverse", "server.history"]

@@ -41,11 +41,27 @@ These keys work in text mode only (`g` also in hex mode), and stop while `f` fol
 
 Press F4 (⌥4) on a file. It opens text files up to 32 MB in a tab of the editor window; a binary or larger file is refused, and the message points to the viewer. F4 on a file that's already open, on this Mac or on the same server as the same user, chooses its tab: one file, one tab.
 
-The window's title is the shown tab's file name with where it is under it, as the viewer's; the status line says the encoding and what's saved where (and, for a few seconds, a save's note); the key bar shows ⎋ and the menu keys that work there. The toolbar has **Final Newline** (lit while on, as the menu's checkmark) and, for a server's file, **Server File History…**.
+The window's title is the shown tab's file name with where it is under it, as the viewer's; the status line says the encoding and what's saved where (and, for a few seconds, a save's note), and at its right where the caret is — `Ln 12, Col 5`, what's selected (`3 lines, 120 selected`) and what Tab puts in (`Spaces: 4` or `Tabs`); the key bar shows ⎋ and the menu keys that work there. The toolbar has **Final Newline** (lit while on, as the menu's checkmark) and, for a server's file, **Server File History…**.
 
 - Line numbers show in the margin.
 - Syntax colors cover shell, Python, JSON, YAML, INI-style files (`.ini`, `.toml`, `.cfg`, `.properties`, `.service`), `.conf`, XML (plist, HTML, SVG), Dockerfile, Makefile and C-style languages (Swift, C, C++, JavaScript, TypeScript, Go, Rust, Java and others). The file name or a `#!` line picks the language. A text over 2 MB gets no colors. The viewer colors files by name the same way.
 - ⌘F opens the find bar, which also replaces. ⌘G finds the next match.
+- The caret's line is lit, and so is a bracket next to the caret with its pair.
+
+### Typing and moving around
+
+These work in the editor window and in the [tools' editor](tools.md#your-own-tools). Each change is one ⌘Z.
+
+- ⌘L (**Go to Line…** in the Go menu, where the panels have Go to Path…) asks for a line, `120`, or a line and its column, `120:8` (counted as the status line's Col: a tab takes four), and flashes it.
+- ↩ starts the new line at the indent of the one before, one step further after `{`, `[` or `(` — and in YAML and Python after a `:` that ends the line. Between a pair of brackets the closing one goes to a line of its own.
+- Tab puts in what the file indents with: tabs, or spaces up to the next step (2 or 4, by its lines). A file with no indented lines follows its language: 2 spaces in YAML and JSON, a tab in a Makefile, else 4 spaces. YAML never gets a tab. **View ▸ Indentation** picks **Tabs**, **2 Spaces** or **4 Spaces** for the shown tab. A tab takes four columns.
+- Tab on lines selected indents them all; ⇧Tab takes one step off the caret's line or the lines selected.
+- ⌘/ (**Toggle Comment** in the View menu, where the panels have Filter Presets…) comments the lines out at their least indent — `#` in shell, Python, YAML, INI-style and config files and in a file with no extension (`hosts`, a crontab, an Untitled), `;` in an `.ini` file, `//` in C-style languages, `<!-- -->` in XML — or takes it off when every line that isn't blank has it. XML lines commented one by one come off one by one. JSON has no comments, and a file of an extension Kermo has no colors for gets no guess: it beeps.
+- ⌥↑ and ⌥↓ move the lines up or down, ⌥⇧↓ and ⌥⇧↑ duplicate them below or above, ⇧⌘K deletes them (**Edit ▸ Lines**). With several selections (⌘-drag) they take the first one's lines. A line of a file with mixed line ends keeps its own.
+- ⌘+ and ⌘− make the text bigger or smaller in every editor, line numbers too (the terminal's own keys elsewhere); Kermo remembers the size.
+- ⌥Z (**View ▸ Wrap Lines**) wraps long lines at the window's edge, or lets them run on to the right; on at first, and remembered.
+- **View ▸ Show Invisibles** marks spaces and tabs (→), to tell them apart in YAML or a Makefile.
+- Settings › Editor & Viewer has the text size, Wrap lines and Show invisibles too.
 - ⌘S (**File ▸ Save**) saves. Mode, owner, extended attributes, a UTF-8 BOM and CRLF line ends stay as they were. The new text goes into a temporary file that then replaces the old one whole, and the folder is flushed to the disk too, so a power cut right after doesn't bring the old file back. A file with more than one hard link, someone else's file, or one in a folder you can't write is written into instead, so its links and owner stay. Its old text is copied first to `~/.config/dfilemanager/saves.noindex/` (yours only). The new text then goes over it and is cut to length only at the end. If the write fails on the way (a full disk), the old text is put back and the message says so; the copy goes once the file is whole. If Kermo or the Mac stops midway, the copy stays, and every launch names it until you delete it. When there's nowhere to keep the copy, the save goes ahead and the status line says so; when the disk is full, nothing is written, since the write itself could stop midway too: free some space, or use **Save As…** to another disk.
 
 > [!WARNING]

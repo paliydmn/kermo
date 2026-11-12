@@ -672,18 +672,7 @@ final class Viewer: NSWindowController, NSWindowDelegate, NSToolbarDelegate, NSS
         sliding = true
         defer { sliding = wasSliding }
         wrap = on
-        if on {
-            scroll.hasHorizontalScroller = false
-            textView.isHorizontallyResizable = false
-            tc.widthTracksTextView = true
-            tc.containerSize = NSSize(width: scroll.contentSize.width, height: .greatestFiniteMagnitude)
-            textView.frame.size.width = scroll.contentSize.width
-        } else {
-            scroll.hasHorizontalScroller = true
-            textView.isHorizontallyResizable = true
-            tc.widthTracksTextView = false
-            tc.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
-        }
+        textView.setWraps(on)
         if let keep { scroll(toChar: keep, delta: 0, dx: -tc.lineFragmentPadding - textView.textContainerOrigin.x) }
         showSwitches()
     }
@@ -904,20 +893,7 @@ extension Viewer {
 
     // MARK: Go to / find in the whole file
 
-    private func ask(_ message: String, value: String, then: @escaping (String) -> Void) {
-        guard let window else { return }
-        let alert = NSAlert()
-        alert.messageText = message
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(string: value)
-        field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        alert.beginSheetModal(for: window) { r in
-            MainActor.assumeIsolated { if r == .alertFirstButtonReturn { then(field.stringValue) } }
-        }
-    }
+    private func ask(_ message: String, value: String, then: @escaping (String) -> Void) { window?.ask(message, value: value, then: then) }
 
     fileprivate func goToDialog() {
         let size = big?.count ?? ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0)
@@ -1046,5 +1022,24 @@ final class TextPeek: NSScrollView {
         }
         rulersVisible = numbers
         ruler?.invalidate()
+    }
+}
+
+extension NSWindow {
+    /// A sheet with one field (the viewer's `g`, `&`, `/`; the editor's Go to Line); `then` gets what was typed on OK.
+    func ask(_ message: String, info: String = "", value: String = "", placeholder: String = "", ok: String = "OK", then: @escaping (String) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = info
+        alert.addButton(withTitle: ok)
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: value)
+        field.placeholderString = placeholder
+        field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: self) { r in
+            MainActor.assumeIsolated { if r == .alertFirstButtonReturn { then(field.stringValue) } }
+        }
     }
 }

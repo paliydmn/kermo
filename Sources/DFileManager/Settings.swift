@@ -92,6 +92,10 @@ extension AppDelegate {
                             control: .choice(Self.apps(Self.textEditors, keeping: defaults.string(forKey: "editorBundleID"), first: ("Kermo", nil)), segmented: false)),
                 SettingsRow(title: "End with a newline", note: "For new editor windows; File ▸ Ensure Final Newline changes one", key: "editorFinalNewline",
                             control: .choice([("Config files", nil), ("Always", true), ("Never", false)], segmented: true)),
+                SettingsRow(title: "Text size", note: "⌘+ and ⌘− in an editor change it too", key: "editorFontSize", control: .number(8...36, step: 1, value: 12, unit: "pt"),
+                            apply: { _ in Editor.zoom(by: 0) }),
+                SettingsRow(title: "Wrap lines", note: "View ▸ Wrap Lines (⌥Z) in an editor", key: "editorWrap", control: .command("text.wrap")),
+                SettingsRow(title: "Show invisibles", note: "Spaces and tabs marked", key: "editorInvisibles", control: .command("text.invisibles")),
             ]),
             ("Viewer", [
                 SettingsRow(title: "Line numbers", note: "For the next viewer; l switches them in one", key: "viewerLineNumbers", control: .toggle(false)),

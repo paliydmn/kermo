@@ -1320,7 +1320,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// A list's own `?` and `:` are type-select's anywhere else.
     func runKey(_ event: NSEvent) -> Bool {
         let key = Shortcut(event: event)
-        guard let c = keymap[key], !Self.listOnly.contains(c.id) || !terminalActive && activePanel?.list != nil else { return false }
+        guard let c = keymap[key], !Self.listOnly.contains(c.id) || !terminalActive && activePanel?.list != nil,
+              !c.id.hasPrefix("text.") else { return false }   // an editor's (⌥↑): the panel's own key here
         perform(c, key: key)
         return true
     }
@@ -1342,7 +1343,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// app's windows; ↩ connects. The rest would act on the local folder behind it.
     static func runsParked(_ id: String) -> Bool {
         parkedRuns.contains(id) || id.hasPrefix("panel.focus")
-            || !parkedRefuses.contains(id) && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term", "editor"].contains(String(id.prefix { $0 != "." }))
+            || !parkedRefuses.contains(id) && ["go", "tab", "view", "app", "help", "ssh", "server", "tunnel", "term", "editor", "text"].contains(String(id.prefix { $0 != "." }))
     }
     static let parkedRuns: Set<String> = ["open", "open.inside", "panel.switch", "panel.add", "panel.close", "admin.rootPanel", "admin.userPanel",
                                           "admin.auditLog", "admin.sudoTouchID", "usermenu.edit", "validators.edit"]
@@ -1354,7 +1355,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     private func perform(_ c: Command, key: Shortcut? = nil) {
         // The app's own from another window (⌘N in an editor) run as they are, not as a list's row.
-        if !terminalActive, !Self.appWide.contains(c.id) || Self.windowToClose(key: NSApp.keyWindow, main: window) == nil {
+        // From an editor (⌘L its Go to Line): not a list's row's or a parked tab's in the main window.
+        if !terminalActive, textEditor == nil, !Self.appWide.contains(c.id) || Self.windowToClose(key: NSApp.keyWindow, main: window) == nil {
             if let list = active.list, listRun(c, key: key, in: list) { return keyBar.commandRan(c.id) }
             if let hint = active.parkedHint, !Self.runsParked(c.id) { return active.flash(hint) }
             if let hint = other.parkedHint ?? other.listHint, Self.toOther.contains(c.id) { return active.flash("The other panel: " + hint) }
@@ -1382,6 +1384,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if ["file.view", "file.edit", "go.path"].contains(id) { item.title = c?.title ?? item.title }   // a list names them for its rows (below)
         if id == "file.trash" { item.title = (activePanel.map { ($0.remote ?? $0.parked) != nil } ?? false) ? "Delete…" : c?.title ?? item.title }   // no Trash on a server
         if id == "file.copy" { item.title = activePanel?.archive != nil ? "Extract To…" : c?.title ?? item.title }   // F5 in an archive
+        if let t = Self.editorTitles[id] {   // a panel command's key in an editor: its branch there
+            item.title = textEditor != nil ? t : c?.title ?? item.title
+            if textEditor != nil { return true }
+        }
+        if id.hasPrefix("text.") { return textEditor != nil }
         if id.hasPrefix("tab.") || Self.editorTabs.contains(id) {   // the editor window's tabs: its own (D-101: none from another)
             if editorKey != nil { item.title = c?.title ?? item.title; return true }
             if Self.editorTabs.contains(id) { return false }
@@ -1405,6 +1412,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                                        "editor.new", "editor.show"]
     /// What works only in the editor window: its tabs, hiding it.
     static let editorTabs: Set<String> = ["editor.close", "editor.tab.left", "editor.tab.right", "editor.tabs"]
+    /// Panel commands whose keys an editor takes for its text, and what they're called there (D-101: one key, one command).
+    static let editorTitles = ["go.path": "Go to Line…", "view.filterPresets": "Toggle Comment", "term.bigger": "Bigger Text", "term.smaller": "Smaller Text"]
+    /// An editor while it's key — the editor window's shown tab, or a tool's: what `text.*` and `editorTitles` act on.
+    var textEditor: Editor? { EditorHost.shown(in: NSApp.keyWindow) }
     /// The editor window, while it's key (its tabs take ⌘T, ⌘W, ⌃Tab).
     var editorKey: EditorHost? { Self.editor(key: NSApp.keyWindow) }
     static func editor(key: NSWindow?) -> EditorHost? { (key?.windowController as? EditorHost).flatMap { $0.tabbed ? $0 : nil } }

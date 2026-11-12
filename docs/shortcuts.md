@@ -145,6 +145,8 @@ In the command line, ↑↓ browse its history. On a local panel ↩ runs the li
 | Editor: new document (Untitled, from any Kermo window) / save / save as / find and replace | ⌘N / ⌘S / ⇧⌘S / ⌘F |
 | Editor: new document from any app (off at first: Settings › General) | ⌃⌘E, or the key you record ([from any app](viewer-editor.md#from-any-app)) |
 | Editor: new tab / close tab / next, previous tab / hide the window (tabs kept) / back to the panels | ⌘T / ⌘W / ⌃Tab or ⇧⌘], ⌃⇧Tab or ⇧⌘[ / ⇧⌘W / ⎋ |
+| Editor: go to line / comment out or back / bigger, smaller text / wrap lines | ⌘L / ⌘/ / ⌘+, ⌘− / ⌥Z |
+| Editor: move lines up, down / duplicate them below, above / delete them / indent, outdent the lines selected | ⌥↑, ⌥↓ / ⌥⇧↓, ⌥⇧↑ / ⇧⌘K / Tab, ⇧Tab |
 | Output window: stop, then close / run again / copy all / save / [send to a tool](tools.md#send-to) | ⎋ / ⌘R / ⌘C / ⌘S / F2 |
 
 The keys for large files work only in text mode, not while the file is followed (`f`) or filtered (`&`); in hex mode only `g` works. More in [Viewer and editor](viewer-editor.md).
