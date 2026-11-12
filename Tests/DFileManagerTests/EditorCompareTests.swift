@@ -181,6 +181,18 @@ extension EditorWindowTests {
         #expect(h.comparison == nil && !h.docs.contains { $0 === snap } && h.panes.count == 1, "the copy closed, its pane with it")
         #expect(doc.current.text.compared == nil && doc.current.ruler.compared == nil && doc.current.text.layoutManager?.delegate == nil)
 
+        // Typed, and before it's worked out again: an old block past the shorter text's end — nothing breaks.
+        let tail = copy("1\n2\n3\n4\n5\n6\nA\nB\n")
+        h.compare(old: tail, new: doc, snapshots: [tail])
+        let t = try #require(h.comparison)
+        try await worked(t)
+        #expect(t.blocks == [TextDiff.Block(old: 6..<8, new: 6..<6)])
+        doc.current.text.insertText("", replacementRange: NSRange(location: 6, length: 6))   // "4\n5\n6\n" gone
+        t.regap()
+        a.run("term.pane.down")
+        try await until("worked out anew") { t.blocks == [TextDiff.Block(old: 3..<8, new: 3..<3)] }
+        a.run("editor.compare.stop")
+
         let other = Editor.untitled()
         other.textView.insertText("1\n2\n", replacementRange: NSRange(location: 0, length: 0))
         h.compare(old: other, new: doc)

@@ -121,8 +121,9 @@ final class Comparison: NSObject {
     var snapshots: [Editor]
     private(set) var blocks: [TextDiff.Block] = []
     private(set) var paused = false
-    /// The last result, for the blank space again (Wrap, a new width, the text size).
+    /// The last result, for the blank space again (Wrap, a new width, the text size), and the texts' edits it was of.
     private var last: TextDiff.Result?
+    private var lastEdits = (0, 0)
     /// Over the budget (`TextDiff.cost`): no colors, its status lines say so and offer `diff -u`.
     private(set) var tooBig = false
     private var running = false, again = false, syncing = false, due = 0
@@ -239,6 +240,7 @@ final class Comparison: NSObject {
             running = false
             guard host?.comparison === self, !paused, old.view?.doc === a, new.view?.doc === b else { return }
             if again || a.edits != ea || b.edits != eb { again = false; return recompute() }
+            lastEdits = (ea, eb)
             show(r)
         }
     }
@@ -261,6 +263,7 @@ final class Comparison: NSObject {
     /// Lines, characters and blank space on both views from the last result.
     func regap() {
         guard let r = last, let va = old.view, let vb = new.view else { return sides.forEach { set($0, lines: [], chars: [], gaps: [:], top: 0) } }
+        guard (va.doc.edits, vb.doc.edits) == lastEdits else { return }   // typed since: what shows was moved along (`shift`), the next result regaps
         var gaps: [[Int: CGFloat]] = [[:], [:]], tops: [CGFloat] = [0, 0], lines: [[(NSRange, Kind, Int)]] = [[], []]
         for (k, b) in r.blocks.enumerated() {
             let pairs = min(b.old.count, b.new.count)
@@ -356,7 +359,8 @@ final class Comparison: NSObject {
         if !r.isEmpty { return y(ofLine: r.lowerBound, in: v) }
         let next = y(ofLine: r.lowerBound, in: v)
         guard r.lowerBound > 0 else { return next - s.top }
-        return next - (s.gaps[v.ruler.starts[r.lowerBound - 1]] ?? 0)
+        let starts = v.ruler.starts   // a block from before the latest typing may be past the text's end now
+        return next - (starts.indices.contains(r.lowerBound - 1) ? s.gaps[starts[r.lowerBound - 1]] ?? 0 : 0)
     }
 
     /// The block whose lines on that side hold `line` (a block with none there: at the line after its space).
