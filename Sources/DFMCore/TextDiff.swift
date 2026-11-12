@@ -133,6 +133,27 @@ public enum TextDiff {
         return out
     }
 
+    /// Copy Change: what makes lines `to.range` of the target text read as lines `from.range` of the source — the range to
+    /// replace there and the text to put in. Lines as `lines` gives them (without line ends): the source's lines with
+    /// what's between them; a block one side lacks goes in (or out) with one line end, at the end of the text before it.
+    public static func carry(from: (text: NSString, lines: [NSRange], range: Range<Int>),
+                             to: (text: NSString, lines: [NSRange], range: Range<Int>)) -> (range: NSRange, text: String) {
+        let (src, dst, r) = (from.lines, to.lines, to.range)
+        let text = from.range.isEmpty ? "" : from.text.substring(with: NSRange(location: src[from.range.lowerBound].location,
+                                                                                length: NSMaxRange(src[from.range.upperBound - 1]) - src[from.range.lowerBound].location))
+        func span(_ a: Int, _ b: Int) -> NSRange { NSRange(location: a, length: b - a) }
+        if !r.isEmpty, !from.range.isEmpty {   // changed: the lines' text over the lines' text, their ends as they are
+            return (span(dst[r.lowerBound].location, NSMaxRange(dst[r.upperBound - 1])), text)
+        }
+        if r.isEmpty {   // missing here: in before the line it stands at, or after the last line
+            if r.lowerBound < dst.count { return (NSRange(location: dst[r.lowerBound].location, length: 0), text + "\n") }
+            return (NSRange(location: to.text.length, length: 0), "\n" + text)
+        }
+        // Only here: out with the line end after them, or — at the end — the one before them.
+        if r.upperBound < dst.count { return (span(dst[r.lowerBound].location, dst[r.upperBound].location), "") }
+        return (span(r.lowerBound > 0 ? NSMaxRange(dst[r.lowerBound - 1]) : 0, to.text.length), "")
+    }
+
     /// The characters `a` and `b` don't share — whole Characters: an emoji or a letter with its marks stays one — as
     /// UTF-16 ranges in each; nil for a line over `limit` UTF-16 units (all of it is the change then).
     public static func inline(_ a: String, _ b: String, limit: Int = 1000) -> (old: [NSRange], new: [NSRange])? {

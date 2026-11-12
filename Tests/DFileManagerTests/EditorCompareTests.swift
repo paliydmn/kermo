@@ -225,6 +225,82 @@ extension EditorWindowTests {
         #expect(diff.title == "Compare Files")
     }
 
+    /// Copy Change to Left / Right (E6 PR 5): the caret's change as the other side has it, into a document only — one
+    /// Undo step back to the text byte for byte, nothing saved; a changed, a removed and an added block; never into a
+    /// read-only copy; a result from before the latest typing isn't used; the arrow shows only where it can write.
+    @Test func copyChangeGoesIntoADocumentOnly() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        let a = app(dir)
+        a.commands = a.makeCommands()
+        defer {
+            AppDelegate.keyWindow = { NSApp.keyWindow }
+            Editor.app = { NSApp.delegate as? AppDelegate }
+            a.panels.forEach { $0.shutdown() }
+            gone()
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        let h = fresh(dir + "/drafts")
+        AppDelegate.keyWindow = { h.window }
+        let (oldText, newText) = ("1\n2\n3\n4\n5\n", "1\nX\n3\n5\nY\n")
+        try put(oldText, dir + "/a.txt")
+        try put(newText, dir + "/b.txt")
+        let x = try await opened(dir + "/a.txt"), y = try await opened(dir + "/b.txt")
+        h.compare(old: x, new: y)
+        let c = try #require(h.comparison)
+        try await worked(c)
+        #expect(c.blocks == [TextDiff.Block(old: 1..<2, new: 1..<2), TextDiff.Block(old: 3..<4, new: 3..<3), TextDiff.Block(old: 5..<5, new: 4..<5)])
+        let left = try #require(c.side(left: true)), (xSide, ySide) = (c.old, c.new)
+        #expect(xSide.view?.doc === x && ySide.view?.doc === y && c.side(left: false) !== left)
+        let into = { (e: Editor) in a.run(e === x ? (xSide === left ? "editor.compare.copyLeft" : "editor.compare.copyRight")
+                                                   : (ySide === left ? "editor.compare.copyLeft" : "editor.compare.copyRight")) }
+        y.current.text.setSelectedRange(NSRange(location: 2, length: 0))   // in "X"
+        c.caretMoved(y.current)
+        #expect(xSide.arrow?.at == 2 && ySide.arrow?.at == 2, "both are documents: an arrow on each")
+        into(x)   // changed: "2" → "X"
+        #expect(x.textView.string == "1\nX\n3\n4\n5\n" && x.isEdited && y.textView.string == newText)
+        #expect(x.textView.undoManager?.undoActionName == "Copy Change")
+        x.textView.undoManager?.undo()
+        #expect(x.textView.string == oldText, "one Undo: the text as it was")
+        try await until("worked out after the undo") { c.fresh && c.blocks.count == 3 }
+        y.current.text.setSelectedRange(NSRange(location: 6, length: 0))   // the line after where "4" is missing
+        c.caretMoved(y.current)
+        #expect(c.old.current == 1 && ySide.arrow?.gap == true && ySide.arrow?.at == 4, "missing here: under the line before")
+        into(y)   // "4" goes in
+        #expect(y.textView.string == "1\nX\n3\n4\n5\nY\n")
+        y.textView.undoManager?.undo()
+        #expect(y.textView.string == newText)
+        try await until("worked out") { c.fresh && c.blocks.count == 3 }
+        y.current.text.setSelectedRange(NSRange(location: 8, length: 0))   // in "Y"
+        c.caretMoved(y.current)
+        into(x)   // added "Y" at the end
+        #expect(x.textView.string == "1\n2\n3\n4\n5\nY\n")
+        try await until("worked out anew, at once") { c.fresh && c.blocks.count == 2 }
+        #expect(read(dir + "/a.txt") == oldText && read(dir + "/b.txt") == newText, "nothing saved")
+
+        // Typed and copied at once: the result is of the text before the typing — nothing goes over.
+        let before = x.textView.string
+        y.current.text.setSelectedRange(NSRange(location: 2, length: 0))
+        c.caretMoved(y.current)
+        y.textView.insertText("Z", replacementRange: NSRange(location: 0, length: 0))
+        into(x)
+        #expect(x.textView.string == before, "a stale result: nothing copied")
+        a.run("editor.compare.stop")
+
+        // A read-only copy is never written; its side has no arrow.
+        let snap = copy("1\n2\n")
+        h.compare(old: snap, new: y, snapshots: [snap])
+        let s = try #require(h.comparison)
+        try await worked(s)
+        y.current.text.setSelectedRange(NSRange(location: 0, length: 0))
+        s.caretMoved(y.current)
+        #expect(s.old.current != nil && s.old.arrow == nil && s.new.arrow != nil)
+        s.copy(into: s.old)
+        #expect(snap.textView.string == "1\n2\n" && !snap.isEdited)
+        s.copy(into: s.new)
+        #expect(y.textView.string.hasPrefix("1\n2\n"), "from the copy into the document")
+    }
+
     /// Every Compare of files goes through `diff`: `diffCommand` set — its program, as before; not set — the built-in,
     /// a file open in a tab as its document (no second copy), another as a read-only copy; a binary one, or `plain`
     /// (a question standing meanwhile) — `diff -u`. The draft banner's Compare makes no file of the draft.

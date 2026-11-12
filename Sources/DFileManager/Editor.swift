@@ -53,6 +53,8 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
             [AppDelegate.KeyRow(section: "Editor", title: e.host.tabbed ? "Back to Panels" : "Close", key: "⎋") { e.escape() }]
                 + (e.host.comparison?.paused == false ? [("Next Change", "⌥⌘↓", 1), ("Previous Change", "⌥⌘↑", -1)].map { t, k, d in   // `term.pane.down` / `.up` there
                     AppDelegate.KeyRow(section: "Editor", title: t, key: k) { app()?.compareStep(d) }
+                } + [("Copy Change to Left", "⌥⇧⌘←", true), ("Copy Change to Right", "⌥⇧⌘→", false)].map { t, k, left in
+                    AppDelegate.KeyRow(section: "Editor", title: t, key: k) { e.host.copyChange(toLeft: left) }
                 } : [])
         }
     }
@@ -1791,15 +1793,24 @@ extension Editor {
     /// Only while the text has the keys: ⇧⌘K typed in the find bar deletes no line behind it.
     private func change(_ e: LineEdit.Edit?, named: String) {
         guard let e, textView.isEditable, window?.firstResponder === textView else { return NSSound.beep() }
-        textView.breakUndoCoalescing()
-        guard textView.shouldChangeText(in: e.range, replacementString: e.text) else { return }
-        let plain: [NSAttributedString.Key: Any] = [.font: textView.font as Any, .paragraphStyle: textView.defaultParagraphStyle as Any, .foregroundColor: NSColor.textColor]
-        textView.textStorage?.replaceCharacters(in: e.range, with: NSAttributedString(string: e.text, attributes: plain))
-        textView.didChangeText()
-        undo.setActionName(named)
+        guard apply(e.text, over: e.range, in: current, named: named) else { return }
         let sel = NSIntersectionRange(e.select, NSRange(location: 0, length: text.length))   // never past the end
         textView.setSelectedRange(sel.location == e.select.location ? sel : NSRange(location: min(e.select.location, text.length), length: 0))
         textView.scrollRangeToVisible(textView.selectedRange())
+    }
+
+    /// `text` over `range` as one Undo step named so, through `v`'s text view — with the keys or not (Copy Change from the
+    /// other side): its draft, colors and line numbers follow as after typing. False: the view said no.
+    @discardableResult
+    func apply(_ text: String, over range: NSRange, in v: DocView, named: String) -> Bool {
+        let tv = v.text
+        tv.breakUndoCoalescing()
+        guard tv.shouldChangeText(in: range, replacementString: text) else { return false }
+        let plain: [NSAttributedString.Key: Any] = [.font: tv.font as Any, .paragraphStyle: tv.defaultParagraphStyle as Any, .foregroundColor: NSColor.textColor]
+        tv.textStorage?.replaceCharacters(in: range, with: NSAttributedString(string: text, attributes: plain))
+        tv.didChangeText()
+        undo.setActionName(named)
+        return true
     }
 
     /// ⌘L: asks for a line ("120", or "120:8" for its 8th column) and goes there.

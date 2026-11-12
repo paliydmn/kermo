@@ -150,11 +150,18 @@ extension AppDelegate {
         },
         cmd("editor.joinPanes", "Join Panes", [], menu: "View/Tabs", group: 2, aliases: "editor unsplit merge panes") { $0.editorKey?.joinPanes() },
         // Compare in the editor window (`Comparison`): ⇧⌘D there is Compare With… (`editorTitles`), ⌥⌘↓ ⌥⌘↑ go from
-        // change to change while it compares (`term.pane.down`, `term.pane.up`); these have no keys of their own.
+        // change to change while it compares (`term.pane.down`, `term.pane.up`); these have no keys of their own but Copy Change's.
         cmd("editor.compare.with", "Compare With…", [], menu: "View/Compare", group: 3, aliases: "editor diff compare tab clipboard saved version") { $0.editorKey?.compareWith() },
         cmd("editor.compare.next", "Next Change", [], menu: "View/Compare", group: 4, aliases: "editor diff compare difference") { $0.compareStep(1) },
         cmd("editor.compare.prev", "Previous Change", [], menu: "View/Compare", group: 4, aliases: "editor diff compare difference") { $0.compareStep(-1) },
-        cmd("editor.compare.stop", "Stop Comparing", [], menu: "View/Compare", group: 5, aliases: "editor diff compare end close") { $0.editorKey?.stopComparing() },
+        // The caret's change from the other side, into the left pane's or the right one's (a document's).
+        cmd("editor.compare.copyLeft", "Copy Change to Left", ["cmd+opt+shift+left"], menu: "View/Compare", group: 5, aliases: "editor diff compare merge take apply hunk") {
+            $0.editorKey?.copyChange(toLeft: true)
+        },
+        cmd("editor.compare.copyRight", "Copy Change to Right", ["cmd+opt+shift+right"], menu: "View/Compare", group: 5, aliases: "editor diff compare merge take apply hunk") {
+            $0.editorKey?.copyChange(toLeft: false)
+        },
+        cmd("editor.compare.stop", "Stop Comparing", [], menu: "View/Compare", group: 6, aliases: "editor diff compare end close") { $0.editorKey?.stopComparing() },
         // The terminal's panes (as VS Code's split): while it's up. In the editor window, its own (`editorTitles`).
         cmd("term.split.right", "Split Terminal Right", ["cmd+\\"], menu: "View/Tabs", group: 3, aliases: "pane side by side") { app in
             if let h = app.editorKey { h.split(vertical: true) } else { app.terminal.split(vertical: true) }

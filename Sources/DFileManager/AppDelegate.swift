@@ -1394,6 +1394,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         if id.hasPrefix("text.") { return textEditor != nil }
         if ["editor.compare.next", "editor.compare.prev", "editor.compare.stop"].contains(id) { return editorKey?.comparison != nil }   // while it compares
+        if ["editor.compare.copyLeft", "editor.compare.copyRight"].contains(id) { return editorKey?.comparison?.paused == false }   // a copy's target says why it can't
         if id.hasPrefix("tab.") || Self.editorTabs.contains(id) {   // the editor window's tabs: its own (D-101: none from another)
             if editorKey != nil { item.title = c?.title ?? item.title; return true }
             if Self.editorTabs.contains(id) { return false }
@@ -1418,7 +1419,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// What works only in the editor window: its tabs, hiding it.
     static let editorTabs: Set<String> = ["editor.close", "editor.tab.left", "editor.tab.right", "editor.tabs", "editor.closeOthers", "editor.closeRight",
                                           "editor.moveToPane", "editor.cloneToPane", "editor.joinPanes",
-                                          "editor.compare.with", "editor.compare.next", "editor.compare.prev", "editor.compare.stop"]
+                                          "editor.compare.with", "editor.compare.next", "editor.compare.prev", "editor.compare.stop",
+                                          "editor.compare.copyLeft", "editor.compare.copyRight"]
     /// Panel commands whose keys an editor takes for its text or its tab, and what they're called there (D-101: one key,
     /// one command).
     static let editorTitles = ["go.path": "Go to Line…", "view.filterPresets": "Toggle Comment", "term.bigger": "Bigger Text", "term.smaller": "Smaller Text",
