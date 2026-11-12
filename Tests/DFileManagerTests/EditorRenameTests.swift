@@ -29,6 +29,8 @@ import Testing
     #expect(try AppDelegate.rename(dir + "/d.conf", to: "D.conf") == dir + "/D.conf", "only its case")
     #expect(try fm.contentsOfDirectory(atPath: dir).contains("D.conf") && text("D.conf") == "a")
 
+    link(dir + "/D.conf", dir + "/hard")
+    #expect(why("hard", from: "D.conf") == "“hard” already exists — nothing was renamed.", "a hard link of it is another name, not itself")
     try fm.createSymbolicLink(atPath: dir + "/link", withDestinationPath: "D.conf")
     _ = try AppDelegate.rename(dir + "/link", to: "link2")
     #expect(try fm.destinationOfSymbolicLink(atPath: dir + "/link2") == "D.conf" && text("D.conf") == "a", "the link, not what it points to")

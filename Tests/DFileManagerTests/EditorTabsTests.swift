@@ -651,6 +651,14 @@ extension EditorWindowTests {
         _ = try AppDelegate.rename(b.path, to: "notes")   // the panel's ⇧F6
         await Editor.renamed(b.path, to: dir + "/notes")
         #expect(eb.url?.path == dir + "/notes" && eb.language == nil && h.tabTitle(eb) == "notes")
+
+        h.beginRename(eb)   // the field on its tab, then ↩
+        let field = try #require(h.renameField)
+        #expect(field.stringValue == "notes" && h.renameField != nil)
+        field.stringValue = "notes.ini"
+        #expect(h.control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:))))
+        try await waitUntil("renamed by ↩") { eb.url?.lastPathComponent == "notes.ini" }
+        #expect(h.renameField == nil && read(dir + "/notes.ini") == "x\ny\n" && eb.language == .ini)
     }
 
     /// An Untitled takes a name and no file: its language by it, Save As offers it (`name`), the session keeps it and a
@@ -837,6 +845,53 @@ extension EditorWindowTests {
         #expect(h.renameField?.stringValue == "app.yaml" && h.renameField?.currentEditor()?.selectedRange == NSRange(location: 0, length: 3))
         h.endRename(nil)   // ⎋
         #expect(h.renameField == nil && e.server?.path == to && e.window?.firstResponder === e.textView)
+
+        // A panel's ⇧F6 of it through another spelling of the server (its root panel's, a kept connection's): the tab follows.
+        let moved = dir + "/srv/app2.yaml"
+        #expect(await app.renameOnServer(SFTPTarget.local().persisting(60), to, to: moved, in: app.panels[0]) { _ in })
+        #expect(e.server?.path == moved && read(moved) == "v1\nv2\n" && e.name == "app2.yaml")
+    }
+
+    /// A server's file gone from the server since it was opened (deleted, or renamed elsewhere): a save asks before
+    /// making it again under its old name — ↩ is Cancel, nothing written; Save makes it. A file that wasn't there when it
+    /// was opened (a new one) is made without a question.
+    @Test func aSaveAsksBeforeMakingAGoneServerFileAgain() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        let app = testApp(dir)
+        defer {
+            Editor.app = { NSApp.delegate as? AppDelegate }
+            AppDelegate.answering = nil
+            app.panels.forEach { $0.shutdown() }
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        let file = dir + "/app.conf", copy = URL(fileURLWithPath: dir + "/copy/app.conf")
+        try put("v1\n", file)
+        try FileManager.default.createDirectory(atPath: dir + "/copy", withIntermediateDirectories: true)
+        try put("mine\n", copy.path)
+        let c = try SFTPClient(.local())
+        let state = AppDelegate.RemoteEdit(baseline: try #require(try c.stat(file)))
+        c.close()
+        try FileManager.default.removeItem(atPath: file)   // deleted there, or renamed outside its tab
+        var asked: [String] = []
+        AppDelegate.answering = { m, _, ret in asked.append(m); return ret ?? 0 }   // ↩
+        #expect(await app.upload(copy, to: file, on: .local(), state) == false)
+        #expect(asked == ["“app.conf” is gone from localhost since you opened it"] && read(file) == nil, "\(asked)")
+        AppDelegate.answering = { _, _, _ in 0 }   // Save
+        #expect(await app.upload(copy, to: file, on: .local(), state) && read(file) == "mine\n")
+        // A link whose file is gone (sites-enabled → sites-available): asked too, the link left as it is.
+        try put("v1\n", dir + "/real.conf")
+        try FileManager.default.createSymbolicLink(atPath: dir + "/link.conf", withDestinationPath: "real.conf")
+        let c2 = try SFTPClient(.local())
+        let linked = AppDelegate.RemoteEdit(baseline: try #require(try c2.stat(dir + "/link.conf")))
+        c2.close()
+        try FileManager.default.removeItem(atPath: dir + "/real.conf")
+        asked = []
+        AppDelegate.answering = { m, _, ret in asked.append(m); return ret ?? 0 }
+        #expect(await app.upload(copy, to: dir + "/link.conf", on: .local(), linked) == false && asked.count == 1 && read(dir + "/real.conf") == nil)
+        asked = []
+        AppDelegate.answering = { m, _, _ in asked.append(m); return 1 }
+        #expect(await app.upload(copy, to: dir + "/new.conf", on: .local(), AppDelegate.RemoteEdit(baseline: .nothing)) && asked.isEmpty)
     }
 
     /// ⇧⌘T on a server's tab: an unchanged one comes back parked — nothing downloaded, no Touch ID — and a Don't Save's
@@ -931,8 +986,10 @@ extension EditorWindowTests {
         let board = NSPasteboard(name: .init("kermo-test-" + UUID().uuidString))
         e.copyPath(to: board)
         #expect(board.string(forType: .string) == f.path)
-        _ = Editor.untitled()
-        #expect(!app.validateMenuItem(copy), "an Untitled has no path")
+        let u = Editor.untitled()
+        let before = board.changeCount
+        u.copyPath(to: board)
+        #expect(app.validateMenuItem(copy) && board.changeCount == before, "its key stays as tabs change; an Untitled has no path to copy")
 
         let remote = try #require(app.panels.first)
         remote.loadRemote(.local(), dir: dir, select: nil)

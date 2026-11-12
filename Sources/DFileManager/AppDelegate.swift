@@ -1386,7 +1386,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if id == "file.copy" { item.title = activePanel?.archive != nil ? "Extract To…" : c?.title ?? item.title }   // F5 in an archive
         if let t = Self.editorTitles[id] {   // a panel command's key in an editor: its branch there
             item.title = inEditor(id) ? t : c?.title ?? item.title
-            if inEditor(id) { return id != "edit.copyPath" || textEditor?.copyablePath != nil }   // an Untitled, a locked draft: no path
+            if inEditor(id) { return true }   // keys stay put as tabs change: Copy Path beeps for an Untitled or a locked draft
         }
         if id.hasPrefix("text.") { return textEditor != nil }
         if id.hasPrefix("tab.") || Self.editorTabs.contains(id) {   // the editor window's tabs: its own (D-101: none from another)

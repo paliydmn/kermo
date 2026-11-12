@@ -1034,6 +1034,12 @@ extension SFTPClient {
         public var errorDescription: String? { "It changed on the server since it was opened." }
     }
 
+    /// It was there when it was opened and nothing is now (deleted, or renamed outside its editor): a save would make it
+    /// again under the old name — the caller asks first.
+    public struct GoneFromServer: LocalizedError {
+        public var errorDescription: String? { "It's gone from the server since it was opened." }
+    }
+
     /// A save written into the file failed on the way: the file may be cut short there — unless its old text went
     /// back (`restored`). The new text, whole, stays in `partial` next to it.
     public struct InPlaceFailed: LocalizedError {
@@ -1132,6 +1138,7 @@ extension SFTPClient {
         // can't be followed (a folder on the way is missing) — written through, as another owner's file.
         var real: String? = remote, cur = entry
         if entry?.kind == .link { (real, cur) = try follow(remote) }
+        if !force, let baseline, baseline != .nothing, cur == nil { throw GoneFromServer() }   // a link's file too
         let keep = replaced != nil && cur?.kind == .file && cur!.size <= ServerHistory.fileLimit
         var old: Data?
         // Size + whole-second mtime is all SFTP v3 tells; a same-size change within that second shows in the content.

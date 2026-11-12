@@ -26,6 +26,8 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     }
     /// The window of the editor whose file `url` is now.
     static func window(for url: URL) -> NSWindow? { open.first { $0.url == url }?.window }
+    /// Save As… of the editor whose server copy `url` is (its file is gone from the server).
+    static func saveAs(copy url: URL) { open.first { $0.url == url }.map { e in Task { await e.saveAs() } } }
     /// Where a question about `url`'s save goes — a server copy's upload that went on after Save As made it a local
     /// file asks there too — its tab shown first (`revealed`). nil: no editor has it (closed).
     static func asking(about url: URL) -> NSWindow? { open.first { $0.url == url || $0.formerCopy == url }?.revealed() }
@@ -45,6 +47,10 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     }
     /// The open editor of that server's file, if any.
     static func editing(_ t: SFTPTarget, _ path: String) -> Editor? { open.first { $0.server?.target == t && $0.server?.path == path } }
+    /// The same, its user's or root's (a root panel's rename of a file a user's tab has open): the tab that follows it.
+    static func tab(onServer t: SFTPTarget, _ path: String) -> Editor? {
+        open.first { $0.server.map { ServerRow.key($0.target.asUser) == ServerRow.key(t.asUser) && $0.path == path } == true }
+    }
     /// The root write behind Save as Administrator (tests swap it: the real one shows the password dialog).
     static var runAsAdmin: (String) async -> Admin.Outcome = Admin.run
     /// Tests: the app a rename on a server goes through (there's no app delegate there).
@@ -1244,7 +1250,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         if remote != nil, server == nil { return "Not renamed: this is a copy of a server's file" }   // an older "host:/path" copy
         if let s = server, saving || s.state.sending > 0 { return "Not renamed: an upload to \(SavedServer.name(for: s.target)) is still going" }
         if saving { return "Not renamed: it's being saved" }
-        if cover == .loading { return "Not renamed: it's still being read" }
+        if cover == .loading, server == nil { return "Not renamed: it's still being read" }   // a server's download after a rename is dropped (`remoteOpen(into:)`)
         if case .unreadable? = cover { return "Not renamed: its draft couldn't be read" }
         return nil
     }
@@ -1259,7 +1265,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     /// The editor of this Mac's file at `path` that follows its renames (not a tool's: Kermo reads that one where it is).
-    private static func following(_ path: String) -> Editor? {
+    static func following(_ path: String) -> Editor? {
         open.first { !$0.fixedPlace && $0.server == nil && $0.url?.standardizedFileURL.path == URL(fileURLWithPath: path).standardizedFileURL.path }
     }
 
@@ -1272,10 +1278,12 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         guard !name.isEmpty, name != self.name else { return }
         if let why = renameRefusal { return flash(why) }
         if let why = AppDelegate.badName(name) { return flash("Not renamed: " + why) }
-        if let server, let app = Self.app() {
+        if let server {
+            guard let app = Self.app() else { return }
             let (t, from) = (server.target, server.path)
             let to = ((from as NSString).deletingLastPathComponent as NSString).appendingPathComponent(name)
-            if let other = Self.editing(t, to), other !== self { return flash("“\(name)” is open in another tab — nothing was renamed") }
+            // Before production's question (`renameOnServer` looks again after it).
+            if let other = Self.tab(onServer: t, to), other !== self { return flash("“\(name)” is open in another tab — nothing was renamed") }
             if SavedServer.isProd(t) {   // the field has no strip: the question has, ↩ Cancel
                 var c = Confirm("Rename “\(self.name)” to “\(name)” on \(SavedServer.name(for: t.asUser))?", on: t, action: "Rename")
                 c.note = "In \((from as NSString).deletingLastPathComponent)."
@@ -1293,9 +1301,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         }
         let path = url.path, dst = url.deletingLastPathComponent().appendingPathComponent(name).path, hook = willRename
         if let why = Self.renameRefused(path, to: dst) { return flash(why) }
-        saving = true   // ⌘S meanwhile does nothing: it would make the old name again
-        let done = await Blocking.run(.userInitiated) { Result { try AppDelegate.rename(path, to: name, willRename: hook) } }   // a share that doesn't answer
-        saving = false
+        let done = await renaming { await Blocking.run(.userInitiated) { Result { try AppDelegate.rename(path, to: name, willRename: hook) } } }   // a share that doesn't answer
         switch done {
         case .failure(let e): alert("Couldn't rename “\(self.name)”", e.localizedDescription)
         case .success(let dst):
@@ -1304,16 +1310,20 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         }
     }
 
-    /// While its file is renamed on its server: ⌘S does nothing (it would make the old name again).
+    /// While its file is renamed: ⌘S does nothing (it would make the old name again). A server tab's text may come in
+    /// meanwhile (its download): editable once it's done.
     func renaming<T>(_ work: () async -> T) async -> T {
         saving = true
-        defer { saving = false }
+        defer {
+            saving = false
+            textView.isEditable = cover == nil
+        }
         return await work()
     }
 
     /// Its file is `new` on this Mac now: the tab, title and language follow, and the session names it at once — a
     /// draft goes with it.
-    private func moved(to new: URL) async {
+    func moved(to new: URL) async {
         url = new
         relanguage()
         showState()

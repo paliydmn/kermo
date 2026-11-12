@@ -157,7 +157,11 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
     func remove(_ e: Editor, _ back: (doc: EditorSession.Doc, text: String?)? = nil) {
         closing.remove(ObjectIdentifier(e))
         guard let i = docs.firstIndex(where: { $0 === e }) else { return }
-        if tabbed, let back { closedTabs = Array((closedTabs + [(back.doc, back.text, i)]).suffix(20)) }
+        if tabbed, let back {
+            closedTabs.append((back.doc, back.text, i))
+            // Twenty, and their texts 64 MB at most all told: the oldest go first.
+            while closedTabs.count > 20 || closedTabs.reduce(0, { $0 + ($1.text?.utf8.count ?? 0) }) > 64 << 20 { closedTabs.removeFirst() }
+        }
         docs.remove(at: i)
         e.frame.removeFromSuperview()
         e.closed()
@@ -277,6 +281,8 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         select(docs[b.tag])
         docs[b.tag].connect()   // a click: a parked server tab opens
     }
+    /// A tab pressed (`EditorTab`): chosen now; a parked one opens on the release unless it was dragged.
+    func tabPressed(_ i: Int) { if docs.indices.contains(i) { select(docs[i]) } }
     @objc private func closeTabClicked(_ b: NSButton) { if docs.indices.contains(b.tag) { docs[b.tag].closeAsking() } }
 
     /// A tab dragged to `p` (in the window): it moves once the pointer is past a neighbour's middle — the strip is made
@@ -356,14 +362,16 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         guard let s = e.server, e.cover == .locked || ServerLock.needsUnlock(s.target) else { return showRenameField(e) }
         Task {
             guard await ServerLock.authorize(s.target, "rename a file on") else { return }
-            e.connect()   // its draft shows too: unlocked now, nothing asked again
+            guard docs.contains(where: { $0 === e }) else { return }   // closed during Touch ID
+            if e.cover == .locked { e.connect() }   // its draft shows too: unlocked now, nothing asked again (a parked one stays)
             showRenameField(e)
         }
     }
 
     private func showRenameField(_ e: Editor) {
+        guard renaming == nil, docs.contains(where: { $0 === e }) else { return }   // closed during Touch ID
         select(e)
-        guard renaming == nil, let i = docs.firstIndex(where: { $0 === e }), strip.arrangedSubviews.indices.contains(i) else { return }
+        guard let i = docs.firstIndex(where: { $0 === e }), strip.arrangedSubviews.indices.contains(i) else { return }
         let tab = strip.arrangedSubviews[i], r = row.convert(tab.bounds, from: tab)
         let field = NSTextField(string: e.name)
         field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -412,9 +420,11 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
     /// (nothing connects), a Don't Save's text as it was. Its file open meanwhile: that tab is chosen. None: a beep.
     func reopenClosed() {
         guard let c = closedTabs.popLast() else { return NSSound.beep() }
-        let open = c.doc.server.flatMap { s in Editor.editing(s.target.asRoot(s.root), s.path) }
-            ?? c.doc.path.flatMap { p in docs.first { $0.server == nil && $0.url?.standardizedFileURL.path == URL(fileURLWithPath: p).standardizedFileURL.path } }
-        if let open { reveal(open); return }
+        if let open = c.doc.server.flatMap({ Editor.editing($0.target.asRoot($0.root), $0.path) }) ?? c.doc.path.flatMap(Editor.following) {
+            open.revealed()
+            if c.text != nil { open.flash("Open already: the text it was closed with isn't brought back") }
+            return
+        }
         let e = Editor(restoring: c.doc, draft: c.text != nil, onServer: onServer)
         e.host = self
         docs.insert(e, at: min(c.at, docs.count))
@@ -617,11 +627,13 @@ private final class EditorTab: NSButton {
         guard let host, let window, host.docs.indices.contains(tag) else { return super.mouseDown(with: e) }
         if e.clickCount == 2 { return host.beginRename(host.docs[tag]) }   // the first click chose it
         var at = tag, dragged = false
-        host.tabClicked(self)   // the strip is made anew: this button leaves it
+        let doc = host.docs[tag]
+        host.tabPressed(tag)   // the strip is made anew: this button leaves it
         while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]), next.type == .leftMouseDragged {
             dragged = dragged || abs(next.locationInWindow.x - e.locationInWindow.x) > 4
             if dragged { at = host.drag(at, to: next.locationInWindow) }
         }
+        if !dragged { doc.connect() }   // a click: a parked server tab opens (no Touch ID mid-drag)
     }
 
     override func otherMouseDown(with e: NSEvent) { if e.buttonNumber != 2 { super.otherMouseDown(with: e) } }

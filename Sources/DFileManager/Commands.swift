@@ -1506,6 +1506,21 @@ extension AppDelegate {
                 default: return false
                 }
             }
+        case .failure(is SFTPClient.GoneFromServer):   // deleted or renamed there: not made again unasked
+            Editor.markUnsaved(saved)
+            let here = Editor.window(for: saved) != nil
+            var c = Confirm("“\(name)” is gone from \(SavedServer.name(for: target)) since you opened it", on: target, action: "Save")
+            c.note = "It was deleted or renamed there. Save makes it again as \(remotePath)" + (here ? "; Save As… keeps your text in a file on this Mac" : "")
+                + "; Cancel keeps your text " + (here ? "unsaved here." : "in \(saved.path).")
+            (c.others, c.irreversible) = (here ? ["Save As…"] : [], true)   // ↩: Cancel
+            switch await confirm(c, on: Editor.asking(about: saved)) {
+            case 0:
+                state.baseline = .nothing   // a file that appears there meanwhile still asks
+                return await uploadNow(saved, to: remotePath, on: target, state, force: false, action: action)
+            case 1 where here: Editor.saveAs(copy: saved)
+            default: break
+            }
+            return false
         case .failure(let e):
             if !(e is CancellationError) { AuditLog.write(target, action, paths: [remotePath], exit: 1, error: e.localizedDescription) }
             return notSaved(saved, to: target, e)
@@ -1842,14 +1857,14 @@ extension AppDelegate {
     @discardableResult
     func renameOnServer(_ t: SFTPTarget, _ from: String, to: String, in panel: PanelViewController, on sheet: NSWindow? = nil,
                         say: (String) -> Void) async -> Bool {
-        let tab = Editor.editing(t, from), name = (to as NSString).lastPathComponent
+        guard await unlock([.sftp(t)]) else { return false }   // first: an upload a ⌘S starts meanwhile is refused below
+        let tab = Editor.editing(t, from) ?? Editor.tab(onServer: t, from), name = (to as NSString).lastPathComponent   // the asking tab's first
         if let why = tab?.renameRefusal { say(why); return false }
-        if let other = Editor.editing(t, to), other !== tab { say("“\(name)” is open in the editor — nothing was renamed"); return false }
-        guard await unlock([.sftp(t)]) else { return false }
+        if let other = Editor.tab(onServer: t, to), other !== tab { say("“\(name)” is open in the editor — nothing was renamed"); return false }
         let op = { await self.remoteOp("Rename", t, paths: [from, to], select: name, in: panel, on: sheet) { try $0.rename(from, to, replace: false) } }
         guard let tab else { return await op() }
         guard await tab.renaming(op) else { return false }
-        if Editor.editing(t, from) === tab { await tab.moved(onServer: to) }   // still open
+        if Editor.tab(onServer: t, from) === tab { await tab.moved(onServer: to) }   // still open
         return true
     }
 
@@ -2891,8 +2906,11 @@ extension AppDelegate {
                   name != old, !name.isEmpty else { return }
             let dst = url.deletingLastPathComponent().appendingPathComponent(name).path
             if let why = Editor.renameRefused(url.path, to: dst) { return showError(JobErrorMessage(why)) }   // its tab saving, or `dst` open
-            // Off the main thread: a share that doesn't answer.
-            if case .failure(let e) = await Blocking.run(.userInitiated, { Result { try Self.rename(url.path, to: name) } }) { return showError(e) }
+            // Off the main thread: a share that doesn't answer. Its tab can't save meanwhile (the old name again).
+            let rename = { await Blocking.run(.userInitiated) { Result { try Self.rename(url.path, to: name) } } }
+            let tab = Editor.following(url.path)
+            let done = if let tab { await tab.renaming(rename) } else { await rename() }
+            if case .failure(let e) = done { return showError(e) }
             registerMoves("Rename", [(from: url.path, to: dst)])
             forgetGone([url.path])   // not after a case-only rename
             active.reload(select: name)
@@ -2916,16 +2934,20 @@ extension AppDelegate {
         let dir = (path as NSString).deletingLastPathComponent, dst = (dir as NSString).appendingPathComponent(name)
         var a = stat(), b = stat()
         guard lstat(path, &a) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .ENOENT) }
-        func same() -> Bool { lstat(dst, &b) == 0 && (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino) }
-        if lstat(dst, &b) == 0, !same() { throw JobErrorMessage("“\(name)” already exists — nothing was renamed.") }
+        // The item itself under `dst` — only its case changes, on a disk that ignores case (not a hard link of another name).
+        let caseOnly = pathconf(dir, _PC_CASE_SENSITIVE) == 0 && name.caseInsensitiveCompare((path as NSString).lastPathComponent) == .orderedSame
+        func itself() -> Bool { caseOnly && lstat(dst, &b) == 0 && (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino) }
+        if lstat(dst, &b) == 0, !itself() { throw JobErrorMessage("“\(name)” already exists — nothing was renamed.") }
         willRename(dst)
         if renamex_np(path, dst, UInt32(RENAME_EXCL)) == 0 { return dst }
         var err = errno
         // Taken: by the item itself in another case, else by one that appeared meanwhile. A disk that can't rename only
         // where nothing is: looked at once more, then renamed. ponytail: an item appearing in that instant is replaced,
         // as a save there (D-180).
+        if err == EEXIST && !itself() || (err == ENOTSUP || err == EINVAL) && lstat(dst, &b) == 0 && !itself() {
+            throw JobErrorMessage("“\(name)” appeared there meanwhile — nothing was renamed.")
+        }
         if err == EEXIST || err == ENOTSUP || err == EINVAL {
-            if lstat(dst, &b) == 0, !same() { throw JobErrorMessage("“\(name)” appeared there meanwhile — nothing was renamed.") }
             if Darwin.rename(path, dst) == 0 { return dst }
             err = errno
         }
@@ -3287,6 +3309,9 @@ extension AppDelegate {
                 }
                 fill(record, renames, jobs)
                 updateTrashLog(after: renames)   // the jobs': once they've run (jobFinished)
+                // ⌘Z of a rename: its tab goes back with it. All looked up first: a swap's second pair would find the first's tab.
+                // ponytail: not held while renaming, as ⇧F6 holds it — a ⌘S in that instant makes the old name again.
+                for (tab, r) in zip(renames.map { Editor.following($0.from) }, renames) { await tab?.moved(to: URL(fileURLWithPath: r.to)) }
             } catch {
                 fill(record, [], [])
                 showError(JobErrorMessage("Can't undo \(title.lowercased()): \(error.localizedDescription)"))

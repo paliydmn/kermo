@@ -254,6 +254,8 @@ extension SFTPClient {
             failed.now = "Put back: the file on \(host) is as it was before this save."
         } catch is ChangedOnServer {
             failed.now = "Not put back: it changed on \(host) meanwhile, and what's there now stays."
+        } catch is GoneFromServer {
+            failed.now = "Not put back: it was deleted or renamed on \(host) meanwhile."
         } catch {
             failed.now = "Not put back: \(error.localizedDescription). The file on \(host) may have your text."
         }
