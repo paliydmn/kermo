@@ -1512,7 +1512,7 @@ extension AppDelegate {
             var c = Confirm("“\(name)” is gone from \(SavedServer.name(for: target)) since you opened it", on: target, action: "Save")
             c.note = "It was deleted or renamed there. Save makes it again as \(remotePath)" + (here ? "; Save As… keeps your text in a file on this Mac" : "")
                 + "; Cancel keeps your text " + (here ? "unsaved here." : "in \(saved.path).")
-            (c.others, c.irreversible) = (here ? ["Save As…"] : [], true)   // ↩: Cancel
+            (c.others, c.returnCancels) = (here ? ["Save As…"] : [], true)   // ↩: Cancel; Save isn't red: it destroys nothing
             switch await confirm(c, on: Editor.asking(about: saved)) {
             case 0:
                 state.baseline = .nothing   // a file that appears there meanwhile still asks

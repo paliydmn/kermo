@@ -86,7 +86,7 @@ A tab's menu (a right click, ⌃-click) has **Close Tab**, **Close Other Tabs**,
 
 Drag a tab to move it along the strip; the middle button closes it as ⌘W does; a double-click where no tab is opens a new Untitled.
 
-⇧⌘T (**Reopen Closed Tab**, in the Go menu while the editor is in front; Folder Tree's key in the panels) brings back the tab closed last, where it was, with its caret: this Mac's file as it is on disk now, a server's file not connected until you click it, and the text of a tab you closed with **Don't Save**. That text is kept in memory only, until Kermo quits. Kermo keeps the last twenty; a file open again meanwhile just has its tab shown.
+⇧⌘T (**Reopen Closed Tab**, in the Go menu while the editor is in front; Folder Tree's key in the panels) brings back the tab closed last, where it was, with its caret: this Mac's file as it is on disk now, a server's file not connected until you click it, and the text of a tab you closed with **Don't Save**. That text is kept in memory only, until Kermo quits. Kermo keeps the last twenty, with 64 MB of their texts at most; a file open again meanwhile just has its tab shown.
 
 The [tools' editor](tools.md#your-own-tools) is a window of its own, as before: no tabs, no drafts; ⎋ and ⌘W close it, asking about changes.
 
