@@ -190,7 +190,7 @@ extension ServerLockTests {
     #expect(await app.upload(URL(fileURLWithPath: dir + "/l"), to: dir + "/saved.conf", on: .local(), state))
     #expect(await app.upload(URL(fileURLWithPath: dir + "/l"), to: dir + "/reverted.conf", on: .local(), state, force: true, action: "revert"))
     // ⇧F6.
-    app.remoteOp("Rename", .local(), paths: [dir + "/saved.conf", dir + "/renamed.conf"]) { try $0.rename(dir + "/saved.conf", dir + "/renamed.conf", replace: false) }
+    await app.remoteOp("Rename", .local(), paths: [dir + "/saved.conf", dir + "/renamed.conf"]) { try $0.rename(dir + "/saved.conf", dir + "/renamed.conf", replace: false) }
     await wait(3)
     // F8, and Synchronize's delete.
     for sync in [false, true] {

@@ -24,6 +24,8 @@ public struct EditorSession: Codable, Sendable, Equatable {
         public var kind: Kind
         /// An untitled one's: "Untitled 3".
         public var number: Int?
+        /// An untitled one's name given on its tab ("deploy.yaml"). Optional: an older Kermo skips it and says "Untitled N".
+        public var name: String?
         /// A local file's, as opened.
         public var path: String?
         public var server: Server?

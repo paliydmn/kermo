@@ -146,6 +146,7 @@ In the command line, ↑↓ browse its history. On a local panel ↩ runs the li
 | Editor: new document from any app (off at first: Settings › General) | ⌃⌘E, or the key you record ([from any app](viewer-editor.md#from-any-app)) |
 | Editor: new tab / close tab / next, previous tab / hide the window (tabs kept) / back to the panels | ⌘T / ⌘W / ⌃Tab or ⇧⌘], ⌃⇧Tab or ⇧⌘[ / ⇧⌘W / ⎋ |
 | Editor: go to line / comment out or back / bigger, smaller text / wrap lines | ⌘L / ⌘/ / ⌘+, ⌘− / ⌥Z |
+| Editor: rename the tab's file (or name an Untitled) / copy its path / reopen the tab closed last | ⇧F6 or a double-click on the tab / ⇧⌘C / ⇧⌘T |
 | Editor: move lines up, down / duplicate them below, above / delete them / indent, outdent the lines selected | ⌥↑, ⌥↓ / ⌥⇧↓, ⌥⇧↑ / ⇧⌘K / Tab, ⇧Tab |
 | Output window: stop, then close / run again / copy all / save / [send to a tool](tools.md#send-to) | ⎋ / ⌘R / ⌘C / ⌘S / F2 |
 

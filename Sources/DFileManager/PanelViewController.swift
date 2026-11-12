@@ -2382,15 +2382,19 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// The current tab: bold title and an accent line under it; the others' titles are dimmed. `dot`: a state mark before the title.
     /// `italic`: a tab with nothing loaded yet (the editor's parked server file).
     static func tabButton(_ title: String, lead: NSAttributedString? = nil, tint: NSColor? = nil, tip: String, index i: Int, current: Bool,
-                          target: AnyObject, action: Selector, close: Selector, closeTip: String = "Close Tab  ⌘W", italic: Bool = false) -> NSButton {
-        tabButton([(lead, title)], tint: tint, tip: tip, index: i, current: current, target: target, action: action, close: close, closeTip: closeTip, italic: italic)
+                          target: AnyObject, action: Selector, close: Selector, closeTip: String = "Close Tab  ⌘W", italic: Bool = false,
+                          button: NSButton? = nil) -> NSButton {
+        tabButton([(lead, title)], tint: tint, tip: tip, index: i, current: current, target: target, action: action, close: close, closeTip: closeTip,
+                  italic: italic, button: button)
     }
 
     /// A tab of several terminal panes: their titles side by side, each after its `lead` (its state, its chips). `tint`:
-    /// the line's color (production's, root's) instead of the accent.
+    /// the line's color (production's, root's) instead of the accent. `button`: one of a subclass (the editor's tabs).
     static func tabButton(_ parts: [(NSAttributedString?, String)], tint: NSColor? = nil, tip: String, index i: Int, current: Bool,
-                          target: AnyObject, action: Selector, close: Selector, closeTip: String = "Close Tab  ⌘W", italic: Bool = false) -> NSButton {
-        let b = NSButton(title: "", target: target, action: action)
+                          target: AnyObject, action: Selector, close: Selector, closeTip: String = "Close Tab  ⌘W", italic: Bool = false,
+                          button: NSButton? = nil) -> NSButton {
+        let b = button ?? NSButton(title: "", target: target, action: action)
+        (b.target, b.action) = (target, action)
         b.setButtonType(.pushOnPushOff)
         b.bezelStyle = .accessoryBarAction
         b.controlSize = .small

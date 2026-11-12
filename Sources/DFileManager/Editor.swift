@@ -47,6 +47,8 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     static func editing(_ t: SFTPTarget, _ path: String) -> Editor? { open.first { $0.server?.target == t && $0.server?.path == path } }
     /// The root write behind Save as Administrator (tests swap it: the real one shows the password dialog).
     static var runAsAdmin: (String) async -> Admin.Outcome = Admin.run
+    /// Tests: the app a rename on a server goes through (there's no app delegate there).
+    static var app: () -> AppDelegate? = { NSApp.delegate as? AppDelegate }
     /// Stays the same through Save As and launches: its draft's.
     let id: UUID
     /// The window it shows in: the editor window's tab, or a tool's own.
@@ -60,8 +62,14 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     private(set) var url: URL?
     /// An Untitled's N: one past the highest Untitled open when it was made.
     private let number: Int?
-    /// The file's name; an Untitled's "Untitled N".
-    var name: String { url?.lastPathComponent ?? "Untitled \(number ?? 1)" }
+    /// An Untitled's name given on its tab ("deploy.yaml"): its language, and what Save As offers. No file of it.
+    private(set) var givenName: String?
+    /// The file's name — a server's file's by its path there (its local copy keeps the name it was opened by); an
+    /// Untitled's given one, else "Untitled N".
+    var name: String {
+        if let server { return (server.path as NSString).lastPathComponent }
+        return url?.lastPathComponent ?? givenName ?? "Untitled \(number ?? 1)"
+    }
     /// "host:/path" of a server's file edited through its local copy: the title, not the copy's temp folder.
     private var remote: String?
     var server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)? {   // its saves go up with `state`
@@ -74,7 +82,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     private var formerCopy: URL?
     let textView = EditorTextView(usingTextLayoutManager: false)   // TextKit 1: the line-number ruler needs it
     private var ruler: LineNumberRuler!
-    private var language: Syntax.Language?
+    private(set) var language: Syntax.Language?
     /// View ▸ Indentation's pick; else Tab follows the text's indent (`indent`), read once per text it replaced.
     private var indentPick: LineEdit.Indent?
     /// nil: not read yet; .some(nil): nothing indented then (read again on the next ↩ or Tab).
@@ -98,7 +106,8 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     var willRewriteInPlace: @Sendable (String) -> Void = { _ in }
     /// Tests: writes the text into what a save opened — its temp file, or the file itself in place (to fail it midway).
     var writeText: @Sendable (FileHandle, Data) throws -> Void = { try $0.write(contentsOf: $1) }
-    /// Tests: runs with the temp file's path right before it's renamed over the file (to fail the rename).
+    /// Tests: runs with the temp file's path right before it's renamed over the file (to fail the rename); a rename of
+    /// its file, with the new path, between the look there and the rename.
     var willRename: @Sendable (String) -> Void = { _ in }
     /// A tool's file: Kermo reads it where it is, so Save As… is off.
     private var fixedPlace = false
@@ -111,7 +120,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     private(set) var noticed: Stamp?
     private var dirty = false { didSet { if dirty != oldValue { showState() } } }
     private var unsent = false   // saved here, but not where it lives (a server): the same bytes still count as a change
-    private(set) var saving = false   // a save's disk work is under way (the text can't be edited meanwhile)
+    private(set) var saving = false   // a save's disk work is under way (the text can't be edited meanwhile), or a rename's
     /// Has changes its file doesn't (a dot on its tab and the window's close button).
     var isEdited: Bool { dirty }
 
@@ -535,11 +544,11 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
                     setattrlist(tmp, &crtime, &st.st_birthtimespec, MemoryLayout<timespec>.size, 0)
                 }
                 willRename(tmp)
-                var failed = vacant ? renamex_np(tmp, path, UInt32(RENAME_EXCL)) != 0 : rename(tmp, path) != 0
+                var failed = vacant ? renamex_np(tmp, path, UInt32(RENAME_EXCL)) != 0 : Darwin.rename(tmp, path) != 0
                 if failed, vacant, errno == ENOTSUP || errno == EINVAL {   // a disk that can't rename only where nothing is
                     // ponytail: looked at once more, then renamed — a file appearing in between is replaced; link() + unlink
                     // would close that where hard links work (not FAT, not every share).
-                    failed = lstat(path, &entry) == 0 ? { errno = EEXIST; return true }() : rename(tmp, path) != 0
+                    failed = lstat(path, &entry) == 0 ? { errno = EEXIST; return true }() : Darwin.rename(tmp, path) != 0
                 }
                 if failed {
                     let err: Error = vacant && errno == EEXIST ? JobErrorMessage("“\(name)” appeared there meanwhile — nothing was written.")
@@ -777,7 +786,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         case .written(let stamp, let digest, _):
             if server != nil { formerCopy = url }
             url = dest
-            (remote, onSaved, noticed) = (nil, nil, nil)
+            (remote, onSaved, noticed, givenName) = (nil, nil, nil, nil)
             server = nil   // else a revert from that file's server history would find this window and write over `dest`
             chips = []
             saved(stamp, digest)
@@ -968,12 +977,28 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     /// on production ↩ is Cancel. True if it asked nothing. A failed or cancelled Save keeps it.
     @discardableResult func closeAsking() -> Bool {
         guard changed else { host.close(self); return true }
-        AppDelegate.sheet(unsavedQuestion().alert(), on: revealed()) { [weak self] r in
-            guard let self else { return }
-            if r == 0 { Task { if await self.save(then: { self.host.close(self) }) { self.host.close(self) } } }
-            if r == 1 { host.close(self) }   // its draft goes with the tab
-        }
+        askToClose { _ in }
         return false
+    }
+
+    /// The same, waited for (Close Other Tabs asks one tab after another): true once it goes — false if it stays
+    /// (Cancel, a Save that didn't go through or asks about the encoding first).
+    func closeAsked() async -> Bool {
+        guard changed else { host.close(self); return true }
+        return await withCheckedContinuation { c in askToClose { c.resume(returning: $0) } }
+    }
+
+    /// The question, up before this returns; `done`: whether the tab goes.
+    private func askToClose(_ done: @escaping @MainActor (Bool) -> Void) {
+        AppDelegate.sheet(unsavedQuestion().alert(), on: revealed()) { [weak self] r in
+            guard let self, r == 0 || r == 1 else { return done(false) }
+            if r == 1 { host.close(self); return done(true) }   // Don't Save: its draft goes with the tab
+            Task {
+                let saved = await self.save(then: { self.host.close(self) })
+                if saved { self.host.close(self) }
+                done(saved)
+            }
+        }
     }
 
     func unsavedQuestion() -> Confirm {
@@ -1006,6 +1031,29 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     var edits = 0, sent = -1, onDisk = -1
     /// Why its last draft wasn't written (a "!" on its tab); when the last one was.
     var draftFailed: String?, draftSaved: Date?
+    /// Its file's path as Copy Path gives it — a server's "web-01:/etc/x", as its title says it; nil for an Untitled,
+    /// and for a locked server's draft till it's unlocked.
+    var copyablePath: String? {
+        if cover == .locked || cover == .loading && server != nil { return nil }
+        if let server { return SavedServer.title(server.target, server.path) }
+        return remote ?? url?.path
+    }
+    /// Copy Path (⇧⌘C in an editor, its tab's menu).
+    func copyPath(to pasteboard: NSPasteboard = .general) {
+        guard let p = copyablePath else { return NSSound.beep() }
+        pasteboard.clearContents()
+        pasteboard.setString(p, forType: .string)
+    }
+    /// Reveal in Panel has a place to go: this Mac's file, a server's (not an older "host:/path" copy's).
+    var revealable: Bool { copyablePath != nil && (server != nil || remote == nil) }
+
+    /// What ⇧⌘T brings back of it: as the session keeps it, with its text if it has changes (a Don't Save's, an
+    /// Untitled's) — a locked server's draft read now, before its closing drops it. Kept in memory only.
+    var reopenable: (doc: EditorSession.Doc, text: String?)? {
+        guard let d = sessionDoc else { return nil }
+        return (d, d.dirty ? draftText ?? lockedDraft.flatMap { try? $0.read() } : nil)
+    }
+
     /// A tab of the editor window with drafts on: its changes are written as a draft, and Quit waits for that.
     var keepsDrafts: Bool { host?.tabbed == true && host.drafts != nil }
 
@@ -1013,8 +1061,8 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     /// shown till it's unlocked, one that couldn't be read, or one being read.
     enum Cover: Equatable { case parked, locked, unreadable(String?), loading }
     var cover: Cover? { didSet { showCover(); host?.update(self) } }
-    /// The revision a locked server's draft is in, read once it's unlocked.
-    private var lockedDraft: (store: DraftStore, doc: EditorSession.Doc)?
+    /// A locked server's draft: where its text is (a revision, or memory: ⇧⌘T), read once it's unlocked.
+    private var lockedDraft: (read: @Sendable () throws -> String?, doc: EditorSession.Doc)?
     /// What has the keys in its tab: the text, or the cover (↩ its button).
     var focus: NSView { frame.cover ?? textView }
 
@@ -1038,7 +1086,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
             d.path = url.path
             d.baseline = .init(stamp: stamp.map { .init(dev: $0.dev, ino: $0.ino, size: $0.size, sec: $0.sec, nsec: $0.nsec, mode: $0.mode) }, digest: digest)
         } else {
-            d.number = number
+            (d.number, d.name) = (number, givenName)
         }
         let uploading = (server?.state.sending ?? 0) > 0
         d.unsent = unsent || uploading
@@ -1049,7 +1097,8 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     /// Back from the last launch: its tab at once, its text as it's read (`restore(from:)`).
-    convenience init(restoring d: EditorSession.Doc, onServer: EditorHost.OnServer) {
+    /// `draft`: it has a text to read (the store's revision; ⇧⌘T's, in memory).
+    convenience init(restoring d: EditorSession.Doc, draft: Bool? = nil, onServer: EditorHost.OnServer) {
         let url: URL? = switch d.kind {
             case .untitled: nil
             case .local: d.path.map { URL(fileURLWithPath: $0) }
@@ -1061,6 +1110,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         let loaded: Loaded = ("", String.Encoding(rawValue: f.encoding), f.lossy, f.bom, f.crlf, stamp, d.baseline?.digest ?? Self.sha(Data()))
         self.init(url, number: d.number, id: d.id, remote: d.server.map { SavedServer.title($0.target, $0.path) }, loaded: loaded)
         (encodingAsked, finalNewline, dirty, unsent) = (d.format.encodingAsked, d.format.finalNewline, d.dirty, d.unsent)
+        if url == nil, let n = d.name { givenName = n; relanguage() }
         lastSelection = d.selection.flatMap { $0.first }.map { ($0, CGFloat(d.scroll ?? 0)) }
         if let target, let s = d.server, let url {
             let state = AppDelegate.RemoteEdit(baseline: d.baseline?.attrs ?? .nothing)
@@ -1069,7 +1119,7 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
             chips = Chip.of(target)
             (onSaved, onClose) = onServer(target, s.path, state, url.deletingLastPathComponent().path)
         }
-        cover = d.kind == .untitled && d.revision == nil ? nil : .loading
+        cover = d.kind == .untitled && !(draft ?? (d.revision != nil)) ? nil : .loading
         showCover()   // in an initializer `didSet` doesn't run
         showState()
         Self.open.append(self)
@@ -1080,15 +1130,28 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
     /// whose draft is what's in it now is just open. An unchanged file gone: its tab goes, and says why. A server's file
     /// parks (nothing connects); a locked server's draft waits for Unlock.
     func restore(_ d: EditorSession.Doc, from store: DraftStore) async {
-        if d.kind == .untitled, d.revision == nil { return }   // an empty one
-        if server != nil, d.revision == nil { return cover = .parked }
+        await restore(d, draft: d.revision != nil) { try store.text(of: d) }
+    }
+
+    /// A tab ⇧⌘T brings back, as a restored one: `text` its changes' (in memory), else its file as it is now — a
+    /// server's parked.
+    func reopen(_ d: EditorSession.Doc, text: String?) async {
+        reopened = text != nil
+        await restore(d, draft: text != nil) { text }
+    }
+    /// Its text came back by ⇧⌘T: it isn't in the store (its closing dropped it), so the next commit writes it whole.
+    private var reopened = false
+
+    private func restore(_ d: EditorSession.Doc, draft hasDraft: Bool, text read: @escaping @Sendable () throws -> String?) async {
+        if d.kind == .untitled, !hasDraft { return }   // an empty one
+        if server != nil, !hasDraft { return cover = .parked }
         if let server {
             await ServerLock.learn([server.target])   // a locked server's, however its address is written
-            if ServerLock.needsUnlock(server.target) { lockedDraft = (store, d); return cover = .locked }
+            if ServerLock.needsUnlock(server.target) { lockedDraft = (read, d); return cover = .locked }
         }
         let path = url?.resolvingSymlinksInPath().path, kind = d.kind
         let (draft, disk, stampNow) = await Blocking.run(.userInitiated) { () -> (Result<String?, Error>, Data?, Stamp?) in
-            let draft = Result { try store.text(of: d) }
+            let draft = Result { try read() }
             guard kind == .local, let path else { return (draft, nil, nil) }
             let stamp = Stamp(path)
             return (draft, stamp == nil || FileInfo.notRegular(path) != nil ? nil : try? Data(contentsOf: URL(fileURLWithPath: path)), stamp)
@@ -1132,7 +1195,8 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         if let digest { self.digest = digest }
         if clean || loaded != nil { (dirty, unsent) = (false, false) }
         undo.removeAllActions()
-        (sent, onDisk) = (edits, edits)
+        (sent, onDisk) = reopened ? (-1, -1) : (edits, edits)
+        if reopened { reopened = false; host?.changed(self) }
         cover = nil
         if url != nil, language == nil { language = Syntax.language(forFileName: name, firstLine: String(text.prefix(200).split(separator: "\n").first ?? "")) }
         if let d = lastSelection { textView.setSelectedRange(NSRange(location: min(d.0, (text as NSString).length), length: 0)); frame.scroll.contentView.scroll(to: NSPoint(x: 0, y: d.1)) }
@@ -1155,10 +1219,10 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
             }
         case .locked?:
             Task {
-                guard let (store, d) = lockedDraft, await ServerLock.authorize(server.target, "see a draft on") else { return }
+                guard let (read, d) = lockedDraft, await ServerLock.authorize(server.target, "see a draft on") else { return }
                 lockedDraft = nil
                 cover = .loading
-                await restore(d, from: store)
+                await restore(d, draft: true, text: read)
             }
         default: break
         }
@@ -1170,6 +1234,112 @@ final class Editor: NSViewController, NSTextViewDelegate, NSMenuItemValidation {
         if let s = server { server = (s.target, s.path, state) }
         (self.onSaved, self.onClose) = (onSaved, onClose)
         fill(loaded.0, stamp: loaded.5, digest: loaded.6, apply: loaded)
+    }
+
+    // MARK: - Rename
+
+    /// Why its tab's file can't be renamed now (said in its status line); nil: it can.
+    var renameRefusal: String? {
+        if fixedPlace { return "Not renamed: Kermo reads a tool's file where it is" }
+        if remote != nil, server == nil { return "Not renamed: this is a copy of a server's file" }   // an older "host:/path" copy
+        if let s = server, saving || s.state.sending > 0 { return "Not renamed: an upload to \(SavedServer.name(for: s.target)) is still going" }
+        if saving { return "Not renamed: it's being saved" }
+        if cover == .loading { return "Not renamed: it's still being read" }
+        if case .unreadable? = cover { return "Not renamed: its draft couldn't be read" }
+        return nil
+    }
+
+    /// A panel's rename of `path` on this Mac to `dst`, for the tabs: not while that file's tab saves (the save would
+    /// make the old name again), nor onto a file a tab has open (one file, one tab).
+    static func renameRefused(_ path: String, to dst: String) -> String? {
+        let tab = following(path)
+        if let tab, let why = tab.renameRefusal { return why }
+        if let other = following(dst), other !== tab { return "“\(other.name)” is open in the editor — nothing was renamed." }
+        return nil
+    }
+
+    /// The editor of this Mac's file at `path` that follows its renames (not a tool's: Kermo reads that one where it is).
+    private static func following(_ path: String) -> Editor? {
+        open.first { !$0.fixedPlace && $0.server == nil && $0.url?.standardizedFileURL.path == URL(fileURLWithPath: path).standardizedFileURL.path }
+    }
+
+    /// A file renamed on this Mac (its tab, a panel's ⇧F6): its tab follows.
+    static func renamed(_ path: String, to dst: String) async { await following(path)?.moved(to: URL(fileURLWithPath: dst)) }
+
+    /// Rename… of its tab (a double-click, ⇧F6): an Untitled's name; its file on this Mac or on its server — never over
+    /// anything there. Nothing of it changes unless the file's renamed.
+    func rename(to name: String) async {
+        guard !name.isEmpty, name != self.name else { return }
+        if let why = renameRefusal { return flash(why) }
+        if let why = AppDelegate.badName(name) { return flash("Not renamed: " + why) }
+        if let server, let app = Self.app() {
+            let (t, from) = (server.target, server.path)
+            let to = ((from as NSString).deletingLastPathComponent as NSString).appendingPathComponent(name)
+            if let other = Self.editing(t, to), other !== self { return flash("“\(name)” is open in another tab — nothing was renamed") }
+            if SavedServer.isProd(t) {   // the field has no strip: the question has, ↩ Cancel
+                var c = Confirm("Rename “\(self.name)” to “\(name)” on \(SavedServer.name(for: t.asUser))?", on: t, action: "Rename")
+                c.note = "In \((from as NSString).deletingLastPathComponent)."
+                guard await app.confirm(c, on: revealed()) == 0 else { return }
+            }
+            let panel = app.panels.first { $0.remote?.target == t } ?? app.active
+            await app.renameOnServer(t, from, to: to, in: panel, on: revealed()) { [weak self] in self?.flash($0) }
+            return
+        }
+        guard let url else {
+            givenName = name
+            relanguage()
+            showState()
+            return host?.changed(self, now: true) ?? ()
+        }
+        let path = url.path, dst = url.deletingLastPathComponent().appendingPathComponent(name).path, hook = willRename
+        if let why = Self.renameRefused(path, to: dst) { return flash(why) }
+        saving = true   // ⌘S meanwhile does nothing: it would make the old name again
+        let done = await Blocking.run(.userInitiated) { Result { try AppDelegate.rename(path, to: name, willRename: hook) } }   // a share that doesn't answer
+        saving = false
+        switch done {
+        case .failure(let e): alert("Couldn't rename “\(self.name)”", e.localizedDescription)
+        case .success(let dst):
+            await moved(to: URL(fileURLWithPath: dst))
+            Self.app()?.showRenamed(from: path, to: dst)
+        }
+    }
+
+    /// While its file is renamed on its server: ⌘S does nothing (it would make the old name again).
+    func renaming<T>(_ work: () async -> T) async -> T {
+        saving = true
+        defer { saving = false }
+        return await work()
+    }
+
+    /// Its file is `new` on this Mac now: the tab, title and language follow, and the session names it at once — a
+    /// draft goes with it.
+    private func moved(to new: URL) async {
+        url = new
+        relanguage()
+        showState()
+        await host?.commit(durable: true)
+    }
+
+    /// Its file is at `path` on its server now: its saves go there — the same state and copy folder (the old `onClose`
+    /// would remove that) — and the session names it at once.
+    func moved(onServer path: String) async {
+        guard let s = server, let url, let host else { return }
+        server = (s.target, path, s.state)
+        remote = SavedServer.title(s.target, path)
+        (onSaved, onClose) = host.onServer(s.target, path, s.state, url.deletingLastPathComponent().path)
+        relanguage()
+        showState()
+        await host.commit(durable: true)
+    }
+
+    /// Its language by its name now (renamed, an Untitled named): colors, comment mark and Tab's indent follow; Final
+    /// Newline stays as it is.
+    private func relanguage() {
+        language = Syntax.language(forFileName: name, firstLine: String(textView.string.prefix(200).split(separator: "\n").first ?? ""))
+        highlightGen += 1   // a tint in the old language under way: dropped
+        tinted = nil
+        if language == nil, let s = textView.textStorage, s.length > 0 { SyntaxColors.apply([], to: s) } else { highlight(after: 0) }
+        sayPosition()
     }
 
     /// Compare's copies of drafts: removed at quit (the launch sweep takes one a crash left).
@@ -1413,7 +1583,7 @@ extension Editor {
 
     /// ⌘/ by its language (`LineEdit.comment`): JSON, or a file of an extension Kermo doesn't know, beeps.
     func toggleComment() {
-        guard let c = LineEdit.comment(language, fileName: url?.lastPathComponent) else { return NSSound.beep() }
+        guard let c = LineEdit.comment(language, fileName: name) else { return NSSound.beep() }
         let sel = textView.selectedRange()
         change(c.close.map { LineEdit.toggleComment(text, sel, open: c.open, close: $0) } ?? LineEdit.toggleComment(text, sel, token: c.open), named: "Toggle Comment")
     }

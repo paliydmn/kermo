@@ -82,7 +82,23 @@ Two tabs of one name say where each is — `nginx.conf — web-01`, `run.sh — 
 
 ![The editor with four tabs — README.md — weather-app, README.md — landing-page, config.yaml and deploy.sh with ● — deploy.sh's shell script highlighted, and the status line: Unsaved changes · Draft saved 11:04](images/editor-tabs.png)
 
+A tab's menu (a right click, ⌃-click) has **Close Tab**, **Close Other Tabs**, **Close Tabs to the Right**, **Rename…**, **Copy Path** and **Reveal in Panel**. Close Other Tabs and Close Tabs to the Right (in **View ▸ Tabs** and search too) ask about each changed tab in turn, as ⌘W does; **Cancel** keeps that tab and the ones after it. Copy Path (⇧⌘C in the editor) gives a server's file as `web-01:/etc/nginx/nginx.conf`. Reveal in Panel shows the file under a panel's cursor in the main window: a server's in the panel showing that server, or the active one connects to it. An Untitled has neither, and a locked server's draft not until it's unlocked.
+
+Drag a tab to move it along the strip; the middle button closes it as ⌘W does; a double-click where no tab is opens a new Untitled.
+
+⇧⌘T (**Reopen Closed Tab**, in the Go menu while the editor is in front; Folder Tree's key in the panels) brings back the tab closed last, where it was, with its caret: this Mac's file as it is on disk now, a server's file not connected until you click it, and the text of a tab you closed with **Don't Save**. That text is kept in memory only, until Kermo quits. Kermo keeps the last twenty; a file open again meanwhile just has its tab shown.
+
 The [tools' editor](tools.md#your-own-tools) is a window of its own, as before: no tabs, no drafts; ⎋ and ⌘W close it, asking about changes.
+
+### Rename
+
+A double-click on a tab's name, **Rename…** in its menu, or ⇧F6 in the editor puts a field on the tab with the name selected up to its extension. ↩ renames; ⎋ or a click elsewhere leaves it as it was.
+
+- **This Mac's file** is renamed on disk and never over anything: a name that's taken, or a file that appears under it meanwhile, renames nothing and says so. A symbolic link is renamed itself, as in Finder. The tab, the title and the colors go by the new name; text you changed stays in the tab, and its draft follows it.
+- **A server's file** is renamed as the panel's ⇧F6 renames it. A locked server asks for Touch ID before the field. On a production server a question with its strip names the old and the new name, ↩ answers **Cancel**, and the production log has a line. A tab not connected yet needs the connection, not its text. Its next ⌘S goes to the new name. Its [file history](server-files.md#file-history) stays under the old name.
+- Not while the file saves or uploads, not to a name another tab has open, and not a tool's file (Kermo reads it where it is).
+- **An Untitled** takes just a name, no file. Its colors follow the name (`deploy.yaml` is YAML), and ⌘S offers it in the save panel.
+- ⇧F6 in a panel on a file open in a tab takes the tab along, on this Mac and on a server.
 
 ### Untitled and Save As
 

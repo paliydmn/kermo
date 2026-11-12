@@ -51,6 +51,7 @@ extension AppDelegate {
         },
         cmd("go.jump", "Jump to Folder…", ["cmd+p"], menu: "Go", group: 2, short: "Jump", aliases: "go to folder recent frecency") { $0.showJump() },
         cmd("go.tree", "Folder Tree…", ["f10", "opt+0", "opt+f10", "cmd+shift+t"], menu: "Go", group: 2, short: "Tree", aliases: "folder tree") { app in
+            if let h = app.editorKey { return h.reopenClosed() }   // the editor window's ⇧⌘T: Reopen Closed Tab (`editorTitles`)
             let panel = app.active
             DirTree.show(in: app.window, over: panel.view, at: panel.path, showHidden: app.defaults.bool(forKey: "showHidden")) { panel.navigate(to: $0) }
         },
@@ -134,6 +135,12 @@ extension AppDelegate {
         cmd("editor.tab.left", "Move Tab Left", [], menu: "View/Tabs", group: 2, aliases: "editor reorder") { $0.editorKey?.moveTab(by: -1) },
         cmd("editor.tab.right", "Move Tab Right", [], menu: "View/Tabs", group: 2, aliases: "editor reorder") { $0.editorKey?.moveTab(by: 1) },
         cmd("editor.tabs", "All Tabs…", [], menu: "View/Tabs", group: 2, aliases: "editor list documents") { $0.editorKey?.allTabs() },
+        cmd("editor.closeOthers", "Close Other Tabs", [], menu: "View/Tabs", group: 2, aliases: "editor close all but") { app in
+            if let h = app.editorKey, let a = h.active { h.closeOthers(than: a) }
+        },
+        cmd("editor.closeRight", "Close Tabs to the Right", [], menu: "View/Tabs", group: 2, aliases: "editor close") { app in
+            if let h = app.editorKey, let a = h.active { h.closeRight(of: a) }
+        },
         // The terminal's panes (as VS Code's split): while it's up.
         cmd("term.split.right", "Split Terminal Right", ["cmd+\\"], menu: "View/Tabs", group: 3, aliases: "pane side by side") { $0.terminal.split(vertical: true) },
         cmd("term.split.down", "Split Terminal Down", ["cmd+shift+\\"], menu: "View/Tabs", group: 3, aliases: "pane above below") { $0.terminal.split(vertical: false) },
@@ -343,7 +350,9 @@ extension AppDelegate {
         },
 
         // Clipboard
-        cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", group: 1, aliases: "path clipboard") { $0.copyToPasteboard($0.active.targetPaths) },
+        cmd("edit.copyPath", "Copy Path", ["cmd+shift+c"], menu: "Edit", group: 1, aliases: "path clipboard") { app in
+            if let e = app.textEditor { e.copyPath() } else { app.copyToPasteboard(app.active.targetPaths) }   // an editor's: its file's (`editorTitles`)
+        },
         cmd("text.line.up", "Move Line Up", ["opt+up"], menu: "Edit/Lines", group: 3, aliases: "editor swap") { $0.textEditor?.moveLines(up: true) },
         cmd("text.line.down", "Move Line Down", ["opt+down"], menu: "Edit/Lines", group: 3, aliases: "editor swap") { $0.textEditor?.moveLines(up: false) },
         cmd("text.line.duplicate", "Duplicate Line", ["shift+opt+down"], menu: "Edit/Lines", group: 3, aliases: "editor copy line") { $0.textEditor?.duplicateLines(up: false) },
@@ -1763,24 +1772,24 @@ extension AppDelegate {
     }
 
     /// One operation over the native client (names go as bytes, no `sftp -b` quoting), then the server's panels reload.
-    /// `paths`: what it changes, for the production log.
-    /// `then`: once it's done (not after a failure).
-    func remoteOp(_ title: String, _ target: SFTPTarget, paths: [String], select: String? = nil, _ op: @escaping @Sendable (SFTPClient) throws -> Void,
-                  then: (() -> Void)? = nil) {
+    /// `paths`: what it changes, for the production log. `panel` says it's under way (⎋ there cancels; default the active
+    /// one), a failure is said on `sheet` (an editor's; default the main window). True once it's done.
+    @discardableResult
+    func remoteOp(_ title: String, _ target: SFTPTarget, paths: [String], select: String? = nil, in panel: PanelViewController? = nil,
+                  on sheet: NSWindow? = nil, _ op: @escaping @Sendable (SFTPClient) throws -> Void) async -> Bool {
         let env = SSHAskpass.env
-        Task {
-            let r = await active.busy("\(title) on \(target.host)…") { flag in try SFTPClient.session(target, env: env, cancel: flag, op) }
-            switch r {
-            case .success:
-                AuditLog.write(target, title.lowercased(), paths: paths, exit: 0)
-                then?()
-            case .failure(is CancellationError): break
-            case .failure(let e):
-                AuditLog.write(target, title.lowercased(), paths: paths, exit: 1, error: e.localizedDescription)
-                showError(JobErrorMessage("\(title): \(e.localizedDescription)"))
-            }
-            for p in panels where p.remote?.target.asUser == target.asUser { p.reload(select: select) }
+        let r = await (panel ?? active).busy("\(title) on \(target.host)…") { flag in try SFTPClient.session(target, env: env, cancel: flag, op) }
+        switch r {
+        case .success:
+            AuditLog.write(target, title.lowercased(), paths: paths, exit: 0)
+        case .failure(is CancellationError): break
+        case .failure(let e):
+            AuditLog.write(target, title.lowercased(), paths: paths, exit: 1, error: e.localizedDescription)
+            showError(JobErrorMessage("\(title): \(e.localizedDescription)"), on: sheet)
         }
+        for p in panels where p.remote?.target.asUser == target.asUser { p.reload(select: select) }
+        if case .success = r { return true }
+        return false
     }
 
     private func remoteMkdir() {
@@ -1788,7 +1797,7 @@ extension AppDelegate {
         Task {
             guard let name = await prompt("New folder on \(target.host):", value: "", ok: "Create", strip: target), !name.isEmpty else { return }
             let path = (dir as NSString).appendingPathComponent(name)
-            remoteOp("New folder", target, paths: [path], select: name) { try $0.mkdir(path) }
+            await remoteOp("New folder", target, paths: [path], select: name) { try $0.mkdir(path) }
         }
     }
 
@@ -1800,7 +1809,7 @@ extension AppDelegate {
             guard let name = await prompt("New file on \(target.host):", value: "", ok: "Create", strip: target),
                   !name.isEmpty else { return }
             let path = name.hasPrefix("/") ? name : (r.dir as NSString).appendingPathComponent(name)
-            remoteOp("New file", target, paths: [path], select: (path as NSString).lastPathComponent, { try Self.newServerFile($0, path) }) { [self] in
+            if await remoteOp("New file", target, paths: [path], select: (path as NSString).lastPathComponent, { try Self.newServerFile($0, path) }) {
                 remoteOpen(.edit, target, path, in: panel)
             }
         }
@@ -1816,14 +1825,54 @@ extension AppDelegate {
     /// Never over an existing item (sftp's `rename` is posix-rename, which silently replaced it); `Foo` → `foo` works.
     private func remoteRename() {
         guard let (target, dir, item) = active.remoteCursor else { return NSSound.beep() }
+        let panel = active
         Task {
             guard let name = await prompt("Rename “\(item.name)” on \(target.host) to:", value: item.name, ok: "Rename",
                                           selectBaseName: true, strip: target),
                   name != item.name, !name.isEmpty else { return }
             let from = (dir as NSString).appendingPathComponent(item.name)
             let to = name.hasPrefix("/") ? name : (dir as NSString).appendingPathComponent(name)
-            remoteOp("Rename", target, paths: [from, to], select: (to as NSString).lastPathComponent) { try $0.rename(from, to, replace: false) }
+            await renameOnServer(target, from, to: to, in: panel) { panel.flash($0, error: true) }
         }
+    }
+
+    /// A server's file renamed — the panel's ⇧F6, an editor tab's: never over anything there (`replace: false`), and the
+    /// production log has its line. Its tab follows; not while it uploads (that upload would make the old name again),
+    /// nor onto a file a tab has open. `say`: a refusal, where it was asked.
+    @discardableResult
+    func renameOnServer(_ t: SFTPTarget, _ from: String, to: String, in panel: PanelViewController, on sheet: NSWindow? = nil,
+                        say: (String) -> Void) async -> Bool {
+        let tab = Editor.editing(t, from), name = (to as NSString).lastPathComponent
+        if let why = tab?.renameRefusal { say(why); return false }
+        if let other = Editor.editing(t, to), other !== tab { say("“\(name)” is open in the editor — nothing was renamed"); return false }
+        guard await unlock([.sftp(t)]) else { return false }
+        let op = { await self.remoteOp("Rename", t, paths: [from, to], select: name, in: panel, on: sheet) { try $0.rename(from, to, replace: false) } }
+        guard let tab else { return await op() }
+        guard await tab.renaming(op) else { return false }
+        if Editor.editing(t, from) === tab { await tab.moved(onServer: to) }   // still open
+        return true
+    }
+
+    /// Reveal in Panel (an editor tab's menu): its file under the cursor of a panel in the main window — a server's in the
+    /// panel showing that server, else the active one connects to it as the sidebar would (a locked one asks first).
+    func revealInPanel(_ e: Editor) {
+        bringBack(window)
+        showPanels()
+        let (dir, name, server): (String, String, SFTPTarget?)
+        if let s = e.server { (dir, name, server) = ((s.path as NSString).deletingLastPathComponent, (s.path as NSString).lastPathComponent, s.target) }
+        else if e.revealable, let url = e.url { (dir, name, server) = (url.deletingLastPathComponent().path, url.lastPathComponent, nil) }
+        else { return NSSound.beep() }
+        let panel = server.flatMap { t in panels.first { $0.remote?.target == t } } ?? active
+        window.makeFirstResponder(panel.table)
+        if let server { panel.loadRemote(server, dir: dir, select: name) } else { panel.navigate(to: dir, select: name) }
+    }
+
+    /// A file renamed from its editor tab on this Mac: the panels showing its folder have it under the cursor, and the old
+    /// name leaves Favorites and Frequent.
+    func showRenamed(from path: String, to dst: String) {
+        let dir = URL(fileURLWithPath: dst).deletingLastPathComponent().standardizedFileURL.path
+        for p in panels where p.localFolder?.standardizedFileURL.path == dir { p.reload(select: (dst as NSString).lastPathComponent) }
+        forgetGone([path])
     }
 
     /// The items as the panel listed them: one that's another thing by now (a file swapped by `mv`, a folder in its
@@ -2818,12 +2867,13 @@ extension AppDelegate {
             }
             if let r {
                 let each = items.map { ((r.dir as NSString).appendingPathComponent($0.name), $0) }
-                return remoteOp("Permissions", r.target, paths: each.map(\.0)) { c in
+                await remoteOp("Permissions", r.target, paths: each.map(\.0)) { c in
                     for (path, it) in each {
                         let owner = ids.uid == nil && ids.gid == nil ? nil : (uid: ids.uid ?? it.uid, gid: ids.gid ?? it.gid)   // unknown: left as is
                         try c.setAttrs(path, mtime: nil, mode: mode, owner: owner)
                     }
                 }
+                return
             }
             let errors = await Blocking.run { Perms.apply(paths, mode: mode, uid: ids.uid, gid: ids.gid) }
             active.reload()
@@ -2832,25 +2882,57 @@ extension AppDelegate {
     }
 
     func renameDialog() {
+        if let e = textEditor { return e.host.beginRename(e) }   // ⇧F6 in an editor: its tab's file (`editorTitles`)
         if active.remote != nil { return remoteRename() }
         guard let url = active.cursorURL else { return NSSound.beep() }
         let old = url.lastPathComponent
         Task {
             guard let name = await prompt("Rename “\(old)” to:", value: old, ok: "Rename", selectBaseName: true),
-                  name != old else { return }
-            guard !name.contains("/") else { return showError(JobErrorMessage("A name can't contain “/”")) }
+                  name != old, !name.isEmpty else { return }
             let dst = url.deletingLastPathComponent().appendingPathComponent(name).path
-            let failure = await Blocking.run(.userInitiated) { () -> Error? in   // off the main thread: a share that doesn't answer
-                // Allow case-only renames (same inode on a case-insensitive volume).
-                var a = stat(), b = stat()
-                if lstat(dst, &b) == 0, lstat(url.path, &a) == 0, a.st_ino != b.st_ino { return JobErrorMessage("“\(name)” already exists.") }
-                return rename(url.path, dst) == 0 ? nil : POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-            }
-            if let failure { return showError(failure) }
+            if let why = Editor.renameRefused(url.path, to: dst) { return showError(JobErrorMessage(why)) }   // its tab saving, or `dst` open
+            // Off the main thread: a share that doesn't answer.
+            if case .failure(let e) = await Blocking.run(.userInitiated, { Result { try Self.rename(url.path, to: name) } }) { return showError(e) }
             registerMoves("Rename", [(from: url.path, to: dst)])
             forgetGone([url.path])   // not after a case-only rename
             active.reload(select: name)
+            await Editor.renamed(url.path, to: dst)   // its tab follows: ⌘S doesn't make the old name again
         }
+    }
+
+    /// Why `name` isn't one to give a file, if it isn't (a rename on this Mac or a server, an Untitled's).
+    nonisolated static func badName(_ name: String) -> String? {
+        if name.contains("/") { return "A name can't contain “/”" }
+        if name.contains("\0") { return "A name can't contain a NUL character" }
+        return name == "." || name == ".." ? "“\(name)” isn't a name a file can have" : nil
+    }
+
+    /// The panel's ⇧F6 and an editor tab's on this Mac: the item at `path` (a link itself, not where it points) is
+    /// `name` in its folder now — never over anything there: `RENAME_EXCL`, so an item appearing meanwhile stays and
+    /// nothing is renamed. Only the item itself by another case (a disk that ignores case) is renamed plainly. Off the
+    /// main thread; the new path. `willRename`: tests, between the look and the rename.
+    nonisolated static func rename(_ path: String, to name: String, willRename: (String) -> Void = { _ in }) throws -> String {
+        if let why = badName(name) { throw JobErrorMessage(why) }
+        let dir = (path as NSString).deletingLastPathComponent, dst = (dir as NSString).appendingPathComponent(name)
+        var a = stat(), b = stat()
+        guard lstat(path, &a) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .ENOENT) }
+        func same() -> Bool { lstat(dst, &b) == 0 && (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino) }
+        if lstat(dst, &b) == 0, !same() { throw JobErrorMessage("“\(name)” already exists — nothing was renamed.") }
+        willRename(dst)
+        if renamex_np(path, dst, UInt32(RENAME_EXCL)) == 0 { return dst }
+        var err = errno
+        // Taken: by the item itself in another case, else by one that appeared meanwhile. A disk that can't rename only
+        // where nothing is: looked at once more, then renamed. ponytail: an item appearing in that instant is replaced,
+        // as a save there (D-180).
+        if err == EEXIST || err == ENOTSUP || err == EINVAL {
+            if lstat(dst, &b) == 0, !same() { throw JobErrorMessage("“\(name)” appeared there meanwhile — nothing was renamed.") }
+            if Darwin.rename(path, dst) == 0 { return dst }
+            err = errno
+        }
+        if err == EACCES || err == EPERM {
+            throw JobErrorMessage("No permission to rename “\((path as NSString).lastPathComponent)” in “\((dir as NSString).lastPathComponent)”.")
+        }
+        throw POSIXError(POSIXErrorCode(rawValue: err) ?? .EIO)
     }
 
     /// A copy next to each marked item (or the cursor's): one under a typed name ("x.conf.bak", `.bak` selected, so ↩
