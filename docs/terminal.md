@@ -21,6 +21,8 @@ While the keys are in the terminal:
 - **⌃↩** types the active panel's cursor name and **⌃⇧↩** its marked items' full paths into the shell (from a panel they go into the command line).
 - Files dropped on the terminal are typed into its shell as quoted paths (a local shell only: a server can't see this Mac's files).
 
+From the editor, ⌃↩ types the line or the selection into a shell of the file's machine and ⌃⇧↩ runs it there ([Send to Terminal](viewer-editor.md#send-to-terminal)): only into a shell waiting for a line, else into a new tab.
+
 ### Copy and paste with the mouse
 
 As in PuTTY: **selecting text copies it** — a drag, a double-click on a word, a triple-click on a line — and **a right-click pastes** the clipboard where the cursor is. ⌘C and ⌘V work as before.

@@ -32,6 +32,7 @@ Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`
 | `filters.json` | Quick filter presets (⌘/) | **Edit Filter Presets…** |
 | `bookmarks.json` | Sidebar Favorites | ⌘D, drag and drop |
 | `frecency.json` | Sidebar Frequent and ⌘P | Kermo writes it |
+| `editor-recent.json` | The editor's recent files, for [Quick Open](viewer-editor.md#quick-open): paths only, a server's with its address | Kermo writes it |
 | `audit.jsonl` | The [production log](safety.md#production-log) | **Server ▸ Production Log** |
 | `saves.noindex/` | A file's old text while the editor [writes into it in place](viewer-editor.md#editor); a copy stays only if that save was cut short | Kermo writes it; delete what's left |
 | `history.noindex/` | [Versions of server files](server-files.md#file-history) | Kermo writes it |
@@ -46,7 +47,7 @@ Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`
 
 Kermo also writes `server-pins.json` (the order of pinned servers), `trash.json` (where trashed items came from, for Put Back) and `activity.json` (the last 100 finished jobs in [Activity](files.md#activity)).
 
-A file Kermo writes back itself (`servers.json`, `bookmarks.json`, `server-pins.json`, `frecency.json`, `trash.json`) that it can't read is copied as it is to `name.broken` before anything is saved over it, and Kermo says so at launch (`trash.json`: when it's next read). In a list (servers, bookmarks, pins) only the entries that can't be read are left out; the rest load. A file that doesn't parse at all starts empty. When a `name.broken` with something else in it is there already, the new copy is `name.broken-<date>-<time>`.
+A file Kermo writes back itself (`servers.json`, `bookmarks.json`, `server-pins.json`, `frecency.json`, `editor-recent.json`, `trash.json`) that it can't read is copied as it is to `name.broken` before anything is saved over it, and Kermo says so at launch (`trash.json`: when it's next read). In a list (servers, bookmarks, pins) only the entries that can't be read are left out; the rest load. A file that doesn't parse at all starts empty. When a `name.broken` with something else in it is there already, the new copy is `name.broken-<date>-<time>`.
 
 ## Keymap
 

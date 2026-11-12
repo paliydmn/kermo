@@ -34,7 +34,7 @@ Questions about a window are sheets on that window. Only quitting, which is abou
 On a production server, what Kermo does there goes into `~/.config/dfilemanager/audit.jsonl`, one JSON line each:
 
 - saves and reverts (a failed check shows as its exit status and what became of the file; a passed or skipped check leaves nothing in the line);
-- commands (⌘E, F2, Run on Servers…);
+- commands (⌘E, F2, Run on Servers…, the editor's Execute in Terminal — not what's typed in the terminal itself);
 - copies, moves and deletes (F5, F6, F8, Synchronize);
 - renames, permissions, new folders, extracting and reloads;
 - a key added with Copy SSH Key to Server…;
