@@ -94,7 +94,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 |---|---|
 | Compare folders recursively (marks differences) | ⇧F2 |
 | Synchronize folders (two-way or mirror → / ←; also with a server) | ⌥⌘S |
-| Diff two files (two marked, the cursor and the same name in the other panel, or both cursors; also a server's) | ⇧⌘D |
+| Compare two files side by side (two marked, the cursor and the same name in the other panel, or both cursors; also a server's) | ⇧⌘D |
 | Git: only changes / all changes as a list / diff against HEAD | ⌃G / ⌃⇧G / ⌃D |
 | Git: log of the file / blame (in the viewer) | ⌃L / ⌃⇧L |
 | Git: stage / unstage the marked files | ⌃⇧A / ⌃⇧U |
@@ -149,6 +149,7 @@ In the command line, ↑↓ browse its history. On a local panel ↩ runs the li
 | Editor: rename the tab's file (or name an Untitled) / copy its path / reopen the tab closed last | ⇧F6 or a double-click on the tab / ⇧⌘C / ⇧⌘T |
 | Editor: [two panes](viewer-editor.md#two-panes), the tab you're in beside / below (with two: the other pane) | ⌘\\ / ⇧⌘\\ |
 | Editor: the other pane, side by side / one above the other / move the divider | ⌥⌘← ⌥⌘→ / ⌥⌘↑ ⌥⌘↓ / ⌃⌘ arrows |
+| Editor: [compare](viewer-editor.md#compare) the tab with another tab, its saved version or the clipboard / next, previous change while comparing | ⇧⌘D / ⌥⌘↓, ⌥⌘↑ |
 | Editor: move lines up, down / duplicate them below, above / delete them / indent, outdent the lines selected | ⌥↑, ⌥↓ / ⌥⇧↓, ⌥⇧↑ / ⇧⌘K / Tab, ⇧Tab |
 | Output window: stop, then close / run again / copy all / save / [send to a tool](tools.md#send-to) | ⎋ / ⌘R / ⌘C / ⌘S / F2 |
 

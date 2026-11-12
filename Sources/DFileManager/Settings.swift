@@ -101,7 +101,7 @@ extension AppDelegate {
                 SettingsRow(title: "Line numbers", note: "For the next viewer; l switches them in one", key: "viewerLineNumbers", control: .toggle(false)),
             ]),
             ("Compare", [
-                SettingsRow(title: "Compare files with", note: "%1 and %2 are the two files: code --diff %1 %2", key: "diffCommand", control: .field("built-in diff")),
+                SettingsRow(title: "Compare files with", note: "%1 and %2 are the two files: code --diff %1 %2. Empty: side by side in the editor", key: "diffCommand", control: .field("Kermo's Compare")),
             ]),
         ]),
         SettingsTab(title: "Servers & Safety", symbol: .safety, groups: [

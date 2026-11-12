@@ -8,6 +8,8 @@ final class LineNumberRuler: NSRulerView {
     var firstLine = 0
     /// Its numbers' size (the editor's text size follows ⌘= / ⌘−).
     var fontSize: CGFloat = 10 { didSet { needsDisplay = true } }
+    /// Its side of a comparison: − + ~ beside the changed lines' numbers, the caret's change marked.
+    weak var compared: Comparison.Side? { didSet { needsDisplay = true } }
 
     init(textView: NSTextView) {
         super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
@@ -66,7 +68,7 @@ final class LineNumberRuler: NSRulerView {
         let s = lineStarts!
         // Widen the gutter for files with many lines.
         let digits = max(3, String(s.count).count)
-        let width = CGFloat(digits) * fontSize * 0.8 + 14
+        let width = CGFloat(digits) * fontSize * 0.8 + 14 + (compared == nil ? 0 : 12)   // room for − + ~
         if abs(ruleThickness - width) > 1 { ruleThickness = width }
         return s
     }
@@ -105,8 +107,16 @@ final class LineNumberRuler: NSRulerView {
             }
             let p = convert(NSPoint(x: 0, y: y + tv.textContainerInset.height), from: tv)
             let label = "\(firstLine + line + 1)" as NSString
-            let size = label.size(withAttributes: attrs)
-            label.draw(at: NSPoint(x: ruleThickness - size.width - 6, y: p.y + 1), withAttributes: attrs)
+            let size = label.size(withAttributes: attrs), mark = compared?.mark(at: lines[line])
+            label.draw(at: NSPoint(x: ruleThickness - size.width - (compared == nil ? 6 : 18), y: p.y + 1), withAttributes: attrs)
+            if let mark {
+                let (symbol, color) = Comparison.Side.symbol(mark.kind)
+                (symbol as NSString).draw(at: NSPoint(x: ruleThickness - 13, y: p.y + 1), withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold), .foregroundColor: color])
+                if mark.block == compared?.current {   // the change the caret's in
+                    NSColor.controlAccentColor.setFill()
+                    NSRect(x: ruleThickness - 3, y: p.y, width: 3, height: lm.defaultLineHeight(for: tv.font ?? .systemFont(ofSize: 12))).fill()
+                }
+            }
             line += 1
         }
     }

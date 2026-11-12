@@ -70,13 +70,13 @@ The **Synchronize Folders** window lists every difference below both folders. No
 
 ## Compare files
 
-Press ⇧⌘D (**Mark ▸ Compare Files**) to diff two files. Kermo uses the first of these that applies:
+Press ⇧⌘D (**Mark ▸ Compare Files**) to compare two files. Kermo uses the first of these that applies:
 
 1. Two files marked in the active panel.
 2. The cursor's file and the file of the same name in the other panel's folder.
 3. The cursor's files in both panels.
 
-Folders are never compared. The result opens in a window as `diff -u`: added lines green, removed red, `@@` lines purple, and `Files are identical.` when they match. ⎋ closes it.
+Folders are never compared. The two files open side by side in the editor's [Compare](viewer-editor.md#compare): a file open in a tab as that document, live; another as a read-only copy, with **Edit** to open it. A file that isn't text (binary, over 32 MB) is shown in a window as `diff -u` instead: added lines green, removed red, `@@` lines purple, and `Files are identical.` when they match. ⎋ closes it.
 
 To use your own tool, set **Compare files with** in Settings › Editor & Viewer (`diffCommand`). Kermo runs it through zsh with `%1` and `%2` replaced by the quoted paths, and opens no window:
 
@@ -84,4 +84,4 @@ To use your own tool, set **Compare files with** in Settings › Editor & Viewer
 defaults write com.dmn.dfilemanager diffCommand 'code --diff %1 %2'
 ```
 
-`defaults delete com.dmn.dfilemanager diffCommand` brings back the built-in window. A server's file is fetched first and compared as a local copy. Compare folders and Synchronize also work with a server: see [Files on a server](server-files.md#preview-sizes-and-compare).
+`defaults delete com.dmn.dfilemanager diffCommand` brings back Kermo's own Compare. A server's file is fetched first and compared as a local copy. Compare folders and Synchronize also work with a server: see [Files on a server](server-files.md#preview-sizes-and-compare).

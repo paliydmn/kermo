@@ -38,13 +38,23 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
         if let server { return editing(server.target, server.path) }
         return open.first { $0.url?.standardizedFileURL.path == url.standardizedFileURL.path }
     }
+    /// The editor window's document of this Mac's file at `path` — a server file's by its local copy too (a save's
+    /// question has that). Not a tool's: that one is its own window's.
+    static func document(at path: String) -> Editor? { opened(URL(fileURLWithPath: path), nil).flatMap { $0.host?.tabbed == true ? $0 : nil } }
+    /// Still a tab of the editor window (a Compare that waited on a download mustn't bring a closed one back).
+    static func isTab(_ e: Editor) -> Bool { open.contains { $0 === e } && e.host?.tabbed == true }
     /// The server's file the shown tab of an editor window edits (Server File History… there).
     static func server(of window: NSWindow?) -> (target: SFTPTarget, path: String)? {
         EditorHost.shown(in: window)?.server.map { ($0.target, $0.path) }
     }
     /// Its own key, on its key bar and F1 over it; Save, Find and the rest are the menu bar's.
     static func keys(of window: NSWindow?) -> [AppDelegate.KeyRow]? {
-        EditorHost.shown(in: window).map { e in [AppDelegate.KeyRow(section: "Editor", title: e.host.tabbed ? "Back to Panels" : "Close", key: "⎋") { e.escape() }] }
+        EditorHost.shown(in: window).map { e in
+            [AppDelegate.KeyRow(section: "Editor", title: e.host.tabbed ? "Back to Panels" : "Close", key: "⎋") { e.escape() }]
+                + (e.host.comparison?.paused == false ? [("Next Change", "⌥⌘↓", 1), ("Previous Change", "⌥⌘↑", -1)].map { t, k, d in   // `term.pane.down` / `.up` there
+                    AppDelegate.KeyRow(section: "Editor", title: t, key: k) { app()?.compareStep(d) }
+                } : [])
+        }
     }
     /// The open editor of that server's file, if any.
     static func editing(_ t: SFTPTarget, _ path: String) -> Editor? { open.first { $0.server?.target == t && $0.server?.path == path } }
@@ -83,6 +93,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// The file's name — a server's file's by its path there (its local copy keeps the name it was opened by); an
     /// Untitled's given one, else "Untitled N".
     var name: String {
+        if let snapshot { return snapshot.title }
         if let server { return (server.path as NSString).lastPathComponent }
         return url?.lastPathComponent ?? givenName ?? "Untitled \(number ?? 1)"
     }
@@ -200,6 +211,55 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
         return e
     }
 
+    /// A read-only copy to compare with (`EditorHost.compare` places it): `loaded` as a file was read, `file` its name
+    /// for its colors. Not a document: no file, draft, save, rename or session, and no lookup finds it.
+    static func snapshot(_ loaded: Loaded, file: String?, title: String, place: String, source: AppDelegate.DiffSide? = nil) -> Editor {
+        let e = Editor(nil, remote: nil, loaded: loaded)
+        e.snapshot = (title, place, source)
+        e.language = file.flatMap { Syntax.language(forFileName: $0, firstLine: String(loaded.0.prefix(200).split(separator: "\n").first ?? "")) }
+        e.editable(false)
+        open.append(e)   // Wrap, text size and Show Invisibles reach it; with no file and no server, nothing else does
+        return e
+    }
+
+    /// A read-only copy (`snapshot`): what its tab and title say, and the file Edit turns it into (nil: not a file —
+    /// a kept version, the clipboard, or a file whose document is the other side).
+    private(set) var snapshot: (title: String, place: String, source: AppDelegate.DiffSide?)?
+
+    /// Edit, in a read-only copy of a file: that file's document now, in its place — read again as F4 reads it, a
+    /// server's with all of F4's rules — and its comparison goes on. Open in another tab already: that tab takes its place.
+    func edit() {
+        guard let copy = snapshot, let s = copy.source else { return NSSound.beep() }
+        if let other = s.server.flatMap({ Self.editing($0, s.path) }) ?? (s.server == nil ? Self.opened(URL(fileURLWithPath: s.path), nil) : nil) {
+            guard other.host?.tabbed == true else { other.revealed(); return flash("“\(other.name)” is open in a tool's editor: edit it there") }
+            return host.replace(self, with: other)
+        }
+        snapshot = nil
+        finalNewline = Self.finalNewlineSetting() ?? Self.isConfig(s.path)
+        lastSelection = (textView.selectedRange().location, frame.scroll.contentView.bounds.origin.y)
+        if let t = s.server {
+            remote = SavedServer.title(t, s.path)
+            server = (t, s.path, AppDelegate.RemoteEdit(baseline: .nothing))   // the download sets what the saves check against
+            chips = Chip.of(t)
+            cover = .parked
+            connect()
+        } else {
+            let u = URL(fileURLWithPath: s.path)
+            url = u
+            cover = .loading
+            Task {
+                switch await Blocking.run(.userInitiated, { Result { try Self.load(u) } }) {
+                case .success(let l): fill(l.0, stamp: l.5, digest: l.6, apply: l)
+                case .failure(let error):   // gone or changed into something else meanwhile: still the copy it was
+                    (url, snapshot, cover) = (nil, copy, nil)
+                    flash(error.localizedDescription)
+                    if host.comparison?.shows(self) != true { host.remove(self) }   // its comparison ended meanwhile: a copy goes with it
+                }
+            }
+        }
+        host.changed(self)   // a document now: in the session
+    }
+
     /// In a window of its own, not shown (tests).
     convenience init(_ url: URL, remote: String? = nil) throws {
         try self.init(url, remote: remote, loaded: Self.load(url))
@@ -236,6 +296,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// What the window says while its tab shows: the file's name and where it is ("web-01 · /etc/nginx"). A locked
     /// server's draft: its name and server only, till it's unlocked.
     var heading: (title: String, subtitle: String) {
+        if let snapshot { return (snapshot.title.bidiVisible, ["Read-only", snapshot.place].filter { !$0.isEmpty }.joined(separator: " · ")) }
         let (host, path): (String?, String) = if let server { (SavedServer.name(for: server.target), server.path) }
             else if let r = remote, let c = r.range(of: ":/") { (String(r[..<c.lowerBound]), String(r[r.index(after: c.lowerBound)...])) }   // "host:/path"
             else { (nil, url?.path ?? "") }
@@ -251,6 +312,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     }
     /// What tells it from a tab of the same name: its server, else its folder's name.
     var whereShort: String {
+        if let snapshot { return snapshot.place }
         if let server { return SavedServer.name(for: server.target) }
         return (url.map { (($0.path as NSString).deletingLastPathComponent as NSString).lastPathComponent }) ?? ""
     }
@@ -273,6 +335,9 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// Its tab, shown in the window, before a question about it: out of the Dock, key, in front — a sheet on a window
     /// out of sight waits unseen (and the save behind it with it).
     @discardableResult func revealed() -> NSWindow { host.reveal(self) }
+
+    /// What saving writes besides the text: two files of the same text may still differ in these (Compare says so).
+    var format: (encoding: String.Encoding, bom: Bool, crlf: Bool) { (encoding, bom, crlf) }
 
     private var encodingName: String { encoding == .utf8 ? lossy ? "UTF-8 (damaged)" : "UTF-8" : "Windows-1251" }
 
@@ -409,13 +474,14 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     @objc func toggleFinalNewline(_ sender: Any?) { finalNewline.toggle() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if snapshot != nil, [#selector(saveDocument(_:)), #selector(saveDocumentAs(_:)), #selector(toggleFinalNewline(_:))].contains(item.action) { return false }
         if item.action == #selector(toggleFinalNewline(_:)) { item.state = finalNewline ? .on : .off }
         if item.action == #selector(saveDocumentAs(_:)) { return canSaveAs && window?.attachedSheet == nil }   // a second ⇧⌘S: no second panel
         return true
     }
 
     /// Not a tool's file, nor while a save runs.
-    private var canSaveAs: Bool { !fixedPlace && !saving && cover == nil }
+    private var canSaveAs: Bool { !fixedPlace && !saving && cover == nil && snapshot == nil }
 
     /// What saving writes of `text`: in its encoding, with the final newline if that's on, CRLF line ends and the BOM
     /// if the file had them; nil if the encoding can't hold it.
@@ -464,6 +530,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// edited until it's done, and a second ⌘S meanwhile does nothing.
     @discardableResult
     func save(force: Bool = false, then: (@MainActor () -> Void)? = nil) async -> Bool {
+        if snapshot != nil { NSSound.beep(); return false }   // a read-only copy: nowhere to write it
         if cover != nil { connect(); return false }   // a parked or locked tab: opened, or unlocked, first
         host?.changed(self, now: true)   // a crash during the save: the draft has what was typed till now
         guard let url, let path = realPath else { return await saveAs() }   // an Untitled: where to, first
@@ -729,7 +796,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     private func saveAs(_ dest: URL, base: (stamp: Stamp?, digest: Data?)) async -> Bool {
-        guard !saving else { return false }
+        guard !saving, snapshot == nil else { return false }
         // This file (a plain Save) or another editor window's (nothing written), through links — every time, the
         // encoding question's Save too (F4 on it meanwhile). Off the main thread: a share that stopped answering.
         let others = Self.open.filter { $0 !== self }, urls = others.map(\.url), mine = url
@@ -1063,6 +1130,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// still uploading: a crash mid-upload mustn't leave the text only in a temp copy), it gets a revision.
     var sessionDoc: EditorSession.Doc? {
         if case .unreadable = cover { return nil }
+        if snapshot != nil { return nil }   // a read-only copy: gone with its comparison, never back from a launch or ⇧⌘T
         var d = EditorSession.Doc(id: id, kind: server != nil ? .server : url == nil ? .untitled : .local)
         d.format.encoding = encoding.rawValue
         (d.format.lossy, d.format.bom, d.format.crlf, d.format.encodingAsked, d.format.finalNewline) = (lossy, bom, crlf, encodingAsked, finalNewline)
@@ -1231,6 +1299,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
 
     /// Why its tab's file can't be renamed now (said in its status line); nil: it can.
     var renameRefusal: String? {
+        if snapshot != nil { return "Not renamed: a read-only copy to compare with" }
         if fixedPlace { return "Not renamed: Kermo reads a tool's file where it is" }
         if remote != nil, server == nil { return "Not renamed: this is a copy of a server's file" }   // an older "host:/path" copy
         if let s = server, saving || s.state.sending > 0 { return "Not renamed: an upload to \(SavedServer.name(for: s.target)) is still going" }
@@ -1337,13 +1406,18 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
         sayPosition()
     }
 
-    /// Compare's copies of drafts: removed at quit (the launch sweep takes one a crash left).
+    /// Compare's copies of texts for a program (`diffCommand`) or `diff -u`: removed at quit (the launch sweep takes one a crash left).
     static var comparisons: [String] = []
 
     /// The draft's bytes against the file's now, as saving would write them (its encoding, CRLF, BOM): a diff of the
     /// text alone would differ on every line of a CRLF file. Through a 0600 file of ours, gone with the diff's temp files.
-    private func compareWithDisk() {
-        guard let url, let app = NSApp.delegate as? AppDelegate, let data = fileData(of: textView.string) else { return }
+    func compareWithDisk() {
+        guard let url, let app = Self.app() else { return }
+        if app.builtInCompare {   // built in: this document itself against the file as it is now
+            Task { await app.compare(.file(.init(path: url.path, name: "\(name) (on disk)", now: true)), .doc(self)) }
+            return
+        }
+        guard let data = fileData(of: textView.string) else { return }
         let tmp = NSTemporaryDirectory() + "dfm-text-draft-" + UUID().uuidString   // diff reads it after it starts: gone at quit
         guard mkdir(tmp, 0o700) == 0, FileManager.default.createFile(atPath: tmp + "/" + name, contents: data, attributes: [.posixPermissions: 0o600]) else { return }
         Self.comparisons.append(tmp)
@@ -1372,14 +1446,22 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
 
     /// A line over its text in every view (a restored draft whose file changed or went), with its buttons.
     private var notice: (text: String, actions: [(String, @MainActor () -> Void)])? {
-        didSet { views.forEach { $0.frame.banner = notice.map { Banner($0.text, $0.actions) } } }
+        didSet {
+            views.forEach { $0.frame.banner = notice.map { Banner($0.text, $0.actions) } }
+            host?.comparison?.levelTops()   // compared: the other side's rows level with these again
+        }
     }
 
     /// Typing on or off in every view (a save, a rename, a cover).
-    private func editable(_ on: Bool) { views.forEach { $0.text.isEditable = on } }
+    private func editable(_ on: Bool) { views.forEach { $0.text.isEditable = on && snapshot == nil } }
 
-    /// The mark before its tab's name: ● changed, ↑ saved here but not on its server, ! its draft not written.
+    /// The mark before its tab's name: ● changed, ↑ saved here but not on its server, ! its draft not written, a lock a read-only copy.
     var mark: NSAttributedString? {
+        if snapshot != nil {   // a read-only copy: a lock
+            let lock = NSTextAttachment()
+            lock.image = Symbol.lock.image("Read-only", color: .secondaryLabelColor, size: NSFont.smallSystemFontSize - 1)
+            return NSAttributedString(attachment: lock)
+        }
         let m: (String, NSColor)? = draftFailed != nil && dirty ? ("!", .systemRed) : unsent ? ("↑", .systemOrange) : dirty ? ("●", .secondaryLabelColor) : nil
         return m.map { NSAttributedString(string: $0.0, attributes: [.foregroundColor: $0.1, .font: NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize)]) }
     }
@@ -1423,6 +1505,8 @@ final class EditorTextView: NSTextView {
     /// A bracket by the caret and its pair (`Editor.markBrackets`).
     var brackets: [NSRange] = [] { didSet { relight() } }
     var tabMarks = false { didSet { needsDisplay = true } }
+    /// Its side of a comparison (`Comparison`): its colors and blank space, under the caret's line.
+    weak var compared: Comparison.Side? { didSet { needsDisplay = true } }
     /// Where they were last drawn: what to redraw when they move.
     private var lit: [NSRect] = []
 
@@ -1455,6 +1539,7 @@ final class EditorTextView: NSTextView {
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
+        compared?.draw(in: self, rect)
         let now = lights()
         lit = [now.line].compactMap { $0 } + now.brackets
         if let line = now.line, line.intersects(rect) {
@@ -1588,8 +1673,9 @@ extension Editor {
         if step != 0, size == fontSize { return NSSound.beep() }
         UserDefaults.standard.set(Double(size), forKey: "editorFontSize")
         open.forEach { $0.applyFont() }
+        EditorHost.shared?.comparison?.regap()   // its blank space is so many lines' height
     }
-    static func toggleWrap() { UserDefaults.standard.set(!wraps, forKey: "editorWrap"); open.forEach { $0.applyView() } }
+    static func toggleWrap() { UserDefaults.standard.set(!wraps, forKey: "editorWrap"); open.forEach { $0.applyView() }; EditorHost.shared?.comparison?.regap() }
     static func toggleInvisibles() { UserDefaults.standard.set(!invisibles, forKey: "editorInvisibles"); open.forEach { $0.applyView() } }
 
     /// Its text at `fontSize`, a tab `LineEdit.tabWidth` columns wide, the line numbers to match; `only`: a new view's
@@ -1634,8 +1720,9 @@ extension Editor {
     /// "Ln 12, Col 5 · 3 lines, 120 selected · Spaces: 4", right of each view's status line. Col counts columns, a tab
     /// to the next stop.
     func sayPosition() { views.forEach(sayPosition) }
-    fileprivate func sayPosition(_ v: DocView) {
-        guard cover == nil else { v.frame.position = ""; return }
+    func sayPosition(_ v: DocView) {
+        let compare = host?.comparison?.words(for: v)
+        guard cover == nil else { v.frame.position = compare ?? ""; return }
         let sel = v.text.selectedRange(), starts = v.ruler.starts
         let line = LineNumberRuler.line(of: sel.location, in: starts), n = sel.location - starts[line]
         let col = n > 10_000 ? n : LineEdit.column(text.substring(with: NSRange(location: starts[line], length: n)))   // ponytail: a longer line's start counts characters
@@ -1645,12 +1732,13 @@ extension Editor {
             words.append((lines > 1 ? "\(lines) lines, " : "") + "\(sel.length) selected")
         }
         words.append(indent == .tabs ? "Tabs" : "Spaces: \(indent.width)")
-        v.frame.position = words.joined(separator: " · ")
+        v.frame.position = ([compare].compactMap { $0 } + words).joined(separator: " · ")
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {
         // A tab not shown (twenty restored at launch): `shown` says it.
         guard let v = views.first(where: { $0.text === notification.object as? NSTextView }), v.frame.window != nil else { return }
+        if let c = host?.comparison { c.caretMoved(v) }   // says the position too
         sayPosition(v)
         markBrackets(v)
     }
