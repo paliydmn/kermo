@@ -175,7 +175,7 @@ final class Comparison: NSObject {
     /// A line over one side's text moves its rows down: the other side gets as much blank space over its own.
     func levelTops(off: Bool = false) {
         if let s = spacer, let f = s.superview as? DocFrame, f.banner === s { f.banner = nil }
-        guard !off, let a = old.view, let b = new.view else { return }
+        guard !off, !paused, let a = old.view, let b = new.view else { return }   // paused: the other side shows alone
         let (ha, hb) = (a.frame.banner?.frame.height ?? 0, b.frame.banner?.frame.height ?? 0)
         guard ha != hb else { return }
         let low = ha < hb ? a : b
@@ -250,13 +250,14 @@ final class Comparison: NSObject {
         guard !paused, let a = old.view?.doc, let b = new.view?.doc else { return }
         guard a.cover == nil, b.cover == nil else { return show(nil, empty: true) }   // a text being read: nothing yet
         if running { again = true; return }
-        running = true
+        (running, again) = (true, false)
         let (x, y, ea, eb) = (a.storage.string, b.storage.string, a.edits, b.edits)
         Task {
             let r = await Task.detached(priority: .userInitiated) { TextDiff.compare(x, y) }.value
             running = false
-            guard host?.comparison === self, !paused, old.view?.doc === a, new.view?.doc === b else { return }
-            if again || a.edits != ea || b.edits != eb { again = false; return recompute() }
+            guard host?.comparison === self, !paused else { return }
+            // Asked again meanwhile, typed on, or a side's another document now (Edit): the latest, not this.
+            if again || old.view?.doc !== a || new.view?.doc !== b || a.edits != ea || b.edits != eb { return recompute() }
             lastEdits = (ea, eb)
             show(r)
         }

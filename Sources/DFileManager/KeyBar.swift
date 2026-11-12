@@ -525,6 +525,12 @@ final class DocFrame: NSView {
     }
     private var buttons: NSStackView?
 
+    /// A narrower or wider pane: the buttons stay, `position` gives way or gets its room back.
+    override func resizeSubviews(withOldSize old: NSSize) {
+        super.resizeSubviews(withOldSize: old)
+        layoutStatus()
+    }
+
     private func layoutStatus() {
         let room = bounds.width - 20 - (buttons.map { $0.fittingSize.width + 8 } ?? 0) - 56   // the buttons and some words stay; `position` gives way
         place.lineBreakMode = .byClipping   // its whole width as it is; cut with "…" only where it doesn't fit

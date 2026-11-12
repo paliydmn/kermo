@@ -80,3 +80,10 @@ private func blocks(_ a: String, _ b: String) -> [String] {
     #expect(TextDiff.inline(nfc, nfd)! == ([NSRange(location: 3, length: 1)], [NSRange(location: 3, length: 2)]))
 }
 
+@Test func aCharacterChangedInEachLongLineIsMarkedInEach() {
+    let old = (0..<2000).map { String(repeating: "x", count: 125) + "\($0 % 10)" + String(repeating: "y", count: 124) }
+    let new = old.map { line -> String in var c = Array(line); c[125] = "Q"; return String(c) }   // one character changed, mid-line
+    let r = TextDiff.compare(old.joined(separator: "\n"), new.joined(separator: "\n"))
+    #expect(r?.newChars.count == 2000, "each line its character, not all of it changed")
+}
+

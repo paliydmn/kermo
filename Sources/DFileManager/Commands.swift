@@ -2586,7 +2586,8 @@ extension AppDelegate {
         guard let ea = await editor(a) else { return }
         guard let eb = await editor(b) else { return made.forEach { $0.closed() } }   // in no tab yet: out of the lookups only
         // A document closed while a copy downloaded isn't brought back; one file on both sides is nothing to compare.
-        guard [ea, eb].allSatisfy({ $0.snapshot != nil || Editor.isTab($0) }), ea !== eb else { return made.forEach { $0.closed() } }
+        guard [ea, eb].allSatisfy({ $0.snapshot != nil || Editor.isTab($0) }) else { return made.forEach { $0.closed() } }
+        guard ea !== eb else { return panel.flash("Both sides are the same file") }   // two spellings of one path (/tmp, /private/tmp)
         EditorHost.tabs.compare(old: ea, new: eb, snapshots: made)
     }
 

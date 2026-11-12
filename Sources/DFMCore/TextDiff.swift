@@ -18,7 +18,8 @@ public enum TextDiff {
         public let oldChars: [NSRange], newChars: [NSRange]
     }
 
-    /// Under a second of `cost` on a 2026 Mac: 7 000 lines all different are 2·10⁸, 0.7 s (10 000: 4·10⁸, 1.25 s).
+    /// About 0.7 s of work on a 2026 Mac: 7 000 lines all different are 2·10⁸ (10 000: 4·10⁸, 1.25 s). The lines' check
+    /// and their matching each take up to that; the changed characters what the matching left of it.
     public static let budget = 2 * 100_000_000
 
     /// `old` against `new`; nil if matching them would cost over `budget` (`cost`). Its changed characters within the
@@ -28,13 +29,14 @@ public enum TextDiff {
         let la = lines(a), lb = lines(b)
         var table: [[UInt16]: Int] = [:]
         let x = ids(a, la, &table), y = ids(b, lb, &table)
-        guard cost(x, y, budget: budget) else { return nil }
+        guard let spent = cost(x, y, budget: budget) else { return nil }
         let blocks = blocks(x, y)
-        var oc: [NSRange] = [], nc: [NSRange] = [], left = budget
+        var oc: [NSRange] = [], nc: [NSRange] = [], left = budget - spent
         for k in blocks {
             for (i, j) in zip(k.old, k.new) {
-                let work = (la[i].length + lb[j].length) * (la[i].length + lb[j].length)   // at most (n + m)·D
-                guard work <= left, let d = inline(a.substring(with: la[i]), b.substring(with: lb[j])) else { continue }
+                let (u, v) = (a.substring(with: la[i]), b.substring(with: lb[j]))
+                let rest = differing(Array(u.utf16), Array(v.utf16)), work = rest * rest   // (n + m)·D at most, of what differs
+                guard work <= left, let d = inline(u, v) else { continue }
                 left -= work
                 oc += d.old.map { NSRange(location: $0.location + la[i].location, length: $0.length) }
                 nc += d.new.map { NSRange(location: $0.location + lb[j].location, length: $0.length) }
@@ -77,17 +79,18 @@ public enum TextDiff {
         return (p, s)
     }
 
-    /// Whether matching costs `budget` at most: (N + M)·D of what's left once the common start and end are set aside,
+    /// What matching costs, if `budget` at most: (N + M)·D of what's left once the common start and end are set aside,
     /// D the lines either side has that the other hasn't there. The standard library's matching can't be stopped
     /// midway, so it's asked first: at once no when the lines with no equal at all are too many; else D itself, worked
     /// out up to what the budget allows and no further (lines that only moved count too — a sorted file's do).
-    public static func cost(_ a: [Int], _ b: [Int], budget: Int = budget) -> Bool {
+    /// The work it takes ((N + M)·D), nil over `budget`.
+    public static func cost(_ a: [Int], _ b: [Int], budget: Int = budget) -> Int? {
         let (p, s) = common(a, b)
         let x = Array(a[p..<(a.count - s)]), y = Array(b[p..<(b.count - s)]), n = x.count + y.count
-        guard n > 0 else { return true }
+        guard n > 0 else { return 0 }
         let inX = Set(x), inY = Set(y), cap = budget / n
-        guard x.count(where: { !inY.contains($0) }) + y.count(where: { !inX.contains($0) }) <= cap else { return false }
-        return distance(x, y, cap: cap) != nil
+        guard x.count(where: { !inY.contains($0) }) + y.count(where: { !inX.contains($0) }) <= cap else { return nil }
+        return distance(x, y, cap: cap).map { n * $0 }
     }
 
     /// The fewest lines removed and added that make `x` into `y` (Myers's forward pass, one diagonal array: no more
@@ -143,6 +146,15 @@ public enum TextDiff {
             }
         }
         return (runs(gone, x), runs(came, y))
+    }
+
+    /// How much of `x` and `y` is left once their common start and end are set aside.
+    private static func differing(_ x: [UInt16], _ y: [UInt16]) -> Int {
+        var p = 0
+        while p < x.count, p < y.count, x[p] == y[p] { p += 1 }
+        var s = 0
+        while s < x.count - p, s < y.count - p, x[x.count - 1 - s] == y[y.count - 1 - s] { s += 1 }
+        return x.count + y.count - 2 * (p + s)
     }
 
     /// The marked characters' runs in UTF-16.

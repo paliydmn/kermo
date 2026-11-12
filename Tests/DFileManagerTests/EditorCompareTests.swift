@@ -146,6 +146,11 @@ extension EditorWindowTests {
         dv.frame.banner = nil
         c.levelTops()
         #expect(sv.frame.banner == nil)
+        dv.frame.banner = Banner("changed on disk", [])
+        h.select(Editor.untitled(), in: try #require(sv.pane))   // paused: the other side shows alone, no blank band over it
+        c.levelTops()
+        #expect(c.paused && sv.frame.banner == nil)
+        dv.frame.banner = nil
     }
 
     /// ⌥⌘↓ ⌥⌘↑ go from change to change while it compares (Focus Pane Below / Above otherwise); ⇧⌘D in the editor window
@@ -280,9 +285,22 @@ extension EditorWindowTests {
         gone.close()
         await late.value
         #expect(h.comparison == nil && !h.docs.contains { $0 === gone } && Editor.document(at: dir + "/x.conf") == nil)
-        // One file on both sides: said, nothing opened.
+        // One file on both sides: said, nothing opened — two spellings of its path too.
         await a.diff(y, y, in: a.active)
         #expect(h.comparison == nil && a.active.statusText.contains("same file"))
+        let other = dir.hasPrefix("/private/") ? String(dir.dropFirst("/private".count)) : dir
+        await a.diff(AppDelegate.DiffSide(path: other + "/y.conf"), y, in: a.active)
+        #expect(h.comparison == nil, "\(other)")
+        // Edit while a matching is under way, its file open in a tab: that tab's the side, and it's worked out.
+        let xdoc = try await opened(dir + "/x.conf")
+        let copyX = Editor.snapshot(("a\n", .utf8, false, false, false, nil, Editor.sha(Data())), file: "x.conf", title: "x.conf (copy)", place: "~",
+                                    source: AppDelegate.DiffSide(path: dir + "/x.conf"))
+        h.compare(old: copyX, new: doc, snapshots: [copyX])
+        let r = try #require(h.comparison)
+        copyX.edit()   // right away: the first matching is still running
+        #expect(r.old.view?.doc === xdoc)
+        try await until("worked out with the document") { r.words(for: r.new.view!) != "Comparing…" && r.new.view?.text.compared != nil }
+        h.stopComparing()
         // A tool's file open in its own editor window is read as a copy, never pulled into the editor window.
         try put("{}\n", dir + "/t.json")
         let tool = try Editor.open(URL(fileURLWithPath: dir + "/t.json"), text: nil, beside: NSView()) { _ in }
