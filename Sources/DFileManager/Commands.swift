@@ -49,7 +49,9 @@ extension AppDelegate {
         cmd("go.path", "Go to Path…", ["cmd+l", "cmd+shift+g"], menu: "Go", group: 2, aliases: "path location") { app in
             if let e = app.textEditor { e.goToLine() } else { app.active.beginPathEditing() }   // an editor's: Go to Line… (`editorTitles`)
         },
-        cmd("go.jump", "Jump to Folder…", ["cmd+p"], menu: "Go", group: 2, short: "Jump", aliases: "go to folder recent frecency") { $0.showJump() },
+        cmd("go.jump", "Jump to Folder…", ["cmd+p"], menu: "Go", group: 2, short: "Jump", aliases: "go to folder recent frecency") { app in
+            if app.editorKey != nil { app.quickOpen() } else { app.showJump() }   // the editor window's ⌘P: Quick Open… (`editorTitles`)
+        },
         cmd("go.tree", "Folder Tree…", ["f10", "opt+0", "opt+f10", "cmd+shift+t"], menu: "Go", group: 2, short: "Tree", aliases: "folder tree") { app in
             if let h = app.editorKey { return h.reopenClosed() }   // the editor window's ⇧⌘T: Reopen Closed Tab (`editorTitles`)
             let panel = app.active

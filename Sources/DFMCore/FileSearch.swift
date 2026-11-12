@@ -8,6 +8,7 @@ public struct SearchQuery: Sendable {
     public var includeHidden = false
     public var spotlight = false          // use the Spotlight index (fast; skips what Spotlight doesn't index)
     public var tag = ""                   // Finder tag name (case-insensitive); empty = any
+    public var skipFolder: (@Sendable (String) -> Bool)? = nil   // folders by name not gone into (Quick Open: node_modules, packages)
 
     public init(root: String) { self.root = root }
 }
@@ -54,7 +55,7 @@ public enum FileSearch {
                 let full = dir + "/" + item.name
                 let relName = rel.isEmpty ? item.name : rel + "/" + item.name
                 if matches(item, full) { onMatch(item.renamed(relName)) }
-                if item.kind == .dir && (q.includeHidden || !item.isHidden) && !DirLister.crosses(full, mount, rootStat.st_dev) {
+                if item.kind == .dir && (q.includeHidden || !item.isHidden) && q.skipFolder?(item.name) != true && !DirLister.crosses(full, mount, rootStat.st_dev) {
                     walk(full, relName)
                 }
             }

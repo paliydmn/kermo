@@ -167,7 +167,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// editor window. `note`: said in its status line once it's open (`flash`).
     static func open(_ url: URL, remote: String? = nil, server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)? = nil,
                      note: String? = nil, onSaved: (@MainActor (URL) -> Void)? = nil, onClose: (@MainActor () -> Void)? = nil) {
-        if let existing = opened(url, server) { onClose?(); existing.revealed(); return }
+        if let existing = opened(url, server) { onClose?(); existing.revealed(); app()?.rememberRecent(existing); return }
         Task {
             let loaded = await Blocking.run(.userInitiated) { Result { try load(url) } }
             // Opened meanwhile (↩ twice during a slow read or download): one tab per file, the other copy goes.
@@ -180,6 +180,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
                 if let t = server?.target { e.chips = Chip.of(t) }
                 open.append(e)
                 EditorHost.tabs.add(e)
+                app()?.rememberRecent(e)
                 if let note { e.flash(note) }
             } catch {
                 onClose?()
@@ -270,6 +271,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
             }
         }
         host.changed(self)   // a document now: in the session
+        Self.app()?.rememberRecent(self)
     }
 
     /// In a window of its own, not shown (tests).

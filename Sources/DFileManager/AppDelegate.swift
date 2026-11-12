@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
     var serverPins: [String] = Config.noting(Config.loadEach("server-pins.json", as: String.self))   // addresses, in pin order
     var frecency: Frecency = Config.noting(Config.loadKeeping("frecency.json", as: Frecency.self)) ?? Frecency()
+    var editorRecent: RecentFiles = Config.noting(Config.loadKeeping("editor-recent.json", as: RecentFiles.self)) ?? RecentFiles()   // Quick Open's
     lazy var searchFrecency = Self.searchFrecency(defaults)   // what the search's Recent lists
     private var visitsSinceSave = 0
 
@@ -186,14 +187,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // The terminal eats control keys, so its commands (⌃O, ⌘T, ⌘W, ⌃⇥ …) are picked off here first.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [unowned self] e in
             let handled = MainActor.assumeIsolated { () -> Bool in
-                if Self.editor(key: e.window) != nil, let c = keymap[Shortcut(event: e)], Self.editorPaneKeys.contains(c.id) {   // ⌥⌘ / ⌃⌘ arrows
-                    run(c.id)
-                    return true
-                }
-                // ⌃↩ / ⌃⇧↩ in the editor window's text: Send / Execute in Terminal (NSTextView would take them first).
-                if Self.editor(key: e.window) != nil, e.window?.firstResponder is EditorTextView, let c = keymap[Shortcut(event: e)],
-                   let to = Self.editorTerminalKeys[c.id] {
-                    run(to)
+                if let c = keymap[Shortcut(event: e)], let id = Self.editorPickOff(c.id, in: e.window) {   // ⌥⌘ / ⌃⌘ arrows, ⌃↩ / ⌃⇧↩
+                    run(id)
                     return true
                 }
                 guard e.window === window else { return false }
@@ -1431,9 +1426,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// one command).
     static let editorTitles = ["go.path": "Go to Line…", "view.filterPresets": "Toggle Comment", "term.bigger": "Bigger Text", "term.smaller": "Smaller Text",
                                "file.rename": "Rename…", "edit.copyPath": "Copy Path", "go.tree": "Reopen Closed Tab",
-                               "term.split.right": "Split Editor Right", "term.split.down": "Split Editor Down", "file.diff": "Compare With…"]
+                               "term.split.right": "Split Editor Right", "term.split.down": "Split Editor Down", "file.diff": "Compare With…",
+                               "go.jump": "Quick Open…"]
     /// The editor window's own branches (its tabs, its panes; `editorPaneKeys` too), not a tool's editor's.
-    static let editorWindowOnly: Set<String> = ["go.tree", "term.split.right", "term.split.down", "file.diff"]
+    static let editorWindowOnly: Set<String> = ["go.tree", "term.split.right", "term.split.down", "file.diff", "go.jump"]
     /// The terminal's pane keys that, in the editor window, move between its panes and their divider: keys only, no menu
     /// items — picked off as the terminal's are.
     static let editorPaneKeys: Set<String> = ["term.pane.left", "term.pane.right", "term.pane.up", "term.pane.down",
@@ -1441,6 +1437,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Panel keys that, in the editor window's text, are Send / Execute in Terminal: keys only, no menu items — picked off
     /// before the text takes them.
     static let editorTerminalKeys = ["cmdline.insert": "editor.send", "cmdline.insertPaths": "editor.execute"]
+    /// What a key (`id`: its command) runs in the editor window before its text gets it: the pane keys; ⌃↩ / ⌃⇧↩ as
+    /// Send / Execute in Terminal while the text has the keys (not the find bar). nil: the key goes on as it is.
+    static func editorPickOff(_ id: String, in w: NSWindow?) -> String? {
+        guard editor(key: w) != nil else { return nil }
+        if editorPaneKeys.contains(id) { return id }
+        return w?.firstResponder is EditorTextView ? editorTerminalKeys[id] : nil
+    }
     /// An editor has that command's branch now (`editorTitles`): the editor window's own only there, the rest a tool's
     /// editor too.
     func inEditor(_ id: String) -> Bool { Self.editorTitles[id] != nil && (Self.editorWindowOnly.contains(id) ? editorKey != nil : textEditor != nil) }

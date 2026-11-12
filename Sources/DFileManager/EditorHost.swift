@@ -762,6 +762,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         p.docs.insert(e, at: min(c.at, p.docs.count))
         reveal(e)
         changed()
+        Editor.app()?.rememberRecent(e)
         Task { await e.reopen(c.doc, text: c.text) }
     }
 

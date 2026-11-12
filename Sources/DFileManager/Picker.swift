@@ -297,6 +297,13 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         if r == index(at: table.selectedRow) { updateBar() }   // its keys may have changed (a run started on it)
     }
 
+    /// Its rows as they are now (a list that fills in: Quick Open's folder): what's typed and highlighted stay.
+    func replace(_ items: [Item]) {
+        selectID = highlighted?.id
+        self.items = items
+        filter()
+    }
+
     func has(_ id: String) -> Bool {
         items.contains { $0.id == id } || source?.listID == id || above.contains { l in l.items.contains { $0.id == id } || l.source?.listID == id }
     }

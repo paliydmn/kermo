@@ -529,6 +529,14 @@ extension EditorWindowTests {
         #expect(await send("echo again", run: true, from: e, in: dir + "/one") != .notSent(""))
         #expect(a.terminal.tabs.count == 2 && typed.count == n + 1 && typed.last?.tab != shell.id && typed.last?.tab == a.terminal.current?.id)
 
+        // The keys: ⌃↩ / ⌃⇧↩ only while the editor window's text has them; the panels' ⌃↩ stays theirs.
+        #expect(h.window?.makeFirstResponder(try #require(h.active).current.text) == true)   // the shown tab's text
+        #expect(AppDelegate.editorPickOff("cmdline.insert", in: h.window) == "editor.send" && AppDelegate.editorPickOff("cmdline.insertPaths", in: h.window) == "editor.execute")
+        h.window?.makeFirstResponder(nil)
+        #expect(AppDelegate.editorPickOff("cmdline.insert", in: h.window) == nil, "the find bar's ⌃↩ is its own")
+        #expect(AppDelegate.editorPickOff("cmdline.insert", in: a.window) == nil && AppDelegate.editorPickOff("term.pane.left", in: h.window) == "term.pane.left")
+        #expect(Editor.keys(of: h.window)?.contains { $0.title == "Execute in Terminal" && $0.key == "⌃⇧↩" } == true)
+
         // A server: production asks (↩ = Cancel: nothing), Run starts a new SSH tab that runs it, as the user, logged.
         let t = SFTPTarget(host: "pr5@dfm-pr5.invalid")
         var prod = SavedServer(address: "pr5@dfm-pr5.invalid")!
@@ -552,5 +560,108 @@ extension EditorWindowTests {
         let before = typed.count
         if case .notSent = await send("ls", run: false, from: b, on: t, in: "/srv") {} else { Issue.record("typed into a tab that never asked") }
         #expect(typed.count == before)
+    }
+}
+
+// Editor E6 PR 5: Quick Open (⌘P in the editor window).
+extension EditorWindowTests {
+    /// ⌘P in the editor window: its tabs, then Recent, then the files under the document's repository — Picker at once,
+    /// the folder after; each file once; not hidden, .git, node_modules, a package's insides, nor through a link out of
+    /// it; the walk stops at its limit; ↩ on an open file is its tab (no second one), a Recent server file opens as F4's.
+    /// Recent: written 0600, newest first, never a locked server's; a damaged file reads as an empty list.
+    @Test func quickOpenListsTabsRecentAndTheRepository() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        let a = app(dir)
+        a.commands = a.makeCommands()
+        let menu = a.makeMenu()
+        let limit = AppDelegate.quickOpenLimit
+        defer {
+            AppDelegate.quickOpenLimit = limit
+            (AppDelegate.answering, ServerLock.servers) = (nil, { [] })
+            Picker.dismiss()
+            AppDelegate.keyWindow = { NSApp.keyWindow }
+            Editor.app = { NSApp.delegate as? AppDelegate }
+            a.panels.forEach { $0.shutdown() }
+            gone()
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        let h = fresh(dir + "/drafts") { a.remoteEditing($0, $1, $2, in: $3) }
+        let repo = dir + "/repo", fm = FileManager.default
+        for d in ["/.git", "/src/api", "/node_modules/x", "/Tool.app/Contents", "/.cache"] { try fm.createDirectory(atPath: repo + d, withIntermediateDirectories: true) }
+        try fm.createDirectory(atPath: dir + "/outside", withIntermediateDirectories: true)
+        for f in ["/README.md", "/src/app.ts", "/src/api/server.ts", "/node_modules/x/index.js", "/Tool.app/Contents/Info.plist", "/.cache/c", "/.env"] { try put("x\n", repo + f) }
+        try put("x\n", dir + "/outside/secret.txt")
+        try fm.createSymbolicLink(atPath: repo + "/linked", withDestinationPath: dir + "/outside")
+        try put("x\n", dir + "/notes.txt")
+        a.editorRecent = RecentFiles()
+        let e = try await opened(repo + "/src/app.ts")
+        #expect(a.editorRecent.entries.first == RecentFiles.Entry(path: repo + "/src/app.ts"), "F4 puts it first in Recent")
+        a.editorRecent.visit(RecentFiles.Entry(path: repo + "/README.md"))   // also in the repository: once, as Recent
+        a.editorRecent.visit(RecentFiles.Entry(path: dir + "/notes.txt"))
+        AppDelegate.keyWindow = { h.window }
+        a.updateMenuKeys(menu)
+        let jump = try #require(menu.allItems.first { $0.representedObject as? String == "go.jump" })
+        #expect(a.validateMenuItem(jump) && jump.title == "Quick Open…" && jump.keyEquivalent == "p")
+        a.run("go.jump")
+        let p = try #require(Picker.current)
+        #expect(p.groups == ["Tabs", "Recent"] && p.rows.map(\.title) == ["app.ts", "notes.txt", "README.md"], "at once: tabs and Recent, the open file once")
+        try await until("the folder came in") { p.groups.count == 3 }
+        #expect(p.groups[2] == "In " + (repo as NSString).abbreviatingWithTildeInPath, "the repository's root, not the file's folder")
+        #expect(Set(p.rows.filter { $0.group.hasPrefix("In ") }.map(\.title)) == ["server.ts"], "\(p.rows.map(\.title))")
+        p.field.stringValue = "srvts"
+        p.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        #expect(p.rows.first?.title == "server.ts")
+        p.field.stringValue = "app"
+        p.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        let tab = try #require(p.rows.first)
+        #expect(tab.group == "Tabs")
+        Picker.dismiss()
+        let docs = h.docs.count
+        tab.run()
+        #expect(h.active === e && h.docs.count == docs, "its tab, no second one")
+
+        // A Recent server file: as F4 opens it.
+        let t = SFTPTarget.local()
+        try put("srv\n", dir + "/served.conf")
+        a.editorRecent.visit(RecentFiles.Entry(path: dir + "/served.conf", server: t))
+        a.run("go.jump")
+        let q = try #require(Picker.current)
+        let served = try #require(q.rows.first { $0.title == "served.conf" })
+        Picker.dismiss()
+        served.run()
+        try await until("downloaded and open") { Editor.editing(t, dir + "/served.conf") != nil }
+        #expect(a.editorRecent.entries.first == RecentFiles.Entry(path: dir + "/served.conf", server: t))
+        Config.flush()
+        let attrs = try fm.attributesOfItem(atPath: Config.path("editor-recent.json"))
+        #expect((attrs[.posixPermissions] as? Int) == 0o600)
+
+        // A locked server's file isn't remembered.
+        var locked = SavedServer(address: "me@dfm-pr5-locked.invalid")!
+        locked.locked = true
+        ServerLock.servers = { [locked] }
+        let before = a.editorRecent
+        let server = e.server
+        e.server = (locked.target, "/etc/x", AppDelegate.RemoteEdit(baseline: .nothing))
+        a.rememberRecent(e)
+        e.server = server
+        #expect(a.editorRecent == before)
+
+        // The walk's limit: Picker says it's the first ones.
+        AppDelegate.quickOpenLimit = (files: 3, seconds: 5)
+        for i in 0..<10 { try put("x\n", repo + "/src/f\(i).txt") }
+        a.run("go.jump")
+        #expect(Picker.current?.groups == ["Tabs", "Recent"], "a server's file shown: no folder walked")
+        Picker.dismiss()
+        h.select(e)
+        a.run("go.jump")
+        let r = try #require(Picker.current)
+        try await until("the first files") { r.groups.count == 3 }
+        #expect(r.rows.filter { $0.group.hasPrefix("In ") }.count <= 3)
+
+        // A damaged list: empty, and the file stays as it was.
+        try put("{ not json", dir + "/editor-recent.json")
+        let damaged = Config.loadKeeping("editor-recent.json", as: RecentFiles.self, in: dir)
+        #expect(damaged.value == nil && damaged.problem != nil && read(dir + "/editor-recent.json") == "{ not json")
     }
 }
