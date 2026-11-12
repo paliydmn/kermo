@@ -149,6 +149,12 @@ extension AppDelegate {
             if let h = app.editorKey, let a = h.active { h.clone(a) }
         },
         cmd("editor.joinPanes", "Join Panes", [], menu: "View/Tabs", group: 2, aliases: "editor unsplit merge panes") { $0.editorKey?.joinPanes() },
+        // Compare in the editor window (`Comparison`): ⇧⌘D there is Compare With… (`editorTitles`), ⌥⌘↓ ⌥⌘↑ go from
+        // change to change while it compares (`term.pane.down`, `term.pane.up`); these have no keys of their own.
+        cmd("editor.compare.with", "Compare With…", [], menu: "View/Compare", group: 3, aliases: "editor diff compare tab clipboard saved version") { $0.editorKey?.compareWith() },
+        cmd("editor.compare.next", "Next Change", [], menu: "View/Compare", group: 4, aliases: "editor diff compare difference") { $0.compareStep(1) },
+        cmd("editor.compare.prev", "Previous Change", [], menu: "View/Compare", group: 4, aliases: "editor diff compare difference") { $0.compareStep(-1) },
+        cmd("editor.compare.stop", "Stop Comparing", [], menu: "View/Compare", group: 5, aliases: "editor diff compare end close") { $0.editorKey?.stopComparing() },
         // The terminal's panes (as VS Code's split): while it's up. In the editor window, its own (`editorTitles`).
         cmd("term.split.right", "Split Terminal Right", ["cmd+\\"], menu: "View/Tabs", group: 3, aliases: "pane side by side") { app in
             if let h = app.editorKey { h.split(vertical: true) } else { app.terminal.split(vertical: true) }
@@ -160,8 +166,12 @@ extension AppDelegate {
         cmd("term.unsplit", "Move Pane to New Tab", [], menu: "View/Tabs", group: 3, aliases: "unsplit pane terminal") { $0.terminal.unsplit() },
         cmd("term.pane.left", "Focus Pane Left", ["cmd+opt+left"], aliases: "terminal split") { app in if let h = app.editorKey { h.focusPane(by: -1, vertical: true) } else { app.terminal.focusPane(by: -1, vertical: true) } },
         cmd("term.pane.right", "Focus Pane Right", ["cmd+opt+right"], aliases: "terminal split") { app in if let h = app.editorKey { h.focusPane(by: 1, vertical: true) } else { app.terminal.focusPane(by: 1, vertical: true) } },
-        cmd("term.pane.up", "Focus Pane Above", ["cmd+opt+up"], aliases: "terminal split") { app in if let h = app.editorKey { h.focusPane(by: -1, vertical: false) } else { app.terminal.focusPane(by: -1, vertical: false) } },
-        cmd("term.pane.down", "Focus Pane Below", ["cmd+opt+down"], aliases: "terminal split") { app in if let h = app.editorKey { h.focusPane(by: 1, vertical: false) } else { app.terminal.focusPane(by: 1, vertical: false) } },
+        cmd("term.pane.up", "Focus Pane Above", ["cmd+opt+up"], aliases: "terminal split") { app in
+            if let h = app.editorKey { if h.comparison?.paused == false { app.compareStep(-1) } else { h.focusPane(by: -1, vertical: false) } } else { app.terminal.focusPane(by: -1, vertical: false) }
+        },
+        cmd("term.pane.down", "Focus Pane Below", ["cmd+opt+down"], aliases: "terminal split") { app in   // comparing: the panes are side by side, ↓ ↑ free
+            if let h = app.editorKey { if h.comparison?.paused == false { app.compareStep(1) } else { h.focusPane(by: 1, vertical: false) } } else { app.terminal.focusPane(by: 1, vertical: false) }
+        },
         cmd("term.resize.left", "Move Pane Divider Left", ["ctrl+cmd+left"], aliases: "terminal split resize") { app in if let h = app.editorKey { h.resizePane(by: -1, vertical: true) } else { app.terminal.resizePane(by: -1, vertical: true) } },
         cmd("term.resize.right", "Move Pane Divider Right", ["ctrl+cmd+right"], aliases: "terminal split resize") { app in if let h = app.editorKey { h.resizePane(by: 1, vertical: true) } else { app.terminal.resizePane(by: 1, vertical: true) } },
         cmd("term.resize.up", "Move Pane Divider Up", ["ctrl+cmd+up"], aliases: "terminal split resize") { app in if let h = app.editorKey { h.resizePane(by: -1, vertical: false) } else { app.terminal.resizePane(by: -1, vertical: false) } },
@@ -289,7 +299,9 @@ extension AppDelegate {
         },
         cmd("file.split", "Split File…", [], menu: "File/Split & Combine", group: 5, aliases: "chunks parts") { $0.splitDialog() },
         cmd("file.combine", "Combine Parts…", [], menu: "File/Split & Combine", group: 5, aliases: "join merge chunks") { $0.combineDialog() },
-        cmd("file.diff", "Compare Files", ["cmd+shift+d"], menu: "Mark", group: 2, short: "Compare", aliases: "compare files Compare Files (diff)") { $0.diffFiles() },   // not ⌘⌥D: macOS takes it (Dock hiding)
+        cmd("file.diff", "Compare Files", ["cmd+shift+d"], menu: "Mark", group: 2, short: "Compare", aliases: "compare files Compare Files (diff)") { app in
+            if let h = app.editorKey { h.compareWith() } else { app.diffFiles() }
+        },   // not ⌘⌥D: macOS takes it (Dock hiding)
         cmd("server.history", "File History…", [], menu: "Server", group: 4, aliases: "versions revert previous backup undo save sftp Server File History…") { $0.serverFileHistory() },
         cmd("file.eject", "Eject Volume", ["cmd+opt+e"], menu: "File", group: 7, short: "Eject", aliases: "unmount disk") { $0.ejectVolume() },
         cmd("file.unmount", "Unmount Volume", [], menu: "File", group: 7, short: "Unmount", aliases: "disk eject") { $0.ejectVolume(unmount: true) },
@@ -1446,8 +1458,16 @@ extension AppDelegate {
         if state.asks(target) {
             var c = Confirm("Save “\(name)” to \(SavedServer.name(for: target))?", on: target, action: "Save")
             c.note = "This overwrites the file there."
-            guard await confirm(c, on: Editor.asking(about: saved)) == 0 else {
-                return notSaved(saved, to: target, CancellationError())   // the editor may be gone: says where the text is
+            let editing = Editor.window(for: saved) != nil   // an editor's save: not a Revert, not another app's
+            if editing { c.others = ["Show Changes"] }
+            switch await confirm(c, on: Editor.asking(about: saved)) {
+            case 0: break
+            case 1 where editing:   // this save doesn't happen (nothing written); the file there now beside the text: ⌘S asks again
+                _ = notSaved(saved, to: target, CancellationError())
+                let panel = panels.first { $0.remote?.target == target } ?? active
+                Task { await diff(Self.serverNow(remotePath, on: target), DiffSide(path: saved.path, name: "\(name) (yours)"), in: panel) }
+                return false
+            default: return notSaved(saved, to: target, CancellationError())   // the editor may be gone: says where the text is
             }
             state.prodConfirmed = true
         }
@@ -1513,8 +1533,15 @@ extension AppDelegate {
                 case 0:   // over what was shown, not whatever's there by now: another change meanwhile asks again
                     state.baseline = e.attrs
                     return await uploadNow(saved, to: remotePath, on: target, state, force: false, action: action)
-                case 1: await diff(DiffSide(path: saved.path, name: "\(name) (yours)"),
-                                   DiffSide(path: remotePath, server: target, size: e.attrs.size, mtime: e.attrs.mtime), in: panel)
+                case 1:
+                    let yours = DiffSide(path: saved.path, name: "\(name) (yours)")
+                    var there = Self.serverNow(remotePath, on: target)
+                    (there.size, there.mtime, there.look) = (e.attrs.size, e.attrs.mtime, false)   // as the question says it is: its preview copy if there's one
+                    if Editor.window(for: saved) != nil, defaults.string(forKey: "diffCommand") == nil {   // side by side, live: like Show Changes
+                        Task { await diff(there, yours, in: panel) }
+                        return false
+                    }
+                    await diff(yours, there, in: panel, plain: true)   // the question stays up meanwhile
                 default: return false
                 }
             }
@@ -1537,6 +1564,11 @@ extension AppDelegate {
             if !(e is CancellationError) { AuditLog.write(target, action, paths: [remotePath], exit: 1, error: e.localizedDescription) }
             return notSaved(saved, to: target, e)
         }
+    }
+
+    /// A server's file as it is there now, never its open document: the other side of a Compare before a save.
+    static func serverNow(_ path: String, on target: SFTPTarget) -> DiffSide {
+        DiffSide(path: path, server: target, look: true, name: "\(target.host):\(path) (now)", now: true)
     }
 
     /// The session a save to `target` goes over: that of a panel showing it, if one does — no ssh start and handshake
@@ -1622,7 +1654,8 @@ extension AppDelegate {
                 guard let old else { panel.flash("Nothing to compare: the text before this save wasn't kept (over 5 MB, or a new file)"); continue }
                 if before == nil { before = Self.textBefore(old, name: name) }
                 guard let before else { continue }
-                await diff(DiffSide(path: before, name: "\(target.host):\(path) (before this save)"), DiffSide(path: saved.path, name: "\(target.host):\(path)"), in: panel)
+                await diff(DiffSide(path: before, name: "\(target.host):\(path) (before this save)"), DiffSide(path: saved.path, name: "\(target.host):\(path)"),
+                           in: panel, plain: true)   // the question stays up: it can't be asked again later
             default: return
             }
         }
@@ -2425,8 +2458,16 @@ extension AppDelegate {
         var size: Int64 = 0, mtime: Double = 0
         var look = false   // a link (its own size says nothing), or a size not known: the server is asked first
         var name: String? = nil   // what the diff calls it, if not its path ("host:/path" on a server)
+        var now = false   // the file as it is there now, even with its document open (that's the other side)
         var label: String { name ?? server.map { "\($0.host):\(path)" } ?? path }
+        /// Its tab in the built-in Compare: the file's name, and what it is if the caller said ("nginx.conf @ 14:03").
+        var title: String { ((name ?? path) as NSString).lastPathComponent + (name == nil ? server.map { " (\($0.host))" } ?? "" : "") }
+        /// Under its tab's title: where it is.
+        @MainActor var place: String { DocFrame.place((path as NSString).deletingLastPathComponent, host: server.map { SavedServer.name(for: $0) }) }
     }
+
+    /// A side of the built-in Compare: an open document as it is, live; or a file read as it is now — a read-only copy.
+    enum CompareSide { case doc(Editor), file(DiffSide) }
 
     /// A panel's marked files (or the cursor's), and its cursor's: on a server, as its listing has them.
     private func diffSides(_ p: PanelViewController) -> (marked: [DiffSide], cursor: DiffSide?) {
@@ -2474,18 +2515,70 @@ extension AppDelegate {
         }
     }
 
-    /// `a` against `b`: a server's file through its local copy (`localCopy`).
-    func diff(_ a: DiffSide, _ b: DiffSide, in panel: PanelViewController) async {
+    /// Next / Previous Change of the editor window's comparison, from the side with the keys.
+    func compareStep(_ d: Int) {
+        guard let h = editorKey, let c = h.comparison else { return NSSound.beep() }
+        c.step(d, from: h.active?.current)
+    }
+
+    /// `a` (old) against `b` (new) — the one way every Compare of files goes: `diffCommand`'s program with their copies
+    /// if it's set; else the built-in Compare (a file open in the editor as its document, unless the side wants it as
+    /// it is `now`); `plain`, or a file that isn't text: `diff -u` in an output window (a question that stays up while
+    /// it shows — Reload…?, a copy's "already there" — asks for that). A server's file goes through its local copy
+    /// (`localCopy`).
+    func diff(_ a: DiffSide, _ b: DiffSide, in panel: PanelViewController, plain: Bool = false) async {
+        if !plain, defaults.string(forKey: "diffCommand") == nil {
+            func side(_ d: DiffSide) -> CompareSide {
+                guard !d.now, let e = d.server.map({ Editor.editing($0, d.path) }) ?? Editor.document(at: d.path) else { return .file(d) }
+                return .doc(e)
+            }
+            return await compare(side(a), side(b), in: panel)
+        }
         guard await unlock([a, b].compactMap { $0.server.map(Endpoint.sftp) }) else { return }
         guard let la = await localCopy(a, in: panel), let lb = await localCopy(b, in: panel) else { return }
         let (qa, qb) = (ShellContext.quote(la), ShellContext.quote(lb))
         if let tool = defaults.string(forKey: "diffCommand") {
-            Shell.spawn(Self.fillDiff(tool, qa, qb), in: panel.path)
+            Self.runDiff(Self.fillDiff(tool, qa, qb), panel.path, true, nil)
         } else {
             let named = a.server != nil || b.server != nil || a.name != nil || b.name != nil
-            Shell.run(Self.diffCommand(la, lb, labels: named ? (a.label, b.label) : nil), in: panel.path, diff: true,
-                      title: named ? "diff \(a.label) ↔ \(b.label)" : nil)   // not the copies' temp paths
+            Self.runDiff(Self.diffCommand(la, lb, labels: named ? (a.label, b.label) : nil), panel.path, false,
+                         named ? "diff \(a.label) ↔ \(b.label)" : nil)   // not the copies' temp paths
         }
+    }
+
+    /// A Compare of files outside the editor: `diffCommand`'s program (`external`), or `diff -u` in an output window
+    /// under `title` (tests: nothing runs, they keep the command).
+    static var runDiff: @MainActor (_ command: String, _ dir: String, _ external: Bool, _ title: String?) -> Void = { command, dir, external, title in
+        if external { Shell.spawn(command, in: dir) } else { Shell.run(command, in: dir, diff: true, title: title) }
+    }
+
+    /// The built-in Compare of `a` (old) and `b` (new) in the editor window (`EditorHost.compare`): a file read now as a
+    /// read-only copy — a server's downloaded as a preview's is, after its lock. Two files of which one isn't text
+    /// (binary, over 32 MB): `diff -u`, as before; a document against such a file: why not, said.
+    func compare(_ a: CompareSide, _ b: CompareSide, in panel: PanelViewController? = nil) async {
+        let panel = panel ?? active
+        var files: [DiffSide] = []
+        for case .file(let d) in [a, b] { files.append(d) }
+        guard await unlock(files.compactMap { $0.server.map(Endpoint.sftp) }) else { return }
+        var made: [Editor] = []
+        func editor(_ s: CompareSide) async -> Editor? {
+            guard case .file(let d) = s else { if case .doc(let e) = s { return e }; return nil }
+            guard let path = await localCopy(d, in: panel) else { return nil }
+            switch await Blocking.run(.userInitiated, { Result { try Editor.load(URL(fileURLWithPath: path)) } }) {
+            case .success(let loaded):
+                let e = Editor.snapshot(loaded, file: (d.path as NSString).lastPathComponent, title: d.title, place: d.place,
+                                        source: d.now || d.name != nil ? nil : d)   // a real file, not its document's other side: Edit
+                made.append(e)
+                return e
+            case .failure(let error):
+                if case .file(let x) = a, case .file(let y) = b { await diff(x, y, in: panel, plain: true) }   // as Compare Files always did
+                else { panel.flash(error.localizedDescription, error: true) }
+                return nil
+            }
+        }
+        guard let ea = await editor(a) else { return }
+        guard let eb = await editor(b) else { return made.forEach { $0.closed() } }   // in no tab yet: out of the lookups only
+        EditorHost.tabs.compare(old: ea, new: eb, snapshots: made)
     }
 
     /// An output window's title for git's diff: what it's of, not git's options and full paths.

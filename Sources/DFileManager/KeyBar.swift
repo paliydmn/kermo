@@ -506,10 +506,35 @@ final class DocFrame: NSView {
         set {
             guard newValue != place.stringValue else { return }
             place.stringValue = newValue
-            let w = newValue.isEmpty ? 0 : place.intrinsicContentSize.width
-            place.frame = NSRect(x: bounds.width - 10 - w, y: status.frame.minY, width: w, height: status.frame.height)
-            status.frame.size.width = place.frame.minX - (w > 0 ? 16 : 0) - status.frame.minX
+            layoutStatus()
         }
+    }
+
+    /// Buttons between the status line's words and `position` (a read-only copy's Edit, Compare's Show as diff -u).
+    var actions: [(String, @MainActor () -> Void)] = [] {
+        didSet {
+            buttons?.removeFromSuperview()
+            buttons = actions.isEmpty ? nil : NSStackView(views: actions.map(Banner.button))
+            if let b = buttons {
+                b.spacing = 6
+                b.autoresizingMask = [.minXMargin, .maxYMargin]
+                addSubview(b)
+            }
+            layoutStatus()
+        }
+    }
+    private var buttons: NSStackView?
+
+    private func layoutStatus() {
+        let w = place.stringValue.isEmpty ? 0 : place.intrinsicContentSize.width
+        place.frame = NSRect(x: bounds.width - 10 - w, y: status.frame.minY, width: w, height: status.frame.height)
+        var end = place.frame.minX - (w > 0 ? 16 : 0)
+        if let b = buttons {
+            let size = b.fittingSize
+            b.frame = NSRect(x: end - size.width, y: status.frame.minY - 2, width: size.width, height: status.frame.height + 4)
+            end = b.frame.minX - 8
+        }
+        status.frame.size.width = end - status.frame.minX
     }
 
     /// Where a document window's file or command is, said under its title: "web-01 · /var/log/nginx" on a server (its
@@ -607,7 +632,7 @@ final class Banner: NSView {
         return l
     }
 
-    private static func button(_ a: (String, @MainActor () -> Void)) -> NSButton {
+    fileprivate static func button(_ a: (String, @MainActor () -> Void)) -> NSButton {
         let b = ClosureButton(title: a.0) { MainActor.assumeIsolated { a.1() } }
         b.bezelStyle = .rounded
         b.controlSize = .small

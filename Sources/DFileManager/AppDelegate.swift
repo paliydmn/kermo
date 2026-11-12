@@ -143,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         window.undoManager?.levelsOfUndo = 100   // each step holds its paths (and a move's jobs): not a whole day's worth
         window.title = "Kermo"
         ops = OpsController(window: window, historyDir: Config.dir) { [unowned self] in jobFinished($0) }
-        ops.compare = { [unowned self] new, existing in await diff(new, existing, in: active) }
+        ops.compare = { [unowned self] new, existing in await diff(new, existing, in: active, plain: true) }   // the copy's question waits meanwhile
         ops.onRetry = { [unowned self] in retryFailed($0, $1) }
         ops.onShow = { [unowned self] in showItem(on: $0, in: $1, select: $2) }
         ops.toolJobs = tools.jobs   // a long job still running since the last launch: followed again once its server is connected
@@ -1393,6 +1393,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if inEditor(id) { return true }   // keys stay put as tabs change: Copy Path beeps for an Untitled or a locked draft
         }
         if id.hasPrefix("text.") { return textEditor != nil }
+        if ["editor.compare.next", "editor.compare.prev", "editor.compare.stop"].contains(id) { return editorKey?.comparison != nil }   // while it compares
         if id.hasPrefix("tab.") || Self.editorTabs.contains(id) {   // the editor window's tabs: its own (D-101: none from another)
             if editorKey != nil { item.title = c?.title ?? item.title; return true }
             if Self.editorTabs.contains(id) { return false }
@@ -1416,14 +1417,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                                        "editor.new", "editor.show"]
     /// What works only in the editor window: its tabs, hiding it.
     static let editorTabs: Set<String> = ["editor.close", "editor.tab.left", "editor.tab.right", "editor.tabs", "editor.closeOthers", "editor.closeRight",
-                                          "editor.moveToPane", "editor.cloneToPane", "editor.joinPanes"]
+                                          "editor.moveToPane", "editor.cloneToPane", "editor.joinPanes",
+                                          "editor.compare.with", "editor.compare.next", "editor.compare.prev", "editor.compare.stop"]
     /// Panel commands whose keys an editor takes for its text or its tab, and what they're called there (D-101: one key,
     /// one command).
     static let editorTitles = ["go.path": "Go to Line…", "view.filterPresets": "Toggle Comment", "term.bigger": "Bigger Text", "term.smaller": "Smaller Text",
                                "file.rename": "Rename…", "edit.copyPath": "Copy Path", "go.tree": "Reopen Closed Tab",
-                               "term.split.right": "Split Editor Right", "term.split.down": "Split Editor Down"]
+                               "term.split.right": "Split Editor Right", "term.split.down": "Split Editor Down", "file.diff": "Compare With…"]
     /// The editor window's own branches (its tabs, its panes; `editorPaneKeys` too), not a tool's editor's.
-    static let editorWindowOnly: Set<String> = ["go.tree", "term.split.right", "term.split.down"]
+    static let editorWindowOnly: Set<String> = ["go.tree", "term.split.right", "term.split.down", "file.diff"]
     /// The terminal's pane keys that, in the editor window, move between its panes and their divider: keys only, no menu
     /// items — picked off as the terminal's are.
     static let editorPaneKeys: Set<String> = ["term.pane.left", "term.pane.right", "term.pane.up", "term.pane.down",

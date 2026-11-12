@@ -104,7 +104,13 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         let q = addPane()
         split.adjustSubviews()
         split.setPosition((split.isVertical ? split.bounds.width : split.bounds.height) / 2, ofDividerAt: 0)
+        minimumSize()
         return q
+    }
+
+    /// Two panes side by side are each at least `minPane` wide (D-201): the window can't be made narrower.
+    private func minimumSize() {
+        window?.contentMinSize.width = panes.count > 1 && split.isVertical ? 2 * Self.minPane + split.dividerThickness : 0
     }
 
     /// An emptied pane goes: the other has the window.
@@ -113,6 +119,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         panes.removeAll { $0 === p }
         p.box.removeFromSuperview()
         split.adjustSubviews()
+        minimumSize()
         if pane === p { activate(panes[0]) }
     }
 
@@ -211,6 +218,96 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
     private var share: Double {
         let whole = split.isVertical ? split.bounds.width : split.bounds.height
         return whole > 0 ? Double((split.isVertical ? panes[0].box.frame.width : panes[0].box.frame.height) / whole) : 0.5
+    }
+
+    // MARK: Compare
+
+    /// The two views compared now (`Comparison`); nil: none.
+    private(set) var comparison: Comparison?
+
+    /// Compare `old` with `new` side by side: a document already in a pane stays there — `new`'s first, the one typed
+    /// in — and the other side goes to the other pane, made beside if there's one (panes one above the other are put
+    /// side by side). A document in that pane already is chosen there; one in this pane only is shown there too (a
+    /// view of the same document). `snapshots`: read-only copies made for it, new tabs, closed when it ends. The keys
+    /// go to the document.
+    func compare(old a: Editor, new b: Editor, snapshots: [Editor] = []) {
+        guard tabbed, a !== b else { return }
+        stopComparing()
+        if panes.count > 1, !split.isVertical {
+            split.isVertical = true
+            split.adjustSubviews()
+            split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
+            minimumSize()
+        }
+        let (qb, qa): (Pane, Pane)
+        if let p = place(of: b) { (qb, qa) = (p, place(of: a).flatMap { $0 === p ? nil : $0 } ?? other(than: p, vertical: true)) }
+        else if let p = place(of: a) { (qa, qb) = (p, other(than: p, vertical: true)) }
+        else { (qa, qb) = (pane, other(than: pane, vertical: true)) }
+        for (e, p) in [(a, qa), (b, qb)] where !p.docs.contains(where: { $0 === e }) {
+            e.host = self
+            p.docs.append(e)
+        }
+        show(a, in: qa)
+        show(b, in: qb)
+        comparison = Comparison(old: a.view(in: qa), new: b.view(in: qb), snapshots: snapshots, host: self)
+        let keys = b.snapshot == nil || a.snapshot != nil ? b : a
+        activate(keys === b ? qb : qa)
+        comparison?.start()
+        reveal(keys)
+        changed()
+    }
+
+    /// Stop Comparing, and its end by a side closed or moved, Join Panes: plain views again, its copies closed.
+    func stopComparing() {
+        guard let c = comparison else { return }
+        comparison = nil
+        c.stop()
+    }
+
+    /// A read-only copy's tab given to `doc` (Edit, its file open in another tab already): the comparison goes on with it.
+    func replace(_ copy: Editor, with doc: Editor) {
+        guard let p = place(of: copy), let i = p.docs.firstIndex(where: { $0 === copy }) else { return }
+        if !p.docs.contains(where: { $0 === doc }) { p.docs.insert(doc, at: i + 1) }
+        comparison?.replace(copy, with: doc, in: p)
+        select(doc, in: p)
+        remove(copy)
+        comparison?.start()
+    }
+
+    /// Compare With… (⇧⌘D in the editor window): the shown tab against the other pane's shown tab (first), another tab,
+    /// its file as saved now (on disk, or its server's), or the clipboard's text as it is then.
+    func compareWith() {
+        guard let w = window, let e = active, e.snapshot == nil else { return NSSound.beep() }
+        let there = panes.first { $0 !== pane }?.active
+        var tabs = docs.filter { $0 !== e && $0.snapshot == nil && !($0.url == nil && $0.server == nil && $0.storage.length == 0) }
+        if let t = there, let i = tabs.firstIndex(where: { $0 === t }) { tabs.insert(tabs.remove(at: i), at: 0) }
+        var items = tabs.map { t in
+            Picker.Item(title: t.name, subtitle: t === there ? "The other pane" : t.heading.subtitle, badges: t.chips.map(\.image)) { [weak self] in self?.compare(old: t, new: e) }
+        }
+        if let s = e.server {
+            items.append(Picker.Item(title: "Saved Version", subtitle: "\(SavedServer.name(for: s.target)), now") {
+                Task { await Editor.app()?.compare(.file(.init(path: s.path, server: s.target, look: true, now: true)), .doc(e)) }
+            })
+        } else if let url = e.url {
+            items.append(Picker.Item(title: "Saved Version", subtitle: "On disk, now") {
+                Task { await Editor.app()?.compare(.file(.init(path: url.path, now: true)), .doc(e)) }
+            })
+        }
+        if let clip = NSPasteboard.general.string(forType: .string) {
+            let lines = clip.split(separator: "\n", omittingEmptySubsequences: false).count
+            items.append(Picker.Item(title: "Clipboard", subtitle: lines == 1 ? "1 line" : "\(lines) lines") { [weak self] in self?.compareClipboard(with: e) })
+        }
+        guard !items.isEmpty else { return e.flash("Nothing to compare “\(e.name)” with: no other tab, saved version or text on the clipboard") }
+        Picker.show(over: w, placeholder: "Compare “\(e.name)” with…", header: "Compare With", items: items)
+    }
+
+    /// The clipboard's text as it is now, a read-only copy against `e` — in memory only.
+    func compareClipboard(with e: Editor) {
+        guard let text = NSPasteboard.general.string(forType: .string) else { return NSSound.beep() }
+        let at = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
+        let copy = Editor.snapshot((text, .utf8, false, false, false, nil, Editor.sha(Data())), file: e.url?.lastPathComponent ?? e.server.map { ($0.path as NSString).lastPathComponent },
+                                   title: "Clipboard \(at)", place: "the clipboard at \(at)")
+        compare(old: copy, new: e, snapshots: [copy])
     }
 
     // MARK: Tabs
@@ -416,6 +513,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         w.representedURL = e.representedURL
         w.showChips(e.chips)
         finalNewlineSwitch.setSelected(e.finalNewline, forSegment: 0)
+        finalNewlineSwitch.isEnabled = e.snapshot == nil
         let history = w.toolbar?.items.contains { $0.itemIdentifier == Self.historyID } == true
         if history != (e.server != nil), let bar = w.toolbar {   // a server's file has its history
             if history { bar.removeItem(at: bar.items.count - 1) } else { bar.insertItem(withItemIdentifier: Self.historyID, at: bar.items.count) }
@@ -546,6 +644,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
     /// the pane the keys aren't in.
     private func showTabs() {
         guard tabbed else { return }
+        defer { comparison?.check() }   // a tab chosen, moved or closed: paused, on again, or over
         let names = docs.map(\.name)
         for p in panes {
             p.off.isHidden = draftsOff == nil
@@ -800,7 +899,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         if durable { lastDurable = Date() }
         var s = EditorSession(), texts: [UUID: String] = [:], sent: [(Editor, Int)] = []
         s.windowOpen = windowOpen ?? (window?.isVisible == true)
-        let kept = docs.filter { !closing.contains(ObjectIdentifier($0)) }
+        let kept = docs.filter { !closing.contains(ObjectIdentifier($0)) && $0.snapshot == nil }   // a Compare's read-only copies: never kept
         s.active = active.flatMap { a in kept.contains { $0 === a } ? a.id : nil }
         if panes.count > 1 {
             let ids = Set(kept.map(\.id))
