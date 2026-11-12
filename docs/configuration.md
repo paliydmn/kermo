@@ -100,7 +100,7 @@ Set an option in [Settings](#settings), or with `defaults write com.dmn.dfileman
 | `editorFontSize` | points | 12 | The editor's text size, 8–36 (⌘+ / ⌘− in an editor save it) |
 | `editorWrap` | `-bool` | `true` | Long lines wrap in the editor; `false` runs them on to the right (**View ▸ Wrap Lines**, ⌥Z) |
 | `editorInvisibles` | `-bool` | `false` | The editor marks spaces and tabs (**View ▸ Show Invisibles**) |
-| `diffCommand` | command | built-in diff | Tool for [comparing files](search-compare.md), for example `'code --diff %1 %2'` (a server's file comes as its local copy) |
+| `diffCommand` | command | Kermo's Compare | Tool for [comparing files](search-compare.md#compare-files), for example `'code --diff %1 %2'` (a server's file comes as its local copy); unset, files open side by side in the editor's [Compare](viewer-editor.md#compare) |
 | `serverHistory` | `-bool` | `true` | `false` keeps no [versions of server files](server-files.md#file-history) |
 | `updateCheckOff` | `-bool` | `false` | `true`: Kermo doesn't [check for updates](install.md#updates) by itself (**Kermo ▸ Configuration ▸ Check for Updates Automatically** sets it) |
 | `auditLog` | `-bool` | `true` | `false` writes no [production log](safety.md#production-log) |

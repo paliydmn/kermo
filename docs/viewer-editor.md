@@ -101,6 +101,25 @@ Closing one of a clone's two tabs asks nothing and keeps the changes: the docume
 
 The panes come back after a restart: their tabs, what each shows, side by side or one above the other, where the divider was. Kermo 2.0.x, opening that session, shows every tab once in one strip.
 
+### Compare
+
+Compare shows two texts side by side in the two panes, their differences in color. ⇧⌘D in the editor (**View ▸ Compare ▸ Compare With…**) compares the tab you're in with:
+
+- the tab shown in the other pane (first in the list), or another tab;
+- **Saved Version**: its file as it is now — on disk, or on its server;
+- **Clipboard**: the clipboard's text as it is then.
+
+It also opens from ⇧⌘D in the panels ([Compare files](search-compare.md#compare-files)), from a server file's [history](server-files.md#file-history), from **Show Changes** before a save to a production server, from **Compare** when a server's file changed since you opened it, and from a draft's **changed on disk** line.
+
+- **An open document is compared as it is.** Typing in it updates the comparison once you pause. It is still the one document — its draft, Undo, save — and comparing changes nothing in it: the colors are on that pane's view only (a clone in the other pane shows none).
+- **Anything else is a read-only copy**: a file as it is on disk or on its server now, a kept version, the clipboard. Its tab has a lock and **Read-only** under the title. It can't be typed in, saved or renamed, has no draft, isn't kept after a restart or brought back by ⇧⌘T, and closes without a question. A copy of a file that isn't open has **Edit** in its status line: the file opens there as F4 opens it (a server's with all of F4's rules), and the comparison goes on with it.
+- **Colors** go by old and new, not left and right — the version is old, the document new: removed lines gray, added lines green, changed lines amber with the characters that changed stronger. Beside the line numbers **−** marks a removed line, **+** an added one, **~** a changed one, and a bar the change the caret's in. Across from what one side lacks there's hatched space, so equal lines stand level; scrolling one side scrolls the other line by line.
+- ⌥⌘↓ / ⌥⌘↑ (**Next Change** / **Previous Change**) take the caret to the next or previous change; after the last comes the first. The status line says **Change 3 of 7**, **No differences**, or **Same text — line endings differ (CRLF / LF)** when only the bytes do.
+- The document stays in its pane and the other side opens in the other one, a pane beside it if there's one; panes one above the other are put side by side. Choosing another tab in either pane pauses the comparison (**Compare paused**); back again, it goes on. Closing or moving either side, **Join Panes**, or **View ▸ Compare ▸ Stop Comparing** ends it, and its read-only copies close.
+- Texts too different to compare quickly (thousands of lines, nearly all changed) aren't colored: the status line says **Too different to compare here** and has **Show as diff -u**, which shows both texts as they are now in an output window. A file that isn't text (binary, over 32 MB) is compared as `diff -u`, as before.
+
+Compare With… is always Kermo's own. **Compare files with** (`diffCommand`, [Compare files](search-compare.md#compare-files)) is for files: when it's set, ⇧⌘D in the panels, the file history, the draft's line and the save questions hand both files to that program, as before.
+
 ### Rename
 
 A double-click on a tab's name, **Rename…** in its menu, or ⇧F6 in the editor puts a field on the tab with the name selected up to its extension. ↩ renames; ⎋ or a click elsewhere leaves it as it was.
@@ -142,7 +161,7 @@ What you type in the editor window is kept as a draft, not saved to the file: ab
 Drafts are kept in `~/.config/dfilemanager/editor.noindex/`, only for documents with changes and Untitled ones with text: the text and the encoding, BOM, line ends and final newline it saves with (see [what stays on this Mac](safety.md#what-stays-on-this-mac)). When Kermo starts again — after Quit, a crash or a restart — the tabs come back in their order, with the one you were on, the Untitled numbers, the caret and the scroll; the window shows if it was open.
 
 - A file without changes is read again. One that's gone has no tab, and the status line says so.
-- A file with a draft shows the draft (●). If the file changed since, a line over the text says **changed on disk since your draft** — **Compare**, **Reload**, **Save As…**; if it's gone, **Save puts it back**, with its old permissions. A draft that's what the file has (saved right before a crash) is just open.
+- A file with a draft shows the draft (●). If the file changed since, a line over the text says **changed on disk since your draft** — **Compare** (the file now beside your draft, in [Compare](#compare)), **Reload**, **Save As…**; if it's gone, **Save puts it back**, with its old permissions. A draft that's what the file has (saved right before a crash) is just open.
 - A server's file without changes waits as **Not connected to web-01**: a click on its tab or ↩ opens it. Nothing connects by itself.
 - A server's draft shows its text (● or ↑) with no connection. ⌘S connects — Touch ID first for a [locked server](servers.md#lock-a-server), production's question again, and a change made there since asks before it's written over. A root file's draft saves as root.
 - A locked server's draft shows only its name until **Unlock to see this draft**.

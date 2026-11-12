@@ -1447,8 +1447,13 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// Typing on or off in every view (a save, a rename, a cover).
     private func editable(_ on: Bool) { views.forEach { $0.text.isEditable = on && snapshot == nil } }
 
-    /// The mark before its tab's name: ● changed, ↑ saved here but not on its server, ! its draft not written.
+    /// The mark before its tab's name: ● changed, ↑ saved here but not on its server, ! its draft not written, a lock a read-only copy.
     var mark: NSAttributedString? {
+        if snapshot != nil {   // a read-only copy: a lock
+            let lock = NSTextAttachment()
+            lock.image = Symbol.lock.image("Read-only", color: .secondaryLabelColor, size: NSFont.smallSystemFontSize - 1)
+            return NSAttributedString(attachment: lock)
+        }
         let m: (String, NSColor)? = draftFailed != nil && dirty ? ("!", .systemRed) : unsent ? ("↑", .systemOrange) : dirty ? ("●", .secondaryLabelColor) : nil
         return m.map { NSAttributedString(string: $0.0, attributes: [.foregroundColor: $0.1, .font: NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize)]) }
     }
