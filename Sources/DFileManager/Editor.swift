@@ -51,6 +51,11 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     static func keys(of window: NSWindow?) -> [AppDelegate.KeyRow]? {
         EditorHost.shown(in: window).map { e in
             [AppDelegate.KeyRow(section: "Editor", title: e.host.tabbed ? "Back to Panels" : "Close", key: "⎋") { e.escape() }]
+                + (e.host.tabbed ? [("Send to Terminal", "cmdline.insert", false), ("Execute in Terminal", "cmdline.insertPaths", true)] : []).compactMap { t, id, run in
+                    app()?.commands.first { $0.id == id }?.keys.first.map { k in   // the panels' ⌃↩ / ⌃⇧↩ (`editorTerminalKeys`)
+                        AppDelegate.KeyRow(section: "Editor", title: t, key: k.display) { app()?.editorToTerminal(run: run) }
+                    }
+                }
                 + (e.host.comparison?.paused == false ? [("Next Change", "⌥⌘↓", 1), ("Previous Change", "⌥⌘↑", -1)].map { t, k, d in   // `term.pane.down` / `.up` there
                     AppDelegate.KeyRow(section: "Editor", title: t, key: k) { app()?.compareStep(d) }
                 } + [("Copy Change to Left", "⌥⇧⌘←", true), ("Copy Change to Right", "⌥⇧⌘→", false)].map { t, k, left in
@@ -215,9 +220,11 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
 
     /// A read-only copy to compare with (`EditorHost.compare` places it): `loaded` as a file was read, `file` its name
     /// for its colors. Not a document: no file, draft, save, rename or session, and no lookup finds it.
-    static func snapshot(_ loaded: Loaded, file: String?, title: String, place: String, source: AppDelegate.DiffSide? = nil) -> Editor {
+    static func snapshot(_ loaded: Loaded, file: String?, title: String, place: String, source: AppDelegate.DiffSide? = nil,
+                         from: (target: SFTPTarget?, path: String)? = nil) -> Editor {
         let e = Editor(nil, remote: nil, loaded: loaded)
         e.snapshot = (title, place, source)
+        e.snapshotFrom = from ?? source.map { ($0.server, $0.path) }
         e.language = file.flatMap { Syntax.language(forFileName: $0, firstLine: String(loaded.0.prefix(200).split(separator: "\n").first ?? "")) }
         e.editable(false)
         open.append(e)   // Wrap, text size and Show Invisibles reach it; with no file and no server, nothing else does
@@ -227,6 +234,9 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// A read-only copy (`snapshot`): what its tab and title say, and the file Edit turns it into (nil: not a file —
     /// a kept version, the clipboard, or a file whose document is the other side).
     private(set) var snapshot: (title: String, place: String, source: AppDelegate.DiffSide?)?
+    /// A read-only copy's file — its server's (nil: this Mac's) and path there — whatever it is a version of: where
+    /// Send / Execute in Terminal go from it. nil: not a file's (the clipboard).
+    private(set) var snapshotFrom: (target: SFTPTarget?, path: String)?
 
     /// Edit, in a read-only copy of a file: that file's document now, in its place — read again as F4 reads it, a
     /// server's with all of F4's rules — and its comparison goes on. Open in another tab already: that tab takes its place.
@@ -1100,6 +1110,17 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
         pasteboard.clearContents()
         pasteboard.setString(p, forType: .string)
     }
+    /// Where Send / Execute in Terminal's text goes: its file's server (nil: this Mac), the folder a new tab starts in
+    /// (nil: the caller's pick — an Untitled's, the clipboard's), the file for the production log. A read-only copy:
+    /// where it was read from. nil: a server file's old copy whose server isn't known.
+    var terminalPlace: (target: SFTPTarget?, folder: String?, path: String?)? {
+        func dir(_ p: String) -> String { (p as NSString).deletingLastPathComponent }
+        if snapshot != nil { return snapshotFrom.map { ($0.target, dir($0.path), $0.path) } ?? (nil, nil, nil) }
+        if let server { return (server.target, dir(server.path), server.path) }
+        if remote != nil { return nil }
+        return (nil, url.map { dir($0.path) }, url?.path)
+    }
+
     /// Reveal in Panel has a place to go: this Mac's file, a server's (not an older "host:/path" copy's).
     var revealable: Bool { copyablePath != nil && (server != nil || remote == nil) }
 

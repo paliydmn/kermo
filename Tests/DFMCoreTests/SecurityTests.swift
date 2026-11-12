@@ -141,3 +141,21 @@ final class QAFlag: @unchecked Sendable {
     var value: Bool { l.withLock { v } }
     func set() { l.withLock { v = true } }
 }
+
+/// Send / Execute in Terminal: the text goes as typed, or not at all — never a control character (an ESC would end a
+/// bracketed paste early and run the rest), several lines only as one bracketed paste, ^U and ↩ only for Execute.
+@Test func terminalTextIsTypedWholeOrNotAtAll() {
+    let start = Array("\u{1b}[200~".utf8), end = Array("\u{1b}[201~".utf8)
+    #expect(TerminalText.bytes("echo hi\n", bracketed: false, run: false, clear: false) == .success(Array("echo hi".utf8)), "a line's own end isn't sent")
+    #expect(TerminalText.bytes("echo hi", bracketed: false, run: true, clear: true) == .success([0x15] + Array("echo hi".utf8) + [0x0d]))
+    #expect(TerminalText.bytes("a\r\nb\r", bracketed: true, run: true, clear: false) == .success(start + Array("a\nb".utf8) + end + [0x0d]), "CRLF and CR as LF; ↩ after the paste")
+    #expect(TerminalText.bytes("a\nb", bracketed: false, run: true, clear: true) == .failure(.severalLines))
+    #expect(TerminalText.bytes("a\tb", bracketed: false, run: false, clear: false) == .failure(.tab))
+    #expect(TerminalText.bytes("a\tb", bracketed: true, run: false, clear: false) == .success(start + Array("a\tb".utf8) + end))
+    for bad in ["x\u{1b}[201~; rm -rf ~", "x\u{3}", "x\u{15}y", "x\u{7f}", "x\u{9b}201~", "x\u{0}"] {
+        #expect(TerminalText.bytes(bad, bracketed: true, run: true, clear: true) == .failure(.control), "\(bad.debugDescription)")
+    }
+    #expect(TerminalText.bytes("  \n", bracketed: true, run: true, clear: true) == .failure(.empty))
+    #expect(TerminalText.command("make", in: "/srv/a b") == "cd -- '/srv/a b' && make; exec \"$SHELL\" -l")
+    #expect(TerminalText.command("cd x\nmake", in: "/srv") == "cd -- /srv && {\ncd x\nmake\n}; exec \"$SHELL\" -l", "all of it in the folder, or none")
+}

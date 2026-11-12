@@ -453,3 +453,104 @@ extension EditorWindowTests {
         #expect(await a.upload(other, to: file, on: t, s2) == false && asked == [["Save", "Cancel"]])
     }
 }
+
+// Editor E6 PR 5: Send to Terminal (⌃↩) and Execute in Terminal (⌃⇧↩).
+extension EditorWindowTests {
+    /// Into a shell of the file's machine at its prompt only. Send types (no ^U, no ↩); Execute clears the line, types,
+    /// ↩, and steps the caret to the next line with something on it; the document's tab from then on (no `cd` again),
+    /// another document's first Execute `cd`s it; several lines only as a bracketed paste; a program holding the
+    /// terminal gets nothing (a new tab). A server's Execute starts a new SSH tab that runs it as the server's user,
+    /// asked first on production (↩ = Cancel) and in its production log; a server's Send never types into a tab whose
+    /// shell hasn't asked for text.
+    @Test func sendAndExecuteGoToTheFilesShell() async throws {
+        _ = NSApplication.shared
+        let dir = try tempDir()
+        let a = app(dir)
+        a.commands = a.makeCommands()
+        let panels = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
+        a.window.setContentSize(panels.frame.size)
+        a.window.contentView!.addSubview(panels)
+        a.terminal = EmbeddedTerminal(covering: panels)
+        var typed: [(tab: UUID, text: String)] = []
+        let typing = EmbeddedTerminal.typing, log = AuditLog.path
+        EmbeddedTerminal.typing = { t, b in typed.append((t.id, String(decoding: b, as: UTF8.self))) }
+        AuditLog.path = dir + "/audit.jsonl"
+        defer {
+            (EmbeddedTerminal.typing, AuditLog.path) = (typing, log)
+            (AppDelegate.answering, ServerLock.servers) = (nil, { [] })
+            AppDelegate.keyWindow = { NSApp.keyWindow }
+            Editor.app = { NSApp.delegate as? AppDelegate }
+            a.terminal.tabs.forEach { $0.view.process?.terminate() }
+            a.panels.forEach { $0.shutdown() }
+            gone()
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        let h = fresh(dir + "/drafts")
+        AppDelegate.keyWindow = { h.window }
+        for d in ["one", "two"] { try FileManager.default.createDirectory(atPath: dir + "/" + d, withIntermediateDirectories: true) }
+        try put("echo one\n\n   \necho two\n", dir + "/one/run.sh")
+        try put("echo b\n", dir + "/two/b.sh")
+        let e = try await opened(dir + "/one/run.sh")
+        func send(_ text: String, run: Bool, from owner: Editor, on t: SFTPTarget? = nil, in folder: String) async -> AppDelegate.ToTerminal {
+            await a.toTerminal(text, run: run, on: t, folder: folder, path: folder + "/x", owner: owner, askOn: h.window)
+        }
+
+        // Send: a new shell in the file's folder; typed, nothing run.
+        #expect(await send("echo one\n", run: false, from: e, in: dir + "/one") != .notSent(""))
+        let shell = try #require(a.terminal.current)
+        #expect(a.terminal.tabs.count == 1 && shell.host == nil && shell.shellCwd == dir + "/one")
+        let paste = { (s: String) in shell.bracketed ? "\u{1b}[200~" + s + "\u{1b}[201~" : s }
+        #expect(typed.map(\.text) == [paste("echo one")], "no ^U, no ↩")
+
+        // Execute from the editor: the same tab (its own: no cd), ^U … ↩, the caret to the next line with something on it.
+        e.current.text.setSelectedRange(NSRange(location: 2, length: 0))
+        a.editorToTerminal(run: true)
+        try await until("ran") { typed.count == 2 }
+        #expect(typed[1].tab == shell.id && typed[1].text == "\u{15}" + paste("echo one") + "\r")
+        try await until("stepped") { e.current.text.selectedRange().location == 14 }   // over the empty and the blank line
+
+        // Another document: the current shell at its prompt, but elsewhere — its folder first.
+        let b = try await opened(dir + "/two/b.sh")
+        #expect(await send("echo b", run: true, from: b, in: dir + "/two") != .notSent(""))
+        #expect(typed.count == 4 && typed[2].text == "\u{15} cd \(ShellContext.quote(dir + "/two"))\r" && typed[3].text.hasSuffix("echo b" + (shell.bracketed ? "\u{1b}[201~\r" : "\r")))
+
+        // Several lines: only as one bracketed paste.
+        shell.view.feed(text: "\u{1b}[?2004l")
+        #expect(await send("make\nls", run: true, from: e, in: dir + "/one") == .notSent(TerminalText.Refusal.severalLines.words) && typed.count == 4)
+        #expect(await send("a\u{1b}[201~b", run: false, from: e, in: dir + "/one") == .notSent(TerminalText.Refusal.control.words) && typed.count == 4)
+        shell.view.feed(text: "\u{1b}[?2004h")
+        #expect(await send("make\nls", run: true, from: e, in: dir + "/one") != .notSent(""))
+        #expect(typed.last?.text == "\u{15}\u{1b}[200~make\nls\u{1b}[201~\r")
+
+        // A program holds the terminal: a new tab, never into it.
+        shell.view.send(txt: "sleep 3\r")   // to the shell itself, not the recorder
+        try await until("sleeping") { !shell.isAtPrompt }
+        let n = typed.count
+        #expect(await send("echo again", run: true, from: e, in: dir + "/one") != .notSent(""))
+        #expect(a.terminal.tabs.count == 2 && typed.count == n + 1 && typed.last?.tab != shell.id && typed.last?.tab == a.terminal.current?.id)
+
+        // A server: production asks (↩ = Cancel: nothing), Run starts a new SSH tab that runs it, as the user, logged.
+        let t = SFTPTarget(host: "pr5@dfm-pr5.invalid")
+        var prod = SavedServer(address: "pr5@dfm-pr5.invalid")!
+        prod.prod = true
+        ServerLock.servers = { [prod] }
+        var asked = 0
+        AppDelegate.answering = { _, buttons, safe in asked += 1; return safe ?? buttons.count - 1 }   // ↩
+        let tabs = a.terminal.tabs.count
+        #expect(await send("systemctl reload app", run: true, from: e, on: t.asRoot(), in: "/srv") == .cancelled)
+        #expect(asked == 1 && a.terminal.tabs.count == tabs)
+        AppDelegate.answering = { _, _, _ in 0 }   // ⌘↩ Run
+        #expect(await send("systemctl reload app", run: true, from: e, on: t.asRoot(), in: "/srv") != .notSent(""))
+        let ssh = try #require(a.terminal.current)
+        #expect(ssh.kind == .ssh(t) && ssh.command == TerminalText.command("systemctl reload app", in: "/srv"), "as the user, never root")
+        Config.flush()
+        #expect(read(dir + "/audit.jsonl")?.contains("\"command\":\"systemctl reload app\"") == true)
+        #expect(typed.last?.tab != ssh.id, "nothing typed into it")
+
+        // Send to a server whose shell never asks for text (ssh can't connect): nothing typed.
+        ServerLock.servers = { [] }
+        let before = typed.count
+        if case .notSent = await send("ls", run: false, from: b, on: t, in: "/srv") {} else { Issue.record("typed into a tab that never asked") }
+        #expect(typed.count == before)
+    }
+}

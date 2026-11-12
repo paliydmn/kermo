@@ -168,6 +168,7 @@ struct Confirm {
 
     /// The command as it runs: mono, selectable, wrapped; a long one scrolls past 8 lines.
     @MainActor static func commandBox(_ command: String) -> NSView {
+        let command = command.bidiVisible   // what runs, as it reads: a bidi control can't turn its words around
         let font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular), inset = NSSize(width: 8, height: 6), fill = NSColor.labelColor.withAlphaComponent(0.08)
         let text = NSTextField(wrappingLabelWithString: command)
         text.font = font

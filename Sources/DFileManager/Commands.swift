@@ -154,6 +154,10 @@ extension AppDelegate {
         cmd("editor.compare.with", "Compare With…", [], menu: "View/Compare", group: 3, aliases: "editor diff compare tab clipboard saved version") { $0.editorKey?.compareWith() },
         cmd("editor.compare.next", "Next Change", [], menu: "View/Compare", group: 4, aliases: "editor diff compare difference") { $0.compareStep(1) },
         cmd("editor.compare.prev", "Previous Change", [], menu: "View/Compare", group: 4, aliases: "editor diff compare difference") { $0.compareStep(-1) },
+        // The editor window's line or selection into the terminal: typed, or typed and run (⌃↩ / ⌃⇧↩ there,
+        // `editorTerminalKeys`).
+        cmd("editor.send", "Send to Terminal", [], menu: "Edit", group: 9, aliases: "editor terminal type insert line selection shell") { $0.editorToTerminal(run: false) },
+        cmd("editor.execute", "Execute in Terminal", [], menu: "Edit", group: 9, aliases: "editor terminal run line selection shell command") { $0.editorToTerminal(run: true) },
         // The caret's change from the other side, into the left pane's or the right one's (a document's).
         cmd("editor.compare.copyLeft", "Copy Change to Left", ["cmd+opt+shift+left"], menu: "View/Compare", group: 5, aliases: "editor diff compare merge take apply hunk") {
             $0.editorKey?.copyChange(toLeft: true)
@@ -1611,7 +1615,7 @@ extension AppDelegate {
             let fmt = DateFormatter()
             fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
             let when = { (v: ServerHistory.Version) in fmt.string(from: v.date) + (v.n > 1 ? " (\(v.n))" : "") }
-            let side = { (v: ServerHistory.Version) in DiffSide(path: v.path, name: "\(target.host):\(path) @ \(when(v))") }
+            let side = { (v: ServerHistory.Version) in DiffSide(path: v.path, name: "\(target.host):\(path) @ \(when(v))", origin: (target, path)) }
             let items = versions.enumerated().map { i, v in
                 let url = URL(fileURLWithPath: v.path), when = when(v)
                 let view: @MainActor () -> Void = { Viewer.show(url) }
@@ -2466,6 +2470,7 @@ extension AppDelegate {
         var look = false   // a link (its own size says nothing), or a size not known: the server is asked first
         var name: String? = nil   // what the diff calls it, if not its path ("host:/path" on a server)
         var now = false   // the file as it is there now, even with its document open (that's the other side)
+        var origin: (target: SFTPTarget, path: String)? = nil   // a kept version's: the server's file it's of
         var label: String { name ?? server.map { "\($0.host):\(path)" } ?? path }
         /// Its tab in the built-in Compare: the file's name, and what it is if the caller said ("nginx.conf @ 14:03").
         var title: String { ((name ?? path) as NSString).lastPathComponent + (name == nil ? server.map { " (\($0.host))" } ?? "" : "") }
@@ -2581,7 +2586,8 @@ extension AppDelegate {
             switch await Blocking.run(.userInitiated, { Result { try Editor.load(URL(fileURLWithPath: path)) } }) {
             case .success(let loaded):
                 let e = Editor.snapshot(loaded, file: (d.path as NSString).lastPathComponent, title: d.title, place: d.place,
-                                        source: d.now || d.name != nil ? nil : d)   // a real file, not its document's other side: Edit
+                                        source: d.now || d.name != nil ? nil : d,   // a real file, not its document's other side: Edit
+                                        from: d.origin.map { ($0.target, $0.path) } ?? (d.server != nil || d.name == nil ? (d.server, d.path) : nil))
                 made.append(e)
                 return e
             case .failure(let error):

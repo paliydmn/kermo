@@ -536,6 +536,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
 
     private func start(_ tab: Tab, cwd: String?) {
         tab.exitStatus = nil
+        tab.view.feed(text: "\u{1b}[?2004l")   // a dropped session's bracketed paste isn't the new one's (`takesText`)
         tab.cwd = nil
         tab.reconnect?.removeFromSuperview()
         tab.reconnect = nil

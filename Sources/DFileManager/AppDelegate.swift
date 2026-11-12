@@ -190,6 +190,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                     run(c.id)
                     return true
                 }
+                // ⌃↩ / ⌃⇧↩ in the editor window's text: Send / Execute in Terminal (NSTextView would take them first).
+                if Self.editor(key: e.window) != nil, e.window?.firstResponder is EditorTextView, let c = keymap[Shortcut(event: e)],
+                   let to = Self.editorTerminalKeys[c.id] {
+                    run(to)
+                    return true
+                }
                 guard e.window === window else { return false }
                 if terminal.hasFocus {
                     if terminal.handleKey(e) { return true }
@@ -1394,7 +1400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         if id.hasPrefix("text.") { return textEditor != nil }
         if ["editor.compare.next", "editor.compare.prev", "editor.compare.stop"].contains(id) { return editorKey?.comparison != nil }   // while it compares
-        if ["editor.compare.copyLeft", "editor.compare.copyRight"].contains(id) { return editorKey?.comparison?.paused == false }   // a copy's target says why it can't
+        if ["editor.compare.copyLeft", "editor.compare.copyRight", "editor.send", "editor.execute"].contains(id) { return editorKey?.comparison?.paused == false }   // a copy's target says why it can't
         if id.hasPrefix("tab.") || Self.editorTabs.contains(id) {   // the editor window's tabs: its own (D-101: none from another)
             if editorKey != nil { item.title = c?.title ?? item.title; return true }
             if Self.editorTabs.contains(id) { return false }
@@ -1420,7 +1426,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     static let editorTabs: Set<String> = ["editor.close", "editor.tab.left", "editor.tab.right", "editor.tabs", "editor.closeOthers", "editor.closeRight",
                                           "editor.moveToPane", "editor.cloneToPane", "editor.joinPanes",
                                           "editor.compare.with", "editor.compare.next", "editor.compare.prev", "editor.compare.stop",
-                                          "editor.compare.copyLeft", "editor.compare.copyRight"]
+                                          "editor.compare.copyLeft", "editor.compare.copyRight", "editor.send", "editor.execute"]
     /// Panel commands whose keys an editor takes for its text or its tab, and what they're called there (D-101: one key,
     /// one command).
     static let editorTitles = ["go.path": "Go to Line…", "view.filterPresets": "Toggle Comment", "term.bigger": "Bigger Text", "term.smaller": "Smaller Text",
@@ -1432,6 +1438,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// items — picked off as the terminal's are.
     static let editorPaneKeys: Set<String> = ["term.pane.left", "term.pane.right", "term.pane.up", "term.pane.down",
                                               "term.resize.left", "term.resize.right", "term.resize.up", "term.resize.down"]
+    /// Panel keys that, in the editor window's text, are Send / Execute in Terminal: keys only, no menu items — picked off
+    /// before the text takes them.
+    static let editorTerminalKeys = ["cmdline.insert": "editor.send", "cmdline.insertPaths": "editor.execute"]
     /// An editor has that command's branch now (`editorTitles`): the editor window's own only there, the rest a tool's
     /// editor too.
     func inEditor(_ id: String) -> Bool { Self.editorTitles[id] != nil && (Self.editorWindowOnly.contains(id) ? editorKey != nil : textEditor != nil) }
