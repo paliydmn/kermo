@@ -1177,7 +1177,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     private func fill(_ text: String, clean: Bool = false, stamp: Stamp?? = nil, digest: Data? = nil, apply loaded: Loaded? = nil) {
         if let loaded { (encoding, lossy, bom, crlf) = (loaded.1, loaded.lossy, loaded.bom, loaded.crlf) }
         textView.string = text
-        detected = nil
+        (detected, tinted) = (nil, nil)   // a tint of the empty text it had while read (shown meanwhile): all of it again
         if let stamp { self.stamp = stamp }
         if let digest { self.digest = digest }
         if clean || loaded != nil { (dirty, unsent) = (false, false) }
@@ -1186,7 +1186,11 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
         if reopened { reopened = false; host?.changed(self) }
         cover = nil
         if url != nil, language == nil { language = Syntax.language(forFileName: name, firstLine: String(text.prefix(200).split(separator: "\n").first ?? "")) }
-        if let d = lastSelection { textView.setSelectedRange(NSRange(location: min(d.0, (text as NSString).length), length: 0)); frame.scroll.contentView.scroll(to: NSPoint(x: 0, y: d.1)) }
+        if let d = lastSelection {   // x as it is: the line numbers sit over the clip view, the text inset from them (x < 0)
+            let clip = frame.scroll.contentView
+            textView.setSelectedRange(NSRange(location: min(d.0, (text as NSString).length), length: 0))
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: d.1))
+        }
         if host.shows(self), window?.isKeyWindow == true { shown() }
     }
     /// Where its caret and scroll were (restored).

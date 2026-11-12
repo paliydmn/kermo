@@ -36,6 +36,8 @@ Release:
 - A watched tool's **24h** and **7d** draw the 15 minutes under way too: the line goes on to now and ends in a ring, the tip says “2:30 PM–now”, and the summary and the CSV say those 15 minutes aren't over. They ended at the last 15 minutes on disk.
 
 ### Fixed
+- A tab the editor brings back at launch no longer comes up with the start of its lines hidden under the line numbers.
+- A tab reopened with ⇧⌘T, or a server's file opened from its parked tab, has its colors at once, not only after the first keystroke.
 - **Rename** (⇧F6) on this Mac no longer replaces a file that appears under the new name between the check and the rename. A file open in the editor follows its rename in a panel, on this Mac and on a server, so ⌘S there no longer makes the old name again.
 - A gap that began over an hour ago — the Mac asleep through the night — is a band with its reason from the left edge of the hour's charts. They began blank until the first value.
 - 15 minutes on 24h and 7d that Kermo wrote at a short sleep and filled again after it are drawn in order — the part after the sleep where the sleep began — with no gap band running on to the next 15 minutes, or to now. They were two points at one time.

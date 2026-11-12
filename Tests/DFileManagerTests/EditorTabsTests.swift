@@ -1182,6 +1182,10 @@ extension EditorWindowTests {
         let back = try #require(h.docs.first { $0.id == u.id })
         try await waitUntil("restored") { h.docs.allSatisfy { $0.cover == nil } && back.textView.string == "u\n" }
         #expect(back.views.count == 1 && back.isEdited, "a view for a tab shown only")
+        for e in h.docs { for v in e.views where v.frame.window != nil {
+            let clip = v.frame.scroll.contentView
+            #expect(clip.bounds.origin.x == -clip.contentInsets.left, "\(e.name): its text clear of the line numbers (D-200)")
+        } }
         var json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: dir + "/drafts/session.json"))) as? [String: Any])
         #expect(back.closeAsking(in: h.panes[0]) && h.panes[0].docs.map(\.id) == [ex.id], "its clone's tab: it's in the other pane")
         h.select(back, in: h.panes[1])

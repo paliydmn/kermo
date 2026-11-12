@@ -131,8 +131,8 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
     fileprivate func keysMoved() {
         var v = window?.firstResponder as? NSView
         if let t = v as? NSText, t.isFieldEditor { v = t.delegate as? NSView }   // a field's: the field
-        guard let v, let p = panes.first(where: { v.isDescendant(of: $0.body) }), let e = p.active else { return }
-        e.current = e.view(in: p)
+        guard let v, let p = panes.first(where: { v.isDescendant(of: $0.body) }), let e = p.active, let shown = e.views.first(where: { $0.pane === p }) else { return }
+        e.current = shown
         guard p !== pane else { return }
         pane = p
         update(e)
@@ -903,7 +903,11 @@ final class EditorTab: NSButton {
             dragged = dragged || abs(p.x - e.locationInWindow.x) > 4 || abs(p.y - e.locationInWindow.y) > 4
             if dragged, host.pane(at: p, besides: pane) == nil { at = host.drag(at, in: pane, to: p) }   // over the other pane: it goes there on the release
         }
-        if dragged { host.dropped(doc, from: pane, at: last.locationInWindow, clone: last.modifierFlags.contains(.option)) }
+        if dragged {
+            let point = last.locationInWindow
+            if at != tag, host.pane(at: point, besides: pane) != nil { host.moveTab(from: at, to: tag, in: pane) }   // gone across: its strip as it was
+            host.dropped(doc, from: pane, at: point, clone: last.modifierFlags.contains(.option))
+        }
         else { doc.connect() }   // a click: a parked server tab opens (no Touch ID mid-drag)
     }
 
