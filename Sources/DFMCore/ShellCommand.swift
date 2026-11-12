@@ -105,6 +105,7 @@ public enum TerminalText {
 
     /// Execute's command for a new SSH tab, which runs it itself (nothing is typed while ssh may ask a password in the
     /// tab): in `dir`, then the user's shell. One block on lines of its own, all of it in `dir` or none of it — a `;` list,
-    /// a trailing `&` or a `# comment` stay inside it and leave the shell after it alone.
-    public static func command(_ text: String, in dir: String) -> String { SSHCommand.shell(in: dir, after: "{\n" + text + "\n}") }
+    /// a trailing `&` or `\\`, a `# comment` stay inside it and leave the shell after it alone; `:` keeps a block of
+    /// comments from being empty.
+    public static func command(_ text: String, in dir: String) -> String { SSHCommand.shell(in: dir, after: "{\n" + text + "\n:\n}") }
 }

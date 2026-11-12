@@ -534,6 +534,8 @@ extension EditorWindowTests {
         #expect(await send("ls", run: false, from: c3, in: dir + "/three") != .notSent("") && typed.last?.tab == shell.id)
         #expect(await send("ls", run: true, from: c3, in: dir + "/three") != .notSent(""))
         #expect(typed[typed.count - 2].text == "\u{15} cd \(ShellContext.quote(dir + "/three"))\r", "in its folder, not where the Send found the shell")
+        #expect(AppDelegate.ownTabs.object(forKey: c3) as UUID? == shell.id && AppDelegate.ownTabs.object(forKey: e) == nil && AppDelegate.ownTabs.object(forKey: b) == nil,
+                "one tab, one document's: the others' folder is gone from it")
 
         // Several lines: only as one bracketed paste.
         shell.view.feed(text: "\u{1b}[?2004l")
@@ -543,6 +545,7 @@ extension EditorWindowTests {
         shell.view.feed(text: "\u{1b}[?2004h")
         #expect(await send("make\nls", run: true, from: e, in: dir + "/one") != .notSent(""))
         #expect(typed.last?.text == "\u{15}\u{1b}[200~make\nls\u{1b}[201~\r")
+
 
         // A program holds the terminal: a new tab, never into it.
         shell.view.send(txt: "sleep 3\r")   // to the shell itself, not the recorder

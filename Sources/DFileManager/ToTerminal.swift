@@ -62,28 +62,36 @@ extension AppDelegate {
         let dir = folder ?? (user == nil ? active.plainFolder ?? panels.lazy.compactMap(\.plainFolder).first ?? NSHomeDirectory() : ".")
         let mine = { (t: EmbeddedTerminal.Tab) in t.target == user && t.takesText }
         let own = { [unowned self] in Self.ownTabs.object(forKey: owner).flatMap { id in terminal.tabs.first { $0.id == id as UUID } }.flatMap { mine($0) ? $0 : nil } }
+        let asked = own()
         if run, let target {
             if await !ServerLock.authorize(target, "run “\(String(body.prefix(60)).bidiVisible)” on") { return .notSent("\(target.host) stays locked") }
             if SavedServer.isProd(target) {
                 var c = Confirm("Run this in the terminal on \(name)?", on: user!, action: "Run")
-                c.runs = own() != nil ? "In the SSH tab on \(name) it ran in before — as whoever is logged in there now."   // a `sudo -i` there isn't seen
+                c.runs = asked != nil ? "In the SSH tab on \(name) this file used before — as whoever is logged in there now."   // a `sudo -i` there isn't seen
                     : "In a new SSH tab on \(name), as its user" + (target.sudo ? " — not root" : "") + ", in \(dir)."
                 c.command = body
                 guard await confirm(c, on: askOn) == 0 else { return .cancelled }   // ↩ = Cancel
             }
         }
-        // The tab, chosen now (a question may have stood a while): the owner's, the current one, else a new one.
-        let mineNow = own()
+        // The tab, chosen now (a question may have stood a while): the owner's, the current one, else a new one — on
+        // production only the one the question named.
+        var mineNow = own()
+        if run, let target, SavedServer.isProd(target), mineNow !== asked {
+            if asked != nil { return .notSent("The SSH tab the question named is busy now — nothing run") }
+            mineNow = nil
+        }
         var tab = mineNow ?? terminal.current.flatMap { mine($0) && (user == nil || !run) ? $0 : nil }, new = false
         if tab == nil {
             if let user {
-                if run {   // it runs the text itself: nothing typed while ssh may ask for a password in the tab — shown, the keys in it
+                if run {   // it runs the text itself: nothing typed while ssh may ask for a password in the tab
+                    let asks = await Blocking.run(.userInitiated) { !SFTP.isConnected(user) && !SFTP.hasPassword(user) }   // a login there: the keys go to it
                     terminal.newSSH(user, command: TerminalText.command(body, in: dir))
                     AuditLog.write(user, "command", paths: [path].compactMap { $0 }, command: body, exit: nil)   // its end is the terminal's
                     guard let t = terminal.current else { return .notSent("No terminal tab") }
-                    Self.ownTabs.setObject(t.id as NSUUID, forKey: owner)
-                    show(t, keys: true, askOn: askOn)
-                    return .sent("Started in a new SSH tab on \(name) — it runs once logged in" + (target!.sudo ? ", as its user, not root" : ""))
+                    claim(t, for: owner)
+                    show(t, keys: asks, askOn: askOn)
+                    return .sent((asks ? "Started in a new SSH tab on \(name) — it runs once logged in" : "Ran in a new SSH tab on \(name)")
+                                 + (target!.sudo ? ", as its user, not root" : ""))
                 }
                 terminal.newSSH(user, command: SSHCommand.shell(in: dir))
                 say("Waiting for \(name)'s prompt…")
@@ -93,7 +101,8 @@ extension AppDelegate {
             guard let t = terminal.current else { return .notSent("No terminal tab") }
             if !run { show(t, keys: true, askOn: askOn) }   // Send: the keys go there now (a password too), not after the wait
             guard await terminal.waitForText(t, seconds: user == nil ? 3 : 30) else {
-                return .notSent(user == nil ? "The new shell didn't come up — nothing sent" : "\(name)'s shell didn't ask for text (bracketed paste) — nothing typed")
+                if user == nil { return .notSent("The new shell didn't come up — nothing sent") }
+                return .notSent(t.exitStatus != nil ? "Not connected to \(name) — nothing typed" : "\(name)'s shell didn't ask for text (bracketed paste) — nothing typed")
             }
             (tab, new) = (t, true)
         }
@@ -110,9 +119,16 @@ extension AppDelegate {
         }
         EmbeddedTerminal.typing(t, bytes)
         if run, let user { AuditLog.write(user, "command", paths: [path].compactMap { $0 }, command: body, exit: nil) }
-        if run || new { Self.ownTabs.setObject(t.id as NSUUID, forKey: owner) }   // in its folder now: a Send into another tab isn't
+        if run || new { claim(t, for: owner) }   // in its folder now: a Send into another tab isn't
         if run || !new { show(t, keys: !run, askOn: askOn) }   // a new tab's Send has the keys there already
         return .sent((run ? "Ran in" : "Typed into") + (new ? " a new tab: " : " ") + t.label + (run ? "" : " — ↩ there runs it"))
+    }
+
+    /// `t` is `owner`'s tab now — and no other's: their folder is gone from it (a `cd` to it comes first again).
+    private func claim(_ t: EmbeddedTerminal.Tab, for owner: AnyObject) {
+        let id = t.id as NSUUID
+        for case let o as AnyObject in Self.ownTabs.keyEnumerator().allObjects where o !== owner && Self.ownTabs.object(forKey: o) == id { Self.ownTabs.removeObject(forKey: o) }
+        Self.ownTabs.setObject(id, forKey: owner)
     }
 
     /// The tab in the main window's terminal. `keys`: in front with the keys in the tab (Send: the next thing to do is

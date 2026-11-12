@@ -27,12 +27,12 @@ extension AppDelegate {
         }
         let place = h.active?.terminalPlace
         let start = place?.target == nil ? place?.folder ?? active.plainFolder : nil   // this Mac only
-        let flag = CancelFlag(), all = Rows(rows)
+        let flag = CancelFlag()
+        let all = Rows(rows)
         // Ranked off the main thread (thousands of a repository's paths: a keystroke each held the field), the groups whole.
         let results = { (q: String, cancel: CancelFlag) async -> [Picker.Item] in
-            let rows = all.rows, query = q.trimmingCharacters(in: .whitespaces)
+            let (rows, keys, query) = (all.rows, all.keys, q.trimmingCharacters(in: .whitespaces))
             guard !query.isEmpty else { return Array(rows.prefix(300)) }
-            let keys = rows.map { ($0.subtitle + "/" + $0.title, $0.title, $0.group == "Tabs" ? 300_000 : $0.group == "Recent" ? 200_000 : 0) }
             let order = await Blocking.run(.userInitiated) { () -> [Int] in
                 var scored: [(score: Int, i: Int)] = []
                 for (i, k) in keys.enumerated() {
@@ -48,8 +48,8 @@ extension AppDelegate {
                             onClose: { _, _ in flag.cancel() }, results: results)
         guard let start else { return }
         Task { [unowned self] in
-            let root = await Blocking.run(.userInitiated) { Self.projectRoot(of: start) }
-            guard Self.walks(root) else { return }
+            // statfs on a share is a round trip to it: off the main thread too.
+            guard let root = await Blocking.run(.userInitiated, { () -> String? in let r = Self.projectRoot(of: start); return Self.walks(r) ? r : nil }) else { return }
             let shown = (root as NSString).abbreviatingWithTildeInPath, limit = Self.quickOpenLimit
             let (files, whole) = await Blocking.run(.userInitiated) { Self.files(under: root, limit: limit, cancel: flag) }
             guard Picker.current === p, !flag.isCancelled else { return }
@@ -65,10 +65,15 @@ extension AppDelegate {
         }
     }
 
-    /// Quick Open's rows as they are now: the folder's come in after the Picker shows.
+    /// Quick Open's rows as they are now (the folder's come in after the Picker shows), and what each is ranked by: its
+    /// path, its name, its group's place.
     private final class Rows {
-        var rows: [Picker.Item]
-        init(_ rows: [Picker.Item]) { self.rows = rows }
+        var rows: [Picker.Item] { didSet { keys = Self.keys(rows) } }
+        private(set) var keys: [(path: String, name: String, group: Int)]
+        init(_ rows: [Picker.Item]) { (self.rows, keys) = (rows, Self.keys(rows)) }
+        static func keys(_ rows: [Picker.Item]) -> [(path: String, name: String, group: Int)] {
+            rows.map { ($0.subtitle + "/" + $0.title, $0.title, $0.group == "Tabs" ? 300_000 : $0.group == "Recent" ? 200_000 : 0) }
+        }
     }
 
     /// A folder Quick Open walks: not the home folder or the root (no project, and Desktop, Documents… under them), and

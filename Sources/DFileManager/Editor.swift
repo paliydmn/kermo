@@ -1444,7 +1444,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
         let tmp = NSTemporaryDirectory() + "dfm-text-draft-" + UUID().uuidString   // diff reads it after it starts: gone at quit
         guard mkdir(tmp, 0o700) == 0, FileManager.default.createFile(atPath: tmp + "/" + name, contents: data, attributes: [.posixPermissions: 0o600]) else { return }
         Self.comparisons.append(tmp)
-        Task { await app.diff(AppDelegate.DiffSide(path: tmp + "/" + name, name: "\(name) (your draft)", origin: (nil, url.path)), AppDelegate.DiffSide(path: url.path), in: app.active) }
+        Task { await app.diff(AppDelegate.DiffSide(path: tmp + "/" + name, name: "\(name) (your draft)"), AppDelegate.DiffSide(path: url.path), in: app.active) }
     }
 
     /// The cover over its text in every view, with what it says and its button (↩).

@@ -194,6 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 guard e.window === window else { return false }
                 if terminal.hasFocus {
                     if terminal.handleKey(e) { return true }
+                    if e.isARepeat, let c = keymap[Shortcut(event: e)], Self.editorTerminalKeys[c.id] != nil { return true }   // a held ⌃↩ from the editor, now here: once
                     if let c = keymap[Shortcut(event: e)], Self.terminalCommands.contains(c.id)   // ⌘1–4 too: back to a panel
                         || Self.terminalCmdKeys.contains(c.id) && e.modifierFlags.contains(.command) {
                         run(c.id)
