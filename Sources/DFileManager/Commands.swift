@@ -1537,7 +1537,7 @@ extension AppDelegate {
                     let yours = DiffSide(path: saved.path, name: "\(name) (yours)")
                     var there = Self.serverNow(remotePath, on: target)
                     (there.size, there.mtime, there.look) = (e.attrs.size, e.attrs.mtime, false)   // as the question says it is: its preview copy if there's one
-                    if Editor.window(for: saved) != nil, defaults.string(forKey: "diffCommand") == nil {   // side by side, live: like Show Changes
+                    if Editor.window(for: saved) != nil, builtInCompare {   // side by side, live: like Show Changes
                         Task { await diff(there, yours, in: panel) }
                         return false
                     }
@@ -2463,7 +2463,10 @@ extension AppDelegate {
         /// Its tab in the built-in Compare: the file's name, and what it is if the caller said ("nginx.conf @ 14:03").
         var title: String { ((name ?? path) as NSString).lastPathComponent + (name == nil ? server.map { " (\($0.host))" } ?? "" : "") }
         /// Under its tab's title: where it is.
-        @MainActor var place: String { DocFrame.place((path as NSString).deletingLastPathComponent, host: server.map { SavedServer.name(for: $0) }) }
+        @MainActor var place: String {
+            if server == nil, path.hasPrefix(AppDelegate.historyRoot + "/") { return "a version kept on this Mac" }
+            return DocFrame.place((path as NSString).deletingLastPathComponent, host: server.map { SavedServer.name(for: $0) })
+        }
     }
 
     /// A side of the built-in Compare: an open document as it is, live; or a file read as it is now — a read-only copy.
@@ -2527,9 +2530,10 @@ extension AppDelegate {
     /// it shows — Reload…?, a copy's "already there" — asks for that). A server's file goes through its local copy
     /// (`localCopy`).
     func diff(_ a: DiffSide, _ b: DiffSide, in panel: PanelViewController, plain: Bool = false) async {
-        if !plain, defaults.string(forKey: "diffCommand") == nil {
+        if !plain, builtInCompare {
+            guard a.now || b.now || a.path != b.path || a.server != b.server else { return panel.flash("Both sides are the same file") }
             func side(_ d: DiffSide) -> CompareSide {
-                guard !d.now, let e = d.server.map({ Editor.editing($0, d.path) }) ?? Editor.document(at: d.path) else { return .file(d) }
+                guard !d.now, let e = d.server.map({ Editor.editing($0, d.path) }) ?? Editor.document(at: d.path), e.host?.tabbed == true else { return .file(d) }
                 return .doc(e)
             }
             return await compare(side(a), side(b), in: panel)
@@ -2545,6 +2549,9 @@ extension AppDelegate {
                          named ? "diff \(a.label) ↔ \(b.label)" : nil)   // not the copies' temp paths
         }
     }
+
+    /// No `diffCommand`: files are compared in the editor (`compare`), not by a program of the user's.
+    var builtInCompare: Bool { defaults.string(forKey: "diffCommand") == nil }
 
     /// A Compare of files outside the editor: `diffCommand`'s program (`external`), or `diff -u` in an output window
     /// under `title` (tests: nothing runs, they keep the command).
@@ -2578,6 +2585,8 @@ extension AppDelegate {
         }
         guard let ea = await editor(a) else { return }
         guard let eb = await editor(b) else { return made.forEach { $0.closed() } }   // in no tab yet: out of the lookups only
+        // A document closed while a copy downloaded isn't brought back; one file on both sides is nothing to compare.
+        guard [ea, eb].allSatisfy({ $0.snapshot != nil || Editor.isTab($0) }), ea !== eb else { return made.forEach { $0.closed() } }
         EditorHost.tabs.compare(old: ea, new: eb, snapshots: made)
     }
 

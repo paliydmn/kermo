@@ -38,8 +38,11 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
         if let server { return editing(server.target, server.path) }
         return open.first { $0.url?.standardizedFileURL.path == url.standardizedFileURL.path }
     }
-    /// The open document of this Mac's file at `path` — a server file's by its local copy too (a save's question has that).
-    static func document(at path: String) -> Editor? { opened(URL(fileURLWithPath: path), nil) }
+    /// The editor window's document of this Mac's file at `path` — a server file's by its local copy too (a save's
+    /// question has that). Not a tool's: that one is its own window's.
+    static func document(at path: String) -> Editor? { opened(URL(fileURLWithPath: path), nil).flatMap { $0.host?.tabbed == true ? $0 : nil } }
+    /// Still a tab of the editor window (a Compare that waited on a download mustn't bring a closed one back).
+    static func isTab(_ e: Editor) -> Bool { open.contains { $0 === e } && e.host?.tabbed == true }
     /// The server's file the shown tab of an editor window edits (Server File History… there).
     static func server(of window: NSWindow?) -> (target: SFTPTarget, path: String)? {
         EditorHost.shown(in: window)?.server.map { ($0.target, $0.path) }
@@ -228,6 +231,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     func edit() {
         guard let copy = snapshot, let s = copy.source else { return NSSound.beep() }
         if let other = s.server.flatMap({ Self.editing($0, s.path) }) ?? (s.server == nil ? Self.opened(URL(fileURLWithPath: s.path), nil) : nil) {
+            guard other.host?.tabbed == true else { other.revealed(); return flash("“\(other.name)” is open in a tool's editor: edit it there") }
             return host.replace(self, with: other)
         }
         snapshot = nil
@@ -249,6 +253,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
                 case .failure(let error):   // gone or changed into something else meanwhile: still the copy it was
                     (url, snapshot, cover) = (nil, copy, nil)
                     flash(error.localizedDescription)
+                    if host.comparison?.shows(self) != true { host.remove(self) }   // its comparison ended meanwhile: a copy goes with it
                 }
             }
         }
@@ -1408,7 +1413,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// text alone would differ on every line of a CRLF file. Through a 0600 file of ours, gone with the diff's temp files.
     func compareWithDisk() {
         guard let url, let app = Self.app() else { return }
-        if app.defaults.string(forKey: "diffCommand") == nil {   // built in: this document itself against the file as it is now
+        if app.builtInCompare {   // built in: this document itself against the file as it is now
             Task { await app.compare(.file(.init(path: url.path, name: "\(name) (on disk)", now: true)), .doc(self)) }
             return
         }
@@ -1441,7 +1446,10 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
 
     /// A line over its text in every view (a restored draft whose file changed or went), with its buttons.
     private var notice: (text: String, actions: [(String, @MainActor () -> Void)])? {
-        didSet { views.forEach { $0.frame.banner = notice.map { Banner($0.text, $0.actions) } } }
+        didSet {
+            views.forEach { $0.frame.banner = notice.map { Banner($0.text, $0.actions) } }
+            host?.comparison?.levelTops()   // compared: the other side's rows level with these again
+        }
     }
 
     /// Typing on or off in every view (a save, a rename, a cover).

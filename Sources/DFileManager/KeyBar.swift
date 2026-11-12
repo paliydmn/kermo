@@ -526,7 +526,10 @@ final class DocFrame: NSView {
     private var buttons: NSStackView?
 
     private func layoutStatus() {
-        let w = place.stringValue.isEmpty ? 0 : place.intrinsicContentSize.width
+        let room = bounds.width - 20 - (buttons.map { $0.fittingSize.width + 8 } ?? 0) - 56   // the buttons and some words stay; `position` gives way
+        place.lineBreakMode = .byClipping   // its whole width as it is; cut with "…" only where it doesn't fit
+        let full = place.stringValue.isEmpty ? 0 : place.intrinsicContentSize.width, w = max(0, min(full, room))
+        place.lineBreakMode = w < full ? .byTruncatingTail : .byClipping
         place.frame = NSRect(x: bounds.width - 10 - w, y: status.frame.minY, width: w, height: status.frame.height)
         var end = place.frame.minX - (w > 0 ? 16 : 0)
         if let b = buttons {
@@ -534,7 +537,7 @@ final class DocFrame: NSView {
             b.frame = NSRect(x: end - size.width, y: status.frame.minY - 2, width: size.width, height: status.frame.height + 4)
             end = b.frame.minX - 8
         }
-        status.frame.size.width = end - status.frame.minX
+        status.frame.size.width = max(0, end - status.frame.minX)
     }
 
     /// Where a document window's file or command is, said under its title: "web-01 · /var/log/nginx" on a server (its

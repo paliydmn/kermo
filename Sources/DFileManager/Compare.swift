@@ -88,9 +88,9 @@ final class Comparison: NSObject {
                     NSBezierPath(roundedRect: r.offsetBy(dx: o.x, dy: o.y), xRadius: 2, yRadius: 2).fill()
                 }
             }
-            for start in gaps.keys where start <= NSMaxRange(shown) && start < text.length {
+            let first = text.lineRange(for: NSRange(location: min(shown.location, text.length), length: 0)).location   // the top line's own space may show
+            for start in gaps.keys where start >= first && start <= NSMaxRange(shown) && start < text.length {
                 let end = NSMaxRange(text.lineRange(for: NSRange(location: start, length: 0))) - 1
-                guard end >= shown.location else { continue }   // its line above what's drawn (its space may still show)
                 let f = lm.lineFragmentRect(forGlyphAt: lm.glyphIndexForCharacter(at: end), effectiveRange: nil)
                 let u = lm.lineFragmentUsedRect(forGlyphAt: lm.glyphIndexForCharacter(at: end), effectiveRange: nil)
                 hatched(NSRect(x: 0, y: u.maxY + o.y, width: w, height: f.maxY - u.maxY))
@@ -126,9 +126,11 @@ final class Comparison: NSObject {
     private var lastEdits = (0, 0)
     /// Over the budget (`TextDiff.cost`): no colors, its status lines say so and offer `diff -u`.
     private(set) var tooBig = false
-    private var running = false, again = false, syncing = false, due = 0
+    private var running = false, again = false, syncing = false, due = 0, resizing = 0
     private var observers: [NSObjectProtocol] = []
     private var widths: [CGFloat] = [0, 0]
+    /// Blank space over one side's text as tall as a line over the other's (a draft's "changed on disk"): rows level across.
+    private weak var spacer: NSView?
     private weak var host: EditorHost?   // a late result after the window's gone: nothing to do
 
     init(old: DocView, new: DocView, snapshots: [Editor], host: EditorHost) {
@@ -166,7 +168,21 @@ final class Comparison: NSObject {
         }
         widths = sides.map { $0.view?.text.bounds.width ?? 0 }
         paused = false
+        levelTops()
         keys()
+    }
+
+    /// A line over one side's text moves its rows down: the other side gets as much blank space over its own.
+    func levelTops(off: Bool = false) {
+        if let s = spacer, let f = s.superview as? DocFrame, f.banner === s { f.banner = nil }
+        guard !off, let a = old.view, let b = new.view else { return }
+        let (ha, hb) = (a.frame.banner?.frame.height ?? 0, b.frame.banner?.frame.height ?? 0)
+        guard ha != hb else { return }
+        let low = ha < hb ? a : b
+        guard low.frame.banner == nil else { return }
+        let s = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: abs(ha - hb)))
+        low.frame.banner = s
+        spacer = s
     }
 
     /// The key bars say ⌥⌘↓ ⌥⌘↑ while it compares (`Editor.keys`).
@@ -176,6 +192,7 @@ final class Comparison: NSObject {
     private func detach() {
         observers.forEach(NotificationCenter.default.removeObserver)
         observers = []
+        levelTops(off: true)
         NotificationCenter.default.removeObserver(self, name: NSTextStorage.didProcessEditingNotification, object: nil)
         for s in sides {
             s.view?.text.compared = nil
@@ -184,7 +201,7 @@ final class Comparison: NSObject {
             set(s, lines: [], chars: [], gaps: [:], top: 0)
             s.view?.frame.actions = []
         }
-        (blocks, last, tooBig, running, again) = ([], nil, false, false, false)
+        (blocks, last, tooBig) = ([], nil, false)   // a matching under way finishes and is dropped (`running` stays: one at a time)
         say()
         keys()
     }
@@ -309,10 +326,17 @@ final class Comparison: NSObject {
     /// The width changed (the window, the divider, Wrap): wrapped lines' blank space measured again.
     private func resized(_ i: Int) {
         let w = sides[i].view?.text.bounds.width ?? 0
-        guard w != widths[i] else { return }
+        guard w != widths[i], Editor.wraps else { return }
         widths[i] = w
-        if Editor.wraps { regap() }
+        resizing += 1
+        let mine = resizing
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in   // once a live resize pauses, not at every frame
+            MainActor.assumeIsolated { if let self, self.resizing == mine { self.regap() } }
+        }
     }
+
+    /// One of its sides.
+    func shows(_ e: Editor) -> Bool { sides.contains { $0.view?.doc === e } }
 
     // MARK: Scrolling together
 
@@ -438,7 +462,8 @@ final class Comparison: NSObject {
         let (pa, pb) = (dir + "/old", dir + "/new"), fm = FileManager.default
         guard fm.createFile(atPath: pa, contents: Data(a.storage.string.utf8), attributes: [.posixPermissions: 0o600]),
               fm.createFile(atPath: pb, contents: Data(b.storage.string.utf8), attributes: [.posixPermissions: 0o600]) else { return }
-        AppDelegate.runDiff(AppDelegate.diffCommand(pa, pb, labels: (a.name, b.name)), dir, false, "diff \(a.name) ↔ \(b.name)")
+        let (la, lb) = a.name == b.name ? ("\(a.name) (\(a.whereShort))", "\(b.name) (\(b.whereShort))") : (a.name, b.name)   // two of one name: where each is
+        AppDelegate.runDiff(AppDelegate.diffCommand(pa, pb, labels: (la, lb)), dir, false, "diff \(la) ↔ \(lb)")
     }
 }
 

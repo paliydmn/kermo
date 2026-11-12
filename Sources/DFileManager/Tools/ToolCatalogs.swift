@@ -191,7 +191,8 @@ final class ToolCatalogs {
                 ask: while true {
                     switch await app.confirm(c, on: window) {
                     case 0: break ask
-                    case 1: await app.diff(.init(path: now.path, name: "yours: \(file)"), .init(path: tool.path, name: "v\(o.entry.version): \(file)"), in: app.active)
+                    case 1: await app.diff(.init(path: now.path, name: "yours: \(file)"), .init(path: tool.path, name: "v\(o.entry.version): \(file)"), in: app.active,
+                                           plain: true)   // the question stays up: diff -u, not the editor's Compare
                     default: return "\(now.preset.title): yours kept"
                     }
                 }

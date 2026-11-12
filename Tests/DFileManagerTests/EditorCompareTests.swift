@@ -137,6 +137,15 @@ extension EditorWindowTests {
         try await until("worked out anew") { c.blocks.count == 3 }
         #expect(c.blocks.last == TextDiff.Block(old: 4..<5, new: 5..<6), "\(c.blocks)")
         #expect(doc.textView.string == "xzero\none\ntwo\nthree\nfour\ny")
+
+        // A line over one side's text (a draft's "changed on disk"): as much blank space over the other's, gone with it.
+        let (dv, sv) = (try #require(c.new.view), try #require(c.old.view))
+        dv.frame.banner = Banner("changed on disk", [])
+        c.levelTops()
+        #expect(sv.frame.banner?.frame.height == dv.frame.banner?.frame.height && sv.frame.scroll.frame.maxY == dv.frame.scroll.frame.maxY)
+        dv.frame.banner = nil
+        c.levelTops()
+        #expect(sv.frame.banner == nil)
     }
 
     /// ⌥⌘↓ ⌥⌘↑ go from change to change while it compares (Focus Pane Below / Above otherwise); ⇧⌘D in the editor window
@@ -263,6 +272,24 @@ extension EditorWindowTests {
         let d = try #require(h.comparison)
         #expect(d.new.view?.doc === doc && d.old.view?.doc.name == "y.conf (on disk)" && d.old.view?.doc.snapshot?.source == nil)
         #expect(Editor.comparisons.count == temps, "no file of the draft")
+
+        // A document closed while its other side is read isn't brought back as a tab.
+        h.stopComparing()
+        let gone = try await opened(dir + "/x.conf")
+        let late = Task { await a.compare(.file(.init(path: dir + "/y.conf", now: true)), .doc(gone)) }
+        gone.close()
+        await late.value
+        #expect(h.comparison == nil && !h.docs.contains { $0 === gone } && Editor.document(at: dir + "/x.conf") == nil)
+        // One file on both sides: said, nothing opened.
+        await a.diff(y, y, in: a.active)
+        #expect(h.comparison == nil && a.active.statusText.contains("same file"))
+        // A tool's file open in its own editor window is read as a copy, never pulled into the editor window.
+        try put("{}\n", dir + "/t.json")
+        let tool = try Editor.open(URL(fileURLWithPath: dir + "/t.json"), text: nil, beside: NSView()) { _ in }
+        defer { tool.close() }
+        await a.diff(x, AppDelegate.DiffSide(path: dir + "/t.json"), in: a.active)
+        let t = try #require(h.comparison)
+        #expect(t.new.view?.doc !== tool && t.new.view?.doc.snapshot != nil && tool.host.tabbed == false && !h.docs.contains { $0 === tool })
     }
 
     /// Same text, other bytes: said, not "No differences".

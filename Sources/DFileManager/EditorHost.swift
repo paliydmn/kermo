@@ -254,6 +254,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         activate(keys === b ? qb : qa)
         comparison?.start()
         reveal(keys)
+        if window?.isKeyWindow == true { [a, b].forEach { $0.shown() } }   // the pane without the keys: its colors too
         changed()
     }
 
@@ -294,7 +295,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
             })
         }
         if let clip = NSPasteboard.general.string(forType: .string) {
-            let lines = clip.split(separator: "\n", omittingEmptySubsequences: false).count
+            let lines = clip.split(separator: "\n", omittingEmptySubsequences: false).count - (clip.hasSuffix("\n") ? 1 : 0)
             items.append(Picker.Item(title: "Clipboard", subtitle: lines == 1 ? "1 line" : "\(lines) lines") { [weak self] in self?.compareClipboard(with: e) })
         }
         guard !items.isEmpty else { return e.flash("Nothing to compare “\(e.name)” with: no other tab, saved version or text on the clipboard") }

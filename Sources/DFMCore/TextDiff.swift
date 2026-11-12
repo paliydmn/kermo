@@ -21,18 +21,21 @@ public enum TextDiff {
     /// Under a second of `cost` on a 2026 Mac: 7 000 lines all different are 2·10⁸, 0.7 s (10 000: 4·10⁸, 1.25 s).
     public static let budget = 2 * 100_000_000
 
-    /// `old` against `new`; nil if matching them would cost over `budget` (`cost`).
+    /// `old` against `new`; nil if matching them would cost over `budget` (`cost`). Its changed characters within the
+    /// budget too: past it, a changed line is changed all of it.
     public static func compare(_ old: String, _ new: String, budget: Int = budget) -> Result? {
         let a = NSString(string: old), b = NSString(string: new)   // UTF-16 underneath: a line's text by its range at once
         let la = lines(a), lb = lines(b)
-        var table: [String: Int] = [:]
+        var table: [[UInt16]: Int] = [:]
         let x = ids(a, la, &table), y = ids(b, lb, &table)
-        guard cost(x, y) <= budget else { return nil }
+        guard cost(x, y, budget: budget) else { return nil }
         let blocks = blocks(x, y)
-        var oc: [NSRange] = [], nc: [NSRange] = []
+        var oc: [NSRange] = [], nc: [NSRange] = [], left = budget
         for k in blocks {
             for (i, j) in zip(k.old, k.new) {
-                guard let d = inline(a.substring(with: la[i]), b.substring(with: lb[j])) else { continue }
+                let work = (la[i].length + lb[j].length) * (la[i].length + lb[j].length)   // at most (n + m)·D
+                guard work <= left, let d = inline(a.substring(with: la[i]), b.substring(with: lb[j])) else { continue }
+                left -= work
                 oc += d.old.map { NSRange(location: $0.location + la[i].location, length: $0.length) }
                 nc += d.new.map { NSRange(location: $0.location + lb[j].location, length: $0.length) }
             }
@@ -53,10 +56,12 @@ public enum TextDiff {
         return r
     }
 
-    /// Lines as numbers, the same text the same number (`table` shared by both texts): matched as Ints, not Strings.
-    private static func ids(_ s: NSString, _ lines: [NSRange], _ table: inout [String: Int]) -> [Int] {
+    /// Lines as numbers, the same UTF-16 the same number (`table` shared by both texts): matched as Ints. Not as
+    /// Strings: those call "é" and "e" with a combining accent equal, and the bytes differ.
+    private static func ids(_ s: NSString, _ lines: [NSRange], _ table: inout [[UInt16]: Int]) -> [Int] {
         lines.map { r in
-            let line = s.substring(with: r)
+            var line = [UInt16](repeating: 0, count: r.length)
+            s.getCharacters(&line, range: r)
             if let id = table[line] { return id }
             table[line] = table.count
             return table.count - 1
@@ -72,14 +77,34 @@ public enum TextDiff {
         return (p, s)
     }
 
-    /// What matching costs, about: (N + M)·D of what's left once the common start and end are set aside, D counted as
-    /// the lines with no equal on the other side. Can't be stopped midway, so it's asked first; lines that only moved
-    /// aren't counted (a reversed file costs more than this says).
-    public static func cost(_ a: [Int], _ b: [Int]) -> Int {
+    /// Whether matching costs `budget` at most: (N + M)·D of what's left once the common start and end are set aside,
+    /// D the lines either side has that the other hasn't there. The standard library's matching can't be stopped
+    /// midway, so it's asked first: at once no when the lines with no equal at all are too many; else D itself, worked
+    /// out up to what the budget allows and no further (lines that only moved count too — a sorted file's do).
+    public static func cost(_ a: [Int], _ b: [Int], budget: Int = budget) -> Bool {
         let (p, s) = common(a, b)
-        let x = a[p..<(a.count - s)], y = b[p..<(b.count - s)]
-        let inX = Set(x), inY = Set(y)
-        return (x.count + y.count) * (x.count(where: { !inY.contains($0) }) + y.count(where: { !inX.contains($0) }))
+        let x = Array(a[p..<(a.count - s)]), y = Array(b[p..<(b.count - s)]), n = x.count + y.count
+        guard n > 0 else { return true }
+        let inX = Set(x), inY = Set(y), cap = budget / n
+        guard x.count(where: { !inY.contains($0) }) + y.count(where: { !inX.contains($0) }) <= cap else { return false }
+        return distance(x, y, cap: cap) != nil
+    }
+
+    /// The fewest lines removed and added that make `x` into `y` (Myers's forward pass, one diagonal array: no more
+    /// memory than the texts'); nil past `cap` — stopped there.
+    static func distance(_ x: [Int], _ y: [Int], cap: Int) -> Int? {
+        let (n, m) = (x.count, y.count), most = min(cap, n + m), off = most + 1
+        var v = [Int](repeating: 0, count: 2 * most + 3)
+        for d in 0...most {
+            for k in stride(from: -d, through: d, by: 2) {
+                var i = k == -d || k != d && v[off + k - 1] < v[off + k + 1] ? v[off + k + 1] : v[off + k - 1] + 1
+                var j = i - k
+                while i < n, j < m, x[i] == y[j] { (i, j) = (i + 1, j + 1) }
+                v[off + k] = i
+                if i >= n, j >= m { return d }
+            }
+        }
+        return nil
     }
 
     /// Where `a` and `b` differ, in order.
@@ -109,7 +134,7 @@ public enum TextDiff {
     /// UTF-16 ranges in each; nil for a line over `limit` UTF-16 units (all of it is the change then).
     public static func inline(_ a: String, _ b: String, limit: Int = 1000) -> (old: [NSRange], new: [NSRange])? {
         guard a.utf16.count <= limit, b.utf16.count <= limit else { return nil }
-        let x = Array(a), y = Array(b)
+        let x = a.map { Array($0.utf16) }, y = b.map { Array($0.utf16) }   // whole Characters, told apart by their UTF-16
         var gone = [Bool](repeating: false, count: x.count), came = [Bool](repeating: false, count: y.count)
         for c in y.difference(from: x) {
             switch c {
@@ -121,11 +146,11 @@ public enum TextDiff {
     }
 
     /// The marked characters' runs in UTF-16.
-    private static func runs(_ marked: [Bool], _ chars: [Character]) -> [NSRange] {
+    private static func runs(_ marked: [Bool], _ chars: [[UInt16]]) -> [NSRange] {
         var out: [NSRange] = [], u = 0, start: Int?
         for (k, c) in chars.enumerated() {
             if marked[k] { start = start ?? u } else if let s = start { out.append(NSRange(location: s, length: u - s)); start = nil }
-            u += c.utf16.count
+            u += c.count
         }
         if let s = start { out.append(NSRange(location: s, length: u - s)) }
         return out

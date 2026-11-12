@@ -66,3 +66,17 @@ private func blocks(_ a: String, _ b: String) -> [String] {
     #expect(r?.blocks.count == 100)
     #expect(Date().timeIntervalSince(start) < 5)   // ~0.2 s here; slack for a busy test run
 }
+
+@Test func theBudgetCountsLinesThatOnlyMoved() {
+    let up = (0..<20_000).map { "line \($0)" }
+    #expect(TextDiff.compare(up.joined(separator: "\n"), up.reversed().joined(separator: "\n")) == nil, "a reversed file: none missing, all moved")
+    #expect(TextDiff.distance([1, 2, 3, 4], [1, 3, 4, 5], cap: 10) == 2 && TextDiff.distance([1, 2], [2, 1], cap: 10) == 2)
+    #expect(TextDiff.distance(Array(0..<50), Array(50..<100), cap: 99) == nil && TextDiff.distance([], [1], cap: 5) == 1)
+}
+
+@Test func linesDifferByTheirCharactersNotTheirLooks() {
+    let nfc = "caf\u{E9}", nfd = "cafe\u{301}"   // one "é" each, other bytes
+    #expect(TextDiff.compare("a\n\(nfc)", "a\n\(nfd)")?.blocks == [TextDiff.Block(old: 1..<2, new: 1..<2)])
+    #expect(TextDiff.inline(nfc, nfd)! == ([NSRange(location: 3, length: 1)], [NSRange(location: 3, length: 2)]))
+}
+
