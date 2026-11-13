@@ -14,6 +14,8 @@ Release:
 ## [Unreleased]
 
 ### Added
+- **Selecting past the terminal's edge scrolls it**: drag above or below its window and the scrollback moves, the selection growing with it — a long output in one drag.
+- **The wheel in less, man and `git log`** scrolls them, as in Terminal.app.
 - **Editor** in the main window's toolbar and ⇧⌘E (**File ▸ Show Editor**, from the terminal too) bring the editor forward as you left it, or on a new Untitled; hold the button for **New Editor Document** and **Quick Open…**.
 - **Copy a change across in Compare**: ⌥⇧⌘← / ⌥⇧⌘→ (or the arrow beside its line numbers) put the change the caret's in, as the other side has it, into the left or the right side — into a document only, as one ⌘Z, nothing saved till ⌘S.
 - **Send to Terminal and Execute in Terminal** in the editor: ⌃↩ types the line or the selection into a shell of the file's machine (a server's file: an SSH session there, as its user), ⌃⇧↩ also runs it and steps to the next line. Only into a shell waiting for a line — never into vim or a password prompt; several lines as one paste only; Execute on production asks every time and goes into the production log.
@@ -33,6 +35,8 @@ Release:
 - **Hand the charts on**: **Copy Summary…** over a server's Tools charts, and under a stretch you drag, writes what they show as a short text — the server, the time and its zone, each series' average and highest and when, the gaps, the events — in a sheet to edit first; only **Copy** puts it on the clipboard. ⋯ beside it: **Export CSV…** saves their numbers unrounded — a row a sample, or each 15 minutes' lowest, average and highest on 24h and 7d, a gap a row with its reason, times in ISO 8601 with the offset —, written whole or not at all; **Copy Image of the Charts** copies them as a picture with the server, the time and the zone, no pointer or tip. Each takes what's drawn — in Focus that chart alone —; the summary and the CSV the stretch you marked, else the window, the image the window with the stretch marked. None has a process row, a command line or a log.
 
 ### Changed
+- **The terminal's engine is new** (SwiftTerm 1.99): its scrollback takes about a third of the memory, and a flood of output shows several times faster.
+- **⌥-drag in the terminal selects a block** — the same columns of each line — as in Terminal.app and iTerm2, in any program. In a program that reads the mouse, ⇧-drag selects lines; with `terminalCopyOnSelect` off, that selection is copied by ⌘C, no longer by itself.
 - ⇧⌘D (**Compare Files**), a server file's history and a draft's **changed on disk** line open the editor's Compare instead of a `diff -u` window, unless **Compare files with** (`diffCommand`) names a program — then that program, as before. A binary file is still shown as `diff -u`.
 - Saving a server's file that's gone from the server since you opened it — deleted, or renamed outside the editor — asks first: **Save** makes it again under that name, **Save As…** keeps your text on this Mac, **Cancel** (↩) writes nothing. It used to be made again without a word.
 - A chart of several series says only *when* in its header; the values moved to its chips. A chart whose metrics' units differ says so, and a tool's Problems warn about it.
