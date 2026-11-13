@@ -37,6 +37,14 @@ private typealias P = TerminalLink.Place
         #expect(r(nothing) == nil, "\(nothing.debugDescription)")
     }
     #expect(r("src/a.py", base: nil) == nil, "relative, no folder to start from")
+    #expect(r("./a.py:7 and more") == .path([P(path: "/w/a.py", line: "7")]), "one place, whatever the cut")
+    #expect(r("main.swift:12") == .path([P(path: "/w/main.swift", line: "12")]), "a dot: not a scheme")
+    #expect(r("~/../shared/app.yml", home: nil) == nil, "out of the server's home: it's only known there")
+    #expect(r("~/../shared/app.yml") == .path([P(path: "/Users/shared/app.yml", line: nil)]))
+    for hidden in ["file:///tmp/%E2%80%AEtxt.exe", "file:///tmp/a%0Ab", "/etc/pass\u{FE0F}wd", "/tmp/a\u{3164}b"] {
+        #expect(r(hidden) == nil, "\(hidden.debugDescription)")
+    }
+    #expect(r("src/a.py", base: "/srv/\u{202E}ppa") == nil, "the folder a shell told is text too")
     #expect(r("/abs/a.py", base: nil) == .path([P(path: "/abs/a.py", line: nil)]))
 }
 
@@ -48,7 +56,7 @@ private typealias P = TerminalLink.Place
     try FileManager.default.createDirectory(atPath: d + "/sub", withIntermediateDirectories: true)
     try Data("x".utf8).write(to: URL(fileURLWithPath: d + "/out file.txt"))
     let big = FileHandle(forWritingAtPath: { FileManager.default.createFile(atPath: d + "/big.log", contents: nil); return d + "/big.log" }())!
-    try big.truncate(atOffset: UInt64(TerminalLink.editorLimit) + 1)   // sparse: nothing written
+    try big.truncate(atOffset: UInt64(Editor.sizeLimit) + 1)   // sparse: nothing written
     try big.close()
     try FileManager.default.createSymbolicLink(atPath: d + "/to-sub", withDestinationPath: d + "/sub")
     func open(_ link: String, reveal: Bool = false) -> TerminalLink.Opening? {
@@ -90,7 +98,7 @@ private typealias P = TerminalLink.Place
     #expect(try open("./nothing") == nil)
     let home = try c.realpath("."), there = try #require(try FileManager.default.contentsOfDirectory(atPath: home).first {
         var s = stat()
-        return stat(home + "/" + $0, &s) == 0 && s.st_mode & S_IFMT == S_IFREG && s.st_size < TerminalLink.editorLimit
+        return stat(home + "/" + $0, &s) == 0 && s.st_mode & S_IFMT == S_IFREG && s.st_size < Editor.sizeLimit
     })
     #expect(try open("~/" + there) == .editor(P(path: home + "/" + there, line: nil)), "~/ is the server's home")
 }
@@ -127,14 +135,29 @@ private typealias P = TerminalLink.Place
     term.newShell(cwd: d)
     let shell = try #require(term.current)
     _ = term.show()
-    for _ in 0..<1000 where !shell.isAtPrompt { try await Task.sleep(for: .milliseconds(10)) }
+    var calm = 0   // its prompt drawn and its rc files done: what's typed before may be lost
+    for _ in 0..<3000 where calm < 5 {
+        calm = shell.isAtPrompt && !String(decoding: shell.view.getBufferAsData(), as: UTF8.self).allSatisfy(\.isWhitespace) ? calm + 1 : 0
+        try await Task.sleep(for: .milliseconds(10))
+    }
     #expect(!shell.showsAnotherMachine, "the shell itself")
-    for (name, remote) in [("ssh", true), ("make", false)] {
-        shell.view.send(txt: " ./\(name) 30\r")   // a leading space: not in your history (HIST_IGNORE_SPACE)
-        for _ in 0..<500 where shell.program != name { try await Task.sleep(for: .milliseconds(10)) }
-        #expect(shell.program == name && shell.showsAnotherMachine == remote, "\(name)")
+    var refused = 0, web: [String] = []
+    let app = AppDelegate()
+    app.linkRefused = { refused += 1 }
+    app.openWeb = { _, link in web.append(link) }
+    for (name, remote) in [("make", false), ("ssh", true), ("exec ./ssh", true)] {   // `exec`: the shell is ssh now
+        shell.view.send(txt: " \(name.hasPrefix("exec") ? name : "./" + name) 30\r")   // a leading space: not in your history (HIST_IGNORE_SPACE)
+        let program = name.hasPrefix("exec") ? "ssh" : name
+        for _ in 0..<3000 where shell.foreground != program { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(shell.foreground == program && shell.showsAnotherMachine == remote, "\(name)")
+        if remote {
+            app.openLink(TerminalLinkRequest(link: "/etc/hosts", params: [:], isExplicit: false), flags: .command, in: shell)
+            app.openLink(TerminalLinkRequest(link: "https://example.com", params: [:], isExplicit: false), flags: .command, in: shell)
+            #expect(refused == 1 && web == ["https://example.com"], "a path: another machine's; an address opens")
+            (refused, web) = (0, [])
+        }
         shell.view.send(txt: "\u{3}")   // ⌃C
-        for _ in 0..<500 where !shell.isAtPrompt { try await Task.sleep(for: .milliseconds(10)) }
+        for _ in 0..<3000 where shell.isRunning && !shell.isAtPrompt { try await Task.sleep(for: .milliseconds(10)) }
     }
 }
 
@@ -198,7 +221,7 @@ private typealias P = TerminalLink.Place
     #expect(r.v.getSelection() == nil, "no anchor: nothing")
     r.v.scrollTo(row: 0)
     r.click(col: 2, row: 10)  // "ne 10"
-    #expect(r.v.anchor?.row == 10 && r.v.anchor?.col == 2)
+    #expect(r.v.anchor?.row == 10)
     r.v.scrollTo(row: live)
     let copies = r.v.pasteboard.changeCount
     r.click(col: 4, row: 95 - live, .shift)
@@ -282,5 +305,25 @@ extension EditorWindowTests {
         #expect(at(Editor.editing(t, path)) == "12:1")
         app.remoteOpen(.edit, t, path, line: "40", in: app.panels[0])
         #expect(at(Editor.editing(t, path)) == "40:1", "its open tab")
+
+        // ⌘-click, all the way: an SSH tab's "/etc/hosts" is its server's (here the local SFTP server stands in for one),
+        // never this Mac's; a big file that isn't text opens nothing; a local tab's file is this Mac's.
+        var refused = 0
+        app.linkRefused = { refused += 1 }
+        let click = { (link: String, tab: EmbeddedTerminal.Tab) in app.openLink(TerminalLinkRequest(link: link, params: [:], isExplicit: false), flags: .command, in: tab) }
+        let ssh = EmbeddedTerminal.Tab(kind: .ssh(t), view: DropTerminalView(frame: .zero))
+        click("/etc/hosts", ssh)
+        try await waitFor("the server's") { Editor.editing(t, "/etc/hosts") != nil }
+        #expect(editorDoc(URL(fileURLWithPath: "/etc/hosts")) == nil, "not this Mac's")
+        let big = FileHandle(forWritingAtPath: { FileManager.default.createFile(atPath: dir + "/big.bin", contents: nil); return dir + "/big.bin" }())!
+        try big.truncate(atOffset: UInt64(Editor.sizeLimit) + 1)   // sparse: nothing written
+        try big.close()
+        click(dir + "/big.bin", ssh)
+        try await waitFor("refused") { refused == 1 }
+        let local = EmbeddedTerminal.Tab(kind: .shell, view: DropTerminalView(frame: .zero)), b = URL(fileURLWithPath: dir + "/b.txt")
+        try Data(text.utf8).write(to: b)
+        click(b.path + ":9", local)
+        try await waitFor("this Mac's") { editorDoc(b) != nil }
+        #expect(at(editorDoc(b)) == "9:1" && Editor.editing(t, b.path) == nil)
     }
 }

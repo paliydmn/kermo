@@ -167,6 +167,28 @@ extension ServerLockTests {
     try await waitFor("the program read the wheel") { text(v).contains("<   6   4") }   // ESC [ < 64 …: button 4, up
 }
 
+/// ⌘-click is the terminal's (a link) even in a program that reads the mouse: it gets neither the press nor the release;
+/// a plain click is still its own.
+@MainActor @Test func aCommandClickIsntAProgramsClick() async throws {
+    let v = try await standIn("printf '\\033[?1000h'; echo ready /etc/hosts; dd bs=1 count=6 2>/dev/null | od -An -tu1")
+    defer { v.process.terminate() }
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+    w.contentView!.addSubview(v)
+    var links: [String] = []
+    v.onLink = { r, _ in links.append(r.link) }
+    func click(col: Int, _ f: NSEvent.ModifierFlags) {
+        let p = NSPoint(x: (CGFloat(col) + 0.5) * v.caretFrame.width, y: v.frame.height - 0.5 * v.caretFrame.height)
+        for t in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let e = NSEvent.mouseEvent(with: t, location: p, modifierFlags: f, timestamp: 0, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)!
+            t == .leftMouseDown ? v.mouseDown(with: e) : v.mouseUp(with: e)
+        }
+    }
+    click(col: 8, .command)
+    #expect(links == ["/etc/hosts"])
+    click(col: 2, [])
+    try await waitFor("the program read a click") { text(v).contains(" 77  32  35  33") }   // ESC [ M, button 0, column 2 + 33: the plain one first
+}
+
 /// D-093: in a full-screen program that doesn't read the mouse (less, man, git log) the wheel is ↑ / ↓.
 @MainActor @Test func theWheelScrollsLess() async throws {
     let v = try await standIn("printf '\\033[?1049h'; echo ready; dd bs=1 count=3 2>/dev/null | od -An -c")

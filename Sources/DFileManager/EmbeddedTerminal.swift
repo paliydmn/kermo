@@ -58,11 +58,11 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
             guard isRunning else { return nil }
             if let host { return "The connection to “\(host)”" }
             guard !isAtPrompt else { return nil }
-            return program.map { "“\($0)” in a shell" } ?? "A program in a shell"
+            return foreground.map { "“\($0)” in a shell" } ?? "A program in a shell"
         }
-        /// The program a local shell runs now (it has the terminal); nil: none, or unknown.
-        var program: String? {
-            guard host == nil, let p = view.process, isRunning, !isAtPrompt else { return nil }
+        /// What has a local tab's terminal now: its shell, a program it runs, what the shell `exec`ed; nil: unknown.
+        var foreground: String? {
+            guard host == nil, let p = view.process, isRunning else { return nil }
             var name = [UInt8](repeating: 0, count: 256)
             let pg = tcgetpgrp(p.childfd)
             return pg > 0 && proc_name(pg, &name, 256) > 0 ? String(decoding: name.prefix { $0 != 0 }, as: UTF8.self) : nil
@@ -1292,31 +1292,28 @@ final class DropTerminalView: LocalProcessTerminalView {
 
     // MARK: Anchor (task 21 PR 4)
 
-    /// Where the last plain click was — an absolute row (as a mark's), its column, the row's text then: a ⇧-click with
-    /// nothing selected selects from there, scrolled away meanwhile or not (Terminal.app's). Gone where the marks go (rows
-    /// renumbered, ⌘K), and once its row reads otherwise: never someone else's line.
-    private(set) var anchor: (row: Int, col: Int, text: String?)?
-
-    /// The cell's size: the caret's (SwiftTerm sizes it to one).
-    private var cell: NSSize { caretFrame.size }
+    /// Where the last plain click was — an absolute row (as a mark's), the click's x, the row's text then: a ⇧-click
+    /// with nothing selected selects from there, scrolled away meanwhile or not (Terminal.app's). Gone where the marks go
+    /// (rows renumbered, ⌘K), and once its row reads otherwise: never someone else's line.
+    private(set) var anchor: (row: Int, x: CGFloat, text: String?)?
 
     override func mouseDown(with event: NSEvent) {
         let keys = event.modifierFlags.intersection([.command, .option, .control, .shift])
-        guard event.clickCount == 1, keys.isEmpty || keys == .shift, cell.width > 0, cell.height > 0,
+        let h = caretFrame.height   // a row's: SwiftTerm sizes the caret to a cell (wider on a wide character, never taller)
+        guard event.clickCount == 1, keys.isEmpty || keys == .shift, h > 0,
               !(allowMouseReporting && currentMouseMode != .off), let now = look(), !now.alt
-        else { return super.mouseDown(with: event) }
+        else { return terminals(event) { super.mouseDown(with: event) } }
         let top = now.top + terminalStateSnapshot().viewportRow   // the row at the view's top
-        let p = convert(event.locationInWindow, from: nil)
-        let row = top + max(Int((bounds.height - p.y) / cell.height), 0), col = max(Int(p.x / cell.width), 0)
+        let p = convert(event.locationInWindow, from: nil), row = top + max(Int((bounds.height - p.y) / h), 0)
         guard keys == .shift else {
-            anchor = (row, col, rowText(row))
+            anchor = (row, p.x, rowText(row))
             return super.mouseDown(with: event)
         }
         guard !selectionActive, let a = anchor, a.row >= now.top, rowText(a.row) == a.text else { return super.mouseDown(with: event) }
-        // A press on the anchor's cell — off the view if it's scrolled away: SwiftTerm takes that point for the row
-        // above or below — and a release here: one selection, copied once, as it ends.
+        // A press at the anchor — off the view if it's scrolled away: SwiftTerm takes that point for the row above or
+        // below — and a release here: one selection, copied once, as it ends.
         let n = CGFloat(a.row - top)
-        let at = NSPoint(x: (CGFloat(a.col) + 0.5) * cell.width, y: bounds.height - (n + (n < 0 ? -0.5 : 0.5)) * cell.height)   // its Int() rounds towards 0
+        let at = NSPoint(x: a.x, y: bounds.height - (n + (n < 0 ? -0.5 : 0.5)) * h)   // its Int() rounds towards 0
         func mouse(_ t: NSEvent.EventType, _ p: NSPoint) -> NSEvent {
             NSEvent.mouseEvent(with: t, location: convert(p, to: nil), modifierFlags: [], timestamp: event.timestamp, windowNumber: event.windowNumber,
                                context: nil, eventNumber: event.eventNumber, clickCount: 1, pressure: 0)!
@@ -1334,7 +1331,17 @@ final class DropTerminalView: LocalProcessTerminalView {
     private(set) var clickFlags: NSEvent.ModifierFlags = []
     override func mouseUp(with event: NSEvent) {
         clickFlags = event.modifierFlags
-        super.mouseUp(with: event)
+        terminals(event) { super.mouseUp(with: event) }
+    }
+    override func mouseDragged(with event: NSEvent) { terminals(event) { super.mouseDragged(with: event) } }
+
+    /// With ⌘ held a click is the terminal's (a link), never a program's that reads the mouse: SwiftTerm would give it
+    /// the press and keep the release for the link.
+    private func terminals(_ e: NSEvent, _ body: () -> Void) {
+        guard e.modifierFlags.contains(.command), allowMouseReporting else { return body() }
+        allowMouseReporting = false
+        defer { allowMouseReporting = true }
+        body()
     }
 
     private lazy var gate = TerminalGate(self)   // `terminalDelegate` is weak: the view keeps it

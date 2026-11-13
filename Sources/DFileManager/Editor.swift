@@ -436,12 +436,15 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// A file's SHA-256, as a save compares it and the session keeps it.
     nonisolated static func sha(_ data: Data) -> Data { Data(SHA256.hash(data: data)) }
 
+    /// The most it reads: 32 MB. A bigger file is the viewer's (F3).
+    nonisolated static let sizeLimit: Int64 = 32 << 20
+
     /// UTF-8; UTF-8 with a few damaged bytes (lossy, see `TextFormat.mostlyUTF8`); else Windows-1251.
     nonisolated static func load(_ url: URL) throws -> Loaded {
         let stamp = Stamp(url.resolvingSymlinksInPath().path)   // before reading: a change in between shows as a conflict
         if let what = FileInfo.notRegular(url.path) { throw JobErrorMessage("“\(url.lastPathComponent)” is \(what) — not a file to edit.") }
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-        if let size = attrs[.size] as? Int, size > 32 << 20 {
+        if let size = attrs[.size] as? Int, size > sizeLimit {
             throw JobErrorMessage("“\(url.lastPathComponent)” is larger than 32 MB — use the viewer (F3).")
         }
         let data = try Data(contentsOf: url)
@@ -1346,8 +1349,8 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     var lastSelection: (Int, CGFloat)?
 
     /// A parked server tab opened (a click on its tab, ↩, F4 on its file), a locked one's draft unlocked: never by
-    /// itself, never at launch.
-    func connect() {
+    /// itself, never at launch. `line`: gone to once its text is there.
+    func connect(goingTo line: String? = nil) {
         guard let server else { return }
         switch cover {
         case .parked?:
@@ -1355,7 +1358,8 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
             cover = .loading
             Task {
                 guard await ServerLock.authorize(server.target, "open a file on") else { return cover = .parked }
-                if await !app.remoteOpen(into: self, server.target, server.path) { cover = .parked }
+                if await !app.remoteOpen(into: self, server.target, server.path) { return cover = .parked }
+                if let line { go(to: line) }
             }
         case .locked?:
             Task {
@@ -1363,8 +1367,10 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
                 lockedDraft = nil
                 cover = .loading
                 await restore(d, draft: true, text: read)
+                if let line { go(to: line) }
             }
-        default: break
+        case nil: if let line { go(to: line) }
+        default: break   // still loading
         }
     }
 

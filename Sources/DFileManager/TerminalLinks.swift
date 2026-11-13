@@ -26,18 +26,14 @@ enum TerminalLink: Equatable {
         case panel(String, into: Bool)
     }
 
-    /// The editor takes up to 32 MB; past that, the viewer.
-    nonisolated static let editorLimit: Int64 = 32 << 20
 
     /// nil: nothing to open. `base`: where a relative path starts — a local tab's shell's folder (the kernel's word, not
     /// what any program printed), an SSH tab's as its shell told (OSC 7); nil: a relative path opens nothing. `home`:
     /// this Mac's for a local tab, nil for an SSH tab ("~/" kept for the server).
     nonisolated static func route(_ link: String, base: String?, home: String?) -> TerminalLink? {
-        // Controls, format characters (bidi overrides, zero widths), line breaks: what's opened must be what shows.
-        guard !link.isEmpty, !link.unicodeScalars.contains(where: {
-            [.control, .format, .lineSeparator, .paragraphSeparator].contains($0.properties.generalCategory)
-        }) else { return nil }
-        if let colon = link.firstIndex(of: ":"), link[..<colon].range(of: #"^[A-Za-z][A-Za-z0-9+.-]*$"#, options: .regularExpression) != nil {
+        guard !link.isEmpty, !invisible(link) else { return nil }
+        // A scheme: what SwiftTerm finds has no dot in it ("main.swift:12" is a file's line).
+        if let colon = link.firstIndex(of: ":"), link[..<colon].range(of: #"^[A-Za-z][A-Za-z0-9+-]*$"#, options: .regularExpression) != nil {
             switch link[..<colon].lowercased() {
             case "http", "https", "mailto": return .web(link)
             case "file":   // as the path it names: on the server for an SSH tab
@@ -55,10 +51,21 @@ enum TerminalLink: Equatable {
             guard let r = s.range(of: #":[0-9]+(:[0-9]+)?(?=$|[: ])"#, options: .regularExpression) else { return place(s, line: nil, base: base, home: home) }
             return place(String(s[..<r.lowerBound]), line: String(s[r].dropFirst()), base: base, home: home)
         }
-        return places.isEmpty ? nil : .path(places)
+        var seen = Set<String>()   // "./a.py:7 and more": one place, whatever the cut
+        let unique = places.filter { seen.insert($0.path + ":" + ($0.line ?? "")).inserted }
+        return unique.isEmpty ? nil : .path(unique)
     }
 
-    /// An absolute path, ".." and "." taken out; "~/…" kept where `home` is nil.
+    /// Controls, format characters (bidi overrides, zero widths), line breaks, what's drawn as nothing (variation
+    /// selectors, fillers): what opens must be what shows.
+    private nonisolated static func invisible(_ s: String) -> Bool {
+        s.unicodeScalars.contains {
+            [.control, .format, .lineSeparator, .paragraphSeparator].contains($0.properties.generalCategory) || $0.properties.isDefaultIgnorableCodePoint
+        }
+    }
+
+    /// An absolute path, ".." and "." taken out; "~/…" kept where `home` is nil (and not climbed out of: the server's
+    /// home is only known there). Checked whole: a `file:`'s %-escapes and the folder a shell told are text too.
     private nonisolated static func place(_ path: String, line: String?, base: String?, home: String?) -> Place? {
         guard !path.isEmpty, !path.hasPrefix("$"), !path.contains("/$") else { return nil }   // $HOME/x: the server's variable, not ours
         var p = path, root = "/"
@@ -70,9 +77,11 @@ enum TerminalLink: Equatable {
         }
         var parts: [Substring] = []
         for c in p.split(separator: "/") where c != "." {
-            if c == ".." { _ = parts.popLast() } else { parts.append(c) }
+            guard c == ".." else { parts.append(c); continue }
+            if parts.popLast() == nil, root == "~/" { return nil }
         }
-        return Place(path: root + parts.joined(separator: "/"), line: line)
+        let full = root + parts.joined(separator: "/")
+        return invisible(full) ? nil : Place(path: full, line: line)
     }
 
     /// The first of `places` on this Mac, and what a click opens there; nil: none is.
@@ -80,7 +89,7 @@ enum TerminalLink: Equatable {
         for p in places {
             var s = stat()   // follows a symlink, as F4 does
             guard stat(p.path, &s) == 0 else { continue }
-            return opening(p, dir: s.st_mode & S_IFMT == S_IFDIR, size: Int64(s.st_size), reveal: reveal)
+            return opening(p, dir: s.st_mode & S_IFMT == S_IFDIR, size: Int64(s.st_size), reveal: reveal)   // a FIFO: the editor says what it is
         }
         return nil
     }
@@ -100,7 +109,7 @@ enum TerminalLink: Equatable {
 
     private nonisolated static func opening(_ p: Place, dir: Bool, size: Int64, reveal: Bool) -> Opening {
         if reveal || dir { return .panel(p.path, into: dir && !reveal) }
-        return size > editorLimit ? .viewer(p.path) : .editor(p)
+        return size > Editor.sizeLimit ? .viewer(p.path) : .editor(p)
     }
 }
 
@@ -111,29 +120,29 @@ extension EmbeddedTerminal.Tab {
         if let t = target { (t.asUser, cwd, nil) } else { (nil, shellCwd, NSHomeDirectory()) }
     }
 
-    /// A local shell running another machine's shell now: what it prints names that machine's files, not this Mac's.
-    /// ponytail: by the program's name — a console of a VM, a serial line, a shell left after `exit` showing a server's
-    /// lines above still open this Mac's file of the same name.
-    var showsAnotherMachine: Bool { program.map(Self.remoteShells.contains) ?? false }
-    nonisolated static let remoteShells: Set<String> = ["ssh", "mosh-client", "telnet", "docker", "podman", "kubectl"]
+    /// A local shell running another machine's shell now (`exec ssh` too): what it prints names that machine's files,
+    /// not this Mac's. ponytail: by the program's name — one under a wrapper (`sudo ssh`), a VM's or a serial line's
+    /// console, a server's lines left above after `exit` still open this Mac's file of the same name.
+    var showsAnotherMachine: Bool { foreground.map(Self.remoteShells.contains) ?? false }
+    nonisolated static let remoteShells: Set<String> = ["ssh", "autossh", "sshpass", "mosh-client", "et", "tsh", "telnet", "docker", "podman", "kubectl"]
 }
 
 extension AppDelegate {
-    /// A web address's app, after SwiftTerm's check (http(s) with a host, mailto). Replaced in tests: nothing opens.
-    static var openWeb: @MainActor (TerminalLinkRequest, String) -> Void = { r, link in r.openDefault(link) }
-
     /// ⌘-click on a link in `tab`; ⌥ too: a panel shows it instead.
     func openLink(_ r: TerminalLinkRequest, flags: NSEvent.ModifierFlags, in tab: EmbeddedTerminal.Tab) {
         let (server, base, home) = tab.linkPlace
-        if server == nil, tab.showsAnotherMachine { return TerminalGate.refused() }   // `ssh` in a local tab
         switch TerminalLink.route(r.link, base: base, home: home) {
-        case nil: TerminalGate.refused()
-        case .web(let link): Self.openWeb(r, link)
+        case nil: linkRefused()
+        case .web(let link): openWeb(r, link)
         case .path(let places):
             let reveal = flags.contains(.option)
             guard let t = server else {
-                guard let o = TerminalLink.here(places, reveal: reveal) else { return TerminalGate.refused() }
-                return open(o, on: nil)
+                guard !tab.showsAnotherMachine else { return linkRefused() }   // `ssh` in a local tab
+                Task {   // a share that doesn't answer holds `stat`, not the app
+                    guard let o = await Blocking.run(.userInitiated, { TerminalLink.here(places, reveal: reveal) }) else { return linkRefused() }
+                    open(o, on: nil)
+                }
+                return
             }
             let panel = panels.first { $0.remote?.target == t } ?? active, env = SSHAskpass.env
             Task {
@@ -144,7 +153,7 @@ extension AppDelegate {
                 }
                 switch found {
                 case .success(let o?): open(o, on: t, in: panel)
-                case .success(nil): TerminalGate.refused()
+                case .success(nil): linkRefused()
                 case .failure(let e): if !(e is CancellationError) { showError(e) }
                 }
             }
@@ -161,7 +170,7 @@ extension AppDelegate {
         case .viewer(let path):
             guard let t else { Viewer.show(URL(fileURLWithPath: path)); return }
             // F3's tail of a log; a big file that isn't text would come whole: not for a click.
-            guard Viewer.tailLimit(for: (path as NSString).lastPathComponent) != nil else { return TerminalGate.refused() }
+            guard Viewer.tailLimit(for: (path as NSString).lastPathComponent) != nil else { return linkRefused() }
             remoteOpen(.view, t, path, in: panel ?? active)
         }
     }

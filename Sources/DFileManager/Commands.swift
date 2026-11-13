@@ -1341,8 +1341,7 @@ extension AppDelegate {
                     in panel: PanelViewController) {
         if how == .edit, let e = Editor.editing(target, remotePath) {   // one file, one tab: no second copy (a parked one opens)
             e.revealed()
-            e.connect()
-            if let line { e.go(to: line) }
+            e.connect(goingTo: line)
             return
         }
         let name = (remotePath as NSString).lastPathComponent
@@ -1354,7 +1353,9 @@ extension AppDelegate {
         let last = how == .view ? Viewer.tailLimit(for: name) : nil
         Task {
             let r = await panel.busy("Downloading “\(name)”…") { flag in
-                try SFTPClient.session(target, env: env, cancel: flag) { try $0.download(remotePath, to: local.path, last: last) }
+                try SFTPClient.session(target, env: env, cancel: flag) {   // the editor reads 32 MB at most: no more comes
+                    try $0.download(remotePath, to: local.path, last: last, max: how == .edit ? Editor.sizeLimit : nil)
+                }
             }
             guard case .success(let opened) = r else {
                 TempCopies.remove(tmp)
@@ -1385,7 +1386,7 @@ extension AppDelegate {
         let local = URL(fileURLWithPath: tmp).appendingPathComponent((remotePath as NSString).lastPathComponent)
         let panel = panels.first { $0.remote?.target == target } ?? active
         let r = await panel.busy("Downloading “\(local.lastPathComponent)”…") { flag in
-            try SFTPClient.session(target, env: env, cancel: flag) { try $0.download(remotePath, to: local.path) }
+            try SFTPClient.session(target, env: env, cancel: flag) { try $0.download(remotePath, to: local.path, max: Editor.sizeLimit) }
         }
         var loaded: Result<Editor.Loaded, Error> = .failure(CancellationError())
         if case .success = r { loaded = await Blocking.run(.userInitiated) { Result { try Editor.load(local) } } }
