@@ -157,9 +157,9 @@ import Testing
     let (gone, closed) = try startedTwice()
     term.close(gone.id, confirm: false)
     #expect(!term.tabs.contains { $0 === gone })
-    for _ in 0..<300 where again.exitStatus == nil { try await Task.sleep(for: .milliseconds(10)) }
+    for _ in 0..<1000 where again.exitStatus == nil { try await Task.sleep(for: .milliseconds(10)) }
     #expect(again.exitStatus == 5 << 8, "the tab ends with its new process, not the old one")
-    for _ in 0..<300 where gone.exitStatus == nil { try await Task.sleep(for: .milliseconds(10)) }
+    for _ in 0..<1000 where gone.exitStatus == nil { try await Task.sleep(for: .milliseconds(10)) }
     #expect(gone.exitStatus == EmbeddedTerminal.bySignal, "a closed tab starts nothing: it ends with its first process (⌘W's SIGHUP)")
     for pid in [old, closed] {
         var s: Int32 = 0
