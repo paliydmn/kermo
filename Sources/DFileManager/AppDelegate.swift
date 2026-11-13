@@ -1578,6 +1578,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             updatePrompt()
         }
         terminal.onDirectory = { [unowned self] in follow($0) }
+        terminal.onLink = { [unowned self] in openLink($1, flags: $2, in: $0) }
 
         splitController = NSSplitViewController()
         splitController.splitView.autosaveName = "Sidebar"

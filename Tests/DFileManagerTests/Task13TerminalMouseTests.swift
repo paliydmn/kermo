@@ -333,16 +333,17 @@ extension ServerLockTests {
     #expect(pb.string(forType: .string) == "kept")
 }
 
-/// ⌘-click on an OSC 8 link opens nothing: its target needn't be what the line shows. The view's other calls go on
-/// through the gate as before.
+/// ⌘-click on an OSC 8 link opens nothing: its target needn't be what the line shows. A visible address is the tab's
+/// to open. The view's other calls go on through the gate as before.
 @MainActor @Test func aLinksHiddenTargetIsntOpened() {
     _ = NSApplication.shared
-    var refused = 0
+    var refused = 0, links: [String] = []
     let was = TerminalGate.refused
     TerminalGate.refused = { refused += 1 }
     defer { TerminalGate.refused = was }
     let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
     let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+    v.onLink = { r, _ in links.append(r.link) }
     w.contentView!.addSubview(v)
     #expect(v.terminalDelegate is TerminalGate)
     v.feed(text: "\u{1b}]8;;file:///nonexistent-kermo-test/Some.app\u{1b}\\https://docs.example\u{1b}]8;;\u{1b}\\\r\nsee https://example.com/x")
@@ -355,7 +356,7 @@ extension ServerLockTests {
     #expect(refused == 1)
     v.mouseUp(with: NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 8 * ("W" as NSString).size(withAttributes: [.font: v.font]).width, y: 200 - 1.5 * ch),
                                        modifierFlags: .command, timestamp: 0, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)!)
-    #expect(refused == 1, "a visible https:// isn't a link yet (task 21 PR 4)")
+    #expect(refused == 1 && links == ["https://example.com/x"], "a visible https:// is the tab's")
 }
 
 /// The folder a server's shell tells (OSC 7) is never a base for a path on this Mac; a local tab's shell's folder is.
