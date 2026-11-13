@@ -4,14 +4,22 @@ set -e
 cd "${0:A:h}"
 BUILD_ARGS=(-c release --product DFileManager)
 if [[ ${DFM_UNIVERSAL:-0} == 1 ]]; then
-  BUILD_ARGS+=(--arch arm64 --arch x86_64)
+  # One architecture at a time, then one binary: with two --arch SwiftPM also builds SwiftTerm's build-time tool for
+  # x86_64, which Command Line Tools can't link (no x86_64 libswiftCompatibility56).
+  # Both land in the same folder: the first is set aside.
+  ARM=($BUILD_ARGS --triple arm64-apple-macosx14.0) X86=($BUILD_ARGS --triple x86_64-apple-macosx14.0)
+  BIN_DIR=$(swift build $ARM --show-bin-path) BIN=.build/Kermo-universal
+  swift build $ARM && cp $BIN_DIR/DFileManager $BIN-arm64
+  swift build $X86 && lipo -create -output $BIN $BIN-arm64 $(swift build $X86 --show-bin-path)/DFileManager
+else
+  BIN_DIR=$(swift build $BUILD_ARGS --show-bin-path)
+  swift build $BUILD_ARGS
+  BIN=$BIN_DIR/DFileManager   # SwiftPM target keeps its old name
 fi
-BIN_DIR=$(swift build $BUILD_ARGS --show-bin-path)
-swift build $BUILD_ARGS
 APP=build/Kermo.app
 rm -rf $APP
 mkdir -p $APP/Contents/MacOS
-cp $BIN_DIR/DFileManager $APP/Contents/MacOS/Kermo   # SwiftPM target keeps its old name
+cp $BIN $APP/Contents/MacOS/Kermo
 mkdir -p $APP/Contents/Resources
 for b in $BIN_DIR/*.bundle(N); do cp -R $b $APP/Contents/Resources/; done   # SwiftPM resource bundles
 cp bin/fm $APP/Contents/Resources/
