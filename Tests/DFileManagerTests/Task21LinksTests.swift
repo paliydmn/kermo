@@ -322,3 +322,16 @@ extension EditorWindowTests {
         #expect(at(editorDoc(b)) == "9:1" && Editor.editing(t, b.path) == nil)
     }
 }
+
+/// A layer without keys ("No ⌥ keys") is as tall as one with them: holding ⇧ before a ⇧-click resized the terminal,
+/// which dropped its selection (task 21 PR 4's GUI pass).
+@MainActor @Test func aLayerWithoutKeysIsAsTallAsOneWithThem() {
+    let bar = KeyBarView()
+    bar.frame = NSRect(x: 0, y: 0, width: 900, height: 40)
+    bar.reload(AppDelegate().makeCommands())
+    bar.layoutSubtreeIfNeeded()
+    let withKeys = bar.fittingSize.height
+    bar.reload([])
+    bar.layoutSubtreeIfNeeded()
+    #expect(bar.shownSlots.isEmpty && bar.fittingSize.height == withKeys, "\(bar.fittingSize.height) vs \(withKeys)")
+}
