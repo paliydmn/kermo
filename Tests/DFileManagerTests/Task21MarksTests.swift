@@ -323,10 +323,10 @@ extension EditorWindowTests {
                 && bar.shownSlots.contains(KeySlot(key: "⇧⌘A", label: "Copy Output", id: "term.output.copy")))
         let more = app.terminalMenu()
         #expect(more.items.map { $0.isSeparatorItem ? "—" : $0.title + " " + $0.keyEquivalent } == ["Open in Editor o", "Open Output in Editor ", "Copy Output of Last Command a", "—",
-                                                                                                  "Previous Mark \u{F700}", "Next Mark \u{F701}"])
+                                                                                                  "Previous Mark \u{F700}", "Next Mark \u{F701}", "—", "Zoom Pane \r"])
         #expect(more.items.allSatisfy { $0.isSeparatorItem || app.validateMenuItem($0) })
         let view = submenu(menu, "View/Terminal Pane")?.items.map(\.title)
-        #expect(view == ["Open in Editor", "Open Output in Editor", "Copy Output of Last Command", "", "Previous Mark", "Next Mark"])
+        #expect(view == ["Open in Editor", "Open Output in Editor", "Copy Output of Last Command", "", "Previous Mark", "Next Mark", "", "Zoom Pane"])
 
         term.setFull(false)   // the drawer, the keys in a panel
         #expect(!app.terminalActive && app.validateMenuItem(item("term.editor")), "⌥⌘O: the drawer's pane, from a panel too")
