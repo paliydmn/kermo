@@ -29,7 +29,7 @@ As in PuTTY: **selecting text copies it** — a drag, a double-click on a word, 
 
 - In a program that reads the mouse itself (mc, htop, vim with `mouse=a`, Claude Code), a right-click is the program's: **⇧-right-click** pastes there. **⇧-drag** selects text in the terminal, and the selection is copied when you let go of the button.
 - **⌥-drag** selects a block: the same columns of each line, in any program.
-- The wheel and the trackpad scroll such a program, and less, man or `git log` too, as in Terminal.app. With ⇧ or ⌥ held, the wheel scrolls the terminal's own scrollback instead.
+- The wheel and the trackpad scroll such a program, and less, man or `git log` too, as in Terminal.app. With ⌥ held, the wheel scrolls the terminal's own scrollback instead (⇧ too, on a trackpad: macOS turns ⇧ with a mouse wheel into sideways scrolling); a full-screen program (vim, mc, less) has none, so nothing moves.
 - A program can put text into the clipboard itself (OSC 52): Claude Code does when you select its text, and so do tmux and vim. It works in local and SSH tabs, in the tab in front. A program can't read the clipboard this way.
 - A shell that asked for bracketed paste (zsh, bash 5.1 and later) runs nothing pasted until you press ↩. Pasting several lines into a **production** server's SSH tab, or one logged in as `root@`, into a shell that didn't ask for it (`sh`, an old bash), asks first: “Paste 5 lines into web1?”, with its PROD or ROOT strip, the lines themselves and ↩ on Cancel.
 - Selecting replaces what the clipboard held. To keep it, turn either part off: `terminalCopyOnSelect`, `terminalRightClickPaste` ([Options](#options)).
@@ -37,7 +37,7 @@ As in PuTTY: **selecting text copies it** — a drag, a double-click on a word, 
 ### Find and select
 
 - **⌘F** opens a find bar over the terminal. It searches the scrollback and the screen as you type; **Aa**, **.\*** and **Word** match case, take a regular expression, match whole words. ↩ finds the next one and ⇧↩ the one before, as the bar's arrows do; ⎋ closes it. With the keys in the text, the bar open or closed, ⌘G finds the next one. A match is selected but never copied: the clipboard keeps what you copied.
-- **More than the window shows:** drag past the window's top or bottom edge — the scrollback scrolls, and the selection grows with it until you let go. Or double-click the first word, scroll to the last line, ⇧-click there — while nothing new is printed: new output clears a selection. ⌘A selects the whole scrollback and screen, and copies it.
+- **More than the window shows:** drag past the window's top or bottom edge — the scrollback scrolls, and the selection grows with it until you let go. Or double-click the first word, scroll to the last line, ⇧-click there. A selection stays on its text as new lines come in; a program that redraws the screen under it (`clear`) drops it. ⌘A selects the whole scrollback and screen, and copies it.
 - **Links:** ⌘-click on a link a program printed with a hidden target (OSC 8, as `ls --hyperlink` prints them: the text shows one thing, the target may be another) opens nothing. Text from a server isn't trusted.
 
 ## Sessions side by side
