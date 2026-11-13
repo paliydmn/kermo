@@ -754,7 +754,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             t.view.feed(text: "\u{1b}[3J" + (y > 0 ? "\u{1b}[\(y)S" : "") + "\u{1b}[1;\(x + 1)H")
             return true
         }
-        guard t.host != nil, !t.isRunning,
+        guard t.host != nil, !t.isRunning, !t.view.findBarHasKeys,   // ↩ and ⎋ in the find bar are the bar's
               e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return false }
         switch e.keyCode {
         case 36, 76: reconnect()
@@ -994,9 +994,38 @@ final class DropTerminalView: LocalProcessTerminalView {
     /// The mouse's left button is down now (a drag under way). Tests: not the real mouse, which someone may be pressing.
     static var leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 }
 
+    // A find's match is a selection too (SwiftTerm's find bar, ⌘F, ⌘G): it never goes to the clipboard. Decided as the
+    // selection changes: SwiftTerm 1.99 calls `selectionChanged` off the main actor, and the copy must hop there later.
+    private var finding = false
+    override func performTextFinderAction(_ sender: Any?) {
+        finding = true
+        defer { finding = false }
+        super.performTextFinderAction(sender)
+    }
+    override func performFindPanelAction(_ sender: Any?) {
+        finding = true
+        defer { finding = false }
+        super.performFindPanelAction(sender)
+    }
+
+    /// SwiftTerm's find bar while it's up. Its type is SwiftTerm's own; it's the view's one `NSVisualEffectView`.
+    var findBar: NSView? { subviews.first { $0 is NSVisualEffectView && !$0.isHidden } }
+    /// The find bar's field has the keys: ↩, ⇧↩ and ⎋ are its, and each letter finds.
+    var findBarHasKeys: Bool { findBar.map { (window?.firstResponder as? NSView)?.isDescendant(of: $0) == true } ?? false }
+    private func inFindBar(_ e: NSEvent) -> Bool { findBar?.frame.contains(convert(e.locationInWindow, from: nil)) == true }
+
+    /// The find bar drives the selection: typed into, or clicked (its arrows, its switches). ponytail: a VoiceOver press
+    /// on its arrows while the text has the keys isn't a click: that match is copied.
+    private var findBarDrives: Bool {
+        guard findBar != nil else { return false }
+        if findBarHasKeys { return true }
+        guard let e = NSApp?.currentEvent, e.window === window, e.type == .leftMouseDown || e.type == .leftMouseUp else { return false }
+        return inFindBar(e)
+    }
+
     override func selectionChanged(source: Terminal) {
         super.selectionChanged(source: source)
-        guard Self.on("terminalCopyOnSelect") else { return }
+        guard Self.on("terminalCopyOnSelect"), !finding, !findBarDrives else { return }
         guard Self.leftButtonDown() else { return copySelection() }   // ⌘A, or made at once
         guard upMonitor == nil else { return }   // dragging: once, when it ends — not on every move
         upMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] e in
@@ -1072,7 +1101,7 @@ final class DropTerminalView: LocalProcessTerminalView {
     /// ⇧-drag (xterm's) or ⌥-drag (iTerm's) in a program that reads the mouse selects here instead: the program gets no
     /// mouse till the button is up. Its next redraw clears the selection, so it's copied then (`mouseReleased`).
     func shiftDown(_ e: NSEvent) {
-        guard !e.modifierFlags.isDisjoint(with: [.shift, .option]), allowMouseReporting, getTerminal().mouseMode != .off else { return }
+        guard !e.modifierFlags.isDisjoint(with: [.shift, .option]), allowMouseReporting, getTerminal().mouseMode != .off, !inFindBar(e) else { return }
         allowMouseReporting = false
         shiftSelecting = true
     }
@@ -1084,10 +1113,13 @@ final class DropTerminalView: LocalProcessTerminalView {
         DispatchQueue.main.async { MainActor.assumeIsolated { self.allowMouseReporting = true } }   // after SwiftTerm's mouseUp: no release without a press
     }
 
+    private lazy var gate = TerminalGate(self)   // `terminalDelegate` is weak: the view keeps it
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         registerForDraggedTypes([.fileURL])
         getTerminal().registerOscHandler(code: 52) { [weak self] d in MainActor.assumeIsolated { self?.osc52(d) } }
+        terminalDelegate = gate
     }
 
     required init?(coder: NSCoder) { fatalError("not from a nib") }
@@ -1110,6 +1142,30 @@ final class DropTerminalView: LocalProcessTerminalView {
         let line = urls.map { ShellContext.quote($0.path) }.joined(separator: " ") + " "
         return ShellContext.isTypeable(line) ? line : nil
     }
+}
+
+/// The view's `terminalDelegate`, in front of SwiftTerm's own (the view itself, `LocalProcessTerminalView`): each call
+/// goes on to it as before but a link's. ⌘-click on an OSC 8 link opens its target, which needn't be what the line
+/// shows ("https://docs…" over a `file:` app or another scheme), so it opens nothing: text from a server isn't trusted.
+@MainActor
+final class TerminalGate: @preconcurrency TerminalViewDelegate {
+    private unowned let view: LocalProcessTerminalView
+    init(_ view: LocalProcessTerminalView) { self.view = view }
+    private var next: TerminalViewDelegate { view }
+    /// A link refused (tests: count them).
+    static var refused: @MainActor () -> Void = { NSSound.beep() }
+
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) { Self.refused() }
+
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) { next.sizeChanged(source: source, newCols: newCols, newRows: newRows) }
+    func setTerminalTitle(source: TerminalView, title: String) { next.setTerminalTitle(source: source, title: title) }
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) { next.hostCurrentDirectoryUpdate(source: source, directory: directory) }
+    func send(source: TerminalView, data: ArraySlice<UInt8>) { next.send(source: source, data: data) }
+    func scrolled(source: TerminalView, position: Double) { next.scrolled(source: source, position: position) }
+    func bell(source: TerminalView) { next.bell(source: source) }
+    func clipboardCopy(source: TerminalView, content: Data) { next.clipboardCopy(source: source, content: content) }
+    func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) { next.iTermContent(source: source, content: content) }
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) { next.rangeChanged(source: source, startY: startY, endY: endY) }
 }
 
 /// The panels over the terminal's drawer, a line between them to drag (Р6): either can be alone — the panels while the

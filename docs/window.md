@@ -6,6 +6,8 @@ How the Kermo window is laid out, and the three ways to reach anything: the key 
 
 ![The window: the Places sidebar on the left, a local Git project and a server over SFTP in two panels, the command line and the key bar at the bottom](images/main-window.png)
 
+The toolbar has the Sidebar button (⌃⌘S), **Editor** (⇧⌘E: the [editor](viewer-editor.md#editor) as you left it, or a new Untitled; hold it for **New Editor Document** and **Quick Open…**), Activity and **Search or jump to…**.
+
 ## Panels and tabs
 
 The window shows two to four panels side by side, each with its own tabs. Tab moves between panels. The active panel has a 2 pt line under its path bar in the color of where it is: the accent color on this Mac (a theme with a background has its own, cyan in Midnight Commander and Far Manager), purple on a production server, orange in a [root panel](root-panel.md), purple again when that's on a production server. Its path is in full contrast, the other panels' paths are dimmed, and their cursor is an outline (in a theme's dimmed text color). A panel can show a folder on this Mac, a [server](servers.md), an archive, a Git list, search results, or a list of what a server runs: its [services or containers](servers.md#in-a-panel), with columns, a filter and marks of its own.

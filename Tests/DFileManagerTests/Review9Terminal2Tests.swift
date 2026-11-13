@@ -55,6 +55,26 @@ import Testing
     #expect(term.tabs.isEmpty && exited)
 }
 
+/// ↩ and ⎋ typed into the find bar are the bar's — find, close it —, not the disconnected SSH tab's Reconnect and Close.
+@MainActor @Test func aDisconnectedTabsFindBarKeepsItsKeys() throws {
+    let term = terminal()
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    w.contentView!.addSubview(hosts.last!)
+    term.restore([SFTPTarget(host: "dfm-find.invalid")])
+    let tab = try #require(term.current)
+    _ = term.show()
+    let find = NSMenuItem()
+    find.tag = NSTextFinder.Action.showFindInterface.rawValue
+    let pb = NSPasteboard(name: .find), was = pb.string(forType: .string)
+    defer { pb.clearContents(); if let was { pb.setString(was, forType: .string) } }
+    tab.view.performTextFinderAction(find)
+    #expect(tab.view.findBarHasKeys)
+    #expect(!term.handleKey(key(36, "\r")) && !term.handleKey(key(53, "\u{1b}")))
+    #expect(term.tabs.count == 1 && !tab.isRunning, "nor closed, nor reconnecting")
+    w.makeFirstResponder(tab.view)
+    #expect(term.handleKey(key(53, "\u{1b}")) && term.tabs.isEmpty, "from the text, ⎋ closes it as before")
+}
+
 /// T5: ⌘K in the terminal clears it as in Terminal — the scrollback and the lines above the prompt go, the prompt line
 /// moves to the top with the cursor where it was.
 @MainActor @Test func cmdKClearsTheTerminal() throws {

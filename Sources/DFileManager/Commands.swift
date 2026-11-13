@@ -284,7 +284,7 @@ extension AppDelegate {
         cmd("file.edit", "Edit", ["f4", "opt+4"], menu: "File", group: 1, aliases: "editor") { $0.editFile() },
         // In the built-in editor whatever F4 opens with; nothing on disk till its Save (Shift+F4 New File… makes one).
         cmd("editor.new", "New Editor Document", ["cmd+n"], menu: "File", group: 0, aliases: "untitled new text document notepad scratch") { _ in Editor.untitled() },
-        cmd("editor.show", "Show Editor", [], menu: "File", group: 0, aliases: "editor tabs drafts notepad") { _ in EditorHost.tabs.showEditor() },
+        cmd("editor.show", "Show Editor", ["cmd+shift+e"], menu: "File", group: 0, aliases: "editor tabs drafts notepad") { _ in EditorHost.tabs.showEditor() },
         // Hides it, its tabs kept as drafts (Show Editor brings it back).
         cmd("editor.close", "Close Editor Window", ["cmd+shift+w"], menu: "File", group: 0, aliases: "hide editor") { $0.editorKey?.hide() },
         cmd("file.copy", "Copy To…", ["f5", "opt+5"], menu: "File", group: 2, short: "Copy") { $0.transferDialog(move: false) },

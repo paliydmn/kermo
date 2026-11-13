@@ -14,6 +14,7 @@ Release:
 ## [Unreleased]
 
 ### Added
+- **Editor** in the main window's toolbar and ⇧⌘E (**File ▸ Show Editor**, from the terminal too) bring the editor forward as you left it, or on a new Untitled; hold the button for **New Editor Document** and **Quick Open…**.
 - **Copy a change across in Compare**: ⌥⇧⌘← / ⌥⇧⌘→ (or the arrow beside its line numbers) put the change the caret's in, as the other side has it, into the left or the right side — into a document only, as one ⌘Z, nothing saved till ⌘S.
 - **Send to Terminal and Execute in Terminal** in the editor: ⌃↩ types the line or the selection into a shell of the file's machine (a server's file: an SSH session there, as its user), ⌃⇧↩ also runs it and steps to the next line. Only into a shell waiting for a line — never into vim or a password prompt; several lines as one paste only; Execute on production asks every time and goes into the production log.
 - **Quick Open** (⌘P in the editor): its tabs, the files it opened lately and the files under the document's repository, by name as you type; ↩ opens as F4 does.
@@ -41,12 +42,17 @@ Release:
 - A watched tool's **24h** and **7d** draw the 15 minutes under way too: the line goes on to now and ends in a ring, the tip says “2:30 PM–now”, and the summary and the CSV say those 15 minutes aren't over. They ended at the last 15 minutes on disk.
 
 ### Fixed
+- Searching in the terminal (⌘F, ⌘G) no longer puts each match into the clipboard; what you copied stays.
+- ↩ and ⎋ typed into the terminal's find bar find and close it; in a disconnected SSH tab they used to reconnect or close the tab.
 - A tab the editor brings back at launch no longer comes up with the start of its lines hidden under the line numbers.
 - A tab reopened with ⇧⌘T, or a server's file opened from its parked tab, has its colors at once, not only after the first keystroke.
 - **Rename** (⇧F6) on this Mac no longer replaces a file that appears under the new name between the check and the rename. A file open in the editor follows its rename in a panel, on this Mac and on a server, so ⌘S there no longer makes the old name again.
 - A gap that began over an hour ago — the Mac asleep through the night — is a band with its reason from the left edge of the hour's charts. They began blank until the first value.
 - 15 minutes on 24h and 7d that Kermo wrote at a short sleep and filled again after it are drawn in order — the part after the sleep where the sleep began — with no gap band running on to the next 15 minutes, or to now. They were two points at one time.
 - A chart's top value on its scale (“100%”) sits under its line, clear of the chart's title.
+
+### Security
+- ⌘-clicking a link a program printed in the terminal with a hidden target (OSC 8) no longer opens it: the text shows one thing, the target may be another — an app, a file or another scheme.
 
 ## [2.0.1] - 2026-11-08
 

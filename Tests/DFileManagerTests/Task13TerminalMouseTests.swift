@@ -116,3 +116,77 @@ extension ServerLockTests {
     #expect(!v.allowMouseReporting, "⌥ too, as in iTerm")
     v.mouseReleased()
 }
+
+/// A find's match is a selection too, but it never goes to the clipboard: typed into the find bar, ⌘G with the bar up
+/// and after it's closed. ⌘A still copies, the bar up or not.
+@MainActor @Test func aFindMatchIsntCopied() {
+    _ = NSApplication.shared
+    let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString)), find = NSPasteboard(name: .find)
+    let wasFind = find.string(forType: .string)   // SwiftTerm writes the find string Mac-wide: the user's comes back
+    defer {
+        pb.releaseGlobally()
+        DropTerminalView.leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 }
+        find.clearContents()
+        if let wasFind { find.setString(wasFind, forType: .string) }
+    }
+    DropTerminalView.leftButtonDown = { false }
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+    let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
+    w.contentView!.addSubview(v)
+    v.pasteboard = pb
+    v.feed(text: "hello world\r\nhello again\r\nand hello once more")
+    pb.clearContents()
+    pb.setString("kept", forType: .string)
+    func action(_ a: NSTextFinder.Action) {
+        let item = NSMenuItem()
+        item.tag = a.rawValue
+        v.performTextFinderAction(item)
+    }
+    func field(in view: NSView) -> NSSearchField? { (view as? NSSearchField) ?? view.subviews.lazy.compactMap { field(in: $0) }.first }
+
+    v.selectAll()   // ⌘A copies; then ⌘F takes the selection as what to find, and finds it
+    pb.clearContents()
+    pb.setString("kept", forType: .string)
+    action(.showFindInterface)
+    #expect(pb.string(forType: .string) == "kept", "⌘F with a selection")
+    guard let f = field(in: v) else { Issue.record("no find bar"); return }
+    f.stringValue = "hello"   // as typed: the field has the keys, each letter finds
+    (f.delegate as? NSSearchFieldDelegate)?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: f))
+    #expect(v.getSelection() == "hello", "a match is selected")
+    #expect(pb.string(forType: .string) == "kept", "typed into the bar")
+    action(.nextMatch)   // ⌘G, the bar up
+    #expect(v.getSelection() == "hello")
+    #expect(pb.string(forType: .string) == "kept", "⌘G with the bar up")
+
+    w.makeFirstResponder(v)   // a click back in the text, the bar still up: ⌘A is the user's
+    v.selectAll()
+    #expect(pb.string(forType: .string)?.contains("hello again") == true, "⌘A copies with the bar up")
+
+    pb.clearContents()
+    pb.setString("kept", forType: .string)
+    action(.hideFindInterface)
+    action(.nextMatch)   // ⌘G, the bar closed: the find pasteboard's "hello"
+    #expect(v.getSelection() == "hello")
+    #expect(pb.string(forType: .string) == "kept", "⌘G with the bar closed")
+    v.selectAll()
+    #expect(pb.string(forType: .string)?.contains("hello once more") == true, "⌘A copies")
+}
+
+/// ⌘-click on an OSC 8 link opens nothing: its target needn't be what the line shows. The view's other calls go on
+/// through the gate as before.
+@MainActor @Test func aLinksHiddenTargetIsntOpened() {
+    _ = NSApplication.shared
+    var refused = 0
+    let was = TerminalGate.refused
+    TerminalGate.refused = { refused += 1 }
+    defer { TerminalGate.refused = was }
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+    let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+    w.contentView!.addSubview(v)
+    #expect(v.terminalDelegate is TerminalGate)
+    v.feed(text: "\u{1b}]8;;file:///nonexistent-kermo-test/Some.app\u{1b}\\https://docs.example\u{1b}]8;;\u{1b}\\")
+    let click = NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 3, y: 197), modifierFlags: .command, timestamp: 0,
+                                   windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)!
+    v.mouseUp(with: click)   // ⌘-click on the link's first cell
+    #expect(refused == 1)
+}
