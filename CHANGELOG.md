@@ -50,6 +50,7 @@ Release:
 - A watched tool's **24h** and **7d** draw the 15 minutes under way too: the line goes on to now and ends in a ring, the tip says “2:30 PM–now”, and the summary and the CSV say those 15 minutes aren't over. They ended at the last 15 minutes on disk.
 
 ### Fixed
+- **Holding ⇧ or ⌥ no longer drops the terminal's selection**: the key bar's layer without keys was shorter, so the window's content moved; a ⇧-click now extends a selection as it should.
 - **F4 on a big file on a server** stops after 32 MB with “larger than 32 MB” instead of downloading it all first (the editor reads 32 MB at most); a file that says it's empty and isn't (`/proc`) no longer streams on.
 - Searching in the terminal (⌘F, ⌘G) no longer puts each match into the clipboard; what you copied stays.
 - ↩ and ⎋ typed into the terminal's find bar find and close it; in a disconnected SSH tab they used to reconnect or close the tab.
