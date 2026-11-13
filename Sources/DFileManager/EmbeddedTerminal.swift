@@ -136,6 +136,8 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     var onHide: (() -> Void)?
     /// A command's key, as the keymap has it: the buttons' tooltips.
     var keyFor: ((String) -> String?)?
+    /// «⋯»'s menu: View ▸ Terminal Pane's items.
+    var moreMenu: (() -> NSMenu)?
     private let maximize = NSButton(title: "", target: nil, action: nil)
     private let rowSpace = NSView()   // with one shell and no tabs shown: the buttons at the row's right end still
     var onExit: (() -> Void)?          // last tab closed: panels come back
@@ -169,8 +171,8 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         topRow.addArrangedSubview(tabBar)
         rowSpace.setContentHuggingPriority(.init(1), for: .horizontal)
         topRow.addArrangedSubview(rowSpace)
-        for (symbol, label, id) in [(Symbol.splitRight, "Split Terminal Right", "term.split.right"), (.maximize, "Maximize Terminal", "view.terminalFull"),
-                                    (.collapse, "Hide Terminal", "view.terminal")] {
+        for (symbol, label, id) in [(Symbol.more, "Terminal", "term.more"), (.splitRight, "Split Terminal Right", "term.split.right"),
+                                    (.maximize, "Maximize Terminal", "view.terminalFull"), (.collapse, "Hide Terminal", "view.terminal")] {
             let b = symbol == .maximize ? maximize : NSButton(title: "", target: nil, action: nil)
             b.image = symbol.image(label)
             b.isBordered = false
@@ -229,6 +231,10 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
 
     @objc private func rowButton(_ sender: NSButton) {
         guard let id = sender.identifier?.rawValue else { return }
+        if id == "term.more" {   // under the button
+            _ = moreMenu?().popUp(positioning: nil, at: NSPoint(x: 0, y: sender.isFlipped ? sender.bounds.maxY + 4 : -4), in: sender)
+            return
+        }
         id == "view.terminal" ? onHide?() : onCommand?(id)
     }
 
@@ -240,7 +246,7 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         let shells = tabs.filter { $0.kind == .shell && $0.isRunning }
         if let t = shells.first(where: { $0 === current }) ?? shells.first {
             reveal(t)
-            if t.isAtPrompt, t.shellCwd != Self.real(cwd), let line = ShellContext.typedCd(cwd) { t.view.send(txt: line) }
+            if t.isAtPrompt, t.shellCwd != Self.real(cwd), let line = ShellContext.typedCd(cwd) { t.view.type(line) }
         } else {
             newShell(cwd: cwd)
         }
@@ -286,7 +292,7 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     /// program runs in the shell.
     func cd(_ path: String) -> Bool {
         guard let t = current, t.kind == .shell, t.isAtPrompt, let line = ShellContext.typedCd(path) else { return false }
-        t.view.send(txt: line)
+        t.view.type(line)
         return true
     }
 
@@ -300,12 +306,12 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         if let t = shells.first(where: { $0 === current }) ?? shells.first {
             reveal(t)
             // ^U first (typedCd carries its own): a half-typed line would otherwise take the command as its tail.
-            t.view.send(txt: (t.shellCwd != Self.real(cwd) ? cd : "\u{15}") + line + "\r")
+            t.view.type((t.shellCwd != Self.real(cwd) ? cd : "\u{15}") + line + "\r")
         } else {
             // Typed ahead: the pty holds it until the shell reads — the first prompt is unknowable (the child is the foreground
             // group from forkpty on, .zshrc still running). A .zshrc that flushes input loses it: a known limit.
             newShell(cwd: cwd)
-            current!.view.send(txt: line + "\r")
+            current!.view.type(line + "\r")
         }
         return show()
     }
@@ -730,8 +736,18 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         render()
     }
 
+    /// Previous / Next Mark (⌘↑ / ⌘↓ in the terminal): a beep where there's none.
+    func goToMark(by d: Int) { if !(isShown && current?.view.goToMark(by: d) == true) { NSSound.beep() } }
+
+    /// Copy Output of Last Command (⇧⌘A in the terminal): nothing printed — a beep, the clipboard as it was.
+    func copyOutput() {
+        guard isShown, let v = current?.view, let text = v.output() else { return NSSound.beep() }
+        v.pasteboard.clearContents()
+        v.pasteboard.setString(text, forType: .string)
+    }
+
     /// ⌘K clears the tab, as in Terminal (not while a full-screen program — vim, less, mc — has it: theirs would shift). ↩ / ⎋ in a disconnected SSH tab reconnect / close it (its PTY is gone, so the
-    /// keys would go nowhere).
+    /// keys would go nowhere). Any other key without ⌘ is on its way to the program: the view's marks see it (`typed`).
     func handleKey(_ e: NSEvent) -> Bool {
         guard isShown, let t = current else { return false }
         if Shortcut(event: e) == Shortcut("cmd+k") {
@@ -739,16 +755,16 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
             // The scrollback and every line above the cursor's go; the cursor's line (the prompt) moves to the top.
             let c = t.view.terminalStateSnapshot().cursor
             t.view.say("\u{1b}[3J" + (c.row > 0 ? "\u{1b}[\(c.row)S" : "") + "\u{1b}[1;\(c.col + 1)H")
+            t.view.dropMarks()
             return true
         }
-        guard t.host != nil, !t.isRunning, !t.view.findBarHasKeys,   // ↩ and ⎋ in the find bar are the bar's
-              e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return false }
-        switch e.keyCode {
-        case 36, 76: reconnect()
-        case 53: close(t.id)
-        default: return false
+        if t.host != nil, !t.isRunning, !t.view.findBarHasKeys,   // ↩ and ⎋ in the find bar are the bar's
+           e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty, [36, 76, 53].contains(e.keyCode) {
+            if e.keyCode == 53 { close(t.id) } else { reconnect() }
+            return true
         }
-        return true
+        if !e.modifierFlags.contains(.command) { t.view.typed(e) }
+        return false
     }
 
     private func render() {
@@ -756,7 +772,8 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         rowSpace.isHidden = !tabBar.isHidden
         for b in topRow.arrangedSubviews.compactMap({ $0 as? NSButton }) {   // the row's buttons say their keys
             guard let id = b.identifier?.rawValue else { continue }
-            let what = id == "view.terminal" ? "Hide Terminal" : id == "view.terminalFull" ? (isFull ? "Restore Terminal" : "Maximize Terminal") : "Split Terminal Right"
+            let what = id == "view.terminal" ? "Hide Terminal" : id == "view.terminalFull" ? (isFull ? "Restore Terminal" : "Maximize Terminal")
+                : id == "term.more" ? "Terminal: Open in Editor, Marks, Copy Output" : "Split Terminal Right"
             b.toolTip = what + (keyFor?(id).map { "  " + $0 } ?? "")
             b.setAccessibilityLabel(what)
         }
@@ -788,7 +805,7 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         if let c = Chip.text(chips(t)) { s.append(NSAttributedString(string: " ")); s.append(c) }
         return s
     }
-    private static func chips(_ t: Tab) -> [Chip] { t.target.map { Chip.of($0, root: $0.host.hasPrefix("root@")) } ?? [] }
+    static func chips(_ t: Tab) -> [Chip] { t.target.map { Chip.of($0, root: $0.host.hasPrefix("root@")) } ?? [] }
     private static func tip(_ t: Tab) -> String { t.host.map { h in t.isRunning ? "ssh \(h)" : "ssh \(h) — disconnected" } ?? "Shell" }
     /// A production server's pane underlined in purple, a root login's in orange — as a panel's line.
     private static func tint(_ t: Tab) -> NSColor? { Chip.tint(chips(t)) }
@@ -1060,6 +1077,183 @@ final class DropTerminalView: LocalProcessTerminalView {
         guard let text = getSelection(), !text.isEmpty else { return }
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+    }
+
+    // MARK: Marks (task 21)
+
+    /// A ↩ typed outside a full-screen program marks the line it was typed on (Terminal.app's rule; nothing goes to the
+    /// shell, nothing is set up there): ⌘↑ / ⌘↓ go from mark to mark, Copy Output takes what a command printed. A row is
+    /// SwiftTerm's absolute one, which holds as the scrollback is cut. What renumbers rows drops the marks — ⌘K, `clear`,
+    /// RIS (fewer rows held), ⌃L (those under the cursor), a width change, a lower drawer cutting a full scrollback —:
+    /// a mark is only a place to go, never someone else's line.
+    struct Mark: Equatable {
+        let row: Int
+        /// The row as it stood at the look after the mark (the shell may redraw it on ↩: a transient prompt): checked as
+        /// the mark is used — a `clear` and more output than there was between two looks leave the numbers as they were.
+        var text: String?
+    }
+    private(set) var marks: [Mark] = []
+    /// The last look's rows held (the scrollback and the screen) and columns: fewer rows, other columns — renumbered.
+    private var seen: (held: Int, cols: Int)?
+    /// The mark ⌘↑ / ⌘↓ went to, and the top row in view then. Scrolled since, or typed: from the view or the last again.
+    private var at: (row: Int, top: Int)?
+
+    /// ⌘K: the scrollback is gone.
+    func dropMarks() { (marks, at) = ([], nil) }
+
+    /// A new size may renumber the rows (a width's reflow, a lower drawer cutting a full scrollback): the marks are
+    /// looked at as the rows stand just before it — out of a live resize SwiftTerm resizes in here.
+    override func setFrameSize(_ newSize: NSSize) {
+        if newSize != frame.size, !marks.isEmpty { _ = look() }
+        super.setFrameSize(newSize)
+    }
+
+    /// A key without ⌘ on its way to the program (the app's key monitor has it before the view; SwiftTerm hands keys to
+    /// the process itself, past its delegate): ⌘↑ goes from the last command again; a ↩ that runs — not one the find bar
+    /// or an input method takes, nor ⌃↩ (the app's) — marks its line while the cursor is still on it.
+    func typed(_ e: NSEvent) {
+        at = nil
+        if e.keyCode == 36 || e.keyCode == 76, !e.modifierFlags.contains(.control), !hasMarkedText(), !findBarHasKeys { markReturn() }
+    }
+
+    /// Kermo's own text into the program (a typed `cd`, ⌘E ↩'s line, Execute in Terminal's): marked as a ↩ typed would be.
+    func type(_ bytes: [UInt8]) {
+        if Self.returns(bytes[...]) { markReturn() }
+        send(bytes)
+    }
+    func type(_ text: String) { type(Array(text.utf8)) }
+
+    /// A ↩ that runs: one outside a bracketed paste (a pasted line waits in the line editor for its ↩).
+    nonisolated static func returns(_ data: ArraySlice<UInt8>) -> Bool {
+        let end: [UInt8] = [0x1b, 0x5b, 0x32, 0x30, 0x31, 0x7e]   // ESC[201~: a paste goes in one piece
+        return (data.ranges(of: end).last.map { data[$0.upperBound...] } ?? data).contains(0x0D)
+    }
+
+    /// The normal screen now (absolute rows: the first held, the cursor's, the live screen's top), its marks checked
+    /// against it; nil before the view has a terminal. Not under the terminal's lock (it takes it).
+    private func look() -> (top: Int, cursor: Int, live: Int, alt: Bool)? {
+        guard let s = terminalContentSnapshot(region: .rows(0..<0), buffer: .normal) else { return nil }
+        let held = s.liveTopRow + s.dimensions.rows, top = s.capturedRange.lowerBound
+        if let seen, held < seen.held || s.dimensions.cols != seen.cols { dropMarks() }
+        seen = (held, s.dimensions.cols)
+        marks.removeAll { $0.row < top || $0.row > s.cursorRow }
+        for i in marks.indices where marks[i].text == nil { marks[i].text = rowText(marks[i].row) }
+        return (top, s.cursorRow, s.liveTopRow, s.inputState.isAlternateBuffer)
+    }
+
+    private func rowText(_ row: Int) -> String? { terminalContentSnapshot(region: .rows(row..<row + 1), buffer: .normal)?.rows.first?.text }
+
+    /// The mark is still on its line; one that isn't goes.
+    private func holds(_ m: Mark) -> Bool {
+        guard let t = m.text, rowText(m.row) != t else { return true }
+        marks.removeAll { $0 == m }
+        return false
+    }
+
+    /// The nearest mark that holds before `row` (`d` −1) or after it (1).
+    private func mark(from row: Int, _ d: Int) -> Mark? {
+        while let m = d < 0 ? marks.last(where: { $0.row < row }) : marks.first(where: { $0.row > row }) {
+            if holds(m) { return m }
+        }
+        return nil
+    }
+
+    /// ↩ on its way to the program: a mark on the first row of the cursor's line (a long command wraps), one per row.
+    private func markReturn() {
+        guard let now = look(), !now.alt,
+              let s = terminalContentSnapshot(region: .rows(max(now.top, now.cursor - 50)..<now.cursor + 1), buffer: .normal),
+              var i = s.rows.indices.last else { return }
+        while i > 0, s.rows[i].isWrapped { i -= 1 }
+        let row = s.rows[i].absoluteRow
+        marks.removeAll { $0.row >= row }
+        marks.append(Mark(row: row))
+    }
+
+    /// ⌘↑ (`d` −1) / ⌘↓ (1): the mark before or after the one gone to last — from the live screen ⌘↑ is the last
+    /// command's; scrolled by hand, from the top row in view. That row goes to the top (as far as it scrolls) and a bar
+    /// shows it a moment. A shell's OSC 133 prompts count where there's no mark (above the first: a width change dropped
+    /// them). ⌘↓ after the last: the live screen. False: nowhere to go (a full-screen program has the tab).
+    func goToMark(by d: Int) -> Bool {
+        guard let now = look(), !now.alt else { return false }
+        let view = now.top + terminalStateSnapshot().viewportRow
+        let from = at.flatMap { $0.top == view ? $0.row : nil } ?? (view != now.live ? view : d < 0 ? now.cursor + 1 : nil)
+        var row = from.flatMap { mark(from: $0, d)?.row }
+        if let p = (d < 0 ? previousSemanticPromptRow() : nextSemanticPromptRow()).map({ $0 + now.top }), p < marks.first?.row ?? .max,
+           d < 0 ? row == nil : p < row ?? .max { row = p }
+        guard let row else {
+            guard d > 0, at != nil || view != now.live else { return false }
+            scrollTo(row: now.live - now.top)
+            at = nil
+            return true
+        }
+        scrollTo(row: row - now.top)
+        let top = now.top + terminalStateSnapshot().viewportRow
+        at = (row, top)
+        showMark(row - top)
+        return true
+    }
+
+    private weak var markBar: NSView?
+    /// A bar left of the `n`th row in view for a moment: where ⌘↑ / ⌘↓ went, scrolled there or not.
+    private func showMark(_ n: Int) {
+        markBar?.removeFromSuperview()
+        let h = caretFrame.height > 0 ? caretFrame.height : bounds.height / CGFloat(max(terminalStateSnapshot().dimensions.rows, 1))
+        let bar = NSView(frame: NSRect(x: 0, y: CGFloat(n) * h, width: 3, height: h))   // flipped: rows from the top
+        bar.wantsLayer = true
+        bar.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        bar.layer?.cornerRadius = 1.5
+        addSubview(bar)
+        markBar = bar
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            NSAnimationContext.runAnimationGroup({ $0.duration = 0.4; bar.animator().alphaValue = 0 },
+                                                 completionHandler: { MainActor.assumeIsolated { bar.removeFromSuperview() } })
+        }
+    }
+
+    /// What a command printed: the one ⌘↑ / ⌘↓ went to (while it's still in view), else the last that printed anything
+    /// — its rows after the command's own up to the next mark, or to the cursor's (the prompt). Nil: nothing printed, or
+    /// a full-screen program has the tab.
+    func output() -> String? {
+        guard let now = look(), !now.alt else { return nil }
+        let view = now.top + terminalStateSnapshot().viewportRow
+        if let at, at.top == view {
+            guard let m = marks.first(where: { $0.row == at.row }), holds(m) else { return nil }
+            return output(of: m, cursor: now.cursor)
+        }
+        var row = now.cursor + 1
+        while let m = mark(from: row, -1) {
+            if let o = output(of: m, cursor: now.cursor) { return o }
+            row = m.row
+        }
+        return nil
+    }
+
+    private func output(of m: Mark, cursor: Int) -> String? {
+        let end = mark(from: m.row, 1)?.row ?? cursor
+        guard end > m.row, let s = terminalContentSnapshot(region: .rows(m.row..<end), buffer: .normal) else { return nil }
+        let text = Self.text(s.rows.dropFirst().drop(while: \.isWrapped)).text   // not the command's own line
+        return text.isEmpty ? nil : text
+    }
+
+    /// Open in Editor's text: the selection; else every row held — the scrollback and the screen, a full-screen
+    /// program's screen only —, and the line of the row at the top of the view.
+    func contents() -> (text: String, line: Int)? {
+        if let s = getSelection(), !s.isEmpty { return (s, 0) }
+        guard let s = terminalContentSnapshot(region: .all) else { return nil }
+        return Self.text(s.rows, row: s.capturedRange.lowerBound + terminalStateSnapshot().viewportRow)
+    }
+
+    /// Rows as text: a wrapped row goes on with its line; a line without spaces at its end, no blank lines at the end.
+    /// `line`: the line `row` is on.
+    nonisolated static func text(_ rows: some Collection<TerminalContentRowSnapshot>, row: Int? = nil) -> (text: String, line: Int) {
+        var lines: [String] = [], line = 0
+        for r in rows {
+            if r.isWrapped, !lines.isEmpty { lines[lines.count - 1] += r.text } else { lines.append(r.text) }
+            if r.absoluteRow == row { line = lines.count - 1 }
+        }
+        lines = lines.map { String($0[..<($0.lastIndex { $0 != " " }.map($0.index(after:)) ?? $0.startIndex)]) }
+        while lines.last?.isEmpty == true { lines.removeLast() }
+        return (lines.joined(separator: "\n"), min(line, max(lines.count - 1, 0)))
     }
 
     /// A plain right-click is the program's when it reads the mouse itself (SwiftTerm reports it); ⇧ pastes there anyway.

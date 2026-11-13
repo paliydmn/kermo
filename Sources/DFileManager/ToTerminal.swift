@@ -21,7 +21,7 @@ extension EmbeddedTerminal.Tab {
 
 extension EmbeddedTerminal {
     /// What goes into a tab, as bytes (tests: what was typed where, without a shell to read it).
-    static var typing: @MainActor (Tab, [UInt8]) -> Void = { $0.view.send(data: $1[...]) }
+    static var typing: @MainActor (Tab, [UInt8]) -> Void = { $0.view.type($1) }
 
     /// Till `t` takes text (`takesText`; a local shell: its line editor up too, if it asks for bracketed paste at all)
     /// or `seconds` pass, or it's gone. True: it takes text now.
@@ -154,6 +154,20 @@ extension AppDelegate {
 
     /// Edit ▸ Send to Terminal (⌃↩) / Execute in Terminal (⌃⇧↩) in the editor window: its shown tab's selection, else
     /// the caret's line. Execute without a selection then moves the caret to the next line with something on it.
+    /// Open in Editor (⌥⌘O) / Open Output in Editor: the terminal's current pane — its selection, else all it holds (a
+    /// full-screen program's screen only), or a command's output (`DropTerminalView.output`) — as a read-only copy in the
+    /// editor window, in memory only till its Edit. Send / Execute from it go into that pane while it takes text, else as
+    /// `toTerminal` picks — its machine, as its user.
+    func terminalToEditor(output: Bool) {
+        guard terminal.isShown, let t = terminal.current,
+              let (text, line) = output ? t.view.output().map({ ($0, 0) }) : t.view.contents() else { return NSSound.beep() }
+        let at = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short), host = t.target.map { SavedServer.name(for: $0) }
+        let copy = Editor.terminalCopy(text, line: line, title: "\(output ? "Output" : "Terminal") — \(host ?? t.label) \(at)",
+                                       place: t.folder.map { DocFrame.place($0, host: host) } ?? host ?? "", chips: EmbeddedTerminal.chips(t),
+                                       target: t.target, folder: t.folder, pane: t.id)
+        claim(t, for: copy)
+    }
+
     func editorToTerminal(run: Bool) {
         guard let h = editorKey, let e = h.active else { return NSSound.beep() }
         guard e.cover == nil else { NSSound.beep(); return e.flash("Its text isn't here yet") }

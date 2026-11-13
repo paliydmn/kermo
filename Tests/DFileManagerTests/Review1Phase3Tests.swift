@@ -95,11 +95,12 @@ private func words(_ s: String) -> [String] {
     #expect(rest.first == KeySlot(key: "⌃O", label: "Hide Terminal", id: "view.terminal"))
     #expect(rest.contains(KeySlot(key: "⌃⇧O", label: "Maximize", id: "view.terminalFull")))
     #expect(rest.contains(KeySlot(key: "⌘T", label: "New Tab", id: "tab.new")) && rest.contains { $0.id == "term.split.right" })
-    #expect(rest.compactMap(\.id).allSatisfy(AppDelegate.terminalCommands.contains))
-    #expect(AppDelegate.terminalCmdKeys == ["app.palette"] && !AppDelegate.terminalCommands.contains("app.palette"), "⇧⌘P from the terminal; F9 stays mc's")
+    #expect(rest.compactMap(\.id).allSatisfy { AppDelegate.terminalCommands.contains($0) || AppDelegate.terminalBranches[$0] != nil })
+    #expect(AppDelegate.terminalCmdKeys == ["app.palette", "go.up", "open.inside", "mark.none"] && !AppDelegate.terminalCommands.contains("app.palette"),
+            "⇧⌘P and the marks' ⌘ keys from the terminal; F9 stays mc's, ⌫ the shell's")
     let terminal = AppDelegate.terminalCommands.compactMap { id in commands.first { $0.id == id } }
     let panes = KeyBarModel.layers(terminal, terminal: true).first { $0.mods == [.command, .option] }?.slots.compactMap(\.id)
-    #expect(panes == ["term.pane.left", "term.pane.right", "term.pane.up", "term.pane.down"])
+    #expect(panes == ["term.editor", "term.pane.left", "term.pane.right", "term.pane.up", "term.pane.down"])
     #expect(!KeyBarModel.layers(commands).flatMap(\.slots).contains { $0.id?.hasPrefix("term.pane.") == true }, "not on the panels' bar")
 }
 

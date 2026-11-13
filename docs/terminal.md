@@ -10,8 +10,8 @@ A shell inside Kermo, local or on a server, that stays in step with the panels.
 - **⌃⇧O** (**View ▸ Maximize Terminal**) gives the terminal the panels' room too, as ⌃O did before the drawer; press it again to put the terminal back in its drawer. A command that needs the panels (Connect to a folder, Show in Activity, a tag in the sidebar) puts it back too.
 - **The focus decides where keys go.** Click in the terminal (or press ⌃O from a panel while the drawer is open) and keys go to it: the key bar shows the terminal's keys and the panels' commands rest. Click a panel (or press ⌘1–⌘4) and the panels work as without a terminal, with their key bar and the command line. Clicking the sidebar or searching in between changes nothing.
 - **⌃O** with the keys in the terminal hides it; the active panel goes to the shell's folder. Press **⌃O twice quickly** to send ⌃O to the program in the terminal.
-- The drawer's top row has its tabs and three buttons: **Split** (⌘\\), **Maximize** (⌃⇧O; **Restore** while maximized) and **Hide** (⌃O).
-- While the keys are in the terminal, the [key bar](window.md#key-bar) shows its keys: **⌃O Hide Terminal**, **⌃⇧O Maximize**, **⌘T New Tab**, **⌘W Close Tab**, the splits, **⌃⇥** for the next tab, **⌘1**–**⌘4** back to a panel and the rest; holding ⌥⌘ shows the pane keys, ⌃⌘ the divider keys.
+- The drawer's top row has its tabs and four buttons: **⋯** (the pane's [marks and Open in Editor](#marks-and-the-editor), as **View ▸ Terminal Pane** has them), **Split** (⌘\\), **Maximize** (⌃⇧O; **Restore** while maximized) and **Hide** (⌃O).
+- While the keys are in the terminal, the [key bar](window.md#key-bar) shows its keys: **⌃O Hide Terminal**, **⌃⇧O Maximize**, **⌘T New Tab**, **⌘W Close Tab**, the splits, **⌘↑ Prev Mark**, **⌘↓ Next Mark**, **⇧⌘A Copy Output**, **⌃⇥** for the next tab, **⌘1**–**⌘4** back to a panel and the rest; holding ⌥⌘ shows the pane keys, ⌃⌘ the divider keys.
 - **⌘K** opens a shell on a server in a new tab ([Servers and SSH](servers.md)). Inside the terminal, ⌘K clears it.
 - **⌘+** and **⌘−** change the text size.
 
@@ -39,6 +39,18 @@ As in PuTTY: **selecting text copies it** — a drag, a double-click on a word, 
 - **⌘F** opens a find bar over the terminal. It searches the scrollback and the screen as you type; **Aa**, **.\*** and **Word** match case, take a regular expression, match whole words. ↩ finds the next one and ⇧↩ the one before, as the bar's arrows do; ⎋ closes it. With the keys in the text, the bar open or closed, ⌘G finds the next one. A match is selected but never copied: the clipboard keeps what you copied.
 - **More than the window shows:** drag past the window's top or bottom edge — the scrollback scrolls, and the selection grows with it until you let go. Or double-click the first word, scroll to the last line, ⇧-click there. A selection stays on its text as new lines come in; a program that redraws the screen under it (`clear`) drops it. ⌘A selects the whole scrollback and screen, and copies it.
 - **Links:** ⌘-click on a link a program printed with a hidden target (OSC 8, as `ls --hyperlink` prints them: the text shows one thing, the target may be another) opens nothing. Text from a server isn't trusted.
+
+## Marks and the editor
+
+Each ↩ you type at a shell marks the line it was typed on, as in Terminal.app: nothing is set up on the server and nothing is sent there. Not in vim, less, mc or another program that has the whole screen. The marks are in Kermo's memory only.
+
+- **⌘↑** (**View ▸ Terminal Pane ▸ Previous Mark**) goes to the last command, then to the one before. Its line moves to the top of the terminal as far as it scrolls, and a short bar beside it shows where you are. **⌘↓** goes to the next one, and after the last back to the bottom. If you scrolled by hand, they go from the top line in view. In the panels, ⌘↑ and ⌘↓ are Go's as before; in the terminal ⌫ is the shell's.
+- **⇧⌘A** (**View ▸ Terminal Pane ▸ Copy Output of Last Command**) copies what a command printed: the one ⌘↑ / ⌘↓ went to, else the last one that printed anything. A long line the terminal wrapped is one line again; spaces at the ends of lines and empty lines at the end are left out. With nothing to copy it beeps, and the clipboard stays as it was.
+- Marks go when the lines move under them: ⌘K, `clear`, `reset`, a change of the terminal's width (a split, Join, the window's width), or a lower drawer once the scrollback is full (10,000 lines). ⌃L drops the marks on the screen it cleared, and the oldest go with the scrollback. A mark never lands on another command's line.
+- A ↩ in a program that reads a line (`read`, a password question, mysql) is marked too. It's harmless: a mark is only a place to go. Kermo's own lines count as typed: ⌘E ↩'s line, Execute in Terminal's, the `cd` a sidebar click types.
+- A shell that marks its own prompts (OSC 133: fish 4, a zsh or bash set up for it) adds those prompts as stops for ⌘↑ / ⌘↓ where there are no marks, for example above a width change.
+
+**⌥⌘O** (**View ▸ Terminal Pane ▸ Open in Editor**) opens the pane in the [editor](viewer-editor.md#a-terminals-text) as a read-only copy: the selection if there is one, else the scrollback and the screen; with vim, mc or less running, the screen. **Open Output in Editor** does the same with Copy Output's text.
 
 ## Sessions side by side
 

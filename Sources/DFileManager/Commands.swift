@@ -225,6 +225,18 @@ extension AppDelegate {
             on: { $0.terminal?.isFull == true }) {
             $0.toggleTerminalFull()
         },
+        // The terminal's current pane (task 21), «⋯» in its top row too. ⌘↑ ⌘↓ ⇧⌘A there are their keys (`terminalBranches`).
+        cmd("term.editor", "Open in Editor", ["cmd+opt+o"], menu: "View/Terminal Pane", group: 1, aliases: "terminal output scrollback history copy text") {
+            $0.terminalToEditor(output: false)
+        },
+        cmd("term.output.editor", "Open Output in Editor", [], menu: "View/Terminal Pane", group: 1, aliases: "terminal last command result") {
+            $0.terminalToEditor(output: true)
+        },
+        cmd("term.output.copy", "Copy Output of Last Command", [], menu: "View/Terminal Pane", group: 1, short: "Copy Output", aliases: "terminal last command result clipboard") {
+            $0.terminal.copyOutput()
+        },
+        cmd("term.mark.prev", "Previous Mark", [], menu: "View/Terminal Pane", group: 2, short: "Prev Mark", aliases: "terminal command prompt jump scroll") { $0.terminal.goToMark(by: -1) },
+        cmd("term.mark.next", "Next Mark", [], menu: "View/Terminal Pane", group: 2, aliases: "terminal command prompt jump scroll") { $0.terminal.goToMark(by: 1) },
         cmd("view.activity", "Activity", ["cmd+opt+j"], menu: "View", group: 1,
             aliases: "copies transfers operations queue progress history retry failed", on: { $0.ops?.activityShown == true }) { $0.ops.toggleActivity() },
         cmd("term.bigger", "Bigger Terminal Text", ["cmd+=", "cmd+shift+="], menu: "View", group: 4, aliases: "font size zoom in larger") { app in
