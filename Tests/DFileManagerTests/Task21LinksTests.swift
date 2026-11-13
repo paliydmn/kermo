@@ -127,34 +127,29 @@ private typealias P = TerminalLink.Place
     let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t21l-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(atPath: d) }
-    for name in ["ssh", "make"] { try FileManager.default.copyItem(atPath: "/bin/sleep", toPath: d + "/" + name) }
-    let parent = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400)), panels = NSView(frame: parent.bounds)
-    parent.addSubview(panels)
-    let term = EmbeddedTerminal(covering: panels)
-    defer { term.tabs.forEach { term.close($0.id, confirm: false) } }
-    term.newShell(cwd: d)
-    let shell = try #require(term.current)
-    _ = term.show()
-    var calm = 0   // its prompt drawn and its rc files done: what's typed before may be lost
-    for _ in 0..<3000 where calm < 5 {
-        calm = shell.isAtPrompt && !String(decoding: shell.view.getBufferAsData(), as: UTF8.self).allSatisfy(\.isWhitespace) ? calm + 1 : 0
-        try await Task.sleep(for: .milliseconds(10))
-    }
+    // zsh without rc files (nor history): in a test, nothing of yours runs, and the prompt is there at once.
+    let shell = EmbeddedTerminal.Tab(kind: .shell, view: DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 400)))
+    shell.view.startProcess(executable: "/bin/zsh", args: ["-f"], environment: ["HOME=\(d)", "PATH=/usr/bin:/bin", "TERM=xterm-256color"], currentDirectory: d)
+    shell.started = "zsh"
+    defer { shell.view.process.terminate() }
+    for _ in 0..<3000 where !shell.isAtPrompt { try await Task.sleep(for: .milliseconds(10)) }
     #expect(!shell.showsAnotherMachine, "the shell itself")
     var refused = 0, web: [String] = []
     let app = AppDelegate()
     app.linkRefused = { refused += 1 }
     app.openWeb = { _, link in web.append(link) }
-    for (name, remote) in [("make", false), ("ssh", true), ("exec ./ssh", true)] {   // `exec`: the shell is ssh now
-        shell.view.send(txt: " \(name.hasPrefix("exec") ? name : "./" + name) 30\r")   // a leading space: not in your history (HIST_IGNORE_SPACE)
-        let program = name.hasPrefix("exec") ? "ssh" : name
+    // ssh waiting on a stand-in for its connection (no network, no config of yours); `exec`: the shell is ssh now.
+    let ssh = "ssh -F /dev/null -o BatchMode=yes -o ProxyCommand='sleep 30' kermo-test.invalid"
+    for (line, program, remote) in [("sleep 30", "sleep", false), (ssh, "ssh", true), ("exec " + ssh, "ssh", true)] {
+        shell.view.send(txt: line + "\r")
         for _ in 0..<3000 where shell.foreground != program { try await Task.sleep(for: .milliseconds(10)) }
-        #expect(shell.foreground == program && shell.showsAnotherMachine == remote, "\(name)")
+        #expect(shell.foreground == program && shell.showsAnotherMachine == remote, "\(line): \(shell.foreground ?? "nil")")
         if remote {
             app.openLink(TerminalLinkRequest(link: "/etc/hosts", params: [:], isExplicit: false), flags: .command, in: shell)
             app.openLink(TerminalLinkRequest(link: "https://example.com", params: [:], isExplicit: false), flags: .command, in: shell)
             #expect(refused == 1 && web == ["https://example.com"], "a path: another machine's; an address opens")
             (refused, web) = (0, [])
+            #expect(!shell.isAtPrompt && shell.busyWith == "“ssh” in a shell", "`exec`ed or not: no `cd` typed into it, closing asks")
         }
         shell.view.send(txt: "\u{3}")   // ⌃C
         for _ in 0..<3000 where shell.isRunning && !shell.isAtPrompt { try await Task.sleep(for: .milliseconds(10)) }

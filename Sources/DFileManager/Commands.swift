@@ -1359,7 +1359,9 @@ extension AppDelegate {
             }
             guard case .success(let opened) = r else {
                 TempCopies.remove(tmp)
-                if case .failure(let e) = r, !(e is CancellationError) { showError(e) }
+                if case .failure(let e) = r, !(e is CancellationError) {   // F4 on a big one: as the editor says it
+                    showError(e is SFTPClient.TooBig ? JobErrorMessage("“\(name)” is larger than 32 MB — use the viewer (F3).") : e)
+                }
                 return
             }
             switch how {

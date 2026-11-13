@@ -96,7 +96,7 @@ private func tempDir() -> String {
     try Data(repeating: 0x61, count: 3 << 20).write(to: URL(fileURLWithPath: big))
     let c = try SFTPClient(.local())
     defer { c.close() }
-    #expect(throws: SFTPError.self) { try c.download(big, to: local, max: 2 << 20) }
+    #expect(throws: SFTPClient.TooBig.self) { try c.download(big, to: local, max: 2 << 20) }
     #expect((try? FileManager.default.attributesOfItem(atPath: local)[.size] as? Int) ?? 0 == 0, "nothing came")
     #expect(try c.download(big, to: local, last: 1 << 20, max: 2 << 20).size == 3 << 20)
     #expect(try c.download(big, to: local, max: 3 << 20).size == 3 << 20 && FileManager.default.contents(atPath: local)?.count == 3 << 20)

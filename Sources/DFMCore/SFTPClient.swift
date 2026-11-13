@@ -1049,6 +1049,12 @@ extension SFTPClient {
         public var errorDescription: String? { error.localizedDescription }
     }
 
+    /// A download past its `max`.
+    public struct TooBig: LocalizedError {
+        public let name: String, max: Int64
+        public var errorDescription: String? { "“\(name)” is larger than \(max >> 20) MB." }
+    }
+
     /// Files this big at most get a `sha256` in their baseline (configs, scripts): reading them back costs little.
     public static let hashLimit: Int64 = 1 << 20
 
@@ -1060,7 +1066,7 @@ extension SFTPClient {
         var a = try stat(remote)
         let name = (remote as NSString).lastPathComponent
         guard a.kind == .file else { throw SFTPError(message: "“\(name)” isn't a regular file") }
-        let tooBig = SFTPError(message: "“\(name)” is larger than \((max ?? 0) >> 20) MB.")
+        let tooBig = TooBig(name: name, max: max ?? 0)
         if let max, min(a.size, last ?? a.size) > max { throw tooBig }
         let fd = Darwin.open(local, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0o600)
         guard fd >= 0 else { throw LocalFS.posixError() }

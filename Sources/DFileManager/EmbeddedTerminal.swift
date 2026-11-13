@@ -52,7 +52,10 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         var isRunning: Bool { exitStatus == nil && view.process?.running == true }
         /// The shell itself has the terminal (not ssh, vim, mysql, sudo's password prompt…): only then may a typed
         /// `cd` go in.
-        var isAtPrompt: Bool { EmbeddedTerminal.atPrompt(view.process) }
+        var isAtPrompt: Bool { EmbeddedTerminal.atPrompt(view.process) && (host != nil || started == nil || foreground == started) }
+        /// The program a local tab's shell was started as ("zsh"): one it `exec`ed (`exec ssh host`) has its pid, not
+        /// its name — never at the prompt for a typed `cd` or ⌘E ↩.
+        var started: String?
         /// What closing the tab would end: an SSH connection, or a program still running in a local shell.
         var busyWith: String? {
             guard isRunning else { return nil }
@@ -617,6 +620,7 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     /// again only after `exitStatus` is set (`reconnect`).
     func launch(_ tab: Tab, _ executable: String, _ args: [String], execName: String? = nil, cwd: String?) {
         assert(tab.view.process.map { !$0.running && !$0.windingDown } ?? true, "started while its last process is there")
+        tab.started = (executable as NSString).lastPathComponent
         TunnelListener.forking {   // a tunnel's socket half made now would go with the shell, its port held while it runs
             tab.view.startProcess(executable: executable, args: args, environment: Self.environment, execName: execName, currentDirectory: cwd)
         }
@@ -1298,11 +1302,12 @@ final class DropTerminalView: LocalProcessTerminalView {
     private(set) var anchor: (row: Int, x: CGFloat, text: String?)?
 
     override func mouseDown(with event: NSEvent) {
+        commandPress = event.modifierFlags.contains(.command)
         let keys = event.modifierFlags.intersection([.command, .option, .control, .shift])
         let h = caretFrame.height   // a row's: SwiftTerm sizes the caret to a cell (wider on a wide character, never taller)
         guard event.clickCount == 1, keys.isEmpty || keys == .shift, h > 0,
               !(allowMouseReporting && currentMouseMode != .off), let now = look(), !now.alt
-        else { return terminals(event) { super.mouseDown(with: event) } }
+        else { return terminals { super.mouseDown(with: event) } }
         let top = now.top + terminalStateSnapshot().viewportRow   // the row at the view's top
         let p = convert(event.locationInWindow, from: nil), row = top + max(Int((bounds.height - p.y) / h), 0)
         guard keys == .shift else {
@@ -1331,14 +1336,20 @@ final class DropTerminalView: LocalProcessTerminalView {
     private(set) var clickFlags: NSEvent.ModifierFlags = []
     override func mouseUp(with event: NSEvent) {
         clickFlags = event.modifierFlags
-        terminals(event) { super.mouseUp(with: event) }
+        defer { commandPress = false }
+        guard !commandPress, event.modifierFlags.contains(.command) else { return terminals { super.mouseUp(with: event) } }
+        // ⌘ came after the press: the click is as it began — a program's gets its release, no link opens.
+        super.mouseUp(with: NSEvent.mouseEvent(with: event.type, location: event.locationInWindow, modifierFlags: event.modifierFlags.subtracting(.command),
+                                               timestamp: event.timestamp, windowNumber: event.windowNumber, context: nil,
+                                               eventNumber: event.eventNumber, clickCount: event.clickCount, pressure: event.pressure) ?? event)
     }
-    override func mouseDragged(with event: NSEvent) { terminals(event) { super.mouseDragged(with: event) } }
+    override func mouseDragged(with event: NSEvent) { terminals { super.mouseDragged(with: event) } }
 
-    /// With ⌘ held a click is the terminal's (a link), never a program's that reads the mouse: SwiftTerm would give it
-    /// the press and keep the release for the link.
-    private func terminals(_ e: NSEvent, _ body: () -> Void) {
-        guard e.modifierFlags.contains(.command), allowMouseReporting else { return body() }
+    /// The press held ⌘: the click is the terminal's (a link), never a program's that reads the mouse — SwiftTerm would
+    /// give it the press and keep the release for the link. Decided at the press, for the whole click.
+    private var commandPress = false
+    private func terminals(_ body: () -> Void) {
+        guard commandPress, allowMouseReporting else { return body() }
         allowMouseReporting = false
         defer { allowMouseReporting = true }
         body()
