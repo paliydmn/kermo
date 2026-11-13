@@ -43,6 +43,7 @@ Release:
 
 ### Fixed
 - Searching in the terminal (⌘F, ⌘G) no longer puts each match into the clipboard; what you copied stays.
+- ↩ and ⎋ typed into the terminal's find bar find and close it; in a disconnected SSH tab they used to reconnect or close the tab.
 - A tab the editor brings back at launch no longer comes up with the start of its lines hidden under the line numbers.
 - A tab reopened with ⇧⌘T, or a server's file opened from its parked tab, has its colors at once, not only after the first keystroke.
 - **Rename** (⇧F6) on this Mac no longer replaces a file that appears under the new name between the check and the rename. A file open in the editor follows its rename in a panel, on this Mac and on a server, so ⌘S there no longer makes the old name again.

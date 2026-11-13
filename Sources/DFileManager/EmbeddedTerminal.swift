@@ -995,7 +995,7 @@ final class DropTerminalView: LocalProcessTerminalView {
     static var leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 }
 
     // A find's match is a selection too (SwiftTerm's find bar, ⌘F, ⌘G): it never goes to the clipboard. Decided as the
-    // selection changes, not later — SwiftTerm 1.99's `selectionChanged` reaches the main thread only afterwards.
+    // selection changes: SwiftTerm 1.99 calls `selectionChanged` off the main actor, and the copy must hop there later.
     private var finding = false
     override func performTextFinderAction(_ sender: Any?) {
         finding = true
