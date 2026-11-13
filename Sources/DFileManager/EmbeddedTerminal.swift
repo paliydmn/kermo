@@ -467,7 +467,7 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     /// meanwhile — a stand-in of the pane's size holds its place —, so the other panes keep their sizes: no reflow, no
     /// SIGWINCH for their programs. The zoomed pane grows (its marks go if its width changes, as with any width). What
     /// changes the panes (a split, ⌥⌘ / ⌃⌘ arrows, Join, a pane closed, going to another pane) puts it back first. The
-    /// pane moves straight from one superview to the other, never out of the window (its program isn't told it lost focus).
+    /// pane moves straight from one superview to the other, the keys given back to it after (`focus`).
     func zoom() {
         guard isShown, let g = group, g.zoomed != nil || g.panes.count > 1 else { return beep() }
         if g.zoomed != nil { unzoom(g) } else {
@@ -482,7 +482,8 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
 
     /// The zoomed pane back into its place in the split, shown (its tab may be behind another).
     private func unzoom(_ g: Group) {
-        guard let t = g.zoomed, let i = g.split.arrangedSubviews.firstIndex(of: g.stand) else { return }
+        guard let t = g.zoomed else { return }
+        let i = g.split.arrangedSubviews.firstIndex(of: g.stand) ?? g.split.arrangedSubviews.count
         g.zoomed = nil
         t.box.isHidden = false
         t.box.translatesAutoresizingMaskIntoConstraints = true

@@ -114,8 +114,8 @@ private let a = SFTPTarget(host: "a@dfm-t21c.invalid"), b = SFTPTarget(host: "b@
 
     // A size change (a drawer dragged, ⌘+): the prompt's redraw isn't news for half a second.
     term.select(tb.id)
+    tb.view.resized()   // before it's watched again: a batch in between would tell at once
     term.select(ta.id)
-    tb.view.resized()
     try await Task.sleep(for: .milliseconds(250))
     #expect(tb.news == nil, "quiet after a resize")
     for _ in 0..<300 where tb.news == nil { try await Task.sleep(for: .milliseconds(10)) }
