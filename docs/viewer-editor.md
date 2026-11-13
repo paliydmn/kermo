@@ -200,7 +200,7 @@ Only one Kermo keeps drafts at a time. Another one (a test build beside the app)
 
 ⎋ (outside the find bar, which it closes first) goes back to the panels: an unchanged tab closes, a changed one stays as a draft, and the window hides. F4, then ⎋, leaves no tab behind.
 
-**File ▸ Close Editor Window** (⇧⌘W) and the window's close button hide the window with all its tabs, asking nothing: their drafts are written to the disk itself first, and if that fails the window stays and says why. **File ▸ Show Editor** brings it back as it was; so do F4 and ⌘N. A hidden editor window doesn't keep Kermo running: closing the main window then quits, as with no other window open — unless the [shortcut from any app](#from-any-app) is on.
+**File ▸ Close Editor Window** (⇧⌘W) and the window's close button hide the window with all its tabs, asking nothing: their drafts are written to the disk itself first, and if that fails the window stays and says why. **File ▸ Show Editor** (⇧⌘E, also from the terminal, or **Editor** in the main window's toolbar) brings it back as it was — with no tabs, on a new Untitled; so do F4 and ⌘N. A hidden editor window doesn't keep Kermo running: closing the main window then quits, as with no other window open — unless the [shortcut from any app](#from-any-app) is on.
 
 Quitting writes the last drafts to the disk and asks nothing about them. It names a document only when its draft couldn't be written — **Quit Anyway** (its changes are lost), **Show Editor** or **Cancel** — or while drafts are off. Its other warnings (uploads, copies, SSH sessions, terminals) are as before.
 

@@ -137,14 +137,18 @@ extension EditorWindowTests {
     }
 
     /// ⌘T, ⌘W, ⌃Tab are the tab commands as they were, with the editor window's branch; Close Editor Window is ⇧⌘W, Move
-    /// Tab and All Tabs have no keys, Show Editor works from anywhere.
+    /// Tab and All Tabs have no keys, Show Editor (⇧⌘E, the toolbar's Editor) works from anywhere.
     @Test func theTabCommandsServeTheEditorWindow() throws {
         _ = NSApplication.shared
         let app = AppDelegate()
         app.commands = app.makeCommands()
         func keys(_ id: String) -> [String] { app.commands.first { $0.id == id }?.keys.map(\.display) ?? ["?"] }
         #expect(keys("tab.new") == ["⌘T"] && keys("tab.close") == ["⌘W"] && keys("editor.close") == ["⇧⌘W"])
-        #expect(keys("editor.tab.left").isEmpty && keys("editor.tab.right").isEmpty && keys("editor.tabs").isEmpty && keys("editor.show").isEmpty)
+        #expect(keys("editor.tab.left").isEmpty && keys("editor.tab.right").isEmpty && keys("editor.tabs").isEmpty && keys("editor.show") == ["⇧⌘E"])
+        #expect(AppDelegate.terminalCmdKeys.contains("editor.show"), "⇧⌘E from the terminal too")
+        let bar = app.toolbarDefaultItemIdentifiers(NSToolbar()).map(\.rawValue)
+        #expect(bar.firstIndex(of: "editor").map { bar[$0 - 1] == NSToolbarItem.Identifier.flexibleSpace.rawValue && bar[$0 + 1] == "activity" } == true,
+                "the Editor button: after the space, before Activity")
         #expect(app.commands.filter { $0.keys.contains(Shortcut("cmd+shift+w")!) }.map(\.id) == ["editor.close"])
         #expect(AppDelegate.appWide.contains("editor.show") && !AppDelegate.appWide.contains("editor.close"))
         let tool = try Editor.open(URL(fileURLWithPath: NSTemporaryDirectory() + "dfm-tabs-\(UUID().uuidString).json"), text: "{}\n", beside: NSView()) { _ in }

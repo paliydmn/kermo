@@ -33,6 +33,12 @@ As in PuTTY: **selecting text copies it** — a drag, a double-click on a word, 
 - A shell that asked for bracketed paste (zsh, bash 5.1 and later) runs nothing pasted until you press ↩. Pasting several lines into a **production** server's SSH tab, or one logged in as `root@`, into a shell that didn't ask for it (`sh`, an old bash), asks first: “Paste 5 lines into web1?”, with its PROD or ROOT strip, the lines themselves and ↩ on Cancel.
 - Selecting replaces what the clipboard held. To keep it, turn either part off: `terminalCopyOnSelect`, `terminalRightClickPaste` ([Options](#options)).
 
+### Find and select
+
+- **⌘F** opens a find bar over the terminal. It searches the scrollback and the screen as you type; **Aa**, **.\*** and **Word** match case, take a regular expression, match whole words. ↩ (or ⌘G) finds the next one, ⇧↩ the one before, the bar's arrows either way; ⎋ closes it, and ⌘G goes on finding after that. A match is selected but never copied: the clipboard keeps what you copied.
+- **More than the window shows:** double-click the first word, scroll to the last line, ⇧-click there. ⌘A selects the whole scrollback and screen, and copies it.
+- **Links:** ⌘-click on a link a program printed with a hidden target (OSC 8, as `ls --hyperlink` prints them: the text shows one thing, the target may be another) opens nothing. Text from a server isn't trusted.
+
 ## Sessions side by side
 
 One tab can show up to four sessions at once: run a command in one and watch a log in another, without switching tabs. It works as the split in VS Code's terminal.

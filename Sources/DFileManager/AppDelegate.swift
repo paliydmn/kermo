@@ -505,6 +505,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         commands = cmds
         keymap = bound.keymap
         keyBar.reload(cmds)
+        window?.toolbar?.items.first { $0.itemIdentifier == Self.editorButtonID }?.toolTip = editorTip
         showCmdKey()
         refreshSidebar()   // section headers show keys
         let menu = makeMenu()
@@ -1208,16 +1209,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 isConfig ? MenuAction.item("Edit SSH Config…") { [unowned self] in editSSHConfig() } : nil]
     }
 
-    private static let sidebarButtonID = NSToolbarItem.Identifier("sidebar")
+    private static let sidebarButtonID = NSToolbarItem.Identifier("sidebar"), editorButtonID = NSToolbarItem.Identifier("editor")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarButtonID, .flexibleSpace, OpsController.toolbarID, search.item.itemIdentifier]
+        [Self.sidebarButtonID, .flexibleSpace, Self.editorButtonID, OpsController.toolbarID, search.item.itemIdentifier]
     }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarDefaultItemIdentifiers(toolbar) }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar: Bool) -> NSToolbarItem? {
         if id == search.item.itemIdentifier { return search.item }
         if id == OpsController.toolbarID { return ops.toolbarItem }
+        if id == Self.editorButtonID { return editorItem() }
         guard id == Self.sidebarButtonID else { return nil }
         let item = NSToolbarItem(itemIdentifier: id)
         item.image = Symbol.sidebar.image("Sidebar")
@@ -1230,6 +1232,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     @objc private func sidebarButton() { run("view.sidebar") }
+
+    /// Editor: a click shows it (Show Editor: as it was, else a new Untitled); held, its menu — a new document, Quick Open.
+    private func editorItem() -> NSToolbarItem {
+        let item = NSMenuToolbarItem(itemIdentifier: Self.editorButtonID)
+        item.image = Symbol.document.image("Show Editor")
+        item.label = "Editor"
+        item.showsIndicator = false   // a click is the button's; the menu waits for a press held
+        item.isBordered = true
+        item.target = self
+        item.action = #selector(editorButton)
+        item.menu = NSMenu()
+        item.menu.items = [MenuAction.item("New Editor Document") { [unowned self] in run("editor.new") },
+                           MenuAction.item("Quick Open…") { [unowned self] in
+                               EditorHost.tabs.showEditor()
+                               DispatchQueue.main.async { MainActor.assumeIsolated { self.quickOpen() } }   // once the editor is the key window
+                           }]
+        item.toolTip = editorTip
+        return item
+    }
+    /// "Show Editor  ⇧⌘E", with the key keymap.json gives it.
+    private var editorTip: String { "Show Editor" + (commands.first { $0.id == "editor.show" }?.keys.first.map { "  " + $0.display } ?? "") }
+
+    @objc private func editorButton() { run("editor.show") }
 
     /// Join Tab…: which tab's panes go beside the current tab's.
     func joinTerminalTab() {
@@ -1245,8 +1270,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// What works while the keys go to the terminal (`terminalActive`), in the key bar's order there; `tab.*` act on
     /// its tabs then. ⌘1–4 go back to a panel.
-    /// From the terminal on their ⌘ keys only (⇧⌘P): those never reach the shell — F9 and ⌥9 do (mc's, the shell's).
-    static let terminalCmdKeys: Set<String> = ["app.palette"]
+    /// From the terminal on their ⌘ keys only (⇧⌘P, ⇧⌘E): those never reach the shell — F9 and ⌥9 do (mc's, the shell's).
+    static let terminalCmdKeys: Set<String> = ["app.palette", "editor.show"]
     static let terminalCommands = ["view.terminal", "view.terminalFull", "tab.new", "tab.close", "term.split.right", "term.split.down", "tab.next",
                                    "tab.prev", "ssh.new", "go.connect", "cmdline.insert", "cmdline.insertPaths", "term.bigger", "term.smaller",
                                    "view.sidebar", "ssh.reconnect", "server.disconnect", "term.join", "term.unsplit", "term.pane.left",

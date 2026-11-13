@@ -145,6 +145,7 @@ In the command line, ↑↓ browse its history. On a local panel ↩ runs the li
 | Editor: new document (Untitled, from any Kermo window) / save / save as / find and replace | ⌘N / ⌘S / ⇧⌘S / ⌘F |
 | Editor: new document from any app (off at first: Settings › General) | ⌃⌘E, or the key you record ([from any app](viewer-editor.md#from-any-app)) |
 | Editor: new tab / close tab / next, previous tab / hide the window (tabs kept) / back to the panels | ⌘T / ⌘W / ⌃Tab or ⇧⌘], ⌃⇧Tab or ⇧⌘[ / ⇧⌘W / ⎋ |
+| Editor: show it (File ▸ Show Editor, the toolbar's Editor; from the terminal too) | ⇧⌘E |
 | Editor: go to line / comment out or back / bigger, smaller text / wrap lines | ⌘L / ⌘/ / ⌘+, ⌘− / ⌥Z |
 | Editor: rename the tab's file (or name an Untitled) / copy its path / reopen the tab closed last | ⇧F6 or a double-click on the tab / ⇧⌘C / ⇧⌘T |
 | Editor: [two panes](viewer-editor.md#two-panes), the tab you're in beside / below (with two: the other pane) | ⌘\\ / ⇧⌘\\ |
