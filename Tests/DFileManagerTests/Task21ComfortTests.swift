@@ -64,14 +64,16 @@ private let a = SFTPTarget(host: "a@dfm-t21c.invalid"), b = SFTPTarget(host: "b@
     term.zoom()
     term.resizePane(by: 1, vertical: true)
     #expect(g.zoomed == nil && term.hasFocus)
-    // A zoomed tab behind another, joined into the current one: its pane comes back shown, not collapsed.
+    // A zoomed tab behind another whose other pane goes (its shell exited): the zoomed one comes back shown, not
+    // collapsed — alone, nothing would spread it again.
     term.zoom()
-    let zoomed = try #require(g.zoomed)
+    let zoomed = try #require(g.zoomed), rest = try #require(g.panes.first { $0 !== zoomed })
     term.restore([.init(vertical: true, panes: [a])])
     term.select(term.groups[1].panes[0].id)
     #expect(zoomed.box.isHidden, "its tab is behind")
-    term.join(g)
-    #expect(g.zoomed == nil && !zoomed.box.isHidden && term.groups.count == 1 && term.groups[0].panes.contains { $0 === zoomed })
+    term.close(rest.id, confirm: false)
+    term.select(zoomed.id)
+    #expect(g.zoomed == nil && g.panes.count == 1 && !zoomed.box.isHidden && term.shows(zoomed))
 
     let one = terminal()
     one.restore([.init(vertical: true, panes: [a])])
