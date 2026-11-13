@@ -135,13 +135,21 @@ A file shows once, in the first group it's in. ↩ opens it as F4 does: an open 
 
 In the editor ⌃↩ (**Edit ▸ Send to Terminal**) types the selection, or the line the caret's on, into the main window's [terminal](terminal.md); nothing runs, and the keys go there to change it and press ↩. ⌃⇧↩ (**Edit ▸ Execute in Terminal**) types it and runs it; the keys stay in the editor, and without a selection the caret moves on to the next line with something on it, so a script can be run a line at a time.
 
-- **It goes to the file's machine.** A file on this Mac (an Untitled, the clipboard's copy too) goes to a shell here; a server's file to an SSH session on that server, as its user — a file opened as root too: Kermo never opens a root shell, so `sudo` is yours to type. A read-only copy goes where its file is.
+- **It goes to the file's machine.** A file on this Mac (an Untitled, the clipboard's copy too) goes to a shell here; a server's file to an SSH session on that server, as its user — a file opened as root too: Kermo never opens a root shell, so `sudo` is yours to type. A read-only copy goes where its file is, a [terminal's copy](#a-terminals-text) to that terminal's machine.
 - **Only into a shell that's waiting for a line.** On this Mac, a shell at its prompt (not one running vim, `cat`, `sudo`'s password question or anything else); on a server, a session whose shell says it takes a paste (bracketed paste, as zsh and bash 5.1 and later do at a prompt) and shows no full-screen program. Kermo can't see more of a server than that: a `sudo -i` or an `ssh` onward you ran in that tab looks the same.
 - **Which tab:** the one this document sent to before, while it waits for a line — so a script's own `cd` holds from line to line; else the terminal's tab of that machine (on this Mac, where Execute first `cd`s it to the file's folder; a server's, for Send only); else a new tab in the file's folder. A new SSH tab is never typed into before its shell asks for text — it may be asking for a password — so Execute starts it with the text as its command, in the file's folder, then a shell, and shows it with the keys in it; Send waits up to 30 seconds for its prompt. A Send into a tab that isn't the document's own doesn't make it so: the next Execute still `cd`s it first.
 - **What goes:** several lines go as one paste, only into a shell that takes a paste; else nothing is sent, and the status line says why. A control character (ESC, ⌃C…) is never sent, nor a second line while the first is on its way (a held key runs one). With several selections (⌘-drag) nothing goes.
 - **Production:** Execute asks every time, ↩ being **Cancel**, and goes into the [production log](safety.md#production-log); a locked server asks for Touch ID first. Send asks nothing and logs nothing: nothing ran — what you then run in the terminal is yours, as anything typed there.
 
 The tools' editor has neither: ⌃↩ there is the text's own.
+
+### A terminal's text
+
+**Open in Editor** (⌥⌘O in the [terminal](terminal.md#marks-and-the-editor)) shows a terminal pane's text in an editor tab as a read-only copy. It's named after the server (a local shell: the tab's name) and the time, “Terminal — web-01 14:02” (**Open Output in Editor**: “Output — …”), with the server and the shell's folder under the title and the server's PROD or ROOT strip. The caret is at the start of the line that was at the top of the terminal, with that line at the top.
+
+- Find (⌘F, with regular expressions too), select and copy as in any tab. The copy is in memory only: no draft, not kept after a restart, not brought back by ⇧⌘T, and it closes without a question. Open in Editor again from the same pane replaces its copy.
+- **Edit** in the status line turns it into an Untitled with that text, to change and save. From then on it is like any Untitled: it has a draft, and ⌃↩ / ⌃⇧↩ go to this Mac, not to the server.
+- ⌃↩ / ⌃⇧↩ from it go to the pane's machine as the pane's user: into that pane while its shell waits for a line, else as [Send to Terminal](#send-to-terminal) picks. On production, Execute asks every time.
 
 ### Rename
 

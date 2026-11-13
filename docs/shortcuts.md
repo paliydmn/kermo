@@ -118,6 +118,8 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Terminal: split the tab, the new session to the right / below | ⌘\\ / ⇧⌘\\ |
 | Terminal: the pane to the left, right, above, below | ⌥⌘← ⌥⌘→ ⌥⌘↑ ⌥⌘↓ |
 | Terminal: move the pane's divider | ⌃⌘← ⌃⌘→ ⌃⌘↑ ⌃⌘↓ |
+| Terminal: [marks](terminal.md#marks-and-the-editor) — the last command, the one before / the next / copy the command's output | ⌘↑ / ⌘↓ / ⇧⌘A |
+| Terminal: the pane's text (the selection, the scrollback and the screen) in the editor, read-only | ⌥⌘O |
 | User command menu / command line | F2, ⌥2 / ⌘E |
 | Insert the cursor's name / the marked items' full paths into the command line, or into the shell while the terminal is open | ⌃↩ / ⌃⇧↩ |
 

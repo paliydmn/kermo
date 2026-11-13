@@ -211,13 +211,52 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// the text in focus. Nothing of it is in a file until its Save picks where; its draft is kept meanwhile.
     @discardableResult
     static func untitled() -> Editor {
-        let e = Editor(nil, number: (open.compactMap { $0.url == nil ? $0.number : nil }.max() ?? 0) + 1, remote: nil, loaded: ("", .utf8, false, false, false, nil, sha(Data())))
-        open.append(e)
+        let e = newUntitled("")
         EditorHost.tabs.add(e)
         return e
     }
 
-    /// A read-only copy to compare with (`EditorHost.compare` places it): `loaded` as a file was read, `file` its name
+    /// An Untitled with `text` — changed if there's any (its draft is kept) —, its tab not placed yet.
+    private static func newUntitled(_ text: String) -> Editor {
+        let e = Editor(nil, number: (open.compactMap { $0.url == nil ? $0.number : nil }.max() ?? 0) + 1, remote: nil, loaded: (text, .utf8, false, false, false, nil, sha(Data())))
+        e.dirty = !text.isEmpty
+        open.append(e)
+        return e
+    }
+
+    /// Open in Editor: a terminal pane's text as a read-only copy in the editor window — in memory only, till its Edit —,
+    /// the caret at the start of `line`, that line at the top. Again from the same pane: its copy, still read-only, gives
+    /// this one its tab.
+    @discardableResult
+    static func terminalCopy(_ text: String, line: Int, title: String, place: String, chips: [Chip], target: SFTPTarget?, folder: String?,
+                             pane: UUID) -> Editor {
+        let e = snapshot((text, .utf8, false, false, false, nil, sha(Data())), file: nil, title: title, place: place)
+        (e.terminal, e.chips) = ((target, folder, pane), chips)
+        if let old = open.first(where: { $0 !== e && $0.snapshot != nil && $0.terminal?.pane == pane }), let h = old.host, h.tabbed {
+            e.host = h
+            h.replace(old, with: e)
+            h.reveal(e)
+        } else {
+            EditorHost.tabs.add(e)
+        }
+        e.caret(atLine: line)
+        e.frame.actions = [("Edit", { [weak e] in e?.edit() })]
+        return e
+    }
+
+    /// A terminal pane's copy (`terminalCopy`): where its text came from — that pane's machine, as its user, and folder.
+    private(set) var terminal: (target: SFTPTarget?, folder: String?, pane: UUID)?
+
+    /// The caret at the start of line `n` (from 0), that line at the top of the view as far as the text goes on.
+    private func caret(atLine n: Int) {
+        let starts = ruler.starts, start = starts[min(max(n, 0), starts.count - 1)]
+        textView.setSelectedRange(NSRange(location: start, length: 0))
+        guard let lm = textView.layoutManager, lm.numberOfGlyphs > 0 else { return }
+        let y = lm.lineFragmentRect(forGlyphAt: min(lm.glyphIndexForCharacter(at: start), lm.numberOfGlyphs - 1), effectiveRange: nil).minY
+        textView.scroll(NSPoint(x: 0, y: y + textView.textContainerOrigin.y))
+    }
+
+    /// A read-only copy to compare with (`EditorHost.compare` places it), or a terminal's (`terminalCopy`): `loaded` as a file was read, `file` its name
     /// for its colors. Not a document: no file, draft, save, rename or session, and no lookup finds it.
     static func snapshot(_ loaded: Loaded, file: String?, title: String, place: String, source: AppDelegate.DiffSide? = nil,
                          from: (target: SFTPTarget?, path: String)? = nil) -> Editor {
@@ -239,8 +278,19 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
 
     /// Edit, in a read-only copy of a file: that file's document now, in its place — read again as F4 reads it, a
     /// server's with all of F4's rules — and its comparison goes on. Open in another tab already: that tab takes its place.
+    /// In a terminal's copy: an Untitled with its text.
     func edit() {
-        guard let copy = snapshot, let s = copy.source else { return NSSound.beep() }
+        guard let copy = snapshot else { return NSSound.beep() }
+        guard let s = copy.source else {   // a terminal's copy: an Untitled with its text takes its tab, its draft kept from now on
+            guard terminal != nil, let host, host.tabbed else { return NSSound.beep() }
+            let u = Self.newUntitled(textView.string), at = textView.selectedRange(), y = frame.scroll.contentView.bounds.origin.y
+            u.host = host
+            host.replace(self, with: u)
+            u.textView.setSelectedRange(NSRange(location: min(at.location, u.storage.length), length: 0))
+            u.frame.scroll.contentView.scroll(to: NSPoint(x: u.frame.scroll.contentView.bounds.origin.x, y: y))
+            host.changed(u)
+            return
+        }
         if let other = s.server.flatMap({ Self.editing($0, s.path) }) ?? (s.server == nil ? Self.opened(URL(fileURLWithPath: s.path), nil) : nil) {
             guard other.host?.tabbed == true else { other.revealed(); return flash("“\(other.name)” is open in a tool's editor: edit it there") }
             return host.replace(self, with: other)
@@ -1115,6 +1165,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// where it was read from. nil: a server file's old copy whose server isn't known.
     var terminalPlace: (target: SFTPTarget?, folder: String?, path: String?)? {
         func dir(_ p: String) -> String { (p as NSString).deletingLastPathComponent }
+        if let terminal { return (terminal.target, terminal.folder, nil) }   // a terminal's copy: that pane's place
         if snapshot != nil { return snapshotFrom.map { ($0.target, dir($0.path), $0.path) } ?? (nil, nil, nil) }
         if let server { return (server.target, dir(server.path), server.path) }
         if remote != nil { return nil }

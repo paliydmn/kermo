@@ -64,7 +64,8 @@ private func titles(_ nodes: [AppDelegate.MenuNode]) -> [String] {
         "Connect to Server…", "New SSH Session…", "New Server…", "—", "Overview", "Services…", "Containers…", "Ports & Tunnels ▸", "—",
         "Reopen as Root", "Reopen as User", "—", "Copy SSH Key to Server…", "File History…", "Watch Server…", "Run on Servers…", "—",
         "Disconnect", "Reconnect SSH Session", "Edit SSH Config…", "Production Log"])
-    #expect(titles(AppDelegate.menuItems(app.commands, in: "View")).prefix(8) == ["Sidebar", "Quick View", "Terminal", "Maximize Terminal", "Activity", "—", "Tabs ▸", "Panels ▸"])
+    #expect(titles(AppDelegate.menuItems(app.commands, in: "View")).prefix(9) == ["Sidebar", "Quick View", "Terminal", "Maximize Terminal", "Terminal Pane ▸", "Activity", "—",
+                                                                                 "Tabs ▸", "Panels ▸"])
     #expect(titles(AppDelegate.menuItems(app.commands, in: "View/Sort By")) == ["Name", "Size", "Modified", "—", "Reverse"])
     #expect(titles(AppDelegate.menuItems(app.commands, in: "File/As Administrator")) == [
         "Copy as Administrator…", "Move as Administrator…", "New Folder as Administrator…", "Delete as Administrator…", "—",
