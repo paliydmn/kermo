@@ -195,8 +195,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 if terminal.hasFocus {
                     if terminal.handleKey(e) { return true }
                     if e.isARepeat, let c = keymap[Shortcut(event: e)], Self.editorTerminalKeys[c.id] != nil { return true }   // a held ⌃↩ from the editor, now here: once
-                    if let c = keymap[Shortcut(event: e)], Self.takesFromTerminal(c.id, command: e.modifierFlags.contains(.command)) {   // ⌘1–4 too: back to a panel
-                        run(c.id)
+                    if let c = keymap[Shortcut(event: e)], Self.takesFromTerminal(c.id, command: e.modifierFlags.contains(.command), inText: window.firstResponder is NSText) {   // ⌘1–4 too: back to a panel
+                        run(Self.terminalBranches[c.id] ?? c.id)
                         return true
                     }
                 }
@@ -1272,10 +1272,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// ⌥9 and ⌫ (Enclosing Folder's other key) do (mc's, the shell's).
     static let terminalCmdKeys = Set(terminalBranches.keys).union(["app.palette"])
     /// A key the app takes from the terminal before its program: a terminal command's, any; a `terminalCmdKeys` one's
-    /// with ⌘ only.
-    static func takesFromTerminal(_ id: String, command: Bool) -> Bool { terminalCommands.contains(id) || terminalCmdKeys.contains(id) && command }
-    /// Panel commands whose ⌘ keys in the terminal run its marks' commands — named so in the menus and the key bar there.
+    /// with ⌘ only — the marks' not from a text field (the find bar's: ⌘↑ moves its caret).
+    static func takesFromTerminal(_ id: String, command: Bool, inText: Bool) -> Bool {
+        terminalCommands.contains(id) || terminalCmdKeys.contains(id) && command && !(inText && terminalBranches[id] != nil)
+    }
+    /// Panel commands whose ⌘ keys in the terminal run its marks' commands (its key monitor, their menu items there) —
+    /// named so in the menus and the key bar there. The palette runs what it lists.
     static let terminalBranches = ["go.up": "term.mark.prev", "open.inside": "term.mark.next", "mark.none": "term.output.copy"]
+    /// A mark's command → the panel command whose key it has in the terminal.
+    static let terminalBranchKeys = Dictionary(uniqueKeysWithValues: terminalBranches.map { ($1, $0) })
     /// What acts on the terminal's current pane: while it's shown — from «⋯», or the menu, with a panel's keys too.
     static let terminalPane: Set<String> = ["term.editor", "term.output.editor", "term.output.copy", "term.mark.prev", "term.mark.next"]
     static let terminalCommands = ["view.terminal", "view.terminalFull", "tab.new", "tab.close", "term.split.right", "term.split.down", "term.mark.prev",
@@ -1392,7 +1397,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                                        "admin.move", "file.extract", "file.compress", "file.symlink", "file.hardlink"]
 
     private func perform(_ c: Command, key: Shortcut? = nil) {
-        if terminalActive, let t = Self.terminalBranches[c.id] { return run(t) }   // ⌘↑ ⌘↓ ⇧⌘A in the terminal: its marks'
         // The app's own from another window (⌘N in an editor) run as they are, not as a list's row.
         // From an editor (⌘L its Go to Line): not a list's row's or a parked tab's in the main window.
         if !terminalActive, textEditor == nil, !Self.appWide.contains(c.id) || Self.windowToClose(key: NSApp.keyWindow, main: window) == nil {
@@ -1407,7 +1411,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// A menu item: clicked, or its key — then a list's row may take that key (`listRun`).
     @objc private func menuCommand(_ sender: NSMenuItem) {
-        let id = sender.representedObject as! String
+        var id = sender.representedObject as! String
+        if terminalActive, let t = Self.terminalBranches[id] { id = t }   // Go's and Mark's items in the terminal: its marks' (`terminalBranches`)
         let key = NSApp.currentEvent.flatMap { $0.type == .keyDown ? Shortcut(event: $0) : nil }
         run(id, key: key.flatMap { k in commands.first { $0.id == id }?.keys.contains(k) == true ? k : nil })   // ↩ in an open menu isn't the item's key
     }
@@ -1531,7 +1536,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// Also the key bar's: a click there makes the window key, so only focus and the terminal matter.
     func canRun(_ id: String) -> Bool {
-        if terminalActive { return Self.terminalCommands.contains(id) || Self.terminalCmdKeys.contains(id) }   // the panels' commands: from a panel
+        if terminalActive {   // the panels' commands: from a panel; the marks' keys not in a text field
+            return Self.terminalCommands.contains(id) || Self.terminalCmdKeys.contains(id) && !(Self.terminalBranches[id] != nil && window?.firstResponder is NSText)
+        }
         return !(window?.firstResponder is NSText)
     }
 
@@ -1704,10 +1711,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// «⋯» in the terminal's top row: View ▸ Terminal Pane's items, the marks' with their keys there (`terminalBranches`).
     func terminalMenu() -> NSMenu {
-        let menu = NSMenu(), branch = Dictionary(uniqueKeysWithValues: Self.terminalBranches.map { ($1, $0) })
+        let menu = NSMenu()
         for n in Self.menuItems(commands, in: "View/Terminal Pane") {
             guard case .command(let c) = n else { menu.addItem(.separator()); continue }
-            let key = (branch[c.id].flatMap { b in commands.first { $0.id == b } } ?? c).keys.first
+            let key = (Self.terminalBranchKeys[c.id].flatMap { b in commands.first { $0.id == b } } ?? c).keys.first
             let it = NSMenuItem(title: c.title, action: #selector(menuCommand(_:)), keyEquivalent: key?.menuKey ?? "")
             it.keyEquivalentModifierMask = key?.flags ?? []
             it.target = self

@@ -152,8 +152,6 @@ extension AppDelegate {
     /// Documents whose text is on its way (a question, a new tab's wait): pressed again meanwhile, nothing goes twice.
     static var sending = Set<ObjectIdentifier>()
 
-    /// Edit ▸ Send to Terminal (⌃↩) / Execute in Terminal (⌃⇧↩) in the editor window: its shown tab's selection, else
-    /// the caret's line. Execute without a selection then moves the caret to the next line with something on it.
     /// Open in Editor (⌥⌘O) / Open Output in Editor: the terminal's current pane — its selection, else all it holds (a
     /// full-screen program's screen only), or a command's output (`DropTerminalView.output`) — as a read-only copy in the
     /// editor window, in memory only till its Edit. Send / Execute from it go into that pane while it takes text, else as
@@ -165,9 +163,11 @@ extension AppDelegate {
         let copy = Editor.terminalCopy(text, line: line, title: "\(output ? "Output" : "Terminal") — \(host ?? t.label) \(at)",
                                        place: t.folder.map { DocFrame.place($0, host: host) } ?? host ?? "", chips: EmbeddedTerminal.chips(t),
                                        target: t.target, folder: t.folder, pane: t.id)
-        claim(t, for: copy)
+        Self.ownTabs.setObject(t.id as NSUUID, forKey: copy)   // not `claim`: a script's document keeps the tab too
     }
 
+    /// Edit ▸ Send to Terminal (⌃↩) / Execute in Terminal (⌃⇧↩) in the editor window: its shown tab's selection, else
+    /// the caret's line. Execute without a selection then moves the caret to the next line with something on it.
     func editorToTerminal(run: Bool) {
         guard let h = editorKey, let e = h.active else { return NSSound.beep() }
         guard e.cover == nil else { NSSound.beep(); return e.flash("Its text isn't here yet") }

@@ -249,13 +249,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
 
     /// The caret at the start of line `n` (from 0), that line at the top of the view as far as the text goes on.
     private func caret(atLine n: Int) {
-        let text = textView.string as NSString
-        var start = 0
-        for _ in 0..<n {
-            let r = text.range(of: "\n", range: NSRange(location: start, length: text.length - start))
-            if r.location == NSNotFound { break }
-            start = NSMaxRange(r)
-        }
+        let starts = ruler.starts, start = starts[min(max(n, 0), starts.count - 1)]
         textView.setSelectedRange(NSRange(location: start, length: 0))
         guard let lm = textView.layoutManager, lm.numberOfGlyphs > 0 else { return }
         let y = lm.lineFragmentRect(forGlyphAt: min(lm.glyphIndexForCharacter(at: start), lm.numberOfGlyphs - 1), effectiveRange: nil).minY

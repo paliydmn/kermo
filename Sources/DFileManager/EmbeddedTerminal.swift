@@ -1095,6 +1095,9 @@ final class DropTerminalView: LocalProcessTerminalView {
     private(set) var marks: [Mark] = []
     /// The last look's rows held (the scrollback and the screen) and columns: fewer rows, other columns — renumbered.
     private var seen: (held: Int, cols: Int)?
+    /// Its shell has turned bracketed paste on (zsh, bash 5.1+, fish do it at the prompt only, off while a command
+    /// runs): from then on a ↩ without it isn't a command's — one pressed into `make`'s output, `read`, a password.
+    private var promptSaysSo = false
     /// The mark ⌘↑ / ⌘↓ went to, and the top row in view then. Scrolled since, or typed: from the view or the last again.
     private var at: (row: Int, top: Int)?
 
@@ -1131,14 +1134,15 @@ final class DropTerminalView: LocalProcessTerminalView {
 
     /// The normal screen now (absolute rows: the first held, the cursor's, the live screen's top), its marks checked
     /// against it; nil before the view has a terminal. Not under the terminal's lock (it takes it).
-    private func look() -> (top: Int, cursor: Int, live: Int, alt: Bool)? {
+    private func look() -> (top: Int, cursor: Int, live: Int, alt: Bool, bracketed: Bool)? {
         guard let s = terminalContentSnapshot(region: .rows(0..<0), buffer: .normal) else { return nil }
         let held = s.liveTopRow + s.dimensions.rows, top = s.capturedRange.lowerBound
         if let seen, held < seen.held || s.dimensions.cols != seen.cols { dropMarks() }
         seen = (held, s.dimensions.cols)
         marks.removeAll { $0.row < top || $0.row > s.cursorRow }
         for i in marks.indices where marks[i].text == nil { marks[i].text = rowText(marks[i].row) }
-        return (top, s.cursorRow, s.liveTopRow, s.inputState.isAlternateBuffer)
+        if s.inputState.bracketedPasteMode { promptSaysSo = true }
+        return (top, s.cursorRow, s.liveTopRow, s.inputState.isAlternateBuffer, s.inputState.bracketedPasteMode)
     }
 
     private func rowText(_ row: Int) -> String? { terminalContentSnapshot(region: .rows(row..<row + 1), buffer: .normal)?.rows.first?.text }
@@ -1158,9 +1162,10 @@ final class DropTerminalView: LocalProcessTerminalView {
         return nil
     }
 
-    /// ↩ on its way to the program: a mark on the first row of the cursor's line (a long command wraps), one per row.
+    /// ↩ on its way to the program: a mark on the first row of the cursor's line (a long command wraps), one per row —
+    /// not in a full-screen program, nor where the shell says it isn't at its prompt (`promptSaysSo`).
     private func markReturn() {
-        guard let now = look(), !now.alt,
+        guard let now = look(), !now.alt, now.bracketed || !promptSaysSo,
               let s = terminalContentSnapshot(region: .rows(max(now.top, now.cursor - 50)..<now.cursor + 1), buffer: .normal),
               var i = s.rows.indices.last else { return }
         while i > 0, s.rows[i].isWrapped { i -= 1 }
@@ -1178,7 +1183,7 @@ final class DropTerminalView: LocalProcessTerminalView {
         let view = now.top + terminalStateSnapshot().viewportRow
         let from = at.flatMap { $0.top == view ? $0.row : nil } ?? (view != now.live ? view : d < 0 ? now.cursor + 1 : nil)
         var row = from.flatMap { mark(from: $0, d)?.row }
-        if let p = (d < 0 ? previousSemanticPromptRow() : nextSemanticPromptRow()).map({ $0 + now.top }), p < marks.first?.row ?? .max,
+        if from != nil, let p = (d < 0 ? previousSemanticPromptRow() : nextSemanticPromptRow()).map({ $0 + now.top }), p < marks.first?.row ?? .max,
            d < 0 ? row == nil : p < row ?? .max { row = p }
         guard let row else {
             guard d > 0, at != nil || view != now.live else { return false }
@@ -1193,12 +1198,12 @@ final class DropTerminalView: LocalProcessTerminalView {
         return true
     }
 
-    private weak var markBar: NSView?
+    private(set) weak var markBar: NSView?
     /// A bar left of the `n`th row in view for a moment: where ⌘↑ / ⌘↓ went, scrolled there or not.
     private func showMark(_ n: Int) {
         markBar?.removeFromSuperview()
         let h = caretFrame.height > 0 ? caretFrame.height : bounds.height / CGFloat(max(terminalStateSnapshot().dimensions.rows, 1))
-        let bar = NSView(frame: NSRect(x: 0, y: CGFloat(n) * h, width: 3, height: h))   // flipped: rows from the top
+        let bar = NSView(frame: NSRect(x: 0, y: bounds.height - CGFloat(n + 1) * h, width: 3, height: h))   // as SwiftTerm puts its caret: rows from the top, y up
         bar.wantsLayer = true
         bar.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
         bar.layer?.cornerRadius = 1.5

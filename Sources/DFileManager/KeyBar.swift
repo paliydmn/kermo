@@ -180,13 +180,11 @@ final class KeyBarView: NSView {
     func reload(_ commands: [Command]) {
         self.commands = commands
         layers = KeyBarModel.layers(commands, server: server, archive: archive)
-        // A mark's command (no key of its own) by the panel command whose ⌘ key it takes there: ⌘↑ Prev Mark.
-        let branch = Dictionary(uniqueKeysWithValues: AppDelegate.terminalBranches.map { ($1, $0) })
+        // A mark's command (no key of its own) with the key of the panel command it takes it from there: ⌘↑ Prev Mark.
         terminalLayers = KeyBarModel.layers(AppDelegate.terminalCommands.compactMap { id in
-            guard let c = commands.first(where: { $0.id == id }) else { return nil }
-            guard var b = branch[id].flatMap({ b in commands.first { $0.id == b } }) else { return c }
-            b.short = KeyBarModel.label(c)
-            return b
+            guard var c = commands.first(where: { $0.id == id }) else { return nil }
+            if let b = AppDelegate.terminalBranchKeys[id].flatMap({ b in commands.first { $0.id == b } }) { c.keys = b.keys }
+            return c
         }, terminal: true)
         render()
     }

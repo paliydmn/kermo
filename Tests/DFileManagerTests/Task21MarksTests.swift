@@ -38,8 +38,9 @@ private func lines(_ n: Int, _ p: String) -> [String] { (0..<n).map { "\(p) \($0
 }
 
 /// M1: ↩ marks the first row of the line it was typed on — not in a full-screen program, one per row; not ⌃↩ (the
-/// app's). Kermo's own lines: a ↩ that runs marks, a bracketed paste's line breaks don't (Send to Terminal's: the line
-/// waits for its ↩); Execute's ↩ after its paste does.
+/// app's); not while a shell that turns bracketed paste on at its prompt has it off (a command runs, `read`). Kermo's
+/// own lines: a ↩ that runs marks, a bracketed paste's line breaks don't (Send to Terminal's: the line waits for its
+/// ↩); Execute's ↩ after its paste does.
 @MainActor @Test func aReturnMarksTheLineItWasTypedOn() throws {
     let v = view()
     v.feed(text: "$ ")
@@ -65,6 +66,15 @@ private func lines(_ n: Int, _ p: String) -> [String] { (0..<n).map { "\(p) \($0
     enter(w)
     #expect(w.marks.map(\.row) == [0])
 
+    let z = view()   // zsh: bracketed paste on at its prompt, off while `make` runs
+    z.feed(text: "\u{1b}[?2004h$ make")
+    enter(z)
+    z.feed(text: "\u{1b}[?2004l\r\nbuilding\r\n")
+    enter(z)   // ↩ pressed into the output
+    z.feed(text: "done\r\n\u{1b}[?2004h$ ls")
+    enter(z)
+    #expect(z.marks.map(\.row) == [0, 3])
+
     #expect(DropTerminalView.returns(ArraySlice("ls\r".utf8)) && DropTerminalView.returns(ArraySlice("\u{15}\u{1b}[200~ls\u{1b}[201~\r".utf8)))
     #expect(!DropTerminalView.returns(ArraySlice("\u{1b}[200~ls\rpwd\r\u{1b}[201~".utf8)) && !DropTerminalView.returns(ArraySlice("\u{1b}[A".utf8)))
 
@@ -79,7 +89,7 @@ private func lines(_ n: Int, _ p: String) -> [String] { (0..<n).map { "\(p) \($0
 
 /// M2: ⌘↑ from the live screen is the last command, then the one before; its row goes to the top as far as it scrolls;
 /// ⌘↓ the next, and after the last the live screen; ⌘↓ there — nowhere. Typing: from the last again.
-@MainActor @Test func cmdUpAndDownGoFromMarkToMark() {
+@MainActor @Test func cmdUpAndDownGoFromMarkToMark() throws {
     let v = view(rows: 10)
     v.feed(text: "$ ")
     run(v, "one", lines(30, "o"))   // row 0
@@ -90,6 +100,8 @@ private func lines(_ n: Int, _ p: String) -> [String] { (0..<n).map { "\(p) \($0
     #expect(v.goToMark(by: -1) && live(v), "the last command is on the screen: nowhere to scroll")
     #expect(v.output() == "3")
     #expect(v.goToMark(by: -1) && top(v) == "$ two" && v.output() == lines(30, "t").joined(separator: "\n"), "⌘↑ ⌘↑ ⇧⌘A: the one before's")
+    let bar = try #require(v.markBar), h = v.caretFrame.height
+    #expect(!v.isFlipped && h > 0 && abs(bar.frame.maxY - v.bounds.maxY) < 0.5 && abs(bar.frame.height - h) < 0.5, "beside the top row: y goes up")
     #expect(v.goToMark(by: -1) && top(v) == "$ one")
     #expect(!v.goToMark(by: -1), "none before")
     #expect(v.goToMark(by: 1) && top(v) == "$ two")
@@ -155,7 +167,7 @@ private func lines(_ n: Int, _ p: String) -> [String] { (0..<n).map { "\(p) \($0
     v.feed(text: "clear && cat big")
     enter(v)
     v.feed(text: "\r\n\u{1b}[H\u{1b}[2J\u{1b}[3J" + lines(100, "b").map { $0 + "\r\n" }.joined() + "$ ")
-    #expect(v.output().map { !$0.contains("o ") && !$0.contains("t ") } == true, "its own rows only")
+    #expect(v.output() == lines(100, "b").dropFirst(43).joined(separator: "\n"), "a known limit: its own rows after its mark's row")
     var stops = 0
     while v.goToMark(by: -1) { stops += 1 }
     #expect(stops == 1, "its own mark only: one's and two's rows hold other lines now")
@@ -283,25 +295,32 @@ extension EditorWindowTests {
         #expect(app.terminalActive)
         run(tab.view, "one", lines(60, "o"))
         run(tab.view, "two", ["2"])
-        app.run("go.up")
-        app.run("go.up")
-        #expect(top(tab.view) == "$ one")
-        app.run("mark.none")
-        #expect(tab.view.pasteboard.string(forType: .string) == lines(60, "o").joined(separator: "\n"))
-        app.run("open.inside")
-        #expect(live(tab.view))
-
         let menu = app.makeMenu(), item = { (id: String) in menu.allItems.first { $0.representedObject as? String == id }! }
+        let click = { (id: String) in _ = app.perform(item(id).action!, with: item(id)) }   // the menu item, as its key from the menu
+        click("go.up")
+        click("go.up")
+        #expect(top(tab.view) == "$ one")
+        click("mark.none")
+        #expect(tab.view.pasteboard.string(forType: .string) == lines(60, "o").joined(separator: "\n"))
+        click("open.inside")
+        #expect(live(tab.view))
+        tab.view.pasteboard.clearContents()
+        app.run("mark.none")   // the palette's "Unmark All": the panel's, not the clipboard
+        #expect(tab.view.pasteboard.string(forType: .string) == nil)
+
         for (id, title) in [("go.up", "Previous Mark"), ("open.inside", "Next Mark"), ("mark.none", "Copy Output of Last Command")] {
             _ = app.validateMenuItem(item(id))
             #expect(item(id).title == title)
         }
-        #expect(AppDelegate.takesFromTerminal("go.up", command: true) && !AppDelegate.takesFromTerminal("go.up", command: false), "⌫: the shell's")
+        #expect(AppDelegate.takesFromTerminal("go.up", command: true, inText: false) && !AppDelegate.takesFromTerminal("go.up", command: false, inText: false), "⌫: the shell's")
+        #expect(!AppDelegate.takesFromTerminal("go.up", command: true, inText: true) && AppDelegate.takesFromTerminal("app.palette", command: true, inText: true),
+                "⌘↑ in the find bar's field moves its caret")
         let bar = KeyBarView()
         bar.terminalShown = { true }
         bar.frame = NSRect(x: 0, y: 0, width: 2000, height: 30)
         bar.reload(app.commands)
-        #expect(bar.shownSlots.contains(KeySlot(key: "⌘↑", label: "Prev Mark", id: "go.up")) && bar.shownSlots.contains(KeySlot(key: "⇧⌘A", label: "Copy Output", id: "mark.none")))
+        #expect(bar.shownSlots.contains(KeySlot(key: "⌘↑", label: "Prev Mark", id: "term.mark.prev"))
+                && bar.shownSlots.contains(KeySlot(key: "⇧⌘A", label: "Copy Output", id: "term.output.copy")))
         let more = app.terminalMenu()
         #expect(more.items.map { $0.isSeparatorItem ? "—" : $0.title + " " + $0.keyEquivalent } == ["Open in Editor o", "Open Output in Editor ", "Copy Output of Last Command a", "—",
                                                                                                   "Previous Mark \u{F700}", "Next Mark \u{F701}"])
@@ -309,7 +328,8 @@ extension EditorWindowTests {
         let view = submenu(menu, "View/Terminal Pane")?.items.map(\.title)
         #expect(view == ["Open in Editor", "Open Output in Editor", "Copy Output of Last Command", "", "Previous Mark", "Next Mark"])
 
-        term.setFull(false)
+        term.setFull(false)   // the drawer, the keys in a panel
+        #expect(!app.terminalActive && app.validateMenuItem(item("term.editor")), "⌥⌘O: the drawer's pane, from a panel too")
         _ = term.hide()
         #expect(!app.terminalActive)
         for (id, title) in [("go.up", "Enclosing Folder"), ("open.inside", "Open Inside"), ("mark.none", "Unmark All")] {
@@ -331,6 +351,8 @@ extension EditorWindowTests {
         let h = fresh(dir + "/drafts")
         let (app, _, tab) = try app("root@dfm-t21.invalid")
         tab.cwd = "/var/log"
+        let script = NSObject()   // a document Execute ran in this pane before
+        AppDelegate.ownTabs.setObject(tab.id as NSUUID, forKey: script)
         run(tab.view, "seq", lines(40, "l"))
         tab.view.scrollTo(row: 21)   // "l 20" at the top
         app.terminalToEditor(output: false)
@@ -343,6 +365,7 @@ extension EditorWindowTests {
         let place = try #require(e.terminalPlace)
         #expect(place.target == SFTPTarget(host: "root@dfm-t21.invalid") && place.folder == "/var/log" && place.path == nil)
         #expect(AppDelegate.ownTabs.object(forKey: e) == tab.id as NSUUID, "Execute: into the pane it came from")
+        #expect(AppDelegate.ownTabs.object(forKey: script) == tab.id as NSUUID, "the script's tab stays its")
 
         app.terminalToEditor(output: false)
         let again = try #require(h.active)
