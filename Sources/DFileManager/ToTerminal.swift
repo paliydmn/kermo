@@ -13,10 +13,10 @@ extension EmbeddedTerminal.Tab {
     var takesText: Bool {
         guard isRunning else { return false }
         if host == nil { return isAtPrompt }
-        let t = view.getTerminal()
-        return t.bracketedPasteMode && !t.isCurrentBufferAlternate
+        guard let t = view.terminalInputStateSnapshot() else { return false }
+        return t.bracketedPasteMode && !t.isAlternateBuffer
     }
-    var bracketed: Bool { view.getTerminal().bracketedPasteMode }
+    var bracketed: Bool { view.terminalInputStateSnapshot()?.bracketedPasteMode ?? false }
 }
 
 extension EmbeddedTerminal {

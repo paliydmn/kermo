@@ -8,7 +8,7 @@ import SwiftTerm
 /// the current pane when it's a local shell: the active panel follows its `cd`, and goes to its folder when it hides;
 /// showing it again `cd`s it to the panel's.
 @MainActor
-final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalViewDelegate, NSSplitViewDelegate {
+final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSplitViewDelegate {
     enum Kind: Equatable { case shell, ssh(SFTPTarget) }
 
     @MainActor
@@ -17,7 +17,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         let kind: Kind
         let view: DropTerminalView
         var title = ""            // set by the remote / local shell (OSC 0/2)
-        var exitStatus: Int32?    // set when the process ended (raw wait status; -1 = never started)
+        var exitStatus: Int32?    // set when the process's end was told (raw wait status; -1 = never started, `bySignal`)
         var reconnect: NSButton?
         var command: String?      // SSH: what to run instead of a login shell, once
         var cwd: String?          // the folder its shell last told (OSC 7); SSH: on the server
@@ -35,6 +35,10 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             for v in [header, view] { v.widthAnchor.constraint(equalTo: box.widthAnchor).isActive = true }   // `.width` alone sizes them to each other
             header.isHidden = true
             view.acceptsLocalPaths = kind == .shell
+            // The folder a server's shell tells (OSC 7) is never taken for one of this Mac's. ponytail: SwiftTerm still
+            // reads a path a server prints as this Mac's (relative to Kermo's own folder, or absolute if it exists here)
+            // — task 21 PR 4's links need their own rule for SSH tabs; the gate opens nothing till then.
+            view.resolvesLinksAgainstShellDirectory = kind == .shell
             // Lines pasted by a right-click into a production server, or as root, ask first.
             if case .ssh(let t) = kind {
                 view.pasteRisk = {
@@ -182,15 +186,11 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         topRow.widthAnchor.constraint(equalTo: container.widthAnchor, constant: -12).isActive = true
         content.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         wrap()
-        // SwiftTerm's scrollWheel and mouseDown aren't open: the pane under the mouse sees these first.
-        NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown, .leftMouseUp]) { [weak self] e in
-            guard let self else { return e }
-            if e.type == .leftMouseUp { tabs.forEach { $0.view.mouseReleased() }; return e }
-            guard let g = group, let i = paneIndex(under: e, in: g) else { return e }
-            let v = g.panes[i].view
-            if e.type == .scrollWheel { return v.wheel(e) ? nil : e }
-            if i != g.focused { g.focused = i; render() }   // the click makes its view first responder itself
-            v.shiftDown(e)
+        // A click in another pane focuses it (the click makes its view first responder itself).
+        NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] e in
+            guard let self, let g = group, let i = paneIndex(under: e, in: g), i != g.focused else { return e }
+            g.focused = i
+            render()
             return e
         }
     }
@@ -472,7 +472,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         let t = DropTerminalView(frame: host.bounds)
         t.processDelegate = self
         t.font = Self.font(size: fontSize)
-        t.getTerminal().changeHistorySize(10_000)   // ponytail: fixed; a `terminalScrollback` key if someone asks
+        t.changeScrollback(10_000)   // ponytail: fixed; a `terminalScrollback` key if someone asks
         t.optionAsMetaKey = UserDefaults.standard.object(forKey: "terminalOptionIsMeta") as? Bool ?? true   // false: ⌥ types the layout's @ | [ ]
         paint(t)
         return t
@@ -536,7 +536,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
 
     private func start(_ tab: Tab, cwd: String?) {
         tab.exitStatus = nil
-        tab.view.feed(text: "\u{1b}[?2004l")   // a dropped session's bracketed paste isn't the new one's (`takesText`)
+        tab.view.say("\u{1b}[?2004l")   // a dropped session's bracketed paste isn't the new one's (`takesText`)
         tab.cwd = nil
         tab.reconnect?.removeFromSuperview()
         tab.reconnect = nil
@@ -553,7 +553,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             }
             Task {
                 guard await ServerLock.authorize(t) else {
-                    tab.view.feed(text: "\(t.host) stays locked\r\n")
+                    tab.view.say("\(t.host) stays locked\r\n")
                     return ended(tab, status: -1)
                 }
                 if tabs.contains(where: { $0 === tab }) { login(tab, ServerLock.locking(t)) }
@@ -566,10 +566,10 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     /// password logs in first, in the background through askpass; ssh then rides on that connection.
     private func login(_ tab: Tab, _ t: SFTPTarget) {
         guard SFTP.hasPassword(t) else { return startSSH(tab, t) }
-        tab.view.feed(text: "Logging in to \(t.host)…\r\n")
+        tab.view.say("Logging in to \(t.host)…\r\n")
         Task {
             let r = await Blocking.run { Result { try SFTP.startMaster(t, env: SSHAskpass.env) } }
-            if case .failure(let e) = r { tab.view.feed(text: e.localizedDescription.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n") }
+            if case .failure(let e) = r { tab.view.say(e.localizedDescription.replacingOccurrences(of: "\n", with: "\r\n") + "\r\n") }
             if tabs.contains(where: { $0 === tab }) { startSSH(tab, t) }   // failed: ssh asks in the tab
         }
     }
@@ -596,27 +596,14 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         }
     }
 
-    /// Starts the tab's process and watches for its end itself: SwiftTerm drops the exit when it reads the pty's
-    /// end first (`exit`, a dropped connection). Whoever reaps the process first has its status; `finished` once.
+    /// Starts the tab's process. SwiftTerm reaps it and tells `processTerminated` (also when it reads the pty's end
+    /// first), or `processFailedToStart`. It ignores a start until it has told the last process's end — so a tab starts
+    /// again only after `exitStatus` is set (`reconnect`).
     func launch(_ tab: Tab, _ executable: String, _ args: [String], execName: String? = nil, cwd: String?) {
+        assert(tab.view.process.map { !$0.running && !$0.windingDown } ?? true, "started while its last process is there")
         TunnelListener.forking {   // a tunnel's socket half made now would go with the shell, its port held while it runs
             tab.view.startProcess(executable: executable, args: args, environment: Self.environment, execName: execName, currentDirectory: cwd)
         }
-        guard let p = tab.view.process, p.running, p.shellPid > 0 else { return }
-        let pid = p.shellPid
-        // Each process's watch lives (its handler holds it) until that process is gone and reaped, whatever became of
-        // the tab: closed, or started again after the pty ended but before the old process did.
-        let watch = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
-        watch.setEventHandler { [weak self, weak tab] in
-            MainActor.assumeIsolated {
-                watch.cancel()
-                // -1 (ECHILD): SwiftTerm's own watch reaped it, and has already told processTerminated.
-                var status: Int32 = 0
-                guard waitpid(pid, &status, WNOHANG) == pid, let self, let tab, tab.view.process?.shellPid == pid else { return }
-                self.finished(tab, status: status)
-            }
-        }
-        watch.activate()
     }
 
     /// A session's sidebar row: its tab, that pane focused.
@@ -704,7 +691,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         kill(pid, SIGHUP)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             MainActor.assumeIsolated {
-                if tab.isRunning { killpg(pid, SIGKILL) }   // forkpty made it a session (group) leader
+                if tab.view.process?.shellPid == pid { killpg(pid, SIGKILL) }   // forkpty made it a session (group) leader
                 self?.closing.removeAll { $0 === tab && !tab.isRunning }
             }
         }
@@ -735,10 +722,10 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         }
     }
 
-    /// Reconnects the current SSH tab (or the one given) if its `ssh` has ended.
+    /// Reconnects the current SSH tab (or the one given) once its `ssh`'s end was told — not while it logs in or runs.
     func reconnect(_ id: UUID? = nil) {
-        guard let tab = id.map({ i in tabs.first { $0.id == i } }) ?? current, tab.host != nil, !tab.isRunning else { return NSSound.beep() }
-        tab.view.feed(text: "\r\n")
+        guard let tab = id.map({ i in tabs.first { $0.id == i } }) ?? current, tab.host != nil, tab.exitStatus != nil else { return NSSound.beep() }
+        tab.view.say("\r\n")
         start(tab, cwd: nil)
         render()
     }
@@ -748,10 +735,10 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     func handleKey(_ e: NSEvent) -> Bool {
         guard isShown, let t = current else { return false }
         if Shortcut(event: e) == Shortcut("cmd+k") {
-            if t.view.getTerminal().isCurrentBufferAlternate { return true }
+            if t.view.terminalInputStateSnapshot()?.isAlternateBuffer == true { return true }
             // The scrollback and every line above the cursor's go; the cursor's line (the prompt) moves to the top.
-            let (x, y) = t.view.getTerminal().getCursorLocation()
-            t.view.feed(text: "\u{1b}[3J" + (y > 0 ? "\u{1b}[\(y)S" : "") + "\u{1b}[1;\(x + 1)H")
+            let c = t.view.terminalStateSnapshot().cursor
+            t.view.say("\u{1b}[3J" + (c.row > 0 ? "\u{1b}[\(c.row)S" : "") + "\u{1b}[1;\(c.col + 1)H")
             return true
         }
         guard t.host != nil, !t.isRunning, !t.view.findBarHasKeys,   // ↩ and ⎋ in the find bar are the bar's
@@ -880,8 +867,8 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
     private func ended(_ tab: Tab, status: Int32) {
         tab.exitStatus = status
         guard let h = tab.host else { return }
-        let why = status == -1 ? "Not connected" : SSHCommand.describe(status: status)
-        tab.view.feed(text: "\r\n\u{1b}[2m[\(h): \(why)] ↩ Reconnect   ⎋ Close\u{1b}[0m\r\n")
+        let why = status == -1 ? "Not connected" : status == Self.bySignal ? "ssh ended by a signal" : SSHCommand.describe(status: status)
+        tab.view.say("\r\n\u{1b}[2m[\(h): \(why)] ↩ Reconnect   ⎋ Close\u{1b}[0m\r\n")
         let b = NSButton(title: "Reconnect", target: self, action: #selector(reconnectClicked(_:)))
         b.bezelStyle = .rounded
         b.keyEquivalent = ""
@@ -939,17 +926,26 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
         render()
     }
 
+    /// An exit status SwiftTerm doesn't tell: the process was killed (its exit code is nil then).
+    static let bySignal: Int32 = -2
+
+    /// The process is reaped and its last output shown; SwiftTerm takes a new start from now on (Reconnect, as soon as
+    /// `exitStatus` says so).
     func processTerminated(source: TerminalView, exitCode: Int32?) {
-        DispatchQueue.main.async { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, let tab = (self.tabs + self.closing).first(where: { $0.view === source }) else { return }
-                self.finished(tab, status: exitCode ?? 0)
-            }
-        }
+        guard let tab = (tabs + closing).first(where: { $0.view === source }) else { return }
+        finished(tab, status: exitCode.map { $0 << 8 } ?? Self.bySignal)   // the tab's raw wait status
     }
 
-    /// The tab's process ended (told by SwiftTerm or by `launch`'s watch; the second word is dropped). `exit` in a
-    /// shell closes its tab (the next ⌃O starts a fresh shell); an SSH tab stays, disconnected.
+    /// fork or the pty's writer failed (SwiftTerm has said so in the tab): an SSH tab offers Reconnect; a shell's tab
+    /// stays, saying why, and closes without asking.
+    func processFailedToStart(source: TerminalView, error: LocalProcessError) {
+        guard let tab = tabs.first(where: { $0.view === source }) else { return }
+        guard tab.host != nil else { tab.exitStatus = -1; return }
+        finished(tab, status: -1)
+    }
+
+    /// The tab's process ended. `exit` in a shell closes its tab (the next ⌃O starts a fresh shell); an SSH tab stays,
+    /// disconnected.
     private func finished(_ tab: Tab, status: Int32) {
         guard tab.exitStatus == nil else { return }
         tab.exitStatus = status
@@ -995,8 +991,20 @@ final class DropTerminalView: LocalProcessTerminalView {
     static var leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 }
 
     // A find's match is a selection too (SwiftTerm's find bar, ⌘F, ⌘G): it never goes to the clipboard. Decided as the
-    // selection changes: SwiftTerm 1.99 calls `selectionChanged` off the main actor, and the copy must hop there later.
-    private var finding = false
+    // selection changes (`selectionChanged`), not after a hop to the main queue: these flags are gone by then.
+    private var finding = false, saying = false
+    /// Kermo's own words in the tab (a session's end, "Logging in…", ⌘K's clear): a program's output to the selection —
+    /// one they move up (the scrollback full) isn't copied again: it may be a find's match.
+    func say(_ text: String) { quietly { feed(text: text) } }
+    override func processFailedToStart(_ source: LocalProcess, error: LocalProcessError) {   // SwiftTerm says why in the tab
+        quietly { super.processFailedToStart(source, error: error) }
+    }
+    private func quietly(_ body: () -> Void) {
+        let was = saying
+        saying = true
+        defer { saying = was }   // one inside another (a failed start's `ended`)
+        body()
+    }
     override func performTextFinderAction(_ sender: Any?) {
         finding = true
         defer { finding = false }
@@ -1023,14 +1031,21 @@ final class DropTerminalView: LocalProcessTerminalView {
         return inFindBar(e)
     }
 
-    override func selectionChanged(source: Terminal) {
+    /// Called with the terminal's lock held: the copy (`getSelection` takes the lock) waits for the main queue. Off the
+    /// main thread it's the program's output dropping or moving the selection: nothing to copy.
+    nonisolated override func selectionChanged(source: Terminal) {
         super.selectionChanged(source: source)
-        guard Self.on("terminalCopyOnSelect"), !finding, !findBarDrives else { return }
-        guard Self.leftButtonDown() else { return copySelection() }   // ⌘A, or made at once
-        guard upMonitor == nil else { return }   // dragging: once, when it ends — not on every move
-        upMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] e in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.dragEnded() } }   // after the view's own mouseUp
-            return e
+        guard Thread.isMainThread else { return }
+        MainActor.assumeIsolated {
+            guard Self.on("terminalCopyOnSelect"), !finding, !saying, !findBarDrives else { return }
+            guard Self.leftButtonDown() else {   // ⌘A, or made at once
+                return DispatchQueue.main.async { MainActor.assumeIsolated { self.copySelection() } }
+            }
+            guard upMonitor == nil else { return }   // dragging: once, when it ends — not on every move
+            upMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] e in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.dragEnded() } }   // after the view's own mouseUp
+                return e
+            }
         }
     }
 
@@ -1047,7 +1062,7 @@ final class DropTerminalView: LocalProcessTerminalView {
         pasteboard.setString(text, forType: .string)
     }
 
-    /// A plain right-click is the program's when it reads the mouse itself; ⇧ pastes there anyway.
+    /// A plain right-click is the program's when it reads the mouse itself (SwiftTerm reports it); ⇧ pastes there anyway.
     nonisolated static func rightClickPastes(shift: Bool, programReadsMouse: Bool) -> Bool { shift || !programReadsMouse }
 
     /// Several lines into a shell that runs each as it comes (no bracketed paste), where that's risky: ask.
@@ -1055,62 +1070,15 @@ final class DropTerminalView: LocalProcessTerminalView {
 
     override func rightMouseDown(with event: NSEvent) {
         guard Self.on("terminalRightClickPaste"),
-              Self.rightClickPastes(shift: event.modifierFlags.contains(.shift), programReadsMouse: allowMouseReporting && getTerminal().mouseMode != .off)
+              Self.rightClickPastes(shift: event.modifierFlags.contains(.shift), programReadsMouse: allowMouseReporting && currentMouseMode != .off)
         else { return super.rightMouseDown(with: event) }
         window?.makeFirstResponder(self)
         guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return NSSound.beep() }
-        let risk = pasteRisk(), ask = Self.pasteAsks(text, bracketed: getTerminal().bracketedPasteMode, risky: risk != nil)
+        let risk = pasteRisk(), ask = Self.pasteAsks(text, bracketed: terminalInputStateSnapshot()?.bracketedPasteMode ?? false, risky: risk != nil)
         Task {
             if ask, let risk, await !Self.pasteQuestion(text, risk, window) { return }
             paste(self)   // as ⌘V: bracketed when the shell asked for it
         }
-    }
-
-    /// OSC 52 (Claude Code's, tmux's, vim's copy): the program's text into the clipboard, a server's too. SwiftTerm
-    /// drops it on the Mac. A read (`?`) would hand the clipboard to the program: never answered. Nor does a tab you
-    /// aren't looking at write it.
-    func osc52(_ data: ArraySlice<UInt8>) {
-        guard !isHiddenOrHasHiddenAncestor, let semi = data.firstIndex(of: UInt8(ascii: ";")), data[(semi + 1)...].first != UInt8(ascii: "?"),
-              let bytes = Data(base64Encoded: Data(data[(semi + 1)...]), options: .ignoreUnknownCharacters),
-              let text = String(data: bytes, encoding: .utf8), !text.isEmpty else { return }
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-    }
-
-    private var wheelRest: CGFloat = 0   // a trackpad's fractions of a line, till they make one
-    /// The wheel in a program that reads the mouse (Claude Code, htop, vim's mouse=a) is its wheel, as in Terminal.app:
-    /// SwiftTerm only scrolls its own scrollback, and a full-screen program has none. False: SwiftTerm's.
-    func wheel(_ e: NSEvent) -> Bool {
-        let t = getTerminal()
-        guard allowMouseReporting, t.mouseMode != .off else { return false }
-        wheelRest += e.deltaY
-        let n = Int(wheelRest)
-        wheelRest -= CGFloat(n)
-        guard n != 0, bounds.width > 0, bounds.height > 0 else { return true }
-        // ponytail: the cell from the view's size (SwiftTerm's cell size isn't public); off by the scroller's width at most
-        let p = convert(e.locationInWindow, from: nil)
-        let col = min(t.cols - 1, max(0, Int(p.x / bounds.width * CGFloat(t.cols))))
-        let row = min(t.rows - 1, max(0, Int((bounds.height - p.y) / bounds.height * CGFloat(t.rows))))
-        let f = e.modifierFlags
-        let flags = t.encodeButton(button: n > 0 ? 4 : 5, release: false, shift: f.contains(.shift), meta: f.contains(.option), control: f.contains(.control))
-        for _ in 0..<abs(n) { t.sendEvent(buttonFlags: flags, x: col, y: row) }
-        return true
-    }
-
-    private var shiftSelecting = false
-    /// ⇧-drag (xterm's) or ⌥-drag (iTerm's) in a program that reads the mouse selects here instead: the program gets no
-    /// mouse till the button is up. Its next redraw clears the selection, so it's copied then (`mouseReleased`).
-    func shiftDown(_ e: NSEvent) {
-        guard !e.modifierFlags.isDisjoint(with: [.shift, .option]), allowMouseReporting, getTerminal().mouseMode != .off, !inFindBar(e) else { return }
-        allowMouseReporting = false
-        shiftSelecting = true
-    }
-
-    func mouseReleased() {
-        guard shiftSelecting else { return }
-        shiftSelecting = false
-        copySelection()
-        DispatchQueue.main.async { MainActor.assumeIsolated { self.allowMouseReporting = true } }   // after SwiftTerm's mouseUp: no release without a press
     }
 
     private lazy var gate = TerminalGate(self)   // `terminalDelegate` is weak: the view keeps it
@@ -1118,8 +1086,12 @@ final class DropTerminalView: LocalProcessTerminalView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         registerForDraggedTypes([.fileURL])
-        getTerminal().registerOscHandler(code: 52) { [weak self] d in MainActor.assumeIsolated { self?.osc52(d) } }
         terminalDelegate = gate
+        // Nothing in the text is a link to click (task 21 PR 4 opens visible ones): no lookups as the mouse moves, an
+        // OSC 8 link takes only a ⌘-click — which the gate refuses. A click on an OSC 133 prompt doesn't move the cursor.
+        linkReporting = .none
+        linkHighlightMode = .alwaysWithModifier
+        semanticPromptClickBehavior = .disabled
     }
 
     required init?(coder: NSCoder) { fatalError("not from a nib") }
@@ -1144,28 +1116,44 @@ final class DropTerminalView: LocalProcessTerminalView {
     }
 }
 
-/// The view's `terminalDelegate`, in front of SwiftTerm's own (the view itself, `LocalProcessTerminalView`): each call
-/// goes on to it as before but a link's. ⌘-click on an OSC 8 link opens its target, which needn't be what the line
-/// shows ("https://docs…" over a `file:` app or another scheme), so it opens nothing: text from a server isn't trusted.
+/// The view's `terminalDelegate`, in front of SwiftTerm's own (the view itself, `LocalProcessTerminalView`). Text from
+/// a program — a server's too — isn't trusted: it never reads the clipboard (OSC 52 `?`, kitty's OSC 5522), writes it
+/// only from the tab in front, and a link's hidden target (OSC 8: "https://docs…" over a `file:` app) never opens. The
+/// rest goes on to the view, each call by name: a call left out would get the protocol's default, not the view's.
 @MainActor
-final class TerminalGate: @preconcurrency TerminalViewDelegate {
-    private unowned let view: LocalProcessTerminalView
-    init(_ view: LocalProcessTerminalView) { self.view = view }
-    private var next: TerminalViewDelegate { view }
+final class TerminalGate: TerminalViewDelegate {
+    private unowned let view: DropTerminalView
+    init(_ view: DropTerminalView) { self.view = view }
     /// A link refused (tests: count them).
     static var refused: @MainActor () -> Void = { NSSound.beep() }
 
+    func requestOpenLink(source: TerminalView, request: TerminalLinkRequest) { Self.refused() }
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) { Self.refused() }
 
-    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) { next.sizeChanged(source: source, newCols: newCols, newRows: newRows) }
-    func setTerminalTitle(source: TerminalView, title: String) { next.setTerminalTitle(source: source, title: title) }
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) { next.hostCurrentDirectoryUpdate(source: source, directory: directory) }
-    func send(source: TerminalView, data: ArraySlice<UInt8>) { next.send(source: source, data: data) }
-    func scrolled(source: TerminalView, position: Double) { next.scrolled(source: source, position: position) }
-    func bell(source: TerminalView) { next.bell(source: source) }
-    func clipboardCopy(source: TerminalView, content: Data) { next.clipboardCopy(source: source, content: content) }
-    func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) { next.iTermContent(source: source, content: content) }
-    func rangeChanged(source: TerminalView, startY: Int, endY: Int) { next.rangeChanged(source: source, startY: startY, endY: endY) }
+    func clipboardRead(source: TerminalView) -> Data? { nil }
+    /// OSC 52 (Claude Code's, tmux's, vim's copy): the program's text into the clipboard, a server's too — from the tab
+    /// in front only (not a hidden one, nor one closed and winding down).
+    func clipboardCopy(source: TerminalView, content: Data) {
+        guard view.window != nil, !view.isHiddenOrHasHiddenAncestor, let text = String(data: content, encoding: .utf8), !text.isEmpty else { return }
+        view.pasteboard.clearContents()
+        view.pasteboard.setString(text, forType: .string)
+    }
+    // kitty's clipboard: none (and so DEC mode 5522 isn't offered). nil and .unsupported would mean SwiftTerm's own.
+    func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities { [] }
+    func kittyClipboardAvailableMimeTypes(source: TerminalView, location: KittyClipboardLocation) -> [String]? { [] }
+    func kittyClipboardRead(source: TerminalView, location: KittyClipboardLocation, mimeType: String) -> KittyClipboardReadResult? { .denied }
+    func kittyClipboardWrite(source: TerminalView, location: KittyClipboardLocation, content: KittyClipboardWriteContent) -> KittyClipboardWriteResult { .denied }
+    func kittyClipboardRequestPermission(source: TerminalView, request: KittyClipboardPermissionRequest) -> KittyClipboardPermissionResult { .deny }
+
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) { view.sizeChanged(source: source, newCols: newCols, newRows: newRows) }
+    func setTerminalTitle(source: TerminalView, title: String) { view.setTerminalTitle(source: source, title: title) }
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) { view.hostCurrentDirectoryUpdate(source: source, directory: directory) }
+    func send(source: TerminalView, data: ArraySlice<UInt8>) { view.send(source: source, data: data) }
+    func scrolled(source: TerminalView, position: Double) { view.scrolled(source: source, position: position) }
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) { view.rangeChanged(source: source, startY: startY, endY: endY) }
+    func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) { view.programStatusChanged(source: source, records: records) }
+    func bell(source: TerminalView) { view.bell(source: source) }
+    func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) { view.iTermContent(source: source, content: content) }
 }
 
 /// The panels over the terminal's drawer, a line between them to drag (Р6): either can be alone — the panels while the

@@ -5,8 +5,9 @@ let package = Package(
     name: "dfilemanager",
     platforms: [.macOS(.v14)],
     dependencies: [
-        // 1.12+ ships Metal shaders, which need Xcode's `metal` compiler; 1.11 builds with Command Line Tools.
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm", .upToNextMinor(from: "1.11.2")),
+        // Exact: the terminal leans on its internals (the delegate's defaults, LocalProcess's lifecycle). Its Metal
+        // shaders compile at run time, so Command Line Tools build it; Kermo draws with Core Graphics.
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.99.3"),
     ],
     targets: [
         .systemLibrary(name: "CArchive", path: "Sources/CArchive"),

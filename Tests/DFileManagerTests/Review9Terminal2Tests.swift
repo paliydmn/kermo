@@ -1,5 +1,6 @@
 import AppKit
 import DFMCore
+import SwiftTerm
 import Testing
 @testable import DFileManager
 
@@ -38,7 +39,7 @@ import Testing
 }
 
 @MainActor private func text(_ tab: EmbeddedTerminal.Tab) -> String {
-    String(decoding: tab.view.getTerminal().getBufferAsData(), as: UTF8.self)
+    String(decoding: tab.view.getBufferAsData(), as: UTF8.self)
 }
 
 /// T4: an SSH tab whose connection ended says ↩ reconnects and ⎋ closes it, and ⎋ does.
@@ -53,6 +54,14 @@ import Testing
     #expect(!term.handleKey(key(53, "\u{1b}", .shift)), "⇧⎋ is not ⎋")
     #expect(term.handleKey(key(53, "\u{1b}")))
     #expect(term.tabs.isEmpty && exited)
+
+    term.restore([SFTPTarget(host: "dfm-t4b.invalid")])   // logging in: no ssh yet, its end not told
+    let logging = try #require(term.current)
+    logging.exitStatus = nil
+    _ = term.show()
+    #expect(term.handleKey(key(36, "\r")), "↩ isn't a second login: a beep")
+    #expect(term.handleKey(key(53, "\u{1b}")))
+    #expect(term.tabs.isEmpty, "⎋ closes it")
 }
 
 /// ↩ and ⎋ typed into the find bar are the bar's — find, close it —, not the disconnected SSH tab's Reconnect and Close.
@@ -86,7 +95,7 @@ import Testing
     #expect(term.handleKey(key(40, "k", .command)))
     #expect(!text(tab).contains("old line"), "scrollback and screen")
     #expect(text(tab).hasPrefix("me$ ls"))
-    #expect(tab.view.getTerminal().getCursorLocation() == (6, 0))
+    #expect(tab.view.terminalStateSnapshot().cursor == Position(col: 6, row: 0))
     #expect(!term.handleKey(key(40, "k", [.command, .shift])))
 }
 
@@ -97,9 +106,9 @@ import Testing
     let tab = try #require(term.current)
     _ = term.show()
     tab.view.feed(text: "\u{1b}[?1049h\u{1b}[H" + (1...10).map { "vim line \($0)" }.joined(separator: "\r\n") + "\u{1b}[5;3H")
-    let (before, cursor) = (text(tab), tab.view.getTerminal().getCursorLocation())
+    let (before, cursor) = (text(tab), tab.view.terminalStateSnapshot().cursor)
     #expect(term.handleKey(key(40, "k", .command)))
-    #expect(text(tab) == before && tab.view.getTerminal().getCursorLocation() == cursor)
+    #expect(text(tab) == before && tab.view.terminalStateSnapshot().cursor == cursor)
 }
 
 /// T5: ⌃O twice within 0.4 s brings the same tab back (an SSH one too, not a local shell) and sends the program in it a
@@ -142,7 +151,7 @@ import Testing
 
 /// T3: `cd` in an SSH tab whose shell reports it (OSC 7) is that tab's folder on the server, told to the app (prompt,
 /// the server's panel) once per change and only for the tab in front.
-@MainActor @Test func anSSHTabFollowsItsShellsFolder() throws {
+@MainActor @Test func anSSHTabFollowsItsShellsFolder() async throws {
     let term = terminal()
     var told: [String?] = []
     term.onDirectory = { told.append($0.cwd) }
@@ -151,12 +160,16 @@ import Testing
     _ = term.show()
     #expect(term.current === a)
     a.view.feed(text: "\u{1b}]7;file://web-1/var/log\u{7}me@web-1:/var/log$ ")
+    await drained()
     a.view.feed(text: "\u{1b}]7;file://web-1/var/log\u{1b}\\")   // the next prompt, same folder
+    await drained()
     #expect(a.cwd == "/var/log" && told == ["/var/log"])
     b.view.feed(text: "\u{1b}]7;file://db-1/srv\u{7}")
+    await drained()
     #expect(b.cwd == "/srv" && told == ["/var/log"], "a tab behind doesn't move anything")
     _ = term.hide()
     a.view.feed(text: "\u{1b}]7;file://web-1/var/www\u{7}")   // `git pull` done while the user works in the panel
+    await drained()
     #expect(a.cwd == "/var/www" && told == ["/var/log"], "hidden, the panels are the user's")
 }
 
@@ -177,10 +190,14 @@ import Testing
     for _ in 0..<1000 where !(shell.isAtPrompt && !text(shell).allSatisfy(\.isWhitespace)) { try await Task.sleep(for: .milliseconds(10)) }
 
     shell.view.feed(text: "\u{1b}]7;file://evil/usr/share\u{7}")   // exists, at the prompt — but not the shell's
+
+    await drained()
     #expect(told.isEmpty && shell.cwd == nil)
     shell.view.feed(text: "\u{1b}]7;file://mac/nonexistent-dfm-t3\u{7}")
+    await drained()
     #expect(told.isEmpty)
     shell.view.feed(text: "\u{1b}]7;file://mac\(dir)\u{7}")
+    await drained()
     #expect(told == [dir] && shell.cwd == dir)
 }
 

@@ -20,7 +20,7 @@ private func osc7(_ path: String) -> String { "\u{1b}]7;file://mac\(path)\u{7}" 
 @MainActor private func atPrompt(_ tab: EmbeddedTerminal.Tab) async {
     var calm = 0
     for _ in 0..<1000 where calm < 5 {
-        let drawn = !String(decoding: tab.view.getTerminal().getBufferAsData(), as: UTF8.self).allSatisfy(\.isWhitespace)
+        let drawn = !String(decoding: tab.view.getBufferAsData(), as: UTF8.self).allSatisfy(\.isWhitespace)
         calm = drawn && tab.isAtPrompt ? calm + 1 : 0
         try? await Task.sleep(for: .milliseconds(10))
     }
@@ -45,17 +45,19 @@ private func osc7(_ path: String) -> String { "\u{1b}]7;file://mac\(path)\u{7}" 
     for _ in 0..<500 where shell.isAtPrompt { try await Task.sleep(for: .milliseconds(10)) }
     try #require(!shell.isAtPrompt)
     shell.view.feed(text: osc7(dir))
+    await drained()
     #expect(told.isEmpty && shell.cwd == nil, "sleep has the terminal")
 
     shell.view.send([0x03])   // ⌃C: the shell's prompt again
     await atPrompt(shell)
     shell.view.feed(text: osc7(dir))
+    await drained()
     #expect(told == [dir] && shell.cwd == dir)
 }
 
 /// I2: a `cd` in an SSH tab while the terminal is hidden moves no panel (nor clears its marks) — not then, and not once
 /// the terminal is back and the next prompt says the same folder: only the next `cd` does.
-@MainActor @Test func anSSHTabsHiddenCdMovesNothingLater() {
+@MainActor @Test func anSSHTabsHiddenCdMovesNothingLater() async {
     let term = terminal()
     var told: [String?] = []
     term.onDirectory = { told.append($0.cwd) }
@@ -63,11 +65,15 @@ private func osc7(_ path: String) -> String { "\u{1b}]7;file://mac\(path)\u{7}" 
     let tab = term.tabs[0]
     _ = term.show()
     tab.view.feed(text: osc7("/var/log"))
+    await drained()
     _ = term.hide()
     tab.view.feed(text: osc7("/var/www"))
+    await drained()
     _ = term.show()
     tab.view.feed(text: osc7("/var/www"))   // the next prompt
+    await drained()
     #expect(told == ["/var/log"])
     tab.view.feed(text: osc7("/srv"))
+    await drained()
     #expect(told == ["/var/log", "/srv"])
 }
