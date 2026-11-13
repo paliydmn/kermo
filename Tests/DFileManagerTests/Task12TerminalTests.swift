@@ -17,7 +17,7 @@ import Testing
 }
 
 @MainActor private func text(_ tab: EmbeddedTerminal.Tab) -> String {
-    String(decoding: tab.view.getTerminal().getBufferAsData(), as: UTF8.self)
+    String(decoding: tab.view.getBufferAsData(), as: UTF8.self)
 }
 
 private func osc7(_ path: String) -> String { "\u{1b}]7;file://mac\(path)\u{7}" }
@@ -59,12 +59,15 @@ private func tempDir(_ name: String) throws -> String {
     try body()
 }
 
-/// 3: 10 000 lines of scrollback (SwiftTerm's default is 500): the start of a build's output is still there.
+/// 3: 10 000 lines of scrollback (SwiftTerm's default is 500): the start of a build's output is still there — and
+/// no more than that.
 @MainActor @Test func aTabKeeps10000LinesOfScrollback() {
     let tab = idleTab(terminal())
-    #expect(tab.view.getTerminal().options.scrollback == 10_000)
     tab.view.feed(text: (1...2000).map { "line \($0)" }.joined(separator: "\r\n") + "\r\n")
     #expect(text(tab).contains("\nline 1\nline 2\n") && text(tab).contains("line 2000"))   // above it: the tab's own "Not connected"
+    tab.view.feed(text: (2001...12_000).map { "line \($0)" }.joined(separator: "\r\n") + "\r\n")
+    let lines = text(tab).split(separator: "\n")
+    #expect(!lines.contains("line 1000") && lines.contains("line 2500") && lines.contains("line 12000"))
 }
 
 /// 4: ⌘+ / ⌘− is remembered (`terminalFontSize`, clamped to 9…36 on the way back in); `terminalFont` names the font
@@ -118,8 +121,10 @@ private func tempDir(_ name: String) throws -> String {
     await atPrompt(tab)
     #expect(tab.label == "other", "the kernel's word, whatever the shell prints")
     tab.view.feed(text: osc7(other))   // the snippet's precmd
+    await drained()
     #expect(tab.cwd == other && changes > 0, "told: the tab bar is redrawn")
     tab.view.feed(text: "\u{1b}]2;my title\u{7}")
+    await drained()
     #expect(tab.label == "my title")
 }
 

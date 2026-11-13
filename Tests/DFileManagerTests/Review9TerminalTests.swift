@@ -61,9 +61,8 @@ import Testing
     #expect(view.font.pointSize == base + (base < 36 ? 1 : -1))
 }
 
-/// R27: a process that ends on its own (`exit` typed, a dropped connection) ends its tab every time, also when
-/// SwiftTerm reads the pty's end first and drops the exit: an SSH tab says so (status, Reconnect, ○, the sidebar is
-/// told), a shell tab closes, and each process is reaped once (no zombie).
+/// R27: a process that ends on its own (`exit` typed, a dropped connection) ends its tab every time: an SSH tab says so
+/// (status, Reconnect, ○, the sidebar is told), a shell tab closes, and each process is reaped once (no zombie).
 @MainActor @Test func aProcessThatEndsOnItsOwnEndsItsTab() async throws {
     _ = NSApplication.shared
     let parent = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
@@ -100,8 +99,40 @@ import Testing
     #expect(waitpid(pid, &s, WNOHANG) == -1, "reaped, no zombie")
 }
 
-/// R27: between SwiftTerm reading the pty's end and the exit being handled (main busy), a tab started again (Reconnect)
-/// or closed (⌘W) still has its old process reaped, and only the new process's end counts for the tab.
+/// A tab whose process couldn't start (fork failed; SwiftTerm says so in it): an SSH tab offers Reconnect, a shell's
+/// stays, saying why, and closes without asking. One killed says so.
+@MainActor @Test func aTabWhoseProcessCouldntStartEnds() async throws {
+    _ = NSApplication.shared
+    let parent = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+    let panels = NSView(frame: parent.bounds)
+    parent.addSubview(panels)
+    let term = EmbeddedTerminal(covering: panels)
+    defer { term.tabs.forEach { $0.view.process?.terminate() } }
+    term.restore([SFTPTarget(host: "dfm-fork.invalid")])
+    let ssh = try #require(term.tabs.last)
+    ssh.exitStatus = nil
+    term.processFailedToStart(source: ssh.view, error: .forkFailed(EAGAIN))
+    #expect(ssh.exitStatus == -1 && ssh.reconnect != nil && !ssh.isRunning)
+    #expect(String(decoding: ssh.view.getBufferAsData(), as: UTF8.self).contains("Not connected"))
+
+    term.newShell(cwd: NSTemporaryDirectory())   // its shell runs; the failure is told to it as if it hadn't
+    let failed = try #require(term.current)
+    term.processFailedToStart(source: failed.view, error: .forkFailed(EAGAIN))
+    #expect(term.tabs.contains { $0 === failed } && failed.exitStatus == -1 && failed.busyWith == nil)
+
+    term.restore([SFTPTarget(host: "dfm-killed.invalid")])
+    let killed = try #require(term.tabs.last)
+    killed.exitStatus = nil
+    term.launch(killed, "/bin/sh", ["-c", "kill -9 $$"], cwd: nil)
+    for _ in 0..<300 where killed.exitStatus == nil { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(killed.exitStatus == EmbeddedTerminal.bySignal)
+    #expect(String(decoding: killed.view.getBufferAsData(), as: UTF8.self).contains("ssh ended by a signal"))
+}
+
+/// R27: a tab started again while its last process is still there — Reconnect in the moment that process has ended but
+/// SwiftTerm hasn't said so yet (it winds down, and ignores a start then; the same path, but not one a test can hold) —
+/// starts once that end is told, and only the new process's end counts for the tab. Closed meanwhile (⌘W), it starts
+/// nothing. Each old process is reaped.
 @MainActor @Test func aTabStartedOrClosedAsItsProcessEndsStillReapsIt() async throws {
     _ = NSApplication.shared
     let parent = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
@@ -110,29 +141,26 @@ import Testing
     let term = EmbeddedTerminal(covering: panels)
     defer { term.tabs.forEach { $0.view.process?.terminate() } }
 
-    /// A tab whose process ended and whose pty end was read, the exit not handled yet: main doesn't yield meanwhile.
-    func inTheGap() throws -> (EmbeddedTerminal.Tab, pid_t) {
+    /// A tab started again while its first process still runs.
+    func startedTwice() throws -> (EmbeddedTerminal.Tab, pid_t) {
         term.restore([SFTPTarget(host: "dfm-r27-gap-\(term.tabs.count).invalid")])
         let tab = try #require(term.tabs.last)
         tab.exitStatus = nil
-        term.launch(tab, "/bin/sh", ["-c", "exit 4"], cwd: nil)
+        term.launch(tab, "/bin/sh", ["-c", "sleep 0.3; exit 4"], cwd: nil)
         let pid = tab.view.process.shellPid
-        let deadline = Date() + 3
-        while tab.view.process.running && Date() < deadline { usleep(1000) }
-        try #require(!tab.isRunning && tab.exitStatus == nil, "the pty ended, the exit isn't handled yet")
+        term.launch(tab, "/bin/sh", ["-c", "sleep 0.3; exit 5"], cwd: nil)   // as Reconnect does
+        #expect(tab.view.process.shellPid == pid && tab.relaunch != nil, "waits for the first one's end")
         return (tab, pid)
     }
 
-    let (again, old) = try inTheGap()
-    term.launch(again, "/bin/sh", ["-c", "sleep 0.3; exit 5"], cwd: nil)   // as Reconnect does
-    let closed = try { () throws -> pid_t in   // nothing here keeps the closed tab
-        let (gone, pid) = try inTheGap()
-        term.close(gone.id, confirm: false)
-        #expect(!term.tabs.contains { $0 === gone })
-        return pid
-    }()
+    let (again, old) = try startedTwice()
+    let (gone, closed) = try startedTwice()
+    term.close(gone.id, confirm: false)
+    #expect(!term.tabs.contains { $0 === gone })
     for _ in 0..<300 where again.exitStatus == nil { try await Task.sleep(for: .milliseconds(10)) }
     #expect(again.exitStatus == 5 << 8, "the tab ends with its new process, not the old one")
+    for _ in 0..<300 where gone.exitStatus == nil { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(gone.exitStatus == EmbeddedTerminal.bySignal, "a closed tab starts nothing: it ends with its first process (⌘W's SIGHUP)")
     for pid in [old, closed] {
         var s: Int32 = 0
         #expect(waitpid(pid, &s, WNOHANG) == -1 && errno == ECHILD, "reaped, no zombie")
