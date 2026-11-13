@@ -145,7 +145,6 @@ extension EditorWindowTests {
         func keys(_ id: String) -> [String] { app.commands.first { $0.id == id }?.keys.map(\.display) ?? ["?"] }
         #expect(keys("tab.new") == ["⌘T"] && keys("tab.close") == ["⌘W"] && keys("editor.close") == ["⇧⌘W"])
         #expect(keys("editor.tab.left").isEmpty && keys("editor.tab.right").isEmpty && keys("editor.tabs").isEmpty && keys("editor.show") == ["⇧⌘E"])
-        #expect(AppDelegate.terminalCmdKeys.contains("editor.show"), "⇧⌘E from the terminal too")
         let bar = app.toolbarDefaultItemIdentifiers(NSToolbar()).map(\.rawValue)
         #expect(bar.firstIndex(of: "editor").map { bar[$0 - 1] == NSToolbarItem.Identifier.flexibleSpace.rawValue && bar[$0 + 1] == "activity" } == true,
                 "the Editor button: after the space, before Activity")

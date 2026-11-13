@@ -1242,7 +1242,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         item.isBordered = true
         item.target = self
         item.action = #selector(editorButton)
-        item.menu = NSMenu()
         item.menu.items = [MenuAction.item("New Editor Document") { [unowned self] in run("editor.new") },
                            MenuAction.item("Quick Open…") { [unowned self] in
                                EditorHost.tabs.showEditor()
@@ -1270,8 +1269,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// What works while the keys go to the terminal (`terminalActive`), in the key bar's order there; `tab.*` act on
     /// its tabs then. ⌘1–4 go back to a panel.
-    /// From the terminal on their ⌘ keys only (⇧⌘P, ⇧⌘E): those never reach the shell — F9 and ⌥9 do (mc's, the shell's).
-    static let terminalCmdKeys: Set<String> = ["app.palette", "editor.show"]
+    /// From the terminal on their ⌘ keys only (⇧⌘P): those never reach the shell — F9 and ⌥9 do (mc's, the shell's).
+    static let terminalCmdKeys: Set<String> = ["app.palette"]
     static let terminalCommands = ["view.terminal", "view.terminalFull", "tab.new", "tab.close", "term.split.right", "term.split.down", "tab.next",
                                    "tab.prev", "ssh.new", "go.connect", "cmdline.insert", "cmdline.insertPaths", "term.bigger", "term.smaller",
                                    "view.sidebar", "ssh.reconnect", "server.disconnect", "term.join", "term.unsplit", "term.pane.left",

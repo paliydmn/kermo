@@ -754,7 +754,7 @@ final class EmbeddedTerminal: NSObject, @preconcurrency LocalProcessTerminalView
             t.view.feed(text: "\u{1b}[3J" + (y > 0 ? "\u{1b}[\(y)S" : "") + "\u{1b}[1;\(x + 1)H")
             return true
         }
-        guard t.host != nil, !t.isRunning,
+        guard t.host != nil, !t.isRunning, !t.view.findBarHasKeys,   // ↩ and ⎋ in the find bar are the bar's
               e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return false }
         switch e.keyCode {
         case 36, 76: reconnect()
@@ -1008,13 +1008,19 @@ final class DropTerminalView: LocalProcessTerminalView {
         super.performFindPanelAction(sender)
     }
 
-    /// The find bar drives the selection: typed into (its field has the keys: each letter finds) or clicked (its arrows,
-    /// its switches). Its type is SwiftTerm's own; it's the view's one `NSVisualEffectView`.
+    /// SwiftTerm's find bar while it's up. Its type is SwiftTerm's own; it's the view's one `NSVisualEffectView`.
+    var findBar: NSView? { subviews.first { $0 is NSVisualEffectView && !$0.isHidden } }
+    /// The find bar's field has the keys: ↩, ⇧↩ and ⎋ are its, and each letter finds.
+    var findBarHasKeys: Bool { findBar.map { (window?.firstResponder as? NSView)?.isDescendant(of: $0) == true } ?? false }
+    private func inFindBar(_ e: NSEvent) -> Bool { findBar?.frame.contains(convert(e.locationInWindow, from: nil)) == true }
+
+    /// The find bar drives the selection: typed into, or clicked (its arrows, its switches). ponytail: a VoiceOver press
+    /// on its arrows while the text has the keys isn't a click: that match is copied.
     private var findBarDrives: Bool {
-        guard let bar = subviews.first(where: { $0 is NSVisualEffectView && !$0.isHidden }) else { return false }
-        if (window?.firstResponder as? NSView)?.isDescendant(of: bar) == true { return true }
-        guard let e = NSApp.currentEvent, e.window === window, e.type == .leftMouseDown || e.type == .leftMouseUp else { return false }
-        return bar.frame.contains(convert(e.locationInWindow, from: nil))
+        guard findBar != nil else { return false }
+        if findBarHasKeys { return true }
+        guard let e = NSApp?.currentEvent, e.window === window, e.type == .leftMouseDown || e.type == .leftMouseUp else { return false }
+        return inFindBar(e)
     }
 
     override func selectionChanged(source: Terminal) {
@@ -1095,7 +1101,7 @@ final class DropTerminalView: LocalProcessTerminalView {
     /// ⇧-drag (xterm's) or ⌥-drag (iTerm's) in a program that reads the mouse selects here instead: the program gets no
     /// mouse till the button is up. Its next redraw clears the selection, so it's copied then (`mouseReleased`).
     func shiftDown(_ e: NSEvent) {
-        guard !e.modifierFlags.isDisjoint(with: [.shift, .option]), allowMouseReporting, getTerminal().mouseMode != .off else { return }
+        guard !e.modifierFlags.isDisjoint(with: [.shift, .option]), allowMouseReporting, getTerminal().mouseMode != .off, !inFindBar(e) else { return }
         allowMouseReporting = false
         shiftSelecting = true
     }

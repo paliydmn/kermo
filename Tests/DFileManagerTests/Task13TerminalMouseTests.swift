@@ -120,6 +120,7 @@ extension ServerLockTests {
 /// A find's match is a selection too, but it never goes to the clipboard: typed into the find bar, ⌘G with the bar up
 /// and after it's closed. ⌘A still copies, the bar up or not.
 @MainActor @Test func aFindMatchIsntCopied() {
+    _ = NSApplication.shared
     let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString)), find = NSPasteboard(name: .find)
     let wasFind = find.string(forType: .string)   // SwiftTerm writes the find string Mac-wide: the user's comes back
     defer {
@@ -143,7 +144,11 @@ extension ServerLockTests {
     }
     func field(in view: NSView) -> NSSearchField? { (view as? NSSearchField) ?? view.subviews.lazy.compactMap { field(in: $0) }.first }
 
-    action(.showFindInterface)   // ⌘F
+    v.selectAll()   // ⌘A copies; then ⌘F takes the selection as what to find, and finds it
+    pb.clearContents()
+    pb.setString("kept", forType: .string)
+    action(.showFindInterface)
+    #expect(pb.string(forType: .string) == "kept", "⌘F with a selection")
     guard let f = field(in: v) else { Issue.record("no find bar"); return }
     f.stringValue = "hello"   // as typed: the field has the keys, each letter finds
     (f.delegate as? NSSearchFieldDelegate)?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: f))
@@ -170,6 +175,7 @@ extension ServerLockTests {
 /// ⌘-click on an OSC 8 link opens nothing: its target needn't be what the line shows. The view's other calls go on
 /// through the gate as before.
 @MainActor @Test func aLinksHiddenTargetIsntOpened() {
+    _ = NSApplication.shared
     var refused = 0
     let was = TerminalGate.refused
     TerminalGate.refused = { refused += 1 }
