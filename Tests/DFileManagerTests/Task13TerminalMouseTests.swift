@@ -29,8 +29,10 @@ import Testing
 /// A selection goes to the clipboard as it's made (here: ⌘A, made at once); `terminalCopyOnSelect` false: it doesn't.
 @MainActor @Test func aSelectionInTheTerminalIsCopied() async {
     let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString))
-    defer { pb.releaseGlobally(); DropTerminalView.leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 } }
-    DropTerminalView.leftButtonDown = { false }   // the real mouse may be held by whoever works on this Mac meanwhile
+    defer { pb.releaseGlobally() }
+    // The real mouse may be held by whoever works on this Mac meanwhile. Never put back: a test running alongside
+    // would read the real button then, and a held one makes its copy wait for a mouseUp that never comes.
+    DropTerminalView.leftButtonDown = { false }
     let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
     v.pasteboard = pb
     v.feed(text: "hello world")
@@ -52,7 +54,7 @@ import Testing
 /// the view there).
 @MainActor @Test func aSelectionDroppedByOutputCopiesNothing() async throws {
     let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString))
-    defer { pb.releaseGlobally(); DropTerminalView.leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 } }
+    defer { pb.releaseGlobally() }
     DropTerminalView.leftButtonDown = { false }
     let v = try await standIn("echo ready; read x; printf '\\033[2J'; echo cleared")   // the screen is redrawn under the selection
     defer { v.process.terminate() }
@@ -176,7 +178,7 @@ extension ServerLockTests {
 /// ⇧-drag in a program that reads the mouse selects (and so copies) here; a plain drag is the program's.
 @MainActor @Test func shiftSelectsInAProgramThatReadsTheMouse() async {
     let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString))
-    defer { pb.releaseGlobally(); DropTerminalView.leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 } }
+    defer { pb.releaseGlobally() }
     DropTerminalView.leftButtonDown = { false }
     let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
     v.pasteboard = pb
@@ -194,7 +196,7 @@ extension ServerLockTests {
 /// ⌥-drag selects a block (Terminal.app's, iTerm2's): the same columns of each line.
 @MainActor @Test func optionDragSelectsABlock() async {
     let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString))
-    defer { pb.releaseGlobally(); DropTerminalView.leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 } }
+    defer { pb.releaseGlobally() }
     DropTerminalView.leftButtonDown = { false }
     let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
     v.pasteboard = pb
@@ -221,7 +223,7 @@ extension ServerLockTests {
 /// The main complaint (task 21): a drag past the top edge scrolls the scrollback, and the selection follows.
 @MainActor @Test func aDragPastTheEdgeScrolls() async throws {
     let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString))
-    defer { pb.releaseGlobally(); DropTerminalView.leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 } }
+    defer { pb.releaseGlobally() }
     DropTerminalView.leftButtonDown = { false }
     let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
     v.pasteboard = pb
@@ -247,7 +249,6 @@ extension ServerLockTests {
     let wasFind = find.string(forType: .string)   // SwiftTerm writes the find string Mac-wide: the user's comes back
     defer {
         pb.releaseGlobally()
-        DropTerminalView.leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 }
         find.clearContents()
         if let wasFind { find.setString(wasFind, forType: .string) }
     }
@@ -309,7 +310,6 @@ extension ServerLockTests {
     let wasFind = find.string(forType: .string)
     defer {
         pb.releaseGlobally()
-        DropTerminalView.leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 }
         find.clearContents()
         if let wasFind { find.setString(wasFind, forType: .string) }
     }
