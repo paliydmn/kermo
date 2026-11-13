@@ -162,8 +162,9 @@ import Testing
     let closed = gone.view.process.shellPid
     term.close(gone.id, confirm: false)
     #expect(!term.tabs.contains { $0 === gone })
-    for _ in 0..<1000 where gone.exitStatus == nil { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(gone.exitStatus == EmbeddedTerminal.bySignal, "⌘W's SIGHUP ended it")
+    let p = try #require(gone.view.process)   // a closed tab's end may come after it left `closing`: its process counts
+    for _ in 0..<1000 where p.running || p.windingDown { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(!p.running && !p.windingDown, "⌘W's SIGHUP ended it")
     for pid in [old, closed] {
         var s: Int32 = 0
         #expect(waitpid(pid, &s, WNOHANG) == -1 && errno == ECHILD, "reaped, no zombie")
