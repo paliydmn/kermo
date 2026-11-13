@@ -67,7 +67,8 @@ extension AppDelegate {
             if await !ServerLock.authorize(target, "run “\(String(body.prefix(60)).bidiVisible)” on") { return .notSent("\(target.host) stays locked") }
             if SavedServer.isProd(target) {
                 var c = Confirm("Run this in the terminal on \(name)?", on: user!, action: "Run")
-                c.runs = asked != nil ? "In the SSH tab on \(name) this file used before — as whoever is logged in there now."   // a `sudo -i` there isn't seen
+                let tab = (owner as? Editor)?.terminal != nil ? "it was copied from" : "this file used before"   // a terminal's copy
+                c.runs = asked != nil ? "In the SSH tab on \(name) \(tab) — as whoever is logged in there now."   // a `sudo -i` there isn't seen
                     : "In a new SSH tab on \(name), as its user" + (target.sudo ? " — not root" : "") + ", in \(dir)."
                 c.command = body
                 guard await confirm(c, on: askOn) == 0 else { return .cancelled }   // ↩ = Cancel
