@@ -7,10 +7,14 @@ if [[ ${DFM_UNIVERSAL:-0} == 1 ]]; then
   # One architecture at a time, then one binary: with two --arch SwiftPM also builds SwiftTerm's build-time tool for
   # x86_64, which Command Line Tools can't link (no x86_64 libswiftCompatibility56).
   # Both land in the same folder: the first is set aside.
+  # Each step on its own line: set -e doesn't stop at a failure inside an && list.
   ARM=($BUILD_ARGS --triple arm64-apple-macosx14.0) X86=($BUILD_ARGS --triple x86_64-apple-macosx14.0)
   BIN_DIR=$(swift build $ARM --show-bin-path) BIN=.build/Kermo-universal
-  swift build $ARM && cp $BIN_DIR/DFileManager $BIN-arm64
-  swift build $X86 && lipo -create -output $BIN $BIN-arm64 $(swift build $X86 --show-bin-path)/DFileManager
+  rm -f $BIN $BIN-arm64
+  swift build $ARM
+  cp $BIN_DIR/DFileManager $BIN-arm64
+  swift build $X86
+  lipo -create -output $BIN $BIN-arm64 $(swift build $X86 --show-bin-path)/DFileManager
 else
   BIN_DIR=$(swift build $BUILD_ARGS --show-bin-path)
   swift build $BUILD_ARGS

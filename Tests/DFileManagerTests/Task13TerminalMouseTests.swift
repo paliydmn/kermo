@@ -21,7 +21,7 @@ import Testing
 /// A view running a stand-in program (raw tty, no echo) once it has said "ready"; it prints what it reads (`od -c`).
 @MainActor private func standIn(_ script: String) async throws -> DropTerminalView {
     let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
-    v.startProcess(executable: "/bin/sh", args: ["-c", "stty raw -echo; " + script + "; sleep 5"])
+    v.startProcess(executable: "/bin/sh", args: ["-c", "stty raw -echo; " + script + "; exec sleep 5"])
     try await waitFor("the stand-in started") { text(v).contains("ready") }
     return v
 }
@@ -107,8 +107,11 @@ extension ServerLockTests {
 @MainActor @Test func osc52WritesTheClipboard() async throws {
     let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString))
     defer { pb.releaseGlobally() }
+    _ = NSApplication.shared
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
     let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
     try #require(v.terminalDelegate is TerminalGate)   // else SwiftTerm's own would write the real clipboard
+    w.contentView!.addSubview(v)
     v.pasteboard = pb
     func osc52(_ s: String) async { v.feed(text: s); await drained() }
     await osc52("\u{1b}]52;c;" + Data("привіт, Claude".utf8).base64EncodedString() + "\u{7}")
@@ -123,6 +126,10 @@ extension ServerLockTests {
     v.isHidden = true
     await osc52("\u{1b}]52;c;" + Data("hidden".utf8).base64EncodedString() + "\u{7}")
     #expect(pb.string(forType: .string) == long, "a tab not in front")
+    v.isHidden = false
+    v.removeFromSuperview()   // closed, its process winding down
+    await osc52("\u{1b}]52;c;" + Data("closed".utf8).base64EncodedString() + "\u{7}")
+    #expect(pb.string(forType: .string) == long, "a closed tab")
 }
 
 /// No program reads the clipboard: an OSC 52 read (`?`) gets no answer — the program reads only what's typed next.
@@ -136,10 +143,12 @@ extension ServerLockTests {
     #expect(!text(v).contains("]   5   2"), "no answer with the clipboard in it")
 }
 
-/// Nor kitty's clipboard (OSC 5522): the gate offers none and refuses each request.
+/// The gate answers no read: OSC 52's (the test above shows the way there), kitty's (OSC 5522: it offers none and
+/// refuses each request).
 @MainActor @Test func kittysClipboardIsRefused() {
     let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
     let g = try! #require(v.terminalDelegate as? TerminalGate)
+    #expect(g.clipboardRead(source: v) == nil, "OSC 52's read")
     #expect(g.kittyClipboardCapabilities(source: v).isEmpty)
     #expect(g.kittyClipboardAvailableMimeTypes(source: v, location: .standard) == [], "nil: SwiftTerm would read the pasteboard")
     #expect(g.kittyClipboardRead(source: v, location: .standard, mimeType: "text/plain") == .denied)
@@ -292,6 +301,38 @@ extension ServerLockTests {
     #expect(pb.string(forType: .string)?.contains("hello once more") == true, "⌘A copies")
 }
 
+/// Kermo's own words in a tab (a session's end, ⌘K's clear) move a find's match up once the scrollback is full: it's
+/// still not copied.
+@MainActor @Test func aFindMatchMovedByKermosWordsIsntCopied() async {
+    _ = NSApplication.shared
+    let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString)), find = NSPasteboard(name: .find)
+    let wasFind = find.string(forType: .string)
+    defer {
+        pb.releaseGlobally()
+        DropTerminalView.leftButtonDown = { NSEvent.pressedMouseButtons & 1 != 0 }
+        find.clearContents()
+        if let wasFind { find.setString(wasFind, forType: .string) }
+    }
+    DropTerminalView.leftButtonDown = { false }
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+    let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
+    w.contentView!.addSubview(v)
+    v.pasteboard = pb
+    v.feed(text: (1...1000).map { "filler \($0)" }.joined(separator: "\r\n") + "\r\nthe needle\r\n")   // past 500 lines: full
+    pb.clearContents()
+    pb.setString("kept", forType: .string)
+    find.clearContents()
+    find.setString("needle", forType: .string)
+    let item = NSMenuItem()
+    item.tag = NSTextFinder.Action.nextMatch.rawValue
+    v.performTextFinderAction(item)   // ⌘G
+    #expect(v.getSelection() == "needle")
+    v.say("\r\n[web-01: Connection closed] ↩ Reconnect   ⎋ Close\r\n")
+    await drained()
+    #expect(v.getSelection() == "needle", "moved up, still selected")
+    #expect(pb.string(forType: .string) == "kept")
+}
+
 /// ⌘-click on an OSC 8 link opens nothing: its target needn't be what the line shows. The view's other calls go on
 /// through the gate as before.
 @MainActor @Test func aLinksHiddenTargetIsntOpened() {
@@ -317,8 +358,7 @@ extension ServerLockTests {
     #expect(refused == 1, "a visible https:// isn't a link yet (task 21 PR 4)")
 }
 
-/// A path a server prints is never resolved as this Mac's file (the links of task 21 PR 4); a local tab's against its
-/// shell's folder.
+/// A relative path a server prints isn't resolved against this Mac's folders; a local tab's is, against its shell's.
 @MainActor @Test func anSSHTabsPathsArentThisMacs() {
     #expect(!EmbeddedTerminal.Tab(kind: .ssh(SFTPTarget(host: "me@db.invalid")), view: DropTerminalView(frame: .zero)).view.resolvesLinksAgainstShellDirectory)
     #expect(EmbeddedTerminal.Tab(kind: .shell, view: DropTerminalView(frame: .zero)).view.resolvesLinksAgainstShellDirectory)
