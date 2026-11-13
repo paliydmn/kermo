@@ -420,6 +420,12 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
                     select: active?.id.uuidString)
     }
 
+    /// Copy Change to Left / Right (⌥⇧⌘← →): the caret's change into the side in the left pane, or the right one's.
+    func copyChange(toLeft: Bool) {
+        guard let c = comparison, let s = c.side(left: toLeft) else { return NSSound.beep() }
+        c.copy(into: s)
+    }
+
     /// Show Editor: the window as it was; with no tabs, a new Untitled in it.
     func showEditor() {
         if let a = active { reveal(a) } else { Editor.untitled() }
@@ -756,6 +762,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         p.docs.insert(e, at: min(c.at, p.docs.count))
         reveal(e)
         changed()
+        Editor.app()?.rememberRecent(e)
         Task { await e.reopen(c.doc, text: c.text) }
     }
 

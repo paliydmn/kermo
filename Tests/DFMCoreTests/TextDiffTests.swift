@@ -87,3 +87,40 @@ private func blocks(_ a: String, _ b: String) -> [String] {
     #expect(r?.newChars.count == 2000, "each line its character, not all of it changed")
 }
 
+
+/// Copy Change: the target's lines then read as the source's block in its place, the rest as they were (line ends as
+/// they were too); carrying the last block till none is left makes the texts the same — either way, with and without a
+/// final line end, from and to an empty text.
+@Test func carryingAChangeMakesItsLinesTheSame() {
+    func lines(_ s: String) -> [String] { let n = NSString(string: s); return TextDiff.lines(n).map { n.substring(with: $0) } }
+    func carry(_ a: String, _ b: String, block k: Int, toOld: Bool) -> String {
+        let r = TextDiff.compare(a, b)!, x = NSString(string: a), y = NSString(string: b), bl = r.blocks[k]
+        let old = (text: x, lines: r.oldLines, range: bl.old), new = (text: y, lines: r.newLines, range: bl.new)
+        let c = toOld ? TextDiff.carry(from: new, to: old) : TextDiff.carry(from: old, to: new)
+        let out = (toOld ? x : y).replacingCharacters(in: c.range, with: c.text)
+        let (src, dst) = toOld ? (lines(b), lines(a)) : (lines(a), lines(b)), (fr, tr) = toOld ? (bl.new, bl.old) : (bl.old, bl.new)
+        #expect(lines(out) == Array(dst[..<tr.lowerBound] + src[fr] + dst[tr.upperBound...]), "\(a.debugDescription) \(b.debugDescription) block \(k) toOld \(toOld) → \(out.debugDescription)")
+        return out
+    }
+    var rng = SystemRandomNumberGenerator()
+    let words = ["a", "b", "c", "", "dd"]
+    func text() -> String {
+        let n = Int.random(in: 0...6, using: &rng)
+        return (0..<n).map { _ in words.randomElement(using: &rng)! }.joined(separator: "\n") + (Bool.random(using: &rng) ? "\n" : "")
+    }
+    let fixed = [("a\nb\nc", "a\nB\nc"), ("a\nb", "a\nb\n"), ("a\nb\n", "a\nb"), ("", "x\ny"), ("x\ny", ""), ("a\nb\nc\nd", "a\nd"),
+                 ("a\nd", "a\nb\nc\nd"), ("a", "a\nb"), ("a\nb", "a"), ("x\na", "a"), ("a", "x\na"), ("\n", ""), ("", "\n")]
+    for (a, b) in fixed + (0..<400).map({ _ in (text(), text()) }) {
+        let n = TextDiff.compare(a, b)!.blocks.count
+        for toOld in [true, false] {
+            for k in 0..<n { _ = carry(a, b, block: k, toOld: toOld) }
+            var (x, y) = (a, b)
+            for _ in 0..<50 {   // the same tail grows by the last block each time
+                let m = TextDiff.compare(x, y)!.blocks.count
+                if m == 0 { break }
+                if toOld { x = carry(x, y, block: m - 1, toOld: true) } else { y = carry(x, y, block: m - 1, toOld: false) }
+            }
+            #expect(x == y, "\(a.debugDescription) \(b.debugDescription) toOld \(toOld): \(x.debugDescription) ≠ \(y.debugDescription)")
+        }
+    }
+}

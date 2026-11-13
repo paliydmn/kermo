@@ -123,3 +123,23 @@ public struct Frecency: Codable, Sendable {
         }
     }
 }
+
+/// The editor's files opened lately (Quick Open's Recent): paths only — a server's by its server as its user, its path
+/// there and whether it was opened as root — newest first, `limit` of them.
+public struct RecentFiles: Codable, Sendable, Equatable {
+    public struct Entry: Codable, Sendable, Equatable {
+        public var path: String
+        public var server: SFTPTarget?
+        public var root = false
+        public init(path: String, server: SFTPTarget? = nil, root: Bool = false) { (self.path, self.server, self.root) = (path, server, root) }
+    }
+    public private(set) var entries: [Entry] = []
+
+    public init() {}
+
+    public mutating func visit(_ e: Entry, limit: Int = 100) {
+        entries.removeAll { $0 == e }
+        entries.insert(e, at: 0)
+        if entries.count > limit { entries.removeLast(entries.count - limit) }
+    }
+}

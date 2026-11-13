@@ -149,7 +149,9 @@ In the command line, ↑↓ browse its history. On a local panel ↩ runs the li
 | Editor: rename the tab's file (or name an Untitled) / copy its path / reopen the tab closed last | ⇧F6 or a double-click on the tab / ⇧⌘C / ⇧⌘T |
 | Editor: [two panes](viewer-editor.md#two-panes), the tab you're in beside / below (with two: the other pane) | ⌘\\ / ⇧⌘\\ |
 | Editor: the other pane, side by side / one above the other / move the divider | ⌥⌘← ⌥⌘→ / ⌥⌘↑ ⌥⌘↓ / ⌃⌘ arrows |
-| Editor: [compare](viewer-editor.md#compare) the tab with another tab, its saved version or the clipboard / next, previous change while comparing | ⇧⌘D / ⌥⌘↓, ⌥⌘↑ |
+| Editor: [compare](viewer-editor.md#compare) the tab with another tab, its saved version or the clipboard / next, previous change while comparing / copy the change into the left, right side | ⇧⌘D / ⌥⌘↓, ⌥⌘↑ / ⌥⇧⌘←, ⌥⇧⌘→ |
+| Editor: [quick open](viewer-editor.md#quick-open) a tab, a recent file or one in the document's repository | ⌘P |
+| Editor: [send](viewer-editor.md#send-to-terminal) the line or selection to the terminal / run it there | ⌃↩ / ⌃⇧↩ |
 | Editor: move lines up, down / duplicate them below, above / delete them / indent, outdent the lines selected | ⌥↑, ⌥↓ / ⌥⇧↓, ⌥⇧↑ / ⇧⌘K / Tab, ⇧Tab |
 | Output window: stop, then close / run again / copy all / save / [send to a tool](tools.md#send-to) | ⎋ / ⌘R / ⌘C / ⌘S / F2 |
 

@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
     var serverPins: [String] = Config.noting(Config.loadEach("server-pins.json", as: String.self))   // addresses, in pin order
     var frecency: Frecency = Config.noting(Config.loadKeeping("frecency.json", as: Frecency.self)) ?? Frecency()
+    var editorRecent: RecentFiles = Config.noting(Config.loadKeeping("editor-recent.json", as: RecentFiles.self)) ?? RecentFiles()   // Quick Open's
     lazy var searchFrecency = Self.searchFrecency(defaults)   // what the search's Recent lists
     private var visitsSinceSave = 0
 
@@ -186,13 +187,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         // The terminal eats control keys, so its commands (⌃O, ⌘T, ⌘W, ⌃⇥ …) are picked off here first.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [unowned self] e in
             let handled = MainActor.assumeIsolated { () -> Bool in
-                if Self.editor(key: e.window) != nil, let c = keymap[Shortcut(event: e)], Self.editorPaneKeys.contains(c.id) {   // ⌥⌘ / ⌃⌘ arrows
-                    run(c.id)
+                if let c = keymap[Shortcut(event: e)], let id = Self.editorPickOff(c.id, in: e.window) {   // ⌥⌘ / ⌃⌘ arrows, ⌃↩ / ⌃⇧↩, ⌥⇧⌘← →
+                    if !(e.isARepeat && Self.editorTerminalKeys.values.contains(id)) { run(id) }   // a held ⌃⇧↩ runs one line, not each
                     return true
                 }
                 guard e.window === window else { return false }
                 if terminal.hasFocus {
                     if terminal.handleKey(e) { return true }
+                    if e.isARepeat, let c = keymap[Shortcut(event: e)], Self.editorTerminalKeys[c.id] != nil { return true }   // a held ⌃↩ from the editor, now here: once
                     if let c = keymap[Shortcut(event: e)], Self.terminalCommands.contains(c.id)   // ⌘1–4 too: back to a panel
                         || Self.terminalCmdKeys.contains(c.id) && e.modifierFlags.contains(.command) {
                         run(c.id)
@@ -1394,6 +1396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         if id.hasPrefix("text.") { return textEditor != nil }
         if ["editor.compare.next", "editor.compare.prev", "editor.compare.stop"].contains(id) { return editorKey?.comparison != nil }   // while it compares
+        if Self.editorCompareKeys.contains(id) { return editorKey?.comparison?.paused == false }   // a copy's target says why it can't
         if id.hasPrefix("tab.") || Self.editorTabs.contains(id) {   // the editor window's tabs: its own (D-101: none from another)
             if editorKey != nil { item.title = c?.title ?? item.title; return true }
             if Self.editorTabs.contains(id) { return false }
@@ -1418,18 +1421,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// What works only in the editor window: its tabs, hiding it.
     static let editorTabs: Set<String> = ["editor.close", "editor.tab.left", "editor.tab.right", "editor.tabs", "editor.closeOthers", "editor.closeRight",
                                           "editor.moveToPane", "editor.cloneToPane", "editor.joinPanes",
-                                          "editor.compare.with", "editor.compare.next", "editor.compare.prev", "editor.compare.stop"]
+                                          "editor.compare.with", "editor.compare.next", "editor.compare.prev", "editor.compare.stop",
+                                          "editor.compare.copyLeft", "editor.compare.copyRight", "editor.send", "editor.execute"]
     /// Panel commands whose keys an editor takes for its text or its tab, and what they're called there (D-101: one key,
     /// one command).
     static let editorTitles = ["go.path": "Go to Line…", "view.filterPresets": "Toggle Comment", "term.bigger": "Bigger Text", "term.smaller": "Smaller Text",
                                "file.rename": "Rename…", "edit.copyPath": "Copy Path", "go.tree": "Reopen Closed Tab",
-                               "term.split.right": "Split Editor Right", "term.split.down": "Split Editor Down", "file.diff": "Compare With…"]
+                               "term.split.right": "Split Editor Right", "term.split.down": "Split Editor Down", "file.diff": "Compare With…",
+                               "go.jump": "Quick Open…"]
     /// The editor window's own branches (its tabs, its panes; `editorPaneKeys` too), not a tool's editor's.
-    static let editorWindowOnly: Set<String> = ["go.tree", "term.split.right", "term.split.down", "file.diff"]
+    static let editorWindowOnly: Set<String> = ["go.tree", "term.split.right", "term.split.down", "file.diff", "go.jump"]
     /// The terminal's pane keys that, in the editor window, move between its panes and their divider: keys only, no menu
     /// items — picked off as the terminal's are.
     static let editorPaneKeys: Set<String> = ["term.pane.left", "term.pane.right", "term.pane.up", "term.pane.down",
                                               "term.resize.left", "term.resize.right", "term.resize.up", "term.resize.down"]
+    /// Panel keys that, in the editor window's text, are Send / Execute in Terminal: keys only, no menu items — picked off
+    /// before the text takes them.
+    static let editorTerminalKeys = ["cmdline.insert": "editor.send", "cmdline.insertPaths": "editor.execute"]
+    /// Copy Change's keys: only while it compares.
+    static let editorCompareKeys: Set<String> = ["editor.compare.copyLeft", "editor.compare.copyRight"]
+    /// What a key (`id`: its command) runs in the editor window before its text gets it: the pane keys; Copy Change's
+    /// while it compares; ⌃↩ / ⌃⇧↩ as Send / Execute in Terminal while the text has the keys (not the find bar). nil:
+    /// the key goes on as it is.
+    static func editorPickOff(_ id: String, in w: NSWindow?) -> String? {
+        guard let h = editor(key: w) else { return nil }
+        if editorPaneKeys.contains(id) { return id }
+        if editorCompareKeys.contains(id) { return h.comparison?.paused == false ? id : nil }   // a menu key set before the comparison began isn't there
+        return w?.firstResponder is EditorTextView ? editorTerminalKeys[id] : nil
+    }
     /// An editor has that command's branch now (`editorTitles`): the editor window's own only there, the rest a tool's
     /// editor too.
     func inEditor(_ id: String) -> Bool { Self.editorTitles[id] != nil && (Self.editorWindowOnly.contains(id) ? editorKey != nil : textEditor != nil) }

@@ -23,6 +23,11 @@ final class Comparison: NSObject {
         fileprivate(set) var top: CGFloat = 0
         /// The block the caret is in, either side's: its lines are marked in the line numbers.
         var current: Int?
+        /// The caret's change can come over to this side (a document's, the result of the texts as they are): its arrow in
+        /// the line numbers — at the change's first line here, or (none here) under the line its blank space follows —
+        /// pointing the way it comes; a click on it is `copyHere`.
+        fileprivate(set) var arrow: (at: Int, gap: Bool, left: Bool)?
+        fileprivate(set) var copyHere: (@MainActor () -> Void)?
 
         init(_ v: DocView, old: Bool) { (view, self.old) = (v, old) }
 
@@ -154,6 +159,7 @@ final class Comparison: NSObject {
             guard let v = s.view else { continue }
             v.text.compared = s
             v.ruler.compared = s
+            s.copyHere = { [weak self, weak s] in if let self, let s { self.copy(into: s) } }
             v.text.layoutManager?.delegate = s
             v.frame.scroll.contentView.postsBoundsChangedNotifications = true
             observers.append(nc.addObserver(forName: NSView.boundsDidChangeNotification, object: v.frame.scroll.contentView, queue: nil) { [weak self] _ in
@@ -197,6 +203,7 @@ final class Comparison: NSObject {
         for s in sides {
             s.view?.text.compared = nil
             s.view?.ruler.compared = nil
+            (s.arrow, s.copyHere) = (nil, nil)
             s.view?.text.layoutManager?.delegate = nil
             set(s, lines: [], chars: [], gaps: [:], top: 0)
             s.view?.frame.actions = []
@@ -432,7 +439,62 @@ final class Comparison: NSObject {
             (old.current, new.current) = (b, b)
             sides.forEach { $0.view?.ruler.needsDisplay = true }
         }
+        arrows()
         say()
+    }
+
+    // MARK: Copying a change
+
+    /// The last result is of the texts as they are now: its lines and blocks are where they say. Internal: tests wait for it.
+    var fresh: Bool {
+        guard last != nil, !tooBig, !paused, let a = old.view?.doc, let b = new.view?.doc else { return false }
+        return (a.edits, b.edits) == lastEdits
+    }
+
+    /// The side in the left pane (`left`), or the right one's.
+    func side(left: Bool) -> Side? {
+        guard let host, let a = old.view?.pane, let b = new.view?.pane, let i = host.panes.firstIndex(where: { $0 === a }),
+              let j = host.panes.firstIndex(where: { $0 === b }) else { return nil }
+        return (i < j) == left ? old : new
+    }
+
+    /// Each side's arrow for the caret's change, where it can be written.
+    private func arrows() {
+        let left = side(left: true)
+        for s in sides {
+            var a: (at: Int, gap: Bool, left: Bool)?
+            if fresh, let r = last, let k = s.current, blocks.indices.contains(k), let d = s.view?.doc, d.snapshot == nil, d.cover == nil, !d.saving {
+                let range = s.old ? blocks[k].old : blocks[k].new, lines = s.old ? r.oldLines : r.newLines
+                a = !range.isEmpty ? (lines[range.lowerBound].location, false, s === left)
+                    : range.lowerBound > 0 ? (lines[range.lowerBound - 1].location, true, s === left) : (0, false, s === left)
+            }
+            guard a?.at != s.arrow?.at || a?.gap != s.arrow?.gap || (a == nil) != (s.arrow == nil) else { continue }
+            s.arrow = a
+            s.view?.ruler.needsDisplay = true
+        }
+    }
+
+    /// Copy Change to Left / Right, or a click on its arrow: the caret's change as the other side has it, over `s`'s
+    /// lines — a document only, one Undo step; nothing saved or uploaded (⌘S does that, as after typing). A result of
+    /// the texts before the latest typing isn't used: its lines are elsewhere now.
+    func copy(into s: Side) {
+        guard !paused, let v = s.view, let from = (s === old ? new : old).view else { return NSSound.beep() }
+        func no(_ why: String) {
+            NSSound.beep()
+            sides.forEach { $0.view?.frame.flash(why) }
+        }
+        if v.doc.snapshot != nil { return no("Read-only copy — Edit to change it") }
+        guard v.doc.cover == nil, !v.doc.saving, v.text.isEditable else { return no("“\(v.doc.name)” can't be changed now") }
+        guard fresh, let r = last else { return no(tooBig ? "Too different to compare here" : "Still comparing — try again") }
+        guard let k = s.current, blocks.indices.contains(k) else { return no("Not in a change — ⌥⌘↓ goes to the next one") }
+        let b = blocks[k]
+        let c = TextDiff.carry(from: (from.doc.storage.mutableString, s.old ? r.newLines : r.oldLines, s.old ? b.new : b.old),
+                               to: (v.doc.storage.mutableString, s.old ? r.oldLines : r.newLines, s.old ? b.old : b.new))
+        guard v.doc.apply(c.text, over: c.range, in: v, named: "Copy Change") else { return NSSound.beep() }
+        v.frame.window?.makeFirstResponder(v.text)   // the keys where it went: ⌘Z there undoes it, not the other side's typing
+        v.text.setSelectedRange(NSRange(location: c.range.location, length: 0))
+        due += 1   // its typing pause isn't waited for: worked out now
+        recompute()
     }
 
     /// Its words for `v`'s status line, before Ln and Col; nil: `v` isn't a side.

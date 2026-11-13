@@ -10,6 +10,8 @@ final class LineNumberRuler: NSRulerView {
     var fontSize: CGFloat = 10 { didSet { needsDisplay = true } }
     /// Its side of a comparison: − + ~ beside the changed lines' numbers, the caret's change marked.
     weak var compared: Comparison.Side? { didSet { needsDisplay = true } }
+    /// Where its side's Copy Change arrow was drawn last: a click there copies.
+    private var arrowRect: NSRect?
 
     init(textView: NSTextView) {
         super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
@@ -97,6 +99,8 @@ final class LineNumberRuler: NSRulerView {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor]
         var line = Self.line(of: chars.location, in: lines)   // the first one shown
+        arrowRect = nil
+        let arrow = compared?.arrow, lineHeight = lm.defaultLineHeight(for: tv.font ?? .systemFont(ofSize: 12))
         while line < lines.count, lines[line] <= NSMaxRange(chars) {
             let y: CGFloat
             if lines[line] < text.length {
@@ -109,7 +113,16 @@ final class LineNumberRuler: NSRulerView {
             let label = "\(firstLine + line + 1)" as NSString
             let size = label.size(withAttributes: attrs), mark = compared?.mark(at: lines[line])
             label.draw(at: NSPoint(x: ruleThickness - size.width - (compared == nil ? 6 : 18), y: p.y + 1), withAttributes: attrs)
-            if let mark {
+            if let a = arrow, a.at == lines[line] {
+                var y = p.y
+                if a.gap, lines[line] < text.length {   // under the line, in the blank space it's followed by
+                    let end = NSMaxRange(text.lineRange(for: NSRange(location: lines[line], length: 0))) - 1
+                    y = convert(NSPoint(x: 0, y: lm.lineFragmentUsedRect(forGlyphAt: lm.glyphIndexForCharacter(at: end), effectiveRange: nil).maxY
+                                        + tv.textContainerInset.height), from: tv).y
+                }
+                drawArrow(NSRect(x: ruleThickness - 15, y: y + 1, width: 14, height: lineHeight - 2), left: a.left)
+            }
+            if let mark, arrow.map({ $0.gap || $0.at != lines[line] }) ?? true {
                 let (symbol, color) = Comparison.Side.symbol(mark.kind)
                 (symbol as NSString).draw(at: NSPoint(x: ruleThickness - 13, y: p.y + 1), withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold), .foregroundColor: color])
                 if mark.block == compared?.current {   // the change the caret's in
@@ -119,6 +132,21 @@ final class LineNumberRuler: NSRulerView {
             }
             line += 1
         }
+    }
+
+    /// Copy Change's arrow: the way the change comes, white on the accent color.
+    private func drawArrow(_ r: NSRect, left: Bool) {
+        NSColor.controlAccentColor.setFill()
+        NSBezierPath(roundedRect: r, xRadius: 3, yRadius: 3).fill()
+        let s = (left ? "←" : "→") as NSString, attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: fontSize, weight: .bold), .foregroundColor: NSColor.white]
+        let size = s.size(withAttributes: attrs)
+        s.draw(at: NSPoint(x: r.midX - size.width / 2, y: r.midY - size.height / 2), withAttributes: attrs)
+        arrowRect = r
+    }
+
+    override func mouseDown(with e: NSEvent) {
+        if let r = arrowRect, r.insetBy(dx: -2, dy: -2).contains(convert(e.locationInWindow, from: nil)) { return compared?.copyHere?() ?? () }
+        super.mouseDown(with: e)
     }
 }
 

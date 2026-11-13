@@ -49,7 +49,9 @@ extension AppDelegate {
         cmd("go.path", "Go to Path…", ["cmd+l", "cmd+shift+g"], menu: "Go", group: 2, aliases: "path location") { app in
             if let e = app.textEditor { e.goToLine() } else { app.active.beginPathEditing() }   // an editor's: Go to Line… (`editorTitles`)
         },
-        cmd("go.jump", "Jump to Folder…", ["cmd+p"], menu: "Go", group: 2, short: "Jump", aliases: "go to folder recent frecency") { $0.showJump() },
+        cmd("go.jump", "Jump to Folder…", ["cmd+p"], menu: "Go", group: 2, short: "Jump", aliases: "go to folder recent frecency") { app in
+            if app.editorKey != nil { app.quickOpen() } else { app.showJump() }   // the editor window's ⌘P: Quick Open… (`editorTitles`)
+        },
         cmd("go.tree", "Folder Tree…", ["f10", "opt+0", "opt+f10", "cmd+shift+t"], menu: "Go", group: 2, short: "Tree", aliases: "folder tree") { app in
             if let h = app.editorKey { return h.reopenClosed() }   // the editor window's ⇧⌘T: Reopen Closed Tab (`editorTitles`)
             let panel = app.active
@@ -150,11 +152,22 @@ extension AppDelegate {
         },
         cmd("editor.joinPanes", "Join Panes", [], menu: "View/Tabs", group: 2, aliases: "editor unsplit merge panes") { $0.editorKey?.joinPanes() },
         // Compare in the editor window (`Comparison`): ⇧⌘D there is Compare With… (`editorTitles`), ⌥⌘↓ ⌥⌘↑ go from
-        // change to change while it compares (`term.pane.down`, `term.pane.up`); these have no keys of their own.
+        // change to change while it compares (`term.pane.down`, `term.pane.up`); these have no keys of their own but Copy Change's.
         cmd("editor.compare.with", "Compare With…", [], menu: "View/Compare", group: 3, aliases: "editor diff compare tab clipboard saved version") { $0.editorKey?.compareWith() },
         cmd("editor.compare.next", "Next Change", [], menu: "View/Compare", group: 4, aliases: "editor diff compare difference") { $0.compareStep(1) },
         cmd("editor.compare.prev", "Previous Change", [], menu: "View/Compare", group: 4, aliases: "editor diff compare difference") { $0.compareStep(-1) },
-        cmd("editor.compare.stop", "Stop Comparing", [], menu: "View/Compare", group: 5, aliases: "editor diff compare end close") { $0.editorKey?.stopComparing() },
+        // The editor window's line or selection into the terminal: typed, or typed and run (⌃↩ / ⌃⇧↩ there,
+        // `editorTerminalKeys`).
+        cmd("editor.send", "Send to Terminal", [], menu: "Edit", group: 9, aliases: "editor terminal type insert line selection shell") { $0.editorToTerminal(run: false) },
+        cmd("editor.execute", "Execute in Terminal", [], menu: "Edit", group: 9, aliases: "editor terminal run line selection shell command") { $0.editorToTerminal(run: true) },
+        // The caret's change from the other side, into the left pane's or the right one's (a document's).
+        cmd("editor.compare.copyLeft", "Copy Change to Left", ["cmd+opt+shift+left"], menu: "View/Compare", group: 5, aliases: "editor diff compare merge take apply hunk") {
+            $0.editorKey?.copyChange(toLeft: true)
+        },
+        cmd("editor.compare.copyRight", "Copy Change to Right", ["cmd+opt+shift+right"], menu: "View/Compare", group: 5, aliases: "editor diff compare merge take apply hunk") {
+            $0.editorKey?.copyChange(toLeft: false)
+        },
+        cmd("editor.compare.stop", "Stop Comparing", [], menu: "View/Compare", group: 6, aliases: "editor diff compare end close") { $0.editorKey?.stopComparing() },
         // The terminal's panes (as VS Code's split): while it's up. In the editor window, its own (`editorTitles`).
         cmd("term.split.right", "Split Terminal Right", ["cmd+\\"], menu: "View/Tabs", group: 3, aliases: "pane side by side") { app in
             if let h = app.editorKey { h.split(vertical: true) } else { app.terminal.split(vertical: true) }
@@ -1465,7 +1478,7 @@ extension AppDelegate {
             case 1 where editing:   // this save doesn't happen (nothing written); the file there now beside the text: ⌘S asks again
                 _ = notSaved(saved, to: target, CancellationError())
                 let panel = panels.first { $0.remote?.target == target } ?? active
-                Task { await diff(Self.serverNow(remotePath, on: target), DiffSide(path: saved.path, name: "\(name) (yours)"), in: panel) }
+                Task { await diff(Self.serverNow(remotePath, on: target), DiffSide(path: saved.path, name: "\(name) (yours)", origin: (target, remotePath)), in: panel) }
                 return false
             default: return notSaved(saved, to: target, CancellationError())   // the editor may be gone: says where the text is
             }
@@ -1534,7 +1547,7 @@ extension AppDelegate {
                     state.baseline = e.attrs
                     return await uploadNow(saved, to: remotePath, on: target, state, force: false, action: action)
                 case 1:
-                    let yours = DiffSide(path: saved.path, name: "\(name) (yours)")
+                    let yours = DiffSide(path: saved.path, name: "\(name) (yours)", origin: (target, remotePath))
                     var there = Self.serverNow(remotePath, on: target)
                     (there.size, there.mtime, there.look) = (e.attrs.size, e.attrs.mtime, false)   // as the question says it is: its preview copy if there's one
                     if Editor.window(for: saved) != nil, builtInCompare {   // side by side, live: like Show Changes
@@ -1604,7 +1617,7 @@ extension AppDelegate {
             let fmt = DateFormatter()
             fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
             let when = { (v: ServerHistory.Version) in fmt.string(from: v.date) + (v.n > 1 ? " (\(v.n))" : "") }
-            let side = { (v: ServerHistory.Version) in DiffSide(path: v.path, name: "\(target.host):\(path) @ \(when(v))") }
+            let side = { (v: ServerHistory.Version) in DiffSide(path: v.path, name: "\(target.host):\(path) @ \(when(v))", origin: (target, path)) }
             let items = versions.enumerated().map { i, v in
                 let url = URL(fileURLWithPath: v.path), when = when(v)
                 let view: @MainActor () -> Void = { Viewer.show(url) }
@@ -2459,6 +2472,7 @@ extension AppDelegate {
         var look = false   // a link (its own size says nothing), or a size not known: the server is asked first
         var name: String? = nil   // what the diff calls it, if not its path ("host:/path" on a server)
         var now = false   // the file as it is there now, even with its document open (that's the other side)
+        var origin: (target: SFTPTarget?, path: String)? = nil   // a copy's (a kept version, "yours", a draft): the file it's of
         var label: String { name ?? server.map { "\($0.host):\(path)" } ?? path }
         /// Its tab in the built-in Compare: the file's name, and what it is if the caller said ("nginx.conf @ 14:03").
         var title: String { ((name ?? path) as NSString).lastPathComponent + (name == nil ? server.map { " (\($0.host))" } ?? "" : "") }
@@ -2574,7 +2588,8 @@ extension AppDelegate {
             switch await Blocking.run(.userInitiated, { Result { try Editor.load(URL(fileURLWithPath: path)) } }) {
             case .success(let loaded):
                 let e = Editor.snapshot(loaded, file: (d.path as NSString).lastPathComponent, title: d.title, place: d.place,
-                                        source: d.now || d.name != nil ? nil : d)   // a real file, not its document's other side: Edit
+                                        source: d.now || d.name != nil ? nil : d,   // a real file, not its document's other side: Edit
+                                        from: d.origin ?? (d.server != nil || d.name == nil ? (d.server, d.path) : nil))
                 made.append(e)
                 return e
             case .failure(let error):
