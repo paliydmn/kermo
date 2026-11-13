@@ -35,9 +35,9 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
             for v in [header, view] { v.widthAnchor.constraint(equalTo: box.widthAnchor).isActive = true }   // `.width` alone sizes them to each other
             header.isHidden = true
             view.acceptsLocalPaths = kind == .shell
-            // A relative path a server prints isn't taken from this Mac's folders. ponytail: an absolute one still would
-            // be (SwiftTerm checks it exists here) — task 21 PR 4's links need their own rule for SSH tabs; the gate
-            // opens nothing till then.
+            // The folder a server's shell tells (OSC 7) is never taken for one of this Mac's. ponytail: SwiftTerm still
+            // reads a path a server prints as this Mac's (relative to Kermo's own folder, or absolute if it exists here)
+            // — task 21 PR 4's links need their own rule for SSH tabs; the gate opens nothing till then.
             view.resolvesLinksAgainstShellDirectory = kind == .shell
             // Lines pasted by a right-click into a production server, or as root, ask first.
             if case .ssh(let t) = kind {
@@ -741,7 +741,7 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
             t.view.say("\u{1b}[3J" + (c.row > 0 ? "\u{1b}[\(c.row)S" : "") + "\u{1b}[1;\(c.col + 1)H")
             return true
         }
-        guard t.host != nil, t.exitStatus != nil, !t.view.findBarHasKeys,   // ↩ and ⎋ in the find bar are the bar's
+        guard t.host != nil, !t.isRunning, !t.view.findBarHasKeys,   // ↩ and ⎋ in the find bar are the bar's
               e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return false }
         switch e.keyCode {
         case 36, 76: reconnect()
@@ -995,15 +995,15 @@ final class DropTerminalView: LocalProcessTerminalView {
     private var finding = false, saying = false
     /// Kermo's own words in the tab (a session's end, "Logging in…", ⌘K's clear): a program's output to the selection —
     /// one they move up (the scrollback full) isn't copied again: it may be a find's match.
-    func say(_ text: String) {
-        saying = true
-        defer { saying = false }
-        feed(text: text)
-    }
+    func say(_ text: String) { quietly { feed(text: text) } }
     override func processFailedToStart(_ source: LocalProcess, error: LocalProcessError) {   // SwiftTerm says why in the tab
+        quietly { super.processFailedToStart(source, error: error) }
+    }
+    private func quietly(_ body: () -> Void) {
+        let was = saying
         saying = true
-        defer { saying = false }
-        super.processFailedToStart(source, error: error)
+        defer { saying = was }   // one inside another (a failed start's `ended`)
+        body()
     }
     override func performTextFinderAction(_ sender: Any?) {
         finding = true

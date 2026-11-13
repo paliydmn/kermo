@@ -358,8 +358,8 @@ extension ServerLockTests {
     #expect(refused == 1, "a visible https:// isn't a link yet (task 21 PR 4)")
 }
 
-/// A relative path a server prints isn't resolved against this Mac's folders; a local tab's is, against its shell's.
-@MainActor @Test func anSSHTabsPathsArentThisMacs() {
+/// The folder a server's shell tells (OSC 7) is never a base for a path on this Mac; a local tab's shell's folder is.
+@MainActor @Test func anSSHTabsFolderIsntThisMacs() {
     #expect(!EmbeddedTerminal.Tab(kind: .ssh(SFTPTarget(host: "me@db.invalid")), view: DropTerminalView(frame: .zero)).view.resolvesLinksAgainstShellDirectory)
     #expect(EmbeddedTerminal.Tab(kind: .shell, view: DropTerminalView(frame: .zero)).view.resolvesLinksAgainstShellDirectory)
 }

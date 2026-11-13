@@ -54,6 +54,14 @@ import Testing
     #expect(!term.handleKey(key(53, "\u{1b}", .shift)), "⇧⎋ is not ⎋")
     #expect(term.handleKey(key(53, "\u{1b}")))
     #expect(term.tabs.isEmpty && exited)
+
+    term.restore([SFTPTarget(host: "dfm-t4b.invalid")])   // logging in: no ssh yet, its end not told
+    let logging = try #require(term.current)
+    logging.exitStatus = nil
+    _ = term.show()
+    #expect(term.handleKey(key(36, "\r")), "↩ isn't a second login: a beep")
+    #expect(term.handleKey(key(53, "\u{1b}")))
+    #expect(term.tabs.isEmpty, "⎋ closes it")
 }
 
 /// ↩ and ⎋ typed into the find bar are the bar's — find, close it —, not the disconnected SSH tab's Reconnect and Close.
