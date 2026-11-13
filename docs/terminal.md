@@ -35,7 +35,7 @@ As in PuTTY: **selecting text copies it** — a drag, a double-click on a word, 
 
 ### Find and select
 
-- **⌘F** opens a find bar over the terminal. It searches the scrollback and the screen as you type; **Aa**, **.\*** and **Word** match case, take a regular expression, match whole words. ↩ (or ⌘G) finds the next one, ⇧↩ the one before, the bar's arrows either way; ⎋ closes it, and ⌘G goes on finding after that. A match is selected but never copied: the clipboard keeps what you copied.
+- **⌘F** opens a find bar over the terminal. It searches the scrollback and the screen as you type; **Aa**, **.\*** and **Word** match case, take a regular expression, match whole words. ↩ finds the next one and ⇧↩ the one before, as the bar's arrows do; ⎋ closes it. With the keys in the text, the bar open or closed, ⌘G finds the next one. A match is selected but never copied: the clipboard keeps what you copied.
 - **More than the window shows:** double-click the first word, scroll to the last line, ⇧-click there — while nothing new is printed: new output clears a selection. ⌘A selects the whole scrollback and screen, and copies it.
 - **Links:** ⌘-click on a link a program printed with a hidden target (OSC 8, as `ls --hyperlink` prints them: the text shows one thing, the target may be another) opens nothing. Text from a server isn't trusted.
 
