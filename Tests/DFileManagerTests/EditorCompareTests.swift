@@ -548,7 +548,7 @@ extension EditorWindowTests {
 
 
         // A program holds the terminal: a new tab, never into it.
-        shell.view.send(txt: "sleep 3\r")   // to the shell itself, not the recorder
+        shell.view.send(txt: " sleep 3\r")   // to the shell itself, not the recorder; a leading space: not in your history (HIST_IGNORE_SPACE)
         try await until("sleeping") { !shell.isAtPrompt }
         let n = typed.count
         #expect(await send("echo again", run: true, from: e, in: dir + "/one") != .notSent(""))

@@ -138,6 +138,8 @@ extension AppDelegate {
             if out.count >= limit.files || Date() > end { cut = true }
             return cut || cancel.isCancelled
         }) { if $0.kind == .file { out.append($0.name) } }
-        return (Array(out.prefix(limit.files)), !cut)
+        // As the disk listed them they're in no order: the folder's own first, then deeper, each level by name.
+        let files = out.prefix(limit.files).map { (depth: $0.utf8.count(where: { $0 == UInt8(ascii: "/") }), path: $0) }
+        return (files.sorted { $0.depth != $1.depth ? $0.depth < $1.depth : $0.path.localizedStandardCompare($1.path) == .orderedAscending }.map(\.path), !cut)
     }
 }

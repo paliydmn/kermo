@@ -99,7 +99,9 @@ extension AppDelegate {
                 terminal.newShell(cwd: dir)
             }
             guard let t = terminal.current else { return .notSent("No terminal tab") }
-            if !run { show(t, keys: true, askOn: askOn) }   // Send: the keys go there now (a password too), not after the wait
+            // Shown before its shell starts reading: a view still in a closed drawer has no size yet, and a shell started
+            // so lost the first line (seen in the GUI). Send's keys go there now (a password too), not after the wait.
+            show(t, keys: !run, askOn: askOn)
             guard await terminal.waitForText(t, seconds: user == nil ? 3 : 30) else {
                 if user == nil { return .notSent("The new shell didn't come up — nothing sent") }
                 return .notSent(t.exitStatus != nil ? "Not connected to \(name) — nothing typed" : "\(name)'s shell didn't ask for text (bracketed paste) — nothing typed")
