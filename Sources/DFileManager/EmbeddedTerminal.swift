@@ -383,6 +383,7 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     /// Makes `t` the current tab's focused pane.
     private func reveal(_ t: Tab) {
         guard let gi = groups.firstIndex(where: { $0.panes.contains { $0 === t } }) else { return }
+        if let z = groups[gi].zoomed, z !== t { unzoom(groups[gi]) }   // keys never go to a pane out of sight
         index = gi
         groups[gi].focused = groups[gi].panes.firstIndex { $0 === t }!
     }
@@ -417,7 +418,10 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     /// pane's left (upper) one. Never closer than `minPane` to another divider.
     func resizePane(by d: Int, vertical: Bool) {
         guard isShown, let g = group, g.panes.count > 1, g.vertical == vertical else { return NSSound.beep() }
-        unzoom(g)
+        if g.zoomed != nil {
+            unzoom(g)
+            focus()
+        }
         let s = g.split, i = min(g.focused, g.panes.count - 2)
         let (a, b) = (g.panes[i].box.frame, g.panes[i + 1].box.frame)
         let lo = (vertical ? a.minX : a.minY) + Self.minPane, hi = (vertical ? b.maxX : b.maxY) - Self.minPane - s.dividerThickness
@@ -461,29 +465,30 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
 
     /// ⇧⌘↩ (iTerm2's, tmux's zoom): the current pane over its whole tab; again — back as it was. The split stays as it is
     /// meanwhile — a stand-in of the pane's size holds its place —, so the other panes keep their sizes: no reflow, no
-    /// SIGWINCH for their programs. Only the zoomed pane's width changes (its marks go, as with any width). What changes
-    /// the panes (a split, ⌥⌘ arrows, Join, a pane closed) puts it back first.
+    /// SIGWINCH for their programs. The zoomed pane grows (its marks go if its width changes, as with any width). What
+    /// changes the panes (a split, ⌥⌘ / ⌃⌘ arrows, Join, a pane closed, going to another pane) puts it back first. The
+    /// pane moves straight from one superview to the other, never out of the window (its program isn't told it lost focus).
     func zoom() {
-        guard isShown, let g = group, g.zoomed != nil || g.panes.count > 1 else { return NSSound.beep() }
+        guard isShown, let g = group, g.zoomed != nil || g.panes.count > 1 else { return beep() }
         if g.zoomed != nil { unzoom(g) } else {
-            let t = g.pane
+            let t = g.pane, i = g.split.arrangedSubviews.firstIndex(of: t.box)!
             g.stand.frame = t.box.frame
-            g.split.replaceSubview(t.box, with: g.stand)
             pin(t.box)
+            g.split.insertArrangedSubview(g.stand, at: i)
             g.zoomed = t
         }
         focus()
     }
 
-    /// The zoomed pane back into its place in the split (gone meanwhile: its place goes).
+    /// The zoomed pane back into its place in the split, shown (its tab may be behind another).
     private func unzoom(_ g: Group) {
-        guard let t = g.zoomed else { return }
+        guard let t = g.zoomed, let i = g.split.arrangedSubviews.firstIndex(of: g.stand) else { return }
         g.zoomed = nil
-        t.box.removeFromSuperview()
-        guard g.panes.contains(where: { $0 === t }) else { return g.stand.removeFromSuperview() }
+        t.box.isHidden = false
         t.box.translatesAutoresizingMaskIntoConstraints = true
         t.box.frame = g.stand.frame
-        g.split.replaceSubview(g.stand, with: t.box)
+        g.split.insertArrangedSubview(t.box, at: i)
+        g.stand.removeFromSuperview()
         render()
     }
 
@@ -531,8 +536,9 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
             guard let onLink, let tab = tabs.first(where: { $0.view === t }) else { return TerminalGate.refused() }
             onLink(tab, r, f)
         }
-        t.onOutput = { [unowned self, unowned t] in tabs.first { $0.view === t }.map { tell($0, .output) } }
-        t.onBell = { [unowned self, unowned t] in
+        t.onOutput = { [weak self, unowned t] in self?.tabs.first { $0.view === t }.map { self?.tell($0, .output) } }
+        t.onBell = { [weak self, unowned t] in
+            guard let self else { return }
             guard let tab = tabs.first(where: { $0.view === t }), !shows(tab) else { return beep() }
             tell(tab, .bell)
         }
@@ -839,7 +845,7 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         for b in topRow.arrangedSubviews.compactMap({ $0 as? NSButton }) {   // the row's buttons say their keys
             guard let id = b.identifier?.rawValue else { continue }
             let what = id == "view.terminal" ? "Hide Terminal" : id == "view.terminalFull" ? (isFull ? "Restore Terminal" : "Maximize Terminal")
-                : id == "term.more" ? "Terminal: Open in Editor, Marks, Copy Output" : "Split Terminal Right"
+                : id == "term.more" ? "Terminal: Open in Editor, Marks, Copy Output, Zoom" : "Split Terminal Right"
             b.toolTip = what + (keyFor?(id).map { "  " + $0 } ?? "")
             b.setAccessibilityLabel(what)
         }
@@ -869,19 +875,19 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
 
     /// Output or a bell in a pane that isn't shown: its tab says so (`news`) until it shows.
     private func tell(_ t: Tab, _ n: Tab.News) {
-        guard tabs.contains(where: { $0 === t }), !shows(t), t.news != .bell else { return }
+        guard tabs.contains(where: { $0 === t }), !shows(t), t.news != .bell, t.news != n else { return }
         t.news = n
         render()
     }
     /// A bell in a shown pane: the system's sound. Tests: their own.
     var beep: @MainActor () -> Void = { NSSound.beep() }
 
-    /// What happened while it wasn't shown (accent dot: output; bell), an SSH pane's state (on while ssh runs, off once it
+    /// What happened while it wasn't shown (output: an ellipsis, not the state's dot; a bell), an SSH pane's state (on while ssh runs, off once it
     /// ended) and its server's chips — root for a root login.
     private static func lead(_ t: Tab) -> NSAttributedString? {
         let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         let news: NSAttributedString? = switch t.news {
-        case .output: Symbol.dot.text(Palette.accent, font: font, label: "new output")
+        case .output: Symbol.news.text(Palette.accent, font: font, label: "new output")
         case .bell: Symbol.bell.text(Palette.warn, font: font, label: "rang")
         case nil: nil
         }
@@ -1436,12 +1442,19 @@ final class DropTerminalView: LocalProcessTerminalView {
     var onOutput: (() -> Void)?
     var onBell: (() -> Void)?
     /// Armed while the tab doesn't show: the parse thread's one check per batch, and one hop to the main queue per arming.
-    private let armed = OSAllocatedUnfairLock(initialState: false)
-    func watch(_ on: Bool) { armed.withLock { $0 = on } }
+    /// After a size change its shell redraws its prompt (SIGWINCH) — a drawer dragged, ⌘+: not news. ponytail: half a
+    /// second; a server's redraw later than that over a slow link still marks the tab.
+    private let armed = OSAllocatedUnfairLock(initialState: (on: false, quietUntil: UInt64(0)))
+    func watch(_ on: Bool) { armed.withLock { $0.on = on } }
+    func resized() { armed.withLock { $0.quietUntil = DispatchTime.now().uptimeNanoseconds + 500_000_000 } }
     private func watchOutput() {
         nonisolated(unsafe) weak var me = self   // read on the main queue only
         setProcessOutputHandler { [armed] in
-            guard armed.withLock({ let was = $0; $0 = false; return was }) else { return }
+            guard armed.withLock({ s in
+                guard s.on, DispatchTime.now().uptimeNanoseconds >= s.quietUntil else { return false }
+                s.on = false
+                return true
+            }) else { return }
             DispatchQueue.main.async { MainActor.assumeIsolated { me?.onOutput?() } }
         }
     }
@@ -1515,14 +1528,19 @@ final class TerminalGate: TerminalViewDelegate {
     func kittyClipboardWrite(source: TerminalView, location: KittyClipboardLocation, content: KittyClipboardWriteContent) -> KittyClipboardWriteResult { .denied }
     func kittyClipboardRequestPermission(source: TerminalView, request: KittyClipboardPermissionRequest) -> KittyClipboardPermissionResult { .deny }
 
-    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) { view.sizeChanged(source: source, newCols: newCols, newRows: newRows) }
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        view.resized()
+        view.sizeChanged(source: source, newCols: newCols, newRows: newRows)
+    }
     func setTerminalTitle(source: TerminalView, title: String) { view.setTerminalTitle(source: source, title: title) }
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) { view.hostCurrentDirectoryUpdate(source: source, directory: directory) }
     func send(source: TerminalView, data: ArraySlice<UInt8>) { view.send(source: source, data: data) }
     func scrolled(source: TerminalView, position: Double) { view.scrolled(source: source, position: position) }
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) { view.rangeChanged(source: source, startY: startY, endY: endY) }
     func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) { view.programStatusChanged(source: source, records: records) }
-    func bell(source: TerminalView) { view.onBell.map { $0() } ?? view.bell(source: source) }
+    func bell(source: TerminalView) {
+        if let b = view.onBell { b() } else { view.bell(source: source) }
+    }
     func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) { view.iTermContent(source: source, content: content) }
 }
 

@@ -54,6 +54,25 @@ private let a = SFTPTarget(host: "a@dfm-t21c.invalid"), b = SFTPTarget(host: "b@
     term.close(pa.id, confirm: false)
     #expect(g.zoomed == nil && g.split.arrangedSubviews == [pb.box, pc.box] && pa.box.superview == nil, "the zoomed pane closed: its place goes")
 
+    // Going to a pane under the zoom (a sidebar row, Execute from the editor) puts it back: keys never go out of sight.
+    term.zoom()
+    #expect(g.zoomed === term.current)
+    let other = try #require(g.panes.first { $0 !== term.current })
+    term.select(other.id)
+    #expect(g.zoomed == nil && term.current === other && term.shows(other))
+    // ⌃⌘ arrows: back, and the keys stay in the terminal.
+    term.zoom()
+    term.resizePane(by: 1, vertical: true)
+    #expect(g.zoomed == nil && term.hasFocus)
+    // A zoomed tab behind another, joined into the current one: its pane comes back shown, not collapsed.
+    term.zoom()
+    let zoomed = try #require(g.zoomed)
+    term.restore([.init(vertical: true, panes: [a])])
+    term.select(term.groups[1].panes[0].id)
+    #expect(zoomed.box.isHidden, "its tab is behind")
+    term.join(g)
+    #expect(g.zoomed == nil && !zoomed.box.isHidden && term.groups.count == 1 && term.groups[0].panes.contains { $0 === zoomed })
+
     let one = terminal()
     one.restore([.init(vertical: true, panes: [a])])
     _ = one.show()
@@ -91,9 +110,20 @@ private let a = SFTPTarget(host: "a@dfm-t21c.invalid"), b = SFTPTarget(host: "b@
     for _ in 0..<300 where tb.news == nil { try await Task.sleep(for: .milliseconds(10)) }
     #expect(tb.news == .output, "hidden again: watched again")
 
+    // A size change (a drawer dragged, ⌘+): the prompt's redraw isn't news for half a second.
+    term.select(tb.id)
+    term.select(ta.id)
+    tb.view.resized()
+    try await Task.sleep(for: .milliseconds(250))
+    #expect(tb.news == nil, "quiet after a resize")
+    for _ in 0..<300 where tb.news == nil { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(tb.news == .output, "then watched again")
+
     // A bell: the hidden tab's marks it, quietly; it stays over output. The shown tab's sounds, with no mark.
     tb.view.terminalDelegate?.bell(source: tb.view)
     #expect(tb.news == .bell && beeps == 0)
+    tb.view.onOutput?()   // a batch's hop already on its way
+    #expect(tb.news == .bell, "a bell stays over output")
     ta.view.terminalDelegate?.bell(source: ta.view)
     #expect(ta.news == nil && beeps == 1)
     ta.view.feed(text: "\u{7}")   // a program's BEL, through SwiftTerm's own queue

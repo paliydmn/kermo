@@ -20,7 +20,7 @@ Release:
 - **The wheel in less, man and `git log`** scrolls them, as in Terminal.app.
 - **⌘-click on a path in the terminal** opens it in the editor at its line (`src/app.py:42`, `src/main.rs:10:5`): in an SSH tab the server's file, as its user and as F4 opens it, never this Mac's file of the same name. A folder opens in a panel, a file over 32 MB in the viewer; ⌥⌘-click shows it in a panel. ⌘-click on `http(s)://` opens the browser. Hold ⌘ to see what's a link. A link's hidden target (OSC 8) still opens nothing.
 - **Zoom Pane** (⇧⌘↩): a terminal pane over its whole tab, and back where it was; the other panes keep their sizes.
-- **A terminal tab you can't see says what happened in it**: a dot for new output, a bell for BEL, which then makes no sound.
+- **A terminal tab you can't see says what happened in it**: an ellipsis for new output, a bell for BEL, which then makes no sound.
 - **⇧-click selects from the last click in the terminal**, as in Terminal.app: click where the text starts, scroll, ⇧-click where it ends.
 - **Editor** in the main window's toolbar and ⇧⌘E (**File ▸ Show Editor**, from the terminal too) bring the editor forward as you left it, or on a new Untitled; hold the button for **New Editor Document** and **Quick Open…**.
 - **Copy a change across in Compare**: ⌥⇧⌘← / ⌥⇧⌘→ (or the arrow beside its line numbers) put the change the caret's in, as the other side has it, into the left or the right side — into a document only, as one ⌘Z, nothing saved till ⌘S.
