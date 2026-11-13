@@ -1287,13 +1287,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// A mark's command → the panel command whose key it has in the terminal.
     static let terminalBranchKeys = Dictionary(uniqueKeysWithValues: terminalBranches.map { ($1, $0) })
     /// What acts on the terminal's current pane: while it's shown — from «⋯», or the menu, with a panel's keys too.
-    static let terminalPane: Set<String> = ["term.editor", "term.output.editor", "term.output.copy", "term.mark.prev", "term.mark.next"]
+    static let terminalPane: Set<String> = ["term.editor", "term.output.editor", "term.output.copy", "term.mark.prev", "term.mark.next", "term.zoom"]
     static let terminalCommands = ["view.terminal", "view.terminalFull", "tab.new", "tab.close", "term.split.right", "term.split.down", "term.mark.prev",
                                    "term.mark.next", "term.output.copy", "term.editor", "term.output.editor", "tab.next",
                                    "tab.prev", "ssh.new", "go.connect", "cmdline.insert", "cmdline.insertPaths", "term.bigger", "term.smaller",
                                    "view.sidebar", "ssh.reconnect", "server.disconnect", "term.join", "term.unsplit", "term.pane.left",
                                    "term.pane.right", "term.pane.up", "term.pane.down", "term.resize.left", "term.resize.right", "term.resize.up",
-                                   "term.resize.down"] + (1...4).map { "panel.focus\($0)" }
+                                   "term.resize.down", "term.zoom"] + (1...4).map { "panel.focus\($0)" }
 
     /// ⌃O: the drawer under the panels; open with the keys in a panel, the keys go to it (as ⌃` in VS Code); with the
     /// keys in it (or over the panels, ⌃⇧O), it hides.
