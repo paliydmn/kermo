@@ -39,7 +39,8 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
     }
     /// The active pane's tab shown.
     var active: Editor? { pane?.active }
-    private let finalNewlineSwitch = NSSegmentedControl(labels: ["Final Newline"], trackingMode: .selectAny, target: nil, action: #selector(Editor.toggleFinalNewline(_:)))
+    /// The row under the toolbar (`MoreTools`), made when first shown.
+    private(set) var moreTools: MoreTools?
 
     private init(tabbed: Bool) {
         self.tabbed = tabbed
@@ -55,15 +56,19 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         content.addSubview(split)
         w.contentView = content
         pane = addPane()
-        finalNewlineSwitch.toolTip = "Saving ends the file with a newline (File ▸ Ensure Final Newline)"
-        let bar = NSToolbar(identifier: "Editor " + UUID().uuidString)   // its own: same-named toolbars share their items
+        // The editor window's is one: its toolbar keeps the user's Customize Toolbar…; a tool's window has its own
+        // (same-named toolbars share their items: a server file's History would show in every tool's window).
+        let bar = NSToolbar(identifier: tabbed ? "Editor" : "Tool Editor " + UUID().uuidString)
         bar.delegate = self
         bar.displayMode = .iconOnly
+        bar.allowsUserCustomization = tabbed
+        bar.autosavesConfiguration = tabbed
         w.toolbar = bar
         w.toolbarStyle = .unified
         w.delegate = self
         w.center()
         w.setFrameAutosaveName(tabbed ? "Editor" : "Tool Editor")   // two kinds of window, two places
+        if MoreTools.shown { showMoreTools(true) }
         if tabbed {
             NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.checkpoint() }   // another app in front: what's typed is kept now
@@ -253,6 +258,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         let keys = b.snapshot == nil || a.snapshot != nil ? b : a
         activate(keys === b ? qb : qa)
         comparison?.start()
+        updateTools()
         reveal(keys)
         if window?.isKeyWindow == true { [a, b].forEach { $0.shown() } }   // the pane without the keys: its colors too
         changed()
@@ -263,6 +269,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         guard let c = comparison else { return }
         comparison = nil
         c.stop()
+        updateTools()
     }
 
     /// A read-only copy's tab given to `doc` (Edit, its file open in another tab already): the comparison goes on with it.
@@ -519,12 +526,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         (w.title, w.subtitle) = e.heading
         w.representedURL = e.representedURL
         w.showChips(e.chips)
-        finalNewlineSwitch.setSelected(e.finalNewline, forSegment: 0)
-        finalNewlineSwitch.isEnabled = e.snapshot == nil
-        let history = w.toolbar?.items.contains { $0.itemIdentifier == Self.historyID } == true
-        if history != (e.server != nil), let bar = w.toolbar {   // a server's file has its history
-            if history { bar.removeItem(at: bar.items.count - 1) } else { bar.insertItem(withItemIdentifier: Self.historyID, at: bar.items.count) }
-        }
+        updateTools()
         w.listInWindowsMenu()   // a new title put the plain one back there
     }
 
@@ -766,26 +768,108 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         Task { await e.reopen(c.doc, text: c.text) }
     }
 
-    // MARK: Toolbar: what there is to switch for the file shown
+    // MARK: Toolbar and More Tools (`EditorTool`)
 
-    private static let newlineID = NSToolbarItem.Identifier("finalNewline"), historyID = NSToolbarItem.Identifier("history")
-
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [.flexibleSpace, Self.newlineID] }
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [.flexibleSpace, Self.newlineID, Self.historyID] }
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { EditorTool.defaults(tabbed: tabbed) }
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { EditorTool.allowed(tabbed: tabbed) }
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-        let item = NSToolbarItem(itemIdentifier: id)
-        if id == Self.newlineID {
-            (item.view, item.label) = (finalNewlineSwitch, "Final Newline")   // to the shown document, by the responder chain
-        } else {
-            let b = NSButton(title: "Server File History…", target: self, action: #selector(showHistory))
-            b.bezelStyle = .toolbar
-            (item.view, item.label) = (b, "Server File History")
+        switch id {
+        case EditorTool.backID:
+            let item = NSToolbarItem(itemIdentifier: id)
+            item.label = tabbed ? "Back to Panels" : "Close"
+            (item.paletteLabel, item.toolTip) = (item.label, item.label + " ⎋")
+            item.image = NSImage(systemSymbolName: "chevron.backward", accessibilityDescription: item.label)
+            (item.isNavigational, item.isBordered, item.target, item.action) = (true, true, self, #selector(back))
+            return item
+        case EditorTool.moreID:
+            let item = NSToolbarItem(itemIdentifier: id)
+            (item.label, item.paletteLabel) = ("More Tools", "More Tools")
+            (item.isBordered, item.target, item.action, item.visibilityPriority) = (true, self, #selector(toggleMoreTools), .high)
+            showMoreState(item)
+            return item
+        default:
+            guard let tool = EditorTool.named(id) else { return nil }
+            if case .submenu = tool.source, let menu = EditorTool.copy(of: tool.menuItem()?.submenu) {   // a pick list
+                let item = NSMenuToolbarItem(itemIdentifier: id)
+                (item.label, item.paletteLabel, item.toolTip, item.menu) = (tool.label, tool.label, tool.label, menu)
+                item.image = NSImage(systemSymbolName: tool.symbol, accessibilityDescription: tool.label)
+                return item
+            }
+            return ToolItem(tool, host: self, action: #selector(runTool(_:)))
         }
-        return item
+    }
+    // Customize Toolbar… moved a tool in or out: More Tools has the rest.
+    func toolbarWillAddItem(_ notification: Notification) { Task { self.fillMoreTools() } }
+    func toolbarDidRemoveItem(_ notification: Notification) { Task { self.fillMoreTools() } }
+
+    /// A tool clicked: in the toolbar, its » menu, or More Tools.
+    @objc func runTool(_ sender: Any?) {
+        let id = (sender as? NSToolbarItem)?.itemIdentifier.rawValue ?? (sender as? NSUserInterfaceItemIdentification)?.identifier?.rawValue
+        guard let w = window, let tool = id.flatMap({ EditorTool.named(.init($0)) }) else { return }
+        tool.run(in: w, from: sender as? NSView)
+    }
+    @objc private func back() { active?.escape() }
+
+    /// History for a server's file, Compare's steps while it compares: in the toolbar then only, before the chevron.
+    private func updateTools() {
+        guard let bar = window?.toolbar else { return }
+        let want = EditorTool.all.filter { t in
+            switch t.when {
+            case .server: active?.server != nil
+            case .comparing: comparison != nil
+            case nil: false
+            }
+        }.map(\.id)
+        for (i, item) in bar.items.enumerated().reversed() where EditorTool.named(item.itemIdentifier)?.when != nil && !want.contains(item.itemIdentifier) {
+            bar.removeItem(at: i)
+        }
+        let have = Set(bar.items.map(\.itemIdentifier))
+        var at = bar.items.firstIndex { $0.itemIdentifier == EditorTool.moreID } ?? bar.items.count
+        for id in want where !have.contains(id) {
+            bar.insertItem(withItemIdentifier: id, at: at)
+            at += 1
+        }
     }
 
-    /// Server ▸ File History…, for the shown tab's file.
-    @objc private func showHistory() { (NSApp.delegate as? AppDelegate)?.run("server.history") }
+    /// The toolbar's chevron, View ▸ Show More Tools: the row in every editor window, open or closed, remembered.
+    @objc func toggleMoreTools() {
+        MoreTools.shown.toggle()
+        for h in NSApp.windows.compactMap({ $0.windowController as? EditorHost }) where h === Self.shared || h.window?.isVisible == true {
+            h.showMoreTools(MoreTools.shown)   // the editor window, shown or hidden, and the tools' open ones
+        }
+    }
+
+    private func showMoreTools(_ on: Bool) {
+        guard let w = window else { return }
+        if on, moreTools == nil {
+            let row = MoreTools()
+            moreTools = row
+            w.addTitlebarAccessoryViewController(row)
+            fillMoreTools()
+        }
+        moreTools?.isHidden = !on
+        if on { moreTools?.validate(in: w) }
+        w.toolbar?.items.first { $0.itemIdentifier == EditorTool.moreID }.map(showMoreState)
+    }
+
+    private func showMoreState(_ item: NSToolbarItem) {
+        let on = moreTools?.isHidden == false
+        item.toolTip = on ? "Hide More Tools" : "Show More Tools"
+        item.image = NSImage(systemSymbolName: on ? "chevron.up" : "chevron.down", accessibilityDescription: item.toolTip)
+    }
+
+    /// Every tool the toolbar hasn't now, the shown tab's own ones (History, Compare's) left to the toolbar.
+    private func fillMoreTools() {
+        guard let row = moreTools, let w = window else { return }
+        let have = Set(w.toolbar?.items.map(\.itemIdentifier) ?? [])
+        row.fill(EditorTool.all.filter { $0.when == nil && (tabbed || !$0.windowOnly) && !have.contains($0.id) }, target: self, action: #selector(runTool(_:)))
+        row.validate(in: w)
+    }
+
+    /// More Tools as the toolbar: enabled, on, the tooltips — whenever the window updates.
+    func windowDidUpdate(_ notification: Notification) {
+        if let row = moreTools, !row.isHidden, let w = window { row.validate(in: w) }
+    }
 
     // MARK: Drafts
 

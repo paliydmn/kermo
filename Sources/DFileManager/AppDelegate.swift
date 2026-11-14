@@ -1430,6 +1430,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let c = commands.first { $0.id == id }
         if let on = c?.on { item.state = on(self) ? .on : .off }
         if id == "app.update" { item.title = updateOffered.map { "Kermo \($0) Available…" } ?? "Check for Updates…" }
+        if id == "text.moreTools" { item.title = MoreTools.shown ? "Hide More Tools" : "Show More Tools" }
         if ["file.view", "file.edit", "go.path"].contains(id) { item.title = c?.title ?? item.title }   // a list names them for its rows (below)
         if id == "file.trash" { item.title = (activePanel.map { ($0.remote ?? $0.parked) != nil } ?? false) ? "Delete…" : c?.title ?? item.title }   // no Trash on a server
         if id == "file.copy" { item.title = activePanel?.archive != nil ? "Extract To…" : c?.title ?? item.title }   // F5 in an archive

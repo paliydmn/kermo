@@ -49,16 +49,22 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     }
     /// Its own key, on its key bar and F1 over it; Save, Find and the rest are the menu bar's.
     static func keys(of window: NSWindow?) -> [AppDelegate.KeyRow]? {
-        EditorHost.shown(in: window).map { e in
-            [AppDelegate.KeyRow(section: "Editor", title: e.host.tabbed ? "Back to Panels" : "Close", key: "⎋") { e.escape() }]
-                + (e.host.tabbed ? [("Send to Terminal", "cmdline.insert", false), ("Execute in Terminal", "cmdline.insertPaths", true)] : []).compactMap { t, id, run in
+        (window?.windowController as? EditorHost).flatMap { h in h.active.map { (h, $0) } }.map { h, e in   // the window's: a closed tab's own host is gone
+            [AppDelegate.KeyRow(section: "Editor", title: h.tabbed ? "Back to Panels" : "Close", key: "⎋") { e.escape() }]
+                + (h.tabbed ? [("Send to Terminal", "cmdline.insert", false), ("Execute in Terminal", "cmdline.insertPaths", true)] : []).compactMap { t, id, run in
                     app()?.commands.first { $0.id == id }?.keys.first.map { k in   // the panels' ⌃↩ / ⌃⇧↩ (`editorTerminalKeys`)
                         AppDelegate.KeyRow(section: "Editor", title: t, key: k.display) { app()?.editorToTerminal(run: run) }
                     }
                 }
-                + (e.host.comparison?.paused == false ? [("Next Change", "⌥⌘↓", 1), ("Previous Change", "⌥⌘↑", -1)].map { t, k, d in   // `term.pane.down` / `.up` there
+                + (h.comparison?.paused == false ? [("Next Change", "⌥⌘↓", 1), ("Previous Change", "⌥⌘↑", -1)].map { t, k, d in   // `term.pane.down` / `.up` there
                     AppDelegate.KeyRow(section: "Editor", title: t, key: k) { app()?.compareStep(d) }
                 } : [])   // Copy Change's keys are its menu items'.
+        }
+    }
+    /// Its key bar's last: F1, every key over the window (`help.keys`).
+    static var allKeys: AppDelegate.KeyRow {
+        AppDelegate.KeyRow(section: "Editor", title: "All Keys", key: app()?.commands.first { $0.id == "help.keys" }?.keys.first?.display ?? "F1") {
+            app()?.run("help.keys")
         }
     }
     /// The open editor of that server's file, if any.
@@ -1587,6 +1593,28 @@ final class EditorTextView: NSTextView {
             return performTextFinderAction(hide)
         }
         (delegate as? Editor)?.escape()
+    }
+
+    /// The right click: AppKit's text menu without what code has no use for — spelling, substitutions, speech, layout
+    /// orientation, fonts, Share — and after its Cut/Copy/Paste the editor's own for the click's place
+    /// (`EditorTool.contextItems`).
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event)
+        guard let menu, let e = delegate as? Editor else { return menu }
+        let unused: Set<Selector> = [#selector(NSTextView.showGuessPanel(_:)), #selector(NSTextView.orderFrontSubstitutionsPanel(_:)),
+                                     #selector(NSTextView.startSpeaking(_:)), #selector(NSTextView.changeLayoutOrientation(_:)),
+                                     #selector(NSFontManager.orderFrontFontPanel(_:))]
+        for it in menu.items where it.submenu?.items.contains(where: { $0.action.map(unused.contains) == true }) == true
+            || it.action.map(NSStringFromSelector) == "_performStandardShareMenuItem:" {   // AppKit's Share…: no public way to tell it
+            menu.removeItem(it)
+        }
+        let paste = menu.items.firstIndex { $0.action == #selector(NSText.paste(_:)) } ?? menu.items.count   // Paste and Match Style after it
+        let at = menu.items[paste...].firstIndex(where: \.isSeparatorItem) ?? menu.items.count
+        for (i, it) in EditorTool.contextItems(for: e).enumerated() { menu.insertItem(it, at: at + i) }
+        for (i, it) in menu.items.enumerated().reversed() where it.isSeparatorItem && (i == 0 || i == menu.items.count - 1 || menu.items[i - 1].isSeparatorItem) {
+            menu.removeItem(at: i)   // the separators of what went: none first, last or two running
+        }
+        return menu
     }
 
     /// A bracket by the caret and its pair (`Editor.markBrackets`).

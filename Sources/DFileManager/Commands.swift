@@ -251,6 +251,8 @@ extension AppDelegate {
         cmd("text.invisibles", "Show Invisibles", [], menu: "View", group: 6, aliases: "whitespace tabs spaces editor", on: { _ in Editor.invisibles }) { _ in
             Editor.toggleInvisibles()
         },
+        // The editor's row under its toolbar (`MoreTools`): no key, ⌥⌘T is macOS's Show Toolbar.
+        cmd("text.moreTools", "Show More Tools", [], menu: "View", group: 6, aliases: "editor toolbar buttons second row icons") { $0.textEditor?.host.toggleMoreTools() },
         cmd("text.indent.tabs", "Tabs", [], menu: "View/Indentation", group: 6, aliases: "indent with tabs editor",
             on: { $0.textEditor?.indent == .tabs }) { $0.textEditor?.pickIndent(.tabs) },
         cmd("text.indent.2", "2 Spaces", [], menu: "View/Indentation", group: 6, aliases: "indent with spaces editor",

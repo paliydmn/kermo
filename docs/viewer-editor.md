@@ -41,7 +41,17 @@ These keys work in text mode only (`g` also in hex mode), and stop while `f` fol
 
 Press F4 (⌥4) on a file. It opens text files up to 32 MB in a tab of the editor window; a binary or larger file is refused, and the message points to the viewer. F4 on a file that's already open, on this Mac or on the same server as the same user, chooses its tab: one file, one tab.
 
-The window's title is the shown tab's file name with where it is under it, as the viewer's; the status line says the encoding and what's saved where (and, for a few seconds, a save's note), and at its right where the caret is — `Ln 12, Col 5`, what's selected (`3 lines, 120 selected`) and what Tab puts in (`Spaces: 4` or `Tabs`); the key bar shows ⎋ and the menu keys that work there. The toolbar has **Final Newline** (lit while on, as the menu's checkmark) and, for a server's file, **Server File History…**.
+The window's title is the shown tab's file name with where it is under it, as the viewer's; the status line says the encoding and what's saved where (and, for a few seconds, a save's note), and at its right where the caret is — `Ln 12, Col 5`, what's selected (`3 lines, 120 selected`) and what Tab puts in (`Spaces: 4` or `Tabs`). The key bar shows the editor's own keys — ⎋ back to the panels, ⌃↩ and ⌃⇧↩ to the terminal — and **F1** for every key; the menu's keys are in the toolbar's tooltips.
+
+### Toolbar and More Tools
+
+The toolbar holds the editor's most used commands as icons: **‹** back to the panels before the title, then **Quick Open** and **Save**, **Find** and **Go to Line**, **Toggle Comment**, **Wrap**, **Invisibles** and **Final Newline** (these three lit while on), **Send** and **Execute** to the terminal, **Split Right** and **Compare**. Hover one for its name and key; it does what its menu item does, and is dimmed where that item is. A server's file adds **History**; while two texts are compared, **Previous** and **Next** change, **Copy Left**, **Copy Right** and **Stop** appear. A narrow window puts what doesn't fit under **»**.
+
+**⌄** at the right end (**View ▸ Show More Tools**) opens a second row under the toolbar with every other command of the editor, in groups — File (New, Save As, Reopen Tab, Copy Path), Text (Indentation), Lines (Line Up, Line Down, Duplicate, Delete Line), Panes (All Tabs, Split Down, Join Panes, Move to Pane, Clone to Pane) and View (Bigger, Smaller). It stays open or closed for every editor window, after a restart too; on a narrow window its last groups give way.
+
+Right-click the toolbar for **Customize Toolbar…** to drag icons in or out, or show them with their names: what you take out of the toolbar goes to the second row, and back. **Restore Default Set** there brings the toolbar above back.
+
+Right-click in the text for the commands that act where you clicked: **Send to Terminal** and **Execute in Terminal**, **Toggle Comment**, **Lines ▸**, **Copy Change to Left / Right** while comparing, **Copy Path** of a file and a server file's **Server File History…**, beside Cut, Copy and Paste.
 
 - Line numbers show in the margin.
 - Syntax colors cover shell, Python, JSON, YAML, INI-style files (`.ini`, `.toml`, `.cfg`, `.properties`, `.service`), `.conf`, XML (plist, HTML, SVG), Dockerfile, Makefile and C-style languages (Swift, C, C++, JavaScript, TypeScript, Go, Rust, Java and others). The file name or a `#!` line picks the language. A text over 2 MB gets no colors. The viewer colors files by name the same way.
@@ -216,7 +226,7 @@ If the file changed on disk after you opened it, ⌘S asks **Overwrite**, **Relo
 
 ### Ensure Final Newline
 
-**File ▸ Ensure Final Newline**, or **Final Newline** in the toolbar, adds a newline at the end of the text on save when it is missing. The checkmark, and the toolbar's switch, show the state for the shown tab. It starts on for config files (crontabs, dotfiles, files under `/etc`, `.conf`, `.ini`, `.yml`, `.toml` and the like) and off for other files. To set one rule for every new window, choose **End with a newline** in Settings › Editor & Viewer, or use `-bool true` (always) or `-bool false` (never):
+**File ▸ Ensure Final Newline**, or **Final Newline** (↵) in the toolbar, adds a newline at the end of the text on save when it is missing. The checkmark, and the toolbar's icon (lit while on), show the state for the shown tab. It starts on for config files (crontabs, dotfiles, files under `/etc`, `.conf`, `.ini`, `.yml`, `.toml` and the like) and off for other files. To set one rule for every new window, choose **End with a newline** in Settings › Editor & Viewer, or use `-bool true` (always) or `-bool false` (never):
 
 ```sh
 defaults write com.dmn.dfilemanager editorFinalNewline -bool true
