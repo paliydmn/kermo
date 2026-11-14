@@ -255,7 +255,10 @@ extension AppDelegate {
                               "sh", String(ProcessInfo.processInfo.processIdentifier), app.path]
         try? relaunch.run()
         active.flash("Kermo \(version) is installed: it opens when Kermo quits")
-        NSApp.terminate(nil)
+        // Not from inside this task: with the editor's drafts the quit waits (`.terminateLater`) for another main-actor
+        // task, which can't start while this one holds the main queue — Kermo stayed half-quit, without a window
+        // (2.0.1 → 2.1). From the run loop it's as ⌘Q.
+        NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
     }
 
     func toggleUpdateChecks() {

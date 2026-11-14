@@ -34,6 +34,8 @@ Once a day Kermo asks GitHub for its latest release: one HTTPS request to `api.g
 
 Install and Relaunch comes with Kermo 1.4.1. Kermo 1.2.1 and older offer only **Download**: update them once with the [install line](#install-a-release) or by hand.
 
+From Kermo 2.0, 2.0.1 or 2.1, Install and Relaunch puts the new version in place and then leaves the old Kermo open with no window (a click on its Dock icon shows nothing). Force Quit it (⌥⌘⎋, or the Dock icon's menu with ⌥ held): the new version opens by itself. Kermo after 2.1 doesn't stop there.
+
 Turn the daily check off in Settings › General, with **Kermo ▸ Configuration ▸ Check for Updates Automatically**, or `defaults write com.dmn.dfilemanager updateCheckOff -bool true`.
 
 Releases after 1.2.1 are all signed with one certificate, so Full Disk Access and other permissions survive an update. Saved passwords in the Keychain may still ask once per update: click **Always Allow**.
