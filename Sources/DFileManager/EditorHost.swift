@@ -790,7 +790,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
             return item
         default:
             guard let tool = EditorTool.named(id) else { return nil }
-            if case .submenu = tool.source, let menu = EditorTool.copy(of: tool.menuItem()?.submenu) {   // a pick list
+            if case .submenu = tool.source, let menu = tool.menuItem()?.submenu?.copy() as? NSMenu {   // a pick list: the menu's items again, in a menu of its own
                 let item = NSMenuToolbarItem(itemIdentifier: id)
                 (item.label, item.paletteLabel, item.toolTip, item.menu) = (tool.label, tool.label, tool.label, menu)
                 item.image = tool.symbol.image(tool.label)

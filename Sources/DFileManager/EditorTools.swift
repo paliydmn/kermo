@@ -8,7 +8,8 @@ struct EditorTool {
     enum Source {
         case command(String)
         case action(Selector, tag: Int = 0)
-        /// The submenu holding this command's item (View ▸ Indentation): a menu to pick from.
+        /// The submenu holding this command's item (View ▸ Indentation): a menu to pick from. A plain `NSMenu`: it is
+        /// copied (`NSMenu.copy()`), which a subclass without `init(title:)` — `LiveMenu` — would crash on.
         case submenu(of: String)
     }
     /// Shown by itself, as the shown tab is: a server's file, while it compares. Never in More Tools.
@@ -80,10 +81,8 @@ struct EditorTool {
 
     /// Back (Close in a tool's window) before the title, the tools on the right, More Tools' chevron last.
     static func defaults(tabbed: Bool) -> [NSToolbarItem.Identifier] {
-        let ids = first.filter { tabbed || named($0)?.windowOnly != true }
-        var kept = ids.enumerated().filter { i, id in id != .space || i > 0 && ids[i - 1] != .space }.map(\.element)   // a tool window's: no two spaces running
-        while kept.last == .space { kept.removeLast() }
-        return [backID, .flexibleSpace] + kept + [moreID]
+        let groups = first.split(separator: .space).map { $0.filter { tabbed || named($0)?.windowOnly != true } }   // a tool window's: no group left empty
+        return [backID, .flexibleSpace] + groups.filter { !$0.isEmpty }.joined(separator: [.space]) + [moreID]
     }
     /// Customize Toolbar…'s: not the shown tab's own (History, Compare's), which come and go by themselves.
     static func allowed(tabbed: Bool) -> [NSToolbarItem.Identifier] {
@@ -127,19 +126,11 @@ struct EditorTool {
     func run(in w: NSWindow, from view: NSView?) {
         guard let it = menuItem() else { return NSSound.beep() }
         if case .submenu = source, let view {
-            _ = Self.copy(of: it.submenu)?.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 4), in: view)
+            _ = (it.submenu?.copy() as? NSMenu)?.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 4), in: view)
             return
         }
         guard let action = it.action, let target = AppDelegate.target(of: it, in: w), AppDelegate.works(it, in: w) else { return NSSound.beep() }
         NSApp.sendAction(action, to: target, from: it)   // to this window's, as `works` found it
-    }
-
-    /// A menu's items again, in a menu of their own: an item belongs to one menu (a toolbar's pick list, a right click).
-    static func copy(of menu: NSMenu?) -> NSMenu? {
-        guard let menu else { return nil }
-        let m = NSMenu(title: menu.title)
-        for it in menu.items { m.addItem(it.copy() as! NSMenuItem) }
-        return m
     }
 
     /// A button for More Tools: its symbol, a toggle's on and off; a click goes to `host`.
