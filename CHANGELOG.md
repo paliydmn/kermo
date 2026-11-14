@@ -13,6 +13,8 @@ Release:
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-11-14
+
 ### Fixed
 - **Install and Relaunch no longer leaves Kermo half-quit, with no window**: Kermo put the new version in place and then waited for itself. Updating to this version from 2.0, 2.0.1 or 2.1 still stops there — Force Quit Kermo (⌥⌘⎋) and the new version opens by itself.
 
@@ -497,7 +499,8 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v2.1...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/paliydmn/kermo/releases/tag/v2.1.1
 [2.1]: https://github.com/paliydmn/kermo/releases/tag/v2.1
 [2.0.1]: https://github.com/paliydmn/kermo/releases/tag/v2.0.1
 [2.0]: https://github.com/paliydmn/kermo/releases/tag/v2.0
