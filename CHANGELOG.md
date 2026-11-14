@@ -13,6 +13,9 @@ Release:
 
 ## [Unreleased]
 
+### Fixed
+- **Install and Relaunch no longer leaves Kermo half-quit, with no window**: Kermo put the new version in place and then waited for itself. Updating to this version from 2.0, 2.0.1 or 2.1 still stops there — Force Quit Kermo (⌥⌘⎋) and the new version opens by itself.
+
 ## [2.1] - 2026-11-14
 
 ### Added
