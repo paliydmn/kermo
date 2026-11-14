@@ -1,3 +1,6 @@
+> [!WARNING]
+> **Updating from 2.0, 2.0.1 or 2.1 with Install and Relaunch?** If Kermo then stays open with no window, Force Quit it (⌥⌘Esc): the new version opens by itself. Fixed from 2.1.1 on.
+
 # Kermo
 
 A keyboard-first file manager and admin console for macOS: 2–4 panels, SFTP and SSH, a built-in terminal. Built with Swift and AppKit. *Kermo* is Ukrainian for "helm".
