@@ -29,7 +29,7 @@ import Testing
 
 extension ServerLockTests {
     /// The Keys tab in a config folder of its own (`AppDelegate.keymapDir`); keymap.json as written.
-    private func keys(_ body: (AppDelegate, KeysPane) async throws -> Void) async throws {
+    private func keys(_ body: @MainActor (AppDelegate, KeysPane) async throws -> Void) async throws {
         _ = NSApplication.shared
         let dir = NSTemporaryDirectory() + "kermo-keys-" + UUID().uuidString, was = AppDelegate.keymapDir
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)

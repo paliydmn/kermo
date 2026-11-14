@@ -450,7 +450,7 @@ final class ModChip: NSButton {
 
 /// A document window's frame (Р9) — the viewer's, the editor's, an output window's: what it shows, a status line under
 /// it, and its keys along the bottom: its own, then the menu bar's that work there, as F1 over it lists them
-/// (`AppDelegate.keyRows`). Laid out by frames, so the scroll view has its size from the start (the viewer sizes its
+/// (`AppDelegate.keyRows`) — an editor's, its own and F1 (`showKeys`). Laid out by frames, so the scroll view has its size from the start (the viewer sizes its
 /// text from it).
 @MainActor
 final class DocFrame: NSView {
@@ -575,9 +575,11 @@ final class DocFrame: NSView {
         }
     }
 
-    /// Its keys as they are now — on becoming key, and when what works changes (a command ended, hex on).
+    /// Its keys as they are now — on becoming key, and when what works changes (a command ended, hex on). An editor's:
+    /// its own, then F1 for every key — its toolbar has the menu's, their keys in its tooltips.
     func showKeys() {
-        if let w = window { keys.show(Self.rows(w)) }
+        guard let w = window else { return }
+        keys.show(Editor.keys(of: w).map { $0 + [Editor.allKeys] } ?? Self.rows(w))
     }
 
     /// A line over the text (a restored draft whose file changed or went): the text below it.
