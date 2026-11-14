@@ -4,6 +4,8 @@
 
 A shell inside Kermo, local or on a server, that stays in step with the panels.
 
+Video: [the terminal in 2.1](https://youtu.be/fqrWtPnnJZg?t=39), 46 s — marks, ⌘-click on a path, Open in Editor, Zoom Pane.
+
 ## Open the terminal
 
 - **⌃O** opens the terminal as a drawer under the panels: your login shell on a local panel, the server's SSH session on a server panel. The panels stay in view, and the active one follows the shell's `cd`. Drag the line above the drawer to change its height; Kermo keeps it, also after a restart.

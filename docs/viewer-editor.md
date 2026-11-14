@@ -39,6 +39,8 @@ These keys work in text mode only (`g` also in hex mode), and stop while `f` fol
 
 ## Editor
 
+Video: [the editor in 2.1](https://youtu.be/fqrWtPnnJZg?t=4), 35 s — the toolbar, two panes, Compare, and a line run on its server.
+
 Press F4 (⌥4) on a file. It opens text files up to 32 MB in a tab of the editor window; a binary or larger file is refused, and the message points to the viewer. F4 on a file that's already open, on this Mac or on the same server as the same user, chooses its tab: one file, one tab.
 
 The window's title is the shown tab's file name with where it is under it, as the viewer's; the status line says the encoding and what's saved where (and, for a few seconds, a save's note), and at its right where the caret is — `Ln 12, Col 5`, what's selected (`3 lines, 120 selected`) and what Tab puts in (`Spaces: 4` or `Tabs`). The key bar shows the editor's own keys — ⎋ back to the panels, ⌃↩ and ⌃⇧↩ to the terminal — and **F1** for every key; the menu's keys are in the toolbar's tooltips.
