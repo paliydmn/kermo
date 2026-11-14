@@ -50,6 +50,14 @@ enum Symbol: String, CaseIterable {
     case tool = "wrench"
     // watching: the menu bar's item, Snooze
     case monitor = "gauge.with.dots.needle.33percent", snooze = "bell.slash", bell = "bell.fill", news = "ellipsis", maintenance = "wrench.and.screwdriver", quit = "power"
+    // the editor's toolbar and More Tools (`EditorTool`)
+    case back = "chevron.backward", moreOpen = "chevron.up", quickOpen = "doc.text.magnifyingglass", save = "square.and.arrow.down",
+         newDocument = "square.and.pencil", saveAs = "square.and.arrow.down.on.square", copyPath = "doc.on.clipboard",
+         comment = "chevron.left.forwardslash.chevron.right", wrapLines = "text.append", invisibles = "paragraphsign", finalNewline = "return",
+         indent = "increase.indent", lineUp = "arrow.up.to.line.compact", lineDown = "arrow.down.to.line.compact", duplicate = "plus.square.on.square",
+         deleteLine = "text.badge.minus", execute = "play", splitDown = "rectangle.split.1x2", joinPanes = "rectangle",
+         moveToPane = "rectangle.righthalf.inset.filled.arrow.right", cloneToPane = "rectangle.on.rectangle", bigger = "textformat.size.larger",
+         smaller = "textformat.size.smaller", copyLeft = "arrow.left.to.line", copyRight = "arrow.right.to.line"
 
     /// `label`: what VoiceOver says for it.
     func image(_ label: String? = nil) -> NSImage { NSImage(systemSymbolName: rawValue, accessibilityDescription: label)! }

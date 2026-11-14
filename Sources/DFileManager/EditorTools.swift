@@ -16,7 +16,7 @@ struct EditorTool {
 
     let id: NSToolbarItem.Identifier
     let label: String
-    let symbol: String
+    let symbol: Symbol
     let source: Source
     /// Its heading in More Tools.
     let group: String
@@ -27,7 +27,7 @@ struct EditorTool {
     /// Which goes into the toolbar's » last on a narrow window.
     var priority = NSToolbarItem.VisibilityPriority.standard
 
-    init(_ id: String, _ label: String, _ symbol: String, _ source: Source, _ group: String, toggle: Bool = false,
+    init(_ id: String, _ label: String, _ symbol: Symbol, _ source: Source, _ group: String, toggle: Bool = false,
          windowOnly: Bool = false, when: When? = nil, priority: NSToolbarItem.VisibilityPriority = .standard) {
         (self.id, self.label, self.symbol, self.source, self.group) = (.init(id), label, symbol, source, group)
         (self.toggle, self.windowOnly, self.when, self.priority) = (toggle, windowOnly, when, priority)
@@ -35,41 +35,41 @@ struct EditorTool {
 
     /// Every tool, in More Tools' order.
     static let all: [EditorTool] = [
-        .init("quickOpen", "Quick Open", "doc.text.magnifyingglass", .command("go.jump"), "File", windowOnly: true),
-        .init("save", "Save", "square.and.arrow.down", .action(#selector(Editor.saveDocument(_:))), "File", priority: .high),
-        .init("new", "New", "square.and.pencil", .command("editor.new"), "File"),
-        .init("saveAs", "Save As", "square.and.arrow.down.on.square", .action(#selector(Editor.saveDocumentAs(_:))), "File"),
-        .init("reopen", "Reopen Tab", "arrow.uturn.backward", .command("go.tree"), "File", windowOnly: true),
-        .init("copyPath", "Copy Path", "doc.on.clipboard", .command("edit.copyPath"), "File"),
-        .init("find", "Find", "magnifyingglass", .action(#selector(NSResponder.performTextFinderAction(_:)), tag: NSTextFinder.Action.showFindInterface.rawValue),
+        .init("quickOpen", "Quick Open", .quickOpen, .command("go.jump"), "File", windowOnly: true),
+        .init("save", "Save", .save, .action(#selector(Editor.saveDocument(_:))), "File", priority: .high),
+        .init("new", "New", .newDocument, .command("editor.new"), "File"),
+        .init("saveAs", "Save As", .saveAs, .action(#selector(Editor.saveDocumentAs(_:))), "File"),
+        .init("reopen", "Reopen Tab", .undo, .command("go.tree"), "File", windowOnly: true),
+        .init("copyPath", "Copy Path", .copyPath, .command("edit.copyPath"), "File"),
+        .init("find", "Find", .search, .action(#selector(NSResponder.performTextFinderAction(_:)), tag: NSTextFinder.Action.showFindInterface.rawValue),
               "Find", priority: .high),
-        .init("goToLine", "Go to Line", "number", .command("go.path"), "Find"),
-        .init("comment", "Comment", "chevron.left.forwardslash.chevron.right", .command("view.filterPresets"), "Text", priority: .low),
-        .init("wrap", "Wrap", "text.append", .command("text.wrap"), "Text", toggle: true),
-        .init("invisibles", "Invisibles", "paragraphsign", .command("text.invisibles"), "Text", toggle: true, priority: .low),
-        .init("newline", "Final Newline", "return", .action(#selector(Editor.toggleFinalNewline(_:))), "Text", toggle: true, priority: .low),
-        .init("indent", "Indentation", "increase.indent", .submenu(of: "text.indent.4"), "Text"),
-        .init("lineUp", "Line Up", "arrow.up.to.line.compact", .command("text.line.up"), "Lines"),
-        .init("lineDown", "Line Down", "arrow.down.to.line.compact", .command("text.line.down"), "Lines"),
-        .init("duplicate", "Duplicate", "plus.square.on.square", .command("text.line.duplicate"), "Lines"),
-        .init("deleteLine", "Delete Line", "text.badge.minus", .command("text.line.delete"), "Lines"),
-        .init("send", "Send", "apple.terminal", .command("editor.send"), "Terminal", windowOnly: true, priority: .high),
-        .init("execute", "Execute", "play", .command("editor.execute"), "Terminal", windowOnly: true, priority: .high),
-        .init("tabs", "All Tabs", "list.bullet", .command("editor.tabs"), "Panes", windowOnly: true),
-        .init("splitRight", "Split Right", "rectangle.split.2x1", .command("term.split.right"), "Panes", windowOnly: true, priority: .low),
-        .init("splitDown", "Split Down", "rectangle.split.1x2", .command("term.split.down"), "Panes", windowOnly: true),
-        .init("join", "Join Panes", "rectangle", .command("editor.joinPanes"), "Panes", windowOnly: true),
-        .init("moveToPane", "Move to Pane", "rectangle.righthalf.inset.filled.arrow.right", .command("editor.moveToPane"), "Panes", windowOnly: true),
-        .init("cloneToPane", "Clone to Pane", "rectangle.on.rectangle", .command("editor.cloneToPane"), "Panes", windowOnly: true),
-        .init("compare", "Compare", "arrow.left.arrow.right", .command("file.diff"), "Panes", windowOnly: true),
-        .init("bigger", "Bigger", "textformat.size.larger", .command("term.bigger"), "View"),
-        .init("smaller", "Smaller", "textformat.size.smaller", .command("term.smaller"), "View"),
-        .init("history", "History", "clock.arrow.circlepath", .command("server.history"), "", when: .server),
-        .init("prevChange", "Previous", "arrow.up", .command("editor.compare.prev"), "", windowOnly: true, when: .comparing, priority: .high),
-        .init("nextChange", "Next", "arrow.down", .command("editor.compare.next"), "", windowOnly: true, when: .comparing, priority: .high),
-        .init("copyLeft", "Copy Left", "arrow.left.to.line", .command("editor.compare.copyLeft"), "", windowOnly: true, when: .comparing),
-        .init("copyRight", "Copy Right", "arrow.right.to.line", .command("editor.compare.copyRight"), "", windowOnly: true, when: .comparing),
-        .init("stopCompare", "Stop", "xmark", .command("editor.compare.stop"), "", windowOnly: true, when: .comparing, priority: .high),
+        .init("goToLine", "Go to Line", .root, .command("go.path"), "Find"),
+        .init("comment", "Comment", .comment, .command("view.filterPresets"), "Text", priority: .low),
+        .init("wrap", "Wrap", .wrapLines, .command("text.wrap"), "Text", toggle: true),
+        .init("invisibles", "Invisibles", .invisibles, .command("text.invisibles"), "Text", toggle: true, priority: .low),
+        .init("newline", "Final Newline", .finalNewline, .action(#selector(Editor.toggleFinalNewline(_:))), "Text", toggle: true, priority: .low),
+        .init("indent", "Indentation", .indent, .submenu(of: "text.indent.4"), "Text"),
+        .init("lineUp", "Line Up", .lineUp, .command("text.line.up"), "Lines"),
+        .init("lineDown", "Line Down", .lineDown, .command("text.line.down"), "Lines"),
+        .init("duplicate", "Duplicate", .duplicate, .command("text.line.duplicate"), "Lines"),
+        .init("deleteLine", "Delete Line", .deleteLine, .command("text.line.delete"), "Lines"),
+        .init("send", "Send", .ssh, .command("editor.send"), "Terminal", windowOnly: true, priority: .high),
+        .init("execute", "Execute", .execute, .command("editor.execute"), "Terminal", windowOnly: true, priority: .high),
+        .init("tabs", "All Tabs", .list, .command("editor.tabs"), "Panes", windowOnly: true),
+        .init("splitRight", "Split Right", .splitRight, .command("term.split.right"), "Panes", windowOnly: true, priority: .low),
+        .init("splitDown", "Split Down", .splitDown, .command("term.split.down"), "Panes", windowOnly: true),
+        .init("join", "Join Panes", .joinPanes, .command("editor.joinPanes"), "Panes", windowOnly: true),
+        .init("moveToPane", "Move to Pane", .moveToPane, .command("editor.moveToPane"), "Panes", windowOnly: true),
+        .init("cloneToPane", "Clone to Pane", .cloneToPane, .command("editor.cloneToPane"), "Panes", windowOnly: true),
+        .init("compare", "Compare", .tunnel, .command("file.diff"), "Panes", windowOnly: true),
+        .init("bigger", "Bigger", .bigger, .command("term.bigger"), "View"),
+        .init("smaller", "Smaller", .smaller, .command("term.smaller"), "View"),
+        .init("history", "History", .activity, .command("server.history"), "", when: .server),
+        .init("prevChange", "Previous", .up, .command("editor.compare.prev"), "", windowOnly: true, when: .comparing, priority: .high),
+        .init("nextChange", "Next", .down, .command("editor.compare.next"), "", windowOnly: true, when: .comparing, priority: .high),
+        .init("copyLeft", "Copy Left", .copyLeft, .command("editor.compare.copyLeft"), "", windowOnly: true, when: .comparing),
+        .init("copyRight", "Copy Right", .copyRight, .command("editor.compare.copyRight"), "", windowOnly: true, when: .comparing),
+        .init("stopCompare", "Stop", .close, .command("editor.compare.stop"), "", windowOnly: true, when: .comparing, priority: .high),
     ]
     static func named(_ id: NSToolbarItem.Identifier) -> EditorTool? { all.first { $0.id == id } }
 
@@ -81,11 +81,13 @@ struct EditorTool {
     /// Back (Close in a tool's window) before the title, the tools on the right, More Tools' chevron last.
     static func defaults(tabbed: Bool) -> [NSToolbarItem.Identifier] {
         let ids = first.filter { tabbed || named($0)?.windowOnly != true }
-        let kept = ids.enumerated().filter { i, id in id != .space || i > 0 && ids[i - 1] != .space }.map(\.element)   // a tool window's: no two spaces running
+        var kept = ids.enumerated().filter { i, id in id != .space || i > 0 && ids[i - 1] != .space }.map(\.element)   // a tool window's: no two spaces running
+        while kept.last == .space { kept.removeLast() }
         return [backID, .flexibleSpace] + kept + [moreID]
     }
+    /// Customize Toolbar…'s: not the shown tab's own (History, Compare's), which come and go by themselves.
     static func allowed(tabbed: Bool) -> [NSToolbarItem.Identifier] {
-        [backID, moreID, .space, .flexibleSpace] + all.filter { tabbed || !$0.windowOnly }.map(\.id)
+        [backID, moreID, .space, .flexibleSpace] + all.filter { $0.when == nil && (tabbed || !$0.windowOnly) }.map(\.id)
     }
 
     // MARK: The menu bar item
@@ -109,12 +111,15 @@ struct EditorTool {
     }
 
     /// As things are now in `w`: whether it works (the item's own validation), its check mark, and its tooltip — the
-    /// menu's title (an editor's: Go to Line…, Toggle Comment) with its key, or the editor's own for it (⌃↩ Send to Terminal).
+    /// menu's title (an editor's: Go to Line…, Toggle Comment) with its key, or the editor's own for it (⌃↩ Send to
+    /// Terminal, ⌥⌘↓ Next Change).
     func state(in w: NSWindow) -> (enabled: Bool, on: Bool, tip: String) {
         guard let it = menuItem() else { return (false, false, label) }
         if case .submenu = source { return (it.submenu?.items.contains { AppDelegate.works($0, in: w) } == true, false, it.title) }
         let enabled = AppDelegate.works(it, in: w)
-        let key = Shortcut(menuItem: it)?.display ?? Editor.keys(of: w)?.first { $0.title == it.title }?.key
+        let command: String? = if case .command(let c) = source { c } else { nil }
+        let key = Shortcut(menuItem: it)?.display ?? command.flatMap(Editor.terminalKey)?.display
+            ?? (when == .comparing ? Editor.keys(of: w)?.first { $0.title == it.title }?.key : nil)
         return (enabled, it.state == .on, it.title + (key.map { " " + $0 } ?? ""))
     }
 
@@ -125,8 +130,8 @@ struct EditorTool {
             _ = Self.copy(of: it.submenu)?.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 4), in: view)
             return
         }
-        guard let action = it.action, AppDelegate.works(it, in: w) else { return NSSound.beep() }
-        NSApp.sendAction(action, to: it.target, from: it)
+        guard let action = it.action, let target = AppDelegate.target(of: it, in: w), AppDelegate.works(it, in: w) else { return NSSound.beep() }
+        NSApp.sendAction(action, to: target, from: it)   // to this window's, as `works` found it
     }
 
     /// A menu's items again, in a menu of their own: an item belongs to one menu (a toolbar's pick list, a right click).
@@ -139,7 +144,7 @@ struct EditorTool {
 
     /// A button for More Tools: its symbol, a toggle's on and off; a click goes to `host`.
     func button(target: AnyObject, action: Selector) -> NSButton {
-        let b = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: label) ?? NSImage(), target: target, action: action)
+        let b = NSButton(image: symbol.image(label), target: target, action: action)
         b.bezelStyle = .toolbar   // as the toolbar's: no frame until the mouse is over it
         b.setButtonType(toggle ? .pushOnPushOff : .momentaryPushIn)
         b.identifier = NSUserInterfaceItemIdentifier(id.rawValue)
@@ -154,26 +159,19 @@ extension EditorTool {
     /// Execute in Terminal (with their ⌃↩ ⌃⇧↩), Toggle Comment, Lines ▸, Copy Change while it compares, Copy Path of a
     /// file, a server file's History. A group a separator each; they validate and run as in the menu bar.
     static func contextItems(for e: Editor) -> [NSMenuItem] {
-        guard let menu = menu(), let host = e.host else { return [] }
-        func item(_ id: String) -> NSMenuItem? {
-            guard let it = menu.allItems.first(where: { $0.representedObject as? String == id })?.copy() as? NSMenuItem else { return nil }
-            if let panel = AppDelegate.editorTerminalKeys.first(where: { $0.value == id })?.key,   // a key picked off the panels'
-               let k = Editor.app()?.commands.first(where: { $0.id == panel })?.keys.first {
-                (it.keyEquivalent, it.keyEquivalentModifierMask) = (k.menuKey, k.flags)
-            }
+        guard let host = e.host else { return [] }
+        func item(_ tool: String) -> NSMenuItem? {
+            guard let t = named(.init(tool)), let it = t.menuItem()?.copy() as? NSMenuItem else { return nil }
+            if case .command(let c) = t.source, let k = Editor.terminalKey(c) { (it.keyEquivalent, it.keyEquivalentModifierMask) = (k.menuKey, k.flags) }
             return it
         }
-        let lines = menu.allItems.first { $0.submenu?.items.contains { $0.representedObject as? String == "text.line.up" } == true }.map { parent in
-            let it = NSMenuItem(title: parent.title, action: nil, keyEquivalent: "")
-            it.submenu = copy(of: parent.submenu)
-            return it
-        }
+        let lines = named(.init("lineUp"))?.menuItem()?.parent?.copy() as? NSMenuItem   // Edit ▸ Lines, its submenu copied with it
         let file = e.url != nil || e.server != nil
         let groups: [[NSMenuItem?]] = [
-            host.tabbed ? [item("editor.send"), item("editor.execute")] : [],
-            [item("view.filterPresets"), lines],
-            host.comparison != nil ? [item("editor.compare.copyLeft"), item("editor.compare.copyRight")] : [],
-            [file ? item("edit.copyPath") : nil, e.server != nil ? item("server.history") : nil],
+            host.tabbed ? [item("send"), item("execute")] : [],
+            [item("comment"), lines],
+            host.comparison != nil ? [item("copyLeft"), item("copyRight")] : [],
+            [file ? item("copyPath") : nil, e.server != nil ? item("history") : nil],
         ]
         return groups.map { $0.compactMap { $0 } }.filter { !$0.isEmpty }.flatMap { [NSMenuItem.separator()] + $0 }
     }
@@ -190,22 +188,29 @@ final class ToolItem: NSToolbarItem {
         self.host = host
         super.init(itemIdentifier: tool.id)
         (label, paletteLabel, toolTip, visibilityPriority) = (tool.label, tool.label, tool.label, tool.priority)
-        let image = NSImage(systemSymbolName: tool.symbol, accessibilityDescription: tool.label)
         if tool.toggle {   // a button of its own: AppKit's toolbar items have no "on"
             view = tool.button(target: host, action: action)
-            menuFormRepresentation = NSMenuItem(title: tool.label, action: action, keyEquivalent: "")
-            menuFormRepresentation?.target = host
-            menuFormRepresentation?.identifier = NSUserInterfaceItemIdentifier(tool.id.rawValue)
         } else {
-            self.image = image
+            image = tool.symbol.image(tool.label)
             isBordered = true
             target = host
             self.action = action
         }
     }
 
+    /// A toggle in », its menu item again: it validates and checks itself there, as in the menu.
+    override var menuFormRepresentation: NSMenuItem? {
+        get {
+            guard tool.toggle, let it = tool.menuItem()?.copy() as? NSMenuItem else { return super.menuFormRepresentation }
+            it.title = tool.label
+            return it
+        }
+        set { super.menuFormRepresentation = newValue }
+    }
+
+    /// The window keys go to only: the menu's items answer for that one.
     override func validate() {
-        guard let w = host?.window else { return }
+        guard let w = host?.window, w === AppDelegate.keyWindow() else { return }
         let s = tool.state(in: w)
         isEnabled = s.enabled
         toolTip = s.tip
@@ -269,8 +274,8 @@ final class MoreTools: NSTitlebarAccessoryViewController {
     override func viewDidLayout() {
         super.viewDidLayout()
         var room = view.bounds.width - stack.edgeInsets.left - stack.edgeInsets.right, gone = false
-        for g in groups {
-            let width = g.map(\.fittingSize.width).reduce(0, +) + CGFloat(g.count) * stack.spacing + 14
+        for (i, g) in groups.enumerated() {
+            let width = g.map(\.fittingSize.width).reduce(0, +) + CGFloat(g.count - 1) * stack.spacing + (i > 0 ? 14 : 0)
             gone = gone || width > room
             room -= width
             for v in g where v.isHidden != gone { v.isHidden = gone }   // only a change: no layout loop

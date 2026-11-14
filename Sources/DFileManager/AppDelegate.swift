@@ -584,17 +584,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// responder chain — then the window, its delegate, the app, the app's delegate — takes it, and doesn't grey it out.
     /// Save is the editor's, not the viewer's; Paste needs a text that can be typed in.
     static func works(_ it: NSMenuItem, in w: NSWindow) -> Bool {
-        guard let action = it.action else { return false }
-        var chain: [AnyObject] = it.target.map { [$0] } ?? []
-        if it.target == nil {
-            var r: NSResponder? = w.firstResponder
-            while let x = r { chain.append(x); r = x.nextResponder }
-            chain += [w, w.delegate, NSApp, NSApp.delegate].compactMap { $0 as AnyObject? }
-        }
-        guard let target = chain.first(where: { $0.responds(to: action) }) else { return false }
+        guard let target = target(of: it, in: w) else { return false }
         if let v = target as? NSMenuItemValidation { return v.validateMenuItem(it) }
         if let v = target as? NSUserInterfaceValidations { return v.validateUserInterfaceItem(it) }
         return true
+    }
+
+    /// Who takes `it`'s action in `w` (`works`): its target, else the first along that chain.
+    static func target(of it: NSMenuItem, in w: NSWindow) -> AnyObject? {
+        guard let action = it.action else { return nil }
+        if let t = it.target { return t.responds(to: action) ? t : nil }
+        var chain: [AnyObject] = []
+        var r: NSResponder? = w.firstResponder
+        while let x = r { chain.append(x); r = x.nextResponder }
+        chain += [w, w.delegate, NSApp, NSApp.delegate].compactMap { $0 as AnyObject? }
+        return chain.first { $0.responds(to: action) }
     }
 
     /// F1 over a document window: `keyRows`, by section.

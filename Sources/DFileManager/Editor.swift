@@ -51,15 +51,17 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     static func keys(of window: NSWindow?) -> [AppDelegate.KeyRow]? {
         (window?.windowController as? EditorHost).flatMap { h in h.active.map { (h, $0) } }.map { h, e in   // the window's: a closed tab's own host is gone
             [AppDelegate.KeyRow(section: "Editor", title: h.tabbed ? "Back to Panels" : "Close", key: "⎋") { e.escape() }]
-                + (h.tabbed ? [("Send to Terminal", "cmdline.insert", false), ("Execute in Terminal", "cmdline.insertPaths", true)] : []).compactMap { t, id, run in
-                    app()?.commands.first { $0.id == id }?.keys.first.map { k in   // the panels' ⌃↩ / ⌃⇧↩ (`editorTerminalKeys`)
-                        AppDelegate.KeyRow(section: "Editor", title: t, key: k.display) { app()?.editorToTerminal(run: run) }
-                    }
+                + (h.tabbed ? [("Send to Terminal", "editor.send", false), ("Execute in Terminal", "editor.execute", true)] : []).compactMap { t, id, run in
+                    terminalKey(id).map { k in AppDelegate.KeyRow(section: "Editor", title: t, key: k.display) { app()?.editorToTerminal(run: run) } }
                 }
                 + (h.comparison?.paused == false ? [("Next Change", "⌥⌘↓", 1), ("Previous Change", "⌥⌘↑", -1)].map { t, k, d in   // `term.pane.down` / `.up` there
                     AppDelegate.KeyRow(section: "Editor", title: t, key: k) { app()?.compareStep(d) }
                 } : [])   // Copy Change's keys are its menu items'.
         }
+    }
+    /// Send / Execute in Terminal's key (`id`: theirs): the panels' ⌃↩ / ⌃⇧↩ the editor window takes (`editorTerminalKeys`).
+    static func terminalKey(_ id: String) -> Shortcut? {
+        AppDelegate.editorTerminalKeys.first { $0.value == id }.flatMap { panel in app()?.commands.first { $0.id == panel.key }?.keys.first }
     }
     /// Its key bar's last: F1, every key over the window (`help.keys`).
     static var allKeys: AppDelegate.KeyRow {
@@ -1599,6 +1601,7 @@ final class EditorTextView: NSTextView {
     /// orientation, fonts, Share — and after its Cut/Copy/Paste the editor's own for the click's place
     /// (`EditorTool.contextItems`).
     override func menu(for event: NSEvent) -> NSMenu? {
+        if window?.firstResponder !== self { window?.makeFirstResponder(self) }   // the other pane's: its tab is the one acted on
         let menu = super.menu(for: event)
         guard let menu, let e = delegate as? Editor else { return menu }
         let unused: Set<Selector> = [#selector(NSTextView.showGuessPanel(_:)), #selector(NSTextView.orderFrontSubstitutionsPanel(_:)),

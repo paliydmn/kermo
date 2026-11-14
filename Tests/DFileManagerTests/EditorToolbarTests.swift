@@ -20,6 +20,7 @@ private func put(_ s: String, _ path: String) throws { try Data(s.utf8).write(to
 
 @MainActor private func fresh(_ dir: String) -> EditorHost {
     gone()
+    UserDefaults.standard.removeObject(forKey: "NSToolbar Configuration Editor")   // the editor window keeps its toolbar: the defaults, not a past run's
     EditorHost.restore(dir, onServer: { _, _, _, _ in ({ _ in }, {}) })
     return EditorHost.tabs
 }
@@ -30,6 +31,7 @@ private func put(_ s: String, _ path: String) throws { try Data(s.utf8).write(to
     h.drafts?.release()
     h.window?.orderOut(nil)
     EditorHost.shared = nil
+    UserDefaults.standard.removeObject(forKey: "NSToolbar Configuration Editor")
 }
 @MainActor private func opened(_ path: String) async throws -> Editor {
     Editor.open(URL(fileURLWithPath: path))
@@ -58,8 +60,8 @@ private func put(_ s: String, _ path: String) throws { try Data(s.utf8).write(to
 @MainActor private func ids(_ w: NSWindow?) -> [String] { w?.toolbar?.items.map(\.itemIdentifier.rawValue) ?? [] }
 
 extension EditorWindowTests {
-    /// Every tool has its symbol on this macOS, and each stands for a menu bar item that's there.
-    @Test func everyToolHasItsSymbolAndItsMenuItem() throws {
+    /// Every tool stands for a menu bar item that's there (its symbol is `Symbol`'s: the registry's test asks macOS for it).
+    @Test func everyToolHasItsMenuItem() throws {
         _ = NSApplication.shared
         let app = AppDelegate()
         app.commands = app.makeCommands()
@@ -67,10 +69,14 @@ extension EditorWindowTests {
         EditorTool.menu = { menu }
         defer { EditorTool.menu = { NSApp.mainMenu } }
         for t in EditorTool.all {
-            #expect(NSImage(systemSymbolName: t.symbol, accessibilityDescription: nil) != nil, "\(t.id.rawValue): \(t.symbol)")
             #expect(t.menuItem() != nil, "\(t.id.rawValue) has its menu item")
         }
         #expect(Set(EditorTool.all.map(\.id)).count == EditorTool.all.count)
+        let reloaded = app.makeMenu()   // Reload Config: a new menu bar, found again
+        EditorTool.menu = { reloaded }
+        #expect(EditorTool.named(.init("save"))?.menuItem().map { it in reloaded.allItems.contains { $0 === it } } == true)
+        #expect(!EditorTool.allowed(tabbed: true).contains { EditorTool.named($0)?.when != nil }, "Customize doesn't offer the shown tab's own")
+        #expect(EditorTool.defaults(tabbed: false).suffix(2).first != .space)
     }
 
     /// The editor window's toolbar: Back, the tools in their groups, the chevron last; History for a server's file and
@@ -139,12 +145,13 @@ extension EditorWindowTests {
         let send = try item("send")
         send.validate()
         #expect(send.toolTip == "Send to Terminal ⌃↩", "a picked-off key: the editor's own")
-        let newline = try item("newline")
+        let newline = try item("newline"), had = e.finalNewline
         newline.validate()
-        #expect(newline.isEnabled && (newline.view as? NSButton)?.state == (e.finalNewline ? .on : .off))
+        #expect(newline.isEnabled && (newline.view as? NSButton)?.state == (had ? .on : .off))
+        #expect(newline.menuFormRepresentation?.action == #selector(Editor.toggleFinalNewline(_:)), "in », its menu item: checked as there")
         h.runTool(newline.view)
         newline.validate()
-        #expect((newline.view as? NSButton)?.state == (e.finalNewline ? .on : .off) && newline.isEnabled)
+        #expect(e.finalNewline != had && (newline.view as? NSButton)?.state == (had ? .off : .on))
         let stop = EditorTool.named(.init("stopCompare"))!
         #expect(!stop.state(in: w).enabled, "not comparing: Stop Comparing's item is off")
     }
@@ -154,8 +161,8 @@ extension EditorWindowTests {
     @Test func moreToolsHasTheRestAndIsRemembered() async throws {
         _ = NSApplication.shared
         let dir = try tempDir()
-        let was = MoreTools.shown
-        defer { gone(); try? FileManager.default.removeItem(atPath: dir); MoreTools.shown = was }
+        let was = UserDefaults.standard.object(forKey: "editorMoreTools")
+        defer { gone(); try? FileManager.default.removeItem(atPath: dir); UserDefaults.standard.set(was, forKey: "editorMoreTools") }
         MoreTools.shown = false
         let h = fresh(dir + "/drafts")
         try put("a\n", dir + "/a.conf")
@@ -191,6 +198,8 @@ extension EditorWindowTests {
         let bar = try #require(tool.window?.toolbar), at = try #require(bar.items.firstIndex { $0.itemIdentifier.rawValue == "comment" })
         bar.removeItem(at: at)
         try await until("Comment in More Tools") { toolRow.buttons.contains { $0.tool.id.rawValue == "comment" } }
+        bar.insertItem(withItemIdentifier: .init("comment"), at: at)
+        try await until("Comment back in the toolbar, out of More Tools") { !toolRow.buttons.contains { $0.tool.id.rawValue == "comment" } }
         h.toggleMoreTools()
         #expect(!MoreTools.shown && row.isHidden && toolRow.isHidden, "closed in every editor window")
     }
@@ -221,10 +230,11 @@ extension EditorWindowTests {
         let (_, restore) = app(dir) { h.window }
         defer { restore() }
         let w = try #require(h.window)
-        func menu(_ e: Editor) throws -> NSMenu {
+        func menu(_ e: Editor) throws -> NSMenu {   // a right click in its view that shows
+            let text = try #require(e.views.first { v in h.panes.contains { $0 === v.pane && $0.active === e } }?.text)
             let click = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: NSPoint(x: 20, y: 20), modifierFlags: [], timestamp: 0,
                                                        windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-            let m = try #require(e.textView.menu(for: click))
+            let m = try #require(text.menu(for: click))
             m.update()   // validated, as when it opens: the editor's titles
             return m
         }
@@ -245,5 +255,8 @@ extension EditorWindowTests {
         #expect(try !menu(untitled).items.contains { $0.title == "Copy Path" }, "no file, no path")
         h.compare(old: e, new: untitled)
         #expect(try menu(untitled).items.contains { $0.title == "Copy Change to Left" })
+        #expect(h.active === untitled)
+        _ = try menu(e)
+        #expect(h.active === e, "a right click in the other pane: its tab is the one acted on")
     }
 }

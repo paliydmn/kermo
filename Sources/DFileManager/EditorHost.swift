@@ -64,6 +64,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
         bar.allowsUserCustomization = tabbed
         bar.autosavesConfiguration = tabbed
         w.toolbar = bar
+        updateTools()   // a saved toolbar from a quit while comparing: none of Compare's now
         w.toolbarStyle = .unified
         w.delegate = self
         w.center()
@@ -778,7 +779,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
             let item = NSToolbarItem(itemIdentifier: id)
             item.label = tabbed ? "Back to Panels" : "Close"
             (item.paletteLabel, item.toolTip) = (item.label, item.label + " ⎋")
-            item.image = NSImage(systemSymbolName: "chevron.backward", accessibilityDescription: item.label)
+            item.image = Symbol.back.image(item.label)
             (item.isNavigational, item.isBordered, item.target, item.action) = (true, true, self, #selector(back))
             return item
         case EditorTool.moreID:
@@ -792,15 +793,25 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
             if case .submenu = tool.source, let menu = EditorTool.copy(of: tool.menuItem()?.submenu) {   // a pick list
                 let item = NSMenuToolbarItem(itemIdentifier: id)
                 (item.label, item.paletteLabel, item.toolTip, item.menu) = (tool.label, tool.label, tool.label, menu)
-                item.image = NSImage(systemSymbolName: tool.symbol, accessibilityDescription: tool.label)
+                item.image = tool.symbol.image(tool.label)
                 return item
             }
             return ToolItem(tool, host: self, action: #selector(runTool(_:)))
         }
     }
-    // Customize Toolbar… moved a tool in or out: More Tools has the rest.
-    func toolbarWillAddItem(_ notification: Notification) { Task { self.fillMoreTools() } }
-    func toolbarDidRemoveItem(_ notification: Notification) { Task { self.fillMoreTools() } }
+    // Customize Toolbar… moved a tool in or out: More Tools has the rest — once for a run of them (the toolbar's own
+    // at first), not for the shown tab's own.
+    func toolbarWillAddItem(_ notification: Notification) { toolbarChanged(notification) }
+    func toolbarDidRemoveItem(_ notification: Notification) { toolbarChanged(notification) }
+    private func toolbarChanged(_ n: Notification) {
+        guard moreTools != nil, !refilling, (n.userInfo?["item"] as? NSToolbarItem).flatMap({ EditorTool.named($0.itemIdentifier)?.when }) == nil else { return }
+        refilling = true
+        Task {
+            self.refilling = false
+            self.fillMoreTools()
+        }
+    }
+    private var refilling = false
 
     /// A tool clicked: in the toolbar, its » menu, or More Tools.
     @objc func runTool(_ sender: Any?) {
@@ -855,7 +866,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
     private func showMoreState(_ item: NSToolbarItem) {
         let on = moreTools?.isHidden == false
         item.toolTip = on ? "Hide More Tools" : "Show More Tools"
-        item.image = NSImage(systemSymbolName: on ? "chevron.up" : "chevron.down", accessibilityDescription: item.toolTip)
+        item.image = (on ? Symbol.moreOpen : .collapse).image(item.toolTip)
     }
 
     /// Every tool the toolbar hasn't now, the shown tab's own ones (History, Compare's) left to the toolbar.
@@ -868,7 +879,7 @@ final class EditorHost: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
 
     /// More Tools as the toolbar: enabled, on, the tooltips — whenever the window updates.
     func windowDidUpdate(_ notification: Notification) {
-        if let row = moreTools, !row.isHidden, let w = window { row.validate(in: w) }
+        if let row = moreTools, !row.isHidden, let w = window, w === AppDelegate.keyWindow() { row.validate(in: w) }
     }
 
     // MARK: Drafts
