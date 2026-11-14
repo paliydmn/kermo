@@ -8,10 +8,14 @@ Every user-visible change adds a line under [Unreleased]: Added, Changed, Fixed,
 Release:
 1. Set CFBundleShortVersionString in build.sh to the new version.
 2. Rename [Unreleased] to [X.Y] - YYYY-MM-DD, start a new empty [Unreleased], and add the link at the bottom.
-3. Commit, `git tag vX.Y`, `./package.sh` (it signs with “Kermo Release Signing”, made once by `./cert.sh "Kermo Release Signing"`; keep its backup), then attach dist/*.dmg, *.pkg, their .sha256 and the .zip (Install and Relaunch takes it) to the GitHub release with that section as its notes.
+3. Commit, `git tag vX.Y`, `./package.sh` (it signs with “Kermo Release Signing”, made once by `./cert.sh "Kermo Release Signing"`; keep its backup), `python3 tools/release-notes.py X.Y [lead.md]`, then attach dist/*.dmg, *.pkg, their .sha256, the .zip (Install and Relaunch takes it) and dist/latest.json (the daily check reads it) to the GitHub release with dist/Kermo-X.Y-notes.md as its notes.
+4. `tools/release-stats.sh`: how many checks and installs each release had.
 -->
 
 ## [Unreleased]
+
+### Changed
+- The daily update check downloads the latest release's small `latest.json` from GitHub instead of asking GitHub's API: still one request a day, with nothing in it but Kermo's version. GitHub counts that file's downloads — how many checks there were is the one number we see; **Check for Updates Automatically** turns it off.
 
 ## [2.1.1] - 2026-11-14
 

@@ -15,7 +15,7 @@ PLIST=$(mktemp)
 trap 'rm -rf $STAGE $PLIST' EXIT
 
 mkdir -p dist
-rm -f $DMG $DMG.sha256 $PKG $PKG.sha256 $ZIP
+rm -f $DMG $DMG.sha256 $PKG $PKG.sha256 $ZIP dist/latest.json   # latest.json: tools/release-notes.py, after this
 ditto --noextattr --noacl $APP $STAGE/Kermo.app
 # One certificate for every release: macOS keeps Full Disk Access and other grants across updates (ad hoc, each
 # build is a new app to it). Not notarized all the same: the first launch still needs Open Anyway.
