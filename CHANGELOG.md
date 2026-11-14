@@ -13,6 +13,8 @@ Release:
 
 ## [Unreleased]
 
+## [2.1] - 2026-11-14
+
 ### Added
 - **The editor's toolbar**: its most used commands as icons — Quick Open, Save, Find, Go to Line, Toggle Comment, Wrap, Invisibles, Final Newline, Send / Execute in Terminal, Split, Compare — with **‹** back to the panels before the title; a server file's History and Compare's steps appear while they apply. **⌄** (**View ▸ Show More Tools**) opens a second row with every other editor command, by group, and stays open or closed. Right-click the toolbar for **Customize Toolbar…**: what you take out goes to the second row.
 - **The editor's right-click menu** has Send / Execute in Terminal, Toggle Comment, Lines ▸, Copy Change while comparing, Copy Path and a server file's History; spelling, substitutions, speech, layout orientation and Share are gone from it.
@@ -492,7 +494,8 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v2.1...HEAD
+[2.1]: https://github.com/paliydmn/kermo/releases/tag/v2.1
 [2.0.1]: https://github.com/paliydmn/kermo/releases/tag/v2.0.1
 [2.0]: https://github.com/paliydmn/kermo/releases/tag/v2.0
 [1.6]: https://github.com/paliydmn/kermo/releases/tag/v1.6
