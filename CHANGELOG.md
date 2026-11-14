@@ -18,6 +18,8 @@ Release:
 - **Open in Editor** (⌥⌘O): the terminal pane's scrollback and screen, or just the selection, or a full-screen program's screen, as a read-only copy in the editor, the caret where the terminal's view was. Find in it with regular expressions; ⌃⇧↩ runs a line on the same server. **Edit** makes it an Untitled. **Open Output in Editor** does the same with a command's output. Nothing goes to disk until Edit.
 - **Selecting past the terminal's edge scrolls it**: drag above or below its window and the scrollback moves, the selection growing with it — a long output in one drag.
 - **The wheel in less, man and `git log`** scrolls them, as in Terminal.app.
+- **⌘-click on a path in the terminal** opens it in the editor at its line (`src/app.py:42`, `src/main.rs:10:5`): in an SSH tab the server's file, as its user and as F4 opens it, never this Mac's file of the same name. A folder opens in a panel, a file over 32 MB in the viewer; ⌥⌘-click shows it in a panel. ⌘-click on `http(s)://` opens the browser. Hold ⌘ to see what's a link. A link's hidden target (OSC 8) still opens nothing.
+- **⇧-click selects from the last click in the terminal**, as in Terminal.app: click where the text starts, scroll, ⇧-click where it ends.
 - **Editor** in the main window's toolbar and ⇧⌘E (**File ▸ Show Editor**, from the terminal too) bring the editor forward as you left it, or on a new Untitled; hold the button for **New Editor Document** and **Quick Open…**.
 - **Copy a change across in Compare**: ⌥⇧⌘← / ⌥⇧⌘→ (or the arrow beside its line numbers) put the change the caret's in, as the other side has it, into the left or the right side — into a document only, as one ⌘Z, nothing saved till ⌘S.
 - **Send to Terminal and Execute in Terminal** in the editor: ⌃↩ types the line or the selection into a shell of the file's machine (a server's file: an SSH session there, as its user), ⌃⇧↩ also runs it and steps to the next line. Only into a shell waiting for a line — never into vim or a password prompt; several lines as one paste only; Execute on production asks every time and goes into the production log.
@@ -48,6 +50,8 @@ Release:
 - A watched tool's **24h** and **7d** draw the 15 minutes under way too: the line goes on to now and ends in a ring, the tip says “2:30 PM–now”, and the summary and the CSV say those 15 minutes aren't over. They ended at the last 15 minutes on disk.
 
 ### Fixed
+- **Holding ⇧ or ⌥ no longer drops the terminal's selection**: the key bar's layer without keys was shorter, so the window's content moved; a ⇧-click now extends a selection as it should.
+- **F4 on a big file on a server** stops after 32 MB with “larger than 32 MB” instead of downloading it all first (the editor reads 32 MB at most); a file that says it's empty and isn't (`/proc`) no longer streams on.
 - Searching in the terminal (⌘F, ⌘G) no longer puts each match into the clipboard; what you copied stays.
 - ↩ and ⎋ typed into the terminal's find bar find and close it; in a disconnected SSH tab they used to reconnect or close the tab.
 - A tab the editor brings back at launch no longer comes up with the start of its lines hidden under the line numbers.

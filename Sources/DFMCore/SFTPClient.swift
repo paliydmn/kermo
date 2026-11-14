@@ -1049,22 +1049,34 @@ extension SFTPClient {
         public var errorDescription: String? { error.localizedDescription }
     }
 
+    /// A download past its `max`.
+    public struct TooBig: LocalizedError {
+        public let name: String, max: Int64
+        public var errorDescription: String? { "“\(name)” is larger than \(max >> 20) MB." }
+    }
+
     /// Files this big at most get a `sha256` in their baseline (configs, scripts): reading them back costs little.
     public static let hashLimit: Int64 = 1 << 20
 
     /// Copies the server's file into the local file `local` (owner-only); returns its attributes then — the
     /// baseline `upload` checks against. `last`: only that many bytes off its end (the tail of a big log);
-    /// the attributes are still the whole file's.
-    public func download(_ remote: String, to local: String, last: Int64? = nil) throws -> Attrs {
+    /// the attributes are still the whole file's. `max`: past that many bytes it stops and throws — the size the
+    /// server tells may be wrong (a /proc file says 0) or grow meanwhile.
+    public func download(_ remote: String, to local: String, last: Int64? = nil, max: Int64? = nil) throws -> Attrs {
         var a = try stat(remote)
-        guard a.kind == .file else { throw SFTPError(message: "“\((remote as NSString).lastPathComponent)” isn't a regular file") }
+        let name = (remote as NSString).lastPathComponent
+        guard a.kind == .file else { throw SFTPError(message: "“\(name)” isn't a regular file") }
+        let tooBig = TooBig(name: name, max: max ?? 0)
+        if let max, min(a.size, last ?? a.size) > max { throw tooBig }
         let fd = Darwin.open(local, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0o600)
         guard fd >= 0 else { throw LocalFS.posixError() }
         defer { Darwin.close(fd) }
-        let r = try openRead(remote, offset: last.map { max(0, a.size - $0) } ?? 0, sizeHint: a.size)
+        let r = try openRead(remote, offset: last.map { Swift.max(0, a.size - $0) } ?? 0, sizeHint: a.size)
         defer { r.close() }
-        var hash = SHA256()
+        var hash = SHA256(), got: Int64 = 0
         while let d = try r.read() {
+            got += Int64(d.count)
+            if let max, got > max { throw tooBig }
             hash.update(data: d)
             try d.withUnsafeBytes { b in
                 var off = 0

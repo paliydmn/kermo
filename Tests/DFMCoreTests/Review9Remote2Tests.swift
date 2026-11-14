@@ -86,3 +86,18 @@ private func tempDir() -> String {
     #expect(try c.download(log, to: local, last: 1 << 30).size == Int64(content.count))   // smaller than the tail: all of it
     #expect(FileManager.default.contents(atPath: local) == content)
 }
+
+/// Task 21 PR 4: the editor's download stops past its limit (32 MB) — a click on a server's big file, F4 on one — and
+/// says so; the tail of one (F3) takes what it asks for.
+@Test func aDownloadStopsPastItsLimit() throws {
+    let d = tempDir()
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let big = d + "/big.txt", local = d + "/copy.txt"
+    try Data(repeating: 0x61, count: 3 << 20).write(to: URL(fileURLWithPath: big))
+    let c = try SFTPClient(.local())
+    defer { c.close() }
+    #expect(throws: SFTPClient.TooBig.self) { try c.download(big, to: local, max: 2 << 20) }
+    #expect((try? FileManager.default.attributesOfItem(atPath: local)[.size] as? Int) ?? 0 == 0, "nothing came")
+    #expect(try c.download(big, to: local, last: 1 << 20, max: 2 << 20).size == 3 << 20)
+    #expect(try c.download(big, to: local, max: 3 << 20).size == 3 << 20 && FileManager.default.contents(atPath: local)?.count == 3 << 20)
+}

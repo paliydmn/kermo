@@ -120,6 +120,8 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Terminal: move the pane's divider | ⌃⌘← ⌃⌘→ ⌃⌘↑ ⌃⌘↓ |
 | Terminal: [marks](terminal.md#marks-and-the-editor) — the last command, the one before / the next / copy the command's output | ⌘↑ / ⌘↓ / ⇧⌘A |
 | Terminal: the pane's text (the selection, the scrollback and the screen) in the editor, read-only | ⌥⌘O |
+| Terminal: open the [path or address](terminal.md#links) under the mouse — a file in the editor at its line, a folder in a panel, http(s) in the browser / show the path in a panel | ⌘-click / ⌥⌘-click |
+| Terminal: select from the last click to here (scrolled meanwhile too); with a selection, move its end | ⇧-click |
 | User command menu / command line | F2, ⌥2 / ⌘E |
 | Insert the cursor's name / the marked items' full paths into the command line, or into the shell while the terminal is open | ⌃↩ / ⌃⇧↩ |
 

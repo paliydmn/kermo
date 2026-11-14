@@ -35,9 +35,8 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
             for v in [header, view] { v.widthAnchor.constraint(equalTo: box.widthAnchor).isActive = true }   // `.width` alone sizes them to each other
             header.isHidden = true
             view.acceptsLocalPaths = kind == .shell
-            // The folder a server's shell tells (OSC 7) is never taken for one of this Mac's. ponytail: SwiftTerm still
-            // reads a path a server prints as this Mac's (relative to Kermo's own folder, or absolute if it exists here)
-            // — task 21 PR 4's links need their own rule for SSH tabs; the gate opens nothing till then.
+            // The folder a server's shell tells (OSC 7) is never taken for one of this Mac's. Paths never reach SwiftTerm's
+            // own opening (which would read them as this Mac's): `TerminalLink` routes them, an SSH tab's to its server.
             view.resolvesLinksAgainstShellDirectory = kind == .shell
             // Lines pasted by a right-click into a production server, or as root, ask first.
             if case .ssh(let t) = kind {
@@ -53,15 +52,23 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         var isRunning: Bool { exitStatus == nil && view.process?.running == true }
         /// The shell itself has the terminal (not ssh, vim, mysql, sudo's password prompt…): only then may a typed
         /// `cd` go in.
-        var isAtPrompt: Bool { EmbeddedTerminal.atPrompt(view.process) }
+        var isAtPrompt: Bool { EmbeddedTerminal.atPrompt(view.process) && (host != nil || started == nil || foreground == started) }
+        /// The program a local tab's shell was started as ("zsh"): one it `exec`ed (`exec ssh host`) has its pid, not
+        /// its name — never at the prompt for a typed `cd` or ⌘E ↩.
+        var started: String?
         /// What closing the tab would end: an SSH connection, or a program still running in a local shell.
         var busyWith: String? {
-            guard isRunning, let p = view.process else { return nil }
+            guard isRunning else { return nil }
             if let host { return "The connection to “\(host)”" }
             guard !isAtPrompt else { return nil }
+            return foreground.map { "“\($0)” in a shell" } ?? "A program in a shell"
+        }
+        /// What has a local tab's terminal now: its shell, a program it runs, what the shell `exec`ed; nil: unknown.
+        var foreground: String? {
+            guard host == nil, let p = view.process, isRunning else { return nil }
             var name = [UInt8](repeating: 0, count: 256)
             let pg = tcgetpgrp(p.childfd)
-            return pg > 0 && proc_name(pg, &name, 256) > 0 ? "“\(String(decoding: name.prefix { $0 != 0 }, as: UTF8.self))” in a shell" : "A program in a shell"
+            return pg > 0 && proc_name(pg, &name, 256) > 0 ? String(decoding: name.prefix { $0 != 0 }, as: UTF8.self) : nil
         }
         /// The shell's working directory, read from the kernel (works whatever the shell prints).
         var shellCwd: String? {
@@ -143,6 +150,8 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     var onExit: (() -> Void)?          // last tab closed: panels come back
     var onChange: (() -> Void)?        // tabs / states changed (sidebar, saved session)
     var onDirectory: ((Tab) -> Void)?  // the current tab's shell told its folder (`cwd`)
+    /// A link ⌘-clicked in a tab's text (not an OSC 8 one) and the click's keys: the app opens it (`openLink`).
+    var onLink: ((Tab, TerminalLinkRequest, NSEvent.ModifierFlags) -> Void)?
     /// ⌘+ / ⌘−, every tab; kept in `terminalFontSize` (clamped to 9…36; 13 if unset).
     private(set) var fontSize: CGFloat = (UserDefaults.standard.object(forKey: "terminalFontSize") as? Double).map { min(max($0, 9), 36) } ?? 13
     private var hiddenAt = -TimeInterval.infinity   // uptime; ⌃O ⌃O
@@ -477,6 +486,10 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     private func makeView() -> DropTerminalView {
         let t = DropTerminalView(frame: host.bounds)
         t.processDelegate = self
+        t.onLink = { [unowned self, unowned t] r, f in
+            guard let onLink, let tab = tabs.first(where: { $0.view === t }) else { return TerminalGate.refused() }
+            onLink(tab, r, f)
+        }
         t.font = Self.font(size: fontSize)
         t.changeScrollback(10_000)   // ponytail: fixed; a `terminalScrollback` key if someone asks
         t.optionAsMetaKey = UserDefaults.standard.object(forKey: "terminalOptionIsMeta") as? Bool ?? true   // false: ⌥ types the layout's @ | [ ]
@@ -607,6 +620,7 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     /// again only after `exitStatus` is set (`reconnect`).
     func launch(_ tab: Tab, _ executable: String, _ args: [String], execName: String? = nil, cwd: String?) {
         assert(tab.view.process.map { !$0.running && !$0.windingDown } ?? true, "started while its last process is there")
+        tab.started = (executable as NSString).lastPathComponent
         TunnelListener.forking {   // a tunnel's socket half made now would go with the shell, its port held while it runs
             tab.view.startProcess(executable: executable, args: args, environment: Self.environment, execName: execName, currentDirectory: cwd)
         }
@@ -1101,8 +1115,8 @@ final class DropTerminalView: LocalProcessTerminalView {
     /// The mark ⌘↑ / ⌘↓ went to, and the top row in view then. Scrolled since, or typed: from the view or the last again.
     private var at: (row: Int, top: Int)?
 
-    /// ⌘K: the scrollback is gone.
-    func dropMarks() { (marks, at) = ([], nil) }
+    /// ⌘K: the scrollback is gone (and with it the anchor's row).
+    func dropMarks() { (marks, at, anchor) = ([], nil, nil) }
 
     /// A new size may renumber the rows (a width's reflow, a lower drawer cutting a full scrollback): the marks are
     /// looked at as the rows stand just before it — out of a live resize SwiftTerm resizes in here.
@@ -1280,16 +1294,78 @@ final class DropTerminalView: LocalProcessTerminalView {
         }
     }
 
+    // MARK: Anchor (task 21 PR 4)
+
+    /// Where the last plain click was — an absolute row (as a mark's), the click's x, the row's text then: a ⇧-click
+    /// with nothing selected selects from there, scrolled away meanwhile or not (Terminal.app's). Gone where the marks go
+    /// (rows renumbered, ⌘K), and once its row reads otherwise: never someone else's line.
+    private(set) var anchor: (row: Int, x: CGFloat, text: String?)?
+
+    override func mouseDown(with event: NSEvent) {
+        commandPress = event.modifierFlags.contains(.command)
+        let keys = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        let h = caretFrame.height   // a row's: SwiftTerm sizes the caret to a cell (wider on a wide character, never taller)
+        guard event.clickCount == 1, keys.isEmpty || keys == .shift, h > 0,
+              !(allowMouseReporting && currentMouseMode != .off), let now = look(), !now.alt
+        else { return terminals { super.mouseDown(with: event) } }
+        let top = now.top + terminalStateSnapshot().viewportRow   // the row at the view's top
+        let p = convert(event.locationInWindow, from: nil), row = top + max(Int((bounds.height - p.y) / h), 0)
+        guard keys == .shift else {
+            anchor = (row, p.x, rowText(row))
+            return super.mouseDown(with: event)
+        }
+        guard !selectionActive, let a = anchor, a.row >= now.top, rowText(a.row) == a.text else { return super.mouseDown(with: event) }
+        // A press at the anchor — off the view if it's scrolled away: SwiftTerm takes that point for the row above or
+        // below — and a release here: one selection, copied once, as it ends.
+        let n = CGFloat(a.row - top)
+        let at = NSPoint(x: a.x, y: bounds.height - (n + (n < 0 ? -0.5 : 0.5)) * h)   // its Int() rounds towards 0
+        func mouse(_ t: NSEvent.EventType, _ p: NSPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: t, location: convert(p, to: nil), modifierFlags: [], timestamp: event.timestamp, windowNumber: event.windowNumber,
+                               context: nil, eventNumber: event.eventNumber, clickCount: 1, pressure: 0)!
+        }
+        quietly {
+            super.mouseDown(with: mouse(.leftMouseDown, at))
+            super.mouseUp(with: mouse(.leftMouseUp, p))
+        }
+        if Self.on("terminalCopyOnSelect") { copySelection() }
+    }
+
+    /// A link ⌘-clicked in the text (never an OSC 8 one) and the click's keys: the tab's to open; nil: none opens.
+    var onLink: ((TerminalLinkRequest, NSEvent.ModifierFlags) -> Void)?
+    /// The last click's keys as it ended (SwiftTerm's request doesn't carry them).
+    private(set) var clickFlags: NSEvent.ModifierFlags = []
+    override func mouseUp(with event: NSEvent) {
+        clickFlags = event.modifierFlags
+        defer { commandPress = false }
+        guard !commandPress, event.modifierFlags.contains(.command) else { return terminals { super.mouseUp(with: event) } }
+        // ⌘ came after the press: the click is as it began — a program's gets its release, no link opens.
+        super.mouseUp(with: NSEvent.mouseEvent(with: event.type, location: event.locationInWindow, modifierFlags: event.modifierFlags.subtracting(.command),
+                                               timestamp: event.timestamp, windowNumber: event.windowNumber, context: nil,
+                                               eventNumber: event.eventNumber, clickCount: event.clickCount, pressure: event.pressure) ?? event)
+    }
+    override func mouseDragged(with event: NSEvent) { terminals { super.mouseDragged(with: event) } }
+
+    /// The press held ⌘: the click is the terminal's (a link), never a program's that reads the mouse — SwiftTerm would
+    /// give it the press and keep the release for the link. Decided at the press, for the whole click.
+    private var commandPress = false
+    private func terminals(_ body: () -> Void) {
+        guard commandPress, allowMouseReporting else { return body() }
+        allowMouseReporting = false
+        defer { allowMouseReporting = true }
+        body()
+    }
+
     private lazy var gate = TerminalGate(self)   // `terminalDelegate` is weak: the view keeps it
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         registerForDraggedTypes([.fileURL])
         terminalDelegate = gate
-        // Nothing in the text is a link to click (task 21 PR 4 opens visible ones): no lookups as the mouse moves, an
-        // OSC 8 link takes only a ⌘-click — which the gate refuses. A click on an OSC 133 prompt doesn't move the cursor.
+        // A path or an address in the text is a link while ⌘ is down (underlined under the mouse); without ⌘ nothing is
+        // looked up as the mouse moves. An OSC 8 link's hidden target: the gate refuses it. A click on an OSC 133 prompt
+        // doesn't move the cursor.
         linkReporting = .none
-        linkHighlightMode = .alwaysWithModifier
+        linkHighlightMode = .hoverWithModifier
         semanticPromptClickBehavior = .disabled
     }
 
@@ -1326,7 +1402,10 @@ final class TerminalGate: TerminalViewDelegate {
     /// A link refused (tests: count them).
     static var refused: @MainActor () -> Void = { NSSound.beep() }
 
-    func requestOpenLink(source: TerminalView, request: TerminalLinkRequest) { Self.refused() }
+    func requestOpenLink(source: TerminalView, request: TerminalLinkRequest) {
+        guard !request.isExplicit, let open = view.onLink else { return Self.refused() }
+        open(request, view.clickFlags)
+    }
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) { Self.refused() }
 
     func clipboardRead(source: TerminalView) -> Data? { nil }

@@ -948,14 +948,15 @@ extension AppDelegate {
         openInEditor(url)
     }
 
-    /// Built-in editor, unless `defaults write com.dmn.dfilemanager editorBundleID <id>` picks an external app.
-    func openInEditor(_ url: URL) {
+    /// Built-in editor, unless `defaults write com.dmn.dfilemanager editorBundleID <id>` picks an external app (which
+    /// isn't told the `line`).
+    func openInEditor(_ url: URL, line: String? = nil) {
         Config.flush()   // a config file just saved (keymap.json's first one) is there for the editor
         let ws = NSWorkspace.shared
         if let app = defaults.string(forKey: "editorBundleID").flatMap(ws.urlForApplication(withBundleIdentifier:)) {
             ws.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
         } else {
-            Editor.open(url)
+            Editor.open(url, line: line)
         }
     }
 
@@ -1335,8 +1336,14 @@ extension AppDelegate {
 
     /// The same for a server's file by its path (⌘E on a service: its unit file). `listed`: its size and time as a
     /// panel listed it (another app's saves check against them); none, as downloaded.
-    func remoteOpen(_ how: RemoteOpen, _ target: SFTPTarget, _ remotePath: String, listed: (Int64, Double)? = nil, in panel: PanelViewController) {
-        if how == .edit, let e = Editor.editing(target, remotePath) { e.revealed(); e.connect(); return }   // one file, one tab: no second copy (a parked one opens)
+    /// `line`: the editor goes to it ("42", "42:5").
+    func remoteOpen(_ how: RemoteOpen, _ target: SFTPTarget, _ remotePath: String, listed: (Int64, Double)? = nil, line: String? = nil,
+                    in panel: PanelViewController) {
+        if how == .edit, let e = Editor.editing(target, remotePath) {   // one file, one tab: no second copy (a parked one opens)
+            e.revealed()
+            e.connect(goingTo: line)
+            return
+        }
         let name = (remotePath as NSString).lastPathComponent
         let tmp = NSTemporaryDirectory() + "dfm-sftp-" + UUID().uuidString
         mkdir(tmp, 0o700)
@@ -1346,11 +1353,15 @@ extension AppDelegate {
         let last = how == .view ? Viewer.tailLimit(for: name) : nil
         Task {
             let r = await panel.busy("Downloading “\(name)”…") { flag in
-                try SFTPClient.session(target, env: env, cancel: flag) { try $0.download(remotePath, to: local.path, last: last) }
+                try SFTPClient.session(target, env: env, cancel: flag) {   // the editor reads 32 MB at most: no more comes
+                    try $0.download(remotePath, to: local.path, last: last, max: how == .edit ? Editor.sizeLimit : nil)
+                }
             }
             guard case .success(let opened) = r else {
                 TempCopies.remove(tmp)
-                if case .failure(let e) = r, !(e is CancellationError) { showError(e) }
+                if case .failure(let e) = r, !(e is CancellationError) {   // F4 on a big one: as the editor says it
+                    showError(e is SFTPClient.TooBig ? JobErrorMessage("“\(name)” is larger than 32 MB — use the viewer (F3).") : e)
+                }
                 return
             }
             switch how {
@@ -1363,7 +1374,8 @@ extension AppDelegate {
                 let state = RemoteEdit(baseline: opened)
                 let note = Self.rootsOnly(opened, for: target) ? "“\(name)” is root's: saving it needs the panel as root (⌃⌘R)" : nil
                 let (onSaved, onClose) = remoteEditing(target, remotePath, state, in: tmp)
-                Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath, state), note: note, onSaved: onSaved, onClose: onClose)
+                Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath, state), note: note, line: line,
+                            onSaved: onSaved, onClose: onClose)
             }
         }
     }
@@ -1376,7 +1388,7 @@ extension AppDelegate {
         let local = URL(fileURLWithPath: tmp).appendingPathComponent((remotePath as NSString).lastPathComponent)
         let panel = panels.first { $0.remote?.target == target } ?? active
         let r = await panel.busy("Downloading “\(local.lastPathComponent)”…") { flag in
-            try SFTPClient.session(target, env: env, cancel: flag) { try $0.download(remotePath, to: local.path) }
+            try SFTPClient.session(target, env: env, cancel: flag) { try $0.download(remotePath, to: local.path, max: Editor.sizeLimit) }
         }
         var loaded: Result<Editor.Loaded, Error> = .failure(CancellationError())
         if case .success = r { loaded = await Blocking.run(.userInitiated) { Result { try Editor.load(local) } } }
@@ -1941,15 +1953,19 @@ extension AppDelegate {
     /// Reveal in Panel (an editor tab's menu): its file under the cursor of a panel in the main window — a server's in the
     /// panel showing that server, else the active one connects to it as the sidebar would (a locked one asks first).
     func revealInPanel(_ e: Editor) {
+        if let s = e.server { showInPanel((s.path as NSString).deletingLastPathComponent, select: (s.path as NSString).lastPathComponent, on: s.target) }
+        else if e.revealable, let url = e.url { showInPanel(url.deletingLastPathComponent().path, select: url.lastPathComponent, on: nil) }
+        else { NSSound.beep() }
+    }
+
+    /// `dir` in a panel of the main window, `select` under the cursor: a server's in the panel showing that server, else
+    /// the active one connects to it as the sidebar would (a locked one asks first).
+    func showInPanel(_ dir: String, select: String?, on server: SFTPTarget?) {
         bringBack(window)
         showPanels()
-        let (dir, name, server): (String, String, SFTPTarget?)
-        if let s = e.server { (dir, name, server) = ((s.path as NSString).deletingLastPathComponent, (s.path as NSString).lastPathComponent, s.target) }
-        else if e.revealable, let url = e.url { (dir, name, server) = (url.deletingLastPathComponent().path, url.lastPathComponent, nil) }
-        else { return NSSound.beep() }
         let panel = server.flatMap { t in panels.first { $0.remote?.target == t } } ?? active
         window.makeFirstResponder(panel.table)
-        if let server { panel.loadRemote(server, dir: dir, select: name) } else { panel.navigate(to: dir, select: name) }
+        if let server { panel.loadRemote(server, dir: dir, select: select) } else { panel.navigate(to: dir, select: select) }
     }
 
     /// A file renamed from its editor tab on this Mac: the panels showing its folder have it under the cursor, and the old

@@ -1,6 +1,7 @@
 import AppKit
 import UserNotifications
 import DFMCore
+import SwiftTerm
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSTextFieldDelegate, NSWindowDelegate, NSToolbarDelegate {
@@ -27,6 +28,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     var undoWork: Task<Void, Never>?
     private var askpass: Askpass.Server?   // ssh's questions, asked in a sheet (`AskpassSheet`)
     var terminal: EmbeddedTerminal!   // set in tests
+    /// A terminal link that opens nothing (`openLink`), and a web address's app after SwiftTerm's check (http(s) with
+    /// a host, mailto). Tests: their own, on their own app.
+    var linkRefused: @MainActor () -> Void = { TerminalGate.refused() }
+    var openWeb: @MainActor (TerminalLinkRequest, String) -> Void = { r, link in r.openDefault(link) }
     private var split: NSSplitView!
     private var sidebarItem: NSSplitViewItem!
     private var sidebarWidth: CGFloat = 200   // last width while shown, for the auto-hide rule
@@ -1578,6 +1583,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             updatePrompt()
         }
         terminal.onDirectory = { [unowned self] in follow($0) }
+        terminal.onLink = { [unowned self] in openLink($1, flags: $2, in: $0) }
 
         splitController = NSSplitViewController()
         splitController.splitView.autosaveName = "Sidebar"

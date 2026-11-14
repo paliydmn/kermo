@@ -169,6 +169,9 @@ final class KeyBarView: NSView {
         stack.setHuggingPriority(.defaultHigh, for: .vertical)   // as tall as its keys: the panels above take the rest
         stack.translatesAutoresizingMaskIntoConstraints = false
         line.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        // As tall with "No ⇧ keys" as with keys: holding a modifier never moves the window's content (it resized the
+        // terminal, which dropped its selection — a ⇧-click's).
+        row.heightAnchor.constraint(equalToConstant: SlotButton.height).isActive = true
         addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -354,7 +357,8 @@ final class KeyBarView: NSView {
 final class SlotButton: NSButton {
     private var inside = false { didSet { needsDisplay = true } }
 
-    override var intrinsicContentSize: NSSize { NSSize(width: ceil(attributedTitle.size().width) + 12, height: 23) }
+    static let height: CGFloat = 23
+    override var intrinsicContentSize: NSSize { NSSize(width: ceil(attributedTitle.size().width) + 12, height: Self.height) }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
