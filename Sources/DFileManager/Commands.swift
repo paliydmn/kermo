@@ -237,6 +237,7 @@ extension AppDelegate {
         },
         cmd("term.mark.prev", "Previous Mark", [], menu: "View/Terminal Pane", group: 2, short: "Prev Mark", aliases: "terminal command prompt jump scroll") { $0.terminal.goToMark(by: -1) },
         cmd("term.mark.next", "Next Mark", [], menu: "View/Terminal Pane", group: 2, aliases: "terminal command prompt jump scroll") { $0.terminal.goToMark(by: 1) },
+        cmd("term.zoom", "Zoom Pane", ["cmd+shift+return"], menu: "View/Terminal Pane", group: 3, short: "Zoom", aliases: "terminal split maximize pane whole tab") { $0.terminal.zoom() },
         cmd("view.activity", "Activity", ["cmd+opt+j"], menu: "View", group: 1,
             aliases: "copies transfers operations queue progress history retry failed", on: { $0.ops?.activityShown == true }) { $0.ops.toggleActivity() },
         cmd("term.bigger", "Bigger Terminal Text", ["cmd+=", "cmd+shift+="], menu: "View", group: 4, aliases: "font size zoom in larger") { app in

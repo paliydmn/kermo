@@ -118,6 +118,7 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | Terminal: split the tab, the new session to the right / below | ⌘\\ / ⇧⌘\\ |
 | Terminal: the pane to the left, right, above, below | ⌥⌘← ⌥⌘→ ⌥⌘↑ ⌥⌘↓ |
 | Terminal: move the pane's divider | ⌃⌘← ⌃⌘→ ⌃⌘↑ ⌃⌘↓ |
+| Terminal: the current pane over the whole tab, and back | ⇧⌘↩ |
 | Terminal: [marks](terminal.md#marks-and-the-editor) — the last command, the one before / the next / copy the command's output | ⌘↑ / ⌘↓ / ⇧⌘A |
 | Terminal: the pane's text (the selection, the scrollback and the screen) in the editor, read-only | ⌥⌘O |
 | Terminal: open the [path or address](terminal.md#links) under the mouse — a file in the editor at its line, a folder in a panel, http(s) in the browser / show the path in a panel | ⌘-click / ⌥⌘-click |
