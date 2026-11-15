@@ -7,7 +7,9 @@ enum Gate: Equatable {
 }
 
 extension AppDelegate {
-    /// What every action on a server passes before anything is sent there, in this order: each of `targets` learned
+    /// What an action on a server passes before anything is sent there (commands, services, tools, file changes; a
+    /// connection, a save, a tunnel and Copy SSH Key ask `ServerLock.authorize` themselves, then their own question),
+    /// in this order: each of `targets` learned
     /// (where `ssh -G` says its address goes — a production or locked server under an alias is known as one from here
     /// on), Touch ID for a locked one whose five minutes ran out (`action` completes the system's "… to <action>
     /// “server”"), then `question`, built only now, when production is known however the address was typed — on

@@ -27,7 +27,7 @@ import Testing
 extension ServerLockTests {   // swap `ServerLock.servers`, `authenticate` and `AppDelegate.answering`
     /// The server every test here acts on: this Mac's sftp-server under a port of its own — a lock on "localhost"
     /// itself would be every other test's server's while these run.
-    private var here: SFTPTarget { .local(port: 2222) }
+    private var here: SFTPTarget { .local(port: 1) }   // nobody listens there, should a test get past the gate
 
     private func gateServer(locked: Bool, prod: Bool) -> SavedServer {
         var s = SavedServer(target: here)
@@ -60,6 +60,7 @@ extension ServerLockTests {   // swap `ServerLock.servers`, `authenticate` and `
         answer = false
         app.runShell("touch ran-locked", in: .window)
         await gateUntil { asked.count == 2 }
+        try? await Task.sleep(for: .milliseconds(50))
         defer { NSApp.windows.filter { $0.title.contains("ran-locked") }.forEach { $0.close() } }
         #expect(asked.count == 2, "Touch ID before a command on a locked server: \(asked)")
         #expect(!NSApp.windows.contains { $0.title.contains("ran-locked") }, "refused: no output window, nothing started")
@@ -69,9 +70,9 @@ extension ServerLockTests {   // swap `ServerLock.servers`, `authenticate` and `
     /// the production log has no line saying it did.
     @Test func aCommandThatStayedLockedIsNotInTheLog() async throws {
         let dir = try gateDir(), server = gateServer(locked: true, prod: true)
-        var answer = true
+        var answer = true, asked = 0
         ServerLock.servers = { [server] }
-        ServerLock.authenticate = { _ in answer }
+        ServerLock.authenticate = { _ in asked += 1; return answer }
         let was = AuditLog.path, off = UserDefaults.standard.object(forKey: "auditLog")
         AuditLog.path = dir + "/audit.jsonl"
         UserDefaults.standard.removeObject(forKey: "auditLog")
@@ -90,8 +91,11 @@ extension ServerLockTests {   // swap `ServerLock.servers`, `authenticate` and `
 
         ServerLock.relock()
         answer = false
+        let before = asked
         app.runShell("uptime", in: .terminalApp)   // not dangerous: no question
-        try? await Task.sleep(for: .milliseconds(300))
+        await gateUntil { asked == before + 1 }
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(asked == before + 1, "Touch ID was asked")
         #expect(app.terminal.tabs.isEmpty, "no tab for what stayed locked")
         Config.flush()
         let log = (try? String(contentsOfFile: AuditLog.path, encoding: .utf8)) ?? ""
@@ -104,11 +108,12 @@ extension ServerLockTests {   // swap `ServerLock.servers`, `authenticate` and `
         let dir = try gateDir(), config = dir + "/config"
         try "Host t22gate\n  HostName 192.0.2.40\n  User root\n".write(toFile: config, atomically: true, encoding: .utf8)
         var prod = SavedServer(address: "root@192.0.2.40")!
-        prod.prod = true
+        (prod.prod, prod.locked) = (true, true)
         var questions: [String] = []
         let sshG = ServerLock.sshG, answering = AppDelegate.answering
         ServerLock.sshG = { SFTP.sshG($0, config: config) }
         ServerLock.servers = { [prod] }
+        ServerLock.authenticate = { _ in questions.append("Touch ID"); return true }
         AppDelegate.answering = { title, buttons, _ in questions.append(title); return buttons.count - 1 }   // Cancel
         defer {
             ServerLock.sshG = sshG
@@ -122,7 +127,7 @@ extension ServerLockTests {   // swap `ServerLock.servers`, `authenticate` and `
         let alias = RunOnServersSheet.Choice(title: "t22gate", target: SFTPTarget(host: "t22gate"), saved: nil)
         let started = await app.runOnServers("rm -f /tmp/t22gate-x", [alias])
         NSApp.windows.filter { $0.title.contains("t22gate-x") }.forEach { $0.close() }
-        #expect(questions.count == 1, "the production question: \(questions)")
+        #expect(questions.count == 2 && questions.first == "Touch ID", "Touch ID, then the production question: \(questions)")
         #expect(!started, "Cancel: nothing started")
     }
 

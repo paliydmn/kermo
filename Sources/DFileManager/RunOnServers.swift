@@ -27,7 +27,7 @@ extension AppDelegate {
             active.flash("Nothing ran: the servers stayed locked")
             return false
         }
-        guard await gate(run.map(\.target), to: "run a command on", on: sheetWindow, question: { Self.runQuestion(command, on: run.map(\.target)) }) == .pass else { return false }
+        guard await gate([], on: sheetWindow, question: { Self.runQuestion(command, on: run.map(\.target)) }) == .pass else { return false }
         let env = SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For “Run on Servers”"]) { $1 }
         Self.start(command, on: run, of: chosen.count, skipped: skipped, env: env) { [unowned self] in await runOnServers(command, chosen, askingOn: $0) }
         return true

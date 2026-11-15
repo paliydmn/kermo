@@ -21,10 +21,10 @@ Release:
 - **F6 with Overwrite between two mounts of one share** (`/Volumes/share`, `/Volumes/share-1`) no longer copies a file over itself and then deletes it — the only copy.
 
 ### Security
-- **Every action on a server now passes one gate**: the address is looked up, a locked server asks for Touch ID, then the production question — built once Kermo knows where the address goes. What that closes:
+- **Commands, services, tools and file changes on a server now pass one gate**: the address is looked up, a locked server asks for Touch ID, then the production question — built once Kermo knows where the address goes. What that closes:
   - ⌘E, F2 and the user menu on a locked server's panel ran without Touch ID once its five minutes were over; so did F7, New File, F8, permissions and Extract there, while F5, F6 and a rename asked. All ask now.
   - **Run on Servers…** with an `~/.ssh/config` alias of a production server you hadn't connected by yet ran a dangerous command without the production question. Touch ID now comes first, then the question, naming only the servers that will run.
-  - The production log no longer has a line for a ⌘E command sent to the terminal whose tab stayed locked, and has one for a new folder, rename or permissions change you stopped with ⎋ (“cancelled, may have been done”).
+  - The production log no longer has a line for a ⌘E command sent to the terminal whose tab stayed locked, and has one for a new folder or file, rename or permissions change you stopped with ⎋ (“cancelled, may have been done”).
 - An address `ssh -G` can't place is treated as the locked or production server it may be: Touch ID with five minutes of its own, PROD, the questions and the log. The production log also records where each address really goes (`identity`).
 
 ### Changed
