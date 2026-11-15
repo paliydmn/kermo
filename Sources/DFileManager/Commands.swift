@@ -674,11 +674,11 @@ extension AppDelegate {
     var shellContext: ShellContext {
         if let l = active.list {   // its server's login folder; %f the cursor's row, %s the marked ones (a service, a container)
             let rows = l.source is PlaceSource ? [] : l.targets.map(\.title)
-            return ShellContext(dir: ".", otherDir: nil, cursor: l.source is PlaceSource ? nil : l.cursor?.title, targets: rows)
+            return ShellContext(dir: ".", otherDir: nil, cursor: l.source is PlaceSource ? nil : l.cursor?.title, targets: rows, server: l.source.target.asUser)
         }
         if let r = active.remote {
             return ShellContext(dir: r.dir, otherDir: other.remote?.target.asUser == r.target.asUser ? other.remote?.dir : nil,
-                                cursor: active.remoteCursor?.item.name, targets: active.remoteSelection?.items.map(\.name) ?? [])
+                                cursor: active.remoteCursor?.item.name, targets: active.remoteSelection?.items.map(\.name) ?? [], server: r.target)
         }
         let dir = active.itemsDir
         return ShellContext(dir: dir, otherDir: other.remote == nil && other.parked == nil ? other.path : nil, cursor: active.cursorURL.map { Self.name($0, in: dir) },
@@ -699,18 +699,22 @@ extension AppDelegate {
 
     /// ⌘E and the user menu (F2). On a server panel the command runs on the server, in its folder.
     func runShell(_ command: String, in dest: ShellWhere) {
-        guard let expanded = shellContext.expand(command) else { return active.flash("%D: the other panel is on another machine") }
+        let context = shellContext
+        guard let expanded = context.expand(command) else { return active.flash("%D: the other panel is on another machine") }
         // A list of a server's: on that server, in its login folder (".": where its shell starts).
-        if let r = active.remote ?? active.list.map({ (target: $0.source.target.asUser, dir: ".") }) {
-            let env = SSHAskpass.env
+        if let target = context.server {
+            let env = SSHAskpass.env, r = (target: target, dir: context.dir), panel = active
             Task { [self] in
                 // R1: rm, mv, chmod, chown, dd, systemctl stop/restart on a production server ask first.
-                if SavedServer.isProd(r.target), Shell.isDangerous(expanded) {
+                let passed = await gate([r.target], to: "run “\(String(expanded.prefix(60)).bidiVisible)” on") {
+                    guard SavedServer.isProd(r.target), Shell.isDangerous(expanded) else { return nil }
                     var c = Confirm("Run this command on \(SavedServer.name(for: r.target))?", on: r.target, action: "Run")
                     c.runs = (r.dir == "." ? "In its login folder" : "In \(r.dir)") + (r.target.sudo ? ", as the server's user — not root." : ".")
                     c.command = dest == .terminalApp ? SSHCommand.shell(in: r.dir, after: expanded) : Shell.remote(expanded, in: r.dir, follow: false)
-                    guard await confirm(c) == 0 else { return }
+                    return c
                 }
+                if case .locked(let t) = passed { return panel.flash("\(t.host) stays locked") }
+                guard passed == .pass else { return }
                 if dest == .terminalApp {
                     AuditLog.write(r.target.asUser, "command", paths: [r.dir], command: expanded, exit: nil)   // its end is the terminal's; as the user, root panel or not
                     return openSSH(r.target, command: SSHCommand.shell(in: r.dir, after: expanded))
@@ -1729,9 +1733,10 @@ extension AppDelegate {
                   ask: (message: String, button: String)? = nil, askOn: NSWindow? = nil, in panel: PanelViewController,
                   running: (@MainActor () -> Void)? = nil) async -> RanThere {
         // A locked server's Touch ID again if its time ran out since it was looked at (a Picker can stay open).
-        if await !ServerLock.authorize(target, "run “\(command)” on") { return .notRun("\(target.host) stays locked") }
-        if let ask, let c = Self.prodQuestion(command, on: target, ask) {
-            guard await confirm(c, on: askOn) == 0 else { return .notRun("cancelled") }   // ↩ = Cancel
+        switch await gate([target], to: "run “\(command)” on", on: askOn, question: { ask.flatMap { Self.prodQuestion(command, on: target, $0) } }) {   // ↩ = Cancel
+        case .locked: return .notRun("\(target.host) stays locked")
+        case .cancelled: return .notRun("cancelled")
+        case .pass: break
         }
         let env = SSHAskpass.env
         running?()
@@ -1882,7 +1887,7 @@ extension AppDelegate {
         switch r {
         case .success:
             AuditLog.write(target, title.lowercased(), paths: paths, exit: 0)
-        case .failure(is CancellationError): break
+        case .failure(is CancellationError): AuditLog.write(target, title.lowercased(), paths: paths, exit: nil, error: "cancelled, may have been done")   // ⎋ stops the wait
         case .failure(let e):
             AuditLog.write(target, title.lowercased(), paths: paths, exit: 1, error: e.localizedDescription)
             showError(JobErrorMessage("\(title): \(e.localizedDescription)"), on: sheet)
@@ -1895,6 +1900,7 @@ extension AppDelegate {
     private func remoteMkdir() {
         guard let (target, dir, _) = active.remoteSelection ?? active.remote.map({ ($0.target, $0.dir, []) }) else { return }
         Task {
+            guard await unlock([.sftp(target)], to: "make a folder on") else { return }
             guard let name = await prompt("New folder on \(target.host):", value: "", ok: "Create", strip: target), !name.isEmpty else { return }
             let path = (dir as NSString).appendingPathComponent(name)
             await remoteOp("New folder", target, paths: [path], select: name) { try $0.mkdir(path) }
@@ -1906,6 +1912,7 @@ extension AppDelegate {
         guard let r = active.remote else { return }
         let (target, panel) = (r.target, active)
         Task {
+            guard await unlock([.sftp(target)], to: "make a file on") else { return }
             guard let name = await prompt("New file on \(target.host):", value: "", ok: "Create", strip: target),
                   !name.isEmpty else { return }
             let path = name.hasPrefix("/") ? name : (r.dir as NSString).appendingPathComponent(name)
@@ -1994,6 +2001,7 @@ extension AppDelegate {
         guard let sel = active.remoteSelection else { return NSSound.beep() }
         let items = active.listed(sel.items)
         Task {
+            guard await unlock([.sftp(sel.target)], to: "delete files on") else { return }
             let what = sel.items.count == 1 ? "“\(sel.items[0].name)”" : "\(sel.items.count) items"
             var c = Confirm("Delete \(what) on \(SavedServer.name(for: sel.target)) permanently?", on: sel.target, action: "Delete")
             (c.items, c.note, c.irreversible) = (items, "A server has no Trash. This can't be undone.", true)
@@ -2243,6 +2251,7 @@ extension AppDelegate {
         let file = (dir as NSString).appendingPathComponent(item.name), panel = active, env = SSHAskpass.env
         let there = other.remote.flatMap { $0.target.isSameServer(as: target) ? $0.dir : nil } ?? (file as NSString).deletingLastPathComponent
         Task { [self] in
+            guard await unlock([.sftp(target)], to: "extract an archive on") else { return }
             guard let input = await prompt("Extract “\((item.name as NSString).lastPathComponent)” on \(target.host) to:", value: there,
                                            ok: "Extract", strip: target), !input.isEmpty else { return }
             let dest = ((input.hasPrefix("/") ? input : (dir as NSString).appendingPathComponent(input)) as NSString).standardizingPath
@@ -2884,8 +2893,9 @@ extension AppDelegate {
     /// one tagged production where files change (`changed`) asks to go ahead, naming it.
     func enqueueTransfer(_ sources: [String], from: Endpoint = .local, to dir: String, on side: Endpoint = .local, name: String?, move: Bool,
                          prodAsked: Bool = false) {
+        // Asked first: a locked server's, and one not learned yet — it may be a production server under another name.
         let locked = [from, side].compactMap { e -> SFTPTarget? in
-            if case .sftp(let t) = e, ServerLock.needsUnlock(t) { t } else { nil }
+            if case .sftp(let t) = e, ServerLock.needsUnlock(t) || !ServerLock.isLearned(t) { t } else { nil }
         }
         let what = sources.count == 1 ? (name ?? (sources[0] as NSString).lastPathComponent) : "\(sources.count) items"
         let place = DirSync.place(side, dir)
@@ -2893,11 +2903,15 @@ extension AppDelegate {
         let prod = prodAsked ? [] : Self.changed(from: from, to: side, move: move).filter(SavedServer.isProd)
         if !locked.isEmpty || !prod.isEmpty {
             Task {
-                for t in locked where await !ServerLock.authorize(t) { return active.flash("\(t.host) stays locked") }
                 let landing = side == .local ? [] : sources.map { (dir as NSString).appendingPathComponent(name ?? ($0 as NSString).lastPathComponent) }
                 let unchecked = Self.uncheckedNote(landing, rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules)
-                if !prod.isEmpty, await confirm(Self.prodTransfer("\(move ? "Move" : "Copy") \(sources.count == 1 ? "“\(what)”" : what) to \(place)?", sources, to: prod, move: move,
-                                                                   unchecked: unchecked)) != 0 { return }
+                let passed = await gate(locked) {
+                    let prod = prodAsked ? [] : Self.changed(from: from, to: side, move: move).filter(SavedServer.isProd)   // learned by now
+                    return prod.isEmpty ? nil : Self.prodTransfer("\(move ? "Move" : "Copy") \(sources.count == 1 ? "“\(what)”" : what) to \(place)?", sources, to: prod, move: move,
+                                                                  unchecked: unchecked)
+                }
+                if case .locked(let t) = passed { return active.flash("\(t.host) stays locked") }
+                guard passed == .pass else { return }
                 enqueueTransfer(sources, from: from, to: dir, on: side, name: name, move: move, prodAsked: true)
             }
             return
@@ -2915,15 +2929,16 @@ extension AppDelegate {
         let move = e.kind == .move
         Task {
             guard await unlock([e.from, e.to]) else { return }
-            let prod = Self.changed(from: e.from, to: e.to, move: move).filter(SavedServer.isProd)
-            if !prod.isEmpty {
-                let unchecked = Self.uncheckedNote(e.to == .local ? [] : failures.compactMap(\.dst),
-                                                   rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules)
+            let unchecked = Self.uncheckedNote(e.to == .local ? [] : failures.compactMap(\.dst),
+                                               rules: ConfigCheck.rules(FileManager.default.contents(atPath: Self.validatorsPath)).rules)
+            guard await gate([], question: {
+                let prod = Self.changed(from: e.from, to: e.to, move: move).filter(SavedServer.isProd)
+                guard !prod.isEmpty else { return nil }
                 let what = failures.count == 1 ? "“\((failures[0].src as NSString).lastPathComponent)”" : "\(failures.count) items"
                 var c = Self.prodTransfer("Retry \(move ? "moving" : "copying") \(what)?", failures.map(\.src), to: prod, move: move, unchecked: unchecked)
                 c.action = "Retry"
-                guard await confirm(c) == 0 else { return }
-            }
+                return c
+            }) == .pass else { return }
             for g in ActivityEntry.retryGroups(failures) {
                 enqueueTransfer(g.sources, from: e.from, to: g.dir, on: e.to, name: g.name, move: move, prodAsked: true)
             }
@@ -2955,11 +2970,13 @@ extension AppDelegate {
         }
     }
 
-    /// Touch ID first for each locked server among `ends`, as listing one of its folders asks; false (and said so)
-    /// if one stays locked. For what walks a whole tree there: compare, sync, search.
-    func unlock(_ ends: [Endpoint]) async -> Bool {
-        for case .sftp(let t) in ends where ServerLock.needsUnlock(t) {
-            guard await ServerLock.authorize(t) else { active.flash("\(t.host) stays locked"); return false }
+    /// Touch ID first for each locked server among `ends` (`action`: what for, in the system's prompt), as listing
+    /// one of its folders asks; false (and said so) if one stays locked. The gate without a question: what walks a
+    /// whole tree there (compare, sync, search) and what changes a file on it.
+    func unlock(_ ends: [Endpoint], to action: String = "connect to") async -> Bool {
+        if case .locked(let t) = await gate(ends.compactMap { if case .sftp(let t) = $0 { t } else { nil } }, to: action) {
+            active.flash("\(t.host) stays locked")
+            return false
         }
         return true
     }
@@ -2970,9 +2987,10 @@ extension AppDelegate {
         func server(_ e: Endpoint) -> SFTPTarget? { if case .sftp(let t) = e { t } else { nil } }
         let changed = jobs.compactMap { server($0.job.to) }   // a delete's `to` is its server too
         let deleted = jobs.filter { $0.job.kind == .delete }.reduce(0) { $0 + $1.job.sources.count }
-        let prod = changed.filter(SavedServer.isProd)
         guard await unlock(jobs.flatMap { [$0.job.from, $0.job.to] }) else { return false }
-        if !prod.isEmpty || deleted > 0 {
+        guard await gate([], question: {
+            let prod = changed.filter(SavedServer.isProd)   // learned by the lock above
+            guard !prod.isEmpty || deleted > 0 else { return nil }
             let hosts = Set(changed.map(\.host)).sorted().joined(separator: ", ")
             var c = Confirm("Synchronize with \(hosts)?", action: "Synchronize")
             c.on(prod)
@@ -2980,8 +2998,8 @@ extension AppDelegate {
                 ? "\(deleted) item\(deleted == 1 ? "" : "s") only there \(deleted == 1 ? "is" : "are") deleted — a server has no Trash. This can't be undone."
                 : "Files there may be overwritten."
             c.irreversible = deleted > 0
-            guard await confirm(c) == 0 else { return false }
-        }
+            return c
+        }) == .pass else { return false }
         for (job, label) in jobs {
             syncJobs.add(job)   // the production log says "sync"
             ops.enqueue(job, title: label)
@@ -3024,6 +3042,7 @@ extension AppDelegate {
         let shown = [common { $0.mode & 0o7777 }.map { String(format: "%03o", $0) } ?? "", owner.isEmpty && group.isEmpty ? "" : owner + ":" + group]
             .filter { !$0.isEmpty }.joined(separator: " ")
         Task {
+            if let r { guard await unlock([.sftp(r.target)], to: "change permissions on") else { return } }
             let what = (items.count == 1 ? "“\(items[0].name)”" : "\(items.count) items") + (r.map { " on \($0.target.host)" } ?? "")
             guard let text = await prompt("Permissions and owner of \(what):", value: shown, ok: "Apply",
                                           info: "Octal mode, then owner:group" + (r != nil ? " — the server's numbers (uid:gid)." : " (names or numbers)."),

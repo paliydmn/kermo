@@ -31,9 +31,10 @@ public struct SFTPTarget: Sendable, Hashable, Codable {
     }
 
     /// `sudo`: a stand-in for the server's sudo (a script), which makes it a root target.
+    /// `port`: another server to the lock and production (a test's own, while others use "localhost").
     public static func local(server: String = "/usr/libexec/sftp-server", persist: Int? = nil, sudo: String? = nil,
-                             selinux: Bool = false, rootUID: UInt32? = nil) -> SFTPTarget {
-        var t = SFTPTarget(host: "localhost", persist: persist)
+                             selinux: Bool = false, rootUID: UInt32? = nil, port: Int? = nil) -> SFTPTarget {
+        var t = SFTPTarget(host: "localhost", port: port, persist: persist)
         t.localRootUID = rootUID
         t.localServer = server
         t.localSudo = sudo

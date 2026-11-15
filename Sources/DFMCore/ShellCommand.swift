@@ -11,9 +11,10 @@ public struct ShellContext: Sendable {
     public var otherDir: String?      // nil: the other panel is on another machine, so %D means nothing here
     public var cursor: String?        // name in `dir`
     public var targets: [String]      // names in `dir`
+    public var server: SFTPTarget?    // where `dir` is; nil: this Mac
 
-    public init(dir: String, otherDir: String?, cursor: String?, targets: [String]) {
-        self.dir = dir; self.otherDir = otherDir; self.cursor = cursor; self.targets = targets
+    public init(dir: String, otherDir: String?, cursor: String?, targets: [String], server: SFTPTarget? = nil) {
+        self.dir = dir; self.otherDir = otherDir; self.cursor = cursor; self.targets = targets; self.server = server
     }
 
     /// nil when the command uses %D and there's no other folder on this machine.

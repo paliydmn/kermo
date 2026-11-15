@@ -64,14 +64,18 @@ extension AppDelegate {
         let own = { [unowned self] in Self.ownTabs.object(forKey: owner).flatMap { id in terminal.tabs.first { $0.id == id as UUID } }.flatMap { mine($0) ? $0 : nil } }
         let asked = own()
         if run, let target {
-            if await !ServerLock.authorize(target, "run “\(String(body.prefix(60)).bidiVisible)” on") { return .notSent("\(target.host) stays locked") }
-            if SavedServer.isProd(target) {
+            switch await gate([target], to: "run “\(String(body.prefix(60)).bidiVisible)” on", on: askOn, question: {   // ↩ = Cancel
+                guard SavedServer.isProd(target) else { return nil }
                 var c = Confirm("Run this in the terminal on \(name)?", on: user!, action: "Run")
                 let tab = (owner as? Editor)?.terminal != nil ? "it was copied from" : "this file used before"   // a terminal's copy
                 c.runs = asked != nil ? "In the SSH tab on \(name) \(tab) — as whoever is logged in there now."   // a `sudo -i` there isn't seen
                     : "In a new SSH tab on \(name), as its user" + (target.sudo ? " — not root" : "") + ", in \(dir)."
                 c.command = body
-                guard await confirm(c, on: askOn) == 0 else { return .cancelled }   // ↩ = Cancel
+                return c
+            }) {
+            case .locked: return .notSent("\(target.host) stays locked")
+            case .cancelled: return .cancelled
+            case .pass: break
             }
         }
         // The tab, chosen now (a question may have stood a while): the owner's, the current one, else a new one — on
