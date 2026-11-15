@@ -420,7 +420,7 @@ final class ToolRunner {
                values filled: [String: String]? = nil, job: String? = nil, text: String? = nil) async -> Ready {
         let p = tool.preset, verb = (a.spec.title ?? a.spec.id).replacingOccurrences(of: "…", with: "")
         let mac = (a.run.where ?? p.where) == .mac, sudo = (a.run.sudo ?? p.sudo ?? false) && !mac
-        if !mac, await !ServerLock.authorize(t, "run “\(verb)” on") { return .stop("\(SavedServer.name(for: t.asUser)) stays locked") }
+        if !mac, await app.gate([t], to: "run “\(verb)” on") != .pass { return .stop("\(SavedServer.name(for: t.asUser)) stays locked") }   // its question: below, its own
         var scope = scope, uploads: [Upload] = []
         if let inputs = a.spec.inputs, !inputs.isEmpty {
             let kept = settings.remembered(p.id, on: serverID(t), row: row)

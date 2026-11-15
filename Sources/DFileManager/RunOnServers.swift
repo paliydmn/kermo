@@ -22,12 +22,12 @@ extension AppDelegate {
     /// question on that window). False: nothing started.
     @discardableResult
     func runOnServers(_ command: String, _ chosen: [RunOnServersSheet.Choice], askingOn sheetWindow: NSWindow? = nil) async -> Bool {
-        if let q = Self.runQuestion(command, on: chosen.map(\.target)), await confirm(q, on: sheetWindow) != 0 { return false }
-        let (run, skipped) = await Self.unlocked(chosen)
+        let (run, skipped) = await Self.unlocked(chosen)   // learns each: an alias of a production server is one from here on
         guard !run.isEmpty else {
             active.flash("Nothing ran: the servers stayed locked")
             return false
         }
+        guard await gate(run.map(\.target), to: "run a command on", on: sheetWindow, question: { Self.runQuestion(command, on: run.map(\.target)) }) == .pass else { return false }
         let env = SSHAskpass.env.merging(["DFM_ASKPASS_WHY": "For “Run on Servers”"]) { $1 }
         Self.start(command, on: run, of: chosen.count, skipped: skipped, env: env) { [unowned self] in await runOnServers(command, chosen, askingOn: $0) }
         return true
