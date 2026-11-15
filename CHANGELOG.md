@@ -9,7 +9,7 @@ Release:
 1. Set CFBundleShortVersionString in build.sh to the new version.
 2. Rename [Unreleased] to [X.Y] - YYYY-MM-DD, start a new empty [Unreleased], and add the link at the bottom.
 3. Commit, `git tag vX.Y`, `./package.sh` (it signs with “Kermo Release Signing”, made once by `./cert.sh "Kermo Release Signing"`; keep its backup), `python3 tools/release-notes.py X.Y [lead.md]`, then attach dist/*.dmg, *.pkg, their .sha256, the .zip (Install and Relaunch takes it) and dist/latest.json (the daily check reads it) to the GitHub release with dist/Kermo-X.Y-notes.md as its notes.
-4. `tools/release-stats.sh`: how many checks and installs each release had.
+4. `tools/release-stats.sh`: how many checks and installs each release had — and, right after publishing, whether the release's latest.json has its tag and every file it names attached (it says so and exits 1 if not).
 -->
 
 ## [Unreleased]

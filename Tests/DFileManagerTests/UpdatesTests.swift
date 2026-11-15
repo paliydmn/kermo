@@ -49,6 +49,15 @@ import DFMCore
     await #expect(throws: (any Error).self) { try await Updates.fetch([dir.appendingPathComponent("missing.json")]) }
 }
 
+@Test func theCheckKeepsNoCookiesAndAsksOnceWithoutANetwork() {
+    let c = Updates.session.configuration
+    #expect(c.httpCookieStorage == nil && !c.httpShouldSetCookies, "github.com's _octo would tie a copy's checks together")
+    #expect(Updates.isOffline(URLError(.notConnectedToInternet)) && Updates.isOffline(URLError(.cannotFindHost)))
+    #expect(!Updates.isOffline(URLError(.badServerResponse)) && !Updates.isOffline(URLError(.timedOut)) && !Updates.isOffline(URLError(.fileDoesNotExist)),
+            "no file, or a host that doesn't answer: the API next")
+    #expect(!Updates.isOffline(DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: ""))))
+}
+
 /// A tiny app signed ad hoc, and its designated requirement as text.
 private func signedApp(_ dir: String, _ name: String = "T.app", version: String = "9.9") throws -> (url: URL, requirement: String) {
     let app = URL(fileURLWithPath: dir).appendingPathComponent(name)

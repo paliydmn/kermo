@@ -7,6 +7,7 @@
 #   dmg      the .dmg: by hand
 # Counts are per release (a new release starts at 0), include any download by hand, and GitHub updates them with a delay.
 # Usage: tools/release-stats.sh [how many releases, 8]
+# After the table: the latest release's latest.json checked against the release (exit 1 if it's wrong or missing).
 # /day: checks go to the latest release only, so a release's days end where the next one begins. Drafts are left out.
 gh api "repos/paliydmn/kermo/releases?per_page=${1:-8}" --jq '
   ["release", "published", "checks", "/day", "update", "pkg", "dmg"],
@@ -17,3 +18,17 @@ gh api "repos/paliydmn/kermo/releases?per_page=${1:-8}" --jq '
     | [$r.tag_name, $r.published_at[0:10], n("latest.json"), ((n("latest.json") / $days * 10 | round) / 10),
        n(".zip"), n(".pkg"), n(".dmg")])
   | @tsv' | column -t -s $'\t'
+
+# The latest release's latest.json against the release itself: Kermo offers what the file says, so its tag must be
+# the release's and every file it names attached (a missing .zip is Install and Relaunch's "The download failed").
+gh api repos/paliydmn/kermo/releases/latest | python3 -c '
+import json, sys, urllib.request
+r = json.load(sys.stdin)
+tag, have = r["tag_name"], {a["name"]: a["browser_download_url"] for a in r["assets"]}
+if "latest.json" not in have:
+    sys.exit("\n%s has no latest.json: Kermo asks the API, and its checks are not counted" % tag)
+f = json.load(urllib.request.urlopen(have["latest.json"], timeout=15))
+bad = ["its tag is " + f["tag_name"]] if f["tag_name"] != tag else []
+bad += [a["name"] + " is not attached" for a in f["assets"] if have.get(a["name"]) != a["browser_download_url"]]
+if bad:
+    sys.exit("\n%s: latest.json is wrong: %s" % (tag, "; ".join(bad)))'

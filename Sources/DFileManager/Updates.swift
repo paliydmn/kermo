@@ -68,19 +68,31 @@ enum Updates {
         return String(latest.trimmingPrefix("v"))
     }
 
-    private static let session: URLSession = {
+    /// No cookies kept or sent: github.com sets an identifier (`_octo`) that would tie one copy's checks together.
+    static let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
         c.timeoutIntervalForResource = 60
+        c.httpCookieStorage = nil
+        c.httpShouldSetCookies = false
         return URLSession(configuration: c)
     }()
 
+    /// The first of `urls` that answers with a release. Without a network it stops at the first: no second request.
     static func fetch(_ urls: [URL] = [latest, api]) async throws -> Release {
         var failed: Error = URLError(.badURL)
         for url in urls {
             do { return try JSONDecoder().decode(Release.self, from: await get(url, accept: url == api ? "application/vnd.github+json" : nil)) }
+            catch where isOffline(error) { throw error }
             catch { failed = error }
         }
         throw failed
+    }
+
+    /// No network at all, as against a host that can't be reached or a file that isn't there (those try the next URL:
+    /// a firewall may let `api.github.com` through and not GitHub's file servers).
+    static func isOffline(_ error: Error) -> Bool {
+        guard let code = (error as? URLError)?.code else { return false }
+        return [.notConnectedToInternet, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff, .cannotFindHost, .dnsLookupFailed].contains(code)
     }
 
     /// One GET: no cache on disk, no cookies, nothing in it but Kermo's own version (in User-Agent). Over `limit` bytes,
