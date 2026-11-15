@@ -24,7 +24,7 @@ By hand:
 
 ## Updates
 
-Once a day Kermo asks GitHub for its latest release: one HTTPS request to `api.github.com`, with nothing in it but Kermo's version. When a newer version is out, the status line says so once and the Kermo menu shows **Kermo X.Y Available…** until you update or skip it. No window opens by itself, and without a network nothing happens.
+Once a day Kermo asks GitHub for its latest release: one HTTPS request for the release's small `latest.json` (from `github.com`, which hands the file over from `release-assets.githubusercontent.com`), with nothing in it but Kermo's version; if that file can't be read, Kermo asks `api.github.com` instead. GitHub counts that file's downloads, so we see how many checks there were — that number and nothing else: no identifier, nothing about you, your Mac or your files. **Check for Updates Automatically** (below) turns the check off. When a newer version is out, the status line says so once and the Kermo menu shows **Kermo X.Y Available…** until you update or skip it. No window opens by itself, and without a network nothing happens.
 
 **Kermo ▸ Check for Updates…** (or `update` in ⌘⇧P) checks at once and shows the release notes:
 

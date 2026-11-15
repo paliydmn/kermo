@@ -36,6 +36,19 @@ import DFMCore
     #expect(Updates.archive(try JSONDecoder().decode(Updates.Release.self, from: Data(#"{"tag_name": "v1.3", "body": "x"}"#.utf8))) == nil)
 }
 
+@Test func theCheckReadsLatestJsonElseTheAPI() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("kermo-latest-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let latest = dir.appendingPathComponent("latest.json"), api = dir.appendingPathComponent("api.json")
+    try Data(#"{"tag_name": "v9.1", "body": "- fixed\n- more", "assets": [{"name": "Kermo-9.1-universal.zip", "browser_download_url": "https://x/z.zip"}]}"#.utf8).write(to: latest)
+    try Data(#"{"tag_name": "v9.0", "id": 7, "draft": false, "body": "y", "assets": []}"#.utf8).write(to: api)
+    let r = try await Updates.fetch([latest, api])
+    #expect(r.tag_name == "v9.1" && r.body == "- fixed\n- more" && Updates.archive(r)?.absoluteString == "https://x/z.zip")
+    #expect(try await Updates.fetch([dir.appendingPathComponent("missing.json"), api]).tag_name == "v9.0", "no latest.json: the API")
+    await #expect(throws: (any Error).self) { try await Updates.fetch([dir.appendingPathComponent("missing.json")]) }
+}
+
 /// A tiny app signed ad hoc, and its designated requirement as text.
 private func signedApp(_ dir: String, _ name: String = "T.app", version: String = "9.9") throws -> (url: URL, requirement: String) {
     let app = URL(fileURLWithPath: dir).appendingPathComponent(name)

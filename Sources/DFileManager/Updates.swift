@@ -1,7 +1,8 @@
 import AppKit
 import DFMCore
 
-/// Is there a newer Kermo? One GET to GitHub's latest release: once a day by itself, and from Check for Updates….
+/// Is there a newer Kermo? One GET of the latest release's `latest.json` on GitHub: once a day by itself, and from Check
+/// for Updates…. GitHub counts that file's downloads: how many checks there were is the one number anyone learns.
 /// The daily check never opens anything: a newer version shows once in the status line and stays in the Kermo menu.
 enum Updates {
     struct Release: Decodable {
@@ -43,6 +44,9 @@ enum Updates {
         return SecRequirementCopyString(requirement, [], &s) == errSecSuccess ? s as String? : nil
     }
 
+    /// The latest release's own `latest.json` (`tools/release-notes.py`): the API's tag_name, body and assets.
+    static let latest = URL(string: "https://github.com/paliydmn/kermo/releases/latest/download/latest.json")!
+    /// Asked only when `latest.json` can't be read (a release without one, 2.1.1 and older).
     static let api = URL(string: "https://api.github.com/repos/paliydmn/kermo/releases/latest")!
     static let page = URL(string: "https://github.com/paliydmn/kermo/releases/latest")!
     static var current: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0" }
@@ -70,8 +74,13 @@ enum Updates {
         return URLSession(configuration: c)
     }()
 
-    static func fetch() async throws -> Release {
-        try JSONDecoder().decode(Release.self, from: await get(api, accept: "application/vnd.github+json"))
+    static func fetch(_ urls: [URL] = [latest, api]) async throws -> Release {
+        var failed: Error = URLError(.badURL)
+        for url in urls {
+            do { return try JSONDecoder().decode(Release.self, from: await get(url, accept: url == api ? "application/vnd.github+json" : nil)) }
+            catch { failed = error }
+        }
+        throw failed
     }
 
     /// One GET: no cache on disk, no cookies, nothing in it but Kermo's own version (in User-Agent). Over `limit` bytes,
@@ -80,6 +89,7 @@ enum Updates {
         var request = URLRequest(url: url, timeoutInterval: 15)
         request.setValue(accept, forHTTPHeaderField: "Accept")
         request.setValue("Kermo/\(current)", forHTTPHeaderField: "User-Agent")
+        request.setValue("en", forHTTPHeaderField: "Accept-Language")   // not the Mac's languages, which macOS adds
         let (bytes, response) = try await session.bytes(for: request)
         guard url.isFileURL || (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
         var data = Data()

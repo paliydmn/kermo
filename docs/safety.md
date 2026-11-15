@@ -2,7 +2,7 @@
 
 # Safety on servers
 
-What Kermo does to keep a server safe from a slip, and what it keeps on your Mac. Kermo has no telemetry. Its network traffic is the ssh connections you open, the `smb://`, `nfs://` or `afp://` shares you mount (macOS does that), and [one request a day to GitHub](install.md#updates) for the latest release, which **Kermo ▸ Configuration ▸ Check for Updates Automatically** turns off.
+What Kermo does to keep a server safe from a slip, and what it keeps on your Mac. Kermo has no telemetry. Its network traffic is the ssh connections you open, the `smb://`, `nfs://` or `afp://` shares you mount (macOS does that), and [one request a day to GitHub](install.md#updates) for the latest release, which **Kermo ▸ Configuration ▸ Check for Updates Automatically** turns off. GitHub counts those requests; how many there were is the one number we see.
 
 ## Production servers
 
