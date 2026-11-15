@@ -680,13 +680,19 @@ public final class SFTPClient: @unchecked Sendable {
     public var canCopyData: Bool { extensions["copy-data"] != nil }
 
     /// Copies `length` bytes (0 = to the end) of `from` at `offset` into `to` at the same offset. `truncate` as `openWrite`'s.
-    /// `opened`: `to` is open — from here on it may not be as it was.
+    /// `opened`: both are open — from here on `to` may not be as it was. (`to` is opened along with `from`: a `from`
+    /// that can't be opened leaves a `to` made, or cut when `truncate`, without `opened`.)
     public func copyData(_ from: String, to: String, offset: Int64, length: Int64, truncate: Bool = true, opened: () -> Void = {}) throws {
-        let rh = try open(from, Self.FXF_READ)
-        defer { closeUnheard(rh) }
-        let wh = try open(to, Self.FXF_WRITE | Self.FXF_CREAT | (offset > 0 || !truncate ? 0 : Self.FXF_TRUNC), mode: 0o600)   // new: owner-only, as openWrite
+        // Both opened in one wave, closed without a wait (the server takes requests in order): two waits in all.
+        let rid = try send(Self.opening(from, Self.FXF_READ))
+        let wid: UInt32
+        do {   // new: owner-only, as openWrite
+            wid = try send(Self.opening(to, Self.FXF_WRITE | Self.FXF_CREAT | (offset > 0 || !truncate ? 0 : Self.FXF_TRUNC), mode: 0o600))
+        } catch { forget([rid]); throw error }
+        let read = Result { try handle(try wait(rid), from) }, write = Result { try handle(try wait(wid), to) }
+        defer { for h in [read, write] { if let h = try? h.get() { closeUnheard(h) } } }
+        let (rh, wh) = (try read.get(), try write.get())
         opened()
-        defer { try? closeHandle(wh) }
         var p = Packet(Self.EXTENDED)
         p.string("copy-data")
         p.string(rh)
@@ -699,14 +705,16 @@ public final class SFTPClient: @unchecked Sendable {
 
     // MARK: - Requests
 
-    private func open(_ path: String, _ flags: UInt32, mode: UInt32 = 0o644) throws -> Data {
+    private static func opening(_ path: String, _ flags: UInt32, mode: UInt32 = 0o644) -> Packet {
         var p = Packet(Self.OPEN)
         p.string(path)
         p.u32(flags)
         p.u32(Self.ATTR_PERMISSIONS)
         p.u32(mode)
-        return try handle(p, path)
+        return p
     }
+
+    private func open(_ path: String, _ flags: UInt32, mode: UInt32 = 0o644) throws -> Data { try handle(Self.opening(path, flags, mode: mode), path) }
 
     private func open(dir: String) throws -> Data {
         var p = Packet(Self.OPENDIR)
@@ -728,8 +736,10 @@ public final class SFTPClient: @unchecked Sendable {
         if let id = try? send(p) { forget([id]) }
     }
 
-    private func handle(_ p: Packet, _ path: String) throws -> Data {
-        let (type, body) = try call(p)
+    private func handle(_ p: Packet, _ path: String) throws -> Data { try handle(try call(p), path) }
+
+    private func handle(_ answer: (type: UInt8, body: Data), _ path: String) throws -> Data {
+        let (type, body) = answer
         if type == Self.STATUS { _ = try status(body, path: path, okOnly: true) }
         var r = Reader(body)
         guard type == Self.HANDLE else { throw protocolError("OPEN answered \(type)") }
@@ -1041,9 +1051,11 @@ extension SFTPClient {
     }
 
     /// A save written into the file failed on the way: the file may be cut short there — unless its old text went
-    /// back (`restored`). The new text, whole, stays in `partial` next to it.
+    /// back (`restored`). The new text, whole, stays in `partial` next to it; the old one, when it didn't go back
+    /// (the connection is gone), in `old`.
     public struct InPlaceFailed: LocalizedError {
         public let partial: String
+        public let old: String?
         public let restored: Bool
         public let error: Error
         public var errorDescription: String? { error.localizedDescription }
@@ -1098,6 +1110,17 @@ extension SFTPClient {
         var out = Data()
         while out.count < max, let d = try r.read() { out.append(d) }
         return out.count > max ? out.prefix(max) : out
+    }
+
+    /// `from`'s bytes over `to` from its start, not cut to their length: on the server where it can (`copy-data`),
+    /// else through here. `opened`: as `copyData`'s.
+    private func copyOver(_ from: String, to: String, sizeHint: Int64, opened: () -> Void = {}) throws {
+        if canCopyData { return try copyData(from, to: to, offset: 0, length: 0, truncate: false, opened: opened) }
+        let r = try openRead(from, sizeHint: sizeHint)
+        defer { r.close() }
+        let out = try openWrite(to, truncate: false)
+        opened()
+        do { while let d = try r.read() { try out.write(d) }; try out.finish() } catch { out.close(); throw error }
     }
 
     /// The server's file as it is now, whole (it follows a symlink): small ones only.
@@ -1201,6 +1224,7 @@ extension SFTPClient {
         }
         let into = real ?? remote
         var touched = false   // the copy into the file began: it may not be as it was
+        var oldCopy: String?    // its old text, whole, next to the partial file: what a failure puts back
         do {
             try check?(partial)
             let mine = try lstat(partial)
@@ -1231,37 +1255,39 @@ extension SFTPClient {
             } else {
                 // Never opened with TRUNC: written over from the start, then cut to its new length. A drop on the
                 // way leaves the old text, or the new one's start over the old one's end — never an empty file.
-                // Its old text is read first, whatever the history wants: what a failure puts back.
-                if old == nil, let cur, cur.kind == .file, cur.size <= ServerHistory.fileLimit { old = try contents(into, size: cur.size) }
-                guard cancel?.hold() != false else { throw CancellationError() }
-                if canCopyData {
-                    try copyData(partial, to: into, offset: 0, length: 0, truncate: false) { touched = true }
-                } else {
-                    let r = try openRead(partial, sizeHint: length)
-                    defer { r.close() }
-                    let out = try openWrite(into, truncate: false)
-                    touched = true
-                    do { while let d = try r.read() { try out.write(d) }; try out.finish() } catch { out.close(); throw error }
+                // Its old text is copied aside first, next to the partial file (a folder we can write in), owner-only:
+                // what a failure puts back, whatever its size — and what's left there if the connection goes too.
+                if let cur, cur.kind == .file {
+                    let copy = ((partial as NSString).deletingLastPathComponent as NSString).appendingPathComponent(FileJob.oldName())
+                    oldCopy = copy
+                    if let old, !canCopyData {   // read already (the check, the history): sent, not fetched again
+                        let out = try openWrite(copy)
+                        do { try out.write(old); try out.finish() } catch { out.close(); throw error }
+                    } else {
+                        try copyOver(into, to: copy, sizeHint: cur.size)
+                    }
                 }
+                guard cancel?.hold() != false else { throw CancellationError() }   // ⎋ still stops the copy aside
+                try copyOver(partial, to: into, sizeHint: length) { touched = true }
                 try setAttrs(into, mtime: nil, mode: nil, size: length)
-                try? remove(partial)
+                _ = remove([partial, oldCopy].compactMap { $0 })
             }
         } catch {
             guard touched else {
-                try? remove(partial)
+                _ = remove([partial, oldCopy].compactMap { $0 })
                 throw error
             }
             // The partial file stays: the only whole copy of the new text there.
             var restored = false
-            if let old, isConnected {
+            if let oldCopy, let cur, isConnected {
                 do {
-                    let out = try openWrite(into, truncate: false)
-                    do { try out.write(old); try out.finish() } catch { out.close(); throw error }
-                    try setAttrs(into, mtime: nil, mode: nil, size: Int64(old.count))
+                    try copyOver(oldCopy, to: into, sizeHint: cur.size)
+                    try setAttrs(into, mtime: nil, mode: nil, size: cur.size)
+                    try? remove(oldCopy)
                     restored = true
-                } catch {}   // not put back: said so
+                } catch {}   // not put back: said so, the copy stays
             }
-            throw InPlaceFailed(partial: partial, restored: restored, error: error)
+            throw InPlaceFailed(partial: partial, old: restored ? nil : oldCopy, restored: restored, error: error)
         }
         if let cur, cur.kind == .file { replaced?(cur, keep ? old : nil) }
         var a = try stat(remote)

@@ -168,9 +168,10 @@ private func tempDir() throws -> String {
     let saved = URL(fileURLWithPath: "/tmp/dfm-sftp-X/site.conf")
     struct Full: LocalizedError { var errorDescription: String? { "No space left on device" } }
     let partial = "/etc/nginx/sites-available/.dfm-partial-1-X"
-    let cut = AppDelegate.notUploaded(saved, host: "srv", SFTPClient.InPlaceFailed(partial: partial, restored: false, error: Full()), editorOpen: true) ?? ""
-    #expect(cut.contains("No space left on device") && cut.contains("may be cut short") && cut.contains(partial), "\(cut)")
-    let back = AppDelegate.notUploaded(saved, host: "srv", SFTPClient.InPlaceFailed(partial: partial, restored: true, error: Full()), editorOpen: false) ?? ""
+    let old = "/etc/nginx/sites-available/.dfm-old-1-X"   // task 22: the old text's copy, when it couldn't go back
+    let cut = AppDelegate.notUploaded(saved, host: "srv", SFTPClient.InPlaceFailed(partial: partial, old: old, restored: false, error: Full()), editorOpen: true) ?? ""
+    #expect(cut.contains("No space left on device") && cut.contains("may be cut short") && cut.contains(partial) && cut.contains("old text is in \(old)"), "\(cut)")
+    let back = AppDelegate.notUploaded(saved, host: "srv", SFTPClient.InPlaceFailed(partial: partial, old: nil, restored: true, error: Full()), editorOpen: false) ?? ""
     #expect(back.contains("put back") && !back.contains("cut short") && back.contains(partial) && back.contains(saved.path), "\(back)")
 }
 

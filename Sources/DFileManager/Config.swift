@@ -102,19 +102,57 @@ enum Config {
     static let writes = DispatchQueue(label: "kermo.config.writes", qos: .utility)
     static func flush() { writes.sync {} }
 
+    /// Hears why a file couldn't be written (the app's status line): once a file, until it's written again.
+    nonisolated(unsafe) static var failed: (@MainActor (String) -> Void)?
+    /// What couldn't be written, by path, and why: the latest of each, tried again with every save. Only in `writes`.
+    /// `seen`: the file's date then — one changed since (edited by hand) is the user's: not written over.
+    nonisolated(unsafe) private static var unwritten: [String: (data: Data, why: String, seen: Date?)] = [:]
+    private static func date(_ path: String) -> Date? { (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date }
+    private static func retry(except path: String? = nil) {
+        for (other, u) in unwritten where other != path {
+            if date(other) == u.seen { write(other, u.data) } else { unwritten[other] = nil }
+        }
+    }
+    /// The files still not written after one more try, each with why: what quitting now would lose.
+    static var unsaved: [String] {
+        writes.sync {
+            retry()
+            return unwritten.sorted { $0.key < $1.key }.map { "\(($0.key as NSString).abbreviatingWithTildeInPath) (\($0.value.why))" }
+        }
+    }
+
     /// Owner-only: folder history (frecency) and Trash paths are nobody else's business on a shared Mac. Encoded
-    /// here (what it is now), written in `writes`.
+    /// here (what it is now), written in `writes`. One that can't be written (a full disk, a home that's read-only)
+    /// is said (`failed`) and kept: every later save tries it again, and quitting asks (`unsaved`).
     static func save<T: Encodable>(_ name: String, _ value: T, in dir: String = dir) {
         let path = (dir as NSString).appendingPathComponent(name)
         guard !heldLock.withLock({ held.contains(path) }) else { return }   // unreadable at launch: the user's, as it is
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        guard let data = try? enc.encode(value) else { return }
+        let data: Data
+        do { data = try enc.encode(value) } catch { return say(path, error.localizedDescription) }   // nothing to try again
         writes.async {
-            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            chmod(dir, 0o700)
-            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
-            chmod(path, 0o600)
+            write(path, data)
+            retry(except: path)
         }
+    }
+
+    private static func write(_ path: String, _ data: Data) {
+        let dir = (path as NSString).deletingLastPathComponent
+        do {
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            chmod(dir, 0o700)
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+            chmod(path, 0o600)
+            unwritten[path] = nil
+        } catch {
+            let why = error.localizedDescription
+            if unwritten.updateValue((data, why, date(path)), forKey: path) == nil { say(path, why + " Kermo keeps it and tries again with the next change.") }
+        }
+    }
+
+    private static func say(_ path: String, _ why: String) {
+        NSLog("Kermo: not saved: %@ — %@", path, why)   // while quitting nobody reads the status line
+        DispatchQueue.main.async { MainActor.assumeIsolated { failed?("Not saved: \((path as NSString).abbreviatingWithTildeInPath) — \(why)") } }
     }
 }

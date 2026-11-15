@@ -216,6 +216,56 @@ private func footprint() -> Int64 {
     #expect(idx.list("a/a")?.map(\.name) == ["a"] && idx.list("a/b") == nil && idx.list("")?.first?.kind == .dir)
 }
 
+/// D-087: one share mounted twice — two devices, one file: F6 with Overwrite doesn't copy it over itself and unlink
+/// the one file. Told by the server's file number, size and date on two volumes that aren't this Mac's.
+@Test func aMoveOntoTheSameFileOfAShareMountedTwiceLeavesIt() throws {
+    var a = stat(), b = stat()
+    (a.st_dev, a.st_ino, a.st_size, a.st_mtimespec) = (905969668, 20614625, 13, timespec(tv_sec: 1794734915, tv_nsec: 328666800))
+    (b.st_dev, b.st_ino, b.st_size, b.st_mtimespec) = (905969669, 20614625, 13, a.st_mtimespec)   // as one share mounted twice showed a file
+    #expect(FileJob.isSameFileElsewhere(a, b, remote: true))
+    #expect(!FileJob.isSameFileElsewhere(a, b, remote: false), "this Mac's disks number their own files")
+    var c = b
+    c.st_ino += 1
+    #expect(!FileJob.isSameFileElsewhere(a, c, remote: true))
+    c = b
+    c.st_mtimespec.tv_nsec += 100
+    #expect(!FileJob.isSameFileElsewhere(a, c, remote: true))
+    c = b
+    c.st_dev = a.st_dev
+    #expect(!FileJob.isSameFileElsewhere(a, c, remote: true), "one mount: a rename, or a hard link's other name")
+    #expect(FileJob.isLocal(NSTemporaryDirectory()))
+
+    // By hand: DFM_TEST_TWICE="<mount 1>:<mount 2>" — one share mounted at both (by IP and by name), with a file
+    // "t22-same" made on the server itself (one just written through a mount is busy there: the move fails anyway).
+    guard let twice = ProcessInfo.processInfo.environment["DFM_TEST_TWICE"]?.split(separator: ":").map(String.init), twice.count == 2 else { return }
+    let text = try #require(fm.contents(atPath: twice[0] + "/t22-same"))
+    let job = FileJob(.move, sources: [twice[0] + "/t22-same"], destDir: twice[1])
+    job.resolveConflict = { _ in (.overwrite, false) }
+    job.run()
+    #expect(job.progress.errors == ["\(twice[0])/t22-same: the same file as \(twice[1])/t22-same (one share mounted twice) — not moved"])
+    sleep(6)   // past the mounts' attribute caches
+    #expect(fm.contents(atPath: twice[0] + "/t22-same") == text && fm.contents(atPath: twice[1] + "/t22-same") == text)
+}
+
+/// Task 22: root's write fails on the way (a full disk — here a file size limit, `SIGXFSZ` ignored so the write
+/// itself says so): the file goes back as it was, not the new text's start over the old one's end.
+@Test func aFailedRootWritePutsTheOldTextBack() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    let old = Data("old text\n".utf8), new = Data(repeating: 0x6e, count: 4096)
+    try new.write(to: URL(fileURLWithPath: d + "/new"))
+    try old.write(to: URL(fileURLWithPath: d + "/target"))
+    var st = stat()
+    lstat(d + "/target", &st)
+    let write = AdminCommand.writeOver(d + "/target", from: ShellContext.quote(d + "/new"), inode: "\(st.st_ino)", size: "\(st.st_size)", length: new.count)
+    let r = sh("trap '' XFSZ; ulimit -f 2; " + write)   // 1 KB: the old text fits, the new one doesn't
+    #expect(r.status != 0 && r.err.contains(AdminCommand.unchanged), "\(r)")
+    #expect(fm.contents(atPath: d + "/target") == old)
+    var now = stat()
+    lstat(d + "/target", &now)
+    #expect(now.st_ino == st.st_ino)
+}
+
 private func sh(_ command: String) -> (status: Int32, err: String) {
     let p = Process(), err = Pipe()
     p.executableURL = URL(fileURLWithPath: "/bin/sh")

@@ -519,6 +519,10 @@ extension FileJob {
     /// ".dfm-partial-<seconds since 1970>-<UUID>": a partial copy, and when it was begun.
     static func partialName() -> String { ".dfm-partial-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString)" }
 
+    /// ".dfm-old-…": a file's old text, put aside before a save is written into it (`SFTPClient.upload`). Never
+    /// swept: one that stays is the only whole old text of a file the save left mixed.
+    static func oldName() -> String { ".dfm-old-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString)" }
+
     /// When the partial named `name` (or its ._ twin) was begun; 0 for one named before names said so (only its
     /// date tells then); nil if it isn't one.
     static func partialMade(_ name: String) -> Double? {

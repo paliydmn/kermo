@@ -220,6 +220,34 @@ import Testing
     #expect(ServerLock.locking(SFTPTarget(host: "admin@192.0.2.10")).persist == nil, "another account: as it was")
 }
 
+/// Task 22: `ssh -G` couldn't tell where an address goes (learned, no identity): it may be the locked production
+/// server under another name, so it's asked for and purple; an unlock isn't carried from one such address to another.
+@Test func anAddressSSHCannotResolveIsTakenForTheLockedServer() async throws {
+    var prod = SavedServer(address: "root@192.0.2.30")!
+    (prod.locked, prod.prod) = (true, true)
+    var asked: [String] = []
+    let sshG = ServerLock.sshG
+    ServerLock.sshG = { _ in nil }
+    ServerLock.authenticate = { asked.append($0); return true }
+    ServerLock.servers = { [prod] }
+    defer { ServerLock.sshG = sshG; ServerLock.servers = { [] }; ServerLock.relock() }
+    let alias = SFTPTarget(host: "t22-alias"), other = SFTPTarget(host: "t22-other")
+    #expect(ServerLock.needsUnlock(alias) && !SavedServer.isProd(alias), "not learned yet: asked for, shown as written")
+    #expect(await ServerLock.authorize(alias) && asked.count == 1, "asked: \(asked)")
+    #expect(SavedServer.isProd(alias) && !ServerLock.needsUnlock(alias), "learned, no identity: production, and unlocked by its answer")
+    #expect(ServerLock.needsUnlock(other), "one such address's unlock isn't another's")
+    #expect(await ServerLock.authorize(other) && asked.count == 2, "its own question")
+    #expect(asked.count == 2 && !ServerLock.needsUnlock(alias) && !ServerLock.needsUnlock(other), "each unlocked by its own answer: what asked goes on")
+    #expect(await ServerLock.authorize(alias) && asked.count == 2, "its own five minutes")
+    #expect(ServerLock.needsUnlock(prod.target), "not the server's")
+    #expect(await ServerLock.authorize(prod.target) && asked.count == 3 && !ServerLock.needsUnlock(prod.target), "as saved: the server itself")
+    #expect(await ServerLock.authorize(prod.target) && asked.count == 3, "and its five minutes")
+    #expect(ServerLock.needsUnlock(SFTPTarget(host: "t22-third")) , "the server's unlock isn't an unplaced address's")
+    ServerLock.relock()
+    #expect(ServerLock.needsUnlock(alias) && ServerLock.needsUnlock(prod.target), "the screen locked: all asked again")
+    #expect(ServerLock.identity(alias) == nil && ServerLock.identity(SFTPTarget(host: "t22-never-learned")) == nil, "what the log's `identity` leaves out")
+}
+
 /// The main thread never waits for ssh -G: before an address is learned, the lock and production compare it as written.
 @Test func anAddressNotLearnedYetRunsNoSSH() {
     let calls = Locked(value: 0), sshG = ServerLock.sshG

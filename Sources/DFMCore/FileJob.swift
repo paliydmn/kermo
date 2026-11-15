@@ -414,6 +414,11 @@ public final class FileJob: @unchecked Sendable {
                     // Type mismatch (file ↔ folder): the destination goes to the Trash, never straight away.
                     guard attempt(dst, { try FileManager.default.trashItem(at: URL(fileURLWithPath: dst), resultingItemURL: nil) })
                     else { skipCount(src, s); return nil }
+                } else if move, let a = Self.lstat(src), let b = Self.lstat(dst), Self.isSameFileElsewhere(a, b, remote: !Self.isLocal(src) && !Self.isLocal(dst)) {
+                    // Looked at again, after the question: a share's attributes are a few seconds behind the other mount's.
+                    update { $0.errors.append("\(src): the same file as \(dst) (one share mounted twice) — not moved") }
+                    skipCount(src, s)
+                    return nil
                 }
                 // file → file overwrite is handled atomically below (temp + rename).
             }
@@ -632,6 +637,22 @@ public final class FileJob: @unchecked Sendable {
         var b = stat()
         guard let a = lstat(path), fstatat(AT_FDCWD, dir, &b, 0) == 0 else { return false }
         return a.st_dev == b.st_dev
+    }
+
+    /// D-087: one share mounted twice (`/Volumes/share`, `/Volumes/share-1`) is two devices and one file: a move
+    /// with Overwrite would copy it over itself, then unlink the source — the one file. Nothing ties the two mounts
+    /// (no volume UUID, the file resource ids differ): told by what both show of the server's file — its number,
+    /// size and date. ponytail: a change through one mount shows in the other's attributes seconds later, and two
+    /// servers that number files by path (no file ids) with a mirrored file are refused too — D-087.
+    static func isSameFileElsewhere(_ a: stat, _ b: stat, remote: Bool) -> Bool {
+        remote && a.st_dev != b.st_dev && a.st_ino == b.st_ino && a.st_size == b.st_size
+            && a.st_mtimespec.tv_sec == b.st_mtimespec.tv_sec && a.st_mtimespec.tv_nsec == b.st_mtimespec.tv_nsec
+    }
+
+    /// On one of this Mac's disks, not a share.
+    static func isLocal(_ path: String) -> Bool {
+        var f = statfs()
+        return statfs(path, &f) != 0 || f.f_flags & UInt32(MNT_LOCAL) != 0
     }
 
     static func lstat(_ path: String) -> stat? {

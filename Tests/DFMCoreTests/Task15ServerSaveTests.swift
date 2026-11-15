@@ -17,18 +17,20 @@ private func put(_ p: String, _ s: String) { try! Data(s.utf8).write(to: URL(fil
 private func text(_ p: String) -> String? { fm.contents(atPath: p).map { String(decoding: $0, as: UTF8.self) } }
 private func inode(_ p: String) -> ino_t { var st = stat(); lstat(p, &st); return st.st_ino }
 private func partials(_ d: String) -> [String] { ((try? fm.contentsOfDirectory(atPath: d)) ?? []).filter { $0.hasPrefix(".dfm-partial-") } }
+private func olds(_ d: String) -> [String] { ((try? fm.contentsOfDirectory(atPath: d)) ?? []).filter { $0.hasPrefix(".dfm-old-") } }
 
 /// The sftp-server behind a proxy. `bare`: it announces no extensions (no copy-data, no posix-rename — OpenSSH
 /// before 9.0 has no copy-data). The first OPEN for writing of a path ending in "/`name`": `drop` passes its handle
-/// on and hangs up; `failWrite` answers the first WRITE on that handle with a failure itself.
-private func proxy(in dir: String, name: String = "", bare: Bool = false, drop: Bool = false, failWrite: Bool = false) -> String {
+/// on and hangs up; `failWrite` answers the first WRITE on that handle (or copy-data into it) with a failure itself; `dropOnWrite` lets that
+/// WRITE through and hangs up once the server has done it.
+private func proxy(in dir: String, name: String = "", bare: Bool = false, drop: Bool = false, failWrite: Bool = false, dropOnWrite: Bool = false) -> String {
     let path = dir + "/sftp-proxy-" + UUID().uuidString.prefix(8)
     try! """
     #!/usr/bin/perl
     use strict; use warnings; use IPC::Open2; use IO::Select;
     my $pid = open2(my $out, my $in, '/usr/libexec/sftp-server');
     binmode($_) for \\*STDIN, \\*STDOUT, $out, $in;
-    my ($fromClient, $fromServer, $first, $opened, $failed, %want, $handle) = ('', '', 1, 0, 0);
+    my ($fromClient, $fromServer, $first, $opened, $failed, %want, $handle, $written) = ('', '', 1, 0, 0);
     sub put { my ($fh, $d) = @_; while (length $d) { my $n = syswrite($fh, $d); die unless defined $n; substr($d, 0, $n) = '' } }
     sub packets { my $b = shift; my @p; while (length $$b >= 4) { my $l = unpack('N', $$b); last if length $$b < 4 + $l; push @p, substr($$b, 0, 4 + $l, '') } @p }
     my $sel = IO::Select->new(\\*STDIN, $out);
@@ -45,6 +47,7 @@ private func proxy(in dir: String, name: String = "", bare: Bool = false, drop: 
                         $handle = substr($p, 13, unpack('x9 N', $p));
                         if (\(drop ? 1 : 0)) { put(\\*STDOUT, $p); exit 0 }
                     }
+                    exit 0 if defined $written && $id == $written;
                     put(\\*STDOUT, $p);
                 }
                 next;
@@ -57,9 +60,11 @@ private func proxy(in dir: String, name: String = "", bare: Bool = false, drop: 
                     my ($path, $flags) = (substr($p, 13, $l), unpack("x13 x$l N", $p));
                     if (($flags & 2) && $path =~ m{/\\Q\(name)\\E$}) { $opened = 1; $want{$id} = 1 }
                 }
-                if ($type == 6 && \(failWrite ? 1 : 0) && !$failed && defined $handle && substr($p, 13, unpack('x9 N', $p)) eq $handle) {
+                if (\(failWrite ? 1 : 0) && !$failed && defined $handle && ($type == 6 && substr($p, 13, unpack('x9 N', $p)) eq $handle
+                    || $type == 200 && substr($p, 13, 9) eq 'copy-data' && substr($p, -8 - length $handle, length $handle) eq $handle)) {
                     $failed = 1; put(\\*STDOUT, pack('N C N N N N', 17, 101, $id, 4, 0, 0)); next
                 }
+                if ($type == 6 && \(dropOnWrite ? 1 : 0) && !defined $written && defined $handle && substr($p, 13, unpack('x9 N', $p)) eq $handle) { $written = $id }
                 put($in, $p);
             }
         }
@@ -178,7 +183,7 @@ private func proxy(in dir: String, name: String = "", bare: Bool = false, drop: 
         #expect(c.canCopyData == !bare)
         let ino = inode(file)
         let after = try c.upload(d + "/local", to: file, baseline: try c.stat(file))
-        #expect(text(file) == "new\n" && after.size == 4 && inode(file) == ino && partials(d).isEmpty, "bare: \(bare)")
+        #expect(text(file) == "new\n" && after.size == 4 && inode(file) == ino && partials(d).isEmpty && olds(d).isEmpty, "bare: \(bare)")
     }
 }
 
@@ -196,7 +201,41 @@ private func proxy(in dir: String, name: String = "", bare: Bool = false, drop: 
     let e = #expect(throws: SFTPClient.InPlaceFailed.self) { try c.upload(d + "/local", to: file, baseline: try c.stat(file)) }
     #expect(text(file) == "old text, longer than the new one\n")
     #expect(e?.restored == true && e.map { text($0.partial) } == "new text\n")
-    #expect(c.isConnected)
+    #expect(c.isConnected && olds(d).isEmpty && e?.old == nil, "put back: its copy gone")
+}
+
+/// Task 22: a file too big to read first (over `ServerHistory.fileLimit`) whose WRITE fails goes back as it was too:
+/// its old text was copied aside on the server before the first byte.
+@Test func aFailedWriteIntoABigFilePutsItBack() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    let file = d + "/big.conf", old = Data(repeating: 0x6f, count: Int(ServerHistory.fileLimit) + 4096)
+    try old.write(to: URL(fileURLWithPath: file))
+    put(d + "/local", "new text\n")
+    let p = proxy(in: d, name: "big.conf", failWrite: true)   // copy-data: megabytes both ways at once would stall the proxy
+    let c = try SFTPClient(.local(sudo: try fakeSudo(d, #"[ "$1" = -n ] || exit 2; exec \#(p)"#), selinux: true))
+    defer { c.close() }
+    let e = #expect(throws: SFTPClient.InPlaceFailed.self) { try c.upload(d + "/local", to: file, baseline: try c.stat(file)) }
+    #expect(fm.contents(atPath: file) == old)
+    #expect(e?.restored == true && e.map { text($0.partial) } == "new text\n" && olds(d).isEmpty)
+}
+
+/// Task 22: the connection drops after the first WRITE into the file: the file is the new text's start over the old
+/// one's end, and nothing can be sent to mend it — the old text, whole, is in a copy next to the partial file.
+@Test func aDropMidWriteLeavesTheOldTextInACopy() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    let file = d + "/f.conf"
+    put(file, "old text, longer than the new one\n")
+    put(d + "/local", "new text\n")
+    let p = proxy(in: d, name: "f.conf", bare: true, dropOnWrite: true)
+    let c = try SFTPClient(.local(sudo: try fakeSudo(d, #"[ "$1" = -n ] || exit 2; exec \#(p)"#), selinux: true))
+    defer { c.close() }
+    let e = #expect(throws: SFTPClient.InPlaceFailed.self) { try c.upload(d + "/local", to: file, baseline: try c.stat(file)) }
+    #expect(text(file) == "new text\n longer than the new one\n", "what the drop left: mixed")
+    #expect(e?.restored == false && e.map { text($0.partial) } == "new text\n")
+    #expect(olds(d).map { text(d + "/" + $0) } == ["old text, longer than the new one\n"] && e?.old == d + "/" + (olds(d).first ?? "?"))
+    #expect(!FileJob.isStalePartial(olds(d)[0], SFTPClient.Attrs(kind: .file, size: 1, mtime: 0), before: .greatestFiniteMagnitude), "never swept")
 }
 
 /// After a save, `sweepPartials` removes the partial files earlier saves left in its folder once over a day old (by

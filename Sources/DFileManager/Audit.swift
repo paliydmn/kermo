@@ -13,7 +13,7 @@ import Foundation
     private static var failing = false
 
     struct Entry: Encodable {
-        var time: String, server: String, root: Bool?, action: String, paths: [String], to: String?, command: String?, exit: Int32?, error: String?
+        var time: String, server: String, identity: String?, root: Bool?, action: String, paths: [String], to: String?, command: String?, exit: Int32?, error: String?
     }
 
     /// A line for `action` on `t`, if it's a production server. `exit`: 0 done, else failed (`error` says how); nil: not
@@ -22,7 +22,7 @@ import Foundation
         guard UserDefaults.standard.object(forKey: "auditLog") as? Bool ?? true, SavedServer.isProd(t) else { return }
         let time = ISO8601DateFormatter()
         time.timeZone = .current
-        let entry = Entry(time: time.string(from: Date()), server: t.host + (t.port.map { ":\($0)" } ?? ""), root: t.sudo ? true : nil,
+        let entry = Entry(time: time.string(from: Date()), server: t.host + (t.port.map { ":\($0)" } ?? ""), identity: ServerLock.identity(t), root: t.sudo ? true : nil,
                           action: action, paths: paths, to: to, command: command, exit: exit, error: error)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]

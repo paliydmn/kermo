@@ -87,7 +87,8 @@ public enum AdminCommand {
     /// changed by anything running as them while macOS asks for the password. Then nothing is written if the target
     /// isn't `stamp` ("inode:size:mtime", `stat -f %i:%z:%Fm`; nil: it mustn't exist) — and the write itself
     /// (`writeOver`) opens it without following a link and checks that what it opened is still that inode. Written over
-    /// without truncating first and cut to length after: a failed write (a full disk) never leaves an empty file.
+    /// without truncating first and cut to length after, the old text put back if the write fails (a full disk): never an
+    /// empty or a mixed file.
     public static func writeContents(_ source: Source, sha256: String, to target: String, stamp: String?, length: Int) -> String {
         let t = q(target)
         let copy = switch source {
@@ -104,21 +105,29 @@ public enum AdminCommand {
             + "umask 022; " + writeOver(target, from: "\"$c\"", inode: seen?.first, size: seen?.dropFirst().first, length: length)
     }
     static let isLink = "It is a symlink now; nothing was written."
+    /// What a write that failed on the way (a full disk) says once the old text is back.
+    static let unchanged = "nothing was changed."
 
     /// Run as root: `from` (a shell word) written over `target` from its start, then cut to `length`. The open doesn't
     /// follow a link at `target` (`O_NOFOLLOW`) and what it opened must be `inode` and `size` (nil: a new file,
     /// `O_EXCL`): a link or another file swapped in after the shell's checks is refused, never written through as
     /// root. The system's perl — the shell has no such open, and code of our own would need to be trusted as root
-    /// (signed): /usr/bin is sealed. `-T` ignores PERL5LIB and PERL5OPT.
+    /// (signed): /usr/bin is sealed. `-T` ignores PERL5LIB and PERL5OPT. The old text is read from what was opened
+    /// first: a write that fails on the way (a full disk) writes it back — never the new text's start over the old
+    /// one's end. ponytail: kept in memory, so a perl killed mid-write puts nothing back (D-213).
     static func writeOver(_ target: String, from: String, inode: String?, size: String?, length: Int) -> String {
         let perl = """
         use Fcntl; my ($t, $c, $ino, $size, $len) = map { /\\A(.*)\\z/s; $1 } @ARGV; my $new = $ino eq "-";
-        sysopen(my $f, $t, O_WRONLY | O_NOFOLLOW | ($new ? O_CREAT | O_EXCL : 0), 0644) or do { print STDERR
+        sysopen(my $f, $t, O_RDWR | O_NOFOLLOW | ($new ? O_CREAT | O_EXCL : 0), 0644) or do { print STDERR
         ($!{ELOOP} ? "\(isLink)" : $!{EEXIST} ? "\(changedOnDisk)" : "$t: $!"), "\\n"; exit 1 };
         my @s = stat($f); if (!$new && ($s[1] != $ino || $s[7] != $size)) { print STDERR "\(changedOnDisk)\\n"; exit 1 }
         open(my $in, "<", $c) or die "$c: $!\\n"; binmode $in; binmode $f; my $d = do { local $/; <$in> };
-        for (my $o = 0; $o < length $d;) { my $n = syswrite($f, $d, length($d) - $o, $o); defined $n or die "$t: $!\\n"; $o += $n }
-        truncate($f, $len) or die "$t: $!\\n"; close($f) or die "$t: $!\\n";
+        my $old = ""; while (1) { my $n = sysread($f, my $b, 1 << 20); defined $n or die "$t: $!\\n"; last unless $n; $old .= $b }
+        sub over { my ($d, $len) = @_; sysseek($f, 0, 0) or return 0; for (my $o = 0; $o < length $d;) {
+        my $n = syswrite($f, $d, length($d) - $o, $o); defined $n or return 0; $o += $n } truncate($f, $len) }
+        if (!over($d, $len)) { my $e = "$!"; my $back = $new ? unlink($t) : over($old, $size);
+        die "$t: $e — ", ($back ? "\(unchanged)" : $new ? "what was written of it is still there." : "its old text couldn't be put back ($!): it may be cut short."), "\\n" }
+        close($f) or die "$t: $!\\n";
         """
         return "/usr/bin/perl -T -e \(q(perl)) -- \(q(target)) \(from) \(q(inode ?? "-")) \(q(size ?? "-")) \(length)"
     }

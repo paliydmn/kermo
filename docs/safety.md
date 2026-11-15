@@ -40,7 +40,7 @@ On a production server, what Kermo does there goes into `~/.config/dfilemanager/
 - a key added with Copy SSH Key to Server…;
 - [tools'](tools.md) actions (`"action": "tool ufw delete"`), with what was sent, its secrets and the sudo password as `•••`.
 
-Each line has the time, the server, the paths, the command and its exit status. There is no exit status for a command handed to Terminal, and a reload stopped with ⎋ says it may have run. `"root": true` marks what ran as root from a root panel: saves, copies, moves, deletes, renames, permissions, new folders and reloads. Commands and extracting always run as the user and carry no `root`. If a line can't be written, the status line says so once.
+Each line has the time, the server as you wrote it and, as `identity`, the user, host and port ssh really reaches (an alias resolved), the paths, the command and its exit status. There is no exit status for a command handed to Terminal, and a reload stopped with ⎋ says it may have run. `"root": true` marks what ran as root from a root panel: saves, copies, moves, deletes, renames, permissions, new folders and reloads. Commands and extracting always run as the user and carry no `root`. If a line can't be written, the status line says so once.
 
 Read the log with `grep` or `jq`, or choose **Server ▸ Production Log** (or search for it).
 
@@ -58,7 +58,7 @@ Read the log with `grep` or `jq`, or choose **Server ▸ Production Log** (or se
 | Login Keychain | "Kermo: host" (ssh password), "Kermo sudo: host" (sudo password) | Keychain; each only if you chose to save it |
 | Memory | The sudo password for 5 minutes after its last use | Forgotten at screen lock, sleep and **Disconnect** |
 
-Server passwords are never put on a command line or in a file. A [locked server](servers.md#lock-a-server) asks for Touch ID or the Mac password before you use it, by its saved address, an `~/.ssh/config` alias of it or any other way of writing it ssh takes to the same user, host and port.
+Server passwords are never put on a command line or in a file. A [locked server](servers.md#lock-a-server) asks for Touch ID or the Mac password before you use it, by its saved address, an `~/.ssh/config` alias of it or any other way of writing it ssh takes to the same user, host and port. An IP address and its DNS name stay two servers to Kermo: save the one you use, or give the other the same lock. When `ssh -G` can't tell where an address goes (a broken `~/.ssh/config`), Kermo takes it for the locked or production server it may be: it asks for Touch ID (an unlock of its own, not the server's), shows PROD and writes the log — a question too many, never one too few.
 
 A file from a server or an archive that **↩** opens in another app is quarantined first, as a browser's download is, so Gatekeeper asks before a script or app runs ([server files](server-files.md#open-and-edit), [archives](files.md#archives)).
 

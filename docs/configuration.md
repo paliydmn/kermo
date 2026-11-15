@@ -23,6 +23,8 @@ Where Kermo keeps its settings, the formats of the files you can edit, and the `
 
 Kermo's files are in `~/.config/dfilemanager/` (the folder is owner-only, `0700`; files are `0600`). **Kermo ▸ Configuration ▸ Open Config Folder** (or **Open** in Settings › Advanced) opens it in the panel, and **Reload Config** (in the same menu, and there) applies a changed `keymap.json` and reads `tools/` again without a restart.
 
+If a file there can't be written (a full disk, a home folder that's read-only), the active panel's status line says so once. Kermo keeps the change and tries again with every later change, and quitting before it's written asks first.
+
 | File | Holds | Edit with |
 |---|---|---|
 | `servers.json` | [Saved servers](servers.md#save-a-server) and their [tunnels](tunnels.md) | The sidebar menus; by hand, see below |
