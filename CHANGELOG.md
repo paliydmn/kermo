@@ -14,6 +14,15 @@ Release:
 
 ## [Unreleased]
 
+### Fixed
+- **A save written into a server's file puts the old text back whatever its size**: a symlink into a folder that isn't yours, someone else's file and every save on a server with SELinux are written in place. The old text is now copied aside on the server first (`.dfm-old-…`), not read into memory up to 5 MB — and if the connection drops mid-write, the message names that copy.
+- **Save as Administrator** writes the old text back when the write fails on the way (a full disk), instead of leaving the new text's start over the old one's end.
+- **A settings file that can't be written is no longer dropped silently** (a full disk, a read-only home): the status line says so, Kermo tries again with every later change, and quitting asks first.
+- **F6 with Overwrite between two mounts of one share** (`/Volumes/share`, `/Volumes/share-1`) no longer copies a file over itself and then deletes it — the only copy.
+
+### Security
+- An address `ssh -G` can't place is treated as the locked or production server it may be: Touch ID with five minutes of its own, PROD, the questions and the log. The production log also records where each address really goes (`identity`).
+
 ### Changed
 - The daily update check downloads the latest release's small `latest.json` from GitHub instead of asking GitHub's API: still one request a day, with nothing in it but Kermo's version. GitHub counts that file's downloads — how many checks there were is the one number we see; **Check for Updates Automatically** turns it off.
 

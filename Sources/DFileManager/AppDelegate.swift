@@ -107,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         ServerLock.servers = { [unowned self] in savedServers }
         ServerCopies.upload = { [unowned self] c in await upload(c.url, to: c.path, on: c.target, c.state) }
         AuditLog.failed = { [unowned self] in active.flash($0, error: true) }
+        Config.failed = { [unowned self] in active.flash($0, error: true) }
         ServerLock.relockOnScreenLockAndSleep()
         ServerLock.onRelock = { [unowned self] in
             tunnels.relock(savedServers)
@@ -415,6 +416,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if !editing.isEmpty {
             lost.append("Edited in another app: " + editing.map { "“\($0.url.lastPathComponent)”" }.joined(separator: ", ") + " — saves after quitting don't reach the server")
         }
+        lost += Config.unsaved.map { "Settings not saved: \($0)" }
         if let busy = Shell.busy { lost.append(busy) }
         if let note = tunnels.quitNote() { lost.append(note) }
         for b in terminal.tabs.compactMap(\.busyWith) where !lost.contains(b) { lost.append(b) }   // two panes on one server: one line

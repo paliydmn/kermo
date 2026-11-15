@@ -1864,7 +1864,7 @@ extension AppDelegate {
             return "“\(saved.lastPathComponent)” wasn't saved to \(host): its check didn't run. \(e.message)\(kept)"
         }
         if let e = error as? SFTPClient.InPlaceFailed {
-            let now = e.restored ? "was put back as it was" : "may be cut short"
+            let now = e.restored ? "was put back as it was" : "may be cut short" + (e.old.map { " — its old text is in \($0)" } ?? "")
             return "Uploading “\(saved.lastPathComponent)” to \(host) failed: \(e.error.localizedDescription). The file on \(host) \(now); "
                 + "your full text is in \(e.partial) there.\(kept)"
         }

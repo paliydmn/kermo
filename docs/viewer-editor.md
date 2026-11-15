@@ -236,7 +236,7 @@ defaults write com.dmn.dfilemanager editorFinalNewline -bool true
 
 ### Save as Administrator
 
-When a save fails because the file or its folder is not yours to write, the editor asks **Save as Administrator**, with the orange ROOT strip. It shows the macOS password dialog and writes the text as root, keeping the owner, mode and hard links.
+When a save fails because the file or its folder is not yours to write, the editor asks **Save as Administrator**, with the orange ROOT strip. It shows the macOS password dialog and writes the text as root, keeping the owner, mode and hard links. If that write fails on the way (a full disk), the old text is written back and the message says nothing was changed.
 
 - The file is checked before the password dialog, and once more as root right before writing: if it changed while the dialog was up (another size, date or file), nothing is written and the editor asks "changed on disk" as for any change.
 - The text goes to root in the command itself, so nothing else running as you can change it while macOS asks for the password. A text over about 500 KB, or one that isn't UTF-8, goes through a temporary file only you can read; root copies it and writes only if the copy is exactly your text.

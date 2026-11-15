@@ -30,7 +30,7 @@ Every copy, move, Trash and delete gets a row above the key bar: files done of t
 - Jobs on this Mac run one at a time and wait as **Queued**. **Start Now** (▶▶) runs one next to the others.
 - **▸** at the start of a row opens its files: the last few done, the one being copied, any that failed, and the picked items not begun yet.
 - When a copy or move is done, its row shows **✓** for a moment. One that finished with errors keeps its row in red, with **Show** and **Retry Failed**, until you close it with ×; nothing stops the window.
-- A move inside one volume is a rename: instant. To another volume it copies, then removes each original.
+- A move inside one volume is a rename: instant. To another volume it copies, then removes each original. One share mounted twice (`/Volumes/share` and `/Volumes/share-1`) is two volumes with the same files: a move with Overwrite onto the file itself is refused, not copied over itself and removed.
 - A copy inside one APFS volume is cloned where possible, and Pause then lands between files.
 - Copies keep permissions, extended attributes, ACLs and dates, and copy a symbolic link as a link. Each file is written under a hidden name and renamed when whole, so a pulled drive never leaves a cut-off file under the real name. A hidden `.dfm-partial-…` file can stay behind; the next copy into that folder removes it once it is a day old.
 

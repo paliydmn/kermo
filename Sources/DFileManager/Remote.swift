@@ -65,8 +65,9 @@ struct SavedServer: Codable, Equatable {
     @MainActor static func name(for t: SFTPTarget) -> String {
         ServerLock.servers().first { !$0.name.isEmpty && ServerLock.same($0.target, t) }?.name ?? t.shown
     }
-    /// A saved server that is the same server (`ServerLock.same`) is tagged production.
-    @MainActor static func isProd(_ t: SFTPTarget) -> Bool { ServerLock.servers().contains { $0.prod && ServerLock.same($0.target, t) } }
+    /// A saved server that is the same server (`ServerLock.same`) is tagged production — or may be it
+    /// (`ServerLock.mayBe`): purple, a question and a log line too many, never one too few.
+    @MainActor static func isProd(_ t: SFTPTarget) -> Bool { ServerLock.servers().contains { $0.prod && ServerLock.mayBe($0.target, t) } }
 
     /// A server file's editor title: "web:/etc/nginx/nginx.conf", "root@web:/…" from a root panel; production and root
     /// are its chips (`Chip.of`).
@@ -229,6 +230,19 @@ enum ServerLock {
         return SSHPasswords.sameKey(a, b)
     }
 
+    /// Where `t` really goes, once learned and if `ssh -G` could tell.
+    static func identity(_ t: SFTPTarget) -> String? { identities[spelling(t)]?.identity }
+
+    /// Could `t` be the saved server at `s`? Also when both are learned and `ssh -G` couldn't tell where one of them
+    /// goes: the lock and production take an address nobody can place for the server it may be. Not learned yet
+    /// compares as written (the main thread never waits; `needsUnlock` and `authorize` cover the lock till then, and
+    /// nothing is done on a server before `authorize` has learned it). Names, the linger and what's remembered stay
+    /// with `same`.
+    static func mayBe(_ s: SFTPTarget, _ t: SFTPTarget) -> Bool {
+        same(s, t) || isLearned(s) && isLearned(t) && (identity(s) == nil || identity(t) == nil)
+    }
+    private static func maybeLocked(_ t: SFTPTarget) -> SavedServer? { servers().first { $0.locked && mayBe($0.target, t) } }
+
     /// `ssh -G` (~15 ms each) off the main thread for `targets` and the saved servers not learned yet. `again`:
     /// everything learned so far as well — ~/.ssh/config, or a file it includes, may have changed (Connect… opening,
     /// the saved servers changing).
@@ -265,17 +279,21 @@ enum ServerLock {
 
     static func isLearned(_ t: SFTPTarget) -> Bool { identities[spelling(t)] != nil }
 
-    /// Also while `t` or a locked server isn't learned yet: `authorize` finds out.
+    /// Also while `t` or a locked server isn't learned yet (`authorize` finds out), and when `ssh -G` couldn't place
+    /// one of them: `t` may be that server, until its own unlock (`authorizeUnplaced`).
     static func needsUnlock(_ t: SFTPTarget) -> Bool {
         if servers().contains(where: { $0.locked && !(isLearned($0.target) && isLearned(t)) }) { return true }
-        return server(for: t).map { (unlockedUntil[$0.id] ?? .distantPast) < Date() } ?? false
+        if let s = server(for: t) { return (unlockedUntil[s.id] ?? .distantPast) < Date() }
+        return maybeLocked(t) != nil && (unplacedUntil[spelling(t)] ?? .distantPast) < Date()
     }
 
     /// `action` completes "… to <action>" in the system's prompt.
     static func authorize(_ s: SavedServer, _ action: String) async -> Bool {
         await learn([s.target])
-        let s = server(for: s.target) ?? s   // an unlocked twin of a locked server shares its connection: asks too
-        guard s.locked, (unlockedUntil[s.id] ?? .distantPast) < Date() else { return true }
+        guard let s = server(for: s.target) ?? (s.locked ? s : nil) else {   // an unlocked twin of a locked server shares its connection: asks too
+            return await authorizeUnplaced(s.target, action)
+        }
+        guard (unlockedUntil[s.id] ?? .distantPast) < Date() else { return true }
         guard await authenticate("\(action) “\(s.title)”") else { return false }
         unlockedUntil[s.id] = Date().addingTimeInterval(grace)
         return true
@@ -284,15 +302,26 @@ enum ServerLock {
     /// Every new connection's way: learns `t` first, so a production server typed another way is known as one too.
     static func authorize(_ t: SFTPTarget, _ action: String = "connect to") async -> Bool {
         await learn([t])
-        guard let s = server(for: t) else { return true }
+        guard let s = server(for: t) else { return await authorizeUnplaced(t, action) }
         return await authorize(s, action)
     }
+
+    /// `t` is no locked server as far as anyone can tell — but `ssh -G` couldn't place it, or a locked one: it may
+    /// be that server under another name. Its unlock is its own, by the address as written: none taken from the
+    /// server's five minutes or another such address's, none given to them.
+    private static func authorizeUnplaced(_ t: SFTPTarget, _ action: String) async -> Bool {
+        guard needsUnlock(t) else { return true }
+        guard await authenticate("\(action) “\(t.shown)”") else { return false }
+        unplacedUntil[spelling(t)] = Date().addingTimeInterval(grace)
+        return true
+    }
+    private static var unplacedUntil: [String: Date] = [:]
 
     /// Also when the screen locks or the Mac sleeps (the app's tunnels: `Tunnels.relock`).
     static var onRelock: () -> Void = {}
 
     static func relock() {
-        unlockedUntil = [:]
+        (unlockedUntil, unplacedUntil) = ([:], [:])
         SudoPasswords.forget()
         onRelock()
     }
