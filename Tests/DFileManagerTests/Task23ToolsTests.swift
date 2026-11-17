@@ -154,7 +154,11 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         try Data(("pass" + "word: hunter22\nname: web\n").utf8).write(to: URL(fileURLWithPath: dir + "/app.conf"))
         try Data([0xff, 0xfe, 0x00, 0x80]).write(to: URL(fileURLWithPath: dir + "/blob"))
         try Data(("a" + String(repeating: "é", count: AISession.textLimit)).utf8).write(to: URL(fileURLWithPath: dir + "/long.txt"))   // the cut falls inside an é
-        #expect(mkfifo(dir + "/pipe", 0o600) == 0)
+        // The FIFO in a folder no panel shows: a panel's own look at its folder isn't this test's.
+        let aside = dir + "-aside"
+        try FileManager.default.createDirectory(atPath: aside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: aside) }
+        #expect(mkfifo(aside + "/pipe", 0o600) == 0)
 
         var r = await s.call("list_folder", ["server": .string(box), "path": .string(dir)])   // Cancel: not allowed to read there
         #expect(r.isError && asked().count == 1 && !s.hasRead)
@@ -166,10 +170,12 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             #expect(!r.isError && r.text.contains("name: web") && !r.text.contains("hunter22") && r.text.contains("1 secret hidden"), "\(server): \(r.text)")
             r = await s.call("read_file", ["server": .string(server), "path": .string(dir + "/long.txt")])
             #expect(!r.isError && r.text.contains("Only the beginning is here") && r.text.count < AISession.textLimit, "\(server) \(r.text.suffix(200))")
-            for (name, why) in [("blob", "isn't text"), ("sub", "isn't a file"), ("pipe", "isn't a file"), ("none", "Couldn't read"), ("dev/x", "a device")] {
+            for (name, why) in [("blob", "isn't text"), ("sub", "isn't a file"), ("none", "Couldn't read"), ("dev/x", "a device")] {
                 r = await s.call("read_file", ["server": .string(server), "path": .string(dir + "/" + name)])
                 #expect(r.isError && r.text.contains(why), "\(server): \(r.text)")
             }
+            r = await s.call("read_file", ["server": .string(server), "path": .string(aside + "/pipe")])
+            #expect(r.isError && r.text.contains("isn't a file"), "\(server): \(r.text)")
             #expect(s.hasRead == (server == box))
         }
         #expect(asked().count == 3 && s.scope.grants.count == 2 && s.scope.grants.values.allSatisfy { $0.level == .view })
