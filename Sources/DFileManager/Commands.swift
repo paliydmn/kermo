@@ -671,18 +671,38 @@ extension AppDelegate {
     }
 
     /// The active panel's folder and names — a server's, on a server panel (never the local folder hidden behind it).
-    var shellContext: ShellContext {
-        if let l = active.list {   // its server's login folder; %f the cursor's row, %s the marked ones (a service, a container)
-            let rows = l.source is PlaceSource ? [] : l.targets.map(\.title)
-            return ShellContext(dir: ".", otherDir: nil, cursor: l.source is PlaceSource ? nil : l.cursor?.title, targets: rows, server: l.source.target.asUser)
+    var shellContext: ShellContext { AIContext(active: aiPanel(active), other: aiPanel(other)).shell }
+
+    /// What the user has in front of them (`AIContext`): the panels, the editor window's document while it shows, the
+    /// terminal's tab while the drawer is open.
+    var aiContext: AIContext {
+        var c = AIContext(active: aiPanel(active), other: aiPanel(other))
+        if let h = EditorHost.shared, h.window?.isVisible == true, let e = h.active {
+            let text = e.textView.string as NSString, sel = e.textView.selectedRange()
+            let line = { (at: Int) in text.substring(to: at).reduce(1) { $1.isNewline ? $0 + 1 : $0 } }
+            c.editor = .init(server: e.server?.target, path: e.server?.path ?? e.url?.path, unsaved: e.changed,
+                             selection: sel.length > 0 ? (line(sel.location)...line(NSMaxRange(sel) - 1), text.substring(with: sel)) : nil)
         }
-        if let r = active.remote {
-            return ShellContext(dir: r.dir, otherDir: other.remote?.target.asUser == r.target.asUser ? other.remote?.dir : nil,
-                                cursor: active.remoteCursor?.item.name, targets: active.remoteSelection?.items.map(\.name) ?? [], server: r.target)
+        if terminal?.isShown == true, let t = terminal.current {
+            c.terminal = .init(server: t.target, command: t.view.marks.last?.text, selection: t.view.getSelection().flatMap { $0.isEmpty ? nil : $0 })
         }
-        let dir = active.itemsDir
-        return ShellContext(dir: dir, otherDir: other.remote == nil && other.parked == nil ? other.path : nil, cursor: active.cursorURL.map { Self.name($0, in: dir) },
-                            targets: active.targetURLs.map { Self.name($0, in: dir) })
+        return c
+    }
+
+    /// A panel as `AIContext` has it. A parked one (`folder` nil) is the local folder behind it, as ⌘E always had it —
+    /// what runs a command says "not connected" before it gets here.
+    private func aiPanel(_ p: PanelViewController) -> AIContext.Panel {
+        let folder = p.remote.map { AIContext.Folder(server: $0.target, dir: $0.dir) } ?? (p.parked == nil ? AIContext.Folder(server: nil, dir: p.path) : nil)
+        if let l = p.list {   // its server's login folder; %f the cursor's row, %s the marked ones (a service, a container)
+            let place = l.source is PlaceSource
+            return .init(server: l.source.target.asUser, dir: ".", cursor: place ? nil : l.cursor?.title, targets: place ? [] : l.targets.map(\.title),
+                         list: l.source.title, folder: folder)
+        }
+        if let r = p.remote {
+            return .init(server: r.target, dir: r.dir, cursor: p.remoteCursor?.item.name, targets: p.remoteSelection?.items.map(\.name) ?? [], folder: folder)
+        }
+        let dir = p.itemsDir
+        return .init(dir: dir, cursor: p.cursorURL.map { Self.name($0, in: dir) }, targets: p.targetURLs.map { Self.name($0, in: dir) }, folder: folder)
     }
 
     /// `url` as named from `dir`: a search hit or a Git change is `sub/x.conf` there — its last component alone named
