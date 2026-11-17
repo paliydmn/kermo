@@ -26,7 +26,11 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
     private var chat: AIChat?
     private var session: AISession?
+    /// The provider the chat started with: its production questions named it, its history is its.
+    private var pinned: String?
     private(set) var turn: Task<Void, Never>?
+    /// New Chat's count: a turn of an earlier chat, still waiting on Touch ID, ends without a word.
+    private var generation = 0
     private var chips: [Attached] = []
     /// Production servers this chat sends from: asked once each.
     private var prodSent: Set<String> = []
@@ -87,6 +91,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         input.textContainer?.widthTracksTextView = true
         input.placeholder = "Ask about what's open — # adds context"
         input.onCommandReturn = { [unowned self] in if let card { card.answer(0) } else { send(input.string) } }
+        input.onFocus = { [unowned self] in showChips() }   // what is open now
         inputScroll.documentView = input
         inputScroll.hasVerticalScroller = true
         inputScroll.borderType = .bezelBorder
@@ -123,7 +128,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         for v in [head, scroll, composer] as [NSView] { v.widthAnchor.constraint(equalTo: all.widthAnchor).isActive = true }
         // Back from Settings with a key, or another model: said at once.
         NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: app.window, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
+            MainActor.assumeIsolated { if self?.app.aiChatShown == true { self?.refresh() } }
         }
         refresh()
     }
@@ -146,7 +151,10 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         updateSend()
     }
 
-    func focus() { view.window?.makeFirstResponder(composer.isHidden ? view : input) }
+    func focus() {
+        view.window?.makeFirstResponder(composer.isHidden ? view : input)
+        if !composer.isHidden { showChips() }
+    }
     var hasFocus: Bool { (view.window?.firstResponder as? NSView)?.isDescendant(of: view) == true }
 
     private final class Empty: NSStackView {}
@@ -173,13 +181,16 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     func contexts(all: Bool) -> [Context] {
         var out: [Context] = []
         if let h = EditorHost.shared, h.window?.isVisible == true, let e = h.active {
-            let path = e.server?.path ?? e.url?.path, name = path.map { ($0 as NSString).lastPathComponent } ?? "Untitled", t = e.server?.target.asUser
-            let range = e.textView.selectedRange(), text = e.textView.string
+            // A terminal's or a comparison's copy is its origin's: a production server's output is production's.
+            let name = e.name, t = e.origin?.asUser
+            let range = e.textView.selectedRange()
             if range.length > 0 {
-                let selected = (text as NSString).substring(with: range)
-                out.append(Context(id: "sel:\(path ?? "")", title: "Selection · \(name)", symbol: .document, server: t) { AISession.handOver(selected) })
+                let selected = (e.textView.string as NSString).substring(with: range)
+                out.append(Context(id: "sel:\(ObjectIdentifier(e).hashValue):\(range)", title: "Selection · \(name)", symbol: .document, server: t) { AISession.handOver(selected) })
             }
-            out.append(Context(id: "editor:\(path ?? "")", title: "\(name) · editor", symbol: .document, server: t) { AISession.handOver(text) })
+            out.append(Context(id: "editor:\(ObjectIdentifier(e).hashValue)", title: "\(name) · editor", symbol: .document, server: t) { [weak e] in
+                e.map { AISession.handOver($0.textView.string) } ?? .failure("The document was closed.")
+            })
         }
         for p in all ? app.panels : [app.active] {
             if let r = p.remote, p.list == nil, p.searchTitle == nil {
@@ -190,7 +201,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
                 }
                 out.append(folder(r.dir, on: t, title: "\(r.dir) · \(at)"))
             } else if let dir = p.plainFolder {
-                if let u = p.cursorURL, (try? u.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true {
+                if let u = p.cursorURL, p.item(at: p.table.selectedRow)?.kind == .file {   // the panel's look, no disk access here
                     out.append(file(u.path, on: nil, title: "\(u.lastPathComponent) · this Mac"))
                 }
                 out.append(folder(dir, on: nil, title: "\((dir as NSString).abbreviatingWithTildeInPath) · this Mac"))
@@ -310,6 +321,17 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
     func stop() { turn?.cancel() }
 
+    /// Why this chat can't go on, in words; nil: it can. It stays with the provider it started with (its production
+    /// questions named that one), and under Never Send a chat that took production text goes no further.
+    private func blocked(_ e: AIEndpoint) -> String? {
+        if let pinned, pinned != Self.pin(e) { return "Settings › AI names another provider now: a New Chat goes there." }
+        if AISettings.neverProd(app.defaults), !prodSent.isEmpty || session?.readProduction == true {
+            return "This chat holds text from a production server, and Settings › AI says Never Send: start a New Chat."
+        }
+        return nil
+    }
+    private static func pin(_ e: AIEndpoint) -> String { "\(e.kind.rawValue) \(e.address.absoluteString)" }
+
     func send(_ typed: String) {
         guard turn == nil, card == nil, !composer.isHidden else { return }
         let question = typed.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -317,34 +339,40 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         guard chips.allSatisfy({ $0.text != nil }) else { return flash("Still reading what you attached…") }
         guard let e = AISettings.endpoint(app.defaults) else { return note("Settings › AI: the address isn't one.", error: true, settings: true) }
         if let why = e.problem() { return note("Settings › AI: " + why, error: true, settings: true) }
-        let sent = chips
+        if let why = blocked(e) { return note(why, error: true) }
+        if AISettings.neverProd(app.defaults), chips.contains(where: { isProd($0.context) }) {
+            return note("Settings › AI: nothing from a production server goes to the AI. Remove its chip to send.", error: true)
+        }
+        let asked = chips, g = generation
         turn = Task {
             // Production: asked once a chat for each server, ↩ = Cancel. Nothing is sent until each said yes.
-            for t in Self.unique(sent.compactMap(\.context.server)) where SavedServer.isProd(t) && !prodSent.contains(Self.key(t)) {
-                guard !AISettings.neverProd(app.defaults) else { return finish(note: "Settings › AI: nothing from a production server goes to the AI.") }
-                let asked = await app.gate([t], to: "send what you attached to the AI from", question: { [self] in sendQuestion(t, e) }) { c, _ in await self.ask(c) }
-                guard case .pass = asked, !Task.isCancelled else { return finish(note: nil) }
+            for t in Self.unique(asked.compactMap(\.context.server)) where SavedServer.isProd(t) && !prodSent.contains(Self.key(t)) {
+                let answer = await app.gate([t], to: "send what you attached to the AI from", question: { [self] in sendQuestion(t, e) }) { c, _ in await self.ask(c) }
+                guard g == generation else { return }   // New Chat meanwhile
+                guard case .pass = answer, !Task.isCancelled else { return finish() }
                 prodSent.insert(Self.key(t))
                 append(Self.prodLine(AISession.label(t), host: e.address.host ?? "the provider"))
             }
+            // What is attached now: a chip removed while a question was up doesn't go.
+            let sent = asked.filter { a in chips.contains { $0.context.id == a.context.id } }
             let prod = Self.unique(sent.compactMap(\.context.server)).filter(SavedServer.isProd).map(AISession.label)
             let message = AIChat.compose(question, attached: sent.map { ($0.context.title, $0.text?.text ?? "") }, production: prod)
-            if chat == nil { start() }
+            if chat == nil { start(e) }
             chat?.add(message)
             chips.removeAll { c in sent.contains { $0.context.id == c.context.id } }
-            input.string = ""
-            if list.arrangedSubviews.first is Empty { list.setViews([], in: .top) }
+            if input.string == typed { input.string = "" }   // words typed meanwhile stay
             append(Self.userMessage(question, sent.map { ($0.context.title, isProd($0.context)) }))
             showChips()
-            await run(e)
+            await run(e, g)
         }
         updateSend()
     }
 
-    private func start() {
+    private func start(_ e: AIEndpoint) {
         chat = AIChat(system: AIChat.askSystem, tools: AIChat.askTools)
         session = AISession(app: app) { [weak self] c, _ in await self?.ask(c) ?? 1 }
         session?.readOnly = true
+        pinned = Self.pin(e)
     }
 
     private func sendQuestion(_ t: SFTPTarget, _ e: AIEndpoint) -> Confirm? {
@@ -355,8 +383,8 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         return c
     }
 
-    /// One turn, as it comes; again for Retry.
-    private func run(_ e: AIEndpoint) async {
+    /// One turn, as it comes; again for Retry. `g`: the chat it belongs to.
+    private func run(_ e: AIEndpoint, _ g: Int) async {
         guard let chat, let session else { return }
         session.noProduction = AISettings.neverProd(app.defaults)
         let answer = Answer(model: e.model, panel: self)
@@ -373,17 +401,19 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             let e2 = error as? AIError ?? AIError(.other, error.localizedDescription)
             answer.end(note: e2.words, error: true, action: e2.kind == .key ? ("Settings…", { [weak self] in self?.openSettings() }) : ("Retry", { [weak self] in self?.retry() }))
         }
-        finish(note: nil)
+        if g == generation { finish() }
     }
 
+    /// Only while the chat still ends with the question that failed: an older Retry would ask for nothing.
     private func retry() {
-        guard turn == nil, let e = AISettings.endpoint(app.defaults), e.problem() == nil else { return }
-        turn = Task { await run(e) }
+        guard turn == nil, chat?.messages.last?.role == .user, let e = AISettings.endpoint(app.defaults), e.problem() == nil else { return }
+        if let why = blocked(e) { return note(why, error: true) }
+        let g = generation
+        turn = Task { await run(e, g) }
         updateSend()
     }
 
-    private func finish(note words: String?) {
-        if let words { note(words, error: true) }
+    private func finish() {
         turn = nil
         updateSend()
         follow()
@@ -396,13 +426,14 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
     @objc private func newChat() {
         stop()
-        (chat, session, prodSent, turn) = (nil, nil, [], nil)
+        generation += 1
+        (chat, session, prodSent, turn, pinned) = (nil, nil, [], nil, nil)
         list.setViews([], in: .top)
         refresh()
         focus()
     }
 
-    @objc private func hide() { app.toggleAIChat() }
+    @objc private func hide() { app.toggleAIChat(focusFirst: false) }
     @objc func openSettings() { SettingsWindow.show(app, tab: "AI") }
 
     private func updateSend() {
@@ -442,21 +473,25 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     func ask(_ c: Confirm) async -> Int {
         if AppDelegate.answering != nil { return await app.confirm(c) }   // the tests' answers
         let cancel = c.buttons.count - 1
+        guard !Task.isCancelled else { return cancel }
+        if !app.aiChatShown { app.setAIChat(shown: true) }   // the user's turn waits on it: seen, but the keys stay where they are
+        let asking = Asking()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (k: CheckedContinuation<Int, Never>) in
                 let v = Card(c) { [weak self] i in
-                    self?.card = nil
+                    if self?.card === asking.card { self?.card = nil }
                     k.resume(returning: i)
                 }
-                card = v
+                (asking.card, card) = (v, v)
                 append(v)
-                focus()
                 if Task.isCancelled { v.answer(cancel) }
             }
         } onCancel: {
-            Task { @MainActor [weak self] in self?.card?.answer(cancel) }
+            Task { @MainActor in asking.card?.answer(cancel) }
         }
     }
+    /// The card one question shows: a Stop answers that one, whatever the chat shows by then.
+    @MainActor private final class Asking { weak var card: Card? }
 
     // MARK: - Keys in the field
 
@@ -485,6 +520,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     // MARK: - The chat's views
 
     private func append(_ v: NSView) {
+        if list.arrangedSubviews.first is Empty { list.setViews([], in: .top) }   // the chat's first word
         let bottom = atBottom
         list.addArrangedSubview(v)
         v.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -24).isActive = true
@@ -553,6 +589,13 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         return l
     }
 
+    /// A small push button that runs `act`.
+    static func button(_ title: String, _ act: @escaping () -> Void) -> NSButton {
+        let b = ClosureButton(title: title, action: act)
+        (b.bezelStyle, b.controlSize) = (.push, .small)
+        return b
+    }
+
     static func tokens(_ n: Int) -> String { n < 1000 ? "\(n)" : String(format: "%.1fk", Double(n) / 1000) }
 
     private static func key(_ t: SFTPTarget) -> String { ServerLock.identity(t.asUser) ?? t.asUser.shown }
@@ -574,7 +617,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         let popover = NSPopover()
         var views: [NSView] = [head, scroll]
         if let (title, act) = button {
-            views.append(MenuButton(title) { popover.close(); act() })
+            views.append(Self.button(title) { [weak popover] in popover?.close(); act() })
         }
         let stack = NSStackView(views: views)
         (stack.orientation, stack.alignment, stack.spacing, stack.edgeInsets) = (.vertical, .leading, 6, NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10))
@@ -592,22 +635,15 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
 private final class Flipped: NSView { override var isFlipped: Bool { true } }
 
-/// A button that runs a closure.
-final class MenuButton: NSButton {
-    private var act: () -> Void = {}
-    convenience init(_ title: String, _ act: @escaping () -> Void) {
-        self.init(title: title, target: nil, action: #selector(run))
-        target = self
-        self.act = act
-        controlSize = .small
-    }
-    @objc private func run() { act() }
-}
-
 /// The question field: ↩ sends (⇧↩ a new line), ⌘↩ answers a question's action, a placeholder while empty.
 final class ChatInput: NSTextView {
     var placeholder = ""
     var onCommandReturn: () -> Void = {}
+    var onFocus: () -> Void = {}
+    override func becomeFirstResponder() -> Bool {
+        defer { onFocus() }
+        return super.becomeFirstResponder()
+    }
     override func keyDown(with e: NSEvent) {
         if (e.keyCode == 36 || e.keyCode == 76) && e.modifierFlags.contains(.command) { return onCommandReturn() }
         super.keyDown(with: e)
@@ -734,7 +770,7 @@ final class Card: NSStackView {
             views.append(ChatText(NSAttributedString(string: line.bidiVisible, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor])))
         }
         let buttons = NSStackView(views: c.buttons.enumerated().reversed().map { i, title in
-            let b = MenuButton(title) { [weak self] in self?.answer(i) }
+            let b = AIPanel.button(title) { [weak self] in self?.answer(i) }
             if i == 0, !c.safe { b.bezelColor = .controlAccentColor }
             return b
         })

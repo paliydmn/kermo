@@ -96,12 +96,12 @@ final class Answer: NSStackView {
         case .code(let code, let lang):
             let text = ChatText(NSAttributedString(string: code.bidiVisible, attributes: [.font: NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular),
                                                                                          .foregroundColor: NSColor.labelColor]))
-            var buttons: [NSView] = [MenuButton("Copy") {
+            var buttons: [NSView] = [AIPanel.button("Copy") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(code, forType: .string)
             }]
             if ChatMarkdown.shells.contains(lang.lowercased()) {
-                let into = MenuButton("Into Terminal") { [weak self] in self?.panel.intoTerminal(code) }
+                let into = AIPanel.button("Into Terminal") { [weak self] in self?.panel.intoTerminal(code) }
                 into.toolTip = "Into the terminal's line — nothing runs until you press ↩ there"
                 buttons.insert(into, at: 0)
             }
@@ -142,9 +142,9 @@ final class Answer: NSStackView {
     }
 
     static func noteRow(_ words: String, error: Bool, action: (String, () -> Void)?) -> NSView {
-        let text = ChatText(NSAttributedString(string: words, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: error ? Palette.fail : NSColor.secondaryLabelColor]))
+        let text = ChatText(NSAttributedString(string: words.bidiVisible, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: error ? Palette.fail : NSColor.secondaryLabelColor]))
         guard let (title, act) = action else { return text }
-        let b = MenuButton(title, act)
+        let b = AIPanel.button(title, act)
         b.setContentHuggingPriority(.required, for: .horizontal)
         let row = NSStackView(views: [text, b])
         (row.alignment, row.spacing) = (.centerY, 8)
@@ -188,7 +188,7 @@ final class StepRow: NSStackView {
         mark.image = (r.isError ? Symbol.failed : Symbol.check).image(r.isError ? "Failed" : "Done")
         mark.contentTintColor = r.isError ? Palette.fail : .secondaryLabelColor
         setViews([mark, label], in: .leading)
-        label.stringValue = title + (r.isError ? " — " + (r.text.split(separator: "\n").first.map(String.init) ?? "") : " · \(AIPanel.tokens(r.text.count)) characters")
+        label.stringValue = title + (r.isError ? " — " + (r.text.split(separator: "\n").first.map(String.init) ?? "").bidiVisible : " · \(AIPanel.tokens(r.text.count)) characters")
         toolTip = "Click: what came back"
     }
 
@@ -232,7 +232,7 @@ enum ChatMarkdown {
     }
 
     static func prose(_ text: String, size: CGFloat = 13) -> NSAttributedString {
-        let md = text.bidiVisible
+        let md = text
             .replacingOccurrences(of: #"(?m)^#{1,6}\s+(.+)$"#, with: "**$1**", options: .regularExpression)
             .replacingOccurrences(of: #"(?m)^(\s*)[-*+] "#, with: "$1• ", options: .regularExpression)
         let base = NSFont.systemFont(ofSize: size), out = NSMutableAttributedString()
@@ -240,7 +240,7 @@ enum ChatMarkdown {
             return NSAttributedString(string: text.bidiVisible, attributes: [.font: base, .foregroundColor: NSColor.labelColor])
         }
         for run in a.runs {
-            var s = String(a[run.range].characters)
+            var s = String(a[run.range].characters).bidiVisible   // after parsing: `&#x202E;` is one too
             var attrs: [NSAttributedString.Key: Any] = [.font: base, .foregroundColor: NSColor.labelColor]
             let i = run.inlinePresentationIntent ?? []
             if i.contains(.code) {

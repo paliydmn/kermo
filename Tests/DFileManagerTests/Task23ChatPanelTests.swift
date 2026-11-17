@@ -137,6 +137,64 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         panel.view.cacheDisplay(in: panel.view.bounds, to: rep)
     }
 
+    /// What is attached from a production server: asked once a chat (Cancel sends nothing), Kermo's word goes with it;
+    /// Never Send turned on later ends that chat; a New Chat under Never Send doesn't take such a chip.
+    @Test func productionIsAskedOnceAChatOrNeverSent() async throws {
+        let std = UserDefaults.standard, names = ["aiProvider", "aiAddress", "aiModel", "aiProduction"], saved = names.map { ($0, std.object(forKey: $0)) }
+        let wire = Wire([(200, turn(text: "Fine.")), (200, turn(text: "Still fine."))])
+        (AISettings.keys, AISettings.transport) = (AIKeys(Keys()), wire.transport)
+        let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t23q-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try Data("listen 80;\n".utf8).write(to: URL(fileURLWithPath: dir + "/site.conf"))
+        var box = SavedServer(target: .local(port: 2))
+        (box.name, box.prod) = ("box", true)
+        ServerLock.servers = { [box] }
+        var asked: [String] = [], answer = 1
+        AppDelegate.answering = { title, _, _ in asked.append(title); return answer }
+        let app = panelApp(dir)
+        defer {
+            for (k, v) in saved { if let v { std.set(v, forKey: k) } else { std.removeObject(forKey: k) } }
+            (AISettings.keys, AISettings.transport, AppDelegate.answering) = (.shared, AIHTTP.live, nil)
+            ServerLock.servers = { [] }
+            app.panels.forEach { $0.shutdown() }
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        names.forEach(std.removeObject(forKey:))
+        let panel = app.panels[1]
+        panel.loadRemote(.local(port: 2), dir: dir, select: nil)
+        for _ in 0..<300 where panel.remote?.dir != dir { try? await Task.sleep(for: .milliseconds(10)) }
+        try #require(panel.remote?.dir == dir)
+        let chat = AIPanel(app: app)
+        chat.view.frame = NSRect(x: 0, y: 0, width: 400, height: 700)
+        chat.build()
+        func attachAndSend(_ q: String) async {
+            if let c = chat.contexts(all: true).first(where: { $0.id == "dir:box:\(dir)" }) { chat.attach(c) }
+            for _ in 0..<300 where chat.turn == nil {
+                chat.send(q)
+                if chat.turn == nil { try? await Task.sleep(for: .milliseconds(10)) }
+            }
+            await done(chat)
+        }
+        await attachAndSend("What's here?")   // Cancel: nothing goes
+        #expect(asked == ["Send what you attached from box to api.anthropic.com?"] && wire.bodies.isEmpty)
+        answer = 0
+        chat.send("What's here?")
+        await done(chat)
+        #expect(asked.count == 2 && wire.bodies.count == 1 && shown(chat).contains("box: what you attach from it goes to api.anthropic.com"))
+        #expect("\(wire.bodies[0]["messages"] ?? "")".contains("[Kermo: box is a production server"))
+        await attachAndSend("And now?")   // once a chat
+        #expect(asked.count == 2 && wire.bodies.count == 2)
+
+        std.set("never", forKey: "aiProduction")
+        chat.send("More?")
+        #expect(chat.turn == nil && wire.bodies.count == 2 && shown(chat).contains("Never Send: start a New Chat"))
+        click(try #require(views(chat.view, NSButton.self).first { $0.toolTip == "New Chat" }))
+        if let c = chat.contexts(all: true).first(where: { $0.id == "dir:box:\(dir)" }) { chat.attach(c) }
+        chat.send("Here?")   // the question goes, the production chip wasn't taken
+        await done(chat)
+        #expect(wire.bodies.count == 3 && !"\(wire.bodies[2]["messages"] ?? "")".contains("site.conf") && asked.count == 2)
+    }
+
     @Test func withoutAKeyTheChatLeadsToSettings() async throws {
         let std = UserDefaults.standard, names = ["aiProvider", "aiAddress"], saved = names.map { ($0, std.object(forKey: $0)) }
         final class None: AIKeyStore, @unchecked Sendable {
@@ -168,6 +226,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         var links: [URL] = []
         s.enumerateAttribute(.link, in: NSRange(location: 0, length: s.length)) { v, _, _ in if let u = v as? URL { links.append(u) } }
         #expect(Set(links) == [URL(string: "https://example.com/a")!], "only http(s) is a link")
+        #expect(!ChatMarkdown.prose("[Download&#x202E;fdp.exe](https://example.com/x) a&#8238;b").string.unicodeScalars.contains("\u{202E}"), "a reference is a control too")
         // 20 KB in one paragraph (~40 ms here; `Answer` paces its drawing by it): nothing that grows worse than that.
         let long = String(repeating: "Some **words** and `code` in a long answer. ", count: 460)
         let start = Date()

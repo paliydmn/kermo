@@ -103,7 +103,9 @@ public final class AIChat {
     /// A user message as it goes: Kermo's production note, what the user attached (each already masked), the question
     /// — secrets in it masked too: what goes is what "What Will Be Sent" shows.
     nonisolated public static func compose(_ question: String, attached: [(title: String, text: String)], production: [String]) -> String {
-        let parts = [productionNote(production)] + attached.map { "<attached name=\"\($0.title)\">\n\($0.text)\n</attached>" } + [AISecrets.mask(question).text]
+        // A title is a file's or a terminal's (its program may set it): masked, one line, no quote to end the name.
+        let name = { (t: String) in AISecrets.mask(t).text.map { $0.isNewline || $0 == "\"" ? " " : String($0) }.joined() }
+        let parts = [productionNote(production)] + attached.map { "<attached name=\"\(name($0.title))\">\n\($0.text)\n</attached>" } + [AISecrets.mask(question).text]
         return parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 }

@@ -812,14 +812,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             window.makeKeyAndOrderFront(nil)
             return aiPanel.focus()
         }
-        let show = !aiChatShown
-        if show {
-            aiPanel.build()
-            window.makeKeyAndOrderFront(nil)
-        } else if aiPanel.hasFocus { window.makeFirstResponder(active.table) }
-        aiItem.isCollapsed = !show
-        defaults.set(show, forKey: "aiChatShown")
-        if show { aiPanel.focus() }
+        if aiChatShown {
+            if aiPanel.hasFocus { window.makeFirstResponder(active.table) }
+            return setAIChat(shown: false)
+        }
+        window.makeKeyAndOrderFront(nil)
+        setAIChat(shown: true)
+        aiPanel.focus()
+    }
+
+    /// The chat shown or hidden, and remembered — the keys stay where they are.
+    func setAIChat(shown: Bool) {
+        if shown { aiPanel.build() }
+        aiItem.isCollapsed = !shown
+        defaults.set(shown, forKey: "aiChatShown")
         applySidebarRule()
     }
 

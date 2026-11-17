@@ -158,8 +158,6 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(!r.isError && ran == 2)
     }
 
-    /// list_folder and read_file on a server and on this Mac: asked once to read there, then free; secrets masked,
-    /// a long file cut, what isn't a text file refused in words.
     /// Ask (the chat panel): the user is only ever asked to let it read; anything more is refused in words, unasked.
     /// Never Send keeps a production server from the model; Ask Once lets the text through with Kermo's word on it.
     @Test func askOnlyReadsAndProductionIsKeptOrMarked() async throws {
@@ -184,6 +182,8 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(asked() == ["Let the assistant read there until the chat ends?"])
     }
 
+    /// list_folder and read_file on a server and on this Mac: asked once to read there, then free; secrets masked,
+    /// a long file cut, what isn't a text file refused in words.
     @Test func theAssistantReadsFoldersAndFiles() async throws {
         let (s, dir, asked, answer) = try aiSetUp()
         defer { aiTearDown(s, dir) }

@@ -683,7 +683,7 @@ extension AppDelegate {
         if let h = EditorHost.shared, h.window?.isVisible == true, let e = h.active {
             let text = e.textView.string as NSString, sel = e.textView.selectedRange()
             let line = { (at: Int) in text.substring(to: at).reduce(1) { $1.isNewline ? $0 + 1 : $0 } }
-            c.editor = .init(server: e.server?.target, path: e.server?.path ?? e.url?.path, unsaved: e.changed,
+            c.editor = .init(server: e.origin, path: e.server?.path ?? e.url?.path ?? e.snapshotFrom?.path, unsaved: e.changed,
                              selection: sel.length > 0 ? (line(sel.location)...line(NSMaxRange(sel) - 1), text.substring(with: sel)) : nil)
         }
         if terminal?.isShown == true, let t = terminal.current {

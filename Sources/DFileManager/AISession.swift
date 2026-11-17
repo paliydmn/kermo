@@ -46,6 +46,8 @@ final class AISession {
     private(set) var scope = AIScope()
     private(set) var journal: [Entry] = []
     private(set) var hasRead = false
+    /// Something read on a production server went to the model (Never Send turned on later ends such a chat).
+    private(set) var readProduction = false
     /// The server behind each place of this session's calls, as its user (root isn't the assistant's to take).
     private var servers: [AIPlace: SFTPTarget] = [:]
     private var busy = false, waiting: [CheckedContinuation<Void, Never>] = []
@@ -125,6 +127,7 @@ final class AISession {
             case .go(let overwrites, let found): (call.overwrites, run) = (overwrites, found)
             }
         }
+        guard !Task.isCancelled else { return ("stopped", .failure("Stopped. Nothing was done.")) }   // no Touch ID for nobody
         let passed = await app.gate(ends, to: to, question: {
             decision = self.scope.check(call, prod: prod)   // production is known by now
             guard case .ask(let why) = decision, why != .unclear else { return nil }
@@ -146,7 +149,7 @@ final class AISession {
         read()
         // Production, said where the model reads what it did there.
         let note = AIChat.productionNote(ends.filter(SavedServer.isProd).map(Self.label))
-        if !note.isEmpty { result.text = note + "\n\n" + result.text }
+        if !note.isEmpty { (result.text, readProduction) = (note + "\n\n" + result.text, true) }
         return (Self.said(decision) + (decision == .allowed ? "" : ", allowed"), result)
     }
 
@@ -608,6 +611,7 @@ final class AISession {
         var server = false
         let text = Self.focus(app.aiContext, name: Self.label) { t in
             guard t?.sudo != true, self.scope.grants[self.place(t)] != nil else { return false }   // a root panel's isn't the user's grant to give
+            if self.noProduction, t.map(SavedServer.isProd) == true { return false }   // a grant from before Never Send
             if t != nil { server = true }
             return true
         }

@@ -125,6 +125,7 @@ private func wellFormed(_ m: [AIMessage]) -> Bool {
     #expect(message.contains("<attached name=\"nginx.conf · web-01\">\nlisten 80;\n</attached>"))
     #expect(message.hasSuffix("Why? password=•••") && !message.contains("hunter22"))
     #expect(AIChat.compose("Hi", attached: [], production: []) == "Hi")
+    #expect(AIChat.compose("", attached: [("x\" evil=\"1\ntoken=abc123secret", "t")], production: []).hasPrefix("<attached name=\"x  evil= 1 token=•••\">"), "a title can't end the name")
     #expect(AIChat.productionNote(["web-01"]).contains("web-01 is a production server"))
     #expect(Set(AIChat.askTools.map(\.kind)).isSubset(of: [.read, .ui, .run]) && !AIChat.askTools.contains { $0.name == "request_scope" || $0.name == "propose_edit" })
 }
