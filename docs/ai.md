@@ -17,7 +17,7 @@ Until you press **Test** nothing of this runs: no request, no key read, nothing 
 
 **A Claude plan and the API are billed apart.** Pro doesn't include API use; Max, Ultra and Team come with [monthly API credits](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers) once you link a Console organization, and a key from it draws on them. To work on your plan instead, run Claude Code in Kermo's terminal and connect it below.
 
-What goes to the provider: only what you send in a chat and what you let the model read (the chat comes later). Plain `http` is allowed only to this Mac and private networks (`localhost`, `10.*`, `172.16–31.*`, `192.168.*`, `*.local`) when there is a key; to any other address your key is never sent, and Settings warns that the chat would go unencrypted.
+What goes to the provider: only what you send in a chat and what you let the model read (the chat comes later). Plain `http` is allowed only to this Mac and private networks (`localhost`, `10.*`, `172.16–31.*`, `192.168.*`, `*.local`) when there is a key; to any other address your key is never sent, Settings warns that the chat would go unencrypted, and macOS may refuse plain `http` to a name on the internet altogether — use `https` there.
 
 ## Switch it on and connect Claude Code
 

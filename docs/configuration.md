@@ -110,7 +110,7 @@ Set an option in [Settings](#settings), or with `defaults write com.dmn.dfileman
 | `auditLog` | `-bool` | `true` | `false` writes no [production log](safety.md#production-log) |
 | `aiProvider` | `openai` | Anthropic | `openai`: an [OpenAI-compatible server](ai.md#your-own-ai) — OpenAI, Ollama, LM Studio and the like |
 | `aiAddress` | URL | the provider's own | Where the provider is, for example `http://localhost:11434/v1` for Ollama. Your key is kept for this address only |
-| `aiModel` | model id | `claude-sonnet-5-5` for Anthropic; the server's first otherwise | The model, for example `claude-opus-5-5` (**Test** lists the ones your key may use) |
+| `aiModel` | model id | `claude-sonnet-5-5` for Anthropic; a server on this Mac or your network: its first | The model, for example `claude-opus-5-5` (**Test** lists the ones your key may use) |
 | `aiMCP` | `-bool` | `false` | `true` lets an agent started in Kermo's terminal use Kermo's tools ([AI agents](ai.md)) |
 | `monitorKeepAwake` | `-bool` | `false` | While this Mac is on power and a server is [watched](tools.md#watching-a-server), it doesn't go to sleep by itself (the display still does; closing the lid still puts it to sleep) |
 | `monitorSlowOnBattery` | `-bool` | `true` | On battery or in Low Power Mode, watching checks three times less often; `false`: as on power |

@@ -343,6 +343,9 @@ enum AIWire {
         if let a = error as? AIError { return masked(a, e) }
         let host = e.address.host ?? "the provider"
         if (error as? URLError)?.code == .timedOut { return AIError(answering ? .cut : .offline, "\(host) went quiet for over \(Int(AIHTTP.silence)) s" + (answering ? " — nothing it asked for was run." : ".")) }
+        if (error as? URLError)?.code == .appTransportSecurityRequiresSecureConnection {
+            return AIError(.offline, "macOS doesn't let Kermo use plain http to \(host): use https.")
+        }
         if answering { return AIError(.cut, "The connection to \(host) broke off in the middle of the answer (\(ToolHTTPCheck.said(error))) — nothing it asked for was run.") }
         return masked(AIError(.offline, "No answer from \(host): \(ToolHTTPCheck.said(error))."), e)
     }

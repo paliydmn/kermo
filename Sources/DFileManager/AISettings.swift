@@ -55,7 +55,7 @@ enum AISettings {
         if (d.string(forKey: "aiAddress") ?? "").isEmpty {
             said.append("Empty: \(a.absoluteString)" + (kind(d) == .openai ? ". Your own server: Ollama http://localhost:11434/v1, LM Studio http://localhost:1234/v1" : ""))
         }
-        if a.scheme == "http" && !AIEndpoint.isLocal(a) { said.append("Plain http: the chat goes unencrypted, and your key never goes there") }
+        if a.scheme == "http" && !AIEndpoint.isLocal(a) { said.append("Plain http: the chat goes unencrypted and your key never goes there; macOS may refuse a name on the internet — use https") }
         return said.joined(separator: ". ")
     }
 
@@ -68,7 +68,8 @@ enum AISettings {
     }
 
     static func modelNote(_ d: UserDefaults) -> String {
-        kind(d) == .anthropic ? "Empty: \(anthropicModel). Test lists the models your key may use" : "Test lists the server's models; empty: the first of them"
+        kind(d) == .anthropic ? "Empty: \(anthropicModel). Test lists the models your key may use"
+            : "Test lists the server's models; empty: a server on this Mac or your network gets its first"
     }
 
     static func hasKey(_ d: UserDefaults) -> Bool { address(d).map(keys.has) ?? false }
