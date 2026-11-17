@@ -406,6 +406,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
                 } ?? 0
             }
             let write = { [unowned self] (i: Int) in
+                guard i != index() else { return }   // the chosen one clicked again: nothing changed
                 if let v = options[i].value { defaults.set(v, forKey: key) } else { defaults.removeObject(forKey: key) }
                 r.apply?(app)
             }

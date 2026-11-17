@@ -76,7 +76,7 @@ enum AISettings {
 
     /// nil: removed.
     static func saveKey(_ d: UserDefaults, _ key: String?) {
-        guard let a = address(d) else { return }
+        guard let a = address(d) else { return say(key == nil ? "Not an address." : "Not an address — the key wasn't saved.") }
         let ok = keys.set(key, for: a)
         changed()
         if !ok { say("The Keychain didn't take the key.") }
@@ -98,7 +98,10 @@ enum AISettings {
                     e.model = first
                     d.set(first, forKey: "aiModel")
                 }
-                guard !e.model.isEmpty else { throw AIError(.other, list.isEmpty ? "The server lists no models." : "Key accepted. Choose a model from the list, then Test again.") }
+                guard !e.model.isEmpty else {
+                    throw AIError(.other, list.isEmpty ? "The server lists no models."
+                                  : "\(e.keyToSend == nil ? "The server answered" : "Key accepted"). Choose a model from the list, then Test again.")
+                }
                 var stop: AIStop?
                 for try await event in e.provider(transport).send([AIMessage(.user, [.text("Reply with the single word OK.")])], tools: [], system: "") {
                     if case .done(_, let s, _) = event { stop = s }

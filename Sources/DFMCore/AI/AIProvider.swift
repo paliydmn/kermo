@@ -110,7 +110,7 @@ public struct AIEndpoint: Sendable, CustomStringConvertible, CustomDebugStringCo
 
     var isPlain: Bool { address.scheme != "https" && !Self.isLocal(address) }
     /// The key for a request's header — never over plain http to a public address.
-    var keyToSend: String? { key.flatMap { $0.isEmpty || isPlain ? nil : $0 } }
+    public var keyToSend: String? { key.flatMap { $0.isEmpty || isPlain ? nil : $0 } }
 
     /// What keeps this from being used, in words; nil — nothing. `model: false` — a model isn't needed yet (Test
     /// fills the list).
@@ -283,7 +283,7 @@ enum AIWire {
                     answering = true
                     var sse = AISSE(), p = parser
                     for try await chunk in r.body {
-                        for payload in try sse.feed(chunk) { for ev in try p.take(payload) { c.yield(ev) } }
+                        for payload in try sse.feed(chunk) where !payload.isEmpty { for ev in try p.take(payload) { c.yield(ev) } }   // "data:" alone: a keep-alive
                     }
                     try Task.checkCancellation()
                     c.yield(try p.end())
@@ -387,7 +387,8 @@ public struct AIKeychain: AIKeyStore {
 
     /// nil or "": forget it.
     public func set(_ key: String?, _ account: String) -> Bool {
-        SecItemDelete(query(account) as CFDictionary)
+        let gone = SecItemDelete(query(account) as CFDictionary)
+        guard gone == errSecSuccess || gone == errSecItemNotFound else { return false }
         guard let key, !key.isEmpty else { return true }
         var q = query(account)
         (q[kSecValueData], q[kSecAttrLabel]) = (Data(key.utf8), "Kermo AI: \(account)")

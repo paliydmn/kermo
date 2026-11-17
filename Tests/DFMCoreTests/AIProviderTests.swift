@@ -284,10 +284,10 @@ private let usage = #"{"id":"c1","object":"chat.completion.chunk","created":1,"m
         #expect(stop == .tools)
         #expect(m.calls == [AIToolUse(id: ids[0], name: "list_folder", args: ["server": "mac", "path": "/tmp"]), AIToolUse(id: ids[1], name: "focus", args: [:])])
     }
-    let noIndex = sse([#"{"choices":[{"index":0,"delta":{"tool_calls":[{"id":"a","type":"function","function":{"name":"focus","arguments":"{}"}}]},"finish_reason":null}],"error":null}"#,
+    let noIndex = sse(["", #"{"choices":[{"index":0,"delta":{"tool_calls":[{"id":"a","index":null,"type":"function","function":{"name":"focus","arguments":"{}"}}]},"finish_reason":null}],"error":null}"#,
                        #"{"choices":[{"index":0,"delta":{"tool_calls":[{"id":"b","type":"function","function":{"name":"focus","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}"#])
     #expect(await done(run(local.provider(Wire(Answer(body: noIndex)).transport).send([], tools: [], system: "")).events)?.0.calls.map(\.id) == ["a", "b"],
-            "whole calls without an index, one a chunk: two calls, not one; \"error\": null is no error")
+            "whole calls without an index, one a chunk: two calls, not one; \"error\": null is no error; \"data:\" alone is a keep-alive")
     let broken = sse([chunk(#"{"tool_calls":[{"index":0,"id":"c","function":{"name":"focus","arguments":"{\"server\": "}}]}"#), chunk("{}", finish: "tool_calls")])
     #expect(await done(run(local.provider(Wire(Answer(body: broken)).transport).send([], tools: [], system: "")).events)?.0.calls == [AIToolUse(id: "c", name: "focus", args: nil)],
             "a finished call whose arguments aren't a JSON object: a call nothing may run")

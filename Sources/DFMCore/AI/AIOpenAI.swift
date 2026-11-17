@@ -82,7 +82,7 @@ public struct AIOpenAI: AIProvider {
                 for (n, part) in parts.enumerated() {
                     let p = AIWire.object(part), f = AIWire.object(p["function"]), id = AIWire.string(p["id"]) ?? ""
                     var i = AIWire.int(p["index"]) ?? n
-                    if p["index"] == nil, !id.isEmpty, let had = calls[i]?.id, !had.isEmpty, had != id { i = (calls.keys.max() ?? -1) + 1 }   // whole calls, no index
+                    if AIWire.int(p["index"]) == nil, !id.isEmpty, let had = calls[i]?.id, !had.isEmpty, had != id { i = (calls.keys.max() ?? -1) + 1 }   // whole calls, no index
                     var call = calls[i] ?? ("", "", "")
                     if call.id.isEmpty { call.id = id }
                     if call.name.isEmpty { call.name = AIWire.string(f["name"]) ?? "" }

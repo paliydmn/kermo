@@ -130,7 +130,12 @@ public struct AIAnthropic: AIProvider {
                 case "text": if !b.text.isEmpty { parts.append(.text(b.text)) }
                 case "tool_use":
                     guard stop == .tools else { throw AIError(.cut, "The model stopped (\(reason ?? "no reason")) while asking for a tool — nothing was run.") }
-                    let args = b.json.isEmpty ? AIWire.object(b.start["input"]) : AIWire.args(b.json)   // all in its start, or in pieces
+                    let args: [String: ToolValue]? = switch (b.json.isEmpty, b.start["input"]) {   // all in its start, or in pieces
+                    case (true, nil): [:]
+                    case (true, .object(let o)?): o
+                    case (true, _): nil   // not an object: nothing may run
+                    case (false, _): AIWire.args(b.json)
+                    }
                     parts.append(.call(AIToolUse(id: AIWire.string(b.start["id"]) ?? "", name: AIWire.string(b.start["name"]) ?? "", args: args)))
                 case "thinking": parts.append(.kept(["type": "thinking", "thinking": .string(b.text), "signature": .string(b.signature)]))
                 default: parts.append(.kept(.object(b.start)))   // redacted_thinking: whole in its start

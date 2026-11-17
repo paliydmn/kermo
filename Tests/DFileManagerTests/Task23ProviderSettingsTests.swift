@@ -113,8 +113,15 @@ extension ServerLockTests {
         click(provider)
         #expect(std.string(forKey: "aiProvider") == "openai" && std.object(forKey: "aiAddress") == nil && std.object(forKey: "aiModel") == nil)
         AISettings.test(std)
-        await until { AISettings.tested.hasPrefix("Key accepted") || AISettings.tested.contains("answered") }
-        #expect(AISettings.tested == "Key accepted. Choose a model from the list, then Test again." && std.object(forKey: "aiModel") == nil)
+        await until { AISettings.tested.contains("answered") }
+        #expect(AISettings.tested == "The server answered. Choose a model from the list, then Test again." && std.object(forKey: "aiModel") == nil,
+                "no key for OpenAI's address: none was sent, so none was accepted")
+        std.set("http://localhost:11434/v1", forKey: "aiAddress")
+        click(provider)   // the chosen one again: nothing changes
+        #expect(std.string(forKey: "aiAddress") == "http://localhost:11434/v1")
+        std.set("gw.example.com", forKey: "aiAddress")
+        AISettings.saveKey(std, key)
+        #expect(AISettings.tested == "Not an address — the key wasn't saved.")
     }
 }
 
