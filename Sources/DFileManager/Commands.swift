@@ -384,6 +384,8 @@ extension AppDelegate {
         cmd("monitor.notificationSettings", "Notification Settings for Kermo", [], hidden: true) { _ in ToolMonitor.notificationSettings() },
         cmd("monitor.test", "Send a Test Alert", [], hidden: true) { $0.tools.monitor.test() },
         cmd("ai.test", "Test the AI Provider", [], hidden: true) { AISettings.test($0.defaults) },
+        cmd("ai.chat", "AI Chat", ["ctrl+cmd+i"], menu: "View", group: 1, short: "AI", aliases: "ai assistant chat ask claude model llm Show AI Chat",
+            on: { $0.aiChatShown }) { $0.toggleAIChat() },
         cmd("monitor.keepAwake", "Keep This Mac Awake on Power", [], hidden: true, on: { $0.tools.monitor.keepAwake }) { $0.tools.monitor.keepAwake.toggle() },
         cmd("monitor.slowOnBattery", "Watch Less Often on Battery", [], hidden: true, on: { $0.tools.monitor.slowOnBattery }) { $0.tools.monitor.slowOnBattery.toggle() },
         cmd("monitor.openAtLogin", "Open Kermo at Login", [], hidden: true, on: { _ in ToolMonitor.loginItem.status() == .enabled }) { $0.tools.monitor.openAtLogin() },

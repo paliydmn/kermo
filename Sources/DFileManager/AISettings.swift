@@ -55,7 +55,12 @@ enum AISettings {
         if (d.string(forKey: "aiAddress") ?? "").isEmpty {
             said.append("Empty: \(a.absoluteString)" + (kind(d) == .openai ? ". Your own server: Ollama http://localhost:11434/v1, LM Studio http://localhost:1234/v1" : ""))
         }
-        if a.scheme == "http" && !AIEndpoint.isLocal(a) { said.append("Plain http: the chat goes unencrypted and your key never goes there; macOS may refuse a name on the internet — use https") }
+        if a.scheme == "http" && !AIEndpoint.isLocal(a) {
+            // macOS (App Transport Security) refuses plain http to a name; an address in numbers it lets through.
+            let numbers = (a.host ?? "").contains(":") || (a.host ?? "").split(separator: ".").allSatisfy { Int($0) != nil }
+            said.append(numbers ? "Plain http: the chat goes unencrypted and your key never goes there"
+                        : "Plain http: macOS doesn't let Kermo reach a name on the internet that way — use https")
+        }
         return said.joined(separator: ". ")
     }
 
@@ -73,6 +78,9 @@ enum AISettings {
     }
 
     static func hasKey(_ d: UserDefaults) -> Bool { address(d).map(keys.has) ?? false }
+
+    /// Settings › AI's "Never Send": nothing from a production server goes to the AI.
+    static func neverProd(_ d: UserDefaults) -> Bool { d.string(forKey: "aiProduction") == "never" }
 
     /// nil: removed.
     static func saveKey(_ d: UserDefaults, _ key: String?) {

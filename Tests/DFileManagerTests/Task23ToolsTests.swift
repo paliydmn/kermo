@@ -160,6 +160,30 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
 
     /// list_folder and read_file on a server and on this Mac: asked once to read there, then free; secrets masked,
     /// a long file cut, what isn't a text file refused in words.
+    /// Ask (the chat panel): the user is only ever asked to let it read; anything more is refused in words, unasked.
+    /// Never Send keeps a production server from the model; Ask Once lets the text through with Kermo's word on it.
+    @Test func askOnlyReadsAndProductionIsKeptOrMarked() async throws {
+        let (s, dir, asked, answer) = try await aiAnswering(prod: true)
+        defer { aiTearDown(s, dir) }
+        s.readOnly = true
+        try Data("x\n".utf8).write(to: URL(fileURLWithPath: dir + "/a.txt"))
+        for (name, args): (String, [String: ToolValue]) in [("write_file", ["server": "box", "path": .string(dir + "/b.txt"), "text": "y"]),
+                                                             ("run_command", ["server": "box", "command": .string("rm -f \(dir)/a.txt")]),
+                                                             ("request_scope", ["server": "box", "level": "work", "folder": .string(dir), "why": "to fix it"])] {
+            let r = await s.call(name, args)
+            #expect(r.isError && r.text.contains("only reads"), "\(name): \(r.text)")
+        }
+        #expect(asked().isEmpty && s.scope.grants.isEmpty && FileManager.default.fileExists(atPath: dir + "/a.txt"))
+        s.noProduction = true
+        var r = await s.call("read_file", ["server": "box", "path": .string(dir + "/a.txt")])
+        #expect(r.isError && r.text.contains("production") && asked().isEmpty && s.journal.last?.decision == "refused: production")
+        s.noProduction = false
+        answer([0])
+        r = await s.call("read_file", ["server": "box", "path": .string(dir + "/a.txt")])
+        #expect(!r.isError && r.text.hasPrefix("[Kermo: box is a production server") && r.text.hasSuffix("x\n"), "\(r.text)")
+        #expect(asked() == ["Let the assistant read there until the chat ends?"])
+    }
+
     @Test func theAssistantReadsFoldersAndFiles() async throws {
         let (s, dir, asked, answer) = try aiSetUp()
         defer { aiTearDown(s, dir) }

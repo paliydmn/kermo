@@ -153,6 +153,8 @@ extension AppDelegate {
                             apply: { _ in AISettings.changed(models: false) }, status: { AISettings.modelNote($0.defaults) }),
                 SettingsRow(title: "Test", note: "Lists the models, then asks the model for one word: a fraction of a cent",
                             control: .buttons([("Test", "ai.test")]), status: { _ in AISettings.tested }),
+                SettingsRow(title: "Production servers", note: "What you attach from a production server, and what the model reads there: asked once a chat, or never sent",
+                            key: "aiProduction", control: .choice([("Ask Once a Chat", nil), ("Never Send", "never")], segmented: true)),
             ]),
             ("Agents in Kermo's terminal", [
                 SettingsRow(title: "Allow agents in Kermo's terminal (MCP)",
@@ -161,7 +163,7 @@ extension AppDelegate {
                                 + "For terminal tabs opened after this is switched on.",
                             key: "aiMCP", control: .toggle(false), apply: { AIAgents.apply($0) }),
                 SettingsRow(title: "Connect Claude Code", note: "", control: .info,
-                            status: { _ in "Once, in a Kermo terminal tab:\nclaude mcp add kermo -- \(ShellContext.quote(Bundle.main.executablePath ?? "Kermo")) --mcp" }),
+                            status: { _ in "Once, in a Kermo terminal tab (-s user: for every folder, not just that one):\nclaude mcp add -s user kermo -- \(ShellContext.quote(Bundle.main.executablePath ?? "Kermo")) --mcp" }),
             ]),
         ]),
         SettingsTab(title: "Advanced", symbol: .advanced, groups: [
