@@ -679,8 +679,10 @@ enum SSHAskpass {
     /// Starts this app's side (`AskpassSheet` asks); sockets left by Kermos that are gone go. nil: not the app.
     static func serve() -> Askpass.Server? {
         guard app != nil else { return nil }
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: SFTP.controlDir)) ?? [] where name.hasPrefix("askpass-") && name.hasSuffix(".sock") {
-            if let pid = Int32(name.dropFirst("askpass-".count).dropLast(".sock".count)), pid != getpid(), kill(pid, 0) != 0, errno == ESRCH {
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: SFTP.controlDir)) ?? [] where name.hasSuffix(".sock") {
+            // askpass-<pid>.sock, and mcp-<pid>.sock (`AIAgents`) of a Kermo that was killed.
+            if let pid = Int32(name.dropLast(".sock".count).split(separator: "-").last ?? ""), name.hasPrefix("askpass-") || name.hasPrefix("mcp-"),
+               pid != getpid(), kill(pid, 0) != 0, errno == ESRCH {
                 unlink(SFTP.controlDir + "/" + name)
             }
         }
