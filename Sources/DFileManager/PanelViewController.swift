@@ -961,7 +961,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     func restatus() { updateStatus() }
-    @objc private func chipsClicked() { (NSApp.delegate as? AppDelegate)?.agents.map { if $0.chip != nil { $0.popUp(at: statusChips) } } }
+    @objc private func chipsClicked() {
+        guard let app = NSApp.delegate as? AppDelegate, app.panels.first === self, let agents = app.agents, agents.chip != nil else { return }
+        agents.popUp(at: statusChips)
+    }
 
     /// The status line's words, the first `lead` characters (the marked count) bold in the marks' color, and its chips.
     private func say(_ text: String, lead: Int = 0, chips: [(words: String, symbol: Symbol?)] = []) {

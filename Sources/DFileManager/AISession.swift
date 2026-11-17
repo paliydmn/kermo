@@ -96,6 +96,7 @@ final class AISession {
         var decision = scope.check(call, prod: prod)
         if case .outside(let needs) = decision {
             guard await allow(needs, why: nil) else { return ("not allowed", .failure("The user didn't allow it. Nothing was done.")) }
+            guard !Task.isCancelled else { return ("stopped", .failure("Stopped. Nothing was done.")) }   // before Touch ID is asked for nobody
             decision = scope.check(call, prod: prod)
         }
         if let no = Self.refusal(decision) { return no }

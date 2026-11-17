@@ -2032,9 +2032,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// `alert` as a sheet on `window`; the button's index.
     static func sheet(_ alert: NSAlert, on window: NSWindow) async -> Int {
         // Whoever asked is gone (an agent that hung up, Stop): the question goes with them, as a Cancel.
-        guard !Task.isCancelled else { return alert.buttons.count - 1 }
+        // As ⎋ would answer: the button that has it (Later, not Skip This Version), else the last.
+        let cancel = alert.buttons.firstIndex { $0.keyEquivalent == "\u{1b}" } ?? alert.buttons.count - 1
+        guard !Task.isCancelled else { return cancel }
         return await withTaskCancellationHandler {
-            await withCheckedContinuation { cont in sheet(alert, on: window) { cont.resume(returning: $0 < 0 ? alert.buttons.count - 1 : $0) } }
+            await withCheckedContinuation { cont in sheet(alert, on: window) { cont.resume(returning: $0 < 0 ? cancel : $0) } }
         } onCancel: { Task { @MainActor in if alert.window.sheetParent != nil { window.endSheet(alert.window) } } }
     }
 

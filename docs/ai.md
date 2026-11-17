@@ -6,9 +6,9 @@ Let an AI agent you run in Kermo's terminal — [Claude Code](https://claude.com
 
 ## Switch it on and connect Claude Code
 
-1. Open **Settings ▸ AI** (⌘,) and switch on **Allow agents in Kermo's terminal (MCP)**.
+1. Open **Settings › AI** (⌘,) and switch on **Allow agents in Kermo's terminal (MCP)**.
 2. Open a **new** terminal tab in Kermo (⌃O). Tabs opened before the switch don't know about it.
-3. Once, tell Claude Code about Kermo. **Settings ▸ AI** shows the line with the right path:
+3. Once, tell Claude Code about Kermo. **Settings › AI** shows the line with the right path:
 
    ```
    claude mcp add kermo -- /Applications/Kermo.app/Contents/MacOS/Kermo --mcp
@@ -18,7 +18,7 @@ Let an AI agent you run in Kermo's terminal — [Claude Code](https://claude.com
 
 Another MCP client works the same way: its server is the command `Kermo --mcp` (stdio).
 
-Only a program started from one of Kermo's terminal tabs gets in. An agent in another terminal app, or inside `tmux` or `screen`, is turned away and told why.
+Only a program started from one of Kermo's terminal tabs gets in — any program you run there, not only the agent you set up; a question's sheet names the tab it comes from. An agent in another terminal app, or inside `tmux` or `screen`, is turned away and told why.
 
 ## What the agent can do
 
@@ -47,7 +47,7 @@ A question appears as a sheet on Kermo's window, and Kermo comes to the front; t
 
 ## See and take back what an agent may do
 
-While an agent is connected, the first panel's status line shows a chip with its name and what you allowed it. Click the chip, or open **Window ▸ AI Scope**:
+While an agent is connected, the first panel's status line shows a chip with its name and what you allowed it. Click the chip, or open **AI Scope** in the **Window** menu (it is there while agents are allowed):
 
 - each line is one place and what the agent may do there; its **Take Away** withdraws it, and the next call there asks again;
 - **Show Journal…** lists every call the agent made, what Kermo decided and how it ended. A ⚠ marks calls made after the agent read something from a server: text from a server can try to steer an agent;

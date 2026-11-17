@@ -146,7 +146,7 @@ extension AppDelegate {
                             note: "An agent you start in a terminal tab, such as Claude Code, can use Kermo: read and copy files, run commands on your servers. "
                                 + "Kermo asks you before anything you haven't allowed; Window ▸ AI Scope shows what an agent may do and takes it back. "
                                 + "For terminal tabs opened after this is switched on.",
-                            key: AIAgents.key, control: .toggle(false), apply: { AIAgents.apply($0) }),
+                            key: "aiMCP", control: .toggle(false), apply: { AIAgents.apply($0) }),
                 SettingsRow(title: "Connect Claude Code", note: "", control: .info,
                             status: { _ in "Once, in a Kermo terminal tab:\nclaude mcp add kermo -- \(ShellContext.quote(Bundle.main.executablePath ?? "Kermo")) --mcp" }),
             ]),

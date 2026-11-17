@@ -164,16 +164,7 @@ public enum Askpass {
         return n < 0 ? nil : Data(buf.prefix(n))
     }
 
-    static func write(_ fd: Int32, _ s: String) -> Bool {
-        let bytes = Array(s.utf8)
-        var done = 0
-        while done < bytes.count {
-            let n = bytes[done...].withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
-            if n <= 0 { return false }
-            done += n
-        }
-        return true
-    }
+    static func write(_ fd: Int32, _ s: String) -> Bool { MCP.write(fd, Data(s.utf8)) }
 
     static func withAddress(_ path: String, _ body: (UnsafePointer<sockaddr>, socklen_t) -> Int32) -> Int32 {
         var a = sockaddr_un()

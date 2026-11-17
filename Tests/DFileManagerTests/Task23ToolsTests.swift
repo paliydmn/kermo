@@ -585,12 +585,13 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             inside += 1
             most = max(most, inside)
             if case .string(let p)? = args["path"] { order.append((p as NSString).lastPathComponent) }
-            try? await Task.sleep(for: .milliseconds(60))
+            try? await Task.sleep(for: .milliseconds(150))   // a's is cut short by its stop
             inside -= 1
             return AIResult("done")
         }
         let calls = ["a", "b", "c", "d"].map { name in Task { await s.call(reads, ["server": "mac", "path": .string(dir + "/" + name)], run: run) } }
-        try await Task.sleep(for: .milliseconds(20))   // a runs, the rest wait
+        for _ in 0..<400 where inside != 1 { try await Task.sleep(for: .milliseconds(2)) }   // a runs, the rest wait
+        for _ in 0..<5 { await Task.yield() }
         calls[0].cancel()   // the one running: its runner's to notice
         calls[2].cancel()   // one waiting its turn
         var results: [AIResult] = []
@@ -604,8 +605,9 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         answer([0])   // "Allow…" for the first; the second's "write over" gets a Cancel
         async let one = s.call("write_file", ["server": "mac", "path": .string(path), "text": "one\n"])
         async let two = s.call("write_file", ["server": "mac", "path": .string(path), "text": "two\n"])
-        let (r1, r2) = await (one, two)
-        #expect(!r1.isError && r2.isError && aiText(path) == "one\n" && asked().last == "Let the assistant write over what is there?", "\(r1.text) / \(r2.text)")
+        let (r1, r2) = await (one, two)   // whichever came first wrote; the other asked, and was told no
+        #expect(r1.isError != r2.isError && aiText(path) == (r1.isError ? "two\n" : "one\n") && asked().last == "Let the assistant write over what is there?",
+                "\(r1.text) / \(r2.text)")
     }
 
     /// The agent's side of the socket: lines out, answers by id.

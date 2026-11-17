@@ -41,8 +41,11 @@ public enum MCP {
 
         private let tools: [AITool], version: String, write: @Sendable (Data) -> Void, call: Call
         private let lock = NSLock()
-        private var running: [ToolValue: Task<Void, Never>] = [:]
+        private var running: [ToolValue: (call: Int, task: Task<Void, Never>)] = [:]
+        private var calls = 0
         private var name: String?
+        private let out = NSLock()   // a line whole, whoever writes it — and none once closed
+        private var closed = false
         /// What the client calls itself (`clientInfo`): for display only, it proves nothing.
         public var client: String? { lock.withLock { name } }
 
@@ -50,9 +53,11 @@ public enum MCP {
             (self.tools, self.version, self.write, self.call) = (tools, version, write, call)
         }
 
-        /// The client is gone: what it asked for stops.
+        /// The client is gone: what it asked for stops, and nothing more is written — when this returns no write is
+        /// under way, so the descriptor may be closed (its number may be someone else's the moment after).
         public func close() {
-            let tasks = lock.withLock { defer { running = [:] }; return Array(running.values) }
+            out.withLock { closed = true }
+            let tasks = lock.withLock { defer { running = [:] }; return running.values.map(\.task) }
             tasks.forEach { $0.cancel() }
         }
 
@@ -66,7 +71,7 @@ public enum MCP {
                 lock.withLock { name = String(n.prefix(40)) }
             }
             guard let id = MCP.id(json) else {   // a notification: never answered
-                if method == "notifications/cancelled", let of = params["requestId"] { lock.withLock { running.removeValue(forKey: of) }?.cancel() }
+                if method == "notifications/cancelled", let of = params["requestId"] { lock.withLock { running.removeValue(forKey: of) }?.task.cancel() }
                 return
             }
             if case .string(let v)? = meta["io.modelcontextprotocol/protocolVersion"], v != modern {
@@ -94,11 +99,14 @@ public enum MCP {
                 guard tools.contains(where: { $0.name == name }) else { return fail(id, -32602, "Unknown tool: \(name.prefix(80))") }
                 let started = lock.withLock {
                     guard running[id] == nil else { return false }
-                    running[id] = Task { [self] in   // waits for this lock before it can end: always found below
+                    calls += 1
+                    let mine = calls   // the id may be a later call's by the time this one, cancelled, winds down
+                    running[id] = (mine, Task { [self] in   // waits for this lock before it can end: always found below
                         let r = await call(name, args)
-                        guard lock.withLock({ running.removeValue(forKey: id) }) != nil else { return }   // cancelled: not a word more
+                        let said = lock.withLock { running[id]?.call == mine ? running.removeValue(forKey: id) != nil : false }
+                        guard said else { return }   // cancelled: not a word more
                         reply(id, ["content": [["type": "text", "text": .string(r.text)]], "isError": .bool(r.isError)])
-                    }
+                    })
                     return true
                 }
                 if !started { fail(id, -32600, "This id is in use by a call still running") }
@@ -114,7 +122,10 @@ public enum MCP {
             if let data { e["data"] = .object(data) }
             send(["jsonrpc": "2.0", "id": id, "error": .object(e)])
         }
-        private func send(_ message: ToolValue) { write(MCP.line(message)) }
+        private func send(_ message: ToolValue) {
+            let line = MCP.line(message)
+            out.withLock { if !closed { write(line) } }
+        }
     }
 
     /// A message as its line: JSON never holds a bare new line, so one line it is.
@@ -172,6 +183,7 @@ public enum MCP {
         private let admit: @Sendable (pid_t) -> (@Sendable (Int32) -> Void)?
         private let lock = NSLock()
         private var clients: Set<Int32> = []
+        private var stopped = false
 
         public init?(path: String, admit: @escaping @Sendable (pid_t) -> (@Sendable (Int32) -> Void)?) {
             (self.path, self.admit) = (path, admit)
@@ -199,14 +211,21 @@ public enum MCP {
             shutdown(fd, SHUT_RDWR)
             close(fd)
             unlink(path)
-            lock.withLock { clients }.forEach { shutdown($0, SHUT_RDWR) }
+            lock.withLock {   // under the lock: a client that closes meanwhile doesn't hand its number to another socket
+                stopped = true
+                clients.forEach { shutdown($0, SHUT_RDWR) }
+            }
         }
 
         private func serve(_ c: Int32) {
             defer { close(c) }
             _ = fcntl(c, F_SETNOSIGPIPE, 1)
+            // A client that stops reading (⌃Z) doesn't hold a writer for good.
+            var t = timeval(tv_sec: 10, tv_usec: 0)
+            setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &t, socklen_t(MemoryLayout<timeval>.size))
             guard let pid = Askpass.peer(c), let server = admit(pid) else { return }
-            lock.withLock { _ = clients.insert(c) }
+            // Admitted just as `stop` ran: not served.
+            guard lock.withLock({ stopped ? false : clients.insert(c).inserted }) else { return }
             defer { lock.withLock { _ = clients.remove(c) } }   // before the close: the number may be another's after it
             guard MCP.write(c, hello) else { return }
             server(c)
@@ -225,7 +244,7 @@ public enum MCP {
         var p = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
         guard fd >= 0, let path = env[socketVariable], !path.isEmpty, Askpass.withAddress(path, { connect(fd, $0, $1) }) == 0,
               poll(&p, 1, Int32(helloWait * 1000)) > 0, Askpass.read(fd, 1) == hello else {
-            let why = "Kermo isn't taking agents here. Allow them in Kermo's Settings ▸ AI, then start the agent in a new tab of Kermo's terminal — "
+            let why = "Kermo isn't taking agents here. Allow them in Kermo's Settings › AI, then start the agent in a new tab of Kermo's terminal — "
                 + "not in tmux or another terminal app. Kermo has to be running."
             lines(input) { line in
                 guard let json = try? JSONDecoder().decode(ToolValue.self, from: line), let id = id(json) else { return }

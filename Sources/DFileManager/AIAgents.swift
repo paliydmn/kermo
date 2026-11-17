@@ -2,7 +2,7 @@ import AppKit
 import DFMCore
 
 /// Outside agents — Claude Code started in one of Kermo's terminal tabs — calling Kermo's tools over MCP (`MCP`).
-/// There only while Settings ▸ AI allows them: otherwise no socket, no menu item, no variable in a tab, no session.
+/// There only while Settings › AI allows them: otherwise no socket, no menu item, no variable in a tab, no session.
 ///
 /// - Who gets in: a process of this user that a terminal tab's shell started (its parents, a few up). Not one
 ///   started elsewhere, not one under tmux — its server isn't the tab's child.
@@ -14,7 +14,6 @@ import DFMCore
 ///   show its journal and hang up on it.
 @MainActor
 final class AIAgents {
-    static let key = "aiMCP"
     /// This app's socket while agents are allowed: what a new terminal tab is told (`$KERMO_MCP_SOCKET`).
     private(set) static var socket: String?
 
@@ -33,10 +32,10 @@ final class AIAgents {
     private(set) var all: [Agent] = []
     private var listener: MCP.Listener?
 
-    /// The switch as it is now (at launch, and when Settings ▸ AI changes it). Off: every agent is hung up on, and
+    /// The switch as it is now (at launch, and when Settings › AI changes it). Off: every agent is hung up on, and
     /// what each was allowed goes with it.
     static func apply(_ app: AppDelegate) {
-        let on = app.defaults.bool(forKey: key)
+        let on = app.defaults.bool(forKey: "aiMCP")
         guard on != (app.agents != nil) else { return }
         app.agents?.stop()
         app.agents = on ? AIAgents(app, at: SFTP.controlDir + "/mcp-\(getpid()).sock") : nil
@@ -87,12 +86,14 @@ final class AIAgents {
         guard listener != nil, let tab = admits.map({ $0(pid) }) ?? self.tab(of: pid) else { return nil }
         let session = AISession(app: app) { [unowned app] c, w in
             if AppDelegate.answering == nil, !NSApp.isActive { NSApp.activate() }   // the user is in the agent's terminal, or in another app
+            var c = c   // which agent asks: the tab is Kermo's word, the name is only the client's
+            c.note = [c.note, "Asked by the agent in the terminal tab “\(tab)”."].compactMap { $0 }.joined(separator: " ")
             return await app.confirm(c, on: w)
         }
         let agent = Agent(session, tab: tab)
         return { [weak self] fd in
-            let out = NSLock()   // a line whole, whoever writes it
-            let c = MCP.Connection(version: Updates.current, write: { line in out.withLock { _ = MCP.write(fd, line) } }) { [weak self] name, args in
+            // A client that takes nothing for ten seconds is hung up on: the reading below ends.
+            let c = MCP.Connection(version: Updates.current, write: { if !MCP.write(fd, $0) { shutdown(fd, SHUT_RDWR) } }) { [weak self] name, args in
                 let result = await session.call(name, args)
                 await self?.changed()   // what it may do, and how much it did
                 return result
@@ -105,9 +106,10 @@ final class AIAgents {
                 }
             }
             MCP.lines(fd) { c.receive($0) }   // a line past the limit ends it too
-            c.close()   // what it asked for stops, a question on screen goes
-            DispatchQueue.main.async {
+            c.close()   // what it asked for stops, a question on screen goes; nothing more is written
+            DispatchQueue.main.sync {   // before the descriptor closes: Disconnect never has a number that is another's
                 MainActor.assumeIsolated {
+                    agent.fd = -1
                     self?.all.removeAll { $0 === agent }
                     self?.changed()
                 }
@@ -154,7 +156,7 @@ final class AIAgents {
                 OutputWindow.show(a.session.journalText, errors: "", title: "\(a.name) — journal", status: 0, ok: true)
             }
             journal.isEnabled = calls > 0
-            items += [journal, MenuAction.item("Disconnect") { shutdown(a.fd, SHUT_RDWR) }]
+            items += [journal, MenuAction.item("Disconnect") { if a.fd >= 0 { shutdown(a.fd, SHUT_RDWR) } }]
         }
         return items
     }

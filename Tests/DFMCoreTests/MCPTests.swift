@@ -172,17 +172,21 @@ private func socketPath() -> String {
 
 /// `Kermo --mcp` in a thread of its own, the agent at the other ends of its pipes: what it answered to `input`
 /// once the agent closed its side, and its exit code.
-private func bridged(_ env: [String: String], _ input: String) async -> (Int32, String) {
+private func bridged(_ env: [String: String], _ input: String, answers: Int = 1) async -> (Int32, String) {
     await withCheckedContinuation { cont in
         Thread {
             var to: [Int32] = [0, 0], from: [Int32] = [0, 0]
             pipe(&to)
             pipe(&from)
             MCP.write(to[1], Data(input.utf8))
+            let lock = NSLock()
             nonisolated(unsafe) var out = Data()
-            let reader = Thread { while let d = Askpass.read(from[0], 4096), !d.isEmpty { out += d } }
+            let reader = Thread { while let d = Askpass.read(from[0], 4096), !d.isEmpty { lock.withLock { out += d } } }
             reader.start()
-            Thread { usleep(300_000); close(to[1]) }.start()   // the agent leaves once it has its answers
+            Thread {   // the agent leaves once it has its answers (or after 5 s without them)
+                for _ in 0..<500 where lock.withLock({ out.filter { $0 == 0x0a }.count }) < answers { usleep(10_000) }
+                close(to[1])
+            }.start()
             let code = MCP.bridge(env: env, input: to[0], output: from[1])
             close(from[1])
             while !reader.isFinished { usleep(1000) }
@@ -204,7 +208,7 @@ private func bridged(_ env: [String: String], _ input: String) async -> (Int32, 
     // Nobody listens (MCP is off, Kermo isn't running), or no socket named at all: an error for each request, in words.
     for e in [env, [:]] {
         let (code, out) = await bridged(e, ping)
-        #expect(code == 1 && out.contains(#""id":1"#) && out.contains("-32000") && out.contains("Settings ▸ AI") && out.split(separator: "\n").count == 1)
+        #expect(code == 1 && out.contains(#""id":1"#) && out.contains("-32000") && out.contains("Settings › AI") && out.split(separator: "\n").count == 1)
     }
 
     // Admitted: lines both ways, through the app's connection.
@@ -221,7 +225,7 @@ private func bridged(_ env: [String: String], _ input: String) async -> (Int32, 
     })
     var st = stat()
     #expect(lstat(path, &st) == 0 && st.st_mode & 0o777 == 0o600)
-    let (code, out) = await bridged(env, ping + #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"focus"}}"# + "\n")
+    let (code, out) = await bridged(env, ping + #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"focus"}}"# + "\n", answers: 2)
     #expect(code == 0 && out.contains(#""id":1"#) && out.contains(#""text":"focus""#) && !out.contains("-32000"))
     #expect(pids.withLock { $0 } == [getpid()], "the one at the other end is known by its pid")
 
