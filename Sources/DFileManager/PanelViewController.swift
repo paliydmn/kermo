@@ -468,7 +468,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         statusLabel.setContentHuggingPriority(.init(1), for: .horizontal)   // the chips at the right end
         statusLabel.setContentCompressionResistancePriority(.init(300), for: .horizontal)
         statusChips.lineBreakMode = .byTruncatingHead   // narrow, the chips give way before what's on the left
-        statusChips.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(chipsClicked)))
+        let click = NSClickGestureRecognizer(target: self, action: #selector(chipsClicked))
+        click.delaysPrimaryMouseButtonEvents = false   // a click here is nobody else's to wait for
+        statusChips.addGestureRecognizer(click)
         statusChips.setContentCompressionResistancePriority(.init(260), for: .horizontal)
 
         pathBar.onEdit = { [unowned self] in beginPathEditing() }

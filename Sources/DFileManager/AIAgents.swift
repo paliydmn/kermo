@@ -68,9 +68,11 @@ final class AIAgents {
         changed()
     }
 
-    /// The tab whose shell started `pid`, by its title.
+    /// The tab whose shell started `pid`, by its title — which the program in it may have set (OSC 0/2): one line
+    /// of 40 characters at most, as it goes into a question.
     private func tab(of pid: pid_t) -> String? {
-        let shells = Dictionary((app.terminal?.tabs ?? []).compactMap { t in t.view.process.map { ($0.shellPid, t.label) } }) { a, _ in a }
+        func clean(_ s: String) -> String { String(String.UnicodeScalarView(s.unicodeScalars.filter { $0.value >= 0x20 && $0.value != 0x7f }).prefix(40)).bidiVisible }
+        let shells = Dictionary((app.terminal?.tabs ?? []).compactMap { t in t.view.process.map { ($0.shellPid, clean(t.label)) } }) { a, _ in a }
         var p = pid
         for _ in 0..<8 {
             if let tab = shells[p] { return tab }
@@ -86,9 +88,9 @@ final class AIAgents {
         guard listener != nil, let tab = admits.map({ $0(pid) }) ?? self.tab(of: pid) else { return nil }
         let session = AISession(app: app) { [unowned app] c, w in
             if AppDelegate.answering == nil, !NSApp.isActive { NSApp.activate() }   // the user is in the agent's terminal, or in another app
-            var c = c   // which agent asks: the tab is Kermo's word, the name is only the client's
+            var c = c   // which agent asks: by its tab — a title a program may set, so cut and cleaned (`tab(of:)`)
             c.note = [c.note, "Asked by the agent in the terminal tab “\(tab)”."].compactMap { $0 }.joined(separator: " ")
-            return await app.confirm(c, on: w)
+            return await app.confirm(c, on: w, goesWithTask: true)   // an agent that hangs up takes its question away
         }
         let agent = Agent(session, tab: tab)
         return { [weak self] fd in
@@ -141,7 +143,7 @@ final class AIAgents {
         var items: [NSMenuItem] = []
         for a in all {
             if !items.isEmpty { items.append(.separator()) }
-            items.append(off("\(a.name) — tab “\(a.tab)”".bidiVisible))
+            items.append(off("\(a.name.bidiVisible) — tab “\(a.tab)”"))
             let granted = a.session.granted
             if granted.isEmpty { items.append(off("Nothing allowed yet: it asks first")) }
             for g in granted {

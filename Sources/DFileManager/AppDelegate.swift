@@ -2030,9 +2030,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     static var answeredInfo = ""
 
     /// `alert` as a sheet on `window`; the button's index.
-    static func sheet(_ alert: NSAlert, on window: NSWindow) async -> Int {
-        // Whoever asked is gone (an agent that hung up, Stop): the question goes with them, as a Cancel.
-        // As ⎋ would answer: the button that has it (Later, not Skip This Version), else the last.
+    /// `goesWithTask`: whoever asked may go away (an agent that hung up) — the question goes with its cancelled
+    /// task, answered as ⎋ would: the button that has it, else the last.
+    static func sheet(_ alert: NSAlert, on window: NSWindow, goesWithTask: Bool = false) async -> Int {
+        guard goesWithTask else { return await withCheckedContinuation { cont in sheet(alert, on: window) { cont.resume(returning: $0) } } }
         let cancel = alert.buttons.firstIndex { $0.keyEquivalent == "\u{1b}" } ?? alert.buttons.count - 1
         guard !Task.isCancelled else { return cancel }
         return await withTaskCancellationHandler {
@@ -2100,14 +2101,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Every question before something that changes things (`Confirm`): a sheet on `sheetWindow` (default: the main
     /// one); the index in `c.buttons` — the action 0, Cancel the last. Tests answer it through `answering`, ↩ being
     /// Cancel's index where `c.safe`.
-    func confirm(_ c: Confirm, on sheetWindow: NSWindow? = nil) async -> Int {
+    func confirm(_ c: Confirm, on sheetWindow: NSWindow? = nil, goesWithTask: Bool = false) async -> Int {
         if let answer = Self.answering {
             Self.answeredInfo = [c.runs, c.command, c.note].compactMap { $0 }.joined(separator: "\n")
             return answer(c.title, c.buttons, c.safe ? c.buttons.count - 1 : nil)
         }
         let on = sheetHost(sheetWindow)
         if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }
-        return await Self.sheet(c.alert(), on: on)
+        return await Self.sheet(c.alert(), on: on, goesWithTask: goesWithTask)
     }
 
     /// On `sheetWindow` (an editor's, about its document), else the main window.

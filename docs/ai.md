@@ -31,7 +31,7 @@ Only a program started from one of Kermo's terminal tabs gets in — any program
 | `propose_edit`, `open_in_editor` | Check that a change fits a file; open a file in Kermo's editor | As reading |
 | `request_scope` | Ask you for more, with a reason | Always |
 
-The agent acts as you: on a server, as the user you log in as, never as root.
+The agent acts as you: on a server, as the user you log in as. Kermo never opens a root session for it, but a command may say `sudo` itself, and where your user has passwordless `sudo` that works — `sudo cat /etc/shadow` counts as a command that only reads.
 
 ## What Kermo asks
 

@@ -714,4 +714,32 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         var st = stat()
         #expect(second.gone && agents.all.isEmpty && AIAgents.socket == nil && lstat(path + "/mcp.sock", &st) != 0)
     }
+
+    /// Settings › AI's switch: on — a socket, Window ▸ AI Scope, the variable for new tabs; off — none of them, and
+    /// whoever was connected is hung up on. Off is how it starts.
+    @Test func theSwitchBringsAgentsAndTakesThemAway() async throws {
+        let (s, dir, _, _) = try aiSetUp()
+        let app = s.app, was = app.defaults.object(forKey: "aiMCP")
+        defer { app.defaults.set(was, forKey: "aiMCP"); AIAgents.apply(app); aiTearDown(s, dir) }
+        func scope() -> Bool { app.makeMenu().items.first { $0.submenu?.title == "Window" }?.submenu?.items.contains { $0.title == "AI Scope" } == true }
+        app.defaults.removeObject(forKey: "aiMCP")
+        AIAgents.apply(app)
+        #expect(app.agents == nil && AIAgents.socket == nil && !scope())
+
+        app.defaults.set(true, forKey: "aiMCP")
+        AIAgents.apply(app)
+        let path = try #require(AIAgents.socket)
+        var st = stat()
+        #expect(app.agents != nil && lstat(path, &st) == 0 && st.st_mode & S_IFMT == S_IFSOCK && scope())
+        #expect(path.hasPrefix(SFTP.controlDir + "/mcp-"), "in the folder only we can enter")
+        AIAgents.apply(app)   // again: the same one
+        #expect(AIAgents.socket == path)
+        // The tests aren't a terminal tab's child: turned away by the app's own rule.
+        let stranger = StubAgent(path)
+        #expect(await !stranger.admitted && app.agents?.all.isEmpty == true)
+
+        app.defaults.set(false, forKey: "aiMCP")
+        AIAgents.apply(app)
+        #expect(app.agents == nil && AIAgents.socket == nil && lstat(path, &st) != 0 && !scope())
+    }
 }
