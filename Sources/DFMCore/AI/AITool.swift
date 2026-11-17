@@ -65,6 +65,20 @@ public struct AITool: Sendable {
     }
 }
 
+/// What a tool call came to, as tool use and MCP hand it back: text, and whether it is an error — said in words
+/// the model can act on ("the user didn't allow it"), never a code.
+public struct AIResult: Sendable, Equatable {
+    public var text: String
+    public var isError = false
+
+    public init(_ text: String) { self.text = text }
+    public static func failure(_ text: String) -> AIResult {
+        var r = AIResult(text)
+        r.isError = true
+        return r
+    }
+}
+
 public enum AITools {
     private static let server = AITool.Param(name: "server", about: "A server by the name Kermo shows, or \"mac\" for this Mac")
     private static func path(_ about: String) -> AITool.Param { .init(name: "path", about: about + " — an absolute path") }

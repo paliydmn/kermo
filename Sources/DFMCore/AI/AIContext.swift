@@ -22,9 +22,12 @@ public struct AIContext: Sendable, Equatable {
         /// The file folder the panel stands in — what %D means to the other panel; behind a list or a search's
         /// results too. nil: a server tab not connected.
         public var folder: Folder?
+        /// The server such a tab stands for, and the folder it would open there.
+        public var parked: Folder?
 
-        public init(server: SFTPTarget? = nil, dir: String, cursor: String? = nil, targets: [String] = [], list: String? = nil, folder: Folder?) {
-            (self.server, self.dir, self.cursor, self.targets, self.list, self.folder) = (server, dir, cursor, targets, list, folder)
+        public init(server: SFTPTarget? = nil, dir: String, cursor: String? = nil, targets: [String] = [], list: String? = nil, folder: Folder?,
+                    parked: Folder? = nil) {
+            (self.server, self.dir, self.cursor, self.targets, self.list, self.folder, self.parked) = (server, dir, cursor, targets, list, folder, parked)
         }
     }
 
