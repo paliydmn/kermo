@@ -74,6 +74,10 @@ public struct AIScope: Sendable, Equatable {
         public var level: Level
         public var folder: String?
         public var commands = false
+
+        public init(place: AIPlace, level: Level, folder: String? = nil, commands: Bool = false) {
+            (self.place, self.level, self.folder, self.commands) = (place, level, folder, commands)
+        }
     }
 
     /// Why a call in scope is asked all the same; the first that holds is the one told.

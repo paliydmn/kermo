@@ -702,7 +702,8 @@ extension AppDelegate {
             return .init(server: r.target, dir: r.dir, cursor: p.remoteCursor?.item.name, targets: p.remoteSelection?.items.map(\.name) ?? [], folder: folder)
         }
         let dir = p.itemsDir
-        return .init(dir: dir, cursor: p.cursorURL.map { Self.name($0, in: dir) }, targets: p.targetURLs.map { Self.name($0, in: dir) }, folder: folder)
+        return .init(dir: dir, cursor: p.cursorURL.map { Self.name($0, in: dir) }, targets: p.targetURLs.map { Self.name($0, in: dir) }, folder: folder,
+                     parked: p.parked.map { .init(server: $0.target, dir: $0.dir) })
     }
 
     /// `url` as named from `dir`: a search hit or a Git change is `sub/x.conf` there — its last component alone named
