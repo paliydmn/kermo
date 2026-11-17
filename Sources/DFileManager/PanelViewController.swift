@@ -468,6 +468,9 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         statusLabel.setContentHuggingPriority(.init(1), for: .horizontal)   // the chips at the right end
         statusLabel.setContentCompressionResistancePriority(.init(300), for: .horizontal)
         statusChips.lineBreakMode = .byTruncatingHead   // narrow, the chips give way before what's on the left
+        let click = NSClickGestureRecognizer(target: self, action: #selector(chipsClicked))
+        click.delaysPrimaryMouseButtonEvents = false   // a click here is nobody else's to wait for
+        statusChips.addGestureRecognizer(click)
         statusChips.setContentCompressionResistancePriority(.init(260), for: .horizontal)
 
         pathBar.onEdit = { [unowned self] in beginPathEditing() }
@@ -954,7 +957,15 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         if remote == nil { chips.append(("\(freeSpace) free", nil)) } else if let f = remoteFree { chips.append(("\(f) free", nil)) }
         if remote != nil { chips.append(("SFTP", nil)) }
         if let a = archive { chips.append(("\(a.index.format) · read-only", nil)) }
+        // Agents over MCP and what they may do, once in the window; its click is Window ▸ AI Scope.
+        if let app = NSApp.delegate as? AppDelegate, app.panels.first === self, let agents = app.agents?.chip { chips.insert((agents, .ai), at: 0) }
         say(parts.joined(separator: " · "), lead: marked.isEmpty ? 0 : parts[0].count, chips: chips)
+    }
+
+    func restatus() { updateStatus() }
+    @objc private func chipsClicked() {
+        guard let app = NSApp.delegate as? AppDelegate, app.panels.first === self, let agents = app.agents, agents.chip != nil else { return }
+        agents.popUp(at: statusChips)
     }
 
     /// The status line's words, the first `lead` characters (the marked count) bold in the marks' color, and its chips.

@@ -675,7 +675,9 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         assert(tab.view.process.map { !$0.running && !$0.windingDown } ?? true, "started while its last process is there")
         tab.started = (executable as NSString).lastPathComponent
         TunnelListener.forking {   // a tunnel's socket half made now would go with the shell, its port held while it runs
-            tab.view.startProcess(executable: executable, args: args, environment: Self.environment, execName: execName, currentDirectory: cwd)
+            // Where an agent started in this tab finds Kermo (`Kermo --mcp`): only while agents are allowed.
+            let mcp = AIAgents.socket.map { ["\(MCP.socketVariable)=\($0)"] } ?? []
+            tab.view.startProcess(executable: executable, args: args, environment: Self.environment + mcp, execName: execName, currentDirectory: cwd)
         }
     }
 

@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// What a server's lists counted when last read ("<key> services" → 10 units, 1 failed): its place shows them while
     /// a connection is up.
     var listCounts: [String: (n: Int, problems: Int)] = [:]
+    var agents: AIAgents?   // outside agents over MCP: only while Settings ▸ AI allows them
     lazy var tools = ToolRunner(self)   // Tools: the library, what servers have, actions' runs
     var ops: OpsController!   // set once at launch (tests: their own)
     /// Move jobs an undo/redo started (across volumes): their own undo is registered already.
@@ -106,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         SFTP.sudoPasswordTaken = { SudoPasswords.taken($0, $1) }
         PanelViewController.toolsItem = { [unowned self] in toolsItem(for: $0) }
         askpass = SSHAskpass.serve()
+        AIAgents.apply(self)
         ServerLock.servers = { [unowned self] in savedServers }
         ServerCopies.upload = { [unowned self] c in await upload(c.url, to: c.path, on: c.target, c.state) }
         AuditLog.failed = { [unowned self] in active.flash($0, error: true) }
@@ -334,6 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         tools.monitor.closing()   // the history's last slots
         tunnels.stopAll()   // first: a client connecting now would start a login
         askpass?.stop()   // a login still asking falls back to the dialog
+        agents?.stop()
         // No logged-in connection outlives the app. All at once: each may take up to `SFTP.stopWait`.
         let masters = Array(SFTP.masterTargets)
         DispatchQueue.concurrentPerform(iterations: masters.count) { SFTP.stopMaster(masters[$0], now: true) }
@@ -516,9 +519,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         window?.toolbar?.items.first { $0.itemIdentifier == Self.editorButtonID }?.toolTip = editorTip
         showCmdKey()
         refreshSidebar()   // section headers show keys
-        let menu = makeMenu()
-        NSApp.mainMenu = menu
-        updateMenuKeys(menu)
+        let menu = installMenu()
         let fixed = Self.fixedKeys(menu)
         problems += overrides.flatMap { Self.keymapProblems($0.id, $0.keys, was: $0.was, fixed: fixed) }
         if let g = GlobalKey.current, let c = keymap[g], !overrides.contains(where: { $0.id == c.id }) {   // its own key back (an entry deleted)
@@ -1739,6 +1740,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return menu
     }
 
+    /// The menu bar made again: the keymap changed, or what is live in it came or went (Window ▸ AI Scope).
+    @discardableResult func installMenu() -> NSMenu {
+        let menu = makeMenu()
+        NSApp.mainMenu = menu
+        updateMenuKeys(menu)
+        return menu
+    }
+
     func makeMenu() -> NSMenu {
         let main = NSMenu()
         // Not commands: what's live in a menu, after the registry's items there.
@@ -1782,7 +1791,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                      item("Ensure Final Newline", #selector(Editor.toggleFinalNewline(_:)), ""), .separator()],
             // Standard responder-chain items: text fields handle them as text; panels as files.
             "Window": [item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"), item("Zoom", #selector(NSWindow.performZoom(_:)), ""),
-                       .separator(), item("Main Window", #selector(showMainWindow(_:)), "0")],
+                       .separator(), item("Main Window", #selector(showMainWindow(_:)), "0")] + (agents.map { [$0.menuItem()] } ?? []),
             "Edit": [
                 item("Undo", Selector(("undo:")), "z"),
                 item("Redo", Selector(("redo:")), "z", [.command, .shift]),
@@ -2021,8 +2030,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     static var answeredInfo = ""
 
     /// `alert` as a sheet on `window`; the button's index.
-    static func sheet(_ alert: NSAlert, on window: NSWindow) async -> Int {
-        await withCheckedContinuation { cont in sheet(alert, on: window) { cont.resume(returning: $0) } }
+    /// `goesWithTask`: whoever asked may go away (an agent that hung up) — the question goes with its cancelled
+    /// task, answered as ⎋ would: the button that has it, else the last.
+    static func sheet(_ alert: NSAlert, on window: NSWindow, goesWithTask: Bool = false) async -> Int {
+        guard goesWithTask else { return await withCheckedContinuation { cont in sheet(alert, on: window) { cont.resume(returning: $0) } } }
+        let cancel = alert.buttons.firstIndex { $0.keyEquivalent == "\u{1b}" } ?? alert.buttons.count - 1
+        guard !Task.isCancelled else { return cancel }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { cont in sheet(alert, on: window) { cont.resume(returning: $0 < 0 ? cancel : $0) } }
+        } onCancel: { Task { @MainActor in if alert.window.sheetParent != nil { window.endSheet(alert.window) } } }
     }
 
     /// The same, the sheet up before this returns (a window's close asks while it stays); `then` gets the index.
@@ -2085,14 +2101,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Every question before something that changes things (`Confirm`): a sheet on `sheetWindow` (default: the main
     /// one); the index in `c.buttons` — the action 0, Cancel the last. Tests answer it through `answering`, ↩ being
     /// Cancel's index where `c.safe`.
-    func confirm(_ c: Confirm, on sheetWindow: NSWindow? = nil) async -> Int {
+    func confirm(_ c: Confirm, on sheetWindow: NSWindow? = nil, goesWithTask: Bool = false) async -> Int {
         if let answer = Self.answering {
             Self.answeredInfo = [c.runs, c.command, c.note].compactMap { $0 }.joined(separator: "\n")
             return answer(c.title, c.buttons, c.safe ? c.buttons.count - 1 : nil)
         }
         let on = sheetHost(sheetWindow)
         if !NSApp.isActive { NSApp.requestUserAttention(.criticalRequest) }
-        return await Self.sheet(c.alert(), on: on)
+        return await Self.sheet(c.alert(), on: on, goesWithTask: goesWithTask)
     }
 
     /// On `sheetWindow` (an editor's, about its document), else the main window.

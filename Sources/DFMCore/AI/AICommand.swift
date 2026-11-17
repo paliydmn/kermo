@@ -74,13 +74,15 @@ public enum AICommand {
         // program reads bytes (`-o` + a combining mark is still -o), the rules below read characters.
         guard let name = w.first, !w.contains(where: { a in   // `ip addr show dev eth0`: a word of its own there
             a.unicodeScalars.contains(">") || name != "ip" && consumes(a) || a.unicodeScalars.first == "-" && !a.unicodeScalars.allSatisfy(\.isASCII)
+                || a.contains("~") && a != "~" && (!a.hasPrefix("~/") || a.dropFirst().contains("~"))   // ~sys is /dev on Debian
         }) else { return false }
         let args = Array(w.dropFirst())
         // Their options matter (below): a glob that may start a word with a dash — next to a file named `-R` — isn't theirs.
-        if name.hasSuffix("grep") || ["wc", "du", "df"].contains(name), all.contains(where: { $0.glob && "*?[".contains($0.text.prefix(1)) }) { return false }
+        if name.hasSuffix("grep") || ["wc", "du", "df"].contains(name), all.contains(where: { $0.glob && $0.text.unicodeScalars.first.map("*?[-".unicodeScalars.contains) == true }) { return false }
         // Names to read taken from stdin (xargs under another name), GNU df's sync(2); grep reading devices.
         if long(args, ["--files0-from", "--sync"]) { return false }
         if name.hasSuffix("grep"), short(args, "RD") || long(args, ["--dereference-recursive", "--devices"]) { return false }
+        if name == "zcat", short(args, "r") || long(args, ["--recursive"]) { return false }   // gzip -r opens whatever the tree holds
         // None of their other options writes a file or runs a program: whatever a glob expands to.
         if plain.contains(name) { return true }
         // A glob may expand to an option (`sort *` next to a file named -o): not for a program whose options matter.
@@ -91,7 +93,10 @@ public enum AICommand {
     /// another process's descriptors — by its words (a FIFO elsewhere they don't tell). Any case: this Mac's disk folds it.
     public static func consumes(_ path: String) -> Bool {
         let p = path.lowercased()
-        return p.split(separator: "/").contains { $0 == "dev" || $0 == "fd" } || p.contains("kmsg") || p.contains("trace_pipe")
+        let parts = p.split(separator: "/")
+        // `-fdev/watchdog` after `cd /`: an option with the path glued on.
+        return parts.contains { $0 == "dev" || $0 == "fd" } || p.hasPrefix("-") && parts.first.map { $0.hasSuffix("dev") || $0.hasSuffix("fd") } == true
+            || p.contains("kmsg") || p.contains("trace_pipe")
     }
 
     /// Programs with no argument that writes a file, deletes or runs another program (GNU and BSD).
@@ -115,7 +120,7 @@ public enum AICommand {
 
     /// Programs that read only with the right arguments: true = these arguments only read.
     private static let rules: [String: @Sendable ([String]) -> Bool] = [
-        "file": { !short($0, "Cfs") && !long($0, ["--compile", "--files-from", "--special-files"]) },   // -f: names from a file or stdin; -s reads devices
+        "file": { !short($0, "Cfps") && !long($0, ["--compile", "--files-from", "--special-files", "--preserve-date"]) },   // -f: names from a file or stdin; -s reads devices; -p sets times
         "hostname": { $0.allSatisfy(["-f", "-s", "-i", "-I", "-d", "-A"].contains) },   // a name sets it
         // -s, a bare date, BSD's `-f format date` set the clock: only how to print now.
         // One +FORMAT: busybox takes a second `+word` for the time to set.

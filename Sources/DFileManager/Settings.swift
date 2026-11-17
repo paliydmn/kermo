@@ -1,4 +1,5 @@
 import AppKit
+import DFMCore
 import UniformTypeIdentifiers
 
 // Settings (⌘,): one window of tabs, each tab groups of rows. A row is an option the code already reads — its
@@ -139,6 +140,17 @@ extension AppDelegate {
             ]),
         ]),
         SettingsTab(title: "Tools", symbol: .tool, groups: [], view: { ToolSourcesPane(app: $0) }),
+        SettingsTab(title: "AI", symbol: .ai, groups: [
+            ("Agents in Kermo's terminal", [
+                SettingsRow(title: "Allow agents in Kermo's terminal (MCP)",
+                            note: "An agent you start in a terminal tab, such as Claude Code, can use Kermo: read and copy files, run commands on your servers. "
+                                + "Kermo asks you before anything you haven't allowed; Window ▸ AI Scope shows what an agent may do and takes it back. "
+                                + "For terminal tabs opened after this is switched on.",
+                            key: "aiMCP", control: .toggle(false), apply: { AIAgents.apply($0) }),
+                SettingsRow(title: "Connect Claude Code", note: "", control: .info,
+                            status: { _ in "Once, in a Kermo terminal tab:\nclaude mcp add kermo -- \(ShellContext.quote(Bundle.main.executablePath ?? "Kermo")) --mcp" }),
+            ]),
+        ]),
         SettingsTab(title: "Advanced", symbol: .advanced, groups: [
             ("Files", [
                 SettingsRow(title: "keymap.json", note: "Your shortcuts", control: .buttons([("Edit…", "app.keymap")])),
