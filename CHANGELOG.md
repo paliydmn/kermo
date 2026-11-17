@@ -16,6 +16,7 @@ Release:
 
 ### Added
 - **AI agents in Kermo's terminal (MCP)**: an agent you start in a terminal tab — Claude Code, or another MCP client — can use Kermo where it is connected: read and copy files between this Mac and servers, run commands on servers, write a text file, open one in the editor. Off by default (**Settings › AI**). Kermo asks before anything you haven't allowed, always before writing over a file or changing a production server, and a locked server still wants Touch ID. **Window ▸ AI Scope** and a chip in the status line show what a connected agent may do, take it back, show its journal and disconnect it. Only a program started from Kermo's own terminal tabs gets in. → [AI agents](docs/ai.md)
+- **Your own AI in Settings › AI**: Anthropic or an OpenAI-compatible server (OpenAI, Ollama, LM Studio…), its address, your API key in the Keychain for that address only, the model, and **Test**. Requests go straight from your Mac, only when you use it. The chat that uses it comes next. → [Your own AI](docs/ai.md#your-own-ai)
 
 ### Fixed
 - **A save written into a server's file puts the old text back whatever its size**: a symlink into a folder that isn't yours, someone else's file and every save on a server with SELinux are written in place. The old text is now copied aside on the server first (`.dfm-old-…`), not read into memory up to 5 MB — and if the connection drops mid-write, the message names that copy.

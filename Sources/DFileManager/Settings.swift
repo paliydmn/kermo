@@ -17,7 +17,8 @@ struct SettingsRow {
         case toggle(Bool)                                  // the key's default
         case command(String)                               // a switch of the menu's: its ✓, and running it
         case choice([(title: String, value: Any?)], segmented: Bool)   // nil: no key, the code's default
-        case field(String)                                 // placeholder; empty: no key
+        case field(String, items: (@MainActor (AppDelegate) -> [String])? = nil)   // placeholder; empty: no key. Items: a list to pick from too
+        case secret(has: @MainActor (AppDelegate) -> Bool, save: @MainActor (AppDelegate, String?) -> Void)   // never in defaults; nil: remove
         case number(ClosedRange<Double>, step: Double, value: Double, unit: String)
         case buttons([(title: String, command: String)])
         case themes
@@ -141,6 +142,18 @@ extension AppDelegate {
         ]),
         SettingsTab(title: "Tools", symbol: .tool, groups: [], view: { ToolSourcesPane(app: $0) }),
         SettingsTab(title: "AI", symbol: .ai, groups: [
+            ("Your own AI", [
+                SettingsRow(title: "Provider", note: "Kermo talks to it straight from this Mac, with your key: nothing of Kermo's in between", key: "aiProvider",
+                            control: .choice([("Anthropic", nil), ("OpenAI-compatible", "openai")], segmented: true), apply: { AISettings.providerChanged($0.defaults) }),
+                SettingsRow(title: "Address", key: "aiAddress", control: .field("the provider's own"), apply: { _ in AISettings.changed() },
+                            status: { AISettings.addressNote($0.defaults) }),
+                SettingsRow(title: "API key", control: .secret(has: { AISettings.hasKey($0.defaults) }, save: { AISettings.saveKey($0.defaults, $1) }),
+                            status: { AISettings.keyNote($0.defaults) }),
+                SettingsRow(title: "Model", key: "aiModel", control: .field("Test fills the list", items: { _ in AISettings.models }),
+                            apply: { _ in AISettings.changed(models: false) }, status: { AISettings.modelNote($0.defaults) }),
+                SettingsRow(title: "Test", note: "Lists the models, then asks the model for one word: a fraction of a cent",
+                            control: .buttons([("Test", "ai.test")]), status: { _ in AISettings.tested }),
+            ]),
             ("Agents in Kermo's terminal", [
                 SettingsRow(title: "Allow agents in Kermo's terminal (MCP)",
                             note: "An agent you start in a terminal tab, such as Claude Code, can use Kermo: read and copy files, run commands on your servers. "
@@ -393,6 +406,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
                 } ?? 0
             }
             let write = { [unowned self] (i: Int) in
+                guard i != index() else { return }   // the chosen one clicked again: nothing changed
                 if let v = options[i].value { defaults.set(v, forKey: key) } else { defaults.removeObject(forKey: key) }
                 r.apply?(app)
             }
@@ -407,13 +421,19 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             refreshers.append { p.selectItem(at: index()) }
             target(p) { write(p.indexOfSelectedItem) }
             return p
-        case .field(let placeholder):
-            let f = NSTextField()
+        case .field(let placeholder, let items):
+            let f = items == nil ? NSTextField() : NSComboBox()
             f.placeholderString = placeholder
             f.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
             f.widthAnchor.constraint(equalToConstant: 230).isActive = true
             (f.cell as? NSTextFieldCell)?.sendsActionOnEndEditing = true
-            refreshers.append { [unowned self] in f.stringValue = defaults.string(forKey: key) ?? "" }
+            refreshers.append { [unowned self] in
+                if let c = f as? NSComboBox, let items {
+                    c.removeAllItems()
+                    c.addItems(withObjectValues: items(app))
+                }
+                f.stringValue = defaults.string(forKey: key) ?? ""
+            }
             target(f) { [unowned self] in
                 let v = f.stringValue.trimmingCharacters(in: .whitespaces)
                 if v.isEmpty { defaults.removeObject(forKey: key) } else { defaults.set(v, forKey: key) }
@@ -451,6 +471,37 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             }
             if bs.count == 1 { return bs[0] }
             let h = NSStackView(views: bs)
+            h.spacing = 6
+            h.setHuggingPriority(.required, for: .horizontal)
+            return h
+        case .secret(let has, let save):
+            let f = NSSecureTextField()
+            f.setAccessibilityLabel(r.title)
+            f.widthAnchor.constraint(equalToConstant: 170).isActive = true
+            let keep = NSButton(title: "Save", target: nil, action: nil), remove = NSButton(title: "Remove", target: nil, action: nil)
+            keep.setAccessibilityLabel("Save — \(r.title)")
+            remove.setAccessibilityLabel("Remove — \(r.title)")
+            refreshers.append { [unowned self] in
+                let saved = has(app)
+                f.placeholderString = saved ? "Saved · paste to replace" : "Paste your key"
+                remove.isEnabled = saved
+            }
+            let store: @MainActor () -> Void = { [unowned self] in
+                window.makeFirstResponder(nil)   // an address still being typed is written first: the key is filed under it
+                let v = f.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                f.stringValue = ""   // not kept in the field, even hidden
+                guard !v.isEmpty else { return }
+                save(app, v)
+                refresh()
+            }
+            target(f, store)   // ↩
+            target(keep, store)
+            target(remove) { [unowned self] in
+                window.makeFirstResponder(nil)
+                save(app, nil)
+                refresh()
+            }
+            let h = NSStackView(views: [f, keep, remove])
             h.spacing = 6
             h.setHuggingPriority(.required, for: .horizontal)
             return h
