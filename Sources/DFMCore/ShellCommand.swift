@@ -57,6 +57,12 @@ public struct ShellContext: Sendable {
             ? s : "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
+    /// `quote` for a line whose reader isn't known — a server's login shell may be fish, which alone reads `\\` and
+    /// `\'` inside single quotes as escapes: a backslash goes outside them, where every shell reads `\\` as one.
+    public static func quoteForAnyShell(_ s: String) -> String {
+        "'" + s.map { $0 == "'" ? "'\\''" : $0 == "\\" ? "'\\\\'" : String($0) }.joined() + "'"
+    }
+
     /// A bare name: "./" in front of a leading "-", so `rm %s` on a file named "-rf" doesn't read it as options.
     public static func quoteName(_ name: String) -> String { quote(name.hasPrefix("-") ? "./" + name : name) }
 }

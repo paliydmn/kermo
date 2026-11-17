@@ -649,7 +649,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// The write behind `save`, off the main thread: checks the file is still the one opened (unless `base` is nil:
     /// Overwrite), writes it, and says what's on disk then. `newMode`: a file that isn't there yet gets it (less the
     /// umask). `inPlace` false (Save As): never written into — the file is either as it was or ours whole.
-    nonisolated private static func write(_ data: Data, to path: String, name: String,
+    nonisolated static func write(_ data: Data, to path: String, name: String,
                                           unlessChangedFrom base: (stamp: Stamp?, digest: Data?)?, newMode: mode_t = 0o666, inPlace: Bool = true,
                                           hook: (String) -> Void, writing: (FileHandle, Data) throws -> Void, willRename: (String) -> Void) -> Written {
         if let base, let now = changed(path, from: base.stamp, base.digest) { return .changed(now) }

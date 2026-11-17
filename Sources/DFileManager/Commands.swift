@@ -1502,24 +1502,34 @@ extension AppDelegate {
 
     /// Every save of a server file (F4's ⌘S, another app's, Revert) goes here. The version it replaces goes into the
     /// file history; if it can't, the save goes on and the status line says why.
-    func upload(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool = false, action: String = "save") async -> Bool {
+    /// `told`: the assistant's save (`write_file`) — what went wrong, or wasn't done after, is told in words, never
+    /// asked in a sheet nobody is at; the production log says it was its.
+    func upload(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool = false, action: String = "save",
+                told: (@MainActor (String) -> Void)? = nil) async -> Bool {
         // One save to a server file at a time, from any editor, copy or revert: two at once each passed the check
         // against the same version, and the last rename won — the other's text gone, unasked. The later one now
         // checks against what the earlier wrote, and asks.
         let key = ServerRow.key(target.asUser) + ":" + remotePath, before = Self.uploads[key]
+        let assistant = told != nil
         let mine = Task { @MainActor in
             _ = await before?.value
-            return await uploadNow(saved, to: remotePath, on: target, state, force: force, action: action)
+            // Stopped while the save before it was at its question: the assistant's doesn't go in after.
+            if assistant, Task.isCancelled { told?("Stopped. Nothing was written."); return false }
+            return await uploadNow(saved, to: remotePath, on: target, state, force: force, action: action, told: told)
         }
         Self.uploads[key] = mine
-        let ok = await mine.value
+        let ok = await withTaskCancellationHandler { await mine.value } onCancel: { if assistant { mine.cancel() } }
         if Self.uploads[key] == mine { Self.uploads[key] = nil }
         return ok
     }
     private static var uploads: [String: Task<Bool, Never>] = [:]
 
-    private func uploadNow(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool, action: String) async -> Bool {
+    private func uploadNow(_ saved: URL, to remotePath: String, on target: SFTPTarget, _ state: RemoteEdit, force: Bool, action: String,
+                           told: (@MainActor (String) -> Void)? = nil) async -> Bool {
         let name = (remotePath as NSString).lastPathComponent   // the copy's own, but not a version's (Revert)
+        let by = told == nil ? nil : "ai"
+        /// The assistant's: said, and the save is over — the file there as it was.
+        func tell(_ what: String) -> Bool { told?(what); return false }
         if state.asks(target) {
             var c = Confirm("Save “\(name)” to \(SavedServer.name(for: target))?", on: target, action: "Save")
             c.note = "This overwrites the file there."
@@ -1540,7 +1550,9 @@ extension AppDelegate {
         // No panel of its own: the one showing that server (else the active one) says it's saving; ⎋ there cancels.
         let panel = panels.first { $0.remote?.target == target } ?? active
         // A tool's folder there (`{base}`), if this may be its file.
-        guard await tools.near(remotePath, on: target, in: panel) != nil else { return notSaved(saved, to: target, CancellationError()) }
+        guard await tools.near(remotePath, on: target, in: panel) != nil, told == nil || !Task.isCancelled else {
+            return told != nil ? tell("Stopped. Nothing was written.") : notSaved(saved, to: target, CancellationError())
+        }
         let (rule, problem) = checkRule(for: remotePath, on: target)
         let kept = Self.keptSession(of: target, in: panels)
         let r = await panel.busy("Saving “\(name)” to \(target.host)…") { flag in
@@ -1561,28 +1573,35 @@ extension AppDelegate {
         }
         switch r {
         case .success(let (attrs, note, outcome, reload)):
-            AuditLog.write(target, action, paths: [remotePath], exit: 0)
+            AuditLog.write(target, action, paths: [remotePath], exit: 0, by: by)
             Editor.markSent(saved)   // a question's Overwrite, or an earlier save that failed: on the server now
             state.baseline = attrs
             for p in panels where p.remote?.target.asUser == target.asUser { p.reload() }   // root's or user's: one server
             let notes = [note.map { "no history: \($0)" }, outcome.map { Self.checkNote($0, of: rule) }, Self.reloadNote(rule, outcome, on: target), problem]
                 .compactMap { $0 }
+            if !notes.isEmpty { told?(notes.joined(separator: " · ")) }
             if !notes.isEmpty {
                 let said = "Saved “\(name)” to \(target.host) · " + notes.joined(separator: " · ")
                 panel.flash(said)
                 Editor.flash(saved, said)
             }
+            if let (command, _) = reload, let told { told("Its service wasn't reloaded — that is the user's to do: \(command)") } else
             if let (command, old) = reload {   // not waited for: the next save needn't wait for the answer
                 Task { await offerReload(command, after: saved, to: remotePath, on: target, old: old, in: panel) }
             }
             return true
         case .failure(let e as SFTPClient.CheckFailed):
-            AuditLog.write(target, action, paths: [remotePath], exit: e.status, error: "“\(e.program)” failed. " + (e.now.isEmpty ? "Not saved." : e.now))
+            AuditLog.write(target, action, paths: [remotePath], exit: e.status, error: "“\(e.program)” failed. " + (e.now.isEmpty ? "Not saved." : e.now), by: by)
             Editor.markUnsaved(saved)
             if let a = e.attrs { state.baseline = a }   // an "after" check: what's there now, put back or not
             let (message, info) = Self.checkFailed(e, name: name, host: target.host, kept: Editor.window(for: saved) == nil ? saved.path : nil)
+            if told != nil { return tell(message + "\n" + Self.checkFailed(e, name: name, host: target.host, kept: "").info) }
             _ = await choose(message, info: info, ["OK"], on: Editor.asking(about: saved))
             return false
+        case .failure(is SFTPClient.ChangedOnServer) where told != nil:
+            return tell("“\(name)” changed on the server, or appeared there, after Kermo looked. Nothing was written.")
+        case .failure(is SFTPClient.GoneFromServer) where told != nil:
+            return tell("“\(name)” is gone from the server: deleted or renamed after Kermo looked. Nothing was written.")
         case .failure(let e as SFTPClient.ChangedOnServer):
             Editor.markUnsaved(saved)   // ↑ while it asks (and Compare runs): closing its tab asks first
             let keeps = Editor.window(for: saved) == nil ? "in \(saved.path)" : "unsaved here"   // the editor may be gone
@@ -1626,7 +1645,8 @@ extension AppDelegate {
             }
             return false
         case .failure(let e):
-            if !(e is CancellationError) { AuditLog.write(target, action, paths: [remotePath], exit: 1, error: e.localizedDescription) }
+            if !(e is CancellationError) { AuditLog.write(target, action, paths: [remotePath], exit: 1, error: e.localizedDescription, by: by) }
+            if told != nil { return tell(e is CancellationError ? "It was stopped on its way: whether \(remotePath) was written isn't known. Read it to see." : "Not written: \(e.localizedDescription)") }
             return notSaved(saved, to: target, e)
         }
     }
@@ -1868,7 +1888,8 @@ extension AppDelegate {
     static func checkFailed(_ e: SFTPClient.CheckFailed, name: String, host: String, kept: String?) -> (message: String, info: String) {
         let lines = e.output.split(separator: "\n", omittingEmptySubsequences: false)
         let shown = (lines.count > 30 ? ["…"] + lines.suffix(30) : lines).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        let text = kept.map { "Your text is kept in \($0)." } ?? "Your text stays unsaved here."
+        // "": nobody's text to keep (the assistant's write).
+        let text = kept.map { $0.isEmpty ? "" : "Your text is kept in \($0)." } ?? "Your text stays unsaved here."
         return ("“\(name)” didn't pass “\(e.program)” on \(host)",
                 (shown.isEmpty ? "It exited with \(e.status)." : shown) + "\n\n" + (e.now.isEmpty ? "Not saved there: the file on \(host) is as it was." : e.now) + " " + text)
     }
@@ -3522,7 +3543,8 @@ extension AppDelegate {
     }
 
     func jobFinished(_ job: FileJob) {
-        AuditLog.write(job, sync: syncJobs.contains(job))
+        AuditLog.write(job, sync: syncJobs.contains(job), by: aiJobs.contains(job) ? "ai" : nil)
+        aiJobs.remove(job)
         reloadVolumes()   // Locations' free space
         syncJobs.remove(job)
         // Local panels follow the disk (FSEvents); a server panel has to ask again.

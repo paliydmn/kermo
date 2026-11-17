@@ -52,18 +52,21 @@ final class OpsController {
         updateButton()
     }
 
-    /// `then`: once it's over — done, failed, or cancelled before it started.
-    func enqueue(_ job: FileJob, title: String, then: ((FileJob) -> Void)? = nil) {
+    /// `then`: once it's over — done, failed, or cancelled before it started. `asking` false: a taken name and an
+    /// error get the job's own answers, not a sheet (the assistant's copy: nobody is at the question).
+    func enqueue(_ job: FileJob, title: String, asking: Bool = true, then: ((FileJob) -> Void)? = nil) {
         waiting[ObjectIdentifier(job)] = then
         let side = job.to, from = job.from, local = job.from == .local && job.to == .local   // not `job`: it holds these closures
-        job.resolveConflict = { [weak self] c in
-            Self.ask((.cancel, false)) { done in
-                if let self { self.askConflict(c, from: from, on: side, done) } else { done((.cancel, false)) }
+        if asking {
+            job.resolveConflict = { [weak self] c in
+                Self.ask((.cancel, false)) { done in
+                    if let self { self.askConflict(c, from: from, on: side, done) } else { done((.cancel, false)) }
+                }
             }
-        }
-        job.resolveError = { [weak self] path, message in
-            Self.ask((.abort, false)) { done in
-                if let self { self.askError(path, message, local: local, done) } else { done((.abort, false)) }
+            job.resolveError = { [weak self] path, message in
+                Self.ask((.abort, false)) { done in
+                    if let self { self.askError(path, message, local: local, done) } else { done((.abort, false)) }
+                }
             }
         }
         job.onFinish = { [weak self] in
@@ -106,7 +109,7 @@ final class OpsController {
         updateButton()
     }
 
-    private func cancel(_ job: FileJob) {
+    func cancel(_ job: FileJob) {
         job.cancel()
         if !running.contains(where: { $0 === job }) {   // queued, never started
             remove(job)

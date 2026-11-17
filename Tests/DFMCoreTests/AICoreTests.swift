@@ -255,3 +255,19 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
     s = AIContext(active: list, other: there).shell
     #expect(s.dir == "." && s.otherDir == nil && s.expand("systemctl status %f") == "systemctl status nginx")
 }
+
+/// A line for a login shell that may be fish: no backslash inside single quotes, where fish alone reads it as an escape.
+@Test func aiQuotesForAnyShell() throws {
+    for text in ["plain", "it's", #"a\b"#, #"/x\';touch /tmp/p;#"#, #"\\'"#, "two\nlines", ""] {
+        let quoted = ShellContext.quoteForAnyShell(text)
+        // But for a quote and a backslash, each written outside the quotes, nothing in it is either.
+        let rest = quoted.dropFirst().dropLast().replacingOccurrences(of: #"'\''"#, with: "").replacingOccurrences(of: #"'\\'"#, with: "")
+        #expect(!rest.contains("'") && !rest.contains("\\"), "\(quoted)")
+        let sh = Process(), out = Pipe()
+        (sh.executableURL, sh.arguments, sh.standardOutput) = (URL(fileURLWithPath: "/bin/sh"), ["-c", "printf %s " + quoted], out)
+        try sh.run()
+        sh.waitUntilExit()
+        #expect(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == text, "\(quoted)")
+    }
+}
+
