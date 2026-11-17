@@ -44,7 +44,8 @@ final class AISession {
     /// A tool of `AITools.all` by its name, as tool use and MCP call it.
     func call(_ name: String, _ args: [String: ToolValue]) async -> AIResult {
         guard let tool = AITools.all.first(where: { $0.name == name }), let run = Self.runners[name] else {
-            return note(name, args, "refused: no such tool", .failure("There is no tool “\(name)”."), afterRead: hasRead)
+            let known = AITools.all.contains { $0.name == name }
+            return note(name, args, "refused: no such tool", .failure(known ? "“\(name)” isn't available yet." : "There is no tool “\(name)”."), afterRead: hasRead)
         }
         return await call(tool, args, run: run)
     }
@@ -57,7 +58,9 @@ final class AISession {
     }
 
     private func note(_ tool: String, _ args: [String: ToolValue], _ decision: String, _ result: AIResult, afterRead: Bool) -> AIResult {
-        journal.append(Entry(tool: tool, args: AISecrets.mask(Self.told(args, cut: 200).joined(separator: ", ")).text, decision: decision, result: result,
+        var kept = result   // what it came to, not all it read
+        kept.text = String(result.text.prefix(2000))
+        journal.append(Entry(tool: tool, args: AISecrets.mask(Self.told(args, cut: 200).joined(separator: ", ")).text, decision: decision, result: kept,
                              afterRead: afterRead))
         return result
     }
@@ -67,12 +70,9 @@ final class AISession {
         var named: [String: SFTPTarget?] = [:]
         for arg in Set(tool.places.map(\.server)) {
             guard case .string(let name)? = args[arg] else { continue }   // missing or mistyped: `targets` refuses it
-            guard let t = server(named: name) else {
-                return ("refused: unknown server", .failure("Kermo knows no server “\(name)”. Use a name `focus` gave, or \"mac\" for this Mac."))
-            }
+            guard let t = await server(named: name) else { return ("refused: unknown server", .failure(Self.unknown(name))) }
             named[name] = t
         }
-        await ServerLock.learn(named.values.compactMap { $0 })
         guard let targets = tool.targets(args, resolve: { name in named[name].map { self.place($0) } }) else {
             return ("refused: malformed", .failure("The call doesn't fit “\(tool.name)”: every argument as its schema says, each path absolute — no “..”, and no “~” on a server."))
         }
@@ -91,14 +91,24 @@ final class AISession {
             return self.question(tool, args, why, on: ends)
         }, asker: asker)
         switch passed {
-        case .locked(let t): return ("locked", .failure("\(SavedServer.name(for: t)) stays locked: the user didn't unlock it. Nothing was done."))
-        case .cancelled: return ("asked: \(decision), cancelled", .failure("The user said no. Nothing was done."))
+        case .locked(let t): return ("locked", .failure("\(Self.label(t)) stays locked: the user didn't unlock it. Nothing was done."))
+        case .cancelled: return (Self.said(decision) + ", cancelled", .failure("The user said no. Nothing was done."))
         case .pass: break
         }
         if let no = Self.refusal(decision) { return no }   // what the question's closure couldn't say: it only asks or passes
+        // A place whose server isn't known would be read as this Mac by a runner.
+        guard targets.allSatisfy({ $0.place == .mac || servers[$0.place] != nil }) else { return Self.refusal(.ask(.unclear))! }
+        // Stopped while Touch ID or the question was up, answered after.
+        guard !Task.isCancelled else { return ("stopped", .failure("Stopped. Nothing was done.")) }
         let result = await run(self, args, targets)
-        if targets.contains(where: { $0.place != .mac }) && !result.isError { hasRead = true }
-        return (decision == .allowed ? "allowed" : "asked: \(decision), allowed", result)
+        // A server's text, its error's too; and a terminal's, whoever is logged in there.
+        if targets.contains(where: { $0.place != .mac }) || tool.name == "terminal_output" { hasRead = true }
+        return (Self.said(decision) + (decision == .allowed ? "" : ", allowed"), result)
+    }
+
+    private static func said(_ d: AIScope.Decision) -> String { if case .ask(let why) = d { "asked: \(why)" } else { "allowed" } }
+    private static func unknown(_ name: String) -> String {
+        "Kermo knows no single server “\(name)”. Use a name `focus` gave, or \"mac\" for this Mac."
     }
 
     /// What never reaches a server: a call still outside the scope, and one that doesn't fit its tool.
@@ -112,17 +122,27 @@ final class AISession {
 
     // MARK: Servers and places
 
-    /// "mac" (nil inside), a saved server by its name, or one in front of the user by the name `focus` gave it. Two
-    /// saved servers under one name are nobody's. Always as the server's user.
-    private func server(named name: String) -> SFTPTarget?? {
+    /// "mac" (nil inside) is this Mac, always. Else the one server that goes by `name`: saved under it, or in front
+    /// of the user as `focus` named it — learned, so one server written two ways is one. Two different servers under
+    /// a name are nobody's (a saved "web-01" and an ssh alias web-01 in a panel). Always as the server's user.
+    private func server(named name: String) async -> SFTPTarget?? {
         if name == "mac" { return .some(nil) }
-        let saved = ServerLock.servers().filter { $0.title == name }
-        if saved.count == 1 { return saved[0].target.asUser }
         let c = app.aiContext
         let shown = [c.active.server, c.other.server, c.active.parked?.server, c.other.parked?.server, c.editor?.server, c.terminal?.server]
+        let all = ServerLock.servers().filter { $0.title == name }.map(\.target.asUser) + shown.compactMap { $0?.asUser }.filter { Self.label($0) == name }
+        await ServerLock.learn(all)
+        let one = all.reduce(into: [SFTPTarget]()) { found, t in if !found.contains(where: { ServerLock.same($0, t) }) { found.append(t) } }
         // `.none` spelled out: a bare nil here would read as "this Mac".
-        guard saved.isEmpty, let t = shown.compactMap({ $0?.asUser }).first(where: { SavedServer.name(for: $0) == name }) else { return .none }
-        return .some(t)
+        guard one.count == 1 else { return .none }
+        return .some(one[0])
+    }
+
+    /// What `focus` calls a server, and takes back: its saved name, else its address — with the port when it isn't
+    /// ssh's own (two tunnels on localhost), and never "mac".
+    static func label(_ t: SFTPTarget) -> String {
+        let name = SavedServer.name(for: t.asUser)
+        guard name == t.asUser.shown || name == "mac" else { return name }
+        return t.asUser.shown + (t.port.map { $0 == 22 ? "" : ":\($0)" } ?? "")
     }
 
     /// The scope's key for `t`: where `ssh -G` says it goes, once learned; else the address as written, a key of its
@@ -130,11 +150,11 @@ final class AISession {
     func place(_ t: SFTPTarget?) -> AIPlace {
         guard let t = t?.asUser else { return .mac }
         let p = AIPlace.server(ServerLock.identity(t) ?? "as written: \(t.shown)#\(t.port ?? 22)")
-        servers[p] = t
+        servers[p] = ServerLock.locking(t)   // a locked server's connection lingers as briefly under any name
         return p
     }
 
-    private func name(_ p: AIPlace) -> String { servers[p].map(SavedServer.name(for:)) ?? "this Mac" }
+    private func name(_ p: AIPlace) -> String { servers[p].map(Self.label) ?? "this Mac" }
 
     // MARK: Asking
 
@@ -202,12 +222,12 @@ final class AISession {
 
     /// Text for the model: secrets masked (and counted), cut at `limit` characters from the `end` that matters less.
     static func handOver(_ text: String, limit: Int = textLimit, keepEnd: Bool = false, cut: Bool = false) -> AIResult {
-        let part = keepEnd ? String(text.suffix(limit)) : String(text.prefix(limit))
-        let (masked, hidden) = AISecrets.mask(part)
+        let (whole, hidden) = AISecrets.mask(text)   // before the cut: a cut inside a secret would leave its tail bare
+        let part = keepEnd ? String(whole.suffix(limit)) : String(whole.prefix(limit))
         var notes: [String] = []
-        if cut || part.count < text.count { notes.append(keepEnd ? "Only the end is here." : "Only the beginning is here.") }
+        if cut || part.count < whole.count { notes.append(keepEnd ? "Only the end is here." : "Only the beginning is here.") }
         if hidden > 0 { notes.append("\(hidden) secret\(hidden == 1 ? "" : "s") hidden as •••.") }
-        return AIResult(notes.isEmpty ? masked : masked + "\n\n[" + notes.joined(separator: " ") + "]")
+        return AIResult(notes.isEmpty ? part : part + "\n\n[" + notes.joined(separator: " ") + "]")
     }
 
     static let runners: [String: Runner] = [
@@ -220,6 +240,8 @@ final class AISession {
             case .failure(let e): return .failure("Couldn't list \(path): \(e.localizedDescription)")
             case .success(let items):
                 let day = ISO8601DateFormatter()
+                // A name with a tab or a new line in it would forge rows: left out, as a server's listing leaves them.
+                let items = items.filter { !$0.name.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f } }
                 let lines = items.sorted { $0.name < $1.name }.prefix(namesLimit).map { i in
                     "\(i.name)\(i.kind == .dir ? "/" : i.kind == .link ? "@" : "")\t\(i.kind == .dir ? "" : String(i.size))\t\(day.string(from: Date(timeIntervalSince1970: i.mtime)))"
                 }
@@ -229,7 +251,9 @@ final class AISession {
         },
         "read_file": { s, _, targets in
             let t = s.servers[targets[0].place], path = targets[0].path ?? "/", env = SSHAskpass.env, limit = textLimit
-            // A file only: a FIFO or a device read as one would hang, or take what was another reader's.
+            // A file only: a FIFO or a device read as one would hang, or take what was another reader's — and some of
+            // those say they are files (/proc/kmsg).
+            guard !AICommand.consumes(path) else { return .failure("\(path) isn't a file to read: a device or a kernel pipe.") }
             let read = await work { flag -> Data in
                 if let t {
                     return try SFTP.session(t, env: env, cancel: flag, on: nil) { c in
@@ -237,11 +261,11 @@ final class AISession {
                         return try c.read(path, max: limit + 1)
                     }
                 }
-                guard (try FileManager.default.attributesOfItem(atPath: (path as NSString).resolvingSymlinksInPath))[.type] as? FileAttributeType == .typeRegular else {
-                    throw NotAFile()
-                }
-                let h = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
-                defer { try? h.close() }
+                let fd = Darwin.open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)   // never waits for a FIFO's writer
+                guard fd >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+                let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+                var st = stat()
+                guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { throw NotAFile() }   // what was opened, not what the name says now
                 return try h.read(upToCount: limit + 1) ?? Data()
             }
             switch read {
@@ -268,8 +292,8 @@ final class AISession {
     /// the chat may read (any grant there), else just where the panel stands.
     private func focus() -> AIResult {
         var server = false
-        let text = Self.focus(app.aiContext, name: { SavedServer.name(for: $0) }) { t in
-            guard self.scope.grants[self.place(t)] != nil else { return false }
+        let text = Self.focus(app.aiContext, name: Self.label) { t in
+            guard t?.sudo != true, self.scope.grants[self.place(t)] != nil else { return false }   // a root panel's isn't the user's grant to give
             if t != nil { server = true }
             return true
         }
@@ -312,8 +336,7 @@ final class AISession {
         guard let name = text("server"), let level = ["view": AIScope.Level.view, "work": .work, "all": .all][text("level") ?? ""], let why = text("why") else {
             return .failure("request_scope needs server, level and why.")
         }
-        guard let t = server(named: name) else { return .failure("Kermo knows no server “\(name)”.") }
-        await ServerLock.learn([t].compactMap { $0 })
+        guard let t = await server(named: name) else { return .failure(Self.unknown(name)) }
         var folder: String?
         if let f = text("folder") {
             guard level == .work, let n = AITarget.normal(f, home: t == nil ? NSHomeDirectory() : nil) else {

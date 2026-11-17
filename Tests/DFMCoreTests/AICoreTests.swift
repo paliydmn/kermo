@@ -13,7 +13,8 @@ import Testing
               "du -sh /var/* | sort -h", "grep 'a b' f", "sed -n '/server name/p' f", "ls \"My Docs\"", "cat a 2>&1",
               "grep -E 'a{2}|\\$' f".replacingOccurrences(of: "|\\$", with: ""), "grep '$HOME' f", "sed -n '10,20p' f", "awk -F: '{print $1 \"(\" $3 \")\"}' /etc/passwd",
               "cat *.log", "ls -la /var/log/*.gz",
-              "ip addr show dev eth0", "docker ps --format '{{.Names}}'", "podman logs --tail=50 web", "grep -rn x /srv/*.conf", "cd /srv && ls && df -h"] {
+              "ip addr show dev eth0", "docker ps --format '{{.Names}}'", "podman logs --tail=50 web", "grep -rn x /srv/*.conf", "cd /srv && ls && df -h",
+              "docker ps -aq", "docker logs --follow web", "wc -l /var/log/*.log", "cat *"] {
         #expect(AICommand.isReadOnly(c), Comment(rawValue: c))
     }
     for c in ["rm -rf /srv", "cat a > b", "cat a >> b", "cat a 2>/dev/null.txt", "cat a 2> err", "cat $(rm x)", "cat `rm x`", "cat <(rm x)", "cat a & rm b",
@@ -50,7 +51,10 @@ import Testing
               "find / -name watchdog | sudo file -s -f -", "file --files-from=x", "sudo awk 'NR==1{ARGV[ARGC++]=\"/de\" \"v/watchdog\"}' /etc/hostname",
               "awk '{print}' /inet/tcp/0/10.0.0.5/25", "find . -rm", "sudo find /srv -name '*.log' -rm", "tail -f /var/log/syslog &",
               "sudo tail -f /var/log/syslog 2>&1 &", "df --sync", "df --sy", "sudo cat /proc/kmsg", "sudo cat /sys/kernel/debug/tracing/trace_pipe",
-              "sudo head -c 100 /proc/1234/fd/0", "sudo journalctl --image=/x.raw", "sudo systemctl status --image=/x.raw nginx"] {
+              "sudo head -c 100 /proc/1234/fd/0", "sudo journalctl --image=/x.raw", "sudo systemctl status --image=/x.raw nginx",
+              // …and PR 2a's own review: gawk's other spellings, this Mac's case-folding disk, a glob that may bring an option.
+              "awk '{print}' /inet4/tcp/0/10.0.0.5/25", "awk 'BEGIN{print SYMTAB[\"ARG\" \"V\"][1]}' f", "cat /DEV/ttys003", "wc *", "grep x *",
+              "sudo grep x [a-z]*", "du ?", "docker ps -ax", "docker logs --follow --root /x web"] {
         #expect(!AICommand.isReadOnly(c), Comment(rawValue: c))
     }
 }

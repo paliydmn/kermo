@@ -65,15 +65,16 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         var r = await s.call(writes, args, run: run)   // Cancel on "Allow…"
         #expect(r.isError && ran == 0 && asked().count == 1 && asked()[0].hasPrefix("Allow the assistant") && s.scope.grants.isEmpty)
         #expect(s.journal.last?.decision == "not allowed")
+        #expect(await s.call("copy", [:]).text.contains("isn't available yet"))
 
         answer([0])   // allowed for the task, then Cancel on "write over"
         r = await s.call(writes, args, run: run)
         #expect(r.isError && ran == 0 && asked().count == 3 && asked()[2].contains("write over"), "\(asked())")
-        #expect(s.scope.grants.count == 1 && s.journal.last?.decision.hasSuffix("cancelled") == true)
+        #expect(s.scope.grants.count == 1 && s.journal.last?.decision == "asked: overwrites, cancelled")
 
         answer([0])   // in scope now: only the overwrite question
         r = await s.call(writes, args, run: run)
-        #expect(r == AIResult("done") && ran == 1 && asked().count == 4 && s.journal.last?.decision.hasSuffix("allowed") == true)
+        #expect(r == AIResult("done") && ran == 1 && asked().count == 4 && s.journal.last?.decision == "asked: overwrites, allowed")
         #expect(s.hasRead && s.journal.last?.afterRead == false)   // a server answered: every later call is marked
 
         // Refused in words, nobody asked, nothing run: a relative path, `..`, `~` on a server, a server nobody knows,
@@ -91,6 +92,20 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(r.isError && s.journal.last?.decision == "refused: unclear")
         #expect(ran == 1 && asked().count == before, "\(ran) \(asked())")
         #expect(await s.call("no_such_tool", [:]).isError)
+
+        // Stopped while the question was up, then answered: nothing runs.
+        s.asker = { _, _ in withUnsafeCurrentTask { $0?.cancel() }; return 0 }
+        r = await Task { await s.call(writes, args, run: run) }.value
+        #expect(r.isError && ran == 1 && s.journal.last?.decision == "stopped")
+
+        // A name is one server or nobody: two saved under it aren't; a server called "mac" goes by its address.
+        var twin = SavedServer(address: "me@192.0.2.42")!, mac = SavedServer(address: "me@192.0.2.43")!
+        (twin.name, mac.name) = ("box", "mac")
+        let saved = ServerLock.servers()
+        ServerLock.servers = { saved + [twin, mac] }
+        r = await s.call(writes, args, run: run)
+        #expect(r.isError && ran == 1 && s.journal.last?.decision == "refused: unknown server", "\(r.text)")
+        #expect(AISession.label(mac.target) == "me@192.0.2.43" && AISession.label(twin.target) == "box" && AISession.label(.local(port: 2201)).hasSuffix(":2201"))
     }
 
     /// A locked server asks Touch ID before anything; refused, the runner hasn't run. A production server asks for
@@ -138,7 +153,8 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         try FileManager.default.createDirectory(atPath: dir + "/sub", withIntermediateDirectories: true)
         try Data(("pass" + "word: hunter22\nname: web\n").utf8).write(to: URL(fileURLWithPath: dir + "/app.conf"))
         try Data([0xff, 0xfe, 0x00, 0x80]).write(to: URL(fileURLWithPath: dir + "/blob"))
-        try Data(String(repeating: "é", count: AISession.textLimit).utf8).write(to: URL(fileURLWithPath: dir + "/long.txt"))   // two bytes each: the cut falls inside one
+        try Data(("a" + String(repeating: "é", count: AISession.textLimit)).utf8).write(to: URL(fileURLWithPath: dir + "/long.txt"))   // the cut falls inside an é
+        #expect(mkfifo(dir + "/pipe", 0o600) == 0)
 
         var r = await s.call("list_folder", ["server": .string(box), "path": .string(dir)])   // Cancel: not allowed to read there
         #expect(r.isError && asked().count == 1 && !s.hasRead)
@@ -150,7 +166,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             #expect(!r.isError && r.text.contains("name: web") && !r.text.contains("hunter22") && r.text.contains("1 secret hidden"), "\(server): \(r.text)")
             r = await s.call("read_file", ["server": .string(server), "path": .string(dir + "/long.txt")])
             #expect(!r.isError && r.text.contains("Only the beginning is here") && r.text.count < AISession.textLimit, "\(server) \(r.text.suffix(200))")
-            for (name, why) in [("blob", "isn't text"), ("sub", "isn't a file"), ("none", "Couldn't read")] {
+            for (name, why) in [("blob", "isn't text"), ("sub", "isn't a file"), ("pipe", "isn't a file"), ("none", "Couldn't read"), ("dev/x", "a device")] {
                 r = await s.call("read_file", ["server": .string(server), "path": .string(dir + "/" + name)])
                 #expect(r.isError && r.text.contains(why), "\(server): \(r.text)")
             }
@@ -187,6 +203,13 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(!r.isError && s.scope.grants[.mac] == AIScope.Grant(level: .work, folders: [dir], commands: true))
         r = await s.call("focus", [:])
         #expect(r.text.contains("cursor: seen.txt") && !s.hasRead, "\(r.text)")
+    }
+
+    /// A long text is masked before it is cut: the end kept of a terminal's output never starts inside a secret.
+    @Test func textIsMaskedBeforeItIsCut() {
+        let text = "DB_PASS" + "WORD=abcdefghijklmnopqrstuvwxyz\n" + String(repeating: "x", count: 10)
+        let r = AISession.handOver(text, limit: 20, keepEnd: true)
+        #expect(!r.text.contains("uvwxyz") && r.text.contains("Only the end is here") && r.text.contains("1 secret hidden"), "\(r.text)")
     }
 
     /// focus in words: a parked tab says its server, a root panel says so, the editor's and the terminal's text only

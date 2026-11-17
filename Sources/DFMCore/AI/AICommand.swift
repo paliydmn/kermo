@@ -73,10 +73,11 @@ public enum AICommand {
         // `cat /de?/x`, a FIFO elsewhere, `grep -r x /` on BSD they don't. An option with a letter beyond ASCII: the
         // program reads bytes (`-o` + a combining mark is still -o), the rules below read characters.
         guard let name = w.first, !w.contains(where: { a in   // `ip addr show dev eth0`: a word of its own there
-            a.unicodeScalars.contains(">") || name != "ip" && a.split(separator: "/").contains { $0 == "dev" || $0 == "fd" } || a.contains("kmsg") || a.contains("trace_pipe")
-                || a.unicodeScalars.first == "-" && !a.unicodeScalars.allSatisfy(\.isASCII)
+            a.unicodeScalars.contains(">") || name != "ip" && consumes(a) || a.unicodeScalars.first == "-" && !a.unicodeScalars.allSatisfy(\.isASCII)
         }) else { return false }
         let args = Array(w.dropFirst())
+        // Their options matter (below): a glob that may start a word with a dash — next to a file named `-R` — isn't theirs.
+        if name.hasSuffix("grep") || ["wc", "du", "df"].contains(name), all.contains(where: { $0.glob && "*?[".contains($0.text.prefix(1)) }) { return false }
         // Names to read taken from stdin (xargs under another name), GNU df's sync(2); grep reading devices.
         if long(args, ["--files0-from", "--sync"]) { return false }
         if name.hasSuffix("grep"), short(args, "RD") || long(args, ["--dereference-recursive", "--devices"]) { return false }
@@ -84,6 +85,13 @@ public enum AICommand {
         if plain.contains(name) { return true }
         // A glob may expand to an option (`sort *` next to a file named -o): not for a program whose options matter.
         return !all.contains(where: \.glob) && rules[name]?(args) == true
+    }
+
+    /// A path that reading may do things to, or take from another reader: a device, the kernel's log, a trace pipe,
+    /// another process's descriptors — by its words (a FIFO elsewhere they don't tell). Any case: this Mac's disk folds it.
+    public static func consumes(_ path: String) -> Bool {
+        let p = path.lowercased()
+        return p.split(separator: "/").contains { $0 == "dev" || $0 == "fd" } || p.contains("kmsg") || p.contains("trace_pipe")
     }
 
     /// Programs with no argument that writes a file, deletes or runs another program (GNU and BSD).
@@ -127,7 +135,7 @@ public enum AICommand {
         // program names its own input (a device, pieced together); gawk's /inet/ is a connection.
         "awk": { a in
             a.allSatisfy { !$0.hasPrefix("-") || $0.hasPrefix("-F") || $0 == "-v" }
-                && !a.contains { w in ["system", "getline", "@", "ARGV", "ARGC", "/inet/"].contains(where: w.contains) }
+                && !a.contains { w in ["system", "getline", "@", "ARGV", "ARGC", "SYMTAB", "/inet"].contains(where: w.contains) }
         },
         "find": { a in !a.contains { ["-delete", "-rm", "-exec", "-execdir", "-ok", "-okdir", "-fls"].contains($0) || $0.hasPrefix("-fprint") } },
         "journalctl": { !long($0, ["--vacuum", "--rotate", "--flush", "--sync", "--setup-keys", "--update-catalog", "--relinquish", "--smart-relinquish", "--cursor-file",
@@ -152,7 +160,8 @@ public enum AICommand {
     private static let containers: @Sendable ([String]) -> Bool = { a in
         sub(a, ["ps", "logs", "inspect", "images", "version", "info"]) && a.filter { $0.hasPrefix("-") }.allSatisfy {
             ["-a", "--all", "-q", "--quiet", "-n", "--last", "-l", "--latest", "-s", "--size", "--no-trunc", "--format", "-f", "--filter", "--tail", "--since",
-             "--until", "-t", "--timestamps", "--details"].contains(String($0.prefix { $0 != "=" }))
+             "--until", "-t", "--timestamps", "--details", "--follow", "--digests"].contains(String($0.prefix { $0 != "=" }))
+                || $0.dropFirst().allSatisfy("aqlstnf".contains)   // -aq
         }
     }
 
