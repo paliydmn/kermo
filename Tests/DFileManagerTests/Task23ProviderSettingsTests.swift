@@ -96,6 +96,25 @@ extension ServerLockTests {
         w.refresh()
         click(try #require(find(w, "Remove — API key", as: NSButton.self)))
         #expect(store.all.isEmpty && !AISettings.hasKey(std))
+
+        // An address still being typed when Save is pressed: the key is filed under it, not the one before.
+        w.tabs.selectedTabViewItemIndex = try #require(w.tabs.tabViewItems.firstIndex { $0.label == "AI" })   // its fields in the window
+        let address = try #require(find(w, "Address", as: NSTextField.self))
+        #expect(w.window.makeFirstResponder(address) && address.currentEditor() != nil)
+        (address.currentEditor() as? NSTextView)?.insertText("https://gw.example.com/v1", replacementRange: NSRange(location: 0, length: 0))   // typed, not ended
+        field.stringValue = key
+        click(try #require(find(w, "Save — API key", as: NSButton.self)))
+        #expect(store.all == ["https://gw.example.com/v1": key] && std.string(forKey: "aiAddress") == "https://gw.example.com/v1")
+
+        // Another provider: its own address and model; a public server's first model isn't picked for you.
+        std.set("claude-opus-5-5", forKey: "aiModel")
+        let provider = try #require(find(w, "Provider", as: NSSegmentedControl.self))
+        provider.selectedSegment = 1
+        click(provider)
+        #expect(std.string(forKey: "aiProvider") == "openai" && std.object(forKey: "aiAddress") == nil && std.object(forKey: "aiModel") == nil)
+        AISettings.test(std)
+        await until { AISettings.tested.hasPrefix("Key accepted") || AISettings.tested.contains("answered") }
+        #expect(AISettings.tested == "Key accepted. Choose a model from the list, then Test again." && std.object(forKey: "aiModel") == nil)
     }
 }
 

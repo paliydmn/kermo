@@ -29,10 +29,19 @@ enum AISettings {
         return AIEndpoint(k, address: a, model: d.string(forKey: "aiModel") ?? (k == .anthropic ? anthropicModel : ""), key: keys.has(a) ? keys.key(a) : nil)
     }
 
-    static func changed() {
+    /// The settings changed: Test's words are for what was. `models`: the list too (another provider or address).
+    static func changed(models forget: Bool = true) {
         testing?.cancel()
-        (testing, tested, models) = (nil, "", [])
+        (testing, tested) = (nil, "")
+        if forget { models = [] }
         SettingsWindow.refreshShown()
+    }
+
+    /// Another provider: its own address and models — not the other one's.
+    static func providerChanged(_ d: UserDefaults) {
+        d.removeObject(forKey: "aiAddress")
+        d.removeObject(forKey: "aiModel")
+        changed()
     }
 
     private static func say(_ words: String) {
@@ -72,26 +81,28 @@ enum AISettings {
         if !ok { say("The Keychain didn't take the key.") }
     }
 
-    /// The models the key may use (free), then one word from the chosen model: a fraction of a cent.
+    /// The models the key may use (free), then one word from the chosen model: a fraction of a cent. With no model
+    /// chosen, a server on this Mac or your network gets its first (OpenAI's first may be one that can't chat).
     static func test(_ d: UserDefaults) {
         guard testing == nil else { return }
         guard var e = endpoint(d) else { return say("Not an address.") }
-        if let why = e.problem, !(e.kind == .openai && e.model.isEmpty) { return say(why) }   // a server's model may come from its list
+        if let why = e.problem(model: false) { return say(why) }
         say("Testing…")
         testing = Task {
             do {
                 let list = try await e.provider(transport).models()
-                if e.model.isEmpty, let first = list.first {
+                try Task.checkCancellation()
+                models = list
+                if e.model.isEmpty, AIEndpoint.isLocal(e.address), let first = list.first {
                     e.model = first
                     d.set(first, forKey: "aiModel")
                 }
-                guard !e.model.isEmpty else { throw AIError(.other, "The server lists no models.") }
+                guard !e.model.isEmpty else { throw AIError(.other, list.isEmpty ? "The server lists no models." : "Key accepted. Choose a model from the list, then Test again.") }
                 var stop: AIStop?
                 for try await event in e.provider(transport).send([AIMessage(.user, [.text("Reply with the single word OK.")])], tools: [], system: "") {
                     if case .done(_, let s, _) = event { stop = s }
                 }
                 guard !Task.isCancelled else { return }
-                models = list
                 testing = nil
                 say(stop == nil ? "" : "\(e.model) answered · \(list.count) model\(list.count == 1 ? "" : "s") to choose from")
             } catch {

@@ -55,7 +55,8 @@ public enum AIEvent: Sendable, Equatable {
 }
 
 public protocol AIProvider: Sendable {
-    /// One turn. Ends with `.done`, an `AIError` in words, or — the task cancelled — nothing more at all.
+    /// One turn. Ends with `.done`, an `AIError` in words, or — the task cancelled — nothing new. Events already
+    /// buffered may still come after a stop: check `Task.isCancelled` before acting on `.done`.
     func send(_ messages: [AIMessage], tools: [AITool], system: String) -> AsyncThrowingStream<AIEvent, Error>
     /// The models the provider lists for this key.
     func models() async throws -> [String]
@@ -107,16 +108,17 @@ public struct AIEndpoint: Sendable, CustomStringConvertible, CustomDebugStringCo
         return p[0] == 127 || p[0] == 10 || (p[0] == 172 && (16...31).contains(p[1])) || (p[0] == 192 && p[1] == 168) || (p[0] == 169 && p[1] == 254)
     }
 
-    var isPlain: Bool { address.scheme == "http" && !Self.isLocal(address) }
+    var isPlain: Bool { address.scheme != "https" && !Self.isLocal(address) }
     /// The key for a request's header — never over plain http to a public address.
     var keyToSend: String? { key.flatMap { $0.isEmpty || isPlain ? nil : $0 } }
 
-    /// What keeps this from being used, in words; nil — nothing.
-    public var problem: String? {
+    /// What keeps this from being used, in words; nil — nothing. `model: false` — a model isn't needed yet (Test
+    /// fills the list).
+    public func problem(model needed: Bool = true) -> String? {
         let hasKey = key?.isEmpty == false
         if kind == .anthropic && !hasKey { return "Anthropic needs a key." }
         if hasKey && isPlain { return "A key goes only over https, or over http to this Mac or your own network." }
-        if model.isEmpty { return "Choose a model." }
+        if needed && model.isEmpty { return "Choose a model." }
         return nil
     }
 
@@ -147,15 +149,18 @@ public enum AIHTTP {
     public static let silence: TimeInterval = 300
 
     /// `URLSession`: a session of its own each time (no cache, no cookies), no redirect followed — the key stays with
-    /// the address it was saved for. Stopping the reader (or its task) cancels the connection.
+    /// the address it was saved for; plain http (this Mac, your network) past no proxy. The body is the answer's
+    /// only: stopping its reader, or just letting it go, cancels the connection.
     public static let live: AITransport = { request in
         let config = URLSessionConfiguration.ephemeral
         (config.urlCache, config.httpCookieStorage, config.httpShouldSetCookies) = (nil, nil, false)
         (config.timeoutIntervalForRequest, config.timeoutIntervalForResource) = (silence, 3600)
-        let receiver = Receiver()
+        if request.url?.scheme != "https" { config.connectionProxyDictionary = [kCFNetworkProxiesHTTPEnable: false] }
+        let (body, pipe) = AsyncThrowingStream<Data, Error>.makeStream()
+        let receiver = Receiver(pipe)
         let session = URLSession(configuration: config, delegate: receiver, delegateQueue: nil)
         let task = session.dataTask(with: request)
-        receiver.body.1.onTermination = { _ in task.cancel() }
+        pipe.onTermination = { _ in task.cancel() }
         let head = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { c in
                 receiver.waiting(c)
@@ -163,14 +168,15 @@ public enum AIHTTP {
             }
         } onCancel: { task.cancel() }
         return AIHTTPResponse(status: head.statusCode, headers: Dictionary(head.allHeaderFields.map { ("\($0.key)".lowercased(), "\($0.value)") }) { a, _ in a },
-                              body: receiver.body.0)
+                              body: body)
     }
 
     private final class Receiver: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-        let body = AsyncThrowingStream<Data, Error>.makeStream()
+        private let pipe: AsyncThrowingStream<Data, Error>.Continuation
         private let lock = NSLock()
         private var head: CheckedContinuation<HTTPURLResponse, Error>?
         private var failed: Error?
+        init(_ pipe: AsyncThrowingStream<Data, Error>.Continuation) { self.pipe = pipe }
 
         func waiting(_ c: CheckedContinuation<HTTPURLResponse, Error>) {
             let early = lock.withLock { () -> Error? in
@@ -187,12 +193,12 @@ public enum AIHTTP {
             takeHead()?.resume(returning: h)
             return .allow
         }
-        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) { body.1.yield(data) }
+        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) { pipe.yield(data) }
         func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
             let e = error ?? URLError(.badServerResponse)
             lock.withLock { failed = e }
             takeHead()?.resume(throwing: e)
-            if let error { body.1.finish(throwing: error) } else { body.1.finish() }
+            if let error { pipe.finish(throwing: error) } else { pipe.finish() }
             session.finishTasksAndInvalidate()
         }
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
@@ -207,24 +213,30 @@ public enum AIHTTP {
 struct AISSE {
     var maxLine = 4 << 20, maxTotal = 64 << 20
     private var pending = Data(), total = 0
+    /// The head of `pending` already looked through: no new line in it.
+    private var searched = 0
 
     mutating func feed(_ chunk: Data) throws -> [String] {
         total += chunk.count
         guard total <= maxTotal else { throw AIError(.other, "The answer passed \(maxTotal >> 20) MB; Kermo stopped reading it.") }
         pending.append(chunk)
-        var out: [String] = []
-        while let nl = pending.firstIndex(of: 10) {
-            var line = String(decoding: pending[pending.startIndex..<nl], as: UTF8.self)
-            pending = Data(pending[(nl + 1)...])
+        var out: [String] = [], start = pending.startIndex
+        while let nl = pending[(start + searched)...].firstIndex(of: 10) {
+            guard nl - start <= maxLine else { throw tooLong }
+            var line = String(decoding: pending[start..<nl], as: UTF8.self)
+            (start, searched) = (nl + 1, 0)
             if line.hasSuffix("\r") { line.removeLast() }
             guard line.hasPrefix("data:") else { continue }
             line.removeFirst(5)
             if line.hasPrefix(" ") { line.removeFirst() }
             out.append(line)
         }
-        guard pending.count <= maxLine else { throw AIError(.other, "One event of the answer passed \(maxLine >> 20) MB; Kermo stopped reading it.") }
+        pending.removeSubrange(pending.startIndex..<start)
+        searched = pending.count
+        guard pending.count <= maxLine else { throw tooLong }
         return out
     }
+    private var tooLong: AIError { AIError(.other, "One event of the answer passed \(maxLine >> 20) MB; Kermo stopped reading it.") }
 }
 
 /// An adapter's reading of one turn: each payload, then the end.
@@ -234,6 +246,7 @@ protocol AIParser: Sendable {
 }
 
 enum AIWire {
+    static let damaged = AIError(.cut, "The answer came damaged — nothing it asked for was run.")
     static func json(_ text: String) -> ToolValue? { try? JSONDecoder().decode(ToolValue.self, from: Data(text.utf8)) }
     static func object(_ v: ToolValue?) -> [String: ToolValue] { if case .object(let o)? = v { o } else { [:] } }
     static func string(_ v: ToolValue?) -> String? { if case .string(let s)? = v { s } else { nil } }
@@ -247,8 +260,8 @@ enum AIWire {
         return nil
     }
 
-    static func request(_ url: URL, _ e: AIEndpoint, body: ToolValue?, headers: [String: String]) -> URLRequest {
-        var r = URLRequest(url: url)
+    static func request(_ url: URL, body: ToolValue?, headers: [String: String]) -> URLRequest {
+        var r = URLRequest(url: url, timeoutInterval: AIHTTP.silence)   // not URLRequest's own 60 s
         r.httpMethod = body == nil ? "GET" : "POST"
         for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
         if let body {
@@ -289,6 +302,7 @@ enum AIWire {
             let r = try await transport(request)
             guard r.status == 200 else { throw await failure(r, e) }
             let body = try await read(r.body, max: 8 << 20)
+            guard body.count <= 8 << 20 else { throw AIError(.other, "\(e.address.host ?? "The provider") answered with over 8 MB; Kermo stopped reading it.") }
             guard case .object(let o)? = try? JSONDecoder().decode(ToolValue.self, from: body) else {
                 throw AIError(.other, "\(e.address.host ?? "The provider") answered with something that isn't JSON.")
             }
@@ -296,6 +310,7 @@ enum AIWire {
         } catch { throw said(error, e) }
     }
 
+    /// Up to just past `max`; the rest isn't read (letting the body go cancels it).
     static func read(_ body: AsyncThrowingStream<Data, Error>, max: Int) async throws -> Data {
         var all = Data()
         for try await chunk in body {
@@ -307,7 +322,7 @@ enum AIWire {
 
     /// An answer other than 200, in words.
     static func failure(_ r: AIHTTPResponse, _ e: AIEndpoint) async -> AIError {
-        let text = String(decoding: (try? await read(r.body, max: 64 << 10)) ?? Data(), as: UTF8.self)
+        let text = hide(String(decoding: (try? await read(r.body, max: 64 << 10)) ?? Data(), as: UTF8.self), e)   // before it is cut
         let err = object(json(text))["error"]   // Anthropic's, OpenAI's, Ollama's and llama.cpp's shape; a proxy's page is text
         let message = string(object(err)["message"]) ?? string(err) ?? String(text.prefix(300)).trimmingCharacters(in: .whitespacesAndNewlines)
         let host = e.address.host ?? "The provider", detail = message.isEmpty ? "" : ": \(message)"
@@ -334,9 +349,11 @@ enum AIWire {
 
     static func masked(_ a: AIError, _ e: AIEndpoint) -> AIError {
         var a = a
-        if let key = e.key, key.count >= 4 { a.words = a.words.replacingOccurrences(of: key, with: "•••") }
-        a.words = AISecrets.mask(a.words).text
+        a.words = hide(a.words, e)
         return a
+    }
+    static func hide(_ text: String, _ e: AIEndpoint) -> String {
+        AISecrets.mask(e.key.map { $0.count >= 4 ? text.replacingOccurrences(of: $0, with: "•••") : text } ?? text).text
     }
 }
 
@@ -377,31 +394,35 @@ public struct AIKeychain: AIKeyStore {
 
 /// The user's keys by provider address. Each is read from the store once a launch, when first needed, then kept in
 /// memory; `has` never reads one.
-public final class AIKeys: @unchecked Sendable {
+public final class AIKeys: @unchecked Sendable, CustomStringConvertible, CustomReflectable {
     public static let shared = AIKeys(AIKeychain())
     private let store: AIKeyStore
     private let lock = NSLock()
-    private var read: [String: String?] = [:]
+    /// Keys read or saved this launch. A read that failed (denied) isn't kept: the next use asks again.
+    private var known: [String: String] = [:]
     public init(_ store: AIKeyStore) { self.store = store }
 
     public func has(_ address: URL) -> Bool {
         let a = address.absoluteString
-        return lock.withLock { read[a].map { $0 != nil } } ?? store.has(a)
+        return lock.withLock { known[a] != nil } || store.has(a)
     }
 
     public func key(_ address: URL) -> String? {
         let a = address.absoluteString
-        if let known = lock.withLock({ read[a] }) { return known }
+        if let k = lock.withLock({ known[a] }) { return k }
         let k = store.get(a)
-        lock.withLock { read[a] = .some(k) }
+        if let k { lock.withLock { known[a] = k } }
         return k
     }
 
-    /// nil or "": removed.
+    /// nil or "": removed. Failed: nothing kept in memory either (the store may have lost the old one).
     @discardableResult public func set(_ key: String?, for address: URL) -> Bool {
         let a = address.absoluteString, k = key?.isEmpty == false ? key : nil
         let ok = store.set(k, a)
-        if ok { lock.withLock { read[a] = .some(k) } }
+        lock.withLock { known[a] = ok ? k : nil }
         return ok
     }
+
+    public var description: String { "AIKeys" }
+    public var customMirror: Mirror { Mirror(self, children: [:]) }
 }

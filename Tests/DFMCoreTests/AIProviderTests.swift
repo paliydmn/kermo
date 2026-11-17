@@ -131,6 +131,16 @@ private let tools = sse([start] + text(0, ["Let me look."])
         let (events, error) = await run(anthropic.provider(Wire(Answer(body: body)).transport).send([], tools: [], system: ""))
         #expect(error?.kind == .cut && error?.words.contains(reason) == true && done(events) == nil)
     }
+    // A damaged payload isn't skipped: what's left could still parse into another call ({"path":"/tmp/a"} + "}").
+    let damaged = Wire(Answer(body: sse([start] + toolUse(0, "toolu_1", "read_file", [#"{\"path\":\"/tmp/a"#]) + ["{garbage", #"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"}"}}"#]), hang: true))
+    let broken = await run(anthropic.provider(damaged.transport).send([], tools: [], system: ""))
+    #expect(broken.error?.kind == .cut && done(broken.events) == nil)
+    await until { damaged.stopped }
+    #expect(damaged.stopped, "the body let go: its connection is cancelled, not read on")
+    let inStart = sse([start, #"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_9","name":"focus","input":{"why":"all at once"}}}"#,
+                       #"{"type":"content_block_stop","index":0}"#] + ending("tool_use"))
+    #expect(await done(run(anthropic.provider(Wire(Answer(body: inStart)).transport).send([], tools: [], system: "")).events)?.0.calls
+            == [AIToolUse(id: "toolu_9", name: "focus", args: ["why": "all at once"])], "arguments whole in the block's start")
     let refused = sse([start] + text(0, ["I can"]) + ending("refusal", #"{"type":"refusal","category":"cyber","explanation":null}"#))
     #expect(await done(run(anthropic.provider(Wire(Answer(body: refused)).transport).send([], tools: [], system: "")).events)?.1 == .refused("cyber"))
 }
@@ -147,6 +157,8 @@ private let tools = sse([start] + text(0, ["Let me look."])
     #expect(limited.kind == .limit && limited.retryAfter == 7 && limited.words.contains("7 s"))
     #expect(await failure(Answer(status: 529, body: #"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#))?.kind == .busy)
     #expect(await failure(Answer(status: 413, body: "<html><body>413 Request Entity Too Large</body></html>"))?.words.contains("413") == true, "a proxy's page")
+    let straddling = try #require(await failure(Answer(status: 401, body: String(repeating: "x", count: 296) + " " + key)))
+    #expect(!straddling.words.contains(String(key.prefix(3))), "masked before it is cut at 300: no part of it left")
     #expect(await failure(Answer(status: 302, headers: ["location": "https://elsewhere.example"], body: ""))?.words.contains("elsewhere") == true)
 
     let midway = sse([start] + text(0, ["Hel"]) + [#"{"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}"#])
@@ -185,12 +197,12 @@ private let tools = sse([start] + text(0, ["Let me look."])
     }
     #expect(await header("https://api.anthropic.com", .anthropic) == key)
     #expect(await header("http://203.0.113.5:8080/v1", .openai) == nil, "plain http to a public address: never")
-    #expect(AIEndpoint(.openai, address: AIEndpoint.address("http://203.0.113.5:8080/v1")!, model: "m", key: key).problem != nil)
+    #expect(AIEndpoint(.openai, address: AIEndpoint.address("http://203.0.113.5:8080/v1")!, model: "m", key: key).problem() != nil)
     #expect(await header("http://192.168.1.20:1234/v1", .openai) == "Bearer \(key)", "your own network")
     #expect(await header("http://localhost:11434/v1", .openai) == "Bearer \(key)")
     let plain = AIEndpoint(.openai, address: AIEndpoint.address("http://203.0.113.5/v1")!, model: "m", key: nil)
-    #expect(plain.problem == nil, "no key: allowed, the row says it goes in plain text")
-    #expect(AIEndpoint(.anthropic, address: AIEndpoint.defaultAddress(.anthropic), model: "m", key: nil).problem != nil)
+    #expect(plain.problem() == nil, "no key: allowed, the row says it goes in plain text")
+    #expect(AIEndpoint(.anthropic, address: AIEndpoint.defaultAddress(.anthropic), model: "m", key: nil).problem() != nil)
 
     for shown in ["\(anthropic)", String(reflecting: anthropic), { var s = ""; dump(anthropic, to: &s); return s }()] {
         #expect(!shown.contains(key) && shown.contains("•••"), "no description holds it: \(shown)")
@@ -223,6 +235,8 @@ private final class Seen: @unchecked Sendable {
     #expect(try sse.feed(Data("data: {\"a\":".utf8)) == [])
     #expect(try sse.feed(Data("1}\r\n\r\n: comment\nevent: x\ndata:2\n".utf8)) == ["{\"a\":1}", "2"])
     #expect(throws: AIError.self, "one line past its ceiling") { try sse.feed(Data(String(repeating: "x", count: 65).utf8)) }
+    var whole = AISSE(maxLine: 64, maxTotal: 1000)
+    #expect(throws: AIError.self, "a long line with its new line in the same chunk") { try whole.feed(Data(("data: " + String(repeating: "x", count: 80) + "\n").utf8)) }
     var all = AISSE(maxLine: 64, maxTotal: 100)
     #expect(throws: AIError.self, "the whole answer past its ceiling") { for _ in 0..<20 { _ = try all.feed(Data("data: 1234\n".utf8)) } }
 }
@@ -270,6 +284,10 @@ private let usage = #"{"id":"c1","object":"chat.completion.chunk","created":1,"m
         #expect(stop == .tools)
         #expect(m.calls == [AIToolUse(id: ids[0], name: "list_folder", args: ["server": "mac", "path": "/tmp"]), AIToolUse(id: ids[1], name: "focus", args: [:])])
     }
+    let noIndex = sse([#"{"choices":[{"index":0,"delta":{"tool_calls":[{"id":"a","type":"function","function":{"name":"focus","arguments":"{}"}}]},"finish_reason":null}],"error":null}"#,
+                       #"{"choices":[{"index":0,"delta":{"tool_calls":[{"id":"b","type":"function","function":{"name":"focus","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}"#])
+    #expect(await done(run(local.provider(Wire(Answer(body: noIndex)).transport).send([], tools: [], system: "")).events)?.0.calls.map(\.id) == ["a", "b"],
+            "whole calls without an index, one a chunk: two calls, not one; \"error\": null is no error")
     let broken = sse([chunk(#"{"tool_calls":[{"index":0,"id":"c","function":{"name":"focus","arguments":"{\"server\": "}}]}"#), chunk("{}", finish: "tool_calls")])
     #expect(await done(run(local.provider(Wire(Answer(body: broken)).transport).send([], tools: [], system: "")).events)?.0.calls == [AIToolUse(id: "c", name: "focus", args: nil)],
             "a finished call whose arguments aren't a JSON object: a call nothing may run")
@@ -329,8 +347,9 @@ private final class Memory: AIKeyStore, @unchecked Sendable {
     private let lock = NSLock()
     private var items: [String: String] = [:]
     private(set) var reads = 0
+    var deny = false
     func has(_ account: String) -> Bool { lock.withLock { items[account] != nil } }
-    func get(_ account: String) -> String? { lock.withLock { reads += 1; return items[account] } }
+    func get(_ account: String) -> String? { lock.withLock { reads += 1; return deny ? nil : items[account] } }
     func set(_ key: String?, _ account: String) -> Bool { lock.withLock { items[account] = key; return true } }
 }
 
@@ -345,5 +364,14 @@ private final class Memory: AIKeyStore, @unchecked Sendable {
     keys.set(nil, for: a)
     #expect(!keys.has(a) && keys.key(a) == nil && !store.has(a.absoluteString))
     keys.set("new-one", for: a)
-    #expect(keys.key(a) == "new-one" && store.reads == 2, "set is remembered as it is written")
+    #expect(keys.key(a) == "new-one" && store.reads == 3, "set is remembered as it is written (the read of none, after Remove, wasn't kept)")
+    var shown = ""
+    dump(keys, to: &shown)
+    #expect(!shown.contains("new-one") && !"\(keys)".contains("new-one"), "no key in a description")
+    let denied = Memory(), later = AIKeys(denied)
+    _ = denied.set(key, a.absoluteString)
+    denied.deny = true
+    #expect(later.has(a) && later.key(a) == nil, "the Keychain said no")
+    denied.deny = false
+    #expect(later.key(a) == key, "a refused read isn't kept: the next use asks again")
 }

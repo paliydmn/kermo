@@ -12,7 +12,7 @@ public struct AIOpenAI: AIProvider {
     private func request(_ path: String, body: ToolValue? = nil) -> URLRequest {
         var headers: [String: String] = [:]
         headers["authorization"] = endpoint.keyToSend.map { "Bearer \($0)" }
-        return AIWire.request(endpoint.address.appendingPathComponent(path), endpoint, body: body, headers: headers)
+        return AIWire.request(endpoint.address.appendingPathComponent(path), body: body, headers: headers)
     }
 
     public func send(_ messages: [AIMessage], tools: [AITool], system: String) -> AsyncThrowingStream<AIEvent, Error> {
@@ -66,8 +66,8 @@ public struct AIOpenAI: AIProvider {
 
         mutating func take(_ payload: String) throws -> [AIEvent] {
             guard payload != "[DONE]" else { return [] }
-            let m = AIWire.object(AIWire.json(payload))
-            if let e = m["error"] {
+            guard case .object(let m)? = AIWire.json(payload) else { throw AIWire.damaged }
+            if let e = m["error"], e != .null {
                 throw AIError(.other, "The server stopped the answer: \(AIWire.string(AIWire.object(e)["message"]) ?? AIWire.string(e) ?? "an error")")
             }
             if case .object(let u)? = m["usage"] {
@@ -80,9 +80,11 @@ public struct AIOpenAI: AIProvider {
             finish = AIWire.string(c["finish_reason"]) ?? finish
             if case .array(let parts)? = d["tool_calls"] {
                 for (n, part) in parts.enumerated() {
-                    let p = AIWire.object(part), f = AIWire.object(p["function"]), i = AIWire.int(p["index"]) ?? n
+                    let p = AIWire.object(part), f = AIWire.object(p["function"]), id = AIWire.string(p["id"]) ?? ""
+                    var i = AIWire.int(p["index"]) ?? n
+                    if p["index"] == nil, !id.isEmpty, let had = calls[i]?.id, !had.isEmpty, had != id { i = (calls.keys.max() ?? -1) + 1 }   // whole calls, no index
                     var call = calls[i] ?? ("", "", "")
-                    if call.id.isEmpty { call.id = AIWire.string(p["id"]) ?? "" }
+                    if call.id.isEmpty { call.id = id }
                     if call.name.isEmpty { call.name = AIWire.string(f["name"]) ?? "" }
                     switch f["arguments"] {
                     case .string(let s)?: call.args += s

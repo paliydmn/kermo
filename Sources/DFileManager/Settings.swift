@@ -17,8 +17,7 @@ struct SettingsRow {
         case toggle(Bool)                                  // the key's default
         case command(String)                               // a switch of the menu's: its ✓, and running it
         case choice([(title: String, value: Any?)], segmented: Bool)   // nil: no key, the code's default
-        case field(String)                                 // placeholder; empty: no key
-        case combo(String, items: @MainActor (AppDelegate) -> [String])   // a field with a list to pick from
+        case field(String, items: (@MainActor (AppDelegate) -> [String])? = nil)   // placeholder; empty: no key. Items: a list to pick from too
         case secret(has: @MainActor (AppDelegate) -> Bool, save: @MainActor (AppDelegate, String?) -> Void)   // never in defaults; nil: remove
         case number(ClosedRange<Double>, step: Double, value: Double, unit: String)
         case buttons([(title: String, command: String)])
@@ -145,13 +144,13 @@ extension AppDelegate {
         SettingsTab(title: "AI", symbol: .ai, groups: [
             ("Your own AI", [
                 SettingsRow(title: "Provider", note: "Kermo talks to it straight from this Mac, with your key: nothing of Kermo's in between", key: "aiProvider",
-                            control: .choice([("Anthropic", nil), ("OpenAI-compatible", "openai")], segmented: true), apply: { _ in AISettings.changed() }),
+                            control: .choice([("Anthropic", nil), ("OpenAI-compatible", "openai")], segmented: true), apply: { AISettings.providerChanged($0.defaults) }),
                 SettingsRow(title: "Address", key: "aiAddress", control: .field("the provider's own"), apply: { _ in AISettings.changed() },
                             status: { AISettings.addressNote($0.defaults) }),
                 SettingsRow(title: "API key", control: .secret(has: { AISettings.hasKey($0.defaults) }, save: { AISettings.saveKey($0.defaults, $1) }),
                             status: { AISettings.keyNote($0.defaults) }),
-                SettingsRow(title: "Model", key: "aiModel", control: .combo("Test fills the list", items: { _ in AISettings.models }),
-                            status: { AISettings.modelNote($0.defaults) }),
+                SettingsRow(title: "Model", key: "aiModel", control: .field("Test fills the list", items: { _ in AISettings.models }),
+                            apply: { _ in AISettings.changed(models: false) }, status: { AISettings.modelNote($0.defaults) }),
                 SettingsRow(title: "Test", note: "Lists the models, then asks the model for one word: a fraction of a cent",
                             control: .buttons([("Test", "ai.test")]), status: { _ in AISettings.tested }),
             ]),
@@ -421,13 +420,19 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             refreshers.append { p.selectItem(at: index()) }
             target(p) { write(p.indexOfSelectedItem) }
             return p
-        case .field(let placeholder):
-            let f = NSTextField()
+        case .field(let placeholder, let items):
+            let f = items == nil ? NSTextField() : NSComboBox()
             f.placeholderString = placeholder
             f.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
             f.widthAnchor.constraint(equalToConstant: 230).isActive = true
             (f.cell as? NSTextFieldCell)?.sendsActionOnEndEditing = true
-            refreshers.append { [unowned self] in f.stringValue = defaults.string(forKey: key) ?? "" }
+            refreshers.append { [unowned self] in
+                if let c = f as? NSComboBox, let items {
+                    c.removeAllItems()
+                    c.addItems(withObjectValues: items(app))
+                }
+                f.stringValue = defaults.string(forKey: key) ?? ""
+            }
             target(f) { [unowned self] in
                 let v = f.stringValue.trimmingCharacters(in: .whitespaces)
                 if v.isEmpty { defaults.removeObject(forKey: key) } else { defaults.set(v, forKey: key) }
@@ -468,23 +473,6 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             h.spacing = 6
             h.setHuggingPriority(.required, for: .horizontal)
             return h
-        case .combo(let placeholder, let items):
-            let c = NSComboBox()
-            c.placeholderString = placeholder
-            c.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-            c.widthAnchor.constraint(equalToConstant: 230).isActive = true
-            (c.cell as? NSTextFieldCell)?.sendsActionOnEndEditing = true
-            refreshers.append { [unowned self] in
-                c.removeAllItems()
-                c.addItems(withObjectValues: items(app))
-                c.stringValue = defaults.string(forKey: key) ?? ""
-            }
-            target(c) { [unowned self] in
-                let v = c.stringValue.trimmingCharacters(in: .whitespaces)
-                if v.isEmpty { defaults.removeObject(forKey: key) } else { defaults.set(v, forKey: key) }
-                r.apply?(app)
-            }
-            return c
         case .secret(let has, let save):
             let f = NSSecureTextField()
             f.setAccessibilityLabel(r.title)
@@ -498,6 +486,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
                 remove.isEnabled = saved
             }
             let store: @MainActor () -> Void = { [unowned self] in
+                window.makeFirstResponder(nil)   // an address still being typed is written first: the key is filed under it
                 let v = f.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 f.stringValue = ""   // not kept in the field, even hidden
                 guard !v.isEmpty else { return }
@@ -507,6 +496,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             target(f, store)   // ↩
             target(keep, store)
             target(remove) { [unowned self] in
+                window.makeFirstResponder(nil)
                 save(app, nil)
                 refresh()
             }

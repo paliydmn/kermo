@@ -14,7 +14,7 @@ public struct AIAnthropic: AIProvider {
     private func request(_ path: String, body: ToolValue? = nil) -> URLRequest {
         var headers = ["anthropic-version": Self.version]
         headers["x-api-key"] = endpoint.keyToSend
-        return AIWire.request(endpoint.address.appendingPathComponent(path), endpoint, body: body, headers: headers)
+        return AIWire.request(endpoint.address.appendingPathComponent(path), body: body, headers: headers)
     }
 
     public func send(_ messages: [AIMessage], tools: [AITool], system: String) -> AsyncThrowingStream<AIEvent, Error> {
@@ -67,13 +67,14 @@ public struct AIAnthropic: AIProvider {
         private var stopped = false
 
         mutating func take(_ payload: String) throws -> [AIEvent] {
-            let m = AIWire.object(AIWire.json(payload))
+            guard case .object(let m)? = AIWire.json(payload) else { throw AIWire.damaged }   // never skipped: the rest could still parse
             let i = AIWire.int(m["index"]) ?? -1
             switch AIWire.string(m["type"]) {
             case "message_start": count(AIWire.object(AIWire.object(m["message"])["usage"]))
             case "content_block_start":
                 let start = AIWire.object(m["content_block"])
-                blocks[i] = Block(start: start, text: AIWire.string(start["text"]) ?? "")
+                blocks[i] = Block(start: start, text: AIWire.string(start["text"]) ?? AIWire.string(start["thinking"]) ?? "",
+                                  signature: AIWire.string(start["signature"]) ?? "")
             case "content_block_delta":
                 guard blocks[i] != nil else { return [] }
                 let d = AIWire.object(m["delta"])
@@ -129,7 +130,8 @@ public struct AIAnthropic: AIProvider {
                 case "text": if !b.text.isEmpty { parts.append(.text(b.text)) }
                 case "tool_use":
                     guard stop == .tools else { throw AIError(.cut, "The model stopped (\(reason ?? "no reason")) while asking for a tool — nothing was run.") }
-                    parts.append(.call(AIToolUse(id: AIWire.string(b.start["id"]) ?? "", name: AIWire.string(b.start["name"]) ?? "", args: AIWire.args(b.json))))
+                    let args = b.json.isEmpty ? AIWire.object(b.start["input"]) : AIWire.args(b.json)   // all in its start, or in pieces
+                    parts.append(.call(AIToolUse(id: AIWire.string(b.start["id"]) ?? "", name: AIWire.string(b.start["name"]) ?? "", args: args)))
                 case "thinking": parts.append(.kept(["type": "thinking", "thinking": .string(b.text), "signature": .string(b.signature)]))
                 default: parts.append(.kept(.object(b.start)))   // redacted_thinking: whole in its start
                 }
