@@ -80,7 +80,9 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         var r = await s.call(writes, args, run: run)   // Cancel on "Allow…"
         #expect(r.isError && ran == 0 && asked().count == 1 && asked()[0].hasPrefix("Allow the assistant") && s.scope.grants.isEmpty)
         #expect(s.journal.last?.decision == "not allowed")
-        #expect(await s.call("copy", [:]).text.contains("isn't available yet"))
+        let (unfit, none) = (await s.call("copy", [:]).text, await s.call("move", [:]).text)
+        #expect(unfit.contains("doesn't fit") && none.contains("no tool"))
+        #expect(AITools.all.allSatisfy { AISession.runners[$0.name] != nil || AISession.looks[$0.name] != nil }, "every tool told to a model can be called")
 
         answer([0])   // allowed for the task, then Cancel on "write over"
         r = await s.call(writes, args, run: run)
@@ -135,10 +137,13 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         var r = await s.call(writes, args, run: run)
         #expect(r.isError && ran == 0 && touch.count == 1 && touch[0].contains("box") && s.journal.last?.decision == "locked", "\(touch)")
         #expect(asked().count == 1)   // the scope's question; the overwrite one never came
+        var looks = 0   // a tool that looks first: a locked server isn't looked at either
+        r = await s.call(writes, args, look: { _, _, _ in looks += 1; return .go(overwrites: false, run) })
+        #expect(r.isError && looks == 0 && ran == 0 && touch.count == 2 && s.journal.last?.decision == "locked")
         unlock = true
         answer([0])
         r = await s.call(writes, args, run: run)
-        #expect(!r.isError && ran == 1 && touch.count == 2)
+        #expect(!r.isError && ran == 1 && touch.count == 3)
         aiTearDown(s, dir)
 
         (s, dir, asked, answer) = try aiSetUp(prod: true)
@@ -334,6 +339,11 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         r = await run("read line; echo got-$line")   // nothing to read: it doesn't wait for a key
         #expect(r.text.contains("got-"), "\(r.text)")
 
+        let stopped = Task { await run("sleep 20") }
+        try await Task.sleep(for: .milliseconds(300))
+        stopped.cancel()
+        r = await stopped.value
+        #expect(r.isError && r.text.hasPrefix("Stopped"), "\(r.text)")
         r = await run("head -c \(AISession.textLimit * 2) /dev/zero | tr '\\0' x")
         #expect(r.isError && r.text.contains("printed more than") && r.text.count < AISession.textLimit + 500, "\(r.text.prefix(200))")
         AISession.commandSeconds = 1
@@ -373,7 +383,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         r = await s.call("server_info", ["server": .string("box")])
         #expect(!r.isError && r.text.hasPrefix("home folder: /"), "\(r.text)")
         r = await s.call("server_info", ["server": .string("mac")])
-        #expect(r.isError && audit.lines().count == 2)
+        #expect(r.isError && audit.lines().count == 3 && audit.lines().last?["command"] as? String == "server info", "what it ran on production is logged too")
     }
 
     /// A call of a real tool with something happening right after its look — before the question, and the write.
@@ -399,6 +409,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             let at = dir + "/" + server
             try FileManager.default.createDirectory(atPath: at, withIntermediateDirectories: true)
             func write(_ name: String, _ text: String) async -> AIResult { await s.call("write_file", ["server": .string(server), "path": .string(at + "/" + name), "text": .string(text)]) }
+            answer([])
             let before = asked().count
             var r = await write("new.conf", "one\n")   // Cancel at "Allow…"
             #expect(r.isError && aiNames(at).isEmpty && asked().count == before + 1, "\(server): \(r.text)")
@@ -423,19 +434,21 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             }
             #expect(r.isError && r.text.contains("Nothing was written") && aiText(at + "/new.conf") == "theirs, longer", "\(server): \(r.text)")
 
-            try FileManager.default.createDirectory(atPath: at + "/sub", withIntermediateDirectories: true)
+            // A link is never written through: not the file's own name, not a folder on the way — it would lead
+            // out of the folder the user allowed.
+            let out = dir + "/out-" + server
+            for d in [at + "/sub", out] { try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true) }
             try FileManager.default.createSymbolicLink(atPath: at + "/link", withDestinationPath: at + "/new.conf")
-            answer([0])
-            r = await write("sub", "x")
-            #expect(r.isError && r.text.contains("isn't a file"), "\(server): \(r.text)")
-            answer([0, 0])   // allowed; and over what is there
-            r = await write("link", "through\n")
-            let link = try FileManager.default.destinationOfSymbolicLink(atPath: at + "/link")
-            #expect(!r.isError && link == at + "/new.conf" && aiText(at + "/new.conf") == "through\n", "\(server): the link stays, its file is written: \(r.text)")
-            #expect(aiNames(at) == ["link", "new.conf", "raced", "sub"], "\(server): nothing else left there: \(aiNames(at))")
+            try FileManager.default.createSymbolicLink(atPath: at + "/way", withDestinationPath: out)
+            for (name, why) in [("sub", "isn't a text file"), ("link", "isn't a text file"), ("way/planted", "through a link: it is \(out)")] {
+                answer([0, 0])   // allowed; and whatever is asked after
+                r = await write(name, "x")
+                #expect(r.isError && r.text.contains(why), "\(server) \(name): \(r.text)")
+            }
+            #expect(aiText(at + "/new.conf") == "theirs, longer" && aiNames(out).isEmpty)
+            #expect(aiNames(at) == ["link", "new.conf", "raced", "sub", "way"], "\(server): nothing else left there: \(aiNames(at))")
         }
         #expect(temps() == 0 && audit.lines().isEmpty)
-        #expect((try FileManager.default.attributesOfItem(atPath: dir + "/box/raced")[.posixPermissions] as? Int) != nil)
     }
 
     /// On a production server a write asks each time, a new file too, and is in the production log as the assistant's.
@@ -450,13 +463,20 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         answer([0])
         r = await s.call("write_file", args)
         #expect(!r.isError && aiText(dir + "/app.conf") == "a\n" && asked().count == 3, "one question, not the save's own too: \(r.text)")
+        var notes: [String?] = []
+        let asker = s.asker
+        s.asker = { c, w in notes.append(c.note); return await asker!(c, w) }
+        answer([0])
+        r = await s.call("write_file", args.merging(["text": .string("b\n")]) { $1 })
+        #expect(!r.isError && notes == ["It writes over the file that is there."] && aiText(dir + "/app.conf") == "b\n", "\(notes)")
+        s.asker = asker
         try Data("src\n".utf8).write(to: URL(fileURLWithPath: dir + "-src"))
         defer { try? FileManager.default.removeItem(atPath: dir + "-src") }
         answer([0, 0])   // to read this Mac; production
         r = await s.call("copy", ["from_server": .string("mac"), "from_path": .string(dir + "-src"), "to_server": .string("box"), "to_folder": .string(dir)])
         #expect(!r.isError && aiText(dir + "/" + (dir as NSString).lastPathComponent + "-src") == "src\n", "\(r.text)")
         let lines = audit.lines()
-        #expect(lines.map { $0["action"] as? String } == ["save", "copy"] && lines.allSatisfy { $0["by"] as? String == "ai" && $0["exit"] as? Int == 0 }, "\(lines)")
+        #expect(lines.map { $0["action"] as? String } == ["save", "save", "copy"] && lines.allSatisfy { $0["by"] as? String == "ai" && $0["exit"] as? Int == 0 }, "\(lines)")
     }
 
     /// copy: what isn't there yet is copied without a question; a taken name asks, and only that name is written
@@ -482,11 +502,21 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         r = await copy("one.txt")
         #expect(!r.isError && aiText(dst + "/one.txt") == "one, newer", "\(r.text)")
 
+        // A folder of that name there, a link, a folder reached through a link, the item's own folder: not copied.
         try fm.createDirectory(atPath: dst + "/tree", withIntermediateDirectories: true)
         try Data("b old".utf8).write(to: URL(fileURLWithPath: dst + "/tree/b"))
-        answer([0])   // the folder is there: merged into, what it has stays
+        try fm.createDirectory(atPath: dir + "/out", withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: dst + "/way", withDestinationPath: dir + "/out")
+        answer([0])
         r = await copy("tree")
-        #expect(r.isError && r.text.contains("left as they were (1): \(dst)/tree/b") && aiText(dst + "/tree/b") == "b old" && aiText(dst + "/tree/a") == "a", "\(r.text)")
+        #expect(r.isError && r.text.contains("isn't a file") && aiNames(dst + "/tree") == ["b"] && aiText(dst + "/tree/b") == "b old", "\(r.text)")
+        answer([0])
+        r = await copy("one.txt", into: dst + "/way")
+        #expect(r.isError && r.text.contains("through a link") && aiNames(dir + "/out").isEmpty, "\(r.text)")
+        answer([0])
+        r = await copy("one.txt", to: "mac", into: src)
+        #expect(r.isError && r.text.contains("already") && aiNames(src).count == 4, "\(r.text)")
+        try fm.removeItem(atPath: dst + "/way")
 
         try Data("mine".utf8).write(to: URL(fileURLWithPath: src + "/raced"))
         r = await aiCall(s, "copy", ["from_server": .string("mac"), "from_path": .string(src + "/raced"), "to_server": .string("box"), "to_folder": .string(dst)]) {
@@ -499,7 +529,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         r = await copy("tree", from: "box", to: "mac", into: dir + "/back")
         #expect(!r.isError && aiNames(dir + "/back") == ["tree", "tree/a", "tree/b"], "\(r.text)")
         r = await copy("none")
-        #expect(r.isError && aiNames(dst) == ["one.txt", "raced", "tree", "tree/a", "tree/b"], "\(r.text)")
+        #expect(r.isError && aiNames(dst) == ["one.txt", "raced", "tree", "tree/b"], "\(r.text)")
 
         // Stopped on its way: no file cut short stays.
         let big = src + "/big.bin"

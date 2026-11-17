@@ -1510,12 +1510,15 @@ extension AppDelegate {
         // against the same version, and the last rename won — the other's text gone, unasked. The later one now
         // checks against what the earlier wrote, and asks.
         let key = ServerRow.key(target.asUser) + ":" + remotePath, before = Self.uploads[key]
+        let assistant = told != nil
         let mine = Task { @MainActor in
             _ = await before?.value
+            // Stopped while the save before it was at its question: the assistant's doesn't go in after.
+            if assistant, Task.isCancelled { told?("Stopped. Nothing was written."); return false }
             return await uploadNow(saved, to: remotePath, on: target, state, force: force, action: action, told: told)
         }
         Self.uploads[key] = mine
-        let ok = await mine.value
+        let ok = await withTaskCancellationHandler { await mine.value } onCancel: { if assistant { mine.cancel() } }
         if Self.uploads[key] == mine { Self.uploads[key] = nil }
         return ok
     }
@@ -1547,7 +1550,9 @@ extension AppDelegate {
         // No panel of its own: the one showing that server (else the active one) says it's saving; ⎋ there cancels.
         let panel = panels.first { $0.remote?.target == target } ?? active
         // A tool's folder there (`{base}`), if this may be its file.
-        guard await tools.near(remotePath, on: target, in: panel) != nil else { return told != nil ? tell("It was stopped.") : notSaved(saved, to: target, CancellationError()) }
+        guard await tools.near(remotePath, on: target, in: panel) != nil, told == nil || !Task.isCancelled else {
+            return told != nil ? tell("Stopped. Nothing was written.") : notSaved(saved, to: target, CancellationError())
+        }
         let (rule, problem) = checkRule(for: remotePath, on: target)
         let kept = Self.keptSession(of: target, in: panels)
         let r = await panel.busy("Saving “\(name)” to \(target.host)…") { flag in
@@ -1574,6 +1579,7 @@ extension AppDelegate {
             for p in panels where p.remote?.target.asUser == target.asUser { p.reload() }   // root's or user's: one server
             let notes = [note.map { "no history: \($0)" }, outcome.map { Self.checkNote($0, of: rule) }, Self.reloadNote(rule, outcome, on: target), problem]
                 .compactMap { $0 }
+            if !notes.isEmpty { told?(notes.joined(separator: " · ")) }
             if !notes.isEmpty {
                 let said = "Saved “\(name)” to \(target.host) · " + notes.joined(separator: " · ")
                 panel.flash(said)
@@ -1588,8 +1594,8 @@ extension AppDelegate {
             AuditLog.write(target, action, paths: [remotePath], exit: e.status, error: "“\(e.program)” failed. " + (e.now.isEmpty ? "Not saved." : e.now), by: by)
             Editor.markUnsaved(saved)
             if let a = e.attrs { state.baseline = a }   // an "after" check: what's there now, put back or not
-            let (message, info) = Self.checkFailed(e, name: name, host: target.host, kept: told != nil || Editor.window(for: saved) != nil ? nil : saved.path)
-            if told != nil { return tell(message + "\n" + info) }
+            let (message, info) = Self.checkFailed(e, name: name, host: target.host, kept: Editor.window(for: saved) == nil ? saved.path : nil)
+            if told != nil { return tell(message + "\n" + Self.checkFailed(e, name: name, host: target.host, kept: "").info) }
             _ = await choose(message, info: info, ["OK"], on: Editor.asking(about: saved))
             return false
         case .failure(is SFTPClient.ChangedOnServer) where told != nil:
@@ -1640,7 +1646,7 @@ extension AppDelegate {
             return false
         case .failure(let e):
             if !(e is CancellationError) { AuditLog.write(target, action, paths: [remotePath], exit: 1, error: e.localizedDescription, by: by) }
-            if told != nil { return tell(Self.notUploaded(saved, host: target.host, e, editorOpen: true) ?? "It was stopped.") }
+            if told != nil { return tell(e is CancellationError ? "It was stopped on its way: whether \(remotePath) was written isn't known. Read it to see." : "Not written: \(e.localizedDescription)") }
             return notSaved(saved, to: target, e)
         }
     }
@@ -1882,7 +1888,8 @@ extension AppDelegate {
     static func checkFailed(_ e: SFTPClient.CheckFailed, name: String, host: String, kept: String?) -> (message: String, info: String) {
         let lines = e.output.split(separator: "\n", omittingEmptySubsequences: false)
         let shown = (lines.count > 30 ? ["…"] + lines.suffix(30) : lines).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        let text = kept.map { "Your text is kept in \($0)." } ?? "Your text stays unsaved here."
+        // "": nobody's text to keep (the assistant's write).
+        let text = kept.map { $0.isEmpty ? "" : "Your text is kept in \($0)." } ?? "Your text stays unsaved here."
         return ("“\(name)” didn't pass “\(e.program)” on \(host)",
                 (shown.isEmpty ? "It exited with \(e.status)." : shown) + "\n\n" + (e.now.isEmpty ? "Not saved there: the file on \(host) is as it was." : e.now) + " " + text)
     }

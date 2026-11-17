@@ -732,7 +732,7 @@ enum NetworkMount {
 enum TempCopies {
     // dfm-git-: Git Log / Blame text; dfm-command-: ⌘↩ scripts; dfm-text-: ⌘Y's .txt copies; dfm-admin-save-, dfm-putback-:
     // the text a save as administrator or a config check's put-back is writing (seconds; left only by a crash).
-    static let prefixes = ["dfm-sftp-", "dfm-archive-", "dfm-git-", "dfm-command-", "dfm-text-", "dfm-admin-save-", "dfm-putback-"]
+    static let prefixes = ["dfm-sftp-", "dfm-archive-", "dfm-git-", "dfm-command-", "dfm-text-", "dfm-admin-save-", "dfm-putback-", "dfm-ai-"]   // dfm-ai-: the assistant's write_file on its way
     static let keptMarker = ".dfm-kept"
 
     /// The file lives in one of these copies (so Save As doesn't offer that folder: it goes with the copy).
