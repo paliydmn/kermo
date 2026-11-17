@@ -48,6 +48,10 @@ public enum AICommand {
             } else if c == " " || c == "\t" {
                 end()
             } else if one(c, of: ";&|\n") {
+                if c == "&" {   // a lone & leaves the command running behind the answer, past the runner's time limit
+                    guard rest.dropFirst().first == "&" else { return nil }
+                    rest = rest.dropFirst()
+                }
                 end()
                 parts.append([])
             } else {
@@ -64,12 +68,22 @@ public enum AICommand {
     private static func readsOnly(_ all: [(text: String, glob: Bool)]) -> Bool {
         var w = all.map(\.text)[...]
         if w.first == "sudo" { w = w.dropFirst(w.dropFirst().first == "-n" ? 2 : 1) }
-        // `>` here was quoted — awk's `print > "file"`. /dev: reading a device may do things (a watchdog, a tape) — as
-        // far as the words say: `cd /dev && cat x`, `cat /de?/x`, a FIFO elsewhere they don't.
-        guard let name = w.first, !w.contains(where: { $0.unicodeScalars.contains(">") || $0.contains("/dev/") }) else { return false }
-        if plain.contains(name) { return true }   // none of their options writes a file or runs a program: whatever a glob expands to
+        // `>` here was quoted — awk's `print > "file"`. A device, the kernel's log, another process's pipe: reading
+        // one may do things (a watchdog, a tape) or take what was another reader's — as far as the words say:
+        // `cat /de?/x`, a FIFO elsewhere, `grep -r x /` on BSD they don't. An option with a letter beyond ASCII: the
+        // program reads bytes (`-o` + a combining mark is still -o), the rules below read characters.
+        guard let name = w.first, !w.contains(where: { a in   // `ip addr show dev eth0`: a word of its own there
+            a.unicodeScalars.contains(">") || name != "ip" && a.split(separator: "/").contains { $0 == "dev" || $0 == "fd" } || a.contains("kmsg") || a.contains("trace_pipe")
+                || a.unicodeScalars.first == "-" && !a.unicodeScalars.allSatisfy(\.isASCII)
+        }) else { return false }
+        let args = Array(w.dropFirst())
+        // Names to read taken from stdin (xargs under another name), GNU df's sync(2); grep reading devices.
+        if long(args, ["--files0-from", "--sync"]) { return false }
+        if name.hasSuffix("grep"), short(args, "RD") || long(args, ["--dereference-recursive", "--devices"]) { return false }
+        // None of their other options writes a file or runs a program: whatever a glob expands to.
+        if plain.contains(name) { return true }
         // A glob may expand to an option (`sort *` next to a file named -o): not for a program whose options matter.
-        return !all.contains(where: \.glob) && rules[name]?(Array(w.dropFirst())) == true
+        return !all.contains(where: \.glob) && rules[name]?(args) == true
     }
 
     /// Programs with no argument that writes a file, deletes or runs another program (GNU and BSD).
@@ -93,10 +107,11 @@ public enum AICommand {
 
     /// Programs that read only with the right arguments: true = these arguments only read.
     private static let rules: [String: @Sendable ([String]) -> Bool] = [
-        "file": { !short($0, "C") && !long($0, ["--compile"]) },
+        "file": { !short($0, "Cfs") && !long($0, ["--compile", "--files-from", "--special-files"]) },   // -f: names from a file or stdin; -s reads devices
         "hostname": { $0.allSatisfy(["-f", "-s", "-i", "-I", "-d", "-A"].contains) },   // a name sets it
         // -s, a bare date, BSD's `-f format date` set the clock: only how to print now.
-        "date": { $0.allSatisfy { $0.hasPrefix("+") || ["-u", "-R", "--utc", "--universal", "--rfc-email"].contains($0) || $0.hasPrefix("-I") || $0.hasPrefix("--iso-8601") } },
+        // One +FORMAT: busybox takes a second `+word` for the time to set.
+        "date": { $0.filter { $0.hasPrefix("+") }.count <= 1 && $0.allSatisfy { $0.hasPrefix("+") || ["-u", "-R", "--utc", "--universal", "--rfc-email"].contains($0) || $0.hasPrefix("-I") || $0.hasPrefix("--iso-8601") } },
         "netstat": { !short($0, "z") },   // FreeBSD's -z resets the counters
         "sort": { !short($0, "o") && !long($0, ["--output", "--compress-program"]) },
         "uniq": { a in   // a second name is the file written — BSD's may start with a dash once a name came: the one name is the last word
@@ -108,14 +123,18 @@ public enum AICommand {
             return flags.contains { $0.contains("n") } && flags.allSatisfy { $0.dropFirst().allSatisfy("nEr".contains) }
                 && named(a).first?.range(of: "^\(address)(,\(address))?p$", options: .regularExpression) != nil
         },
-        "awk": { a in   // no system(), no getline from a command, no program from a file; `|` and `>` are refused before
-            a.allSatisfy { !$0.hasPrefix("-") || $0.hasPrefix("-F") || $0 == "-v" } && !a.contains { w in ["system", "getline", "@"].contains(where: w.contains) }
+        // No system(), no getline from a command, no program from a file; `|` and `>` are refused before. ARGV: a
+        // program names its own input (a device, pieced together); gawk's /inet/ is a connection.
+        "awk": { a in
+            a.allSatisfy { !$0.hasPrefix("-") || $0.hasPrefix("-F") || $0 == "-v" }
+                && !a.contains { w in ["system", "getline", "@", "ARGV", "ARGC", "/inet/"].contains(where: w.contains) }
         },
-        "find": { a in !a.contains { ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fls"].contains($0) || $0.hasPrefix("-fprint") } },
-        "journalctl": { !long($0, ["--vacuum", "--rotate", "--flush", "--sync", "--setup-keys", "--update-catalog", "--relinquish", "--smart-relinquish", "--cursor-file"]) },
+        "find": { a in !a.contains { ["-delete", "-rm", "-exec", "-execdir", "-ok", "-okdir", "-fls"].contains($0) || $0.hasPrefix("-fprint") } },
+        "journalctl": { !long($0, ["--vacuum", "--rotate", "--flush", "--sync", "--setup-keys", "--update-catalog", "--relinquish", "--smart-relinquish", "--cursor-file",
+                                    "--image", "--root"]) },   // an image is attached as a loop device and mounted
         "systemctl": { sub($0, ["status", "is-active", "is-enabled", "is-failed", "list-units", "list-timers", "list-unit-files", "list-sockets",
                                 "list-dependencies", "cat", "show"])
-                       && !short($0, "HM") && !long($0, ["--host", "--machine"]) },   // another machine: an ssh from there
+                       && !short($0, "HM") && !long($0, ["--host", "--machine", "--image", "--root"]) },   // another machine: an ssh from there
         "ip": { a in   // `ip addr add`, `ip route del`, `ip -batch file` change things
             let n = named(a)
             return a.filter { $0.hasPrefix("-") }.allSatisfy(["-4", "-6", "-br", "-brief", "-o", "-oneline", "-c", "-color", "-j", "-json", "-p", "-pretty",
@@ -126,12 +145,16 @@ public enum AICommand {
         "ss": { !short($0, "KD") && !long($0, ["--kill", "--diag"]) },   // -K closes sockets, -D writes a file
         // The test only (-q alone starts the server). As root it creates the log files its config names, if missing.
         "nginx": { ($0.contains("-t") || $0.contains("-T")) && $0.allSatisfy(["-t", "-T", "-q"].contains) },
-        "docker": { sub($0, containers) },
-        "podman": { sub($0, containers) && !short($0, "cr")   // its own options go after the subcommand too: another storage, host, runtime
-                    && !long($0, ["--root", "--runroot", "--url", "--connection", "--conmon", "--runtime", "--identity", "--module", "--hooks-dir", "--tmpdir",
-                                  "--storage", "--imagestore", "--network-cmd-path", "--ssh"]) },
+        "docker": containers, "podman": containers,   // podman-docker's `docker` is podman
     ]
-    private static let containers: Set<String> = ["ps", "logs", "inspect", "images", "version", "info"]
+    /// A subcommand that shows, and only the options named here, spelled out: podman takes its own after the
+    /// subcommand too — another storage, host or runtime, a profile written over any file (`--cpu-profile`).
+    private static let containers: @Sendable ([String]) -> Bool = { a in
+        sub(a, ["ps", "logs", "inspect", "images", "version", "info"]) && a.filter { $0.hasPrefix("-") }.allSatisfy {
+            ["-a", "--all", "-q", "--quiet", "-n", "--last", "-l", "--latest", "-s", "--size", "--no-trunc", "--format", "-f", "--filter", "--tail", "--since",
+             "--until", "-t", "--timestamps", "--details"].contains(String($0.prefix { $0 != "=" }))
+        }
+    }
 
     /// The command says itself that it deletes or writes over something: `rm`, `rmdir`, `mv`, `dd`, `truncate`,
     /// `shred`, `unlink`, `mkfs…` as any word of it (`sh -c 'rm x'`, `xargs rm` — once too often for `echo rm`),

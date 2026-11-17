@@ -12,7 +12,8 @@ import Testing
               "ip -br addr show", "ip route get 1.1.1.1", "ss -tlnp", "nginx -t", "sudo nginx -T", "date +%s", "date -u +%F", "netstat -tlnp", "systemctl status --no-pager nginx", "podman ps -a", "cat файл.txt", "nginx -t -q", "hostname -f", "uniq -c names",
               "du -sh /var/* | sort -h", "grep 'a b' f", "sed -n '/server name/p' f", "ls \"My Docs\"", "cat a 2>&1",
               "grep -E 'a{2}|\\$' f".replacingOccurrences(of: "|\\$", with: ""), "grep '$HOME' f", "sed -n '10,20p' f", "awk -F: '{print $1 \"(\" $3 \")\"}' /etc/passwd",
-              "cat *.log", "ls -la /var/log/*.gz"] {
+              "cat *.log", "ls -la /var/log/*.gz",
+              "ip addr show dev eth0", "docker ps --format '{{.Names}}'", "podman logs --tail=50 web", "grep -rn x /srv/*.conf", "cd /srv && ls && df -h"] {
         #expect(AICommand.isReadOnly(c), Comment(rawValue: c))
     }
     for c in ["rm -rf /srv", "cat a > b", "cat a >> b", "cat a 2>/dev/null.txt", "cat a 2> err", "cat $(rm x)", "cat `rm x`", "cat <(rm x)", "cat a & rm b",
@@ -37,7 +38,19 @@ import Testing
               "cat a \u{600}; rm b", "cat a >\u{301}out", "cat a \u{600}>out", "uniq a \u{301}b", "nginx -q", "sudo nginx -q", "uniq in -out",
               "date -f -%Y%m%d%H%M -- -202001010000", "date -d -d 010100002020", "date -d yesterday", "systemctl status -H root@other nginx",
               "systemctl show -M box x", "podman ps --root /tmp/x", "podman ps --url ssh://root@other/x", "podman info --conmon /tmp/prog", "netstat -z",
-              "sort ^x", "awk '{print > \"out\"}' f"] {
+              "sort ^x", "awk '{print > \"out\"}' f",
+              // …and the fourth (task 23 PR 2, before run_command leans on it): podman's own options under either name, options
+              // spelled past ASCII, busybox date, devices by another road, names from stdin, awk naming its input, a job left behind.
+              "sudo podman ps --cpu-profile /etc/passwd", "sudo podman info --memory-profile=/etc/shadow", "sudo docker ps --root /tmp/x",
+              "docker info --conmon /tmp/prog", "docker ps --runtime /tmp/prog", "podman ps --syslog", "cd /etc && sudo sort -o\u{301}x in",
+              "sudo sort -o\u{200d}passwd in", "sort --o=\u{301}out in", "sudo ss -D\u{301}dump", "systemctl status -H\u{301}x@10.0.0.5 nginx",
+              "journalctl --cursor-f=\u{301}c -n 1", "wc --files0-fro=\u{301}x", "sudo date +%s +1011200", "sudo -n date -u +%F +10112002030",
+              "sudo grep -R x /dev", "sudo grep -r x /dev", "sudo grep -D read -r x /", "grep --devices=read -r x /", "cd / && sudo cat dev/watchdog",
+              "cd /dev && cat watchdog", "find / -name watchdog -print0 | sudo wc --files0-from=-", "ls | sudo sort --files0-from=-", "du --files0-from=x",
+              "find / -name watchdog | sudo file -s -f -", "file --files-from=x", "sudo awk 'NR==1{ARGV[ARGC++]=\"/de\" \"v/watchdog\"}' /etc/hostname",
+              "awk '{print}' /inet/tcp/0/10.0.0.5/25", "find . -rm", "sudo find /srv -name '*.log' -rm", "tail -f /var/log/syslog &",
+              "sudo tail -f /var/log/syslog 2>&1 &", "df --sync", "df --sy", "sudo cat /proc/kmsg", "sudo cat /sys/kernel/debug/tracing/trace_pipe",
+              "sudo head -c 100 /proc/1234/fd/0", "sudo journalctl --image=/x.raw", "sudo systemctl status --image=/x.raw nginx"] {
         #expect(!AICommand.isReadOnly(c), Comment(rawValue: c))
     }
 }
