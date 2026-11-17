@@ -14,7 +14,7 @@ import Testing
               "grep -E 'a{2}|\\$' f".replacingOccurrences(of: "|\\$", with: ""), "grep '$HOME' f", "sed -n '10,20p' f", "awk -F: '{print $1 \"(\" $3 \")\"}' /etc/passwd",
               "cat *.log", "ls -la /var/log/*.gz",
               "ip addr show dev eth0", "docker ps --format '{{.Names}}'", "podman logs --tail=50 web", "grep -rn x /srv/*.conf", "cd /srv && ls && df -h",
-              "docker ps -aq", "docker logs --follow web", "wc -l /var/log/*.log", "cat *"] {
+              "docker ps -aq", "docker logs --follow web", "wc -l /var/log/*.log", "cat *", "ls ~", "cat ~/notes.txt", "zcat a.gz"] {
         #expect(AICommand.isReadOnly(c), Comment(rawValue: c))
     }
     for c in ["rm -rf /srv", "cat a > b", "cat a >> b", "cat a 2>/dev/null.txt", "cat a 2> err", "cat $(rm x)", "cat `rm x`", "cat <(rm x)", "cat a & rm b",
@@ -54,7 +54,12 @@ import Testing
               "sudo head -c 100 /proc/1234/fd/0", "sudo journalctl --image=/x.raw", "sudo systemctl status --image=/x.raw nginx",
               // …and PR 2a's own review: gawk's other spellings, this Mac's case-folding disk, a glob that may bring an option.
               "awk '{print}' /inet4/tcp/0/10.0.0.5/25", "awk 'BEGIN{print SYMTAB[\"ARG\" \"V\"][1]}' f", "cat /DEV/ttys003", "wc *", "grep x *",
-              "sudo grep x [a-z]*", "du ?", "docker ps -ax", "docker logs --follow --root /x web"] {
+              "sudo grep x [a-z]*", "du ?", "docker ps -ax", "docker logs --follow --root /x web",
+              // …and the sixth (task 23 PR 3): ~user, a device path glued to an option, zcat -r, a glob after a dash, file -p.
+              "sudo cat ~sys/watchdog", "cd ~sys && sudo cat watchdog", "cat x=~sys/watchdog", "cd / && sudo grep -fdev/watchdog x /etc/hostname",
+              "cd / && sudo du -Xdev/watchdog /etc", "cd / && sudo du --exclude-from=dev/watchdog /etc", "cd / && sort -R --random-source=dev/watchdog f",
+              "cd /proc/1234 && sudo grep -ffd/0 x /etc/hostname", "sudo zcat -r /", "sudo zcat -rf /", "zcat --recursive .", "df --s*", "wc --files0-fro*",
+              "du -*", "sudo grep x -? /", "wc *\u{301}", "grep x ?\u{301} /", "sudo file -p /etc/passwd", "file --preserve-date x"] {
         #expect(!AICommand.isReadOnly(c), Comment(rawValue: c))
     }
 }
@@ -137,6 +142,8 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
     // View: reads and read-only commands.
     s.grant(web, .view)
     #expect(decide(s, "read_file", read) == .allowed && decide(s, "run_command", run("sudo cat /etc/shadow | wc -l")) == .allowed)
+    #expect(decide(s, "run_command", [AITarget(web, "/dev", .run("sudo cat watchdog"))]) == .outside([.init(place: web, level: .work, commands: true)]),
+            "run in /dev, a name is a device")
     #expect(decide(s, "run_command", run("make")) == .outside([.init(place: web, level: .work, commands: true)]))
     #expect(decide(s, "read_file", [AITarget(.mac, "/etc/hosts", .read)]) == .outside([.init(place: .mac, level: .view)]), "this Mac is a place like any other")
 

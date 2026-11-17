@@ -129,7 +129,8 @@ public struct AIScope: Sendable, Equatable {
             let changes: Bool
             switch t.access {
             case .read: changes = false
-            case .run(let c) where AICommand.isReadOnly(c) && !AICommand.overwrites(c): changes = false   // two readings must agree
+            case .run(let c) where AICommand.isReadOnly(c) && !AICommand.overwrites(c) && t.path.map(AICommand.consumes) != true:
+                changes = false   // two readings must agree; and run in /dev, `cat watchdog` reads a device
             case .run(let c):
                 changes = true
                 if g?.level != .all && !(g?.level == .work && g?.commands == true) { needs.append(Need(place: t.place, level: .work, commands: true)) }
