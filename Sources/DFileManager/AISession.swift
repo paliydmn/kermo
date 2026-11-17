@@ -611,7 +611,10 @@ final class AISession {
         var server = false
         let text = Self.focus(app.aiContext, name: Self.label) { t in
             guard t?.sudo != true, self.scope.grants[self.place(t)] != nil else { return false }   // a root panel's isn't the user's grant to give
-            if self.noProduction, t.map(SavedServer.isProd) == true { return false }   // a grant from before Never Send
+            if t.map(SavedServer.isProd) == true {
+                if self.noProduction { return false }   // a grant from before Never Send
+                self.readProduction = true
+            }
             if t != nil { server = true }
             return true
         }

@@ -29,6 +29,8 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     /// The provider the chat started with: its production questions named it, its history is its.
     private var pinned: String?
     private(set) var turn: Task<Void, Never>?
+    /// The history's length when a request failed: Retry asks again only while nothing came after it.
+    private var failedAt: Int?
     /// New Chat's count: a turn of an earlier chat, still waiting on Touch ID, ends without a word.
     private var generation = 0
     private var chips: [Attached] = []
@@ -142,6 +144,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     /// The key, the model, the chips Kermo suggests — as things are now. No Keychain read: `has` only.
     func refresh() {
         guard built else { return }
+        session?.noProduction = AISettings.neverProd(app.defaults)   // back from Settings: the next read already knows
         let d = app.defaults, hasKey = AISettings.hasKey(d) || AISettings.address(d).map(AIEndpoint.isLocal) == true && AISettings.kind(d) == .openai
         model.title = d.string(forKey: "aiModel").flatMap { $0.isEmpty ? nil : $0 } ?? (AISettings.kind(d) == .anthropic ? AISettings.anthropicModel : "Choose a model")
         composer.isHidden = !hasKey
@@ -186,9 +189,9 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             let range = e.textView.selectedRange()
             if range.length > 0 {
                 let selected = (e.textView.string as NSString).substring(with: range)
-                out.append(Context(id: "sel:\(ObjectIdentifier(e).hashValue):\(range)", title: "Selection · \(name)", symbol: .document, server: t) { AISession.handOver(selected) })
+                out.append(Context(id: "sel:\(e.id):\(range)", title: "Selection · \(name)", symbol: .document, server: t) { AISession.handOver(selected) })
             }
-            out.append(Context(id: "editor:\(ObjectIdentifier(e).hashValue)", title: "\(name) · editor", symbol: .document, server: t) { [weak e] in
+            out.append(Context(id: "editor:\(e.id)", title: "\(name) · editor", symbol: .document, server: t) { [weak e] in
                 e.map { AISession.handOver($0.textView.string) } ?? .failure("The document was closed.")
             })
         }
@@ -262,13 +265,11 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         showChips()
         Task {
             var r = AIResult.failure("\(c.server.map(AISession.label) ?? "This Mac") stays locked.")
-            if let t = c.server, case .locked = await app.gate([t], to: "read “\(c.title)” for the AI on") {} else { r = await c.read() }
+            if let t = c.server, case .locked = await app.gate([t], to: "read “\(c.title.bidiVisible)” for the AI on") {} else { r = await c.read() }
             guard let i = chips.firstIndex(where: { $0.context.id == c.id }) else { return }   // removed meanwhile
-            if r.isError {
-                chips.remove(at: i)
-                flash(r.text)
-            } else { chips[i].text = r }
+            if r.isError { chips.remove(at: i) } else { chips[i].text = r }
             showChips()
+            if r.isError { flash(r.text.bidiVisible) }   // after: the chips' line would write over it
         }
         focus()
     }
@@ -289,7 +290,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         let menu = NSMenu()
         let have = Set(chips.map(\.context.id))
         for c in contexts(all: true) {
-            let item = MenuAction.item(c.title) { [unowned self] in
+            let item = MenuAction.item(c.title.bidiVisible) { [unowned self] in
                 if removingHash { dropHash() }
                 attach(c)
             }
@@ -344,6 +345,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             return note("Settings › AI: nothing from a production server goes to the AI. Remove its chip to send.", error: true)
         }
         let asked = chips, g = generation
+        failedAt = nil
         turn = Task {
             // Production: asked once a chat for each server, ↩ = Cancel. Nothing is sent until each said yes.
             for t in Self.unique(asked.compactMap(\.context.server)) where SavedServer.isProd(t) && !prodSent.contains(Self.key(t)) {
@@ -351,10 +353,12 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
                 guard g == generation else { return }   // New Chat meanwhile
                 guard case .pass = answer, !Task.isCancelled else { return finish() }
                 prodSent.insert(Self.key(t))
+                pinned = pinned ?? Self.pin(e)   // the consent named this provider: the chat is its from now on
                 append(Self.prodLine(AISession.label(t), host: e.address.host ?? "the provider"))
             }
-            // What is attached now: a chip removed while a question was up doesn't go.
+            // What is attached now: a chip removed while a question was up doesn't go; Never Send may have come meanwhile.
             let sent = asked.filter { a in chips.contains { $0.context.id == a.context.id } }
+            guard !(AISettings.neverProd(app.defaults) && sent.contains { isProd($0.context) }), !sent.isEmpty || !question.isEmpty else { return finish() }
             let prod = Self.unique(sent.compactMap(\.context.server)).filter(SavedServer.isProd).map(AISession.label)
             let message = AIChat.compose(question, attached: sent.map { ($0.context.title, $0.text?.text ?? "") }, production: prod)
             if chat == nil { start(e) }
@@ -399,14 +403,15 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             answer.end(note: "Stopped. Nothing more was asked or read.")
         } catch {
             let e2 = error as? AIError ?? AIError(.other, error.localizedDescription)
+            if g == generation { failedAt = chat.messages.count }
             answer.end(note: e2.words, error: true, action: e2.kind == .key ? ("Settings…", { [weak self] in self?.openSettings() }) : ("Retry", { [weak self] in self?.retry() }))
         }
         if g == generation { finish() }
     }
 
-    /// Only while the chat still ends with the question that failed: an older Retry would ask for nothing.
+    /// Only while the chat is as the failed request left it: an older Retry would ask for something else.
     private func retry() {
-        guard turn == nil, chat?.messages.last?.role == .user, let e = AISettings.endpoint(app.defaults), e.problem() == nil else { return }
+        guard turn == nil, let n = failedAt, chat?.messages.count == n, let e = AISettings.endpoint(app.defaults), e.problem() == nil else { return }
         if let why = blocked(e) { return note(why, error: true) }
         let g = generation
         turn = Task { await run(e, g) }
@@ -556,13 +561,13 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     }
 
     private static func userMessage(_ text: String, _ chips: [(String, Bool)]) -> NSView {
-        var views: [NSView] = text.isEmpty ? [] : [ChatText(NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]))]
+        var views: [NSView] = text.isEmpty ? [] : [ChatText(NSAttributedString(string: text.bidiVisible, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]))]
         if !chips.isEmpty {
             let s = NSMutableAttributedString()
             for (i, (title, prod)) in chips.enumerated() {
                 if i > 0 { s.append(NSAttributedString(string: "  ·  ")) }
                 if prod { s.append(Chip.prod.text); s.append(NSAttributedString(string: " ")) }
-                s.append(NSAttributedString(string: title))
+                s.append(NSAttributedString(string: title.bidiVisible))
             }
             s.addAttributes([.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor], range: NSRange(location: 0, length: s.length))
             views.append(ChatText(s))
@@ -603,7 +608,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
     /// A text in a popover: a chip's, a step's result, what will be sent.
     static func pop(_ title: String, _ text: String, from anchor: NSView, button: (String, () -> Void)? = nil) {
-        let head = NSTextField(labelWithString: title)
+        let head = NSTextField(labelWithString: title.bidiVisible)
         head.font = .boldSystemFont(ofSize: 12)
         head.lineBreakMode = .byTruncatingMiddle
         let textView = NSTextView(usingTextLayoutManager: false)

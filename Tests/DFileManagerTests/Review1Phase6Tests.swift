@@ -151,7 +151,7 @@ private func titles(_ nodes: [AppDelegate.MenuNode]) -> [String] {
 @MainActor @Test func keyHelpFollowsTheMenuBar() {
     let commands = AppDelegate().makeCommands(), s = KeyHelp.sections(commands)
     #expect(s.map(\.title) == ["File", "Edit", "Mark", "View", "Go", "Server", "Git", "Window", "Help", "Kermo", "Keyboard"])
-    #expect(s.first { $0.title == "View" }?.rows.prefix(3).map(\.title) == ["Sidebar", "Quick View", "Terminal"])
+    #expect(s.first { $0.title == "View" }?.rows.prefix(3).map(\.title) == ["Sidebar", "AI Chat", "Quick View"])
     #expect(s.first { $0.title == "Server" }?.rows.map(\.title).contains("Reopen as Root") == true)
 }
 

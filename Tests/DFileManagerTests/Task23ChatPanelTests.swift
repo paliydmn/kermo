@@ -122,6 +122,8 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         click(try #require(button(panel, "Retry")))
         await done(panel)
         #expect(shown(panel).contains("Now it's fine.") && wire.bodies.count == 4)
+        click(try #require(button(panel, "Retry")))   // that failure was answered: nothing more to ask
+        #expect(panel.turn == nil && wire.bodies.count == 4)
         #expect("\(wire.bodies[3]["messages"] ?? "")".components(separatedBy: "Again?").count == 2, "the question once")
 
         // Stop while the answer is coming: said, and the next question joins it.
@@ -184,6 +186,12 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         #expect("\(wire.bodies[0]["messages"] ?? "")".contains("[Kermo: box is a production server"))
         await attachAndSend("And now?")   // once a chat
         #expect(asked.count == 2 && wire.bodies.count == 2)
+
+        // The chat is the provider's its production text went to: another one is a New Chat.
+        (std.set("openai", forKey: "aiProvider"), std.set("http://127.0.0.1:9/v1", forKey: "aiAddress"), std.set("m", forKey: "aiModel"))
+        chat.send("Elsewhere?")
+        #expect(chat.turn == nil && wire.bodies.count == 2 && shown(chat).contains("names another provider"))
+        ["aiProvider", "aiAddress", "aiModel"].forEach(std.removeObject(forKey:))
 
         std.set("never", forKey: "aiProduction")
         chat.send("More?")
