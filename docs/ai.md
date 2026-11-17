@@ -4,6 +4,21 @@
 
 Let an AI agent you run in Kermo's terminal — [Claude Code](https://claude.com/claude-code) or another MCP client — work where Kermo is connected: read and copy files, run commands on your servers, open a file in the editor. The agent calls Kermo's tools; Kermo asks you before anything you haven't allowed. It is off until you switch it on, and Kermo sends nothing anywhere itself: the agent is yours, with your own account.
 
+## Your own AI
+
+Kermo also talks to a model provider itself, with your own key: **Settings › AI**, under **Your own AI**. There is no Kermo server or account in between: requests go straight from this Mac to the address you set. The chat panel that uses it comes in a later version; for now Settings keeps the key and tests it.
+
+1. **Provider:** Anthropic, or an OpenAI-compatible server — OpenAI itself, or one on your Mac or network such as [Ollama](https://ollama.com) (`http://localhost:11434/v1`) or [LM Studio](https://lmstudio.ai) (`http://localhost:1234/v1`).
+2. **Address:** empty means the provider's own (`https://api.anthropic.com`, `https://api.openai.com/v1`).
+3. **API key:** paste it and press **Save**. It goes to the Keychain (item **Kermo AI**), kept for that address only: change the address and the key isn't sent there. It's read once a launch, when first needed. **Remove** deletes it. A server on your Mac or network usually needs no key.
+4. **Test** lists the models your key may use, then asks the chosen model for one word — a fraction of a cent — and says what came back, or why not. Pick the **Model** from the list (Anthropic: `claude-sonnet-5-5` until you choose).
+
+Without a key nothing of this runs: no request, nothing in memory.
+
+**A Claude plan and the API are billed apart.** Pro doesn't include API use; Max, Ultra and Team come with [monthly API credits](https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers) once you link a Console organization, and a key from it draws on them. To work on your plan instead, run Claude Code in Kermo's terminal and connect it below.
+
+What goes to the provider: only what you send in a chat and what you let the model read (the chat comes later). Plain `http` is allowed only to this Mac and private networks (`localhost`, `10.*`, `172.16–31.*`, `192.168.*`, `*.local`) when there is a key; to any other address your key is never sent, and Settings warns that the chat would go unencrypted.
+
 ## Switch it on and connect Claude Code
 
 1. Open **Settings › AI** (⌘,) and switch on **Allow agents in Kermo's terminal (MCP)**.

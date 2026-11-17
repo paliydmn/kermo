@@ -17,7 +17,7 @@ Where Kermo keeps its settings, the formats of the files you can edit, and the `
 | Editor & Viewer | The editor for files on this Mac (`editorBundleID`); End with a newline (`editorFinalNewline`); the editor's text size (`editorFontSize`), Wrap lines (`editorWrap`), Show invisibles (`editorInvisibles`); Line numbers (`viewerLineNumbers`); the tool that compares files (`diffCommand`) |
 | Servers & Safety | Keep a production log (`auditLog`) and Show it; Keep earlier versions of saved server files (`serverHistory`); Checks before saving (**Edit…**); **Edit SSH Config…**; how long the sudo password is kept |
 | Monitor | Whether macOS lets Kermo [notify](tools.md#notifications) and **Open System Settings**; a command to run on critical alerts (`onAlert`) and **Send Test**; keep this Mac awake on power while something is watched (`monitorKeepAwake`); watch three times less often on battery (`monitorSlowOnBattery`). Thresholds are in the Tools window |
-| AI | Allow agents in Kermo's terminal (`aiMCP`): see [AI agents](ai.md) |
+| AI | [Your own AI](ai.md#your-own-ai): the provider (`aiProvider`), its address (`aiAddress`), the API key (in the Keychain, never a `defaults` key), the model (`aiModel`) and **Test**; allow agents in Kermo's terminal (`aiMCP`): see [AI agents](ai.md) |
 | Advanced | **Edit…** for `keymap.json`, `usermenu.json`, `validators.json` and `filters.json`; **Open** the config folder; **Reload Config** |
 
 ## Files
@@ -108,6 +108,9 @@ Set an option in [Settings](#settings), or with `defaults write com.dmn.dfileman
 | `serverHistory` | `-bool` | `true` | `false` keeps no [versions of server files](server-files.md#file-history) |
 | `updateCheckOff` | `-bool` | `false` | `true`: Kermo doesn't [check for updates](install.md#updates) by itself (**Kermo ▸ Configuration ▸ Check for Updates Automatically** sets it) |
 | `auditLog` | `-bool` | `true` | `false` writes no [production log](safety.md#production-log) |
+| `aiProvider` | `openai` | Anthropic | `openai`: an [OpenAI-compatible server](ai.md#your-own-ai) — OpenAI, Ollama, LM Studio and the like |
+| `aiAddress` | URL | the provider's own | Where the provider is, for example `http://localhost:11434/v1` for Ollama. Your key is kept for this address only |
+| `aiModel` | model id | `claude-sonnet-5-5` for Anthropic; the server's first otherwise | The model, for example `claude-opus-5-5` (**Test** lists the ones your key may use) |
 | `aiMCP` | `-bool` | `false` | `true` lets an agent started in Kermo's terminal use Kermo's tools ([AI agents](ai.md)) |
 | `monitorKeepAwake` | `-bool` | `false` | While this Mac is on power and a server is [watched](tools.md#watching-a-server), it doesn't go to sleep by itself (the display still does; closing the lid still puts it to sleep) |
 | `monitorSlowOnBattery` | `-bool` | `true` | On battery or in Low Power Mode, watching checks three times less often; `false`: as on power |
