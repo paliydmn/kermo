@@ -405,7 +405,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(lines.first?["command"] as? String == "touch made" && lines.first?["paths"] as? [String] == [dir])
 
         r = await s.call("server_info", ["server": .string("box")])
-        #expect(!r.isError && r.text.hasPrefix("home folder: /"), "\(r.text)")
+        #expect(!r.isError && r.text.hasPrefix("[Kermo: box is a production server") && r.text.contains("\n\nhome folder: /"), "\(r.text)")
         r = await s.call("server_info", ["server": .string("mac")])
         #expect(r.isError && audit.lines().count == 3 && audit.lines().last?["command"] as? String == "server info", "what it ran on production is logged too")
     }

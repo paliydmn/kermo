@@ -64,8 +64,8 @@ private func titles(_ nodes: [AppDelegate.MenuNode]) -> [String] {
         "Connect to Server…", "New SSH Session…", "New Server…", "—", "Overview", "Services…", "Containers…", "Ports & Tunnels ▸", "—",
         "Reopen as Root", "Reopen as User", "—", "Copy SSH Key to Server…", "File History…", "Watch Server…", "Run on Servers…", "—",
         "Disconnect", "Reconnect SSH Session", "Edit SSH Config…", "Production Log"])
-    #expect(titles(AppDelegate.menuItems(app.commands, in: "View")).prefix(9) == ["Sidebar", "Quick View", "Terminal", "Maximize Terminal", "Terminal Pane ▸", "Activity", "—",
-                                                                                 "Tabs ▸", "Panels ▸"])
+    #expect(titles(AppDelegate.menuItems(app.commands, in: "View")).prefix(10) == ["Sidebar", "AI Chat", "Quick View", "Terminal", "Maximize Terminal", "Terminal Pane ▸", "Activity", "—",
+                                                                                  "Tabs ▸", "Panels ▸"])
     #expect(titles(AppDelegate.menuItems(app.commands, in: "View/Sort By")) == ["Name", "Size", "Modified", "—", "Reverse"])
     #expect(titles(AppDelegate.menuItems(app.commands, in: "File/As Administrator")) == [
         "Copy as Administrator…", "Move as Administrator…", "New Folder as Administrator…", "Delete as Administrator…", "—",
@@ -111,7 +111,7 @@ private func titles(_ nodes: [AppDelegate.MenuNode]) -> [String] {
 /// Switches show ✓ for their state (`Command.on`), asked as the menu opens.
 @MainActor @Test func switchesShowTheirState() {
     let app = app()
-    let switches = ["view.sidebar", "view.quickview", "view.terminal", "view.terminalFull", "view.activity", "view.hidden", "view.perms",
+    let switches = ["view.sidebar", "ai.chat", "view.quickview", "view.terminal", "view.terminalFull", "view.activity", "view.hidden", "view.perms",
                     "view.gitOnly", "go.bookmark", "view.sort.name", "view.sort.size", "view.sort.mtime", "view.sort.reverse", "app.update.auto",
                     "monitor.keepAwake", "monitor.slowOnBattery", "monitor.openAtLogin",   // Settings' switches
                     "text.wrap", "text.invisibles", "text.indent.tabs", "text.indent.2", "text.indent.4"]   // an editor's
