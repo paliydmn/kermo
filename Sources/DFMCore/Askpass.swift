@@ -70,10 +70,7 @@ public enum Askpass {
         private func serve(_ c: Int32) {
             defer { close(c) }
             _ = fcntl(c, F_SETNOSIGPIPE, 1)
-            var uid = uid_t(), gid = gid_t(), pid = pid_t(), size = socklen_t(MemoryLayout<pid_t>.size)
-            guard getpeereid(c, &uid, &gid) == 0, uid == getuid(),
-                  getsockopt(c, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) == 0, admits(pid),
-                  let request = Askpass.readRequest(c) else { return }
+            guard let pid = Askpass.peer(c), admits(pid), let request = Askpass.readRequest(c) else { return }
             let gone = CancelFlag(), done = CancelFlag()
             Thread {   // the client hanging up (ssh gone) takes the question away
                 var p = pollfd(fd: c, events: Int16(POLLIN), revents: 0)
@@ -88,6 +85,13 @@ public enum Askpass {
         }
     }
 
+    /// Who is at the other end of `c`, if it is this user: its pid.
+    public static func peer(_ c: Int32) -> pid_t? {
+        var uid = uid_t(), gid = gid_t(), pid = pid_t(), size = socklen_t(MemoryLayout<pid_t>.size)
+        guard getpeereid(c, &uid, &gid) == 0, uid == getuid(), getsockopt(c, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) == 0 else { return nil }
+        return pid
+    }
+
     /// `pid` is `root` or started by it, a few levels down (askpass ← sh ← ssh ← a ProxyJump's ssh ← git…).
     public static func descends(_ pid: pid_t, from root: pid_t) -> Bool {
         var p = pid
@@ -99,7 +103,7 @@ public enum Askpass {
         return false
     }
 
-    static func parent(of pid: pid_t) -> pid_t? {
+    public static func parent(of pid: pid_t) -> pid_t? {
         var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.size
         var mib = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
         guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }

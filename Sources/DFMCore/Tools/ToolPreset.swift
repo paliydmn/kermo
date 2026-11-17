@@ -557,3 +557,8 @@ extension ToolValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, Ex
     public init(floatLiteral v: Double) { self = .number(v) }
     public init(booleanLiteral v: Bool) { self = .bool(v) }
 }
+
+extension ToolValue: ExpressibleByDictionaryLiteral, ExpressibleByArrayLiteral {
+    public init(dictionaryLiteral pairs: (String, ToolValue)...) { self = .object(Dictionary(pairs) { $1 }) }
+    public init(arrayLiteral items: ToolValue...) { self = .array(items) }
+}
