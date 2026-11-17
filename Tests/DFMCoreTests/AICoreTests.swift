@@ -9,8 +9,10 @@ import Testing
               "tail -n 100 /var/log/app.log 2>/dev/null", "grep -rn error /var/log 2>&1 | sort | uniq -c | sort -rn", "df -h; free -m", "cd /srv/app && ls",
               "journalctl -u nginx -n 100 --no-pager", "systemctl status nginx", "sudo systemctl is-active nginx", "docker ps -a", "podman logs --tail 50 web",
               "find /var/log -name '*.log' -mtime +7", "sed -n '10,20p' /etc/hosts", "sed -nE /listen/p nginx.conf", "awk '{print $1}' access.log", "ip a",
-              "ip -br addr show", "ip route get 1.1.1.1", "ss -tlnp", "nginx -t", "sudo nginx -T", "date +%s", "date -d yesterday", "hostname -f", "uniq -c names",
-              "du -sh /var/* | sort -h", "sort < names", "grep 'a b' f", "sed -n '/server name/p' f", "ls \"My Docs\"", "cat a 2>&1"] {
+              "ip -br addr show", "ip route get 1.1.1.1", "ss -tlnp", "nginx -t", "sudo nginx -T", "date +%s", "date -u +%F", "netstat -tlnp", "systemctl status --no-pager nginx", "podman ps -a", "cat файл.txt", "nginx -t -q", "hostname -f", "uniq -c names",
+              "du -sh /var/* | sort -h", "grep 'a b' f", "sed -n '/server name/p' f", "ls \"My Docs\"", "cat a 2>&1",
+              "grep -E 'a{2}|\\$' f".replacingOccurrences(of: "|\\$", with: ""), "grep '$HOME' f", "sed -n '10,20p' f", "awk -F: '{print $1 \"(\" $3 \")\"}' /etc/passwd",
+              "cat *.log", "ls -la /var/log/*.gz"] {
         #expect(AICommand.isReadOnly(c), Comment(rawValue: c))
     }
     for c in ["rm -rf /srv", "cat a > b", "cat a >> b", "cat a 2>/dev/null.txt", "cat a 2> err", "cat $(rm x)", "cat `rm x`", "cat <(rm x)", "cat a & rm b",
@@ -26,7 +28,16 @@ import Testing
               "find d1 ';' ls -delete", "find d1 \\; ls -delete", "awk -v cat='touch t5' 'BEGIN { print | cat }'", "sort f ';' cat -o g", "sed -n 1p f ';' cat -i",
               "sed -n 1p f -\\\nid", "sort --o=/tmp/out in", "file --compil x", "date --s=2020-01-01", "journalctl --rot", "ss --di=/tmp/d",
               "journalctl --cursor-file=/tmp/c -n 1", "sort --compress-program=sh f", "uniq - out", "cat a | uniq - out", "uniq -- in -out", "cat =(touch t3)",
-              "ls *(e:'touch t4':)", "cat (touch t)", "find . -del*", "sudo cat /dev/watchdog", "cat 'a", "sed -n '$p' f"] {
+              "ls *(e:'touch t4':)", "cat (touch t)", "find . -del*", "sudo cat /dev/watchdog", "cat 'a", "cat </dev/kmsg",
+              // …and through the second: only single quotes are literal.
+              "cat \"`touch t`\"", "awk \"$(touch t)\"", "sort -t \"\\\"\" -o out -t \\\" in", "awk $'BEGIN{sys\\x74em(\"touch t\")}'", "cat \"$X\"",
+              "awk \"{print $1}\" f", "sudo sort *", "sed -n 1p *", "cat \"a\u{7}b\"", "ls ${HOME}", "awk {print} f",
+              // …and the third review: a here-document, Unicode that Swift's characters fold into syntax, options after a subcommand, BSD.
+              "cat <<pwd\nls '$(touch t)'\npwd", "cat <<<x", "sort < names", "find /srv \u{37e} ls -delete", "find /srv '\u{301};cat '\u{301} -exec touch x '{}' +",
+              "cat a \u{600}; rm b", "cat a >\u{301}out", "cat a \u{600}>out", "uniq a \u{301}b", "nginx -q", "sudo nginx -q", "uniq in -out",
+              "date -f -%Y%m%d%H%M -- -202001010000", "date -d -d 010100002020", "date -d yesterday", "systemctl status -H root@other nginx",
+              "systemctl show -M box x", "podman ps --root /tmp/x", "podman ps --url ssh://root@other/x", "podman info --conmon /tmp/prog", "netstat -z",
+              "sort ^x", "awk '{print > \"out\"}' f"] {
         #expect(!AICommand.isReadOnly(c), Comment(rawValue: c))
     }
 }
