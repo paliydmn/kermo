@@ -110,3 +110,51 @@ public enum TerminalText {
     /// comments from being empty.
     public static func command(_ text: String, in dir: String) -> String { SSHCommand.shell(in: dir, after: "{\n" + text + "\n:\n}") }
 }
+
+/// What a typed command may destroy, told from its words (quotes aren't parsed).
+public enum ShellRisk {
+    /// Programs that delete or write over what is there (`AICommand.overwrites` asks for these on any server).
+    public static let removes: Set<String> = ["rm", "mv", "dd", "truncate", "shred", "unlink"]
+
+    /// R1: a command that removes, moves, re-owns, truncates or stops things, which asks first on a production server:
+    /// `rm`, `mv`, `chmod`, `chown`, `dd`, `truncate`, `shred`, `unlink`, `find … -delete / -exec`, `rsync --delete`,
+    /// `git clean / reset --hard`, `systemctl stop|restart|disable|mask|kill`, and `> file` — in any command of a list
+    /// or pipeline (`cd x && rm -rf y`, `ls; rm x`, `… | xargs rm`, `$(…)`), behind sudo / doas / env / xargs, their
+    /// options, VAR=value and a path (/bin/rm). Quotes aren't parsed: a separator inside them asks once too often.
+    public static func isDangerous(_ command: String) -> Bool {
+        command.components(separatedBy: CharacterSet(charactersIn: ";&|\n()`")).contains(where: isDangerousOne) || writesOver(command)
+    }
+
+    private static func isDangerousOne(_ command: String) -> Bool {
+        var words = command.split(whereSeparator: \.isWhitespace).map(String.init)[...]
+        let name = { (w: String) in (w as NSString).lastPathComponent }   // /usr/bin/sudo, /bin/rm
+        var takesValue = ["-u", "-g"]   // `sudo -u www rm …`
+        while let w = words.first, ["sudo", "doas", "env", "nohup", "command", "exec", "time", "xargs"].contains(name(w)) || w.hasPrefix("-") || w.contains("=") {
+            if name(w) == "xargs" { takesValue = ["-I", "-n", "-P", "-L", "-s", "-E"] }   // `xargs -I {} rm {}`
+            words = words.dropFirst(takesValue.contains(w) ? 2 : 1)
+        }
+        guard let first = words.first.map({ String(name($0).drop(while: { $0 == "\\" })) }) else { return false }   // `\rm`: past the alias
+        let rest = words.dropFirst()
+        switch first {
+        case "systemctl": return rest.first { !$0.hasPrefix("-") }.map { ["stop", "restart", "disable", "mask", "kill"].contains($0) } == true
+        case "find": return rest.contains { ["-delete", "-exec", "-execdir", "-ok"].contains($0) }
+        case "rsync": return rest.contains { $0.hasPrefix("--delete") || $0 == "--remove-source-files" }
+        case "git":
+            let sub = rest.first { !$0.hasPrefix("-") }
+            return sub == "clean" || sub == "reset" && rest.contains("--hard")
+        default: return removes.contains(first) || ["chmod", "chown"].contains(first)
+        }
+    }
+
+    /// `> file` (not `>>`, `>&2`, nor into /dev/null): the file is emptied before the command even runs.
+    public static func writesOver(_ command: String) -> Bool {
+        let c = Array(command)
+        for i in c.indices where c[i] == ">" && (i == 0 || c[i - 1] != ">") {
+            let after = c[(i + 1)...]
+            if after.first == ">" || after.first == "&" { continue }
+            let target = String(after.drop { $0 == " " || $0 == "\t" }.prefix { !$0.isWhitespace && !";&|)".contains($0) })
+            if !target.isEmpty && target != "/dev/null" { return true }
+        }
+        return false
+    }
+}

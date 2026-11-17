@@ -685,6 +685,47 @@ extension ServerLockTests {
         #expect(a.isPlace && a.list?.source.target == SFTPTarget(host: "deploy@web-01.invalid"))
     }
 
+    /// Task 23 PR 1: ⌘E / F2's placeholders are made of `AIContext`'s panels — what they were before it, branch by
+    /// branch: a folder here, a server's folder (%D only for the same server), a list (its rows, the login folder).
+    @Test func shellContextIsMadeOfThePanelsAsBefore() async throws {
+        let (app, a, b, done) = try app()
+        defer { done() }
+        let dir = try tempDir()
+        try FileManager.default.createDirectory(atPath: dir + "/sub", withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: dir + "/x.txt", contents: Data())
+        a.navigate(to: dir)
+        await until { a.listedItems.count == 2 }
+        app.window.makeFirstResponder(a.table)
+        a.moveCursor(toName: "x.txt")
+        var c = app.shellContext
+        #expect(c.dir == dir && c.otherDir == b.path && c.cursor == "x.txt" && c.targets == ["x.txt"] && c.server == nil)
+
+        let s = Stub(rows: [row("nginx"), row("cron")])
+        a.showList(s)
+        app.window.makeFirstResponder(a.table)
+        c = app.shellContext
+        #expect(c.dir == "." && c.otherDir == nil && c.cursor == "nginx" && c.targets == ["nginx"] && c.server == s.target)
+        app.window.makeFirstResponder(b.table)
+        #expect(app.shellContext.otherDir == a.path, "as before: the folder behind the other panel's list (D-219)")
+
+        b.loadRemote(.local(), dir: dir + "/sub", select: nil)
+        await until { b.remote?.dir == dir + "/sub" }
+        c = app.shellContext
+        #expect(c.dir == dir + "/sub" && c.otherDir == nil && c.server == .local() && c.targets.isEmpty, "a list isn't its server's folder")
+        a.loadRemote(.local(), dir: dir, select: "x.txt")
+        await until { a.remote?.dir == dir && a.remoteCursor?.item.name == "x.txt" }
+        #expect(app.shellContext.otherDir == dir, "the same server")
+        app.window.makeFirstResponder(a.table)
+        c = app.shellContext
+        #expect(c.dir == dir && c.otherDir == dir + "/sub" && c.cursor == "x.txt" && c.targets == ["x.txt"] && c.server == .local())
+        b.navigate(to: dir)
+        await until { b.remote == nil }
+        #expect(app.shellContext.otherDir == nil, "the other panel is on this Mac")
+        let all = app.aiContext
+        #expect(all.shell.dir == dir && all.active.server == .local() && all.other.folder == .init(server: nil, dir: dir))
+        #expect(all.editor == nil && all.terminal == nil, "no editor window, the drawer shut: neither is in front of the user")
+    }
+
     /// ⌘↩: a folder under the cursor in the other panel (here or on the panel's server); on an overview's row, that row
     /// there. ⌘E on a list runs on its server, in its login folder, %f its cursor's row. `?` and `:` are a list's keys
     /// only: in a folder they stay type-select's.
