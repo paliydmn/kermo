@@ -568,4 +568,148 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             }
         }
     }
+
+    // MARK: Task 23 PR 3: one call at a time; an outside agent over MCP
+
+    /// A client may call side by side; the session takes one call at a time, in the order they came. One stopped
+    /// while it waits asks nothing and runs nothing, and stopping one doesn't stop the next.
+    @Test func aSessionTakesOneCallAtATime() async throws {
+        let (s, dir, asked, answer) = try aiSetUp()
+        defer { aiTearDown(s, dir) }
+        let reads = AITool(name: "test_read", about: "", kind: .read, params: [.init(name: "server", about: ""), .init(name: "path", about: "")],
+                           places: [.init(server: "server", path: "path", access: .read)])
+        answer([0])
+        _ = await s.call(reads, ["server": "mac", "path": .string(dir)], run: { _, _, _ in AIResult("") })   // the Mac allowed
+        var inside = 0, most = 0, order: [String] = []
+        let run: AISession.Runner = { _, args, _ in
+            inside += 1
+            most = max(most, inside)
+            if case .string(let p)? = args["path"] { order.append((p as NSString).lastPathComponent) }
+            try? await Task.sleep(for: .milliseconds(60))
+            inside -= 1
+            return AIResult("done")
+        }
+        let calls = ["a", "b", "c", "d"].map { name in Task { await s.call(reads, ["server": "mac", "path": .string(dir + "/" + name)], run: run) } }
+        try await Task.sleep(for: .milliseconds(20))   // a runs, the rest wait
+        calls[0].cancel()   // the one running: its runner's to notice
+        calls[2].cancel()   // one waiting its turn
+        var results: [AIResult] = []
+        for c in calls { results.append(await c.value) }
+        #expect(most == 1 && order == ["a", "b", "d"], "\(most) at once, ran \(order)")
+        #expect(results.map(\.text) == ["done", "done", "Stopped. Nothing was done.", "done"] && asked().count == 1)
+        #expect(s.journal.suffix(4).map(\.decision).sorted() == ["allowed", "allowed", "allowed", "stopped"])
+
+        // Two writes of one new file, side by side: the second sees the first's file and asks — it isn't a race to lose.
+        let path = dir + "/same.txt"
+        answer([0])   // "Allow…" for the first; the second's "write over" gets a Cancel
+        async let one = s.call("write_file", ["server": "mac", "path": .string(path), "text": "one\n"])
+        async let two = s.call("write_file", ["server": "mac", "path": .string(path), "text": "two\n"])
+        let (r1, r2) = await (one, two)
+        #expect(!r1.isError && r2.isError && aiText(path) == "one\n" && asked().last == "Let the assistant write over what is there?", "\(r1.text) / \(r2.text)")
+    }
+
+    /// The agent's side of the socket: lines out, answers by id.
+    private final class StubAgent: @unchecked Sendable {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        private let lock = NSLock()
+        private var lines: [[String: ToolValue]] = [], ended = false
+        private var taken: Bool?
+        /// Off the main thread: the app decides there who gets in.
+        init(_ path: String) {
+            Thread { [self] in
+                let ok = Askpass.withAddress(path, { connect(fd, $0, $1) }) == 0 && Askpass.read(fd, 1) == Data("K".utf8)
+                lock.withLock { taken = ok }
+                MCP.lines(fd) { l in if case .object(let m)? = try? JSONDecoder().decode(ToolValue.self, from: l) { lock.withLock { lines.append(m) } } }
+                lock.withLock { ended = true }
+            }.start()
+        }
+        var gone: Bool { lock.withLock { ended } }
+        var admitted: Bool {
+            get async {
+                for _ in 0..<500 where lock.withLock({ taken }) == nil { try? await Task.sleep(for: .milliseconds(10)) }
+                return lock.withLock { taken } == true
+            }
+        }
+        func call(_ id: Int, _ tool: String, _ args: [String: ToolValue] = [:]) async -> (text: String, isError: Bool)? {
+            let r = await ask(id, "tools/call", ["name": .string(tool), "arguments": .object(args)])
+            guard case .object(let result)? = r?["result"], case .array(let c)? = result["content"], case .object(let first)? = c.first,
+                  case .string(let text)? = first["text"] else { return nil }
+            return (text, result["isError"] == true)
+        }
+        func ask(_ id: Int, _ method: String, _ params: ToolValue = [:]) async -> [String: ToolValue]? {
+            MCP.write(fd, MCP.line(["jsonrpc": "2.0", "id": .number(Double(id)), "method": .string(method), "params": params]))
+            for _ in 0..<500 {
+                if let a = lock.withLock({ lines.first { $0["id"] == .number(Double(id)) } }) { return a }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            return nil
+        }
+    }
+
+    /// An agent over the socket gets the registry's tools and no other way to them than the session's chain: asked
+    /// as any call is, its scope shown and taken back, its journal kept; hung up on when it leaves or the switch
+    /// goes off. One no tab started is turned away with nothing read.
+    @Test func anAgentOverMCPCallsThroughTheSameChain() async throws {
+        let (s, dir, _, _) = try aiSetUp()   // the app, the folder
+        let app = s.app, path = "/tmp/dfm-mcp-" + String(UUID().uuidString.prefix(8))
+        mkdir(path, 0o700)
+        defer { aiTearDown(s, dir); try? FileManager.default.removeItem(atPath: path); AppDelegate.answering = nil }
+        try "hello\n".write(toFile: dir + "/a.txt", atomically: true, encoding: .utf8)
+        var asked: [String] = [], answers: [Int] = []
+        AppDelegate.answering = { title, buttons, _ in asked.append(title); return answers.isEmpty ? buttons.count - 1 : answers.removeFirst() }
+        var tabs: [String?] = ["zsh"]
+        let agents = try #require(AIAgents(app, at: path + "/mcp.sock") { _ in tabs.isEmpty ? nil : tabs.removeFirst() })
+        app.agents = agents
+        defer { agents.stop(); app.agents = nil }
+        #expect(AIAgents.socket == path + "/mcp.sock" && agents.chip == nil && agents.menuItems().map(\.title) == ["No agent connected"])
+
+        let agent = StubAgent(path + "/mcp.sock")
+        try #require(await agent.admitted)
+        let hello = await agent.ask(1, "initialize", ["protocolVersion": "2025-11-25", "clientInfo": ["name": "Stub Code"]])
+        #expect(MCP.object(hello?["result"])?["protocolVersion"] == "2025-11-25")
+        try #require(agents.all.count == 1)
+        let session = agents.all[0].session
+        #expect(agents.chip == "Stub Code" && agents.menuItems().map(\.title).prefix(2) == ["Stub Code — tab “zsh”", "Nothing allowed yet: it asks first"])
+
+        var r = await agent.call(2, "focus")
+        #expect(r?.isError == false && r?.text.contains("Active panel: mac") == true && asked.isEmpty)
+        r = await agent.call(3, "read_file", ["server": "mac", "path": .string(dir + "/a.txt")])   // Cancel at "Allow…"
+        #expect(r?.isError == true && r?.text.contains("didn't allow") == true && asked.count == 1)
+        answers = [0]
+        r = await agent.call(4, "read_file", ["server": "mac", "path": .string(dir + "/a.txt")])
+        #expect(r?.isError == false && r?.text == "hello\n" && asked.count == 2)
+        #expect(agents.chip == "Stub Code · this Mac View" && agents.menuItems().map(\.title).contains("this Mac: read"))
+        r = await agent.call(5, "read_file", ["server": "mac", "path": .string(dir + "/a.txt")])
+        #expect(r?.text == "hello\n" && asked.count == 2, "allowed till it hangs up")
+
+        // Taken back (Window ▸ AI Scope ▸ Take Away): the next call asks again.
+        session.takeAway(.mac)
+        #expect(session.granted.isEmpty)
+        r = await agent.call(6, "read_file", ["server": "mac", "path": .string(dir + "/a.txt")])
+        #expect(r?.isError == true && asked.count == 3)
+
+        // What isn't a tool's call isn't the session's — and every call that is, is in its journal: no way past it.
+        let no = await agent.ask(7, "tools/call", ["name": "rm_everything", "arguments": [:]])
+        #expect(MCP.object(no?["error"])?["code"] == -32602 && session.journal.map(\.tool) == ["focus", "read_file", "read_file", "read_file", "read_file"])
+        #expect(session.journalText.contains("read_file(path: \(dir)/a.txt, server: mac) — not allowed") && session.journalText.contains("— allowed"))
+
+        // Another process — not from a tab: closed before a byte is read; the first agent stays.
+        tabs = []
+        let stranger = StubAgent(path + "/mcp.sock")
+        #expect(await !stranger.admitted && agents.all.count == 1)
+
+        // The agent leaves: off the list. The switch off: no socket, the one still there hung up on.
+        tabs = ["two"]
+        let second = StubAgent(path + "/mcp.sock")
+        try #require(await second.admitted)
+        _ = await second.ask(1, "ping")
+        #expect(agents.all.count == 2)
+        close(agent.fd)
+        for _ in 0..<300 where agents.all.count != 1 { try? await Task.sleep(for: .milliseconds(10)) }
+        #expect(agents.all.map(\.tab) == ["two"])
+        agents.stop()
+        for _ in 0..<300 where !second.gone { try? await Task.sleep(for: .milliseconds(10)) }
+        var st = stat()
+        #expect(second.gone && agents.all.isEmpty && AIAgents.socket == nil && lstat(path + "/mcp.sock", &st) != 0)
+    }
 }

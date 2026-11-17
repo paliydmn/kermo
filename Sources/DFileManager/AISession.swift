@@ -44,6 +44,7 @@ final class AISession {
     private(set) var hasRead = false
     /// The server behind each place of this session's calls, as its user (root isn't the assistant's to take).
     private var servers: [AIPlace: SFTPTarget] = [:]
+    private var busy = false, waiting: [CheckedContinuation<Void, Never>] = []
 
     init(app: AppDelegate, asker: Asker? = nil) { (self.app, self.asker) = (app, asker) }
 
@@ -55,8 +56,13 @@ final class AISession {
         return await call(tool, args, look: Self.looks[name], run: Self.runners[name])
     }
 
-    /// The whole chain for one call (tests: a tool of their own).
+    /// The whole chain for one call (tests: a tool of their own). One at a time: a client may call side by side,
+    /// and a second `copy` could put a link where the first has looked and not yet written.
     func call(_ tool: AITool, _ args: [String: ToolValue], look: Look? = nil, run: Runner? = nil) async -> AIResult {
+        if busy { await withCheckedContinuation { waiting.append($0) } } else { busy = true }
+        defer { if waiting.isEmpty { busy = false } else { waiting.removeFirst().resume() } }   // handed on: still busy
+        // Stopped while it waited its turn: it asks nothing.
+        guard !Task.isCancelled else { return note(tool.name, args, "stopped", .failure("Stopped. Nothing was done."), afterRead: hasRead) }
         let afterRead = hasRead   // before this call's own read
         let (decision, result) = await pass(tool, args, look: look, run: run)
         return note(tool.name, args, decision, result, afterRead: afterRead)
@@ -181,6 +187,33 @@ final class AISession {
 
     private func name(_ p: AIPlace) -> String { servers[p].map(Self.label) ?? "this Mac" }
 
+    /// What the user allowed so far, place by place, in words — for whoever shows it and takes it back.
+    var granted: [(place: AIPlace, words: String, short: String)] {
+        scope.grants.map { p, g in (p, "\(name(p)): " + Self.words(g.level, g.folders, g.commands), "\(name(p)) \(["View", "Work", "All"][g.level.rawValue])") }
+            .sorted { $0.words < $1.words }
+    }
+    /// The user takes back what they allowed `place` (nil: everywhere): the next call there asks again. A call
+    /// that passed already goes on.
+    func takeAway(_ place: AIPlace? = nil) { (place.map { [$0] } ?? Array(scope.grants.keys)).forEach { scope.revoke($0) } }
+
+    private static func words(_ level: AIScope.Level, _ folders: [String], _ commands: Bool) -> String {
+        switch level {
+        case .view: "read"
+        case .work: ((folders.isEmpty ? [] : ["write into " + folders.joined(separator: ", ")]) + (commands ? ["run commands"] : [])).joined(separator: ", ")
+        case .all: "everything"
+        }
+    }
+
+    /// The journal as text, the newest call last.
+    var journalText: String {
+        let time = DateFormatter()
+        time.dateFormat = "HH:mm:ss"
+        return journal.map { e in
+            "\(time.string(from: e.at)) \(e.afterRead ? "⚠ " : "")\(e.tool)(\(e.args)) — \(e.decision)\n    "
+                + (e.result.isError ? "✗ " : "") + e.result.text.prefix(300).replacingOccurrences(of: "\n", with: "\n    ")
+        }.joined(separator: "\n")
+    }
+
     // MARK: Asking
 
     private func ask(_ c: Confirm) async -> Bool {
@@ -191,14 +224,7 @@ final class AISession {
     private func allow(_ needs: [AIScope.Need], why: String?) async -> Bool {
         var c = Confirm("Allow the assistant this, until the chat ends?", action: "Allow for This Task")
         c.on(needs.compactMap { servers[$0.place] })
-        c.items = needs.map { n in
-            let what = switch n.level {
-            case .view: "read"
-            case .work: [n.folder.map { "write into \($0)" }, n.commands ? "run commands" : nil].compactMap { $0 }.joined(separator: ", ")
-            case .all: "everything"
-            }
-            return Confirm.Item(name: "\(name(n.place)): \(what)")
-        }
+        c.items = needs.map { n in Confirm.Item(name: "\(name(n.place)): " + Self.words(n.level, n.folder.map { [$0] } ?? [], n.commands)) }
         let limit = needs.contains { $0.commands || $0.level == .all } ? "A command can write over files without asking first." : nil
         c.note = [why, limit, "Deleting, writing over a file and any change on a production server still ask each time."].compactMap { $0 }.joined(separator: " ")
         c.returnCancels = true

@@ -45,7 +45,7 @@ enum Symbol: String, CaseIterable {
          right = "arrow.right", left = "arrow.left", plus, undo = "arrow.uturn.backward"
     // Settings' tabs
     case general = "gearshape", appearance = "paintpalette", keyboard, terminal, document = "doc.text", safety = "lock.shield",
-         advanced = "slider.horizontal.3"
+         advanced = "slider.horizontal.3", ai = "sparkles"
     // a Tools preset's, when it names none or one this macOS lacks
     case tool = "wrench"
     // watching: the menu bar's item, Snooze

@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// What a server's lists counted when last read ("<key> services" → 10 units, 1 failed): its place shows them while
     /// a connection is up.
     var listCounts: [String: (n: Int, problems: Int)] = [:]
+    var agents: AIAgents?   // outside agents over MCP: only while Settings ▸ AI allows them
     lazy var tools = ToolRunner(self)   // Tools: the library, what servers have, actions' runs
     var ops: OpsController!   // set once at launch (tests: their own)
     /// Move jobs an undo/redo started (across volumes): their own undo is registered already.
@@ -106,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         SFTP.sudoPasswordTaken = { SudoPasswords.taken($0, $1) }
         PanelViewController.toolsItem = { [unowned self] in toolsItem(for: $0) }
         askpass = SSHAskpass.serve()
+        AIAgents.apply(self)
         ServerLock.servers = { [unowned self] in savedServers }
         ServerCopies.upload = { [unowned self] c in await upload(c.url, to: c.path, on: c.target, c.state) }
         AuditLog.failed = { [unowned self] in active.flash($0, error: true) }
@@ -334,6 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         tools.monitor.closing()   // the history's last slots
         tunnels.stopAll()   // first: a client connecting now would start a login
         askpass?.stop()   // a login still asking falls back to the dialog
+        agents?.stop()
         // No logged-in connection outlives the app. All at once: each may take up to `SFTP.stopWait`.
         let masters = Array(SFTP.masterTargets)
         DispatchQueue.concurrentPerform(iterations: masters.count) { SFTP.stopMaster(masters[$0], now: true) }
@@ -2022,7 +2025,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// `alert` as a sheet on `window`; the button's index.
     static func sheet(_ alert: NSAlert, on window: NSWindow) async -> Int {
-        await withCheckedContinuation { cont in sheet(alert, on: window) { cont.resume(returning: $0) } }
+        // Whoever asked is gone (an agent that hung up, Stop): the question goes with them, as a Cancel.
+        guard !Task.isCancelled else { return alert.buttons.count - 1 }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { cont in sheet(alert, on: window) { cont.resume(returning: $0 < 0 ? alert.buttons.count - 1 : $0) } }
+        } onCancel: { Task { @MainActor in if alert.window.sheetParent != nil { window.endSheet(alert.window) } } }
     }
 
     /// The same, the sheet up before this returns (a window's close asks while it stays); `then` gets the index.
