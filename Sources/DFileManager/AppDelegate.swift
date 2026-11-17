@@ -18,12 +18,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// a connection is up.
     var listCounts: [String: (n: Int, problems: Int)] = [:]
     lazy var tools = ToolRunner(self)   // Tools: the library, what servers have, actions' runs
-    private(set) var ops: OpsController!
+    var ops: OpsController!   // set once at launch (tests: their own)
     /// Move jobs an undo/redo started (across volumes): their own undo is registered already.
     var replayJobs: [FileJob] = []
     /// Synchronize's jobs not finished yet: the production log calls them "sync". Weak: one cancelled while queued never
     /// finishes, and its address may be another job's later.
     let syncJobs = NSHashTable<FileJob>.weakObjects()
+    /// Copies the assistant started (a tool call the user let through): the production log says by whom.
+    let aiJobs = NSHashTable<FileJob>.weakObjects()
     /// The last undo/redo's disk work: each waits for the one before (`afterUndoWork`).
     var undoWork: Task<Void, Never>?
     private var askpass: Askpass.Server?   // ssh's questions, asked in a sheet (`AskpassSheet`)

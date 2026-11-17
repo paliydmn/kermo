@@ -14,16 +14,18 @@ import Foundation
 
     struct Entry: Encodable {
         var time: String, server: String, identity: String?, root: Bool?, action: String, paths: [String], to: String?, command: String?, exit: Int32?, error: String?
+        /// Who did it when it wasn't the user's own hand: "ai" — the assistant, by a tool call the user let through.
+        var by: String?
     }
 
     /// A line for `action` on `t`, if it's a production server. `exit`: 0 done, else failed (`error` says how); nil: not
     /// known (handed to the terminal app).
-    static func write(_ t: SFTPTarget, _ action: String, paths: [String], to: String? = nil, command: String? = nil, exit: Int32?, error: String? = nil) {
+    static func write(_ t: SFTPTarget, _ action: String, paths: [String], to: String? = nil, command: String? = nil, exit: Int32?, error: String? = nil, by: String? = nil) {
         guard UserDefaults.standard.object(forKey: "auditLog") as? Bool ?? true, SavedServer.isProd(t) else { return }
         let time = ISO8601DateFormatter()
         time.timeZone = .current
         let entry = Entry(time: time.string(from: Date()), server: t.host + (t.port.map { ":\($0)" } ?? ""), identity: ServerLock.identity(t), root: t.sudo ? true : nil,
-                          action: action, paths: paths, to: to, command: command, exit: exit, error: error)
+                          action: action, paths: paths, to: to, command: command, exit: exit, error: error, by: by)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         guard let line = try? encoder.encode(entry) + [0x0a] else { return }
@@ -55,7 +57,7 @@ import Foundation
         return job.targetName.map { (dir as NSString).appendingPathComponent($0) } ?? dir
     }
 
-    static func write(_ job: FileJob, sync: Bool) {
+    static func write(_ job: FileJob, sync: Bool, by: String? = nil) {
         let kind = switch job.kind { case .copy: "copy"; case .move: "move"; case .delete: "delete"; case .trash: "trash" }
         let p = job.progress, ok = p.state == .done && p.errors.isEmpty
         let error = p.state == .cancelled ? "cancelled" : p.errors.isEmpty ? nil : p.errors.prefix(5).joined(separator: "\n")
@@ -64,7 +66,7 @@ import Foundation
         var done: [SFTPTarget] = []
         for t in AppDelegate.changed(from: job.from, to: job.to, move: job.kind == .move) where !done.contains(t) {
             done.append(t)
-            write(t, (sync ? "sync " : "") + kind, paths: paths, to: to, exit: ok ? 0 : 1, error: ok ? nil : error)
+            write(t, (sync ? "sync " : "") + kind, paths: paths, to: to, exit: ok ? 0 : 1, error: ok ? nil : error, by: by)
         }
     }
 }
