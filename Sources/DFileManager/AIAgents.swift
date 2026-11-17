@@ -32,17 +32,22 @@ final class AIAgents {
     unowned let app: AppDelegate
     private(set) var all: [Agent] = []
     private var listener: MCP.Listener?
-    private let item = NSMenuItem(title: "AI Scope", action: nil, keyEquivalent: "")
 
     /// The switch as it is now (at launch, and when Settings ▸ AI changes it). Off: every agent is hung up on, and
     /// what each was allowed goes with it.
     static func apply(_ app: AppDelegate) {
-        if !app.defaults.bool(forKey: key) {
-            app.agents?.stop()
-            app.agents = nil
-        } else if app.agents == nil {
-            app.agents = AIAgents(app, at: SFTP.controlDir + "/mcp-\(getpid()).sock")
-        }
+        let on = app.defaults.bool(forKey: key)
+        guard on != (app.agents != nil) else { return }
+        app.agents?.stop()
+        app.agents = on ? AIAgents(app, at: SFTP.controlDir + "/mcp-\(getpid()).sock") : nil
+        app.installMenu()   // Window ▸ AI Scope comes and goes with it
+    }
+
+    /// Window ▸ AI Scope, built as it opens.
+    func menuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "AI Scope", action: nil, keyEquivalent: "")
+        item.submenu = LiveMenu(title: item.title) { [weak self] in self?.menuItems() ?? [] }
+        return item
     }
 
     /// `admits`: who may connect, and from which tab (tests: their own word for it).
@@ -54,15 +59,12 @@ final class AIAgents {
         }
         guard listener != nil else { return nil }
         Self.socket = path
-        item.submenu = LiveMenu(title: item.title) { [unowned self] in menuItems() }
-        if let menu = NSApp.windowsMenu { menu.insertItem(item, at: min(menu.items.count, 4)) }   // after Main Window
     }
 
     func stop() {
         listener?.stop()   // hangs up on each: its thread takes it off the list
         listener = nil
         Self.socket = nil
-        item.menu?.removeItem(item)
         all = []
         changed()
     }

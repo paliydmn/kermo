@@ -519,9 +519,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         window?.toolbar?.items.first { $0.itemIdentifier == Self.editorButtonID }?.toolTip = editorTip
         showCmdKey()
         refreshSidebar()   // section headers show keys
-        let menu = makeMenu()
-        NSApp.mainMenu = menu
-        updateMenuKeys(menu)
+        let menu = installMenu()
         let fixed = Self.fixedKeys(menu)
         problems += overrides.flatMap { Self.keymapProblems($0.id, $0.keys, was: $0.was, fixed: fixed) }
         if let g = GlobalKey.current, let c = keymap[g], !overrides.contains(where: { $0.id == c.id }) {   // its own key back (an entry deleted)
@@ -1742,6 +1740,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return menu
     }
 
+    /// The menu bar made again: the keymap changed, or what is live in it came or went (Window ▸ AI Scope).
+    @discardableResult func installMenu() -> NSMenu {
+        let menu = makeMenu()
+        NSApp.mainMenu = menu
+        updateMenuKeys(menu)
+        return menu
+    }
+
     func makeMenu() -> NSMenu {
         let main = NSMenu()
         // Not commands: what's live in a menu, after the registry's items there.
@@ -1785,7 +1791,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                      item("Ensure Final Newline", #selector(Editor.toggleFinalNewline(_:)), ""), .separator()],
             // Standard responder-chain items: text fields handle them as text; panels as files.
             "Window": [item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"), item("Zoom", #selector(NSWindow.performZoom(_:)), ""),
-                       .separator(), item("Main Window", #selector(showMainWindow(_:)), "0")],
+                       .separator(), item("Main Window", #selector(showMainWindow(_:)), "0")] + (agents.map { [$0.menuItem()] } ?? []),
             "Edit": [
                 item("Undo", Selector(("undo:")), "z"),
                 item("Redo", Selector(("redo:")), "z", [.command, .shift]),
