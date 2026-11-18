@@ -66,7 +66,7 @@ struct AIChatStore {
         guard st.st_uid == getuid(), st.st_mode & 0o077 == 0 else { return .failure(Unread(words: "\(id).json isn't yours alone (it should be 0600)")) }
         guard st.st_size <= Self.maxSize else { return .failure(Unread(words: "\(id).json is over \(Self.maxSize >> 20) MB")) }
         guard let data = try? h.readToEnd() else { return .failure(Unread(words: "\(id).json couldn't be read")) }
-        return .success((data, Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec))))
+        return .success((data, Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec) + TimeInterval(st.st_mtimespec.tv_nsec) / 1e9)))   // two in a second still in order
     }
 
     /// Written in turn; `failed` hears why not, on the main thread. A new chat over the 50: the oldest readable ones

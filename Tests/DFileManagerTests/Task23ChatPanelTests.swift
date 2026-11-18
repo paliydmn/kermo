@@ -325,13 +325,14 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         wire.then([(200, turn(text: "Same chat.")), (200, turn(text: "Pruned."))])
         await send(again, "Still 51?")
         #expect(store.list().chats.count == 51, "a chat written again prunes nothing")
+        let before = Set(store.list().chats.map(\.id))
         click(try #require(views(again.view, NSButton.self).first { $0.toolTip == "New Chat" }))
         await send(again, "Prune?")
         let pruned = store.list()
         #expect(pruned.chats.count == 50 && pruned.unread.count == 3 && pruned.chats.contains { $0.id == id }, "\(pruned.unread)")
 
         // Delete the open chat: its file is gone, the panel starts afresh.
-        let open = try #require(pruned.chats.first?.id)
+        let open = try #require(pruned.chats.map(\.id).first { !before.contains($0) })
         again.deleteChat(open)
         Config.flush()
         #expect(!FileManager.default.fileExists(atPath: store.dir + "/\(open).json") && store.list().chats.count == 49 && !shown(again).contains("Pruned."))
@@ -346,7 +347,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         for _ in 0..<300 where asked.isEmpty { try? await Task.sleep(for: .milliseconds(10)) }
         #expect(asked == ["Delete the 50 chats kept on this Mac?"])
         await send(again, "Off?")
-        let keptID = try #require(store.list().chats.first?.id)
+        let keptID = try #require(store.list().chats.map(\.id).first { !before.contains($0) })
         let keptText = String(decoding: try Data(contentsOf: URL(fileURLWithPath: store.dir + "/\(keptID).json")), as: UTF8.self)
         #expect(wire.bodies.count == 6 && store.list().chats.count == 50 && keptText.contains("Kept?") && !keptText.contains("Off?"), "the open chat's file as it was")
         answer = 0
