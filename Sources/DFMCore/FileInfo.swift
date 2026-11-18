@@ -25,6 +25,25 @@ public enum FileInfo {
         close(fd)
     }
 
+    /// `data` as the whole of `path`, owner-only, never half: written beside it ("<name>.tmp"), then renamed over it.
+    /// `durable`: on the disk itself before the rename, not only in the system's cache.
+    public static func writeWhole(_ data: Data, to path: String, durable: Bool) throws {
+        let tmp = path + ".tmp"
+        unlink(tmp)   // whatever a crash or anyone left there — a wider file, a link, a FIFO — is never written through
+        let fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        do {
+            let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            try h.write(contentsOf: data)
+            if durable, fcntl(fd, F_FULLFSYNC) != 0 { fsync(fd) }   // a RAM disk has no F_FULLFSYNC
+            try h.close()
+            guard rename(tmp, path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        } catch {
+            unlink(tmp)   // nothing left over that no list names
+            throw error
+        }
+    }
+
     /// "-rwxr-xr-x", with s/S and t/T for setuid/setgid/sticky, like ls -l.
     public static func modeString(_ mode: mode_t) -> String {
         let type: Character = switch mode & S_IFMT {

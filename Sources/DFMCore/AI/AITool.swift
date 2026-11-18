@@ -67,7 +67,7 @@ public struct AITool: Sendable {
 
 /// What a tool call came to, as tool use and MCP hand it back: text, and whether it is an error — said in words
 /// the model can act on ("the user didn't allow it"), never a code.
-public struct AIResult: Sendable, Equatable {
+public struct AIResult: Sendable, Equatable, Codable {
     public var text: String
     public var isError = false
 

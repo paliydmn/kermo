@@ -273,16 +273,7 @@ public final class DraftStore: @unchecked Sendable {   // `lock` guards what's w
         }
     }
 
-    private func put(_ data: Data, _ name: String, _ durable: Bool) throws {
-        let path = dir + "/" + name, tmp = path + ".tmp"
-        let fd = Darwin.open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { throw posix() }
-        let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        try h.write(contentsOf: data)
-        if durable, fcntl(fd, F_FULLFSYNC) != 0 { fsync(fd) }   // a RAM disk has no F_FULLFSYNC
-        try h.close()
-        guard rename(tmp, path) == 0 else { throw posix() }
-    }
+    private func put(_ data: Data, _ name: String, _ durable: Bool) throws { try FileInfo.writeWhole(data, to: dir + "/" + name, durable: durable) }
 
     /// Moves `names` (in `dir`) to a new `damaged/<time>-<id>` and returns it.
     private static func moveAside(_ names: [String], in dir: String) throws -> String {

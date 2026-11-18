@@ -32,13 +32,21 @@ The chat is in **Ask**: the model reads and answers, and changes nothing. For a 
 
 1. **Attach what the question is about.** Under the field Kermo suggests what is open, dashed: the active panel's folder and the file under the cursor, the editor's document and its selection, the terminal's last command with its output. A click attaches one; **+** or **#** in the field lists everything open in both panels. Nothing is attached until you choose it. A click on an attached chip shows exactly what goes, with **Remove**.
 2. **Ask** and press ↩ (⇧↩ for a new line). The 👁 button shows **what will be sent** with the message: Kermo's instructions to the model, each attachment and your words.
-3. **The answer** comes as it is written. A shell command comes in a block with **Into Terminal** — it goes into the line of the terminal tab on the machine in front of you, and nothing runs until you press ↩ there — and **Copy**. Under each answer: the tokens it took, in and out.
+3. **The answer** comes as it is written. A shell command comes in a block with **Into Terminal** — it goes into the line of the terminal tab on the machine in front of you, and nothing runs until you press ↩ there — and **Copy**. Under each answer: the tokens it took, in and out — and, for Anthropic's models at Anthropic's own address, what they cost at Anthropic's prices as of 2026-11 (cache reads and writes counted). Your bill is the provider's; other providers show tokens only.
 4. **⎋ or the Stop button** stops the answer, and any question of the chat that is waiting. What the model asked for and didn't get yet isn't done.
 5. **The model reads by itself** where it needs to: the folders, files, terminal output and server info it asks for, and commands that only read (Kermo's allow-list: `cat`, `tail`, `ls`, `df`, `journalctl`, `systemctl status`, `nginx -t`…). The first read on each server — and on this Mac — asks you in the chat: **Allow in This Chat**, or **Cancel** (↩). Every read shows as a step; a click shows what came back. A command that could change something is refused without a question. A turn stops after 10 rounds of reading; say "go on" to let it continue.
 
 When the provider says no — a limit, too busy, no network — the chat says so in words with **Retry**; a key it doesn't accept, with **Settings…**. Kermo never retries by itself: each request is your money.
 
-**New Chat** (the pencil at the top) starts again: what the model was allowed and what was said are gone. The chat is kept in memory only, until you quit.
+**New Chat** (the pencil at the top) starts again: what the model was allowed is gone.
+
+### Chats on this Mac
+
+Kermo keeps the last 50 chats in `~/.config/dfilemanager/ai`, one file each, only yours to read (folder 0700, files 0600), written after each message and each answer. A file holds what went to the provider — your words and attachments as they went, secrets as `•••` — and the model's answers; never your key. The 🕘 at the top lists them, the latest first, with the model each began with: a click opens one to go on with. **Delete** removes one for good (not to the Trash). Past 50, the oldest go by themselves.
+
+A chat opened again shows its questions, what was attached (by name) and the answers — not the reads. It asks again before its first read on each server and before sending anything from a production server; it stays with the provider it began with; under **Never Send**, one that holds production text goes no further. Its earlier thinking isn't sent again: providers check it against what it was written with.
+
+**Settings › AI › Keep chats on this Mac** off: nothing is written — the chat open then isn't written again, even once it's back on; Kermo asks whether to delete the chats already kept. A file Kermo can't read — damaged, a newer Kermo's, readable by others — is left as it is and named in the list.
 
 ### Production servers
 
@@ -47,7 +55,7 @@ Something attached from a [production server](safety.md) asks once a chat for ea
 ### What goes to your provider
 
 - Kermo's instructions for the chat and the descriptions of its tools — the same in every chat;
-- your messages, with what you attached;
+- your messages, with what you attached — and, in a chat opened again, its earlier messages and answers;
 - what the model's reads return.
 
 Passwords, tokens and keys Kermo recognises are replaced with `•••` before anything is sent — in what you type too. The patterns are not complete: don't attach files whose content must not leave this Mac. Every earlier message of the chat goes again with each new one, as providers need.

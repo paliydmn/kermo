@@ -155,6 +155,9 @@ extension AppDelegate {
                             control: .buttons([("Test", "ai.test")]), status: { _ in AISettings.tested }),
                 SettingsRow(title: "Production servers", note: "What you attach from a production server, and what the model reads there: asked once a chat, or never sent",
                             key: "aiProduction", control: .choice([("Ask Once a Chat", nil), ("Never Send", "never")], segmented: true)),
+                SettingsRow(title: "Keep chats on this Mac",
+                            note: "The last \(AIChatStore.keep), only yours to read, in ~/.config/dfilemanager/ai: what went to the provider, secrets as •••. The chat's 🕘 opens one again",
+                            key: "aiKeepChats", control: .toggle(true), apply: { AIPanel.keepChatsChanged($0) }),
             ]),
             ("Agents in Kermo's terminal", [
                 SettingsRow(title: "Allow agents in Kermo's terminal (MCP)",
