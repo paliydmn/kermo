@@ -846,7 +846,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         } else if !(window.firstResponder is NSText) {
             found = aiPanel.marked(active).map { c in { c } }
         }
-        guard !found.isEmpty || !AISettings.ready(defaults) else { return NSSound.beep() }
+        guard AISettings.ready(defaults) else { return aiPanel.add([]) }   // "Use your own AI": nothing taken further, no `ssh -G`
+        guard !found.isEmpty else { return NSSound.beep() }
         Task {
             var made: [AIPanel.Context] = []
             for f in found { made.append(await f()) }
@@ -856,6 +857,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// A terminal's text, taken now, into the chat once where it's from is known (`learnedOrigin`).
     private func toChat(_ tab: EmbeddedTerminal.Tab, _ text: String, what: String) {
+        guard AISettings.ready(defaults) else { return aiPanel.add([]) }   // "Use your own AI": no `ssh -G`
         Task { aiPanel.add([await AIPanel.terminal(tab, text, what: what)]) }
     }
 

@@ -527,7 +527,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
         var web = SavedServer(), db = SavedServer()
         (web.host, web.user, web.prod) = ("prodweb.invalid", "deploy", true)
-        (db.host, db.name, db.prod) = ("192.0.2.10", "dbprod", true)
+        (db.host, db.name, db.prod) = ("198.51.100.7", "dbprod", true)
         ServerLock.servers = { [web, db] }
         defer {
             ServerLock.servers = { [] }
@@ -549,7 +549,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         }
         // An alias only ~/.ssh/config knows (here a stand-in for `ssh -G`): this Mac's as written, production's once learned.
         let alias = "p-" + UUID().uuidString.prefix(8).lowercased(), was = ServerLock.sshG
-        ServerLock.sshG = { t in "user deploy\nhostname \(t.host == alias || t.host == "192.0.2.10" ? "192.0.2.10" : t.host)\nport 22\n" }
+        ServerLock.sshG = { t in "user deploy\nhostname \(t.host == alias || t.host == "198.51.100.7" ? "198.51.100.7" : t.host)\nport 22\n" }
         defer { ServerLock.sshG = was }
         shell.view.send(txt: "ssh -F /dev/null -o BatchMode=yes -o ProxyCommand='sleep 30' \(alias)\r")
         for _ in 0..<3000 where shell.foreground != "ssh" { try await Task.sleep(for: .milliseconds(10)) }
