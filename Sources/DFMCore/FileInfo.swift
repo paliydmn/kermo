@@ -29,14 +29,19 @@ public enum FileInfo {
     /// `durable`: on the disk itself before the rename, not only in the system's cache.
     public static func writeWhole(_ data: Data, to path: String, durable: Bool) throws {
         let tmp = path + ".tmp"
-        let fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        let fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)   // a FIFO there: an error, not a wait
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        fchmod(fd, 0o600)   // a .tmp left by a crash keeps its mode otherwise
-        try h.write(contentsOf: data)
-        if durable, fcntl(fd, F_FULLFSYNC) != 0 { fsync(fd) }   // a RAM disk has no F_FULLFSYNC
-        try h.close()
-        guard rename(tmp, path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        do {
+            let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            fchmod(fd, 0o600)   // a .tmp left by a crash keeps its mode otherwise
+            try h.write(contentsOf: data)
+            if durable, fcntl(fd, F_FULLFSYNC) != 0 { fsync(fd) }   // a RAM disk has no F_FULLFSYNC
+            try h.close()
+            guard rename(tmp, path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        } catch {
+            unlink(tmp)   // nothing left over that no list names
+            throw error
+        }
     }
 
     /// "-rwxr-xr-x", with s/S and t/T for setuid/setgid/sticky, like ls -l.

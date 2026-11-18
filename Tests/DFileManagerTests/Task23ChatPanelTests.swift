@@ -295,8 +295,8 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         var st = stat()
         #expect(lstat(file, &st) == 0 && st.st_mode & 0o777 == 0o600 && lstat(store.dir, &st) == 0 && st.st_mode & 0o777 == 0o700)
         let bytes = try Data(contentsOf: URL(fileURLWithPath: file)), text = String(decoding: bytes, as: UTF8.self)
-        #expect(!text.contains("abc123secret") && !text.contains("test-key") && text.contains("token=•••") && text.contains("EqQBsig"),
-                "masked as it went (the question and the chip's name), no key; the thinking as it came")
+        #expect(!text.contains("abc123secret") && !text.contains("test-key") && text.contains("token=•••") && !text.contains("EqQBsig") && text.contains("Fine, I thought."),
+                "masked as it went (the question and the chip's name), no key, no thinking")
 
         // A relaunch: the list, the chat as it was shown, and going on without the thinking.
         let again = panel()
@@ -309,7 +309,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         #expect(wire.bodies.count == 2 && !body.contains("EqQBsig") && body.contains("Fine, I thought.") && body.contains("And now?"), "\(body)")
         #expect(try FileManager.default.contentsOfDirectory(atPath: store.dir).count == 1, "the same chat, written over")
 
-        // Damaged, wide and newer files: not read, said; never written over, never pruned. Over 50: the oldest go.
+        // Damaged, wide and newer files: not read, said; never written over, never pruned. A new chat over 50: the oldest go.
         let kept = try Data(contentsOf: URL(fileURLWithPath: file))
         let odd = [("{", 0o600), (String(decoding: kept, as: UTF8.self), 0o644),
                    (String(decoding: kept, as: UTF8.self).replacingOccurrences(of: "\"version\":1", with: "\"version\":99"), 0o600)]
@@ -322,31 +322,43 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
             try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_000_000_000 + Double(i))], ofItemAtPath: path)
         }
         #expect(store.list().unread.count == 3 && store.list().chats.count == 51)
-        wire.then([(200, turn(text: "Pruned."))])
+        wire.then([(200, turn(text: "Same chat.")), (200, turn(text: "Pruned."))])
+        await send(again, "Still 51?")
+        #expect(store.list().chats.count == 51, "a chat written again prunes nothing")
+        click(try #require(views(again.view, NSButton.self).first { $0.toolTip == "New Chat" }))
         await send(again, "Prune?")
         let pruned = store.list()
-        #expect(pruned.chats.count == 50 && pruned.unread.count == 3 && pruned.chats.first?.id == id, "\(pruned.unread)")
+        #expect(pruned.chats.count == 50 && pruned.unread.count == 3 && pruned.chats.contains { $0.id == id }, "\(pruned.unread)")
 
-        // Delete: the file is gone, the panel starts afresh.
-        again.deleteChat(id)
+        // Delete the open chat: its file is gone, the panel starts afresh.
+        let open = try #require(pruned.chats.first?.id)
+        again.deleteChat(open)
         Config.flush()
-        #expect(!FileManager.default.fileExists(atPath: file) && store.list().chats.count == 49 && !shown(again).contains("Fine, I thought."))
+        #expect(!FileManager.default.fileExists(atPath: store.dir + "/\(open).json") && store.list().chats.count == 49 && !shown(again).contains("Pruned."))
 
-        // Switched off: nothing written; the kept ones go only when the user says so.
-        std.set(false, forKey: "aiKeepChats")
-        wire.then([(200, turn(text: "Not kept."))])
+        // Switched off: the open chat isn't written again — not even once it's back on; the kept ones go only when
+        // the user says so.
+        wire.then([(200, turn(text: "Kept.")), (200, turn(text: "Not kept.")), (200, turn(text: "Back."))])
         await send(again, "Kept?")
-        #expect(wire.bodies.count == 4 && store.list().chats.count == 49)
-        AIPanel.keepChatsChanged(app, store: store)   // Keep
+        #expect(store.list().chats.count == 50)
+        std.set(false, forKey: "aiKeepChats")
+        AIPanel.keepChatsChanged(app, panel: again)   // Keep
         for _ in 0..<300 where asked.isEmpty { try? await Task.sleep(for: .milliseconds(10)) }
-        #expect(asked == ["Delete the 49 chats kept on this Mac?"])
+        #expect(asked == ["Delete the 50 chats kept on this Mac?"])
+        await send(again, "Off?")
+        let keptID = try #require(store.list().chats.first?.id)
+        let keptText = String(decoding: try Data(contentsOf: URL(fileURLWithPath: store.dir + "/\(keptID).json")), as: UTF8.self)
+        #expect(wire.bodies.count == 6 && store.list().chats.count == 50 && keptText.contains("Kept?") && !keptText.contains("Off?"), "the open chat's file as it was")
         answer = 0
-        AIPanel.keepChatsChanged(app, store: store)
+        AIPanel.keepChatsChanged(app, panel: again)
         for _ in 0..<300 where store.list().chats.count > 0 {
             try? await Task.sleep(for: .milliseconds(10))
             Config.flush()
         }
         #expect(store.list().chats.isEmpty && store.list().unread.count == 3 && asked.count == 2)
+        std.removeObject(forKey: "aiKeepChats")
+        await send(again, "Back?")
+        #expect(wire.bodies.count == 7 && store.list().chats.isEmpty, "a deleted chat isn't written back")
     }
 
     /// A chat read back keeps what 5a's guards read: its provider, and that it holds production text.

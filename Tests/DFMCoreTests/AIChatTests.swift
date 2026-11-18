@@ -157,3 +157,22 @@ private func wellFormed(_ m: [AIMessage]) -> Bool {
                   AIMessage(.user, [.result(id: "c1", AIResult("x"))]), AIMessage(.assistant, [.text("Done.")])])
     #expect(wellFormed(r))
 }
+
+/// The file's shape as 5b writes it: a renamed case or label would make every kept chat unreadable — raise
+/// `AISavedChat.current` then, and keep reading this.
+@Test func aKeptChatOfVersionOneStillReads() throws {
+    let json = #"""
+        {"version":1,"title":"t","model":"claude-sonnet-5-5","provider":"anthropic https://api.anthropic.com","started":800000000,"production":false,
+         "asked":[{"question":"q","chips":["a"],"prod":[]}],
+         "messages":[{"role":"user","parts":[{"text":{"_0":"q"}}]},
+                     {"role":"assistant","parts":[{"kept":{"_0":{"type":"thinking","thinking":"","signature":"s"}}},{"text":{"_0":"A"}},
+                                                  {"call":{"_0":{"id":"c1","name":"focus","args":{}}}},{"call":{"_0":{"id":"c2","name":"focus"}}}]},
+                     {"role":"user","parts":[{"result":{"id":"c1","_1":{"text":"x","isError":false}}},{"result":{"id":"c2","_1":{"text":"bad","isError":true}}}]}]}
+        """#
+    let c = try JSONDecoder().decode(AISavedChat.self, from: Data(json.utf8))
+    #expect(c.messages == [AIMessage(.user, [.text("q")]),
+                           AIMessage(.assistant, [.kept(["type": "thinking", "thinking": "", "signature": "s"]), .text("A"),
+                                                  .call(AIToolUse(id: "c1", name: "focus", args: [:])), .call(AIToolUse(id: "c2", name: "focus", args: nil))]),
+                           AIMessage(.user, [.result(id: "c1", AIResult("x")), .result(id: "c2", .failure("bad"))])])
+    #expect(c.asked == [.init(question: "q", chips: ["a"], prod: [])] && c.started == Date(timeIntervalSinceReferenceDate: 800_000_000))
+}

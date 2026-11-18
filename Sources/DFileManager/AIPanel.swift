@@ -46,6 +46,8 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     private var asked: [AISavedChat.Asked] = []
     /// A chat read back held production text: Never Send stops it as it would have.
     private var resumedProduction = false
+    /// A write that failed was said in this chat: once is enough.
+    private var unsaved = false
     private var holdsProduction: Bool { !prodSent.isEmpty || session?.readProduction == true || resumedProduction }
 
     private var built = false
@@ -375,7 +377,6 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             chat?.add(message)
             self.asked.append(AISavedChat.Asked(question: AISecrets.mask(question).text, chips: sent.map { AIChat.attachedName($0.context.title) },
                                            prod: sent.filter { isProd($0.context) }.map { AIChat.attachedName($0.context.title) }))
-            save()
             chips.removeAll { c in sent.contains { $0.context.id == c.context.id } }
             if input.string == typed { input.string = "" }   // words typed meanwhile stay
             append(Self.userMessage(question, sent.map { ($0.context.title, isProd($0.context)) }))
@@ -385,10 +386,15 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         updateSend()
     }
 
-    private func start(_ e: AIEndpoint, messages: [AIMessage] = []) {
+    /// Ask's instructions and tools, and a session of its own: nothing allowed yet.
+    private func begin(_ messages: [AIMessage]) {
         chat = AIChat(system: AIChat.askSystem, tools: AIChat.askTools, messages: messages)
         session = AISession(app: app) { [weak self] c, _ in await self?.ask(c) ?? 1 }
         session?.readOnly = true
+    }
+
+    private func start(_ e: AIEndpoint) {
+        begin([])
         pinned = Self.pin(e)
         (chatID, began, beganWith) = (UUID().uuidString, Date(), e.model)
     }
@@ -450,7 +456,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         stop()
         generation += 1
         (chat, session, prodSent, turn, pinned, failedAt) = (nil, nil, [], nil, nil, nil)
-        (chatID, asked, resumedProduction) = (nil, [], false)
+        (chatID, asked, resumedProduction, unsaved) = (nil, [], false, false)
         list.setViews([], in: .top)
         refresh()
         focus()
@@ -460,19 +466,30 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
     static func keepsChats(_ d: UserDefaults) -> Bool { d.object(forKey: "aiKeepChats") as? Bool ?? true }
 
-    /// After each send and each turn, as the history stands — what went, masked as it went. Off: nothing.
+    /// After each turn (stopped and failed too), as the history stands — what went, masked as it went, without the
+    /// thinking (never sent again). Off: nothing, and this chat is never written again, even once it's back on.
     private func save() {
-        guard let chat, let id = chatID, Self.keepsChats(app.defaults) else { return }
+        guard let chat, let id = chatID else { return }
+        guard Self.keepsChats(app.defaults) else { return chatID = nil }
         let first = asked.first.map { $0.question.isEmpty ? $0.chips.first ?? "" : $0.question } ?? ""
         let title = String(first.split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(60))
         let saved = AISavedChat(title: title, model: beganWith, provider: pinned ?? "", started: began, production: holdsProduction,
-                                messages: chat.messages, asked: asked)
-        chats.save(id, saved) { [weak self] why in self?.note("Not kept on this Mac: \(why). The chat goes on here.", error: true) }
+                                messages: AISavedChat.resumable(chat.messages), asked: asked)
+        let g = generation
+        chats.save(id, saved) { [weak self] why in
+            guard let self, g == generation, !unsaved else { return }   // in its own chat, once
+            unsaved = true
+            note("Not kept on this Mac: \(why). The chat goes on here.", error: true)
+        }
     }
 
     /// The chats kept on this Mac, the latest first: a click opens one; Delete removes one for good.
     @objc private func chatsMenu(_ sender: NSView) {
-        let (saved, unread) = chats.list()
+        chats.list { [weak self, weak sender] in if let self, let sender { showChats($0, from: sender) } }   // off the main thread
+    }
+
+    private func showChats(_ found: (chats: [AIChatStore.Entry], unread: [String]), from sender: NSView) {
+        let (saved, unread) = found
         let menu = NSMenu()
         menu.autoenablesItems = false
         if saved.isEmpty { menu.addItem(withTitle: "No chats kept on this Mac", action: nil, keyEquivalent: "").isEnabled = false }
@@ -497,8 +514,12 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             menu.addItem(withTitle: "Delete", action: nil, keyEquivalent: "").submenu = delete
         }
         if !unread.isEmpty {
-            let item = menu.addItem(withTitle: "\(unread.count) not read — left as \(unread.count == 1 ? "it is" : "they are")", action: nil, keyEquivalent: "")
-            (item.isEnabled, item.toolTip) = (false, unread.joined(separator: "\n"))
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Not read — left as \(unread.count == 1 ? "it is" : "they are"):", action: nil, keyEquivalent: "").isEnabled = false
+            for why in unread {
+                let item = menu.addItem(withTitle: why, action: nil, keyEquivalent: "")
+                (item.isEnabled, item.indentationLevel) = (false, 1)
+            }
         }
         if !Self.keepsChats(app.defaults) {
             menu.addItem(.separator())
@@ -518,9 +539,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         }
         newChat()
         build()
-        chat = AIChat(system: AIChat.askSystem, tools: AIChat.askTools, messages: AISavedChat.resumable(saved.messages))
-        session = AISession(app: app) { [weak self] c, _ in await self?.ask(c) ?? 1 }
-        session?.readOnly = true
+        begin(AISavedChat.resumable(saved.messages))
         (chatID, began, beganWith, asked, resumedProduction) = (id, saved.started, saved.model, saved.asked, saved.production)
         pinned = saved.provider.isEmpty ? nil : saved.provider
         var i = 0, answer: Answer?
@@ -549,16 +568,19 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         chats.delete([id])
     }
 
-    /// Settings › AI's "Keep chats on this Mac" switched off: the ones kept go only if the user says so.
-    static func keepChatsChanged(_ app: AppDelegate, store: AIChatStore? = nil) {
-        guard !keepsChats(app.defaults) else { return }
-        let store = store ?? app.aiPanel?.chats ?? AIChatStore(dir: Config.path("ai"))
-        let ids = store.list().chats.map(\.id)
-        guard !ids.isEmpty else { return }
-        Task {
-            var c = Confirm("Delete the \(ids.count == 1 ? "chat" : "\(ids.count) chats") kept on this Mac?", action: "Delete")
-            (c.note, c.irreversible, c.cancel) = ("New chats aren't kept either way.", true, "Keep")
-            if await app.confirm(c) == 0 { store.delete(ids) }
+    /// Settings › AI's "Keep chats on this Mac" switched off: the open chat isn't written again, even once it's back
+    /// on; the ones kept go only if the user says so.
+    static func keepChatsChanged(_ app: AppDelegate, panel: AIPanel? = nil) {
+        guard !keepsChats(app.defaults), let panel = panel ?? app.aiPanel else { return }
+        panel.chatID = nil
+        panel.chats.list { found in
+            let ids = found.chats.map(\.id)
+            guard !ids.isEmpty else { return }
+            Task {
+                var c = Confirm("Delete the \(ids.count == 1 ? "chat" : "\(ids.count) chats") kept on this Mac?", action: "Delete")
+                (c.note, c.irreversible, c.cancel) = ("New chats aren't kept either way.", true, "Keep")
+                if await app.confirm(c) == 0 { panel.chats.delete(ids) }
+            }
         }
     }
 

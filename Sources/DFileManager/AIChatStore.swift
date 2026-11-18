@@ -40,6 +40,15 @@ struct AIChatStore {
         return (chats.sorted { $0.updated > $1.updated }, unread)
     }
 
+    /// The same, read in turn with the writes (after those already asked for), off the main thread: a home on a slow
+    /// disk or a network share doesn't stall the app. `then` on the main thread.
+    func list(_ then: @escaping @MainActor ((chats: [Entry], unread: [String])) -> Void) {
+        Config.writes.async {
+            let found = list()
+            DispatchQueue.main.async { MainActor.assumeIsolated { then(found) } }
+        }
+    }
+
     func read(_ id: String) -> Result<AISavedChat, Unread> {
         data(id).flatMap { data, _ in
             guard let c = try? JSONDecoder().decode(AISavedChat.self, from: data) else { return .failure(Unread(words: "\(id).json is damaged")) }
@@ -60,12 +69,13 @@ struct AIChatStore {
         return .success((data, Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec))))
     }
 
-    /// Written in turn; `failed` hears why not, on the main thread. Over the 50, the oldest readable ones go — never
-    /// this one, never one that can't be read.
+    /// Written in turn; `failed` hears why not, on the main thread. A new chat over the 50: the oldest readable ones
+    /// go — never this one, never one that can't be read.
     @MainActor func save(_ id: String, _ chat: AISavedChat, failed: @escaping @MainActor (String) -> Void) {
         let data: Data
         do { data = try JSONEncoder().encode(chat) } catch { return failed(error.localizedDescription) }
         Config.writes.async {
+            let new = !FileManager.default.fileExists(atPath: path(id))
             do {
                 try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
                 chmod(dir, 0o700)   // a folder already there keeps its mode otherwise
@@ -75,7 +85,7 @@ struct AIChatStore {
                 let why = error.localizedDescription
                 return DispatchQueue.main.async { MainActor.assumeIsolated { failed(why) } }
             }
-            guard ids().count > Self.keep else { return }
+            guard new, ids().count > Self.keep else { return }
             remove(list().chats.dropFirst(Self.keep).map(\.id).filter { $0 != id })
         }
     }

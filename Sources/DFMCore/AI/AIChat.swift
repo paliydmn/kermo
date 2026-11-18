@@ -125,7 +125,8 @@ public struct AISavedChat: Codable, Sendable {
         public var prod: [String]
         public init(question: String, chips: [String], prod: [String]) { (self.question, self.chips, self.prod) = (question, chips, prod) }
     }
-    /// A newer Kermo's file isn't read (nor written over).
+    /// A newer Kermo's file isn't read (nor written over). Raise it with any change to what is kept — a part's case or
+    /// label too: the list reads only the head, so a body this version can't read would be listed, then refused.
     nonisolated public static let current = 1
     public var version = Self.current
     public var title: String
