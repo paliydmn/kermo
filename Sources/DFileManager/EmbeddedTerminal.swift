@@ -77,8 +77,8 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         /// Who its text may be from, as far as Kermo can tell (D-227 (12)): its server — or a production server that an
         /// `ssh` running in it goes to, or that its title names after an "@" (the program there writes it): then that
         /// one, asked about and kept from Never Send as any production text. Matched by the saved server's name or host
-        /// as written — and, once `ssh -G` has learned it (asked the first time it's seen), by where the `ssh` goes.
-        /// `unsure`: a program that logs in elsewhere (or a multiplexer that may hold one) has a local
+        /// as written — and, once `ssh -G` has learned it (`learnedOrigin`), by where the `ssh` goes. `unsure`: a
+        /// program that logs in elsewhere (or a multiplexer that may hold one) has a local
         /// tab's terminal — whoever is logged in there. Scrollback left by one that ended isn't seen; nor, in a server's
         /// tab, a `sudo -i` or a further `ssh` its title doesn't name.
         var origin: (server: SFTPTarget?, unsure: Bool) {
@@ -93,13 +93,18 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
             }
             var named: [SFTPTarget] = []
             if fg == "ssh", let d = foregroundArguments.flatMap(SSHCommand.destination) {
-                if !ServerLock.isLearned(d) { Task { await ServerLock.learn([d]) } }   // where it goes: known the next time
                 named.append(d)
                 said.append(String(d.host.split(separator: "@").last ?? "").lowercased())
             }
             let names = Set(said + said.map(label)).subtracting([""])
             named += ServerLock.servers().filter { s in s.prod && [s.name, s.host, label(s.host)].contains { names.contains($0.lowercased()) } }.map(\.target)
             return (named.first(where: SavedServer.isProd)?.asUser ?? target?.asUser, fg.map(Self.logsIn.contains) ?? false)
+        }
+        /// `origin` once `ssh -G` has said where an `ssh` running there goes (the first time it's seen, ~15 ms): what a
+        /// chip is built with.
+        func learnedOrigin() async -> (server: SFTPTarget?, unsure: Bool) {
+            if foreground == "ssh", let d = foregroundArguments.flatMap(SSHCommand.destination), !ServerLock.isLearned(d) { await ServerLock.learn([d]) }
+            return origin
         }
         /// Programs that log in elsewhere, or as someone else.
         static let logsIn = remoteShells.union(["sudo", "su", "doas", "login", "tmux", "screen"])

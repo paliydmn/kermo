@@ -451,7 +451,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         // A tab whose title says it's on prodbox: production's — asked once, masked, Kermo's word with it.
         let tab = EmbeddedTerminal.Tab(kind: .shell, view: DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300)))
         tab.title = "deploy@prodbox: ~"
-        let c = AIPanel.terminal(tab, "deploy failed: token=abc123secret", what: "Selection")
+        let c = await AIPanel.terminal(tab, "deploy failed: token=abc123secret", what: "Selection")
         #expect(c.server.map(SavedServer.isProd) == true && c.title == "Selection · deploy@prodbox: ~")
         panel.attach(c)
         await send("Why?")
@@ -462,7 +462,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         std.set("never", forKey: "aiProduction")
         click(try #require(views(panel.view, NSButton.self).first { $0.toolTip == "New Chat" }))
         #expect(!panel.following)
-        panel.attach(AIPanel.terminal(tab, "more", what: "Selection"))
+        panel.attach(await AIPanel.terminal(tab, "more", what: "Selection"))
         #expect(shown(panel).contains("nothing from a production server goes to the AI"))
         tab.view.feed(text: "first line\r\n")
         tab.view.selectAll()
@@ -475,7 +475,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         // A title that names no saved server: this Mac's. Each ↩ takes the selection as it is then.
         std.removeObject(forKey: "aiProduction")
         tab.title = "deploy@devbox: ~"
-        #expect(AIPanel.terminal(tab, "x", what: "Selection").server == nil)
+        #expect(await AIPanel.terminal(tab, "x", what: "Selection").server == nil)
         await send("Q2")
         #expect(sent(2).contains("first line") && sent(2).contains("Selection · deploy@devbox"), "\(sent(2))")
         tab.view.feed(text: "second\r\n")
@@ -489,6 +489,23 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         #expect(!sent(4).contains("<attached") && asked.count == 1)
         panel.toggleFollow()
         #expect(!panel.following && chips().contains("Follow selection"))
+
+        // Follow on a locked server's tab: Touch ID refused — nothing goes, and the chat says why.
+        var lock = SavedServer(target: SFTPTarget(host: "lockbox.invalid"))
+        lock.locked = true
+        ServerLock.servers = { [box, lock] }
+        let (wasAuth, wasG) = (ServerLock.authenticate, ServerLock.sshG)
+        (ServerLock.authenticate, ServerLock.sshG) = ({ _ in false }, { t in "user u\nhostname \(t.host)\nport 22\n" })
+        defer { (ServerLock.authenticate, ServerLock.sshG) = (wasAuth, wasG); ServerLock.relock() }
+        let locked = EmbeddedTerminal.Tab(kind: .ssh(lock.target), view: DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300)))
+        locked.view.feed(text: "secret things\r\n")
+        locked.view.selectAll()
+        panel.selected(locked)
+        panel.toggleFollow()
+        let before = wire.bodies.count
+        await send("Q5")
+        #expect(wire.bodies.count == before && shown(panel).contains("The followed selection wasn't read") && shown(panel).contains("stayed locked"), "\(shown(panel).suffix(300))")
+        panel.toggleFollow()
 
         // ⇧⌘I in a panel: the file under its cursor.
         let p = app.panels[0]
@@ -530,6 +547,16 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
             shell.view.send(txt: "\u{3}")   // ⌃C
             for _ in 0..<3000 where shell.isRunning && !shell.isAtPrompt { try await Task.sleep(for: .milliseconds(10)) }
         }
+        // An alias only ~/.ssh/config knows (here a stand-in for `ssh -G`): this Mac's as written, production's once learned.
+        let alias = "p-" + UUID().uuidString.prefix(8).lowercased(), was = ServerLock.sshG
+        ServerLock.sshG = { t in "user deploy\nhostname \(t.host == alias || t.host == "192.0.2.10" ? "192.0.2.10" : t.host)\nport 22\n" }
+        defer { ServerLock.sshG = was }
+        shell.view.send(txt: "ssh -F /dev/null -o BatchMode=yes -o ProxyCommand='sleep 30' \(alias)\r")
+        for _ in 0..<3000 where shell.foreground != "ssh" { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(shell.origin.server == nil, "not learned yet: as written")
+        let learned = await shell.learnedOrigin().server
+        #expect(learned.map(SavedServer.isProd) == true, "\(String(describing: learned))")
+        shell.view.send(txt: "\u{3}")
     }
 }
 

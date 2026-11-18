@@ -831,29 +831,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// ⇧⌘I: what is selected where the keys are, as a chip in the chat — the editor window's selection (else its
     /// document); the terminal's (else the command ⌘↑ went to, or the last, with its output); from the chat's field,
-    /// where the user selected last; a panel's marked items (else its cursor's). Read before the chat shows: showing it
-    /// narrows the terminal, which drops its selection and marks.
+    /// where the user selected last; a panel's marked items (else its cursor's). Taken before the chat shows: showing
+    /// it narrows the terminal, which drops its selection and marks.
     func addToChat() {
-        var found: [AIPanel.Context] = []
+        var found: [() async -> AIPanel.Context] = []
         if let h = editorKey, let e = h.active {
-            found = [AIPanel.selection(e) ?? AIPanel.document(e)]
+            let c = AIPanel.selection(e) ?? AIPanel.document(e)
+            found = [{ c }]
         } else if aiPanel.hasFocus {
-            found = [aiPanel.currentSelection()].compactMap { $0 }
+            found = [aiPanel.selectionNow()].compactMap { $0 }
         } else if terminalActive, let tab = terminal.current {
             let text = tab.view.getSelection().flatMap { $0.isEmpty ? nil : ($0, "Selection") } ?? tab.view.commandWithOutput().map { ($0, "Command") }
-            found = [text.map { AIPanel.terminal(tab, $0.0, what: $0.1) }].compactMap { $0 }
+            found = [text.map { t in { await AIPanel.terminal(tab, t.0, what: t.1) } }].compactMap { $0 }
         } else if !(window.firstResponder is NSText) {
-            found = aiPanel.marked(active)
+            found = aiPanel.marked(active).map { c in { c } }
         }
         guard !found.isEmpty || !AISettings.ready(defaults) else { return NSSound.beep() }
-        aiPanel.add(Array(found.prefix(10)))
-        if found.count > 10 { aiPanel.flash("The first 10 of \(found.count) marked — attach the rest from + or #.") }
+        Task {
+            var made: [AIPanel.Context] = []
+            for f in found { made.append(await f()) }
+            aiPanel.add(made)
+        }
+    }
+
+    /// A terminal's text, taken now, into the chat once where it's from is known (`learnedOrigin`).
+    private func toChat(_ tab: EmbeddedTerminal.Tab, _ text: String, what: String) {
+        Task { aiPanel.add([await AIPanel.terminal(tab, text, what: what)]) }
     }
 
     /// «⋯» Add Command and Output to Chat: the command ⌘↑ went to, else the last that printed, with its output.
     func addCommandToChat() {
         guard terminal.isShown, let tab = terminal.current, let text = tab.view.commandWithOutput() else { return NSSound.beep() }
-        aiPanel.add([AIPanel.terminal(tab, text, what: "Command")])
+        toChat(tab, text, what: "Command")
     }
 
     /// A terminal tab's selection made (or gone): "✨ Add to Chat" by it while the AI is set up; the chat's Follow.
@@ -863,7 +872,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let key = shows ? commands.first { $0.id == "ai.add" }?.keys.first.map { "  " + $0.display } ?? "" : ""
         tab.view.showChatButton(shows ? "Add to Chat" + key : nil) { [weak self, weak tab] in
             guard let self, let tab, let text = tab.view.getSelection(), !text.isEmpty else { return }
-            aiPanel.add([AIPanel.terminal(tab, text, what: "Selection")])
+            toChat(tab, text, what: "Selection")
         }
     }
 
@@ -1665,7 +1674,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         terminal.onDirectory = { [unowned self] in follow($0) }
         terminal.onLink = { [unowned self] in openLink($1, flags: $2, in: $0) }
         terminal.onSelect = { [unowned self] in terminalSelected($0) }
-        terminal.onCommandClick = { [unowned self] tab, text in aiPanel.add([AIPanel.terminal(tab, text, what: "Command")]) }
+        terminal.onCommandClick = { [unowned self] tab, text in toChat(tab, text, what: "Command") }
         terminal.chatReady = { [unowned self] in AISettings.ready(defaults) }
 
         splitController = NSSplitViewController()

@@ -515,7 +515,10 @@ final class AISession {
     }
 
     static let runners: [String: Runner] = [
-        "focus": { s, _, _ in s.focus() },
+        "focus": { s, _, _ in
+            _ = await s.app.terminal?.current?.learnedOrigin()   // where an `ssh` in the tab goes, before it's told
+            return s.focus()
+        },
         "request_scope": { s, args, _ in await s.requestScope(args) },
         "list_folder": { s, _, targets in await listing(s.servers[targets[0].place], targets[0].path ?? "/") },
         "read_file": { s, _, targets in
@@ -567,7 +570,7 @@ final class AISession {
                 return .failure("No terminal tab of \(s.name(targets[0].place)) is open.")
             }
             // A local tab where `ssh prod` runs, a tab whose title names a production server: its text may be that server's.
-            if let p = tab.origin.server, SavedServer.isProd(p), !(t.map { ServerLock.same($0, p) } ?? false) {
+            if let p = await tab.learnedOrigin().server, SavedServer.isProd(p), !(t.map { ServerLock.same($0, p) } ?? false) {
                 return .failure("That tab's text may be from \(label(p)), a production server: the user can attach it to the chat themselves.")
             }
             guard let out = tab.view.output(), !out.isEmpty else { return .failure("Nothing to read there: no command printed anything, or a full-screen program is running.") }
