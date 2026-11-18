@@ -317,9 +317,24 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         (selectedEditor, editorLast) = (e, true)
         followMoved()
     }
-    /// The Follow chip's words as last shown: a caret moving as the user types doesn't redraw the chips.
-    private var followShown: String?
-    private func followMoved() { if following, built, currentSelection()?.title != followShown { showChips() } }
+    /// Where Follow would take from as the chip last showed it: a caret moving as the user types redraws nothing.
+    private var followShown: (title: String, server: SFTPTarget?)?
+    private func followMoved() {
+        guard following, built else { return }
+        let now = followSource()
+        if now?.title != followShown?.title || now?.server != followShown?.server { showChips() }
+    }
+
+    /// Where Follow would take from now — the chip's words and the machine; nil: nothing selected. Nothing is copied.
+    private func followSource() -> (title: String, server: SFTPTarget?)? {
+        if editorLast {
+            guard let e = selectedEditor, e.textView.selectedRange().length > 0 else { return nil }
+            return ("Selection · \(e.name)", e.origin?.asUser)
+        }
+        guard let tab = selectedTab, tab.view.selectionActive else { return nil }
+        let o = tab.origin
+        return (Self.title("Selection", tab, unsure: o.unsure), o.server)
+    }
 
     /// What is selected now where the user selected last, read now; nil: nothing.
     func currentSelection() -> Context? {
@@ -330,18 +345,18 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
     func toggleFollow() {
         following.toggle()
-        if following, let c = currentSelection(), isProd(c), AISettings.neverProd(app.defaults) {
+        showChips()
+        if following, followShown?.server.map(SavedServer.isProd) == true, AISettings.neverProd(app.defaults) {
             flash("Settings › AI: nothing from a production server goes to the AI — that selection won't go.")
         }
-        showChips()
     }
 
     /// The Follow chip, attached chips, then up to four suggestions (dashed: a click adds one).
     private func showChips() {
-        let now = following ? currentSelection() : nil
-        followShown = now?.title
+        let now = following ? followSource() : nil
+        followShown = now
         let follow = ChipButton(title: following ? now.map { "Following: " + $0.title } ?? "Following selection — none now" : "Follow selection",
-                                symbol: .follow, suggested: !following, prod: now.map(isProd) ?? false, plus: false) { [unowned self] _ in toggleFollow() }
+                                symbol: .follow, suggested: !following, prod: now?.server.map(SavedServer.isProd) ?? false, plus: false) { [unowned self] _ in toggleFollow() }
         follow.toolTip = following ? "On: what is selected in the terminal or the editor when you press ↩ goes with the message. Click to turn off."
             : "Turn on: what is selected in the terminal or the editor when you press ↩ goes with each message."
         let added = chips.enumerated().map { i, c -> NSView in
@@ -700,7 +715,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     }
 
     private func updateInfo() {
-        let followed = following ? currentSelection()?.server : nil
+        let followed = following ? followShown?.server : nil   // as the chip shows it: nothing read on each key
         let prod = Self.unique(chips.compactMap(\.context.server) + [followed].compactMap { $0 }).filter(SavedServer.isProd).map(AISession.label)
         if !prod.isEmpty {
             info.stringValue = "\(prod.joined(separator: ", ")) (PROD) goes to \(AISettings.address(app.defaults)?.host ?? "your provider")"

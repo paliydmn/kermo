@@ -500,6 +500,37 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         p.table.selectRowIndexes(IndexSet(integer: try #require(row)), byExtendingSelection: false)
         #expect(panel.marked(p).map(\.title) == ["notes.txt · this Mac"])
     }
+
+    /// Task 23 PR 6: `ssh` running in a local tab to a production server makes the tab's text that server's — one saved
+    /// with its user, one saved by address and typed by its name; one Kermo doesn't know is this Mac's, "whoever is logged
+    /// in". The `ssh` waits on a stand-in for its connection: no network, no config of yours.
+    @Test func aLocalTabRunningSSHToProductionIsProductions() async throws {
+        _ = NSApplication.shared
+        let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t23h-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+        var web = SavedServer(), db = SavedServer()
+        (web.host, web.user, web.prod) = ("prodweb.invalid", "deploy", true)
+        (db.host, db.name, db.prod) = ("192.0.2.10", "dbprod", true)
+        ServerLock.servers = { [web, db] }
+        defer {
+            ServerLock.servers = { [] }
+            try? FileManager.default.removeItem(atPath: d)
+        }
+        // zsh without rc files (nor history): nothing of yours runs.
+        let shell = EmbeddedTerminal.Tab(kind: .shell, view: DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 400)))
+        shell.view.startProcess(executable: "/bin/zsh", args: ["-f"], environment: ["HOME=\(d)", "PATH=/usr/bin:/bin", "TERM=xterm-256color"], currentDirectory: d)
+        shell.started = "zsh"
+        defer { shell.view.process.terminate() }
+        for _ in 0..<3000 where !shell.isAtPrompt { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(shell.origin.server == nil && !shell.origin.unsure, "the shell itself: this Mac's")
+        for (to, expected) in [("prodweb.invalid", web.target.asUser), ("dbprod", db.target.asUser), ("devbox.invalid", nil)] {
+            shell.view.send(txt: "ssh -F /dev/null -o BatchMode=yes -o ProxyCommand='sleep 30' \(to)\r")
+            for _ in 0..<3000 where shell.foreground != "ssh" { try await Task.sleep(for: .milliseconds(10)) }
+            #expect(shell.origin.server == expected && shell.origin.unsure, "\(to): \(String(describing: shell.origin))")
+            shell.view.send(txt: "\u{3}")   // ⌃C
+            for _ in 0..<3000 where shell.isRunning && !shell.isAtPrompt { try await Task.sleep(for: .milliseconds(10)) }
+        }
+    }
 }
 
 /// Task 23 PR 6: ⌥-click on a command's line gives the chat that command and its output — while the AI is set up; on

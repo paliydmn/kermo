@@ -280,7 +280,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
               selection, lines 3–4:
             KEY=1
             B=2
-            Terminal: a tab opened as web-01 — who is logged in there now isn't known
+            Terminal: a tab on web-01 as far as Kermo can tell — who is logged in there now isn't known
               last command line: $ tail log
               selection:
             error 42
@@ -292,7 +292,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             Other panel: a tab of db-01 at /srv, not connected
             Editor: db-01 /srv/app.env (unsaved changes)
               selection, lines 3–4: not in this chat's scope
-            Terminal: a tab opened as web-01 — who is logged in there now isn't known
+            Terminal: a tab on web-01 as far as Kermo can tell — who is logged in there now isn't known
               its text: not in this chat's scope
             """, "\(none)")
     }

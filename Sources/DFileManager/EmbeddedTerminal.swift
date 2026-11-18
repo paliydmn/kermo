@@ -75,22 +75,32 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
             return pg > 0 && proc_name(pg, &name, 256) > 0 ? String(decoding: name.prefix { $0 != 0 }, as: UTF8.self) : nil
         }
         /// Who its text may be from, as far as Kermo can tell (D-227 (12)): its server — or a production server that an
-        /// `ssh` typed in it goes to, or that its title names after an "@" (the program there writes it): then that one,
-        /// asked about and kept from Never Send as any production text. `unsure`: a program that logs in elsewhere has a
-        /// local tab's terminal — whoever is logged in there. Scrollback left by one that ended isn't seen.
+        /// `ssh` running in it goes to, or that its title names after an "@" (the program there writes it): then that
+        /// one, asked about and kept from Never Send as any production text. Matched by the saved server's name or host
+        /// as written, and by the address as `ssh -G` learned it. `unsure`: a program that logs in elsewhere has a local
+        /// tab's terminal — whoever is logged in there. Scrollback left by one that ended isn't seen; nor, in a server's
+        /// tab, a `sudo -i` or a further `ssh` its title doesn't name.
         var origin: (server: SFTPTarget?, unsure: Bool) {
             let fg = foreground
-            var named = fg == "ssh" ? [foregroundArguments.flatMap(SSHCommand.destination)].compactMap { $0 } : []
-            let label = { (h: String) in String(h.split(separator: "@").last?.split(separator: ".").first ?? "") }   // "web" of "root@web.example.com"
-            let said = Set(title.lowercased().split(separator: "@").dropFirst().flatMap { w in   // "deploy@web-01: ~" → web-01
-                let h = String(w.prefix { $0.isLetter || $0.isNumber || "._-".contains($0) })
-                return [h, label(h)]
-            })
-            named += ServerLock.servers().filter { s in s.prod && [s.name, s.host, label(s.host)].contains { !$0.isEmpty && said.contains($0.lowercased()) } }.map(\.target)
+            /// "web" of "root@web.example.com"; an address stays whole.
+            let label = { (h: String) -> String in
+                let host = String(h.split(separator: "@").last ?? "")
+                return host.contains(where: \.isLetter) ? String(host.split(separator: ".").first ?? "") : host
+            }
+            var said = title.lowercased().split(separator: "@").dropFirst().map { w in   // "deploy@web-01: ~" → web-01
+                String(w.prefix { $0.isLetter || $0.isNumber || "._-".contains($0) })
+            }
+            var named: [SFTPTarget] = []
+            if fg == "ssh", let d = foregroundArguments.flatMap(SSHCommand.destination) {
+                named.append(d)
+                said.append(String(d.host.split(separator: "@").last ?? "").lowercased())
+            }
+            let names = Set(said + said.map(label)).subtracting([""])
+            named += ServerLock.servers().filter { s in s.prod && [s.name, s.host, label(s.host)].contains { names.contains($0.lowercased()) } }.map(\.target)
             return (named.first(where: SavedServer.isProd)?.asUser ?? target?.asUser, fg.map(Self.logsIn.contains) ?? false)
         }
         /// Programs that log in elsewhere, or as someone else.
-        static let logsIn: Set = ["ssh", "mosh-client", "sudo", "su", "doas", "login", "telnet", "docker", "podman", "kubectl", "et"]
+        static let logsIn = remoteShells.union(["sudo", "su", "doas", "login"])
         /// The arguments of what has a local tab's terminal; nil: unknown.
         private var foregroundArguments: [String]? {
             guard host == nil, let p = view.process, isRunning else { return nil }
@@ -1492,6 +1502,7 @@ final class DropTerminalView: LocalProcessTerminalView {
 
     override func mouseDown(with event: NSEvent) {
         commandPress = event.modifierFlags.contains(.command)
+        swallowUp = false   // a release that never came doesn't take this click's
         let keys = event.modifierFlags.intersection([.command, .option, .control, .shift])
         let h = caretFrame.height   // a row's: SwiftTerm sizes the caret to a cell (wider on a wide character, never taller)
         guard event.clickCount == 1, keys.isEmpty || keys == .shift || keys == .option && chatReady(), h > 0,
@@ -1521,7 +1532,7 @@ final class DropTerminalView: LocalProcessTerminalView {
             super.mouseDown(with: mouse(.leftMouseDown, at))
             super.mouseUp(with: mouse(.leftMouseUp, p))
         }
-        if Self.on("terminalCopyOnSelect") { copySelection() }
+        selected(copy: Self.on("terminalCopyOnSelect"))
     }
 
     /// A link ⌘-clicked in the text (never an OSC 8 one) and the click's keys: the tab's to open; nil: none opens.

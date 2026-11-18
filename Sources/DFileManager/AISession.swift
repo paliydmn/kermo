@@ -646,7 +646,7 @@ final class AISession {
             }
         }
         if let t = c.terminal {
-            lines.append("Terminal: a tab opened as \(at(t.server)) — who is logged in there now isn't known")
+            lines.append("Terminal: a tab on \(at(t.server)) as far as Kermo can tell — who is logged in there now isn't known")
             if may(t.server) {
                 if let cmd = t.command { lines.append("  last command line: \(cmd.prefix(400))") }
                 if let sel = t.selection { lines.append("  selection:\n" + String(sel.prefix(4000))) }
