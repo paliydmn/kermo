@@ -5,9 +5,9 @@ import Security
 // the HTTP under it, the key in the Keychain. The adapters — `AIAnthropic`, `AIOpenAI` — write and read the wire.
 
 /// One turn of a chat as Kermo keeps it — the same for every provider.
-public struct AIMessage: Sendable, Equatable {
-    public enum Role: String, Sendable { case user, assistant }
-    public enum Part: Sendable, Equatable {
+public struct AIMessage: Sendable, Equatable, Codable {
+    public enum Role: String, Sendable, Codable { case user, assistant }
+    public enum Part: Sendable, Equatable, Codable {
         case text(String)
         /// The model's: a tool it asked for.
         case call(AIToolUse)
@@ -27,16 +27,40 @@ public struct AIMessage: Sendable, Equatable {
 
 /// A tool the model asked for. Its arguments are the model's — untrusted, they go only through `AISession.call`.
 /// `args` nil: what it wrote isn't a JSON object; nothing may run, the model is told so.
-public struct AIToolUse: Sendable, Equatable {
+public struct AIToolUse: Sendable, Equatable, Codable {
     public var id: String, name: String
     public var args: [String: ToolValue]?
     public init(id: String, name: String, args: [String: ToolValue]?) { (self.id, self.name, self.args) = (id, name, args) }
 }
 
-/// Tokens of one turn. `input` is what wasn't read from the provider's cache.
+/// Tokens of one turn. `input` is what wasn't read from the provider's cache. `dollars`: what they cost at Anthropic's
+/// prices (`AIPrice`) — nil where Kermo doesn't know them: another address, an unknown model, another provider.
 public struct AIUsage: Sendable, Equatable {
     public var input = 0, output = 0, cacheRead = 0, cacheWrite = 0
+    public var dollars: Double?
     public init() {}
+}
+
+/// Anthropic's prices, as of 2026-11 (the claude-api skill, 2026-11-03), dollars a million tokens: input, output,
+/// cache read; a cache write (5 minutes, Kermo's one mark) is 1.25× input. Only these ids, or one with a date after
+/// them — a model not here has no price, never a neighbour's.
+public enum AIPrice {
+    static let table: [String: (input: Double, output: Double, read: Double)] = [
+        "claude-fable-5-2": (8, 40, 0.20), "claude-fable-5-1": (10, 50, 0.25), "claude-fable-5": (10, 50, 1),
+        "claude-opus-5-5": (4, 20, 0.20), "claude-opus-5": (5, 25, 0.50),
+        "claude-opus-4-8": (5, 25, 0.50), "claude-opus-4-7": (5, 25, 0.50), "claude-opus-4-6": (5, 25, 0.50),
+        "claude-sonnet-5-5": (2, 10, 0.10), "claude-sonnet-5": (2, 10, 0.20), "claude-sonnet-4-6": (3, 15, 0.30),
+        "claude-haiku-5-5": (0.10, 0.50, 0.01), "claude-haiku-4-5": (1, 5, 0.10),
+    ]
+
+    /// One request's cost; nil — a model not in the table. Haiku 5.5 costs five times as much once the prompt
+    /// (cached or not) passes 100K tokens.
+    public static func dollars(_ model: String, _ u: AIUsage) -> Double? {
+        let id = model.replacingOccurrences(of: #"-\d{8}$"#, with: "", options: .regularExpression)
+        guard var p = table[id] else { return nil }
+        if id == "claude-haiku-5-5", u.input + u.cacheRead + u.cacheWrite > 100_000 { p = (0.50, 2.50, 0.05) }
+        return (Double(u.input) * p.input + Double(u.cacheWrite) * p.input * 1.25 + Double(u.cacheRead) * p.read + Double(u.output) * p.output) / 1_000_000
+    }
 }
 
 public enum AIStop: Sendable, Equatable {

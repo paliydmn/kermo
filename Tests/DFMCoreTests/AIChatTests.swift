@@ -130,3 +130,30 @@ private func wellFormed(_ m: [AIMessage]) -> Bool {
     #expect(AIChat.productionNote(["web-01"]).contains("web-01 is a production server"))
     #expect(Set(AIChat.askTools.map(\.kind)).isSubset(of: [.read, .ui, .run]) && !AIChat.askTools.contains { $0.name == "request_scope" || $0.name == "propose_edit" })
 }
+
+// Task 23 PR 5b: a chat as kept on this Mac — every kind of part back as it went, and read back without thinking.
+
+@Test func aKeptChatComesBackAsItWent() throws {
+    let call = AIToolUse(id: "c1", name: "read_file", args: ["server": "web-01", "path": "/etc/hosts", "n": .number(2.5), "deep": .object(["a": .array([.bool(true), .null])])])
+    let bad = AIToolUse(id: "c2", name: "focus", args: nil)
+    let messages = [AIMessage(.user, [.text("Hi 🌍")]),
+                    AIMessage(.assistant, [.kept(["type": "thinking", "thinking": "", "signature": "EqQB"]), .kept(["type": "redacted_thinking", "data": "xyz"]),
+                                           .text("Looking."), .call(call), .call(bad)]),
+                    AIMessage(.user, [.result(id: "c1", AIResult("127.0.0.1")), .result(id: "c2", .failure("not JSON")), .text("go on")])]
+    let saved = AISavedChat(title: "Hi", model: "claude-sonnet-5-5", provider: "anthropic https://api.anthropic.com", started: Date(timeIntervalSince1970: 1_800_000_000),
+                            production: true, messages: messages, asked: [.init(question: "Hi 🌍", chips: ["hosts · web-01"], prod: ["hosts · web-01"]), .init(question: "go on", chips: [], prod: [])])
+    let back = try JSONDecoder().decode(AISavedChat.self, from: JSONEncoder().encode(saved))
+    #expect(back.messages == messages && back.asked == saved.asked && back.started == saved.started)
+    #expect(back.production && back.provider == saved.provider && back.model == saved.model && back.title == "Hi" && back.version == AISavedChat.current)
+}
+
+@Test func aChatReadBackGoesOnWithoutItsThinking() {
+    let thinking = AIMessage.Part.kept(["type": "thinking", "thinking": "", "signature": "s"])
+    let kept = [AIMessage(.user, [.text("Q1")]), AIMessage(.assistant, [thinking]),   // an answer that was only thinking
+                AIMessage(.user, [.text("Q2")]), AIMessage(.assistant, [thinking, .text("A"), .call(read)]),
+                AIMessage(.user, [.result(id: "c1", AIResult("x"))]), AIMessage(.assistant, [thinking, .text("Done.")])]
+    let r = AISavedChat.resumable(kept)
+    #expect(r == [AIMessage(.user, [.text("Q1"), .text("Q2")]), AIMessage(.assistant, [.text("A"), .call(read)]),
+                  AIMessage(.user, [.result(id: "c1", AIResult("x"))]), AIMessage(.assistant, [.text("Done.")])])
+    #expect(wellFormed(r))
+}

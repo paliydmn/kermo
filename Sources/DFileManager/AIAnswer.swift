@@ -130,7 +130,22 @@ final class Answer: NSStackView {
         if let said { add(Self.noteRow(said, error: false, action: nil)) }
         var tokens = ["\(AIPanel.tokens(used.input + used.cacheRead + used.cacheWrite)) in", "\(AIPanel.tokens(used.output)) out"]
         if used.cacheRead > 0 { tokens.append("\(AIPanel.tokens(used.cacheRead)) from cache") }
-        add(Self.small(tokens.joined(separator: " · ") + " tokens"))
+        let line = Self.small(tokens.joined(separator: " · ") + " tokens")
+        if let d = used.dollars {
+            line.stringValue = Self.dollars(d) + " · " + line.stringValue
+            line.toolTip = "At Anthropic's prices as of 2026-11, cache reads and writes counted — your bill is the provider's"
+        }
+        add(line)
+    }
+
+    /// "$0.012"; under a tenth of a cent, "<$0.001".
+    static func dollars(_ d: Double) -> String { d < 0.001 ? "<$0.001" : String(format: d < 1 ? "$%.3f" : "$%.2f", d) }
+
+    /// Drawn now, nothing waiting: a chat read back.
+    func settle() {
+        draw()
+        waiting?.removeFromSuperview()
+        waiting = nil
     }
 
     /// Stopped or failed: what was there stays, with the words — and what may help.

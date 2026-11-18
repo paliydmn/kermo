@@ -18,7 +18,9 @@ public struct AIAnthropic: AIProvider {
     }
 
     public func send(_ messages: [AIMessage], tools: [AITool], system: String) -> AsyncThrowingStream<AIEvent, Error> {
-        AIWire.stream(request("v1/messages", body: body(messages, tools: tools, system: system)), endpoint, transport, Parser())
+        // Dollars only at Anthropic's own address: a gateway's prices are its own.
+        let priced = endpoint.address.absoluteString == AIEndpoint.defaultAddress(.anthropic).absoluteString ? endpoint.model : nil
+        return AIWire.stream(request("v1/messages", body: body(messages, tools: tools, system: system)), endpoint, transport, Parser(priced: priced))
     }
 
     public func models() async throws -> [String] {
@@ -65,6 +67,9 @@ public struct AIAnthropic: AIProvider {
         private var reason: String?, category: String?
         private var usage = AIUsage()
         private var stopped = false
+        /// The model whose prices the request is counted at; nil — none.
+        let priced: String?
+        init(priced: String? = nil) { self.priced = priced }
 
         mutating func take(_ payload: String) throws -> [AIEvent] {
             guard case .object(let m)? = AIWire.json(payload) else { throw AIWire.damaged }   // never skipped: the rest could still parse
@@ -141,6 +146,7 @@ public struct AIAnthropic: AIProvider {
                 default: parts.append(.kept(.object(b.start)))   // redacted_thinking: whole in its start
                 }
             }
+            usage.dollars = priced.flatMap { AIPrice.dollars($0, usage) }
             return .done(AIMessage(.assistant, parts), stop, usage)
         }
     }

@@ -241,4 +241,149 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         _ = ChatMarkdown.prose(long)
         #expect(Date().timeIntervalSince(start) < 0.5, "\(Date().timeIntervalSince(start)) s for 20 KB")
     }
+
+    /// Task 23 PR 5b: a chat kept on this Mac — owner-only, nothing unmasked, the key nowhere; a new panel (a
+    /// relaunch) lists it and goes on with it without its thinking; damaged, wide and newer files are left as they are
+    /// and never pruned; the 50 latest kept; Delete; switched off, nothing written, and the kept ones go only if the
+    /// user says so.
+    @Test func chatsAreKeptOwnerOnlyAndComeBackWithoutThinking() async throws {
+        let std = UserDefaults.standard, names = ["aiProvider", "aiAddress", "aiModel", "aiProduction", "aiKeepChats"], saved = names.map { ($0, std.object(forKey: $0)) }
+        let thought = sse([#"{"type":"message_start","message":{"usage":{"input_tokens":1200,"output_tokens":1}}}"#,
+                           #"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}"#,
+                           #"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EqQBsig"}}"#,
+                           #"{"type":"content_block_stop","index":0}"#,
+                           #"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":"Fine, I thought."}}"#,
+                           #"{"type":"content_block_stop","index":1}"#,
+                           #"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":40}}"#, #"{"type":"message_stop"}"#])
+        let wire = Wire([(200, thought), (200, turn(text: "Still fine."))])
+        (AISettings.keys, AISettings.transport) = (AIKeys(Keys()), wire.transport)
+        let base = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t23k-" + UUID().uuidString, dir = base + "/token=abc123secret"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let store = AIChatStore(dir: base + "/ai")
+        var asked: [String] = [], answer = 1
+        AppDelegate.answering = { title, _, _ in asked.append(title); return answer }
+        let app = panelApp(dir)
+        defer {
+            for (k, v) in saved { if let v { std.set(v, forKey: k) } else { std.removeObject(forKey: k) } }
+            (AISettings.keys, AISettings.transport, AppDelegate.answering) = (.shared, AIHTTP.live, nil)
+            app.panels.forEach { $0.shutdown() }
+            Config.flush()
+            try? FileManager.default.removeItem(atPath: base)
+        }
+        names.forEach(std.removeObject(forKey:))
+        func panel() -> AIPanel {
+            let p = AIPanel(app: app)
+            p.chats = store
+            p.view.frame = NSRect(x: 0, y: 0, width: 400, height: 700)
+            p.build()
+            return p
+        }
+        func send(_ p: AIPanel, _ q: String) async {
+            for _ in 0..<300 where p.turn == nil {
+                p.send(q)
+                if p.turn == nil { try? await Task.sleep(for: .milliseconds(10)) }
+            }
+            await done(p)
+            Config.flush()
+        }
+        let first = panel()
+        first.attach(try #require(first.contexts(all: true).first { $0.id == "dir:mac:\(dir)" }))   // its name holds a secret
+        await send(first, "Is it fine? token=abc123secret")
+        let files = try FileManager.default.contentsOfDirectory(atPath: store.dir)
+        try #require(files.count == 1 && files[0].hasSuffix(".json"), "\(files)")
+        let id = String(files[0].dropLast(5)), file = store.dir + "/" + files[0]
+        var st = stat()
+        #expect(lstat(file, &st) == 0 && st.st_mode & 0o777 == 0o600 && lstat(store.dir, &st) == 0 && st.st_mode & 0o777 == 0o700)
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: file)), text = String(decoding: bytes, as: UTF8.self)
+        #expect(!text.contains("abc123secret") && !text.contains("test-key") && text.contains("token=•••") && text.contains("EqQBsig"),
+                "masked as it went (the question and the chip's name), no key; the thinking as it came")
+
+        // A relaunch: the list, the chat as it was shown, and going on without the thinking.
+        let again = panel()
+        let list = store.list()
+        #expect(list.chats.map(\.title) == ["Is it fine? token=•••"] && list.chats.map(\.id) == [id] && list.unread.isEmpty)
+        again.open(id)
+        #expect(shown(again).contains("Is it fine? token=•••") && shown(again).contains("Fine, I thought.") && !shown(again).contains("abc123secret"), "\(shown(again))")
+        await send(again, "And now?")
+        let body = "\(wire.bodies.last?["messages"] ?? "")"
+        #expect(wire.bodies.count == 2 && !body.contains("EqQBsig") && body.contains("Fine, I thought.") && body.contains("And now?"), "\(body)")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: store.dir).count == 1, "the same chat, written over")
+
+        // Damaged, wide and newer files: not read, said; never written over, never pruned. Over 50: the oldest go.
+        let kept = try Data(contentsOf: URL(fileURLWithPath: file))
+        let odd = [("{", 0o600), (String(decoding: kept, as: UTF8.self), 0o644),
+                   (String(decoding: kept, as: UTF8.self).replacingOccurrences(of: "\"version\":1", with: "\"version\":99"), 0o600)]
+        for (content, mode) in odd {
+            FileManager.default.createFile(atPath: store.dir + "/\(UUID().uuidString).json", contents: Data(content.utf8), attributes: [.posixPermissions: mode])
+        }
+        for i in 0..<50 {
+            let path = store.dir + "/\(UUID().uuidString).json"
+            FileManager.default.createFile(atPath: path, contents: kept, attributes: [.posixPermissions: 0o600])
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_000_000_000 + Double(i))], ofItemAtPath: path)
+        }
+        #expect(store.list().unread.count == 3 && store.list().chats.count == 51)
+        wire.then([(200, turn(text: "Pruned."))])
+        await send(again, "Prune?")
+        let pruned = store.list()
+        #expect(pruned.chats.count == 50 && pruned.unread.count == 3 && pruned.chats.first?.id == id, "\(pruned.unread)")
+
+        // Delete: the file is gone, the panel starts afresh.
+        again.deleteChat(id)
+        Config.flush()
+        #expect(!FileManager.default.fileExists(atPath: file) && store.list().chats.count == 49 && !shown(again).contains("Fine, I thought."))
+
+        // Switched off: nothing written; the kept ones go only when the user says so.
+        std.set(false, forKey: "aiKeepChats")
+        wire.then([(200, turn(text: "Not kept."))])
+        await send(again, "Kept?")
+        #expect(wire.bodies.count == 4 && store.list().chats.count == 49)
+        AIPanel.keepChatsChanged(app, store: store)   // Keep
+        for _ in 0..<300 where asked.isEmpty { try? await Task.sleep(for: .milliseconds(10)) }
+        #expect(asked == ["Delete the 49 chats kept on this Mac?"])
+        answer = 0
+        AIPanel.keepChatsChanged(app, store: store)
+        for _ in 0..<300 where store.list().chats.count > 0 {
+            try? await Task.sleep(for: .milliseconds(10))
+            Config.flush()
+        }
+        #expect(store.list().chats.isEmpty && store.list().unread.count == 3 && asked.count == 2)
+    }
+
+    /// A chat read back keeps what 5a's guards read: its provider, and that it holds production text.
+    @Test func aChatReadBackKeepsItsProviderAndItsProductionText() async throws {
+        let std = UserDefaults.standard, names = ["aiProvider", "aiAddress", "aiModel", "aiProduction", "aiKeepChats"], saved = names.map { ($0, std.object(forKey: $0)) }
+        let wire = Wire([])
+        (AISettings.keys, AISettings.transport) = (AIKeys(Keys()), wire.transport)
+        let base = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t23r-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
+        let store = AIChatStore(dir: base + "/ai")
+        let app = panelApp(base)
+        defer {
+            for (k, v) in saved { if let v { std.set(v, forKey: k) } else { std.removeObject(forKey: k) } }
+            (AISettings.keys, AISettings.transport) = (.shared, AIHTTP.live)
+            app.panels.forEach { $0.shutdown() }
+            Config.flush()
+            try? FileManager.default.removeItem(atPath: base)
+        }
+        names.forEach(std.removeObject(forKey:))
+        let prod = AISavedChat(title: "Q", model: "claude-sonnet-5-5", provider: "anthropic https://api.anthropic.com", started: Date(), production: true,
+                               messages: [AIMessage(.user, [.text("Q")]), AIMessage(.assistant, [.text("A")])], asked: [.init(question: "Q", chips: [], prod: [])])
+        var elsewhere = prod
+        (elsewhere.production, elsewhere.provider) = (false, "openai http://127.0.0.1:9/v1")
+        let (a, b) = (UUID().uuidString, UUID().uuidString)
+        store.save(a, prod) { _ in }
+        store.save(b, elsewhere) { _ in }
+        Config.flush()
+        let panel = AIPanel(app: app)
+        (panel.chats, panel.view.frame) = (store, NSRect(x: 0, y: 0, width: 400, height: 700))
+        panel.build()
+        std.set("never", forKey: "aiProduction")
+        panel.open(a)
+        panel.send("More?")
+        #expect(panel.turn == nil && wire.bodies.isEmpty && shown(panel).contains("Never Send: start a New Chat"))
+        std.removeObject(forKey: "aiProduction")
+        panel.open(b)
+        panel.send("Here?")
+        #expect(panel.turn == nil && wire.bodies.isEmpty && shown(panel).contains("names another provider"))
+    }
 }

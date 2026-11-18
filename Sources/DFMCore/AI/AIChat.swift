@@ -103,18 +103,65 @@ public final class AIChat {
     /// A user message as it goes: Kermo's production note, what the user attached (each already masked), the question
     /// — secrets in it masked too: what goes is what "What Will Be Sent" shows.
     nonisolated public static func compose(_ question: String, attached: [(title: String, text: String)], production: [String]) -> String {
-        // A title is a file's or a terminal's (its program may set it): one line, no quote to end the name — by scalar,
-        // so a quote with a combining mark is one too — then masked.
-        let name = { (t: String) in
-            AISecrets.mask(String(String.UnicodeScalarView(t.unicodeScalars.map { $0 == "\"" || CharacterSet.newlines.contains($0) ? " " : $0 }))).text
-        }
-        let parts = [productionNote(production)] + attached.map { "<attached name=\"\(name($0.title))\">\n\($0.text)\n</attached>" } + [AISecrets.mask(question).text]
+        let parts = [productionNote(production)] + attached.map { "<attached name=\"\(attachedName($0.title))\">\n\($0.text)\n</attached>" } + [AISecrets.mask(question).text]
         return parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
+    /// A title is a file's or a terminal's (its program may set it): one line, no quote to end the name — by scalar,
+    /// so a quote with a combining mark is one too — then masked.
+    nonisolated public static func attachedName(_ t: String) -> String {
+        AISecrets.mask(String(String.UnicodeScalarView(t.unicodeScalars.map { $0 == "\"" || CharacterSet.newlines.contains($0) ? " " : $0 }))).text
+    }
+}
+
+/// A chat as kept on this Mac (task 23 PR 5b): one JSON file, written whole after each send and each turn. Only what
+/// went to the provider, as it went (masked), and the user's side as the panel showed it — masked the same way.
+public struct AISavedChat: Codable, Sendable {
+    /// What the user sent, for the panel to show again: the question and what was attached, by name.
+    public struct Asked: Codable, Sendable, Equatable {
+        public var question: String
+        public var chips: [String]
+        /// Those from a production server.
+        public var prod: [String]
+        public init(question: String, chips: [String], prod: [String]) { (self.question, self.chips, self.prod) = (question, chips, prod) }
+    }
+    /// A newer Kermo's file isn't read (nor written over).
+    nonisolated public static let current = 1
+    public var version = Self.current
+    public var title: String
+    /// The model it began with.
+    public var model: String
+    /// The provider it began with ("anthropic https://api.anthropic.com"), never its key: production consent named it.
+    public var provider: String
+    public var started: Date
+    /// It holds text from a production server: under Never Send it goes no further.
+    public var production: Bool
+    public var messages: [AIMessage]
+    /// One for each time the user sent: each `.text` of a user message, in order.
+    public var asked: [Asked]
+
+    public init(title: String, model: String, provider: String, started: Date, production: Bool, messages: [AIMessage], asked: [Asked]) {
+        (self.title, self.model, self.provider, self.started, self.production, self.messages, self.asked) = (title, model, provider, started, production, messages, asked)
+    }
+
+    /// The history to go on with after it was read back: without thinking. A provider checks its thinking against the
+    /// instructions, tools and history it came with — another Kermo version, another account would be a 400 — and
+    /// dropping it all at once is what the provider allows. A message that was only thinking goes too, and the two
+    /// user messages it parted become one (two in a row are refused).
+    public static func resumable(_ messages: [AIMessage]) -> [AIMessage] {
+        var out: [AIMessage] = []
+        for var m in messages {
+            m.parts.removeAll { if case .kept = $0 { true } else { false } }
+            if m.parts.isEmpty { continue }
+            if out.last?.role == m.role { out[out.count - 1].parts += m.parts } else { out.append(m) }
+        }
+        return out
     }
 }
 
 extension AIUsage {
     public mutating func add(_ u: AIUsage) {
         (input, output, cacheRead, cacheWrite) = (input + u.input, output + u.output, cacheRead + u.cacheRead, cacheWrite + u.cacheWrite)
+        if let d = u.dollars { dollars = (dollars ?? 0) + d }   // each request priced alone: Haiku's tier is a request's
     }
 }

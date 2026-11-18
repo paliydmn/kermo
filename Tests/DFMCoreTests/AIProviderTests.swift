@@ -375,3 +375,39 @@ private final class Memory: AIKeyStore, @unchecked Sendable {
     denied.deny = false
     #expect(later.key(a) == key, "a refused read isn't kept: the next use asks again")
 }
+
+// MARK: - Prices (task 23 PR 5b)
+
+private func near(_ a: Double?, _ b: Double) -> Bool { a.map { abs($0 - b) < 1e-9 } ?? false }
+
+@Test func dollarsAtAnthropicsPricesForItsOwnModelsOnly() async throws {
+    var u = AIUsage()
+    (u.input, u.output, u.cacheRead, u.cacheWrite) = (1_000_000, 100_000, 1_000_000, 1_000_000)
+    #expect(near(AIPrice.dollars("claude-sonnet-5-5", u), 2 + 1 + 0.10 + 2.5), "a cache write is 1.25× input, a read the table's")
+    #expect(near(AIPrice.dollars("claude-haiku-4-5-20251001", u), 1 + 0.5 + 0.10 + 1.25), "a date after the id")
+    #expect(near(AIPrice.dollars("claude-opus-5", u), 5 + 2.5 + 0.5 + 6.25) && near(AIPrice.dollars("claude-opus-5-5", u), 4 + 2 + 0.2 + 5))
+    for unknown in ["claude-opus-5-6", "claude-opus-5-5-preview", "claude-opus", "gpt-5", "", "claude-sonnet-5-5-2026"] {
+        #expect(AIPrice.dollars(unknown, u) == nil, "\(unknown): never a neighbour's price")
+    }
+    // Haiku 5.5 costs five times as much for a request whose prompt passes 100K tokens — a request's, not a turn's.
+    var small = AIUsage()
+    (small.input, small.output) = (40_000, 1_000)
+    var turn = AIUsage()
+    for _ in 0..<3 {
+        var r = small
+        r.dollars = AIPrice.dollars("claude-haiku-5-5", r)
+        turn.add(r)
+    }
+    #expect(near(turn.dollars, 3 * (40_000 * 0.10 + 1_000 * 0.50) / 1e6) && turn.input == 120_000)
+    var big = small
+    big.cacheRead = 70_000
+    #expect(near(AIPrice.dollars("claude-haiku-5-5", big), (40_000 * 0.50 + 70_000 * 0.05 + 1_000 * 2.50) / 1e6))
+
+    // The adapter prices each request at Anthropic's own address only; a gateway's prices are its own.
+    let (events, _) = await run(anthropic.provider(Wire(Answer(body: chat)).transport).send([AIMessage(.user, [.text("Hi")])], tools: [], system: ""))
+    #expect(near(try #require(done(events)).2.dollars, (12 * 2 + 100 * 0.10 + 40 * 10) / 1e6))
+    var gateway = anthropic
+    gateway.address = AIEndpoint.address("https://gw.example.com")!
+    let (other, _) = await run(gateway.provider(Wire(Answer(body: chat)).transport).send([AIMessage(.user, [.text("Hi")])], tools: [], system: ""))
+    #expect(try #require(done(other)).2.dollars == nil)
+}
