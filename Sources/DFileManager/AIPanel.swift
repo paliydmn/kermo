@@ -48,6 +48,8 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     private var resumedProduction = false
     /// A write that failed was said in this chat: once is enough.
     private var unsaved = false
+    /// "Keep chats" was off at some point of this chat: it isn't written any more, even once it's back on.
+    private var unkept = false
     private var holdsProduction: Bool { !prodSent.isEmpty || session?.readProduction == true || resumedProduction }
 
     private var built = false
@@ -377,6 +379,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             chat?.add(message)
             self.asked.append(AISavedChat.Asked(question: AISecrets.mask(question).text, chips: sent.map { AIChat.attachedName($0.context.title) },
                                            prod: sent.filter { isProd($0.context) }.map { AIChat.attachedName($0.context.title) }))
+            save()   // the question is kept even if the turn never ends (New Chat, quitting)
             chips.removeAll { c in sent.contains { $0.context.id == c.context.id } }
             if input.string == typed { input.string = "" }   // words typed meanwhile stay
             append(Self.userMessage(question, sent.map { ($0.context.title, isProd($0.context)) }))
@@ -396,7 +399,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     private func start(_ e: AIEndpoint) {
         begin([])
         pinned = Self.pin(e)
-        (chatID, began, beganWith) = (UUID().uuidString, Date(), e.model)
+        (chatID, began, beganWith, unkept) = (UUID().uuidString, Date(), e.model, !Self.keepsChats(app.defaults))
     }
 
     private func sendQuestion(_ t: SFTPTarget, _ e: AIEndpoint) -> Confirm? {
@@ -456,7 +459,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         stop()
         generation += 1
         (chat, session, prodSent, turn, pinned, failedAt) = (nil, nil, [], nil, nil, nil)
-        (chatID, asked, resumedProduction, unsaved) = (nil, [], false, false)
+        (chatID, asked, resumedProduction, unsaved, unkept) = (nil, [], false, false, false)
         list.setViews([], in: .top)
         refresh()
         focus()
@@ -466,11 +469,11 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
     static func keepsChats(_ d: UserDefaults) -> Bool { d.object(forKey: "aiKeepChats") as? Bool ?? true }
 
-    /// After each turn (stopped and failed too), as the history stands — what went, masked as it went, without the
-    /// thinking (never sent again). Off: nothing, and this chat is never written again, even once it's back on.
+    /// After each send and each turn (stopped and failed too), as the history stands — what went, masked as it went,
+    /// without the thinking (never sent again). Off: nothing, and this chat is never written again, even once it's on.
     private func save() {
-        guard let chat, let id = chatID else { return }
-        guard Self.keepsChats(app.defaults) else { return chatID = nil }
+        guard let chat, let id = chatID, !unkept else { return }
+        guard Self.keepsChats(app.defaults) else { return unkept = true }
         let first = asked.first.map { $0.question.isEmpty ? $0.chips.first ?? "" : $0.question } ?? ""
         let title = String(first.split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(60))
         let saved = AISavedChat(title: title, model: beganWith, provider: pinned ?? "", started: began, production: holdsProduction,
@@ -569,10 +572,10 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     }
 
     /// Settings › AI's "Keep chats on this Mac" switched off: the open chat isn't written again, even once it's back
-    /// on; the ones kept go only if the user says so.
+    /// on — a deleted one never comes back; the ones kept go only if the user says so.
     static func keepChatsChanged(_ app: AppDelegate, panel: AIPanel? = nil) {
         guard !keepsChats(app.defaults), let panel = panel ?? app.aiPanel else { return }
-        panel.chatID = nil
+        panel.unkept = true
         panel.chats.list { found in
             let ids = found.chats.map(\.id)
             guard !ids.isEmpty else { return }

@@ -338,18 +338,20 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         #expect(!FileManager.default.fileExists(atPath: store.dir + "/\(open).json") && store.list().chats.count == 49 && !shown(again).contains("Pruned."))
 
         // Switched off: the open chat isn't written again — not even once it's back on; the kept ones go only when
-        // the user says so.
-        wire.then([(200, turn(text: "Kept.")), (200, turn(text: "Not kept.")), (200, turn(text: "Back."))])
+        // the user says so; a new chat is kept again.
+        wire.then([(200, turn(text: "Kept.")), (200, turn(text: "On again.")), (200, turn(text: "Back.")), (200, turn(text: "New."))])
         await send(again, "Kept?")
+        let keptID = try #require(store.list().chats.map(\.id).first { !before.contains($0) })
         #expect(store.list().chats.count == 50)
         std.set(false, forKey: "aiKeepChats")
         AIPanel.keepChatsChanged(app, panel: again)   // Keep
         for _ in 0..<300 where asked.isEmpty { try? await Task.sleep(for: .milliseconds(10)) }
         #expect(asked == ["Delete the 50 chats kept on this Mac?"])
-        await send(again, "Off?")
-        let keptID = try #require(store.list().chats.map(\.id).first { !before.contains($0) })
+        std.removeObject(forKey: "aiKeepChats")   // on again at once: nothing went through save() while off
+        await send(again, "On again?")
         let keptText = String(decoding: try Data(contentsOf: URL(fileURLWithPath: store.dir + "/\(keptID).json")), as: UTF8.self)
-        #expect(wire.bodies.count == 6 && store.list().chats.count == 50 && keptText.contains("Kept?") && !keptText.contains("Off?"), "the open chat's file as it was")
+        #expect(wire.bodies.count == 6 && keptText.contains("Kept?") && !keptText.contains("On again?"), "the open chat's file as it was")
+        std.set(false, forKey: "aiKeepChats")
         answer = 0
         AIPanel.keepChatsChanged(app, panel: again)
         for _ in 0..<300 where store.list().chats.count > 0 {
@@ -360,6 +362,9 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         std.removeObject(forKey: "aiKeepChats")
         await send(again, "Back?")
         #expect(wire.bodies.count == 7 && store.list().chats.isEmpty, "a deleted chat isn't written back")
+        click(try #require(views(again.view, NSButton.self).first { $0.toolTip == "New Chat" }))
+        await send(again, "New?")
+        #expect(wire.bodies.count == 8 && store.list().chats.count == 1)
     }
 
     /// A chat read back keeps what 5a's guards read: its provider, and that it holds production text.

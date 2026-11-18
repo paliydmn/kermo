@@ -29,11 +29,11 @@ public enum FileInfo {
     /// `durable`: on the disk itself before the rename, not only in the system's cache.
     public static func writeWhole(_ data: Data, to path: String, durable: Bool) throws {
         let tmp = path + ".tmp"
-        let fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)   // a FIFO there: an error, not a wait
+        unlink(tmp)   // whatever a crash or anyone left there — a wider file, a link, a FIFO — is never written through
+        let fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         do {
             let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-            fchmod(fd, 0o600)   // a .tmp left by a crash keeps its mode otherwise
             try h.write(contentsOf: data)
             if durable, fcntl(fd, F_FULLFSYNC) != 0 { fsync(fd) }   // a RAM disk has no F_FULLFSYNC
             try h.close()

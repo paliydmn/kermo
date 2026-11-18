@@ -176,3 +176,17 @@ private func wellFormed(_ m: [AIMessage]) -> Bool {
                            AIMessage(.user, [.result(id: "c1", AIResult("x")), .result(id: "c2", .failure("bad"))])])
     #expect(c.asked == [.init(question: "q", chips: ["a"], prod: [])] && c.started == Date(timeIntervalSinceReferenceDate: 800_000_000))
 }
+
+/// What a crash or anyone left beside the file — a FIFO nobody reads, a wider file — is never written through.
+@Test func aWholeWriteNeverGoesThroughWhatIsBesideIt() throws {
+    let d = (NSTemporaryDirectory() as NSString).appendingPathComponent("kermo-ww-" + UUID().uuidString), path = d + "/c.json"
+    try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    #expect(mkfifo(path + ".tmp", 0o644) == 0)
+    try FileInfo.writeWhole(Data("one".utf8), to: path, durable: true)
+    FileManager.default.createFile(atPath: path + ".tmp", contents: Data("old".utf8), attributes: [.posixPermissions: 0o644])
+    try FileInfo.writeWhole(Data("two".utf8), to: path, durable: false)
+    var st = stat()
+    #expect(lstat(path, &st) == 0 && st.st_mode & S_IFMT == S_IFREG && st.st_mode & 0o777 == 0o600)
+    #expect(FileManager.default.contents(atPath: path) == Data("two".utf8) && !FileManager.default.fileExists(atPath: path + ".tmp"))
+}
