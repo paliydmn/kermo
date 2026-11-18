@@ -1861,6 +1861,7 @@ extension Editor {
         if let c = host?.comparison { c.caretMoved(v) }   // says the position too
         sayPosition(v)
         markBrackets(v)
+        Self.app()?.aiPanel?.selected(self)   // where the chat's Follow selection looks
     }
 
     /// The bracket just before the caret (else just after it) and its pair, lit.

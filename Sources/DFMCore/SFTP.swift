@@ -484,6 +484,26 @@ public enum SSHCommand {
         SFTP.connectionOptions(t) + (command == nil ? [] : [tty ? "-t" : "-T"]) + t.arguments() + (command.map { [$0] } ?? [])
     }
 
+    /// Where an `ssh` someone typed goes, from its arguments (argv, `ssh` first): "web", "root@web", `-l root web`,
+    /// `-p 2222`; nil: none found. ponytail: `ssh://` addresses and `-o User=` / `-o Port=` aren't read.
+    public static func destination(_ argv: [String]) -> SFTPTarget? {
+        let valued = Set("BbcDEeFIiJLlmOoPpRSWw")   // ssh's options that take a value
+        var i = 1, user: String?, port: Int?
+        while i < argv.count, argv[i].hasPrefix("-"), argv[i].count > 1 {
+            if argv[i] == "--" { i += 1; break }
+            let flags = argv[i].dropFirst()
+            if let at = flags.firstIndex(where: valued.contains) {
+                var value = String(flags[flags.index(after: at)...])
+                if value.isEmpty, i + 1 < argv.count { i += 1; value = argv[i] }
+                if flags[at] == "p" { port = Int(value) } else if flags[at] == "l" { user = value }
+            }
+            i += 1
+        }
+        guard i < argv.count, !argv[i].isEmpty else { return nil }
+        let host = argv[i]
+        return SFTPTarget(host: host.contains("@") || user == nil ? host : "\(user!)@\(host)", port: port)
+    }
+
     /// A remote command line: `command` in `dir` (the server's login shell parses it; `dir` is quoted for it).
     public static func inDir(_ dir: String, _ command: String) -> String {
         "cd -- \(ShellContext.quote(dir)) && " + command

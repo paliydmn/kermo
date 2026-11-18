@@ -46,7 +46,8 @@ public struct AIContext: Sendable, Equatable {
         }
     }
 
-    /// The tab's server is who it was opened as: after `sudo -i` or an ssh typed there, who is logged in isn't known.
+    /// The tab's server is who it was opened as — or a production server an ssh typed there goes to, or its title names
+    /// (the app's `Tab.origin`): after `sudo -i`, or an ssh it can't place, who is logged in isn't known.
     public struct Terminal: Sendable, Equatable {
         public var server: SFTPTarget?
         public var command: String?   // the last line ↩ was pressed on, prompt and all

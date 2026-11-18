@@ -64,7 +64,7 @@ private func titles(_ nodes: [AppDelegate.MenuNode]) -> [String] {
         "Connect to Server…", "New SSH Session…", "New Server…", "—", "Overview", "Services…", "Containers…", "Ports & Tunnels ▸", "—",
         "Reopen as Root", "Reopen as User", "—", "Copy SSH Key to Server…", "File History…", "Watch Server…", "Run on Servers…", "—",
         "Disconnect", "Reconnect SSH Session", "Edit SSH Config…", "Production Log"])
-    #expect(titles(AppDelegate.menuItems(app.commands, in: "View")).prefix(10) == ["Sidebar", "AI Chat", "Quick View", "Terminal", "Maximize Terminal", "Terminal Pane ▸", "Activity", "—",
+    #expect(titles(AppDelegate.menuItems(app.commands, in: "View")).prefix(11) == ["Sidebar", "AI Chat", "Add to Chat", "Quick View", "Terminal", "Maximize Terminal", "Terminal Pane ▸", "Activity", "—",
                                                                                   "Tabs ▸", "Panels ▸"])
     #expect(titles(AppDelegate.menuItems(app.commands, in: "View/Sort By")) == ["Name", "Size", "Modified", "—", "Reverse"])
     #expect(titles(AppDelegate.menuItems(app.commands, in: "File/As Administrator")) == [
@@ -151,7 +151,7 @@ private func titles(_ nodes: [AppDelegate.MenuNode]) -> [String] {
 @MainActor @Test func keyHelpFollowsTheMenuBar() {
     let commands = AppDelegate().makeCommands(), s = KeyHelp.sections(commands)
     #expect(s.map(\.title) == ["File", "Edit", "Mark", "View", "Go", "Server", "Git", "Window", "Help", "Kermo", "Keyboard"])
-    #expect(s.first { $0.title == "View" }?.rows.prefix(3).map(\.title) == ["Sidebar", "AI Chat", "Quick View"])
+    #expect(s.first { $0.title == "View" }?.rows.prefix(4).map(\.title) == ["Sidebar", "AI Chat", "Add to Chat", "Quick View"])
     #expect(s.first { $0.title == "Server" }?.rows.map(\.title).contains("Reopen as Root") == true)
 }
 
