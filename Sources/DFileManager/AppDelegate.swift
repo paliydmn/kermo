@@ -846,7 +846,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             found = aiPanel.marked(active)
         }
         guard !found.isEmpty || !AISettings.ready(defaults) else { return NSSound.beep() }
-        aiPanel.add(found)
+        aiPanel.add(Array(found.prefix(10)))
+        if found.count > 10 { aiPanel.flash("The first 10 of \(found.count) marked — attach the rest from + or #.") }
     }
 
     /// «⋯» Add Command and Output to Chat: the command ⌘↑ went to, else the last that printed, with its output.
@@ -858,8 +859,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// A terminal tab's selection made (or gone): "✨ Add to Chat" by it while the AI is set up; the chat's Follow.
     private func terminalSelected(_ tab: EmbeddedTerminal.Tab) {
         aiPanel.selected(tab)
-        let key = commands.first { $0.id == "ai.add" }?.keys.first.map { "  " + $0.display } ?? ""
-        tab.view.showChatButton(tab.view.selectionActive && AISettings.ready(defaults) ? "Add to Chat" + key : nil) { [weak self, weak tab] in
+        let shows = tab.view.selectionActive && AISettings.ready(defaults)   // the Keychain's word only for a selection
+        let key = shows ? commands.first { $0.id == "ai.add" }?.keys.first.map { "  " + $0.display } ?? "" : ""
+        tab.view.showChatButton(shows ? "Add to Chat" + key : nil) { [weak self, weak tab] in
             guard let self, let tab, let text = tab.view.getSelection(), !text.isEmpty else { return }
             aiPanel.add([AIPanel.terminal(tab, text, what: "Selection")])
         }

@@ -217,7 +217,10 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         }
         if app.terminal?.isShown == true, let tab = app.terminal.current, tab.view.output() != nil {
             let o = tab.origin
-            out.append(Context(id: "term:\(tab.id)", title: Self.title("Last command", tab, unsure: o.unsure), symbol: .terminal, server: o.server) {
+            out.append(Context(id: "term:\(tab.id)", title: Self.title("Last command", tab, unsure: o.unsure), symbol: .terminal, server: o.server) { [weak tab] in
+                guard let tab else { return .failure("The tab was closed.") }
+                // Suggested a while ago: an `ssh` since then makes it another machine's — asked about as that one.
+                guard tab.origin.server == o.server else { return .failure("That tab is on another machine now — add it again.") }
                 guard let text = tab.view.commandWithOutput() else { return .failure("Nothing to read there: no command printed anything, or a full-screen program is running.") }
                 return AISession.handOver(text, limit: 16_000, keepEnd: true)
             })
@@ -273,9 +276,9 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         "\(what) · \(tab.label)" + (unsure ? " · as whoever is logged in" : "")
     }
 
-    /// A panel's marked items, else the one under the cursor: files to read, folders to list — ten at most.
+    /// A panel's marked items, else the one under the cursor: files to read, folders to list.
     func marked(_ p: PanelViewController) -> [Context] {
-        let items = p.selectedItems.filter { $0.kind != .other }.prefix(10)
+        let items = p.selectedItems.filter { $0.kind != .other }
         if let r = p.remote, p.list == nil, p.searchTitle == nil {
             let t = r.target.asUser, at = AISession.label(t)
             return items.map { i in
@@ -296,8 +299,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         if !app.aiChatShown { app.setAIChat(shown: true) }
         app.window.makeKeyAndOrderFront(nil)
         guard AISettings.ready(app.defaults) else { return }
-        found.forEach(attach)
-        focus()
+        attach(found)
     }
 
     /// Follow selection: each ↩ takes what is selected then where the user selected last — a terminal tab or the
@@ -379,20 +381,32 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     private func isProd(_ c: Context) -> Bool { c.server.map(SavedServer.isProd) ?? false }
 
     /// Read now, as the user sees it: a locked server asks for Touch ID; a production one, under Never Send, isn't read.
-    func attach(_ c: Context) {
-        guard !chips.contains(where: { $0.context.id == c.id }) else { return }
-        if isProd(c), AISettings.neverProd(app.defaults) { return flash("Settings › AI: nothing from a production server goes to the AI.") }
-        chips.append(Attached(context: c))
-        showChips()
+    func attach(_ c: Context) { attach([c]) }
+
+    /// Several, read one after another: one Touch ID for a locked server, never a server's sessions all at once.
+    func attach(_ cs: [Context]) {
+        let new = cs.filter { c in !chips.contains { $0.context.id == c.id } }
+        let never = AISettings.neverProd(app.defaults), taken = new.filter { !(never && isProd($0)) }
+        chips += taken.map { Attached(context: $0) }
+        focus()   // the chips drawn again
+        if taken.count < new.count { flash("Settings › AI: nothing from a production server goes to the AI.") }
         Task {
-            var r = AIResult.failure("\(c.server.map(AISession.label) ?? "This Mac") stays locked.")
-            if let t = c.server, case .locked = await app.gate([t], to: "read “\(c.title.bidiVisible)” for the AI on") {} else { r = await c.read() }
-            guard let i = chips.firstIndex(where: { $0.context.id == c.id }) else { return }   // removed meanwhile
-            if r.isError { chips.remove(at: i) } else { chips[i].text = r }
-            showChips()
-            if r.isError { flash(r.text.bidiVisible) }   // after: the chips' line would write over it
+            for c in taken {
+                let r = await read(c)
+                guard let i = chips.firstIndex(where: { $0.context.id == c.id }) else { continue }   // removed meanwhile
+                if r.isError { chips.remove(at: i) } else { chips[i].text = r }
+                showChips()
+                if r.isError { flash(r.text.bidiVisible) }   // after: the chips' line would write over it
+            }
         }
-        focus()
+    }
+
+    /// A chip's text as the user would see it: a locked server asks for Touch ID first.
+    private func read(_ c: Context) async -> AIResult {
+        if let t = c.server, case .locked = await app.gate([t], to: "read “\(c.title.bidiVisible)” for the AI on") {
+            return .failure("\(AISession.label(t)) stays locked.")
+        }
+        return await c.read()
     }
 
     private func showChip(_ i: Int, from v: NSView) {
@@ -476,7 +490,11 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         failedAt = nil
         turn = Task {
             var asked = attached
-            if let f = followed { asked.append(Attached(context: f, text: await f.read())) }   // already read: the read hands it over
+            if let f = followed {   // as a chip is: Touch ID for a locked server
+                let r = await read(f)
+                guard g == generation else { return }
+                if r.isError { flash(r.text.bidiVisible) } else { asked.append(Attached(context: f, text: r)) }
+            }
             // Production: asked once a chat for each server, ↩ = Cancel. Nothing is sent until each said yes.
             for t in Self.unique(asked.compactMap(\.context.server)) where SavedServer.isProd(t) && !prodSent.contains(Self.key(t)) {
                 let answer = await app.gate([t], to: "send what you attached to the AI from", question: { [self] in sendQuestion(t, e) }) { c, _ in await self.ask(c) }
@@ -487,7 +505,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
                 append(Self.prodLine(AISession.label(t), host: e.address.host ?? "the provider"))
             }
             // What is attached now: a chip removed while a question was up doesn't go; Never Send may have come meanwhile.
-            let sent = asked.filter { a in a.context.id == followed?.id || chips.contains { $0.context.id == a.context.id } }
+            let sent = asked.filter { a in a.context.id == followed?.id && following || chips.contains { $0.context.id == a.context.id } }   // turned off meanwhile: not
             guard !(AISettings.neverProd(app.defaults) && sent.contains { isProd($0.context) }), !sent.isEmpty || !question.isEmpty else { return finish() }
             let prod = Self.unique(sent.compactMap(\.context.server)).filter(SavedServer.isProd).map(AISession.label)
             let message = AIChat.compose(question, attached: sent.map { ($0.context.title, $0.text?.text ?? "") }, production: prod)

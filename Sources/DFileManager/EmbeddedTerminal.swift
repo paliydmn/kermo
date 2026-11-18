@@ -77,7 +77,8 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         /// Who its text may be from, as far as Kermo can tell (D-227 (12)): its server — or a production server that an
         /// `ssh` running in it goes to, or that its title names after an "@" (the program there writes it): then that
         /// one, asked about and kept from Never Send as any production text. Matched by the saved server's name or host
-        /// as written, and by the address as `ssh -G` learned it. `unsure`: a program that logs in elsewhere has a local
+        /// as written — and, once `ssh -G` has learned it (asked the first time it's seen), by where the `ssh` goes.
+        /// `unsure`: a program that logs in elsewhere (or a multiplexer that may hold one) has a local
         /// tab's terminal — whoever is logged in there. Scrollback left by one that ended isn't seen; nor, in a server's
         /// tab, a `sudo -i` or a further `ssh` its title doesn't name.
         var origin: (server: SFTPTarget?, unsure: Bool) {
@@ -92,6 +93,7 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
             }
             var named: [SFTPTarget] = []
             if fg == "ssh", let d = foregroundArguments.flatMap(SSHCommand.destination) {
+                if !ServerLock.isLearned(d) { Task { await ServerLock.learn([d]) } }   // where it goes: known the next time
                 named.append(d)
                 said.append(String(d.host.split(separator: "@").last ?? "").lowercased())
             }
@@ -100,7 +102,7 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
             return (named.first(where: SavedServer.isProd)?.asUser ?? target?.asUser, fg.map(Self.logsIn.contains) ?? false)
         }
         /// Programs that log in elsewhere, or as someone else.
-        static let logsIn = remoteShells.union(["sudo", "su", "doas", "login"])
+        static let logsIn = remoteShells.union(["sudo", "su", "doas", "login", "tmux", "screen"])
         /// The arguments of what has a local tab's terminal; nil: unknown.
         private var foregroundArguments: [String]? {
             guard host == nil, let p = view.process, isRunning else { return nil }
@@ -1273,7 +1275,7 @@ final class DropTerminalView: LocalProcessTerminalView {
             guard let (found, o) = outputMark(now) else { return nil }
             (m, out) = (found, o)
         }
-        let end = mark(from: m.row, 1)?.row ?? now.cursor + 1
+        let end = min(mark(from: m.row, 1)?.row ?? now.cursor + 1, m.row + 50)   // its line only: a long command wraps
         guard let s = terminalContentSnapshot(region: .rows(m.row..<max(m.row + 1, end)), buffer: .normal) else { return nil }
         let line = Self.text(s.rows.prefix { $0.absoluteRow == m.row || $0.isWrapped }).text
         return out.map { line + "\n" + $0 } ?? line

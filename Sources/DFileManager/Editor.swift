@@ -244,9 +244,9 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// this one its tab.
     @discardableResult
     static func terminalCopy(_ text: String, line: Int, title: String, place: String, chips: [Chip], target: SFTPTarget?, folder: String?,
-                             pane: UUID) -> Editor {
+                             pane: UUID, origin: SFTPTarget? = nil) -> Editor {
         let e = snapshot((text, .utf8, false, false, false, nil, sha(Data())), file: nil, title: title, place: place)
-        (e.terminal, e.chips) = ((target, folder, pane), chips)
+        (e.terminal, e.chips) = ((target, folder, pane, origin), chips)
         if let old = open.first(where: { $0 !== e && $0.snapshot != nil && $0.terminal?.pane == pane }), let h = old.host, h.tabbed {
             e.host = h
             h.replace(old, with: e)
@@ -259,8 +259,9 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
         return e
     }
 
-    /// A terminal pane's copy (`terminalCopy`): where its text came from — that pane's machine, as its user, and folder.
-    private(set) var terminal: (target: SFTPTarget?, folder: String?, pane: UUID)?
+    /// A terminal pane's copy (`terminalCopy`): where its text came from — that pane's machine, as its user, and folder;
+    /// `origin`: whose text it may be (`Tab.origin`: an `ssh` to production in a local tab), for the AI chat.
+    private(set) var terminal: (target: SFTPTarget?, folder: String?, pane: UUID, origin: SFTPTarget?)?
 
     /// The caret at the start of line `n` (from 0), that line at the top of the view as far as the text goes on.
     private func caret(atLine n: Int) {
@@ -291,7 +292,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// Send / Execute in Terminal go from it. nil: not a file's (the clipboard).
     private(set) var snapshotFrom: (target: SFTPTarget?, path: String)?
     /// The server its text came from: its file's, or — a terminal's or a comparison's copy — its origin's; nil: this Mac.
-    var origin: SFTPTarget? { server?.target ?? terminal?.target ?? snapshotFrom?.target }
+    var origin: SFTPTarget? { server?.target ?? terminal.flatMap { $0.origin ?? $0.target } ?? snapshotFrom?.target }
 
     /// Edit, in a read-only copy of a file: that file's document now, in its place — read again as F4 reads it, a
     /// server's with all of F4's rules — and its comparison goes on. Open in another tab already: that tab takes its place.
