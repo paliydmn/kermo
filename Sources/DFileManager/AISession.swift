@@ -39,9 +39,15 @@ final class AISession {
     unowned let app: AppDelegate
     /// Who asks (`Asker`); nil: a sheet on the main window.
     var asker: Asker?
+    /// Ask: the most the user is ever asked to allow is reading. A call that needs more is refused in words, unasked.
+    var readOnly = false
+    /// Settings › AI's "Never Send": nothing on a production server is read for the model.
+    var noProduction = false
     private(set) var scope = AIScope()
     private(set) var journal: [Entry] = []
     private(set) var hasRead = false
+    /// Something read on a production server went to the model (Never Send turned on later ends such a chat).
+    private(set) var readProduction = false
     /// The server behind each place of this session's calls, as its user (root isn't the assistant's to take).
     private var servers: [AIPlace: SFTPTarget] = [:]
     private var busy = false, waiting: [CheckedContinuation<Void, Never>] = []
@@ -93,8 +99,13 @@ final class AISession {
         }
         var call = AICall(tool, targets), run = run
         let prod = { (p: AIPlace) in self.servers[p].map(SavedServer.isProd) ?? false }
+        let neverProd = { self.noProduction && targets.contains { prod($0.place) } }
+        if neverProd() { return Self.refusedProduction }
         var decision = scope.check(call, prod: prod)
         if case .outside(let needs) = decision {
+            if readOnly, needs.contains(where: { $0.level > .view || $0.commands || $0.folder != nil }) {
+                return ("refused: Ask", .failure("In Ask the assistant only reads: this would change something. Nothing was done — give the user the commands instead."))
+            }
             guard await allow(needs, why: nil) else { return ("not allowed", .failure("The user didn't allow it. Nothing was done.")) }
             guard !Task.isCancelled else { return ("stopped", .failure("Stopped. Nothing was done.")) }   // before Touch ID is asked for nobody
             decision = scope.check(call, prod: prod)
@@ -116,6 +127,7 @@ final class AISession {
             case .go(let overwrites, let found): (call.overwrites, run) = (overwrites, found)
             }
         }
+        guard !Task.isCancelled else { return ("stopped", .failure("Stopped. Nothing was done.")) }   // no Touch ID for nobody
         let passed = await app.gate(ends, to: to, question: {
             decision = self.scope.check(call, prod: prod)   // production is known by now
             guard case .ask(let why) = decision, why != .unclear else { return nil }
@@ -132,10 +144,16 @@ final class AISession {
         // Stopped while Touch ID or the question was up, answered after.
         guard !Task.isCancelled else { return ("stopped", .failure("Stopped. Nothing was done.")) }
         guard let run else { return Self.refusal(.ask(.unclear))! }
-        let result = await run(self, args, targets)
+        if neverProd() { return Self.refusedProduction }   // an alias known as production only now
+        var result = await run(self, args, targets)
         read()
+        // Production, said where the model reads what it did there.
+        let note = AIChat.productionNote(ends.filter(SavedServer.isProd).map(Self.label))
+        if !note.isEmpty { (result.text, readProduction) = (note + "\n\n" + result.text, true) }
         return (Self.said(decision) + (decision == .allowed ? "" : ", allowed"), result)
     }
+
+    private static let refusedProduction = ("refused: production", AIResult.failure("Settings › AI: nothing on a production server goes to the AI. Nothing was read."))
 
     private static func said(_ d: AIScope.Decision) -> String { if case .ask(let why) = d { "asked: \(why)" } else { "allowed" } }
     private static func unknown(_ name: String) -> String {
@@ -223,11 +241,15 @@ final class AISession {
 
     /// "Allow for This Task": what the scope lacks, line by line; granted only as a whole.
     private func allow(_ needs: [AIScope.Need], why: String?) async -> Bool {
-        var c = Confirm("Allow the assistant this, until the chat ends?", action: "Allow for This Task")
+        var c = readOnly ? Confirm("Let the assistant read there until the chat ends?", action: "Allow in This Chat")
+            : Confirm("Allow the assistant this, until the chat ends?", action: "Allow for This Task")
         c.on(needs.compactMap { servers[$0.place] })
         c.items = needs.map { n in Confirm.Item(name: "\(name(n.place)): " + Self.words(n.level, n.folder.map { [$0] } ?? [], n.commands)) }
         let limit = needs.contains { $0.commands || $0.level == .all } ? "A command can write over files without asking first." : nil
-        c.note = [why, limit, "Deleting, writing over a file and any change on a production server still ask each time."].compactMap { $0 }.joined(separator: " ")
+        let mac = needs.contains { $0.place == .mac && $0.level == .view } ? "On this Mac that is any file you can read, ~/.ssh too." : nil
+        let after = readOnly ? "What it reads goes to your AI provider, secrets it recognises as •••."
+            : "Deleting, writing over a file and any change on a production server still ask each time."
+        c.note = [why, mac, limit, after].compactMap { $0 }.joined(separator: " ")
         c.returnCancels = true
         guard await ask(c) else { return false }
         needs.forEach { scope.grant($0) }
@@ -446,7 +468,7 @@ final class AISession {
 
     /// A text file's content, `textLimit` of it at most (`cut`: there is more). A file only: a FIFO or a device read
     /// as one would hang, or take what was another reader's — and some of those say they are files (/proc/kmsg).
-    private static func text(_ t: SFTPTarget?, _ path: String) async -> Result<(text: String, cut: Bool), NotText> {
+    static func text(_ t: SFTPTarget?, _ path: String) async -> Result<(text: String, cut: Bool), NotText> {
         guard !AICommand.consumes(path) else { return .failure(NotText(text: "\(path) isn't a file to read: a device or a kernel pipe.")) }
         let env = SSHAskpass.env, limit = textLimit
         let read = await work { flag -> Data in
@@ -472,27 +494,30 @@ final class AISession {
             return .success((text, cut))
         }
     }
-    private struct NotText: Error { var text: String }
+    struct NotText: Error { var text: String }
+
+    /// A folder's names, sizes and dates, `namesLimit` of them at most.
+    static func listing(_ t: SFTPTarget?, _ path: String) async -> AIResult {
+        let env = SSHAskpass.env
+        let found = await work { flag in try t.map { try SFTP.list($0, path, env: env, cancel: flag) } ?? DirLister.list(path) }
+        switch found {
+        case .failure(let e): return .failure("Couldn't list \(path): \(e.localizedDescription)")
+        case .success(let items):
+            let day = ISO8601DateFormatter()
+            // A name with a tab or a new line in it would forge rows: left out, as a server's listing leaves them.
+            let items = items.filter { !$0.name.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f } }
+            let lines = items.sorted { $0.name < $1.name }.prefix(namesLimit).map { i in
+                "\(i.name)\(i.kind == .dir ? "/" : i.kind == .link ? "@" : "")\t\(i.kind == .dir ? "" : String(i.size))\t\(day.string(from: Date(timeIntervalSince1970: i.mtime)))"
+            }
+            let more = items.count > namesLimit ? "\n[\(items.count - namesLimit) more names not shown.]" : ""
+            return AIResult(items.isEmpty ? "The folder is empty." : "name\tbytes\tchanged\n" + lines.joined(separator: "\n") + more)
+        }
+    }
 
     static let runners: [String: Runner] = [
         "focus": { s, _, _ in s.focus() },
         "request_scope": { s, args, _ in await s.requestScope(args) },
-        "list_folder": { s, _, targets in
-            let t = s.servers[targets[0].place], path = targets[0].path ?? "/", env = SSHAskpass.env
-            let found = await work { flag in try t.map { try SFTP.list($0, path, env: env, cancel: flag) } ?? DirLister.list(path) }
-            switch found {
-            case .failure(let e): return .failure("Couldn't list \(path): \(e.localizedDescription)")
-            case .success(let items):
-                let day = ISO8601DateFormatter()
-                // A name with a tab or a new line in it would forge rows: left out, as a server's listing leaves them.
-                let items = items.filter { !$0.name.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f } }
-                let lines = items.sorted { $0.name < $1.name }.prefix(namesLimit).map { i in
-                    "\(i.name)\(i.kind == .dir ? "/" : i.kind == .link ? "@" : "")\t\(i.kind == .dir ? "" : String(i.size))\t\(day.string(from: Date(timeIntervalSince1970: i.mtime)))"
-                }
-                let more = items.count > namesLimit ? "\n[\(items.count - namesLimit) more names not shown.]" : ""
-                return AIResult(items.isEmpty ? "The folder is empty." : "name\tbytes\tchanged\n" + lines.joined(separator: "\n") + more)
-            }
-        },
+        "list_folder": { s, _, targets in await listing(s.servers[targets[0].place], targets[0].path ?? "/") },
         "read_file": { s, _, targets in
             switch await text(s.servers[targets[0].place], targets[0].path ?? "/") {
             case .failure(let no): return .failure(no.text)
@@ -586,6 +611,10 @@ final class AISession {
         var server = false
         let text = Self.focus(app.aiContext, name: Self.label) { t in
             guard t?.sudo != true, self.scope.grants[self.place(t)] != nil else { return false }   // a root panel's isn't the user's grant to give
+            if t.map(SavedServer.isProd) == true {
+                if self.noProduction { return false }   // a grant from before Never Send
+                self.readProduction = true
+            }
             if t != nil { server = true }
             return true
         }
@@ -636,6 +665,7 @@ final class AISession {
             }
             folder = n
         }
+        guard !readOnly || level == .view else { return .failure("In Ask the assistant only reads: it can't be allowed more.") }
         let need = AIScope.Need(place: place(t), level: level, folder: folder, commands: level == .work && args["commands"] == .bool(true))
         guard level != .work || need.folder != nil || need.commands else { return .failure("Level “work” needs a folder to write into, commands, or both.") }
         guard await allow([need], why: "The assistant says: " + AISecrets.mask(String(why.prefix(300))).text) else { return .failure("The user didn't allow it.") }

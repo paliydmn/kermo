@@ -202,6 +202,8 @@ extension AppDelegate {
         },
         cmd("view.sidebar", "Sidebar", ["ctrl+cmd+s"], menu: "View", group: 1, short: "Sidebar", aliases: "places favorites Show/Hide Sidebar",
             on: { $0.sidebarShown }) { $0.toggleSidebar() },
+        cmd("ai.chat", "AI Chat", ["ctrl+cmd+i"], menu: "View", group: 1, short: "AI", aliases: "ai assistant chat ask claude model llm Show AI Chat",
+            on: { $0.aiChatShown }) { $0.toggleAIChat() },
         cmd("view.sidebarFocus", "Focus Sidebar", ["ctrl+shift+s"], menu: "View/Panels", group: 3, aliases: "places keyboard") { $0.focusSidebar() },
         cmd("view.hidden", "Hidden Files", ["cmd+shift+."], menu: "View", group: 3, short: "Hidden Files", aliases: "dotfiles show hidden files Show Hidden Files",
             on: { $0.defaults.bool(forKey: "showHidden") }) { $0.toggleHidden() },
@@ -681,7 +683,7 @@ extension AppDelegate {
         if let h = EditorHost.shared, h.window?.isVisible == true, let e = h.active {
             let text = e.textView.string as NSString, sel = e.textView.selectedRange()
             let line = { (at: Int) in text.substring(to: at).reduce(1) { $1.isNewline ? $0 + 1 : $0 } }
-            c.editor = .init(server: e.server?.target, path: e.server?.path ?? e.url?.path, unsaved: e.changed,
+            c.editor = .init(server: e.origin, path: e.server?.path ?? e.url?.path ?? e.snapshotFrom?.path, unsaved: e.changed,
                              selection: sel.length > 0 ? (line(sel.location)...line(NSMaxRange(sel) - 1), text.substring(with: sel)) : nil)
         }
         if terminal?.isShown == true, let t = terminal.current {

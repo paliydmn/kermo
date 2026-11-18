@@ -37,6 +37,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     var openWeb: @MainActor (TerminalLinkRequest, String) -> Void = { r, link in r.openDefault(link) }
     private var split: NSSplitView!
     private var sidebarItem: NSSplitViewItem!
+    /// The AI chat right of everything (⌃⌘I); its views are made the first time it shows.
+    private(set) var aiPanel: AIPanel!
+    private var aiItem: NSSplitViewItem!
     private var sidebarWidth: CGFloat = 200   // last width while shown, for the auto-hide rule
     private var sidebarAnimating = false   // the toggle's own window growth is no resize for the rule (B1)
     let sidebar = SidebarController()
@@ -87,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// `active`, before the window has panels (a menu's ✓ asked at launch or in tests).
     var activePanel: PanelViewController? { panels.indices.contains(activeIndex) ? active : nil }
     var sidebarShown: Bool { sidebarItem?.isCollapsed == false }
+    var aiChatShown: Bool { aiItem?.isCollapsed == false }
     var other: PanelViewController {
         panels[Self.targetIndex(active: activeIndex, previous: target.flatMap { t in panels.firstIndex { $0 === t } }, count: panels.count)]
     }
@@ -793,12 +797,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func applySidebarRule() {
         guard !sidebarAnimating, defaults.object(forKey: "sidebarVisible") as? Bool ?? true else { return }
         if !sidebarItem.isCollapsed { sidebarWidth = sidebar.view.frame.width }
-        let hide = SidebarRule.autoHidden(windowWidth: window.frame.width, sidebarWidth: sidebarWidth, panels: panels.count,
+        let ai = aiChatShown ? aiPanel.view.frame.width : 0   // the chat takes its width from the panels' too
+        let hide = SidebarRule.autoHidden(windowWidth: window.frame.width - ai, sidebarWidth: sidebarWidth, panels: panels.count,
                                           hidden: sidebarItem.isCollapsed)
         if hide != sidebarItem.isCollapsed { collapseSidebar(hide, animated: false) }
     }
 
     func windowDidResize(_ notification: Notification) { applySidebarRule() }
+
+    /// ⌃⌘I: shown and focused; from the chat itself, hidden. From the editor: the main window with the chat. The
+    /// toolbar's ✨ (`focusFirst` false) only shows and hides it.
+    func toggleAIChat(focusFirst: Bool = true) {
+        if focusFirst, aiChatShown, !aiPanel.hasFocus || NSApp.keyWindow !== window {
+            window.makeKeyAndOrderFront(nil)
+            return aiPanel.focus()
+        }
+        if aiChatShown {
+            if aiPanel.hasFocus { window.makeFirstResponder(active.table) }
+            return setAIChat(shown: false)
+        }
+        window.makeKeyAndOrderFront(nil)
+        setAIChat(shown: true)
+        aiPanel.focus()
+    }
+
+    /// The chat shown or hidden, and remembered — the keys stay where they are.
+    func setAIChat(shown: Bool) {
+        if shown { aiPanel.build() }
+        aiItem.isCollapsed = !shown
+        defaults.set(shown, forKey: "aiChatShown")
+        applySidebarRule()
+    }
 
     /// The search (⇧⌘P, F9, the toolbar's button), over the main window.
     @discardableResult
@@ -1222,10 +1251,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 isConfig ? MenuAction.item("Edit SSH Config…") { [unowned self] in editSSHConfig() } : nil]
     }
 
-    private static let sidebarButtonID = NSToolbarItem.Identifier("sidebar"), editorButtonID = NSToolbarItem.Identifier("editor")
+    private static let sidebarButtonID = NSToolbarItem.Identifier("sidebar"), editorButtonID = NSToolbarItem.Identifier("editor"),
+                       aiButtonID = NSToolbarItem.Identifier("ai")
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarButtonID, .flexibleSpace, Self.editorButtonID, OpsController.toolbarID, search.item.itemIdentifier]
+        [Self.sidebarButtonID, .flexibleSpace, Self.editorButtonID, OpsController.toolbarID, search.item.itemIdentifier, Self.aiButtonID]
     }
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarDefaultItemIdentifiers(toolbar) }
 
@@ -1233,18 +1263,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if id == search.item.itemIdentifier { return search.item }
         if id == OpsController.toolbarID { return ops.toolbarItem }
         if id == Self.editorButtonID { return editorItem() }
-        guard id == Self.sidebarButtonID else { return nil }
+        guard id == Self.sidebarButtonID || id == Self.aiButtonID else { return nil }
+        let ai = id == Self.aiButtonID
         let item = NSToolbarItem(itemIdentifier: id)
-        item.image = Symbol.sidebar.image("Sidebar")
-        item.label = "Sidebar"
-        item.toolTip = "Show/Hide Sidebar  ⌃⌘S"
+        item.image = ai ? Symbol.ai.image("AI Chat") : Symbol.sidebar.image("Sidebar")
+        item.label = ai ? "AI" : "Sidebar"
+        item.toolTip = ai ? "AI Chat  ⌃⌘I" : "Show/Hide Sidebar  ⌃⌘S"
         item.isBordered = true
         item.target = self
-        item.action = #selector(sidebarButton)
+        item.action = ai ? #selector(aiButton) : #selector(sidebarButton)
         return item
     }
 
     @objc private func sidebarButton() { run("view.sidebar") }
+    @objc private func aiButton() { toggleAIChat(focusFirst: false) }
 
     /// Editor: a click shows it (Show Editor: as it was, else a new Untitled); held, its menu — a new document, Quick Open.
     private func editorItem() -> NSToolbarItem {
@@ -1302,7 +1334,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                                    "tab.prev", "ssh.new", "go.connect", "cmdline.insert", "cmdline.insertPaths", "term.bigger", "term.smaller",
                                    "view.sidebar", "ssh.reconnect", "server.disconnect", "term.join", "term.unsplit", "term.pane.left",
                                    "term.pane.right", "term.pane.up", "term.pane.down", "term.resize.left", "term.resize.right", "term.resize.up",
-                                   "term.resize.down", "term.zoom"] + (1...4).map { "panel.focus\($0)" }
+                                   "term.resize.down", "term.zoom", "ai.chat"] + (1...4).map { "panel.focus\($0)" }
 
     /// ⌃O: the drawer under the panels; open with the keys in a panel, the keys go to it (as ⌃` in VS Code); with the
     /// keys in it (or over the panels, ⌃⇧O), it hides.
@@ -1474,7 +1506,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// The app's own items, not the panels': from a viewer, an editor or over the terminal too.
     static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "app.support", "app.settings", "app.tools", "app.monitor", "help.docs", "help.issue",
-                                       "editor.new", "editor.show"]
+                                       "editor.new", "editor.show", "ai.chat"]
     /// What works only in the editor window: its tabs, hiding it.
     static let editorTabs: Set<String> = ["editor.close", "editor.tab.left", "editor.tab.right", "editor.tabs", "editor.closeOthers", "editor.closeRight",
                                           "editor.moveToPane", "editor.cloneToPane", "editor.joinPanes",
@@ -1604,6 +1636,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         sidebarItem.isCollapsed = !(defaults.object(forKey: "sidebarVisible") as? Bool ?? true)
         splitController.addSplitViewItem(sidebarItem)
         splitController.addSplitViewItem(NSSplitViewItem(viewController: panelsHost))
+        aiPanel = AIPanel(app: self)
+        aiItem = NSSplitViewItem(inspectorWithViewController: aiPanel)
+        (aiItem.minimumThickness, aiItem.maximumThickness) = (300, 600)
+        aiItem.canCollapseFromWindowResize = false   // shown or hidden: the user's ⌃⌘I
+        aiItem.holdingPriority = .init(NSLayoutConstraint.Priority.defaultLow.rawValue + 20)   // the panels give way first
+        aiItem.isCollapsed = !defaults.bool(forKey: "aiChatShown")
+        splitController.addSplitViewItem(aiItem)
+        if !aiItem.isCollapsed { aiPanel.build() }
         let main = splitController.view
 
         wireKeyBar()

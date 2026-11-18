@@ -290,6 +290,8 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// A read-only copy's file — its server's (nil: this Mac's) and path there — whatever it is a version of: where
     /// Send / Execute in Terminal go from it. nil: not a file's (the clipboard).
     private(set) var snapshotFrom: (target: SFTPTarget?, path: String)?
+    /// The server its text came from: its file's, or — a terminal's or a comparison's copy — its origin's; nil: this Mac.
+    var origin: SFTPTarget? { server?.target ?? terminal?.target ?? snapshotFrom?.target }
 
     /// Edit, in a read-only copy of a file: that file's document now, in its place — read again as F4 reads it, a
     /// server's with all of F4's rules — and its comparison goes on. Open in another tab already: that tab takes its place.
