@@ -219,9 +219,11 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             let o = tab.origin
             out.append(Context(id: "term:\(tab.id)", title: Self.title("Last command", tab, unsure: o.unsure), symbol: .terminal, server: o.server) { [weak tab] in
                 guard let tab else { return .failure("The tab was closed.") }
-                // Suggested a while ago: an `ssh` since then makes it another machine's — asked about as that one.
-                guard await tab.learnedOrigin().server == o.server else { return .failure("That tab is on another machine now — add it again.") }
                 guard let text = tab.view.commandWithOutput() else { return .failure("Nothing to read there: no command printed anything, or a full-screen program is running.") }
+                // Suggested a while ago: an `ssh` since, or in the command itself, makes it another machine's.
+                guard await tab.learnedOrigin(ran: String(text.prefix { $0 != "\n" })).server == o.server else {
+                    return .failure("That command is another machine's — ⇧⌘I in the terminal adds it as that one's.")
+                }
                 return AISession.handOver(text, limit: 16_000, keepEnd: true)
             })
         }
@@ -264,10 +266,10 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     }
 
     /// A terminal tab's text, taken by the caller as it was (showing the chat narrows the terminal, which drops its
-    /// selection and its marks) — its selection, or a command with what it printed —, from where the tab says it is
-    /// once `ssh -G` has said where an `ssh` there goes (`learnedOrigin`).
+    /// selection and its marks) — its selection, or a "Command" with what it printed —, from where the tab says it is
+    /// once `ssh -G` has said where an `ssh` there goes (`learnedOrigin`): a command's own line too (`ssh prod 'df'`).
     static func terminal(_ tab: EmbeddedTerminal.Tab, _ text: String, what: String) async -> Context {
-        let o = await tab.learnedOrigin()
+        let o = await tab.learnedOrigin(ran: what == "Command" ? String(text.prefix { $0 != "\n" }) : nil)
         return Context(id: "tsel:\(tab.id):\(text.hashValue)", title: title(what, tab, unsure: o.unsure), symbol: .terminal, server: o.server) {
             AISession.handOver(text, limit: 16_000, keepEnd: true)
         }
@@ -307,18 +309,16 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
     // MARK: - ✨ Explain (task 23 PR 6b)
 
-    static let why = "Why did this fail?"
+    static let question = "Why did this fail?"
 
     /// ✨ Explain: what failed, attached as any chip is — a production server's asked about at ↩, none taken under
-    /// Never Send — and `why` in the field, unless words are there. Nothing goes until ↩. The app shows the chat first
-    /// (`AppDelegate.explain`).
+    /// Never Send — and `question` in the field, unless words are there or a question of the chat's waits. Nothing goes
+    /// until ↩. The app shows the chat first (`AppDelegate.explain`).
     func explain(_ found: [Context]) {
-        guard AISettings.ready(app.defaults) else { return }
-        attach(found)
-        let never = AISettings.neverProd(app.defaults)
-        guard found.contains(where: { !(never && isProd($0)) }), input.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        input.string = Self.why
-        input.setSelectedRange(NSRange(location: (Self.why as NSString).length, length: 0))
+        guard AISettings.ready(app.defaults), attach(found) > 0, card == nil,
+              input.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        input.string = Self.question
+        input.setSelectedRange(NSRange(location: (Self.question as NSString).length, length: 0))
         updateInfo()
     }
 
@@ -413,12 +413,14 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     /// Read now, as the user sees it: a locked server asks for Touch ID; a production one, under Never Send, isn't read.
     func attach(_ c: Context) { attach([c]) }
 
-    /// Several, read one after another: one Touch ID for a locked server, never a server's sessions all at once.
-    func attach(_ cs: [Context]) {
+    /// Several, read one after another: one Touch ID for a locked server, never a server's sessions all at once. How
+    /// many were taken.
+    @discardableResult
+    func attach(_ cs: [Context]) -> Int {
         var seen = Set(chips.map(\.context.id))
         let new = cs.filter { seen.insert($0.id).inserted }
         let never = AISettings.neverProd(app.defaults), taken = new.filter { !(never && isProd($0)) }
-        guard !new.isEmpty else { return focus() }
+        guard !new.isEmpty else { focus(); return 0 }
         chips += taken.map { Attached(context: $0) }
         focus()   // the chips drawn again
         if taken.count < new.count { flash("Settings › AI: nothing from a production server goes to the AI.") }
@@ -437,6 +439,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
                 if r.isError { flash(r.text.bidiVisible) }
             }
         }
+        return taken.count
     }
     /// The reads of what was attached, one after another.
     private var reading: Task<Void, Never>?

@@ -26,10 +26,10 @@ import Testing
 @MainActor private func press(_ b: NSButton) { _ = (b.target as? NSObject)?.perform(b.action, with: b) }   // not performClick: it ends a run
 @MainActor private func text(_ c: AIPanel.Context) async -> String { await c.read().text }
 
-/// A command whose shell says it ended with N ≠ 0 (OSC 133 `D;N`) and that printed something: "Explain · exit N" at the
-/// tab's lower right till the next command; a click gives that command, its output and exit. One end a mark: nothing
-/// for `D;0`, an empty ↩, a second end of the same mark (⌃C at the prompt), output with no mark, ⌃C's 130 — nor while
-/// the app doesn't watch.
+/// A command whose shell says it ended with N ≠ 0 (OSC 133 `D;N`) and that printed something is told with its text;
+/// "Explain · exit N" then shows at the tab's lower right till the next command. One end a mark: nothing for `D;0`, an
+/// empty ↩ (with a two-line prompt too), a second end of the same mark (⌃C at the prompt), output with no mark, ⌃C's
+/// 130 — nor while the app doesn't watch, which takes a button that shows away.
 @MainActor @Test func aFailedCommandsEndShowsExplainTillTheNext() async throws {
     _ = NSApplication.shared
     #expect(DropTerminalView.exitCode(Array("D;1".utf8)) == 1 && DropTerminalView.exitCode(Array("D;2;aid=7".utf8)) == 2)
@@ -37,8 +37,11 @@ import Testing
     let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
     let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
     w.contentView!.addSubview(v)
-    var told: [String] = []
-    v.onExplain = { told.append($0) }
+    var told: [String] = [], clicked = 0
+    v.onFailed = { code, text in
+        told.append(text)
+        v.showExplain(code) { clicked += 1 }
+    }
     v.watchExits(true)
     // Each OSC event reaches the view, then this probe — both hop to the main queue in that order: once the probe's
     // hop has run, the view's has.
@@ -47,9 +50,9 @@ import Testing
     let probe = v.observeOscEvents { _ in DispatchQueue.main.async { count.n += 1 } }
     defer { probe.cancel() }
     var fed = 0
-    func end(_ osc: String) async {
+    func end(_ osc: String, then prompt: String = "") async {
         fed += 1
-        v.feed(text: "\u{1b}]133;\(osc)\u{07}")
+        v.feed(text: "\u{1b}]133;\(osc)\u{07}" + prompt)
         for _ in 0..<500 where count.n < fed { try? await Task.sleep(for: .milliseconds(10)) }
         #expect(count.n == fed)
     }
@@ -62,39 +65,48 @@ import Testing
         await end(osc)
         v.feed(text: "$ ")
     }
-
     var shown: NSButton? { v.explainButton.flatMap { $0.superview == nil ? nil : $0 } }
+
     v.feed(text: "motd\r\n")
     await end("D;1")
-    #expect(shown == nil, "no mark: no command of the user's")
+    #expect(told.isEmpty, "no mark: no command of the user's")
     v.feed(text: "$ ")
     await run("make", printing: "error: boom\r\n", "D;2")
+    #expect(told == ["$ make\nerror: boom\n[exit 2]"], "\(told)")
     let b = try #require(shown)
     #expect(b.title == "Explain · exit 2" && b.frame.maxX > v.bounds.midX && b.frame.minY < v.bounds.midY, "\(b.frame)")
-    press(b)
-    #expect(told == ["$ make\nerror: boom\n[exit 2]"] && shown == nil, "\(told)")
+    _ = (b.target as? NSObject)?.perform(b.action, with: b)
+    #expect(clicked == 1 && shown == nil)
     await end("D;1")
-    #expect(shown == nil, "the same mark's second end (⌃C at the prompt)")
+    #expect(told.count == 1, "the same mark's second end (⌃C at the prompt)")
     await run("true", printing: "ok\r\n", "D;0")
-    #expect(shown == nil, "exit 0")
     v.typed(ret)
     v.feed(text: "\r\n")
-    await end("D;1")
-    v.feed(text: "$ ")
-    #expect(shown == nil, "an empty ↩ printed nothing")
+    await end("D;1", then: "$ ")
     await run("ping", printing: "64 bytes\r\n^C\r\n", "D;130")
-    #expect(shown == nil, "the user's own ⌃C")
+    #expect(told.count == 1, "exit 0, an empty ↩, the user's own ⌃C: \(told)")
+    // A two-line prompt: an empty ↩ under it isn't a command, though the prompt's upper line came after the mark.
+    v.feed(text: "~/p on main\r\n❯ ")
+    v.typed(ret)
+    v.feed(text: "\r\n")
+    await end("D;1", then: "~/p on main\r\n❯ ")
+    #expect(told.count == 1, "\(told)")
+    v.feed(text: "\r\n$ ")
+
     await run("ls nope", printing: "ls: nope: No such file\r\n", "D;1")
     #expect(shown?.title == "Explain · exit 1")
     v.feed(text: "pwd")
     v.typed(ret)
     #expect(shown == nil, "the next command: gone")
+    v.showExplain(1) {}
+    #expect(shown == nil, "shown late, after the next command: not")
     v.feed(text: "\r\n/tmp\r\n$ ")
-
-    v.watchExits(false)
-    #expect(!v.watchesExits)
     await run("ls nope", printing: "ls: nope: No such file\r\n", "D;1")
-    #expect(shown == nil && told.count == 1, "not watched: nothing")
+    #expect(shown != nil)
+    v.watchExits(false)
+    #expect(!v.watchesExits && shown == nil, "not watched: its ✨ goes")
+    await run("ls nope", printing: "ls: nope: No such file\r\n", "D;1")
+    #expect(shown == nil && told.count == 3, "not watched: nothing")
 }
 
 extension ServerLockTests {   // `UserDefaults.standard`'s AI settings, `AppDelegate.explaining`, one picker at a time
@@ -119,10 +131,24 @@ extension ServerLockTests {   // `UserDefaults.standard`'s AI settings, `AppDele
         defer { ServerLock.servers = { [] } }
         let long = (1...40).map { "line \($0)" }.joined(separator: "\n")
         let e = SFTPClient.CheckFailed(rule: ConfigCheck(match: "/etc/nginx/*", check: "nginx -t", when: .before), status: 1, output: long)
-        let c = AppDelegate.checkWhy(e, name: "site.conf", path: "/etc/nginx/sites-enabled/site.conf", on: web.target.asRoot())
+        let c = AppDelegate.checkFailure(e, name: "site.conf", path: "/etc/nginx/sites-enabled/site.conf", on: web.target.asRoot())
         #expect(c.title == "“nginx” on site.conf · shop" && c.server == web.target.asUser && c.server.map(SavedServer.isProd) == true)
         let said = await text(c)
         #expect(said.hasPrefix("“nginx -t” checked /etc/nginx/sites-enabled/site.conf as it was being saved, and failed (exit 1):\nline 1\n") && said.contains("line 40"), "\(said)")
+
+        // A command's own line says where its text is from: an `ssh` to a production server there makes it that one's —
+        // after it ended too (a terminal's ✨, an output window's). `ssh -G` is a stand-in: no config of yours.
+        let wasG = ServerLock.sshG
+        ServerLock.sshG = { t in "user me\nhostname \(t.host)\nport 22\n" }
+        defer { ServerLock.sshG = wasG }
+        let typed = EmbeddedTerminal.Tab.ran("me@mac ~ % ssh -p 2222 me@web.invalid 'systemctl status nginx'")
+        #expect(typed.unsure && typed.ssh.flatMap { EmbeddedTerminal.Tab.production([$0], named: []) } == web.target.asUser)
+        #expect(EmbeddedTerminal.Tab.ran("me@mac ~ % ls -la").ssh == nil && !EmbeddedTerminal.Tab.ran("ls").unsure)
+        let tab = EmbeddedTerminal.Tab(kind: .shell, view: DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300)))
+        let chip = await AIPanel.terminal(tab, "me@mac ~ % ssh shop uptime\nload: 99\n[exit 1]", what: "Command")
+        #expect(chip.server == web.target.asUser && chip.title.hasSuffix("as whoever is logged in"), "by its saved name: \(chip.title)")
+        #expect(await AIPanel.terminal(tab, "me@mac ~ % ls nope\nls: nope\n[exit 1]", what: "Command").server == nil)
+        #expect(await AIPanel.terminal(tab, "ssh shop", what: "Selection").server == nil, "a selection's words aren't a command it ran")
     }
 
     /// An output window whose command failed has ✨ Explain in its status line while ✨ shows: the command and all it
@@ -147,6 +173,7 @@ extension ServerLockTests {   // `UserDefaults.standard`'s AI settings, `AppDele
             let a = try #require(w.docFrame?.actions.first)
             #expect(a.0 == "✨ Explain" && w.docFrame?.actions.count == 1)
             a.1()
+            for _ in 0..<300 where got.isEmpty { try await Task.sleep(for: .milliseconds(10)) }   // after a look where an `ssh` in it goes
             #expect(got.map(\.title) == ["echo oops; exit 3 · this Mac"] && got.first?.server == nil, "\(got.map(\.title))")
             let said = try await text(#require(got.first))
             #expect(said.hasPrefix("$ echo oops; exit 3\noops\n") && said.contains("[exit 3]"), "\(said)")

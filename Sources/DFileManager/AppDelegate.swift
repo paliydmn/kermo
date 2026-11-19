@@ -855,10 +855,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// A terminal's text, taken now, into the chat once where it's from is known (`learnedOrigin`).
-    private func toChat(_ tab: EmbeddedTerminal.Tab, _ text: String, what: String) {
+    /// A terminal's text, taken now, into the chat once where it's from is known (`learnedOrigin`) — with the question
+    /// (`explain`).
+    private func toChat(_ tab: EmbeddedTerminal.Tab, _ text: String, what: String, explain: Bool = false) {
         guard AISettings.ready(defaults) else { return aiPanel.add([]) }   // "Use your own AI": no `ssh -G`
-        Task { aiPanel.add([await AIPanel.terminal(tab, text, what: what)]) }
+        Task {
+            let c = await AIPanel.terminal(tab, text, what: what)
+            if explain { self.explain([c]) } else { aiPanel.add([c]) }
+        }
     }
 
     /// «⋯» Add Command and Output to Chat: the command ⌘↑ went to, else the last that printed, with its output.
@@ -887,11 +891,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// shell seldom tells. Without the AI: the chat's "Use your own AI".
     func explainLastCommand() {
         guard terminal.isShown, let tab = terminal.current, let text = tab.view.commandWithOutput() else { return NSSound.beep() }
-        explainTerminal(tab, text)
+        toChat(tab, text, what: "Command", explain: true)
     }
-    private func explainTerminal(_ tab: EmbeddedTerminal.Tab, _ text: String) {
-        guard AISettings.ready(defaults) else { return aiPanel.add([]) }
-        Task { explain([await AIPanel.terminal(tab, text, what: "Command")]) }
+
+    /// A command its shell said failed: ✨ by it, its chip from where it ran as known now — an `ssh` there may be gone by
+    /// the click.
+    private func commandFailed(_ tab: EmbeddedTerminal.Tab, _ code: Int32, _ text: String) {
+        Task {
+            let c = await AIPanel.terminal(tab, text, what: "Command")
+            tab.view.showExplain(code) { [weak self] in self?.explain([c]) }
+        }
     }
 
     /// Settings › AI changed (a key, the provider, the ✨ row): the terminal watches its commands' ends only while ✨ shows.
@@ -1709,7 +1718,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         terminal.onSelect = { [unowned self] in terminalSelected($0) }
         terminal.onCommandClick = { [unowned self] tab, text in toChat(tab, text, what: "Command") }
         terminal.chatReady = { [unowned self] in AISettings.ready(defaults) }
-        terminal.onExplain = { [unowned self] in explainTerminal($0, $1) }
+        terminal.onFailed = { [unowned self] in commandFailed($0, $1, $2) }
         aiChanged()
 
         splitController = NSSplitViewController()

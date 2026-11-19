@@ -549,11 +549,11 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
 
         panel.explain([AIPanel.failure("pg_dump shop", on: nil, "$ pg_dump shop\npg_dump: error: No space left on device\n[exit 1]")])
         await settled()
-        #expect(chips().first == "pg_dump shop · this Mac" && field.string == AIPanel.why && wire.bodies.isEmpty, "\(chips())")
+        #expect(chips().first == "pg_dump shop · this Mac" && field.string == AIPanel.question && wire.bodies.isEmpty, "\(chips())")
         panel.send(field.string)
         await done(panel)
         let sent = String(decoding: try JSONSerialization.data(withJSONObject: (wire.bodies.first?["messages"] as? [Any])?.last ?? [:]), as: UTF8.self)
-        #expect(wire.bodies.count == 1 && sent.contains("No space left on device") && sent.contains(AIPanel.why), "\(sent)")
+        #expect(wire.bodies.count == 1 && sent.contains("No space left on device") && sent.contains(AIPanel.question), "\(sent)")
 
         field.string = "is it the disk?"
         panel.explain([AIPanel.failure("df", on: nil, "$ df\n100%")])

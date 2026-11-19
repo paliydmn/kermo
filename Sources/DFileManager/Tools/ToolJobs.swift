@@ -432,11 +432,12 @@ struct ToolJob: Codable, Equatable {
         nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                                 withCompletionHandler done: @escaping () -> Void) {
             let info = response.notification.request.content.userInfo as? [String: String] ?? [:], action = response.actionIdentifier
+            let came = response.notification.date
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     Self.at = Date()
                     guard let app = NSApp.delegate as? AppDelegate else { return }
-                    if info["server"] != nil { return app.tools.monitor.clicked(action, info) }
+                    if info["server"] != nil { return app.tools.monitor.clicked(action, info, at: came) }
                     app.bringBack(app.window)
                     if app.ops?.activityShown != true { app.ops?.showActivity(entry: nil) }
                 }

@@ -297,7 +297,8 @@ extension AppDelegate {
             return
         }
         let full = output.trimmingCharacters(in: .whitespacesAndNewlines), failed = said.outcome == .failed || said.outcome == .warning
-        let why: (@MainActor () -> Void)? = explain && failed && explains ? { @MainActor [unowned self] in
+        let stopped = switch how { case .unknown, .notRun: true; default: false }   // ⎋, or never run: nothing failed there
+        let why: (@MainActor () -> Void)? = explain && failed && !stopped && explains ? { @MainActor [unowned self] in
             self.explain([AIPanel.failure(command, on: target, "$ \(command)\n" + (full.isEmpty ? "" : full + "\n") + said.line)])
         } : nil
         for list in lists {

@@ -487,10 +487,21 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         Picker.show(over: window, placeholder: range.length > 0 ? "Send the selection to" : "Send this output to", items: items)
     }
 
-    /// ✨ Explain: the command and all it said — the last 16 KB go — from where it ran.
+    /// ✨ Explain: the command and what it said — the last 16 KB go — from where it ran: on this Mac, a production
+    /// server an `ssh` in it goes to.
     private func explain(_ command: String, on server: SFTPTarget?) {
-        guard let tv else { return }
-        Self.app()?.explain([AIPanel.failure(command, on: server, "$ \(command)\n" + tv.string)])
+        guard let tv, let app = Self.app() else { return }
+        // The last 256 KB, not 4 MB, masked on the main thread: a key this cut leaves without its BEGIN line lies far
+        // before the 16 KB that go.
+        let text = "$ \(command)\n" + String(tv.string.suffix(256_000))
+        Task {
+            var from = server
+            if from == nil, let d = EmbeddedTerminal.Tab.ran(command).ssh {
+                if !ServerLock.isLearned(d) { await ServerLock.learn([d]) }
+                from = EmbeddedTerminal.Tab.production([d], named: [])
+            }
+            app.explain([AIPanel.failure(command, on: from, text)])
+        }
     }
 
     /// Its delegate, and its keys — before the main menu's (Refresh, Copy, Save).

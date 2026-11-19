@@ -81,30 +81,45 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         /// program that logs in elsewhere (or a multiplexer that may hold one) has a local
         /// tab's terminal — whoever is logged in there. Scrollback left by one that ended isn't seen; nor, in a server's
         /// tab, a `sudo -i` or a further `ssh` its title doesn't name.
-        var origin: (server: SFTPTarget?, unsure: Bool) {
-            let fg = foreground
+        var origin: (server: SFTPTarget?, unsure: Bool) { origin(ran: nil) }
+        /// The same for text a command line printed (`ran`, its prompt and all): an `ssh` typed there counts as one
+        /// running — its output stays that server's once it ended —, and one there that logs in elsewhere, unsure.
+        func origin(ran line: String?) -> (server: SFTPTarget?, unsure: Bool) {
+            let fg = foreground, typed = line.map(Self.ran)
+            let said = title.lowercased().split(separator: "@").dropFirst().map { w in   // "deploy@web-01: ~" → web-01
+                String(w.prefix { $0.isLetter || $0.isNumber || "._-".contains($0) })
+            }
+            let going = [fg == "ssh" ? foregroundArguments.flatMap(SSHCommand.destination) : nil, typed?.ssh].compactMap { $0 }
+            return (Self.production(going, named: said) ?? target?.asUser, (fg.map(Self.logsIn.contains) ?? false) || typed?.unsure == true)
+        }
+        /// `origin` once `ssh -G` has said where an `ssh` running there, or typed in `ran`, goes (the first time it's
+        /// seen, ~15 ms): what a chip is built with.
+        func learnedOrigin(ran line: String? = nil) async -> (server: SFTPTarget?, unsure: Bool) {
+            let going = [foreground == "ssh" ? foregroundArguments.flatMap(SSHCommand.destination) : nil, line.flatMap { Self.ran($0).ssh }]
+            let new = going.compactMap { $0 }.filter { !ServerLock.isLearned($0) }
+            if !new.isEmpty { await ServerLock.learn(new) }
+            return origin(ran: line)
+        }
+        /// A saved production server among `going` (where an `ssh` goes) or named by `words` (a title's "web-01") — by
+        /// its name, its host or the host's first label, or where `ssh -G` learned an alias goes; nil: none.
+        static func production(_ going: [SFTPTarget], named words: [String]) -> SFTPTarget? {
             /// "web" of "root@web.example.com"; an address stays whole.
             let label = { (h: String) -> String in
                 let host = String(h.split(separator: "@").last ?? "")
                 return host.contains(where: \.isLetter) ? String(host.split(separator: ".").first ?? "") : host
             }
-            var said = title.lowercased().split(separator: "@").dropFirst().map { w in   // "deploy@web-01: ~" → web-01
-                String(w.prefix { $0.isLetter || $0.isNumber || "._-".contains($0) })
-            }
-            var named: [SFTPTarget] = []
-            if fg == "ssh", let d = foregroundArguments.flatMap(SSHCommand.destination) {
-                named.append(d)
-                said.append(String(d.host.split(separator: "@").last ?? "").lowercased())
-            }
+            let said = words + going.map { String($0.host.split(separator: "@").last ?? "").lowercased() }
             let names = Set(said + said.map(label)).subtracting([""])
-            named += ServerLock.servers().filter { s in s.prod && [s.name, s.host, label(s.host)].contains { names.contains($0.lowercased()) } }.map(\.target)
-            return (named.first(where: SavedServer.isProd)?.asUser ?? target?.asUser, fg.map(Self.logsIn.contains) ?? false)
+            let named = going + ServerLock.servers().filter { s in s.prod && [s.name, s.host, label(s.host)].contains { names.contains($0.lowercased()) } }.map(\.target)
+            return named.first(where: SavedServer.isProd)?.asUser
         }
-        /// `origin` once `ssh -G` has said where an `ssh` running there goes (the first time it's seen, ~15 ms): what a
-        /// chip is built with.
-        func learnedOrigin() async -> (server: SFTPTarget?, unsure: Bool) {
-            if foreground == "ssh", let d = foregroundArguments.flatMap(SSHCommand.destination), !ServerLock.isLearned(d) { await ServerLock.learn([d]) }
-            return origin
+        /// A command line's words as typed (no shell's quoting): where an `ssh` among them goes, and whether one logs in
+        /// elsewhere. A prompt before them may add a word — only ever making the text more a server's, or unsure.
+        static func ran(_ line: String) -> (ssh: SFTPTarget?, unsure: Bool) {
+            let words = line.split(whereSeparator: \.isWhitespace).map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "'\"();&|`")) }
+            let program = { (w: String) in (w as NSString).lastPathComponent }
+            let ssh = words.firstIndex { program($0) == "ssh" }
+            return (ssh.flatMap { SSHCommand.destination(Array(words[$0...])) }, words.contains { logsIn.contains(program($0)) })
         }
         /// Programs that log in elsewhere, or as someone else.
         static let logsIn = remoteShells.union(["sudo", "su", "doas", "login", "tmux", "screen"])
@@ -212,8 +227,8 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     var onSelect: ((Tab) -> Void)?
     var onCommandClick: ((Tab, String) -> Void)?
     var chatReady: (() -> Bool)?
-    /// ✨ Explain clicked by a failed command: that command with its output, as its shell's end said (task 23 PR 6b).
-    var onExplain: ((Tab, String) -> Void)?
+    /// A command its shell said failed: its code, and it with its output (✨ Explain).
+    var onFailed: ((Tab, Int32, String) -> Void)?
     /// Every tab's shell is listened to for its commands' ends (OSC 133 D) — only while ✨ shows (the app's).
     var watchesExits = false { didSet { tabs.forEach { $0.view.watchExits(watchesExits) } } }
     /// ⌘+ / ⌘−, every tab; kept in `terminalFontSize` (clamped to 9…36; 13 if unset).
@@ -598,7 +613,7 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         t.onSelect = { [weak self, unowned t] in if let self, let tab = tabs.first(where: { $0.view === t }) { onSelect?(tab) } }
         t.onCommandClick = { [weak self, unowned t] text in if let self, let tab = tabs.first(where: { $0.view === t }) { onCommandClick?(tab, text) } }
         t.chatReady = { [weak self] in self?.chatReady?() ?? false }
-        t.onExplain = { [weak self, unowned t] text in if let self, let tab = tabs.first(where: { $0.view === t }) { onExplain?(tab, text) } }
+        t.onFailed = { [weak self, unowned t] code, text in if let self, let tab = tabs.first(where: { $0.view === t }) { onFailed?(tab, code, text) } }
         t.watchExits(watchesExits)
         t.onBell = { [weak self, unowned t] in
             guard let self else { return }
@@ -1254,17 +1269,23 @@ final class DropTerminalView: LocalProcessTerminalView {
     func showChatButton(_ title: String?, act: @escaping () -> Void) {
         chatButton?.removeFromSuperview()
         guard let title, selectionActive else { return }
-        let b = ClosureButton(title: title) { [weak self] in
+        let b = aiButton(title) { [weak self] in
             self?.chatButton?.removeFromSuperview()
             act()
         }
-        (b.image, b.imagePosition, b.bezelStyle, b.controlSize) = (Symbol.ai.image(), .imageLeading, .inline, .small)
-        b.sizeToFit()
         let p = window.map { convert($0.mouseLocationOutsideOfEventStream, from: nil) }.flatMap { bounds.contains($0) ? $0 : nil }
             ?? NSPoint(x: bounds.maxX, y: 0)
         b.setFrameOrigin(NSPoint(x: min(max(p.x + 8, 4), bounds.maxX - b.frame.width - 16), y: min(max(p.y - b.frame.height - 6, 4), bounds.maxY - b.frame.height - 4)))
         addSubview(b)
         chatButton = b
+    }
+
+    /// A small ✨ button over the text, sized to its title.
+    private func aiButton(_ title: String, _ act: @escaping () -> Void) -> NSButton {
+        let b = ClosureButton(title: title, action: act)
+        (b.image, b.imagePosition, b.bezelStyle, b.controlSize) = (Symbol.ai.image(), .imageLeading, .inline, .small)
+        b.sizeToFit()
+        return b
     }
     /// The mark on `row` if `row` is its command's line (or a row it wraps onto), still holding.
     private func commandMark(onRow row: Int) -> Mark? {
@@ -1301,8 +1322,9 @@ final class DropTerminalView: LocalProcessTerminalView {
 
     // MARK: ✨ Explain (task 23 PR 6b)
 
-    /// A failed command's ✨ clicked: that command with its output and exit, as taken when its shell said it ended.
-    var onExplain: ((String) -> Void)?
+    /// A command its shell said failed (OSC 133 D): its code, and it with its output as taken then — the app shows
+    /// ✨ for it (`showExplain`) once it knows where it ran.
+    var onFailed: ((Int32, String) -> Void)?
     private(set) weak var explainButton: NSButton?
     /// Its shell's OSC 133 heard — a copy, off the main thread (SwiftTerm's own 133, ⌘↑'s prompts, stays as it is);
     /// nil: not listened to.
@@ -1310,6 +1332,8 @@ final class DropTerminalView: LocalProcessTerminalView {
     var watchesExits: Bool { exits != nil }
     /// The mark whose command's end was heard: one end a mark (a shell says D at every prompt — an empty ↩, ⌃C).
     private var ended: Mark?
+    /// The last end told as a failure, till the next command: ✨ still belongs.
+    private var failedEnd: Int?
 
     func watchExits(_ on: Bool) {
         guard on != watchesExits else { return }
@@ -1327,20 +1351,29 @@ final class DropTerminalView: LocalProcessTerminalView {
         return Int32(String(decoding: parts[1], as: UTF8.self))
     }
 
-    /// Its shell said the command on the last mark ended with `code`: ✨ by it if that's a failure — not ⌃C's 130 —
-    /// and the command printed something. Its text is taken now: a new width drops the marks.
+    /// Its shell said the command on the last mark ended with `code`: told if that's a failure — not ⌃C's 130 —, the
+    /// line had a command (not the prompt as it stands again: an empty ↩) and it printed something. Its text is taken
+    /// now: a new width drops the marks. ponytail: the next prompt may be drawn by now — a prompt's upper line (two-line
+    /// prompts) counts as output, as in Copy Output; the end's own row would need SwiftTerm's.
     private func commandEnded(_ code: Int32) {
         guard watchesExits, let now = look(), !now.alt, let m = mark(from: now.cursor + 1, -1), m.row != ended?.row else { return }
         ended = m
-        guard code != 0, code != 130, output(of: m, cursor: now.cursor) != nil, let text = commandWithOutput(row: m.row) else { return }
+        let typed = { (row: Int) in self.rowText(row)?.trimmingCharacters(in: .whitespaces) }
+        guard code != 0, code != 130, typed(m.row) != typed(now.cursor), output(of: m, cursor: now.cursor) != nil,
+              let text = commandWithOutput(row: m.row) else { return }
+        failedEnd = m.row
+        onFailed?(code, text + "\n[exit \(code)]")
+    }
+
+    /// "✨ Explain · exit N" at the tab's lower right for the end just told, till the next command (a ↩ that runs).
+    func showExplain(_ code: Int32, act: @escaping () -> Void) {
+        guard failedEnd != nil else { return }   // the next command came meanwhile
         explainButton?.removeFromSuperview()
-        let b = ClosureButton(title: "Explain · exit \(code)") { [weak self] in
+        let b = aiButton("Explain · exit \(code)") { [weak self] in
             self?.explainButton?.removeFromSuperview()
-            self?.onExplain?(text + "\n[exit \(code)]")
+            act()
         }
-        (b.image, b.imagePosition, b.bezelStyle, b.controlSize) = (Symbol.ai.image(), .imageLeading, .inline, .small)
-        b.sizeToFit()
-        b.setFrameOrigin(NSPoint(x: bounds.maxX - b.frame.width - 16, y: 4))   // the tab's lower right, clear of the scroller
+        b.setFrameOrigin(NSPoint(x: bounds.maxX - b.frame.width - 16, y: 4))   // clear of the scroller
         b.autoresizingMask = [.minXMargin, .maxYMargin]
         addSubview(b)
         explainButton = b
@@ -1435,6 +1468,7 @@ final class DropTerminalView: LocalProcessTerminalView {
     /// not in a full-screen program, nor where the shell says it isn't at its prompt (`promptSaysSo`).
     private func markReturn() {
         explainButton?.removeFromSuperview()   // the next command: the last one's ✨ goes
+        failedEnd = nil
         guard let now = look(), !now.alt, now.bracketed || !promptSaysSo,
               let s = terminalContentSnapshot(region: .rows(max(now.top, now.cursor - 50)..<now.cursor + 1), buffer: .normal),
               var i = s.rows.indices.last else { return }

@@ -743,7 +743,8 @@ import DFMCore
         guard first != shown else { return }
         shown = first
         kept = []
-        list.setViews(first.isEmpty ? [ToolsWindow.small("Nothing yet")] : first.map { Self.row($0, live: live) { kept.append($0) } }, in: .top)
+        let explains = live.app.explains   // once, not a Keychain look a row
+        list.setViews(first.isEmpty ? [ToolsWindow.small("Nothing yet")] : first.map { Self.row($0, live: live, explains: explains) { kept.append($0) } }, in: .top)
         for v in list.arrangedSubviews { v.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true }
     }
 
@@ -759,8 +760,9 @@ import DFMCore
 
     /// An event's row: the time (its weekday if not today), the level as a shape with its color, the words — a borderless
     /// button when `pick` is given (a click: the moment there), else a label; whole in the tooltip with `why` under them —
-    /// and `goto`'s button. `done` runs before a button's action (the list closes); `keep` keeps the actions.
-    static func row(_ e: ToolEventRecord, live: ToolsLive, pick: (() -> Void)? = nil, why: String? = nil, done: @escaping () -> Void = {},
+    /// and `goto`'s button — and ✨ Explain by a failure's (`explains`). `done` runs before a button's action (the list
+    /// closes); `keep` keeps the actions.
+    static func row(_ e: ToolEventRecord, live: ToolsLive, pick: (() -> Void)? = nil, why: String? = nil, explains: Bool, done: @escaping () -> Void = {},
                     keep: (AnyObject) -> Void) -> NSView {
         let time = ToolsWindow.small(ToolsEventList.time(e.at))
         time.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
@@ -778,12 +780,12 @@ import DFMCore
         text.setContentCompressionResistancePriority(.init(250), for: .horizontal)
         text.setContentHuggingPriority(.init(1), for: .horizontal)   // the row's width: a click anywhere along it
         var views: [NSView] = [time, NSImageView(image: mark(e.level)), text]
-        if ["critical", "warning"].contains(e.level), live.app.explains {   // ✨: what it said, from this server
+        if explains, ["critical", "warning"].contains(e.level) {   // what it said, from this server
             let b = NSButton(title: "Explain", target: nil, action: nil)
             (b.controlSize, b.font, b.image, b.imagePosition) = (.small, .systemFont(ofSize: 11), Symbol.ai.image(), .imageLeading)
             keep(MenuAction.attach(to: b) { [unowned live] in
                 done()
-                live.app.explain([ToolMonitor.why(e.message, level: e.level, tool: e.id == "watch" ? nil : live.tool.preset.title, at: e.at,
+                live.app.explain([ToolMonitor.failure(e.message, level: e.level, tool: e.id == "watch" ? nil : live.tool.preset.title, at: e.at,
                                                   server: live.server.title, live.target)])
             })
             views.append(b)
@@ -834,14 +836,14 @@ import DFMCore
     /// The list: its rows in a scroll, under them what Kermo keeps.
     func view(_ events: [ToolEventRecord], empty: String, live: ToolsLive, charts: ToolsCharts?, close: @escaping () -> Void) -> NSView {
         kept = []
-        let window = charts.map { $0.model.data.from...$0.model.data.to }, now = live.now
+        let window = charts.map { $0.model.data.from...$0.model.data.to }, now = live.now, explains = live.app.explains
         let rows = NSStackView(views: events.isEmpty ? [ToolsWindow.small(empty)] : events.map { e in
             guard let charts, window?.contains(e.at) == true else {
-                return ToolsEvents.row(e, live: live, why: charts.map { Self.outside(e.at, $0, now: now) }, done: close) { kept.append($0) }
+                return ToolsEvents.row(e, live: live, why: charts.map { Self.outside(e.at, $0, now: now) }, explains: explains, done: close) { kept.append($0) }
             }
             let model = charts.model
             return ToolsEvents.row(e, live: live, pick: { model.inspect(at: e.at, gap: model.data.charts.first?.gap(at: e.at)) }, why: "Click: the charts at this time",
-                                   done: close) { kept.append($0) }
+                                   explains: explains, done: close) { kept.append($0) }
         })
         (rows.orientation, rows.alignment, rows.spacing) = (.vertical, .leading, 3)
         rows.translatesAutoresizingMaskIntoConstraints = false

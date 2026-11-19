@@ -171,9 +171,8 @@ struct ListAction {
 @MainActor protocol RowList: AnyObject {
     func has(_ id: String) -> Bool
     func update(_ item: Picker.Item)
-    /// How a run on row `id` went; `failed`: it stays till it's closed. `output`: a button that shows more.
-    func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?)
-    /// The same with ✨ Explain by it (a service's or a container's failure); a list without the button says it as above.
+    /// How a run on row `id` went; `failed`: it stays till it's closed. `output`: a button that shows more; `explain`:
+    /// ✨ Explain (a service's or a container's failure), where the list has room for it.
     func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?, explain: (@MainActor () -> Void)?)
     /// The rows of the list that has row `id`, read again after a change (a Tools action): the cursor stays on its row,
     /// or goes to its neighbour if that went.
@@ -184,13 +183,12 @@ struct ListAction {
 }
 
 extension RowList {
-    func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?, explain: (@MainActor () -> Void)?) {
-        said(text, about: id, failed: failed, output: output)
+    func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?) {
+        said(text, about: id, failed: failed, output: output, explain: nil)
     }
 }
 
 extension Picker: RowList {
-    func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?) { say(text, output: output) }
     func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?, explain: (@MainActor () -> Void)?) {
         say(text, output: output, explain: explain)
     }
@@ -497,9 +495,6 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
 
     /// A row's line, in place of what was said about it before. All of them well: they go after `resultTime`;
     /// one that failed stays till its ✕.
-    func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?) {
-        said(text, about: id, failed: failed, output: output, explain: nil)
-    }
     func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?, explain: (@MainActor () -> Void)?) {
         let label = NSTextField(labelWithAttributedString: text)
         label.lineBreakMode = .byTruncatingTail

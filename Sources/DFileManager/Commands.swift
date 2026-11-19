@@ -1608,7 +1608,7 @@ extension AppDelegate {
             if told != nil { return tell(message + "\n" + Self.checkFailed(e, name: name, host: target.host, kept: "").info) }
             let why = explains   // ✨: the check's whole output and, while it's open, the text that didn't pass. ↩ stays OK.
             if await choose(message, info: info, why ? ["OK", "Explain"] : ["OK"], on: Editor.asking(about: saved)) == 1 {
-                explain([Self.checkWhy(e, name: name, path: remotePath, on: target)] + [Editor.document(at: saved.path).map(AIPanel.document)].compactMap { $0 })
+                explain([Self.checkFailure(e, name: name, path: remotePath, on: target)] + [Editor.document(at: saved.path).map(AIPanel.document)].compactMap { $0 })
             }
             return false
         case .failure(is SFTPClient.ChangedOnServer) where told != nil:
@@ -1908,7 +1908,7 @@ extension AppDelegate {
     }
 
     /// ✨ Explain of a save's check that failed: what it ran and its whole output, from the server it ran on.
-    static func checkWhy(_ e: SFTPClient.CheckFailed, name: String, path: String, on target: SFTPTarget) -> AIPanel.Context {
+    static func checkFailure(_ e: SFTPClient.CheckFailed, name: String, path: String, on target: SFTPTarget) -> AIPanel.Context {
         AIPanel.failure("“\(e.program)” on \(name)", on: target, "“\(e.rule.check ?? e.program)” checked \(path) as it was being saved, and failed "
                         + "(exit \(e.status)):\n\(e.output)" + (e.now.isEmpty ? "" : "\n\(e.now)"))
     }

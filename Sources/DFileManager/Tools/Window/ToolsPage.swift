@@ -496,7 +496,7 @@ final class ToolsPage: NSView, RowList {
     var sheetWindow: NSWindow? { window }
     func holding<T>(_ work: () async -> T) async -> T { await work() }
 
-    func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?) {
+    func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?, explain: (@MainActor () -> Void)?) {
         result.attributedStringValue = text
         result.toolTip = text.string
         (outputButton.isHidden, self.output) = (output == nil, output)

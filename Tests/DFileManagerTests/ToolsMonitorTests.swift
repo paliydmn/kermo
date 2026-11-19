@@ -1656,24 +1656,23 @@ extension ServerLockTests {
         let w = try #require(ToolsWindow.main)
         #expect(w.page?.tab == "pulse" && posts.activations.last?.0 == .regular && posts.activations.last?.1 === w.window, "Open: its tab, Kermo in front")
 
-        // ✨ Explain (task 23 PR 6b): the notification's — its words, from the server it's about —, and an event row's
-        // while ✨ shows (a failure's: not "back to normal").
+        // ✨ Explain (task 23 PR 6b): the notification's — its words and when it came, from the server it's about —, and
+        // an event row's while ✨ shows (a failure's: not "back to normal").
         var got: [AIPanel.Context] = [], keep: [AnyObject] = []
         AppDelegate.explaining = { got += $0 }
         defer { AppDelegate.explaining = nil }
-        monitor.clicked(ToolJobs.Notices.explain, sent.info)
+        let came = Date(timeIntervalSinceNow: -3 * 86400)
+        monitor.clicked(ToolJobs.Notices.explain, sent.info, at: came)
         #expect(got.map(\.title) == ["Monitor: Pulse · \(AISession.label(s.target))"] && got.first?.server == s.target.asUser, "\(got.map(\.title))")
         let said = try await #require(got.first).read().text
-        #expect(said.hasPrefix("Kermo's Monitor, critical, ") && said.hasSuffix("localhost — Pulse: CPU 99%"), "\(said)")
+        #expect(said == "Kermo's Monitor, critical, \(came.formatted(date: .abbreviated, time: .shortened)), localhost — Pulse: CPU 99%", "\(said)")
         let view = try #require(w.page.flatMap(live))
         let e = ToolEventRecord(at: Date(), id: "alert", level: "critical", message: "CPU 99%")
-        let explain = { (e: ToolEventRecord) in buttons(ToolsEvents.row(e, live: view) { keep.append($0) }).first { $0.title == "Explain" } }
-        try await explainsWhile(false) { #expect(explain(e) == nil, "✨ off") }
-        try await explainsWhile(true) {
-            #expect(explain(ToolEventRecord(at: Date(), id: "ok", level: "ok", message: "Back to normal: cpu")) == nil)
-            let b = try #require(explain(e))
-            _ = (b.target as? NSObject)?.perform(b.action, with: b)
-        }
+        let explain = { (e: ToolEventRecord, on: Bool) in buttons(ToolsEvents.row(e, live: view, explains: on) { keep.append($0) }).first { $0.title == "Explain" } }
+        #expect(explain(e, false) == nil, "✨ off")
+        #expect(explain(ToolEventRecord(at: Date(), id: "ok", level: "ok", message: "Back to normal: cpu"), true) == nil)
+        let b = try #require(explain(e, true))
+        _ = (b.target as? NSObject)?.perform(b.action, with: b)
         #expect(got.count == 2 && got.last?.title == got.first?.title && got.last?.server == s.target.asUser)
     }
 

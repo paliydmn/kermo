@@ -127,9 +127,9 @@ extension ToolMonitor {
         URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension" + id).map { _ = NSWorkspace.shared.open($0) }
     }
 
-    /// A notification's button or click (`ToolJobs.Clicks`): Snooze 1 Hour, Mute This Alert on This Server, or Open —
-    /// the server's page on the tool's tab.
-    func clicked(_ action: String, _ info: [String: String]) {
+    /// A notification's button or click (`ToolJobs.Clicks`): Snooze 1 Hour, Mute This Alert on This Server, Explain
+    /// (what it said, when it came: `at`), or Open — the server's page on the tool's tab.
+    func clicked(_ action: String, _ info: [String: String], at: Date = Date()) {
         guard let key = info["server"], let s = servers[key] else { return open(nil) }
         switch action {
         case ToolJobs.Notices.snooze: snooze(until: Date().addingTimeInterval(3600))
@@ -140,14 +140,14 @@ extension ToolMonitor {
             changed()
         case ToolJobs.Notices.explain:
             let tool = info["tool"].flatMap { s.tools[$0]?.preset.title }
-            app.explain([Self.why(info["message"] ?? "", level: "critical", tool: tool, server: s.saved.title, s.target)])
+            app.explain([Self.failure(info["message"] ?? "", level: "critical", tool: tool, at: at, server: s.saved.title, s.target)])
         default: open(s.target, tool: info["tool"])
         }
     }
 
     /// ✨ Explain of what watching said about `server` (`t`): the words, when, from which tool (nil: watching's own) — the
     /// server's chip, production's asked about at ↩. Nothing more is read: the model asks for what it needs.
-    static func why(_ message: String, level: String, tool: String?, at: Date = Date(), server: String, _ t: SFTPTarget) -> AIPanel.Context {
+    static func failure(_ message: String, level: String, tool: String?, at: Date, server: String, _ t: SFTPTarget) -> AIPanel.Context {
         AIPanel.failure("Monitor: " + (tool ?? "watching"), on: t, "Kermo's Monitor, \(level), \(at.formatted(date: .abbreviated, time: .shortened)), "
                         + "\(server)\(tool.map { " — \($0)" } ?? ""): \(message)")
     }
