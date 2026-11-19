@@ -1606,7 +1606,7 @@ extension ServerLockTests {
         await toolsUntil { t.alerts.worst == .critical && s.events.contains { $0.message == "on_alert ran" } }
         #expect(posts.sent.count == 1, "\(posts.sent)")
         let sent = try #require(posts.sent.first)
-        #expect(sent.title == "localhost" && sent.body == "Pulse: CPU 99%" && sent.info == ["server": s.key, "tool": "pulse", "alert": "cpu"], "\(sent)")
+        #expect(sent.title == "localhost" && sent.body == "Pulse: CPU 99%" && sent.info == ["server": s.key, "tool": "pulse", "alert": "cpu", "message": "CPU 99%"], "\(sent)")
         #expect(try String(contentsOfFile: out, encoding: .utf8) == "argc=0\nKERMO_LEVEL=critical\nKERMO_MESSAGE=CPU 99%\nKERMO_SERVER=localhost\nKERMO_TOOL=pulse\n")
         #expect(t.events.contains { $0.message == "hot: 99" && $0.level == "warning" }, "the warning is there, not notified")
         #expect(ToolsMenuBar.head(monitor).text == "1 critical")
@@ -1650,6 +1650,26 @@ extension ServerLockTests {
         monitor.clicked(UNNotificationDefaultActionIdentifier, sent.info)
         let w = try #require(ToolsWindow.main)
         #expect(w.page?.tab == "pulse" && posts.activations.last?.0 == .regular && posts.activations.last?.1 === w.window, "Open: its tab, Kermo in front")
+
+        // ✨ Explain (task 23 PR 6b): the notification's — its words, from the server it's about —, and an event row's
+        // while ✨ shows (a failure's: not "back to normal").
+        var got: [AIPanel.Context] = [], keep: [AnyObject] = []
+        AppDelegate.explaining = { got += $0 }
+        defer { AppDelegate.explaining = nil }
+        monitor.clicked(ToolJobs.Notices.explain, sent.info)
+        #expect(got.map(\.title) == ["Monitor: Pulse · \(AISession.label(s.target))"] && got.first?.server == s.target.asUser, "\(got.map(\.title))")
+        let said = try await #require(got.first).read().text
+        #expect(said.hasPrefix("Kermo's Monitor, critical, ") && said.hasSuffix("localhost — Pulse: CPU 99%"), "\(said)")
+        let view = try #require(w.page.flatMap(live))
+        let e = ToolEventRecord(at: Date(), id: "alert", level: "critical", message: "CPU 99%")
+        let explain = { (e: ToolEventRecord) in buttons(ToolsEvents.row(e, live: view) { keep.append($0) }).first { $0.title == "Explain" } }
+        try await explainsWhile(false) { #expect(explain(e) == nil, "✨ off") }
+        try await explainsWhile(true) {
+            #expect(explain(ToolEventRecord(at: Date(), id: "ok", level: "ok", message: "Back to normal: cpu")) == nil)
+            let b = try #require(explain(e))
+            _ = (b.target as? NSObject)?.perform(b.action, with: b)
+        }
+        #expect(got.count == 2 && got.last?.title == got.first?.title && got.last?.server == s.target.asUser)
     }
 
     /// Sites: the server's addresses (Edit Server) checked from this Mac with no channel — each round one sample of
@@ -1902,7 +1922,7 @@ extension ServerLockTests {
         monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
         await toolsUntil { posts.sent.contains { $0.body == "Pulse: boom" } }
         let boom = try #require(posts.sent.first { $0.body == "Pulse: boom" })
-        #expect(boom.info == ["server": monitor.server(.local())!.key, "tool": "pulse"], "an event: Open and Snooze, no Mute")
+        #expect(boom.info == ["server": monitor.server(.local())!.key, "tool": "pulse", "message": "boom"], "an event: Open and Snooze, no Mute")
         try await Task.sleep(for: .milliseconds(700))
         #expect(posts.sent.filter { $0.body == "Pulse: boom" }.count == 1, "a script's event in every line: one notification till it's closed")
         bench.flag("boom-localhost", false)
@@ -1911,7 +1931,7 @@ extension ServerLockTests {
         await toolsUntil { posts.sent.contains { $0.body.hasPrefix("Not answering") } }
         kill(try #require(pid(bench)), SIGCONT)
         let down = try #require(posts.sent.first { $0.body.hasPrefix("Not answering") })
-        #expect(down.title == "localhost" && down.info == ["server": s.key] && down.body.hasSuffix("This Mac is online: it's the server or the way to it."), "\(down)")
+        #expect(down.title == "localhost" && down.info == ["server": s.key, "message": down.body] && down.body.hasSuffix("This Mac is online: it's the server or the way to it."), "\(down)")
     }
 
     /// The first Watch asks macOS for notifications, once; Settings ▸ Monitor says how they stand as macOS has it now,

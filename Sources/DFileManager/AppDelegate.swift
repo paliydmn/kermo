@@ -867,6 +867,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         toChat(tab, text, what: "Command")
     }
 
+    // MARK: ✨ Explain (task 23 PR 6b)
+
+    /// ✨ shows where something failed (`AISettings.explains`).
+    var explains: Bool { AISettings.explains(defaults) }
+
+    /// ✨ Explain clicked — by a terminal's failed command, a config check, an output window, a service, a Monitor
+    /// alert: Kermo in front with the chat, what failed attached, "Why did this fail?" in the field. Nothing goes until ↩.
+    func explain(_ found: [AIPanel.Context]) {
+        if let seen = Self.explaining { return seen(found) }
+        bringBack(window)
+        if !aiChatShown { setAIChat(shown: true) }
+        aiPanel.explain(found)
+    }
+    /// Tests: what a ✨ would attach (their app has no chat).
+    static var explaining: (@MainActor ([AIPanel.Context]) -> Void)?
+
+    /// «⋯» Explain Last Command: as Add Command and Output to Chat, with the question — whatever its exit, which a
+    /// shell seldom tells. Without the AI: the chat's "Use your own AI".
+    func explainLastCommand() {
+        guard terminal.isShown, let tab = terminal.current, let text = tab.view.commandWithOutput() else { return NSSound.beep() }
+        explainTerminal(tab, text)
+    }
+    private func explainTerminal(_ tab: EmbeddedTerminal.Tab, _ text: String) {
+        guard AISettings.ready(defaults) else { return aiPanel.add([]) }
+        Task { explain([await AIPanel.terminal(tab, text, what: "Command")]) }
+    }
+
+    /// Settings › AI changed (a key, the provider, the ✨ row): the terminal watches its commands' ends only while ✨ shows.
+    func aiChanged() { terminal?.watchesExits = explains }
+
     /// A terminal tab's selection made (or gone): "✨ Add to Chat" by it while the AI is set up; the chat's Follow.
     private func terminalSelected(_ tab: EmbeddedTerminal.Tab) {
         aiPanel.selected(tab)
@@ -1377,10 +1407,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// A mark's command → the panel command whose key it has in the terminal.
     static let terminalBranchKeys = Dictionary(uniqueKeysWithValues: terminalBranches.map { ($1, $0) })
     /// What acts on the terminal's current pane: while it's shown — from «⋯», or the menu, with a panel's keys too.
-    static let terminalPane: Set<String> = ["term.editor", "term.output.editor", "term.output.copy", "term.output.chat", "term.mark.prev", "term.mark.next", "term.zoom"]
+    static let terminalPane: Set<String> = ["term.editor", "term.output.editor", "term.output.copy", "term.output.chat", "term.output.explain", "term.mark.prev",
+                                            "term.mark.next", "term.zoom"]
     static let terminalCommands = ["view.terminal", "view.terminalFull", "tab.new", "tab.close", "term.split.right", "term.split.down", "term.mark.prev",
-                                   "term.mark.next", "term.output.copy", "term.output.chat", "term.editor", "term.output.editor", "tab.next",
-                                   "tab.prev", "ssh.new", "go.connect", "cmdline.insert", "cmdline.insertPaths", "term.bigger", "term.smaller",
+                                   "term.mark.next", "term.output.copy", "term.output.chat", "term.output.explain", "term.editor", "term.output.editor",
+                                   "tab.next", "tab.prev", "ssh.new", "go.connect", "cmdline.insert", "cmdline.insertPaths", "term.bigger", "term.smaller",
                                    "view.sidebar", "ssh.reconnect", "server.disconnect", "term.join", "term.unsplit", "term.pane.left",
                                    "term.pane.right", "term.pane.up", "term.pane.down", "term.resize.left", "term.resize.right", "term.resize.up",
                                    "term.resize.down", "term.zoom", "ai.chat", "ai.add"] + (1...4).map { "panel.focus\($0)" }
@@ -1678,6 +1709,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         terminal.onSelect = { [unowned self] in terminalSelected($0) }
         terminal.onCommandClick = { [unowned self] tab, text in toChat(tab, text, what: "Command") }
         terminal.chatReady = { [unowned self] in AISettings.ready(defaults) }
+        terminal.onExplain = { [unowned self] in explainTerminal($0, $1) }
+        aiChanged()
 
         splitController = NSSplitViewController()
         splitController.splitView.autosaveName = "Sidebar"

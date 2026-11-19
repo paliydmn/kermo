@@ -778,6 +778,16 @@ import DFMCore
         text.setContentCompressionResistancePriority(.init(250), for: .horizontal)
         text.setContentHuggingPriority(.init(1), for: .horizontal)   // the row's width: a click anywhere along it
         var views: [NSView] = [time, NSImageView(image: mark(e.level)), text]
+        if ["critical", "warning"].contains(e.level), live.app.explains {   // ✨: what it said, from this server
+            let b = NSButton(title: "Explain", target: nil, action: nil)
+            (b.controlSize, b.font, b.image, b.imagePosition) = (.small, .systemFont(ofSize: 11), Symbol.ai.image(), .imageLeading)
+            keep(MenuAction.attach(to: b) { [unowned live] in
+                done()
+                live.app.explain([ToolMonitor.why(e.message, level: e.level, tool: e.id == "watch" ? nil : live.tool.preset.title, at: e.at,
+                                                  server: live.server.title, live.target)])
+            })
+            views.append(b)
+        }
         if let g = e.goto.flatMap(ToolRunner.Goto.init) {
             let b = NSButton(title: g.title, target: nil, action: nil)
             b.controlSize = .small

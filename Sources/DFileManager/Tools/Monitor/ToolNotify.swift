@@ -24,7 +24,7 @@ extension ToolMonitor {
         guard tool?.watched ?? s.watched, !silent(s) else { return }
         if let tool, let alert, app.tools.settings.mutes(alert, of: tool.preset.id, on: s.saved.id.uuidString) { return }
         var info = ["server": s.key]
-        (info["tool"], info["alert"]) = (tool?.preset.id, alert)
+        (info["tool"], info["alert"], info["message"]) = (tool?.preset.id, alert, message)   // the message: ✨ Explain's chip
         let title = s.saved.title + (s.saved.prod ? " · production" : ""), body = (tool.map { $0.preset.title + ": " } ?? "") + message
         let notices = ToolJobs.notices
         Task { if await notices.allowed() == true { notices.post("watch " + id, title, body, info) } }   // not allowed: the menu bar and the Dock say it
@@ -138,8 +138,18 @@ extension ToolMonitor {
             app.tools.settings.mute(alert, of: tool, on: s.saved.id.uuidString, true)
             app.tools.saveSettings()
             changed()
+        case ToolJobs.Notices.explain:
+            let tool = info["tool"].flatMap { s.tools[$0]?.preset.title }
+            app.explain([Self.why(info["message"] ?? "", level: "critical", tool: tool, server: s.saved.title, s.target)])
         default: open(s.target, tool: info["tool"])
         }
+    }
+
+    /// ✨ Explain of what watching said about `server` (`t`): the words, when, from which tool (nil: watching's own) — the
+    /// server's chip, production's asked about at ↩. Nothing more is read: the model asks for what it needs.
+    static func why(_ message: String, level: String, tool: String?, at: Date = Date(), server: String, _ t: SFTPTarget) -> AIPanel.Context {
+        AIPanel.failure("Monitor: " + (tool ?? "watching"), on: t, "Kermo's Monitor, \(level), \(at.formatted(date: .abbreviated, time: .shortened)), "
+                        + "\(server)\(tool.map { " — \($0)" } ?? ""): \(message)")
     }
 
     /// Open Monitor (the menu bar, ⌃⌘M, a notification): Kermo in front with the Tools window — on `t`'s page and

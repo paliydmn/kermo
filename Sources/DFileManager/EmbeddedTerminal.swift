@@ -212,6 +212,10 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     var onSelect: ((Tab) -> Void)?
     var onCommandClick: ((Tab, String) -> Void)?
     var chatReady: (() -> Bool)?
+    /// ✨ Explain clicked by a failed command: that command with its output, as its shell's end said (task 23 PR 6b).
+    var onExplain: ((Tab, String) -> Void)?
+    /// Every tab's shell is listened to for its commands' ends (OSC 133 D) — only while ✨ shows (the app's).
+    var watchesExits = false { didSet { tabs.forEach { $0.view.watchExits(watchesExits) } } }
     /// ⌘+ / ⌘−, every tab; kept in `terminalFontSize` (clamped to 9…36; 13 if unset).
     private(set) var fontSize: CGFloat = (UserDefaults.standard.object(forKey: "terminalFontSize") as? Double).map { min(max($0, 9), 36) } ?? 13
     private var hiddenAt = -TimeInterval.infinity   // uptime; ⌃O ⌃O
@@ -594,6 +598,8 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         t.onSelect = { [weak self, unowned t] in if let self, let tab = tabs.first(where: { $0.view === t }) { onSelect?(tab) } }
         t.onCommandClick = { [weak self, unowned t] text in if let self, let tab = tabs.first(where: { $0.view === t }) { onCommandClick?(tab, text) } }
         t.chatReady = { [weak self] in self?.chatReady?() ?? false }
+        t.onExplain = { [weak self, unowned t] text in if let self, let tab = tabs.first(where: { $0.view === t }) { onExplain?(tab, text) } }
+        t.watchExits(watchesExits)
         t.onBell = { [weak self, unowned t] in
             guard let self else { return }
             guard let tab = tabs.first(where: { $0.view === t }), !shows(tab) else { return beep() }
@@ -1293,6 +1299,53 @@ final class DropTerminalView: LocalProcessTerminalView {
         pasteboard.setString(text, forType: .string)
     }
 
+    // MARK: ✨ Explain (task 23 PR 6b)
+
+    /// A failed command's ✨ clicked: that command with its output and exit, as taken when its shell said it ended.
+    var onExplain: ((String) -> Void)?
+    private(set) weak var explainButton: NSButton?
+    /// Its shell's OSC 133 heard — a copy, off the main thread (SwiftTerm's own 133, ⌘↑'s prompts, stays as it is);
+    /// nil: not listened to.
+    private var exits: TerminalOscObservation?
+    var watchesExits: Bool { exits != nil }
+    /// The mark whose command's end was heard: one end a mark (a shell says D at every prompt — an empty ↩, ⌃C).
+    private var ended: Mark?
+
+    func watchExits(_ on: Bool) {
+        guard on != watchesExits else { return }
+        if !on { explainButton?.removeFromSuperview() }
+        exits = on ? observeOscEvents { [weak self] e in
+            guard e.code == 133, let code = Self.exitCode(e.payload) else { return }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.commandEnded(code) } }
+        } : nil
+    }
+
+    /// 133's `D;<code>[;…]`: a command's end and its exit code; nil — another of 133's, or a D without a code.
+    nonisolated static func exitCode(_ payload: [UInt8]) -> Int32? {
+        let parts = payload.split(separator: UInt8(ascii: ";"), omittingEmptySubsequences: false)
+        guard parts.count > 1, parts[0].elementsEqual("D".utf8) else { return nil }
+        return Int32(String(decoding: parts[1], as: UTF8.self))
+    }
+
+    /// Its shell said the command on the last mark ended with `code`: ✨ by it if that's a failure — not ⌃C's 130 —
+    /// and the command printed something. Its text is taken now: a new width drops the marks.
+    private func commandEnded(_ code: Int32) {
+        guard watchesExits, let now = look(), !now.alt, let m = mark(from: now.cursor + 1, -1), m.row != ended?.row else { return }
+        ended = m
+        guard code != 0, code != 130, output(of: m, cursor: now.cursor) != nil, let text = commandWithOutput(row: m.row) else { return }
+        explainButton?.removeFromSuperview()
+        let b = ClosureButton(title: "Explain · exit \(code)") { [weak self] in
+            self?.explainButton?.removeFromSuperview()
+            self?.onExplain?(text + "\n[exit \(code)]")
+        }
+        (b.image, b.imagePosition, b.bezelStyle, b.controlSize) = (Symbol.ai.image(), .imageLeading, .inline, .small)
+        b.sizeToFit()
+        b.setFrameOrigin(NSPoint(x: bounds.maxX - b.frame.width - 16, y: 4))   // the tab's lower right, clear of the scroller
+        b.autoresizingMask = [.minXMargin, .maxYMargin]
+        addSubview(b)
+        explainButton = b
+    }
+
     // MARK: Marks (task 21)
 
     /// A ↩ typed outside a full-screen program marks the line it was typed on (Terminal.app's rule; nothing goes to the
@@ -1316,7 +1369,7 @@ final class DropTerminalView: LocalProcessTerminalView {
     private var at: (row: Int, top: Int)?
 
     /// ⌘K: the scrollback is gone (and with it the anchor's row).
-    func dropMarks() { (marks, at, anchor) = ([], nil, nil) }
+    func dropMarks() { (marks, at, anchor, ended) = ([], nil, nil, nil) }
 
     /// A new size may renumber the rows (a width's reflow, a lower drawer cutting a full scrollback): the marks are
     /// looked at as the rows stand just before it — out of a live resize SwiftTerm resizes in here.
@@ -1381,6 +1434,7 @@ final class DropTerminalView: LocalProcessTerminalView {
     /// ↩ on its way to the program: a mark on the first row of the cursor's line (a long command wraps), one per row —
     /// not in a full-screen program, nor where the shell says it isn't at its prompt (`promptSaysSo`).
     private func markReturn() {
+        explainButton?.removeFromSuperview()   // the next command: the last one's ✨ goes
         guard let now = look(), !now.alt, now.bracketed || !promptSaysSo,
               let s = terminalContentSnapshot(region: .rows(max(now.top, now.cursor - 50)..<now.cursor + 1), buffer: .normal),
               var i = s.rows.indices.last else { return }

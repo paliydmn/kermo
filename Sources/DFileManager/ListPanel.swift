@@ -173,6 +173,8 @@ struct ListAction {
     func update(_ item: Picker.Item)
     /// How a run on row `id` went; `failed`: it stays till it's closed. `output`: a button that shows more.
     func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?)
+    /// The same with ✨ Explain by it (a service's or a container's failure); a list without the button says it as above.
+    func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?, explain: (@MainActor () -> Void)?)
     /// The rows of the list that has row `id`, read again after a change (a Tools action): the cursor stays on its row,
     /// or goes to its neighbour if that went.
     func reload(_ c: ListContent, having id: String)
@@ -181,8 +183,17 @@ struct ListAction {
     func holding<T>(_ work: () async -> T) async -> T
 }
 
+extension RowList {
+    func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?, explain: (@MainActor () -> Void)?) {
+        said(text, about: id, failed: failed, output: output)
+    }
+}
+
 extension Picker: RowList {
     func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?) { say(text, output: output) }
+    func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?, explain: (@MainActor () -> Void)?) {
+        say(text, output: output, explain: explain)
+    }
     var sheetWindow: NSWindow? { window }
 }
 
@@ -487,15 +498,20 @@ final class ListPanel: NSObject, NSTableViewDataSource, NSTableViewDelegate, Row
     /// A row's line, in place of what was said about it before. All of them well: they go after `resultTime`;
     /// one that failed stays till its ✕.
     func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?) {
+        said(text, about: id, failed: failed, output: output, explain: nil)
+    }
+    func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?, explain: (@MainActor () -> Void)?) {
         let label = NSTextField(labelWithAttributedString: text)
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let row = NSStackView(views: [label])
         row.spacing = 6
-        if let output {
-            let b = NSButton(title: "Output…", target: nil, action: nil)
+        for (title, act, ai) in [("Output…", output, false), ("Explain", explain, true)] {
+            guard let act else { continue }
+            let b = NSButton(title: title, target: nil, action: nil)
             (b.bezelStyle, b.controlSize) = (.inline, .small)
-            actionsKept.append(MenuAction.attach(to: b, output))
+            if ai { (b.image, b.imagePosition) = (Symbol.ai.image(), .imageLeading) }
+            actionsKept.append(MenuAction.attach(to: b, act))
             row.addArrangedSubview(b)
         }
         if failed {

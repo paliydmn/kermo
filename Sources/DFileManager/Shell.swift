@@ -381,6 +381,9 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
             } else if self.status != 0 {
                 self.append(Data("\n[exit \(self.status)]\n".utf8), true, in: tv)
                 if let failed { self.append(Data((failed + "\n").utf8), false, in: tv) }
+                if !self.stopAsked, !self.embedded, Self.app()?.explains == true {   // ✨: not for a run ⎋ stopped
+                    self.window?.docFrame?.actions = [("✨ Explain", { @MainActor [weak self] in self?.explain(command, on: server) })]
+                }
             }
             onExit(self.status)
         }
@@ -482,6 +485,12 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
             }
         }
         Picker.show(over: window, placeholder: range.length > 0 ? "Send the selection to" : "Send this output to", items: items)
+    }
+
+    /// ✨ Explain: the command and all it said — the last 16 KB go — from where it ran.
+    private func explain(_ command: String, on server: SFTPTarget?) {
+        guard let tv else { return }
+        Self.app()?.explain([AIPanel.failure(command, on: server, "$ \(command)\n" + tv.string)])
     }
 
     /// Its delegate, and its keys — before the main menu's (Refresh, Copy, Save).

@@ -241,6 +241,9 @@ extension AppDelegate {
         cmd("term.output.chat", "Add Command and Output to Chat", [], menu: "View/Terminal Pane", group: 1, aliases: "ai terminal last command result attach ask") {
             $0.addCommandToChat()
         },
+        cmd("term.output.explain", "Explain Last Command", [], menu: "View/Terminal Pane", group: 1, aliases: "ai why failed error terminal command result ask") {
+            $0.explainLastCommand()
+        },
         cmd("term.mark.prev", "Previous Mark", [], menu: "View/Terminal Pane", group: 2, short: "Prev Mark", aliases: "terminal command prompt jump scroll") { $0.terminal.goToMark(by: -1) },
         cmd("term.mark.next", "Next Mark", [], menu: "View/Terminal Pane", group: 2, aliases: "terminal command prompt jump scroll") { $0.terminal.goToMark(by: 1) },
         cmd("term.zoom", "Zoom Pane", ["cmd+shift+return"], menu: "View/Terminal Pane", group: 3, short: "Zoom", aliases: "terminal split maximize pane whole tab") { $0.terminal.zoom() },
@@ -1603,7 +1606,10 @@ extension AppDelegate {
             if let a = e.attrs { state.baseline = a }   // an "after" check: what's there now, put back or not
             let (message, info) = Self.checkFailed(e, name: name, host: target.host, kept: Editor.window(for: saved) == nil ? saved.path : nil)
             if told != nil { return tell(message + "\n" + Self.checkFailed(e, name: name, host: target.host, kept: "").info) }
-            _ = await choose(message, info: info, ["OK"], on: Editor.asking(about: saved))
+            let why = explains   // ✨: the check's whole output and, while it's open, the text that didn't pass. ↩ stays OK.
+            if await choose(message, info: info, why ? ["OK", "Explain"] : ["OK"], on: Editor.asking(about: saved)) == 1 {
+                explain([Self.checkWhy(e, name: name, path: remotePath, on: target)] + [Editor.document(at: saved.path).map(AIPanel.document)].compactMap { $0 })
+            }
             return false
         case .failure(is SFTPClient.ChangedOnServer) where told != nil:
             return tell("“\(name)” changed on the server, or appeared there, after Kermo looked. Nothing was written.")
@@ -1899,6 +1905,12 @@ extension AppDelegate {
         let text = kept.map { $0.isEmpty ? "" : "Your text is kept in \($0)." } ?? "Your text stays unsaved here."
         return ("“\(name)” didn't pass “\(e.program)” on \(host)",
                 (shown.isEmpty ? "It exited with \(e.status)." : shown) + "\n\n" + (e.now.isEmpty ? "Not saved there: the file on \(host) is as it was." : e.now) + " " + text)
+    }
+
+    /// ✨ Explain of a save's check that failed: what it ran and its whole output, from the server it ran on.
+    static func checkWhy(_ e: SFTPClient.CheckFailed, name: String, path: String, on target: SFTPTarget) -> AIPanel.Context {
+        AIPanel.failure("“\(e.program)” on \(name)", on: target, "“\(e.rule.check ?? e.program)” checked \(path) as it was being saved, and failed "
+                        + "(exit \(e.status)):\n\(e.output)" + (e.now.isEmpty ? "" : "\n\(e.now)"))
     }
 
     private func notSaved(_ saved: URL, to target: SFTPTarget, _ e: Error) -> Bool {

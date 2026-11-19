@@ -305,6 +305,32 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         if fresh.count > 10 { flash("The first 10 of \(fresh.count) — ⇧⌘I again for the next.") }
     }
 
+    // MARK: - ✨ Explain (task 23 PR 6b)
+
+    static let why = "Why did this fail?"
+
+    /// ✨ Explain: what failed, attached as any chip is — a production server's asked about at ↩, none taken under
+    /// Never Send — and `why` in the field, unless words are there. Nothing goes until ↩. The app shows the chat first
+    /// (`AppDelegate.explain`).
+    func explain(_ found: [Context]) {
+        guard AISettings.ready(app.defaults) else { return }
+        attach(found)
+        let never = AISettings.neverProd(app.defaults)
+        guard found.contains(where: { !(never && isProd($0)) }), input.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        input.string = Self.why
+        input.setSelectedRange(NSRange(location: (Self.why as NSString).length, length: 0))
+        updateInfo()
+    }
+
+    /// What failed — a command, a check, an alert — with what it said, from the machine it failed on (nil: this Mac):
+    /// masked, its last 16 KB. `what`: "systemctl restart -- nginx.service", "nginx -t on site.conf".
+    static func failure(_ what: String, on server: SFTPTarget?, _ text: String) -> Context {
+        let at = server.map(AISession.label) ?? "this Mac"
+        return Context(id: "why:\(at):\(what):\(text.hashValue)", title: "\(what) · \(at)", symbol: .warn, server: server?.asUser) {
+            AISession.handOver(text, limit: 16_000, keepEnd: true)
+        }
+    }
+
     /// Follow selection: each ↩ takes what is selected then where the user selected last — a terminal tab or the
     /// editor —, until it's clicked off. New Chat turns it off.
     private(set) var following = false

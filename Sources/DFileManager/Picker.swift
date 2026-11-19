@@ -74,6 +74,9 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     private let footer = NSTextField(wrappingLabelWithString: "")
     private let output = NSButton(title: "Output…", target: nil, action: nil)
     private var showOutput: MenuAction?
+    /// ✨ Explain by a failure's line (a service's, a container's).
+    private let explainButton = NSButton(title: "Explain", target: nil, action: nil)
+    private var explainAction: MenuAction?
     private var holds = 0
     private let header = NSTextField(labelWithString: "")
     private let emptyLabel = NSTextField(labelWithString: "")
@@ -237,9 +240,9 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
         footer.font = .systemFont(ofSize: 12)
         footer.maximumNumberOfLines = 3
         footer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        output.bezelStyle = .inline
-        output.controlSize = .small
-        let bottom = NSStackView(views: [footer, output])   // hidden till something is said there
+        for b in [output, explainButton] { (b.bezelStyle, b.controlSize, b.isHidden) = (.inline, .small, true) }
+        (explainButton.image, explainButton.imagePosition) = (Symbol.ai.image(), .imageLeading)
+        let bottom = NSStackView(views: [footer, output, explainButton])   // hidden till something is said there
         bottom.alignment = .firstBaseline
         bottom.isHidden = true
         let bg = NSVisualEffectView()
@@ -322,13 +325,14 @@ final class Picker: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTableView
     func reread() { if let source { read(source) } }
 
     /// A line under the rows that stays till the next one, or the picker's end; nil takes it away. `output`: a
-    /// button that shows more (a command's whole output).
-    func say(_ text: NSAttributedString?, output show: (@MainActor () -> Void)? = nil) {
+    /// button that shows more (a command's whole output); `explain`: ✨ Explain.
+    func say(_ text: NSAttributedString?, output show: (@MainActor () -> Void)? = nil, explain: (@MainActor () -> Void)? = nil) {
         footer.attributedStringValue = text ?? NSAttributedString()
         bottomRow?.isHidden = text == nil
         if items.isEmpty { emptyLabel.isHidden = text != nil }   // "Looking at…" gives way to why it didn't
-        output.isHidden = show == nil
+        (output.isHidden, explainButton.isHidden) = (show == nil, explain == nil)
         showOutput = show.map { MenuAction.attach(to: output, $0) }
+        explainAction = explain.map { MenuAction.attach(to: explainButton, $0) }
         if let text { NSAccessibility.post(element: panel, notification: .announcementRequested,
                                            userInfo: [.announcement: text.string, .priority: NSAccessibilityPriorityLevel.high.rawValue]) }
     }

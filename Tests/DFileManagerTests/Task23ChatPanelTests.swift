@@ -518,6 +518,64 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         #expect(panel.marked(p).map(\.title) == ["notes.txt · this Mac"])
     }
 
+    /// Task 23 PR 6b: ✨ Explain attaches what failed and puts the question in the field — nothing goes till ↩, then
+    /// both go; words already in the field stay. A production server's under Never Send: no chip, no question. Without
+    /// the AI: nothing.
+    @Test func explainAttachesWhatFailedAndSendsNothingTillReturn() async throws {
+        let std = UserDefaults.standard, names = ["aiProvider", "aiAddress", "aiModel", "aiProduction", "aiKeepChats"], saved = names.map { ($0, std.object(forKey: $0)) }
+        let wire = Wire([(200, turn(text: "The disk is full."))])
+        (AISettings.keys, AISettings.transport) = (AIKeys(Keys()), wire.transport)
+        let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t23e-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        var box = SavedServer(target: .local(port: 2))
+        (box.name, box.prod) = ("prodbox", true)
+        ServerLock.servers = { [box] }
+        let app = panelApp(dir)
+        defer {
+            for (k, v) in saved { if let v { std.set(v, forKey: k) } else { std.removeObject(forKey: k) } }
+            (AISettings.keys, AISettings.transport) = (.shared, AIHTTP.live)
+            ServerLock.servers = { [] }
+            app.panels.forEach { $0.shutdown() }
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        names.forEach(std.removeObject(forKey:))
+        std.set(false, forKey: "aiKeepChats")
+        let panel = AIPanel(app: app)
+        panel.view.frame = NSRect(x: 0, y: 0, width: 400, height: 700)
+        panel.build()
+        let field = try #require(views(panel.view, ChatInput.self).first)
+        let chips = { views(panel.view, ChipButton.self).map(\.attributedTitle.string).filter { !$0.hasPrefix("Follow") } }
+        func settled() async { for _ in 0..<300 where chips().contains(where: { $0.hasSuffix(" …") }) { try? await Task.sleep(for: .milliseconds(10)) } }
+
+        panel.explain([AIPanel.failure("pg_dump shop", on: nil, "$ pg_dump shop\npg_dump: error: No space left on device\n[exit 1]")])
+        await settled()
+        #expect(chips().first == "pg_dump shop · this Mac" && field.string == AIPanel.why && wire.bodies.isEmpty, "\(chips())")
+        panel.send(field.string)
+        await done(panel)
+        let sent = String(decoding: try JSONSerialization.data(withJSONObject: (wire.bodies.first?["messages"] as? [Any])?.last ?? [:]), as: UTF8.self)
+        #expect(wire.bodies.count == 1 && sent.contains("No space left on device") && sent.contains(AIPanel.why), "\(sent)")
+
+        field.string = "is it the disk?"
+        panel.explain([AIPanel.failure("df", on: nil, "$ df\n100%")])
+        await settled()
+        #expect(field.string == "is it the disk?" && chips().contains("df · this Mac"), "words typed stay")
+        field.string = ""
+
+        std.set("never", forKey: "aiProduction")
+        panel.explain([AIPanel.failure("nginx -t", on: box.target, "emerg")])
+        #expect(!chips().contains { $0.hasPrefix("nginx -t") } && field.string.isEmpty, "Never Send: no chip, no question")
+        std.removeObject(forKey: "aiProduction")
+
+        final class None: AIKeyStore, @unchecked Sendable {   // no key (the Mac's own Keychain may have one)
+            func has(_ account: String) -> Bool { false }
+            func get(_ account: String) -> String? { nil }
+            func set(_ key: String?, _ account: String) -> Bool { true }
+        }
+        AISettings.keys = AIKeys(None())
+        panel.explain([AIPanel.failure("ls", on: nil, "nope")])
+        #expect(!chips().contains { $0.hasPrefix("ls ·") } && field.string.isEmpty && wire.bodies.count == 1, "no AI: nothing")
+    }
+
     /// Task 23 PR 6: `ssh` running in a local tab to a production server makes the tab's text that server's — one saved
     /// with its user, one saved by address and typed by its name; one Kermo doesn't know is this Mac's, "whoever is logged
     /// in". The `ssh` waits on a stand-in for its connection: no network, no config of yours.

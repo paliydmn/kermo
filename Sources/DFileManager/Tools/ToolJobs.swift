@@ -374,14 +374,18 @@ struct ToolJob: Codable, Equatable {
         var ask: @MainActor () -> Void
         var post: @MainActor (_ id: String, _ title: String, _ body: String, _ info: [String: String]) -> Void
 
-        static let open = "open", snooze = "snooze", mute = "mute"
-        /// Set once at launch: a category's buttons are its own, the same for every notification of it.
+        static let open = "open", snooze = "snooze", mute = "mute", explain = "explain"
+        /// Set once at launch: a category's buttons are its own, the same for every notification of it — with ✨ Explain
+        /// their own categories, chosen as a notification goes (`AppDelegate.explains`).
         static var categories: Set<UNNotificationCategory> {
             let open = UNNotificationAction(identifier: Self.open, title: "Open", options: [.foreground])
             let snooze = UNNotificationAction(identifier: Self.snooze, title: "Snooze 1 Hour", options: [])
             let mute = UNNotificationAction(identifier: Self.mute, title: "Mute This Alert on This Server", options: [])
+            let explain = UNNotificationAction(identifier: Self.explain, title: "Explain", options: [.foreground])
             return [UNNotificationCategory(identifier: "watch", actions: [open, snooze], intentIdentifiers: []),
-                    UNNotificationCategory(identifier: "alert", actions: [open, snooze, mute], intentIdentifiers: [])]
+                    UNNotificationCategory(identifier: "alert", actions: [open, snooze, mute], intentIdentifiers: []),
+                    UNNotificationCategory(identifier: "watch explain", actions: [open, explain, snooze], intentIdentifiers: []),
+                    UNNotificationCategory(identifier: "alert explain", actions: [open, explain, snooze, mute], intentIdentifiers: [])]
         }
 
         /// Only a bundled Kermo has notifications: a bare binary has no bundle to ask for (and a copy in /tmp, one that
@@ -407,6 +411,7 @@ struct ToolJob: Codable, Equatable {
                 let c = UNMutableNotificationContent()
                 (c.title, c.body, c.sound, c.userInfo) = (title, body, .default, info)
                 c.categoryIdentifier = info["alert"] != nil ? "alert" : info["server"] != nil ? "watch" : ""
+                if !c.categoryIdentifier.isEmpty, (NSApp.delegate as? AppDelegate)?.explains == true { c.categoryIdentifier += " explain" }
                 c.threadIdentifier = info["server"] ?? ""   // a server's notifications as one stack
                 UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: c, trigger: nil))
             })
