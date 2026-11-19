@@ -43,6 +43,9 @@ final class AISession {
     var readOnly = false
     /// Settings › AI's "Never Send": nothing on a production server is read for the model.
     var noProduction = false
+    /// Where `propose_edit`'s diff is shown (the chat's card); nil — an outside agent's session: it says in words
+    /// whether the change fits.
+    var proposes: (@MainActor (AIEdit.Proposal, SFTPTarget?, String) -> Void)?
     private(set) var scope = AIScope()
     private(set) var journal: [Entry] = []
     private(set) var hasRead = false
@@ -277,7 +280,16 @@ final class AISession {
     /// The arguments as a person reads them, each value `cut` at most.
     private static func told(_ args: [String: ToolValue], cut: Int) -> [String] {
         args.sorted { $0.key < $1.key }.map { k, v in
-            if case .string(let s) = v { "\(k): \(s.prefix(cut))" } else if case .bool(let b) = v { "\(k): \(b)" } else { "\(k): ?" }
+            switch v {
+            case .string(let s): "\(k): \(s.prefix(cut))"
+            case .bool(let b): "\(k): \(b)"
+            case .array(let items):   // propose_edit's edits: old → new each
+                "\(k): " + String(items.map { item -> String in
+                    guard case .object(let o) = item, case .string(let a)? = o["old_text"], case .string(let b)? = o["new_text"] else { return "?" }
+                    return "\(a) → \(b)"
+                }.joined(separator: "; ").prefix(cut))
+            default: "\(k): ?"
+            }
         }
     }
 
@@ -528,23 +540,38 @@ final class AISession {
             }
         },
         "propose_edit": { s, args, targets in
-            let path = targets[0].path ?? "/"
-            guard case .string(let old)? = args["old_text"], case .string(let new)? = args["new_text"], !old.isEmpty, old != new else {
-                return .failure("propose_edit needs old_text and a new_text that differs from it.")
+            let path = targets[0].path ?? "/", t = s.servers[targets[0].place]
+            guard case .array(let list)? = args["edits"] else { return .failure("propose_edit needs edits.") }
+            let edits = list.compactMap { v -> (old: String, new: String)? in   // their shape `targets` checked
+                guard case .object(let o) = v, case .string(let old)? = o["old_text"], case .string(let new)? = o["new_text"] else { return nil }
+                return (old, new)
             }
-            switch await text(s.servers[targets[0].place], path) {
-            case .failure(let no): return .failure(no.text)
-            case .success(let (text, cut)):
-                guard !cut else { return .failure("\(path) is too long to edit this way.") }
-                let found = text.ranges(of: old)
-                guard found.count == 1 else {
-                    return .failure(found.isEmpty ? "old_text isn't in \(path). It has to match exactly: spaces and line ends too."
-                                    : "old_text is in \(path) \(found.count) times. Give more of the text around it, so that it is there once.")
+            // The text as the editor has it: the file's tab (its user's), unsaved changes and all, else the file as it is now.
+            let doc = EditCard.tab(t, path).flatMap { $0.cover == nil ? $0 : nil }
+            let base: String, read: Bool
+            if let doc {
+                guard doc.storage.length <= textLimit else { return .failure("\(path) is too long to edit this way.") }
+                (base, read) = (doc.storage.string, false)
+            } else {
+                switch await text(t, path) {
+                case .failure(let no): return .failure(no.text)
+                case .success(let (text, cut)):
+                    guard !cut else { return .failure("\(path) is too long to edit this way.") }
+                    (base, read) = (text, true)
                 }
-                func lines(_ s: some StringProtocol) -> Int { s.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count }
-                // ponytail: said in words; the diff the user keeps or drops piece by piece is the chat's card.
-                return AIResult("The change fits \(path) at line \(lines(text[..<found[0].lowerBound])): \(lines(old)) line(s) become \(lines(new)). Nothing is saved.")
             }
+            // As the editor would read it; the edits, the hidden values and a diff of up to 256 KB: off the main thread.
+            let made = await Blocking.run(.userInitiated) { AIEdit.propose(edits, to: read ? AIEdit.editorText(base) : base, in: path) }
+            guard !Task.isCancelled else { return .failure("Stopped. Nothing was shown.") }
+            let p: AIEdit.Proposal
+            switch made {
+            case .failure(let no): return .failure(no.words + (doc?.isEdited == true ? " (\(path) is open in the editor with unsaved changes: the change goes on its text there.)" : ""))
+            case .success(let made): p = made
+            }
+            // Nothing of the diff in the words: its lines are paired on the text as it is, hidden values too.
+            guard let show = s.proposes else { return AIResult("The change fits \(path). Nothing is saved.") }
+            show(p, t, path)
+            return AIResult("Shown to the user as a diff of \(path). They keep or drop each change and apply it to the editor (or open it in Compare); nothing is saved until they press ⌘S there.")
         },
         "open_in_editor": { s, _, targets in
             let path = targets[0].path ?? "/", env = SSHAskpass.env

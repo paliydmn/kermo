@@ -2,7 +2,8 @@ import AppKit
 import DFMCore
 
 /// The AI chat right of the panels and the terminal (⌃⌘I, the toolbar's ✨): the user's own model in Ask — it reads
-/// and answers, it changes nothing. What goes is what the user attached (chips) and what the model's reads return;
+/// and answers, it changes nothing — or Edit, which also proposes changes to files as a card (`EditCard`) the user
+/// applies to the editor. What goes is what the user attached (chips) and what the model's reads return;
 /// every read is `AISession.call` (`readOnly`: the user is only ever asked to let it read). Without a key: a card that
 /// leads to Settings › AI. Nothing is made before the panel is first shown, and the key is read at the first send.
 @MainActor
@@ -52,6 +53,13 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     private var unkept = false
     private var holdsProduction: Bool { !prodSent.isEmpty || session?.readProduction == true || resumedProduction }
 
+    /// Ask or Edit (task 23 PR 7): what the next ↩ goes with. New Chat keeps it; a launch starts in Ask.
+    private(set) var editing = false
+    private let modes = NSSegmentedControl(), modeNote = NSTextField(labelWithString: "")
+    private var modeRow: NSStackView?
+    /// The answer a turn is writing: where a proposed change's card goes.
+    private weak var answering: Answer?
+
     private var built = false
     private let list = NSStackView(), scroll = NSScrollView()
     private let input = ChatInput(usingTextLayoutManager: false), inputScroll = NSScrollView()
@@ -79,6 +87,18 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
                                        iconButton(.recent, "Chats", #selector(chatsMenu(_:))), iconButton(.newDocument, "New Chat", #selector(newChat)),
                                        iconButton(.close, "Hide  ⌃⌘I", #selector(hide))])
         (head.spacing, head.edgeInsets) = (6, NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 6))
+
+        modes.segmentCount = 2
+        ["Ask", "Edit"].enumerated().forEach { modes.setLabel($1, forSegment: $0) }
+        (modes.trackingMode, modes.controlSize, modes.selectedSegment, modes.target, modes.action) = (.selectOne, .small, 0, self, #selector(modeChanged))
+        modes.setToolTip("Reads and answers; changes nothing", forSegment: 0)
+        modes.setToolTip("Also proposes changes to files as a diff — only your ⌘S saves", forSegment: 1)
+        (modeNote.font, modeNote.textColor, modeNote.lineBreakMode) = (.systemFont(ofSize: 11), .secondaryLabelColor, .byTruncatingTail)
+        modeNote.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let row = NSStackView(views: [modes, modeNote])
+        (row.spacing, row.edgeInsets) = (8, NSEdgeInsets(top: 0, left: 12, bottom: 6, right: 12))
+        modeRow = row
+        showMode()
 
         list.orientation = .vertical
         list.alignment = .leading
@@ -131,7 +151,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         for v in [chipRow, inputScroll, foot] as [NSView] { v.widthAnchor.constraint(equalTo: composer.widthAnchor, constant: -20).isActive = true }
 
         let line = { () -> NSBox in let b = NSBox(); b.boxType = .separator; return b }
-        let all = NSStackView(views: [head, line(), scroll, line(), composer])
+        let all = NSStackView(views: [head, row, line(), scroll, line(), composer])
         all.orientation = .vertical
         all.spacing = 0
         all.translatesAutoresizingMaskIntoConstraints = false
@@ -141,7 +161,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             all.leadingAnchor.constraint(equalTo: view.leadingAnchor), all.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             head.heightAnchor.constraint(equalToConstant: 36),
         ])
-        for v in [head, scroll, composer] as [NSView] { v.widthAnchor.constraint(equalTo: all.widthAnchor).isActive = true }
+        for v in [head, row, scroll, composer] as [NSView] { v.widthAnchor.constraint(equalTo: all.widthAnchor).isActive = true }
         // Back from Settings with a key, or another model: said at once.
         NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: app.window, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { if self?.app.aiChatShown == true { self?.refresh() } }
@@ -162,6 +182,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         let d = app.defaults, hasKey = AISettings.ready(d)
         model.title = d.string(forKey: "aiModel").flatMap { $0.isEmpty ? nil : $0 } ?? (AISettings.kind(d) == .anthropic ? AISettings.anthropicModel : "Choose a model")
         composer.isHidden = !hasKey
+        modeRow?.isHidden = !hasKey
         if !hasKey, chat == nil { return showEmpty(setup: true) }
         if chat == nil, list.arrangedSubviews.isEmpty || list.arrangedSubviews.first is Empty { showEmpty(setup: false) }
         showChips()
@@ -181,7 +202,8 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         title.font = .boldSystemFont(ofSize: 14)
         let text = Self.wrapped(setup
             ? "Kermo sends your questions straight from this Mac to the provider you choose, with your key: Anthropic, or an OpenAI-compatible server — Ollama or LM Studio on your Mac too. No Kermo server, no Kermo account."
-            : "Kermo suggests what's open below: the panel's folder, the file under the cursor, the editor, the terminal. Nothing goes anywhere until you add it and press ↩. The model only reads: it changes nothing.")
+            : "Kermo suggests what's open below: the panel's folder, the file under the cursor, the editor, the terminal. Nothing goes anywhere until you add it and press ↩. "
+                + (editing ? "The model reads, and proposes changes to files as a diff you keep or drop: only your ⌘S saves." : "The model only reads: it changes nothing."))
         text.textColor = .secondaryLabelColor
         let views: [NSView] = [NSImageView(image: Symbol.ai.image()), title, text] + (setup ? [NSButton(title: "Settings › AI…", target: self, action: #selector(openSettings))] : [])
         let e = Empty(views: views)
@@ -558,7 +580,9 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             guard !(AISettings.neverProd(app.defaults) && sent.contains { isProd($0.context) }), !sent.isEmpty || !question.isEmpty else { return finish() }
             let prod = Self.unique(sent.compactMap(\.context.server)).filter(SavedServer.isProd).map(AISession.label)
             let message = AIChat.compose(question, attached: sent.map { ($0.context.title, $0.text?.text ?? "") }, production: prod)
-            if chat == nil { start(e) }
+            if chat == nil { start(e) } else if let c = chat, c.system != system {   // switched since: the history goes on, its thinking doesn't
+                chat = AIChat(system: system, tools: tools, messages: AISavedChat.resumable(c.messages))
+            }
             chat?.add(message)
             self.asked.append(AISavedChat.Asked(question: AISecrets.mask(question).text, chips: sent.map { AIChat.attachedName($0.context.title) },
                                            prod: sent.filter { isProd($0.context) }.map { AIChat.attachedName($0.context.title) }))
@@ -572,11 +596,34 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         updateSend()
     }
 
-    /// Ask's instructions and tools, and a session of its own: nothing allowed yet.
+    /// The mode's instructions and tools, and a session of its own: nothing allowed yet. Edit reads as Ask does —
+    /// a proposed change is a card, not a write.
     private func begin(_ messages: [AIMessage]) {
-        chat = AIChat(system: AIChat.askSystem, tools: AIChat.askTools, messages: messages)
+        chat = AIChat(system: system, tools: tools, messages: messages)
         session = AISession(app: app) { [weak self] c, _ in await self?.ask(c) ?? 1 }
         session?.readOnly = true
+        session?.proposes = { [weak self] p, t, path in
+            guard let self else { return }
+            let card = EditCard(p, on: t, path: path, app: app)
+            if let answering { answering.attach(card) } else { append(card) }
+        }
+    }
+
+    private var system: String { editing ? AIChat.editSystem : AIChat.askSystem }
+    private var tools: [AITool] { editing ? AIChat.editTools : AIChat.askTools }
+
+    @objc private func modeChanged() { setMode(edit: modes.selectedSegment == 1) }
+
+    /// Ask or Edit from the next ↩ on; a turn going on ends in the mode it began.
+    func setMode(edit: Bool) {
+        editing = edit
+        showMode()
+        if chat == nil, list.arrangedSubviews.first is Empty, !composer.isHidden { showEmpty(setup: false) }
+    }
+
+    private func showMode() {
+        modes.selectedSegment = editing ? 1 : 0
+        modeNote.stringValue = editing ? "Also proposes changes to files, as a diff you keep or drop." : "Reads what you allow and answers."
     }
 
     private func start(_ e: AIEndpoint) {
@@ -597,8 +644,9 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     private func run(_ e: AIEndpoint, _ g: Int) async {
         guard let chat, let session else { return }
         session.noProduction = AISettings.neverProd(app.defaults)
-        let answer = Answer(model: e.model, panel: self)
+        let answer = Answer(model: e.model, panel: self, edit: chat.system == AIChat.editSystem)
         append(answer)
+        answering = answer
         do {
             let (end, used) = try await chat.turn(e.provider(AISettings.transport), call: { await session.call($0, $1) }) { [weak self] in
                 answer.show($0)
@@ -806,7 +854,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             let prod = Self.unique(all.compactMap(\.context.server)).filter(SavedServer.isProd).map(AISession.label)
             let message = AIChat.compose(input.string.trimmingCharacters(in: .whitespacesAndNewlines), attached: all.map { ($0.context.title, $0.text?.text ?? "…") }, production: prod)
             let host = AISettings.address(app.defaults)?.host ?? "your provider"
-            let text = "— Kermo's instructions —\n\(chat?.system ?? AIChat.askSystem)\n\n— This message —\n\(message)\n\n"
+            let text = "— Kermo's instructions —\n\(system)\n\n— This message —\n\(message)\n\n"
                 + "— Also —\nThe tools' descriptions\(chat.map { $0.messages.isEmpty ? "" : ", and the \($0.messages.count) earlier messages of this chat" } ?? ""). "
                 + "Straight to \(host), with your key from the Keychain."
             Self.pop("What goes to \(host)", text, from: sender)

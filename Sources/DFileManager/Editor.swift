@@ -72,8 +72,9 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// The open editor of that server's file, if any.
     static func editing(_ t: SFTPTarget, _ path: String) -> Editor? { open.first { $0.server?.target == t && $0.server?.path == path } }
     /// The same, its user's or root's (a root panel's rename of a file a user's tab has open): the tab that follows it.
-    static func tab(onServer t: SFTPTarget, _ path: String) -> Editor? {
-        open.first { $0.server.map { ServerRow.key($0.target.asUser) == ServerRow.key(t.asUser) && $0.path == path } == true }
+    /// `root`: only a root tab, or only a user's.
+    static func tab(onServer t: SFTPTarget, _ path: String, root: Bool? = nil) -> Editor? {
+        open.first { e in e.server.map { s in ServerRow.key(s.target.asUser) == ServerRow.key(t.asUser) && s.path == path && (root.map { s.target.sudo == $0 } ?? true) } == true }
     }
     /// The root write behind Save as Administrator (tests swap it: the real one shows the password dialog).
     static var runAsAdmin: (String) async -> Admin.Outcome = Admin.run
@@ -170,20 +171,23 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     var edited: (@MainActor () -> Void)?
 
     /// Reads the file off the main thread (up to 32 MB, or a share that doesn't answer), then opens it in a tab of the
-    /// editor window. `note`: said in its status line once it's open (`flash`); `line`: gone to ("42", "42:5").
+    /// editor window. `note`: said in its status line once it's open (`flash`); `line`: gone to ("42", "42:5");
+    /// `then`: the tab, once it's there; nil if the file couldn't be opened.
     static func open(_ url: URL, remote: String? = nil, server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)? = nil,
-                     note: String? = nil, line: String? = nil, onSaved: (@MainActor (URL) -> Void)? = nil, onClose: (@MainActor () -> Void)? = nil) {
+                     note: String? = nil, line: String? = nil, onSaved: (@MainActor (URL) -> Void)? = nil, onClose: (@MainActor () -> Void)? = nil,
+                     then: (@MainActor (Editor?) -> Void)? = nil) {
         if let existing = opened(url, server) {
             onClose?()
             existing.revealed()
             app()?.rememberRecent(existing)
             if let line { existing.go(to: line) }
+            then?(existing)
             return
         }
         Task {
             let loaded = await Blocking.run(.userInitiated) { Result { try load(url) } }
             // Opened meanwhile (↩ twice during a slow read or download): one tab per file, the other copy goes.
-            if let existing = opened(url, server) { onClose?(); existing.revealed(); if let line { existing.go(to: line) }; return }
+            if let existing = opened(url, server) { onClose?(); existing.revealed(); if let line { existing.go(to: line) }; then?(existing); return }
             do {
                 let e = try Editor(url, remote: remote, loaded: loaded.get())
                 e.onSaved = onSaved
@@ -195,8 +199,10 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
                 app()?.rememberRecent(e)
                 if let note { e.flash(note) }
                 if let line { e.go(to: line) }
+                then?(e)
             } catch {
                 onClose?()
+                then?(nil)
                 let a = NSAlert(error: error)
                 a.messageText = a.messageText.bidiVisible
                 if let w = NSApp.mainWindow ?? NSApp.keyWindow { a.beginSheetModal(for: w) { _ in } } else { _ = AppDelegate.modal(a) }   // no editor to put it on yet
@@ -433,17 +439,6 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
         return Syntax.language(forFileName: name).map { [.ini, .conf, .yaml].contains($0) } ?? false
     }
 
-    /// Every line ends in CRLF (a file with mixed line ends is left as it is, and so is one with CR CR LF, which the
-    /// text view couldn't tell from a pasted CRLF).
-    nonisolated private static func isCRLF(_ data: Data) -> Bool {
-        var prev2: UInt8 = 0, prev: UInt8 = 0, lines = 0
-        for b in data {
-            if b == 0x0A { if prev != 0x0D || prev2 == 0x0D { return false }; lines += 1 }
-            (prev2, prev) = (prev, b)
-        }
-        return lines > 0
-    }
-
     /// A file's SHA-256, as a save compares it and the session keeps it.
     nonisolated static func sha(_ data: Data) -> Data { Data(SHA256.hash(data: data)) }
 
@@ -465,7 +460,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
         let digest = sha(data)
         let bom = data.starts(with: [0xEF, 0xBB, 0xBF])
         let body = bom ? data.dropFirst(3) : data
-        let crlf = isCRLF(data)
+        let crlf = TextFormat.isCRLF(data)
         func lf(_ s: String) -> String { crlf ? s.replacingOccurrences(of: "\r\n", with: "\n") : s }
         if let s = String(data: body, encoding: .utf8) { return (lf(s), .utf8, false, bom, crlf, stamp, digest) }
         if TextFormat.mostlyUTF8(body) { return (lf(String(decoding: body, as: UTF8.self)), .utf8, true, bom, crlf, stamp, digest) }

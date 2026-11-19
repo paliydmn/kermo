@@ -566,26 +566,40 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(left.isEmpty || (left == ["big.bin"] && !r.isError), "\(left) \(r.text)")
     }
 
-    /// propose_edit only says whether the change fits: its text once in the file. open_in_editor refuses in words
-    /// what the editor wouldn't open.
+    /// propose_edit on a file's text as it is (CRLF and a BOM as the editor reads them): with no chat to show it
+    /// (an outside agent) it says whether the change fits, its text once in the file; with one, the chat gets the
+    /// proposal. Nothing is written either way. open_in_editor refuses in words what the editor wouldn't open.
     @Test func theAssistantProposesAnEdit() async throws {
         let (s, dir, _, answer) = try await aiAnswering()
         defer { aiTearDown(s, dir) }
-        try Data("a = 1\nb = 2\nc = 1\n".utf8).write(to: URL(fileURLWithPath: dir + "/app.conf"))
+        let conf = dir + "/app.conf", bytes = Data("\u{FEFF}a = 1\r\nb = 2\r\nc = 1\r\n".utf8)
+        try bytes.write(to: URL(fileURLWithPath: conf))
+        let stamp = try FileManager.default.attributesOfItem(atPath: conf)[.modificationDate] as? Date
         try FileManager.default.createDirectory(atPath: dir + "/sub", withIntermediateDirectories: true)
         for server in ["mac", "box"] {
             answer([0])
-            func edit(_ old: String, _ new: String) async -> AIResult {
-                await s.call("propose_edit", ["server": .string(server), "path": .string(dir + "/app.conf"), "old_text": .string(old), "new_text": .string(new)])
+            func edit(_ pairs: [(String, String)]) async -> AIResult {
+                await s.call("propose_edit", ["server": .string(server), "path": .string(conf),
+                                              "edits": .array(pairs.map { .object(["old_text": .string($0.0), "new_text": .string($0.1)]) })])
             }
-            var r = await edit("b = 2", "b = 3\nd = 4")
-            #expect(!r.isError && r.text.contains("at line 2: 1 line(s) become 2") && aiText(dir + "/app.conf") == "a = 1\nb = 2\nc = 1\n", "\(server): \(r.text)")
-            r = await edit("= 1", "= 9")
+            s.proposes = nil
+            var r = await edit([("b = 2", "b = 3\nd = 4")])
+            #expect(!r.isError && r.text == "The change fits \(conf). Nothing is saved.", "\(server): \(r.text)")
+            r = await edit([("= 1", "= 9")])
             #expect(r.isError && r.text.contains("2 times"), "\(server): \(r.text)")
-            r = await edit("z = 0", "z = 1")
+            r = await edit([("z = 0", "z = 1")])
             #expect(r.isError && r.text.contains("isn't in"), "\(server): \(r.text)")
-            r = await edit("b = 2", "b = 2")
+            r = await edit([("b = 2", "b = 2")])
             #expect(r.isError)
+            r = await s.call("propose_edit", ["server": .string(server), "path": .string(conf), "old_text": "b = 2", "new_text": "b = 3"])
+            #expect(r.isError, "the old shape doesn't fit the tool")
+            var shown: [(AIEdit.Proposal, SFTPTarget?, String)] = []
+            s.proposes = { shown.append(($0, $1, $2)) }
+            r = await edit([("a = 1\n", ""), ("c = 1", "c = 2")])
+            #expect(!r.isError && r.text.contains("Shown to the user as a diff of \(conf).") && !r.text.contains("line"), "\(server): nothing of the diff: \(r.text)")
+            #expect(shown.count == 1 && shown[0].0.base == "a = 1\nb = 2\nc = 1\n" && shown[0].0.proposed == "b = 2\nc = 2\n" && shown[0].2 == conf)
+            #expect((shown.first?.1 == nil) == (server == "mac"))
+            #expect(FileManager.default.contents(atPath: conf) == bytes && (try? FileManager.default.attributesOfItem(atPath: conf)[.modificationDate] as? Date) == stamp)
             for name in ["sub", "none"] {
                 r = await s.call("open_in_editor", ["server": .string(server), "path": .string(dir + "/" + name)])
                 #expect(r.isError, "\(server) \(name): \(r.text)")

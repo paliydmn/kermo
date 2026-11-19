@@ -10,6 +10,8 @@ public struct AITool: Sendable {
         public var name: String, about: String
         public var required = true, bool = false
         public var oneOf: [String]?
+        /// A list of objects with these text fields, each of them there: `propose_edit`'s edits.
+        public var fields: [String]?
     }
 
     /// One place a call touches: the argument naming the server, the one with the path (if any), the access —
@@ -33,8 +35,21 @@ public struct AITool: Sendable {
                  "properties": .object(Dictionary(uniqueKeysWithValues: params.map { p in
                      var o: [String: ToolValue] = ["type": p.bool ? "boolean" : "string", "description": .string(p.about)]
                      if let all = p.oneOf { o["enum"] = .array(all.map(ToolValue.string)) }
+                     if let f = p.fields {
+                         o["type"] = "array"
+                         o["items"] = .object(["type": "object", "additionalProperties": false, "required": .array(f.map(ToolValue.string)),
+                                               "properties": .object(Dictionary(uniqueKeysWithValues: f.map { ($0, .object(["type": "string"])) }))])
+                     }
                      return (p.name, .object(o))
                  }))])
+    }
+
+    /// `v` is a list of objects with exactly these text fields.
+    private static func isList(_ v: [ToolValue], of fields: [String]) -> Bool {
+        v.allSatisfy { item in
+            guard case .object(let o) = item else { return false }
+            return Set(o.keys) == Set(fields) && o.values.allSatisfy { if case .string = $0 { true } else { false } }
+        }
     }
 
     /// What the call touches, `resolve` turning a server's name into its place. nil — nothing may be done: an
@@ -45,7 +60,8 @@ public struct AITool: Sendable {
             guard let p = params.first(where: { $0.name == name }) else { return nil }
             switch value {
             case .bool where p.bool: break
-            case .string(let s) where !p.bool && p.oneOf?.contains(s) != false: break
+            case .array(let items) where p.fields.map({ Self.isList(items, of: $0) }) == true: break
+            case .string(let s) where !p.bool && p.fields == nil && p.oneOf?.contains(s) != false: break
             default: return nil
             }
         }
@@ -111,9 +127,10 @@ public enum AITools {
         AITool(name: "write_file", about: "Write a text file that isn't open in the editor.", kind: .write,
                params: [server, path("The file"), .init(name: "text", about: "The whole new content")],
                places: [.init(server: "server", path: "path", access: .write)]),
-        AITool(name: "propose_edit", about: "Propose a change to a file as a diff the user accepts piece by piece; nothing is saved.", kind: .ui,
-               params: [server, path("The file"), .init(name: "old_text", about: "The text to replace, exactly as it is in the file"),
-                        .init(name: "new_text", about: "What replaces it")],
+        AITool(name: "propose_edit", about: "Propose a change to a text file as a diff the user keeps or drops piece by piece and applies to Kermo's editor; nothing is saved. All of a file's changes in one call.",
+               kind: .ui, params: [server, path("The file"),
+                                   .init(name: "edits", about: "The changes, made in this order: each old_text exactly as it is in the file — spaces and line ends too — and there once; new_text replaces it",
+                                         fields: ["old_text", "new_text"])],
                places: [.init(server: "server", path: "path", access: .read)]),
         AITool(name: "open_in_editor", about: "Open a file in Kermo's editor for the user.", kind: .ui, params: [server, path("The file")],
                places: [.init(server: "server", path: "path", access: .read)]),

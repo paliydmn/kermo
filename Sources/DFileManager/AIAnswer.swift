@@ -14,11 +14,12 @@ final class Answer: NSStackView {
     private var steps: [String: StepRow] = [:]
     private var waiting: NSView?, drawing = false, pace: TimeInterval = 0.08
 
-    init(model: String, panel: AIPanel) {
+    /// `edit`: the turn went in Edit (it may propose changes), said beside the model.
+    init(model: String, panel: AIPanel, edit: Bool = false) {
         self.panel = panel
         super.init(frame: .zero)
         (orientation, alignment, spacing) = (.vertical, .leading, 6)
-        let who = NSTextField(labelWithString: "✨ " + model)
+        let who = NSTextField(labelWithString: "✨ " + model + (edit ? " · Edit" : ""))
         (who.font, who.textColor) = (.systemFont(ofSize: 11, weight: .semibold), .secondaryLabelColor)
         let spin = NSProgressIndicator()
         (spin.style, spin.controlSize) = (.spinning, .small)
@@ -52,6 +53,14 @@ final class Answer: NSStackView {
             add(row)
         case .called(let c, let r): steps[c.id]?.done(r)
         }
+    }
+
+    /// A card a step brought (`propose_edit`'s diff), where the answer has got to.
+    func attach(_ v: NSView) {
+        draw()
+        (raw, shown, segment) = ("", [], nil)
+        add(v)
+        panel.follow()
     }
 
     /// The segment's blocks: those that didn't change stay as they are.
@@ -182,7 +191,7 @@ final class StepRow: NSStackView {
     init(_ c: AIToolUse) {
         func arg(_ k: String) -> String? { if case .string(let s)? = c.args?[k] { s } else { nil } }
         let what = ["focus": "What's in front of you", "list_folder": "List", "read_file": "Read", "terminal_output": "Terminal output",
-                    "server_info": "Server info", "run_command": "Run"][c.name] ?? c.name
+                    "server_info": "Server info", "run_command": "Run", "propose_edit": "Propose a change to"][c.name] ?? c.name
         title = ([what, arg("server"), arg("path") ?? arg("folder"), arg("command")].compactMap { $0 }).joined(separator: " ").bidiVisible
         super.init(frame: .zero)
         let spin = NSProgressIndicator()

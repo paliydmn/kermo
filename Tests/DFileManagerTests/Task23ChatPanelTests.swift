@@ -1,5 +1,5 @@
 import AppKit
-import DFMCore
+@testable import DFMCore
 import Testing
 @testable import DFileManager
 
@@ -21,9 +21,9 @@ private func turn(text: String) -> String {
          #"{"type":"content_block_stop","index":0}"#,
          #"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":40}}"#, #"{"type":"message_stop"}"#])
 }
-private func turn(call name: String) -> String {
+private func turn(call name: String, input: String = "{}") -> String {
     sse([#"{"type":"message_start","message":{"usage":{"input_tokens":1000,"output_tokens":1}}}"#,
-         #"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"\#(name)","input":{}}}"#,
+         #"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"\#(name)","input":\#(input)}}"#,
          #"{"type":"content_block_stop","index":0}"#,
          #"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":20}}"#, #"{"type":"message_stop"}"#])
 }
@@ -674,4 +674,123 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
 
     let me = try #require(EmbeddedTerminal.Tab.arguments(of: getpid()))
     #expect(me.first == CommandLine.arguments.first && me.count == CommandLine.arguments.count, "\(me)")
+}
+
+// MARK: - Task 23 PR 7: Edit
+
+extension EditorWindowTests {   // the editor window is the app's one; `UserDefaults.standard` as the panel reads it
+    /// Edit: the model's propose_edit is a card in its answer — hidden values as •••; Drop leaves a change out;
+    /// Apply puts the rest into the file's editor tab (opened for it) as one ⌘Z step and writes nothing; a tab that
+    /// changed since refuses a card. The mode stays through New Chat; Ask again goes with Ask's instructions.
+    @Test func anEditIsACardAppliedToTheEditorAsOneUndo() async throws {
+        let std = UserDefaults.standard, names = ["aiProvider", "aiAddress", "aiModel", "aiProduction"], saved = names.map { ($0, std.object(forKey: $0)) }
+        let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t23e-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: dir + "/drafts", withIntermediateDirectories: true)
+        let conf = dir + "/app.conf", base = "a = 1\npass" + "word=hunter22\nb = 2\nc = 3\n"
+        try Data(base.utf8).write(to: URL(fileURLWithPath: conf))
+        let stamp = try FileManager.default.attributesOfItem(atPath: conf)[.modificationDate] as? Date
+        func propose(_ edits: [(String, String)]) -> String {
+            turn(call: "propose_edit", input: #"{"server":"mac","path":\#(json(conf)),"edits":["#
+                 + edits.map { #"{"old_text":\#(json($0.0)),"new_text":\#(json($0.1))}"# }.joined(separator: ",") + "]}")
+        }
+        let wire = Wire([(200, propose([("a = 1", "a = 9"), ("c = 3", "c = 4")])), (200, turn(text: "Two changes."))])
+        (AISettings.keys, AISettings.transport) = (AIKeys(Keys()), wire.transport)
+        AppDelegate.answering = { _, _, _ in 0 }   // reading on this Mac: allowed
+        if let h = EditorHost.shared { h.docs.forEach { $0.closed(); $0.host = nil }; h.drafts?.release(); h.window?.orderOut(nil); EditorHost.shared = nil }
+        EditorHost.restore(dir + "/drafts") { _, _, _, _ in ({ _ in }, {}) }
+        let app = panelApp(dir)
+        defer {
+            for (k, v) in saved { if let v { std.set(v, forKey: k) } else { std.removeObject(forKey: k) } }
+            (AISettings.keys, AISettings.transport, AppDelegate.answering) = (.shared, AIHTTP.live, nil)
+            if let h = EditorHost.shared { h.stopComparing(); h.docs.forEach { $0.closed(); $0.host = nil }; h.drafts?.release(); h.window?.orderOut(nil); EditorHost.shared = nil }
+            app.panels.forEach { $0.shutdown() }
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        names.forEach(std.removeObject(forKey:))
+        let panel = AIPanel(app: app)
+        panel.view.frame = NSRect(x: 0, y: 0, width: 420, height: 900)
+        panel.build()
+        panel.setMode(edit: true)
+        #expect(shown(panel).contains("proposes changes to files"))
+        func ask(_ q: String) async {
+            for _ in 0..<300 where panel.turn == nil {
+                panel.send(q)
+                if panel.turn == nil { try? await Task.sleep(for: .milliseconds(10)) }
+            }
+            await done(panel)
+        }
+        await ask("Fix it")
+        let first = try #require(wire.bodies.first)
+        #expect(first["system"] as? String == AIChat.editSystem && (first["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String } == AIChat.editTools.map(\.name))
+        #expect(wire.bodies.count == 2 && "\(wire.bodies[1]["messages"] ?? "")".contains("Shown to the user as a diff"), "only the model's requests")
+        let text = shown(panel)
+        #expect(text.contains("· Edit") && text.contains("app.conf · this Mac") && text.contains("2 changes") && text.contains("pass" + "word=•••"), "\(text)")
+        #expect(!text.contains("hunter22"), "a hidden value stays hidden in the card")
+
+        // Drop the second change, Apply: the file opens, only the first goes in — one ⌘Z — nothing on the disk.
+        let toggles = views(panel.view, NSSegmentedControl.self).filter { $0.label(forSegment: 0) == "Keep" }
+        try #require(toggles.count == 2)
+        toggles[1].selectedSegment = 1
+        _ = toggles[1].target?.perform(toggles[1].action, with: toggles[1])
+        click(try #require(button(panel, "Apply to Editor")))
+        for _ in 0..<250 where Editor.document(at: conf)?.storage.string.hasPrefix("a = 9") != true { try await Task.sleep(for: .milliseconds(20)) }
+        let doc = try #require(Editor.document(at: conf))
+        #expect(doc.storage.string == "a = 9\npass" + "word=hunter22\nb = 2\nc = 3\n" && doc.textView.selectedRange().location == 0)
+        #expect(doc.textView.undoManager?.undoActionName == "AI Change" && shown(panel).contains("Applied to the editor"))
+        #expect(button(panel, "Apply to Editor")?.isEnabled == false, "once")
+        doc.textView.undoManager?.undo()
+        #expect(doc.storage.string == base, "one ⌘Z")
+        #expect(FileManager.default.contents(atPath: conf) == Data(base.utf8) && (try? FileManager.default.attributesOfItem(atPath: conf)[.modificationDate] as? Date) == stamp)
+
+        // A card on a tab that changed since: refused, the tab as it was.
+        wire.then([(200, propose([("b = 2", "b = 5")])), (200, turn(text: "One more."))])
+        await ask("And b?")
+        doc.apply("# typed\n", over: NSRange(location: 0, length: 0), in: doc.current, named: "Typing")
+        click(try #require(views(panel.view, NSButton.self).last { $0.title == "Apply to Editor" && $0.isEnabled }))
+        #expect(shown(panel).contains("changed since this was proposed") && doc.storage.string == "# typed\n" + base)
+
+        // The mode stays through New Chat; Ask goes with Ask's instructions and tools.
+        click(try #require(views(panel.view, NSButton.self).first { $0.toolTip == "New Chat" }))
+        #expect(panel.editing)
+        panel.setMode(edit: false)
+        wire.then([(200, turn(text: "Fine."))])
+        await ask("Just look")
+        let last = try #require(wire.bodies.last)
+        #expect(last["system"] as? String == AIChat.askSystem && (last["tools"] as? [[String: Any]])?.count == AIChat.askTools.count)
+
+        // Past 200 changed lines: no Keep / Drop, no Apply — Open in Compare puts the proposal beside the file.
+        let now = doc.storage.string, big = AIEdit.Proposal(base: now, proposed: now + (1...210).map { "line \($0)\n" }.joined())
+        let card = EditCard(big, on: nil, path: conf, app: app)
+        #expect(views(card, NSButton.self).map(\.title) == ["Open in Compare"] && views(card, NSTextView.self).contains { $0.string.contains("210 changed lines") })
+        click(try #require(views(card, NSButton.self).first))
+        #expect(EditorHost.tabs.comparison != nil && EditorHost.tabs.docs.contains { $0.snapshot?.title == "app.conf (proposed)" }, "the proposal, read-only, beside it")
+        #expect(doc.storage.string == now)
+
+        // A root tab and a server file's copy on this Mac aren't the chat's to read or change: its user's tab only.
+        let copy = dir + "/copy.conf", user = SFTPTarget.local(port: 2)
+        try Data("x\n".utf8).write(to: URL(fileURLWithPath: copy))
+        Editor.open(URL(fileURLWithPath: copy), server: (user.asRoot(), "/etc/x.conf", AppDelegate.RemoteEdit(baseline: .nothing)))
+        for _ in 0..<250 where Editor.editing(user.asRoot(), "/etc/x.conf") == nil { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(Editor.editing(user.asRoot(), "/etc/x.conf") != nil && Editor.document(at: copy) != nil)
+        #expect(EditCard.tab(user, "/etc/x.conf") == nil && EditCard.tab(nil, copy) == nil && EditCard.tab(nil, conf) === doc)
+        let byPath = EditCard(AIEdit.Proposal(base: "x\n", proposed: "y\n"), on: nil, path: copy, app: app)
+        click(try #require(views(byPath, NSButton.self).first { $0.title == "Apply to Editor" }))   // `Editor.open` finds that tab by the path
+        for _ in 0..<100 where !views(byPath, NSTextField.self).contains(where: { $0.stringValue.contains("another file's copy") }) { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(views(byPath, NSTextField.self).contains { $0.stringValue.contains("another file's copy") } && Editor.editing(user.asRoot(), "/etc/x.conf")?.storage.string == "x\n")
+
+        // A server's file (this Mac's sftp-server as "box", saved as production): the card says so; Apply goes through
+        // the server's gate, opens its tab and changes only the tab.
+        let srv = dir + "/srv.conf", box = SFTPTarget.local(port: 2)
+        try Data("s = 1\nt = 2\n".utf8).write(to: URL(fileURLWithPath: srv))
+        var boxSaved = SavedServer(target: box)
+        (boxSaved.name, boxSaved.prod) = ("box", true)
+        ServerLock.servers = { [boxSaved] }
+        defer { ServerLock.servers = { [] } }
+        let remote = EditCard(AIEdit.Proposal(base: "s = 1\nt = 2\n", proposed: "s = 1\nt = 3\n"), on: box, path: srv, app: app)
+        #expect(views(remote, NSTextView.self).contains { $0.string.contains("srv.conf · box · production") })
+        click(try #require(views(remote, NSButton.self).first { $0.title == "Apply to Editor" }))
+        for _ in 0..<250 where Editor.tab(onServer: box, srv, root: false)?.storage.string != "s = 1\nt = 3\n" { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(Editor.tab(onServer: box, srv, root: false)?.storage.string == "s = 1\nt = 3\n" && FileManager.default.contents(atPath: srv) == Data("s = 1\nt = 2\n".utf8))
+        #expect(views(remote, NSTextField.self).contains { $0.stringValue.contains("Applied to the editor") })
+    }
 }

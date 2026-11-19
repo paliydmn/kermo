@@ -121,7 +121,7 @@ Compare shows two texts side by side in the two panes, their differences in colo
 - **Saved Version**: its file as it is now — on disk, or on its server;
 - **Clipboard**: the clipboard's text as it is then.
 
-It also opens from ⇧⌘D in the panels ([Compare files](search-compare.md#compare-files)), from a server file's [history](server-files.md#file-history), from **Show Changes** before a save to a production server, from **Compare** when a server's file changed since you opened it, and from a draft's **changed on disk** line.
+It also opens from ⇧⌘D in the panels ([Compare files](search-compare.md#compare-files)), from a server file's [history](server-files.md#file-history), from **Show Changes** before a save to a production server, from **Compare** when a server's file changed since you opened it, from a draft's **changed on disk** line, and from **Open in Compare** on a change the [AI chat proposes](ai.md#edit-a-change-as-a-diff) — the proposal is the read-only copy. The chat's **Apply to Editor** puts a change into the document as one ⌘Z (**Undo AI Change**) and saves nothing.
 
 - **An open document is compared as it is.** Typing in it updates the comparison once you pause. It is still the one document — its draft, Undo, save — and comparing changes nothing in it: the colors are on that pane's view only (a clone in the other pane shows none).
 - **Anything else is a read-only copy**: a file as it is on disk or on its server now, a kept version, the clipboard. Its tab has a lock and **Read-only** under the title. It can't be typed in, saved or renamed, has no draft, isn't kept after a restart or brought back by ⇧⌘T, and closes without a question. A copy of a file that isn't open has **Edit** in its status line: the file opens there as F4 opens it (a server's with all of F4's rules), and the comparison goes on with it.
@@ -131,7 +131,7 @@ It also opens from ⇧⌘D in the panels ([Compare files](search-compare.md#comp
 - The document stays in its pane and the other side opens in the other one, a pane beside it if there's one; panes one above the other are put side by side. Choosing another tab in either pane pauses the comparison (**Compare paused**); back again, it goes on. Closing or moving either side, **Join Panes**, or **View ▸ Compare ▸ Stop Comparing** ends it, and its read-only copies close.
 - Texts too different to compare quickly (thousands of lines, nearly all changed) aren't colored: the status line says **Too different to compare here** and has **Show as diff -u**, which shows both texts as they are now in an output window. A file that isn't text (binary, over 32 MB) is compared as `diff -u`, as before.
 
-Compare With… is always Kermo's own. **Compare files with** (`diffCommand`, [Compare files](search-compare.md#compare-files)) is for files: when it's set, ⇧⌘D in the panels, the file history, the draft's line and the save questions hand both files to that program, as before.
+Compare With… is always Kermo's own, and so is the AI chat's **Open in Compare**. **Compare files with** (`diffCommand`, [Compare files](search-compare.md#compare-files)) is for files: when it's set, ⇧⌘D in the panels, the file history, the draft's line and the save questions hand both files to that program, as before.
 
 ### Quick Open
 
