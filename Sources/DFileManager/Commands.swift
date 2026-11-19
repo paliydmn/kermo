@@ -1374,9 +1374,9 @@ extension AppDelegate {
 
     /// The same for a server's file by its path (⌘E on a service: its unit file). `listed`: its size and time as a
     /// panel listed it (another app's saves check against them); none, as downloaded.
-    /// `line`: the editor goes to it ("42", "42:5"); `then`: its tab, once it's there (`Editor.open`).
+    /// `line`: the editor goes to it ("42", "42:5"); `then`: its tab, once it's there — nil if it couldn't be (`Editor.open`).
     func remoteOpen(_ how: RemoteOpen, _ target: SFTPTarget, _ remotePath: String, listed: (Int64, Double)? = nil, line: String? = nil,
-                    in panel: PanelViewController, then: (@MainActor (Editor) -> Void)? = nil) {
+                    in panel: PanelViewController, then: (@MainActor (Editor?) -> Void)? = nil) {
         if how == .edit, let e = Editor.editing(target, remotePath) {   // one file, one tab: no second copy (a parked one opens)
             e.revealed()
             e.connect(goingTo: line)
@@ -1398,6 +1398,7 @@ extension AppDelegate {
             }
             guard case .success(let opened) = r else {
                 TempCopies.remove(tmp)
+                then?(nil)
                 if case .failure(let e) = r, !(e is CancellationError) {   // F4 on a big one: as the editor says it
                     showError(e is SFTPClient.TooBig ? JobErrorMessage("“\(name)” is larger than 32 MB — use the viewer (F3).") : e)
                 }

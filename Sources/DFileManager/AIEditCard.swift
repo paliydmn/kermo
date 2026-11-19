@@ -48,10 +48,11 @@ final class EditCard: NSStackView {
         }
         said.stringValue = small ? "Into the editor as one step — ⌘Z undoes it. Saving is yours: ⌘S." : "Copy Change brings each part into the file. Saving is yours: ⌘S."
         (said.font, said.textColor) = (.systemFont(ofSize: 11), .secondaryLabelColor)
-        said.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let foot = NSStackView(views: [said] + buttons)
-        (foot.alignment, foot.spacing) = (.centerY, 6)
-        views.append(foot)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        let row = NSStackView(views: [spacer] + buttons)
+        row.spacing = 6
+        views += [said, row]   // what it says on a line of its own: a refusal may be long
         setViews(views, in: .top)
         for v in views { v.widthAnchor.constraint(equalTo: widthAnchor, constant: v === views[0] ? 0 : -20).isActive = true }
     }
@@ -73,11 +74,12 @@ final class EditCard: NSStackView {
         s.append(NSAttributedString(string: "\(name) · \(place)".bidiVisible + (prod ? " · production" : ""),
                                     attributes: [.font: NSFont.systemFont(ofSize: 11.5, weight: .semibold), .foregroundColor: prod ? Palette.prod : NSColor.labelColor]))
         let count = Answer.small(changes == 1 ? "1 change" : "\(changes) changes")
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
-        let text = ChatText(s)
-        let row = NSStackView(views: [text, spacer, count])
-        row.spacing = 6
+        count.setContentHuggingPriority(.required, for: .horizontal)
+        count.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let text = ChatText(s)   // the stretchy one: it has no width of its own
+        text.setContentHuggingPriority(.init(1), for: .horizontal)
+        let row = NSStackView(views: [text, count])
+        (row.spacing, row.alignment) = (6, .centerY)
         return TintBox(row, fill: prod ? Palette.prod.withAlphaComponent(0.12) : NSColor.quaternaryLabelColor.withAlphaComponent(0.5), inset: NSSize(width: 10, height: 5))
     }
 
@@ -98,17 +100,21 @@ final class EditCard: NSStackView {
         func row(_ n: Int?, _ mark: String, _ r: NSRange, _ s: NSString, _ hidden: [NSRange], _ kind: Kind) {
             let number = n.map { String($0 + 1) } ?? ""
             let t = String(repeating: " ", count: max(0, 4 - number.count)) + number + " \(mark) " + Self.shown(r, s, hidden).bidiVisible
-            text.append(NSAttributedString(string: (text.length == 0 ? "" : "\n") + t, attributes: [.font: mono, .foregroundColor: kind == .same ? NSColor.secondaryLabelColor : NSColor.labelColor,
-                                                                                                    .backgroundColor: kind.fill, Self.kind: kind.rawValue]))
+            // Its line end its own: the band goes across the card.
+            text.append(NSAttributedString(string: t + "\n", attributes: [.font: mono, .foregroundColor: kind == .same ? NSColor.secondaryLabelColor : NSColor.labelColor,
+                                                                          .backgroundColor: kind.fill, Self.kind: kind.rawValue]))
         }
+        // The empty line after a final line end isn't one to show around a change.
+        let lines = d.oldLines.count - (d.oldLines.last?.length == 0 && d.oldLines.count > 1 ? 1 : 0)
         for n in max(0, b.old.lowerBound - 2)..<b.old.lowerBound { row(n, " ", d.oldLines[n], old, p.hiddenOld, .same) }
         for n in b.old { row(n, "−", d.oldLines[n], old, p.hiddenOld, .gone) }
         for n in b.new { row(nil, "+", d.newLines[n], new, p.hiddenNew, .came) }
-        for n in b.old.upperBound..<min(d.oldLines.count, b.old.upperBound + 2) { row(n, " ", d.oldLines[n], old, p.hiddenOld, .same) }
-        let lines = ChatText(text)
-        lines.setAccessibilityLabel("Change \(i + 1) at line \(b.old.lowerBound + 1)")
-        texts.append(lines)
-        return [head, lines]
+        for n in b.old.upperBound..<max(b.old.upperBound, min(lines, b.old.upperBound + 2)) { row(n, " ", d.oldLines[n], old, p.hiddenOld, .same) }
+        text.deleteCharacters(in: NSRange(location: text.length - 1, length: 1))
+        let shown = ChatText(text)
+        shown.setAccessibilityLabel("Change \(i + 1) at line \(b.old.lowerBound + 1)")
+        texts.append(shown)
+        return [head, shown]
     }
 
     private enum Kind: Int {
@@ -156,7 +162,10 @@ final class EditCard: NSStackView {
     /// The file's tab: open already, or opened now — a server's after its gate (Touch ID for a locked one). One from
     /// the last launch not connected yet is opened (its gate too) for the next click. The buttons wait meanwhile.
     private func document(_ then: @escaping @MainActor (Editor) -> Void) {
-        let done: @MainActor (Editor) -> Void = { [weak self] e in self?.waiting(false); then(e) }
+        let done: @MainActor (Editor?) -> Void = { [weak self] e in
+            self?.waiting(false)
+            if let e { then(e) } else { self?.say("“\(self?.name ?? "")” wasn't opened: nothing was applied.", error: true) }
+        }
         waiting(true)
         if let e = Self.tab(server, path) {
             guard e.cover == .parked || e.cover == .locked else { return done(e) }

@@ -44,9 +44,10 @@ public enum AIEdit {
     /// `edits` made in order on `text` (`name` says which file), and the proposal. Each `old` is found as the model saw
     /// the file: a match inside a hidden value isn't one — so the words never tell a guessed secret right. The one
     /// match mustn't touch what hides a value — the value, its key and `=` (`AISecrets.found`) — and right beside it
-    /// must leave the character next to it as it is: what decides whether a value is hidden is then never changed,
-    /// and no answer depends on what the value is. The base's values are followed through each edit (the card shows
-    /// them as •••). Its work (a diff, the patterns) is for a thread of its own.
+    /// must leave the character next to it as it is: what decides whether a value is hidden isn't changed by the edit
+    /// itself, and the words seldom depend on the value — a quoted value written just before one can still reach into
+    /// it or not by whether it holds a quote (the last check refuses then: D-231). The base's values are followed
+    /// through each edit (the card shows them as •••). Its work (a diff, the patterns) is for a thread of its own.
     public static func propose(_ edits: [(old: String, new: String)], to text: String, in name: String) -> Result<Proposal, Refused> {
         guard !edits.isEmpty else { return .failure(Refused(words: "propose_edit needs at least one edit.")) }
         let base = AISecrets.found(text)

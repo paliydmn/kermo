@@ -777,5 +777,20 @@ extension EditorWindowTests {   // the editor window is the app's one; `UserDefa
         click(try #require(views(byPath, NSButton.self).first { $0.title == "Apply to Editor" }))   // `Editor.open` finds that tab by the path
         for _ in 0..<100 where !views(byPath, NSTextField.self).contains(where: { $0.stringValue.contains("another file's copy") }) { try await Task.sleep(for: .milliseconds(20)) }
         #expect(views(byPath, NSTextField.self).contains { $0.stringValue.contains("another file's copy") } && Editor.editing(user.asRoot(), "/etc/x.conf")?.storage.string == "x\n")
+
+        // A server's file (this Mac's sftp-server as "box", saved as production): the card says so; Apply goes through
+        // the server's gate, opens its tab and changes only the tab.
+        let srv = dir + "/srv.conf", box = SFTPTarget.local(port: 2)
+        try Data("s = 1\nt = 2\n".utf8).write(to: URL(fileURLWithPath: srv))
+        var boxSaved = SavedServer(target: box)
+        (boxSaved.name, boxSaved.prod) = ("box", true)
+        ServerLock.servers = { [boxSaved] }
+        defer { ServerLock.servers = { [] } }
+        let remote = EditCard(AIEdit.Proposal(base: "s = 1\nt = 2\n", proposed: "s = 1\nt = 3\n"), on: box, path: srv, app: app)
+        #expect(views(remote, NSTextView.self).contains { $0.string.contains("srv.conf · box · production") })
+        click(try #require(views(remote, NSButton.self).first { $0.title == "Apply to Editor" }))
+        for _ in 0..<250 where Editor.tab(onServer: box, srv, root: false)?.storage.string != "s = 1\nt = 3\n" { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(Editor.tab(onServer: box, srv, root: false)?.storage.string == "s = 1\nt = 3\n" && FileManager.default.contents(atPath: srv) == Data("s = 1\nt = 2\n".utf8))
+        #expect(views(remote, NSTextField.self).contains { $0.stringValue.contains("Applied to the editor") })
     }
 }

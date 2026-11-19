@@ -172,10 +172,10 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
 
     /// Reads the file off the main thread (up to 32 MB, or a share that doesn't answer), then opens it in a tab of the
     /// editor window. `note`: said in its status line once it's open (`flash`); `line`: gone to ("42", "42:5");
-    /// `then`: the tab, once it's there (not if the file couldn't be opened).
+    /// `then`: the tab, once it's there; nil if the file couldn't be opened.
     static func open(_ url: URL, remote: String? = nil, server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)? = nil,
                      note: String? = nil, line: String? = nil, onSaved: (@MainActor (URL) -> Void)? = nil, onClose: (@MainActor () -> Void)? = nil,
-                     then: (@MainActor (Editor) -> Void)? = nil) {
+                     then: (@MainActor (Editor?) -> Void)? = nil) {
         if let existing = opened(url, server) {
             onClose?()
             existing.revealed()
@@ -202,6 +202,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
                 then?(e)
             } catch {
                 onClose?()
+                then?(nil)
                 let a = NSAlert(error: error)
                 a.messageText = a.messageText.bidiVisible
                 if let w = NSApp.mainWindow ?? NSApp.keyWindow { a.beginSheetModal(for: w) { _ in } } else { _ = AppDelegate.modal(a) }   // no editor to put it on yet
