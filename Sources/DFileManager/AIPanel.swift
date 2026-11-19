@@ -315,7 +315,9 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     /// Never Send — and `question` in the field, unless words are there or a question of the chat's waits. Nothing goes
     /// until ↩. The app shows the chat first (`AppDelegate.explain`).
     func explain(_ found: [Context]) {
-        guard AISettings.ready(app.defaults), attach(found) > 0, card == nil,
+        guard AISettings.ready(app.defaults) else { return }
+        let had = Set(chips.map(\.context.id))   // clicked again: the question comes back with its chip
+        guard attach(found) > 0 || found.contains(where: { had.contains($0.id) }), card == nil,
               input.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         input.string = Self.question
         input.setSelectedRange(NSRange(location: (Self.question as NSString).length, length: 0))

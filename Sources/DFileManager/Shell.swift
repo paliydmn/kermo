@@ -496,9 +496,11 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         let text = "$ \(command)\n" + String(tv.string.suffix(256_000))
         Task {
             var from = server
-            if from == nil, let d = EmbeddedTerminal.Tab.ran(command).ssh {
-                if !ServerLock.isLearned(d) { await ServerLock.learn([d]) }
-                from = EmbeddedTerminal.Tab.production([d], named: [])
+            let going = from == nil ? EmbeddedTerminal.Tab.ran(command).ssh : []
+            if !going.isEmpty {
+                let new = going.filter { !ServerLock.isLearned($0) }
+                if !new.isEmpty { await ServerLock.learn(new) }   // `learn([])` would learn every saved server
+                from = EmbeddedTerminal.Tab.production(going, named: [])
             }
             app.explain([AIPanel.failure(command, on: from, text)])
         }

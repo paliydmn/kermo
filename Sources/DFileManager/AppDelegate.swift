@@ -896,10 +896,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// A command its shell said failed: ✨ by it, its chip from where it ran as known now — an `ssh` there may be gone by
     /// the click.
-    private func commandFailed(_ tab: EmbeddedTerminal.Tab, _ code: Int32, _ text: String) {
+    private func commandFailed(_ tab: EmbeddedTerminal.Tab, _ text: String, show: @escaping DropTerminalView.ShowExplain) {
         Task {
             let c = await AIPanel.terminal(tab, text, what: "Command")
-            tab.view.showExplain(code) { [weak self] in self?.explain([c]) }
+            show { [weak self] in self?.explain([c]) }
         }
     }
 
@@ -1718,7 +1718,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         terminal.onSelect = { [unowned self] in terminalSelected($0) }
         terminal.onCommandClick = { [unowned self] tab, text in toChat(tab, text, what: "Command") }
         terminal.chatReady = { [unowned self] in AISettings.ready(defaults) }
-        terminal.onFailed = { [unowned self] in commandFailed($0, $1, $2) }
+        terminal.onFailed = { [unowned self] tab, _, text, show in commandFailed(tab, text, show: show) }
         aiChanged()
 
         splitController = NSSplitViewController()

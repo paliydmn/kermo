@@ -560,6 +560,9 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         await settled()
         #expect(field.string == "is it the disk?" && chips().contains("df · this Mac"), "words typed stay")
         field.string = ""
+        panel.explain([AIPanel.failure("df", on: nil, "$ df\n100%")])
+        #expect(field.string == AIPanel.question && chips().filter { $0 == "df · this Mac" }.count == 1, "clicked again: the question, the chip once")
+        field.string = ""
 
         std.set("never", forKey: "aiProduction")
         panel.explain([AIPanel.failure("nginx -t", on: box.target, "emerg")])

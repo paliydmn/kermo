@@ -28,8 +28,10 @@ import Testing
 
 /// A command whose shell says it ended with N ≠ 0 (OSC 133 `D;N`) and that printed something is told with its text;
 /// "Explain · exit N" then shows at the tab's lower right till the next command. One end a mark: nothing for `D;0`, an
-/// empty ↩ (with a two-line prompt too), a second end of the same mark (⌃C at the prompt), output with no mark, ⌃C's
-/// 130 — nor while the app doesn't watch, which takes a button that shows away.
+/// empty ↩ (with a two-line prompt and a right prompt too), a second end of the same mark (⌃C at the prompt), output
+/// with no mark, ⌃C's 130, a remote shell's last command ended by the local shell's end of `ssh` — nor while the app
+/// doesn't watch, which takes a button that shows away. A ✨ shown late — after the next command, or after a later
+/// failure's — isn't.
 @MainActor @Test func aFailedCommandsEndShowsExplainTillTheNext() async throws {
     _ = NSApplication.shared
     #expect(DropTerminalView.exitCode(Array("D;1".utf8)) == 1 && DropTerminalView.exitCode(Array("D;2;aid=7".utf8)) == 2)
@@ -37,11 +39,14 @@ import Testing
     let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
     let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
     w.contentView!.addSubview(v)
-    var told: [String] = [], clicked = 0
-    v.onFailed = { code, text in
+    var told: [String] = [], clicked = 0, shows: [DropTerminalView.ShowExplain] = [], later = false
+    v.onFailed = { _, text, show in
         told.append(text)
-        v.showExplain(code) { clicked += 1 }
+        shows.append(show)
+        if !later { show { clicked += 1 } }
     }
+    var remote = false
+    v.remoteNow = { remote }
     v.watchExits(true)
     // Each OSC event reaches the view, then this probe — both hop to the main queue in that order: once the probe's
     // hop has run, the view's has.
@@ -85,28 +90,49 @@ import Testing
     await end("D;1", then: "$ ")
     await run("ping", printing: "64 bytes\r\n^C\r\n", "D;130")
     #expect(told.count == 1, "exit 0, an empty ↩, the user's own ⌃C: \(told)")
-    // A two-line prompt: an empty ↩ under it isn't a command, though the prompt's upper line came after the mark.
-    v.feed(text: "~/p on main\r\n❯ ")
+    // A two-line prompt with a clock at the right: an empty ↩ under it isn't a command, though the prompt's upper line
+    // came after the mark.
+    let right = { (t: String) in "\u{1b}[s\u{1b}[60G\(t)\u{1b}[u" }   // as zsh's RPROMPT: drawn at the right, the cursor back
+    v.feed(text: "~/p on main\r\n❯ " + right("10:03"))
     v.typed(ret)
     v.feed(text: "\r\n")
-    await end("D;1", then: "~/p on main\r\n❯ ")
+    await end("D;1", then: "~/p on main\r\n❯ " + right("10:04"))
     #expect(told.count == 1, "\(told)")
     v.feed(text: "\r\n$ ")
+    // `ssh` in a local tab: the remote shell's last command, then ⌃D — the local shell's end of `ssh` isn't that command's.
+    remote = true
+    v.feed(text: "root@prod:~# systemctl status app")
+    v.typed(ret)
+    v.feed(text: "\r\napp.service: failed\r\n")
+    remote = false
+    await end("D;3", then: "$ ")
+    #expect(told.count == 1, "\(told)")
 
     await run("ls nope", printing: "ls: nope: No such file\r\n", "D;1")
     #expect(shown?.title == "Explain · exit 1")
     v.feed(text: "pwd")
     v.typed(ret)
     #expect(shown == nil, "the next command: gone")
-    v.showExplain(1) {}
+    shows.last? {}
     #expect(shown == nil, "shown late, after the next command: not")
     v.feed(text: "\r\n/tmp\r\n$ ")
+    later = true   // where the first ran is still being learned when the second fails
+    await run("cat a", printing: "cat: a: No such file\r\n", "D;1")
+    await run("cat b", printing: "cat: b: No such file\r\n", "D;4")
+    shows.last? { clicked += 10 }
+    shows[shows.count - 2]({ clicked += 100 })
+    #expect(shown?.title == "Explain · exit 4", "the later failure's stays")
+    if let b = shown { _ = (b.target as? NSObject)?.perform(b.action, with: b) }
+    #expect(clicked == 11, "\(clicked)")
+    later = false
     await run("ls nope", printing: "ls: nope: No such file\r\n", "D;1")
     #expect(shown != nil)
     v.watchExits(false)
     #expect(!v.watchesExits && shown == nil, "not watched: its ✨ goes")
+    shows.last? {}
+    #expect(shown == nil, "shown late, once not watched: not")
     await run("ls nope", printing: "ls: nope: No such file\r\n", "D;1")
-    #expect(shown == nil && told.count == 3, "not watched: nothing")
+    #expect(shown == nil && told.count == 5, "not watched: nothing")
 }
 
 extension ServerLockTests {   // `UserDefaults.standard`'s AI settings, `AppDelegate.explaining`, one picker at a time
@@ -142,8 +168,11 @@ extension ServerLockTests {   // `UserDefaults.standard`'s AI settings, `AppDele
         ServerLock.sshG = { t in "user me\nhostname \(t.host)\nport 22\n" }
         defer { ServerLock.sshG = wasG }
         let typed = EmbeddedTerminal.Tab.ran("me@mac ~ % ssh -p 2222 me@web.invalid 'systemctl status nginx'")
-        #expect(typed.unsure && typed.ssh.flatMap { EmbeddedTerminal.Tab.production([$0], named: []) } == web.target.asUser)
-        #expect(EmbeddedTerminal.Tab.ran("me@mac ~ % ls -la").ssh == nil && !EmbeddedTerminal.Tab.ran("ls").unsure)
+        #expect(typed.unsure && EmbeddedTerminal.Tab.production(typed.ssh, named: []) == web.target.asUser)
+        #expect(EmbeddedTerminal.Tab.ran("me@mac ~ % ls -la").ssh.isEmpty && !EmbeddedTerminal.Tab.ran("ls").unsure)
+        for line in ["me@mac ~ % cd /etc/ssh; ssh shop df", "ssh devbox.invalid a && ssh shop b", "me@mac ssh % echo $(ssh shop cat .env)"] {
+            #expect(EmbeddedTerminal.Tab.production(EmbeddedTerminal.Tab.ran(line).ssh, named: []) == web.target.asUser, "\(line)")
+        }
         let tab = EmbeddedTerminal.Tab(kind: .shell, view: DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300)))
         let chip = await AIPanel.terminal(tab, "me@mac ~ % ssh shop uptime\nload: 99\n[exit 1]", what: "Command")
         #expect(chip.server == web.target.asUser && chip.title.hasSuffix("as whoever is logged in"), "by its saved name: \(chip.title)")
@@ -180,6 +209,19 @@ extension ServerLockTests {   // `UserDefaults.standard`'s AI settings, `AppDele
             let ok = try await ran("echo fine")
             defer { ok.close() }
             #expect(ok.docFrame?.actions.isEmpty == true, "it went well")
+
+            // A command that names `ssh` to a production server: that one's (no ssh runs: `false &&`).
+            var shop = SavedServer()
+            (shop.host, shop.name, shop.prod) = ("shop.invalid", "shop", true)
+            let wasG = ServerLock.sshG
+            (ServerLock.servers, ServerLock.sshG) = ({ [shop] }, { t in "user me\nhostname \(t.host)\nport 22\n" })
+            defer { (ServerLock.servers, ServerLock.sshG) = ({ [] }, wasG) }
+            got = []
+            let viaSSH = try await ran("false && ssh shop uptime; exit 5")
+            defer { viaSSH.close() }
+            try #require(viaSSH.docFrame?.actions.first).1()
+            for _ in 0..<300 where got.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+            #expect(got.first?.server == shop.target.asUser && got.first?.server.map(SavedServer.isProd) == true, "\(got.map(\.title))")
         }
         try await explainsWhile(false) {
             let w = try await ran("exit 4")

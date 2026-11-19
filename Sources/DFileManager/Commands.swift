@@ -694,7 +694,7 @@ extension AppDelegate {
                              selection: sel.length > 0 ? (line(sel.location)...line(NSMaxRange(sel) - 1), text.substring(with: sel)) : nil)
         }
         if terminal?.isShown == true, let t = terminal.current {
-            c.terminal = .init(server: t.origin.server, command: t.view.marks.last?.text, selection: t.view.getSelection().flatMap { $0.isEmpty ? nil : $0 })
+            c.terminal = .init(server: t.origin(ran: t.view.marks.last?.text).server, command: t.view.marks.last?.text, selection: t.view.getSelection().flatMap { $0.isEmpty ? nil : $0 })
         }
         return c
     }
