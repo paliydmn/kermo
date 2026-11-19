@@ -515,7 +515,10 @@ final class AISession {
     }
 
     static let runners: [String: Runner] = [
-        "focus": { s, _, _ in s.focus() },
+        "focus": { s, _, _ in
+            _ = await s.app.terminal?.current?.learnedOrigin()   // where an `ssh` in the tab goes, before it's told
+            return s.focus()
+        },
         "request_scope": { s, args, _ in await s.requestScope(args) },
         "list_folder": { s, _, targets in await listing(s.servers[targets[0].place], targets[0].path ?? "/") },
         "read_file": { s, _, targets in
@@ -565,6 +568,10 @@ final class AISession {
             let mine = { (tab: EmbeddedTerminal.Tab) in t.map { t in tab.target.map { ServerLock.same($0.asUser, t) } ?? false } ?? (tab.target == nil) }
             guard let tab = s.app.terminal?.current.flatMap({ mine($0) ? $0 : nil }) ?? tabs.last(where: mine) else {
                 return .failure("No terminal tab of \(s.name(targets[0].place)) is open.")
+            }
+            // A local tab where `ssh prod` runs, a tab whose title names a production server: its text may be that server's.
+            if let p = await tab.learnedOrigin().server, SavedServer.isProd(p), !(t.map { ServerLock.same($0, p) } ?? false) {
+                return .failure("That tab's text may be from \(label(p)), a production server: the user can attach it to the chat themselves.")
             }
             guard let out = tab.view.output(), !out.isEmpty else { return .failure("Nothing to read there: no command printed anything, or a full-screen program is running.") }
             return handOver(out, limit: 16_000, keepEnd: true)
@@ -642,7 +649,7 @@ final class AISession {
             }
         }
         if let t = c.terminal {
-            lines.append("Terminal: a tab opened as \(at(t.server)) — who is logged in there now isn't known")
+            lines.append("Terminal: a tab on \(at(t.server)) as far as Kermo can tell — who is logged in there now isn't known")
             if may(t.server) {
                 if let cmd = t.command { lines.append("  last command line: \(cmd.prefix(400))") }
                 if let sel = t.selection { lines.append("  selection:\n" + String(sel.prefix(4000))) }

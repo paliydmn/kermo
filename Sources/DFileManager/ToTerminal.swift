@@ -167,7 +167,7 @@ extension AppDelegate {
         let at = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short), host = t.target.map { SavedServer.name(for: $0) }
         let copy = Editor.terminalCopy(text, line: line, title: "\(output ? "Output" : "Terminal") — \(host ?? t.label) \(at)",
                                        place: t.folder.map { DocFrame.place($0, host: host) } ?? host ?? "", chips: EmbeddedTerminal.chips(t),
-                                       target: t.target, folder: t.folder, pane: t.id)
+                                       target: t.target, folder: t.folder, pane: t.id, origin: t.origin.server)
         Self.ownTabs.setObject(t.id as NSUUID, forKey: copy)   // not `claim`: a script's document keeps the tab too
     }
 

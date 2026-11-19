@@ -78,6 +78,8 @@ enum AISettings {
     }
 
     static func hasKey(_ d: UserDefaults) -> Bool { address(d).map(keys.has) ?? false }
+    /// The AI is set up: a key for its address, or a model on this Mac (an OpenAI-compatible server here needs none).
+    static func ready(_ d: UserDefaults) -> Bool { hasKey(d) || kind(d) == .openai && address(d).map(AIEndpoint.isLocal) == true }
 
     /// Settings › AI's "Never Send": nothing from a production server goes to the AI.
     static func neverProd(_ d: UserDefaults) -> Bool { d.string(forKey: "aiProduction") == "never" }

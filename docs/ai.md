@@ -40,6 +40,16 @@ When the provider says no — a limit, too busy, no network — the chat says so
 
 **New Chat** (the pencil at the top) starts again: what the model was allowed is gone.
 
+### What's selected, into the chat
+
+- **⇧⌘I** (**View ▸ Add to Chat**) attaches what is selected where you are: in the terminal, the selection — or, with nothing selected, the command ⌘↑ went to (else the last one) with its output; in the editor, the selection — else the document; in a panel, the marked files and folders — else the one under the cursor — ten at a time (⇧⌘I again takes the next ten). It shows the chat and puts the keys in its field.
+- **In the terminal**, a selection you make gets a small **✨ Add to Chat** button beside it, while the AI is set up. **⌥-click** a command's line to attach that command with its output; **⋯ ▸ Add Command and Output to Chat** does the same for the last one. Without the AI set up, ⌥-click is the terminal's as before.
+- **Follow selection**, the first chip under the field, is off until you click it. While it's on, each ↩ takes what is selected at that moment where you selected last — a terminal tab or the editor — and the chip says where ("Following: Selection · web-01"). 👁 shows it as it would go. Click it again to stop; **New Chat** turns it off.
+
+Text from the terminal is taken as it is when you attach it. Showing or hiding the chat narrows the terminal, which clears its selection and forgets where earlier commands were (⌥-click and ⌘↑ work again from the next command on): keep the chat shown while you work with the terminal. Terminal text goes as a terminal's output always does: secrets as `•••`, the last 16 KB of it.
+
+**Which machine is a terminal's text from?** A server's tab is that server's — after `sudo -i` or a further `ssh` there, Kermo knows only what the tab's title says. A local tab is this Mac's — unless what runs in it now is an `ssh` to a [production server](safety.md) you saved — by its name, its address, or an alias in `~/.ssh/config` that leads there —, or the tab's title names one after an "@" (`deploy@web-01: ~`): then it's that server's, asked about and kept from Never Send as anything from production is. When something that logs in elsewhere runs in a local tab — `ssh` Kermo can't place, `sudo`, `su`, `mosh`, `docker` — the chip says **as whoever is logged in**: Kermo can't tell who that is. What an `ssh` printed before it ended, still in the scrollback, is the local tab's to Kermo; so is an `ssh` started through a wrapper (`sudo ssh …`, a script). Don't attach such text where Never Send matters.
+
 ### Chats on this Mac
 
 Kermo keeps the last 50 chats in `~/.config/dfilemanager/ai`, one file each, only yours to read (folder 0700, files 0600), written after each message and each answer. A file holds what went to the provider — your words and attachments as they went, secrets as `•••` — and the model's answers; never your key. The 🕘 at the top lists them, the latest first, with the model each began with: a click opens one to go on with. **Delete** removes one for good (not to the Trash). Past 50, the oldest go by themselves.
@@ -50,7 +60,7 @@ A chat opened again shows its questions, what was attached (by name) and the ans
 
 ### Production servers
 
-Something attached from a [production server](safety.md) asks once a chat for each server before it is sent, ↩ = **Cancel**; after **Send** a purple line says it goes. Kermo also tells the model that the server is production and to be careful — in the message and in what a read there returns; **What will be sent** shows it. In **Settings › AI**, **Production servers: Never Send** keeps everything from production servers out of the chat: such a chip isn't attached and the model's reads there are refused. Where the panels stand (a server's name and folder) the model may still learn from `focus`.
+Something attached from a [production server](safety.md) asks once a chat for each server before it is sent, ↩ = **Cancel**; after **Send** a purple line says it goes. Kermo also tells the model that the server is production and to be careful — in the message and in what a read there returns; **What will be sent** shows it. In **Settings › AI**, **Production servers: Never Send** keeps everything from production servers out of the chat: such a chip isn't attached, a followed selection there doesn't go, and the model's reads there are refused — the terminal's output of a tab that may be a production server's too. Where the panels stand (a server's name and folder) the model may still learn from `focus`.
 
 ### What goes to your provider
 

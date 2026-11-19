@@ -829,6 +829,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         applySidebarRule()
     }
 
+    /// ⇧⌘I: what is selected where the keys are, as a chip in the chat — the editor window's selection (else its
+    /// document); the terminal's (else the command ⌘↑ went to, or the last, with its output); from the chat's field,
+    /// where the user selected last; a panel's marked items (else its cursor's). Taken before the chat shows: showing
+    /// it narrows the terminal, which drops its selection and marks.
+    func addToChat() {
+        var found: [() async -> AIPanel.Context] = []
+        if let h = editorKey, let e = h.active {
+            let c = AIPanel.selection(e) ?? AIPanel.document(e)
+            found = [{ c }]
+        } else if aiPanel.hasFocus {
+            found = [aiPanel.selectionNow()].compactMap { $0 }
+        } else if terminalActive, let tab = terminal.current {
+            let text = tab.view.getSelection().flatMap { $0.isEmpty ? nil : ($0, "Selection") } ?? tab.view.commandWithOutput().map { ($0, "Command") }
+            found = [text.map { t in { await AIPanel.terminal(tab, t.0, what: t.1) } }].compactMap { $0 }
+        } else if !(window.firstResponder is NSText) {
+            found = aiPanel.marked(active).map { c in { c } }
+        }
+        guard AISettings.ready(defaults) else { return aiPanel.add([]) }   // "Use your own AI": nothing taken further, no `ssh -G`
+        guard !found.isEmpty else { return NSSound.beep() }
+        Task {
+            var made: [AIPanel.Context] = []
+            for f in found { made.append(await f()) }
+            aiPanel.add(made)
+        }
+    }
+
+    /// A terminal's text, taken now, into the chat once where it's from is known (`learnedOrigin`).
+    private func toChat(_ tab: EmbeddedTerminal.Tab, _ text: String, what: String) {
+        guard AISettings.ready(defaults) else { return aiPanel.add([]) }   // "Use your own AI": no `ssh -G`
+        Task { aiPanel.add([await AIPanel.terminal(tab, text, what: what)]) }
+    }
+
+    /// «⋯» Add Command and Output to Chat: the command ⌘↑ went to, else the last that printed, with its output.
+    func addCommandToChat() {
+        guard terminal.isShown, let tab = terminal.current, let text = tab.view.commandWithOutput() else { return NSSound.beep() }
+        toChat(tab, text, what: "Command")
+    }
+
+    /// A terminal tab's selection made (or gone): "✨ Add to Chat" by it while the AI is set up; the chat's Follow.
+    private func terminalSelected(_ tab: EmbeddedTerminal.Tab) {
+        aiPanel.selected(tab)
+        let shows = tab.view.selectionActive && AISettings.ready(defaults)   // the Keychain's word only for a selection
+        let key = shows ? commands.first { $0.id == "ai.add" }?.keys.first.map { "  " + $0.display } ?? "" : ""
+        tab.view.showChatButton(shows ? "Add to Chat" + key : nil) { [weak self, weak tab] in
+            guard let self, let tab, let text = tab.view.getSelection(), !text.isEmpty else { return }
+            toChat(tab, text, what: "Selection")
+        }
+    }
+
     /// The search (⇧⌘P, F9, the toolbar's button), over the main window.
     @discardableResult
     func palette() -> Picker {
@@ -1328,13 +1377,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// A mark's command → the panel command whose key it has in the terminal.
     static let terminalBranchKeys = Dictionary(uniqueKeysWithValues: terminalBranches.map { ($1, $0) })
     /// What acts on the terminal's current pane: while it's shown — from «⋯», or the menu, with a panel's keys too.
-    static let terminalPane: Set<String> = ["term.editor", "term.output.editor", "term.output.copy", "term.mark.prev", "term.mark.next", "term.zoom"]
+    static let terminalPane: Set<String> = ["term.editor", "term.output.editor", "term.output.copy", "term.output.chat", "term.mark.prev", "term.mark.next", "term.zoom"]
     static let terminalCommands = ["view.terminal", "view.terminalFull", "tab.new", "tab.close", "term.split.right", "term.split.down", "term.mark.prev",
-                                   "term.mark.next", "term.output.copy", "term.editor", "term.output.editor", "tab.next",
+                                   "term.mark.next", "term.output.copy", "term.output.chat", "term.editor", "term.output.editor", "tab.next",
                                    "tab.prev", "ssh.new", "go.connect", "cmdline.insert", "cmdline.insertPaths", "term.bigger", "term.smaller",
                                    "view.sidebar", "ssh.reconnect", "server.disconnect", "term.join", "term.unsplit", "term.pane.left",
                                    "term.pane.right", "term.pane.up", "term.pane.down", "term.resize.left", "term.resize.right", "term.resize.up",
-                                   "term.resize.down", "term.zoom", "ai.chat"] + (1...4).map { "panel.focus\($0)" }
+                                   "term.resize.down", "term.zoom", "ai.chat", "ai.add"] + (1...4).map { "panel.focus\($0)" }
 
     /// ⌃O: the drawer under the panels; open with the keys in a panel, the keys go to it (as ⌃` in VS Code); with the
     /// keys in it (or over the panels, ⌃⇧O), it hides.
@@ -1506,7 +1555,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     /// The app's own items, not the panels': from a viewer, an editor or over the terminal too.
     static let appWide: Set<String> = ["app.about", "app.update", "app.update.auto", "app.support", "app.settings", "app.tools", "app.monitor", "help.docs", "help.issue",
-                                       "editor.new", "editor.show", "ai.chat"]
+                                       "editor.new", "editor.show", "ai.chat", "ai.add"]
     /// What works only in the editor window: its tabs, hiding it.
     static let editorTabs: Set<String> = ["editor.close", "editor.tab.left", "editor.tab.right", "editor.tabs", "editor.closeOthers", "editor.closeRight",
                                           "editor.moveToPane", "editor.cloneToPane", "editor.joinPanes",
@@ -1626,6 +1675,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         terminal.onDirectory = { [unowned self] in follow($0) }
         terminal.onLink = { [unowned self] in openLink($1, flags: $2, in: $0) }
+        terminal.onSelect = { [unowned self] in terminalSelected($0) }
+        terminal.onCommandClick = { [unowned self] tab, text in toChat(tab, text, what: "Command") }
+        terminal.chatReady = { [unowned self] in AISettings.ready(defaults) }
 
         splitController = NSSplitViewController()
         splitController.splitView.autosaveName = "Sidebar"

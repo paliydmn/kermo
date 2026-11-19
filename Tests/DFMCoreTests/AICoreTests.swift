@@ -278,3 +278,14 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
     }
 }
 
+
+/// `ssh prod` typed in a local tab: where it goes, as its arguments say (task 23 PR 6, the chip's production guess).
+@Test func aiSSHDestinationFromItsArguments() {
+    let d = { (s: String) in SSHCommand.destination(s.split(separator: " ").map(String.init)) }
+    #expect(d("ssh prod") == SFTPTarget(host: "prod"))
+    #expect(d("ssh -v root@web ls -la") == SFTPTarget(host: "root@web"))
+    #expect(d("ssh -p 2222 -l deploy -i /k db") == SFTPTarget(host: "deploy@db", port: 2222))
+    #expect(d("ssh -tp2222 -A -o ServerAliveInterval=5 -J jump db") == SFTPTarget(host: "db", port: 2222))
+    #expect(d("ssh -- -odd") == SFTPTarget(host: "-odd"))
+    #expect(d("ssh -v") == nil && d("ssh -p") == nil && d("ssh") == nil)
+}

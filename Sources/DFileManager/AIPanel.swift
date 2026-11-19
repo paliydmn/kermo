@@ -159,7 +159,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     func refresh() {
         guard built else { return }
         session?.noProduction = AISettings.neverProd(app.defaults)   // back from Settings: the next read already knows
-        let d = app.defaults, hasKey = AISettings.hasKey(d) || AISettings.address(d).map(AIEndpoint.isLocal) == true && AISettings.kind(d) == .openai
+        let d = app.defaults, hasKey = AISettings.ready(d)
         model.title = d.string(forKey: "aiModel").flatMap { $0.isEmpty ? nil : $0 } ?? (AISettings.kind(d) == .anthropic ? AISettings.anthropicModel : "Choose a model")
         composer.isHidden = !hasKey
         if !hasKey, chat == nil { return showEmpty(setup: true) }
@@ -198,16 +198,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     func contexts(all: Bool) -> [Context] {
         var out: [Context] = []
         if let h = EditorHost.shared, h.window?.isVisible == true, let e = h.active {
-            // A terminal's or a comparison's copy is its origin's: a production server's output is production's.
-            let name = e.name, t = e.origin?.asUser
-            let range = e.textView.selectedRange()
-            if range.length > 0 {
-                let selected = (e.textView.string as NSString).substring(with: range)
-                out.append(Context(id: "sel:\(e.id):\(range)", title: "Selection · \(name)", symbol: .document, server: t) { AISession.handOver(selected) })
-            }
-            out.append(Context(id: "editor:\(e.id)", title: "\(name) · editor", symbol: .document, server: t) { [weak e] in
-                e.map { AISession.handOver($0.textView.string) } ?? .failure("The document was closed.")
-            })
+            out += [Self.selection(e), Self.document(e)].compactMap { $0 }
         }
         for p in all ? app.panels : [app.active] {
             if let r = p.remote, p.list == nil, p.searchTitle == nil {
@@ -225,9 +216,13 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             }
         }
         if app.terminal?.isShown == true, let tab = app.terminal.current, tab.view.output() != nil {
-            out.append(Context(id: "term:\(tab.id)", title: "Last command · \(tab.label)", symbol: .terminal, server: tab.target?.asUser) {
-                guard let o = tab.view.output() else { return .failure("Nothing to read there: no command printed anything, or a full-screen program is running.") }
-                return AISession.handOver((tab.view.marks.last?.text).map { $0 + "\n" + o } ?? o, limit: 16_000, keepEnd: true)
+            let o = tab.origin
+            out.append(Context(id: "term:\(tab.id)", title: Self.title("Last command", tab, unsure: o.unsure), symbol: .terminal, server: o.server) { [weak tab] in
+                guard let tab else { return .failure("The tab was closed.") }
+                // Suggested a while ago: an `ssh` since then makes it another machine's — asked about as that one.
+                guard await tab.learnedOrigin().server == o.server else { return .failure("That tab is on another machine now — add it again.") }
+                guard let text = tab.view.commandWithOutput() else { return .failure("Nothing to read there: no command printed anything, or a full-screen program is running.") }
+                return AISession.handOver(text, limit: 16_000, keepEnd: true)
             })
         }
         var seen = Set<String>()
@@ -250,8 +245,126 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         }
     }
 
-    /// Attached chips, then up to four suggestions (dashed: a click adds one).
+    // MARK: - Selection → chat (task 23 PR 6)
+
+    /// The editor's selection, read now. A terminal's or a comparison's copy is its origin's: a production server's
+    /// output is production's.
+    static func selection(_ e: Editor) -> Context? {
+        let range = e.textView.selectedRange()
+        guard range.length > 0 else { return nil }
+        let selected = (e.textView.string as NSString).substring(with: range)
+        return Context(id: "sel:\(e.id):\(range)", title: "Selection · \(e.name)", symbol: .document, server: e.origin?.asUser) { AISession.handOver(selected) }
+    }
+
+    /// The editor's document, read as it is attached.
+    static func document(_ e: Editor) -> Context {
+        Context(id: "editor:\(e.id)", title: "\(e.name) · editor", symbol: .document, server: e.origin?.asUser) { [weak e] in
+            e.map { AISession.handOver($0.textView.string) } ?? .failure("The document was closed.")
+        }
+    }
+
+    /// A terminal tab's text, taken by the caller as it was (showing the chat narrows the terminal, which drops its
+    /// selection and its marks) — its selection, or a command with what it printed —, from where the tab says it is
+    /// once `ssh -G` has said where an `ssh` there goes (`learnedOrigin`).
+    static func terminal(_ tab: EmbeddedTerminal.Tab, _ text: String, what: String) async -> Context {
+        let o = await tab.learnedOrigin()
+        return Context(id: "tsel:\(tab.id):\(text.hashValue)", title: title(what, tab, unsure: o.unsure), symbol: .terminal, server: o.server) {
+            AISession.handOver(text, limit: 16_000, keepEnd: true)
+        }
+    }
+
+    private static func title(_ what: String, _ tab: EmbeddedTerminal.Tab, unsure: Bool) -> String {
+        "\(what) · \(tab.label)" + (unsure ? " · as whoever is logged in" : "")
+    }
+
+    /// A panel's marked items, else the one under the cursor: files to read, folders to list.
+    func marked(_ p: PanelViewController) -> [Context] {
+        let items = p.selectedItems.filter { $0.kind != .other }
+        if let r = p.remote, p.list == nil, p.searchTitle == nil {
+            let t = r.target.asUser, at = AISession.label(t)
+            return items.map { i in
+                let path = (r.dir as NSString).appendingPathComponent(i.name)
+                return i.kind == .dir ? folder(path, on: t, title: "\(path) · \(at)") : file(path, on: t, title: "\(i.name) · \(at)")
+            }
+        }
+        guard let dir = p.plainFolder else { return [] }
+        return items.map { i in
+            let path = (dir as NSString).appendingPathComponent(i.name)
+            return i.kind == .dir ? folder(path, on: nil, title: "\((path as NSString).abbreviatingWithTildeInPath) · this Mac") : file(path, on: nil, title: "\(i.name) · this Mac")
+        }
+    }
+
+    /// ⇧⌘I, ⌥-click, Add to Chat: these chips, read now, and the chat shown with the keys in its field. Without the AI
+    /// set up: the chat's "Use your own AI", nothing read.
+    func add(_ found: [Context]) {
+        if !app.aiChatShown { app.setAIChat(shown: true) }
+        app.window.makeKeyAndOrderFront(nil)
+        guard AISettings.ready(app.defaults) else { return }
+        let fresh = found.filter { c in !chips.contains { $0.context.id == c.id } }
+        attach(Array(fresh.prefix(10)))
+        if fresh.count > 10 { flash("The first 10 of \(fresh.count) — ⇧⌘I again for the next.") }
+    }
+
+    /// Follow selection: each ↩ takes what is selected then where the user selected last — a terminal tab or the
+    /// editor —, until it's clicked off. New Chat turns it off.
+    private(set) var following = false
+    private weak var selectedTab: EmbeddedTerminal.Tab?
+    private weak var selectedEditor: Editor?
+    private var editorLast = false
+
+    /// A selection made (or gone) in a terminal tab, or in an editor (its caret moved): where Follow and ⇧⌘I from the
+    /// field look.
+    func selected(_ tab: EmbeddedTerminal.Tab) {
+        (selectedTab, editorLast) = (tab, false)
+        followMoved()
+    }
+    func selected(_ e: Editor) {
+        (selectedEditor, editorLast) = (e, true)
+        followMoved()
+    }
+    /// Where Follow would take from as the chip last showed it: a caret moving as the user types redraws nothing.
+    private var followShown: (title: String, server: SFTPTarget?)?
+    private func followMoved() {
+        guard following, built else { return }
+        let now = followSource()
+        if now?.title != followShown?.title || now?.server != followShown?.server { showChips() }
+    }
+
+    /// Where Follow would take from now — the chip's words and the machine; nil: nothing selected. Nothing is copied.
+    private func followSource() -> (title: String, server: SFTPTarget?)? {
+        if editorLast {
+            guard let e = selectedEditor, e.textView.selectedRange().length > 0 else { return nil }
+            return ("Selection · \(e.name)", e.origin?.asUser)
+        }
+        guard let tab = selectedTab, tab.view.selectionActive else { return nil }
+        let o = tab.origin
+        return (Self.title("Selection", tab, unsure: o.unsure), o.server)
+    }
+
+    /// What is selected now where the user selected last — its text taken now, its chip made once where it's from is
+    /// known; nil: nothing.
+    func selectionNow() -> (() async -> Context)? {
+        if editorLast { return selectedEditor.flatMap(Self.selection).map { c in { c } } }
+        guard let tab = selectedTab, let text = tab.view.getSelection(), !text.isEmpty else { return nil }
+        return { await Self.terminal(tab, text, what: "Selection") }
+    }
+
+    func toggleFollow() {
+        following.toggle()
+        showChips()
+        if following, followShown?.server.map(SavedServer.isProd) == true, AISettings.neverProd(app.defaults) {
+            flash("Settings › AI: nothing from a production server goes to the AI — that selection won't go.")
+        }
+    }
+
+    /// The Follow chip, attached chips, then up to four suggestions (dashed: a click adds one).
     private func showChips() {
+        let now = following ? followSource() : nil
+        followShown = now
+        let follow = ChipButton(title: following ? now.map { "Following: " + $0.title } ?? "Following selection — none now" : "Follow selection",
+                                symbol: .follow, suggested: !following, prod: now?.server.map(SavedServer.isProd) ?? false, plus: false) { [unowned self] _ in toggleFollow() }
+        follow.toolTip = following ? "On: what is selected in the terminal or the editor when you press ↩ goes with the message. Click to turn off."
+            : "Turn on: what is selected in the terminal or the editor when you press ↩ goes with each message."
         let added = chips.enumerated().map { i, c -> NSView in
             let b = ChipButton(title: c.context.title + (c.text == nil ? " …" : ""), symbol: c.context.symbol, suggested: false, prod: isProd(c.context)) { [unowned self] v in
                 showChip(i, from: v)
@@ -263,7 +376,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         let suggested = contexts(all: false).filter { !have.contains($0.id) }.prefix(4).map { c -> NSView in
             ChipButton(title: c.title, symbol: c.symbol, suggested: true, prod: isProd(c)) { [unowned self] _ in attach(c) }
         }
-        chipRow.set(added + suggested)
+        chipRow.set([follow] + added + suggested)
         updateInfo()
     }
 
@@ -272,20 +385,40 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     private func isProd(_ c: Context) -> Bool { c.server.map(SavedServer.isProd) ?? false }
 
     /// Read now, as the user sees it: a locked server asks for Touch ID; a production one, under Never Send, isn't read.
-    func attach(_ c: Context) {
-        guard !chips.contains(where: { $0.context.id == c.id }) else { return }
-        if isProd(c), AISettings.neverProd(app.defaults) { return flash("Settings › AI: nothing from a production server goes to the AI.") }
-        chips.append(Attached(context: c))
-        showChips()
-        Task {
-            var r = AIResult.failure("\(c.server.map(AISession.label) ?? "This Mac") stays locked.")
-            if let t = c.server, case .locked = await app.gate([t], to: "read “\(c.title.bidiVisible)” for the AI on") {} else { r = await c.read() }
-            guard let i = chips.firstIndex(where: { $0.context.id == c.id }) else { return }   // removed meanwhile
-            if r.isError { chips.remove(at: i) } else { chips[i].text = r }
-            showChips()
-            if r.isError { flash(r.text.bidiVisible) }   // after: the chips' line would write over it
+    func attach(_ c: Context) { attach([c]) }
+
+    /// Several, read one after another: one Touch ID for a locked server, never a server's sessions all at once.
+    func attach(_ cs: [Context]) {
+        var seen = Set(chips.map(\.context.id))
+        let new = cs.filter { seen.insert($0.id).inserted }
+        let never = AISettings.neverProd(app.defaults), taken = new.filter { !(never && isProd($0)) }
+        guard !new.isEmpty else { return focus() }
+        chips += taken.map { Attached(context: $0) }
+        focus()   // the chips drawn again
+        if taken.count < new.count { flash("Settings › AI: nothing from a production server goes to the AI.") }
+        let before = reading
+        reading = Task {
+            await before?.value   // after what was attached a moment ago: its Touch ID covers these
+            var refused = Set<String>()   // a server that stayed locked isn't asked again for the next chip
+            for c in taken {
+                var r = AIResult.failure("\(c.server.map(AISession.label) ?? "This Mac") stays locked.")
+                if let t = c.server, refused.contains(Self.key(t)) {}
+                else if let got = await read(c) { r = got }
+                else if let t = c.server { refused.insert(Self.key(t)) }
+                guard let i = chips.firstIndex(where: { $0.context.id == c.id }) else { continue }   // removed meanwhile
+                if r.isError { chips.remove(at: i) } else { chips[i].text = r }
+                showChips()
+                if r.isError { flash(r.text.bidiVisible) }
+            }
         }
-        focus()
+    }
+    /// The reads of what was attached, one after another.
+    private var reading: Task<Void, Never>?
+
+    /// A chip's text as the user would see it: a locked server asks for Touch ID first; nil: it stayed locked.
+    private func read(_ c: Context) async -> AIResult? {
+        if let t = c.server, case .locked = await app.gate([t], to: "read “\(c.title.bidiVisible)” for the AI on") { return nil }
+        return await c.read()
     }
 
     private func showChip(_ i: Int, from v: NSView) {
@@ -350,7 +483,9 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     func send(_ typed: String) {
         guard turn == nil, card == nil, !composer.isHidden else { return }
         let question = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !question.isEmpty || !chips.isEmpty else { return }
+        // Follow selection: what is selected now — taken now — goes as a chip would.
+        let follow = following ? selectionNow() : nil
+        guard !question.isEmpty || !chips.isEmpty || follow != nil else { return }
         guard chips.allSatisfy({ $0.text != nil }) else { return flash("Still reading what you attached…") }
         guard let e = AISettings.endpoint(app.defaults) else { return note("Settings › AI: the address isn't one.", error: true, settings: true) }
         if let why = e.problem() { return note("Settings › AI: " + why, error: true, settings: true) }
@@ -358,9 +493,26 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         if AISettings.neverProd(app.defaults), chips.contains(where: { isProd($0.context) }) {
             return note("Settings › AI: nothing from a production server goes to the AI. Remove its chip to send.", error: true)
         }
-        let asked = chips, g = generation
+        let attached = chips, g = generation
         failedAt = nil
         turn = Task {
+            var asked = attached, followed: String?
+            let f = await follow?()   // where it's from: `ssh -G` may be asked (~15 ms)
+            guard g == generation else { return }   // New Chat meanwhile
+            guard !Task.isCancelled else { return finish() }
+            if let f, !chips.contains(where: { $0.context.id == f.id }) {
+                if isProd(f), AISettings.neverProd(app.defaults) {
+                    flash("The followed selection is from a production server: it doesn't go (Settings › AI).")
+                } else {   // as a chip is: Touch ID for a locked server. Still locked, or a Stop meanwhile: nothing goes.
+                    let r = await read(f)
+                    guard g == generation else { return }
+                    guard let r, !r.isError, !Task.isCancelled else {
+                        note("The followed selection wasn't read: \(r?.text ?? "\(f.server.map(AISession.label) ?? "this Mac") stayed locked.") Nothing was sent.", error: true)
+                        return finish()
+                    }
+                    if following { (followed, asked) = (f.id, asked + [Attached(context: f, text: r)]) }   // turned off meanwhile: not
+                }
+            }
             // Production: asked once a chat for each server, ↩ = Cancel. Nothing is sent until each said yes.
             for t in Self.unique(asked.compactMap(\.context.server)) where SavedServer.isProd(t) && !prodSent.contains(Self.key(t)) {
                 let answer = await app.gate([t], to: "send what you attached to the AI from", question: { [self] in sendQuestion(t, e) }) { c, _ in await self.ask(c) }
@@ -371,7 +523,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
                 append(Self.prodLine(AISession.label(t), host: e.address.host ?? "the provider"))
             }
             // What is attached now: a chip removed while a question was up doesn't go; Never Send may have come meanwhile.
-            let sent = asked.filter { a in chips.contains { $0.context.id == a.context.id } }
+            let sent = asked.filter { a in a.context.id == followed && following || chips.contains { $0.context.id == a.context.id } }   // turned off meanwhile: not
             guard !(AISettings.neverProd(app.defaults) && sent.contains { isProd($0.context) }), !sent.isEmpty || !question.isEmpty else { return finish() }
             let prod = Self.unique(sent.compactMap(\.context.server)).filter(SavedServer.isProd).map(AISession.label)
             let message = AIChat.compose(question, attached: sent.map { ($0.context.title, $0.text?.text ?? "") }, production: prod)
@@ -459,7 +611,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         stop()
         generation += 1
         (chat, session, prodSent, turn, pinned, failedAt) = (nil, nil, [], nil, nil, nil)
-        (chatID, asked, resumedProduction, unsaved, unkept) = (nil, [], false, false, false)
+        (chatID, asked, resumedProduction, unsaved, unkept, following) = (nil, [], false, false, false, false)
         list.setViews([], in: .top)
         refresh()
         focus()
@@ -599,7 +751,9 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     }
 
     private func updateInfo() {
-        let prod = Self.unique(chips.compactMap(\.context.server)).filter(SavedServer.isProd).map(AISession.label)
+        guard flashUntil <= Date() else { return }
+        let followed = following ? followShown?.server : nil   // as the chip shows it: nothing read on each key
+        let prod = Self.unique(chips.compactMap(\.context.server) + [followed].compactMap { $0 }).filter(SavedServer.isProd).map(AISession.label)
         if !prod.isEmpty {
             info.stringValue = "\(prod.joined(separator: ", ")) (PROD) goes to \(AISettings.address(app.defaults)?.host ?? "your provider")"
             info.textColor = Palette.prod
@@ -612,13 +766,20 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
     /// "What Will Be Sent": the instructions, the message as it would go now. Earlier messages go too.
     @objc private func preview(_ sender: NSView) {
-        let prod = Self.unique(chips.compactMap(\.context.server)).filter(SavedServer.isProd).map(AISession.label)
-        let message = AIChat.compose(input.string.trimmingCharacters(in: .whitespacesAndNewlines), attached: chips.map { ($0.context.title, $0.text?.text ?? "…") }, production: prod)
-        let host = AISettings.address(app.defaults)?.host ?? "your provider"
-        let text = "— Kermo's instructions —\n\(chat?.system ?? AIChat.askSystem)\n\n— This message —\n\(message)\n\n"
-            + "— Also —\nThe tools' descriptions\(chat.map { $0.messages.isEmpty ? "" : ", and the \($0.messages.count) earlier messages of this chat" } ?? ""). "
-            + "Straight to \(host), with your key from the Keychain."
-        Self.pop("What goes to \(host)", text, from: sender)
+        let follow = following ? selectionNow() : nil
+        Task {   // the followed selection as it is now — what ↩ would take
+            var all = chips
+            if let f = await follow?(), !chips.contains(where: { $0.context.id == f.id }), !(isProd(f) && AISettings.neverProd(app.defaults)) {
+                all.append(Attached(context: f, text: await f.read()))
+            }
+            let prod = Self.unique(all.compactMap(\.context.server)).filter(SavedServer.isProd).map(AISession.label)
+            let message = AIChat.compose(input.string.trimmingCharacters(in: .whitespacesAndNewlines), attached: all.map { ($0.context.title, $0.text?.text ?? "…") }, production: prod)
+            let host = AISettings.address(app.defaults)?.host ?? "your provider"
+            let text = "— Kermo's instructions —\n\(chat?.system ?? AIChat.askSystem)\n\n— This message —\n\(message)\n\n"
+                + "— Also —\nThe tools' descriptions\(chat.map { $0.messages.isEmpty ? "" : ", and the \($0.messages.count) earlier messages of this chat" } ?? ""). "
+                + "Straight to \(host), with your key from the Keychain."
+            Self.pop("What goes to \(host)", text, from: sender)
+        }
     }
 
     // MARK: - Questions in the chat
@@ -694,8 +855,11 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     func flash(_ words: String) {
         info.stringValue = words
         info.textColor = .labelColor
+        flashUntil = Date() + 4
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in MainActor.assumeIsolated { self?.updateInfo() } }
     }
+    /// Words said a moment ago stay that long: the chips redrawn meanwhile don't write over them.
+    private var flashUntil = Date.distantPast
 
     /// A code block's Into Terminal: in the line of the terminal tab on the machine in front of the user — nothing runs.
     func intoTerminal(_ code: String) {
@@ -877,12 +1041,13 @@ final class ChipFlow: NSView {
 final class ChipButton: NSButton {
     private let act: (NSView) -> Void
     private let suggested: Bool
-    init(title: String, symbol: Symbol, suggested: Bool, prod: Bool, act: @escaping (NSView) -> Void) {
+    /// `plus`: "+ " before a suggestion's title (not before Follow selection's).
+    init(title: String, symbol: Symbol, suggested: Bool, prod: Bool, plus: Bool = true, act: @escaping (NSView) -> Void) {
         (self.act, self.suggested) = (act, suggested)
         super.init(frame: .zero)
         let s = NSMutableAttributedString()
         if prod { s.append(Chip.prod.text); s.append(NSAttributedString(string: " ")) }
-        s.append(NSAttributedString(string: (suggested ? "+ " : "") + title.bidiVisible,
+        s.append(NSAttributedString(string: (suggested && plus ? "+ " : "") + title.bidiVisible,
                                     attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: suggested ? NSColor.secondaryLabelColor : NSColor.labelColor]))
         attributedTitle = s
         image = symbol.image()

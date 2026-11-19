@@ -74,6 +74,55 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
             let pg = tcgetpgrp(p.childfd)
             return pg > 0 && proc_name(pg, &name, 256) > 0 ? String(decoding: name.prefix { $0 != 0 }, as: UTF8.self) : nil
         }
+        /// Who its text may be from, as far as Kermo can tell (D-227 (12)): its server — or a production server that an
+        /// `ssh` running in it goes to, or that its title names after an "@" (the program there writes it): then that
+        /// one, asked about and kept from Never Send as any production text. Matched by the saved server's name or host
+        /// as written — and, once `ssh -G` has learned it (`learnedOrigin`), by where the `ssh` goes. `unsure`: a
+        /// program that logs in elsewhere (or a multiplexer that may hold one) has a local
+        /// tab's terminal — whoever is logged in there. Scrollback left by one that ended isn't seen; nor, in a server's
+        /// tab, a `sudo -i` or a further `ssh` its title doesn't name.
+        var origin: (server: SFTPTarget?, unsure: Bool) {
+            let fg = foreground
+            /// "web" of "root@web.example.com"; an address stays whole.
+            let label = { (h: String) -> String in
+                let host = String(h.split(separator: "@").last ?? "")
+                return host.contains(where: \.isLetter) ? String(host.split(separator: ".").first ?? "") : host
+            }
+            var said = title.lowercased().split(separator: "@").dropFirst().map { w in   // "deploy@web-01: ~" → web-01
+                String(w.prefix { $0.isLetter || $0.isNumber || "._-".contains($0) })
+            }
+            var named: [SFTPTarget] = []
+            if fg == "ssh", let d = foregroundArguments.flatMap(SSHCommand.destination) {
+                named.append(d)
+                said.append(String(d.host.split(separator: "@").last ?? "").lowercased())
+            }
+            let names = Set(said + said.map(label)).subtracting([""])
+            named += ServerLock.servers().filter { s in s.prod && [s.name, s.host, label(s.host)].contains { names.contains($0.lowercased()) } }.map(\.target)
+            return (named.first(where: SavedServer.isProd)?.asUser ?? target?.asUser, fg.map(Self.logsIn.contains) ?? false)
+        }
+        /// `origin` once `ssh -G` has said where an `ssh` running there goes (the first time it's seen, ~15 ms): what a
+        /// chip is built with.
+        func learnedOrigin() async -> (server: SFTPTarget?, unsure: Bool) {
+            if foreground == "ssh", let d = foregroundArguments.flatMap(SSHCommand.destination), !ServerLock.isLearned(d) { await ServerLock.learn([d]) }
+            return origin
+        }
+        /// Programs that log in elsewhere, or as someone else.
+        static let logsIn = remoteShells.union(["sudo", "su", "doas", "login", "tmux", "screen"])
+        /// The arguments of what has a local tab's terminal; nil: unknown.
+        private var foregroundArguments: [String]? {
+            guard host == nil, let p = view.process, isRunning else { return nil }
+            return Self.arguments(of: tcgetpgrp(p.childfd))
+        }
+        /// A process's argv, as KERN_PROCARGS2 has it; nil: gone, or not this user's.
+        static func arguments(of pid: pid_t) -> [String]? {
+            var mib = [CTL_KERN, KERN_PROCARGS2, pid], size = 0
+            guard pid > 0, sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 4 else { return nil }
+            var buf = [UInt8](repeating: 0, count: size)
+            guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0, size > 4 else { return nil }
+            let argc = buf.withUnsafeBytes { Int($0.loadUnaligned(as: Int32.self)) }
+            // argc, the executable's path, padding, then argv
+            return Array(buf[4..<size].split(separator: 0).dropFirst().prefix(argc).map { String(decoding: $0, as: UTF8.self) })
+        }
         /// The shell's working directory, read from the kernel (works whatever the shell prints).
         var shellCwd: String? {
             guard let pid = view.process?.shellPid, pid > 0 else { return nil }
@@ -159,6 +208,10 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
     var onDirectory: ((Tab) -> Void)?  // the current tab's shell told its folder (`cwd`)
     /// A link ⌘-clicked in a tab's text (not an OSC 8 one) and the click's keys: the app opens it (`openLink`).
     var onLink: ((Tab, TerminalLinkRequest, NSEvent.ModifierFlags) -> Void)?
+    /// A tab's selection made or gone; a command ⌥-clicked, with its output (the chat's, task 23 PR 6).
+    var onSelect: ((Tab) -> Void)?
+    var onCommandClick: ((Tab, String) -> Void)?
+    var chatReady: (() -> Bool)?
     /// ⌘+ / ⌘−, every tab; kept in `terminalFontSize` (clamped to 9…36; 13 if unset).
     private(set) var fontSize: CGFloat = (UserDefaults.standard.object(forKey: "terminalFontSize") as? Double).map { min(max($0, 9), 36) } ?? 13
     private var hiddenAt = -TimeInterval.infinity   // uptime; ⌃O ⌃O
@@ -538,6 +591,9 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
             onLink(tab, r, f)
         }
         t.onOutput = { [weak self, unowned t] in self?.tabs.first { $0.view === t }.map { self?.tell($0, .output) } }
+        t.onSelect = { [weak self, unowned t] in if let self, let tab = tabs.first(where: { $0.view === t }) { onSelect?(tab) } }
+        t.onCommandClick = { [weak self, unowned t] text in if let self, let tab = tabs.first(where: { $0.view === t }) { onCommandClick?(tab, text) } }
+        t.chatReady = { [weak self] in self?.chatReady?() ?? false }
         t.onBell = { [weak self, unowned t] in
             guard let self else { return }
             guard let tab = tabs.first(where: { $0.view === t }), !shows(tab) else { return beep() }
@@ -1151,22 +1207,83 @@ final class DropTerminalView: LocalProcessTerminalView {
         super.selectionChanged(source: source)
         guard Thread.isMainThread else { return }
         MainActor.assumeIsolated {
-            guard Self.on("terminalCopyOnSelect"), !finding, !saying, !findBarDrives else { return }
+            guard !finding, !saying, !findBarDrives else { return }
+            let copy = Self.on("terminalCopyOnSelect")   // decided now
             guard Self.leftButtonDown() else {   // ⌘A, or made at once
-                return DispatchQueue.main.async { MainActor.assumeIsolated { self.copySelection() } }
+                return DispatchQueue.main.async { MainActor.assumeIsolated { self.selected(copy: copy) } }
             }
             guard upMonitor == nil else { return }   // dragging: once, when it ends — not on every move
             upMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] e in
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.dragEnded() } }   // after the view's own mouseUp
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.dragEnded(copy: copy) } }   // after the view's own mouseUp
                 return e
             }
         }
     }
 
-    private func dragEnded() {
+    private func dragEnded(copy: Bool) {
         upMonitor.map(NSEvent.removeMonitor)
         upMonitor = nil
-        copySelection()
+        selected(copy: copy)
+    }
+
+    /// The user's selection is made (or gone): into the clipboard, and the app told (the chat's Add to Chat button and
+    /// Follow selection).
+    private func selected(copy: Bool) {
+        if copy { copySelection() }
+        onSelect?()
+    }
+
+    // MARK: To the chat (task 23 PR 6)
+
+    /// A selection the user made, or one gone: the app's (`addToChat` decides the button).
+    var onSelect: (() -> Void)?
+    /// ⌥-click on a command's line: that command with what it printed, as the click found it — while the AI is set up
+    /// (`chatReady`); else the click is SwiftTerm's.
+    var onCommandClick: ((String) -> Void)?
+    var chatReady: () -> Bool = { false }
+    private(set) weak var chatButton: NSButton?
+
+    /// "✨ Add to Chat" by the selection — where the mouse let go, else the view's lower right — while it's there; nil:
+    /// none. Gone with the selection, a key, a scroll, a new size.
+    func showChatButton(_ title: String?, act: @escaping () -> Void) {
+        chatButton?.removeFromSuperview()
+        guard let title, selectionActive else { return }
+        let b = ClosureButton(title: title) { [weak self] in
+            self?.chatButton?.removeFromSuperview()
+            act()
+        }
+        (b.image, b.imagePosition, b.bezelStyle, b.controlSize) = (Symbol.ai.image(), .imageLeading, .inline, .small)
+        b.sizeToFit()
+        let p = window.map { convert($0.mouseLocationOutsideOfEventStream, from: nil) }.flatMap { bounds.contains($0) ? $0 : nil }
+            ?? NSPoint(x: bounds.maxX, y: 0)
+        b.setFrameOrigin(NSPoint(x: min(max(p.x + 8, 4), bounds.maxX - b.frame.width - 16), y: min(max(p.y - b.frame.height - 6, 4), bounds.maxY - b.frame.height - 4)))
+        addSubview(b)
+        chatButton = b
+    }
+    /// The mark on `row` if `row` is its command's line (or a row it wraps onto), still holding.
+    private func commandMark(onRow row: Int) -> Mark? {
+        guard let m = marks.last(where: { $0.row <= row }), holds(m),
+              let s = terminalContentSnapshot(region: .rows(m.row..<row + 1), buffer: .normal),
+              s.rows.dropFirst().allSatisfy(\.isWrapped) else { return nil }
+        return m
+    }
+
+    /// A command and what it printed: the one whose line is `row`; nil `row` — the one ⌘↑ / ⌘↓ went to (in view), else
+    /// the last that printed anything (as `output()`). Its line, prompt and all, then the output.
+    func commandWithOutput(row: Int? = nil) -> String? {
+        guard let now = look(), !now.alt else { return nil }
+        let m: Mark, out: String?
+        if let row {
+            guard let found = commandMark(onRow: row) else { return nil }
+            (m, out) = (found, output(of: found, cursor: now.cursor))
+        } else {
+            guard let (found, o) = outputMark(now) else { return nil }
+            (m, out) = (found, o)
+        }
+        let end = min(mark(from: m.row, 1)?.row ?? now.cursor + 1, m.row + 50)   // its line only: a long command wraps
+        guard let s = terminalContentSnapshot(region: .rows(m.row..<max(m.row + 1, end)), buffer: .normal) else { return nil }
+        let line = Self.text(s.rows.prefix { $0.absoluteRow == m.row || $0.isWrapped }).text
+        return out.map { line + "\n" + $0 } ?? line
     }
 
     /// The selection into the clipboard; nothing selected (a click cleared it): the clipboard stays.
@@ -1205,6 +1322,7 @@ final class DropTerminalView: LocalProcessTerminalView {
     /// looked at as the rows stand just before it — out of a live resize SwiftTerm resizes in here.
     override func setFrameSize(_ newSize: NSSize) {
         if newSize != frame.size, !marks.isEmpty { _ = look() }
+        if newSize != frame.size { chatButton?.removeFromSuperview() }   // SwiftTerm drops the selection on a new size
         super.setFrameSize(newSize)
     }
 
@@ -1213,6 +1331,7 @@ final class DropTerminalView: LocalProcessTerminalView {
     /// or an input method takes, nor ⌃↩ (the app's) — marks its line while the cursor is still on it.
     func typed(_ e: NSEvent) {
         at = nil
+        chatButton?.removeFromSuperview()
         if e.keyCode == 36 || e.keyCode == 76, !e.modifierFlags.contains(.control), !hasMarkedText(), !findBarHasKeys { markReturn() }
     }
 
@@ -1317,14 +1436,18 @@ final class DropTerminalView: LocalProcessTerminalView {
     /// a full-screen program has the tab.
     func output() -> String? {
         guard let now = look(), !now.alt else { return nil }
+        return outputMark(now)?.output
+    }
+
+    private func outputMark(_ now: (top: Int, cursor: Int, live: Int, alt: Bool, bracketed: Bool)) -> (mark: Mark, output: String)? {
         let view = now.top + terminalStateSnapshot().viewportRow
         if let at, at.top == view {
-            guard let m = marks.first(where: { $0.row == at.row }), holds(m) else { return nil }
-            return output(of: m, cursor: now.cursor)
+            guard let m = marks.first(where: { $0.row == at.row }), holds(m), let o = output(of: m, cursor: now.cursor) else { return nil }
+            return (m, o)
         }
         var row = now.cursor + 1
         while let m = mark(from: row, -1) {
-            if let o = output(of: m, cursor: now.cursor) { return o }
+            if let o = output(of: m, cursor: now.cursor) { return (m, o) }
             row = m.row
         }
         return nil
@@ -1386,13 +1509,19 @@ final class DropTerminalView: LocalProcessTerminalView {
 
     override func mouseDown(with event: NSEvent) {
         commandPress = event.modifierFlags.contains(.command)
+        swallowUp = false   // a release that never came doesn't take this click's
         let keys = event.modifierFlags.intersection([.command, .option, .control, .shift])
         let h = caretFrame.height   // a row's: SwiftTerm sizes the caret to a cell (wider on a wide character, never taller)
-        guard event.clickCount == 1, keys.isEmpty || keys == .shift, h > 0,
+        guard event.clickCount == 1, keys.isEmpty || keys == .shift || keys == .option && chatReady(), h > 0,
               !(allowMouseReporting && currentMouseMode != .off), let now = look(), !now.alt
         else { return terminals { super.mouseDown(with: event) } }
         let top = now.top + terminalStateSnapshot().viewportRow   // the row at the view's top
         let p = convert(event.locationInWindow, from: nil), row = top + max(Int((bounds.height - p.y) / h), 0)
+        if keys == .option {   // on a command's line: it and its output to the chat; elsewhere SwiftTerm's (a block selection)
+            guard let text = commandWithOutput(row: row) else { return super.mouseDown(with: event) }
+            swallowUp = true   // the press never reached SwiftTerm: nor does its release
+            return onCommandClick?(text) ?? ()
+        }
         guard keys == .shift else {
             anchor = (row, p.x, rowText(row))
             return super.mouseDown(with: event)
@@ -1410,14 +1539,16 @@ final class DropTerminalView: LocalProcessTerminalView {
             super.mouseDown(with: mouse(.leftMouseDown, at))
             super.mouseUp(with: mouse(.leftMouseUp, p))
         }
-        if Self.on("terminalCopyOnSelect") { copySelection() }
+        selected(copy: Self.on("terminalCopyOnSelect"))
     }
 
     /// A link ⌘-clicked in the text (never an OSC 8 one) and the click's keys: the tab's to open; nil: none opens.
     var onLink: ((TerminalLinkRequest, NSEvent.ModifierFlags) -> Void)?
     /// The last click's keys as it ended (SwiftTerm's request doesn't carry them).
     private(set) var clickFlags: NSEvent.ModifierFlags = []
+    private var swallowUp = false
     override func mouseUp(with event: NSEvent) {
+        if swallowUp { return swallowUp = false }
         clickFlags = event.modifierFlags
         defer { commandPress = false }
         guard !commandPress, event.modifierFlags.contains(.command) else { return terminals { super.mouseUp(with: event) } }
@@ -1426,7 +1557,7 @@ final class DropTerminalView: LocalProcessTerminalView {
                                                timestamp: event.timestamp, windowNumber: event.windowNumber, context: nil,
                                                eventNumber: event.eventNumber, clickCount: event.clickCount, pressure: event.pressure) ?? event)
     }
-    override func mouseDragged(with event: NSEvent) { terminals { super.mouseDragged(with: event) } }
+    override func mouseDragged(with event: NSEvent) { if !swallowUp { terminals { super.mouseDragged(with: event) } } }
 
     /// The press held ⌘: the click is the terminal's (a link), never a program's that reads the mouse — SwiftTerm would
     /// give it the press and keep the release for the link. Decided at the press, for the whole click.
@@ -1538,7 +1669,10 @@ final class TerminalGate: TerminalViewDelegate {
     func setTerminalTitle(source: TerminalView, title: String) { view.setTerminalTitle(source: source, title: title) }
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) { view.hostCurrentDirectoryUpdate(source: source, directory: directory) }
     func send(source: TerminalView, data: ArraySlice<UInt8>) { view.send(source: source, data: data) }
-    func scrolled(source: TerminalView, position: Double) { view.scrolled(source: source, position: position) }
+    func scrolled(source: TerminalView, position: Double) {
+        view.chatButton?.removeFromSuperview()   // it stood by the selection
+        view.scrolled(source: source, position: position)
+    }
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) { view.rangeChanged(source: source, startY: startY, endY: endY) }
     func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) { view.programStatusChanged(source: source, records: records) }
     func bell(source: TerminalView) {

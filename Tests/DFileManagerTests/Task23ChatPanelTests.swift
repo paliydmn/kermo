@@ -404,4 +404,213 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         panel.send("Here?")
         #expect(panel.turn == nil && wire.bodies.isEmpty && shown(panel).contains("names another provider"))
     }
+
+    /// Task 23 PR 6: a terminal tab's text goes as it was when it was taken, from where the tab says it is — a title
+    /// naming a production server makes it production's (asked once; Never Send keeps it), one naming none is this
+    /// Mac's. Follow selection takes what is selected at each ↩ (production's not under Never Send) until it's off. A
+    /// panel's cursor file is a chip of its own.
+    @Test func whatIsSelectedGoesAsItWasAndFromWhereTheTabSays() async throws {
+        let std = UserDefaults.standard, names = ["aiProvider", "aiAddress", "aiModel", "aiProduction", "aiKeepChats"], saved = names.map { ($0, std.object(forKey: $0)) }
+        let wire = Wire((1...5).map { (200, turn(text: "Answer \($0).")) })
+        (AISettings.keys, AISettings.transport) = (AIKeys(Keys()), wire.transport)
+        let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t23s-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try Data("hello\n".utf8).write(to: URL(fileURLWithPath: dir + "/notes.txt"))
+        var box = SavedServer(target: .local(port: 2))
+        (box.name, box.prod) = ("prodbox", true)
+        ServerLock.servers = { [box] }
+        var asked: [String] = []
+        AppDelegate.answering = { title, _, _ in asked.append(title); return 0 }
+        let app = panelApp(dir)
+        defer {
+            for (k, v) in saved { if let v { std.set(v, forKey: k) } else { std.removeObject(forKey: k) } }
+            (AISettings.keys, AISettings.transport, AppDelegate.answering) = (.shared, AIHTTP.live, nil)
+            ServerLock.servers = { [] }
+            app.panels.forEach { $0.shutdown() }
+            try? FileManager.default.removeItem(atPath: dir)
+        }
+        names.forEach(std.removeObject(forKey:))
+        std.set(false, forKey: "aiKeepChats")
+        let panel = AIPanel(app: app)
+        panel.view.frame = NSRect(x: 0, y: 0, width: 400, height: 700)
+        panel.build()
+        func send(_ q: String) async {
+            for _ in 0..<300 where panel.turn == nil {
+                panel.send(q)
+                if panel.turn == nil { try? await Task.sleep(for: .milliseconds(10)) }
+            }
+            await done(panel)
+        }
+        /// The last message of request `i`, as it went.
+        func sent(_ i: Int) -> String {
+            guard wire.bodies.indices.contains(i), let last = (wire.bodies[i]["messages"] as? [Any])?.last else { return "" }
+            return String(decoding: (try? JSONSerialization.data(withJSONObject: last)) ?? Data(), as: UTF8.self)
+        }
+        let chips = { views(panel.view, ChipButton.self).map(\.attributedTitle.string).joined(separator: " | ") }
+
+        // A tab whose title says it's on prodbox: production's — asked once, masked, Kermo's word with it.
+        let tab = EmbeddedTerminal.Tab(kind: .shell, view: DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300)))
+        tab.title = "deploy@prodbox: ~"
+        let c = await AIPanel.terminal(tab, "deploy failed: token=abc123secret", what: "Selection")
+        #expect(c.server.map(SavedServer.isProd) == true && c.title == "Selection · deploy@prodbox: ~")
+        panel.attach(c)
+        await send("Why?")
+        #expect(asked == ["Send what you attached from prodbox to api.anthropic.com?"])
+        #expect(sent(0).contains("deploy failed") && !sent(0).contains("abc123secret") && sent(0).contains("[Kermo: prodbox is a production server"), "\(sent(0))")
+
+        // Never Send: such a chip isn't taken; a followed selection there doesn't go — the question does.
+        std.set("never", forKey: "aiProduction")
+        click(try #require(views(panel.view, NSButton.self).first { $0.toolTip == "New Chat" }))
+        #expect(!panel.following)
+        panel.attach(await AIPanel.terminal(tab, "more", what: "Selection"))
+        #expect(shown(panel).contains("nothing from a production server goes to the AI"))
+        tab.view.feed(text: "first line\r\n")
+        tab.view.selectAll()
+        panel.selected(tab)
+        panel.toggleFollow()
+        #expect(panel.following && chips().contains("Following: Selection · deploy@prodbox: ~"), "\(chips())")
+        await send("Q1")
+        #expect(wire.bodies.count == 2 && !sent(1).contains("first line") && sent(1).contains("Q1") && asked.count == 1)
+
+        // A title that names no saved server: this Mac's. Each ↩ takes the selection as it is then.
+        std.removeObject(forKey: "aiProduction")
+        tab.title = "deploy@devbox: ~"
+        #expect(await AIPanel.terminal(tab, "x", what: "Selection").server == nil)
+        await send("Q2")
+        #expect(sent(2).contains("first line") && sent(2).contains("Selection · deploy@devbox"), "\(sent(2))")
+        tab.view.feed(text: "second\r\n")
+        tab.view.selectAll()
+        await send("Q3")
+        #expect(sent(3).contains("second") && panel.following)
+        tab.view.selectNone()
+        panel.selected(tab)
+        #expect(chips().contains("Following selection — none now"), "\(chips())")
+        await send("Q4")
+        #expect(!sent(4).contains("<attached") && asked.count == 1)
+        panel.toggleFollow()
+        #expect(!panel.following && chips().contains("Follow selection"))
+
+        // Follow on a locked server's tab: Touch ID refused — nothing goes, and the chat says why.
+        var lock = SavedServer(target: SFTPTarget(host: "lockbox.invalid"))
+        lock.locked = true
+        ServerLock.servers = { [box, lock] }
+        let (wasAuth, wasG) = (ServerLock.authenticate, ServerLock.sshG)
+        (ServerLock.authenticate, ServerLock.sshG) = ({ _ in false }, { t in "user u\nhostname \(t.host)\nport 22\n" })
+        defer { (ServerLock.authenticate, ServerLock.sshG) = (wasAuth, wasG); ServerLock.relock() }
+        let locked = EmbeddedTerminal.Tab(kind: .ssh(lock.target), view: DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300)))
+        locked.view.feed(text: "secret things\r\n")
+        locked.view.selectAll()
+        panel.selected(locked)
+        panel.toggleFollow()
+        let before = wire.bodies.count
+        await send("Q5")
+        #expect(wire.bodies.count == before && shown(panel).contains("The followed selection wasn't read") && shown(panel).contains("stayed locked"), "\(shown(panel).suffix(300))")
+        panel.toggleFollow()
+
+        // ⇧⌘I in a panel: the file under its cursor.
+        let p = app.panels[0]
+        var row: Int?
+        for _ in 0..<300 where row == nil {
+            row = (0..<p.table.numberOfRows).first { p.item(at: $0)?.name == "notes.txt" }
+            if row == nil { try? await Task.sleep(for: .milliseconds(10)) }
+        }
+        p.table.selectRowIndexes(IndexSet(integer: try #require(row)), byExtendingSelection: false)
+        #expect(panel.marked(p).map(\.title) == ["notes.txt · this Mac"])
+    }
+
+    /// Task 23 PR 6: `ssh` running in a local tab to a production server makes the tab's text that server's — one saved
+    /// with its user, one saved by address and typed by its name; one Kermo doesn't know is this Mac's, "whoever is logged
+    /// in". The `ssh` waits on a stand-in for its connection: no network, no config of yours.
+    @Test func aLocalTabRunningSSHToProductionIsProductions() async throws {
+        _ = NSApplication.shared
+        let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t23h-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
+        var web = SavedServer(), db = SavedServer()
+        (web.host, web.user, web.prod) = ("prodweb.invalid", "deploy", true)
+        (db.host, db.name, db.prod) = ("198.51.100.7", "dbprod", true)
+        ServerLock.servers = { [web, db] }
+        defer {
+            ServerLock.servers = { [] }
+            try? FileManager.default.removeItem(atPath: d)
+        }
+        // zsh without rc files (nor history): nothing of yours runs.
+        let shell = EmbeddedTerminal.Tab(kind: .shell, view: DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 400)))
+        shell.view.startProcess(executable: "/bin/zsh", args: ["-f"], environment: ["HOME=\(d)", "PATH=/usr/bin:/bin", "TERM=xterm-256color"], currentDirectory: d)
+        shell.started = "zsh"
+        defer { shell.view.process.terminate() }
+        for _ in 0..<3000 where !shell.isAtPrompt { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(shell.origin.server == nil && !shell.origin.unsure, "the shell itself: this Mac's")
+        for (to, expected) in [("prodweb.invalid", web.target.asUser), ("dbprod", db.target.asUser), ("devbox.invalid", nil)] {
+            shell.view.send(txt: "ssh -F /dev/null -o BatchMode=yes -o ProxyCommand='sleep 30' \(to)\r")
+            for _ in 0..<3000 where shell.foreground != "ssh" { try await Task.sleep(for: .milliseconds(10)) }
+            #expect(shell.origin.server == expected && shell.origin.unsure, "\(to): \(String(describing: shell.origin))")
+            shell.view.send(txt: "\u{3}")   // ⌃C
+            for _ in 0..<3000 where shell.isRunning && !shell.isAtPrompt { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        // An alias only ~/.ssh/config knows (here a stand-in for `ssh -G`): this Mac's as written, production's once learned.
+        let alias = "p-" + UUID().uuidString.prefix(8).lowercased(), was = ServerLock.sshG
+        ServerLock.sshG = { t in "user deploy\nhostname \(t.host == alias || t.host == "198.51.100.7" ? "198.51.100.7" : t.host)\nport 22\n" }
+        defer { ServerLock.sshG = was }
+        shell.view.send(txt: "ssh -F /dev/null -o BatchMode=yes -o ProxyCommand='sleep 30' \(alias)\r")
+        for _ in 0..<3000 where shell.foreground != "ssh" { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(shell.origin.server == nil, "not learned yet: as written")
+        let learned = await shell.learnedOrigin().server
+        #expect(learned.map(SavedServer.isProd) == true, "\(String(describing: learned))")
+        shell.view.send(txt: "\u{3}")
+    }
+}
+
+/// Task 23 PR 6: ⌥-click on a command's line gives the chat that command and its output — while the AI is set up; on
+/// its output, or with no AI, the click is SwiftTerm's. A selection made tells the app; the Add to Chat button by it
+/// goes with a key. A process's arguments, as `ssh prod` typed in a local tab is read.
+@MainActor @Test func aCommandOptionClickedGoesToTheChatWithItsOutput() async throws {
+    _ = NSApplication.shared
+    let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+    let v = DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
+    w.contentView!.addSubview(v)
+    v.pasteboard = NSPasteboard(name: .init("dfm-t23o-" + UUID().uuidString))
+    var got: [String] = [], ready = false
+    (v.onCommandClick, v.chatReady) = ({ got.append($0) }, { ready })
+    let key = { (c: String, code: UInt16) in
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+                         characters: c, charactersIgnoringModifiers: c, isARepeat: false, keyCode: code)!
+    }
+    v.feed(text: "$ ")
+    for (cmd, out) in [("ls", ["a", "b"]), ("df", ["x"])] {   // rows: 0 "$ ls", 1 a, 2 b, 3 "$ df", 4 x, 5 "$ "
+        v.feed(text: cmd)
+        v.typed(key("\r", 36))
+        v.feed(text: "\r\n" + out.map { $0 + "\r\n" }.joined() + "$ ")
+    }
+    let cell = v.caretFrame.size
+    func click(_ row: Int) {
+        let p = NSPoint(x: cell.width * 1.5, y: v.frame.height - (CGFloat(row) + 0.5) * cell.height)
+        let e = { (t: NSEvent.EventType) in
+            NSEvent.mouseEvent(with: t, location: p, modifierFlags: .option, timestamp: 0, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)!
+        }
+        v.mouseDown(with: e(.leftMouseDown))
+        v.mouseUp(with: e(.leftMouseUp))
+    }
+    click(0)
+    #expect(got.isEmpty, "no AI: SwiftTerm's click")
+    ready = true
+    for row in [0, 3, 1] { click(row) }
+    #expect(got == ["$ ls\na\nb", "$ df\nx"], "\(got)")
+    #expect(v.commandWithOutput() == "$ df\nx")
+
+    DropTerminalView.leftButtonDown = { false }   // the real one may be held; never put back (Task13TerminalMouseTests)
+    var told = 0
+    v.onSelect = { told += 1 }
+    v.selectAll()
+    await drained()
+    #expect(told == 1, "\(told)")
+    v.showChatButton("Add to Chat") {}
+    #expect(v.chatButton != nil)
+    v.typed(key("x", 7))
+    #expect(v.chatButton?.superview == nil)
+    v.selectNone()
+    v.showChatButton("Add to Chat") {}
+    #expect(v.chatButton?.superview == nil, "no selection: no button")
+
+    let me = try #require(EmbeddedTerminal.Tab.arguments(of: getpid()))
+    #expect(me.first == CommandLine.arguments.first && me.count == CommandLine.arguments.count, "\(me)")
 }

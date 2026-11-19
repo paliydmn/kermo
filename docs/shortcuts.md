@@ -110,6 +110,8 @@ Keys are written as on the Mac's menus: ⌃ Control, ⌥ Option, ⇧ Shift, ⌘ 
 | The Tools window (on the active panel's server); in it, a server's tab N | ⌃⌘T; ⌘1…⌘9 |
 | Monitor: the Tools window on the watched servers, problems first | ⌃⌘M |
 | The [AI chat](ai.md#the-chat): show it and go to it; from it, hide it | ⌃⌘I |
+| [Add to Chat](ai.md#whats-selected-into-the-chat): what is selected — in the terminal (else its last command with the output), the editor (else its document), a panel's marked files (else the one under the cursor) | ⇧⌘I |
+| Terminal: a command and its output to the AI chat | ⌥-click its line |
 | In the AI chat: send / a new line / stop the answer | ↩ / ⇧↩ / ⎋ |
 | A dashboard table's row: its menu / its ↩ action (a double-click too) / copy it as shown | ⌃↩ or ⇧F10 / ↩ / ⌘C |
 | A dashboard chart, once clicked: the sample before, after / a minute (an hour on 24h and 7d) / Log for This Time / Focus / a step back — the series list, the stretch, Focus, Back to Live | ← → / ⇧← ⇧→ / ↩ / F / ⎋ |

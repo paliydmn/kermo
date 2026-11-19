@@ -280,7 +280,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
               selection, lines 3–4:
             KEY=1
             B=2
-            Terminal: a tab opened as web-01 — who is logged in there now isn't known
+            Terminal: a tab on web-01 as far as Kermo can tell — who is logged in there now isn't known
               last command line: $ tail log
               selection:
             error 42
@@ -292,7 +292,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             Other panel: a tab of db-01 at /srv, not connected
             Editor: db-01 /srv/app.env (unsaved changes)
               selection, lines 3–4: not in this chat's scope
-            Terminal: a tab opened as web-01 — who is logged in there now isn't known
+            Terminal: a tab on web-01 as far as Kermo can tell — who is logged in there now isn't known
               its text: not in this chat's scope
             """, "\(none)")
     }
@@ -765,5 +765,24 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         app.defaults.set(false, forKey: "aiMCP")
         AIAgents.apply(app)
         #expect(app.agents == nil && AIAgents.socket == nil && lstat(path, &st) != 0 && !scope())
+    }
+
+    /// Task 23 PR 6: terminal_output of a tab whose title names a production server — the user hopped there — is
+    /// refused: its text may be that server's, and the chat was allowed to read the tab's own.
+    @Test func aTabThatMayBeProductionsIsntReadAsAnother() async throws {
+        let (s, dir, _, answer) = try await aiAnswering()
+        defer { aiTearDown(s, dir) }
+        var prod = SavedServer(target: SFTPTarget(host: "prodbox.invalid"))
+        (prod.name, prod.prod) = ("prodbox", true)
+        let box = ServerLock.servers()
+        ServerLock.servers = { box + [prod] }
+        s.app.terminal.restore([.local(port: 2)])   // the box's SSH tab, not connected: no process
+        let tab = try #require(s.app.terminal.current)
+        answer([0])   // let it read on box
+        var r = await s.call("terminal_output", ["server": "box"])
+        #expect(r.isError && r.text.contains("Nothing to read there"), "\(r.text)")
+        tab.title = "deploy@prodbox: ~"
+        r = await s.call("terminal_output", ["server": "box"])
+        #expect(r.isError && r.text.contains("may be from prodbox, a production server"), "\(r.text)")
     }
 }

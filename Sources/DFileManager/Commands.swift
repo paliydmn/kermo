@@ -204,6 +204,7 @@ extension AppDelegate {
             on: { $0.sidebarShown }) { $0.toggleSidebar() },
         cmd("ai.chat", "AI Chat", ["ctrl+cmd+i"], menu: "View", group: 1, short: "AI", aliases: "ai assistant chat ask claude model llm Show AI Chat",
             on: { $0.aiChatShown }) { $0.toggleAIChat() },
+        cmd("ai.add", "Add to Chat", ["cmd+shift+i"], menu: "View", group: 1, short: "To Chat", aliases: "ai selection selected attach context ask chip") { $0.addToChat() },
         cmd("view.sidebarFocus", "Focus Sidebar", ["ctrl+shift+s"], menu: "View/Panels", group: 3, aliases: "places keyboard") { $0.focusSidebar() },
         cmd("view.hidden", "Hidden Files", ["cmd+shift+."], menu: "View", group: 3, short: "Hidden Files", aliases: "dotfiles show hidden files Show Hidden Files",
             on: { $0.defaults.bool(forKey: "showHidden") }) { $0.toggleHidden() },
@@ -236,6 +237,9 @@ extension AppDelegate {
         },
         cmd("term.output.copy", "Copy Output of Last Command", [], menu: "View/Terminal Pane", group: 1, short: "Copy Output", aliases: "terminal last command result clipboard") {
             $0.terminal.copyOutput()
+        },
+        cmd("term.output.chat", "Add Command and Output to Chat", [], menu: "View/Terminal Pane", group: 1, aliases: "ai terminal last command result attach ask") {
+            $0.addCommandToChat()
         },
         cmd("term.mark.prev", "Previous Mark", [], menu: "View/Terminal Pane", group: 2, short: "Prev Mark", aliases: "terminal command prompt jump scroll") { $0.terminal.goToMark(by: -1) },
         cmd("term.mark.next", "Next Mark", [], menu: "View/Terminal Pane", group: 2, aliases: "terminal command prompt jump scroll") { $0.terminal.goToMark(by: 1) },
@@ -687,7 +691,7 @@ extension AppDelegate {
                              selection: sel.length > 0 ? (line(sel.location)...line(NSMaxRange(sel) - 1), text.substring(with: sel)) : nil)
         }
         if terminal?.isShown == true, let t = terminal.current {
-            c.terminal = .init(server: t.target, command: t.view.marks.last?.text, selection: t.view.getSelection().flatMap { $0.isEmpty ? nil : $0 })
+            c.terminal = .init(server: t.origin.server, command: t.view.marks.last?.text, selection: t.view.getSelection().flatMap { $0.isEmpty ? nil : $0 })
         }
         return c
     }
