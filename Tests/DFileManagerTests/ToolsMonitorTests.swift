@@ -517,7 +517,12 @@ extension ServerLockTests {
         let (app, _, _, done) = try toolsApp()
         let bench = try ToolsBench(), quick = Quick(app)
         UserDefaults.standard.removeObject(forKey: "toolsTableHeights")   // an earlier run's drag
-        defer { quick.done(); bench.done(); done(); app.savedServers = []; UserDefaults.standard.removeObject(forKey: "toolsTableHeights") }
+        let hints = UserDefaults.standard.object(forKey: "aiHints")
+        UserDefaults.standard.set(false, forKey: "aiHints")   // no ✨ by the events, whatever key this Mac's Keychain has
+        defer {
+            quick.done(); bench.done(); done(); app.savedServers = []; UserDefaults.standard.removeObject(forKey: "toolsTableHeights")
+            if let hints { UserDefaults.standard.set(hints, forKey: "aiHints") } else { UserDefaults.standard.removeObject(forKey: "aiHints") }
+        }
         try await watching(app, bench)
         bench.flag("hot-localhost")
         ToolsWindow.show(app, server: .local())
