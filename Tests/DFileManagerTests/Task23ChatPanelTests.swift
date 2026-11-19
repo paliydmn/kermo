@@ -773,5 +773,9 @@ extension EditorWindowTests {   // the editor window is the app's one; `UserDefa
         for _ in 0..<250 where Editor.editing(user.asRoot(), "/etc/x.conf") == nil { try await Task.sleep(for: .milliseconds(20)) }
         #expect(Editor.editing(user.asRoot(), "/etc/x.conf") != nil && Editor.document(at: copy) != nil)
         #expect(EditCard.tab(user, "/etc/x.conf") == nil && EditCard.tab(nil, copy) == nil && EditCard.tab(nil, conf) === doc)
+        let byPath = EditCard(AIEdit.Proposal(base: "x\n", proposed: "y\n"), on: nil, path: copy, app: app)
+        click(try #require(views(byPath, NSButton.self).first { $0.title == "Apply to Editor" }))   // `Editor.open` finds that tab by the path
+        for _ in 0..<100 where !views(byPath, NSTextField.self).contains(where: { $0.stringValue.contains("another file's copy") }) { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(views(byPath, NSTextField.self).contains { $0.stringValue.contains("another file's copy") } && Editor.editing(user.asRoot(), "/etc/x.conf")?.storage.string == "x\n")
     }
 }

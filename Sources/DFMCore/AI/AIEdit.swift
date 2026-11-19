@@ -17,8 +17,9 @@ public enum AIEdit {
 
         public init(base: String, proposed: String, hiddenOld: [NSRange], hiddenNew: [NSRange]) {
             (self.base, self.proposed, self.hiddenOld, self.hiddenNew) = (base, proposed, hiddenOld, hiddenNew)
-            // A block's lines put back must give the proposed text: past a lone CR or U+2028 at a block's edge they don't.
-            diff = TextDiff.compare(base, proposed).flatMap { d in
+            // Blocks put back as lines with LF or CRLF only: past a lone CR, U+2028 or NEL a block's last line may go.
+            let odd = { (t: String) in (t as NSString).range(of: "\r(?!\n)|[\u{2028}\u{2029}\u{85}]", options: .regularExpression).location != NSNotFound }
+            diff = odd(base) || odd(proposed) ? nil : TextDiff.compare(base, proposed).flatMap { d in
                 !d.blocks.isEmpty && (AIEdit.carry(base, proposed, d, d.blocks.map { _ in true }) as NSString).isEqual(to: proposed) ? d : nil
             }
         }
@@ -41,14 +42,15 @@ public enum AIEdit {
     }
 
     /// `edits` made in order on `text` (`name` says which file), and the proposal. Each `old` is found as the model saw
-    /// the file: a match inside a hidden value isn't one — so the words never tell a guessed secret right — and the
-    /// one match mustn't touch a hidden value either (`password=` → `password=x` would change it unseen). The base's
-    /// hidden values are found once and followed through each edit: one whose name the edits change so that it
-    /// wouldn't be hidden any more is refused too. Its work (a diff, the patterns) is for a thread of its own.
+    /// the file: a match inside a hidden value isn't one — so the words never tell a guessed secret right. The one
+    /// match mustn't touch what hides a value — the value, its key and `=` (`AISecrets.found`) — and right beside it
+    /// must leave the character next to it as it is: what decides whether a value is hidden is then never changed,
+    /// and no answer depends on what the value is. The base's values are followed through each edit (the card shows
+    /// them as •••). Its work (a diff, the patterns) is for a thread of its own.
     public static func propose(_ edits: [(old: String, new: String)], to text: String, in name: String) -> Result<Proposal, Refused> {
         guard !edits.isEmpty else { return .failure(Refused(words: "propose_edit needs at least one edit.")) }
-        let base = AISecrets.ranges(text)
-        var out = text, hidden = base
+        let base = AISecrets.found(text)
+        var out = text, hidden = base.hidden, whole = base.whole
         let lf = !(text as NSString).contains("\r\n")   // the model read the file's CRLF; the editor's text has LF then
         for (i, e) in edits.enumerated() {
             let which = edits.count > 1 ? "Edit \(i + 1): " : ""
@@ -75,19 +77,33 @@ public enum AIEdit {
                 return no(found.isEmpty ? "old_text isn't in \(name). It has to match exactly: spaces and line ends too."
                           : "old_text is in \(name) \(found.count) times. Give more of the text around it, so that it is there once.")
             }
-            let r = found[0], shift = (new as NSString).length - r.length
-            guard !hidden.contains(where: { $0.location <= NSMaxRange(r) && r.location <= NSMaxRange($0) }) else {
-                return no("old_text ends or starts right at a value Kermo hid (•••): the change would run into it. Edit around it — whole lines before or after.")
+            let r = found[0], n = new as NSString, shift = n.length - r.length
+            // Right beside a match, the character next to it as it was (`\b`, a lookbehind, a value's end go by it).
+            func keeps(_ w: NSRange) -> Bool {
+                if NSMaxRange(r) == w.location {
+                    let next: unichar? = n.length > 0 ? n.character(at: n.length - 1) : r.location > 0 ? s.character(at: r.location - 1) : nil
+                    return next == s.character(at: NSMaxRange(r) - 1)
+                }
+                if r.location == NSMaxRange(w) {
+                    let next: unichar? = n.length > 0 ? n.character(at: 0) : NSMaxRange(r) < s.length ? s.character(at: NSMaxRange(r)) : nil
+                    return next == s.character(at: r.location)
+                }
+                return true
+            }
+            guard !whole.contains(where: { NSIntersectionRange($0, r).length > 0 || !keeps($0) }) else {
+                return no("old_text is on or right at a value Kermo hid (•••), or its name: the change would run into it. Edit around it — the lines before or after, line ends as they are.")
             }
             out = s.replacingCharacters(in: r, with: new)
-            hidden = hidden.map { $0.location >= NSMaxRange(r) ? NSRange(location: $0.location + shift, length: $0.length) : $0 }   // none overlaps r
+            func moved(_ rs: [NSRange]) -> [NSRange] { rs.map { $0.location >= NSMaxRange(r) ? NSRange(location: $0.location + shift, length: $0.length) : $0 } }   // none overlaps r
+            (hidden, whole) = (moved(hidden), moved(whole))
         }
         guard !(out as NSString).isEqual(to: text) else { return .failure(Refused(words: "The edits change nothing.")) }
+        // What hid each value is as it was, so it still is: checked all the same.
         let now = AISecrets.ranges(out)
         guard hidden.allSatisfy({ h in now.contains { $0.location <= h.location && NSMaxRange(h) <= NSMaxRange($0) } }) else {
-            return .failure(Refused(words: "The change would show a value Kermo hid (•••): leave the name in front of it as it is."))
+            return .failure(Refused(words: "The change would show a value Kermo hid (•••). Edit around it."))
         }
-        return .success(Proposal(base: text, proposed: out, hiddenOld: base, hiddenNew: hidden))
+        return .success(Proposal(base: text, proposed: out, hiddenOld: base.hidden, hiddenNew: hidden))
     }
 
     /// The base with the blocks `keep` says (in the diff's order) as proposed, the rest as they are. All kept: the

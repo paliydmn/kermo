@@ -32,7 +32,7 @@ final class EditCard: NSStackView {
         if small {
             for (i, b) in blocks.enumerated() { views += hunk(i, b) }
         } else {
-            views.append(Self.line(p.diff == nil ? "Too different to show here." : "\(p.changedLines) changed lines — too many to show here.", .secondaryLabelColor))
+            views.append(Self.line(p.diff == nil ? "This change can't be shown here piece by piece: it's too different, or its line ends are." : "\(p.changedLines) changed lines — too many to show here.", .secondaryLabelColor))
         }
         let compare = AIPanel.button("Open in Compare") { [weak self] in self?.document { self?.compare($0) } }
         compare.toolTip = "The proposal beside the file: Copy Change takes the parts you want"
@@ -149,28 +149,40 @@ final class EditCard: NSStackView {
     /// The editor tab of a file as the AI names it: a server's as its user (a root tab's text isn't the user's to
     /// read, nor to change from the chat), this Mac's by its path — not a server file's copy on this Mac.
     static func tab(_ t: SFTPTarget?, _ path: String) -> Editor? {
-        if let t { return Editor.editing(t, path) }
+        if let t { return Editor.tab(onServer: t, path, root: false) }
         return Editor.document(at: path).flatMap { $0.server == nil && $0.snapshot == nil ? $0 : nil }
     }
 
-    /// The file's tab: open already, or opened now — a server's after its gate (Touch ID for a locked one).
+    /// The file's tab: open already, or opened now — a server's after its gate (Touch ID for a locked one). One from
+    /// the last launch not connected yet is opened (its gate too) for the next click. The buttons wait meanwhile.
     private func document(_ then: @escaping @MainActor (Editor) -> Void) {
-        if let e = Self.tab(server, path) { return then(e) }
-        guard let t = server else { return Editor.open(URL(fileURLWithPath: path), then: then) }
+        let done: @MainActor (Editor) -> Void = { [weak self] e in self?.waiting(false); then(e) }
+        waiting(true)
+        if let e = Self.tab(server, path) {
+            guard e.cover == .parked || e.cover == .locked else { return done(e) }
+            e.revealed()
+            e.connect()
+            waiting(false)
+            return say("“\(name)” wasn't open — try again once it shows.", error: true)
+        }
+        guard let t = server else { return Editor.open(URL(fileURLWithPath: path), then: done) }
         Task {
-            guard case .pass = await app.gate([t], to: "open a file on") else { return say("\(AISession.label(t)) stays locked: nothing was opened.", error: true) }
-            app.remoteOpen(.edit, t, path, in: app.panels.first { $0.remote?.target.asUser == t } ?? app.active, then: then)
+            guard case .pass = await app.gate([t], to: "open a file on") else {
+                waiting(false)
+                return say("\(AISession.label(t)) stays locked: nothing was opened.", error: true)
+            }
+            app.remoteOpen(.edit, t, path, in: app.panels.first { $0.remote?.target.asUser == t } ?? app.active, then: done)
         }
     }
 
+    private func waiting(_ on: Bool) { buttons.forEach { $0.isEnabled = !on && !applied } }
+
     /// Why `e` can't take the change now, in words; nil: it can. Only the text the change was made on.
     private func refusal(_ e: Editor) -> String? {
+        // What `Editor.open` found by the path: a server file's copy on this Mac, or a root tab — not this card's.
+        if server == nil ? e.server != nil : e.server?.target.sudo != false { return "“\(name)” is open in the editor as another file's copy: close it, then try again." }
         switch e.cover {
-        case .parked?, .locked?:   // a tab from the last launch: opened (a locked server asks for Touch ID) for the next click
-            e.revealed()
-            e.connect()
-            return "“\(name)” is opening — try again once it shows."
-        case .loading?: return "“\(name)” is still opening — try again once it shows."
+        case .parked?, .locked?, .loading?: return "“\(name)” isn't open yet — try again once it shows."
         case .unreadable?: return "“\(name)”'s tab couldn't be read: close it, then try again."
         case nil: break
         }

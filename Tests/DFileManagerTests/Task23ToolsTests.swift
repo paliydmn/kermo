@@ -584,7 +584,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             }
             s.proposes = nil
             var r = await edit([("b = 2", "b = 3\nd = 4")])
-            #expect(!r.isError && r.text.contains("1 change from line 2. Nothing is saved."), "\(server): \(r.text)")
+            #expect(!r.isError && r.text == "The change fits \(conf). Nothing is saved.", "\(server): \(r.text)")
             r = await edit([("= 1", "= 9")])
             #expect(r.isError && r.text.contains("2 times"), "\(server): \(r.text)")
             r = await edit([("z = 0", "z = 1")])
@@ -596,7 +596,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             var shown: [(AIEdit.Proposal, SFTPTarget?, String)] = []
             s.proposes = { shown.append(($0, $1, $2)) }
             r = await edit([("a = 1\n", ""), ("c = 1", "c = 2")])
-            #expect(!r.isError && r.text.contains("Shown to the user as a diff") && r.text.contains("2 changes from line 1"), "\(server): \(r.text)")
+            #expect(!r.isError && r.text.contains("Shown to the user as a diff of \(conf).") && !r.text.contains("line"), "\(server): nothing of the diff: \(r.text)")
             #expect(shown.count == 1 && shown[0].0.base == "a = 1\nb = 2\nc = 1\n" && shown[0].0.proposed == "b = 2\nc = 2\n" && shown[0].2 == conf)
             #expect((shown.first?.1 == nil) == (server == "mac"))
             #expect(FileManager.default.contents(atPath: conf) == bytes && (try? FileManager.default.attributesOfItem(atPath: conf)[.modificationDate] as? Date) == stamp)

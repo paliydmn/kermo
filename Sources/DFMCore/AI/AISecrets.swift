@@ -13,30 +13,31 @@ public enum AISecrets {
     /// - the value after a key naming a password, secret, token or key (`DB_PASSWORD=…`, `"api_key": "…"`, YAML);
     /// - tokens known by their shape (`sk-…`, GitHub, AWS key ids, Slack) and crypt hashes (`$6$…`).
     public static func mask(_ text: String) -> (text: String, hidden: Int) {
-        let out = NSMutableString(string: text)
-        var hidden = 0
-        for (re, keep) in patterns {
-            for m in re.matches(in: out as String, range: NSRange(location: 0, length: out.length)).reversed() {
-                let secret = keep ? m.range(at: 2) : m.range
-                guard secret.length > 0 else { continue }
-                out.replaceCharacters(in: secret, with: "•••")
-                hidden += 1
+        let hidden = ranges(text), out = NSMutableString(string: text)
+        for r in hidden.reversed() { out.replaceCharacters(in: r, with: "•••") }
+        return (out as String, hidden.count)
+    }
+
+    /// What `mask` hides in `text`, in its UTF-16, in order — the one place it is found, so what a model reads and
+    /// what `propose_edit` keeps it from changing are the same.
+    public static func ranges(_ text: String) -> [NSRange] { found(text).hidden }
+
+    /// Every pattern on the text as it is; what they hide, overlapping or touching ones as one; and each match whole —
+    /// a key and its `=` with the value: an edit touching that could change what is hidden, or whether it is.
+    public static func found(_ text: String) -> (hidden: [NSRange], whole: [NSRange]) {
+        let all = NSRange(location: 0, length: (text as NSString).length)
+        let matches = patterns.flatMap { re, keep in re.matches(in: text, range: all).map { (keep ? $0.range(at: 2) : $0.range, $0.range) } }.filter { $0.0.length > 0 }
+        func merged(_ rs: [NSRange]) -> [NSRange] {
+            rs.sorted { $0.location < $1.location }.reduce(into: []) { out, r in
+                if let last = out.last, r.location <= NSMaxRange(last) { out[out.count - 1] = NSUnionRange(last, r) } else { out.append(r) }
             }
         }
-        return (out as String, hidden)
+        return (merged(matches.map(\.0)), merged(matches.map(\.1)))
     }
 
-    /// Where `mask` would hide something in `text`, in its UTF-16: each pattern on the text as it is, so a value two
-    /// patterns see differently is covered by both. `mask` runs each on what the ones before left, so a match only
-    /// that makes (a URL's password after a PEM key in its user part) isn't here.
-    public static func ranges(_ text: String) -> [NSRange] {
-        let all = NSRange(location: 0, length: (text as NSString).length)
-        return patterns.flatMap { re, keep in re.matches(in: text, range: all).map { keep ? $0.range(at: 2) : $0.range } }.filter { $0.length > 0 }
-    }
-
-    /// In order — a key's value after `Bearer`: `token: Bearer x` loses `x` and the word before it (counted twice).
-    /// `keep`: only group 2 is the secret. Lookbehinds, not `\b`, where a run of name characters comes first: `\b`
-    /// starts again inside the run, which is quadratic on a long token.
+    /// A key's value after `Bearer`: `token: Bearer x` loses `x` and the word before it (counted twice). `keep`: only
+    /// group 2 is the secret. Lookbehinds, not `\b`, where a run of name characters comes first: `\b` starts again
+    /// inside the run, which is quadratic on a long token.
     private static let patterns: [(NSRegularExpression, keep: Bool)] = [
         (#"-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----|\z)"#, false),
         (#"(?i)(\bBearer\s+|\bAuthorization:\s*Basic\s+)([A-Za-z0-9._~+/=-]{12,})"#, true),

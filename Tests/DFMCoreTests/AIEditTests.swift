@@ -33,16 +33,20 @@ private func words(_ r: Result<String, AIEdit.Refused>) -> String { if case .fai
     // A guess inside it is no match — the same words as any miss, so they never tell a guess right.
     #expect(words(edit(conf, [(key, "x")])) == words(edit(conf, [("nothing-like-it", "x")])))
     #expect(words(edit(conf, [("=\(key)\nport", "=x\nport")])).contains("isn't in"))
-    // Right beside it: the change would run into it.
+    // On its name, or right beside it changing the character next to it: the change would run into it.
     #expect(words(edit(conf, [("pass" + "word=", "pass" + "word=x")])).contains("right at a value Kermo hid"))
-    #expect(words(edit(conf, [("\nport=80", "\nport=81")])).contains("right at a value Kermo hid"), "starting right after it")
-    // Around it is fine: whole lines before and after.
-    #expect((try? edit(conf, [("user=bob\n", "user=al\n"), ("port=80", "port=81")]).get()) == "user=al\npass" + "word=\(key)\nport=81\n")
-    // Its name changed so that it wouldn't be hidden any more: refused — and a guess after the rename is still no match.
-    let db = "DB_PASS" + "WORD=\(key)\nport=80\n"
-    #expect(words(edit(db, [("DB_PASS" + "WORD", "DB_X")])).contains("would show a value Kermo hid"))
-    #expect(words(edit(db, [("DB_PASS" + "WORD", "DB_X"), ("=\(key)", "=mine")])) == words(edit(db, [("DB_PASS" + "WORD", "DB_X"), ("=nope", "=mine")])))
-    #expect((try? edit(db, [("DB_PASS" + "WORD", "DB_PASS" + "WORD_OLD")]).get()) != nil, "still hidden: fine")
+    #expect(words(edit(conf, [("\nport=80", "port=81")])).contains("right at a value Kermo hid"), "joined to its line")
+    #expect(words(edit(conf, [("bob\n", "bob")])).contains("right at a value Kermo hid"), "its line joined to the one before")
+    // Around it is fine: whole lines before and after, their line ends as they are.
+    #expect((try? edit(conf, [("user=bob\n", "user=al\n"), ("\nport=80", "\nport=81")]).get()) == "user=al\npass" + "word=\(key)\nport=81\n")
+    // Its name isn't the model's to change, whatever the value is: the words never depend on it.
+    let db = "DB_PASS" + "WORD=\(key)\nport=80\n", other = "DB_PASS" + "WORD=x!y\nport=80\n"
+    for e in [("DB_PASS" + "WORD", "DB_X"), ("DB_PASS" + "WORD", "DB_PASS" + "WORD_OLD"), ("DB_PASS" + "WORD", "Bearer aaaa"), ("DB_PASS" + "WORD", "Bearer abcdefghijkl")] {
+        #expect(words(edit(db, [e])).contains("right at a value Kermo hid") && words(edit(db, [e])) == words(edit(other, [e])), "\(e)")
+    }
+    // Text put elsewhere that makes more of it hidden: fine, and `mask` hides it all afterwards.
+    let hid = try? edit("# db\nx_tok" + "en=hunter!2\n", [("# db", "# db Bearer")]).get()
+    #expect(hid.map { AISecrets.mask($0).text } == "# db Bearer\n•••\n")
     // A secret written by the model is its own: the card shows it to the user; the base's stays •••.
     let p = try? AIEdit.propose([(old: "port=80", new: "api_" + "key=abc123")], to: db, in: "x").get()
     #expect(p?.proposed == "DB_PASS" + "WORD=\(key)\napi_" + "key=abc123\n" && p?.hiddenNew == [NSRange(location: 12, length: key.count)] && p?.hiddenOld == p?.hiddenNew)
@@ -54,12 +58,11 @@ private func words(_ r: Result<String, AIEdit.Refused>) -> String { if case .fai
         ("one\ntwo", "zero\none\ntwo\nthree"),   // no final newline, added at both ends
         ("x\ny\n", "x\n"), ("x\ny", "x\ny\n"), ("x\ny\n", "x\ny"),   // the last line, the final newline
         ("😀 a\nb\n", "😁 a\nb\n"), ("e\u{301}\nz\n", "e\u{300}\nz\n"),   // a cut never inside a character
-        ("p\rq\nr\n", "p\rQ\nr\n"),
         ("", "new\n"),
     ]
     // Line ends the blocks can't carry (a lone CR or U+2028 at a block's edge), a change of line ends only: no card,
     // Compare only.
-    for (base, new) in [("a\r", "a\rb"), ("a\rb", "a\r"), ("a\u{2028}b", "a\u{2028}"), ("a\rb", "a\nb")] {
+    for (base, new) in [("a\r", "a\rb"), ("a\rb", "a\r"), ("a\u{2028}b", "a\u{2028}"), ("a\rb", "a\nb"), ("p\rq\nr\n", "p\rQ\nr\n"), ("b\na\nb\r\rx", "a\n")] {
         let p = AIEdit.Proposal(base: base, proposed: new)
         #expect(p.diff == nil && p.changedLines > AIEdit.cardLines && AIEdit.kept(p, []) == base, "\(base.debugDescription) → \(new.debugDescription)")
     }
@@ -100,6 +103,7 @@ private func words(_ r: Result<String, AIEdit.Refused>) -> String { if case .fai
         }
     }
     #expect(AISecrets.ranges("port=80\nuser=bob").isEmpty)
+    for t in texts { #expect(AISecrets.mask(t).hidden == AISecrets.ranges(t).count, "one source: \(t)") }
 }
 
 @Test func proposeEditTakesAListOfEdits() throws {

@@ -72,8 +72,9 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// The open editor of that server's file, if any.
     static func editing(_ t: SFTPTarget, _ path: String) -> Editor? { open.first { $0.server?.target == t && $0.server?.path == path } }
     /// The same, its user's or root's (a root panel's rename of a file a user's tab has open): the tab that follows it.
-    static func tab(onServer t: SFTPTarget, _ path: String) -> Editor? {
-        open.first { $0.server.map { ServerRow.key($0.target.asUser) == ServerRow.key(t.asUser) && $0.path == path } == true }
+    /// `root`: only a root tab, or only a user's.
+    static func tab(onServer t: SFTPTarget, _ path: String, root: Bool? = nil) -> Editor? {
+        open.first { e in e.server.map { s in ServerRow.key(s.target.asUser) == ServerRow.key(t.asUser) && s.path == path && (root.map { s.target.sudo == $0 } ?? true) } == true }
     }
     /// The root write behind Save as Administrator (tests swap it: the real one shows the password dialog).
     static var runAsAdmin: (String) async -> Admin.Outcome = Admin.run
