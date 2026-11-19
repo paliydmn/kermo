@@ -250,7 +250,7 @@ extension AppDelegate {
             if let first, await confirm(first, on: window) != 0 { return .notRun("cancelled") }
             return await ranThere(command, on: target, action: action, busy: busy.dropLast() + " \(name) on \(server)…",
                                   ask: first == nil ? ask : nil, askOn: window, in: panel, running: running)
-        }, read: read, show: { $0.update(row($1)) }, say: say)
+        }, read: read, show: { $0.update(row($1)) }, say: say, explain: true)
     }
 
     /// A change of one row — a service, a container, a Tools action — the list staying open; `serviceRuns[id]` is ""
@@ -259,12 +259,14 @@ extension AppDelegate {
     /// (`read`; nil: nothing to read) into each list showing the row (`show`, nil: as it was), and the line under the
     /// list says how it went (`say`) until the next one, a failure's output a click away. The list is a Picker's or a
     /// panel's (`rowLists`), both if both show it. One closed meanwhile: the status line says it, or a failure's alert,
-    /// as `runThere`'s. `shown`: the command, as those name it (once it ran: a form may have filled it in).
+    /// as `runThere`'s. `shown`: the command, as those name it (once it ran: a form may have filled it in). `explain`:
+    /// ✨ Explain by a failure's line (a service's, a container's — not a tool's, whose output may hold what a form took).
     func changeRow<S: Sendable>(id: String, shown: @escaping @MainActor () -> String, on target: SFTPTarget, busy: String, name: String, server: String,
                                 run: @escaping @MainActor (_ window: NSWindow?, PanelViewController, _ running: @escaping @MainActor () -> Void) async -> RanThere,
                                 read: (@Sendable ([String: String], CancelFlag) throws -> S)?,
                                 show: @escaping @MainActor (any RowList, S?) -> Void,
-                                say: @escaping @MainActor (Services.Ran, S?, String?, String) -> (outcome: Services.Outcome, line: String)) async {
+                                say: @escaping @MainActor (Services.Ran, S?, String?, String) -> (outcome: Services.Outcome, line: String),
+                                explain: Bool = false) async {
         let panel = panel(for: target), list = rowLists(id).first
         let go: () async -> (RanThere, Result<S, Error>?) = { [unowned self] in
             let ran = await run(list?.sheetWindow, panel) { [unowned self] in
@@ -294,7 +296,12 @@ extension AppDelegate {
             _ = await sayRan(ran, command, on: target, done: said.line, in: panel)
             return
         }
-        let full = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let full = output.trimmingCharacters(in: .whitespacesAndNewlines), failed = said.outcome == .failed || said.outcome == .warning
+        // ⎋ — on the change or on the look after it — or never run: nothing failed there.
+        let stopped = stateError == "stopped" || { if case .unknown = how { true } else if case .notRun = how { true } else { false } }()
+        let why: (@MainActor () -> Void)? = explain && failed && !stopped && explains ? { @MainActor [unowned self] in
+            self.explain([AIPanel.failure(command, on: target, "$ \(command)\n" + (full.isEmpty ? "" : full + "\n") + said.line)])
+        } : nil
         for list in lists {
             show(list, state)
             var output: (@MainActor () -> Void)?
@@ -304,7 +311,7 @@ extension AppDelegate {
                     Task { await list.holding { _ = await choose("“\(command)” on \(server)", info: String(full.suffix(4000)), ["OK"], on: list.sheetWindow) } }
                 }
             }
-            list.said(Self.result(said), about: id, failed: said.outcome == .failed || said.outcome == .warning, output: output)
+            list.said(Self.result(said), about: id, failed: failed, output: output, explain: why)
         }
     }
 

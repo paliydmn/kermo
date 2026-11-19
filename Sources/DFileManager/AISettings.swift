@@ -34,6 +34,7 @@ enum AISettings {
         testing?.cancel()
         (testing, tested) = (nil, "")
         if forget { models = [] }
+        (NSApp?.delegate as? AppDelegate)?.aiChanged()   // a key now, or none: the terminal watches for ✨ or stops
         SettingsWindow.refreshShown()
     }
 
@@ -83,6 +84,10 @@ enum AISettings {
 
     /// Settings › AI's "Never Send": nothing from a production server goes to the AI.
     static func neverProd(_ d: UserDefaults) -> Bool { d.string(forKey: "aiProduction") == "never" }
+
+    /// ✨ Explain shows where something failed: Settings › AI's row on (its word first: no Keychain look when off) and
+    /// the AI set up.
+    static func explains(_ d: UserDefaults) -> Bool { (d.object(forKey: "aiHints") as? Bool ?? true) && ready(d) }
 
     /// nil: removed.
     static func saveKey(_ d: UserDefaults, _ key: String?) {

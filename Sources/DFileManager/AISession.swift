@@ -569,8 +569,10 @@ final class AISession {
             guard let tab = s.app.terminal?.current.flatMap({ mine($0) ? $0 : nil }) ?? tabs.last(where: mine) else {
                 return .failure("No terminal tab of \(s.name(targets[0].place)) is open.")
             }
-            // A local tab where `ssh prod` runs, a tab whose title names a production server: its text may be that server's.
-            if let p = await tab.learnedOrigin().server, SavedServer.isProd(p), !(t.map { ServerLock.same($0, p) } ?? false) {
+            // A local tab where `ssh prod` runs or ran that command, a tab whose title names a production server: its
+            // text may be that server's.
+            let line = tab.view.commandWithOutput().map { String($0.prefix { $0 != "\n" }) }   // the command `output()` reads
+            if let p = await tab.learnedOrigin(ran: line).server, SavedServer.isProd(p), !(t.map { ServerLock.same($0, p) } ?? false) {
                 return .failure("That tab's text may be from \(label(p)), a production server: the user can attach it to the chat themselves.")
             }
             guard let out = tab.view.output(), !out.isEmpty else { return .failure("Nothing to read there: no command printed anything, or a full-screen program is running.") }

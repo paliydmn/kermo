@@ -201,7 +201,7 @@ final class ToolsTool: NSView, RowList {
     func reload(_ c: ListContent, having id: String) {}
     var sheetWindow: NSWindow? { window }
     func holding<T>(_ work: () async -> T) async -> T { await work() }
-    func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?) {
+    func said(_ text: NSAttributedString, about id: String, failed: Bool, output: (@MainActor () -> Void)?, explain: (@MainActor () -> Void)?) {
         said = text.string
         refresh()
     }

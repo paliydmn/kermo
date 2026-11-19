@@ -158,6 +158,9 @@ extension AppDelegate {
                 SettingsRow(title: "Keep chats on this Mac",
                             note: "The last \(AIChatStore.keep), only yours to read, in ~/.config/dfilemanager/ai: what went to the provider, secrets as •••. The chat's 🕘 opens one again",
                             key: "aiKeepChats", control: .toggle(true), apply: { AIPanel.keepChatsChanged($0) }),
+                SettingsRow(title: "✨ Explain when something fails",
+                            note: "By a failed command, config check, service or Monitor alert: a click attaches what failed and asks why — nothing goes until you press ↩",
+                            key: "aiHints", control: .toggle(true), apply: { $0.aiChanged() }),
             ]),
             ("Agents in Kermo's terminal", [
                 SettingsRow(title: "Allow agents in Kermo's terminal (MCP)",

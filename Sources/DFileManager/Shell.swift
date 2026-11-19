@@ -381,6 +381,9 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
             } else if self.status != 0 {
                 self.append(Data("\n[exit \(self.status)]\n".utf8), true, in: tv)
                 if let failed { self.append(Data((failed + "\n").utf8), false, in: tv) }
+                if !self.stopAsked, !self.embedded, Self.app()?.explains == true {   // ✨: not for a run ⎋ stopped
+                    self.window?.docFrame?.actions = [("✨ Explain", { @MainActor [weak self] in self?.explain(command, on: server) })]
+                }
             }
             onExit(self.status)
         }
@@ -482,6 +485,25 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
             }
         }
         Picker.show(over: window, placeholder: range.length > 0 ? "Send the selection to" : "Send this output to", items: items)
+    }
+
+    /// ✨ Explain: the command and what it said — the last 16 KB go — from where it ran: on this Mac, a production
+    /// server an `ssh` in it goes to.
+    private func explain(_ command: String, on server: SFTPTarget?) {
+        guard let tv, let app = Self.app() else { return }
+        // The last 256 KB, not 4 MB, masked on the main thread: a key this cut leaves without its BEGIN line lies far
+        // before the 16 KB that go.
+        let text = "$ \(command)\n" + String(tv.string.suffix(256_000))
+        Task {
+            var from = server
+            let going = from == nil ? EmbeddedTerminal.Tab.ran(command).ssh : []
+            if !going.isEmpty {
+                let new = going.filter { !ServerLock.isLearned($0) }
+                if !new.isEmpty { await ServerLock.learn(new) }   // `learn([])` would learn every saved server
+                from = EmbeddedTerminal.Tab.production([], named: [], typed: going)
+            }
+            app.explain([AIPanel.failure(command, on: from, text)])
+        }
     }
 
     /// Its delegate, and its keys — before the main menu's (Refresh, Copy, Save).
