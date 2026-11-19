@@ -4,7 +4,7 @@
 
 Two ways to work with AI in Kermo, both with your own account and nothing of Kermo's in between:
 
-- **The chat** (⌃⌘I): ask your own model about what is open — a folder, a file, the editor, the terminal. It reads, with your permission, and answers; it changes nothing. → [The chat](#the-chat)
+- **The chat** (⌃⌘I): ask your own model about what is open — a folder, a file, the editor, the terminal. It reads, with your permission, and answers; in **Edit** it also proposes changes to files as a diff you apply to the editor — only your ⌘S saves. → [The chat](#the-chat)
 - **Agents in Kermo's terminal**: [Claude Code](https://claude.com/claude-code) or another MCP client works where Kermo is connected — reads and copies files, runs commands on your servers, opens a file in the editor. The agent calls Kermo's tools; Kermo asks you before anything you haven't allowed. → [Switch it on and connect Claude Code](#switch-it-on-and-connect-claude-code)
 
 Both are off until you set them up, and Kermo sends nothing anywhere by itself.
@@ -28,7 +28,7 @@ Plain `http` is allowed only to this Mac and private networks (`localhost`, `10.
 
 **⌃⌘I**, the ✨ button at the right of the toolbar or **View ▸ AI Chat** shows the chat at the right of the window, beside the panels and the terminal; ⌃⌘I from the chat hides it. Drag its edge to make it wider; Kermo remembers the width and whether it was shown. Without a key it shows **Use your own AI**, which opens **Settings › AI**.
 
-The chat is in **Ask**: the model reads and answers, and changes nothing. For a change it gives you the commands or the text, and you do it.
+The chat is in **Ask** or **Edit** — the switch under its title. In **Ask** the model reads and answers, and changes nothing: for a change it gives you the commands or the text, and you do it. **Edit** reads the same way and also proposes changes to files ([Edit](#edit-a-change-as-a-diff)). The switch counts from your next ↩, and **New Chat** keeps it; Kermo starts in Ask.
 
 1. **Attach what the question is about.** Under the field Kermo suggests what is open, dashed: the active panel's folder and the file under the cursor, the editor's document and its selection, the terminal's last command with its output. A click attaches one; **+** or **#** in the field lists everything open in both panels. Nothing is attached until you choose it. A click on an attached chip shows exactly what goes, with **Remove**.
 2. **Ask** and press ↩ (⇧↩ for a new line). The 👁 button shows **what will be sent** with the message: Kermo's instructions to the model, each attachment and your words.
@@ -39,6 +39,17 @@ The chat is in **Ask**: the model reads and answers, and changes nothing. For a 
 When the provider says no — a limit, too busy, no network — the chat says so in words with **Retry**; a key it doesn't accept, with **Settings…**. Kermo never retries by itself: each request is your money.
 
 **New Chat** (the pencil at the top) starts again: what the model was allowed is gone.
+
+### Edit: a change as a diff
+
+In **Edit** the model reads the file, then shows its change in the chat as a card: the file and where it is (a [production server](#production-servers)'s in purple, saying so), then each change — the lines around it, what goes (−) and what comes (+) — with **Keep** / **Drop**.
+
+- **Apply to Editor** puts the changes you keep into the file's tab in Kermo's editor, opening the file if it isn't open (a locked server asks for Touch ID first), with the cursor on the first one. It's one step: **⌘Z** takes all of it back. Nothing is written — the file on the disk or the server is as it was until you press **⌘S**, which saves as always: a config's check, the file's history, the production question.
+- A file open in the editor with unsaved changes gets the change on its text there. If the text changes after the card came — you typed, or applied another — **Apply** refuses: ask again.
+- **Open in Compare** shows the proposal, read-only, beside the file in the editor's [Compare](viewer-editor.md#compare): **Copy Change** takes the parts you want, one ⌘Z each. A change of more than 200 lines has only this.
+- A value Kermo hid as `•••` can't be changed or written back: the model has to edit around it — and the card shows such values as `•••` too. Under **Never Send** a production server's file isn't read, so it isn't changed either.
+
+A card does nothing until you press one of its buttons; **New Chat** clears it.
 
 ### What's selected, into the chat
 
@@ -108,7 +119,7 @@ Only a program started from one of Kermo's terminal tabs gets in — any program
 | `list_folder`, `read_file`, `terminal_output`, `server_info` | Read | The first time on each server (and on this Mac) |
 | `run_command` | Run a shell command on a server | A command that only reads: as reading. Anything else: until you allow commands there |
 | `write_file`, `copy` | Write a text file; copy a file or a folder between this Mac and servers | Until you allow writing into that folder; always before writing over a file |
-| `propose_edit`, `open_in_editor` | Check that a change fits a file; open a file in Kermo's editor | As reading |
+| `propose_edit`, `open_in_editor` | Check that changes fit a file (in the chat's Edit: shown as a diff to apply); open a file in Kermo's editor | As reading |
 | `request_scope` | Ask you for more, with a reason | Always |
 
 The agent acts as you: on a server, as the user you log in as. Kermo never opens a root session for it, but a command may say `sudo` itself, and where your user has passwordless `sudo` that works — `sudo cat /etc/shadow` counts as a command that only reads.

@@ -43,6 +43,9 @@ final class AISession {
     var readOnly = false
     /// Settings › AI's "Never Send": nothing on a production server is read for the model.
     var noProduction = false
+    /// Where `propose_edit`'s diff is shown (the chat's card); nil — an outside agent's session: it says in words
+    /// whether the change fits.
+    var proposes: (@MainActor (AIEdit.Proposal, SFTPTarget?, String) -> Void)?
     private(set) var scope = AIScope()
     private(set) var journal: [Entry] = []
     private(set) var hasRead = false
@@ -528,23 +531,38 @@ final class AISession {
             }
         },
         "propose_edit": { s, args, targets in
-            let path = targets[0].path ?? "/"
-            guard case .string(let old)? = args["old_text"], case .string(let new)? = args["new_text"], !old.isEmpty, old != new else {
-                return .failure("propose_edit needs old_text and a new_text that differs from it.")
+            let path = targets[0].path ?? "/", t = s.servers[targets[0].place]
+            guard case .array(let list)? = args["edits"] else { return .failure("propose_edit needs edits.") }
+            let edits = list.compactMap { v -> (old: String, new: String)? in   // their shape `targets` checked
+                guard case .object(let o) = v, case .string(let old)? = o["old_text"], case .string(let new)? = o["new_text"] else { return nil }
+                return (old, new)
             }
-            switch await text(s.servers[targets[0].place], path) {
-            case .failure(let no): return .failure(no.text)
-            case .success(let (text, cut)):
-                guard !cut else { return .failure("\(path) is too long to edit this way.") }
-                let found = text.ranges(of: old)
-                guard found.count == 1 else {
-                    return .failure(found.isEmpty ? "old_text isn't in \(path). It has to match exactly: spaces and line ends too."
-                                    : "old_text is in \(path) \(found.count) times. Give more of the text around it, so that it is there once.")
+            // The text as the editor has it: the file's tab, unsaved changes and all, else the file as it is now.
+            let doc = (t.map { Editor.tab(onServer: $0, path) } ?? Editor.document(at: path)).flatMap { $0.cover == nil && $0.snapshot == nil ? $0 : nil }
+            var base = doc?.storage.string ?? ""
+            if doc == nil {
+                switch await text(t, path) {
+                case .failure(let no): return .failure(no.text)
+                case .success(let (text, cut)):
+                    guard !cut else { return .failure("\(path) is too long to edit this way.") }
+                    base = AIEdit.editorText(text)
                 }
-                func lines(_ s: some StringProtocol) -> Int { s.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count }
-                // ponytail: said in words; the diff the user keeps or drops piece by piece is the chat's card.
-                return AIResult("The change fits \(path) at line \(lines(text[..<found[0].lowerBound])): \(lines(old)) line(s) become \(lines(new)). Nothing is saved.")
             }
+            let proposed: String
+            switch AIEdit.apply(edits, to: base, in: path) {
+            case .failure(let no): return .failure(no.words + (doc?.isEdited == true ? " (\(path) is open in the editor with unsaved changes: the change goes on its text there.)" : ""))
+            case .success(let text): proposed = text
+            }
+            let made = base
+            let p = await Blocking.run(.userInitiated) { AIEdit.Proposal(base: made, proposed: proposed) }   // a diff of 256 KB may take a while
+            let n = p.diff?.blocks.count ?? 0, from = p.diff?.blocks.first.map { " from line \($0.old.lowerBound + 1)" } ?? ""
+            let what = "\(n) change\(n == 1 ? "" : "s")\(from)"
+            guard let show = s.proposes else { return AIResult("The change fits \(path): \(what). Nothing is saved.") }
+            show(p, t, path)
+            if p.changedLines > AIEdit.cardLines {
+                return AIResult("Shown to the user: too many changed lines for the chat, so they can open it in Compare and take the parts they want. Nothing is saved until they press ⌘S.")
+            }
+            return AIResult("Shown to the user as a diff of \(path): \(what). They keep or drop each change and apply it to the editor; nothing is saved until they press ⌘S there.")
         },
         "open_in_editor": { s, _, targets in
             let path = targets[0].path ?? "/", env = SSHAskpass.env

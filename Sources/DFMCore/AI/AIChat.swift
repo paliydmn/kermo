@@ -77,11 +77,24 @@ public final class AIChat {
     /// Ask: the tools that only read — and `run_command`, which the session lets run only what `AICommand.isReadOnly`.
     nonisolated public static let askTools = AITools.all.filter { ["focus", "list_folder", "read_file", "terminal_output", "server_info", "run_command"].contains($0.name) }
 
+    /// Edit: Ask's tools and `propose_edit`, whose diff the user applies to the editor — the session still only reads.
+    nonisolated public static let editTools = askTools + AITools.all.filter { $0.name == "propose_edit" }
+
     /// The instructions for Ask, as the user approved them (2026-11-17).
-    nonisolated public static let askSystem = """
+    nonisolated public static let askSystem = instructions("""
+        Mode: Ask — you read and answer, and change nothing. Your tools only read; run_command takes read-only commands from Kermo's allow-list (cat, tail, ls, df, journalctl, systemctl status, nginx -t…), anything else is refused. For a change, give the commands or the text and let the user do it: shell commands go in ```sh blocks, which the user can put into the terminal without running them.
+        """)
+
+    /// Edit (task 23 PR 7): Ask, and changes to files proposed as diffs; only the user's ⌘S saves.
+    nonisolated public static let editSystem = instructions("""
+        Mode: Edit — you read, and you propose changes to text files; you never save anything. Your tools read as in Ask, and propose_edit shows the user your change to one file as a diff: they keep or drop each part and apply it to Kermo's editor, where only their ⌘S saves it (Kermo checks a config then, and asks before it writes on a production server). Read the file before you propose a change to it; give all of a file's changes in one propose_edit, each old_text exactly as in the file and there once. If the file is open in the editor with unsaved changes, the change goes on the editor's text. Don't repeat the new text in your answer: say in a line or two what changes and why. A value shown as ••• can't be changed: edit around it. For anything that isn't a file's text — a restart, a command — give the commands as in Ask: shell commands go in ```sh blocks, which the user can put into the terminal without running them.
+        """)
+
+    private nonisolated static func instructions(_ mode: String) -> String {
+        """
         You are the assistant in Kermo, a two-panel file manager for macOS: folders on this Mac and on SSH/SFTP servers, a terminal and a text editor. You work on the user's own API key; Kermo sends you only what the user attached and what your tools return.
 
-        Mode: Ask — you read and answer, and change nothing. Your tools only read; run_command takes read-only commands from Kermo's allow-list (cat, tail, ls, df, journalctl, systemctl status, nginx -t…), anything else is refused. For a change, give the commands or the text and let the user do it: shell commands go in ```sh blocks, which the user can put into the terminal without running them.
+        \(mode)
 
         Rules:
         - Answer in the user's language, briefly unless asked for more. Markdown.
@@ -92,6 +105,7 @@ public final class AIChat {
         - Values shown as ••• were hidden by Kermo; never ask for passwords, tokens or keys.
         - On a production server (Kermo says which): read before anything changes, take the smallest step, say what could break and how to undo it.
         """
+    }
 
     /// Kermo's word on production servers, at the head of a message or a tool's result that has some. "" for none.
     nonisolated public static func productionNote(_ servers: [String]) -> String {

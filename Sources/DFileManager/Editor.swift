@@ -170,20 +170,23 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     var edited: (@MainActor () -> Void)?
 
     /// Reads the file off the main thread (up to 32 MB, or a share that doesn't answer), then opens it in a tab of the
-    /// editor window. `note`: said in its status line once it's open (`flash`); `line`: gone to ("42", "42:5").
+    /// editor window. `note`: said in its status line once it's open (`flash`); `line`: gone to ("42", "42:5");
+    /// `then`: the tab, once it's there (not if the file couldn't be opened).
     static func open(_ url: URL, remote: String? = nil, server: (target: SFTPTarget, path: String, state: AppDelegate.RemoteEdit)? = nil,
-                     note: String? = nil, line: String? = nil, onSaved: (@MainActor (URL) -> Void)? = nil, onClose: (@MainActor () -> Void)? = nil) {
+                     note: String? = nil, line: String? = nil, onSaved: (@MainActor (URL) -> Void)? = nil, onClose: (@MainActor () -> Void)? = nil,
+                     then: (@MainActor (Editor) -> Void)? = nil) {
         if let existing = opened(url, server) {
             onClose?()
             existing.revealed()
             app()?.rememberRecent(existing)
             if let line { existing.go(to: line) }
+            then?(existing)
             return
         }
         Task {
             let loaded = await Blocking.run(.userInitiated) { Result { try load(url) } }
             // Opened meanwhile (↩ twice during a slow read or download): one tab per file, the other copy goes.
-            if let existing = opened(url, server) { onClose?(); existing.revealed(); if let line { existing.go(to: line) }; return }
+            if let existing = opened(url, server) { onClose?(); existing.revealed(); if let line { existing.go(to: line) }; then?(existing); return }
             do {
                 let e = try Editor(url, remote: remote, loaded: loaded.get())
                 e.onSaved = onSaved
@@ -195,6 +198,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
                 app()?.rememberRecent(e)
                 if let note { e.flash(note) }
                 if let line { e.go(to: line) }
+                then?(e)
             } catch {
                 onClose?()
                 let a = NSAlert(error: error)

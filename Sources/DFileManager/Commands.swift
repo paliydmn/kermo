@@ -1374,12 +1374,13 @@ extension AppDelegate {
 
     /// The same for a server's file by its path (⌘E on a service: its unit file). `listed`: its size and time as a
     /// panel listed it (another app's saves check against them); none, as downloaded.
-    /// `line`: the editor goes to it ("42", "42:5").
+    /// `line`: the editor goes to it ("42", "42:5"); `then`: its tab, once it's there (`Editor.open`).
     func remoteOpen(_ how: RemoteOpen, _ target: SFTPTarget, _ remotePath: String, listed: (Int64, Double)? = nil, line: String? = nil,
-                    in panel: PanelViewController) {
+                    in panel: PanelViewController, then: (@MainActor (Editor) -> Void)? = nil) {
         if how == .edit, let e = Editor.editing(target, remotePath) {   // one file, one tab: no second copy (a parked one opens)
             e.revealed()
             e.connect(goingTo: line)
+            then?(e)
             return
         }
         let name = (remotePath as NSString).lastPathComponent
@@ -1413,7 +1414,7 @@ extension AppDelegate {
                 let note = Self.rootsOnly(opened, for: target) ? "“\(name)” is root's: saving it needs the panel as root (⌃⌘R)" : nil
                 let (onSaved, onClose) = remoteEditing(target, remotePath, state, in: tmp)
                 Editor.open(local, remote: SavedServer.title(target, remotePath), server: (target, remotePath, state), note: note, line: line,
-                            onSaved: onSaved, onClose: onClose)
+                            onSaved: onSaved, onClose: onClose, then: then)
             }
         }
     }

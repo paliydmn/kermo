@@ -26,6 +26,13 @@ public enum AISecrets {
         return (out as String, hidden)
     }
 
+    /// Where `mask` would hide something in `text`, in its UTF-16: each pattern on the text as it is, so a value two
+    /// patterns see differently is covered by both — never less than `mask` hides.
+    public static func ranges(_ text: String) -> [NSRange] {
+        let all = NSRange(location: 0, length: (text as NSString).length)
+        return patterns.flatMap { re, keep in re.matches(in: text, range: all).map { keep ? $0.range(at: 2) : $0.range } }.filter { $0.length > 0 }
+    }
+
     /// In order — a key's value after `Bearer`: `token: Bearer x` loses `x` and the word before it (counted twice).
     /// `keep`: only group 2 is the secret. Lookbehinds, not `\b`, where a run of name characters comes first: `\b`
     /// starts again inside the run, which is quadratic on a long token.
