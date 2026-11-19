@@ -84,33 +84,39 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         var origin: (server: SFTPTarget?, unsure: Bool) { origin(ran: nil) }
         /// The same for text a command line printed (`ran`, its prompt and all): an `ssh` typed there counts as one
         /// running — its output stays that server's once it ended —, and one there that logs in elsewhere, unsure.
+        /// Only a line typed to this Mac's shell: a server's (an SSH tab's, a remote shell's in front) is its output.
         func origin(ran line: String?) -> (server: SFTPTarget?, unsure: Bool) {
-            let fg = foreground, typed = line.map(Self.ran)
+            let fg = foreground, typed = typedHere(line).map(Self.ran)
             let said = title.lowercased().split(separator: "@").dropFirst().map { w in   // "deploy@web-01: ~" → web-01
                 String(w.prefix { $0.isLetter || $0.isNumber || "._-".contains($0) })
             }
-            let going = [fg == "ssh" ? foregroundArguments.flatMap(SSHCommand.destination) : nil].compactMap { $0 } + (typed?.ssh ?? [])
-            return (Self.production(going, named: said) ?? target?.asUser, (fg.map(Self.logsIn.contains) ?? false) || typed?.unsure == true)
+            let going = [fg == "ssh" ? foregroundArguments.flatMap(SSHCommand.destination) : nil].compactMap { $0 }
+            return (Self.production(going, named: said, typed: typed?.ssh ?? []) ?? target?.asUser,
+                    (fg.map(Self.logsIn.contains) ?? false) || typed?.unsure == true)
         }
         /// `origin` once `ssh -G` has said where an `ssh` running there, or typed in `ran`, goes (the first time it's
         /// seen, ~15 ms): what a chip is built with.
         func learnedOrigin(ran line: String? = nil) async -> (server: SFTPTarget?, unsure: Bool) {
-            let going = [foreground == "ssh" ? foregroundArguments.flatMap(SSHCommand.destination) : nil].compactMap { $0 } + (line.map { Self.ran($0).ssh } ?? [])
+            let going = [foreground == "ssh" ? foregroundArguments.flatMap(SSHCommand.destination) : nil].compactMap { $0 } + (typedHere(line).map { Self.ran($0).ssh } ?? [])
             let new = going.filter { !ServerLock.isLearned($0) }
             if !new.isEmpty { await ServerLock.learn(new) }
             return origin(ran: line)
         }
-        /// A saved production server among `going` (where an `ssh` goes) or named by `words` (a title's "web-01") — by
-        /// its name, its host or the host's first label, or where `ssh -G` learned an alias goes; nil: none.
-        static func production(_ going: [SFTPTarget], named words: [String]) -> SFTPTarget? {
+        private func typedHere(_ line: String?) -> String? { host == nil && !showsAnotherMachine ? line : nil }
+        /// A saved production server among `going` (where an `ssh` running goes: as `ssh -G` may place it) or named by
+        /// `words` (a title's "web-01") or by where a `typed` one goes — its name, its host or the host's first label,
+        /// or the same place once learned (a word `ssh -G` can't place is no server's); nil: none.
+        static func production(_ going: [SFTPTarget], named words: [String], typed: [SFTPTarget] = []) -> SFTPTarget? {
             /// "web" of "root@web.example.com"; an address stays whole.
             let label = { (h: String) -> String in
                 let host = String(h.split(separator: "@").last ?? "")
                 return host.contains(where: \.isLetter) ? String(host.split(separator: ".").first ?? "") : host
             }
-            let said = words + going.map { String($0.host.split(separator: "@").last ?? "").lowercased() }
+            let said = words + (going + typed).map { String($0.host.split(separator: "@").last ?? "").lowercased() }
             let names = Set(said + said.map(label)).subtracting([""])
-            let named = going + ServerLock.servers().filter { s in s.prod && [s.name, s.host, label(s.host)].contains { names.contains($0.lowercased()) } }.map(\.target)
+            let named = going + ServerLock.servers().filter { s in
+                s.prod && ([s.name, s.host, label(s.host)].contains { names.contains($0.lowercased()) } || typed.contains { ServerLock.same(s.target, $0) })
+            }.map(\.target)
             return named.first(where: SavedServer.isProd)?.asUser
         }
         /// A command line's words as typed (no shell's quoting): where each `ssh` among them goes, and whether one logs in

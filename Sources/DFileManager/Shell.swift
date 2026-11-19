@@ -500,7 +500,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
             if !going.isEmpty {
                 let new = going.filter { !ServerLock.isLearned($0) }
                 if !new.isEmpty { await ServerLock.learn(new) }   // `learn([])` would learn every saved server
-                from = EmbeddedTerminal.Tab.production(going, named: [])
+                from = EmbeddedTerminal.Tab.production([], named: [], typed: going)
             }
             app.explain([AIPanel.failure(command, on: from, text)])
         }

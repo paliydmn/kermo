@@ -165,15 +165,22 @@ extension ServerLockTests {   // `UserDefaults.standard`'s AI settings, `AppDele
         // A command's own line says where its text is from: an `ssh` to a production server there makes it that one's —
         // after it ended too (a terminal's ✨, an output window's). `ssh -G` is a stand-in: no config of yours.
         let wasG = ServerLock.sshG
-        ServerLock.sshG = { t in "user me\nhostname \(t.host)\nport 22\n" }
+        ServerLock.sshG = { t in ["web.invalid", "me@web.invalid", "shop"].contains(t.host) ? "user me\nhostname web.invalid\nport 22\n" : "" }
         defer { ServerLock.sshG = wasG }
         let typed = EmbeddedTerminal.Tab.ran("me@mac ~ % ssh -p 2222 me@web.invalid 'systemctl status nginx'")
-        #expect(typed.unsure && EmbeddedTerminal.Tab.production(typed.ssh, named: []) == web.target.asUser)
+        #expect(typed.unsure && EmbeddedTerminal.Tab.production([], named: [], typed: typed.ssh) == web.target.asUser)
         #expect(EmbeddedTerminal.Tab.ran("me@mac ~ % ls -la").ssh.isEmpty && !EmbeddedTerminal.Tab.ran("ls").unsure)
         for line in ["me@mac ~ % cd /etc/ssh; ssh shop df", "ssh devbox.invalid a && ssh shop b", "me@mac ssh % echo $(ssh shop cat .env)"] {
-            #expect(EmbeddedTerminal.Tab.production(EmbeddedTerminal.Tab.ran(line).ssh, named: []) == web.target.asUser, "\(line)")
+            #expect(EmbeddedTerminal.Tab.production([], named: [], typed: EmbeddedTerminal.Tab.ran(line).ssh) == web.target.asUser, "\(line)")
         }
         let tab = EmbeddedTerminal.Tab(kind: .shell, view: DropTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 300)))
+        // `ssh` as a word, not a command: no server's — here `ssh -G` can't place the next word.
+        for line in ["me@mac ~ % grep ssh /var/log/auth.log", "systemctl restart ssh nginx", "man ssh"] {
+            let going = EmbeddedTerminal.Tab.ran(line).ssh
+            await ServerLock.learn(going)
+            #expect(EmbeddedTerminal.Tab.production([], named: [], typed: going) == nil, "\(line)")
+            #expect(await AIPanel.terminal(tab, line + "\nno\n[exit 1]", what: "Command").server == nil, "\(line)")
+        }
         let chip = await AIPanel.terminal(tab, "me@mac ~ % ssh shop uptime\nload: 99\n[exit 1]", what: "Command")
         #expect(chip.server == web.target.asUser && chip.title.hasSuffix("as whoever is logged in"), "by its saved name: \(chip.title)")
         #expect(await AIPanel.terminal(tab, "me@mac ~ % ls nope\nls: nope\n[exit 1]", what: "Command").server == nil)
