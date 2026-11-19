@@ -280,7 +280,16 @@ final class AISession {
     /// The arguments as a person reads them, each value `cut` at most.
     private static func told(_ args: [String: ToolValue], cut: Int) -> [String] {
         args.sorted { $0.key < $1.key }.map { k, v in
-            if case .string(let s) = v { "\(k): \(s.prefix(cut))" } else if case .bool(let b) = v { "\(k): \(b)" } else { "\(k): ?" }
+            switch v {
+            case .string(let s): "\(k): \(s.prefix(cut))"
+            case .bool(let b): "\(k): \(b)"
+            case .array(let items):   // propose_edit's edits: old → new each
+                "\(k): " + String(items.map { item -> String in
+                    guard case .object(let o) = item, case .string(let a)? = o["old_text"], case .string(let b)? = o["new_text"] else { return "?" }
+                    return "\(a) → \(b)"
+                }.joined(separator: "; ").prefix(cut))
+            default: "\(k): ?"
+            }
         }
     }
 
@@ -537,10 +546,13 @@ final class AISession {
                 guard case .object(let o) = v, case .string(let old)? = o["old_text"], case .string(let new)? = o["new_text"] else { return nil }
                 return (old, new)
             }
-            // The text as the editor has it: the file's tab, unsaved changes and all, else the file as it is now.
-            let doc = (t.map { Editor.tab(onServer: $0, path) } ?? Editor.document(at: path)).flatMap { $0.cover == nil && $0.snapshot == nil ? $0 : nil }
-            var base = doc?.storage.string ?? ""
-            if doc == nil {
+            // The text as the editor has it: the file's tab (its user's), unsaved changes and all, else the file as it is now.
+            let doc = EditCard.tab(t, path).flatMap { $0.cover == nil ? $0 : nil }
+            let base: String
+            if let doc {
+                guard doc.storage.length <= textLimit else { return .failure("\(path) is too long to edit this way.") }
+                base = doc.storage.string
+            } else {
                 switch await text(t, path) {
                 case .failure(let no): return .failure(no.text)
                 case .success(let (text, cut)):
@@ -548,19 +560,20 @@ final class AISession {
                     base = AIEdit.editorText(text)
                 }
             }
-            let proposed: String
-            switch AIEdit.apply(edits, to: base, in: path) {
+            // The edits, the hidden values and a diff of up to 256 KB: off the main thread.
+            let made = await Blocking.run(.userInitiated) { AIEdit.propose(edits, to: base, in: path) }
+            guard !Task.isCancelled else { return .failure("Stopped. Nothing was shown.") }
+            let p: AIEdit.Proposal
+            switch made {
             case .failure(let no): return .failure(no.words + (doc?.isEdited == true ? " (\(path) is open in the editor with unsaved changes: the change goes on its text there.)" : ""))
-            case .success(let text): proposed = text
+            case .success(let made): p = made
             }
-            let made = base
-            let p = await Blocking.run(.userInitiated) { AIEdit.Proposal(base: made, proposed: proposed) }   // a diff of 256 KB may take a while
-            let n = p.diff?.blocks.count ?? 0, from = p.diff?.blocks.first.map { " from line \($0.old.lowerBound + 1)" } ?? ""
-            let what = "\(n) change\(n == 1 ? "" : "s")\(from)"
+            let n = p.diff?.blocks.count, from = p.diff?.blocks.first.map { " from line \($0.old.lowerBound + 1)" } ?? ""
+            let what = n.map { "\($0) change\($0 == 1 ? "" : "s")\(from)" } ?? "too large or too different to show as a diff in the chat"
             guard let show = s.proposes else { return AIResult("The change fits \(path): \(what). Nothing is saved.") }
             show(p, t, path)
             if p.changedLines > AIEdit.cardLines {
-                return AIResult("Shown to the user: too many changed lines for the chat, so they can open it in Compare and take the parts they want. Nothing is saved until they press ⌘S.")
+                return AIResult("Shown to the user: \(n == nil ? what : "too many changed lines for the chat"), so they can open it in Compare and take the parts they want. Nothing is saved until they press ⌘S.")
             }
             return AIResult("Shown to the user as a diff of \(path): \(what). They keep or drop each change and apply it to the editor; nothing is saved until they press ⌘S there.")
         },

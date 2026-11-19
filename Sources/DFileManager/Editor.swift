@@ -437,17 +437,6 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
         return Syntax.language(forFileName: name).map { [.ini, .conf, .yaml].contains($0) } ?? false
     }
 
-    /// Every line ends in CRLF (a file with mixed line ends is left as it is, and so is one with CR CR LF, which the
-    /// text view couldn't tell from a pasted CRLF).
-    nonisolated private static func isCRLF(_ data: Data) -> Bool {
-        var prev2: UInt8 = 0, prev: UInt8 = 0, lines = 0
-        for b in data {
-            if b == 0x0A { if prev != 0x0D || prev2 == 0x0D { return false }; lines += 1 }
-            (prev2, prev) = (prev, b)
-        }
-        return lines > 0
-    }
-
     /// A file's SHA-256, as a save compares it and the session keeps it.
     nonisolated static func sha(_ data: Data) -> Data { Data(SHA256.hash(data: data)) }
 
@@ -469,7 +458,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
         let digest = sha(data)
         let bom = data.starts(with: [0xEF, 0xBB, 0xBF])
         let body = bom ? data.dropFirst(3) : data
-        let crlf = isCRLF(data)
+        let crlf = TextFormat.isCRLF(data)
         func lf(_ s: String) -> String { crlf ? s.replacingOccurrences(of: "\r\n", with: "\n") : s }
         if let s = String(data: body, encoding: .utf8) { return (lf(s), .utf8, false, bom, crlf, stamp, digest) }
         if TextFormat.mostlyUTF8(body) { return (lf(String(decoding: body, as: UTF8.self)), .utf8, true, bom, crlf, stamp, digest) }

@@ -27,7 +27,8 @@ public enum AISecrets {
     }
 
     /// Where `mask` would hide something in `text`, in its UTF-16: each pattern on the text as it is, so a value two
-    /// patterns see differently is covered by both — never less than `mask` hides.
+    /// patterns see differently is covered by both. `mask` runs each on what the ones before left, so a match only
+    /// that makes (a URL's password after a PEM key in its user part) isn't here.
     public static func ranges(_ text: String) -> [NSRange] {
         let all = NSRange(location: 0, length: (text as NSString).length)
         return patterns.flatMap { re, keep in re.matches(in: text, range: all).map { keep ? $0.range(at: 2) : $0.range } }.filter { $0.length > 0 }

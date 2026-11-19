@@ -765,5 +765,13 @@ extension EditorWindowTests {   // the editor window is the app's one; `UserDefa
         click(try #require(views(card, NSButton.self).first))
         #expect(EditorHost.tabs.comparison != nil && EditorHost.tabs.docs.contains { $0.snapshot?.title == "app.conf (proposed)" }, "the proposal, read-only, beside it")
         #expect(doc.storage.string == now)
+
+        // A root tab and a server file's copy on this Mac aren't the chat's to read or change: its user's tab only.
+        let copy = dir + "/copy.conf", user = SFTPTarget.local(port: 2)
+        try Data("x\n".utf8).write(to: URL(fileURLWithPath: copy))
+        Editor.open(URL(fileURLWithPath: copy), server: (user.asRoot(), "/etc/x.conf", AppDelegate.RemoteEdit(baseline: .nothing)))
+        for _ in 0..<250 where Editor.editing(user.asRoot(), "/etc/x.conf") == nil { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(Editor.editing(user.asRoot(), "/etc/x.conf") != nil && Editor.document(at: copy) != nil)
+        #expect(EditCard.tab(user, "/etc/x.conf") == nil && EditCard.tab(nil, copy) == nil && EditCard.tab(nil, conf) === doc)
     }
 }

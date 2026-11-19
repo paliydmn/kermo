@@ -14,6 +14,10 @@ final class EditCard: NSStackView {
     private var keep: [Bool]
     private var toggles: [NSSegmentedControl] = []
     private var buttons: [NSButton] = []
+    /// Each change's lines, as `toggled` redraws them.
+    private var texts: [ChatText] = []
+    /// Applied: a second click (the tab still opening after the first) does nothing.
+    private var applied = false
     private let said = NSTextField(wrappingLabelWithString: "")
     private var name: String { (path as NSString).lastPathComponent }
 
@@ -81,7 +85,6 @@ final class EditCard: NSStackView {
     private func hunk(_ i: Int, _ b: TextDiff.Block) -> [NSView] {
         guard let d = p.diff else { return [] }
         let old = p.base as NSString, new = p.proposed as NSString
-        let hiddenOld = AISecrets.ranges(p.base), hiddenNew = AISecrets.ranges(p.proposed)
         let toggle = NSSegmentedControl(labels: ["Keep", "Drop"], trackingMode: .selectOne, target: self, action: #selector(toggled(_:)))
         (toggle.selectedSegment, toggle.tag, toggle.controlSize) = (0, i, .small)
         toggle.setAccessibilityLabel("Change \(i + 1)")
@@ -98,16 +101,15 @@ final class EditCard: NSStackView {
             text.append(NSAttributedString(string: (text.length == 0 ? "" : "\n") + t, attributes: [.font: mono, .foregroundColor: kind == .same ? NSColor.secondaryLabelColor : NSColor.labelColor,
                                                                                                     .backgroundColor: kind.fill, Self.kind: kind.rawValue]))
         }
-        for n in max(0, b.old.lowerBound - 2)..<b.old.lowerBound { row(n, " ", d.oldLines[n], old, hiddenOld, .same) }
-        for n in b.old { row(n, "−", d.oldLines[n], old, hiddenOld, .gone) }
-        for n in b.new { row(nil, "+", d.newLines[n], new, hiddenNew, .came) }
-        for n in b.old.upperBound..<min(d.oldLines.count, b.old.upperBound + 2) { row(n, " ", d.oldLines[n], old, hiddenOld, .same) }
+        for n in max(0, b.old.lowerBound - 2)..<b.old.lowerBound { row(n, " ", d.oldLines[n], old, p.hiddenOld, .same) }
+        for n in b.old { row(n, "−", d.oldLines[n], old, p.hiddenOld, .gone) }
+        for n in b.new { row(nil, "+", d.newLines[n], new, p.hiddenNew, .came) }
+        for n in b.old.upperBound..<min(d.oldLines.count, b.old.upperBound + 2) { row(n, " ", d.oldLines[n], old, p.hiddenOld, .same) }
         let lines = ChatText(text)
         lines.setAccessibilityLabel("Change \(i + 1) at line \(b.old.lowerBound + 1)")
         texts.append(lines)
         return [head, lines]
     }
-    private var texts: [ChatText] = []
 
     private enum Kind: Int {
         case same, gone, came
@@ -144,9 +146,16 @@ final class EditCard: NSStackView {
 
     // MARK: - Into the editor
 
+    /// The editor tab of a file as the AI names it: a server's as its user (a root tab's text isn't the user's to
+    /// read, nor to change from the chat), this Mac's by its path — not a server file's copy on this Mac.
+    static func tab(_ t: SFTPTarget?, _ path: String) -> Editor? {
+        if let t { return Editor.editing(t, path) }
+        return Editor.document(at: path).flatMap { $0.server == nil && $0.snapshot == nil ? $0 : nil }
+    }
+
     /// The file's tab: open already, or opened now — a server's after its gate (Touch ID for a locked one).
     private func document(_ then: @escaping @MainActor (Editor) -> Void) {
-        if let e = server.map({ Editor.tab(onServer: $0, path) }) ?? Editor.document(at: path) { return then(e) }
+        if let e = Self.tab(server, path) { return then(e) }
         guard let t = server else { return Editor.open(URL(fileURLWithPath: path), then: then) }
         Task {
             guard case .pass = await app.gate([t], to: "open a file on") else { return say("\(AISession.label(t)) stays locked: nothing was opened.", error: true) }
@@ -156,13 +165,22 @@ final class EditCard: NSStackView {
 
     /// Why `e` can't take the change now, in words; nil: it can. Only the text the change was made on.
     private func refusal(_ e: Editor) -> String? {
-        if e.cover != nil { return "“\(name)” isn't open yet — try again once it shows." }
+        switch e.cover {
+        case .parked?, .locked?:   // a tab from the last launch: opened (a locked server asks for Touch ID) for the next click
+            e.revealed()
+            e.connect()
+            return "“\(name)” is opening — try again once it shows."
+        case .loading?: return "“\(name)” is still opening — try again once it shows."
+        case .unreadable?: return "“\(name)”'s tab couldn't be read: close it, then try again."
+        case nil: break
+        }
         if e.snapshot != nil || e.saving || !e.textView.isEditable { return "“\(name)” can't be changed now." }
         if !(e.storage.string as NSString).isEqual(to: p.base) { return "“\(name)” changed since this was proposed — ask again." }
         return nil
     }
 
     private func apply(_ e: Editor, _ keep: [Bool]) {
+        guard !applied else { return }
         if let why = refusal(e) { return say(why, error: true) }
         guard let s = AIEdit.span(p.base, AIEdit.kept(p, keep)) else { return say("Nothing kept: nothing to apply.", error: true) }
         guard e.apply(s.text, over: s.range, in: e.current, named: "AI Change") else { return say("“\(name)” didn't take the change.", error: true) }
@@ -171,6 +189,7 @@ final class EditCard: NSStackView {
         let at = NSRange(location: s.range.location, length: 0)
         e.textView.setSelectedRange(at)
         e.textView.scrollRangeToVisible(at)
+        applied = true
         toggles.forEach { $0.isEnabled = false }
         buttons.forEach { $0.isEnabled = false }
         say("✓ Applied to the editor — ⌘Z undoes it; ⌘S saves.", error: false)

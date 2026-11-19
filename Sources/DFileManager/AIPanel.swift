@@ -95,9 +95,9 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         modes.setToolTip("Also proposes changes to files as a diff — only your ⌘S saves", forSegment: 1)
         (modeNote.font, modeNote.textColor, modeNote.lineBreakMode) = (.systemFont(ofSize: 11), .secondaryLabelColor, .byTruncatingTail)
         modeNote.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let modeRow = NSStackView(views: [modes, modeNote])
-        (modeRow.spacing, modeRow.edgeInsets) = (8, NSEdgeInsets(top: 0, left: 12, bottom: 6, right: 12))
-        self.modeRow = modeRow
+        let modes = NSStackView(views: [self.modes, modeNote])
+        (modes.spacing, modes.edgeInsets) = (8, NSEdgeInsets(top: 0, left: 12, bottom: 6, right: 12))
+        modeRow = modes
         showMode()
 
         list.orientation = .vertical
@@ -151,7 +151,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         for v in [chipRow, inputScroll, foot] as [NSView] { v.widthAnchor.constraint(equalTo: composer.widthAnchor, constant: -20).isActive = true }
 
         let line = { () -> NSBox in let b = NSBox(); b.boxType = .separator; return b }
-        let all = NSStackView(views: [head, modeRow, line(), scroll, line(), composer])
+        let all = NSStackView(views: [head, modes, line(), scroll, line(), composer])
         all.orientation = .vertical
         all.spacing = 0
         all.translatesAutoresizingMaskIntoConstraints = false
@@ -161,7 +161,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             all.leadingAnchor.constraint(equalTo: view.leadingAnchor), all.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             head.heightAnchor.constraint(equalToConstant: 36),
         ])
-        for v in [head, modeRow, scroll, composer] as [NSView] { v.widthAnchor.constraint(equalTo: all.widthAnchor).isActive = true }
+        for v in [head, modes, scroll, composer] as [NSView] { v.widthAnchor.constraint(equalTo: all.widthAnchor).isActive = true }
         // Back from Settings with a key, or another model: said at once.
         NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: app.window, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { if self?.app.aiChatShown == true { self?.refresh() } }

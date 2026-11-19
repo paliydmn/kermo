@@ -6,7 +6,7 @@ import Testing
 // parts the user keeps, put back as one change.
 
 private func edit(_ text: String, _ edits: [(String, String)]) -> Result<String, AIEdit.Refused> {
-    AIEdit.apply(edits.map { (old: $0.0, new: $0.1) }, to: text, in: "/etc/app.conf")
+    AIEdit.propose(edits.map { (old: $0.0, new: $0.1) }, to: text, in: "/etc/app.conf").map(\.proposed)
 }
 private func words(_ r: Result<String, AIEdit.Refused>) -> String { if case .failure(let no) = r { no.words } else { "" } }
 
@@ -15,10 +15,13 @@ private func words(_ r: Result<String, AIEdit.Refused>) -> String { if case .fai
     #expect(try edit(conf, [("b = 2", "b = 3\nd = 4")]).get() == "a = 1\nb = 3\nd = 4\nc = 1\n")
     #expect(try edit(conf, [("a = 1\n", ""), ("c = 1", "c = 9")]).get() == "b = 2\nc = 9\n", "in order, each on the text the one before left")
     #expect(try edit(conf, [("b = 2\r\n", "b = 5\r\n")]).get() == "a = 1\nb = 5\nc = 1\n", "the model's CRLF is the editor's LF")
+    #expect(try edit("a\r\nb\nc\n", [("a\r\n", "x\r\n")]).get() == "x\r\nb\nc\n", "a file of mixed line ends keeps them, as the editor does")
+    #expect(try edit("", [("", "new\n")]).get() == "new\n" && words(edit(conf, [("", "x")])).contains("has to be there"), "an empty file's first text")
     #expect(words(edit(conf, [("= 1", "= 9")])).contains("2 times") && words(edit("aaa", [("aa", "b")])).contains("2 times"), "overlapping ones count")
     #expect(words(edit(conf, [("z = 0", "z = 1")])).contains("isn't in /etc/app.conf"))
     #expect(words(edit(conf, [("a = 1", "a = 2"), ("z", "y")])).hasPrefix("Edit 2: "), "which one, when there are more")
     #expect(words(edit(conf, [("b = 2", "b = 2")])).contains("differ") && words(edit(conf, [])).contains("at least one"))
+    #expect(AIEdit.editorText("\u{FEFF}a\r\nb\r\n") == "a\nb\n" && AIEdit.editorText("a\r\nb\n") == "a\r\nb\n" && AIEdit.editorText("a\r\r\n") == "a\r\r\n")
     #expect(words(edit(conf, [("b = 2", "b = 3"), ("b = 3", "b = 2")])) == "The edits change nothing.")
 }
 
@@ -35,8 +38,14 @@ private func words(_ r: Result<String, AIEdit.Refused>) -> String { if case .fai
     #expect(words(edit(conf, [("\nport=80", "\nport=81")])).contains("right at a value Kermo hid"), "starting right after it")
     // Around it is fine: whole lines before and after.
     #expect((try? edit(conf, [("user=bob\n", "user=al\n"), ("port=80", "port=81")]).get()) == "user=al\npass" + "word=\(key)\nport=81\n")
-    // A secret written by the model is its own: the next edit can't see it (it would be •••), the user does.
-    #expect((try? edit("x=1\n", [("x=1", "api_" + "key=abc123")]).get()) == "api_" + "key=abc123\n")
+    // Its name changed so that it wouldn't be hidden any more: refused — and a guess after the rename is still no match.
+    let db = "DB_PASS" + "WORD=\(key)\nport=80\n"
+    #expect(words(edit(db, [("DB_PASS" + "WORD", "DB_X")])).contains("would show a value Kermo hid"))
+    #expect(words(edit(db, [("DB_PASS" + "WORD", "DB_X"), ("=\(key)", "=mine")])) == words(edit(db, [("DB_PASS" + "WORD", "DB_X"), ("=nope", "=mine")])))
+    #expect((try? edit(db, [("DB_PASS" + "WORD", "DB_PASS" + "WORD_OLD")]).get()) != nil, "still hidden: fine")
+    // A secret written by the model is its own: the card shows it to the user; the base's stays •••.
+    let p = try? AIEdit.propose([(old: "port=80", new: "api_" + "key=abc123")], to: db, in: "x").get()
+    #expect(p?.proposed == "DB_PASS" + "WORD=\(key)\napi_" + "key=abc123\n" && p?.hiddenNew == [NSRange(location: 12, length: key.count)] && p?.hiddenOld == p?.hiddenNew)
 }
 
 @Test func whatsKeptIsPutBackAsOneChangeOfWholeLines() {
@@ -48,6 +57,12 @@ private func words(_ r: Result<String, AIEdit.Refused>) -> String { if case .fai
         ("p\rq\nr\n", "p\rQ\nr\n"),
         ("", "new\n"),
     ]
+    // Line ends the blocks can't carry (a lone CR or U+2028 at a block's edge), a change of line ends only: no card,
+    // Compare only.
+    for (base, new) in [("a\r", "a\rb"), ("a\rb", "a\r"), ("a\u{2028}b", "a\u{2028}"), ("a\rb", "a\nb")] {
+        let p = AIEdit.Proposal(base: base, proposed: new)
+        #expect(p.diff == nil && p.changedLines > AIEdit.cardLines && AIEdit.kept(p, []) == base, "\(base.debugDescription) → \(new.debugDescription)")
+    }
     for (base, new) in cases {
         let p = AIEdit.Proposal(base: base, proposed: new)
         let n = p.diff?.blocks.count ?? 0

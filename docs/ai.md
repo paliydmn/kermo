@@ -47,7 +47,7 @@ In **Edit** the model reads the file, then shows its change in the chat as a car
 - **Apply to Editor** puts the changes you keep into the file's tab in Kermo's editor, opening the file if it isn't open (a locked server asks for Touch ID first), with the cursor on the first one. It's one step: **⌘Z** takes all of it back. Nothing is written — the file on the disk or the server is as it was until you press **⌘S**, which saves as always: a config's check, the file's history, the production question.
 - A file open in the editor with unsaved changes gets the change on its text there. If the text changes after the card came — you typed, or applied another — **Apply** refuses: ask again.
 - **Open in Compare** shows the proposal, read-only, beside the file in the editor's [Compare](viewer-editor.md#compare): **Copy Change** takes the parts you want, one ⌘Z each. A change of more than 200 lines has only this.
-- A value Kermo hid as `•••` can't be changed or written back: the model has to edit around it — and the card shows such values as `•••` too. Under **Never Send** a production server's file isn't read, so it isn't changed either.
+- A value Kermo hid as `•••` can't be changed, written back or uncovered (by renaming the name in front of it): the model has to edit around it, and the card shows such values as `•••` too. What the model writes itself it shows as written. A file open as root in the editor isn't the chat's: it reads and changes the file as your user. Under **Never Send** a production server's file isn't read, so it isn't changed either.
 
 A card does nothing until you press one of its buttons; **New Chat** clears it.
 

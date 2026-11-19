@@ -3,6 +3,17 @@ import UniformTypeIdentifiers
 
 /// Viewer helpers: decoding, hex dumps, readable plist/JSON, log-line highlighting.
 public enum TextFormat {
+    /// Every line ends in CRLF: the editor reads it with LF and saves CRLF back (a file with mixed line ends is left as
+    /// it is, and so is one with CR CR LF, which the text view couldn't tell from a pasted CRLF).
+    public static func isCRLF(_ data: Data) -> Bool {
+        var prev2: UInt8 = 0, prev: UInt8 = 0, lines = 0
+        for b in data {
+            if b == 0x0A { if prev != 0x0D || prev2 == 0x0D { return false }; lines += 1 }
+            (prev2, prev) = (prev, b)
+        }
+        return lines > 0
+    }
+
     /// UTF-8 first (tolerating a character cut at chunk edges), then UTF-8 with a few bad bytes shown as U+FFFD
     /// (see `mostlyUTF8`), then Windows-1251, then lossy UTF-8.
     public static func decode(_ data: Data) -> (text: String, encoding: String) {
