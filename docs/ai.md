@@ -62,6 +62,10 @@ In **Agent** the model does the task: runs commands on servers, copies files and
 3. **Asked every time, whatever you allowed:** deleting, writing over a file that is there, and any change on a [production server](#production-servers) — each with **Allow Once**. A [locked server](servers.md#lock-a-server) wants Touch ID first. On a production server, the commands, saves and copies go to the [production log](safety.md#production-log), marked as the assistant's.
 4. **A file open in the editor** isn't written by the model: it proposes the change as a [diff card](#edit-a-change-as-a-diff), and your ⌘S saves. On a server Kermo knows the tab by its path as you opened it: a tab opened through a link there isn't recognised — writing over that file still asks, and the tab's save checks again.
 
+**Tools actions.** On a server the model uses your [Tools](tools.md) there before a command of its own: `tools` lists the tools in use on that server — each one's actions, which change something, which ask every time, the values they take — and, for one tool, the rows of its list; `tool_action` runs an action as its button does. A built-in tool's look (Status in Full, Server Info's Disks) counts as reading, in Ask too; any other action — and every action of a tool of your own, whatever its file says — counts as a command: it needs commands allowed there. One that always asks from its button (Delete Rule…, Stop…) asks every time, under All too, with the command as it will run, as root or not, and the row; on a production server every change asks. An action on a row names the row by its key: Kermo reads the list again and takes the row as it is now. Its values are checked as its sheet checks them — a choice must be one of its choices. Not the model's to run, it says so and leaves them to you: what runs on this Mac (Who Is It?), what opens a window that follows, a list one level down or a terminal, long jobs, and an action that takes a secret or a file from this Mac. A tool you haven't said to use isn't offered. On a production server the run goes to the production log, marked as the assistant's.
+
+**Save as Tool.** After a task in which the model ran two commands or more on one server, all ending well, the answer offers **Save as Tool…**: the commands as they ran, each in its folder, one after the other — the next only if the last went well — open as a new tool in the [tool editor](tools.md#new-tool), unsaved, its output in a window. Next time it's one click, with no AI. Copies, files written and Tools actions of the task aren't in it (its `about` says how many). Kermo asks before it runs, as for any change; save it with ⌘S, then **Use the tool “…”?** shows it whole.
+
 **The Scope row.** Click a place to set its level — **View** (reads), **Work** (writes into the folders it was given and, on a server, runs commands), **All** (anything there) — or **Take Back**: the next call there asks again. This Mac never runs the model's commands, so its Work is only the folders a task was given. **+** gives a server View yourself before the model asks; this Mac and a production server ask all the same, as their first read would (under **Never Send** production isn't offered), and so does All on this Mac. In Ask and Edit the row offers View only. Everything in it lasts until the chat ends; a New Chat starts from nothing.
 
 > [!WARNING]
@@ -73,7 +77,7 @@ In **Agent** the model does the task: runs commands on servers, copies files and
 
 ### What's selected, into the chat
 
-- **⇧⌘I** (**View ▸ Add to Chat**) attaches what is selected where you are: in the terminal, the selection — or, with nothing selected, the command ⌘↑ went to (else the last one) with its output; in the editor, the selection — else the document; in a panel, the marked files and folders — else the one under the cursor — ten at a time (⇧⌘I again takes the next ten). It shows the chat and puts the keys in its field.
+- **⇧⌘I** (**View ▸ Add to Chat**) attaches what is selected where you are: in an output window, the selection — else its text; in the terminal, the selection — or, with nothing selected, the command ⌘↑ went to (else the last one) with its output; in the editor, the selection — else the document; in a panel, the marked files and folders — else the one under the cursor — ten at a time (⇧⌘I again takes the next ten). It shows the chat and puts the keys in its field.
 - **In the terminal**, a selection you make gets a small **✨ Add to Chat** button beside it, while the AI is set up. **⌥-click** a command's line to attach that command with its output; **⋯ ▸ Add Command and Output to Chat** does the same for the last one. Without the AI set up, ⌥-click is the terminal's as before.
 - **Follow selection**, the first chip under the field, is off until you click it. While it's on, each ↩ takes what is selected at that moment where you selected last — a terminal tab or the editor — and the chip says where ("Following: Selection · web-01"). 👁 shows it as it would go. Click it again to stop; **New Chat** turns it off.
 
@@ -89,6 +93,7 @@ Where something fails, an **✨ Explain** button asks the chat why. A click show
 - **A save whose config check failed** (`nginx -t`, `visudo`…): **Explain** in its dialog, beside **OK** (↩ is still OK). It attaches the check's whole output and, while it's open, the text that didn't pass.
 - **An output window** (⌘E, a server's command, `git`, `tar`) whose command failed: **✨ Explain** in its status line.
 - **Services:** **Explain** by a failed start, stop or restart of a service or container, beside **Output…** (not for one you stopped waiting for with ⎋).
+- **Tools:** **Explain** by a failed action's line, and **✨ Explain** in the status line of its output window — the command as its question showed it, and the output with a secret you typed in its sheet as `•••`.
 - **Monitor:** **Explain** on a critical alert's notification and by a critical or warning event in the Tools window.
 
 The chip is from the machine where it failed — a server's output is that server's, and so is a command's that ran `ssh` to it — so a [production server](#production-servers) asks before it goes (or isn't attached under **Never Send**). Its text goes as terminal text does: secrets as `•••`, the last 16 KB. **Settings › AI › ✨ Explain when something fails** turns the buttons off. Without the AI set up there are none, and Kermo doesn't listen for the shell's OSC 133 at all.
@@ -138,6 +143,7 @@ Only a program started from one of Kermo's terminal tabs gets in — any program
 | `focus` | What is in front of you: both panels, the editor's file, the terminal tab | No; names and selections only where you allowed reading |
 | `list_folder`, `read_file`, `terminal_output`, `server_info` | Read | The first time on each server (and on this Mac) |
 | `run_command` | Run a shell command on a server | A command that only reads: as reading. Anything else: until you allow commands there |
+| `tools`, `tool_action` | List your [Tools](tools.md) on a server, with their actions and a tool's rows; run an action as its button does | A built-in tool's look: as reading. Any other action: until you allow commands there; one that always asks from its button, every time |
 | `write_file`, `copy` | Write a text file; copy a file or a folder between this Mac and servers — never onto a file open in the editor | Until you allow writing into that folder; always before writing over a file |
 | `propose_edit`, `open_in_editor` | Check that changes fit a file (in the chat's Edit: shown as a diff to apply); open a file in Kermo's editor | As reading |
 | `request_scope` | Ask you for all a task needs at once — up to five lines of places, folders, commands — with what for | Always, but not for what it has already |
@@ -172,6 +178,6 @@ Switching **Allow agents in Kermo's terminal (MCP)** off disconnects every agent
 - Paths are absolute. `write_file` and `copy` refuse a path that goes through a symbolic link and name the real one: on a Mac `/tmp/…` is `/private/tmp/…` and `/var/…` is `/private/var/…`.
 - Secrets Kermo recognises in what the agent reads (keys, tokens, passwords in configs) are replaced with `•••`. The patterns are not complete: don't point an agent at files whose content must not leave this Mac.
 - A command gets 30 seconds and 256 KB of output, with no terminal: nothing interactive.
-- Commands run on servers only, not on this Mac.
+- Commands and Tools actions run on servers only, not on this Mac.
 - Deleting, moving and archiving are not among the tools yet.
 - The journal is kept in memory and goes with the connection.

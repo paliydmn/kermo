@@ -170,10 +170,12 @@ The keys work in search. In a panel a row's key works where it's one of Kermo's 
 
    The question shows the command with its values filled in, and how and where it runs (as root, through the server's sudo). **Show Exactly What Runs** shows what Kermo sends, then asks again. The 10 minutes are for that tool on that server only, and end with Kermo or with a change to the tool's file; what can't be undone asks every time.
 4. **The run.** The row says what runs on it, with a spinner. Another change of the same tool on that server waits for it ("Firewall on web-01 is busy: Delete Rule"); looks run alongside.
-5. **How it went**, in a line under the list: "Deleted rule 3 (80/tcp) on web-01 at 14:02:11", or ✕ and the first line of what the program said, with **Output…** for all of it. With the list closed, the status line says it. A program that isn't on the server is said so: "apt-get isn't on web-01 (Fedora 44 · dnf)".
+5. **How it went**, in a line under the list: "Deleted rule 3 (80/tcp) on web-01 at 14:02:11", or ✕ and the first line of what the program said, with **Output…** for all of it — and, with [your own AI](ai.md#-explain-what-failed) set up, **Explain**. With the list closed, the status line says it. A program that isn't on the server is said so: "apt-get isn't on web-01 (Fedora 44 · dnf)".
 6. **The list is read again** after a change, the cursor staying on its row, or going to the next one if that row is gone. A look reads nothing again.
 
-What opens a window or a tab of its own goes there instead of the line: a window of output, a log that follows (closing it ends the command on the server), a command in an SSH tab, a file in the editor (as any server file: history, checks, production's question on save). In a window of output, **⌘C** with nothing selected copies all of it, **⌘S** saves it as a text file, and **F2** sends it to a tool that takes text ([Send To…](#send-to)).
+What opens a window or a tab of its own goes there instead of the line: a window of output, a log that follows (closing it ends the command on the server), a command in an SSH tab, a file in the editor (as any server file: history, checks, production's question on save). In a window of output, **⌘C** with nothing selected copies all of it, **⌘S** saves it as a text file, **F2** sends it to a tool that takes text ([Send To…](#send-to)), and **⇧⌘I** attaches it to the [AI chat](ai.md#whats-selected-into-the-chat); one whose action failed has **✨ Explain** in its status line.
+
+The [AI chat's Agent](ai.md#agent-a-task-within-its-scope) runs actions this same way, asking as these steps do.
 
 ⎋ stops the wait. A run that takes over 30 seconds, or gives over 16 MB of output, is stopped and says so; when the connection drops, the run ends on the server too, leaving nothing behind. Tools use at most 9 of a connection's sessions at once (OpenSSH allows 10; past them ssh would log in again): one more waits, and the status line says so.
 
@@ -284,6 +286,8 @@ A tool of yours runs nothing — not even its check of the server — until you 
 - **List with Actions**: rows from a command's output, an action on a row (it starts as the mounted filesystems, `df -P`);
 - **Buttons**: commands that run when pressed, each its own button (`uptime`, `free -h`);
 - **One Command**: one command, its output in a window (`who`).
+
+**Make with AI…** writes it with [your own AI](ai.md#your-own-ai) instead: the chat opens with Kermo's tool format attached (this page from [The fields that work now](#the-fields-that-work-now) to its end) and "Make a Kermo tool “Disk Check” that" in the field — say what it's for, and ↩. The model may look at the program's output on a server where you let it read. A tool in its answer gets **Open as New Tool…**: it opens here as a starter does, unsaved — under its `id`, or the next free name when that one is taken (Problems then says the `id` isn't the file's name). Ask the chat for changes, and open its next answer the same way. The [AI chat's Agent](ai.md#agent-a-task-within-its-scope) also offers **Save as Tool…** after a task it did with commands.
 
 Each starter works as it is on most Linux servers. It opens in Kermo's editor — a window of its own, not a tab: no draft is kept, and closing it with changes asks — not yet on disk; **⌘S** (or **Save** beside the text) writes it to `~/.config/dfilemanager/tools/` readable only by you, reads your tools again and asks **Use the tool “…”?** — then, for a new tool, **Use on Servers…**. Saving again asks again: it's a new version of the file. A tool with no script needs nothing else; one that names a script needs that file next to it.
 
@@ -431,7 +435,7 @@ A tool like these has no list of its own, so Tools ▸ doesn't show it: **Use on
 
 ### With an AI assistant
 
-Any assistant can write a tool for you: give it this page from [The fields that work now](#the-fields-that-work-now) to here (the recipes and the example below show it the shape), the program's `--help`, and a few lines of its real output — what `--json` prints, if it has that — and say what you want: a list of what, which actions, which change things. Paste its answer into **New Tool…**: **Problems** says what doesn't fit, with its line, as you type; **Test on** a server runs its list there and shows the rows it made of the real output — and every line that didn't fit — before any of its actions can run. Saved, it still runs nothing until **Use the tool “…”?** has shown you everything it can run.
+In Kermo, **New Tool… ▸ Make with AI…** does this with your own AI. Any assistant can write a tool for you: give it this page from [The fields that work now](#the-fields-that-work-now) to here (the recipes and the example below show it the shape), the program's `--help`, and a few lines of its real output — what `--json` prints, if it has that — and say what you want: a list of what, which actions, which change things. Paste its answer into **New Tool…**: **Problems** says what doesn't fit, with its line, as you type; **Test on** a server runs its list there and shows the rows it made of the real output — and every line that didn't fit — before any of its actions can run. Saved, it still runs nothing until **Use the tool “…”?** has shown you everything it can run.
 
 Take out of the sample what you don't want to send: host names, paths, addresses.
 

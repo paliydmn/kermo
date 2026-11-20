@@ -133,7 +133,7 @@ A tool like these has no list of its own, so Tools ▸ doesn't show it: **Use on
 
 ### With an AI assistant
 
-Any assistant can write a tool for you: give it this page from [The fields that work now](#the-fields-that-work-now) to here (the recipes and the example below show it the shape), the program's `--help`, and a few lines of its real output — what `--json` prints, if it has that — and say what you want: a list of what, which actions, which change things. Paste its answer into **New Tool…**: **Problems** says what doesn't fit, with its line, as you type; **Test on** a server runs its list there and shows the rows it made of the real output — and every line that didn't fit — before any of its actions can run. Saved, it still runs nothing until **Use the tool “…”?** has shown you everything it can run.
+In Kermo, **New Tool… ▸ Make with AI…** does this with your own AI. Any assistant can write a tool for you: give it this page from [The fields that work now](#the-fields-that-work-now) to here (the recipes and the example below show it the shape), the program's `--help`, and a few lines of its real output — what `--json` prints, if it has that — and say what you want: a list of what, which actions, which change things. Paste its answer into **New Tool…**: **Problems** says what doesn't fit, with its line, as you type; **Test on** a server runs its list there and shows the rows it made of the real output — and every line that didn't fit — before any of its actions can run. Saved, it still runs nothing until **Use the tool “…”?** has shown you everything it can run.
 
 Take out of the sample what you don't want to send: host names, paths, addresses.
 
