@@ -719,8 +719,8 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         }
         let made = try #require(draft("run-report-sh-on-box"), "\(NSApp.windows.map(\.title))")
         let o = try #require(try JSONSerialization.jsonObject(with: Data(made.utf8)) as? [String: Any])
-        let cd = "cd -- " + ShellContext.quote(app)
-        #expect(o["command"] as? String == "(\(cd) && sh report.sh\n) || exit $?\n(\(cd) && tar -czf report.tgz report.log\n) || exit $?" && o["readonly"] == nil, "\(made)")
+        let cd = "cd -- " + ShellContext.quote(app) + " || exit $?\n"
+        #expect(o["command"] as? String == "(\(cd)sh report.sh\n) || exit $?\n(\(cd)tar -czf report.tgz report.log\n) || exit $?" && o["readonly"] == nil, "\(made)")
         #expect((o["about"] as? String)?.contains("Left out: 2 steps that weren't commands") == true && o["title"] as? String == "Run report.sh on box, the log to my Dow…", "\(made)")
         #expect(!fm.fileExists(atPath: dir + "/tools/" + (o["id"] as? String ?? "") + ".json"), "nothing on disk before ⌘S")
         // A tool in an answer: Open as New Tool… — the same draft's way.

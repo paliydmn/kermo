@@ -136,15 +136,15 @@ extension ServerLockTests {
         let steps = ToolNew.text(commands: [("ls # look first", "/srv/my app"), ("nohup ./x > /tmp/x.log 2>&1 &", nil), ("cd /tmp && echo it's", nil)], id: "steps", title: "Steps", about: "a test")
         #expect(ToolSchema.validate(Data(steps.utf8), file: "steps.json").1.isEmpty)
         let command = try #require((try JSONSerialization.jsonObject(with: Data(steps.utf8)) as? [String: Any])?["command"] as? String)
-        #expect(command == "(cd -- '/srv/my app' && ls # look first\n) || exit $?\n(nohup ./x > /tmp/x.log 2>&1 &\n) || exit $?\n(cd /tmp && echo it's\n) || exit $?")
+        #expect(command == "(cd -- '/srv/my app' || exit $?\nls # look first\n) || exit $?\n(nohup ./x > /tmp/x.log 2>&1 &\n) || exit $?\n(cd /tmp && echo it's\n) || exit $?")
         let sh = Process()
         (sh.executableURL, sh.arguments, sh.standardError) = (URL(fileURLWithPath: "/bin/sh"), ["-n", "-c", command.replacingOccurrences(of: "it's", with: "its")], FileHandle.nullDevice)
         try sh.run()
         sh.waitUntilExit()
         #expect(sh.terminationStatus == 0, "sh reads it")
         // As they ran: inside a step it goes on past a failure, as `sh -c` did; a step that failed stops the rest.
-        func run(_ steps: [String]) throws -> (Int32, String) {
-            let text = ToolNew.text(commands: steps.map { ($0, nil) }, id: "s", title: "S", about: "")
+        func run(_ steps: [String], in folder: String? = nil) throws -> (Int32, String) {
+            let text = ToolNew.text(commands: steps.map { ($0, folder) }, id: "s", title: "S", about: "")
             let line = try #require((try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])?["command"] as? String)
             let p = Process(), out = Pipe()
             (p.executableURL, p.arguments, p.standardOutput) = (URL(fileURLWithPath: "/bin/sh"), ["-c", line], out)
@@ -155,6 +155,8 @@ extension ServerLockTests {
         }
         #expect(try run(["false; echo one", "echo two"]) == (0, "one\ntwo\n"))
         #expect(try run(["echo one", "exit 3", "echo never"]) == (3, "one\n"))
+        #expect(try run(["echo one; echo two", "echo three"], in: "/no such folder").1.isEmpty, "a folder that isn't there: nothing of it runs elsewhere")
+        #expect(["nohup ./x > x.log 2>&1 &", "a & b", "a &"].allSatisfy(AIPanel.inBackground) && !["a && b", "x 2>&1", "x &> f", "a |& b", "x>&2"].contains(where: AIPanel.inBackground))
         let format = await AIPanel.toolFormat.read().text
         #expect(AIPanel.toolFormat.title == "Kermo's tool format" && format.contains("```json block") && format.hasSuffix(ToolNew.format) && !ToolNew.format.isEmpty)
     }

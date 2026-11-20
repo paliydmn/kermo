@@ -272,7 +272,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
                     try SSHCommand.run(server, command(p), env: env, cancel: cancel, stdin: stdin, holdStdin: cancel, onErrors: { hop(p.mask($0), 1) }) { chunk in
                         var d = reader.feed(chunk)
                         if cri { d = strip.feed(d) }
-                        hop(d, 0)
+                        hop(p.mask(d), 0)   // a secret typed in its sheet, as stderr's
                     }
                 }
             }
@@ -331,7 +331,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         let (w, tv) = Self.window()
         w.title = command.bidiVisible
         w.subtitle = DocFrame.place(dir, host: server.map { SavedServer.name(for: $0) })
-        self.command = command
+        self.command = diff ? nil : command   // a diff's text is the compared files', from wherever they are: not ⇧⌘I's
         super.init(window: w)
         own(w)
 

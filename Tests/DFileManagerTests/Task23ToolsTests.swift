@@ -959,6 +959,8 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(!bench.calls.contains { $0.hasPrefix("whois") })
         // Refused before anyone is asked: an action that isn't there; a choice the model didn't name isn't made for it.
         let asked = heard.titles.count
+        r = await s.call("tools", ["server": "mac"])
+        #expect(r.isError && r.text.contains("servers only"), "\(r.text)")
         r = await act("ufw", "reboot")
         #expect(r.isError && r.text.contains("No action “reboot”") && heard.titles.count == asked && s.journal.last?.decision == "refused: not the assistant's")
         r = await act("fail2ban", "ban", ["ip": "192.0.2.9"])

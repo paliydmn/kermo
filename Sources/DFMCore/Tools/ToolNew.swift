@@ -88,7 +88,8 @@ public enum ToolNew {
     /// in its folder and a shell of its own (a `cd`, a `#` or a trailing `&` stays its own; inside, it goes on as it
     /// did), the next only if its exit was 0; the output in a window. Nothing in it says it only reads.
     public static func text(commands: [(command: String, folder: String?)], id: String, title: String, about: String) -> String {
-        let steps = commands.map { c in "(" + (c.folder.map { "cd -- \(ShellContext.quote($0)) && " } ?? "") + c.command + "\n) || exit $?" }
+        // A folder that isn't there (another server, one removed) stops it: nothing of the step runs elsewhere.
+        let steps = commands.map { c in "(" + (c.folder.map { "cd -- \(ShellContext.quote($0)) || exit $?\n" } ?? "") + c.command + "\n) || exit $?" }
         return """
             {
               "schema": 1,

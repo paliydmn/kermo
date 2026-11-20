@@ -171,8 +171,9 @@ extension ToolRunner {
             if let v = given[i.info.name], let choices, !choices.contains(v) {
                 return .no(.failure("\(i.info.name): “\(v)” isn't one of \(choices.prefix(50).joined(separator: ", ")). Nothing ran."))
             }
-            // A choice the form would make by itself — the server's first jail — is the user's to see: the model names it.
-            if given[i.info.name] == nil, let choices, i.info.optional != true, i.info.default == nil {
+            // A choice the form would make by itself — the server's first jail, a list's first — is the user's to see: the
+            // model names it; only a `choice`'s own default, one of its options, stands.
+            if given[i.info.name] == nil, let choices, i.info.type == .choiceFrom || !(i.info.default.map(choices.contains) ?? false) {
                 return .no(.failure("\(i.info.name): give one of \(choices.prefix(50).joined(separator: ", ")). Nothing ran."))
             }
             if let no = form.problem(i) { return .no(.failure("\(i.info.name): \(no). Nothing ran.")) }
@@ -191,7 +192,9 @@ extension ToolRunner {
         c.returnCancels = true
         let verify = row != nil && (a.spec.verify ?? (a.spec.dangerous == true))
         let lister = verify ? ToolListSource.lister(app, tool, s, t) : nil, rowKey = row?.key, record = row?.record
-        let holds = !Self.looks(a), key = ServerRow.key(t.asUser) + " " + p.id
+        // A change holds the tool's change, as the button's does — an own tool's `readonly` too: it's a change to the scope.
+        let holds: Bool = if case .tool(true, _) = seen { true } else { false }
+        let key = ServerRow.key(t.asUser) + " " + p.id
         return .go(overwrites: false, { _, _, _ in
             if holds {
                 if let other = self.changing[key] { return .failure("\(p.title) on \(name) is busy: \(other.replacingOccurrences(of: "…", with: "")) runs. Nothing ran.") }

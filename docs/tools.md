@@ -175,7 +175,7 @@ The keys work in search. In a panel a row's key works where it's one of Kermo's 
 
 What opens a window or a tab of its own goes there instead of the line: a window of output, a log that follows (closing it ends the command on the server), a command in an SSH tab, a file in the editor (as any server file: history, checks, production's question on save). In a window of output, **⌘C** with nothing selected copies all of it, **⌘S** saves it as a text file, **F2** sends it to a tool that takes text ([Send To…](#send-to)), and **⇧⌘I** attaches it to the [AI chat](ai.md#whats-selected-into-the-chat); one whose action failed has **✨ Explain** in its status line (a long job's log hasn't).
 
-The [AI chat's Agent](ai.md#agent-a-task-within-its-scope) runs actions this same way, asking as these steps do.
+The [AI chat's Agent](ai.md#agent-a-task-within-its-scope) runs actions this same way, asking as these steps do — except that the 10 minutes without production's question are never the assistant's.
 
 ⎋ stops the wait. A run that takes over 30 seconds, or gives over 16 MB of output, is stopped and says so; when the connection drops, the run ends on the server too, leaving nothing behind. Tools use at most 9 of a connection's sessions at once (OpenSSH allows 10; past them ssh would log in again): one more waits, and the status line says so.
 

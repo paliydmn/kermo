@@ -113,9 +113,9 @@ final class AISession {
             case .success(let access): targets = targets.compactMap { AITarget($0.place, $0.path, access) }
             }
         }
-        // Commands are for servers: said before the user is asked to allow one here.
-        guard !targets.contains(where: { t in t.place == .mac && { switch t.access { case .run, .tool: true; default: false } }() }) else {
-            return ("refused: no commands on this Mac", .failure("Commands and Tools actions run on servers only, not on this Mac. Nothing was done."))
+        // Commands, Tools and Server Info are for servers: said before the user is asked to allow one here.
+        guard !targets.contains(where: { t in t.place == .mac && { switch t.access { case .run, .tool: true; default: ["tools", "server_info"].contains(tool.name) } }() }) else {
+            return ("refused: no commands on this Mac", .failure("Commands, Tools and server_info run on servers only, not on this Mac. Nothing was done."))
         }
         // Before the scope: what an Agent turn was allowed doesn't carry into Ask.
         if readOnly, targets.contains(where: AIScope.changes) {

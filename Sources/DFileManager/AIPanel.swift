@@ -826,17 +826,23 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         }
     }
 
+    /// A command that starts something in the background (`nohup … &`, `a & b`) — not `&&`, `2>&1`, `&>`, `|&`: a
+    /// tool's run ends what it started (its watcher stops its session), so Save as Tool leaves it out.
+    static func inBackground(_ command: String) -> Bool { command.contains(/(^|[^&>|])&(\s|$)/) }
+
     /// Save as Tool (task 23 PR 9): an Agent turn that ran two commands or more on one server, all ending well, offers
     /// them as a tool — next time one click, no model. The draft opens unsaved in the tool editor; what wasn't a
     /// command (a copy, a file written, a Tools action) is said in its `about`, not in it.
-    private func offerTool(_ ran: [(server: SFTPTarget, command: String, folder: String?)], _ did: [AISession.Entry], under answer: Answer) {
-        guard ran.count >= 2, let t = ran.first?.server, ran.allSatisfy({ ServerLock.same($0.server, t) }) else { return }
+    private func offerTool(_ all: [(server: SFTPTarget, command: String, folder: String?)], _ did: [AISession.Entry], under answer: Answer) {
+        let background = all.filter { Self.inBackground($0.command) }.count, ran = all.filter { !Self.inBackground($0.command) }
+        guard ran.count >= 2, let t = ran.first?.server, ran.allSatisfy({ ServerLock.same($0.server, t) }), all.allSatisfy({ ServerLock.same($0.server, t) }) else { return }
         let server = AISession.label(t), said = AISession.oneLine(String(question.prefix { $0 != "\n" }), max: 40)
         let title = said.isEmpty ? "From a Chat" : said
         let left = did.filter { ["copy", "write_file", "tool_action"].contains($0.tool) && !$0.result.isError }.count
         let all = ran.map(\.command).joined(separator: "\n")
         let about = "Made from an AI chat on \(Date().formatted(date: .abbreviated, time: .omitted)): the commands it ran on \(server) that ended well, as they ran."
             + (left == 0 ? "" : " Left out: \(left) step\(left == 1 ? "" : "s") that weren't commands (copies, files written, Tools actions).")
+            + (background == 0 ? "" : " Left out: \(background) command\(background == 1 ? "" : "s") started in the background (&) — a tool's run ends what it started.")
             + (all.contains("•••") ? " ••• is a secret Kermo hid: put a value the tool asks for in its place." : "")
             + (ToolTemplate.placeholders(in: all).isEmpty ? "" : " {…} in a command is a value of Kermo's in a tool: Problems names each — awk's {print} wants spaces, { print }.")
         let text = ToolNew.text(commands: ran.map { ($0.command, $0.folder) }, id: ToolNew.id(from: title) ?? "from-a-chat", title: title, about: about)
