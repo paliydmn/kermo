@@ -29,6 +29,19 @@ extension ToolRunner {
         return .tool(changes: !(f.tool.builtIn && s.readonly == true), asks: s.dangerous == true || s.confirm == true)
     }
 
+    /// A refusal in words, as the model gets it.
+    struct NotForAI: Error { let result: AIResult }
+
+    /// What `toolID`'s action `actionID` is to the scope (`access`) — or, before anyone is asked, why it isn't run:
+    /// no such action of a tool you use, or one the user presses (`notForAI`).
+    func accessForAI(_ toolID: String, _ actionID: String) -> Result<AITarget.Access, NotForAI> {
+        guard let f = forAI(toolID, actionID) else { return .failure(NotForAI(result: .failure("No action “\(actionID)” of a tool “\(toolID)” you use: tools(server) lists them. Nothing ran."))) }
+        if let no = Self.notForAI(f.action, of: f.tool.preset) {
+            return .failure(NotForAI(result: .failure("“\((f.action.spec.title ?? f.action.spec.id).replacingOccurrences(of: "…", with: ""))”: \(no) — the user presses it in Tools. Nothing ran.")))
+        }
+        return .success(Self.access(f))
+    }
+
     /// Why the assistant doesn't run `a` itself — the user presses it in Tools —, or nil: it runs on this Mac, it
     /// opens something (a window that follows, rows one level down, a terminal, the editor, a place in Kermo), it's a
     /// long job, it takes a secret or a file from this Mac, or Kermo doesn't run it from a button.
@@ -146,7 +159,8 @@ extension ToolRunner {
         defer { form.close() }
         if inputs.contains(where: { $0.info.type == .choiceFrom }) {
             form.load(on: t, env: env)
-            await form.loading?.value
+            await withTaskCancellationHandler { await form.loading?.value } onCancel: { Task { @MainActor in form.close() } }   // Stop ends its reads
+            guard !Task.isCancelled else { return .no(.failure("Stopped. Nothing ran.")) }
         }
         for i in inputs {
             let choices: [String]? = switch i.info.type {
@@ -156,6 +170,10 @@ extension ToolRunner {
             }
             if let v = given[i.info.name], let choices, !choices.contains(v) {
                 return .no(.failure("\(i.info.name): “\(v)” isn't one of \(choices.prefix(50).joined(separator: ", ")). Nothing ran."))
+            }
+            // A choice the form would make by itself — the server's first jail — is the user's to see: the model names it.
+            if given[i.info.name] == nil, let choices, i.info.optional != true, i.info.default == nil {
+                return .no(.failure("\(i.info.name): give one of \(choices.prefix(50).joined(separator: ", ")). Nothing ran."))
             }
             if let no = form.problem(i) { return .no(.failure("\(i.info.name): \(no). Nothing ran.")) }
         }

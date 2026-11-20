@@ -957,6 +957,14 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             #expect(r.isError && r.text.contains(said), "\(action): \(r.text)")
         }
         #expect(!bench.calls.contains { $0.hasPrefix("whois") })
+        // Refused before anyone is asked: an action that isn't there; a choice the model didn't name isn't made for it.
+        let asked = heard.titles.count
+        r = await act("ufw", "reboot")
+        #expect(r.isError && r.text.contains("No action “reboot”") && heard.titles.count == asked && s.journal.last?.decision == "refused: not the assistant's")
+        r = await act("fail2ban", "ban", ["ip": "192.0.2.9"])
+        #expect(r.isError && r.text.contains("jail: give one of sshd") && !bench.calls.contains { $0.contains("banip 192.0.2.9") }, "\(r.text)")
+        r = await act("fail2ban", "ban", ["ip": "192.0.2.9", "jail": "sshd"])
+        #expect(!r.isError && bench.calls.contains("fail2ban-client set sshd banip 192.0.2.9"), "\(r.text)")
         // Your own tool's `readonly` is its word, not Kermo's: a change to the scope.
         var own = try toolNamed(app, "ufw")
         own.builtIn = false

@@ -286,6 +286,7 @@ final class ToolsNew: NSView, NSTextFieldDelegate {
     var problem: String? {
         guard let id = ToolNew.id(from: name.stringValue) else { return "A name needs a letter or a digit." }
         if app.tools.library.tools.contains(where: { $0.builtIn && $0.preset.id == id }) { return "\(id) is a built-in tool's: its page's Customize makes it yours." }
+        if ToolLibrary.kermosOwn.contains(id + ".json") { return "\(id).json is Kermo's own file there: choose another name." }
         if let dir = ToolRunner.own, FileManager.default.fileExists(atPath: dir.appendingPathComponent(id + ".json").path) { return "\(id).json is there already: My Tools has it, or Show File." }
         return nil
     }

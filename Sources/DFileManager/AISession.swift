@@ -54,7 +54,8 @@ final class AISession {
     var scopeChanged: (@MainActor () -> Void)?
     private(set) var scope = AIScope() { didSet { scopeChanged?() } }
     private(set) var journal: [Entry] = []
-    /// The commands that ran and ended well (exit 0), whole and masked, in order: Save as Tool's (task 23 PR 9).
+    /// The commands that ran and ended well (exit 0), whole and masked, in order: Save as Tool's (task 23 PR 9) — a
+    /// chat's session only (`plans`), an outside agent's keeps none.
     private(set) var commands: [(server: SFTPTarget, command: String, folder: String?)] = []
     private(set) var hasRead = false
     /// Something read on a production server went to the model (Never Send turned on later ends such a chat).
@@ -104,10 +105,13 @@ final class AISession {
         guard var targets = tool.targets(args, resolve: { name in named[name].map { self.place($0) } }) else {
             return ("refused: malformed", .failure("The call doesn't fit “\(tool.name)”: every argument as its schema says, each path absolute — no “..”, and no “~” on a server."))
         }
-        // A Tools action is what its tool says it is, known before the scope reads it; its look checks it still is.
+        // A Tools action is what its tool says it is, known before the scope reads it — one that isn't there or isn't
+        // the assistant's is refused before anyone is asked; its look checks it still is.
         if tool.name == "tool_action", case .string(let id)? = args["tool"], case .string(let action)? = args["action"] {
-            let access = ToolRunner.access(app.tools.forAI(id, action))
-            targets = targets.compactMap { AITarget($0.place, $0.path, access) }
+            switch app.tools.accessForAI(id, action) {
+            case .failure(let no): return ("refused: not the assistant's", no.result)
+            case .success(let access): targets = targets.compactMap { AITarget($0.place, $0.path, access) }
+            }
         }
         // Commands are for servers: said before the user is asked to allow one here.
         guard !targets.contains(where: { t in t.place == .mac && { switch t.access { case .run, .tool: true; default: false } }() }) else {
@@ -714,7 +718,7 @@ final class AISession {
                 return .failure("It didn't run: \(e.localizedDescription)")
             case .success(let r):
                 log(r.status, r.status == nil ? "not waited for" : nil)
-                if r.status == 0 { s.commands.append((t, AISecrets.mask(command).text, targets[0].path)) }
+                if r.status == 0, s.plans != nil { s.commands.append((t, AISecrets.mask(command).text, targets[0].path)) }
                 return told(r)
             }
         },

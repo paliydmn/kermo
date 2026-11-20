@@ -834,8 +834,11 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         let server = AISession.label(t), said = AISession.oneLine(String(question.prefix { $0 != "\n" }), max: 40)
         let title = said.isEmpty ? "From a Chat" : said
         let left = did.filter { ["copy", "write_file", "tool_action"].contains($0.tool) && !$0.result.isError }.count
-        let about = "Made from an AI chat on \(Date().formatted(date: .abbreviated, time: .omitted)): the commands it ran on \(server), as they ran."
+        let all = ran.map(\.command).joined(separator: "\n")
+        let about = "Made from an AI chat on \(Date().formatted(date: .abbreviated, time: .omitted)): the commands it ran on \(server) that ended well, as they ran."
             + (left == 0 ? "" : " Left out: \(left) step\(left == 1 ? "" : "s") that weren't commands (copies, files written, Tools actions).")
+            + (all.contains("•••") ? " ••• is a secret Kermo hid: put a value the tool asks for in its place." : "")
+            + (ToolTemplate.placeholders(in: all).isEmpty ? "" : " {…} in a command is a value of Kermo's in a tool: Problems names each — awk's {print} wants spaces, { print }.")
         let text = ToolNew.text(commands: ran.map { ($0.command, $0.folder) }, id: ToolNew.id(from: title) ?? "from-a-chat", title: title, about: about)
         answer.offer("It ran \(ran.count) commands on \(server): as a tool they're one click next time, with no AI.", ("Save as Tool…", { [weak self] in
             self.map { ToolEditor.draft($0.app, text) }

@@ -520,8 +520,9 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     /// What ran in it, as its title or question said it (nil: a log, Run on Servers).
     private var command: String?
 
-    /// The output window ⇧⌘I is pressed over: not one of several servers' (Run on Servers), whose text is from each.
-    static var keyed: OutputWindow? { open.first { $0.window?.isKeyWindow == true && !$0.embedded && ($0.servers == nil || $0.target != nil) } }
+    /// The output window ⇧⌘I is pressed over: one whose text is from where it ran — a command's, a server's — not
+    /// several servers' (Run on Servers) nor an agent's journal, whose text is from anywhere.
+    static var keyed: OutputWindow? { open.first { $0.window?.isKeyWindow == true && !$0.embedded && ($0.command != nil || $0.target != nil) } }
 
     /// ⇧⌘I: what's selected in it, else its text — the last 16 KB go —, as the chat's chip, from where it ran. nil:
     /// nothing in it.

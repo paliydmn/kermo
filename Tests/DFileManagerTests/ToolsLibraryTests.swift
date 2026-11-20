@@ -130,16 +130,31 @@ extension ServerLockTests {
         #expect(p.check().problems.contains { $0.description.contains("isn't the file's name") }, "\(p.check().problems)")
         ToolEditor.draft(app, ToolNew.text(.command, id: "ufw", title: "Mine"))
         #expect(try pane("ufw-2.json").check().problems.count == 1, "a built-in's id isn't taken over")
+        ToolEditor.draft(app, ToolNew.text(.command, id: "trust", title: "Trust"))
+        _ = try pane("trust-2.json")   // never Kermo's own trust.json
         // Save as Tool's draft: it loads, and its command is one shell line whatever a step ends with (a comment, `&`).
         let steps = ToolNew.text(commands: [("ls # look first", "/srv/my app"), ("nohup ./x > /tmp/x.log 2>&1 &", nil), ("cd /tmp && echo it's", nil)], id: "steps", title: "Steps", about: "a test")
         #expect(ToolSchema.validate(Data(steps.utf8), file: "steps.json").1.isEmpty)
         let command = try #require((try JSONSerialization.jsonObject(with: Data(steps.utf8)) as? [String: Any])?["command"] as? String)
-        #expect(command == "set -e\n(cd -- '/srv/my app' && ls # look first\n)\n(nohup ./x > /tmp/x.log 2>&1 &\n)\n(cd /tmp && echo it's\n)")
+        #expect(command == "(cd -- '/srv/my app' && ls # look first\n) || exit $?\n(nohup ./x > /tmp/x.log 2>&1 &\n) || exit $?\n(cd /tmp && echo it's\n) || exit $?")
         let sh = Process()
         (sh.executableURL, sh.arguments, sh.standardError) = (URL(fileURLWithPath: "/bin/sh"), ["-n", "-c", command.replacingOccurrences(of: "it's", with: "its")], FileHandle.nullDevice)
         try sh.run()
         sh.waitUntilExit()
         #expect(sh.terminationStatus == 0, "sh reads it")
+        // As they ran: inside a step it goes on past a failure, as `sh -c` did; a step that failed stops the rest.
+        func run(_ steps: [String]) throws -> (Int32, String) {
+            let text = ToolNew.text(commands: steps.map { ($0, nil) }, id: "s", title: "S", about: "")
+            let line = try #require((try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])?["command"] as? String)
+            let p = Process(), out = Pipe()
+            (p.executableURL, p.arguments, p.standardOutput) = (URL(fileURLWithPath: "/bin/sh"), ["-c", line], out)
+            try p.run()
+            let said = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            p.waitUntilExit()
+            return (p.terminationStatus, said)
+        }
+        #expect(try run(["false; echo one", "echo two"]) == (0, "one\ntwo\n"))
+        #expect(try run(["echo one", "exit 3", "echo never"]) == (3, "one\n"))
         let format = await AIPanel.toolFormat.read().text
         #expect(AIPanel.toolFormat.title == "Kermo's tool format" && format.contains("```json block") && format.hasSuffix(ToolNew.format) && !ToolNew.format.isEmpty)
     }

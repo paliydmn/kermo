@@ -271,7 +271,7 @@ final class ToolRunner {
         Task {
             defer { if !readonly { changing[key] = nil } }
             let prepared = await ready(a, of: tool, scope(p, on: s, t), row: nil, on: t, asked: false, window: window, text: text)
-            guard case let .go(scope, secret, _, payload, _) = prepared else {
+            guard case let .go(scope, secret, willRun, payload, _) = prepared else {
                 if case .stop(let why) = prepared { say("\(verb): " + (why == "cancelled" ? "cancelled — nothing ran" : "\(why) — nothing ran"), failed: why != "cancelled") }
                 return
             }
@@ -283,7 +283,7 @@ final class ToolRunner {
             if a.spec.output == .window, case .success(let (out, payload)) = r {
                 OutputWindow.show(payload.mask(out.text, password: out.password), errors: out.stopped ?? payload.mask(out.errors, password: out.password),
                                   title: "\(verb) — \(place)", status: out.status, ok: out.stopped == nil && a.run.succeeded(out.status),
-                                  save: a.spec.save.map { ToolTemplate.text($0, scope) }, target: t)
+                                  save: a.spec.save.map { ToolTemplate.text($0, scope) }, target: t, command: willRun)
                 return
             }
             let said = line(AppDelegate.how(how).0, a, scope, place: place, at: AppDelegate.clock.string(from: Date()), readError: nil,
