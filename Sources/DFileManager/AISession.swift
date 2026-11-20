@@ -21,8 +21,9 @@ final class AISession {
     /// What a tool that writes does first, once the place is unlocked and before the user is asked: looks at what is
     /// there. `no`: it can't be done, in words. `go`: whether something would be written over — that decides the
     /// question — and the runner, holding what was seen: a change after the look is a refusal, not a silent overwrite.
+    /// `asks`: the question, when the scope asks one, in the words of what was seen (a Tools action's command).
     typealias Look = @MainActor (AISession, [String: ToolValue], [AITarget]) async -> Looked
-    enum Looked { case no(AIResult), go(overwrites: Bool, Runner) }
+    enum Looked { case no(AIResult), go(overwrites: Bool, Runner, asks: Confirm? = nil) }
 
     struct Entry {
         var at = Date()
@@ -98,18 +99,23 @@ final class AISession {
             guard let t = await server(named: name) else { return ("refused: unknown server", .failure(Self.unknown(name))) }
             named[name] = t
         }
-        guard let targets = tool.targets(args, resolve: { name in named[name].map { self.place($0) } }) else {
+        guard var targets = tool.targets(args, resolve: { name in named[name].map { self.place($0) } }) else {
             return ("refused: malformed", .failure("The call doesn't fit “\(tool.name)”: every argument as its schema says, each path absolute — no “..”, and no “~” on a server."))
         }
+        // A Tools action is what its tool says it is, known before the scope reads it; its look checks it still is.
+        if tool.name == "tool_action", case .string(let id)? = args["tool"], case .string(let action)? = args["action"] {
+            let access = ToolRunner.access(app.tools.forAI(id, action))
+            targets = targets.compactMap { AITarget($0.place, $0.path, access) }
+        }
         // Commands are for servers: said before the user is asked to allow one here.
-        guard !targets.contains(where: { if case .run = $0.access { $0.place == .mac } else { false } }) else {
-            return ("refused: no commands on this Mac", .failure("Commands run on servers only, not on this Mac. Nothing was done."))
+        guard !targets.contains(where: { t in t.place == .mac && { switch t.access { case .run, .tool: true; default: false } }() }) else {
+            return ("refused: no commands on this Mac", .failure("Commands and Tools actions run on servers only, not on this Mac. Nothing was done."))
         }
         // Before the scope: what an Agent turn was allowed doesn't carry into Ask.
         if readOnly, targets.contains(where: AIScope.changes) {
             return ("refused: Ask", .failure("In Ask the assistant only reads: this would change something. Nothing was done — give the user the commands instead."))
         }
-        var call = AICall(tool, targets), run = run
+        var call = AICall(tool, targets), run = run, asks: Confirm?
         let prod = { (p: AIPlace) in self.servers[p].map(SavedServer.isProd) ?? false }
         let neverProd = { self.noProduction && targets.contains { prod($0.place) } }
         if neverProd() { return Self.refusedProduction }
@@ -133,14 +139,14 @@ final class AISession {
             read()
             switch looked {
             case .no(let why): return ("refused: can't be done", why)
-            case .go(let overwrites, let found): (call.overwrites, run) = (overwrites, found)
+            case .go(let overwrites, let found, let question): (call.overwrites, run, asks) = (overwrites, found, question)
             }
         }
         guard !Task.isCancelled else { return ("stopped", .failure("Stopped. Nothing was done.")) }   // no Touch ID for nobody
         let passed = await app.gate(ends, to: to, question: {
             decision = self.scope.check(call, prod: prod)   // production is known by now
             guard case .ask(let why) = decision, why != .unclear else { return nil }
-            return self.question(tool, args, why, on: ends, over: look != nil && call.overwrites)
+            return asks ?? self.question(tool, args, why, on: ends, over: look != nil && call.overwrites)
         }, asker: asker)
         switch passed {
         case .locked(let t): return ("locked", .failure("\(Self.label(t)) stays locked: the user didn't unlock it. Nothing was done."))
@@ -313,7 +319,7 @@ final class AISession {
         case .production: "change a production server"
         case .removes: "delete"
         case .overwrites: "write over what is there"
-        case .unclear: "do this"
+        case .unclear, .always: "do this"
         }
         var c = Confirm("Let the assistant \(what)?", action: "Allow Once")
         c.on(ends)
@@ -350,7 +356,7 @@ final class AISession {
     private struct NotAFile: LocalizedError { var errorDescription: String? { "it isn't a file" } }
 
     /// Work off the main thread that stops when the call's task is cancelled.
-    private static func work<T: Sendable>(_ body: @escaping @Sendable (CancelFlag) throws -> T) async -> Result<T, Error> {
+    static func work<T: Sendable>(_ body: @escaping @Sendable (CancelFlag) throws -> T) async -> Result<T, Error> {
         let flag = CancelFlag()
         return await withTaskCancellationHandler { await Blocking.run { Result { try body(flag) } } } onCancel: { flag.cancel() }
     }
@@ -408,8 +414,12 @@ final class AISession {
 
     // MARK: Writing
 
-    /// `write_file` and `copy` look before the user is asked (`Look`).
+    /// `write_file`, `copy` and `tool_action` look before the user is asked (`Look`).
     static let looks: [String: Look] = [
+        "tool_action": { s, args, targets in
+            guard let t = s.servers[targets[0].place] else { return .no(.failure("Tools actions run on servers only.")) }
+            return await s.app.tools.lookForAI(args, on: t, seen: targets[0].access)
+        },
         "write_file": { s, args, targets in
             let path = targets[0].path ?? "/", t = s.servers[targets[0].place]
             guard case .string(let text)? = args["text"] else { return .no(.failure("write_file needs text.")) }
@@ -599,6 +609,11 @@ final class AISession {
             return s.focus()
         },
         "request_scope": { s, args, _ in await s.requestScope(args) },
+        "tools": { s, args, targets in
+            guard let t = s.servers[targets[0].place] else { return .failure("Tools are a server's; this Mac has none here.") }
+            let id: String? = if case .string(let id)? = args["tool"] { id } else { nil }
+            return await s.app.tools.toolsText(on: t, tool: id)
+        },
         "plan": { s, args, _ in
             guard case .array(let items)? = args["steps"], (1...30).contains(items.count) else { return .failure("plan needs 1 to 30 steps.") }
             let steps = items.compactMap { v -> (text: String, state: String)? in   // their shape `targets` checked

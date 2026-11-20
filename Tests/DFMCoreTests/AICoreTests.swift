@@ -240,8 +240,8 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
 
 @Test func aiToolsTellWhatACallTouches() throws {
     let names = AITools.all.map(\.name)
-    #expect(names == ["focus", "request_scope", "plan", "list_folder", "read_file", "terminal_output", "server_info", "run_command", "copy", "write_file", "propose_edit",
-                      "open_in_editor"] && Set(names).count == names.count)
+    #expect(names == ["focus", "request_scope", "plan", "list_folder", "read_file", "terminal_output", "server_info", "tools", "tool_action", "run_command", "copy",
+                      "write_file", "propose_edit", "open_in_editor"] && Set(names).count == names.count)
     for t in AITools.all {   // a schema both tool use and MCP take: an object, every required name a property, every place's argument a parameter
         guard case .object(let o) = t.schema, case .object(let props)? = o["properties"], case .array(let required)? = o["required"] else { Issue.record("\(t.name)"); continue }
         #expect(o["type"] == "object" && required.allSatisfy { if case .string(let n) = $0 { props[n] != nil } else { false } }, Comment(rawValue: t.name))
@@ -260,6 +260,18 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
     #expect(tool("run_command").targets(["server": "web-01", "command": "ls"], resolve: places) == [AITarget(web, nil, .run("ls"))!])
     #expect(tool("run_command").targets(["server": "web-01", "command": "ls", "folder": "/srv"], resolve: places) == [AITarget(web, "/srv", .run("ls"))!])
     #expect(tool("focus").targets([:], resolve: places) == [] && tool("server_info").targets(["server": "mac"], resolve: places) == [AITarget(.mac, nil, .read)!])
+    // A Tools action is the strictest till the session knows it (task 23 PR 9); then its tool says: a look, a change, one that asks.
+    #expect(tool("tool_action").targets(["server": "web-01", "tool": "ufw", "action": "allow", "inputs": [["name": "port", "value": "80"]]], resolve: places)
+            == [AITarget(web, nil, .tool(changes: true, asks: true))!])
+    var scope = AIScope()
+    scope.grant(web, .view)
+    func act(_ changes: Bool, _ asks: Bool, prod: Bool = false) -> AIScope.Decision {
+        scope.check(AICall(tool("tool_action"), [AITarget(web, nil, .tool(changes: changes, asks: asks))!]), prod: { _ in prod })
+    }
+    #expect(act(false, false) == .allowed && !AIScope.changes(AITarget(web, nil, .tool(changes: false, asks: true))!), "a look: View is enough, in Ask too")
+    #expect(act(true, false) == .outside([AIScope.Need(place: web, level: .work, commands: true)]), "a change: commands, as a command")
+    scope.grant(web, .all)
+    #expect(act(true, false) == .allowed && act(true, true) == .ask(.always) && act(false, true) == .ask(.always) && act(true, false, prod: true) == .ask(.production))
     #expect(tool("request_scope").targets(["needs": [["server": "web-01", "level": "commands", "folder": "", "why": "deploy"]]], resolve: places) == [])
     #expect(tool("plan").targets(["steps": [["text": "Run it", "state": "doing"]]], resolve: places) == [])
     #expect(AITools.forAgents.map(\.name) == names.filter { $0 != "plan" }, "an outside agent shows its own plan")

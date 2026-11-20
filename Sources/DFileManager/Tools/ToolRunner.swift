@@ -20,7 +20,8 @@ final class ToolRunner {
     /// greyed while it isn't connected. A cache, not a setting: deleting it costs a batch on the next connection.
     private var known: [String: Known] = [:]
     struct Known: Codable { var facts: ToolFacts; var passed: [String]; var asked: [String]?; var at: Date }
-    private var asking: Set<String> = []
+    /// The batches asking now, by server: one at a time, and the assistant's look waits for it (`answerNow`).
+    private var asking: [String: Task<Void, Never>] = [:]
     /// Bumped as every answer goes (a reload, a tool trusted): a look under way then asked of the tools as they were.
     private var round = 0
     /// What vars' commands found, per server and tool ("<server> <tool>").
@@ -206,17 +207,19 @@ final class ToolRunner {
     /// Every server: a tool just trusted wasn't asked about anywhere.
     func askAgain() { (answers, round) = ([:], round + 1) }
 
-    private func ask(_ t: SFTPTarget) {
+    @discardableResult
+    private func ask(_ t: SFTPTarget) -> Task<Void, Never>? {
         let key = ServerRow.key(t), tools = asked
-        guard !tools.isEmpty, asking.insert(key).inserted else { return }
+        if let running = asking[key] { return running }
+        guard !tools.isEmpty else { return nil }
         let s = app.savedServer(at: t) ?? SavedServer(target: t)
         let scopes = Dictionary(tools.map { ($0.preset.id, scope($0.preset, on: s, t)) }) { a, _ in a }
         let scripts = Dictionary(tools.map { ($0.preset.id, $0.scripts) }) { a, _ in a }
         let items = ToolBatch.items(tools.map(\.preset)), command = Self.command, live = Self.hasMaster
         let r = round
-        Task {
+        let task = Task {
             let a = await Blocking.run { ToolBatch.ask(t, items, scope: { scopes[$0] ?? .init() }, scripts: { scripts[$0] ?? [:] }, hasMaster: live, command: command) }
-            asking.remove(key)
+            asking[key] = nil
             guard r == round else { return app.toolsKnown(on: t) }   // stale: the next look asks anew
             guard let a else { return }
             answers[key] = (a, Date())
@@ -226,6 +229,19 @@ final class ToolRunner {
             }
             app.toolsKnown(on: t)
         }
+        asking[key] = task
+        return task
+    }
+
+    /// What `t`'s server has, asked now if it isn't known this session: logged in first — the assistant's look, its
+    /// server unlocked by the gate. nil: it didn't answer.
+    func answerNow(_ t: SFTPTarget) async -> ToolBatch.Answer? {
+        let u = t.asUser, key = ServerRow.key(u), env = SSHAskpass.env
+        if answers[key] == nil {
+            guard case .success = await AISession.work({ try SFTP.startMaster(u, env: env, cancel: $0) }) else { return nil }
+            await ask(u)?.value
+        }
+        return answers[key]?.answer
     }
 
     // MARK: Send To… (§7.1 `accepts`)
@@ -752,14 +768,15 @@ final class ToolRunner {
     struct Changed: Error {}
 
     /// A run as the change loop takes it, and in the production log: the tool, the action, the payload with its
-    /// secrets and the password as •••, the exit.
-    private func ran(_ r: Result<(ran: ToolExec.Ran, payload: ToolPayload), Error>, _ a: ToolAction, of p: ToolPreset, on t: SFTPTarget, shown: String) -> AppDelegate.RanThere {
+    /// secrets and the password as •••, the exit — and who ran it (`by`: "ai").
+    func ran(_ r: Result<(ran: ToolExec.Ran, payload: ToolPayload), Error>, _ a: ToolAction, of p: ToolPreset, on t: SFTPTarget, shown: String,
+             by: String? = nil) -> AppDelegate.RanThere {
         let what = "tool \(p.id) \(a.spec.id)"
         switch r {
         case .success(let (ran, payload)):
             let ok = ran.stopped == nil && a.run.succeeded(ran.status)
             AuditLog.write(t, what, paths: [], command: payload.mask(payload.shown, password: ran.password), exit: ran.stopped == nil ? ran.status : nil,
-                           error: ok ? nil : ran.stopped ?? ran.errors.split(whereSeparator: \.isNewline).first.map(String.init))
+                           error: ok ? nil : ran.stopped ?? ran.errors.split(whereSeparator: \.isNewline).first.map(String.init), by: by)
             if let stopped = ran.stopped { return .ran(.failure(JobErrorMessage(stopped))) }
             if ok { return .ran(.success(.passed(""))) }
             if ran.status == 127 { askAgain(t) }   // its requires again on the next look
@@ -768,7 +785,7 @@ final class ToolRunner {
         case .failure(is ToolExec.NoPassword): return .notRun("no sudo password")
         case .failure(is Changed): return .notRun("the list changed")
         case .failure(let e):
-            AuditLog.write(t, what, paths: [], command: shown, exit: nil, error: e is CancellationError ? "cancelled, may have run" : e.localizedDescription)
+            AuditLog.write(t, what, paths: [], command: shown, exit: nil, error: e is CancellationError ? "cancelled, may have run" : e.localizedDescription, by: by)
             return .ran(.failure(e))
         }
     }
