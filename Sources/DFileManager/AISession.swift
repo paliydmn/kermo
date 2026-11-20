@@ -407,7 +407,7 @@ final class AISession {
         "write_file": { s, args, targets in
             let path = targets[0].path ?? "/", t = s.servers[targets[0].place]
             guard case .string(let text)? = args["text"] else { return .no(.failure("write_file needs text.")) }
-            if let no = openInEditor(path, on: t) { return .no(no) }
+            if let no = s.openInEditor(path, on: t) { return .no(no) }
             let a: SFTPClient.Attrs?
             switch await landing(path, on: t) {
             case .failure(let no): return .no(.failure(no.text))
@@ -417,14 +417,14 @@ final class AISession {
             guard a.map({ $0.kind == .file && $0.size <= Editor.sizeLimit }) ?? true else { return .no(.failure("\(path) is there and isn't a text file to write over. Nothing was written.")) }
             if let t {
                 return .go(overwrites: a != nil) { s, _, _ in
-                    if let no = openInEditor(path, on: t) { return no }
+                    if let no = s.openInEditor(path, on: t) { return no }
                     return await s.write(text, to: path, on: t, over: a ?? .nothing)
                 }
             }
             // What was seen: the file as it is now (the write goes over nothing else), or nothing there.
             let seen = await Blocking.run { (Editor.Stamp(path), a == nil ? nil : (try? Data(contentsOf: URL(fileURLWithPath: path))).map(Editor.sha)) }
-            return .go(overwrites: a != nil) { _, _, _ in
-                if let no = openInEditor(path, on: nil) { return no }
+            return .go(overwrites: a != nil) { s, _, _ in
+                if let no = s.openInEditor(path, on: nil) { return no }
                 let name = (path as NSString).lastPathComponent
                 let written = await Blocking.run {
                     Editor.write(Data(text.utf8), to: path, name: name, unlessChangedFrom: seen, hook: { _ in }, writing: { try $0.write(contentsOf: $1) }, willRename: { _ in })
@@ -443,7 +443,7 @@ final class AISession {
             guard from.place != .mac || !(source.lowercased() + "/").hasPrefix("/dev/") else { return .no(.failure("\(source) is a device, not a file to copy.")) }
             let name = (source as NSString).lastPathComponent, landing = (dir as NSString).appendingPathComponent(name), t = s.servers[to.place]
             guard from.place != to.place || landing != source else { return .no(.failure("\(source) is in \(dir) already.")) }
-            if let no = openInEditor(landing, on: t) { return .no(no) }
+            if let no = s.openInEditor(landing, on: t) { return .no(no) }
             let taken: Bool
             switch await AISession.landing(landing, on: t) {
             case .failure(let no): return .no(.failure(no.text))
@@ -454,18 +454,20 @@ final class AISession {
                 taken = there != nil
             }
             return .go(overwrites: taken) { s, _, _ in
-                if let no = openInEditor(landing, on: t) { return no }
+                if let no = s.openInEditor(landing, on: t) { return no }
                 return await s.copy(source, from: s.servers[from.place].map { .sftp($0) } ?? .local, into: dir, on: t.map { .sftp($0) } ?? .local, over: taken ? landing : nil)
             }
         },
     ]
 
-    /// A file open in the editor (`Editor.isOpen`) is written only through it: the model's change is `propose_edit`'s
-    /// card, and only the user's ⌘S saves it — never under the user's unsaved text. Asked at the look and again
-    /// just before the write: it may have been opened while the question was up.
-    private static func openInEditor(_ path: String, on t: SFTPTarget?) -> AIResult? {
+    /// A file open in the editor (`Editor.isOpen`) is written only through it — never under the user's unsaved
+    /// text: in the chat the model's change is `propose_edit`'s card, saved by the user's ⌘S; an outside agent, which
+    /// has no card, leaves it to the user. Asked at the look and again just before the write: it may have been opened
+    /// while the question was up.
+    private func openInEditor(_ path: String, on t: SFTPTarget?) -> AIResult? {
         guard Editor.isOpen(path, on: t) else { return nil }
-        return .failure("\(path) is open in the editor: propose the change with propose_edit — the user saves it there. Nothing was written.")
+        return .failure(proposes != nil ? "\(path) is open in the editor: propose the change with propose_edit — the user saves it there. Nothing was written."
+            : "\(path) is open in Kermo's editor: tell the user the change to make there, or to close the file first — don't write it another way. Nothing was written.")
     }
 
     /// What has the name `path` now (a link is a link, not its file; nil: nothing), on `t` or this Mac — once its

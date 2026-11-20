@@ -627,7 +627,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     @discardableResult private func madeSession() -> AISession {
         if let session { return session }
         let s = AISession(app: app) { [weak self] c, _ in await self?.ask(c) ?? 1 }
-        s.readOnly = mode != .agent
+        (s.readOnly, s.noProduction) = (mode != .agent, AISettings.neverProd(app.defaults))
         s.proposes = { [weak self] p, t, path in
             guard let self else { return }
             let card = EditCard(p, on: t, path: path, app: app)
@@ -700,7 +700,8 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         menu.addItem(MenuAction.item("Take Back") { [unowned self] in session?.takeAway(g.place) })
         menu.addItem(.separator())
         menu.addItem(withTitle: "Asked always, under All too: deleting, writing over a file, any change on production", action: nil, keyEquivalent: "").isEnabled = false
-        menu.addItem(withTitle: "A command allowed here may write over files unasked", action: nil, keyEquivalent: "").isEnabled = false
+        menu.addItem(withTitle: g.place == .mac ? "All on this Mac: any file you can write, ~/Library/LaunchAgents too" : "A command allowed here may write over files unasked",
+                     action: nil, keyEquivalent: "").isEnabled = false
         return menu
     }
 

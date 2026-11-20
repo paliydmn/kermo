@@ -860,17 +860,21 @@ extension EditorWindowTests {   // the editor window is the app's one; `UserDefa
         #expect(doc.storage.string == base, "one ⌘Z")
         #expect(FileManager.default.contents(atPath: conf) == Data(base.utf8) && (try? FileManager.default.attributesOfItem(atPath: conf)[.modificationDate] as? Date) == stamp)
 
-        // An Agent doesn't write a file open in the editor, by write_file or by a copy onto it: its card is the way.
+        // An Agent doesn't write a file open in the editor, by write_file or by a copy onto it: its card is the way —
+        // a session with no card (an outside agent's, as here) is told to leave it to the user.
         let agent = AISession(app: app) { _, _ in 0 }
         var r = await agent.call("write_file", ["server": "mac", "path": .string(conf), "text": "x\n"])
-        #expect(r.isError && r.text.contains("open in the editor") && FileManager.default.contents(atPath: conf) == Data(base.utf8), "\(r.text)")
+        #expect(r.isError && r.text.contains("open in Kermo's editor: tell the user") && FileManager.default.contents(atPath: conf) == Data(base.utf8), "\(r.text)")
         try FileManager.default.createDirectory(atPath: dir + "/src", withIntermediateDirectories: true)
         try Data("y\n".utf8).write(to: URL(fileURLWithPath: dir + "/src/app.conf"))
         r = await agent.call("copy", ["from_server": "mac", "from_path": .string(dir + "/src/app.conf"), "to_server": "mac", "to_folder": .string(dir)])
-        #expect(r.isError && r.text.contains("open in the editor") && FileManager.default.contents(atPath: conf) == Data(base.utf8), "\(r.text)")
+        #expect(r.isError && r.text.contains("open in Kermo's editor: tell the user") && FileManager.default.contents(atPath: conf) == Data(base.utf8), "\(r.text)")
         try FileManager.default.linkItem(atPath: conf, toPath: dir + "/same.conf")   // the same file by another name
         r = await agent.call("write_file", ["server": "mac", "path": .string(dir + "/same.conf"), "text": "x\n"])
-        #expect(r.isError && r.text.contains("open in the editor") && FileManager.default.contents(atPath: conf) == Data(base.utf8), "\(r.text)")
+        #expect(r.isError && r.text.contains("open in Kermo's editor: tell the user") && FileManager.default.contents(atPath: conf) == Data(base.utf8), "\(r.text)")
+        agent.proposes = { _, _, _ in }   // the chat's session: its card is the way
+        r = await agent.call("write_file", ["server": "mac", "path": .string(conf), "text": "x\n"])
+        #expect(r.isError && r.text.contains("propose the change with propose_edit") && FileManager.default.contents(atPath: conf) == Data(base.utf8), "\(r.text)")
 
         // A card on a tab that changed since: refused, the tab as it was.
         wire.then([(200, propose([("b = 2", "b = 5")])), (200, turn(text: "One more."))])

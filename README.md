@@ -91,7 +91,7 @@ Mac function keys control media by default: ⌥ plus the digit does the same (�
 - [Checks on save and reloads](docs/config-checks.md): `visudo`, `nginx -t` and the like before a bad save.
 - [SSH tunnels](docs/tunnels.md): forward remote ports to this Mac.
 - [Safety on servers](docs/safety.md): production servers, the production log, what stays on your Mac.
-- [AI: chat and agents](docs/ai.md): ask your own model about what's open (⌃⌘I); let Claude Code in Kermo's terminal use Kermo's tools; what each may do, what Kermo asks, what goes to your provider.
+- [AI: chat and agents](docs/ai.md): ask your own model about what's open (⌃⌘I), or let it do a task within what you allow (Agent); let Claude Code in Kermo's terminal use Kermo's tools; what each may do, what Kermo asks, what goes to your provider.
 
 **Reference**
 - [Keyboard shortcuts](docs/shortcuts.md): every shortcut, grouped.
