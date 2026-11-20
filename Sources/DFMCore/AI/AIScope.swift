@@ -176,5 +176,6 @@ public struct AIScope: Sendable, Equatable {
         return reasons.min { $0.rawValue < $1.rawValue }.map { .ask($0) } ?? .allowed
     }
 
-    static func holds(_ folder: String, _ path: String) -> Bool { path == folder || path.hasPrefix(folder == "/" ? "/" : folder + "/") }
+    /// `folder` holds `path` (or is it), by the words.
+    public static func holds(_ folder: String, _ path: String) -> Bool { path == folder || path.hasPrefix(folder == "/" ? "/" : folder + "/") }
 }

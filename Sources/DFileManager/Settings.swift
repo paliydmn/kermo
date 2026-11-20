@@ -154,7 +154,8 @@ extension AppDelegate {
                 SettingsRow(title: "Test", note: "Lists the models, then asks the model for one word: a fraction of a cent",
                             control: .buttons([("Test", "ai.test")]), status: { _ in AISettings.tested }),
                 SettingsRow(title: "Production servers", note: "What you attach from a production server, and what the model reads there: asked once a chat, or never sent",
-                            key: "aiProduction", control: .choice([("Ask Once a Chat", nil), ("Never Send", "never")], segmented: true)),
+                            key: "aiProduction", control: .choice([("Ask Once a Chat", nil), ("Never Send", "never")], segmented: true),
+                            apply: { $0.aiPanel?.refresh() }),   // a turn going on knows at its next call
                 SettingsRow(title: "Stop a chat at",
                             note: "At Anthropic's prices: past this, the chat asks before its next request, and again each time as much more. 0: never. Other providers: 10 rounds of tools a turn (Agent 30)",
                             key: "aiChatLimit", control: .number(0...50, step: 0.5, value: 2, unit: "$")),

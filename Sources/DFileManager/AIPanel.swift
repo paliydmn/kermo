@@ -59,8 +59,10 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     private(set) var mode = Mode.ask
     private let modes = NSSegmentedControl(), modeNote = NSTextField(labelWithString: "")
     private var modeRow: NSStackView?
-    /// What this chat may do where (`AISession.granted`): a chip a place, and + to give one View.
+    /// What this chat may do where (`AISession.granted`): a chip a place, and + to give one View. `giving`: a level
+    /// the row is setting — its question, if any, goes with New Chat.
     private let scopeRow = ChipFlow(), scopeLine = NSStackView()
+    private var giving: Task<Void, Never>?
     /// The answer a turn is writing: where a proposed change's card and a plan go.
     private weak var answering: Answer?
     /// The plan this answer shows, updated in place; a later answer's plan is a card of its own.
@@ -692,7 +694,10 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         menu.autoenablesItems = false
         menu.addItem(withTitle: "\(g.name.bidiVisible) in this chat", action: nil, keyEquivalent: "").isEnabled = false
         for (level, title) in [(AIScope.Level.view, "View — reads only"), (.work, "Work — its folders, and commands"), (.all, "All — anything there")] {
-            let item = MenuAction.item(title) { [unowned self] in if g.level != level { session?.set(g.place, level) } }
+            let item = MenuAction.item(title) { [unowned self] in
+                guard g.level != level, let session else { return }
+                giving = Task { await session.set(g.place, level) }
+            }
             // This Mac runs no commands: its Work is only the folders a task was given.
             (item.state, item.isEnabled) = (g.level == level ? .on : .off, (mode == .agent || level == .view) && !(level == .work && g.place == .mac))
             menu.addItem(item)
@@ -720,7 +725,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             guard !have.contains(name), !(never && t.map(SavedServer.isProd) == true) else { continue }
             menu.addItem(MenuAction.item(name.bidiVisible + (t.map(SavedServer.isProd) == true ? " (PROD)" : "")) { [unowned self] in
                 let s = madeSession()
-                Task { await s.give(t) }
+                giving = Task { await s.give(t) }
             })
         }
         menu.addItem(.separator())
@@ -800,7 +805,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             // At Anthropic, a model Kermo has no price for: the cap doesn't count it. Said once a chat.
             if unpriced, !toldUnpriced, Self.cap(app.defaults) > 0, AISettings.kind(app.defaults) == .anthropic {
                 toldUnpriced = true
-                note("Kermo has no price for this model: Settings › AI's cap doesn't count it — only the rounds a turn may take stop it.", error: false)
+                note("Kermo has no price for this model at this address: Settings › AI's cap doesn't count it — only the rounds a turn may take stop it.", error: false)
             }
             save()
             finish()
@@ -829,6 +834,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
     @objc private func newChat() {
         stop()
+        giving?.cancel()
         generation += 1
         (chat, session, prodSent, turn, pinned, failedAt) = (nil, nil, [], nil, nil, nil)
         (chatID, asked, resumedProduction, unsaved, unkept, following) = (nil, [], false, false, false, false)
@@ -1358,7 +1364,8 @@ final class PlanCard: NSStackView {
     required init?(coder: NSCoder) { fatalError() }
 
     func set(_ list: [(text: String, state: String)]) {
-        let s = NSMutableAttributedString()
+        let s = NSMutableAttributedString(), lines = NSMutableParagraphStyle()
+        lines.headIndent = 20   // a step's second line under its words, never at the marks' edge as a step of its own
         for (i, step) in list.enumerated() {
             let (mark, tint) = switch step.state {
             case "doing": ("▸", NSColor.controlAccentColor)
@@ -1372,6 +1379,7 @@ final class PlanCard: NSStackView {
             if step.state == "skipped" { words[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
             s.append(NSAttributedString(string: step.text.bidiVisible, attributes: words))
         }
+        s.addAttribute(.paragraphStyle, value: lines, range: NSRange(location: 0, length: s.length))
         steps.set(s)
         setAccessibilityLabel("Plan: " + list.map { "\($0.text), \($0.state)" }.joined(separator: "; "))
     }

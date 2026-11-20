@@ -195,8 +195,9 @@ final class StepRow: NSStackView {
         let what = ["focus": "What's in front of you", "list_folder": "List", "read_file": "Read", "terminal_output": "Terminal output",
                     "server_info": "Server info", "run_command": "Run", "propose_edit": "Propose a change to", "request_scope": "Ask to allow",
                     "copy": "Copy", "write_file": "Write", "open_in_editor": "Open"][c.name] ?? c.name
-        title = ([what, arg("server"), arg("path") ?? arg("folder"), arg("command"), arg("from_server"), arg("from_path"), arg("to_server").map { "→ " + $0 }, arg("to_folder")]
-            .compactMap { $0 }).joined(separator: " ").bidiVisible
+        // A copy by its item's name: the middle of a long line is what a step's label leaves out.
+        title = ([what, arg("server"), arg("path") ?? arg("folder"), arg("command"), arg("from_path").map { ($0 as NSString).lastPathComponent },
+                  arg("to_server").map { "→ " + $0 }, arg("to_folder")].compactMap { $0 }).joined(separator: " ").bidiVisible
         super.init(frame: .zero)
         let spin = NSProgressIndicator()
         (spin.style, spin.controlSize) = (.spinning, .small)

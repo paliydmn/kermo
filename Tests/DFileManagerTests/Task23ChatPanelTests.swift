@@ -735,6 +735,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         panel.setMode(.agent)
         let all = try #require(panel.scopeMenu(g).items.first { $0.title.hasPrefix("All") && $0.isEnabled })
         _ = (all.target as? NSObject)?.perform(all.action, with: all)
+        for _ in 0..<300 where panel.granted.first?.level != .all { try? await Task.sleep(for: .milliseconds(10)) }
         #expect(panel.granted.first?.level == .all && chips() == ["box: everything"], "\(chips())")
     }
 }

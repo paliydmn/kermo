@@ -103,7 +103,7 @@ public enum AITools {
         AITool(name: "request_scope", about: "Ask the user once for all a task needs in this chat, the least that does it: they allow the whole list or nothing.",
                kind: .ui, params: [.init(name: "needs", about: "One item each. server: a name Kermo shows, or \"mac\". level: view (read), write (into folder), "
                                          + "commands (run commands that change things there), all (everything there). folder: the absolute folder for write, else \"\". "
-                                         + "why: what for, one short line the user reads", fields: ["server", "level", "folder", "why"])]),
+                                         + "why: what for, one short line the user reads. At most 5 needs", fields: ["server", "level", "folder", "why"])]),
         AITool(name: "plan", about: "Show the user the task's steps as a checklist, and keep it current: call it again with the whole list as it stands, in the same message as the next step's own call.",
                kind: .ui, params: [.init(name: "steps", about: "Every step in order. text: one short line. state: todo, doing, done or skipped", fields: ["text", "state"])]),
         AITool(name: "list_folder", about: "The names in a folder, with sizes and dates.", kind: .read, params: [server, path("The folder")],

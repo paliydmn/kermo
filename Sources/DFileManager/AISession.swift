@@ -230,10 +230,11 @@ final class AISession {
     func takeAway(_ place: AIPlace? = nil) { (place.map { [$0] } ?? Array(scope.grants.keys)).forEach { scope.revoke($0) } }
 
     /// The user sets a place's level themselves (the scope row): `AIScope.set`. Whatever it is, Ask and Edit
-    /// change nothing (`readOnly`) — the row offers them View only.
-    func set(_ place: AIPlace, _ level: AIScope.Level) {
+    /// change nothing (`readOnly`) — the row offers them View only. All on this Mac goes through the question, as
+    /// View there does: what it reaches is said there.
+    func set(_ place: AIPlace, _ level: AIScope.Level) async {
         guard scope.grants[place] != nil else { return }
-        scope.set(place, level)
+        if place == .mac, level == .all { _ = await allow([AIScope.Need(place: .mac, level: .all)]) } else { scope.set(place, level) }
     }
 
     /// The user gives `t` (nil: this Mac) View up front (the scope row's +): learned first, so it is the place a
@@ -255,12 +256,12 @@ final class AISession {
         }
     }
 
-    /// The model's words as one line of a card: masked first (a cut inside a secret would leave its head bare), no
-    /// line break or control character to draw a line of its own, `max` characters at most.
-    static func oneLine(_ s: String, max: Int = .max) -> String {
-        let flat = String(String.UnicodeScalarView(AISecrets.mask(s).text.unicodeScalars.map {
-            CharacterSet.newlines.contains($0) || CharacterSet.controlCharacters.contains($0) ? " " : $0
-        }))
+    /// Words as one line of a card: masked first (a cut inside a secret would leave its head bare) — the model's;
+    /// Kermo's own (`mask: false`) are said as they are —, no line break, control character or run of spaces to
+    /// draw a line of its own, `max` characters at most.
+    static func oneLine(_ s: String, max: Int = .max, mask: Bool = true) -> String {
+        let flat = String(String.UnicodeScalarView((mask ? AISecrets.mask(s).text : s).unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : $0 }))
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return flat.count > max ? String(flat.prefix(max - 1)) + "…" : flat
     }
 
@@ -280,21 +281,26 @@ final class AISession {
         if let asker { await asker(c, nil) == 0 } else { await app.confirm(c) == 0 }
     }
 
-    /// "Allow for This Task": what the scope lacks, a line each, in Kermo's words only (no more than a sheet lists);
-    /// `whys`, the model's words, go in the note. Granted only as a whole.
+    /// "Allow for This Task": what the scope lacks, a line each in Kermo's words, whole (the wrapped box, never cut
+    /// in the middle); the model's `whys` on a line of their own, quoted. Granted only as a whole.
     private func allow(_ needs: [AIScope.Need], whys: [String] = []) async -> Bool {
-        var c = readOnly ? Confirm("Let the assistant read there until the chat ends?", action: "Allow in This Chat")
+        let reads = needs.allSatisfy { $0.level == .view }
+        var c = reads ? Confirm("Let the assistant read there until the chat ends?", action: "Allow in This Chat")
             : Confirm("Allow the assistant this, until the chat ends?", action: "Allow for This Task")
         c.on(needs.compactMap { servers[$0.place] })
-        c.items = needs.map { n in Confirm.Item(name: Self.oneLine("\(name(n.place)): " + Self.words(n.level, n.folder.map { [$0] } ?? [], n.commands))) }
-        let said = whys.filter { !$0.isEmpty }.map { Self.oneLine($0, max: 80) }
-        let limit = needs.contains { $0.commands || $0.level == .all } ? "A command can write over files without asking first." : nil
-        let home = NSHomeDirectory()
-        let mac = needs.contains { $0.place == .mac && ($0.level == .all || $0.folder == "/" || $0.folder == home) } ? "On this Mac that is any file you can write — ~/Library/LaunchAgents too."
-            : needs.contains { $0.place == .mac } ? "On this Mac reading is any file you can read, ~/.ssh too." : nil
-        let after = readOnly ? nil : "Deleting, writing over a file and any change on a production server still ask each time."
-        c.note = [said.isEmpty ? nil : "The assistant says: " + said.joined(separator: "; ") + ".", mac, limit,
-                  "What it reads goes to your AI provider, secrets it recognises as •••.", after].compactMap { $0 }.joined(separator: " ")
+        c.command = needs.map { n in Self.oneLine("\(name(n.place)): " + Self.words(n.level, n.folder.map { [$0] } ?? [], n.commands), mask: false) }.joined(separator: "\n")
+        let said = whys.filter { !$0.isEmpty }.map { "“" + Self.oneLine($0, max: 80) + "”" }
+        if !said.isEmpty { c.runs = "The assistant says it's for: " + said.joined(separator: ", ") }
+        let limit = needs.contains { $0.place != .mac && ($0.commands || $0.level == .all) } ? "A command can write over files without asking first." : nil
+        // A folder that holds the home folder — however it's reached — or one of its own that runs or logs in.
+        let homes = [NSHomeDirectory(), "/System/Volumes/Data" + NSHomeDirectory()], own = homes.flatMap { [$0 + "/Library", $0 + "/.ssh"] }
+        let wide = needs.contains { n in
+            n.place == .mac && (n.level == .all || n.folder.map { f in homes.contains { AIScope.holds(f, $0) } || own.contains { AIScope.holds($0, f) } } == true)
+        }
+        let mac = wide ? "On this Mac that reaches your own files — ~/Library/LaunchAgents and ~/.ssh too."
+            : needs.contains { $0.place == .mac && $0.level == .view } ? "On this Mac reading is any file you can read, ~/.ssh too." : nil
+        let after = reads ? nil : "Deleting, writing over a file and any change on a production server still ask each time."
+        c.note = [mac, limit, "What it reads goes to your AI provider, secrets it recognises as •••.", after].compactMap { $0 }.joined(separator: " ")
         c.returnCancels = true
         guard await ask(c) else { return false }
         needs.forEach { scope.grant($0) }
@@ -407,7 +413,7 @@ final class AISession {
         "write_file": { s, args, targets in
             let path = targets[0].path ?? "/", t = s.servers[targets[0].place]
             guard case .string(let text)? = args["text"] else { return .no(.failure("write_file needs text.")) }
-            if let no = s.openInEditor(path, on: t) { return .no(no) }
+            if let no = await s.openInEditor(path, on: t) { return .no(no) }
             let a: SFTPClient.Attrs?
             switch await landing(path, on: t) {
             case .failure(let no): return .no(.failure(no.text))
@@ -417,14 +423,14 @@ final class AISession {
             guard a.map({ $0.kind == .file && $0.size <= Editor.sizeLimit }) ?? true else { return .no(.failure("\(path) is there and isn't a text file to write over. Nothing was written.")) }
             if let t {
                 return .go(overwrites: a != nil) { s, _, _ in
-                    if let no = s.openInEditor(path, on: t) { return no }
+                    if let no = await s.openInEditor(path, on: t) { return no }
                     return await s.write(text, to: path, on: t, over: a ?? .nothing)
                 }
             }
             // What was seen: the file as it is now (the write goes over nothing else), or nothing there.
             let seen = await Blocking.run { (Editor.Stamp(path), a == nil ? nil : (try? Data(contentsOf: URL(fileURLWithPath: path))).map(Editor.sha)) }
             return .go(overwrites: a != nil) { s, _, _ in
-                if let no = s.openInEditor(path, on: nil) { return no }
+                if let no = await s.openInEditor(path, on: nil) { return no }
                 let name = (path as NSString).lastPathComponent
                 let written = await Blocking.run {
                     Editor.write(Data(text.utf8), to: path, name: name, unlessChangedFrom: seen, hook: { _ in }, writing: { try $0.write(contentsOf: $1) }, willRename: { _ in })
@@ -443,7 +449,7 @@ final class AISession {
             guard from.place != .mac || !(source.lowercased() + "/").hasPrefix("/dev/") else { return .no(.failure("\(source) is a device, not a file to copy.")) }
             let name = (source as NSString).lastPathComponent, landing = (dir as NSString).appendingPathComponent(name), t = s.servers[to.place]
             guard from.place != to.place || landing != source else { return .no(.failure("\(source) is in \(dir) already.")) }
-            if let no = s.openInEditor(landing, on: t) { return .no(no) }
+            if let no = await s.openInEditor(landing, on: t) { return .no(no) }
             let taken: Bool
             switch await AISession.landing(landing, on: t) {
             case .failure(let no): return .no(.failure(no.text))
@@ -454,7 +460,7 @@ final class AISession {
                 taken = there != nil
             }
             return .go(overwrites: taken) { s, _, _ in
-                if let no = s.openInEditor(landing, on: t) { return no }
+                if let no = await s.openInEditor(landing, on: t) { return no }
                 return await s.copy(source, from: s.servers[from.place].map { .sftp($0) } ?? .local, into: dir, on: t.map { .sftp($0) } ?? .local, over: taken ? landing : nil)
             }
         },
@@ -464,8 +470,8 @@ final class AISession {
     /// text: in the chat the model's change is `propose_edit`'s card, saved by the user's ⌘S; an outside agent, which
     /// has no card, leaves it to the user. Asked at the look and again just before the write: it may have been opened
     /// while the question was up.
-    private func openInEditor(_ path: String, on t: SFTPTarget?) -> AIResult? {
-        guard Editor.isOpen(path, on: t) else { return nil }
+    private func openInEditor(_ path: String, on t: SFTPTarget?) async -> AIResult? {
+        guard await Editor.isOpen(path, on: t) else { return nil }
         return .failure(proposes != nil ? "\(path) is open in the editor: propose the change with propose_edit — the user saves it there. Nothing was written."
             : "\(path) is open in Kermo's editor: tell the user the change to make there, or to close the file first — don't write it another way. Nothing was written.")
     }

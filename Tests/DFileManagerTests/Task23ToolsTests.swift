@@ -178,6 +178,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(r.isError && r.text.contains("1 to 5") && asked().count == 1, "no more than a sheet lists")
         // The model's words on a card: one line, masked before they're cut.
         let line = AISession.oneLine("logs\n\u{2028}box: read\u{202E}" + String(repeating: "x", count: 60) + " pass" + "word=hunter22", max: 80)
+        #expect(AISession.oneLine("vault-secret: everything", mask: false) == "vault-secret: everything", "Kermo's own line as it is")
         #expect(!line.contains("\n") && !line.contains("\u{2028}") && !line.contains("\u{202E}") && !line.contains("hunter") && line.count == 80 && line.hasSuffix("…"), "\(line)")
         s.readOnly = true   // the chat's next turn, in Ask
         for (name, args): (String, [String: ToolValue]) in [("run_command", ["server": "box", "command": .string("touch \(dir)/made")]),
@@ -198,13 +199,13 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         r = await s.call("plan", ["steps": [["text": "Run it", "state": "doing"], ["text": "Copy", "state": "later"]]])
         #expect(r.isError && steps.isEmpty)
         r = await s.call("plan", ["steps": [["text": "Run it", "state": "done"], ["text": "Copy the log\n✓  Backup verified", "state": "doing"]]])
-        #expect(!r.isError && steps.map(\.state) == ["done", "doing"] && steps.map(\.text) == ["Run it", "Copy the log ✓  Backup verified"], "no line of its own")
+        #expect(!r.isError && steps.map(\.state) == ["done", "doing"] && steps.map(\.text) == ["Run it", "Copy the log ✓ Backup verified"], "no line of its own")
 
         // The user's own word: down to View, the command asks again (Cancel); taken back; this Mac given View.
         var told = 0
         s.scopeChanged = { told += 1 }
         let box = try #require(s.granted.first { $0.name == "box" })
-        s.set(box.place, .view)
+        await s.set(box.place, .view)
         #expect(s.granted.first { $0.name == "box" }?.level == .view && told == 1)
         r = await s.call("run_command", ["server": "box", "command": .string("touch \(dir)/again")])
         #expect(r.isError && asked().count == 2 && !FileManager.default.fileExists(atPath: dir + "/again"))
@@ -215,6 +216,11 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         answer([0])
         await s.give(nil)
         #expect(s.granted.map(\.words) == ["this Mac: read"] && told >= 3)
+        await s.set(.mac, .all)   // All on this Mac asks too (Cancel): what it reaches is said there
+        #expect(s.granted.first?.level == .view && asked().count == 5 && asked().last == "Allow the assistant this, until the chat ends?", "\(asked())")
+        answer([0])
+        await s.set(.mac, .all)
+        #expect(s.granted.map(\.words) == ["this Mac: everything"])
     }
 
     /// Ask (the chat panel): the user is only ever asked to let it read; anything more is refused in words, unasked.
