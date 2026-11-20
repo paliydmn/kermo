@@ -255,6 +255,16 @@ final class ToolsNew: NSView, NSTextFieldDelegate {
             row.spacing = 12
             views.append(row)
         }
+        // Make with AI… (task 23 PR 9): the chat writes it, the editor opens it unsaved.
+        let ai = NSButton(title: "Make with AI…", target: nil, action: nil)
+        ai.controlSize = .large
+        ai.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        kept.append(MenuAction.attach(to: ai) { [unowned self] in app.makeTool(named: name.stringValue.trimmingCharacters(in: .whitespaces)) })
+        starters.append(ai)
+        let row = NSStackView(views: [ai, ToolsPage.text("Say what it's for in the chat, with your own AI: its answer opens here as a draft, saved only by your ⌘S.",
+                                                       color: .secondaryLabelColor)])
+        row.spacing = 12
+        views.append(row)
         name.widthAnchor.constraint(equalToConstant: 260).isActive = true
         let stack = NSStackView(views: views)
         stack.orientation = .vertical

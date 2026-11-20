@@ -111,6 +111,36 @@ extension ServerLockTests {
         #expect(l.resultLines.last == "\u{FFFC} fail2ban-client isn't on localhost", "\(l.resultLines)")
     }
 
+    /// Task 23 PR 9: a Tools action that failed has ✨ Explain by its line, as a service's does — the command as its
+    /// question showed it, what it said (masked as the line has it), from its server. Not with ✨ off.
+    @Test func aFailedToolsActionHasExplainByItsLine() async throws {
+        let (app, a, _, done) = try toolsApp()
+        let bench = try ToolsBench()
+        var got: [AIPanel.Context] = []
+        AppDelegate.explaining = { got += $0 }
+        defer { AppDelegate.explaining = nil; bench.done(); done() }
+        let l = try await fail2ban(app, a)
+        let bin = bench.dir + "/bin/fail2ban-client"   // unbanip fails; the list reads as before
+        try FileManager.default.moveItem(atPath: bin, toPath: bin + ".real")
+        try Data("#!/bin/sh\ncase \"$*\" in \"set sshd unbanip \"*) echo \"ERROR NOK: ('$4', 'is not banned')\" >&2; exit 1 ;; esac\nexec \(bin).real \"$@\"\n".utf8)
+            .write(to: URL(fileURLWithPath: bin))
+        chmod(bin, 0o755)
+        func buttons(_ v: NSView) -> [NSButton] { ((v as? NSButton).map { [$0] } ?? []) + v.subviews.flatMap(buttons) }
+        for on in [false, true] {
+            try await explainsWhile(on) {
+                let run = try action(l, "203.0.113.7", "Unban").run(false)
+                await run?.value
+                let b = buttons(a.view).first { $0.title == "Explain" && !$0.isHidden }
+                #expect((b != nil) == on, "\(l.resultLines)")
+                if let b { _ = (b.target as? NSObject)?.perform(b.action, with: b) }
+            }
+        }
+        #expect(got.map(\.title) == ["fail2ban-client set sshd unbanip 203.0.113.7 · localhost"], "\(got.map(\.title))")
+        let first = try #require(got.first)
+        let said = await first.read().text
+        #expect(said.hasPrefix("$ fail2ban-client set sshd unbanip 203.0.113.7\n") && said.contains("is not banned"), "\(said)")
+    }
+
     /// ufw's list, read, in a panel.
     @MainActor private func ufw(_ app: AppDelegate, _ a: PanelViewController, on s: SavedServer = SavedServer(target: .local())) async throws -> ListPanel {
         let source = ToolListSource(app, try toolNamed(app, "ufw"), s, .local())

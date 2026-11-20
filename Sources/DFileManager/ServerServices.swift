@@ -260,7 +260,8 @@ extension AppDelegate {
     /// list says how it went (`say`) until the next one, a failure's output a click away. The list is a Picker's or a
     /// panel's (`rowLists`), both if both show it. One closed meanwhile: the status line says it, or a failure's alert,
     /// as `runThere`'s. `shown`: the command, as those name it (once it ran: a form may have filled it in). `explain`:
-    /// ✨ Explain by a failure's line (a service's, a container's — not a tool's, whose output may hold what a form took).
+    /// ✨ Explain by a failure's line (a service's, a container's, a tool's — whose output and command come masked: a
+    /// secret its form took is ••• there).
     func changeRow<S: Sendable>(id: String, shown: @escaping @MainActor () -> String, on target: SFTPTarget, busy: String, name: String, server: String,
                                 run: @escaping @MainActor (_ window: NSWindow?, PanelViewController, _ running: @escaping @MainActor () -> Void) async -> RanThere,
                                 read: (@Sendable ([String: String], CancelFlag) throws -> S)?,

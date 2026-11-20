@@ -237,6 +237,44 @@ extension ServerLockTests {   // `UserDefaults.standard`'s AI settings, `AppDele
         }
     }
 
+    /// Task 23 PR 9: a Tools run's window that failed has ✨ Explain — what ran as its question showed it, and the text as
+    /// the window shows it (the payload's masked); ⇧⌘I takes what's selected there, else its text, from its server.
+    @Test func aToolsWindowExplainsAndGoesToTheChat() async throws {
+        _ = NSApplication.shared
+        let app = AppDelegate(), was = OutputWindow.app
+        OutputWindow.app = { app }
+        var got: [AIPanel.Context] = []
+        AppDelegate.explaining = { got += $0 }
+        defer { (OutputWindow.app, AppDelegate.explaining) = (was, nil) }
+        let t = SFTPTarget(host: "box.invalid")
+        try await explainsWhile(true) {
+            let w = OutputWindow.show("sealed: •••\n", errors: "ERROR: bad\n", title: "Status — box", status: 3, ok: false, target: t, command: "ufw status")
+            defer { w.window?.close() }
+            let a = try #require(w.window?.docFrame?.actions.first)
+            #expect(a.0 == "✨ Explain" && w.window?.docFrame?.actions.count == 1)
+            a.1()
+            for _ in 0..<300 where got.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+            #expect(got.map(\.title) == ["ufw status · box.invalid"] && got.first?.server == t.asUser, "\(got.map(\.title))")
+            let said = try await text(#require(got.first))
+            #expect(said.hasPrefix("$ ufw status\nsealed: •••\nERROR: bad"), "\(said)")
+
+            let ok = OutputWindow.show("one\ntwo\n", errors: "", title: "Fine — box", status: 0, ok: true, target: t, command: "ufw status")
+            defer { ok.window?.close() }
+            #expect(ok.window?.docFrame?.actions.isEmpty == true, "it went well")
+            var make = try #require(ok.toChat())
+            var c = await make()
+            let all = await c.read().text
+            #expect(c.title == "Output · Fine — box" && c.server == t.asUser && all == "one\ntwo\n", "\(all)")
+            func texts(_ v: NSView) -> [NSTextView] { ((v as? NSTextView).map { [$0] } ?? []) + v.subviews.flatMap(texts) }
+            let tv = try #require(ok.window?.contentView.map(texts)?.first)
+            tv.setSelectedRange(NSRange(location: 4, length: 3))
+            make = try #require(ok.toChat())
+            c = await make()
+            let part = await c.read().text
+            #expect(c.title == "Selection · Fine — box" && part == "two", "\(part)")
+        }
+    }
+
     /// A service's change that failed: ✨ Explain by its line under the list, while ✨ shows — the command, what it
     /// said and the line, from the server it ran on (as its user). Not with ✨ off.
     @Test func aFailedServiceHasExplainByItsLine() async throws {

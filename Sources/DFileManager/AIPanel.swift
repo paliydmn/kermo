@@ -357,15 +357,23 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
     /// ✨ Explain: what failed, attached as any chip is — a production server's asked about at ↩, none taken under
     /// Never Send — and `question` in the field, unless words are there or a question of the chat's waits. Nothing goes
-    /// until ↩. The app shows the chat first (`AppDelegate.explain`).
-    func explain(_ found: [Context]) {
+    /// until ↩. The app shows the chat first (`AppDelegate.explain`). Make with AI… asks its own.
+    func explain(_ found: [Context], asking question: String = AIPanel.question) {
         guard AISettings.ready(app.defaults) else { return }
         let had = Set(chips.map(\.context.id))   // clicked again: the question comes back with its chip
         guard attach(found) > 0 || found.contains(where: { had.contains($0.id) }), card == nil,
               input.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        input.string = Self.question
-        input.setSelectedRange(NSRange(location: (Self.question as NSString).length, length: 0))
+        input.string = question
+        input.setSelectedRange(NSRange(location: (question as NSString).length, length: 0))
         updateInfo()
+    }
+
+    /// Make with AI… (task 23 PR 9): Kermo's tool format as a chip — docs/tools.md's part on it, from the app.
+    static var toolFormat: Context {
+        Context(id: "tool-format", title: "Kermo's tool format", symbol: .document, server: nil) {
+            AIResult("Kermo's tool format, from its docs (docs/tools.md). A tool is one JSON file: answer with the whole file in one ```json block — "
+                     + "Kermo opens it in its tool editor, unsaved, where Problems checks it and Test runs its list on a server.\n\n" + ToolNew.format)
+        }
     }
 
     /// What failed — a command, a check, an alert — with what it said, from the machine it failed on (nil: this Mac):
@@ -555,6 +563,9 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     }
     private static func pin(_ e: AIEndpoint) -> String { "\(e.kind.rawValue) \(e.address.absoluteString)" }
 
+    /// The words of the last question sent: Save as Tool's title.
+    private var question = ""
+
     func send(_ typed: String) {
         guard turn == nil, card == nil, !composer.isHidden else { return }
         let question = typed.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -606,6 +617,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
                 chat = AIChat(system: system, tools: tools, messages: AISavedChat.resumable(c.messages))
             }
             chat?.add(message)
+            self.question = question
             self.asked.append(AISavedChat.Asked(question: AISecrets.mask(question).text, chips: sent.map { AIChat.attachedName($0.context.title) },
                                            prod: sent.filter { isProd($0.context) }.map { AIChat.attachedName($0.context.title) }))
             save()   // the question is kept even if the turn never ends (New Chat, quitting)
@@ -788,12 +800,14 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         let answer = Answer(model: e.model, panel: self, mode: chat.system == AIChat.editSystem ? "Edit" : chat.system == AIChat.agentSystem ? "Agent" : nil)
         append(answer)
         answering = answer
+        let (ran, did) = (session.commands.count, session.journal.count)
         do {
             let (end, used) = try await chat.turn(e.provider(AISettings.transport), call: { await session.call($0, $1) }, show: { [weak self] in
                 answer.show($0)
                 self?.follow()
             }, spent: { [weak self] u in self?.count(u, g) }, goOn: { [weak self] in await self?.goOn() ?? false })
             answer.end(end, used, rounds: chat.rounds)
+            if chat.system == AIChat.agentSystem { offerTool(Array(session.commands[ran...]), Array(session.journal[did...]), under: answer) }
         } catch is CancellationError {
             answer.end(note: "Stopped. Nothing more was asked or read.")
         } catch {
@@ -810,6 +824,22 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             save()
             finish()
         }
+    }
+
+    /// Save as Tool (task 23 PR 9): an Agent turn that ran two commands or more on one server, all ending well, offers
+    /// them as a tool — next time one click, no model. The draft opens unsaved in the tool editor; what wasn't a
+    /// command (a copy, a file written, a Tools action) is said in its `about`, not in it.
+    private func offerTool(_ ran: [(server: SFTPTarget, command: String, folder: String?)], _ did: [AISession.Entry], under answer: Answer) {
+        guard ran.count >= 2, let t = ran.first?.server, ran.allSatisfy({ ServerLock.same($0.server, t) }) else { return }
+        let server = AISession.label(t), said = AISession.oneLine(String(question.prefix { $0 != "\n" }), max: 40)
+        let title = said.isEmpty ? "From a Chat" : said
+        let left = did.filter { ["copy", "write_file", "tool_action"].contains($0.tool) && !$0.result.isError }.count
+        let about = "Made from an AI chat on \(Date().formatted(date: .abbreviated, time: .omitted)): the commands it ran on \(server), as they ran."
+            + (left == 0 ? "" : " Left out: \(left) step\(left == 1 ? "" : "s") that weren't commands (copies, files written, Tools actions).")
+        let text = ToolNew.text(commands: ran.map { ($0.command, $0.folder) }, id: ToolNew.id(from: title) ?? "from-a-chat", title: title, about: about)
+        answer.offer("It ran \(ran.count) commands on \(server): as a tool they're one click next time, with no AI.", ("Save as Tool…", { [weak self] in
+            self.map { ToolEditor.draft($0.app, text) }
+        }))
     }
 
     /// Only while the chat is as the failed request left it: an older Retry would ask for something else.

@@ -84,6 +84,30 @@ public enum ToolNew {
         }
     }
 
+    /// Save as Tool (task 23 PR 9): the commands an agent ran on one server, as they ran, as a one-command tool — each
+    /// in its folder and a shell of its own (a `cd`, a `#` or a trailing `&` stays its own), the next only if it went
+    /// well; the output in a window. Nothing in it says it only reads: Kermo asks before it runs, as for any change.
+    public static func text(commands: [(command: String, folder: String?)], id: String, title: String, about: String) -> String {
+        let steps = commands.map { c in "(" + (c.folder.map { "cd -- \(ShellContext.quote($0)) && " } ?? "") + c.command + "\n)" }
+        return """
+            {
+              "schema": 1,
+              "id": \(quoted(id)),
+              "title": \(quoted(title)),
+              "about": \(quoted(about)),
+              "command": \(quoted("set -e\n" + steps.joined(separator: "\n"))),
+              "output": "window"
+            }
+
+            """
+    }
+
+    /// Make with AI… (task 23 PR 9): the format as docs/tools.md tells it, from "The fields that work now" to the end —
+    /// the same text, a test keeps it so.
+    public static var format: String {
+        (try? String(contentsOf: Bundle.module.url(forResource: "ai", withExtension: nil)!.appendingPathComponent("tool-format.md"), encoding: .utf8)) ?? ""
+    }
+
     private static func quoted(_ s: String) -> String {
         let enc = JSONEncoder()
         enc.outputFormatting = .withoutEscapingSlashes

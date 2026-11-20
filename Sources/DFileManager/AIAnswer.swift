@@ -115,6 +115,11 @@ final class Answer: NSStackView {
                 into.toolTip = "Into the terminal's line — nothing runs until you press ↩ there"
                 buttons.insert(into, at: 0)
             }
+            if lang.lowercased() == "json", ChatMarkdown.isTool(code) {
+                let open = AIPanel.button("Open as New Tool…") { [weak self] in self.map { ToolEditor.draft($0.panel.app, code) } }
+                open.toolTip = "In the tool editor, unsaved: Problems checks it, Test runs its list — nothing is saved until you press ⌘S"
+                buttons.insert(open, at: 0)
+            }
             let spacer = NSView()
             spacer.setContentHuggingPriority(.init(1), for: .horizontal)
             let row = NSStackView(views: [spacer] + buttons)
@@ -158,6 +163,9 @@ final class Answer: NSStackView {
         waiting?.removeFromSuperview()
         waiting = nil
     }
+
+    /// Under a finished answer: words and a button (Save as Tool…).
+    func offer(_ words: String, _ action: (String, () -> Void)) { add(Self.noteRow(words, error: false, action: action)) }
 
     /// Stopped or failed: what was there stays, with the words — and what may help.
     func end(note: String, error: Bool = false, action: (String, () -> Void)? = nil) {
@@ -231,6 +239,12 @@ final class StepRow: NSStackView {
 /// is loaded, nothing opens by itself.
 enum ChatMarkdown {
     enum Block: Equatable { case prose(String), code(String, lang: String) }
+
+    /// A JSON block that is a Kermo tool's file (its `schema` and `id`): Open as New Tool….
+    static func isTool(_ code: String) -> Bool {
+        guard let o = (try? JSONSerialization.jsonObject(with: Data(code.utf8))) as? [String: Any] else { return false }
+        return o["schema"] is NSNumber && o["id"] is String
+    }
     static let shells: Set<String> = ["sh", "bash", "shell", "zsh", "console", "fish"]
 
     /// Blank lines part paragraphs; a fence still open (the answer is coming) is a code block up to here.

@@ -196,15 +196,24 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     }
 
     /// A run that's over already (a Tools action's `window`): what it said, stderr in red, how it ended. `save`: the
-    /// name Save… offers (the action's `save`). `target`: the server it's about (Send To…).
-    static func show(_ out: String, errors: String, title: String, status: Int32, ok: Bool, save: String? = nil, target: SFTPTarget? = nil) {
+    /// name Save… offers (the action's `save`). `target`: the server it's about (Send To…). `command`: what ran, as its
+    /// question showed it — a failed run has ✨ Explain (its text is the payload's masked one: a secret typed in its
+    /// form is ••• there).
+    @discardableResult
+    static func show(_ out: String, errors: String, title: String, status: Int32, ok: Bool, save: String? = nil, target: SFTPTarget? = nil,
+                     command: String? = nil) -> OutputWindow {
         let w = OutputWindow(out: out, errors: errors, status: status, ok: ok)
         w.window?.title = title.bidiVisible
         w.saveName = save
         w.target = target?.asUser
+        w.command = command
+        if !ok, let command, Self.app()?.explains == true {
+            w.window?.docFrame?.actions = [("✨ Explain", { @MainActor [weak w] in w?.explain(command, on: target) })]
+        }
         open.append(w)
         w.showWindow(nil)
         w.window?.listInWindowsMenu()
+        return w
     }
 
     /// A Tools long job's log (§7.6): what Kermo has of it, more as it comes (`add`), how it went (`said`). Closing it
@@ -322,6 +331,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         let (w, tv) = Self.window()
         w.title = command.bidiVisible
         w.subtitle = DocFrame.place(dir, host: server.map { SavedServer.name(for: $0) })
+        self.command = command
         super.init(window: w)
         own(w)
 
@@ -463,6 +473,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
                 + [AppDelegate.KeyRow(section: "Output", title: "Copy", key: "⌘C") { o.copyAll() },
                    AppDelegate.KeyRow(section: "Output", title: "Save…", key: "⌘S") { o.save() }]
                 + (o.receivers.isEmpty ? [] : [AppDelegate.KeyRow(section: "Output", title: "Send To…", key: "F2") { o.sendTo() }])
+                + (keyed !== o || Self.app().map({ !AISettings.ready($0.defaults) }) ?? true ? [] : [AppDelegate.KeyRow(section: "Output", title: "Add to Chat", key: "⇧⌘I") { Self.app()?.addToChat() }])
         }
     }
 
@@ -487,22 +498,43 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         Picker.show(over: window, placeholder: range.length > 0 ? "Send the selection to" : "Send this output to", items: items)
     }
 
-    /// ✨ Explain: the command and what it said — the last 16 KB go — from where it ran: on this Mac, a production
-    /// server an `ssh` in it goes to.
+    /// ✨ Explain: the command and what it said — the last 16 KB go — from where it ran (`origin`).
     private func explain(_ command: String, on server: SFTPTarget?) {
         guard let tv, let app = Self.app() else { return }
         // The last 256 KB, not 4 MB, masked on the main thread: a key this cut leaves without its BEGIN line lies far
         // before the 16 KB that go.
         let text = "$ \(command)\n" + String(tv.string.suffix(256_000))
-        Task {
-            var from = server
-            let going = from == nil ? EmbeddedTerminal.Tab.ran(command).ssh : []
-            if !going.isEmpty {
-                let new = going.filter { !ServerLock.isLearned($0) }
-                if !new.isEmpty { await ServerLock.learn(new) }   // `learn([])` would learn every saved server
-                from = EmbeddedTerminal.Tab.production([], named: [], typed: going)
-            }
-            app.explain([AIPanel.failure(command, on: from, text)])
+        Task { app.explain([AIPanel.failure(command, on: await Self.origin(command, server), text)]) }
+    }
+
+    /// Where a run's text is from: its server, else this Mac — or a production server an `ssh` in its command goes to.
+    private static func origin(_ command: String?, _ server: SFTPTarget?) async -> SFTPTarget? {
+        guard server == nil, let command else { return server }
+        let going = EmbeddedTerminal.Tab.ran(command).ssh
+        guard !going.isEmpty else { return nil }
+        let new = going.filter { !ServerLock.isLearned($0) }
+        if !new.isEmpty { await ServerLock.learn(new) }   // `learn([])` would learn every saved server
+        return EmbeddedTerminal.Tab.production([], named: [], typed: going)
+    }
+
+    /// What ran in it, as its title or question said it (nil: a log, Run on Servers).
+    private var command: String?
+
+    /// The output window ⇧⌘I is pressed over: not one of several servers' (Run on Servers), whose text is from each.
+    static var keyed: OutputWindow? { open.first { $0.window?.isKeyWindow == true && !$0.embedded && ($0.servers == nil || $0.target != nil) } }
+
+    /// ⇧⌘I: what's selected in it, else its text — the last 16 KB go —, as the chat's chip, from where it ran. nil:
+    /// nothing in it.
+    func toChat() -> (() async -> AIPanel.Context)? {
+        guard let tv else { return nil }
+        let range = tv.selectedRange(), selected = range.length > 0, title = window?.title ?? "Output"
+        let text = selected ? (tv.string as NSString).substring(with: range) : String(tv.string.suffix(256_000))
+        guard !text.isEmpty else { return nil }
+        let (command, server) = (command, target)
+        return {
+            let from = await Self.origin(command, server)
+            return AIPanel.Context(id: "out:\(title):\(text.hashValue)", title: "\(selected ? "Selection" : "Output") · \(title)", symbol: .terminal,
+                                   server: from?.asUser) { AISession.handOver(text, limit: 16_000, keepEnd: !selected) }
         }
     }
 

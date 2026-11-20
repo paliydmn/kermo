@@ -11,7 +11,7 @@ let package = Package(
     ],
     targets: [
         .systemLibrary(name: "CArchive", path: "Sources/CArchive"),
-        .target(name: "DFMCore", dependencies: ["CArchive"], resources: [.copy("Resources/tools")]),   // the built-in Tools presets
+        .target(name: "DFMCore", dependencies: ["CArchive"], resources: [.copy("Resources/tools"), .copy("Resources/ai")]),   // the built-in Tools presets; what Make with AI… tells the model
         .executableTarget(name: "DFileManager", dependencies: ["DFMCore", .product(name: "SwiftTerm", package: "SwiftTerm")]),
         .executableTarget(name: "bench", dependencies: ["DFMCore"]),
         .executableTarget(name: "tools-lint", dependencies: ["DFMCore"]),   // checks presets: for editors and the catalog's CI

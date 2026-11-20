@@ -281,9 +281,10 @@ final class ToolRunner {
             }
             let how = ran(r, a, of: p, on: t, shown: payload?.shown ?? "")
             if a.spec.output == .window, case .success(let (out, payload)) = r {
-                return OutputWindow.show(payload.mask(out.text, password: out.password), errors: out.stopped ?? out.errors, title: "\(verb) — \(place)",
-                                         status: out.status, ok: out.stopped == nil && a.run.succeeded(out.status),
-                                         save: a.spec.save.map { ToolTemplate.text($0, scope) }, target: t)
+                OutputWindow.show(payload.mask(out.text, password: out.password), errors: out.stopped ?? payload.mask(out.errors, password: out.password),
+                                  title: "\(verb) — \(place)", status: out.status, ok: out.stopped == nil && a.run.succeeded(out.status),
+                                  save: a.spec.save.map { ToolTemplate.text($0, scope) }, target: t)
+                return
             }
             let said = line(AppDelegate.how(how).0, a, scope, place: place, at: AppDelegate.clock.string(from: Date()), readError: nil,
                             facts: answer(t)?.answer.facts)
@@ -543,7 +544,7 @@ final class ToolRunner {
                 defer { if !readonly { changing[key] = nil } }
                 let panel = app.active
                 let r = await ready(a, of: tool, rowScope, row: rowTitle, on: t, asked: asked, window: lists.first?.sheetWindow, values: values)
-                guard case let .go(scope, secret, _, payload, _) = r else {
+                guard case let .go(scope, secret, willRun, payload, _) = r else {
                     if case .stop(let why) = r { say("\(verb): \(why) — nothing ran", to: lists, about: id, failed: why != "cancelled") }
                     return
                 }
@@ -564,9 +565,9 @@ final class ToolRunner {
                     _ = ran(r, a, of: p, on: t, shown: payload?.shown ?? "")
                     switch r {
                     case .success(let (ran, payload)):
-                        OutputWindow.show(payload.mask(ran.text, password: ran.password), errors: ran.stopped ?? ran.errors, title: "\(verb) — \(place)",
-                                          status: ran.status, ok: ran.stopped == nil && a.run.succeeded(ran.status), save: a.spec.save.map { ToolTemplate.text($0, scope) },
-                                          target: t)
+                        OutputWindow.show(payload.mask(ran.text, password: ran.password), errors: ran.stopped ?? payload.mask(ran.errors, password: ran.password),
+                                          title: "\(verb) — \(place)", status: ran.status, ok: ran.stopped == nil && a.run.succeeded(ran.status),
+                                          save: a.spec.save.map { ToolTemplate.text($0, scope) }, target: t, command: willRun)
                     case .failure(is CancellationError): break
                     case .failure(is ToolExec.NoPassword): say("\(verb): no sudo password — nothing ran", to: lists, about: id, failed: false)
                     case .failure(let e): app.showError(e)
@@ -616,7 +617,8 @@ final class ToolRunner {
                     guard let source else { return }
                     if let read { list.reload(source.show(read), having: id) } else if let row { list.update(source.item(row)) }
                 },
-                say: { how, _, error, time in self.line(how, a, said, place: place, at: time, readError: error, facts: self.answer(t)?.answer.facts) })
+                say: { how, _, error, time in self.line(how, a, said, place: place, at: time, readError: error, facts: self.answer(t)?.answer.facts) },
+                explain: true)
         }
     }
 

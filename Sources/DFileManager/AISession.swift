@@ -54,6 +54,8 @@ final class AISession {
     var scopeChanged: (@MainActor () -> Void)?
     private(set) var scope = AIScope() { didSet { scopeChanged?() } }
     private(set) var journal: [Entry] = []
+    /// The commands that ran and ended well (exit 0), whole and masked, in order: Save as Tool's (task 23 PR 9).
+    private(set) var commands: [(server: SFTPTarget, command: String, folder: String?)] = []
     private(set) var hasRead = false
     /// Something read on a production server went to the model (Never Send turned on later ends such a chat).
     private(set) var readProduction = false
@@ -712,6 +714,7 @@ final class AISession {
                 return .failure("It didn't run: \(e.localizedDescription)")
             case .success(let r):
                 log(r.status, r.status == nil ? "not waited for" : nil)
+                if r.status == 0 { s.commands.append((t, AISecrets.mask(command).text, targets[0].path)) }
                 return told(r)
             }
         },
