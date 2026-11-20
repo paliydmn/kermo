@@ -27,6 +27,16 @@ private func turn(call name: String, input: String = "{}") -> String {
          #"{"type":"content_block_stop","index":0}"#,
          #"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":20}}"#, #"{"type":"message_stop"}"#])
 }
+/// Anthropic's stream for one round of several calls, side by side (`input`: each call's arguments as JSON).
+private func turn(calls: [(name: String, input: [String: Any])]) -> String {
+    var events = [#"{"type":"message_start","message":{"usage":{"input_tokens":1000,"output_tokens":1}}}"#]
+    for (i, c) in calls.enumerated() {
+        let input = String(decoding: try! JSONSerialization.data(withJSONObject: c.input), as: UTF8.self)
+        events += [#"{"type":"content_block_start","index":\#(i),"content_block":{"type":"tool_use","id":"t\#(i)","name":"\#(c.name)","input":\#(input)}}"#,
+                   #"{"type":"content_block_stop","index":\#(i)}"#]
+    }
+    return sse(events + [#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":20}}"#, #"{"type":"message_stop"}"#])
+}
 private func sse(_ events: [String]) -> String { events.map { "data: \($0)\n\n" }.joined() }
 private func json(_ s: String) -> String { String(decoding: try! JSONEncoder().encode(s), as: UTF8.self) }
 
@@ -544,7 +554,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         panel.view.frame = NSRect(x: 0, y: 0, width: 400, height: 700)
         panel.build()
         let field = try #require(views(panel.view, ChatInput.self).first)
-        let chips = { views(panel.view, ChipButton.self).map(\.attributedTitle.string).filter { !$0.hasPrefix("Follow") } }
+        let chips = { views(panel.view, ChipButton.self).map(\.attributedTitle.string).filter { !$0.hasPrefix("Follow") && !$0.isEmpty } }   // the scope row's +
         func settled() async { for _ in 0..<300 where chips().contains(where: { $0.hasSuffix(" …") }) { try? await Task.sleep(for: .milliseconds(10)) } }
 
         panel.explain([AIPanel.failure("pg_dump shop", on: nil, "$ pg_dump shop\npg_dump: error: No space left on device\n[exit 1]")])
@@ -618,6 +628,115 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         let learned = await shell.learnedOrigin().server
         #expect(learned.map(SavedServer.isProd) == true, "\(String(describing: learned))")
         shell.view.send(txt: "\u{3}")
+    }
+
+    /// Agent (task 23 PR 8), the user's task whole: run a program on a server, its log to this Mac, an archive of it to
+    /// another server — a plan and one "Allow for This Task", then only writing over the archive asks. What was
+    /// allowed is the scope row's; Ask in the same chat changes nothing; the spending cap stops between rounds and
+    /// asks to go on; New Chat starts from nothing; the row gives a place View and sets its level.
+    @Test func anAgentDoesATaskOfThreePlacesWithOneAllow() async throws {
+        let std = UserDefaults.standard, names = ["aiProvider", "aiAddress", "aiModel", "aiProduction", "aiChatLimit"], saved = names.map { ($0, std.object(forKey: $0)) }
+        let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t23a-" + UUID().uuidString, fm = FileManager.default
+        let app = dir + "/app", downloads = dir + "/Downloads", backups = dir + "/backups"
+        for d in [app, downloads, backups] { try fm.createDirectory(atPath: d, withIntermediateDirectories: true) }
+        try Data("echo 1284 orders > report.log\n".utf8).write(to: URL(fileURLWithPath: app + "/report.sh"))
+        try Data("old".utf8).write(to: URL(fileURLWithPath: backups + "/report.tgz"))
+        func plan(_ states: [String]) -> (name: String, input: [String: Any]) {
+            ("plan", ["steps": zip(["Run report.sh on box", "Copy its log to Downloads", "Archive the log on box", "Copy the archive to backup"], states).map { ["text": $0, "state": $1] }])
+        }
+        func copy(_ from: String, to server: String, _ folder: String) -> (name: String, input: [String: Any]) {
+            ("copy", ["from_server": "box", "from_path": from, "to_server": server, "to_folder": folder])
+        }
+        let need = { (s: String, l: String, f: String, w: String) -> [String: Any] in ["server": s, "level": l, "folder": f, "why": w] }
+        let wire = Wire([
+            (200, turn(calls: [plan(["doing", "todo", "todo", "todo"]),
+                               ("request_scope", ["needs": [need("box", "commands", "", "run report.sh, make the archive"), need("mac", "write", downloads, "save the log"),
+                                                            need("backup", "write", backups, "put the archive")]])])),
+            (200, turn(calls: [("run_command", ["server": "box", "command": "sh report.sh", "folder": app])])),
+            (200, turn(calls: [plan(["done", "doing", "todo", "todo"]), copy(app + "/report.log", to: "mac", downloads)])),
+            (200, turn(calls: [plan(["done", "done", "doing", "todo"]), ("run_command", ["server": "box", "command": "tar -czf report.tgz report.log", "folder": app])])),
+            (200, turn(calls: [plan(["done", "done", "done", "doing"]), copy(app + "/report.tgz", to: "backup", backups)])),
+            (200, turn(calls: [plan(["done", "done", "done", "done"])])),
+            (200, turn(text: "Done: the log is in Downloads, the archive on backup.")),
+        ])
+        (AISettings.keys, AISettings.transport) = (AIKeys(Keys()), wire.transport)
+        var box = SavedServer(target: .local(port: 2)), backup = SavedServer(target: .local(port: 3))
+        (box.name, backup.name) = ("box", "backup")
+        ServerLock.servers = { [box, backup] }
+        var asked: [String] = []
+        AppDelegate.answering = { title, _, _ in asked.append(title); return title.hasPrefix("This chat has cost") && asked.filter { $0.hasPrefix("This chat") }.count == 1 ? 1 : 0 }
+        let shell = panelApp(dir)
+        shell.ops = OpsController(window: shell.window) { [unowned shell] in shell.jobFinished($0) }   // copies go as F5's
+        defer {
+            for (k, v) in saved { if let v { std.set(v, forKey: k) } else { std.removeObject(forKey: k) } }
+            (AISettings.keys, AISettings.transport, AppDelegate.answering) = (.shared, AIHTTP.live, nil)
+            ServerLock.servers = { [] }
+            ServerLock.relock()
+            shell.panels.forEach { $0.shutdown() }
+            try? fm.removeItem(atPath: dir)
+        }
+        names.forEach(std.removeObject(forKey:))
+        for (panel, t) in [(shell.panels[1], SFTPTarget.local(port: 2)), (shell.panels[0], .local(port: 3))] {
+            panel.loadRemote(t, dir: dir, select: nil)
+            for _ in 0..<300 where panel.remote?.dir != dir { try? await Task.sleep(for: .milliseconds(10)) }
+            try #require(panel.remote?.dir == dir)
+        }
+        let panel = AIPanel(app: shell)
+        panel.view.frame = NSRect(x: 0, y: 0, width: 420, height: 900)
+        panel.build()
+        panel.setMode(.agent)
+        #expect(shown(panel).contains("nothing yet — the AI asks first") && shown(panel).contains("acts within"))
+        func ask(_ q: String) async {
+            for _ in 0..<300 where panel.turn == nil {
+                panel.send(q)
+                if panel.turn == nil { try? await Task.sleep(for: .milliseconds(10)) }
+            }
+            await done(panel)
+        }
+        await ask("Run report.sh on box, the log to my Downloads, an archive of it to backup")
+        let first = try #require(wire.bodies.first)
+        #expect(first["system"] as? String == AIChat.agentSystem && (first["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String } == AIChat.agentTools.map(\.name))
+        #expect(asked == ["Allow the assistant this, until the chat ends?", "Let the assistant write over what is there?"], "\(asked)")
+        #expect(wire.bodies.count == 7 && "\(wire.bodies[1]["messages"] ?? "")".contains("Allowed until the chat ends"))
+        #expect(fm.contents(atPath: downloads + "/report.log") == Data("1284 orders\n".utf8))
+        #expect(fm.contents(atPath: backups + "/report.tgz")?.prefix(2) == Data([0x1f, 0x8b]), "the archive, over the old one")
+        var text = shown(panel)
+        #expect(text.contains("· Agent") && text.contains("✓  Copy the archive to backup") && !text.contains("○") && text.contains("Done: the log"), "\(text)")
+        let chips = { Set(views(panel.view, ChipButton.self).map(\.title).filter { $0.contains(":") }) }
+        #expect(chips() == ["box: run commands", "this Mac: write into \(downloads)", "backup: write into \(backups)"], "\(chips())")
+
+        // Ask in the same chat: a command its scope allows isn't run.
+        panel.setMode(.ask)
+        wire.then([(200, turn(calls: [("run_command", ["server": "box", "command": "touch \(dir)/made"])])), (200, turn(text: "I can't."))])
+        await ask("Touch a file")
+        #expect(!fm.fileExists(atPath: dir + "/made") && "\(wire.bodies.last?["messages"] ?? "")".contains("only reads") && wire.bodies.last?["system"] as? String == AIChat.askSystem)
+
+        // The cap: past it, asked before the next request — Stop sends nothing, the chat stays; Go On goes.
+        std.set(0.001, forKey: "aiChatLimit")
+        let before = wire.bodies.count
+        wire.then([(200, turn(text: "Going on."))])
+        await ask("And now?")
+        #expect(wire.bodies.count == before && asked.last?.hasPrefix("This chat has cost") == true && shown(panel).contains("spending cap"), "\(asked)")
+        await ask("Go on")
+        #expect(wire.bodies.count == before + 1 && shown(panel).contains("Going on.") && asked.filter { $0.hasPrefix("This chat has cost") }.count == 2)
+
+        // New Chat: nothing allowed, the mode as it was; the row's + gives View, its chip's menu the level.
+        click(try #require(views(panel.view, NSButton.self).first { $0.toolTip == "New Chat" }))
+        text = shown(panel)
+        #expect(panel.mode == .ask && panel.granted.isEmpty && text.contains("nothing yet"))
+        let add = panel.addScopeMenu()
+        #expect(Set(add.items.filter(\.isEnabled).map(\.title)) == ["this Mac", "box", "backup"], "\(add.items.map(\.title))")
+        let item = try #require(add.items.first { $0.title == "box" })
+        _ = (item.target as? NSObject)?.perform(item.action, with: item)
+        for _ in 0..<300 where panel.granted.isEmpty { try? await Task.sleep(for: .milliseconds(10)) }
+        #expect(panel.granted.map(\.words) == ["box: read"] && chips() == ["box: read"], "\(panel.granted.map(\.words)) \(chips())")
+        let g = try #require(panel.granted.first)
+        #expect(panel.scopeMenu(g).items.filter(\.isEnabled).map(\.title) == ["View — reads only", "Take Back"], "Ask: View only")
+        panel.setMode(.agent)
+        let all = try #require(panel.scopeMenu(g).items.first { $0.title.hasPrefix("All") && $0.isEnabled })
+        _ = (all.target as? NSObject)?.perform(all.action, with: all)
+        for _ in 0..<300 where panel.granted.first?.level != .all { try? await Task.sleep(for: .milliseconds(10)) }
+        #expect(panel.granted.first?.level == .all && chips() == ["box: everything"], "\(chips())")
     }
 }
 
@@ -710,7 +829,7 @@ extension EditorWindowTests {   // the editor window is the app's one; `UserDefa
         let panel = AIPanel(app: app)
         panel.view.frame = NSRect(x: 0, y: 0, width: 420, height: 900)
         panel.build()
-        panel.setMode(edit: true)
+        panel.setMode(.edit)
         #expect(shown(panel).contains("proposes changes to files"))
         func ask(_ q: String) async {
             for _ in 0..<300 where panel.turn == nil {
@@ -742,6 +861,22 @@ extension EditorWindowTests {   // the editor window is the app's one; `UserDefa
         #expect(doc.storage.string == base, "one ⌘Z")
         #expect(FileManager.default.contents(atPath: conf) == Data(base.utf8) && (try? FileManager.default.attributesOfItem(atPath: conf)[.modificationDate] as? Date) == stamp)
 
+        // An Agent doesn't write a file open in the editor, by write_file or by a copy onto it: its card is the way —
+        // a session with no card (an outside agent's, as here) is told to leave it to the user.
+        let agent = AISession(app: app) { _, _ in 0 }
+        var r = await agent.call("write_file", ["server": "mac", "path": .string(conf), "text": "x\n"])
+        #expect(r.isError && r.text.contains("open in Kermo's editor: tell the user") && FileManager.default.contents(atPath: conf) == Data(base.utf8), "\(r.text)")
+        try FileManager.default.createDirectory(atPath: dir + "/src", withIntermediateDirectories: true)
+        try Data("y\n".utf8).write(to: URL(fileURLWithPath: dir + "/src/app.conf"))
+        r = await agent.call("copy", ["from_server": "mac", "from_path": .string(dir + "/src/app.conf"), "to_server": "mac", "to_folder": .string(dir)])
+        #expect(r.isError && r.text.contains("open in Kermo's editor: tell the user") && FileManager.default.contents(atPath: conf) == Data(base.utf8), "\(r.text)")
+        try FileManager.default.linkItem(atPath: conf, toPath: dir + "/same.conf")   // the same file by another name
+        r = await agent.call("write_file", ["server": "mac", "path": .string(dir + "/same.conf"), "text": "x\n"])
+        #expect(r.isError && r.text.contains("open in Kermo's editor: tell the user") && FileManager.default.contents(atPath: conf) == Data(base.utf8), "\(r.text)")
+        agent.proposes = { _, _, _ in }   // the chat's session: its card is the way
+        r = await agent.call("write_file", ["server": "mac", "path": .string(conf), "text": "x\n"])
+        #expect(r.isError && r.text.contains("propose the change with propose_edit") && FileManager.default.contents(atPath: conf) == Data(base.utf8), "\(r.text)")
+
         // A card on a tab that changed since: refused, the tab as it was.
         wire.then([(200, propose([("b = 2", "b = 5")])), (200, turn(text: "One more."))])
         await ask("And b?")
@@ -751,8 +886,8 @@ extension EditorWindowTests {   // the editor window is the app's one; `UserDefa
 
         // The mode stays through New Chat; Ask goes with Ask's instructions and tools.
         click(try #require(views(panel.view, NSButton.self).first { $0.toolTip == "New Chat" }))
-        #expect(panel.editing)
-        panel.setMode(edit: false)
+        #expect(panel.mode == .edit)
+        panel.setMode(.ask)
         wire.then([(200, turn(text: "Fine."))])
         await ask("Just look")
         let last = try #require(wire.bodies.last)

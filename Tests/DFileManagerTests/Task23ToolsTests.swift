@@ -55,6 +55,11 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         return (session, dir, { heard.titles }, { heard.answers = $0 })
     }
 
+    /// request_scope's arguments: each need as server, level, folder, why.
+    private func needs(_ items: [String]...) -> [String: ToolValue] {
+        ["needs": .array(items.map { .object(["server": .string($0[0]), "level": .string($0[1]), "folder": .string($0[2]), "why": .string($0[3])]) })]
+    }
+
     private func aiTearDown(_ s: AISession, _ dir: String) {
         ServerLock.servers = { [] }
         ServerLock.relock()
@@ -149,13 +154,73 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         (s, dir, asked, answer) = try aiSetUp(prod: true)
         defer { aiTearDown(s, dir) }
         answer([0])
-        r = await s.call("request_scope", ["server": "box", "level": "all", "why": "a test"])
+        r = await s.call("request_scope", needs(["box", "all", "", "a test"]))
         #expect(!r.isError && s.scope.grants.values.first?.level == .all)
         r = await s.call(writes, args, run: run)   // Cancel
         #expect(r.isError && ran == 1 && asked().last?.contains("production") == true, "\(asked())")
         answer([0])
         r = await s.call(writes, args, run: run)
         #expect(!r.isError && ran == 2)
+    }
+
+    /// Agent (task 23 PR 8): one "Allow for This Task" for a list, then the steps go unasked; what was allowed doesn't
+    /// carry into Ask; plan goes to the chat's card or nowhere; the user sets a place's level, takes it back, gives View.
+    @Test func whatAnAgentMayDoStaysInAgent() async throws {
+        let (s, dir, asked, answer) = try await aiAnswering()
+        defer { aiTearDown(s, dir) }
+        answer([0])
+        var r = await s.call("request_scope", needs(["box", "commands", "", "make the report"], ["mac", "write", dir + "/in", "save the log"]))
+        #expect(!r.isError && asked() == ["Allow the assistant this, until the chat ends?"], "\(r.text)")
+        #expect(Set(s.granted.map(\.words)) == ["box: run commands", "this Mac: write into \(dir)/in"], "\(s.granted.map(\.words))")
+        r = await s.call("request_scope", needs(["box", "view", "", "look"], ["mac", "write", dir + "/in/sub", "again"]))   // had already: not asked
+        #expect(!r.isError && r.text.hasPrefix("Already allowed") && asked().count == 1, "\(r.text)")
+        r = await s.call("request_scope", needs(["box", "view", "", "1"], ["box", "view", "", "2"], ["box", "view", "", "3"], ["box", "view", "", "4"], ["box", "view", "", "5"], ["box", "all", "", "6"]))
+        #expect(r.isError && r.text.contains("1 to 5") && asked().count == 1, "no more than a sheet lists")
+        // The model's words on a card: one line, masked before they're cut.
+        let line = AISession.oneLine("logs\n\u{2028}box: read\u{202E}" + String(repeating: "x", count: 60) + " pass" + "word=hunter22", max: 80)
+        #expect(AISession.oneLine("vault-secret: everything", mask: false) == "vault-secret: everything", "Kermo's own line as it is")
+        #expect(!line.contains("\n") && !line.contains("\u{2028}") && !line.contains("\u{202E}") && !line.contains("hunter") && line.count == 80 && line.hasSuffix("…"), "\(line)")
+        s.readOnly = true   // the chat's next turn, in Ask
+        for (name, args): (String, [String: ToolValue]) in [("run_command", ["server": "box", "command": .string("touch \(dir)/made")]),
+                                                             ("write_file", ["server": "mac", "path": .string(dir + "/in/w.txt"), "text": "y"])] {
+            r = await s.call(name, args)
+            #expect(r.isError && r.text.contains("only reads") && s.journal.last?.decision == "refused: Ask", "\(name): \(r.text)")
+        }
+        #expect(asked().count == 1 && !FileManager.default.fileExists(atPath: dir + "/made"))
+        s.readOnly = false
+        r = await s.call("run_command", ["server": "box", "command": .string("touch \(dir)/made")])
+        #expect(!r.isError && asked().count == 1 && FileManager.default.fileExists(atPath: dir + "/made"), "in scope: unasked — \(r.text)")
+
+        // plan: an outside agent's session has no card for it; a step's state is one of four.
+        r = await s.call("plan", ["steps": [["text": "Run it", "state": "doing"]]])
+        #expect(r.isError && r.text.contains("no chat"))
+        var steps: [(text: String, state: String)] = []
+        s.plans = { steps = $0 }
+        r = await s.call("plan", ["steps": [["text": "Run it", "state": "doing"], ["text": "Copy", "state": "later"]]])
+        #expect(r.isError && steps.isEmpty)
+        r = await s.call("plan", ["steps": [["text": "Run it", "state": "done"], ["text": "Copy the log\n✓  Backup verified", "state": "doing"]]])
+        #expect(!r.isError && steps.map(\.state) == ["done", "doing"] && steps.map(\.text) == ["Run it", "Copy the log ✓ Backup verified"], "no line of its own")
+
+        // The user's own word: down to View, the command asks again (Cancel); taken back; this Mac given View.
+        var told = 0
+        s.scopeChanged = { told += 1 }
+        let box = try #require(s.granted.first { $0.name == "box" })
+        await s.set(box.place, .view)
+        #expect(s.granted.first { $0.name == "box" }?.level == .view && told == 1)
+        r = await s.call("run_command", ["server": "box", "command": .string("touch \(dir)/again")])
+        #expect(r.isError && asked().count == 2 && !FileManager.default.fileExists(atPath: dir + "/again"))
+        s.takeAway()
+        #expect(s.granted.isEmpty)
+        await s.give(nil)   // this Mac: asked all the same (~/.ssh, the provider) — Cancel
+        #expect(s.granted.isEmpty && asked().count == 3)
+        answer([0])
+        await s.give(nil)
+        #expect(s.granted.map(\.words) == ["this Mac: read"] && told >= 3)
+        await s.set(.mac, .all)   // All on this Mac asks too (Cancel): what it reaches is said there
+        #expect(s.granted.first?.level == .view && asked().count == 5 && asked().last == "Allow the assistant this, until the chat ends?", "\(asked())")
+        answer([0])
+        await s.set(.mac, .all)
+        #expect(s.granted.map(\.words) == ["this Mac: everything"])
     }
 
     /// Ask (the chat panel): the user is only ever asked to let it read; anything more is refused in words, unasked.
@@ -167,7 +232,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         try Data("x\n".utf8).write(to: URL(fileURLWithPath: dir + "/a.txt"))
         for (name, args): (String, [String: ToolValue]) in [("write_file", ["server": "box", "path": .string(dir + "/b.txt"), "text": "y"]),
                                                              ("run_command", ["server": "box", "command": .string("rm -f \(dir)/a.txt")]),
-                                                             ("request_scope", ["server": "box", "level": "work", "folder": .string(dir), "why": "to fix it"])] {
+                                                             ("request_scope", needs(["box", "write", dir, "to fix it"]))] {
             let r = await s.call(name, args)
             #expect(r.isError && r.text.contains("only reads"), "\(name): \(r.text)")
         }
@@ -175,6 +240,8 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         s.noProduction = true
         var r = await s.call("read_file", ["server": "box", "path": .string(dir + "/a.txt")])
         #expect(r.isError && r.text.contains("production") && asked().isEmpty && s.journal.last?.decision == "refused: production")
+        r = await s.call("request_scope", needs(["box", "view", "", "look"]))   // not even asked
+        #expect(r.isError && r.text.contains("production") && asked().isEmpty && s.scope.grants.isEmpty)
         s.noProduction = false
         answer([0])
         r = await s.call("read_file", ["server": "box", "path": .string(dir + "/a.txt")])
@@ -241,16 +308,19 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
 
         var r = await s.call("focus", [:])
         #expect(!r.isError && r.text.contains("Active panel: mac \(dir)") && r.text.contains("not in this chat's scope") && !r.text.contains("seen.txt"), "\(r.text)")
-        for bad: [String: ToolValue] in [["server": "mac", "level": "work", "why": "x"], ["server": "mac", "level": "view", "folder": "/tmp", "why": "x"],
-                                         ["server": "mac", "level": "work", "folder": "tmp", "why": "x"], ["server": "nobody", "level": "view", "why": "x"]] {
+        // Any wrong need refuses the whole list, unasked: no folder for write, a relative one, commands on this Mac, a
+        // level that isn't one, a server nobody knows, none at all, the old form.
+        for bad: [String: ToolValue] in [needs(["mac", "view", "", "x"], ["mac", "write", "", "x"]), needs(["mac", "write", "tmp", "x"]), needs(["mac", "commands", "", "x"]),
+                                         needs(["mac", "work", "", "x"]), needs(["nobody", "view", "", "x"]), ["needs": []], ["server": "mac", "level": "view", "why": "x"]] {
             #expect(await s.call("request_scope", bad).isError, "\(bad)")
         }
-        #expect(asked().isEmpty, "\(asked())")
-        r = await s.call("request_scope", ["server": "mac", "level": "view", "why": "to see the folder"])   // Cancel
+        #expect(asked().isEmpty && s.scope.grants.isEmpty, "\(asked())")
+        r = await s.call("request_scope", needs(["mac", "view", "", "to see the folder"]))   // Cancel
         #expect(r.isError && s.scope.grants.isEmpty && asked().count == 1)
         answer([0])
-        r = await s.call("request_scope", ["server": "mac", "level": "work", "folder": .string(dir), "commands": true, "why": "to see the folder"])
-        #expect(!r.isError && s.scope.grants[.mac] == AIScope.Grant(level: .work, folders: [dir], commands: true))
+        r = await s.call("request_scope", needs(["mac", "view", "", "to see the folder"], ["mac", "write", dir, "to save the log"]))   // one question
+        #expect(!r.isError && asked().count == 2 && s.scope.grants[.mac] == AIScope.Grant(level: .work, folders: [dir], commands: false), "\(r.text)")
+        #expect(r.text.contains("write into \(dir)"))
         r = await s.call("focus", [:])
         #expect(r.text.contains("cursor: seen.txt") && !s.hasRead, "\(r.text)")
     }

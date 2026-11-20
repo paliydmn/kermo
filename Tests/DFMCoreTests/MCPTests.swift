@@ -71,12 +71,13 @@ private actor Slow {
     let no = await wire.answer(4)
     #expect(code(no) == -32022 && obj(obj(no?["error"])["data"]) == ["supported": ["2026-07-28"], "requested": "2030-01-01"])
 
-    // Every tool of the registry, in its order, with its schema; only the reading ones may be called side by side.
+    // Every tool an outside agent is offered (the registry's, but the chat's plan card), in its order, with its
+    // schema; only the reading ones may be called side by side.
     send(#"{"jsonrpc":"2.0","id":5,"method":"tools/list","params":{\#(meta)}}"#)
     r = obj(await wire.answer(5)?["result"])
     guard case .array(let tools)? = r["tools"] else { Issue.record("no tools"); return }
-    #expect(tools.map { obj($0)["name"] } == AITools.all.map { .string($0.name) } && r["resultType"] == "complete")
-    for (told, tool) in zip(tools, AITools.all) {
+    #expect(tools.map { obj($0)["name"] } == AITools.forAgents.map { .string($0.name) } && r["resultType"] == "complete")
+    for (told, tool) in zip(tools, AITools.forAgents) {
         #expect(obj(told)["inputSchema"] == tool.schema && obj(told)["description"] == .string(tool.about))
         #expect(obj(obj(told)["annotations"])["readOnlyHint"] == .bool(tool.kind == .read), Comment(rawValue: tool.name))
     }

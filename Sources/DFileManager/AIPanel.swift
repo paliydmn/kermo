@@ -2,10 +2,11 @@ import AppKit
 import DFMCore
 
 /// The AI chat right of the panels and the terminal (⌃⌘I, the toolbar's ✨): the user's own model in Ask — it reads
-/// and answers, it changes nothing — or Edit, which also proposes changes to files as a card (`EditCard`) the user
-/// applies to the editor. What goes is what the user attached (chips) and what the model's reads return;
-/// every read is `AISession.call` (`readOnly`: the user is only ever asked to let it read). Without a key: a card that
-/// leads to Settings › AI. Nothing is made before the panel is first shown, and the key is read at the first send.
+/// and answers, it changes nothing — Edit, which also proposes changes to files as a card (`EditCard`) the user
+/// applies to the editor, or Agent, which acts within the chat's scope (the row under the modes). What goes is what
+/// the user attached (chips) and what the model's tools return; every call is `AISession.call` (`readOnly` in Ask
+/// and Edit: nothing changes, the user is only ever asked to let it read). Without a key: a card that leads to
+/// Settings › AI. Nothing is made before the panel is first shown, and the key is read at the first send.
 @MainActor
 final class AIPanel: NSViewController, NSTextViewDelegate {
     unowned let app: AppDelegate
@@ -53,12 +54,23 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     private var unkept = false
     private var holdsProduction: Bool { !prodSent.isEmpty || session?.readProduction == true || resumedProduction }
 
-    /// Ask or Edit (task 23 PR 7): what the next ↩ goes with. New Chat keeps it; a launch starts in Ask.
-    private(set) var editing = false
+    /// Ask, Edit or Agent (task 23 PR 7, 8): what the next ↩ goes with. New Chat keeps it; a launch starts in Ask.
+    enum Mode: Int { case ask, edit, agent }
+    private(set) var mode = Mode.ask
     private let modes = NSSegmentedControl(), modeNote = NSTextField(labelWithString: "")
     private var modeRow: NSStackView?
-    /// The answer a turn is writing: where a proposed change's card goes.
+    /// What this chat may do where (`AISession.granted`): a chip a place, and + to give one View. `giving`: a level
+    /// the row is setting — its question, if any, goes with New Chat.
+    private let scopeRow = ChipFlow(), scopeLine = NSStackView()
+    private var giving: Task<Void, Never>?
+    /// The answer a turn is writing: where a proposed change's card and a plan go.
     private weak var answering: Answer?
+    /// The plan this answer shows, updated in place; a later answer's plan is a card of its own.
+    private weak var planCard: PlanCard?
+    /// Dollars this chat has cost since it was started or opened, request by request, and up to where it goes on
+    /// before it asks again — for the cap it was given under (another cap: that one). `unpriced`: a request had no
+    /// price to count — said once a chat, after its answer (`toldUnpriced`).
+    private var spent = 0.0, allowance: (cap: Double, until: Double)?, unpriced = false, toldUnpriced = false
 
     private var built = false
     private let list = NSStackView(), scroll = NSScrollView()
@@ -88,17 +100,21 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
                                        iconButton(.close, "Hide  ⌃⌘I", #selector(hide))])
         (head.spacing, head.edgeInsets) = (6, NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 6))
 
-        modes.segmentCount = 2
-        ["Ask", "Edit"].enumerated().forEach { modes.setLabel($1, forSegment: $0) }
+        modes.segmentCount = 3
+        ["Ask", "Edit", "Agent"].enumerated().forEach { modes.setLabel($1, forSegment: $0) }
         (modes.trackingMode, modes.controlSize, modes.selectedSegment, modes.target, modes.action) = (.selectOne, .small, 0, self, #selector(modeChanged))
         modes.setToolTip("Reads and answers; changes nothing", forSegment: 0)
         modes.setToolTip("Also proposes changes to files as a diff — only your ⌘S saves", forSegment: 1)
+        modes.setToolTip("Also acts — writes files, copies, runs commands — within what you allow this chat", forSegment: 2)
         (modeNote.font, modeNote.textColor, modeNote.lineBreakMode) = (.systemFont(ofSize: 11), .secondaryLabelColor, .byTruncatingTail)
         modeNote.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let row = NSStackView(views: [modes, modeNote])
         (row.spacing, row.edgeInsets) = (8, NSEdgeInsets(top: 0, left: 12, bottom: 6, right: 12))
         modeRow = row
         showMode()
+        scopeLine.setViews([scopeRow], in: .top)
+        scopeLine.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 6, right: 12)
+        scopeRow.widthAnchor.constraint(equalTo: scopeLine.widthAnchor, constant: -24).isActive = true
 
         list.orientation = .vertical
         list.alignment = .leading
@@ -151,7 +167,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         for v in [chipRow, inputScroll, foot] as [NSView] { v.widthAnchor.constraint(equalTo: composer.widthAnchor, constant: -20).isActive = true }
 
         let line = { () -> NSBox in let b = NSBox(); b.boxType = .separator; return b }
-        let all = NSStackView(views: [head, row, line(), scroll, line(), composer])
+        let all = NSStackView(views: [head, row, scopeLine, line(), scroll, line(), composer])
         all.orientation = .vertical
         all.spacing = 0
         all.translatesAutoresizingMaskIntoConstraints = false
@@ -161,7 +177,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             all.leadingAnchor.constraint(equalTo: view.leadingAnchor), all.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             head.heightAnchor.constraint(equalToConstant: 36),
         ])
-        for v in [head, row, scroll, composer] as [NSView] { v.widthAnchor.constraint(equalTo: all.widthAnchor).isActive = true }
+        for v in [head, row, scopeLine, scroll, composer] as [NSView] { v.widthAnchor.constraint(equalTo: all.widthAnchor).isActive = true }
         // Back from Settings with a key, or another model: said at once.
         NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: app.window, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { if self?.app.aiChatShown == true { self?.refresh() } }
@@ -183,6 +199,8 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         model.title = d.string(forKey: "aiModel").flatMap { $0.isEmpty ? nil : $0 } ?? (AISettings.kind(d) == .anthropic ? AISettings.anthropicModel : "Choose a model")
         composer.isHidden = !hasKey
         modeRow?.isHidden = !hasKey
+        scopeLine.isHidden = !hasKey
+        showScope()
         if !hasKey, chat == nil { return showEmpty(setup: true) }
         if chat == nil, list.arrangedSubviews.isEmpty || list.arrangedSubviews.first is Empty { showEmpty(setup: false) }
         showChips()
@@ -200,10 +218,14 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     private func showEmpty(setup: Bool) {
         let title = NSTextField(labelWithString: setup ? "Use your own AI" : "Ask about what's open")
         title.font = .boldSystemFont(ofSize: 14)
+        let does = switch mode {
+        case .ask: "The model only reads: it changes nothing."
+        case .edit: "The model reads, and proposes changes to files as a diff you keep or drop: only your ⌘S saves."
+        case .agent: "The model acts within what you allow this chat — the Scope row. Deleting, writing over a file and any change on production ask each time."
+        }
         let text = Self.wrapped(setup
             ? "Kermo sends your questions straight from this Mac to the provider you choose, with your key: Anthropic, or an OpenAI-compatible server — Ollama or LM Studio on your Mac too. No Kermo server, no Kermo account."
-            : "Kermo suggests what's open below: the panel's folder, the file under the cursor, the editor, the terminal. Nothing goes anywhere until you add it and press ↩. "
-                + (editing ? "The model reads, and proposes changes to files as a diff you keep or drop: only your ⌘S saves." : "The model only reads: it changes nothing."))
+            : "Kermo suggests what's open below: the panel's folder, the file under the cursor, the editor, the terminal. Nothing goes anywhere until you add it and press ↩. " + does)
         text.textColor = .secondaryLabelColor
         let views: [NSView] = [NSImageView(image: Symbol.ai.image()), title, text] + (setup ? [NSButton(title: "Settings › AI…", target: self, action: #selector(openSettings))] : [])
         let e = Empty(views: views)
@@ -596,34 +618,151 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         updateSend()
     }
 
-    /// The mode's instructions and tools, and a session of its own: nothing allowed yet. Edit reads as Ask does —
-    /// a proposed change is a card, not a write.
+    /// The mode's instructions and tools, and the chat's session (`madeSession`).
     private func begin(_ messages: [AIMessage]) {
         chat = AIChat(system: system, tools: tools, messages: messages)
-        session = AISession(app: app) { [weak self] c, _ in await self?.ask(c) ?? 1 }
-        session?.readOnly = true
-        session?.proposes = { [weak self] p, t, path in
+        madeSession()
+    }
+
+    /// The chat's session — made at its first send, or when the scope row gives a place View before it: nothing
+    /// allowed yet. Edit reads as Ask does — a proposed change is a card, not a write.
+    @discardableResult private func madeSession() -> AISession {
+        if let session { return session }
+        let s = AISession(app: app) { [weak self] c, _ in await self?.ask(c) ?? 1 }
+        (s.readOnly, s.noProduction) = (mode != .agent, AISettings.neverProd(app.defaults))
+        s.proposes = { [weak self] p, t, path in
             guard let self else { return }
             let card = EditCard(p, on: t, path: path, app: app)
             if let answering { answering.attach(card) } else { append(card) }
         }
+        s.plans = { [weak self] in self?.showPlan($0) }
+        s.scopeChanged = { [weak self] in self?.showScope() }
+        session = s
+        showScope()
+        return s
     }
 
-    private var system: String { editing ? AIChat.editSystem : AIChat.askSystem }
-    private var tools: [AITool] { editing ? AIChat.editTools : AIChat.askTools }
+    private var system: String { [AIChat.askSystem, AIChat.editSystem, AIChat.agentSystem][mode.rawValue] }
+    private var tools: [AITool] { [AIChat.askTools, AIChat.editTools, AIChat.agentTools][mode.rawValue] }
 
-    @objc private func modeChanged() { setMode(edit: modes.selectedSegment == 1) }
+    @objc private func modeChanged() { setMode(Mode(rawValue: modes.selectedSegment) ?? .ask) }
 
-    /// Ask or Edit from the next ↩ on; a turn going on ends in the mode it began.
-    func setMode(edit: Bool) {
-        editing = edit
+    /// The mode from the next ↩ on; a turn going on ends in the mode it began.
+    func setMode(_ m: Mode) {
+        mode = m
         showMode()
         if chat == nil, list.arrangedSubviews.first is Empty, !composer.isHidden { showEmpty(setup: false) }
     }
 
     private func showMode() {
-        modes.selectedSegment = editing ? 1 : 0
-        modeNote.stringValue = editing ? "Also proposes changes to files, as a diff you keep or drop." : "Reads what you allow and answers."
+        modes.selectedSegment = mode.rawValue
+        modeNote.stringValue = switch mode {
+        case .ask: "Reads what you allow and answers."
+        case .edit: "Also proposes changes to files, as a diff you keep or drop."
+        case .agent: "Also acts within the scope below, asking before anything else."
+        }
+    }
+
+    // MARK: - Scope
+
+    /// The scope row: what this chat may do where — a chip's click changes or takes it back; + gives a place View.
+    private func showScope() {
+        guard built else { return }
+        var views: [NSView] = [Answer.small("Scope")]
+        if granted.isEmpty { views.append(Answer.small("nothing yet — the AI asks first")) }
+        for g in granted {
+            let chip = ChipButton(title: g.words, symbol: g.place == .mac ? .mac : .server, suggested: false, prod: g.prod) { [unowned self] v in pop(scopeMenu(g), from: v) }
+            chip.toolTip = g.words + " — click to change or take back"
+            chip.setAccessibilityLabel("Scope: " + g.words)
+            views.append(chip)
+        }
+        let plus = ChipButton(title: "", symbol: .plus, suggested: true, prod: false, plus: false) { [unowned self] v in pop(addScopeMenu(), from: v) }
+        plus.toolTip = "Let the AI read on a server or this Mac"
+        plus.setAccessibilityLabel("Give a place View")
+        scopeRow.set(views + [plus])
+    }
+
+    /// What this chat may do where, as the scope row shows it.
+    var granted: [AISession.Granted] { session?.granted ?? [] }
+
+    private func pop(_ menu: NSMenu, from v: NSView) { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: v.bounds.maxY + 4), in: v) }
+
+    /// A place's level, set by the user: View, Work (its folders, and commands on a server), All — in Ask and Edit
+    /// View only — or taken back. The level it has is a no-op: Work from Work doesn't add commands.
+    func scopeMenu(_ g: AISession.Granted) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addItem(withTitle: "\(g.name.bidiVisible) in this chat", action: nil, keyEquivalent: "").isEnabled = false
+        for (level, title) in [(AIScope.Level.view, "View — reads only"), (.work, "Work — its folders, and commands"), (.all, "All — anything there")] {
+            let item = MenuAction.item(title) { [unowned self] in
+                guard g.level != level, let session else { return }
+                giving = Task { await session.set(g.place, level) }
+            }
+            // This Mac runs no commands: its Work is only the folders a task was given.
+            (item.state, item.isEnabled) = (g.level == level ? .on : .off, (mode == .agent || level == .view) && !(level == .work && g.place == .mac))
+            menu.addItem(item)
+        }
+        menu.addItem(MenuAction.item("Take Back") { [unowned self] in session?.takeAway(g.place) })
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Asked always, under All too: deleting, writing over a file, any change on production", action: nil, keyEquivalent: "").isEnabled = false
+        menu.addItem(withTitle: g.place == .mac ? "All on this Mac: any file you can write, ~/Library/LaunchAgents too" : "A command allowed here may write over files unasked",
+                     action: nil, keyEquivalent: "").isEnabled = false
+        return menu
+    }
+
+    /// The places in front of the user and the saved servers, those not in the scope yet: a click gives View.
+    func addScopeMenu() -> NSMenu {
+        let c = app.aiContext, have = Set(granted.map(\.name))
+        var all: [SFTPTarget?] = [nil]
+        for t in [c.active.server, c.other.server, c.editor?.server, c.terminal?.server].compactMap({ $0?.asUser }) + ServerLock.servers().map(\.target.asUser)
+        where !all.contains(where: { $0.map { ServerLock.same($0, t) } ?? false }) { all.append(t) }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addItem(withTitle: "Let the AI read on…", action: nil, keyEquivalent: "").isEnabled = false
+        let never = AISettings.neverProd(app.defaults)
+        for t in all {
+            let name = t.map(AISession.label) ?? "this Mac"
+            guard !have.contains(name), !(never && t.map(SavedServer.isProd) == true) else { continue }
+            menu.addItem(MenuAction.item(name.bidiVisible + (t.map(SavedServer.isProd) == true ? " (PROD)" : "")) { [unowned self] in
+                let s = madeSession()
+                giving = Task { await s.give(t) }
+            })
+        }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "View until the chat ends; its chip gives more", action: nil, keyEquivalent: "").isEnabled = false
+        return menu
+    }
+
+    private func showPlan(_ steps: [(text: String, state: String)]) {
+        if let planCard, let answering, planCard.isDescendant(of: answering) { return planCard.set(steps) }
+        let card = PlanCard(steps)
+        planCard = card
+        if let answering { answering.attach(card) } else { append(card) }
+    }
+
+    // MARK: - Spending
+
+    /// Settings › AI's cap on what one chat costs, in dollars; 0: none. Known only at Anthropic's prices (`AIPrice`).
+    static func cap(_ d: UserDefaults) -> Double { d.object(forKey: "aiChatLimit") as? Double ?? 2 }
+
+    /// A request's price into this chat's.
+    private func count(_ u: AIUsage, _ g: Int) {
+        guard g == generation else { return }
+        if let d = u.dollars { spent += d } else { unpriced = true }
+    }
+
+    /// Before each request: past the cap the user is asked to go on, as much again; Stop answers it no.
+    private func goOn() async -> Bool {
+        let cap = Self.cap(app.defaults), until = allowance.flatMap { $0.cap == cap ? $0.until : nil } ?? cap
+        guard cap > 0, spent >= until else { return true }
+        var next = until + cap
+        while next <= spent { next += cap }
+        var c = Confirm("This chat has cost \(Answer.dollars(spent)). Go on, up to \(Answer.dollars(next))?", action: "Go On")
+        (c.cancel, c.returnCancels) = ("Stop", true)
+        c.note = "Settings › AI stops a chat at \(Answer.dollars(cap)), and asks again each time as much more. Stop keeps the chat as it is."
+        guard await ask(c) == 0 else { return false }
+        allowance = (cap, next)
+        return true
     }
 
     private func start(_ e: AIEndpoint) {
@@ -644,15 +783,17 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     private func run(_ e: AIEndpoint, _ g: Int) async {
         guard let chat, let session else { return }
         session.noProduction = AISettings.neverProd(app.defaults)
-        let answer = Answer(model: e.model, panel: self, edit: chat.system == AIChat.editSystem)
+        // The chat's mode as it was built at ↩ — a Retry's too — not the segment's now.
+        session.readOnly = chat.system != AIChat.agentSystem
+        let answer = Answer(model: e.model, panel: self, mode: chat.system == AIChat.editSystem ? "Edit" : chat.system == AIChat.agentSystem ? "Agent" : nil)
         append(answer)
         answering = answer
         do {
-            let (end, used) = try await chat.turn(e.provider(AISettings.transport), call: { await session.call($0, $1) }) { [weak self] in
+            let (end, used) = try await chat.turn(e.provider(AISettings.transport), call: { await session.call($0, $1) }, show: { [weak self] in
                 answer.show($0)
                 self?.follow()
-            }
-            answer.end(end, used)
+            }, spent: { [weak self] u in self?.count(u, g) }, goOn: { [weak self] in await self?.goOn() ?? false })
+            answer.end(end, used, rounds: chat.rounds)
         } catch is CancellationError {
             answer.end(note: "Stopped. Nothing more was asked or read.")
         } catch {
@@ -661,6 +802,11 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             answer.end(note: e2.words, error: true, action: e2.kind == .key ? ("Settings…", { [weak self] in self?.openSettings() }) : ("Retry", { [weak self] in self?.retry() }))
         }
         if g == generation {
+            // At Anthropic, a model Kermo has no price for: the cap doesn't count it. Said once a chat.
+            if unpriced, !toldUnpriced, Self.cap(app.defaults) > 0, AISettings.kind(app.defaults) == .anthropic {
+                toldUnpriced = true
+                note("Kermo has no price for this model at this address: Settings › AI's cap doesn't count it — only the rounds a turn may take stop it.", error: false)
+            }
             save()
             finish()
         }
@@ -688,9 +834,11 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
     @objc private func newChat() {
         stop()
+        giving?.cancel()
         generation += 1
         (chat, session, prodSent, turn, pinned, failedAt) = (nil, nil, [], nil, nil, nil)
         (chatID, asked, resumedProduction, unsaved, unkept, following) = (nil, [], false, false, false, false)
+        (spent, allowance, unpriced, toldUnpriced) = (0, nil, false, false)
         list.setViews([], in: .top)
         refresh()
         focus()
@@ -1198,5 +1346,49 @@ final class Card: NSStackView {
         setViews([said], in: .top)
         said.widthAnchor.constraint(equalTo: widthAnchor, constant: -20).isActive = true
         done(i)
+    }
+}
+
+/// A task's steps as the model last told them (`plan`): ○ to do, ▸ doing, ✓ done, struck through skipped.
+final class PlanCard: NSStackView {
+    private let steps = ChatText(NSAttributedString())
+    init(_ list: [(text: String, state: String)]) {
+        super.init(frame: .zero)
+        (orientation, alignment, spacing, edgeInsets) = (.vertical, .leading, 4, NSEdgeInsets(top: 8, left: 10, bottom: 8, right: 10))
+        let head = NSTextField(labelWithString: "✨ Plan")
+        (head.font, head.textColor) = (.systemFont(ofSize: 11.5, weight: .semibold), .secondaryLabelColor)
+        setViews([head, steps], in: .top)
+        for v in [head, steps] { v.widthAnchor.constraint(equalTo: widthAnchor, constant: -20).isActive = true }
+        set(list)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func set(_ list: [(text: String, state: String)]) {
+        let s = NSMutableAttributedString(), lines = NSMutableParagraphStyle()
+        lines.headIndent = 20   // a step's second line under its words, never at the marks' edge as a step of its own
+        for (i, step) in list.enumerated() {
+            let (mark, tint) = switch step.state {
+            case "doing": ("▸", NSColor.controlAccentColor)
+            case "done": ("✓", Palette.ok)
+            case "skipped": ("–", NSColor.secondaryLabelColor)
+            default: ("○", NSColor.secondaryLabelColor)
+            }
+            var words: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12, weight: step.state == "doing" ? .semibold : .regular),
+                                                        .foregroundColor: step.state == "skipped" ? NSColor.secondaryLabelColor : NSColor.labelColor]
+            s.append(NSAttributedString(string: (i == 0 ? "" : "\n") + mark + "  ", attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: tint]))
+            if step.state == "skipped" { words[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+            s.append(NSAttributedString(string: step.text.bidiVisible, attributes: words))
+        }
+        s.addAttribute(.paragraphStyle, value: lines, range: NSRange(location: 0, length: s.length))
+        steps.set(s)
+        setAccessibilityLabel("Plan: " + list.map { "\($0.text), \($0.state)" }.joined(separator: "; "))
+    }
+
+    override func draw(_ r: NSRect) {
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        NSColor.controlBackgroundColor.setFill()
+        path.fill()
+        NSColor.separatorColor.setStroke()
+        path.stroke()
     }
 }

@@ -74,7 +74,7 @@ private func wellFormed(_ m: [AIMessage]) -> Bool {
     chat.add("Loop")
     var calls = 0
     let (end, _) = try await chat.turn(Script(.events([asks(read)])), call: { _, _ in calls += 1; return AIResult("x") }) { _ in }
-    #expect(end == .rounds && calls == AIChat.rounds - 1)
+    #expect(end == .rounds && calls == chat.rounds - 1 && chat.rounds == 10)
     #expect(chat.messages.last?.role == .user && wellFormed(chat.messages))
     chat.add("go on")   // joins the results: still alternating
     #expect(chat.messages.last?.parts.count == 2 && wellFormed(chat.messages))
@@ -189,4 +189,22 @@ private func wellFormed(_ m: [AIMessage]) -> Bool {
     var st = stat()
     #expect(lstat(path, &st) == 0 && st.st_mode & S_IFMT == S_IFREG && st.st_mode & 0o777 == 0o600)
     #expect(FileManager.default.contents(atPath: path) == Data("two".utf8) && !FileManager.default.fileExists(atPath: path + ".tmp"))
+}
+
+/// The spending cap (task 23 PR 8): each round's tokens are heard as they come; `goOn` is asked before each request,
+/// and a no ends the turn `.spent` with the history whole — a yes next time goes on from there. Agent: 30 rounds.
+@MainActor @Test func aTurnStopsBetweenRoundsWhenItMayNotGoOn() async throws {
+    let chat = AIChat(system: AIChat.agentSystem, tools: AIChat.agentTools)
+    #expect(chat.rounds == 30 && AIChat.agentTools.map(\.name) == AITools.all.map(\.name))
+    chat.add("Do the task")
+    var heard: [Int] = [], asked = 0, calls = 0
+    var u = AIUsage()
+    u.output = 7
+    let script = Script(.events([.done(AIMessage(.assistant, [.text("Looking."), .call(read)]), .tools, u)]), .events([said("Done.")]))
+    let (end, used) = try await chat.turn(script, call: { _, _ in calls += 1; return AIResult("x") }, show: { _ in },
+                                          spent: { heard.append($0.output) }, goOn: { asked += 1; return asked < 2 })
+    #expect(end == .spent && used.output == 7 && heard == [7] && asked == 2 && calls == 1 && script.requests.count == 1)
+    #expect(chat.messages.last?.role == .user && wellFormed(chat.messages))
+    let (again, _) = try await chat.turn(script, call: { _, _ in AIResult("") }, show: { _ in })
+    #expect(again == .model(.done) && script.requests.count == 2 && wellFormed(chat.messages))
 }

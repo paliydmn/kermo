@@ -8,9 +8,8 @@ public struct AITool: Sendable {
 
     public struct Param: Sendable {
         public var name: String, about: String
-        public var required = true, bool = false
-        public var oneOf: [String]?
-        /// A list of objects with these text fields, each of them there: `propose_edit`'s edits.
+        public var required = true
+        /// A list of objects with these text fields, each of them there: `propose_edit`'s edits, `request_scope`'s needs.
         public var fields: [String]?
     }
 
@@ -33,8 +32,7 @@ public struct AITool: Sendable {
         .object(["type": "object", "additionalProperties": false,
                  "required": .array(params.filter(\.required).map { .string($0.name) }),
                  "properties": .object(Dictionary(uniqueKeysWithValues: params.map { p in
-                     var o: [String: ToolValue] = ["type": p.bool ? "boolean" : "string", "description": .string(p.about)]
-                     if let all = p.oneOf { o["enum"] = .array(all.map(ToolValue.string)) }
+                     var o: [String: ToolValue] = ["type": "string", "description": .string(p.about)]
                      if let f = p.fields {
                          o["type"] = "array"
                          o["items"] = .object(["type": "object", "additionalProperties": false, "required": .array(f.map(ToolValue.string)),
@@ -59,9 +57,8 @@ public struct AITool: Sendable {
         for (name, value) in args {
             guard let p = params.first(where: { $0.name == name }) else { return nil }
             switch value {
-            case .bool where p.bool: break
             case .array(let items) where p.fields.map({ Self.isList(items, of: $0) }) == true: break
-            case .string(let s) where !p.bool && p.fields == nil && p.oneOf?.contains(s) != false: break
+            case .string where p.fields == nil: break
             default: return nil
             }
         }
@@ -103,11 +100,12 @@ public enum AITools {
     public static let all: [AITool] = [
         AITool(name: "focus", about: "What the user has in front of them: both panels (server, folder, cursor, marked names), the editor's file and selection, the terminal tab.",
                kind: .ui, params: []),
-        AITool(name: "request_scope", about: "Ask the user to allow this chat more: a level on a server, a folder to write into, running commands. Ask for the least the task needs.",
-               kind: .ui, params: [server, .init(name: "level", about: "view: read; work: write into the folder, run commands if asked; all: everything", oneOf: ["view", "work", "all"]),
-                                   .init(name: "folder", about: "The folder to write into — an absolute path", required: false),
-                                   .init(name: "commands", about: "Also run commands that change things there", required: false, bool: true),
-                                   .init(name: "why", about: "One line the user reads: what for")]),
+        AITool(name: "request_scope", about: "Ask the user once for all a task needs in this chat, the least that does it: they allow the whole list or nothing.",
+               kind: .ui, params: [.init(name: "needs", about: "One item each. server: a name Kermo shows, or \"mac\". level: view (read), write (into folder), "
+                                         + "commands (run commands that change things there), all (everything there). folder: the absolute folder for write, else \"\". "
+                                         + "why: what for, one short line the user reads. At most 5 needs", fields: ["server", "level", "folder", "why"])]),
+        AITool(name: "plan", about: "Show the user the task's steps as a checklist, and keep it current: call it again with the whole list as it stands, in the same message as the next step's own call.",
+               kind: .ui, params: [.init(name: "steps", about: "Every step in order. text: one short line. state: todo, doing, done or skipped", fields: ["text", "state"])]),
         AITool(name: "list_folder", about: "The names in a folder, with sizes and dates.", kind: .read, params: [server, path("The folder")],
                places: [.init(server: "server", path: "path", access: .read)]),
         AITool(name: "read_file", about: "A text file's content.", kind: .read, params: [server, path("The file")],
@@ -135,4 +133,7 @@ public enum AITools {
         AITool(name: "open_in_editor", about: "Open a file in Kermo's editor for the user.", kind: .ui, params: [server, path("The file")],
                places: [.init(server: "server", path: "path", access: .read)]),
     ]
+
+    /// What an outside agent (MCP) is offered: `plan` is the chat's card — an agent shows its own.
+    public static let forAgents = all.filter { $0.name != "plan" }
 }
