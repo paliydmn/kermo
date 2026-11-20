@@ -49,7 +49,7 @@ public enum MCP {
         /// What the client calls itself (`clientInfo`): for display only, it proves nothing.
         public var client: String? { lock.withLock { name } }
 
-        public init(tools: [AITool] = AITools.all, version: String, write: @escaping @Sendable (Data) -> Void, call: @escaping Call) {
+        public init(tools: [AITool] = AITools.forAgents, version: String, write: @escaping @Sendable (Data) -> Void, call: @escaping Call) {
             (self.tools, self.version, self.write, self.call) = (tools, version, write, call)
         }
 

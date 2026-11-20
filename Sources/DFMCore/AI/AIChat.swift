@@ -15,14 +15,16 @@ public final class AIChat {
         case called(AIToolUse, AIResult)
     }
 
-    /// How a turn ended: as the model ended it, or stopped by Kermo after `rounds` of tools.
-    public enum End: Sendable, Equatable { case model(AIStop), rounds }
+    /// How a turn ended: as the model ended it, stopped by Kermo after `rounds` of tools, or at the spending cap
+    /// (`goOn` said no).
+    public enum End: Sendable, Equatable { case model(AIStop), rounds, spent }
 
     public let system: String
     public let tools: [AITool]
     public private(set) var messages: [AIMessage]
-    /// Rounds of tools one turn may take; then Kermo stops it and the user may say to go on.
-    nonisolated public static let rounds = 10
+    /// Rounds of tools one turn may take; then Kermo stops it and the user may say to go on. An Agent's task takes
+    /// more of them: its plan, its scope and each step.
+    public var rounds: Int { system == Self.agentSystem ? 30 : 10 }
 
     public init(system: String, tools: [AITool], messages: [AIMessage] = []) { (self.system, self.tools, self.messages) = (system, tools, messages) }
 
@@ -36,10 +38,18 @@ public final class AIChat {
     /// and every call it asked for gets a result in the next message — "stopped" for those not run. Stopped (the task
     /// cancelled): nothing more is called, events still buffered are dropped, `CancellationError`. A failed request
     /// (`AIError`) leaves the history as it was before it: running the turn again (Retry) asks again.
-    public func turn(_ provider: AIProvider, call: (String, [String: ToolValue]) async -> AIResult, show: (Step) -> Void) async throws -> (End, AIUsage) {
+    ///
+    /// `spent` hears each round's tokens as soon as they are known — a turn stopped or failed later has used them
+    /// all the same. `goOn` is asked before each request, where nothing is pending: no, and the turn ends `.spent`
+    /// with the history whole; yes, and it goes on as if never asked.
+    public func turn(_ provider: AIProvider, call: (String, [String: ToolValue]) async -> AIResult, show: (Step) -> Void,
+                     spent: (AIUsage) -> Void = { _ in }, goOn: () async -> Bool = { true }) async throws -> (End, AIUsage) {
         var used = AIUsage(), round = 0
         while true {
             round += 1
+            let go = await goOn()
+            try Task.checkCancellation()
+            guard go else { return (.spent, used) }
             var ended: (AIMessage, AIStop, AIUsage)?
             for try await event in provider.send(messages, tools: tools, system: system) {
                 try Task.checkCancellation()
@@ -51,13 +61,14 @@ public final class AIChat {
             try Task.checkCancellation()
             guard let (message, stop, u) = ended else { throw AIError.cut }
             used.add(u)
+            spent(u)
             if !message.parts.isEmpty { messages.append(message) }
             guard stop == .tools, !message.calls.isEmpty else { return (.model(stop), used) }
             var results: [AIMessage.Part] = []
             for c in message.calls {
                 let result: AIResult
                 if Task.isCancelled { result = .failure("Stopped by the user. Nothing was done.") }
-                else if round >= Self.rounds { result = .failure("Kermo stops a turn after \(Self.rounds) rounds of tools. Nothing was run.") }
+                else if round >= rounds { result = .failure("Kermo stops a turn after \(rounds) rounds of tools. Nothing was run.") }
                 else if !tools.contains(where: { $0.name == c.name }) { result = .failure("There is no tool “\(c.name)” in this chat. Nothing was run.") }
                 else if let args = c.args {
                     show(.calling(c))
@@ -68,7 +79,7 @@ public final class AIChat {
             }
             messages.append(AIMessage(.user, results))
             try Task.checkCancellation()
-            if round >= Self.rounds { return (.rounds, used) }
+            if round >= rounds { return (.rounds, used) }
         }
     }
 
@@ -88,6 +99,20 @@ public final class AIChat {
     /// Edit (task 23 PR 7): Ask, and changes to files proposed as diffs; only the user's ⌘S saves.
     nonisolated public static let editSystem = instructions("""
         Mode: Edit — you read, and you propose changes to text files; you never save anything. Your tools read as in Ask, and propose_edit shows the user your change to one file as a diff: they keep or drop each part and apply it to Kermo's editor, where only their ⌘S saves it (Kermo checks a config then, and asks before it writes on a production server). Read the file before you propose a change to it; give all of a file's changes in one propose_edit, each old_text exactly as in the file and there once. If the file is open in the editor with unsaved changes, the change goes on the editor's text. Don't repeat the new text in your answer: say in a line or two what changes and why. A value shown as ••• can't be changed: edit around it. For anything that isn't a file's text — a restart, a command — give the commands as in Ask: shell commands go in ```sh blocks, which the user can put into the terminal without running them.
+        """)
+
+    /// Agent (task 23 PR 8): every tool — the session asks for what the chat's scope lacks.
+    nonisolated public static let agentTools = AITools.all
+
+    /// Agent: it acts within the chat's scope. Fixed text — the scope is told by the tools' results, never here: a
+    /// changed `system` rebuilds the chat without its thinking.
+    nonisolated public static let agentSystem = instructions("""
+        Mode: Agent — you act: read, write files, copy between places, run commands on servers, within what the user allowed this chat (its scope). Kermo asks the user before anything outside the scope, and always before deleting, writing over what exists and any change on a production server.
+        - A task of several steps: first call plan with its steps and request_scope once with all they need (servers, folders to write into, commands) — the least that does it. Then do the steps; send plan again, with the states as they stand, in the same message as the next step's own call.
+        - Prefer the typed tools: copy and write_file ask before they write over anything, a command may not. write_file doesn't write a file open in the editor: propose_edit changes that one.
+        - A command gets 30 seconds and 256 KB of output, then Kermo stops waiting. For a longer program, start it in the background with its output in a file (nohup … > file 2>&1 &), then read the file.
+        - If the user says no, don't try another way to the same thing: say what is left and how they can do it.
+        - At the end, say in a few lines what was done and where things are.
         """)
 
     private nonisolated static func instructions(_ mode: String) -> String {

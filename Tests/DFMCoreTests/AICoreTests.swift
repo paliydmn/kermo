@@ -214,9 +214,28 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
     }
 }
 
+/// The scope row's own word (task 23 PR 8): a place's level down and up, View forgetting folders and commands; what
+/// changes something is one predicate for the scope and for Ask.
+@Test func aScopeIsSetDownAndUpByTheUser() {
+    var s = AIScope()
+    s.grant(web, .work, folder: "/srv/app")
+    s.set(web, .all)
+    #expect(s.grants[web] == AIScope.Grant(level: .all, folders: ["/srv/app"], commands: false))
+    s.set(web, .work)
+    #expect(s.grants[web] == AIScope.Grant(level: .work, folders: ["/srv/app"], commands: true))
+    s.set(web, .view)
+    #expect(s.grants[web] == AIScope.Grant(level: .view))
+    s.set(web, .work)   // from View: commands, no folder — a write still asks for its folder
+    let write = AICall(tool("write_file"), [AITarget(web, "/srv/app/x", .write)!], overwrites: false)
+    #expect(s.check(write, prod: { _ in false }) == .outside([AIScope.Need(place: web, level: .work, folder: "/srv/app/x")]))
+    #expect(!AIScope.changes(AITarget(web, nil, .run("ls -l"))!) && !AIScope.changes(AITarget(web, "/etc", .read)!))
+    #expect(AIScope.changes(AITarget(web, nil, .run("ls > x"))!) && AIScope.changes(AITarget(web, "/dev", .run("cat watchdog"))!)
+            && AIScope.changes(AITarget(web, nil, .run("tar -czf a.tgz b"))!) && AIScope.changes(AITarget(web, "/a", .write)!))
+}
+
 @Test func aiToolsTellWhatACallTouches() throws {
     let names = AITools.all.map(\.name)
-    #expect(names == ["focus", "request_scope", "list_folder", "read_file", "terminal_output", "server_info", "run_command", "copy", "write_file", "propose_edit",
+    #expect(names == ["focus", "request_scope", "plan", "list_folder", "read_file", "terminal_output", "server_info", "run_command", "copy", "write_file", "propose_edit",
                       "open_in_editor"] && Set(names).count == names.count)
     for t in AITools.all {   // a schema both tool use and MCP take: an object, every required name a property, every place's argument a parameter
         guard case .object(let o) = t.schema, case .object(let props)? = o["properties"], case .array(let required)? = o["required"] else { Issue.record("\(t.name)"); continue }
@@ -227,7 +246,7 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
             if case .run(let a) = p.access { args.append(a) }
             #expect(args.allSatisfy { a in t.params.contains { $0.name == a && !$0.bool } }, Comment(rawValue: t.name))
         }
-        #expect(t.places.isEmpty == ["focus", "request_scope"].contains(t.name) && (t.kind != .read || t.places.allSatisfy { $0.access == .read }))
+        #expect(t.places.isEmpty == ["focus", "request_scope", "plan"].contains(t.name) && (t.kind != .read || t.places.allSatisfy { $0.access == .read }))
     }
 
     let places: (String) -> AIPlace? = { ["mac": .mac, "web-01": web][$0] }
@@ -236,13 +255,17 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
     #expect(tool("run_command").targets(["server": "web-01", "command": "ls"], resolve: places) == [AITarget(web, nil, .run("ls"))!])
     #expect(tool("run_command").targets(["server": "web-01", "command": "ls", "folder": "/srv"], resolve: places) == [AITarget(web, "/srv", .run("ls"))!])
     #expect(tool("focus").targets([:], resolve: places) == [] && tool("server_info").targets(["server": "mac"], resolve: places) == [AITarget(.mac, nil, .read)!])
-    #expect(tool("request_scope").targets(["server": "web-01", "level": "work", "commands": true, "why": "deploy"], resolve: places) == [])
+    #expect(tool("request_scope").targets(["needs": [["server": "web-01", "level": "commands", "folder": "", "why": "deploy"]]], resolve: places) == [])
+    #expect(tool("plan").targets(["steps": [["text": "Run it", "state": "doing"]]], resolve: places) == [])
+    #expect(AITools.forAgents.map(\.name) == names.filter { $0 != "plan" }, "an outside agent shows its own plan")
     // Malformed: nothing may be done — nil, never an empty list that reads as "touches nothing".
     let bad: [(String, [String: ToolValue])] = [
         ("read_file", ["server": "web-01"]), ("read_file", ["server": "nobody", "path": "/a"]), ("read_file", ["server": "web-01", "path": "a"]),
         ("read_file", ["server": "web-01", "path": "/a/../b"]), ("read_file", ["server": "web-01", "path": "~/a"]), ("read_file", ["server": "web-01", "path": 1]),
         ("read_file", ["server": "web-01", "path": "/a", "extra": "x"]), ("run_command", ["server": "web-01"]), ("run_command", ["server": "web-01", "command": true]),
-        ("request_scope", ["server": "web-01", "level": "root", "why": "x"]), ("request_scope", ["server": "web-01", "level": "work", "commands": "yes", "why": "x"]),
+        ("request_scope", ["server": "web-01", "level": "view", "why": "x"]),   // the old form
+        ("request_scope", ["needs": [["server": "web-01", "level": "view", "why": "x"]]]), ("request_scope", ["needs": [["server": "web-01", "level": "view", "folder": false, "why": "x"]]]),
+        ("plan", ["steps": [["text": "a"]]]), ("plan", ["steps": "a, b"]),
         ("focus", ["server": "web-01"]), ("write_file", ["server": "web-01", "path": "/a"]),
     ]
     for (name, args) in bad { #expect(tool(name).targets(args, resolve: places) == nil, Comment(rawValue: "\(name) \(args)")) }

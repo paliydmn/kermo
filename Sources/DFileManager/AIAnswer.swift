@@ -14,12 +14,12 @@ final class Answer: NSStackView {
     private var steps: [String: StepRow] = [:]
     private var waiting: NSView?, drawing = false, pace: TimeInterval = 0.08
 
-    /// `edit`: the turn went in Edit (it may propose changes), said beside the model.
-    init(model: String, panel: AIPanel, edit: Bool = false) {
+    /// `mode`: the turn went in Edit or Agent (it may propose changes, or act), said beside the model.
+    init(model: String, panel: AIPanel, mode: String? = nil) {
         self.panel = panel
         super.init(frame: .zero)
         (orientation, alignment, spacing) = (.vertical, .leading, 6)
-        let who = NSTextField(labelWithString: "✨ " + model + (edit ? " · Edit" : ""))
+        let who = NSTextField(labelWithString: "✨ " + model + (mode.map { " · " + $0 } ?? ""))
         (who.font, who.textColor) = (.systemFont(ofSize: 11, weight: .semibold), .secondaryLabelColor)
         let spin = NSProgressIndicator()
         (spin.style, spin.controlSize) = (.spinning, .small)
@@ -45,6 +45,7 @@ final class Answer: NSStackView {
             guard !drawing else { return }
             drawing = true
             DispatchQueue.main.asyncAfter(deadline: .now() + pace) { [weak self] in MainActor.assumeIsolated { self?.draw() } }
+        case .calling(let c) where c.name == "plan": break   // its card is the step
         case .calling(let c):
             draw()
             (raw, shown, segment) = ("", [], nil)   // the text after it is a new segment
@@ -125,8 +126,8 @@ final class Answer: NSStackView {
         }
     }
 
-    /// How the turn ended, and what it took.
-    func end(_ end: AIChat.End, _ used: AIUsage) {
+    /// How the turn ended, and what it took (`rounds`: the chat's ceiling).
+    func end(_ end: AIChat.End, _ used: AIUsage, rounds: Int) {
         draw()
         waiting?.removeFromSuperview()
         let said: String? = switch end {
@@ -134,7 +135,8 @@ final class Answer: NSStackView {
         case .model(.maxTokens): "The answer reached its length limit."
         case .model(.refused(let why)): "The model declined to answer" + (why.map { " (\($0))" } ?? "") + "."
         case .model(.other(let why)): "The answer ended: \(why)."
-        case .rounds: "Kermo stopped after \(AIChat.rounds) rounds of reading. Say “go on” to let it continue."
+        case .rounds: "Kermo stopped after \(rounds) rounds of tools. Say “go on” to let it continue."
+        case .spent: "Stopped at this chat's spending cap (Settings › AI); the chat is as it was. Your next message asks again."
         }
         if let said { add(Self.noteRow(said, error: false, action: nil)) }
         var tokens = ["\(AIPanel.tokens(used.input + used.cacheRead + used.cacheWrite)) in", "\(AIPanel.tokens(used.output)) out"]
@@ -191,8 +193,10 @@ final class StepRow: NSStackView {
     init(_ c: AIToolUse) {
         func arg(_ k: String) -> String? { if case .string(let s)? = c.args?[k] { s } else { nil } }
         let what = ["focus": "What's in front of you", "list_folder": "List", "read_file": "Read", "terminal_output": "Terminal output",
-                    "server_info": "Server info", "run_command": "Run", "propose_edit": "Propose a change to"][c.name] ?? c.name
-        title = ([what, arg("server"), arg("path") ?? arg("folder"), arg("command")].compactMap { $0 }).joined(separator: " ").bidiVisible
+                    "server_info": "Server info", "run_command": "Run", "propose_edit": "Propose a change to", "request_scope": "Ask to allow",
+                    "copy": "Copy", "write_file": "Write", "open_in_editor": "Open"][c.name] ?? c.name
+        title = ([what, arg("server"), arg("path") ?? arg("folder"), arg("command"), arg("from_server"), arg("from_path"), arg("to_server").map { "→ " + $0 }, arg("to_folder")]
+            .compactMap { $0 }).joined(separator: " ").bidiVisible
         super.init(frame: .zero)
         let spin = NSProgressIndicator()
         (spin.style, spin.controlSize) = (.spinning, .small)

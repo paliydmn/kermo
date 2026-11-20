@@ -112,6 +112,26 @@ public struct AIScope: Sendable, Equatable {
     public mutating func grant(_ n: Need) { grant(n.place, n.level, folder: n.folder, commands: n.commands) }
     public mutating func revoke(_ place: AIPlace) { grants[place] = nil }
 
+    /// The user's own word from the scope row: this level from now on, up or down. View drops the folders and
+    /// commands (they'd wake up at a later Work); Work keeps the folders and runs commands — what the row offers;
+    /// All keeps the folders for a Work after it.
+    public mutating func set(_ place: AIPlace, _ level: Level) {
+        var g = grants[place] ?? Grant(level: level)
+        g.level = level
+        if level == .view { (g.folders, g.commands) = ([], false) } else if level == .work { g.commands = true }
+        grants[place] = g
+    }
+
+    /// Whether `t` changes something — never in Ask or Edit, and never under View. Two readings of a command must
+    /// agree; and run in /dev, `cat watchdog` reads a device.
+    public static func changes(_ t: AITarget) -> Bool {
+        switch t.access {
+        case .read: false
+        case .run(let c): !AICommand.isReadOnly(c) || AICommand.overwrites(c) || t.path.map(AICommand.consumes) == true
+        case .write, .remove: true
+        }
+    }
+
     /// May this call go on to the gate? Each target by its own access, the strictest answer for the call:
     /// - read, and a command `AICommand.isReadOnly`: the place is in the scope at any level;
     /// - write, remove: All, or Work with a folder that holds the path (`/srv/app` doesn't hold `/srv/app2`);
@@ -125,18 +145,14 @@ public struct AIScope: Sendable, Equatable {
     public func check(_ call: AICall, prod: (AIPlace) -> Bool) -> Decision {
         var needs: [Need] = [], reasons: Set<Reason> = []
         for t in call.targets {
-            let g = grants[t.place]
-            let changes: Bool
+            let g = grants[t.place], changes = Self.changes(t)
             switch t.access {
-            case .read: changes = false
-            case .run(let c) where AICommand.isReadOnly(c) && !AICommand.overwrites(c) && t.path.map(AICommand.consumes) != true:
-                changes = false   // two readings must agree; and run in /dev, `cat watchdog` reads a device
+            case .read: break
             case .run(let c):
-                changes = true
+                guard changes else { break }
                 if g?.level != .all && !(g?.level == .work && g?.commands == true) { needs.append(Need(place: t.place, level: .work, commands: true)) }
                 if AICommand.overwrites(c) { reasons.insert(.overwrites) }
             case .write, .remove:
-                changes = true
                 let path = t.path ?? "/"   // never nil: `AITarget.init` refuses it
                 if g?.level != .all && !(g?.level == .work && g?.folders.contains(where: { Self.holds($0, path) }) == true) {
                     needs.append(Need(place: t.place, level: .work, folder: path))

@@ -4,7 +4,7 @@
 
 Two ways to work with AI in Kermo, both with your own account and nothing of Kermo's in between:
 
-- **The chat** (⌃⌘I): ask your own model about what is open — a folder, a file, the editor, the terminal. It reads, with your permission, and answers; in **Edit** it also proposes changes to files as a diff you apply to the editor — only your ⌘S saves. → [The chat](#the-chat)
+- **The chat** (⌃⌘I): ask your own model about what is open — a folder, a file, the editor, the terminal. It reads, with your permission, and answers; in **Edit** it also proposes changes to files as a diff you apply to the editor — only your ⌘S saves; in **Agent** it does a task — runs commands, copies, writes files — within what you allow the chat. → [The chat](#the-chat)
 - **Agents in Kermo's terminal**: [Claude Code](https://claude.com/claude-code) or another MCP client works where Kermo is connected — reads and copies files, runs commands on your servers, opens a file in the editor. The agent calls Kermo's tools; Kermo asks you before anything you haven't allowed. → [Switch it on and connect Claude Code](#switch-it-on-and-connect-claude-code)
 
 Both are off until you set them up, and Kermo sends nothing anywhere by itself.
@@ -28,17 +28,19 @@ Plain `http` is allowed only to this Mac and private networks (`localhost`, `10.
 
 **⌃⌘I**, the ✨ button at the right of the toolbar or **View ▸ AI Chat** shows the chat at the right of the window, beside the panels and the terminal; ⌃⌘I from the chat hides it. Drag its edge to make it wider; Kermo remembers the width and whether it was shown. Without a key it shows **Use your own AI**, which opens **Settings › AI**.
 
-The chat is in **Ask** or **Edit** — the switch under its title. In **Ask** the model reads and answers, and changes nothing: for a change it gives you the commands or the text, and you do it. **Edit** reads the same way and also proposes changes to files ([Edit](#edit-a-change-as-a-diff)). The switch counts from your next ↩, and **New Chat** keeps it; Kermo starts in Ask.
+The chat is in **Ask**, **Edit** or **Agent** — the switch under its title. In **Ask** the model reads and answers, and changes nothing: for a change it gives you the commands or the text, and you do it. **Edit** reads the same way and also proposes changes to files ([Edit](#edit-a-change-as-a-diff)). **Agent** acts within the chat's scope ([Agent](#agent-a-task-within-its-scope)). The switch counts from your next ↩, and **New Chat** keeps it; Kermo starts in Ask.
+
+Under the switch, the **Scope** row shows what the model may do in this chat, place by place: "web-01: read", "this Mac: write into ~/Downloads", "web-01: run commands". It starts empty — the model asks first — and fills as you allow things.
 
 1. **Attach what the question is about.** Under the field Kermo suggests what is open, dashed: the active panel's folder and the file under the cursor, the editor's document and its selection, the terminal's last command with its output. A click attaches one; **+** or **#** in the field lists everything open in both panels. Nothing is attached until you choose it. A click on an attached chip shows exactly what goes, with **Remove**.
 2. **Ask** and press ↩ (⇧↩ for a new line). The 👁 button shows **what will be sent** with the message: Kermo's instructions to the model, each attachment and your words.
 3. **The answer** comes as it is written. A shell command comes in a block with **Into Terminal** — it goes into the line of the terminal tab on the machine in front of you, and nothing runs until you press ↩ there — and **Copy**. Under each answer: the tokens it took, in and out — and, for Anthropic's models at Anthropic's own address, what they cost at Anthropic's prices as of 2026-11 (cache reads and writes counted). Your bill is the provider's; other providers show tokens only.
 4. **⎋ or the Stop button** stops the answer, and any question of the chat that is waiting. What the model asked for and didn't get yet isn't done.
-5. **The model reads by itself** where it needs to: the folders, files, terminal output and server info it asks for, and commands that only read (Kermo's allow-list: `cat`, `tail`, `ls`, `df`, `journalctl`, `systemctl status`, `nginx -t`…). The first read on each server — and on this Mac — asks you in the chat: **Allow in This Chat**, or **Cancel** (↩). Every read shows as a step; a click shows what came back. A command that could change something is refused without a question. A turn stops after 10 rounds of reading; say "go on" to let it continue.
+5. **The model reads by itself** where it needs to: the folders, files, terminal output and server info it asks for, and commands that only read (Kermo's allow-list: `cat`, `tail`, `ls`, `df`, `journalctl`, `systemctl status`, `nginx -t`…). The first read on each server — and on this Mac — asks you in the chat: **Allow in This Chat**, or **Cancel** (↩). Every read shows as a step; a click shows what came back. In Ask and Edit a command that could change something is refused without a question — whatever an Agent turn of the same chat was allowed. A turn stops after 10 rounds of tools (Agent: 30); say "go on" to let it continue.
 
 When the provider says no — a limit, too busy, no network — the chat says so in words with **Retry**; a key it doesn't accept, with **Settings…**. Kermo never retries by itself: each request is your money.
 
-**New Chat** (the pencil at the top) starts again: what the model was allowed is gone.
+**New Chat** (the pencil at the top) starts again: what the model was allowed is gone, and the Scope row is empty.
 
 ### Edit: a change as a diff
 
@@ -50,6 +52,24 @@ In **Edit** the model reads the file, then shows its change in the chat as a car
 - A value Kermo hid as `•••` can't be changed or written back, and neither can the name in front of it: the model has to edit around it, and the card shows such values as `•••` too. What the model writes itself it shows as written. A file open as root in the editor isn't the chat's: it reads and changes the file as your user. Under **Never Send** a production server's file isn't read, so it isn't changed either.
 
 A card does nothing until you press one of its buttons; **New Chat** clears it.
+
+### Agent: a task within its scope
+
+In **Agent** the model does the task: runs commands on servers, copies files and folders between this Mac and servers, writes text files — through the same paths as you, so a copy is a job in **Activity** and a server file's write keeps its history and is checked as a save is.
+
+1. **A plan and one question.** For a task of several steps the model first shows its plan — a card of steps that tick themselves off (○ to do, ▸ now, ✓ done) — and asks once for everything it needs: a card **Allow the assistant this, until the chat ends?** with a line for each place and why ("web-01: run commands — run report.sh"). **Allow for This Task** gives all of it; **Cancel** (↩) gives nothing, and nothing is done.
+2. **The steps go without a question** — inside what you allowed. What lies outside asks again, with the same card: never a silent no, never a silent yes.
+3. **Asked every time, whatever you allowed:** deleting, writing over a file that is there, and any change on a [production server](#production-servers) — each with **Allow Once**. A [locked server](servers.md#lock-a-server) wants Touch ID first. On a production server, the commands, saves and copies go to the [production log](safety.md#production-log), marked as the assistant's.
+4. **A file open in the editor** isn't written by the model: it proposes the change as a [diff card](#edit-a-change-as-a-diff), and your ⌘S saves.
+
+**The Scope row.** Click a place to set its level — **View** (reads), **Work** (writes into the folders it was given, and runs commands), **All** (anything there) — or **Take Back**: the next call there asks again. **+** gives a server, or this Mac, View yourself before the model asks. In Ask and Edit the row offers View only. Everything in it lasts until the chat ends; a New Chat starts from nothing.
+
+> [!WARNING]
+> Once the chat may **run commands** on a server, a command can change or delete files there without another question: Kermo recognises the obvious ones (`rm`, `>`), not every way a shell can write. A command gets 30 seconds and 256 KB of output; then Kermo stops waiting, and what it started may still be running. Allow commands only where that is acceptable.
+
+### Spending
+
+**Settings › AI › Stop a chat at** caps what one chat may cost — $2 unless you change it, 0 for no cap. Kermo adds up each request's price as it comes, stopped and failed ones too; past the cap, before the next request, the chat asks **Go On** (up to as much again) or **Stop**. Stop ends the turn between two rounds: nothing is lost, and your next message asks again. The cap counts at Anthropic's prices, for Anthropic's models at its own address; with other providers there is no price to count, and only the rounds limit stops a turn.
 
 ### What's selected, into the chat
 
@@ -118,9 +138,10 @@ Only a program started from one of Kermo's terminal tabs gets in — any program
 | `focus` | What is in front of you: both panels, the editor's file, the terminal tab | No; names and selections only where you allowed reading |
 | `list_folder`, `read_file`, `terminal_output`, `server_info` | Read | The first time on each server (and on this Mac) |
 | `run_command` | Run a shell command on a server | A command that only reads: as reading. Anything else: until you allow commands there |
-| `write_file`, `copy` | Write a text file; copy a file or a folder between this Mac and servers | Until you allow writing into that folder; always before writing over a file |
+| `write_file`, `copy` | Write a text file; copy a file or a folder between this Mac and servers — never onto a file open in the editor | Until you allow writing into that folder; always before writing over a file |
 | `propose_edit`, `open_in_editor` | Check that changes fit a file (in the chat's Edit: shown as a diff to apply); open a file in Kermo's editor | As reading |
-| `request_scope` | Ask you for more, with a reason | Always |
+| `request_scope` | Ask you for all a task needs at once — places, folders, commands — each with a reason | Always |
+| `plan` | The chat's plan card (the chat only; an agent shows its own) | No |
 
 The agent acts as you: on a server, as the user you log in as. Kermo never opens a root session for it, but a command may say `sudo` itself, and where your user has passwordless `sudo` that works — `sudo cat /etc/shadow` counts as a command that only reads.
 
