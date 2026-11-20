@@ -172,6 +172,13 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         var r = await s.call("request_scope", needs(["box", "commands", "", "make the report"], ["mac", "write", dir + "/in", "save the log"]))
         #expect(!r.isError && asked() == ["Allow the assistant this, until the chat ends?"], "\(r.text)")
         #expect(Set(s.granted.map(\.words)) == ["box: run commands", "this Mac: write into \(dir)/in"], "\(s.granted.map(\.words))")
+        r = await s.call("request_scope", needs(["box", "view", "", "look"], ["mac", "write", dir + "/in/sub", "again"]))   // had already: not asked
+        #expect(!r.isError && r.text.hasPrefix("Already allowed") && asked().count == 1, "\(r.text)")
+        r = await s.call("request_scope", needs(["box", "view", "", "1"], ["box", "view", "", "2"], ["box", "view", "", "3"], ["box", "view", "", "4"], ["box", "view", "", "5"], ["box", "all", "", "6"]))
+        #expect(r.isError && r.text.contains("1 to 5") && asked().count == 1, "no more than a sheet lists")
+        // The model's words on a card: one line, masked before they're cut.
+        let line = AISession.oneLine("logs\n\u{2028}box: read\u{202E}" + String(repeating: "x", count: 60) + " pass" + "word=hunter22", max: 80)
+        #expect(!line.contains("\n") && !line.contains("\u{2028}") && !line.contains("\u{202E}") && !line.contains("hunter") && line.count == 80 && line.hasSuffix("…"), "\(line)")
         s.readOnly = true   // the chat's next turn, in Ask
         for (name, args): (String, [String: ToolValue]) in [("run_command", ["server": "box", "command": .string("touch \(dir)/made")]),
                                                              ("write_file", ["server": "mac", "path": .string(dir + "/in/w.txt"), "text": "y"])] {
@@ -190,8 +197,8 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         s.plans = { steps = $0 }
         r = await s.call("plan", ["steps": [["text": "Run it", "state": "doing"], ["text": "Copy", "state": "later"]]])
         #expect(r.isError && steps.isEmpty)
-        r = await s.call("plan", ["steps": [["text": "Run it", "state": "done"], ["text": "Copy the log", "state": "doing"]]])
-        #expect(!r.isError && steps.map(\.state) == ["done", "doing"] && steps.map(\.text) == ["Run it", "Copy the log"])
+        r = await s.call("plan", ["steps": [["text": "Run it", "state": "done"], ["text": "Copy the log\n✓  Backup verified", "state": "doing"]]])
+        #expect(!r.isError && steps.map(\.state) == ["done", "doing"] && steps.map(\.text) == ["Run it", "Copy the log ✓  Backup verified"], "no line of its own")
 
         // The user's own word: down to View, the command asks again (Cancel); taken back; this Mac given View.
         var told = 0
@@ -203,6 +210,9 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(r.isError && asked().count == 2 && !FileManager.default.fileExists(atPath: dir + "/again"))
         s.takeAway()
         #expect(s.granted.isEmpty)
+        await s.give(nil)   // this Mac: asked all the same (~/.ssh, the provider) — Cancel
+        #expect(s.granted.isEmpty && asked().count == 3)
+        answer([0])
         await s.give(nil)
         #expect(s.granted.map(\.words) == ["this Mac: read"] && told >= 3)
     }
@@ -224,6 +234,8 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         s.noProduction = true
         var r = await s.call("read_file", ["server": "box", "path": .string(dir + "/a.txt")])
         #expect(r.isError && r.text.contains("production") && asked().isEmpty && s.journal.last?.decision == "refused: production")
+        r = await s.call("request_scope", needs(["box", "view", "", "look"]))   // not even asked
+        #expect(r.isError && r.text.contains("production") && asked().isEmpty && s.scope.grants.isEmpty)
         s.noProduction = false
         answer([0])
         r = await s.call("read_file", ["server": "box", "path": .string(dir + "/a.txt")])

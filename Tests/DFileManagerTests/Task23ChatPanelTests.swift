@@ -554,7 +554,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         panel.view.frame = NSRect(x: 0, y: 0, width: 400, height: 700)
         panel.build()
         let field = try #require(views(panel.view, ChatInput.self).first)
-        let chips = { views(panel.view, ChipButton.self).map(\.attributedTitle.string).filter { !$0.hasPrefix("Follow") } }
+        let chips = { views(panel.view, ChipButton.self).map(\.attributedTitle.string).filter { !$0.hasPrefix("Follow") && !$0.isEmpty } }   // the scope row's +
         func settled() async { for _ in 0..<300 where chips().contains(where: { $0.hasSuffix(" …") }) { try? await Task.sleep(for: .milliseconds(10)) } }
 
         panel.explain([AIPanel.failure("pg_dump shop", on: nil, "$ pg_dump shop\npg_dump: error: No space left on device\n[exit 1]")])
@@ -867,6 +867,9 @@ extension EditorWindowTests {   // the editor window is the app's one; `UserDefa
         try FileManager.default.createDirectory(atPath: dir + "/src", withIntermediateDirectories: true)
         try Data("y\n".utf8).write(to: URL(fileURLWithPath: dir + "/src/app.conf"))
         r = await agent.call("copy", ["from_server": "mac", "from_path": .string(dir + "/src/app.conf"), "to_server": "mac", "to_folder": .string(dir)])
+        #expect(r.isError && r.text.contains("open in the editor") && FileManager.default.contents(atPath: conf) == Data(base.utf8), "\(r.text)")
+        try FileManager.default.linkItem(atPath: conf, toPath: dir + "/same.conf")   // the same file by another name
+        r = await agent.call("write_file", ["server": "mac", "path": .string(dir + "/same.conf"), "text": "x\n"])
         #expect(r.isError && r.text.contains("open in the editor") && FileManager.default.contents(atPath: conf) == Data(base.utf8), "\(r.text)")
 
         // A card on a tab that changed since: refused, the tab as it was.

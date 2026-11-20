@@ -65,9 +65,10 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     private weak var answering: Answer?
     /// The plan this answer shows, updated in place; a later answer's plan is a card of its own.
     private weak var planCard: PlanCard?
-    /// Dollars this chat has cost, round by round (stopped and failed turns too), and up to where it goes on before
-    /// it asks again (nil: Settings › AI's cap).
-    private var spent = 0.0, allowance: Double?
+    /// Dollars this chat has cost since it was started or opened, request by request, and up to where it goes on
+    /// before it asks again — for the cap it was given under (another cap: that one). `unpriced`: a request had no
+    /// price to count — said once a chat, after its answer (`toldUnpriced`).
+    private var spent = 0.0, allowance: (cap: Double, until: Double)?, unpriced = false, toldUnpriced = false
 
     private var built = false
     private let list = NSStackView(), scroll = NSScrollView()
@@ -669,7 +670,8 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         if granted.isEmpty { views.append(Answer.small("nothing yet — the AI asks first")) }
         for g in granted {
             let chip = ChipButton(title: g.words, symbol: g.place == .mac ? .mac : .server, suggested: false, prod: g.prod) { [unowned self] v in pop(scopeMenu(g), from: v) }
-            chip.toolTip = "Change or take back"
+            chip.toolTip = g.words + " — click to change or take back"
+            chip.setAccessibilityLabel("Scope: " + g.words)
             views.append(chip)
         }
         let plus = ChipButton(title: "", symbol: .plus, suggested: true, prod: false, plus: false) { [unowned self] v in pop(addScopeMenu(), from: v) }
@@ -683,20 +685,22 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
 
     private func pop(_ menu: NSMenu, from v: NSView) { menu.popUp(positioning: nil, at: NSPoint(x: 0, y: v.bounds.maxY + 4), in: v) }
 
-    /// A place's level, set by the user: View, Work (its folders and commands), All — in Ask and Edit View only — or
-    /// taken back.
+    /// A place's level, set by the user: View, Work (its folders, and commands on a server), All — in Ask and Edit
+    /// View only — or taken back. The level it has is a no-op: Work from Work doesn't add commands.
     func scopeMenu(_ g: AISession.Granted) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.addItem(withTitle: "\(g.name.bidiVisible) in this chat", action: nil, keyEquivalent: "").isEnabled = false
         for (level, title) in [(AIScope.Level.view, "View — reads only"), (.work, "Work — its folders, and commands"), (.all, "All — anything there")] {
-            let item = MenuAction.item(title) { [unowned self] in session?.set(g.place, level) }
-            (item.state, item.isEnabled) = (g.level == level ? .on : .off, mode == .agent || level == .view)
+            let item = MenuAction.item(title) { [unowned self] in if g.level != level { session?.set(g.place, level) } }
+            // This Mac runs no commands: its Work is only the folders a task was given.
+            (item.state, item.isEnabled) = (g.level == level ? .on : .off, (mode == .agent || level == .view) && !(level == .work && g.place == .mac))
             menu.addItem(item)
         }
         menu.addItem(MenuAction.item("Take Back") { [unowned self] in session?.takeAway(g.place) })
         menu.addItem(.separator())
         menu.addItem(withTitle: "Asked always, under All too: deleting, writing over a file, any change on production", action: nil, keyEquivalent: "").isEnabled = false
+        menu.addItem(withTitle: "A command allowed here may write over files unasked", action: nil, keyEquivalent: "").isEnabled = false
         return menu
     }
 
@@ -709,9 +713,10 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.addItem(withTitle: "Let the AI read on…", action: nil, keyEquivalent: "").isEnabled = false
+        let never = AISettings.neverProd(app.defaults)
         for t in all {
             let name = t.map(AISession.label) ?? "this Mac"
-            guard !have.contains(name) else { continue }
+            guard !have.contains(name), !(never && t.map(SavedServer.isProd) == true) else { continue }
             menu.addItem(MenuAction.item(name.bidiVisible + (t.map(SavedServer.isProd) == true ? " (PROD)" : "")) { [unowned self] in
                 let s = madeSession()
                 Task { await s.give(t) }
@@ -734,9 +739,15 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     /// Settings › AI's cap on what one chat costs, in dollars; 0: none. Known only at Anthropic's prices (`AIPrice`).
     static func cap(_ d: UserDefaults) -> Double { d.object(forKey: "aiChatLimit") as? Double ?? 2 }
 
+    /// A request's price into this chat's.
+    private func count(_ u: AIUsage, _ g: Int) {
+        guard g == generation else { return }
+        if let d = u.dollars { spent += d } else { unpriced = true }
+    }
+
     /// Before each request: past the cap the user is asked to go on, as much again; Stop answers it no.
     private func goOn() async -> Bool {
-        let cap = Self.cap(app.defaults), until = allowance ?? cap
+        let cap = Self.cap(app.defaults), until = allowance.flatMap { $0.cap == cap ? $0.until : nil } ?? cap
         guard cap > 0, spent >= until else { return true }
         var next = until + cap
         while next <= spent { next += cap }
@@ -744,7 +755,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         (c.cancel, c.returnCancels) = ("Stop", true)
         c.note = "Settings › AI stops a chat at \(Answer.dollars(cap)), and asks again each time as much more. Stop keeps the chat as it is."
         guard await ask(c) == 0 else { return false }
-        allowance = next
+        allowance = (cap, next)
         return true
     }
 
@@ -775,7 +786,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             let (end, used) = try await chat.turn(e.provider(AISettings.transport), call: { await session.call($0, $1) }, show: { [weak self] in
                 answer.show($0)
                 self?.follow()
-            }, spent: { [weak self] u in if self?.generation == g { self?.spent += u.dollars ?? 0 } }, goOn: { [weak self] in await self?.goOn() ?? false })
+            }, spent: { [weak self] u in self?.count(u, g) }, goOn: { [weak self] in await self?.goOn() ?? false })
             answer.end(end, used, rounds: chat.rounds)
         } catch is CancellationError {
             answer.end(note: "Stopped. Nothing more was asked or read.")
@@ -785,6 +796,11 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
             answer.end(note: e2.words, error: true, action: e2.kind == .key ? ("Settings…", { [weak self] in self?.openSettings() }) : ("Retry", { [weak self] in self?.retry() }))
         }
         if g == generation {
+            // At Anthropic, a model Kermo has no price for: the cap doesn't count it. Said once a chat.
+            if unpriced, !toldUnpriced, Self.cap(app.defaults) > 0, AISettings.kind(app.defaults) == .anthropic {
+                toldUnpriced = true
+                note("Kermo has no price for this model: Settings › AI's cap doesn't count it — only the rounds a turn may take stop it.", error: false)
+            }
             save()
             finish()
         }
@@ -815,7 +831,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         generation += 1
         (chat, session, prodSent, turn, pinned, failedAt) = (nil, nil, [], nil, nil, nil)
         (chatID, asked, resumedProduction, unsaved, unkept, following) = (nil, [], false, false, false, false)
-        (spent, allowance) = (0, nil)
+        (spent, allowance, unpriced, toldUnpriced) = (0, nil, false, false)
         list.setViews([], in: .top)
         refresh()
         focus()

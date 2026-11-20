@@ -8,9 +8,8 @@ public struct AITool: Sendable {
 
     public struct Param: Sendable {
         public var name: String, about: String
-        public var required = true, bool = false
-        public var oneOf: [String]?
-        /// A list of objects with these text fields, each of them there: `propose_edit`'s edits.
+        public var required = true
+        /// A list of objects with these text fields, each of them there: `propose_edit`'s edits, `request_scope`'s needs.
         public var fields: [String]?
     }
 
@@ -33,8 +32,7 @@ public struct AITool: Sendable {
         .object(["type": "object", "additionalProperties": false,
                  "required": .array(params.filter(\.required).map { .string($0.name) }),
                  "properties": .object(Dictionary(uniqueKeysWithValues: params.map { p in
-                     var o: [String: ToolValue] = ["type": p.bool ? "boolean" : "string", "description": .string(p.about)]
-                     if let all = p.oneOf { o["enum"] = .array(all.map(ToolValue.string)) }
+                     var o: [String: ToolValue] = ["type": "string", "description": .string(p.about)]
                      if let f = p.fields {
                          o["type"] = "array"
                          o["items"] = .object(["type": "object", "additionalProperties": false, "required": .array(f.map(ToolValue.string)),
@@ -59,9 +57,8 @@ public struct AITool: Sendable {
         for (name, value) in args {
             guard let p = params.first(where: { $0.name == name }) else { return nil }
             switch value {
-            case .bool where p.bool: break
             case .array(let items) where p.fields.map({ Self.isList(items, of: $0) }) == true: break
-            case .string(let s) where !p.bool && p.fields == nil && p.oneOf?.contains(s) != false: break
+            case .string where p.fields == nil: break
             default: return nil
             }
         }

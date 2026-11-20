@@ -228,6 +228,11 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
     s.set(web, .work)   // from View: commands, no folder — a write still asks for its folder
     let write = AICall(tool("write_file"), [AITarget(web, "/srv/app/x", .write)!], overwrites: false)
     #expect(s.check(write, prod: { _ in false }) == .outside([AIScope.Need(place: web, level: .work, folder: "/srv/app/x")]))
+    #expect(s.covers(AIScope.Need(place: web, level: .work, commands: true)) && !s.covers(AIScope.Need(place: web, level: .work, folder: "/srv"))
+            && s.covers(AIScope.Need(place: web, level: .view)) && !s.covers(AIScope.Need(place: web, level: .all)) && !s.covers(AIScope.Need(place: .mac, level: .view)))
+    s.grant(.mac, .all)
+    s.set(.mac, .work)   // this Mac runs no commands
+    #expect(s.grants[.mac] == AIScope.Grant(level: .work) && s.covers(AIScope.Need(place: .mac, level: .view)))
     #expect(!AIScope.changes(AITarget(web, nil, .run("ls -l"))!) && !AIScope.changes(AITarget(web, "/etc", .read)!))
     #expect(AIScope.changes(AITarget(web, nil, .run("ls > x"))!) && AIScope.changes(AITarget(web, "/dev", .run("cat watchdog"))!)
             && AIScope.changes(AITarget(web, nil, .run("tar -czf a.tgz b"))!) && AIScope.changes(AITarget(web, "/a", .write)!))
@@ -244,7 +249,7 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
         for p in t.places {
             var args = [p.server, p.path].compactMap { $0 }
             if case .run(let a) = p.access { args.append(a) }
-            #expect(args.allSatisfy { a in t.params.contains { $0.name == a && !$0.bool } }, Comment(rawValue: t.name))
+            #expect(args.allSatisfy { a in t.params.contains { $0.name == a && $0.fields == nil } }, Comment(rawValue: t.name))
         }
         #expect(t.places.isEmpty == ["focus", "request_scope", "plan"].contains(t.name) && (t.kind != .read || t.places.allSatisfy { $0.access == .read }))
     }

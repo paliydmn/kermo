@@ -237,11 +237,14 @@ final class AISession {
     }
 
     /// The user gives `t` (nil: this Mac) View up front (the scope row's +): learned first, so it is the place a
-    /// call there gets — one server written two ways is one.
+    /// call there gets — one server written two ways is one. This Mac and a production server go through the
+    /// question all the same — what it says there (~/.ssh, the provider) is the consent; under Never Send production
+    /// isn't given.
     func give(_ t: SFTPTarget?) async {
         if let t { await ServerLock.learn([t.asUser]) }
-        let p = place(t)
-        if scope.grants[p] == nil { scope.grant(p, .view) }
+        let p = place(t), prod = t.map(SavedServer.isProd) ?? false
+        guard scope.grants[p] == nil, !(prod && noProduction) else { return }
+        if t == nil || prod { _ = await allow([AIScope.Need(place: p, level: .view)]) } else { scope.grant(p, .view) }
     }
 
     private static func words(_ level: AIScope.Level, _ folders: [String], _ commands: Bool) -> String {
@@ -250,6 +253,15 @@ final class AISession {
         case .work: ((folders.isEmpty ? [] : ["write into " + folders.joined(separator: ", ")]) + (commands ? ["run commands"] : [])).joined(separator: ", ")
         case .all: "everything"
         }
+    }
+
+    /// The model's words as one line of a card: masked first (a cut inside a secret would leave its head bare), no
+    /// line break or control character to draw a line of its own, `max` characters at most.
+    static func oneLine(_ s: String, max: Int = .max) -> String {
+        let flat = String(String.UnicodeScalarView(AISecrets.mask(s).text.unicodeScalars.map {
+            CharacterSet.newlines.contains($0) || CharacterSet.controlCharacters.contains($0) ? " " : $0
+        }))
+        return flat.count > max ? String(flat.prefix(max - 1)) + "…" : flat
     }
 
     /// The journal as text, the newest call last.
@@ -268,21 +280,21 @@ final class AISession {
         if let asker { await asker(c, nil) == 0 } else { await app.confirm(c) == 0 }
     }
 
-    /// "Allow for This Task": what the scope lacks, line by line (`whys`: the model's word on each, as it said
-    /// it); granted only as a whole.
+    /// "Allow for This Task": what the scope lacks, a line each, in Kermo's words only (no more than a sheet lists);
+    /// `whys`, the model's words, go in the note. Granted only as a whole.
     private func allow(_ needs: [AIScope.Need], whys: [String] = []) async -> Bool {
         var c = readOnly ? Confirm("Let the assistant read there until the chat ends?", action: "Allow in This Chat")
             : Confirm("Allow the assistant this, until the chat ends?", action: "Allow for This Task")
         c.on(needs.compactMap { servers[$0.place] })
-        c.items = needs.enumerated().map { i, n in
-            let why = whys.indices.contains(i) && !whys[i].isEmpty ? " — " + AISecrets.mask(String(whys[i].prefix(200))).text : ""
-            return Confirm.Item(name: "\(name(n.place)): " + Self.words(n.level, n.folder.map { [$0] } ?? [], n.commands) + why)
-        }
+        c.items = needs.map { n in Confirm.Item(name: Self.oneLine("\(name(n.place)): " + Self.words(n.level, n.folder.map { [$0] } ?? [], n.commands))) }
+        let said = whys.filter { !$0.isEmpty }.map { Self.oneLine($0, max: 80) }
         let limit = needs.contains { $0.commands || $0.level == .all } ? "A command can write over files without asking first." : nil
-        let mac = needs.contains { $0.place == .mac && $0.level == .view } ? "On this Mac that is any file you can read, ~/.ssh too." : nil
-        let after = readOnly ? "What it reads goes to your AI provider, secrets it recognises as •••."
-            : "Deleting, writing over a file and any change on a production server still ask each time."
-        c.note = [whys.isEmpty ? nil : "The assistant asks for it.", mac, limit, after].compactMap { $0 }.joined(separator: " ")
+        let home = NSHomeDirectory()
+        let mac = needs.contains { $0.place == .mac && ($0.level == .all || $0.folder == "/" || $0.folder == home) } ? "On this Mac that is any file you can write — ~/Library/LaunchAgents too."
+            : needs.contains { $0.place == .mac } ? "On this Mac reading is any file you can read, ~/.ssh too." : nil
+        let after = readOnly ? nil : "Deleting, writing over a file and any change on a production server still ask each time."
+        c.note = [said.isEmpty ? nil : "The assistant says: " + said.joined(separator: "; ") + ".", mac, limit,
+                  "What it reads goes to your AI provider, secrets it recognises as •••.", after].compactMap { $0 }.joined(separator: " ")
         c.returnCancels = true
         guard await ask(c) else { return false }
         needs.forEach { scope.grant($0) }
@@ -403,10 +415,16 @@ final class AISession {
             }
             // A link isn't written through: the file it names is the one to ask about, by its own path.
             guard a.map({ $0.kind == .file && $0.size <= Editor.sizeLimit }) ?? true else { return .no(.failure("\(path) is there and isn't a text file to write over. Nothing was written.")) }
-            if let t { return .go(overwrites: a != nil) { s, _, _ in await s.write(text, to: path, on: t, over: a ?? .nothing) } }
+            if let t {
+                return .go(overwrites: a != nil) { s, _, _ in
+                    if let no = openInEditor(path, on: t) { return no }
+                    return await s.write(text, to: path, on: t, over: a ?? .nothing)
+                }
+            }
             // What was seen: the file as it is now (the write goes over nothing else), or nothing there.
             let seen = await Blocking.run { (Editor.Stamp(path), a == nil ? nil : (try? Data(contentsOf: URL(fileURLWithPath: path))).map(Editor.sha)) }
             return .go(overwrites: a != nil) { _, _, _ in
+                if let no = openInEditor(path, on: nil) { return no }
                 let name = (path as NSString).lastPathComponent
                 let written = await Blocking.run {
                     Editor.write(Data(text.utf8), to: path, name: name, unlessChangedFrom: seen, hook: { _ in }, writing: { try $0.write(contentsOf: $1) }, willRename: { _ in })
@@ -436,15 +454,17 @@ final class AISession {
                 taken = there != nil
             }
             return .go(overwrites: taken) { s, _, _ in
-                await s.copy(source, from: s.servers[from.place].map { .sftp($0) } ?? .local, into: dir, on: t.map { .sftp($0) } ?? .local, over: taken ? landing : nil)
+                if let no = openInEditor(landing, on: t) { return no }
+                return await s.copy(source, from: s.servers[from.place].map { .sftp($0) } ?? .local, into: dir, on: t.map { .sftp($0) } ?? .local, over: taken ? landing : nil)
             }
         },
     ]
 
-    /// A file open in the editor — any tab on it, root's too — is written only through the editor: the model's
-    /// change is `propose_edit`'s card, and only the user's ⌘S saves it. Not under the user's unsaved text.
+    /// A file open in the editor (`Editor.isOpen`) is written only through it: the model's change is `propose_edit`'s
+    /// card, and only the user's ⌘S saves it — never under the user's unsaved text. Asked at the look and again
+    /// just before the write: it may have been opened while the question was up.
     private static func openInEditor(_ path: String, on t: SFTPTarget?) -> AIResult? {
-        guard t.map({ Editor.tab(onServer: $0, path) }) ?? Editor.document(at: path) != nil else { return nil }
+        guard Editor.isOpen(path, on: t) else { return nil }
         return .failure("\(path) is open in the editor: propose the change with propose_edit — the user saves it there. Nothing was written.")
     }
 
@@ -575,7 +595,7 @@ final class AISession {
             guard case .array(let items)? = args["steps"], (1...30).contains(items.count) else { return .failure("plan needs 1 to 30 steps.") }
             let steps = items.compactMap { v -> (text: String, state: String)? in   // their shape `targets` checked
                 guard case .object(let o) = v, case .string(let text)? = o["text"], case .string(let state)? = o["state"] else { return nil }
-                return (AISecrets.mask(String(text.prefix(200))).text, state)
+                return (oneLine(text, max: 120), state)
             }
             guard steps.allSatisfy({ ["todo", "doing", "done", "skipped"].contains($0.state) }) else { return .failure("A step's state is todo, doing, done or skipped.") }
             guard let show = s.plans else { return .failure("There is no chat here to show a plan in.") }
@@ -738,14 +758,18 @@ final class AISession {
     }
 
     /// The model's own request to widen the scope, all a task needs at once: the question a call outside it gets,
-    /// one line a need with its why. Each need is checked before anything is asked; any wrong one refuses them all.
+    /// one line a need. Each need is checked before anything is asked; any wrong one refuses them all; those the
+    /// chat has already aren't asked again. As many as a sheet lists (an outside agent's question is one).
     private func requestScope(_ args: [String: ToolValue]) async -> AIResult {
-        guard case .array(let items)? = args["needs"], (1...20).contains(items.count) else { return .failure("request_scope needs 1 to 20 needs.") }
+        guard case .array(let items)? = args["needs"], (1...Confirm.listed).contains(items.count) else {
+            return .failure("request_scope takes 1 to \(Confirm.listed) needs: ask for the least the task needs.")
+        }
         var needs: [AIScope.Need] = [], whys: [String] = []
         for case .object(let o) in items {   // their shape `targets` checked
             func text(_ k: String) -> String { if case .string(let s)? = o[k] { s } else { "" } }
             let name = text("server")
             guard let t = await server(named: name) else { return .failure(Self.unknown(name)) }
+            if noProduction, t.map(SavedServer.isProd) == true { return Self.refusedProduction.1 }
             let p = place(t)
             switch text("level") {
             case "view": needs.append(.init(place: p, level: .view))
@@ -763,7 +787,10 @@ final class AISession {
             whys.append(text("why"))
         }
         guard !readOnly || needs.allSatisfy({ $0.level == .view }) else { return .failure("In Ask the assistant only reads: it can't be allowed more.") }
-        guard await allow(needs, whys: whys) else { return .failure("The user didn't allow it. Nothing was done.") }
-        return AIResult("Allowed until the chat ends: " + needs.map { "\(name($0.place)): " + Self.words($0.level, $0.folder.map { [$0] } ?? [], $0.commands) }.joined(separator: "; ") + ".")
+        let missing = needs.indices.filter { !scope.covers(needs[$0]) }
+        if !missing.isEmpty {
+            guard await allow(missing.map { needs[$0] }, whys: missing.map { whys[$0] }) else { return .failure("The user didn't allow it. Nothing was done.") }
+        }
+        return AIResult((missing.isEmpty ? "Already allowed: " : "Allowed until the chat ends: ") + needs.map { "\(name($0.place)): " + Self.words($0.level, $0.folder.map { [$0] } ?? [], $0.commands) }.joined(separator: "; ") + ".")
     }
 }

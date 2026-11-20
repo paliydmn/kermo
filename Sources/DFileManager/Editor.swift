@@ -71,6 +71,14 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     }
     /// The open editor of that server's file, if any.
     static func editing(_ t: SFTPTarget, _ path: String) -> Editor? { open.first { $0.server?.target == t && $0.server?.path == path } }
+    /// Any editor — a tab or a tool's window, root's too — on that server's file (one server however its address is
+    /// written), or on this Mac's file however its path is spelled (device and inode; a server file's local copy too).
+    static func isOpen(_ path: String, on t: SFTPTarget?) -> Bool {
+        if let t { return open.contains { e in e.server.map { $0.path == path && ServerLock.same($0.target.asUser, t.asUser) } ?? false } }
+        var a = stat(), b = stat()
+        guard stat(path, &a) == 0 else { return false }
+        return open.contains { e in e.url.map { stat($0.path, &b) == 0 && a.st_dev == b.st_dev && a.st_ino == b.st_ino } ?? false }
+    }
     /// The same, its user's or root's (a root panel's rename of a file a user's tab has open): the tab that follows it.
     /// `root`: only a root tab, or only a user's.
     static func tab(onServer t: SFTPTarget, _ path: String, root: Bool? = nil) -> Editor? {

@@ -113,13 +113,21 @@ public struct AIScope: Sendable, Equatable {
     public mutating func revoke(_ place: AIPlace) { grants[place] = nil }
 
     /// The user's own word from the scope row: this level from now on, up or down. View drops the folders and
-    /// commands (they'd wake up at a later Work); Work keeps the folders and runs commands — what the row offers;
-    /// All keeps the folders for a Work after it.
+    /// commands (they'd wake up at a later Work); Work keeps the folders and, on a server, runs commands — what the
+    /// row offers; All keeps the folders for a Work after it.
     public mutating func set(_ place: AIPlace, _ level: Level) {
         var g = grants[place] ?? Grant(level: level)
         g.level = level
-        if level == .view { (g.folders, g.commands) = ([], false) } else if level == .work { g.commands = true }
+        if level == .view { (g.folders, g.commands) = ([], false) } else if level == .work, place != .mac { g.commands = true }
         grants[place] = g
+    }
+
+    /// The scope already allows all `n` asks for.
+    public func covers(_ n: Need) -> Bool {
+        guard let g = grants[n.place] else { return false }
+        if g.level == .all || n.level == .view { return true }
+        if n.level == .all || g.level == .view { return false }
+        return (n.folder.map { f in g.folders.contains { Self.holds($0, f) } } ?? true) && (!n.commands || g.commands)
     }
 
     /// Whether `t` changes something — never in Ask or Edit, and never under View. Two readings of a command must
