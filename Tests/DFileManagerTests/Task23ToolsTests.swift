@@ -875,7 +875,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
     /// asks every time, under All too; production asks each change and logs it as the assistant's; a row is read
     /// again by its key; values go as the form takes them; Cancel and a refusal run nothing.
     @Test func toolsActionsAreTheAssistantsAsTheirButtonsAre() async throws {
-        let (app, _, panel, done) = try toolsApp()
+        let (app, other, panel, done) = try toolsApp()
         let bench = try ToolsBench()
         defer { bench.done(); done() }
         var box = SavedServer(target: .local())
@@ -935,8 +935,13 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             #expect(r.isError && r.text.contains(said), "\(inputs): \(r.text)")
         }
         #expect(!bench.calls.contains { $0.hasPrefix("ufw allow") })
+        other.showList(ToolListSource(app, try toolNamed(app, "ufw"), box, .local()))   // an open list is read again after the change, as after its button
+        await toolsUntil { other.list?.content != nil }
+        let shown = bench.calls.count
         r = await act("ufw", "allow", ["port": "8080", "proto": "tcp", "source": "any", "comment": "ai"])
         #expect(!r.isError && r.text.hasPrefix("exit 0 — Allowed tcp 8080 from any") && bench.calls.contains("ufw allow proto tcp from any to any port 8080 comment ai"), "\(r.text)")
+        await toolsUntil { bench.calls.dropFirst(shown).last == "ufw status verbose" }
+        #expect(Array(bench.calls.dropFirst(shown)).suffix(2) == ["ufw status numbered", "ufw status verbose"], "\(bench.calls.dropFirst(shown))")
 
         // dangerous asks every time, under All too — the command as it runs, the row; Cancel deletes nothing.
         heard.answers = [0]

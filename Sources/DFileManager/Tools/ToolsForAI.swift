@@ -209,6 +209,8 @@ extension ToolRunner {
                 return try Self.exec(a.run, of: tool, scope, on: t, timeout: timeout, env: env, cancel: flag)
             }
             _ = self.ran(r, a, of: p, on: t, shown: payload.shown, by: "ai")
+            // An open list of the tool there, read again as after its button (D-233 (2)).
+            if !Self.looks(a), a.spec.refresh != false { self.jobs.reread(ServerRow.key(t.asUser) + " tool:" + p.id, on: t) }
             return Self.told(r, a, scope)
         }, asks: c)
     }
