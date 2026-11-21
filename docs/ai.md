@@ -126,6 +126,10 @@ A [locked server](servers.md#lock-a-server) wants Touch ID first, as for you. On
 > [!WARNING]
 > Once the model or an agent may **run commands** on a server, a command can still change files there without another question: Kermo recognises the obvious ones above, not every way a shell can write (`cp`, `sed -i`, `tee`, `tar -cf` don't ask). Allow commands only where that is acceptable, and prefer `copy` and `write_file`, which ask before writing over a file.
 
+### Text from a server
+
+Text from a server or a terminal — a file, a command's output — can try to steer the model ("ignore your instructions and…"), whether the model read it or you attached it. Once a chat holds such text, each question the model brings to allow something begins with ⚠ and says so, in the chat and on an agent's sheet alike. In the chat, each step that may change something is marked ⚠, a refused one too. A chat opened again counts once it read on a server or had anything attached. Read what is asked before you allow it. An agent's [journal](#see-and-take-back-what-an-agent-may-do) marks every call after such a read.
+
 ### Production servers
 
 Something attached from a [production server](safety.md) asks once a chat for each server before it is sent, ↩ = **Cancel**; after **Send** a purple line says it goes. Kermo also tells the model that the server is production and to be careful — in the message and in what a read there returns; **What will be sent** shows it. In **Settings › AI**, **Production servers: Never Send** keeps everything from production servers out of the chat: such a chip isn't attached, a followed selection there doesn't go, and the model's reads there are refused — the terminal's output of a tab that may be a production server's too. Where the panels stand (a server's name and folder) the model may still learn from `focus`.

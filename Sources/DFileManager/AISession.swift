@@ -35,6 +35,8 @@ final class AISession {
         var result: AIResult
         /// A server's text was read earlier in this session: it may have talked the model into this call.
         var afterRead: Bool
+        /// It may change something (`AIScope.changes`): after a read, the chat's step for it says ⚠.
+        var changes: Bool
     }
 
     unowned let app: AppDelegate
@@ -57,7 +59,9 @@ final class AISession {
     /// The commands that ran and ended well (exit 0), whole and masked, in order: Save as Tool's (task 23 PR 9) — a
     /// chat's session only (`plans`), an outside agent's keeps none.
     private(set) var commands: [(server: SFTPTarget, command: String, folder: String?)] = []
-    private(set) var hasRead = false
+    /// Text from a server or a terminal went to the model: its reads — and, set by the chat, what the user attached
+    /// from one, or a chat opened again that holds such text (`AISavedChat.heard`).
+    var hasRead = false
     /// Something read on a production server went to the model (Never Send turned on later ends such a chat).
     private(set) var readProduction = false
     /// The server behind each place of this session's calls, as its user (root isn't the assistant's to take).
@@ -82,19 +86,31 @@ final class AISession {
         // Stopped while it waited its turn: it asks nothing.
         guard !Task.isCancelled else { return note(tool.name, args, "stopped", .failure("Stopped. Nothing was done."), afterRead: hasRead) }
         let afterRead = hasRead   // before this call's own read
-        let (decision, result) = await pass(tool, args, look: look, run: run)
-        return note(tool.name, args, decision, result, afterRead: afterRead)
+        var changes = false
+        let (decision, result) = await pass(tool, args, afterRead: afterRead, changes: &changes, look: look, run: run)
+        return note(tool.name, args, decision, result, afterRead: afterRead, changes: changes)
     }
 
-    private func note(_ tool: String, _ args: [String: ToolValue], _ decision: String, _ result: AIResult, afterRead: Bool) -> AIResult {
+    private func note(_ tool: String, _ args: [String: ToolValue], _ decision: String, _ result: AIResult, afterRead: Bool, changes: Bool = false) -> AIResult {
         var kept = result   // what it came to, not all it read
         kept.text = String(result.text.prefix(2000))
         journal.append(Entry(tool: tool, args: AISecrets.mask(Self.told(args, cut: 200).joined(separator: ", ")).text, decision: decision, result: kept,
-                             afterRead: afterRead))
+                             afterRead: afterRead, changes: changes))
         return result
     }
 
-    private func pass(_ tool: AITool, _ args: [String: ToolValue], look: Look?, run: Runner?) async -> (String, AIResult) {
+    /// A question after text from a server or a terminal was read in this session (the journal's ⚠): it says so first.
+    private static func warned(_ c: Confirm, _ afterRead: Bool) -> Confirm {
+        guard afterRead else { return c }
+        var c = c
+        c.title = "⚠ " + c.title
+        c.note = ["It comes after the assistant read text from a server or a terminal, and such text can try to steer it: check this is what you asked for.",
+                  c.note].compactMap { $0 }.joined(separator: " ")
+        return c
+    }
+
+    /// `changes`: set once the targets are known — the call may change something.
+    private func pass(_ tool: AITool, _ args: [String: ToolValue], afterRead: Bool, changes: inout Bool, look: Look?, run: Runner?) async -> (String, AIResult) {
         // Each server named, found and learned before it becomes a place: its key is where ssh says the address goes.
         var named: [String: SFTPTarget?] = [:]
         for arg in Set(tool.places.map(\.server)) {
@@ -113,6 +129,7 @@ final class AISession {
             case .success(let access): targets = targets.compactMap { AITarget($0.place, $0.path, access) }
             }
         }
+        changes = targets.contains(where: AIScope.changes)
         // Commands, Tools and Server Info are for servers: said before the user is asked to allow one here.
         guard !targets.contains(where: { t in t.place == .mac && { switch t.access { case .run, .tool: true; default: ["tools", "server_info"].contains(tool.name) } }() }) else {
             return ("refused: no commands on this Mac", .failure("Commands, Tools and server_info run on servers only, not on this Mac. Nothing was done."))
@@ -127,7 +144,7 @@ final class AISession {
         if neverProd() { return Self.refusedProduction }
         var decision = scope.check(call, prod: prod)
         if case .outside(let needs) = decision {
-            guard await allow(needs) else { return ("not allowed", .failure("The user didn't allow it. Nothing was done.")) }
+            guard await allow(needs, afterRead: afterRead) else { return ("not allowed", .failure("The user didn't allow it. Nothing was done.")) }
             guard !Task.isCancelled else { return ("stopped", .failure("Stopped. Nothing was done.")) }   // before Touch ID is asked for nobody
             decision = scope.check(call, prod: prod)
         }
@@ -152,7 +169,7 @@ final class AISession {
         let passed = await app.gate(ends, to: to, question: {
             decision = self.scope.check(call, prod: prod)   // production is known by now
             guard case .ask(let why) = decision, why != .unclear else { return nil }
-            return asks ?? self.question(tool, args, why, on: ends, over: look != nil && call.overwrites)
+            return Self.warned(asks ?? self.question(tool, args, why, on: ends, over: look != nil && call.overwrites), afterRead)
         }, asker: asker)
         switch passed {
         case .locked(let t): return ("locked", .failure("\(Self.label(t)) stays locked: the user didn't unlock it. Nothing was done."))
@@ -295,7 +312,8 @@ final class AISession {
 
     /// "Allow for This Task": what the scope lacks, a line each in Kermo's words, whole (the wrapped box, never cut
     /// in the middle); the model's `whys` on a line of their own, quoted. Granted only as a whole.
-    private func allow(_ needs: [AIScope.Need], whys: [String] = []) async -> Bool {
+    /// `afterRead`: the model asks, after a server's text (not the user's own click in the scope row).
+    private func allow(_ needs: [AIScope.Need], whys: [String] = [], afterRead: Bool = false) async -> Bool {
         let reads = needs.allSatisfy { $0.level == .view }
         var c = reads ? Confirm("Let the assistant read there until the chat ends?", action: "Allow in This Chat")
             : Confirm("Allow the assistant this, until the chat ends?", action: "Allow for This Task")
@@ -314,7 +332,7 @@ final class AISession {
         let after = reads ? nil : "Deleting, writing over a file and any change on a production server still ask each time."
         c.note = [mac, limit, "What it reads goes to your AI provider, secrets it recognises as •••.", after].compactMap { $0 }.joined(separator: " ")
         c.returnCancels = true
-        guard await ask(c) else { return false }
+        guard await ask(Self.warned(c, afterRead)) else { return false }
         needs.forEach { scope.grant($0) }
         return true
     }
@@ -748,7 +766,8 @@ final class AISession {
     /// the chat may read (any grant there), else just where the panel stands.
     private func focus() -> AIResult {
         var server = false
-        let text = Self.focus(app.aiContext, name: Self.label) { t in
+        let c = app.aiContext
+        let text = Self.focus(c, name: Self.label) { t in
             guard t?.sudo != true, self.scope.grants[self.place(t)] != nil else { return false }   // a root panel's isn't the user's grant to give
             if t.map(SavedServer.isProd) == true {
                 if self.noProduction { return false }   // a grant from before Never Send
@@ -757,7 +776,9 @@ final class AISession {
             if t != nil { server = true }
             return true
         }
-        if server { hasRead = true }
+        // A local tab's text too — whoever is logged in there, as `terminal_output` counts it.
+        let terminal = c.terminal.map { $0.server == nil && ($0.command != nil || $0.selection != nil) && scope.grants[place(nil)] != nil } ?? false
+        if server || terminal { hasRead = true }
         return Self.handOver(text)
     }
 
@@ -822,7 +843,7 @@ final class AISession {
         guard !readOnly || needs.allSatisfy({ $0.level == .view }) else { return .failure("In Ask the assistant only reads: it can't be allowed more.") }
         let missing = needs.indices.filter { !scope.covers(needs[$0]) }
         if !missing.isEmpty {
-            guard await allow(missing.map { needs[$0] }, whys: missing.map { whys[$0] }) else { return .failure("The user didn't allow it. Nothing was done.") }
+            guard await allow(missing.map { needs[$0] }, whys: missing.map { whys[$0] }, afterRead: hasRead) else { return .failure("The user didn't allow it. Nothing was done.") }
         }
         return AIResult((missing.isEmpty ? "Already allowed: " : "Allowed until the chat ends: ") + needs.map { "\(name($0.place)): " + Self.words($0.level, $0.folder.map { [$0] } ?? [], $0.commands) }.joined(separator: "; ") + ".")
     }

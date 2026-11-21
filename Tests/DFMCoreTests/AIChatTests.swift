@@ -158,6 +158,18 @@ private func wellFormed(_ m: [AIMessage]) -> Bool {
     #expect(wellFormed(r))
 }
 
+/// A kept chat that holds what a server or a terminal said: opened again, its questions say ⚠ as before (D-234).
+@Test func aKeptChatKnowsItHoldsAServersText() {
+    func chat(_ calls: [AIToolUse], chips: [String] = [], prod: Bool = false) -> AISavedChat {
+        AISavedChat(title: "t", model: "m", provider: "", started: Date(), production: prod,
+                    messages: [AIMessage(.user, [.text("q")]), AIMessage(.assistant, calls.map { .call($0) })], asked: [.init(question: "q", chips: chips, prod: [])])
+    }
+    let on = { (name: String, args: [String: ToolValue]) in AIToolUse(id: "c", name: name, args: args) }
+    #expect(!chat([]).heard && !chat([on("read_file", ["server": "mac", "path": "/etc/hosts"]), on("copy", ["from_server": "mac", "to_server": "mac"])]).heard)
+    #expect(chat([on("read_file", ["server": "web-01", "path": "/etc/hosts"])]).heard && chat([on("copy", ["from_server": "mac", "to_server": "web-01"])]).heard)
+    #expect(chat([on("terminal_output", [:])]).heard && chat([], chips: ["hosts"]).heard && chat([], prod: true).heard)
+}
+
 /// The file's shape as 5b writes it: a renamed case or label would make every kept chat unreadable — raise
 /// `AISavedChat.current` then, and keep reading this.
 @Test func aKeptChatOfVersionOneStillReads() throws {

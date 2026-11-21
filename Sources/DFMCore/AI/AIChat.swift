@@ -186,6 +186,16 @@ public struct AISavedChat: Codable, Sendable {
         (self.title, self.model, self.provider, self.started, self.production, self.messages, self.asked) = (title, model, provider, started, production, messages, asked)
     }
 
+    /// It holds what a server or a terminal said — a call that read there, or anything attached: a chat opened again
+    /// marks its questions ⚠ as it did before (`AISession.hasRead`).
+    public var heard: Bool {
+        production || asked.contains { !$0.chips.isEmpty } || messages.flatMap(\.calls).contains { c in
+            ["terminal_output", "focus"].contains(c.name) || ["server", "from_server", "to_server"].contains { k in
+                if case .string(let s)? = c.args?[k] { s != "mac" } else { false }
+            }
+        }
+    }
+
     /// The history to go on with after it was read back: without thinking. A provider checks its thinking against the
     /// instructions, tools and history it came with — another Kermo version, another account would be a 400 — and
     /// dropping it all at once is what the provider allows. A message that was only thinking goes too, and the two
