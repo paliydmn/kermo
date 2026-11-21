@@ -39,7 +39,7 @@ On a production server, what Kermo does there goes into `~/.config/dfilemanager/
 - renames, permissions, new folders, extracting and reloads;
 - a key added with Copy SSH Key to Server…;
 - [tools'](tools.md) actions (`"action": "tool ufw delete"`), with what was sent, its secrets and the sudo password as `•••`.
-- what the [AI](ai.md#what-asks-every-time) did there — the chat's model or an agent in Kermo's terminal: commands, saves, copies, Tools actions — marked `"by": "ai"`.
+- what the [AI](ai.md#what-asks-every-time) did there — the chat's model or an agent in Kermo's terminal: commands (Server Info's look too), saves, copies, Tools actions — marked `"by": "ai"`.
 
 Each line has the time, the server as you wrote it and, as `identity`, the user, host and port ssh really reaches (an alias resolved), the paths, the command and its exit status. There is no exit status for a command handed to Terminal, and a reload stopped with ⎋ says it may have run. `"root": true` marks what ran as root from a root panel: saves, copies, moves, deletes, renames, permissions, new folders and reloads. Commands and extracting always run as the user and carry no `root`. If a line can't be written, the status line says so once.
 
