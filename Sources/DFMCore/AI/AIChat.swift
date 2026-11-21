@@ -68,7 +68,7 @@ public final class AIChat {
             for c in message.calls {
                 let result: AIResult
                 if Task.isCancelled { result = .failure("Stopped by the user. Nothing was done.") }
-                else if round >= rounds { result = .failure("Kermo stops a turn after \(rounds) rounds of tools. Nothing was run.") }
+                else if round >= rounds { result = .failure("Kermo stops a turn at its \(rounds)th request to the model. Nothing was run.") }
                 else if !tools.contains(where: { $0.name == c.name }) { result = .failure("There is no tool “\(c.name)” in this chat. Nothing was run.") }
                 else if let args = c.args {
                     show(.calling(c))

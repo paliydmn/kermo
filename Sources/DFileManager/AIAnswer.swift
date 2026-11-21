@@ -140,7 +140,7 @@ final class Answer: NSStackView {
         case .model(.maxTokens): "The answer reached its length limit."
         case .model(.refused(let why)): "The model declined to answer" + (why.map { " (\($0))" } ?? "") + "."
         case .model(.other(let why)): "The answer ended: \(why)."
-        case .rounds: "Kermo stopped after \(rounds) rounds of tools. Say “go on” to let it continue."
+        case .rounds: "Kermo stopped this turn at its \(rounds)th request to the model. Say “go on” to let it continue."
         case .spent: "Stopped at this chat's spending cap (Settings › AI); the chat is as it was. Your next message asks again."
         }
         if let said { add(Self.noteRow(said, error: false, action: nil)) }

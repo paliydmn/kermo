@@ -122,6 +122,11 @@ extension ServerLockTests {
         std.set("gw.example.com", forKey: "aiAddress")
         AISettings.saveKey(std, key)
         #expect(AISettings.tested == "Not an address — the key wasn't saved.")
+        // Plain http to a public address in numbers: unencrypted without a key; with one, the chat sends nothing there.
+        std.set("http://203.0.113.5/v1", forKey: "aiAddress")
+        #expect(AISettings.addressNote(std) == "Plain http: the chat goes unencrypted")
+        _ = AISettings.keys.set(key, for: try #require(URL(string: "http://203.0.113.5/v1")))
+        #expect(AISettings.addressNote(std).contains("the chat sends nothing there"), "\(AISettings.addressNote(std))")
     }
 }
 
