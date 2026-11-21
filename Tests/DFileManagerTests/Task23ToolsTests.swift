@@ -264,6 +264,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         try FileManager.default.createDirectory(atPath: dir + "/sub", withIntermediateDirectories: true)
         try Data(("pass" + "word: hunter22\nname: web\n").utf8).write(to: URL(fileURLWithPath: dir + "/app.conf"))
         try Data([0xff, 0xfe, 0x00, 0x80]).write(to: URL(fileURLWithPath: dir + "/blob"))
+        FileManager.default.createFile(atPath: dir + "/DB_PASS" + "WORD=hunter22", contents: nil)   // a name the model reads masked, as the chip does
         try Data(("a" + String(repeating: "é", count: AISession.textLimit)).utf8).write(to: URL(fileURLWithPath: dir + "/long.txt"))   // the cut falls inside an é
         // The FIFO in a folder no panel shows: a panel's own look at its folder isn't this test's.
         let aside = dir + "-aside"
@@ -276,7 +277,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         for server in ["mac", box] {   // this Mac first: reading it marks nothing
             answer([0])
             r = await s.call("list_folder", ["server": .string(server), "path": .string(dir)])
-            #expect(!r.isError && r.text.contains("app.conf\t29\t") && r.text.contains("sub/\t\t"), "\(server): \(r.text)")
+            #expect(!r.isError && r.text.contains("app.conf\t29\t") && r.text.contains("sub/\t\t") && !r.text.contains("hunter22"), "\(server): \(r.text)")
             r = await s.call("read_file", ["server": .string(server), "path": .string(dir + "/app.conf")])
             #expect(!r.isError && r.text.contains("name: web") && !r.text.contains("hunter22") && r.text.contains("1 secret hidden"), "\(server): \(r.text)")
             r = await s.call("read_file", ["server": .string(server), "path": .string(dir + "/long.txt")])
