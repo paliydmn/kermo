@@ -42,6 +42,29 @@ When the provider says no — a limit, too busy, no network — the chat says so
 
 **New Chat** (the pencil at the top) starts again: what the model was allowed is gone, and the Scope row is empty.
 
+### What's selected, into the chat
+
+- **⇧⌘I** (**View ▸ Add to Chat**) attaches what is selected where you are: in an output window, the selection — else its text; in the terminal, the selection — or, with nothing selected, the command ⌘↑ went to (else the last one) with its output; in the editor, the selection — else the document; in a panel, the marked files and folders — else the one under the cursor — ten at a time (⇧⌘I again takes the next ten). It shows the chat and puts the keys in its field.
+- **In the terminal**, a selection you make gets a small **✨ Add to Chat** button beside it, while the AI is set up. **⌥-click** a command's line to attach that command with its output; **⋯ ▸ Add Command and Output to Chat** does the same for the last one. Without the AI set up, ⌥-click is the terminal's as before.
+- **Follow selection**, the first chip under the field, is off until you click it. While it's on, each ↩ takes what is selected at that moment where you selected last — a terminal tab or the editor — and the chip says where ("Following: Selection · web-01"). 👁 shows it as it would go. Click it again to stop; **New Chat** turns it off.
+
+Text from the terminal is taken as it is when you attach it. Showing or hiding the chat narrows the terminal, which clears its selection and forgets where earlier commands were (⌥-click and ⌘↑ work again from the next command on): keep the chat shown while you work with the terminal. Terminal text goes as a terminal's output always does: secrets as `•••`, the last 16 KB of it.
+
+**Which machine is a terminal's text from?** A server's tab is that server's — after `sudo -i` or a further `ssh` there, Kermo knows only what the tab's title says. A local tab is this Mac's — unless what runs in it now is an `ssh` to a [production server](safety.md) you saved — by its name, its address, or an alias in `~/.ssh/config` that leads there —, or the tab's title names one after an "@" (`deploy@web-01: ~`): then it's that server's, asked about and kept from Never Send as anything from production is. When something that logs in elsewhere runs in a local tab — `ssh` Kermo can't place, `sudo`, `su`, `mosh`, `docker` — the chip says **as whoever is logged in**: Kermo can't tell who that is. What an `ssh` printed before it ended, still in the scrollback, is the local tab's to Kermo — unless the command you attach is that `ssh` itself (`ssh web-01 'df -h'`): then it's that server's; an `ssh` started through a wrapper (`sudo ssh …`, a script) is the local tab's too. Don't attach such text where Never Send matters.
+
+### ✨ Explain what failed
+
+Where something fails, an **✨ Explain** button asks the chat why. A click shows the chat, attaches what failed as a chip and puts **Why did this fail?** in the field (unless you've typed something there). Nothing goes until you press ↩, so you can change the question or attach more first.
+
+- **The terminal:** **Explain · exit N** at the lower right of the tab, after a command that printed something and ended with an error. It goes with the next command. The button only comes when the shell tells the terminal how each command ended (OSC 133 with the exit code), as fish 4 and the shell integrations of iTerm2, WezTerm and kitty do. A plain zsh or bash doesn't, so there **⋯ ▸ Explain Last Command** does it for the command ⌘↑ went to, else the last one, whatever its exit. Stopping a command with ⌃C isn't a failure. With a prompt of two lines, a command that failed without a word gets the button too, its "output" being the prompt's upper line — as in Copy Output.
+- **A save whose config check failed** (`nginx -t`, `visudo`…): **Explain** in its dialog, beside **OK** (↩ is still OK). It attaches the check's whole output and, while it's open, the text that didn't pass.
+- **An output window** (⌘E, a server's command, `git`, `tar`) whose command failed: **✨ Explain** in its status line.
+- **Services:** **Explain** by a failed start, stop or restart of a service or container, beside **Output…** (not for one you stopped waiting for with ⎋).
+- **Tools:** **Explain** by a failed action's line, and **✨ Explain** in the status line of its output window — the command as its question showed it, and the output with a secret you typed in its sheet as `•••`.
+- **Monitor:** **Explain** on a critical alert's notification and by a critical or warning event in the Tools window.
+
+The chip is from the machine where it failed — a server's output is that server's, and so is a command's that ran `ssh` to it — so a [production server](#production-servers) asks before it goes (or isn't attached under **Never Send**). Its text goes as terminal text does: secrets as `•••`, the last 16 KB. **Settings › AI › ✨ Explain when something fails** turns the buttons off. Without the AI set up there are none, and Kermo doesn't listen for the shell's OSC 133 at all.
+
 ### Edit: a change as a diff
 
 In **Edit** the model reads the file, then shows its change in the chat as a card: the file and where it is (a [production server](#production-servers)'s in purple, saying so), then each change — the lines around it, what goes (−) and what comes (+) — with **Keep** / **Drop**.
@@ -75,29 +98,6 @@ In **Agent** the model does the task: runs commands on servers, copies files and
 
 **Settings › AI › Stop a chat at** caps what one chat may cost — $2 unless you change it, 0 for no cap. Kermo adds up each request's price as its answer ends, since the chat was started or opened again (a request you stop in the middle has no price told, and isn't counted); past the cap, before the next request, the chat asks **Go On** (up to as much again) or **Stop**. Stop ends the turn between two rounds: nothing is lost, and your next message asks again. The cap counts at Anthropic's prices, for Anthropic's models at its own address — a model Kermo has no price for is said once in the chat; with other providers there is no price to count, and only the rounds limit stops a turn.
 
-### What's selected, into the chat
-
-- **⇧⌘I** (**View ▸ Add to Chat**) attaches what is selected where you are: in an output window, the selection — else its text; in the terminal, the selection — or, with nothing selected, the command ⌘↑ went to (else the last one) with its output; in the editor, the selection — else the document; in a panel, the marked files and folders — else the one under the cursor — ten at a time (⇧⌘I again takes the next ten). It shows the chat and puts the keys in its field.
-- **In the terminal**, a selection you make gets a small **✨ Add to Chat** button beside it, while the AI is set up. **⌥-click** a command's line to attach that command with its output; **⋯ ▸ Add Command and Output to Chat** does the same for the last one. Without the AI set up, ⌥-click is the terminal's as before.
-- **Follow selection**, the first chip under the field, is off until you click it. While it's on, each ↩ takes what is selected at that moment where you selected last — a terminal tab or the editor — and the chip says where ("Following: Selection · web-01"). 👁 shows it as it would go. Click it again to stop; **New Chat** turns it off.
-
-Text from the terminal is taken as it is when you attach it. Showing or hiding the chat narrows the terminal, which clears its selection and forgets where earlier commands were (⌥-click and ⌘↑ work again from the next command on): keep the chat shown while you work with the terminal. Terminal text goes as a terminal's output always does: secrets as `•••`, the last 16 KB of it.
-
-**Which machine is a terminal's text from?** A server's tab is that server's — after `sudo -i` or a further `ssh` there, Kermo knows only what the tab's title says. A local tab is this Mac's — unless what runs in it now is an `ssh` to a [production server](safety.md) you saved — by its name, its address, or an alias in `~/.ssh/config` that leads there —, or the tab's title names one after an "@" (`deploy@web-01: ~`): then it's that server's, asked about and kept from Never Send as anything from production is. When something that logs in elsewhere runs in a local tab — `ssh` Kermo can't place, `sudo`, `su`, `mosh`, `docker` — the chip says **as whoever is logged in**: Kermo can't tell who that is. What an `ssh` printed before it ended, still in the scrollback, is the local tab's to Kermo — unless the command you attach is that `ssh` itself (`ssh web-01 'df -h'`): then it's that server's; an `ssh` started through a wrapper (`sudo ssh …`, a script) is the local tab's too. Don't attach such text where Never Send matters.
-
-### ✨ Explain what failed
-
-Where something fails, an **✨ Explain** button asks the chat why. A click shows the chat, attaches what failed as a chip and puts **Why did this fail?** in the field (unless you've typed something there). Nothing goes until you press ↩, so you can change the question or attach more first.
-
-- **The terminal:** **Explain · exit N** at the lower right of the tab, after a command that printed something and ended with an error. It goes with the next command. The button only comes when the shell tells the terminal how each command ended (OSC 133 with the exit code), as fish 4 and the shell integrations of iTerm2, WezTerm and kitty do. A plain zsh or bash doesn't, so there **⋯ ▸ Explain Last Command** does it for the command ⌘↑ went to, else the last one, whatever its exit. Stopping a command with ⌃C isn't a failure. With a prompt of two lines, a command that failed without a word gets the button too, its "output" being the prompt's upper line — as in Copy Output.
-- **A save whose config check failed** (`nginx -t`, `visudo`…): **Explain** in its dialog, beside **OK** (↩ is still OK). It attaches the check's whole output and, while it's open, the text that didn't pass.
-- **An output window** (⌘E, a server's command, `git`, `tar`) whose command failed: **✨ Explain** in its status line.
-- **Services:** **Explain** by a failed start, stop or restart of a service or container, beside **Output…** (not for one you stopped waiting for with ⎋).
-- **Tools:** **Explain** by a failed action's line, and **✨ Explain** in the status line of its output window — the command as its question showed it, and the output with a secret you typed in its sheet as `•••`.
-- **Monitor:** **Explain** on a critical alert's notification and by a critical or warning event in the Tools window.
-
-The chip is from the machine where it failed — a server's output is that server's, and so is a command's that ran `ssh` to it — so a [production server](#production-servers) asks before it goes (or isn't attached under **Never Send**). Its text goes as terminal text does: secrets as `•••`, the last 16 KB. **Settings › AI › ✨ Explain when something fails** turns the buttons off. Without the AI set up there are none, and Kermo doesn't listen for the shell's OSC 133 at all.
-
 ### Chats on this Mac
 
 Kermo keeps the last 50 chats in `~/.config/dfilemanager/ai`, one file each, only yours to read (folder 0700, files 0600), written after each message and each answer. A file holds what went to the provider — your words and attachments as they went, secrets as `•••` — and the model's answers; never your key. The 🕘 at the top lists them, the latest first, with the model each began with: a click opens one to go on with. **Delete** removes one for good (not to the Trash). Past 50, the oldest go by themselves.
@@ -105,6 +105,8 @@ Kermo keeps the last 50 chats in `~/.config/dfilemanager/ai`, one file each, onl
 A chat opened again shows its questions, what was attached (by name) and the answers — not the reads. It asks again before its first read on each server and before sending anything from a production server; it stays with the provider it began with; under **Never Send**, one that holds production text goes no further. Its earlier thinking isn't sent again: providers check it against what it was written with.
 
 **Settings › AI › Keep chats on this Mac** off: nothing is written — the chat open then isn't written again, even once it's back on; Kermo asks whether to delete the chats already kept. A file Kermo can't read — damaged, a newer Kermo's, readable by others — is left as it is and named in the list.
+
+## Safety
 
 ### Production servers
 
@@ -118,7 +120,9 @@ Something attached from a [production server](safety.md) asks once a chat for ea
 
 Passwords, tokens and keys Kermo recognises are replaced with `•••` before anything is sent — in what you type too. The patterns are not complete: don't attach files whose content must not leave this Mac. Every earlier message of the chat goes again with each new one, as providers need.
 
-## Switch it on and connect Claude Code
+## Agents in Kermo's terminal
+
+### Switch it on and connect Claude Code
 
 1. Open **Settings › AI** (⌘,) and switch on **Allow agents in Kermo's terminal (MCP)**.
 2. Open a **new** terminal tab in Kermo (⌃O). Tabs opened before the switch don't know about it.
@@ -136,7 +140,7 @@ Another MCP client works the same way: its server is the command `Kermo --mcp` (
 
 Only a program started from one of Kermo's terminal tabs gets in — any program you run there, not only the agent you set up; a question's sheet names the tab it comes from. An agent in another terminal app, or inside `tmux` or `screen`, is turned away and told why.
 
-## What the agent can do
+### What the agent can do
 
 | Tool | What it does | Asks you |
 |---|---|---|
@@ -151,7 +155,7 @@ Only a program started from one of Kermo's terminal tabs gets in — any program
 
 The agent acts as you: on a server, as the user you log in as. Kermo never opens a root session for it, but a command may say `sudo` itself, and where your user has passwordless `sudo` that works — `sudo cat /etc/shadow` counts as a command that only reads.
 
-## What Kermo asks
+### What Kermo asks
 
 A question appears as a sheet on Kermo's window, and Kermo comes to the front; the agent waits for your answer. **Cancel** leaves everything as it was, and the agent is told you didn't allow it.
 
@@ -163,7 +167,7 @@ A question appears as a sheet on Kermo's window, and Kermo comes to the front; t
 > [!WARNING]
 > Once you allow an agent to **run commands** on a server, a command can change or delete files there without another question: Kermo recognises the obvious ones (`rm`, `mv`, `>`), not every way a shell can write. Allow commands only where that is acceptable, and prefer letting the agent use `copy` and `write_file`.
 
-## See and take back what an agent may do
+### See and take back what an agent may do
 
 While an agent is connected, the first panel's status line shows a chip with its name and what you allowed it. Click the chip, or open **AI Scope** in the **Window** menu (it is there while agents are allowed):
 
