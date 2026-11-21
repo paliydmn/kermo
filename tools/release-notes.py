@@ -2,7 +2,7 @@
 """A release's notes and its latest.json, from CHANGELOG.md.
 
 Usage: python3 tools/release-notes.py X.Y [lead.md]
-Writes dist/Kermo-X.Y-notes.md (the lead, then the [X.Y] section: the GitHub release's notes) and dist/latest.json
+Writes dist/Kermo-X.Y-notes.md (the lead, then the [X.Y] section, the repo's links made absolute to the tag: the GitHub release's notes) and dist/latest.json
 (the API's tag_name, body and assets): attach latest.json to the release. Kermo's daily check downloads it, and its
 download count is how many checks there were.
 """
@@ -20,6 +20,8 @@ if not m:
     sys.exit(f"no [{version}] section in CHANGELOG.md")
 body = "\n\n".join(p for p in (lead, m.group(1).strip()) if p) + "\n"
 tag, base = f"v{version}", "https://github.com/paliydmn/kermo/releases/download"
+# The repo's own links (docs/ai.md#…) as the tag has them: relative ones lead nowhere from a release's page or the app.
+body = re.sub(r"\]\((?!https?://|#|mailto:)([^)\s]+)\)", rf"](https://github.com/paliydmn/kermo/blob/{tag}/\1)", body)
 names = [f"Kermo-{version}-universal.{ext}" for ext in ("dmg", "dmg.sha256", "pkg", "pkg.sha256", "zip")]
 dist = os.path.join(root, "dist")
 missing = [n for n in names if not os.path.exists(os.path.join(dist, n))]
