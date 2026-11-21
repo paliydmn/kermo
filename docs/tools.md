@@ -289,6 +289,8 @@ A tool of yours runs nothing — not even its check of the server — until you 
 
 **Make with AI…** writes it with [your own AI](ai.md#your-own-ai) instead: the chat opens with Kermo's tool format attached (this page from [The fields that work now](#the-fields-that-work-now) to its end) and "Make a Kermo tool “Disk Check” that" in the field — say what it's for, and ↩. The model may look at the program's output on a server where you let it read. A tool in its answer gets **Open as New Tool…**: it opens here as a starter does, unsaved — under its `id`, or the next free name when that one is taken (Problems then says the `id` isn't the file's name). Ask the chat for changes, and open its next answer the same way. The [AI chat's Agent](ai.md#agent-a-task-within-its-scope) also offers **Save as Tool…** after a task it did with commands.
 
+![Make with AI…: the chat with Kermo's tool format attached, a tool in the answer, and Open as New Tool… under it](images/ai-make-tool.png)
+
 Each starter works as it is on most Linux servers. It opens in Kermo's editor — a window of its own, not a tab: no draft is kept, and closing it with changes asks — not yet on disk; **⌘S** (or **Save** beside the text) writes it to `~/.config/dfilemanager/tools/` readable only by you, reads your tools again and asks **Use the tool “…”?** — then, for a new tool, **Use on Servers…**. Saving again asks again: it's a new version of the file. A tool with no script needs nothing else; one that names a script needs that file next to it.
 
 Beside the text:

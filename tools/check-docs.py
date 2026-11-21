@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Checks the relative links and #anchors in README.md, CONTRIBUTING.md and docs/*.md. Run: python3 tools/check-docs.py"""
+"""Checks the relative links and #anchors in README.md, CONTRIBUTING.md, CHANGELOG.md and docs/*.md. Run: python3 tools/check-docs.py"""
 import re, sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
-files = [root / "README.md", root / "CONTRIBUTING.md", *sorted((root / "docs").glob("*.md"))]
+files = [root / "README.md", root / "CONTRIBUTING.md", root / "CHANGELOG.md", *sorted((root / "docs").glob("*.md"))]
 
 def text_without_code(path):
     return re.sub(r"```.*?```", "", path.read_text(), flags=re.S)

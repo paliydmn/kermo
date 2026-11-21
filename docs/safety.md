@@ -39,6 +39,7 @@ On a production server, what Kermo does there goes into `~/.config/dfilemanager/
 - renames, permissions, new folders, extracting and reloads;
 - a key added with Copy SSH Key to Server…;
 - [tools'](tools.md) actions (`"action": "tool ufw delete"`), with what was sent, its secrets and the sudo password as `•••`.
+- what the [AI](ai.md#what-asks-every-time) did there — the chat's model or an agent in Kermo's terminal: commands (Server Info's look too), saves, copies, Tools actions — marked `"by": "ai"`.
 
 Each line has the time, the server as you wrote it and, as `identity`, the user, host and port ssh really reaches (an alias resolved), the paths, the command and its exit status. There is no exit status for a command handed to Terminal, and a reload stopped with ⎋ says it may have run. `"root": true` marks what ran as root from a root panel: saves, copies, moves, deletes, renames, permissions, new folders and reloads. Commands and extracting always run as the user and carry no `root`. If a line can't be written, the status line says so once.
 
@@ -55,7 +56,8 @@ Read the log with `grep` or `jq`, or choose **Server ▸ Production Log** (or se
 | `~/.config/dfilemanager/saves.noindex/` | A file's text from before an [in-place save](viewer-editor.md#editor), while that save runs; left only when it was cut short | Owner-only, out of Spotlight and Time Machine; each launch names a copy left there |
 | `~/.config/dfilemanager/history.noindex/` | Versions of the server files you saved, `.env` and keys included | Owner-only, out of Spotlight and Time Machine; [turn it off](server-files.md#file-history) |
 | `~/.config/dfilemanager/editor.noindex/` | The editor's tabs (paths, servers, never a password) and the [drafts](viewer-editor.md#drafts) of what isn't saved yet — a secret you typed included, until you save it or Don't Save | Owner-only (folder `0700`, files `0600`), out of Spotlight and Time Machine; not encrypted. Don't Save removes the file, not what an SSD or a snapshot may keep |
-| Login Keychain | "Kermo: host" (ssh password), "Kermo sudo: host" (sudo password) | Keychain; each only if you chose to save it |
+| `~/.config/dfilemanager/ai/` | The last 50 [AI chats](ai.md#chats-on-this-mac): what went to your provider, secrets as `•••`, never your key | Folder `0700`, files `0600`; [turn it off](ai.md#chats-on-this-mac) |
+| Login Keychain | "Kermo: host" (ssh password), "Kermo sudo: host" (sudo password), "Kermo AI: address" (your [AI provider's key](ai.md#your-own-ai), for that address only) | Keychain; each only if you chose to save it |
 | Memory | The sudo password for 5 minutes after its last use | Forgotten at screen lock, sleep and **Disconnect** |
 
 Server passwords are never put on a command line or in a file. A [locked server](servers.md#lock-a-server) asks for Touch ID or the Mac password before you use it, by its saved address, an `~/.ssh/config` alias of it or any other way of writing it ssh takes to the same user, host and port. An IP address and its DNS name stay two servers to Kermo: save the one you use, or give the other the same lock. When `ssh -G` can't tell where an address goes (a broken `~/.ssh/config`), Kermo takes it for the locked or production server it may be: it asks for Touch ID (an unlock of its own, not the server's), shows PROD and writes the log — a question too many, never one too few.
@@ -65,5 +67,7 @@ A file from a server or an archive that **↩** opens in another app is quaranti
 ## What listens on this Mac
 
 Only [SSH tunnels](tunnels.md) listen, temporary ones too, and only on `127.0.0.1` and `::1`. Any program or user on this Mac can connect to such a port, so keep a tunnel to a production database off when you don't need it.
+
+With [agents in Kermo's terminal](ai.md#switch-it-on-and-connect-claude-code) allowed (off until you switch it on), Kermo also listens on a socket file in a folder only you can open — not a network port — and lets in only programs started in its own terminal tabs.
 
 Any page or app can open a `kermo://` address. Kermo answers only `kermo://new` (an empty editor document) and `kermo://show` (the editor as it was): no path, text or setting rides on one, and any other address does nothing. The [shortcut from any app](viewer-editor.md#from-any-app) is that one key, registered with macOS: Kermo asks for no Accessibility or Input Monitoring permission and sees no other key.
