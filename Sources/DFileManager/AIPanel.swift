@@ -27,7 +27,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
     private struct Attached { var context: Context; var text: AIResult? }
 
     private var chat: AIChat?
-    private var session: AISession?
+    private(set) var session: AISession?
     /// The provider the chat started with: its production questions named it, its history is its.
     private var pinned: String?
     private(set) var turn: Task<Void, Never>?
@@ -617,6 +617,8 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
                 chat = AIChat(system: system, tools: tools, messages: AISavedChat.resumable(c.messages))
             }
             chat?.add(message)
+            // Attached from a server or a terminal: it can steer the model as its own read can (the questions' ⚠).
+            if sent.contains(where: { $0.context.server != nil || $0.context.symbol == .terminal }) { session?.hasRead = true }
             self.question = question
             self.asked.append(AISavedChat.Asked(question: AISecrets.mask(question).text, chips: sent.map { AIChat.attachedName($0.context.title) },
                                            prod: sent.filter { isProd($0.context) }.map { AIChat.attachedName($0.context.title) }))
@@ -803,7 +805,10 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         let (ran, did) = (session.commands.count, session.journal.count)
         do {
             let (end, used) = try await chat.turn(e.provider(AISettings.transport), call: { await session.call($0, $1) }, show: { [weak self] in
-                answer.show($0)
+                // A change after a server's text: its step says ⚠ (calls go one by one: the journal's last is this one).
+                var warn = false
+                if case .called = $0, let last = session.journal.last { warn = last.afterRead && last.changes }
+                answer.show($0, warn: warn)
                 self?.follow()
             }, spent: { [weak self] u in self?.count(u, g) }, goOn: { [weak self] in await self?.goOn() ?? false })
             answer.end(end, used, rounds: chat.rounds)
@@ -961,6 +966,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         newChat()
         build()
         begin(AISavedChat.resumable(saved.messages))
+        session?.hasRead = saved.heard   // its history still holds what a server said
         (chatID, began, beganWith, asked, resumedProduction) = (id, saved.started, saved.model, saved.asked, saved.production)
         pinned = saved.provider.isEmpty ? nil : saved.provider
         var i = 0, answer: Answer?

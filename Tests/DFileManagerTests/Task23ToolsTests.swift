@@ -97,7 +97,10 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         answer([0])   // in scope now: only the overwrite question
         r = await s.call(writes, args, run: run)
         #expect(r == AIResult("done") && ran == 1 && asked().count == 4 && s.journal.last?.decision == "asked: overwrites, allowed")
-        #expect(s.hasRead && s.journal.last?.afterRead == false)   // a server answered: every later call is marked
+        #expect(s.hasRead && s.journal.last?.afterRead == false && s.journal.last?.changes == true)   // a server answered: every later call is marked
+        answer([0])   // after the read: the question says so first (D-234)
+        r = await s.call(writes, args, run: run)
+        #expect(r == AIResult("done") && ran == 2 && asked().last?.hasPrefix("⚠ Let the assistant write over") == true && s.journal.last?.afterRead == true, "\(asked())")
 
         // Refused in words, nobody asked, nothing run: a relative path, `..`, `~` on a server, a server nobody knows,
         // an argument the tool doesn't have, and a change from a tool that says it only reads.
@@ -112,13 +115,13 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         answer([0, 0])
         r = await s.call(liar, args, run: run)
         #expect(r.isError && s.journal.last?.decision == "refused: unclear")
-        #expect(ran == 1 && asked().count == before, "\(ran) \(asked())")
+        #expect(ran == 2 && asked().count == before, "\(ran) \(asked())")
         #expect(await s.call("no_such_tool", [:]).isError)
 
         // Stopped while the question was up, then answered: nothing runs.
         s.asker = { _, _ in withUnsafeCurrentTask { $0?.cancel() }; return 0 }
         r = await Task { await s.call(writes, args, run: run) }.value
-        #expect(r.isError && ran == 1 && s.journal.last?.decision == "stopped")
+        #expect(r.isError && ran == 2 && s.journal.last?.decision == "stopped")
 
         // A name is one server or nobody: two saved under it aren't; a server called "mac" goes by its address.
         var twin = SavedServer(address: "me@192.0.2.42")!, mac = SavedServer(address: "me@192.0.2.43")!
@@ -126,7 +129,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         let saved = ServerLock.servers()
         ServerLock.servers = { saved + [twin, mac] }
         r = await s.call(writes, args, run: run)
-        #expect(r.isError && ran == 1 && s.journal.last?.decision == "refused: unknown server", "\(r.text)")
+        #expect(r.isError && ran == 2 && s.journal.last?.decision == "refused: unknown server", "\(r.text)")
         #expect(AISession.label(mac.target) == "me@192.0.2.43" && AISession.label(twin.target) == "box" && AISession.label(.local(port: 2201)).hasSuffix(":2201"))
     }
 
@@ -293,7 +296,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(asked().count == 3 && s.scope.grants.count == 2 && s.scope.grants.values.allSatisfy { $0.level == .view })
         r = await s.call("terminal_output", ["server": .string(box)])
         #expect(r.isError && r.text.contains("No terminal tab of \(box)"), "\(r.text)")
-        #expect(s.journal.last?.afterRead == true && s.journal.first?.afterRead == false)
+        #expect(s.journal.last?.afterRead == true && s.journal.first?.afterRead == false && s.journal.allSatisfy { !$0.changes })
     }
 
     /// focus: where the panels stand is told always, their names only where the chat may read; request_scope grants
@@ -512,7 +515,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             r = await write("new.conf", "one\n")
             #expect(!r.isError && aiText(at + "/new.conf") == "one\n" && asked().count == before + 2, "\(server): a new file asks nothing more: \(r.text)")
             r = await write("new.conf", "two\n")   // there now: Cancel
-            #expect(r.isError && aiText(at + "/new.conf") == "one\n" && asked().last == "Let the assistant write over what is there?", "\(server): \(r.text)")
+            #expect(r.isError && aiText(at + "/new.conf") == "one\n" && asked().last == "⚠ Let the assistant write over what is there?", "\(server): \(r.text)")
             answer([0])
             r = await write("new.conf", "two\n")
             #expect(!r.isError && aiText(at + "/new.conf") == "two\n", "\(server): \(r.text)")
@@ -563,7 +566,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         s.asker = { c, w in notes.append(c.note); return await asker!(c, w) }
         answer([0])
         r = await s.call("write_file", args.merging(["text": .string("b\n")]) { $1 })
-        #expect(!r.isError && notes == ["It writes over the file that is there."] && aiText(dir + "/app.conf") == "b\n", "\(notes)")
+        #expect(!r.isError && notes.count == 1 && notes[0]?.hasPrefix("It comes after the assistant read") == true && notes[0]?.hasSuffix(" It writes over the file that is there.") == true && aiText(dir + "/app.conf") == "b\n", "\(notes)")
         s.asker = asker
         try Data("src\n".utf8).write(to: URL(fileURLWithPath: dir + "-src"))
         defer { try? FileManager.default.removeItem(atPath: dir + "-src") }
@@ -592,7 +595,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(!r.isError && r.text.contains("1 of 1 file copied") && aiText(dst + "/one.txt") == "one" && asked().count == 2, "\(r.text)")
         try Data("one, newer".utf8).write(to: URL(fileURLWithPath: src + "/one.txt"))
         r = await copy("one.txt")   // taken: Cancel
-        #expect(r.isError && aiText(dst + "/one.txt") == "one" && asked().last == "Let the assistant write over what is there?", "\(r.text)")
+        #expect(r.isError && aiText(dst + "/one.txt") == "one" && asked().last == "⚠ Let the assistant write over what is there?", "\(r.text)")
         answer([0])
         r = await copy("one.txt")
         #expect(!r.isError && aiText(dst + "/one.txt") == "one, newer", "\(r.text)")
@@ -919,7 +922,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
 
         // A change: outside the scope it asks for commands (Cancel: nothing); allowed, it runs unasked.
         r = await act("fail2ban", "unban", row: "sshd/203.0.113.7")
-        #expect(r.isError && heard.titles.count == 3 && heard.titles[2] == "Allow the assistant this, until the chat ends?" && !bench.calls.contains { $0.contains("unbanip") })
+        #expect(r.isError && heard.titles.count == 3 && heard.titles[2] == "⚠ Allow the assistant this, until the chat ends?" && !bench.calls.contains { $0.contains("unbanip") })
         heard.answers = [0]
         r = await act("fail2ban", "unban", row: "sshd/203.0.113.7")
         #expect(!r.isError && r.text.hasPrefix("exit 0 — Unbanned 203.0.113.7 (sshd)") && heard.titles.count == 4, "\(r.text)")
@@ -950,7 +953,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(!r.isError && s.scope.grants.values.first?.level == .all)
         let before = heard.titles.count
         r = await act("ufw", "delete", row: "3")
-        #expect(r.isError && heard.titles.count == before + 1 && heard.titles.last == "Let the assistant run “Delete Rule” on box?" && heard.commands.last == "ufw --force delete 3")
+        #expect(r.isError && heard.titles.count == before + 1 && heard.titles.last == "⚠ Let the assistant run “Delete Rule” on box?" && heard.commands.last == "ufw --force delete 3")
         #expect(bench.calls.allSatisfy { !$0.contains("delete") })
         heard.answers = [0]
         r = await act("ufw", "delete", row: "3")
@@ -982,7 +985,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         box.prod = true
         ServerLock.servers = { [box] }
         r = await act("fail2ban", "unban", row: "sshd/198.51.100.2")
-        #expect(r.isError && heard.titles.last == "Let the assistant run “Unban” on box?" && !bench.calls.contains { $0.contains("unbanip 198.51.100.2") })
+        #expect(r.isError && heard.titles.last == "⚠ Let the assistant run “Unban” on box?" && !bench.calls.contains { $0.contains("unbanip 198.51.100.2") })
         heard.answers = [0]
         r = await act("fail2ban", "unban", row: "sshd/198.51.100.2")
         #expect(!r.isError && r.text.hasPrefix("[Kermo: box is a production server") && bench.calls.contains("fail2ban-client set sshd unbanip 198.51.100.2"), "\(r.text)")

@@ -123,6 +123,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         #expect(wire.bodies.count == 2 && "\(wire.bodies[1]["messages"] ?? "")".contains("tool_result"))
         #expect(shown(panel).contains("Your folder is fine.") && shown(panel).contains("What's in front of you"), "\(shown(panel))")
         #expect(button(panel, "Into Terminal") != nil && button(panel, "Copy") != nil && shown(panel).contains("2.2k in · 60 out tokens"))
+        #expect(panel.session?.hasRead == false, "a folder of this Mac")
 
         // A limit: in words with Retry, which asks again and appends nothing twice.
         wire.then([(429, #"{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#), (200, turn(text: "Now it's fine."))])
@@ -193,6 +194,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         chat.send("What's here?")
         await done(chat)
         #expect(asked.count == 2 && wire.bodies.count == 1 && shown(chat).contains("box: what you attach from it goes to api.anthropic.com"))
+        #expect(chat.session?.hasRead == true, "attached from a server: as a read of it (D-234)")
         #expect("\(wire.bodies[0]["messages"] ?? "")".contains("[Kermo: box is a production server"))
         await attachAndSend("And now?")   // once a chat
         #expect(asked.count == 2 && wire.bodies.count == 2)
@@ -407,10 +409,12 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         panel.build()
         std.set("never", forKey: "aiProduction")
         panel.open(a)
+        #expect(panel.session?.hasRead == true, "production text in its history: its questions say ⚠ (D-234)")
         panel.send("More?")
         #expect(panel.turn == nil && wire.bodies.isEmpty && shown(panel).contains("Never Send: start a New Chat"))
         std.removeObject(forKey: "aiProduction")
         panel.open(b)
+        #expect(panel.session?.hasRead == false, "a question and an answer only")
         panel.send("Here?")
         #expect(panel.turn == nil && wire.bodies.isEmpty && shown(panel).contains("names another provider"))
     }
@@ -696,12 +700,14 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         await ask("Run report.sh on box, the log to my Downloads, an archive of it to backup")
         let first = try #require(wire.bodies.first)
         #expect(first["system"] as? String == AIChat.agentSystem && (first["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String } == AIChat.agentTools.map(\.name))
-        #expect(asked == ["Allow the assistant this, until the chat ends?", "Let the assistant write over what is there?"], "\(asked)")
+        #expect(asked == ["Allow the assistant this, until the chat ends?", "⚠ Let the assistant write over what is there?"], "\(asked)")   // after box's output (D-234)
         #expect(wire.bodies.count == 7 && "\(wire.bodies[1]["messages"] ?? "")".contains("Allowed until the chat ends"))
         #expect(fm.contents(atPath: downloads + "/report.log") == Data("1284 orders\n".utf8))
         #expect(fm.contents(atPath: backups + "/report.tgz")?.prefix(2) == Data([0x1f, 0x8b]), "the archive, over the old one")
         var text = shown(panel)
         #expect(text.contains("· Agent") && text.contains("✓  Copy the archive to backup") && !text.contains("○") && text.contains("Done: the log"), "\(text)")
+        // ⚠ on what changed after a server's text: the copies and the archive, not the first command (nothing read before it).
+        #expect(text.contains("⚠ Copy report.log → mac") && text.contains("⚠ Run box \(app) tar -czf") && text.contains("Run box \(app) sh report.sh") && !text.contains("⚠ Run box \(app) sh report.sh"), "\(text)")
         let chips = { Set(views(panel.view, ChipButton.self).map(\.title).filter { $0.contains(":") }) }
         #expect(chips() == ["box: run commands", "this Mac: write into \(downloads)", "backup: write into \(backups)"], "\(chips())")
 

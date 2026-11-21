@@ -36,7 +36,8 @@ final class Answer: NSStackView {
         v.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
     }
 
-    func show(_ step: AIChat.Step) {
+    /// `warn`: a step that changed something after a server's text was read (`AISession.Entry`).
+    func show(_ step: AIChat.Step, warn: Bool = false) {
         waiting?.removeFromSuperview()
         waiting = nil
         switch step {
@@ -52,7 +53,7 @@ final class Answer: NSStackView {
             let row = StepRow(c)
             steps[c.id] = row
             add(row)
-        case .called(let c, let r): steps[c.id]?.done(r)
+        case .called(let c, let r): steps[c.id]?.done(r, warn: warn)
         }
     }
 
@@ -220,13 +221,13 @@ final class StepRow: NSStackView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func done(_ r: AIResult) {
+    func done(_ r: AIResult, warn: Bool = false) {
         result = r
         mark.image = (r.isError ? Symbol.failed : Symbol.check).image(r.isError ? "Failed" : "Done")
         mark.contentTintColor = r.isError ? Palette.fail : .secondaryLabelColor
         setViews([mark, label], in: .leading)
-        label.stringValue = title + (r.isError ? " — " + (r.text.split(separator: "\n").first.map(String.init) ?? "").bidiVisible : " · \(AIPanel.tokens(r.text.count)) characters")
-        toolTip = "Click: what came back"
+        label.stringValue = (warn ? "⚠ " : "") + title + (r.isError ? " — " + (r.text.split(separator: "\n").first.map(String.init) ?? "").bidiVisible : " · \(AIPanel.tokens(r.text.count)) characters")
+        toolTip = (warn ? "After the assistant read text from a server or a terminal, which can try to steer it. " : "") + "Click: what came back"
     }
 
     func stopped() { if result == nil { done(.failure("Stopped.")) } }
