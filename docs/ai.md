@@ -82,17 +82,14 @@ In **Agent** the model does the task: runs commands on servers, copies files and
 
 1. **A plan and one question.** For a task of several steps the model first shows its plan — a card of steps that tick themselves off (○ to do, ▸ now, ✓ done) — and asks once for everything it needs, up to five lines: a card **Allow the assistant this, until the chat ends?** with a line for each, whole and in Kermo's words ("web-01: run commands", "this Mac: write into /Users/you/Downloads"), and, quoted on a line of its own, what the model says it's for. **Allow for This Task** gives all of it; **Cancel** (↩) gives nothing, and nothing is done. What the chat has already isn't asked again.
 2. **The steps go without a question** — inside what you allowed. What lies outside asks again, with the same card: never a silent no, never a silent yes.
-3. **Asked every time, whatever you allowed:** deleting, writing over a file that is there, and any change on a [production server](#production-servers) — each with **Allow Once**. A [locked server](servers.md#lock-a-server) wants Touch ID first. On a production server, the commands, saves and copies go to the [production log](safety.md#production-log), marked as the assistant's.
+3. **Asked every time, whatever you allowed:** deleting, writing over a file that is there, a Tools action that always asks, and any change on a [production server](#production-servers) — each with **Allow Once** ([What asks every time](#what-asks-every-time)).
 4. **A file open in the editor** isn't written by the model: it proposes the change as a [diff card](#edit-a-change-as-a-diff), and your ⌘S saves. On a server Kermo knows the tab by its path as you opened it: a tab opened through a link there isn't recognised — writing over that file still asks, and the tab's save checks again.
 
-**Tools actions.** On a server the model uses your [Tools](tools.md) there before a command of its own: `tools` lists the tools in use on that server — each one's actions, which change something, which ask every time, the values they take — and, for one tool, the rows of its list, read as the Tools window reads them (what the tool runs by itself, as root where it says so); `tool_action` runs an action as its button does. A built-in tool's look (Status in Full, Server Info's Disks) counts as reading, in Ask too; any other action — and every action of a tool of your own, whatever its file says — counts as a command: it needs commands allowed there. One that always asks from its button (Delete Rule…, Stop…) asks every time, under All too, with the command as it will run, as root or not, and the row; on a production server every change asks. An action on a row names the row by its key: Kermo reads the list again and takes the row as it is now. Its values are checked as its sheet checks them — a choice must be one of its choices, and named: Kermo doesn't pick the first one for the model. Not the model's to run, it says so and leaves them to you: what runs on this Mac (Who Is It?), what opens something for you (a window that follows, a list one level down, a terminal, a file in the editor, a place in Kermo), long jobs, and an action that takes a secret or a file from this Mac. A tool you haven't said to use isn't offered. On a production server the run goes to the production log, marked as the assistant's.
+**Tools actions.** On a server the model uses your [Tools](tools.md) there before a command of its own: `tools` lists the tools in use on that server — each one's actions, which change something, which ask every time, the values they take — and, for one tool, the rows of its list, read as the Tools window reads them (what the tool runs by itself, as root where it says so); `tool_action` runs an action as its button does. A built-in tool's look (Status in Full, Server Info's Disks) counts as reading, in Ask too; any other action — and every action of a tool of your own, whatever its file says — counts as a command: it needs commands allowed there. One that always asks from its button (Delete Rule…, Stop…) asks every time, under All too, with the command as it will run, as root or not, and the row; on a production server every change asks. An action on a row names the row by its key: Kermo reads the list again and takes the row as it is now. Its values are checked as its sheet checks them — a choice must be one of its choices, and named: Kermo doesn't pick the first one for the model. Not the model's to run, it says so and leaves them to you: what runs on this Mac (Who Is It?), what opens something for you (a window that follows, a list one level down, a terminal, a file in the editor, a place in Kermo), long jobs, and an action that takes a secret or a file from this Mac. A tool you haven't said to use isn't offered.
 
 **Save as Tool.** After a task in which the model ran two commands or more on one server that ended well (exit 0), the answer offers **Save as Tool…**: those commands as they ran — those that failed are left out —, each in its folder and a shell of its own, one after the other, the next only if the last one's exit was 0, open as a new tool in the [tool editor](tools.md#new-tool), unsaved, its output in a window. Next time it's one click, with no AI. Copies, files written, Tools actions and programs started in the background (`&`: a tool's run ends what it started) aren't in it — its `about` says how many —, and a secret Kermo hid is `•••` there; Problems points at `{…}`, which a tool reads as a value of its own. A step whose folder isn't there (another server) stops the run. Read it before you save: once saved and in use — **Use the tool “…”?** shows it whole — it runs as any tool of yours, at your click, asking first only on a production server, and it gets 30 seconds, as a tool's run does.
 
 **The Scope row.** Click a place to set its level — **View** (reads), **Work** (writes into the folders it was given and, on a server, runs commands), **All** (anything there) — or **Take Back**: the next call there asks again. This Mac never runs the model's commands, so its Work is only the folders a task was given. **+** gives a server View yourself before the model asks; this Mac and a production server ask all the same, as their first read would (under **Never Send** production isn't offered), and so does All on this Mac. In Ask and Edit the row offers View only. Everything in it lasts until the chat ends; a New Chat starts from nothing.
-
-> [!WARNING]
-> Once the chat may **run commands** on a server, a command can change or delete files there without another question: Kermo recognises the obvious ones (`rm`, `>`), not every way a shell can write. A command gets 30 seconds and 256 KB of output; then Kermo stops waiting, and what it started may still be running. Allow commands only where that is acceptable.
 
 ### Spending
 
@@ -108,6 +105,19 @@ A chat opened again shows its questions, what was attached (by name) and the ans
 
 ## Safety
 
+### What asks every time
+
+Whatever you allowed — the chat's Agent and an [agent in Kermo's terminal](#agents-in-kermos-terminal) alike —, these ask each time, with **Allow Once** (↩ = **Cancel**):
+
+- a command that deletes, moves or writes over (`rm`, `mv`, `dd`, `truncate`, `find … -delete`, `rsync --delete`, `git clean`, `git reset --hard`, `> file`…), and writing or copying over a file that is there;
+- a Tools action that always asks from its button (Delete Rule…, Stop…), with the command as it will run and the row;
+- any change on a [production server](#production-servers).
+
+A [locked server](servers.md#lock-a-server) wants Touch ID first, as for you. On a production server the commands, saves, copies and Tools actions go to the [production log](safety.md#production-log), marked as the assistant's (`"by": "ai"`).
+
+> [!WARNING]
+> Once the model or an agent may **run commands** on a server, a command can still change files there without another question: Kermo recognises the obvious ones above, not every way a shell can write (`cp`, `sed -i`, `tee`, `tar -cf` don't ask). Allow commands only where that is acceptable, and prefer `copy` and `write_file`, which ask before writing over a file.
+
 ### Production servers
 
 Something attached from a [production server](safety.md) asks once a chat for each server before it is sent, ↩ = **Cancel**; after **Send** a purple line says it goes. Kermo also tells the model that the server is production and to be careful — in the message and in what a read there returns; **What will be sent** shows it. In **Settings › AI**, **Production servers: Never Send** keeps everything from production servers out of the chat: such a chip isn't attached, a followed selection there doesn't go, and the model's reads there are refused — the terminal's output of a tab that may be a production server's too. Where the panels stand (a server's name and folder) the model may still learn from `focus`.
@@ -118,7 +128,7 @@ Something attached from a [production server](safety.md) asks once a chat for ea
 - your messages, with what you attached — and, in a chat opened again, its earlier messages and answers;
 - what the model's reads return.
 
-Passwords, tokens and keys Kermo recognises are replaced with `•••` before anything is sent — in what you type too. The patterns are not complete: don't attach files whose content must not leave this Mac. Every earlier message of the chat goes again with each new one, as providers need.
+Passwords, tokens and keys Kermo recognises are replaced with `•••` before anything is sent — in what you type too, and in what an agent in the terminal reads. The patterns are not complete: don't attach files, or point an agent at them, whose content must not leave this Mac. Every earlier message of the chat goes again with each new one, as providers need.
 
 ## Agents in Kermo's terminal
 
@@ -142,6 +152,8 @@ Only a program started from one of Kermo's terminal tabs gets in — any program
 
 ### What the agent can do
 
+The same tools as the chat's model: an agent in the terminal has all but `plan`; the chat's **Agent** has all; **Ask** has the reads, `tools`, and `run_command` and `tool_action` for reading only; **Edit** has `propose_edit` too.
+
 | Tool | What it does | Asks you |
 |---|---|---|
 | `focus` | What is in front of you: both panels, the editor's file, the terminal tab | No; names and selections only where you allowed reading |
@@ -159,13 +171,7 @@ The agent acts as you: on a server, as the user you log in as. Kermo never opens
 
 A question appears as a sheet on Kermo's window, and Kermo comes to the front; the agent waits for your answer. **Cancel** leaves everything as it was, and the agent is told you didn't allow it.
 
-- **Allow for This Task** names exactly what is asked: reading on a server, writing into one folder, running commands. It holds until the agent disconnects.
-- These ask every time, whatever you allowed: writing over a file, and any change on a [production server](safety.md).
-- A [locked server](servers.md#lock-a-server) asks for Touch ID first, as for you.
-- Commands on a production server, saves and copies there go to the [production log](safety.md#production-log), marked as the assistant's.
-
-> [!WARNING]
-> Once you allow an agent to **run commands** on a server, a command can change or delete files there without another question: Kermo recognises the obvious ones (`rm`, `mv`, `>`), not every way a shell can write. Allow commands only where that is acceptable, and prefer letting the agent use `copy` and `write_file`.
+**Allow for This Task** names exactly what is asked: reading on a server, writing into one folder, running commands. It holds until the agent disconnects. Deleting, writing over a file, a Tools action that always asks and any change on a production server ask every time all the same ([What asks every time](#what-asks-every-time)).
 
 ### See and take back what an agent may do
 
@@ -180,8 +186,7 @@ Switching **Allow agents in Kermo's terminal (MCP)** off disconnects every agent
 ## Limits
 
 - Paths are absolute. `write_file` and `copy` refuse a path that goes through a symbolic link and name the real one: on a Mac `/tmp/…` is `/private/tmp/…` and `/var/…` is `/private/var/…`.
-- Secrets Kermo recognises in what the agent reads (keys, tokens, passwords in configs) are replaced with `•••`. The patterns are not complete: don't point an agent at files whose content must not leave this Mac.
-- A command gets 30 seconds and 256 KB of output, with no terminal: nothing interactive.
+- A command gets 30 seconds and 256 KB of output, with no terminal: nothing interactive. Then Kermo stops waiting, and what it started may still be running.
 - Commands and Tools actions run on servers only, not on this Mac.
-- Deleting, moving and archiving are not among the tools yet.
+- Deleting, moving and archiving have no tool of their own yet: only a command does them, and it asks each time.
 - The journal is kept in memory and goes with the connection.
