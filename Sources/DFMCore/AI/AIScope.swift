@@ -12,6 +12,9 @@ public struct AITarget: Hashable, Sendable {
     public enum Access: Hashable, Sendable {
         case read, write, remove
         case run(String)   // the command
+        /// A Tools action (task 23 PR 9), as its tool says: a look or a change, and whether it asks every time
+        /// (`dangerous`, `confirm`).
+        case tool(changes: Bool, asks: Bool)
     }
     public let place: AIPlace
     public let path: String?
@@ -85,6 +88,7 @@ public struct AIScope: Sendable, Equatable {
         case unclear      // the call doesn't fit its tool: asked rather than guessed
         case production   // any change on a production server
         case removes, overwrites
+        case always       // a Tools action that asks every time, as its button does
     }
 
     public enum Decision: Sendable, Equatable {
@@ -136,6 +140,7 @@ public struct AIScope: Sendable, Equatable {
         switch t.access {
         case .read: false
         case .run(let c): !AICommand.isReadOnly(c) || AICommand.overwrites(c) || t.path.map(AICommand.consumes) == true
+        case .tool(let c, _): c
         case .write, .remove: true
         }
     }
@@ -143,9 +148,9 @@ public struct AIScope: Sendable, Equatable {
     /// May this call go on to the gate? Each target by its own access, the strictest answer for the call:
     /// - read, and a command `AICommand.isReadOnly`: the place is in the scope at any level;
     /// - write, remove: All, or Work with a folder that holds the path (`/srv/app` doesn't hold `/srv/app2`);
-    /// - any other command: All, or Work with commands;
+    /// - any other command, and a Tools action that changes something: All, or Work with commands;
     /// - asked always, in scope or not: a removal, writing over what exists, a command that `AICommand.overwrites`,
-    ///   any change on production; and a call that doesn't fit its tool (no targets for a tool that has them,
+    ///   a Tools action that asks every time, any change on production; and a call that doesn't fit its tool (no targets for a tool that has them,
     ///   a change from a `read` or `ui` tool).
     ///
     /// Pure, so `prod` is the caller's knowledge at that moment: an alias not looked up yet isn't known as
@@ -156,10 +161,11 @@ public struct AIScope: Sendable, Equatable {
             let g = grants[t.place], changes = Self.changes(t)
             switch t.access {
             case .read: break
-            case .run(let c):
+            case .run, .tool:
+                if case .tool(_, true) = t.access { reasons.insert(.always) }
                 guard changes else { break }
                 if g?.level != .all && !(g?.level == .work && g?.commands == true) { needs.append(Need(place: t.place, level: .work, commands: true)) }
-                if AICommand.overwrites(c) { reasons.insert(.overwrites) }
+                if case .run(let c) = t.access, AICommand.overwrites(c) { reasons.insert(.overwrites) }
             case .write, .remove:
                 let path = t.path ?? "/"   // never nil: `AITarget.init` refuses it
                 if g?.level != .all && !(g?.level == .work && g?.folders.contains(where: { Self.holds($0, path) }) == true) {

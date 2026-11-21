@@ -115,6 +115,11 @@ final class Answer: NSStackView {
                 into.toolTip = "Into the terminal's line — nothing runs until you press ↩ there"
                 buttons.insert(into, at: 0)
             }
+            if lang.lowercased() == "json", ChatMarkdown.isTool(code) {
+                let open = AIPanel.button("Open as New Tool…") { [weak self] in self.map { ToolEditor.draft($0.panel.app, code) } }
+                open.toolTip = "In the tool editor, unsaved: Problems checks it, Test runs its list — nothing is saved until you press ⌘S"
+                buttons.insert(open, at: 0)
+            }
             let spacer = NSView()
             spacer.setContentHuggingPriority(.init(1), for: .horizontal)
             let row = NSStackView(views: [spacer] + buttons)
@@ -159,6 +164,9 @@ final class Answer: NSStackView {
         waiting = nil
     }
 
+    /// Under a finished answer: words and a button (Save as Tool…).
+    func offer(_ words: String, _ action: (String, () -> Void)) { add(Self.noteRow(words, error: false, action: action)) }
+
     /// Stopped or failed: what was there stays, with the words — and what may help.
     func end(note: String, error: Bool = false, action: (String, () -> Void)? = nil) {
         draw()
@@ -194,9 +202,9 @@ final class StepRow: NSStackView {
         func arg(_ k: String) -> String? { if case .string(let s)? = c.args?[k] { s } else { nil } }
         let what = ["focus": "What's in front of you", "list_folder": "List", "read_file": "Read", "terminal_output": "Terminal output",
                     "server_info": "Server info", "run_command": "Run", "propose_edit": "Propose a change to", "request_scope": "Ask to allow",
-                    "copy": "Copy", "write_file": "Write", "open_in_editor": "Open"][c.name] ?? c.name
+                    "copy": "Copy", "write_file": "Write", "open_in_editor": "Open", "tools": "Tools on", "tool_action": "Tools action on"][c.name] ?? c.name
         // A copy by its item's name: the middle of a long line is what a step's label leaves out.
-        title = ([what, arg("server"), arg("path") ?? arg("folder"), arg("command"), arg("from_path").map { ($0 as NSString).lastPathComponent },
+        title = ([what, arg("server"), arg("path") ?? arg("folder"), arg("command"), arg("tool"), arg("action"), arg("row"), arg("from_path").map { ($0 as NSString).lastPathComponent },
                   arg("to_server").map { "→ " + $0 }, arg("to_folder")].compactMap { $0 }).joined(separator: " ").bidiVisible
         super.init(frame: .zero)
         let spin = NSProgressIndicator()
@@ -231,6 +239,12 @@ final class StepRow: NSStackView {
 /// is loaded, nothing opens by itself.
 enum ChatMarkdown {
     enum Block: Equatable { case prose(String), code(String, lang: String) }
+
+    /// A JSON block that is a Kermo tool's file (its `schema` and `id`): Open as New Tool….
+    static func isTool(_ code: String) -> Bool {
+        guard let o = (try? JSONSerialization.jsonObject(with: Data(code.utf8))) as? [String: Any] else { return false }
+        return o["schema"] is NSNumber && o["id"] is String
+    }
     static let shells: Set<String> = ["sh", "bash", "shell", "zsh", "console", "fish"]
 
     /// Blank lines part paragraphs; a fence still open (the answer is coming) is a code block up to here.

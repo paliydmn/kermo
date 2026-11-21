@@ -85,15 +85,16 @@ public final class AIChat {
 
     // MARK: What Kermo tells the model
 
-    /// Ask: the tools that only read — and `run_command`, which the session lets run only what `AICommand.isReadOnly`.
-    nonisolated public static let askTools = AITools.all.filter { ["focus", "list_folder", "read_file", "terminal_output", "server_info", "run_command"].contains($0.name) }
+    /// Ask: the tools that only read — and `run_command` and `tool_action`, which the session lets run only what
+    /// `AICommand.isReadOnly` and Kermo's own Tools' looks.
+    nonisolated public static let askTools = AITools.all.filter { ["focus", "list_folder", "read_file", "terminal_output", "server_info", "tools", "run_command", "tool_action"].contains($0.name) }
 
     /// Edit: Ask's tools and `propose_edit`, whose diff the user applies to the editor — the session still only reads.
     nonisolated public static let editTools = askTools + AITools.all.filter { $0.name == "propose_edit" }
 
     /// The instructions for Ask, as the user approved them (2026-11-17).
     nonisolated public static let askSystem = instructions("""
-        Mode: Ask — you read and answer, and change nothing. Your tools only read; run_command takes read-only commands from Kermo's allow-list (cat, tail, ls, df, journalctl, systemctl status, nginx -t…), anything else is refused. For a change, give the commands or the text and let the user do it: shell commands go in ```sh blocks, which the user can put into the terminal without running them.
+        Mode: Ask — you read and answer, and change nothing. Your tools only read; run_command takes read-only commands from Kermo's allow-list (cat, tail, ls, df, journalctl, systemctl status, nginx -t…), and tool_action only the looks of Kermo's built-in Tools; anything else is refused. For a change, give the commands or the text and let the user do it: shell commands go in ```sh blocks, which the user can put into the terminal without running them.
         """)
 
     /// Edit (task 23 PR 7): Ask, and changes to files proposed as diffs; only the user's ⌘S saves.
@@ -110,6 +111,7 @@ public final class AIChat {
         Mode: Agent — you act: read, write files, copy between places, run commands on servers, within what the user allowed this chat (its scope). Kermo asks the user before anything outside the scope, and always before deleting, writing over what exists and any change on a production server.
         - A task of several steps: first call plan with its steps and request_scope once with all they need (servers, folders to write into, commands) — the least that does it. Then do the steps; send plan again, with the states as they stand, in the same message as the next step's own call.
         - Prefer the typed tools: copy and write_file ask before they write over anything, a command may not. write_file doesn't write a file open in the editor: propose_edit changes that one.
+        - On a server, see what tools lists first: a Tools action the user set up there (a firewall rule, a ban, a process stopped) goes before a command of your own — tool_action runs it as its button does.
         - A command gets 30 seconds and 256 KB of output, then Kermo stops waiting. For a longer program, start it in the background with its output in a file (nohup … > file 2>&1 &), then read the file.
         - If the user says no, don't try another way to the same thing: say what is left and how they can do it.
         - At the end, say in a few lines what was done and where things are.

@@ -255,6 +255,16 @@ final class ToolsNew: NSView, NSTextFieldDelegate {
             row.spacing = 12
             views.append(row)
         }
+        // Make with AI… (task 23 PR 9): the chat writes it, the editor opens it unsaved.
+        let ai = NSButton(title: "Make with AI…", target: nil, action: nil)
+        ai.controlSize = .large
+        ai.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        kept.append(MenuAction.attach(to: ai) { [unowned self] in app.makeTool(named: name.stringValue.trimmingCharacters(in: .whitespaces)) })
+        starters.append(ai)
+        let row = NSStackView(views: [ai, ToolsPage.text("Say what it's for in the chat, with your own AI: its answer opens here as a draft, saved only by your ⌘S.",
+                                                       color: .secondaryLabelColor)])
+        row.spacing = 12
+        views.append(row)
         name.widthAnchor.constraint(equalToConstant: 260).isActive = true
         let stack = NSStackView(views: views)
         stack.orientation = .vertical
@@ -276,6 +286,7 @@ final class ToolsNew: NSView, NSTextFieldDelegate {
     var problem: String? {
         guard let id = ToolNew.id(from: name.stringValue) else { return "A name needs a letter or a digit." }
         if app.tools.library.tools.contains(where: { $0.builtIn && $0.preset.id == id }) { return "\(id) is a built-in tool's: its page's Customize makes it yours." }
+        if ToolLibrary.kermosOwn.contains(id + ".json") { return "\(id).json is Kermo's own file there: choose another name." }
         if let dir = ToolRunner.own, FileManager.default.fileExists(atPath: dir.appendingPathComponent(id + ".json").path) { return "\(id).json is there already: My Tools has it, or Show File." }
         return nil
     }

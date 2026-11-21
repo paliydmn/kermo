@@ -869,4 +869,119 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         r = await s.call("terminal_output", ["server": "box"])
         #expect(r.isError && r.text.contains("may be from prodbox, a production server"), "\(r.text)")
     }
+
+    /// Task 23 PR 9: Tools' actions are the assistant's as their buttons are — ufw and fail2ban on stand-ins. A
+    /// built-in's look is a read (Ask too); a change needs commands allowed and runs unasked; one that's `dangerous`
+    /// asks every time, under All too; production asks each change and logs it as the assistant's; a row is read
+    /// again by its key; values go as the form takes them; Cancel and a refusal run nothing.
+    @Test func toolsActionsAreTheAssistantsAsTheirButtonsAre() async throws {
+        let (app, _, panel, done) = try toolsApp()
+        let bench = try ToolsBench()
+        defer { bench.done(); done() }
+        var box = SavedServer(target: .local())
+        box.name = "box"
+        ServerLock.servers = { [box] }
+        // "box" as a panel shows it: this Mac's sftp-server and /bin/sh (the saved one is only its name and tags).
+        panel.loadRemote(.local(), dir: bench.dir, select: nil)
+        await toolsUntil { panel.remote?.dir == bench.dir }
+        final class Heard { var titles: [String] = [], commands: [String] = [], answers: [Int] = [] }
+        let heard = Heard()
+        let s = AISession(app: app) { c, _ in
+            (heard.titles, heard.commands) = (heard.titles + [c.title], heard.commands + [c.command ?? ""])
+            return heard.answers.isEmpty ? c.buttons.count - 1 : heard.answers.removeFirst()
+        }
+        func act(_ tool: String, _ action: String, row: String? = nil, _ inputs: [String: String] = [:], on server: String = "box") async -> AIResult {
+            var args: [String: ToolValue] = ["server": .string(server), "tool": .string(tool), "action": .string(action)]
+            if let row { args["row"] = .string(row) }
+            if !inputs.isEmpty { args["inputs"] = .array(inputs.sorted { $0.key < $1.key }.map { .object(["name": .string($0.key), "value": .string($0.value)]) }) }
+            return await s.call("tool_action", args)
+        }
+        #expect(AIChat.askTools.contains { $0.name == "tool_action" } && AITools.forAgents.contains { $0.name == "tools" })
+
+        var r = await s.call("tools", ["server": "box"])   // Cancel: not even read
+        #expect(r.isError && heard.titles == ["Let the assistant read there until the chat ends?"] && bench.trips == 0)
+        heard.answers = [0]
+        r = await s.call("tools", ["server": "box"])
+        #expect(!r.isError && r.text.contains("ufw — Firewall") && r.text.contains("fail2ban — Banned IPs"), "\(r.text)")
+        #expect(r.text.contains("delete “Delete Rule…” (changes, asks every time, as root)") && r.text.contains("verbose “Status in Full” (reads, as root)"), "\(r.text)")
+        #expect(r.text.contains("proto (Protocol; one of tcp, udp") && r.text.contains("whois “Who Is It?” (it runs on this Mac)"), "\(r.text)")
+        r = await s.call("tools", ["server": "box", "tool": "ufw"])
+        #expect(!r.isError && r.text.contains("Its rows (3):") && r.text.contains("\n3\tAnywhere"), "\(r.text)")
+
+        // A built-in's look: a read, in Ask too, unasked. A change in Ask: refused in words.
+        s.readOnly = true
+        r = await act("ufw", "verbose")
+        #expect(!r.isError && r.text.hasPrefix("exit 0\n") && r.text.contains("Logging: on") && heard.titles.count == 2, "\(r.text)")
+        r = await act("fail2ban", "unban", row: "sshd/203.0.113.7")
+        #expect(r.isError && r.text.contains("only reads") && !bench.calls.contains { $0.contains("unbanip") })
+        s.readOnly = false
+
+        // A change: outside the scope it asks for commands (Cancel: nothing); allowed, it runs unasked.
+        r = await act("fail2ban", "unban", row: "sshd/203.0.113.7")
+        #expect(r.isError && heard.titles.count == 3 && heard.titles[2] == "Allow the assistant this, until the chat ends?" && !bench.calls.contains { $0.contains("unbanip") })
+        heard.answers = [0]
+        r = await act("fail2ban", "unban", row: "sshd/203.0.113.7")
+        #expect(!r.isError && r.text.hasPrefix("exit 0 — Unbanned 203.0.113.7 (sshd)") && heard.titles.count == 4, "\(r.text)")
+        #expect(bench.calls.contains("fail2ban-client set sshd unbanip 203.0.113.7") && s.journal.last?.decision == "allowed")
+        r = await act("fail2ban", "unban", row: "sshd/192.0.2.99")
+        #expect(r.isError && r.text.contains("No row “sshd/192.0.2.99”"), "a row is the list's now, never the model's word")
+        r = await act("fail2ban", "unban")
+        #expect(r.isError && r.text.contains("acts on a row"))
+
+        // Values as the form takes them: a choice is one of its own, a pattern holds, nothing it doesn't take.
+        for (inputs, said) in [(["port": "8080", "proto": "icmp", "source": "any"], "isn't one of tcp, udp"), (["port": "80; reboot", "proto": "tcp", "source": "any"], "port: doesn't look right"),
+                               (["proto": "tcp", "source": "any"], "port: Port is empty"), (["port": "8080", "proto": "tcp", "source": "any", "user": "root"], "takes no value “user”")] {
+            r = await act("ufw", "allow", inputs)
+            #expect(r.isError && r.text.contains(said), "\(inputs): \(r.text)")
+        }
+        #expect(!bench.calls.contains { $0.hasPrefix("ufw allow") })
+        r = await act("ufw", "allow", ["port": "8080", "proto": "tcp", "source": "any", "comment": "ai"])
+        #expect(!r.isError && r.text.hasPrefix("exit 0 — Allowed tcp 8080 from any") && bench.calls.contains("ufw allow proto tcp from any to any port 8080 comment ai"), "\(r.text)")
+
+        // dangerous asks every time, under All too — the command as it runs, the row; Cancel deletes nothing.
+        heard.answers = [0]
+        r = await s.call("request_scope", ["needs": [["server": "box", "level": "all", "folder": "", "why": "firewall"]]])
+        #expect(!r.isError && s.scope.grants.values.first?.level == .all)
+        let before = heard.titles.count
+        r = await act("ufw", "delete", row: "3")
+        #expect(r.isError && heard.titles.count == before + 1 && heard.titles.last == "Let the assistant run “Delete Rule” on box?" && heard.commands.last == "ufw --force delete 3")
+        #expect(bench.calls.allSatisfy { !$0.contains("delete") })
+        heard.answers = [0]
+        r = await act("ufw", "delete", row: "3")
+        #expect(!r.isError && r.text.hasPrefix("exit 0 — Deleted rule 3 (Anywhere)") && bench.calls.contains("ufw --force delete 3"), "\(r.text)")
+
+        // What isn't the assistant's: an action on this Mac, a long log, this Mac as the server, a tool nobody uses.
+        for (tool, action, server, said) in [("fail2ban", "whois", "box", "it runs on this Mac"), ("fail2ban", "log", "box", "opens something for the user"),
+                                             ("ufw", "verbose", "mac", "servers only"), ("dpl", "status", "box", "isn't in use on box")] {
+            r = await act(tool, action, row: action == "whois" ? "sshd/198.51.100.2" : nil, on: server)
+            #expect(r.isError && r.text.contains(said), "\(action): \(r.text)")
+        }
+        #expect(!bench.calls.contains { $0.hasPrefix("whois") })
+        // Refused before anyone is asked: an action that isn't there; a choice the model didn't name isn't made for it.
+        let asked = heard.titles.count
+        r = await s.call("tools", ["server": "mac"])
+        #expect(r.isError && r.text.contains("servers only"), "\(r.text)")
+        r = await act("ufw", "reboot")
+        #expect(r.isError && r.text.contains("No action “reboot”") && heard.titles.count == asked && s.journal.last?.decision == "refused: not the assistant's")
+        r = await act("fail2ban", "ban", ["ip": "192.0.2.9"])
+        #expect(r.isError && r.text.contains("jail: give one of sshd") && !bench.calls.contains { $0.contains("banip 192.0.2.9") }, "\(r.text)")
+        r = await act("fail2ban", "ban", ["ip": "192.0.2.9", "jail": "sshd"])
+        #expect(!r.isError && bench.calls.contains("fail2ban-client set sshd banip 192.0.2.9"), "\(r.text)")
+        // Your own tool's `readonly` is its word, not Kermo's: a change to the scope.
+        var own = try toolNamed(app, "ufw")
+        own.builtIn = false
+        #expect(ToolRunner.access(ToolRunner.ForAI(tool: own, action: try #require(own.preset.toolActions?.first { $0.spec.id == "verbose" }), onRow: false)) == .tool(changes: true, asks: false))
+
+        // Production: each change asks, whatever the scope; the log has it as the assistant's.
+        box.prod = true
+        ServerLock.servers = { [box] }
+        r = await act("fail2ban", "unban", row: "sshd/198.51.100.2")
+        #expect(r.isError && heard.titles.last == "Let the assistant run “Unban” on box?" && !bench.calls.contains { $0.contains("unbanip 198.51.100.2") })
+        heard.answers = [0]
+        r = await act("fail2ban", "unban", row: "sshd/198.51.100.2")
+        #expect(!r.isError && r.text.hasPrefix("[Kermo: box is a production server") && bench.calls.contains("fail2ban-client set sshd unbanip 198.51.100.2"), "\(r.text)")
+        await toolsUntil { ((try? String(contentsOfFile: AuditLog.path, encoding: .utf8)) ?? "").contains("unbanip") }
+        let log = try String(contentsOfFile: AuditLog.path, encoding: .utf8)
+        #expect(log.contains(#""action":"tool fail2ban unban""#) && log.contains(#""by":"ai""#), "\(log)")
+    }
 }

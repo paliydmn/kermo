@@ -71,3 +71,11 @@ private let keptByTheApp: Set<String> = [
         #expect(problems.isEmpty, "\(id): \(problems)")
     }
 }
+
+/// Make with AI… gives the model the format as the docs tell it (task 23 PR 9): the app's copy is docs/tools.md from
+/// "The fields that work now" to its end.
+@Test func theToolFormatTheAIGetsIsTheDocs() throws {
+    let page = try text("docs/tools.md"), from = try #require(page.range(of: "### The fields that work now\n"))
+    #expect(ToolNew.format == String(page[from.lowerBound...]),
+            "copy it: awk '/^### The fields that work now$/{on=1} on' docs/tools.md > Sources/DFMCore/Resources/ai/tool-format.md")
+}

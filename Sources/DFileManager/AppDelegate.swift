@@ -829,13 +829,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         applySidebarRule()
     }
 
-    /// ⇧⌘I: what is selected where the keys are, as a chip in the chat — the editor window's selection (else its
-    /// document); the terminal's (else the command ⌘↑ went to, or the last, with its output); from the chat's field,
+    /// ⇧⌘I: what is selected where the keys are, as a chip in the chat — an output window's selection (else its
+    /// text); the editor window's selection (else its document); the terminal's (else the command ⌘↑ went to, or the last, with its output); from the chat's field,
     /// where the user selected last; a panel's marked items (else its cursor's). Taken before the chat shows: showing
     /// it narrows the terminal, which drops its selection and marks.
     func addToChat() {
         var found: [() async -> AIPanel.Context] = []
-        if let h = editorKey, let e = h.active {
+        if let o = OutputWindow.keyed {
+            found = [o.toChat()].compactMap { $0 }
+        } else if let h = editorKey, let e = h.active {
             let c = AIPanel.selection(e) ?? AIPanel.document(e)
             found = [{ c }]
         } else if aiPanel.hasFocus {
@@ -886,6 +888,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
     /// Tests: what a ✨ would attach (their app has no chat).
     static var explaining: (@MainActor ([AIPanel.Context]) -> Void)?
+
+    /// Make with AI… (New Tool…): the chat with Kermo's tool format attached and "Make a Kermo tool …" in its field,
+    /// for the user to say what it's for — nothing goes until ↩. The answer's tool opens as a draft (`ToolEditor.draft`).
+    func makeTool(named name: String) {
+        bringBack(window)
+        if !aiChatShown { setAIChat(shown: true) }
+        aiPanel.explain([AIPanel.toolFormat], asking: "Make a Kermo tool “\(name)” that ")
+        aiPanel.focus()
+    }
 
     /// «⋯» Explain Last Command: as Add Command and Output to Chat, with the question — whatever its exit, which a
     /// shell seldom tells. Without the AI: the chat's "Use your own AI".

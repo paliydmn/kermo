@@ -39,6 +39,22 @@ final class ToolEditor: NSView, NSTextViewDelegate, NSMenuDelegate {
         open(app, dir.appendingPathComponent(id + ".json"), text: ToolNew.text(kind, id: id, title: title), isNew: true)
     }
 
+    /// A tool from the chat (Make with AI…), unsaved as New Tool…'s are: under its own id where that's free — not a
+    /// built-in's, not a file of yours or Kermo's own (`trust.json`…), not a draft open already —, else the next free name, which Problems then says
+    /// isn't its id. Nothing is written before ⌘S, and then "Use the tool…?" shows all it can run.
+    static func draft(_ app: AppDelegate, _ text: String) {
+        guard let dir = ToolRunner.own else { return }
+        let said = ((try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any])?["id"] as? String
+        let id = said.flatMap(ToolNew.id(from:)) ?? "new-tool"
+        func taken(_ name: String) -> Bool {
+            let url = dir.appendingPathComponent(name + ".json")
+            return app.tools.library.tools.contains { $0.builtIn && $0.preset.id == name } || ToolLibrary.kermosOwn.contains(name + ".json")
+                || FileManager.default.fileExists(atPath: url.path) || Editor.window(for: url) != nil
+        }
+        let name = ([id] + (2...99).map { "\(id)-\($0)" }).first { !taken($0) } ?? "\(id)-\(UUID().uuidString.prefix(8).lowercased())"
+        open(app, dir.appendingPathComponent(name + ".json"), text: text, isNew: true)
+    }
+
     /// One of yours, as it is on disk — loading or not.
     static func edit(_ app: AppDelegate, _ url: URL) {
         open(app, url, text: nil, isNew: false)

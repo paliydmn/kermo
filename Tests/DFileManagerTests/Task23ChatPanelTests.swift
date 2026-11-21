@@ -705,6 +705,31 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         let chips = { Set(views(panel.view, ChipButton.self).map(\.title).filter { $0.contains(":") }) }
         #expect(chips() == ["box: run commands", "this Mac: write into \(downloads)", "backup: write into \(backups)"], "\(chips())")
 
+        // Save as Tool (task 23 PR 9): the two commands it ran on box, each in its folder, as a draft — nothing saved.
+        let own = ToolRunner.own
+        ToolRunner.own = URL(fileURLWithPath: dir + "/tools")
+        defer {
+            ToolRunner.own = own
+            for w in NSApp.windows where w.windowController is EditorHost { w.close() }
+        }
+        #expect(text.contains("It ran 2 commands on box"), "\(text)")
+        click(try #require(button(panel, "Save as Tool…")))
+        func draft(_ name: String) -> String? {
+            NSApp.windows.first { $0.windowController is EditorHost && $0.title.hasPrefix(name) }?.docFrame?.subviews.compactMap { $0 as? ToolEditor }.first?.editor?.textView.string
+        }
+        let made = try #require(draft("run-report-sh-on-box"), "\(NSApp.windows.map(\.title))")
+        let o = try #require(try JSONSerialization.jsonObject(with: Data(made.utf8)) as? [String: Any])
+        let cd = "cd -- " + ShellContext.quote(app) + " || exit $?\n"
+        #expect(o["command"] as? String == "(\(cd)sh report.sh\n) || exit $?\n(\(cd)tar -czf report.tgz report.log\n) || exit $?" && o["readonly"] == nil, "\(made)")
+        #expect((o["about"] as? String)?.contains("Left out: 2 steps that weren't commands") == true && o["title"] as? String == "Run report.sh on box, the log to my Dow…", "\(made)")
+        #expect(!fm.fileExists(atPath: dir + "/tools/" + (o["id"] as? String ?? "") + ".json"), "nothing on disk before ⌘S")
+        // A tool in an answer: Open as New Tool… — the same draft's way.
+        wire.then([(200, turn(text: "Here it is:\n\n```json\n" + ToolNew.text(.command, id: "who-is-on", title: "Who Is On") + "```\n"))])
+        await ask("Make a tool that says who is on")
+        click(try #require(button(panel, "Open as New Tool…")))
+        let opened = draft("who-is-on.json") ?? ""
+        #expect(opened.contains(#""id": "who-is-on""#) && opened.contains(#""command": "who""#) && button(panel, "Save as Tool…") != nil, "\(opened) \(NSApp.windows.map(\.title))")
+
         // Ask in the same chat: a command its scope allows isn't run.
         panel.setMode(.ask)
         wire.then([(200, turn(calls: [("run_command", ["server": "box", "command": "touch \(dir)/made"])])), (200, turn(text: "I can't."))])
