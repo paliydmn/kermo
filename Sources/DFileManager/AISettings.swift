@@ -59,8 +59,10 @@ enum AISettings {
         if a.scheme == "http" && !AIEndpoint.isLocal(a) {
             // macOS (App Transport Security) refuses plain http to a name; an address in numbers it lets through.
             let numbers = (a.host ?? "").contains(":") || (a.host ?? "").split(separator: ".").allSatisfy { Int($0) != nil }
-            said.append(numbers ? "Plain http: the chat goes unencrypted and your key never goes there"
-                        : "Plain http: macOS doesn't let Kermo reach a name on the internet that way — use https")
+            // With a key there the chat sends nothing (`AIEndpoint.problem`): the key never goes unencrypted.
+            said.append(!numbers ? "Plain http: macOS doesn't let Kermo reach a name on the internet that way — use https"
+                        : keys.has(a) ? "Plain http: with a key for it the chat sends nothing there — use https, or remove the key"
+                        : "Plain http: the chat goes unencrypted")
         }
         return said.joined(separator: ". ")
     }

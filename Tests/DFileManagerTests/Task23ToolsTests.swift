@@ -264,6 +264,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         try FileManager.default.createDirectory(atPath: dir + "/sub", withIntermediateDirectories: true)
         try Data(("pass" + "word: hunter22\nname: web\n").utf8).write(to: URL(fileURLWithPath: dir + "/app.conf"))
         try Data([0xff, 0xfe, 0x00, 0x80]).write(to: URL(fileURLWithPath: dir + "/blob"))
+        #expect(FileManager.default.createFile(atPath: dir + "/DB_PASS" + "WORD=hunter22", contents: nil))   // a name the model reads masked, as the chip does
         try Data(("a" + String(repeating: "é", count: AISession.textLimit)).utf8).write(to: URL(fileURLWithPath: dir + "/long.txt"))   // the cut falls inside an é
         // The FIFO in a folder no panel shows: a panel's own look at its folder isn't this test's.
         let aside = dir + "-aside"
@@ -276,7 +277,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         for server in ["mac", box] {   // this Mac first: reading it marks nothing
             answer([0])
             r = await s.call("list_folder", ["server": .string(server), "path": .string(dir)])
-            #expect(!r.isError && r.text.contains("app.conf\t29\t") && r.text.contains("sub/\t\t"), "\(server): \(r.text)")
+            #expect(!r.isError && r.text.contains("app.conf\t29\t") && r.text.contains("sub/\t\t") && !r.text.contains("hunter22") && r.text.contains("DB_PASS" + "WORD=•••"), "\(server): \(r.text)")
             r = await s.call("read_file", ["server": .string(server), "path": .string(dir + "/app.conf")])
             #expect(!r.isError && r.text.contains("name: web") && !r.text.contains("hunter22") && r.text.contains("1 secret hidden"), "\(server): \(r.text)")
             r = await s.call("read_file", ["server": .string(server), "path": .string(dir + "/long.txt")])
@@ -875,7 +876,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
     /// asks every time, under All too; production asks each change and logs it as the assistant's; a row is read
     /// again by its key; values go as the form takes them; Cancel and a refusal run nothing.
     @Test func toolsActionsAreTheAssistantsAsTheirButtonsAre() async throws {
-        let (app, _, panel, done) = try toolsApp()
+        let (app, other, panel, done) = try toolsApp()
         let bench = try ToolsBench()
         defer { bench.done(); done() }
         var box = SavedServer(target: .local())
@@ -935,8 +936,13 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             #expect(r.isError && r.text.contains(said), "\(inputs): \(r.text)")
         }
         #expect(!bench.calls.contains { $0.hasPrefix("ufw allow") })
+        other.showList(ToolListSource(app, try toolNamed(app, "ufw"), box, .local()))   // an open list is read again after the change, as after its button
+        await toolsUntil { other.list?.content != nil }
+        let shown = bench.calls.count
         r = await act("ufw", "allow", ["port": "8080", "proto": "tcp", "source": "any", "comment": "ai"])
         #expect(!r.isError && r.text.hasPrefix("exit 0 — Allowed tcp 8080 from any") && bench.calls.contains("ufw allow proto tcp from any to any port 8080 comment ai"), "\(r.text)")
+        await toolsUntil { bench.calls.dropFirst(shown).last == "ufw status verbose" }
+        #expect(Array(bench.calls.dropFirst(shown)).suffix(2) == ["ufw status numbered", "ufw status verbose"], "\(bench.calls.dropFirst(shown))")
 
         // dangerous asks every time, under All too — the command as it runs, the row; Cancel deletes nothing.
         heard.answers = [0]

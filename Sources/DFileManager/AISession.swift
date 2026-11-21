@@ -631,7 +631,10 @@ final class AISession {
             show(steps)
             return AIResult("Shown.")
         },
-        "list_folder": { s, _, targets in await listing(s.servers[targets[0].place], targets[0].path ?? "/") },
+        "list_folder": { s, _, targets in   // names masked as the folder's chip has them
+            let r = await listing(s.servers[targets[0].place], targets[0].path ?? "/")
+            return r.isError ? r : handOver(r.text)
+        },
         "read_file": { s, _, targets in
             switch await text(s.servers[targets[0].place], targets[0].path ?? "/") {
             case .failure(let no): return .failure(no.text)
