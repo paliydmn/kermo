@@ -38,6 +38,8 @@ Under the switch, the **Scope** row shows what the model may do in this chat, pl
 4. **⎋ or the Stop button** stops the answer, and any question of the chat that is waiting. What the model asked for and didn't get yet isn't done.
 5. **The model reads by itself** where it needs to: the folders, files, terminal output and server info it asks for, and commands that only read (Kermo's allow-list: `cat`, `tail`, `ls`, `df`, `journalctl`, `systemctl status`, `nginx -t`…). The first read on each server — and on this Mac — asks you in the chat: **Allow in This Chat**, or **Cancel** (↩). Every read shows as a step; a click shows what came back. In Ask and Edit a command that could change something is refused without a question — whatever an Agent turn of the same chat was allowed. A turn stops at its 10th request to the model (Agent: 30) — what the model asks for in that one isn't run; say "go on" to let it continue.
 
+![The AI chat in Ask at the right of the window: a question with config.yaml attached, the answer with a command in a block — Into Terminal, Copy — and the tokens it took](images/ai-ask.png)
+
 When the provider says no — a limit, too busy, no network — the chat says so in words with **Retry**; a key it doesn't accept, with **Settings…**. Kermo never retries by itself: each request is your money.
 
 **New Chat** (the pencil at the top) starts again: what the model was allowed is gone, and the Scope row is empty.
@@ -56,6 +58,8 @@ Text from the terminal is taken as it is when you attach it. Showing or hiding t
 
 Where something fails, an **✨ Explain** button asks the chat why. A click shows the chat, attaches what failed as a chip and puts **Why did this fail?** in the field (unless you've typed something there). Nothing goes until you press ↩, so you can change the question or attach more first.
 
+![✨ Explain after a command failed in the terminal: the command with its output attached as a chip, Why did this fail? asked, and the answer](images/ai-explain.png)
+
 - **The terminal:** **Explain · exit N** at the lower right of the tab, after a command that printed something and ended with an error. It goes with the next command. The button only comes when the shell tells the terminal how each command ended (OSC 133 with the exit code), as fish 4 and the shell integrations of iTerm2, WezTerm and kitty do. A plain zsh or bash doesn't, so there **⋯ ▸ Explain Last Command** does it for the command ⌘↑ went to, else the last one, whatever its exit. Stopping a command with ⌃C isn't a failure. With a prompt of two lines, a command that failed without a word gets the button too, its "output" being the prompt's upper line — as in Copy Output.
 - **A save whose config check failed** (`nginx -t`, `visudo`…): **Explain** in its dialog, beside **OK** (↩ is still OK). It attaches the check's whole output and, while it's open, the text that didn't pass.
 - **An output window** (⌘E, a server's command, `git`, `tar`) whose command failed: **✨ Explain** in its status line.
@@ -68,6 +72,8 @@ The chip is from the machine where it failed — a server's output is that serve
 ### Edit: a change as a diff
 
 In **Edit** the model reads the file, then shows its change in the chat as a card: the file and where it is (a [production server](#production-servers)'s in purple, saying so), then each change — the lines around it, what goes (−) and what comes (+) — with **Keep** / **Drop**.
+
+![Edit: a card for config.yaml on this Mac — the lines around the change, what goes and what comes, Keep / Drop, Open in Compare and Apply to Editor — and the Scope row's this Mac: read](images/ai-edit.png)
 
 - **Apply to Editor** puts the changes you keep into the file's tab in Kermo's editor, opening the file if it isn't open (a locked server asks for Touch ID first), with the cursor on the first one. It's one step: **⌘Z** takes all of it back. Nothing is written — the file on the disk or the server is as it was until you press **⌘S**, which saves as always: a config's check, the file's history, the production question.
 - A file open in the editor with unsaved changes gets the change on its text there. If the text changes after the card came — you typed, or applied another — **Apply** refuses: ask again.
@@ -84,6 +90,8 @@ In **Agent** the model does the task: runs commands on servers, copies files and
 2. **The steps go without a question** — inside what you allowed. What lies outside asks again, with the same card: never a silent no, never a silent yes.
 3. **Asked every time, whatever you allowed:** deleting, writing over a file that is there, a Tools action that always asks, and any change on a [production server](#production-servers) — each with **Allow Once** ([What asks every time](#what-asks-every-time)).
 4. **A file open in the editor** isn't written by the model: it proposes the change as a [diff card](#edit-a-change-as-a-diff), and your ⌘S saves. On a server Kermo knows the tab by its path as you opened it: a tab opened through a link there isn't recognised — writing over that file still asks, and the tab's save checks again.
+
+![Agent: the plan ticked off, the steps it took on web-01, its answer with Save as Tool…, and the Scope row's web-01: write into /home/deploy, run commands](images/ai-agent.png)
 
 **The Scope row.** Click a place to set its level — **View** (reads), **Work** (writes into the folders it was given and, on a server, runs commands), **All** (anything there) — or **Take Back**: the next call there asks again. This Mac never runs the model's commands, so its Work is only the folders a task was given. **+** gives a server View yourself before the model asks; this Mac and a production server ask all the same, as their first read would (under **Never Send** production isn't offered), and so does All on this Mac. In Ask and Edit the row offers View only. Everything in it lasts until the chat ends; a New Chat starts from nothing.
 
