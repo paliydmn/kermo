@@ -14,6 +14,8 @@ Release:
 
 ## [Unreleased]
 
+## [2.2] - 2026-11-21
+
 ### Added
 - **AI agents in Kermo's terminal (MCP)**: an agent you start in a terminal tab — Claude Code, or another MCP client — can use Kermo where it is connected: read and copy files between this Mac and servers, run commands on servers, write a text file, open one in the editor. Off by default (**Settings › AI**). Kermo asks before anything you haven't allowed, always before writing over a file with `copy` or `write_file`, before a command it recognises as deleting or writing over (`rm`, `mv`, `>`…) and before changing a production server, and a locked server still wants Touch ID. **Window ▸ AI Scope** and a chip in the status line show what a connected agent may do, take it back, show its journal and disconnect it. Only a program started from Kermo's own terminal tabs gets in. → [AI agents](docs/ai.md)
 - **Your own AI in Settings › AI**: Anthropic or an OpenAI-compatible server (OpenAI, Ollama, LM Studio…), its address, your API key in the Keychain for that address only, the model, and **Test**. Requests go straight from your Mac, only when you use it. → [Your own AI](docs/ai.md#your-own-ai)
@@ -24,9 +26,12 @@ Release:
 - **Agent in the AI chat**: the third mode, beside **Ask** and **Edit**. The model acts — runs commands on servers, copies between this Mac and servers (as a job in Activity), writes text files — within the chat's **Scope**, the row under the modes: for a task it shows a plan, a checklist that ticks itself off, and asks once for all it needs (**Allow for This Task**); then the steps go without a question. A command Kermo recognises as deleting, writing over a file and any change on a production server still ask each time; a locked server wants Touch ID. Click a place in the row to set its level (View, Work, All) or take it back; **+** gives one View yourself. A file open in the editor is changed only by a diff card. → [Agent: a task within its scope](docs/ai.md#agent-a-task-within-its-scope)
 - **Tools in the AI chat's Agent**: on a server the model uses your Tools there — it lists them with their actions and a tool's rows, and runs an action as its button does: a built-in tool's look as reading, any other action once you allow commands there, one that always asks (Delete Rule…, Stop…) every time with its command and row, and every change on a production server. Values are checked as the action's sheet checks them; a row is read again by its key. → [Tools actions](docs/ai.md#agent-a-task-within-its-scope)
 - **Make with AI… and Save as Tool**: **New Tool… ▸ Make with AI…** opens the AI chat with Kermo's tool format attached — a tool in its answer opens in the tool editor with **Open as New Tool…**, unsaved, Problems and Test beside it. After an Agent task done with commands on one server, **Save as Tool…** under the answer drafts them as a tool: next time one click, no AI. → [New Tool…](docs/tools.md#new-tool)
-- **⚠ after text from a server**: once the AI chat or an agent in Kermo's terminal holds text from a server or a terminal — read by the model or attached by you — which can try to steer it, each question the model brings to allow something begins with ⚠ and says so, and in the chat a step that may change something is marked ⚠ → [Text from a server](docs/ai.md#text-from-a-server).
+- **⚠ after text from a server**: once the AI chat or an agent in Kermo's terminal holds text from a server or a terminal — read by the model or attached by you — which can try to steer it, each question the model brings to allow something begins with ⚠ and says so, and in the chat a step that may change something is marked ⚠ → [Text from a server](docs/ai.md#text-from-a-server)
 - **A spending cap for AI chats**: **Settings › AI › Stop a chat at** ($2 unless you change it) — at Anthropic's prices, past it the chat asks before its next request whether to go on, and stops between rounds if you say no, the chat as it was. → [Spending](docs/ai.md#spending)
 - **✨ Explain what failed**: where something fails — a terminal command, a save's config check, an output window, a service's restart, a Tools action, a Monitor alert — **Explain** attaches it to the AI chat and asks why; nothing goes until you press ↩. In the terminal the button comes by itself when the shell reports exit codes (OSC 133: fish 4, iTerm2/WezTerm/kitty integrations); everywhere, **⋯ ▸ Explain Last Command**. **Settings › AI › ✨ Explain when something fails** turns it off. → [✨ Explain what failed](docs/ai.md#-explain-what-failed)
+
+### Changed
+- The daily update check downloads the latest release's small `latest.json` from GitHub instead of asking GitHub's API: still one request a day, with nothing in it but Kermo's version. GitHub counts that file's downloads — how many checks there were is the one number we see; **Check for Updates Automatically** turns it off.
 
 ### Fixed
 - **A save written into a server's file puts the old text back whatever its size**: a symlink into a folder that isn't yours, someone else's file and every save on a server with SELinux are written in place. The old text is now copied aside on the server first (`.dfm-old-…`), not read into memory up to 5 MB — and if the connection drops mid-write, the message names that copy.
@@ -40,9 +45,6 @@ Release:
   - **Run on Servers…** with an `~/.ssh/config` alias of a production server you hadn't connected by yet ran a dangerous command without the production question. Touch ID now comes first, then the question, naming only the servers that will run.
   - The production log no longer has a line for a ⌘E command sent to the terminal whose tab stayed locked, and has one for a new folder or file, rename or permissions change you stopped with ⎋ (“cancelled, may have been done”).
 - An address `ssh -G` can't place is treated as the locked or production server it may be: Touch ID with five minutes of its own, PROD, the questions and the log. The production log also records where each address really goes (`identity`).
-
-### Changed
-- The daily update check downloads the latest release's small `latest.json` from GitHub instead of asking GitHub's API: still one request a day, with nothing in it but Kermo's version. GitHub counts that file's downloads — how many checks there were is the one number we see; **Check for Updates Automatically** turns it off.
 
 ## [2.1.1] - 2026-11-14
 
@@ -530,7 +532,8 @@ The first public release. Kermo was previously called DFileManager; settings and
 - **Themes:** System, Midnight Commander, Far Manager and 10 more.
 - **`fm` command** to open folders from the shell.
 
-[Unreleased]: https://github.com/paliydmn/kermo/compare/v2.1.1...HEAD
+[Unreleased]: https://github.com/paliydmn/kermo/compare/v2.2...HEAD
+[2.2]: https://github.com/paliydmn/kermo/releases/tag/v2.2
 [2.1.1]: https://github.com/paliydmn/kermo/releases/tag/v2.1.1
 [2.1]: https://github.com/paliydmn/kermo/releases/tag/v2.1
 [2.0.1]: https://github.com/paliydmn/kermo/releases/tag/v2.0.1
