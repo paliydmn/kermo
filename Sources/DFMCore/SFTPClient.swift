@@ -469,11 +469,10 @@ public final class SFTPClient: @unchecked Sendable {
     /// only (Linux has no mode of a link's own); without it SETSTAT, which follows a link: listed links are left out,
     /// and `root` (a root panel, a root login) does nothing, since a link put in after the listing would lead it
     /// anywhere. A server can have lsetstat and set no mode with it (glibc before 2.32: Ubuntu 20.04, RHEL 8): the
-    /// first file's mode tells, before anything else changes.
+    /// first file's mode tells, before anything changes.
     public func setPermissions(_ each: [(path: String, item: FileItem)], mode: UInt32?, uid: UInt32?, gid: UInt32?, root: Bool) throws {
-        let files = each.filter { $0.item.kind != .link }, links = each.filter { $0.item.kind == .link }
         var own = extensions["lsetstat@openssh.com"] != nil
-        if own, let mode, let first = files.first {
+        if own, let mode, let first = each.first(where: { $0.item.kind != .link }) {
             do { try expectOK(Self.setstat(first.path, mtime: nil, mode: mode, extended: "lsetstat@openssh.com"), first.path) }
             catch let e as SFTPError where [Self.FAILURE, Self.OP_UNSUPPORTED].contains(e.code ?? Self.OK) {
                 guard try lstat(first.path)?.kind != .link else { throw e }   // a link now: refused rightly
@@ -481,7 +480,7 @@ public final class SFTPClient: @unchecked Sendable {
             }
         }
         if !own, root { throw SFTPError(message: "This server can't change permissions without following symbolic links, so Kermo won't do it as root here.") }
-        for (path, it) in files + links where own || it.kind != .link {
+        for (path, it) in each where own || it.kind != .link {
             let owner = uid == nil && gid == nil ? nil : (uid: uid ?? it.uid, gid: gid ?? it.gid)   // unknown: left as is
             let m = it.kind == .link ? nil : mode
             guard m != nil || owner != nil else { continue }
