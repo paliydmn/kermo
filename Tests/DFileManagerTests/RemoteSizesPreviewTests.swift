@@ -221,3 +221,23 @@ private func tempDir(_ tag: String) throws -> String {
     #expect(!FileManager.default.fileExists(atPath: edited.dir) && !FileManager.default.fileExists(atPath: new.dir))
 }
 }
+
+/// К10: switched to a server tab, the rows of the tab before don't pass for its files while its listing is on its way.
+@MainActor @Test func aServerTabShowsNoRowsButItsOwn() async throws {
+    let d = try tempDir("rtab")
+    defer { try? FileManager.default.removeItem(atPath: d) }
+    let panel = try await serverPanel(d + "/two")   // b
+    defer { panel.shutdown() }
+    panel.newTab()
+    panel.navigate(to: d + "/one", history: .none)   // a local tab: deep
+    await waitUntil { panel.remote == nil && panel.listedItems.map(\.name) == ["deep"] }
+    panel.moveCursor(toName: "deep")
+    panel.toggleMark(move: 0)
+
+    panel.switchTab(by: 1)
+    #expect(panel.remote?.dir == d + "/two")
+    #expect(panel.listedItems.isEmpty && panel.markedNames.isEmpty, "the local tab's rows are the server's")
+    #expect(panel.remoteCursor == nil && panel.remoteSelection == nil && panel.targetItems.isEmpty)
+    await waitUntil { panel.listedItems.map(\.name) == ["b"] }
+    #expect(panel.listedItems.map(\.name) == ["b"], "its own listing comes in")
+}

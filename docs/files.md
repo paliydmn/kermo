@@ -68,7 +68,7 @@ The **Activity** button in the toolbar (a clock going round; a ring that fills a
 - **Covered:** move, **Move to Trash**, **Put Back**, copy (the copies go to the Trash), **Rename…**, **Multi-Rename…** (one step), **New Folder…**, **New File…** and links (the new item goes to the Trash).
 - **Not covered:** **Delete Permanently…**, Admin operations, permissions and owner, tags, extract and compress, split and combine, and everything on a server.
 - Items that merged into or overwrote something aren't undone. Undo never overwrites: if the old name is taken again, it stops with an error.
-- Undo of a copy or a new item moves only that item to the Trash: if it was renamed (in Finder, say) and something else now has its name, that other item stays, and Kermo says so. Undo of a move goes by name and never overwrites.
+- Undo of a copy or a new item moves only that item to the Trash: if it was renamed (in Finder, say) and something else now has its name, that other item stays, and Kermo says so. Undo of **Move to Trash** likewise takes only the item it moved there: another item in the Trash under that name now stays. Undo of a move goes by name and never overwrites.
 
 ## Preview
 

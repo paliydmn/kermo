@@ -147,6 +147,45 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`, as the other tes
     #expect(again == ["/t/a": recorded[0]])
 }
 
+/// В19: ⌘Z of Move to Trash puts back only the item moved there: another one under its name in the Trash now (the
+/// Trash emptied, Finder trashing another) stays, and nothing is left to redo — also after an undo and a redo.
+@MainActor @Test func undoOfTrashPutsBackOnlyTheItemTrashed() async throws {
+    _ = NSApplication.shared
+    let dir = try folder(), trash = "/.Trashes/501"
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    try FileManager.default.createDirectory(atPath: dir + trash, withIntermediateDirectories: true)
+    let app = AppDelegate()
+    app.window = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: true)
+    let um = try #require(app.window.undoManager)
+    func trashed(_ name: String) async throws -> (from: String, to: String) {
+        let p = (from: dir + "/" + name, to: dir + trash + "/" + name)
+        try Data("mine".utf8).write(to: URL(fileURLWithPath: p.from))
+        #expect(rename(p.from, p.to) == 0)   // as trashItem does: the inode goes along
+        app.registerTrashed([p])
+        await app.undoWork?.value
+        return p
+    }
+    func undo(_ redo: Bool = false) async { redo ? um.redo() : um.undo(); await app.undoWork?.value }
+
+    let a = try await trashed("a.txt")
+    try Data("other".utf8).write(to: URL(fileURLWithPath: dir + "/impostor"))   // made before the original goes: another inode
+    #expect(unlink(a.to) == 0 && rename(dir + "/impostor", a.to) == 0)
+    await undo()
+    #expect(read(a.to) == "other" && read(a.from) == nil, "another item came out of the Trash")
+    #expect(!um.canRedo)
+    app.window.attachedSheet.map { app.window.endSheet($0) }
+
+    let b = try await trashed("b.txt")
+    await undo()
+    #expect(read(b.from) == "mine" && read(b.to) == nil)
+    await undo(true)   // into the Trash again: that item, by its inode there
+    #expect(read(b.to) == "mine" && read(b.from) == nil)
+    try Data("other".utf8).write(to: URL(fileURLWithPath: dir + "/impostor"))
+    #expect(unlink(b.to) == 0 && rename(dir + "/impostor", b.to) == 0)
+    await undo()
+    #expect(read(b.to) == "other" && read(b.from) == nil, "after a redo too")
+}
+
 /// F-04 in the F6 dialog: "foo" typed for the folder "Foo" on a case-insensitive disk is that folder itself, so it's a
 /// rename — before, it was taken for an existing folder to move into ("Cannot move a folder into itself"). Another
 /// folder, or the same spelling, isn't.

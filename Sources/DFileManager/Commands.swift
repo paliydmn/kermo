@@ -3376,9 +3376,17 @@ extension AppDelegate {
         var log = log
         for p in pairs {
             log[p.from] = nil
-            if p.to.hasPrefix(NSHomeDirectory() + "/.Trash/") || p.to.contains("/.Trashes/") { log[p.to] = TrashEntry(origin: p.from, at: p.to) }
+            if isInTrash(p.to) { log[p.to] = TrashEntry(origin: p.from, at: p.to) }
         }
         return log
+    }
+
+    nonisolated static func isInTrash(_ path: String) -> Bool { path.hasPrefix(NSHomeDirectory() + "/.Trash/") || path.contains("/.Trashes/") }
+
+    /// Which items are in a Trash now, by inode at their path there: an undo takes back only those (В19). Looks at the
+    /// disk: off the main thread.
+    nonisolated static func trashInodes(_ paths: [String]) -> [String: UInt64] {
+        Dictionary(paths.filter(isInTrash).compactMap { p in TrashEntry.inode(p).map { (p, $0) } }, uniquingKeysWith: { a, _ in a })
     }
 
     func putBack() {
@@ -3423,9 +3431,7 @@ extension AppDelegate {
         guard let um = window.undoManager else { return }
         um.registerUndo(withTarget: record) { [self, record] _ in   // kept by the handler: the undo manager doesn't keep its target
             MainActor.assumeIsolated {
-                performMoves(title) {   // run after the undo/redo work before it: the record is filled in by then
-                    record.done.flatMap { Self.moved($0.renames, $0.jobs) }?.map { (from: $0.to, to: $0.from) }
-                }
+                performMoves(title, back: record)
             }
         }
         um.setActionName(title)
@@ -3466,20 +3472,22 @@ extension AppDelegate {
     func registerCreated(_ title: String, _ paths: [String]) {
         guard !paths.isEmpty, let um = window.undoManager else { return }
         let made = Made()
-        Task { made.inodes = await Blocking.run(.utility) { paths.map(TrashEntry.inode) } }   // read off the main thread, once
+        afterUndoWork { made.inodes = await Blocking.run(.userInitiated) { paths.map(TrashEntry.inode) } }   // off the main thread, before any undo
         um.registerUndo(withTarget: self) { app in
             MainActor.assumeIsolated {
                 let record = app.registerPendingMoves(title)
-                let inodes = made.inodes
                 app.afterUndoWork {
-                    let r = await Blocking.run(.userInitiated) { () -> (trashed: [(from: String, to: String)], errors: [String]) in
+                    let inodes = made.inodes   // read by now: the work before this one
+                    let r = await Blocking.run(.userInitiated) { () -> (trashed: [(from: String, to: String)], errors: [String], inodes: [String: UInt64]) in
                         let (same, others) = TrashEntry.same(inodes.map { zip(paths, $0).map { (from: $0, entry: TrashEntry(origin: "", ino: $1)) } }
                                                              ?? paths.map { (from: $0, entry: TrashEntry(origin: "", ino: nil)) })
                         let r = Self.trash(same.map(\.from))
-                        return (r.trashed, r.errors + others.map { "“\(($0 as NSString).lastPathComponent)”: another item has this name now — left as it is" })
+                        return (r.trashed, r.errors + others.map { "“\(($0 as NSString).lastPathComponent)”: another item has this name now — left as it is" },
+                                Self.trashInodes(r.trashed.map(\.to)))
                     }
                     let (trashed, errors) = (r.trashed, r.errors)
                     app.fill(record, trashed, [])
+                    record.inodes = r.inodes
                     app.recordTrash(trashed)
                     app.panels.forEach { $0.reload() }
                     // A volume without a Trash (SMB, some sticks) refuses: say so, the copy is still there.
@@ -3532,25 +3540,33 @@ extension AppDelegate {
 
     /// Never overwrites: BatchRename refuses if a target exists now (e.g. a new file took the old name); a move
     /// job across volumes asks first. Its redo is registered right away; what the jobs move is read when it runs.
-    /// `pairs` is asked once the undo/redo work before it is done; nil: a move job of it is still running.
-    private func performMoves(_ title: String, _ pairs: @escaping @MainActor () -> [(from: String, to: String)]?) {
+    /// What `source` moved goes back; read once the undo/redo work before it is done (nil: a move job of it is still
+    /// running). Out of a Trash only the items it put there: one Finder trashed since under the name stays (В19).
+    private func performMoves(_ title: String, back source: MoveRecord) {
         let record = registerPendingMoves(title)
         afterUndoWork { [self] in
-            guard let pairs = pairs() else {
+            guard let pairs = source.done.flatMap({ Self.moved($0.renames, $0.jobs) })?.map({ (from: $0.to, to: $0.from) }) else {
                 fill(record, [], [])
                 return showError(JobErrorMessage("Can't undo or redo \(title.lowercased()) while its move between volumes is still running"))
             }
+            let inodes = source.inodes
             do {
-                let (renames, jobs) = try await Blocking.run(.userInitiated) {
-                    let (renames, jobs) = Self.splitMoves(pairs)
+                let (renames, jobs, others, moved) = try await Blocking.run(.userInitiated) {
+                    let (same, others) = TrashEntry.same(pairs.map { (from: $0.from, entry: TrashEntry(origin: $0.to, ino: inodes[$0.from])) })
+                    let (renames, jobs) = Self.splitMoves(same)
                     try BatchRename.run(renames)
-                    return (renames, jobs)
+                    return (renames, jobs, others, Self.trashInodes(renames.map(\.to)))
                 }
                 for job in jobs {
                     replayJobs.append(job)
                     ops.enqueue(job, title: "\(title) \(Self.describe(job.sources.map { URL(fileURLWithPath: $0) }))")
                 }
                 fill(record, renames, jobs)
+                record.inodes = moved
+                if !others.isEmpty {
+                    showError(JobErrorMessage("Left in the Trash — another item has this name there now:\n"
+                        + others.map { ($0 as NSString).lastPathComponent }.joined(separator: "\n")))
+                }
                 updateTrashLog(after: renames)   // the jobs': once they've run (jobFinished)
                 // ⌘Z of a rename: its tab goes back with it. All looked up first: a swap's second pair would find the first's tab.
                 // ponytail: not held while renaming, as ⇧F6 holds it — a ⌘S in that instant makes the old name again.
@@ -3579,11 +3595,20 @@ extension AppDelegate {
         switch job.kind {
         case .move: registerMoves("Move", pairs)
         case .trash:
-            registerMoves("Move to Trash", pairs)   // undo = put back
+            registerTrashed(pairs)
             recordTrash(pairs)
         case .copy: registerCreated("Copy", pairs.map(\.to))
         case .delete: break
         }
+    }
+
+    /// Undo of Move to Trash = put back: only the items moved there, by inode — read as the next undo work, so an undo
+    /// waits for it.
+    func registerTrashed(_ pairs: [(from: String, to: String)]) {
+        guard !pairs.isEmpty else { return }
+        let record = MoveRecord(done: (pairs, []))
+        registerMoves("Move to Trash", record)
+        afterUndoWork { record.inodes = await Blocking.run(.userInitiated) { Self.trashInodes(pairs.map(\.to)) } }
     }
 
     private static func describe(_ urls: [URL]) -> String {
@@ -3601,6 +3626,8 @@ extension AppDelegate {
 /// What an undo/redo moved (`registerMoves`): nil until its disk work is done.
 @MainActor final class MoveRecord {
     var done: (renames: [(from: String, to: String)], jobs: [FileJob])?
+    /// What it moved into a Trash, by inode at the path there (`trashInodes`).
+    var inodes: [String: UInt64] = [:]
     init(done: (renames: [(from: String, to: String)], jobs: [FileJob])?) { self.done = done }
 }
 

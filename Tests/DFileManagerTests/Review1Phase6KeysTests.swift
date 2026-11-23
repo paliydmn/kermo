@@ -91,6 +91,35 @@ extension ServerLockTests {
         }
     }
 
+    /// К12: a keymap.json that can't be read is never saved over — not by a key, a reset or Reset All — and the tab says
+    /// why; fixed by hand, the tab changes keys again.
+    @Test func anUnreadableKeymapIsNotSavedOver() async throws {
+        try await keys { app, pane in
+            let url = URL(fileURLWithPath: AppDelegate.keymapPath)
+            let broken = Data(#"{"go.home": ["ctrl+opt+k"],, "go.up": ["ctrl+opt+u"]}"#.utf8)
+            try broken.write(to: url)
+            pane.reload()
+            #expect(pane.said?.hasPrefix("Can't read keymap.json: ") == true && pane.said?.contains("Fix or delete it") == true, "\(pane.said ?? "")")
+            pane.record("go.home", replacing: nil)
+            pane.pressed(Shortcut("ctrl+opt+h")!)
+            #expect(try Data(contentsOf: url) == broken && pane.said?.contains("Fix or delete it") == true)
+            pane.record("go.home", replacing: nil)
+            pane.pressed(Shortcut("cmd+d")!)   // another command's key: Use Here
+            pane.useHere()
+            #expect(try Data(contentsOf: url) == broken)
+            AppDelegate.answering = { _, _, _ in 0 }
+            defer { AppDelegate.answering = nil }
+            await pane.resetAll()
+            #expect(try Data(contentsOf: url) == broken && pane.said?.contains("Fix or delete it") == true)
+
+            try Data(#"{"go.home": ["ctrl+opt+k"]}"#.utf8).write(to: url)   // fixed by hand
+            pane.reload()
+            #expect(pane.said == nil || pane.said?.contains("keymap.json") == false)
+            pane.reset("go.home")
+            #expect(file() == [:])
+        }
+    }
+
     /// Reset All… asks first, its ↩ on Cancel: it can't be undone.
     @Test func resetAllAsks() async throws {
         try await keys { app, pane in

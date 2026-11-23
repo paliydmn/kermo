@@ -33,6 +33,8 @@ final class KeysPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSear
     private unowned let app: AppDelegate
     private let defaults: [String: [Shortcut]]
     private var file: [String: [String]] = [:]
+    /// keymap.json there but not read (a stray comma): why, as the error said it. Nothing is written over it until it's fixed or deleted (К12).
+    private var unread: String?
     private var all: [Command] = []
     private var owners: [Shortcut: Command] = [:]
     private(set) var shown: [Command] = []
@@ -107,7 +109,8 @@ final class KeysPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSear
     /// Reads keymap.json again (a hand edit shows), and stops a recording.
     func reload() {
         stop()
-        do { file = try AppDelegate.readKeymap() } catch { file = [:]; say("keymap.json: \(error.localizedDescription)") }
+        if unread != nil { unread = nil; clearMessage() }   // fixed meanwhile: it no longer says so
+        do { file = try AppDelegate.readKeymap() } catch { file = [:]; unread = error.localizedDescription; refuse() }
         let bound = AppDelegate.bind(app.makeCommands(), file)
         let visible = bound.commands.filter { !$0.hidden }
         all = AppDelegate.menuOrder(visible) + visible.filter { $0.menu == nil }
@@ -176,8 +179,19 @@ final class KeysPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSear
     private func assign(_ c: Command, _ keys: [Shortcut], defaults d: [Shortcut], in base: [String: [String]]? = nil) {
         let problems = app.newKeyProblems(c.id, keys, old: c.keys, defaults: d)
         guard problems.isEmpty else { return say(problems.joined(separator: "; ")) }
-        app.writeKeymap(AppDelegate.keymap(base ?? file, setting: c.id, to: keys, defaults: d))
+        write(AppDelegate.keymap(base ?? file, setting: c.id, to: keys, defaults: d))
+    }
+
+    /// The only way this tab saves: never over a keymap.json it couldn't read — the user's other keys are in it.
+    private func write(_ f: [String: [String]]) {
+        guard unread == nil else { return refuse() }
+        app.writeKeymap(f)
         reload()
+    }
+
+    private func refuse() {
+        let why = unread ?? ""
+        say("Can't read keymap.json: \(why)\(why.hasSuffix(".") ? "" : ".") Fix or delete it to change keys here — Edit keymap.json… opens it.")
     }
 
     @objc private func editFile() { app.run("app.keymap") }
@@ -186,23 +200,23 @@ final class KeysPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSear
     func reset(_ id: String) {
         guard file[id] != nil else { return }
         if let why = GlobalKey.clash(defaults[id] ?? []) { return say(why) }
-        file[id] = nil
-        app.writeKeymap(file)
-        reload()
+        var f = file
+        f[id] = nil
+        write(f)
     }
 
     @objc private func resetAllClicked() { Task { await resetAll() } }
 
     /// Every entry goes, after a question whose ↩ is Cancel (it can't be undone).
     func resetAll() async {
+        guard unread == nil else { return refuse() }   // its entries aren't known: not "every command has Kermo's keys"
         guard !file.isEmpty else { return say("Every command has Kermo's keys already.") }
         if let why = GlobalKey.clash(file.keys.flatMap { defaults[$0] ?? [] }) { return say(why) }
         var c = Confirm("Reset all shortcuts?", action: "Reset All")
         c.irreversible = true
         c.note = "keymap.json loses its \(file.count) \(file.count == 1 ? "entry" : "entries"): every command gets Kermo's keys back."
         guard await app.confirm(c, on: window) == 0 else { return }
-        app.writeKeymap([:])
-        reload()
+        write([:])
     }
 
     // MARK: - The line under the table

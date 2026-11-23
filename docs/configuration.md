@@ -56,7 +56,7 @@ A file Kermo writes back itself (`servers.json`, `bookmarks.json`, `server-pins.
 
 **Settings › Keys** lists every command with its menu and keys. Type to find one by name, by a word it's known by, or by its key (`⌘D` or `cmd+d`). Click a key, or **＋** after them, and press the new one: **⎋** cancels, **⌫** removes the key you clicked. What can't work is said at once, as Reload Config would say it — a key of the menu bar's own items, one macOS takes first — and nothing changes. A key another command has asks: **Use Here** moves it, **Cancel** leaves both as they were. The arrow after a command's keys gives it Kermo's own back; **Reset All…** does that for every command, after a question.
 
-Keys set there go into `keymap.json`, only for the commands you changed, and work at once. The file stays yours to edit: the tab reads it each time it opens.
+Keys set there go into `keymap.json`, only for the commands you changed, and work at once. The file stays yours to edit: the tab reads it each time it opens. A `keymap.json` it can't read (a stray comma) is never saved over: the tab says why and changes no key until you fix or delete the file.
 
 `keymap.json` maps a command's id to its keys: `{ "command.id": ["cmd+shift+p", "f9"] }`. **Edit Keymap…** writes every current binding on first use, so you change only what you need. An entry replaces all default keys of that command.
 
