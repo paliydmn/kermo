@@ -169,7 +169,7 @@ final class AISession {
         let passed = await app.gate(ends, to: to, question: {
             decision = self.scope.check(call, prod: prod)   // production is known by now
             guard case .ask(let why) = decision, why != .unclear else { return nil }
-            return Self.warned(asks ?? self.question(tool, args, why, on: ends, over: look != nil && call.overwrites), afterRead)
+            return Self.warned(asks ?? Self.question(tool, args, why, on: ends, over: look != nil && call.overwrites), afterRead)
         }, asker: asker)
         switch passed {
         case .locked(let t): return ("locked", .failure("\(Self.label(t)) stays locked: the user didn't unlock it. Nothing was done."))
@@ -338,7 +338,7 @@ final class AISession {
     }
 
     /// The question a call in scope still gets: production, a removal, writing over what is there.
-    private func question(_ tool: AITool, _ args: [String: ToolValue], _ why: AIScope.Reason, on ends: [SFTPTarget], over: Bool = false) -> Confirm {
+    static func question(_ tool: AITool, _ args: [String: ToolValue], _ why: AIScope.Reason, on ends: [SFTPTarget], over: Bool = false) -> Confirm {
         let what = switch why {
         case .production: "change a production server"
         case .removes: "delete"
@@ -348,24 +348,26 @@ final class AISession {
         var c = Confirm("Let the assistant \(what)?", action: "Allow Once")
         c.on(ends)
         c.runs = tool.name
-        c.command = Self.told(args, cut: 400).joined(separator: "\n")
+        let commands = Set(tool.places.compactMap { if case .run(let arg) = $0.access { arg } else { nil } })
+        c.command = told(args, cut: 400, whole: commands).joined(separator: "\n")   // what runs, whole: the box scrolls
         if over, why == .production { c.note = "It writes over the file that is there." }   // production is the reason told; this too
         c.irreversible = why != .production || over
         c.returnCancels = true
         return c
     }
 
-    /// The arguments as a person reads them, each value `cut` at most.
-    private static func told(_ args: [String: ToolValue], cut: Int) -> [String] {
-        args.sorted { $0.key < $1.key }.map { k, v in
+    /// The arguments as a person reads them, each value `cut` at most and what's left said — `whole` ones never.
+    private static func told(_ args: [String: ToolValue], cut: Int, whole: Set<String> = []) -> [String] {
+        func shown(_ k: String, _ s: String) -> String { whole.contains(k) || s.count <= cut ? s : "\(s.prefix(cut))… \(s.count - cut) more characters" }
+        return args.sorted { $0.key < $1.key }.map { k, v in
             switch v {
-            case .string(let s): "\(k): \(s.prefix(cut))"
+            case .string(let s): "\(k): \(shown(k, s))"
             case .bool(let b): "\(k): \(b)"
             case .array(let items):   // propose_edit's edits: old → new each
-                "\(k): " + String(items.map { item -> String in
+                "\(k): " + shown(k, items.map { item -> String in
                     guard case .object(let o) = item, case .string(let a)? = o["old_text"], case .string(let b)? = o["new_text"] else { return "?" }
                     return "\(a) → \(b)"
-                }.joined(separator: "; ").prefix(cut))
+                }.joined(separator: "; "))
             default: "\(k): ?"
             }
         }

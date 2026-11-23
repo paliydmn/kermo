@@ -78,7 +78,7 @@ The sidebar shows a green `⇄` on a server while its tunnels listen (`⇄ 2` fo
 
 ## Locked servers
 
-Turning a tunnel on asks for Touch ID unless the server was unlocked in the last 5 minutes; its connections don't ask again. Locking the screen or sleep turns these tunnels off (connections already open live on, until Disconnect or quitting), and they don't start at launch. An edit that moves a tunnel to a locked server's address turns it off too.
+Turning a tunnel on — or forwarding a port with ↩ in Forward Port's list — asks for Touch ID unless the server was unlocked in the last 5 minutes; its connections don't ask again. Locking the screen or sleep turns these tunnels off (connections already open live on, until Disconnect or quitting), and they don't start at launch. An edit that moves a tunnel to a locked server's address turns it off too.
 
 A production server's tunnels are purple, like the server. Turning one on doesn't ask the production question (a locked production server still asks for Touch ID): a tunnel changes nothing there by itself.
 

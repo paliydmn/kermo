@@ -1602,10 +1602,10 @@ final class DropTerminalView: LocalProcessTerminalView {
         window?.makeFirstResponder(self)
         guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return NSSound.beep() }
         let risk = pasteRisk(), ask = Self.pasteAsks(text, bracketed: terminalInputStateSnapshot()?.bracketedPasteMode ?? false, risky: risk != nil)
-        Task {
-            if ask, let risk, await !Self.pasteQuestion(text, risk, window) { return }
-            paste(self)   // as ⌘V: bracketed when the shell asked for it
-        }
+        // The text read here, never the clipboard again (it may change while the question is up), as ⌘V pastes:
+        // bracketed when the shell asked for it.
+        guard ask, let risk else { return pasteText(text) }
+        Task { if await Self.pasteQuestion(text, risk, window) { pasteText(text) } }
     }
 
     // MARK: Anchor (task 21 PR 4)

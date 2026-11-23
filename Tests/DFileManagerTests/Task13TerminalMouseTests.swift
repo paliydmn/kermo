@@ -402,3 +402,32 @@ extension ServerLockTests {
     v.send(txt: "\n")
     try await waitFor("the program said its size") { text(v).contains("\(d.rows) \(d.cols)") }
 }
+
+/// A right-click paste that asked first sends the text the question showed — not the clipboard read again, which may
+/// have changed while it was up.
+@MainActor @Test func aRightClickPasteSendsTheTextItAskedAbout() async throws {
+    let pb = NSPasteboard(name: .init("dfm-test-" + UUID().uuidString))
+    defer { pb.releaseGlobally() }
+    let v = try await standIn("echo ready; head -c 5 | od -c")
+    defer { v.process.terminate() }
+    v.pasteboard = pb
+    v.pasteRisk = { ([], "test") }
+    pb.clearContents()
+    pb.setString("ab\ncd", forType: .string)
+    let was = DropTerminalView.pasteQuestion
+    var shown: String?
+    DropTerminalView.pasteQuestion = { text, _, _ in
+        shown = text
+        pb.clearContents()
+        pb.setString("XY\nZW", forType: .string)   // copied elsewhere meanwhile (the real clipboard is left alone)
+        return true
+    }
+    defer { DropTerminalView.pasteQuestion = was }
+    let click = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
+                                                context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    v.rightMouseDown(with: click)
+    try await waitFor("the stand-in read five bytes") { text(v).contains("0000005") }
+    #expect(shown == "ab\ncd")
+    let sent = text(v).contains("a   b") && text(v).contains("c   d")
+    #expect(sent)
+}

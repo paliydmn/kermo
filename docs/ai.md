@@ -121,7 +121,7 @@ Whatever you allowed — the chat's Agent and an [agent in Kermo's terminal](#ag
 - a Tools action that always asks from its button (Delete Rule…, Stop…), with the command as it will run and the row;
 - any change on a [production server](#production-servers).
 
-A [locked server](servers.md#lock-a-server) wants Touch ID first, as for you. On a production server the commands, saves, copies and Tools actions go to the [production log](safety.md#production-log), marked as the assistant's (`"by": "ai"`).
+The question shows the command whole, as it will run — a long one scrolls; another long value is cut, saying how much more there is. A [locked server](servers.md#lock-a-server) wants Touch ID first, as for you. On a production server the commands, saves, copies and Tools actions go to the [production log](safety.md#production-log), marked as the assistant's (`"by": "ai"`).
 
 > [!WARNING]
 > Once the model or an agent may **run commands** on a server, a command can still change files there without another question: Kermo recognises the obvious ones above, not every way a shell can write (`cp`, `sed -i`, `tee`, `tar -cf` don't ask). Allow commands only where that is acceptable, and prefer `copy` and `write_file`, which ask before writing over a file.

@@ -425,6 +425,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(rows[0].actions.map { "\($0.key.display) \($0.label)" } == ["⌘O Open in Browser", "⌘C Copy Address", "⌘S Save as Tunnel"] && rows[0].verb == "Forward")
 
         rows[0].run()
+        await waitUntil { !app.tunnels.temporaries().isEmpty }   // after the lock's word
         let next = try #require(app.tunnels.temporaries().first?.tunnel)
         #expect(next.localPort > p[0] && next.host == "localhost" && next.port == p[0] && next.title == "nginx")
         #expect(said.lines.last == "nginx: localhost:\(next.localPort) → db1:\(p[0]) (\(p[0]) is taken here) · listening" && said.errors.last == false)
@@ -445,6 +446,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         let web = SavedServer(target: SFTPTarget(host: "me@web.invalid", port: 2222))   // not saved
         #expect(web.target == SFTPTarget(host: "me@web.invalid", port: 2222) && web.title == "me@web.invalid")
         app.forward(ListeningPort(port: 8080, addresses: ["192.0.2.10"]), of: web, .none)
+        await waitUntil { !app.tunnels.temporaries(server: ServerRow.key(web.target)).isEmpty }
         let w = try #require(app.tunnels.temporaries(server: ServerRow.key(web.target)).first?.tunnel, "\(said.lines.last ?? "")")
         #expect(w.host == "192.0.2.10" && said.lines.last == "192.0.2.10:8080: localhost:\(w.localPort) → me@web.invalid → 192.0.2.10:8080"
                 + (w.localPort == 8080 ? "" : " (8080 is taken here)") + " · listening")
@@ -470,5 +472,31 @@ private final class Locked<T>: @unchecked Sendable {
     var value: T {
         get { lock.withLock { v } }
         set { lock.withLock { v = newValue } }
+    }
+}
+
+extension ServerLockTests {
+    /// ↩ on a locked server's port asks Touch ID first, as Turn On does: refused, nothing listens; allowed, it does.
+    @Test func forwardingALockedServersPortAsksFirst() async throws {
+        let app = AppDelegate()
+        app.tunnels.child = { _, _ in { _ in .init(executable: "/bin/cat") } }
+        let said = Said()
+        app.tunnels.say = { [said] in said.add($0, $1) }
+        var vault = SavedServer(address: "me@vault.invalid")!
+        (vault.name, vault.locked) = ("vault", true)
+        var asked: [String] = [], answer = false
+        ServerLock.servers = { [vault] }
+        ServerLock.authenticate = { asked.append($0); return answer }
+        defer { app.tunnels.stopAll(); ServerLock.servers = { [] }; ServerLock.relock() }
+        let port = try freePorts(1)[0]
+
+        app.forward(ListeningPort(port: port, addresses: ["localhost"]), of: vault, .none)
+        await waitUntil { said.lines.last == "vault stays locked" }
+        #expect(asked == ["open a tunnel to “vault”"] && app.tunnels.temporaries().isEmpty)
+
+        answer = true
+        app.forward(ListeningPort(port: port, addresses: ["localhost"]), of: vault, .none)
+        await waitUntil { !app.tunnels.temporaries().isEmpty }
+        #expect(asked.count == 2 && app.tunnels.temporaries().first?.tunnel.localPort == port)
     }
 }

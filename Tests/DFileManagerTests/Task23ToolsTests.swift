@@ -994,3 +994,15 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(log.contains(#""action":"tool fail2ban unban""#) && log.contains(#""by":"ai""#), "\(log)")
     }
 }
+
+/// The question before a command shows the whole command, spaces and all — what is allowed is what runs; another
+/// long argument is cut with what's left said.
+@MainActor @Test func theQuestionShowsTheWholeCommand() throws {
+    let run = try #require(AITools.all.first { $0.name == "run_command" })
+    let command = "true" + String(repeating: " ", count: 500) + "; echo end"
+    var c = AISession.question(run, ["server": "box", "command": .string(command)], .production, on: [])
+    #expect(c.command == "command: \(command)\nserver: box")
+    let write = try #require(AITools.all.first { $0.name == "write_file" })
+    c = AISession.question(write, ["text": .string(String(repeating: "a", count: 450))], .overwrites, on: [])
+    #expect(c.command == "text: " + String(repeating: "a", count: 400) + "… 50 more characters")
+}

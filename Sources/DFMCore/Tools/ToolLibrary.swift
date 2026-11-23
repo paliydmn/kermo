@@ -16,17 +16,20 @@ public struct LoadedTool: Sendable {
         (self.preset, self.path, self.builtIn, self.scripts, self.hash, self.warnings) = (preset, path, builtIn, scripts, hash, warnings)
     }
 
-    /// What it can run (§12): "Use the tool…?" and its page in the Tools window list it the same.
+    /// What it can run (§12): "Use the tool…?" and its page in the Tools window list it the same — with the `env`
+    /// each run gets, which can change what a command does as much as the command.
     public var runs: ToolRuns {
         let p = preset
+        func env(_ e: [String: String]?) -> [String] { (e ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" } }
         func line(_ what: String, _ run: ToolRun?, requires: Bool = false) -> ToolRuns.Line? {
             guard let run else { return nil }
             let how = run.command.map { $0.all.joined(separator: " ") } ?? run.script.map { s in
                 "the script \(s) (\((scripts[s] ?? "").split(separator: "\n").count) lines)"
-            }
+            } ?? run.files.map { "list the files \($0)" }
             guard let how else { return nil }
             let mac = (run.where ?? p.where) == .mac
-            return ToolRuns.Line(what: what, how: how, root: (run.sudo ?? (requires ? false : p.sudo ?? false)) && !mac, mac: mac)   // §10.5
+            return ToolRuns.Line(what: what, how: (env(run.env) + [how]).joined(separator: " "),
+                                 root: (run.sudo ?? (requires ? false : p.sudo ?? false)) && !mac, mac: mac)   // §10.5
         }
         let itself = [line("requires", p.requires, requires: true), line("header", p.header ?? p.list?.view.header),
                       line("version", p.version.map { ToolRun(command: .one($0.command)) }), line("list", p.list?.run)]
@@ -34,6 +37,7 @@ public struct LoadedTool: Sendable {
             + p.allActions.flatMap { _, a in (a.spec.inputs ?? []).filter { $0.info.type == .choiceFrom }.map { line("\(a.spec.title ?? a.spec.id) choices", $0.run) } }
             + p.allActions.map { _, a in line("\(a.spec.title ?? a.spec.id) requires", a.spec.requires, requires: true) }
             + (p.validators ?? []).map { line("on saving \($0.path)", ToolRun(command: .one($0.check), where: .server)) }   // F4 runs it, no question asked
+            + [p.env.map { _ in ToolRuns.Line(what: "env of every run", how: env(p.env).joined(separator: " ")) }]
         let chosen = [line(p.title, p.commandAction?.run)] + p.allActions.map { _, a in
             var l = line(a.spec.title ?? a.spec.id, a.run.sources.isEmpty ? nil : a.run)
                 ?? a.spec.edit.map { ToolRuns.Line(what: a.spec.title ?? a.spec.id, how: "edit \($0)") }

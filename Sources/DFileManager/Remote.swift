@@ -279,6 +279,11 @@ enum ServerLock {
 
     static func isLearned(_ t: SFTPTarget) -> Bool { identities[spelling(t)] != nil }
 
+    /// `t` logs in as root: written so, or so by `ssh -G` (`User root` in ~/.ssh/config), once learned.
+    static func logsInAsRoot(_ t: SFTPTarget) -> Bool {
+        t.host.lowercased().hasPrefix("root@") || identities[spelling(t)]?.identity?.hasPrefix("root@") == true
+    }
+
     /// Also while `t` or a locked server isn't learned yet (`authorize` finds out), and when `ssh -G` couldn't place
     /// one of them: `t` may be that server, until its own unlock (`authorizeUnplaced`).
     static func needsUnlock(_ t: SFTPTarget) -> Bool {

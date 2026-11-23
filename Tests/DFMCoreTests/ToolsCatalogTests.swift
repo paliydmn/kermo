@@ -148,9 +148,10 @@ private func tool(_ list: String, _ actions: String, scripts: [String: String] =
     #expect(try tool(#"{ "script": "x.list.sh" }"#, delete, scripts: ["x.list.sh": "rm -rf /\n"]).changes(from: script)
             == "Scripts whose text changed (Open File shows them):\n~ x.list.sh")
 
-    // An environment that makes the same command run something else has no line: it differs all the same; new words don't.
+    // An environment that makes the same command run something else is said too; new words don't differ.
     let env = try tool(#"{ "command": "ufw status", "env": { "PATH": "/tmp" } }"#, delete)
-    #expect(env.changes(from: old).isEmpty && env.differs(from: old))
+    #expect(env.changes(from: old) == "Runs by itself:\n+ list: PATH=/tmp ufw status\n− list: ufw status" && env.differs(from: old),
+            "\(env.changes(from: old))")
     var words = old
     (words.preset.title, words.preset.about, words.preset.catalogVersion) = ("Firewall", "Rules", 2)
     #expect(!words.differs(from: old))

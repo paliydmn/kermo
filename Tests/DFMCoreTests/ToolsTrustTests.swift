@@ -127,3 +127,25 @@ private let mine = #"{ "schema": 1, "id": "mine", "title": "Mine", "list": { "sc
     #expect(runs.text.hasPrefix("Runs by itself:\n  requires: command -v kit\n  header: kit status   — as root\n"))
     #expect(runs.text.contains("\n  Open Here: open -R {line}   — on this Mac\n  Sync: kit sync   — as root   — runs on after Kermo quits\n"))
 }
+
+/// The `env` a run gets is on the sheet — the tool's on a line of its own, a run's before its command — and a list of
+/// files is too: what was trusted is all that runs.
+@Test func theTrustSheetShowsEnvAndFiles() throws {
+    let dir = try folder(["envy.json": #"""
+        { "schema": 1, "id": "envy", "title": "Envy", "env": { "B_ONE": "1", "A_TWO": "{repo}" },
+          "vars": { "repo": { "default": "/srv" } },
+          "list": { "files": "/var/log/*.log", "format": "lines", "key": "{line}" },
+          "actions": [ { "id": "go", "title": "Go", "command": "envy go", "env": { "MODE": "fast" } } ] }
+        """#])
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let runs = try #require(ToolLibrary.load(own: dir).tools.first { $0.preset.id == "envy" }).runs
+    #expect(runs.itself.map(\.text) == ["  list: list the files /var/log/*.log", "  env of every run: A_TWO={repo} B_ONE=1"])
+    #expect(runs.chosen.map(\.how) == ["MODE=fast envy go"])
+}
+
+/// An install script's `env` names are checked as any `env`'s.
+@Test func anInstallScriptsEnvNameIsChecked() {
+    let json = #"{ "schema": 1, "id": "x", "title": "X", "install": { "script": { "url": "https://example.com/i.sh", "env": { "a b": "1" } } } }"#
+    let (preset, found) = ToolSchema.validate(Data(json.utf8), file: "x.json")
+    #expect(preset == nil && found.contains { $0.text.contains("an env name is") }, "\(found)")
+}
