@@ -449,6 +449,23 @@ private func sh(_ command: String) -> (status: Int32, err: String) {
     #expect(try job.renameNew(d + "/partial", d + "/free") == d + "/free")
 }
 
+/// A file downloaded to a volume without RENAME_EXCL (FAT) goes in where its name is free and keeps one that's there,
+/// as a local copy does (`renameNew`) — it failed on every new file.
+@Test func downloadsRenameIntoPlaceWithoutExclusiveRename() throws {
+    let d = tempDir()
+    defer { try? fm.removeItem(atPath: d) }
+    nonisolated(unsafe) var asked = false
+    FileJob.noExclusiveRename = { $0.hasPrefix(d) && { asked = true; return true }() }
+    defer { FileJob.noExclusiveRename = { _ in false } }
+    let fs = LocalFS()
+    fm.createFile(atPath: d + "/partial", contents: Data("new".utf8))
+    try fs.rename(d + "/partial", d + "/free", replace: false)
+    #expect(asked && fm.contents(atPath: d + "/free") == Data("new".utf8))
+    fm.createFile(atPath: d + "/partial", contents: Data("x".utf8))
+    #expect(throws: (any Error).self) { try fs.rename(d + "/partial", d + "/free", replace: false) }
+    #expect(fm.contents(atPath: d + "/free") == Data("new".utf8), "what's there stays")
+}
+
 /// R-03: Synchronize took `README` on one side and `readme` on the other for one file (names are matched ignoring
 /// case) and copied the newer over the other's name — on two servers, two unrelated files, one gone. Such a pair is a
 /// conflict now, named, and left alone.

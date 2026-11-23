@@ -230,7 +230,7 @@ final class OpsController {
         var total: Int64 = 0, done: Int64 = 0
         for r in rows {
             let p = r.job.progress
-            if p.totalBytes > 0 { total += p.totalBytes; done += min(p.doneBytes, p.totalBytes) }
+            if p.totalBytes > 0 { total = total.saturatingAdd(p.totalBytes); done = done.saturatingAdd(min(p.doneBytes, p.totalBytes)) }
         }
         // The files' share and each long job's (one without progress counts as begun) make the ring.
         let jobs = toolJobs?.jobs.filter(\.running) ?? []

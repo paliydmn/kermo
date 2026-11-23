@@ -178,7 +178,7 @@ public final class FileJob: @unchecked Sendable {
     public var progress: Progress {
         lock.withLock {
             var p = _progress
-            p.doneBytes += currentFileBytes
+            p.doneBytes = p.doneBytes.saturatingAdd(currentFileBytes)
             p.currentDone = currentFileBytes
             return p
         }
@@ -430,7 +430,7 @@ public final class FileJob: @unchecked Sendable {
             noteCreated(dst)
             if !countsItems {
                 let (f, b) = DirLister.measure(dst, isCancelled: { isCancelled })
-                update { $0.doneFiles += f; $0.doneBytes += b }
+                update { $0.doneFiles += f; $0.doneBytes = $0.doneBytes.saturatingAdd(b) }
             }
             return createsNew ? dst : nil
         }
@@ -513,18 +513,24 @@ public final class FileJob: @unchecked Sendable {
     /// into the same folder, during a long copy — was replaced unasked: it stays now, this takes the next free name, and
     /// the summary says so. Where RENAME_EXCL isn't supported (FAT, some shares): looked at right before instead.
     func renameNew(_ from: String, _ to: String) throws -> String {
-        func exclusive(_ dst: String) -> Int32 {
-            let r = renamex_np(from, dst, UInt32(RENAME_EXCL))
-            guard r != 0, errno == ENOTSUP || errno == EINVAL else { return r }
-            if Self.lstat(dst) != nil { errno = EEXIST; return -1 }
-            return Darwin.rename(from, dst)
-        }
-        if exclusive(to) == 0 { return to }
+        if Self.renameExclusive(from, to) == 0 { return to }
         guard errno == EEXIST else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         let other = Self.uniqueName(to)
-        try Self.check(exclusive(other))
+        try Self.check(Self.renameExclusive(from, other))
         update { $0.errors.append("\(to): appeared while this ran — kept; this one is “\((other as NSString).lastPathComponent)”") }
         return other
+    }
+
+    /// Tests: a destination on a volume without RENAME_EXCL, as FAT is (mounting an image asks for Touch ID).
+    nonisolated(unsafe) static var noExclusiveRename: @Sendable (String) -> Bool = { _ in false }
+
+    /// rename(2) that never replaces: RENAME_EXCL, or where a volume doesn't support it (FAT, some shares) a look right
+    /// before. -1 with errno, EEXIST for a name that's taken.
+    static func renameExclusive(_ from: String, _ to: String) -> Int32 {
+        let r = noExclusiveRename(to) ? { errno = ENOTSUP; return -1 }() : renamex_np(from, to, UInt32(RENAME_EXCL))
+        guard r != 0, errno == ENOTSUP || errno == EINVAL else { return r }
+        if lstat(to) != nil { errno = EEXIST; return -1 }
+        return Darwin.rename(from, to)
     }
 
     fileprivate func copyProgress(_ copied: Int64) {
@@ -588,7 +594,7 @@ public final class FileJob: @unchecked Sendable {
         guard !countsItems else { return }
         let (f, b) = s.map { $0.st_mode & S_IFMT == S_IFDIR } == false ? (1, Int64(s!.st_size))
             : DirLister.measure(src, isCancelled: { isCancelled })
-        update { $0.doneFiles += f; $0.doneBytes += b }
+        update { $0.doneFiles += f; $0.doneBytes = $0.doneBytes.saturatingAdd(b) }
     }
 
     // MARK: - Helpers

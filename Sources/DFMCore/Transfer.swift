@@ -183,7 +183,7 @@ final class LocalFS: TransferFS, Sendable {
     func remove(_ path: String) throws { try check(unlink(path)) }
     func rmdir(_ path: String) throws { try check(Darwin.rmdir(path)) }
     func rename(_ from: String, _ to: String, replace: Bool) throws {
-        try check(replace ? Darwin.rename(from, to) : renamex_np(from, to, UInt32(RENAME_EXCL)))
+        try check(replace ? Darwin.rename(from, to) : FileJob.renameExclusive(from, to))
     }
     func readlink(_ path: String) throws -> String {
         try FileManager.default.destinationOfSymbolicLink(atPath: path)

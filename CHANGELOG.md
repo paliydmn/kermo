@@ -15,6 +15,9 @@ Release:
 ## [Unreleased]
 
 ### Fixed
+- Synchronize with **Include hidden** off leaves an item out on both sides when either side hides it; an item this Mac hides by flag (`~/Library`) no longer shows its server copy as "only on the right", where Mirror would delete it. → [Synchronize folders](docs/search-compare.md#synchronize-folders)
+- Copying from a server to a FAT or exFAT disk no longer fails on every new file.
+- Sizes a server reports as huge no longer overflow the Synchronize summary, the copy progress or the toolbar's ring.
 - A command run in a server folder that no longer exists (⌘E, F2, ⌘↩) runs none of it: the output window shows `cd`'s error, and ⌘↩'s SSH tab ends with it instead of opening in the home folder. → [Command line](docs/commands.md#command-line)
 
 ### Security
