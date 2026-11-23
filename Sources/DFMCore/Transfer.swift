@@ -601,9 +601,11 @@ extension FileJob {
         update { if !$0.errors.contains(line) { $0.errors.append(line) } }   // once, however many items it held
     }
 
-    /// A name a server sent can be anything: never one that leaves the folder it was listed in.
+    /// A name a server sent can be anything: never one that leaves the folder it was listed in. By bytes, as the file
+    /// system reads it: a mark joined to a "/" makes one Character that isn't "/".
     static func isSafeName(_ name: String) -> Bool {
-        !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.utf8.contains(0)
+        let b = Array(name.utf8)
+        return !b.isEmpty && b != Array(".".utf8) && b != Array("..".utf8) && !b.contains(UInt8(ascii: "/")) && !b.contains(0)
     }
 
     private func skip(_ fs: TransferFS, _ path: String, _ a: SFTPClient.Attrs) {

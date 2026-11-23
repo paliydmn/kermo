@@ -147,6 +147,7 @@ import Testing
     #expect(EmbeddedTerminal.osc7Path("file://web-1") == nil)
     #expect(EmbeddedTerminal.osc7Path("http://web-1/x") == nil)
     #expect(EmbeddedTerminal.osc7Path("/var/log") == nil)
+    #expect(EmbeddedTerminal.osc7Path("file://web-1/tmp/x%0Ay") == nil, "a control character, decoded: its lines go to a shell")
 }
 
 /// T3: `cd` in an SSH tab whose shell reports it (OSC 7) is that tab's folder on the server, told to the app (prompt,

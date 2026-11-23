@@ -303,19 +303,24 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
     #expect(s.dir == "." && s.otherDir == nil && s.expand("systemctl status %f") == "systemctl status nginx")
 }
 
-/// A line for a login shell that may be fish: no backslash inside single quotes, where fish alone reads it as an escape.
-@Test func aiQuotesForAnyShell() throws {
-    for text in ["plain", "it's", #"a\b"#, #"/x\';touch /tmp/p;#"#, #"\\'"#, "two\nlines", ""] {
-        let quoted = ShellContext.quoteForAnyShell(text)
-        // But for a quote and a backslash, each written outside the quotes, nothing in it is either.
-        let rest = quoted.dropFirst().dropLast().replacingOccurrences(of: #"'\''"#, with: "").replacingOccurrences(of: #"'\\'"#, with: "")
-        #expect(!rest.contains("'") && !rest.contains("\\"), "\(quoted)")
+/// A line for a shell that may be fish: no backslash inside single quotes, where fish alone reads it as an escape; a
+/// quote, a backslash or a separator with a mark joined to it is still one (the shell reads bytes, not Characters).
+@Test func quotesForAnyShell() throws {
+    for text in ["plain", "it's", #"a\b"#, #"a\'b"#, #"\\'"#, "two\nlines", "", "=ls", "a'\u{301}b", "a\u{600}'b", "a\u{D4E};b", "кирилиця"] {
+        let quoted = ShellContext.quote(text)
+        // Read by scalars as fish reads it: a backslash only outside the quotes, where it takes the next one as it is.
+        var inside = false, escaped = false
+        for c in quoted.unicodeScalars {
+            if escaped { escaped = false } else if c == "'" { inside.toggle() } else if c == "\\" { #expect(!inside, "\(quoted)"); escaped = true }
+        }
+        #expect(!inside, "\(quoted)")
         let sh = Process(), out = Pipe()
         (sh.executableURL, sh.arguments, sh.standardOutput) = (URL(fileURLWithPath: "/bin/sh"), ["-c", "printf %s " + quoted], out)
         try sh.run()
         sh.waitUntilExit()
         #expect(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == text, "\(quoted)")
     }
+    #expect(ShellContext.quoteName("-\u{301}x") == "'./-\u{301}x'", "a leading - with a mark on it")
 }
 
 

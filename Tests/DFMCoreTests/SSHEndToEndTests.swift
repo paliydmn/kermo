@@ -164,3 +164,11 @@ func withTestSSHD(config: String = "", _ body: (_ t: SFTPTarget, _ dir: String, 
     try Data("three\n".utf8).write(to: URL(fileURLWithPath: log))
     #expect(copyIs("one\ntwo\nthree\n"))
 }}
+
+/// A server folder that's gone runs nothing of a command line in it: not the rest of a `;` list either.
+@Test(.timeLimit(.minutes(1))) func commandInAFolderThatsGoneRunsNothing() throws { try withTestSSHD { t, d, _ in
+    var out = Data()
+    let (status, _) = try SSHCommand.run(t, SSHCommand.inDir(d + "/gone", "true; echo ran")) { out += $0 }
+    #expect(status != 0 && !String(decoding: out, as: UTF8.self).contains("ran"))
+    #expect(try SSHCommand.capture(t, SSHCommand.inDir(d, "true; echo ran")) == "ran\n", "a folder that's there")
+}}

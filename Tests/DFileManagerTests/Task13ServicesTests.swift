@@ -67,7 +67,7 @@ import Testing
     /// A follow's remote command ends with ssh; anything else runs as it did.
     @Test func aFollowsCommandEndsWithSSH() {
         #expect(Shell.remote("journalctl -u x.service -f", in: "/", follow: true) == SSHCommand.inDir("/", SSHCommand.endsWithSSH("journalctl -u x.service -f")))
-        #expect(Shell.remote("ls", in: "/srv", follow: false) == "cd -- /srv && ls")
+        #expect(Shell.remote("ls", in: "/srv", follow: false) == "cd -- /srv || exit 1; ls")
     }
 
     /// Services… and Containers… are in each server's menu, after Forward Port… and Tunnels ▸, and in ⌘⇧P.

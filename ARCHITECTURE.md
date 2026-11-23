@@ -229,7 +229,7 @@ Files are owner-only (0600 in 0700 folders). Everything in the config folder is 
 
 Text that crosses one of these lines is data. The code that handles each line is the place to look when changing anything near it.
 
-- **A file name, on this Mac or a server** — `ShellContext.quote` / `quoteForAnyShell`; `isTypeable` before anything is typed into a terminal; `FileJob.isSafeName` for names a server returns.
+- **A file name, on this Mac or a server** — `ShellContext.quote` (one word to any shell, fish too); `isTypeable` before anything is typed into a terminal; `FileJob.isSafeName` for names a server returns.
 - **A server's output** — Parsers in `ToolRecords`; never interpolated into a command. In a terminal: `TerminalGate`.
 - **A tool from outside** — `ToolTrust` (hash of what was approved), `ToolCatalog` (signature before parsing).
 - **The model, and whatever it read** — `AISession.pass` → `AIScope.check` → `AppDelegate.gate`; `AICommand.isReadOnly`; `AISecrets.mask` on the way out.

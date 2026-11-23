@@ -5,7 +5,7 @@ import Foundation
 ///   %s  target names       %S  target full paths   (targets = marked items, or the cursor item)
 ///   %d  current folder     %D  other panel's folder
 ///   %%  a literal %
-/// On a server panel the names and folders are the server's, quoted for its POSIX shell.
+/// On a server panel the names and folders are the server's, quoted for sh, bash, zsh or fish.
 public struct ShellContext: Sendable {
     public var dir: String
     public var otherDir: String?      // nil: the other panel is on another machine, so %D means nothing here
@@ -50,21 +50,18 @@ public struct ShellContext: Sendable {
     /// line the app types — a `cd`, a ⌘E command with %f / %s, ⌃↩, dropped files.
     public static func isTypeable(_ text: String) -> Bool { !text.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f } }
 
-    /// POSIX single-quote quoting: safe for any byte sequence the shell may see. A leading "=" is quoted too:
-    /// zsh expands `=ls` to /bin/ls.
+    /// Single-quote quoting sh, bash, zsh and fish read as the same one word. fish (a server's login shell, the user's
+    /// $SHELL) alone reads `\\` and `\'` inside single quotes as escapes: a quote and a backslash go outside them, where
+    /// every shell reads `\'` and `\\` alike. A leading "=" is quoted too: zsh expands `=ls` to /bin/ls. Unicode scalars,
+    /// not Characters: the shell reads bytes, and a mark joined to a `'` or a `;` makes one Character that isn't it.
     public static func quote(_ s: String) -> String {
-        s.allSatisfy { $0.isLetter || $0.isNumber || "/._-+=:@,".contains($0) } && !s.isEmpty && !s.hasPrefix("=")
-            ? s : "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
-
-    /// `quote` for a line whose reader isn't known — a server's login shell may be fish, which alone reads `\\` and
-    /// `\'` inside single quotes as escapes: a backslash goes outside them, where every shell reads `\\` as one.
-    public static func quoteForAnyShell(_ s: String) -> String {
-        "'" + s.map { $0 == "'" ? "'\\''" : $0 == "\\" ? "'\\\\'" : String($0) }.joined() + "'"
+        let u = s.unicodeScalars
+        let bare = u.allSatisfy { $0.properties.isAlphabetic || $0.properties.numericType != nil || "/._-+=:@,".unicodeScalars.contains($0) }
+        return bare && !u.isEmpty && u.first != "=" ? s : "'" + u.map { $0 == "'" ? "'\\''" : $0 == "\\" ? "'\\\\'" : String($0) }.joined() + "'"
     }
 
     /// A bare name: "./" in front of a leading "-", so `rm %s` on a file named "-rf" doesn't read it as options.
-    public static func quoteName(_ name: String) -> String { quote(name.hasPrefix("-") ? "./" + name : name) }
+    public static func quoteName(_ name: String) -> String { quote(name.unicodeScalars.first == "-" ? "./" + name : name) }
 }
 
 /// Send / Execute in Terminal's text — an editor's line or selection — as the bytes a line editor gets.
