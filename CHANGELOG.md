@@ -30,7 +30,7 @@ Release:
 - Forwarding a locked server's port from Forward Port's list asks for Touch ID first, as turning a tunnel on does. → [Locked servers](docs/tunnels.md#locked-servers)
 - A right-click paste that asked first pastes the text it showed, even if the clipboard changed while it asked. → [Copy and paste with the mouse](docs/terminal.md#copy-and-paste-with-the-mouse)
 - **Use the tool “…”?** and a tool's page show the environment (`env`) its commands run with and the files its list reads; an install script's `env` names are checked as a tool's are. → [Your own tools](docs/tools.md#your-own-tools)
-- **Permissions & Owner…** on a server never goes through a symbolic link: it changes each item itself where the server can (`lsetstat@openssh.com`), else leaves links out — and as root refuses. → [Tags, Info and permissions](docs/files.md#tags-info-and-permissions)
+- **Permissions & Owner…** on a server changes each item itself where the server can (`lsetstat@openssh.com`) — a link's owner, never what it points to. Where it can't, links are left out, and as root it refuses. → [Tags, Info and permissions](docs/files.md#tags-info-and-permissions)
 
 ## [2.2] - 2026-11-21
 

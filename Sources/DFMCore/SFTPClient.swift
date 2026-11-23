@@ -466,26 +466,26 @@ public final class SFTPClient: @unchecked Sendable {
     }
 
     /// Permissions & Owner, never through a symlink. With lsetstat@openssh.com each item itself — a link its owner
-    /// only (Linux has no mode of a link's own); without it SETSTAT, which follows a link: links are left out, and
-    /// `root` (a root panel, a root login) does nothing, since a link put in after the listing would lead it anywhere.
-    /// A server whose lsetstat can't set a mode at all (glibc before 2.32: Ubuntu 20.04, RHEL 8) is taken as one
-    /// without it. Links go last: a refusal comes before anything changed.
+    /// only (Linux has no mode of a link's own); without it SETSTAT, which follows a link: listed links are left out,
+    /// and `root` (a root panel, a root login) does nothing, since a link put in after the listing would lead it
+    /// anywhere. A server can have lsetstat and set no mode with it (glibc before 2.32: Ubuntu 20.04, RHEL 8): the
+    /// first file's mode tells, before anything else changes.
     public func setPermissions(_ each: [(path: String, item: FileItem)], mode: UInt32?, uid: UInt32?, gid: UInt32?, root: Bool) throws {
+        let files = each.filter { $0.item.kind != .link }, links = each.filter { $0.item.kind == .link }
         var own = extensions["lsetstat@openssh.com"] != nil
-        let refused = SFTPError(message: "This server can't change permissions without following symbolic links, so Kermo won't do it as root here.")
-        if !own, root { throw refused }
-        for (path, it) in each.filter({ $0.item.kind != .link }) + each.filter({ $0.item.kind == .link }) {
+        if own, let mode, let first = files.first {
+            do { try expectOK(Self.setstat(first.path, mtime: nil, mode: mode, extended: "lsetstat@openssh.com"), first.path) }
+            catch let e as SFTPError where [Self.FAILURE, Self.OP_UNSUPPORTED].contains(e.code ?? Self.OK) {
+                guard try lstat(first.path)?.kind != .link else { throw e }   // a link now: refused rightly
+                own = false
+            }
+        }
+        if !own, root { throw SFTPError(message: "This server can't change permissions without following symbolic links, so Kermo won't do it as root here.") }
+        for (path, it) in files + links where own || it.kind != .link {
             let owner = uid == nil && gid == nil ? nil : (uid: uid ?? it.uid, gid: gid ?? it.gid)   // unknown: left as is
             let m = it.kind == .link ? nil : mode
-            guard m != nil || owner != nil, own || it.kind != .link else { continue }
-            if own {
-                do { try expectOK(Self.setstat(path, mtime: nil, mode: m, owner: owner, extended: "lsetstat@openssh.com"), path); continue }
-                catch let e as SFTPError where m != nil && [Self.FAILURE, Self.OP_UNSUPPORTED].contains(e.code ?? Self.OK) {
-                    guard !root else { throw refused }
-                    own = false
-                }
-            }
-            try expectOK(Self.setstat(path, mtime: nil, mode: m, owner: owner), path)
+            guard m != nil || owner != nil else { continue }
+            try expectOK(Self.setstat(path, mtime: nil, mode: m, owner: owner, extended: own ? "lsetstat@openssh.com" : nil), path)
         }
     }
 

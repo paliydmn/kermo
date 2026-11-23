@@ -296,6 +296,10 @@ private func serverFailingOneWrite(in dir: String, at offset: Int) -> SFTPTarget
     try SFTPClient.session(serverWhoseLsetstatSetsNoMode(in: dir), cancel: CancelFlag()) { c in
         #expect(throws: (any Error).self) { try c.setPermissions(each, mode: 0o600, uid: nil, gid: nil, root: true) }
         #expect(mode(dir + "/f") == 0o640, "as root: nothing")
+        // Listed as a file, a link by now: its refusal stands, not taken for the server's.
+        let swapped = [(path: dir + "/l", item: FileItem(name: "l", kind: .file, size: 0, mtime: 0, mode: 0o644, flags: 0))]
+        #expect(throws: (any Error).self) { try c.setPermissions(swapped + each, mode: 0o600, uid: nil, gid: nil, root: false) }
+        #expect(mode(dir + "/f") == 0o640)
         try c.setPermissions(each, mode: 0o600, uid: nil, gid: nil, root: false)
     }
     #expect(mode(dir + "/f") == 0o600 && mode(dir + "/out/t") == 0o644)
