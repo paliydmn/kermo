@@ -32,6 +32,22 @@ private struct Pair {
     #expect(Set(p.plan(hidden: true).keys) == [".secret", ".git", "shown"])
 }
 
+/// An item hidden by flag here is out on the other side too: a server's listing carries no flags, and its twin there
+/// must not become "only on the right" — mirror would delete it.
+@Test func hiddenByFlagIsOutOnBothSides() {
+    let p = Pair()
+    defer { try? FileManager.default.removeItem(atPath: p.root) }
+    p.write("l/Library/a", "1")
+    p.write("r/Library/a", "1")
+    p.write("r/shown", "x")
+    #expect(chflags(p.l + "/Library", UInt32(UF_HIDDEN)) == 0)
+    let noFlags: DirSync.Lister = { DirSync.localList($0).map { $0.map { $0.map {
+        FileItem(name: $0.name, kind: $0.kind, size: $0.size, mtime: $0.mtime, mode: $0.mode, flags: 0) } } } }
+    let rows = DirSync.compare(left: p.l, right: p.r, listRight: noFlags)
+    #expect(rows.map(\.path) == ["shown"], "\(rows.map(\.path))")
+    #expect(Set(DirSync.compare(left: p.l, right: p.r, includeHidden: true, listRight: noFlags).map(\.path)).isSuperset(of: ["Library/a", "shown"]), "shown when asked")
+}
+
 @Test func syncFileVersusFolderIsAConflict() {
     let p = Pair()
     defer { try? FileManager.default.removeItem(atPath: p.root) }

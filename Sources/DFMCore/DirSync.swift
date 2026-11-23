@@ -54,7 +54,7 @@ public enum DirSync {
                 done.wait()
                 for ((rel, rightRel), lr, rr) in zip(zip(batch, ls), rs).map({ ($0.0, $0.1, $1) }) {
                     func children(_ r: Result<[FileItem], Error>) throws -> [String: [FileItem]] {
-                        Dictionary(grouping: try r.get().filter { includeHidden || !$0.isHidden }) { key($0.name) }
+                        Dictionary(grouping: try r.get()) { key($0.name) }
                     }
                     let l: [String: [FileItem]], r: [String: [FileItem]]
                     do {
@@ -79,6 +79,10 @@ public enum DirSync {
                                             unreadable: "names differ only in case: \(names)"))
                             continue
                         }
+                        // Hidden on either side, out on both: a server's items carry no flags, so a twin of an item this
+                        // Mac hides by flag (`chflags hidden`) would otherwise be "only there" — and mirror would delete
+                        // it. After the case check: a visible `foo` next to a hidden `Foo` is told, not dropped.
+                        if !includeHidden, ((l[k] ?? []) + (r[k] ?? [])).contains(where: \.isHidden) { continue }
                         switch (a, b) {
                         case let (a?, nil): out.append(Item(path: path, rightPath: rightPath, left: a, right: nil, action: .toRight, isConflict: false))
                         case let (nil, b?): out.append(Item(path: path, rightPath: rightPath, left: nil, right: b, action: .toLeft, isConflict: false))

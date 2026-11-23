@@ -173,7 +173,7 @@ final class SyncWindow: NSWindowController, NSWindowDelegate, NSTableViewDataSou
     private func updateSummary() {
         func total(_ a: DirSync.Action, _ side: (DirSync.Item) -> FileItem?) -> (Int, Int64) {
             let xs = items.filter { $0.action == a }
-            return (xs.count, xs.reduce(0) { $0 + (side($1)?.size ?? 0) })
+            return (xs.count, xs.reduce(0) { $0.saturatingAdd(side($1)?.size ?? 0) })
         }
         let (nr, br) = total(.toRight, \.left)
         let (nl, bl) = total(.toLeft, \.right)
