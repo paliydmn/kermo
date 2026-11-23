@@ -3090,7 +3090,8 @@ extension AppDelegate {
     }
 
     /// chmod / chown of the marked items (or the cursor's) as "644 me:staff": a part left as shown stays as each
-    /// item has it (blank where they differ). Never through a symlink locally; on a server, ids are its own numbers.
+    /// item has it (blank where they differ). Never through a symlink (`SFTPClient.setPermissions` on a server, where ids
+    /// are its own numbers).
     func attributesDialog() {
         if active.archive != nil { return readOnly() }
         let items = active.selectedItems, r = active.remote, paths = active.targetURLs.map(\.path)
@@ -3124,12 +3125,9 @@ extension AppDelegate {
                 guard await confirm(c) == 0 else { return }
             }
             if let r {
-                let each = items.map { ((r.dir as NSString).appendingPathComponent($0.name), $0) }
+                let each = items.map { ((r.dir as NSString).appendingPathComponent($0.name), $0) }, root = r.target.sudo || ServerLock.logsInAsRoot(r.target)
                 await remoteOp("Permissions", r.target, paths: each.map(\.0)) { c in
-                    for (path, it) in each {
-                        let owner = ids.uid == nil && ids.gid == nil ? nil : (uid: ids.uid ?? it.uid, gid: ids.gid ?? it.gid)   // unknown: left as is
-                        try c.setAttrs(path, mtime: nil, mode: mode, owner: owner)
-                    }
+                    try c.setPermissions(each, mode: mode, uid: ids.uid, gid: ids.gid, root: root)
                 }
                 return
             }

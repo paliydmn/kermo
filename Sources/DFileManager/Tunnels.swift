@@ -401,7 +401,8 @@ extension AppDelegate {
     }
 
     /// ↩ on a port: a tunnel already going there serves (a saved one that's off turns on); else a temporary one on the
-    /// same port here — the next free one when it's taken, said (U3) — which then never moves by itself.
+    /// same port here — the next free one when it's taken, said (U3) — which then never moves by itself. A locked
+    /// server asks first, as Turn On does.
     func forward(_ p: ListeningPort, of s: SavedServer, _ then: PortThen) {
         if let to = tunnelTo(p, of: s) {
             let (t, owner) = (to.tunnel, to.server)
@@ -411,12 +412,16 @@ extension AppDelegate {
             }
             return turnOn(t, of: owner) { [unowned self] in portThen(t, of: owner, then) }
         }
-        guard let local = freeLocalPort(p.port) else { return tunnels.say("No free port on this Mac near \(p.port)", true) }
-        let t = Tunnel(name: Tunnel.knownNames[p.port] ?? p.process ?? "", localPort: local, host: p.host, port: p.port)
-        if let why = tunnels.start(t, of: s, temporary: true) { return tunnels.say("“\(t.title)”: \(why)", true) }
-        tunnels.say("\(t.title): " + (t.host == "localhost" ? "\(t.address) → \(s.title):\(t.port)" : t.route(via: s.title))
-                    + (local == p.port ? "" : " (\(p.port) is taken here)") + " · listening", false)
-        portThen(t, of: s, then)
+        Task {
+            guard await ServerLock.authorize(s, "open a tunnel to") else { return tunnels.say("\(s.title) stays locked", false) }
+            if let to = tunnelTo(p, of: s), tunnels.isListening(to.tunnel, of: to.server) { return portThen(to.tunnel, of: to.server, then) }   // ↩ twice
+            guard let local = freeLocalPort(p.port) else { return tunnels.say("No free port on this Mac near \(p.port)", true) }
+            let t = Tunnel(name: Tunnel.knownNames[p.port] ?? p.process ?? "", localPort: local, host: p.host, port: p.port)
+            if let why = tunnels.start(t, of: s, temporary: true) { return tunnels.say("“\(t.title)”: \(why)", true) }
+            tunnels.say("\(t.title): " + (t.host == "localhost" ? "\(t.address) → \(s.title):\(t.port)" : t.route(via: s.title))
+                        + (local == p.port ? "" : " (\(p.port) is taken here)") + " · listening", false)
+            portThen(t, of: s, then)
+        }
     }
 
     private func portThen(_ t: Tunnel, of s: SavedServer, _ then: PortThen) {

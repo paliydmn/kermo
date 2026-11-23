@@ -99,7 +99,7 @@ public enum ToolSchema {
                                    "unknown": .list(.text(.plain))], required: ["command", "pattern"]),
         "install": Object(fields: install),
         "uninstall": Object(fields: install.merging(["keeps": .text(.plain)]) { a, _ in a }),
-        "installScript": Object(fields: ["url": .text(.plain), "env": .map(.text(.plain)), "sha256": .text(.plain)], required: ["url"]),
+        "installScript": Object(fields: ["url": .text(.plain), "env": .map(.text(.value)), "sha256": .text(.plain)], required: ["url"]),
         "precheck": Object(fields: ["title": .text(.plain), "command": .text(.command), "pattern": .text(.regex), "min": .text(.plain)],
                            required: ["title", "command"]),
         "leaves": Object(fields: ["services": .list(.text(.plain)), "paths": .list(.text(.path)), "ports": .list(.integer),

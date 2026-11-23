@@ -33,7 +33,7 @@ As in PuTTY: **selecting text copies it** — a drag, a double-click on a word, 
 - **⌥-drag** selects a block: the same columns of each line, in any program.
 - The wheel and the trackpad scroll such a program, and less, man or `git log` too, as in Terminal.app. With ⌥ held, the wheel scrolls the terminal's own scrollback instead (⇧ too, on a trackpad: macOS turns ⇧ with a mouse wheel into sideways scrolling); a full-screen program (vim, mc, less) has none, so nothing moves.
 - A program can put text into the clipboard itself (OSC 52): Claude Code does when you select its text, and so do tmux and vim. It works in local and SSH tabs, in the tab in front. A program can't read the clipboard this way.
-- A shell that asked for bracketed paste (zsh, bash 5.1 and later) runs nothing pasted until you press ↩. Pasting several lines into a **production** server's SSH tab, or one logged in as `root@`, into a shell that didn't ask for it (`sh`, an old bash), asks first: “Paste 5 lines into web1?”, with its PROD or ROOT strip, the lines themselves and ↩ on Cancel.
+- A shell that asked for bracketed paste (zsh, bash 5.1 and later) runs nothing pasted until you press ↩. Pasting several lines into a **production** server's SSH tab, or one logged in as `root@`, into a shell that didn't ask for it (`sh`, an old bash), asks first: “Paste 5 lines into web1?”, with its PROD or ROOT strip, the lines themselves and ↩ on Cancel. What goes in is the text it showed, even if the clipboard changed meanwhile.
 - Selecting replaces what the clipboard held. To keep it, turn either part off: `terminalCopyOnSelect`, `terminalRightClickPaste` ([Options](#options)).
 
 ### Find and select

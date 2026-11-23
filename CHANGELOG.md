@@ -26,6 +26,11 @@ Release:
 ### Security
 - Names and folders in the command lines Kermo makes are quoted for every shell, fish included, whatever characters they hold, on a server and on this Mac; a folder the terminal reports (OSC 7) with a control character in it is ignored.
 - A name a server lists that holds a `/` is never copied, whatever characters come with it.
+- The assistant's **Allow Once** shows the command whole, spaces and all; another long value is cut, saying how much more there is. → [What asks every time](docs/ai.md#what-asks-every-time)
+- Forwarding a locked server's port from Forward Port's list asks for Touch ID first, as turning a tunnel on does. → [Locked servers](docs/tunnels.md#locked-servers)
+- A right-click paste that asked first pastes the text it showed, even if the clipboard changed while it asked. → [Copy and paste with the mouse](docs/terminal.md#copy-and-paste-with-the-mouse)
+- **Use the tool “…”?** and a tool's page show the environment (`env`) its commands run with and the files its list reads; an install script's `env` names are checked as a tool's are. → [Your own tools](docs/tools.md#your-own-tools)
+- **Permissions & Owner…** on a server changes each item itself where the server can (`lsetstat@openssh.com`) — a link's owner, never what it points to. Where it can't, links are left out, and as root it refuses. → [Tags, Info and permissions](docs/files.md#tags-info-and-permissions)
 
 ## [2.2] - 2026-11-21
 

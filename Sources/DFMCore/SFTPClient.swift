@@ -465,8 +465,33 @@ public final class SFTPClient: @unchecked Sendable {
         try expectOK(Self.setstat(path, mtime: mtime, mode: mode, owner: owner, size: size), path)
     }
 
-    static func setstat(_ path: String, mtime: Double?, mode: UInt32?, owner: (uid: UInt32, gid: UInt32)? = nil, size: Int64? = nil) -> Packet {
-        var p = Packet(Self.SETSTAT)
+    /// Permissions & Owner, never through a symlink. With lsetstat@openssh.com each item itself — a link its owner
+    /// only (Linux has no mode of a link's own); without it SETSTAT, which follows a link: listed links are left out,
+    /// and `root` (a root panel, a root login) does nothing, since a link put in after the listing would lead it
+    /// anywhere. A server can have lsetstat and set no mode with it (glibc before 2.32: Ubuntu 20.04, RHEL 8): the
+    /// first file's mode tells, before anything changes.
+    public func setPermissions(_ each: [(path: String, item: FileItem)], mode: UInt32?, uid: UInt32?, gid: UInt32?, root: Bool) throws {
+        var own = extensions["lsetstat@openssh.com"] != nil
+        if own, let mode, let first = each.first(where: { $0.item.kind != .link }) {
+            do { try expectOK(Self.setstat(first.path, mtime: nil, mode: mode, extended: "lsetstat@openssh.com"), first.path) }
+            catch let e as SFTPError where [Self.FAILURE, Self.OP_UNSUPPORTED].contains(e.code ?? Self.OK) {
+                guard try lstat(first.path)?.kind != .link else { throw e }   // a link now: refused rightly
+                own = false
+            }
+        }
+        if !own, root { throw SFTPError(message: "This server can't change permissions without following symbolic links, so Kermo won't do it as root here.") }
+        for (path, it) in each where own || it.kind != .link {
+            let owner = uid == nil && gid == nil ? nil : (uid: uid ?? it.uid, gid: gid ?? it.gid)   // unknown: left as is
+            let m = it.kind == .link ? nil : mode
+            guard m != nil || owner != nil else { continue }
+            try expectOK(Self.setstat(path, mtime: nil, mode: m, owner: owner, extended: own ? "lsetstat@openssh.com" : nil), path)
+        }
+    }
+
+    static func setstat(_ path: String, mtime: Double?, mode: UInt32?, owner: (uid: UInt32, gid: UInt32)? = nil, size: Int64? = nil,
+                        extended: String? = nil) -> Packet {
+        var p = Packet(extended == nil ? Self.SETSTAT : Self.EXTENDED)
+        if let extended { p.string(extended) }
         p.string(path)
         p.u32((size == nil ? 0 : Self.ATTR_SIZE) | (owner == nil ? 0 : Self.ATTR_UIDGID) | (mtime == nil ? 0 : Self.ATTR_ACMODTIME)
               | (mode == nil ? 0 : Self.ATTR_PERMISSIONS))
@@ -924,7 +949,7 @@ public final class SFTPClient: @unchecked Sendable {
     static let FXF_READ: UInt32 = 1, FXF_WRITE: UInt32 = 2, FXF_CREAT: UInt32 = 8, FXF_TRUNC: UInt32 = 0x10, FXF_EXCL: UInt32 = 0x20
     static let ATTR_SIZE: UInt32 = 1, ATTR_UIDGID: UInt32 = 2, ATTR_PERMISSIONS: UInt32 = 4, ATTR_ACMODTIME: UInt32 = 8
     static let ATTR_EXTENDED: UInt32 = 0x8000_0000
-    static let OK: UInt32 = 0, EOF: UInt32 = 1, NO_SUCH_FILE: UInt32 = 2, PERMISSION_DENIED: UInt32 = 3, OP_UNSUPPORTED: UInt32 = 8
+    static let OK: UInt32 = 0, EOF: UInt32 = 1, NO_SUCH_FILE: UInt32 = 2, PERMISSION_DENIED: UInt32 = 3, FAILURE: UInt32 = 4, OP_UNSUPPORTED: UInt32 = 8
 }
 
 /// Names a server sends needn't be UTF-8 (Latin-1 from an old system). Each byte that isn't part of a UTF-8

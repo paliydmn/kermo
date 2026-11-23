@@ -206,7 +206,7 @@ extension LoadedTool {
     }
 
     /// Whether it differs from `old` in more than its words, its look and its version — in what `changes` has no line
-    /// for too (an `env`, a `files` path, an address): an update with no changes may still not run the same.
+    /// for too (an address, a timeout): an update with no changes may still not run the same.
     public func differs(from old: LoadedTool) -> Bool {
         func bare(_ p: ToolPreset) -> ToolPreset {
             var p = p

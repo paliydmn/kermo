@@ -269,3 +269,73 @@ private func serverFailingOneWrite(in dir: String, at offset: Int) -> SFTPTarget
     #expect(fm.contents(atPath: to + "/f") == changed)
     #expect(try fm.attributesOfItem(atPath: to + "/f")[.modificationDate] as? Date == Date(timeIntervalSince1970: 1_100_000_000))
 }
+
+/// Permissions & Owner on a server never go through a symlink: with lsetstat@openssh.com each item itself; a server
+/// without it leaves links out, and as root does nothing. The link's target here is outside the marked items.
+@Test func serverPermissionsNeverFollowALink() throws {
+    let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-perm-" + UUID().uuidString
+    try FileManager.default.createDirectory(atPath: dir + "/out", withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    for f in ["/f", "/out/t"] { FileManager.default.createFile(atPath: dir + f, contents: Data()); chmod(dir + f, 0o644) }
+    symlink(dir + "/out/t", dir + "/l")
+    let each = [(path: dir + "/f", item: FileItem(name: "f", kind: .file, size: 0, mtime: 0, mode: 0o644, flags: 0)),
+                (path: dir + "/l", item: FileItem(name: "l", kind: .link, size: 0, mtime: 0, mode: 0o755, flags: 0))]
+    func mode(_ p: String) -> mode_t { var st = stat(); lstat(p, &st); return st.st_mode & 0o7777 }
+
+    try SFTPClient.session(.local(), cancel: CancelFlag()) { try $0.setPermissions(each, mode: 0o600, uid: nil, gid: nil, root: true) }
+    #expect(mode(dir + "/f") == 0o600 && mode(dir + "/out/t") == 0o644)
+
+    try SFTPClient.session(serverWithoutExtensions(in: dir), cancel: CancelFlag()) { c in
+        #expect(throws: (any Error).self) { try c.setPermissions(each, mode: 0o640, uid: nil, gid: nil, root: true) }
+        #expect(mode(dir + "/f") == 0o600, "as root: nothing")
+        try c.setPermissions(each, mode: 0o640, uid: nil, gid: nil, root: false)
+    }
+    #expect(mode(dir + "/f") == 0o640 && mode(dir + "/out/t") == 0o644)
+
+    // One whose lsetstat can't set a mode (glibc before 2.32): taken as a server without it.
+    try SFTPClient.session(serverWhoseLsetstatSetsNoMode(in: dir), cancel: CancelFlag()) { c in
+        #expect(throws: (any Error).self) { try c.setPermissions(each, mode: 0o600, uid: nil, gid: nil, root: true) }
+        #expect(mode(dir + "/f") == 0o640, "as root: nothing")
+        // Listed as a file, a link by now: its refusal stands, not taken for the server's.
+        let swapped = [(path: dir + "/l", item: FileItem(name: "l", kind: .file, size: 0, mtime: 0, mode: 0o644, flags: 0))]
+        #expect(throws: (any Error).self) { try c.setPermissions(swapped + each, mode: 0o600, uid: nil, gid: nil, root: false) }
+        #expect(mode(dir + "/f") == 0o640)
+        try c.setPermissions(each, mode: 0o600, uid: nil, gid: nil, root: false)
+    }
+    #expect(mode(dir + "/f") == 0o600 && mode(dir + "/out/t") == 0o644)
+}
+
+/// An sftp-server behind a proxy that refuses an lsetstat@openssh.com with a mode, as OpenSSH does over a glibc
+/// older than 2.32 (Ubuntu 20.04, RHEL 8), and passes on everything else.
+private func serverWhoseLsetstatSetsNoMode(in dir: String) -> SFTPTarget {
+    let path = dir + "/sftp-lsetstat-no-mode"
+    try! """
+    #!/usr/bin/perl
+    use strict; use warnings; use IPC::Open2; use IO::Select;
+    my $pid = open2(my $out, my $in, '/usr/libexec/sftp-server');
+    binmode($_) for \\*STDIN, \\*STDOUT, $out, $in;
+    my ($fromClient, $fromServer) = ('', '');
+    sub put { my ($fh, $d) = @_; while (length $d) { my $n = syswrite($fh, $d); die unless defined $n; substr($d, 0, $n) = '' } }
+    sub packets { my $b = shift; my @p; while (length $$b >= 4) { my $l = unpack('N', $$b); last if length $$b < 4 + $l; push @p, substr($$b, 0, 4 + $l, '') } @p }
+    my $sel = IO::Select->new(\\*STDIN, $out);
+    while (my @ready = $sel->can_read) {
+        for my $fh (@ready) {
+            my $n = sysread($fh, my $chunk, 1 << 16);
+            exit 0 unless $n;
+            if ($fh == $out) { $fromServer .= $chunk; put(\\*STDOUT, $_) for packets(\\$fromServer); next }
+            $fromClient .= $chunk;
+            for my $p (packets(\\$fromClient)) {
+                my ($type, $id, $nl) = unpack('x4 C N N', $p);
+                if ($type == 200 && substr($p, 13, $nl) eq 'lsetstat@openssh.com') {
+                    my $pl = unpack("x13 x$nl N", $p);
+                    my $flags = unpack("x13 x$nl x4 x$pl N", $p);
+                    if ($flags & 4) { put(\\*STDOUT, pack('N C N N N N', 17, 101, $id, 4, 0, 0)); next }
+                }
+                put($in, $p);
+            }
+        }
+    }
+    """.write(toFile: path, atomically: true, encoding: .utf8)
+    chmod(path, 0o755)
+    return .local(server: path)
+}
