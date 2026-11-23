@@ -3472,12 +3472,12 @@ extension AppDelegate {
     func registerCreated(_ title: String, _ paths: [String]) {
         guard !paths.isEmpty, let um = window.undoManager else { return }
         let made = Made()
-        Task { made.inodes = await Blocking.run(.utility) { paths.map(TrashEntry.inode) } }   // read off the main thread, once
+        afterUndoWork { made.inodes = await Blocking.run(.userInitiated) { paths.map(TrashEntry.inode) } }   // off the main thread, before any undo
         um.registerUndo(withTarget: self) { app in
             MainActor.assumeIsolated {
                 let record = app.registerPendingMoves(title)
-                let inodes = made.inodes
                 app.afterUndoWork {
+                    let inodes = made.inodes   // read by now: the work before this one
                     let r = await Blocking.run(.userInitiated) { () -> (trashed: [(from: String, to: String)], errors: [String], inodes: [String: UInt64]) in
                         let (same, others) = TrashEntry.same(inodes.map { zip(paths, $0).map { (from: $0, entry: TrashEntry(origin: "", ino: $1)) } }
                                                              ?? paths.map { (from: $0, entry: TrashEntry(origin: "", ino: nil)) })
@@ -3564,7 +3564,7 @@ extension AppDelegate {
                 fill(record, renames, jobs)
                 record.inodes = moved
                 if !others.isEmpty {
-                    showError(JobErrorMessage("Can't undo \(title.lowercased()) — the Trash holds another item under this name now, left as it is:\n"
+                    showError(JobErrorMessage("Left in the Trash — another item has this name there now:\n"
                         + others.map { ($0 as NSString).lastPathComponent }.joined(separator: "\n")))
                 }
                 updateTrashLog(after: renames)   // the jobs': once they've run (jobFinished)
