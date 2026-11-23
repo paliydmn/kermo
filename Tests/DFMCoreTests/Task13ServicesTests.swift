@@ -69,7 +69,7 @@ let unitsPlain = """
     #expect(Services.status(u) == "systemctl status --no-pager -- getty@tty1.service")
     #expect(Services.log(u) == "journalctl -u getty@tty1.service -n 200 -f --no-pager")
     #expect(Services.restart(u) == "systemctl restart -- getty@tty1.service")
-    #expect(Services.status(ServiceUnit(unit: "fsck@a\\x2db.service", active: "active", sub: "exited")) == "systemctl status --no-pager -- 'fsck@a\\x2db.service'")
+    #expect(Services.status(ServiceUnit(unit: "fsck@a\\x2db.service", active: "active", sub: "exited")) == "systemctl status --no-pager -- 'fsck@a'\\\\'x2db.service'")
     let c = ContainerInfo(name: "web", state: "running", status: "Up 3 hours", image: "nginx:1")
     #expect(Containers.logs(c, tool: "podman") == "podman logs --tail 200 -f -- web" && Containers.restart(c, tool: "docker") == "docker restart -- web")
 }

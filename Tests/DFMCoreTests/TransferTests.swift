@@ -243,7 +243,7 @@ private func pauseMidFile(_ job: FileJob) throws {
 }
 
 @Test func unsafeNamesAreNotEndpointsOfAPath() {
-    for bad in ["", ".", "..", "a/b", "../x", "x\0y"] { #expect(!FileJob.isSafeName(bad), "\(bad)") }
+    for bad in ["", ".", "..", "a/b", "../x", "x\0y", "a/\u{301}b", "../\u{301}x"] { #expect(!FileJob.isSafeName(bad), "\(bad)") }
     for good in ["..a", "a..", ".hidden", "it's", "line\nbreak", "кирилиця"] { #expect(FileJob.isSafeName(good), "\(good)") }
 }
 

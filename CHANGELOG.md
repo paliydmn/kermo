@@ -14,6 +14,13 @@ Release:
 
 ## [Unreleased]
 
+### Fixed
+- A command run in a server folder that no longer exists (⌘E, F2, ⌘↩) runs none of it: the output window shows `cd`'s error, and ⌘↩'s SSH tab ends with it instead of opening in the home folder. → [Command line](docs/commands.md#command-line)
+
+### Security
+- Names and folders in the command lines Kermo makes are quoted for every shell, fish included, whatever characters they hold, on a server and on this Mac; a folder the terminal reports (OSC 7) with a control character in it is ignored.
+- A name a server lists that holds a `/` is never copied, whatever characters come with it.
+
 ## [2.2] - 2026-11-21
 
 ### Added

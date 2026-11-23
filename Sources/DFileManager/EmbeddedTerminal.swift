@@ -1112,9 +1112,10 @@ final class EmbeddedTerminal: NSObject, LocalProcessTerminalViewDelegate, NSSpli
         return cwd
     }
 
-    /// "file://host/some%20dir" → "/some dir".
+    /// "file://host/some%20dir" → "/some dir"; nil for a path with a control character (decoded: %0A is one too) —
+    /// it goes on into lines a shell reads.
     nonisolated static func osc7Path(_ url: String) -> String? {
-        guard let u = URL(string: url), u.isFileURL, !u.path.isEmpty else { return nil }
+        guard let u = URL(string: url), u.isFileURL, !u.path.isEmpty, ShellContext.isTypeable(u.path) else { return nil }
         return u.path
     }
 

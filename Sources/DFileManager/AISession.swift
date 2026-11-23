@@ -409,7 +409,7 @@ final class AISession {
     /// zsh and fish read alike; `sh` reads the command, in `dir` or not at all. A pager would wait for a key nobody
     /// presses. Fails with `CancellationError` (Stop) or with what kept it from starting.
     static func run(_ t: SFTPTarget, _ command: String, in dir: String? = nil) async -> Result<Ran, Error> {
-        let line = (dir.map { "cd -- \(ShellContext.quoteForAnyShell($0)) && " } ?? "") + "exec env PAGER=cat SYSTEMD_PAGER= sh -c " + ShellContext.quoteForAnyShell(command)
+        let line = (dir.map { "cd -- \(ShellContext.quote($0)) && " } ?? "") + "exec env PAGER=cat SYSTEMD_PAGER= sh -c " + ShellContext.quote(command)
         let env = SSHAskpass.env, seconds = commandSeconds, limit = textLimit
         return await work { flag in
             let late = CancelFlag(), full = CancelFlag()

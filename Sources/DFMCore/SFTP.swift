@@ -504,9 +504,10 @@ public enum SSHCommand {
         return SFTPTarget(host: host.contains("@") || user == nil ? host : "\(user!)@\(host)", port: port)
     }
 
-    /// A remote command line: `command` in `dir` (the server's login shell parses it; `dir` is quoted for it).
+    /// A remote command line: `command` in `dir` (the server's login shell parses it; `dir` is quoted for it). None of
+    /// it runs if the folder is gone: `&&` would skip only the first command of a `;` list and run the rest in ~.
     public static func inDir(_ dir: String, _ command: String) -> String {
-        "cd -- \(ShellContext.quote(dir)) && " + command
+        "cd -- \(ShellContext.quote(dir)) || exit 1; " + command
     }
 
     /// Runs `command` on the server without a terminal (its login shell parses it), handing stdout over as it
