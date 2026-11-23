@@ -1594,13 +1594,20 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         loadGen += 1   // a listing on its way doesn't land over it
         connecting = nil
         busyMessage = busyOps.last?.message   // that listing's "Connecting…" too
+        leaveList()
+        remote = nil
+        parked = p
+        clearRows()
+        updateTabBar()
+    }
+
+    /// Nothing of what was on screen stays to be acted on: the rows, marks, filter, search or archive go, and nothing
+    /// listed for them lands later. A server tab switched to shows nothing until its own listing is in (К10).
+    private func clearRows() {
         watcher?.cancel()
         watcher = nil
         if searchTitle != nil { searchFlag?.cancel(); searchTitle = nil; searching = false }
-        leaveList()
         archive = nil
-        remote = nil
-        parked = p
         loadError = nil
         all = []
         (sortedAll, sortedBy) = ([], (sortKey, ascending))
@@ -1611,7 +1618,6 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         setGit(nil)
         showPath()
         applyView(select: nil, newFolder: true)
-        updateTabBar()
     }
 
     // MARK: - A list in place of the folder (Р7): Services, Containers, Ports
@@ -2279,19 +2285,17 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         backStack = t.back
         forwardStack = t.forward
         // Marks and filter are the tab's own, also in another tab of the same folder. They come back with the tab's
-        // listing; until then the old rows stay on screen with the old marks.
+        // listing; until then a local tab's old rows stay on screen (a server tab's don't: clearRows).
         let keep = (t.marked, t.filter)
         if let r = t.remote {
             // Take the tab's server now, not when the listing arrives: switching again before then must save this tab as it is.
             path = t.path
             leaveList()
             remote = r
-            watcher?.cancel()   // also makes the fallback navigate() below count as a change, clearing `remote`
-            watcher = nil
-            marked.removeAll()   // `remote` is already the tab's: old rows must not pass for its files
-            clearSizes()
-            if filter != nil { clearFilter(apply: false) }
             busyMessage = "Connecting to \(r.target.host)… ⎋ cancels"
+            // `remote` is already the tab's: no old row may pass for its files. Stopping the watcher also makes the
+            // fallback navigate() below count as a change, clearing `remote`.
+            clearRows()
             loadRemote(r.target, dir: r.dir, select: t.cursor, keep: keep) { [weak self] _ in   // server gone: the tab falls back to its folder
                 self?.navigate(to: t.path, history: .none)
             }
