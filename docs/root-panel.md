@@ -28,7 +28,7 @@ me ALL=(root) NOPASSWD: /usr/lib/openssh/sftp-server
 
 - It tries the password once on its own, with `sudo -S -p '' -k -- <sftp-server>` and nothing after the password, so `sftp-server` ends at once. A wrong password costs a single attempt in the server's log. Then the session gives the password to sudo on stdin, never on a command line or in a file.
 - If sudo takes the password but doesn't allow `sftp-server` to the user, it says so at once.
-- The password stays in memory for 5 minutes after its last use. Locking the screen, sleep or **Disconnect** forgets it.
+- The password stays in memory for 5 minutes after its last use. Locking the screen, sleep or **Disconnect** forgets it. Each save of a file opens a root session of its own, so a save after that asks again, unless the password is in the Keychain.
 - **Save in Keychain** keeps it in the login keychain as "Kermo sudo: host", apart from the ssh password. It is removed when sudo refuses it, when you delete the saved server, or with **Forget the saved sudo password** in the server's **Edit…** sheet.
 - sudo-rs 0.2.2 can't take a password this way. Set up `NOPASSWD` for it.
 

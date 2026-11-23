@@ -223,30 +223,37 @@ extension ServerLockTests {
     #expect(AppDelegate.commandLineKeys(root: SFTPTarget(host: "web").asRoot()).last?.label == "Runs as your user, not root")
 }
 
-/// A save goes over the session of the panel showing that server: from a root panel, no new sudo (where sudo wants a
-/// password: no look, no check, no second session). Another server, or no panel on it: a session of its own.
-@Test @MainActor func savesRideThePanelsSession() async throws {
+/// К5: a save goes over a session of its own, not the panel's: that one closes when the panel leaves the server, or
+/// with a wake or a network change (`KeptSession.closeAll`) — mid-save, a file written into (SELinux, another owner's)
+/// was left cut. Here the panel's session closes again and again all through the save, which still goes through whole.
+@Test @MainActor func aSaveOutlivesThePanelsSession() async throws {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-rsave-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(atPath: dir) }
     let fake = dir + "/sudo"
-    try Data("#!/bin/sh\necho \"$*\" >> \"$0.log\"\n[ \"$1\" = -n ] || exit 2\nexec \"$3\"\n".utf8).write(to: URL(fileURLWithPath: fake))
+    try Data("#!/bin/sh\n[ \"$1\" = -n ] || exit 2\nexec \"$3\"\n".utf8).write(to: URL(fileURLWithPath: fake))
     chmod(fake, 0o755)
-    let root = SFTPTarget.local(sudo: fake)
+    let root = SFTPTarget.local(sudo: fake, selinux: true)   // SELinux: written into the file
+    let app = AppDelegate()
     let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    app.panels = [panel]
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
     panel.loadRemote(root, dir: dir, select: nil)
     for _ in 0..<250 where panel.remote?.target != root || panel.connecting != nil { try? await Task.sleep(for: .milliseconds(20)) }
-    let kept = try #require(AppDelegate.keptSession(of: root, in: [panel]))
-    #expect(AppDelegate.keptSession(of: root.asRoot(false), in: [panel]) == nil && AppDelegate.keptSession(of: root, in: []) == nil)
-    let sessions = { (try? String(contentsOfFile: fake + ".log", encoding: .utf8))?.split(separator: "\n").count ?? 0 }
-    let before = sessions()
+    let kept = try #require(panel.kept)
+    let new = Data(repeating: 0x6e, count: 256 << 10)
     try Data("old".utf8).write(to: URL(fileURLWithPath: dir + "/f.conf"))
-    try Data("new".utf8).write(to: URL(fileURLWithPath: dir + "/l"))
-    let attrs = try await Blocking.run {
-        try SFTP.session(root, env: [:], cancel: CancelFlag(), on: kept) { c in try c.upload(dir + "/l", to: dir + "/f.conf", baseline: nil) }
-    }
-    #expect(attrs.size == 3 && FileManager.default.contents(atPath: dir + "/f.conf") == Data("new".utf8))
-    #expect(sessions() == before, "no new sudo run for the save")
+    try new.write(to: URL(fileURLWithPath: dir + "/l"))
+    let c = try SFTPClient(root)
+    let state = AppDelegate.RemoteEdit(baseline: try #require(try c.stat(dir + "/f.conf")))
+    c.close()
+    let done = CancelFlag()
+    defer { done.cancel() }
+    Thread.detachNewThread { while !done.isCancelled { kept.close(); usleep(200) } }
+    var said: [String] = []   // the assistant's way: what went wrong in words, not a sheet with no window here
+    let ok = await app.upload(URL(fileURLWithPath: dir + "/l"), to: dir + "/f.conf", on: root, state) { said.append($0) }
+    #expect(ok, "\(said)")
+    #expect(FileManager.default.contents(atPath: dir + "/f.conf") == new)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: dir).sorted() == ["f.conf", "l", "sudo"], "no partial file, no old copy left")
 }

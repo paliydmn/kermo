@@ -21,6 +21,7 @@ Release:
 - **Settings › Keys** never saves over a `keymap.json` it can't read: it says why and changes no key until the file is fixed or deleted. → [Keymap](docs/configuration.md#keymap)
 - Undo of **Move to Trash** puts back only the item it moved: another item in the Trash under that name now stays. → [Undo and redo](docs/files.md#undo-and-redo)
 - Sizes a server reports as huge no longer overflow the Synchronize summary, the copy progress or the toolbar's ring.
+- A save to a server no longer fails when its panel leaves that server, or when Kermo resets its connections after a wake or a network change; a file written into in place (SELinux, someone else's) could be left part new, part old. On a root panel where sudo wants a password, each save is a sudo of its own. → [Open and edit](docs/server-files.md#open-and-edit)
 - A command run in a server folder that no longer exists (⌘E, F2, ⌘↩) runs none of it: the output window shows `cd`'s error, and ⌘↩'s SSH tab ends with it instead of opening in the home folder. → [Command line](docs/commands.md#command-line)
 
 ### Security
