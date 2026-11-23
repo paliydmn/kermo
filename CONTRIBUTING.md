@@ -2,6 +2,8 @@
 
 Found a bug or have an idea? Open an [issue](https://github.com/paliydmn/kermo/issues). For a change to the code or the docs, open a pull request.
 
+How the code is organised, and the rules every change keeps, is in [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Build and run
 
 You need macOS 14 or later and the Command Line Tools with Swift 6 or newer (`swift --version`). Xcode isn't required.
