@@ -23,6 +23,7 @@ Release:
 - Sizes a server reports as huge no longer overflow the Synchronize summary, the copy progress or the toolbar's ring.
 - A save to a server no longer fails when its panel leaves that server, or when Kermo resets its connections after a wake or a network change; a file written into in place (SELinux, someone else's) could be left part new, part old. On a root panel where sudo wants a password, each save is a sudo of its own. → [Open and edit](docs/server-files.md#open-and-edit)
 - A number a server gives a tool that no integer holds — infinite, not a number, or exabytes from a FUSE disk — shows as it came instead of closing Kermo; a table whose header line is only spaces no longer closes it either.
+- Going to a folder that isn't there from an empty folder (a stale favorite, a mistyped path) stays where you are instead of jumping to the home folder — on a server, instead of leaving it. → [Status line and the panel's middle](docs/window.md#status-line-and-the-panels-middle)
 - A watched alert whose row is gone — a disk unmounted, a site removed — ends with **No longer reported** in the tool's events instead of standing until a restart. → [Watching a server](docs/tools.md#watching-a-server)
 - A watched tool updated or edited runs as its new version at once, not the old one until a restart.
 - A watched server printing a line with no end no longer fills this Mac's memory: past 1 MB the line is dropped.

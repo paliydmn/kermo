@@ -727,7 +727,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 resolveLinks(items, in: newPath, gen: gen)
             case .failure(let error):
                 NSSound.beep()
-                if newPath == path && all.isEmpty && parked == nil { loadError = error.localizedDescription }   // nothing of it shown: the middle says so too
+                if newPath == plainFolder && all.isEmpty { loadError = error.localizedDescription }   // nothing of it shown: the middle says so too
                 statusLabel.stringValue = "\((newPath as NSString).abbreviatingWithTildeInPath): \(error.localizedDescription)"
                 statusError = true
                 if (error as? POSIXError)?.code == .ENOENT { onGone?(newPath) }
@@ -740,8 +740,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                         guard let self, m == moves else { return }
                         navigate(to: up)
                     }
-                } else if all.isEmpty && parked == nil && newPath != NSHomeDirectory() {   // parked: it stays, the error said
-                    navigate(to: NSHomeDirectory(), history: .none)   // e.g. restored path no longer exists
+                } else if all.isEmpty && (history == .none || !listedOnce) && parked == nil && newPath != NSHomeDirectory() {
+                    // Nothing of the tab shown yet (a restored path gone, a tab's folder, a server's left for it): home.
+                    // Gone to from a folder shown — even an empty one — it stays; on a server, the server does. Parked: the error said.
+                    navigate(to: NSHomeDirectory(), history: .none)
                 }
             }
         }

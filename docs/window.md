@@ -54,6 +54,8 @@ When there's nothing to list, the panel's middle says why and what comes next, a
 
 A filter that hides every row says so in the status line, not in the middle.
 
+Going to a folder that can't be opened — a favorite that's gone, a mistyped path — beeps and says why in the status line; the panel stays where it is, on a server too. A tab whose own folder is gone (after a restart, or when you switch to it) opens your home folder.
+
 SSH tabs in the terminal come back the same way: ↩ reconnects them ([Terminal](terminal.md)).
 
 ## Key bar
