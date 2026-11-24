@@ -283,8 +283,10 @@ public enum ToolSchema {
             case .integer: if !isNumber(v) || (v as! NSNumber).doubleValue.rounded() != (v as! NSNumber).doubleValue { wrong("a whole number") }
             case .bool: if !isBool(v) { wrong("true or false") }
             case .duration:
-                if isNumber(v) { break }
-                guard let s = v as? String, ToolDuration.text(s).seconds != nil else { return wrong("a duration: \"90s\", \"5m\", \"2h\", \"7d\" or seconds") }
+                guard let s = isNumber(v) ? (v as! NSNumber).doubleValue : (v as? String).flatMap({ ToolDuration.text($0).seconds }) else {
+                    return wrong("a duration: \"90s\", \"5m\", \"2h\", \"7d\" or seconds")
+                }
+                if !(0...ToolDuration.longest).contains(s) { wrong("a duration from 0 to 10 years") }
             case .scalar: if !(v is String || v is NSNumber) { wrong("a string, a number or true/false") }
             case .oneOf(let all):
                 guard let s = v as? String, all.contains(s) else { return wrong("one of " + all.map { "“\($0)”" }.joined(separator: ", ")) }
@@ -492,9 +494,11 @@ extension ToolSchema.Check {
         for (id, m) in p.metrics ?? [:] where m.calc != nil && (m.path == nil || m.count != nil) {
             error([.key("metrics"), .key(id), .key("calc")], "\(m.calc!) works on a number at path, not on a count")
         }
-        if let w = p.watch, w.every < 1 { error([.key("watch"), .key("every")], "a second or more") }   // `sleep 0` would spin, and a tick divides by it
-        for (path, l) in [([ToolPath.key("list")], p.list)] + p.allActions.map({ ($0.path + [.key("list")], $0.action.spec.list) }) where (l?.view.every ?? 2) < 2 {
-            error(path + [.key("every")], "2 seconds or more: a list read again sooner would read all the time")
+        // `sleep 0` would spin, and a tick divides by it
+        if let w = p.watch, !(1...ToolDuration.longest).contains(w.every) { error([.key("watch"), .key("every")], "a second to 10 years") }
+        for (path, l) in [([ToolPath.key("list")], p.list)] + p.allActions.map({ ($0.path + [.key("list")], $0.action.spec.list) })
+        where !(2...ToolDuration.longest).contains(l?.view.every ?? 2) {
+            error(path + [.key("every")], "2 seconds to 10 years: a list read again sooner would read all the time")
         }
 
         // Names: Kermo's own hidden, placeholders nothing fills.

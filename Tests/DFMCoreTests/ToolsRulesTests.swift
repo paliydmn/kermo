@@ -182,6 +182,38 @@ private func systemSamples() throws -> [ToolSample] {
     #expect(a.worst == nil)
 }
 
+/// A row gone from a sample that carries them all (a disk unmounted, a site removed) ends its alert — not "back to
+/// normal": nothing recovered. A row still there without a number, or a sample without the rows, keeps it.
+@Test func aGoneRowEndsItsAlert() {
+    var a = ToolAlerts()
+    let m = ["disk": ToolMetric(title: "Disk", path: "pct", unit: "%", rows: "disks", key: "mount")]
+    let rule = [ToolAlert(id: "disk", metric: "disk", crit: 95)]
+    func disks(_ rows: [ToolRecord]) -> ToolRecord { ["disks": .array(rows.map(ToolValue.object))] }
+    #expect(a.judge(["disk": ["/mnt": 99]], alerts: rule, metrics: m, sample: sample(0, disks([["mount": "/mnt", "pct": 99]])), now: at(0)).count == 1)
+    #expect(a.judge(["disk": [:]], alerts: rule, metrics: m, sample: sample(5, disks([["mount": "/mnt", "pct": "-"]])), now: at(5)) == [] && a.worst == .critical, "there, no number: stands")
+    #expect(a.judge([:], alerts: rule, metrics: m, sample: sample(10, ["other": 1]), now: at(10)) == [] && a.worst == .critical, "no rows in it: stands")
+    #expect(a.judge(["disk": ["/": 10]], alerts: rule, metrics: m, sample: sample(15, disks([["mount": "/", "pct": 10]])), now: at(15))
+            == [.gone(alert: "disk", key: "/mnt", was: .critical)] && a.worst == nil)
+}
+
+/// Numbers a server sends that no Int64 holds (inf, nan, exabytes, a date ages away) show as they came, never a crash.
+@Test func hugeNumbersShowAsTheyCame() {
+    #expect(ToolTemplate.show(.string("inf"), "bytes") == "inf" && ToolTemplate.show(.string("nan"), "kbytes") == "nan")
+    #expect(ToolTemplate.show(.number(1e16), "kbytes") == "1e+16" && ToolTemplate.show(.number(-1e300), "ms") == "-1e+300")
+    #expect(ToolTemplate.show(.number(-1e300), "ago") == "-1e+300")
+    #expect(ToolTemplate.show(.number(1024), "kbytes") == ToolTemplate.show(.number(1_048_576), "bytes"))
+}
+
+/// A channel's output with no newline is held up to 1 MB, then dropped; lines go on after it.
+@Test func aChannelHoldsAnUnendedLineUpToAMegabyte() {
+    #expect(ToolExec.maxLine == 1 << 20)
+    var lines = ToolLines()
+    #expect(lines.feed(Data("a\nb".utf8)) == ["a"] && lines.feed(Data("c\n\n".utf8)) == ["bc"])
+    #expect(lines.feed(Data("\n".utf8)) == [] && lines.feed(Data("x".utf8)) == nil, "a newline alone: lines, none of them")
+    #expect(lines.feed(Data(repeating: 0x78, count: ToolExec.maxLine)) == nil)
+    #expect(lines.feed(Data("tail\nnext\n".utf8)) == ["tail", "next"], "the long one dropped: its tail a line of its own")
+}
+
 @Test func eventsOfEachKind() throws {
     let events = try #require(system.events)
     let base: ToolRecord = ["boot_id": "b1", "oom_kill": 0, "reboot_required": false,

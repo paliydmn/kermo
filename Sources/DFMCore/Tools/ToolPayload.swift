@@ -203,6 +203,24 @@ extension ToolPayload {
     }
 }
 
+/// A channel's stdout as whole lines, empty ones left out (nil: no line ended in it); an unfinished one waits for its
+/// end — up to `ToolExec.maxLine` bytes.
+/// Past that it's dropped: a server printing without a newline doesn't fill this Mac's memory. Its tail, once its
+/// newline comes, is a line no parser takes: a missed sample.
+public struct ToolLines: Sendable {
+    private var rest = Data()
+    public init() {}
+    public mutating func feed(_ chunk: Data) -> [String]? {
+        rest += chunk
+        guard let last = rest.lastIndex(of: 0x0A) else {
+            if rest.count > ToolExec.maxLine { rest = Data() }
+            return nil
+        }
+        defer { rest = Data(rest[(last + 1)...]) }
+        return ToolParse.lines(String(decoding: rest[...last], as: UTF8.self)).filter { !$0.isEmpty }
+    }
+}
+
 /// `strip: "cri"` (§6.1): a container runtime's log line, `<time> <stream> <tag> <message>`, as its message. Lines come
 /// in pieces: an unfinished one waits for its end.
 public struct ToolCRI: Sendable {

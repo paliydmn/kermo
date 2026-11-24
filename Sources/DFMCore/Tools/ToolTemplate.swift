@@ -100,11 +100,13 @@ public enum ToolTemplate {
         switch format {
         case "bytes", "kbytes":
             guard let n else { return v.text }
-            let b = Int64(format == "kbytes" ? n * 1024 : n)
+            let x = format == "kbytes" ? n * 1024 : n
+            guard x.isFinite, abs(x) < 9e18 else { return v.text }   // a server's inf, nan or exabytes: as it came, never a crash
+            let b = Int64(x)
             return b < 1000 ? "\(b) B" : ByteCountFormatter.string(fromByteCount: b, countStyle: .file)
         case "%": return n.map { ToolValue.number(($0 * 10).rounded() / 10).text + " %" } ?? v.text
         case "ms":
-            guard let n else { return v.text }
+            guard let n, n.isFinite, abs(n) < 9e18 else { return v.text }
             return n < 1000 ? "\(Int(n.rounded())) ms" : String(format: "%.1f s", n / 1000)
         case "days":
             guard let n else { return v.text }
@@ -113,6 +115,7 @@ public enum ToolTemplate {
         case "ago":
             guard let d = date(v) else { return v.text }
             let s = max(0, now.timeIntervalSince(d))
+            guard s < 9e18 else { return v.text }
             return s < 60 ? "just now" : s < 3600 ? "\(Int(s / 60)) min ago" : s < 86400 ? "\(Int(s / 3600)) h ago"
                 : Int(s / 86400) == 1 ? "1 day ago" : "\(Int(s / 86400)) days ago"
         case "datetime": return date(v).map { dateTime.string(from: $0) } ?? v.text

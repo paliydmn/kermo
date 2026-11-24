@@ -267,6 +267,7 @@ extension ToolParse {
         var lines = block.split(separator: "\n").map { Array($0) }
         guard !lines.isEmpty else { return r }
         let header = lines.removeFirst(), columns = words(header)
+        guard !columns.isEmpty else { return r }   // a header of spaces: no columns to put words in
         let names = columns.map { String(header[$0]) }
         for l in lines {
             var cells = [Range<Int>?](repeating: nil, count: columns.count)

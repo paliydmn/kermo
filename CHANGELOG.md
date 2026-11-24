@@ -22,6 +22,11 @@ Release:
 - Undo of **Move to Trash** puts back only the item it moved: another item in the Trash under that name now stays. → [Undo and redo](docs/files.md#undo-and-redo)
 - Sizes a server reports as huge no longer overflow the Synchronize summary, the copy progress or the toolbar's ring.
 - A save to a server no longer fails when its panel leaves that server, or when Kermo resets its connections after a wake or a network change; a file written into in place (SELinux, someone else's) could be left part new, part old. On a root panel where sudo wants a password, each save is a sudo of its own. → [Open and edit](docs/server-files.md#open-and-edit)
+- A number a server gives a tool that no integer holds — infinite, not a number, or exabytes from a FUSE disk — shows as it came instead of closing Kermo; a table whose header line is only spaces no longer closes it either.
+- A watched alert whose row is gone — a disk unmounted, a site removed — ends with **No longer reported** in the tool's events instead of standing until a restart. → [Watching a server](docs/tools.md#watching-a-server)
+- A watched tool updated or edited runs as its new version at once, not the old one until a restart.
+- A watched server printing a line with no end no longer fills this Mac's memory: past 1 MB the line is dropped.
+- A tool whose `every` or duration is over 10 years is a problem in its file, shown in Problems, instead of closing Kermo when shown.
 - A command run in a server folder that no longer exists (⌘E, F2, ⌘↩) runs none of it: the output window shows `cd`'s error, and ⌘↩'s SSH tab ends with it instead of opening in the home folder. → [Command line](docs/commands.md#command-line)
 
 ### Security
