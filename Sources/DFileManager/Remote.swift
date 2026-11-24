@@ -661,16 +661,24 @@ enum SSHAskpass {
             && lstat(path, &f) == 0 && f.st_mode & S_IFMT == S_IFREG && f.st_uid == getuid() && f.st_mode & S_IXUSR != 0
         if !ours {
             let made = SFTP.controlDir(predictable: dir)
-            if made.dir == dir { write(in: dir) } else if made.random { try? FileManager.default.removeItem(atPath: made.dir) }
+            guard made.dir == dir else {   // someone else's now: no script of theirs runs — ssh asks nothing, and fails
+                if made.random { try? FileManager.default.removeItem(atPath: made.dir) }
+                return ["SSH_ASKPASS_REQUIRE": "never"]
+            }
+            write(in: dir)
         }
         return ["SSH_ASKPASS": path, "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": ":0"]
             .merging(app.map { ["DFM_ASKPASS_SOCKET": socket, "DFM_ASKPASS_APP": $0] } ?? [:]) { $1 }
     }
 
+    /// Executable from its first byte, then renamed into place: an ssh starting meanwhile runs the old one or this one.
     private static func write(in dir: String) {
-        let path = dir + "/askpass"
-        try? script().write(toFile: path, atomically: true, encoding: .utf8)
-        chmod(path, 0o700)
+        let tmp = dir + "/.askpass-" + UUID().uuidString, bytes = Array(script().utf8)
+        let fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o700)
+        guard fd >= 0 else { return }
+        let ok = fchmod(fd, 0o700) == 0 && Darwin.write(fd, bytes, bytes.count) == bytes.count
+        close(fd)
+        if !ok || rename(tmp, dir + "/askpass") != 0 { unlink(tmp) }
     }
 
     /// `osascript`: the dialog's program (tests: a stand-in).

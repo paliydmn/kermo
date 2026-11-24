@@ -71,14 +71,14 @@ private func tar(_ args: [String], in dir: String) throws -> Int32 {
     }
     defer { AppDelegate.prompting = nil }
     app.compressDialog()
-    await until { FileManager.default.fileExists(atPath: out + "/f.zip") }
+    let over = { (name: String) in NSApp.windows.first { $0.title.hasSuffix("/" + name) }?.docFrame?.text.hasPrefix("exit") == true }
+    await until { over("f.zip") && FileManager.default.fileExists(atPath: out + "/f.zip") }
     let index = try ArchiveIndex.read(out + "/f.zip")
     try index.extract(["f.txt"], from: "", to: out + "/x")
     #expect(try String(contentsOfFile: out + "/x/f.txt", encoding: .utf8) == "A", "the item asked about, not the folder's the panel went to")
     #expect(try FileManager.default.contentsOfDirectory(atPath: out).sorted() == ["f.zip", "x"], "no packing file left")
 
     // tar fails — the item gone while the question was up: nothing under the archive's name, no packing file.
-    await until { Shell.busy == nil }   // and its reload, which keeps the cursor where it was
     FileManager.default.createFile(atPath: b + "/g.txt", contents: Data("G".utf8))
     for _ in 0..<60 where panel.cursorURL?.lastPathComponent != "g.txt" {
         panel.reload(select: "g.txt")
@@ -87,9 +87,9 @@ private func tar(_ args: [String], in dir: String) throws -> Int32 {
     try #require(panel.cursorURL?.path == b + "/g.txt")
     AppDelegate.prompting = { _ in try? FileManager.default.removeItem(atPath: b + "/g.txt"); return out + "/g.zip" }
     app.compressDialog()
-    let window = { NSApp.windows.first { $0.title.hasSuffix("/g.zip") } }
-    await until { window() != nil }
-    await until { Shell.busy == nil && !((try? FileManager.default.contentsOfDirectory(atPath: out)) ?? []).contains { $0.hasPrefix(".dfm-pack-") } }
+    await until { NSApp.windows.contains { $0.title.hasSuffix("/g.zip") } }
+    try #require(NSApp.windows.contains { $0.title.hasSuffix("/g.zip") }, "the second Compress ran")
+    await until { over("g.zip") && !((try? FileManager.default.contentsOfDirectory(atPath: out)) ?? []).contains { $0.hasPrefix(".dfm-pack-") } }
     try? await Task.sleep(for: .milliseconds(300))
     #expect(try FileManager.default.contentsOfDirectory(atPath: out).sorted() == ["f.zip", "x"], "no g.zip that looks whole")
 }
@@ -102,6 +102,10 @@ private func tar(_ args: [String], in dir: String) throws -> Int32 {
     FileManager.default.createFile(atPath: dir + "/f.txt", contents: Data("f".utf8))
     let archive = dir + "/out.tar.gz", tmp = ArchiveIndex.packingPath(for: archive)
     #expect((tmp as NSString).lastPathComponent.hasPrefix(".dfm-pack-") && tmp.hasSuffix(".tar.gz") && (tmp as NSString).deletingLastPathComponent == dir)
+    let long = "1. " + String(repeating: "й", count: 120) + ".zip"   // 248 bytes: the name fits, so must the packing one
+    let packing = (ArchiveIndex.packingPath(for: "/d/" + long) as NSString).lastPathComponent
+    #expect(packing.hasSuffix(".zip") && packing.utf8.count < 255, "\(packing)")
+    #expect(ArchiveIndex.packingPath(for: "/d/x.TAR.XZ").hasSuffix(".TAR.XZ"))
 
     let failed = try tar(ArchiveIndex.createArguments(tmp, names: ["f.txt", "gone"], in: dir), in: dir)
     #expect(failed != 0 && FileManager.default.fileExists(atPath: tmp), "tar leaves what it wrote")
@@ -134,6 +138,24 @@ private func tar(_ args: [String], in dir: String) throws -> Int32 {
     #expect(note?.contains("permissions only") == true, "\(String(describing: note))")
     #expect(FileManager.default.contents(atPath: path) == Data("new".utf8))
     #expect((try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int) == 0o644)
+
+    // Its group too: else it takes the folder's, and the group bits would be for another group. On the Mac's own temp
+    // folder: the tests' RAM disk ignores owners.
+    let own = Foundation.NSTemporaryDirectory() + "dfm-r6s-" + UUID().uuidString, file = own + "/notes.txt"
+    try FileManager.default.createDirectory(atPath: own, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: own) }
+    FileManager.default.createFile(atPath: file, contents: Data("old".utf8), attributes: [.posixPermissions: 0o640])
+    var groups = [gid_t](repeating: 0, count: 64), st = stat()
+    let n = Int(getgroups(Int32(groups.count), &groups))
+    stat(own, &st)
+    let other = try #require(groups.prefix(max(n, 0)).first { $0 != st.st_gid }, "a second group of ours")
+    chown(file, geteuid(), other)
+    stat(file, &st)
+    try #require(st.st_gid == other, "this disk keeps owners")
+    _ = Editor.write(Data("new".utf8), to: file, name: "notes.txt", unlessChangedFrom: nil, hook: { _ in },
+                     writing: { try $0.write(contentsOf: $1) }, willRename: { _ in }, copyAttributes: { _, _ in errno = ENOTSUP; return -1 })
+    stat(file, &st)
+    #expect(st.st_gid == other && st.st_mode & 0o7777 == 0o640, "gid \(st.st_gid), not \(other); mode \(String(st.st_mode & 0o7777, radix: 8))")
 }
 
 /// В3: the askpass script was written once a launch, in /tmp, which macOS's daily cleanup empties of files untouched
@@ -151,4 +173,12 @@ private func tar(_ args: [String], in dir: String) throws -> Int32 {
     _ = SSHAskpass.env(in: dir)
     #expect(mode(dir) == 0o700 && mode(dir + "/askpass") == 0o700, "its folder too")
     #expect(try String(contentsOfFile: dir + "/askpass", encoding: .utf8) == SSHAskpass.script())
+
+    // The folder isn't ours (a link to another one, say): no script in it is given to ssh.
+    try FileManager.default.removeItem(atPath: dir)
+    try FileManager.default.createDirectory(atPath: root + "/elsewhere", withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(atPath: dir, withDestinationPath: root + "/elsewhere")
+    let env = SSHAskpass.env(in: dir)
+    #expect(env["SSH_ASKPASS"] == nil && env["SSH_ASKPASS_REQUIRE"] == "never", "\(env)")
+    #expect(!FileManager.default.fileExists(atPath: root + "/elsewhere/askpass"))
 }

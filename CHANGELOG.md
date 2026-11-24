@@ -29,7 +29,7 @@ Release:
 - A watched alert whose row is gone — a disk unmounted, a site removed — ends with **No longer reported** in the tool's events instead of standing until a restart. → [Watching a server](docs/tools.md#watching-a-server)
 - A watched tool updated or edited runs as its new version at once, not the old one until a restart.
 - SSH passwords and passphrases are still asked after Kermo has run for days: macOS's cleanup of temporary files no longer leaves it without its password helper until a restart.
-- A save that can't carry the file's ACL or extended attributes over keeps at least its permissions instead of leaving the file readable by you alone, and says so. → [Typing and moving around](docs/viewer-editor.md#typing-and-moving-around)
+- A save that can't carry the file's ACL, extended attributes or flags over keeps at least its group and permissions instead of leaving the file readable by you alone, and says so. → [Typing and moving around](docs/viewer-editor.md#typing-and-moving-around)
 - Compress no longer leaves a cut-off archive that looks complete when it's stopped, an item can't be read or the disk fills up, and never replaces a file that appeared under its name meanwhile; it packs the items from the folder they were in when it asked, even if the panel has moved on since. → [Archives](docs/files.md#archives)
 - Compress packs a folder whose name starts with @ (Synology's `@eaDir`) instead of failing on it; `%f` and `%s` put `./` before such a name, as before a leading `-`. → [Archives](docs/files.md#archives), [Placeholders](docs/commands.md#placeholders)
 - A watched server printing a line with no end no longer fills this Mac's memory: past 1 MB the line is dropped.

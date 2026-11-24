@@ -263,11 +263,13 @@ public struct ArchiveIndex: Sendable {
     }
 
     /// Where Compress has tar pack `archive` till it's whole: a hidden name in its folder — the same disk, so `publish`
-    /// is a rename — ending in its last two extensions, which `-a` reads the format from (.tar.gz, .zip). Swept a day
-    /// later if a quit mid-pack left it (`Editor.sweepSaves`).
+    /// is a rename — ending in its extension, which `-a` reads the format from: ".tar" and the one after it (.tar.gz),
+    /// else the last (.zip, .tgz). One a quit mid-pack left goes with the next Compress into that folder, a day on
+    /// (`Editor.sweepSaves`).
     public static func packingPath(for archive: String) -> String {
         let parts = (archive as NSString).lastPathComponent.split(separator: ".", omittingEmptySubsequences: false)
-        let ext = parts.count > 1 ? "." + parts.suffix(min(2, parts.count - 1)).joined(separator: ".") : ""
+        let tar = parts.count > 2 && parts[parts.count - 2].lowercased() == "tar"
+        let ext = parts.count > 1 ? "." + parts.suffix(tar ? 2 : 1).joined(separator: ".") : ""
         return ((archive as NSString).deletingLastPathComponent as NSString)
             .appendingPathComponent(".dfm-pack-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(8))\(ext)")
     }

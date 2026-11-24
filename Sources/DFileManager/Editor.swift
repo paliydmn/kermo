@@ -682,11 +682,12 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
                 if exists {
                     // Mode, owner, ACL, xattrs, flags from the original (STAT also copies times, so reset them after),
                     // then its creation date, which copyfile doesn't carry. Where that fails (an ACL or an xattr this
-                    // disk won't take) its mode at least — else the file would stay 0600 — and the save says so.
+                    // disk won't take) its group and mode at least — else the file would stay 0600 — and the save says
+                    // so. No group: no group bits either (the folder's group isn't the one they were for).
                     if copyAttributes(path, tmp) != 0 {
                         let why = String(cString: strerror(errno))
-                        chmod(tmp, st.st_mode & 0o7777)
-                        note = "Saved with its permissions only: its ACL or extended attributes didn't come along (\(why))"
+                        chmod(tmp, st.st_mode & (chown(tmp, st.st_uid, st.st_gid) == 0 ? 0o7777 : 0o7707))
+                        note = "Saved with its owner and permissions only: its ACL, extended attributes or flags didn't come along (\(why))"
                     }
                     utimes(tmp, nil)
                     var crtime = attrlist(bitmapcount: u_short(ATTR_BIT_MAP_COUNT), reserved: 0, commonattr: attrgroup_t(ATTR_CMN_CRTIME),
