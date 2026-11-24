@@ -1566,9 +1566,11 @@ extension AppDelegate {
             return told != nil ? tell("Stopped. Nothing was written.") : notSaved(saved, to: target, CancellationError())
         }
         let (rule, problem) = checkRule(for: remotePath, on: target)
-        let kept = Self.keptSession(of: target, in: panels)
+        // A session of its own, not the panel's: that one closes when the panel leaves the server, or after a wake or a
+        // network change — mid-save, a file written into (SELinux, another owner's) would be left cut. A root save
+        // costs its own sudo then: where sudo wants a password, not in the Keychain and past its 5 minutes, it is asked again.
         let r = await panel.busy("Saving “\(name)” to \(target.host)…") { flag in
-            try SFTP.session(target, env: env, cancel: flag, on: kept) { c in
+            try SFTP.session(target, env: env, cancel: flag, on: nil) { c in
                 var note: String?, old: Data?
                 // The text it replaces: for the history, and for Compare before a reload.
                 let keep: ((SFTPClient.Attrs, Data?) -> Void)? = history == nil && rule?.reload == nil ? nil : { a, data in
@@ -1669,14 +1671,6 @@ extension AppDelegate {
     /// A server's file as it is there now, never its open document: the other side of a Compare before a save.
     static func serverNow(_ path: String, on target: SFTPTarget) -> DiffSide {
         DiffSide(path: path, server: target, look: true, name: "\(target.host):\(path) (now)", now: true)
-    }
-
-    /// The session a save to `target` goes over: that of a panel showing it, if one does — no ssh start and handshake
-    /// of its own, and from a root panel no second sudo (where sudo wants a password, the look and the check before
-    /// each new session). The panel's listings wait for it meanwhile; its status line says it's saving. Else nil: a
-    /// session of its own.
-    static func keptSession(of target: SFTPTarget, in panels: [PanelViewController]) -> KeptSession? {
-        panels.first { $0.remote?.target == target && $0.kept?.target == target }?.kept
     }
 
     /// Server ▸ File History…: the versions saves replaced (`ServerHistory`) of the server file in the key editor, or under
