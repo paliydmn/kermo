@@ -120,3 +120,18 @@ private func tar(_ args: [String], in dir: String) throws -> Int32 {
     #expect(try ArchiveIndex.read(archive).list("")?.map(\.name) == ["f.txt"])
     #expect(try FileManager.default.contentsOfDirectory(atPath: dir).sorted() == ["f.txt", "out.tar.gz"])
 }
+
+/// В2: a save whose copyfile failed (an ACL or an xattr the disk won't take) left the file 0600 and said nothing. Its
+/// mode comes over at least now, and the save says what didn't.
+@Test func aSaveThatCantCarryTheAttributesKeepsTheModeAndSaysSo() throws {
+    let dir = try tempDir(), path = dir + "/notes.txt"
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    FileManager.default.createFile(atPath: path, contents: Data("old".utf8), attributes: [.posixPermissions: 0o644])
+    let written = Editor.write(Data("new".utf8), to: path, name: "notes.txt", unlessChangedFrom: nil, hook: { _ in },
+                               writing: { try $0.write(contentsOf: $1) }, willRename: { _ in },
+                               copyAttributes: { _, _ in errno = ENOTSUP; return -1 })
+    guard case .written(_, _, let note) = written else { Issue.record("\(written)"); return }
+    #expect(note?.contains("permissions only") == true, "\(String(describing: note))")
+    #expect(FileManager.default.contents(atPath: path) == Data("new".utf8))
+    #expect((try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int) == 0o644)
+}
