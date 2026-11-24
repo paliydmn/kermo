@@ -101,3 +101,33 @@ import Testing
     await until { panel.searchTitle == nil && panel.listedItems.count == 2 }
     #expect(panel.searchTitle == nil && panel.archive == nil && panel.path == dir)
 }
+
+/// The panel's place is one answer, in the order its header and path have always read the optionals: a list, then
+/// search results (a server's too), an archive, a server, a parked tab, this Mac's folder.
+@MainActor @Test func thePanelsPlaceGoesByOneOrder() {
+    final class Rows: ListSource {
+        let title = "Rows", target = SFTPTarget.local(), columns: [ListColumn] = [], content: ListContent? = nil
+        func read(_ cancel: CancelFlag) async throws -> ListContent { ListContent(rows: []) }
+    }
+    let web = SFTPTarget(host: "web"), list = ListPanel(Rows())
+    func at(list: ListPanel? = nil, search: Bool = false, archive: Bool = false, remote: SFTPTarget? = nil, parked: SFTPTarget? = nil) -> String {
+        switch PanelViewController.place(list: list, search: search, archive: archive, remote: remote.map { ($0, "/srv") },
+                                         parked: parked.map { ($0, "/etc") }, path: "/tmp") {
+        case .list: "list"
+        case .results(let t): "results \(t?.host ?? "-")"
+        case .archive: "archive"
+        case .server(let t, let dir): "server \(t.host):\(dir)"
+        case .parked(let t, let dir): "parked \(t.host):\(dir)"
+        case .folder(let p): "folder \(p)"
+        }
+    }
+    #expect(at(list: list, search: true, archive: true, remote: web, parked: web) == "list")
+    #expect(at(search: true, archive: true, remote: web) == "results web", "a server's search results")
+    #expect(at(search: true) == "results -")
+    #expect(at(archive: true, remote: web, parked: web) == "archive")
+    #expect(at(remote: web, parked: web) == "server web:/srv")
+    #expect(at(parked: web) == "parked web:/etc")
+    #expect(at() == "folder /tmp")
+    #expect(PanelViewController.Place.folder("/").showsFolder && PanelViewController.Place.server(web, dir: "/").showsFolder)
+    #expect(!PanelViewController.Place.results(server: nil).showsFolder && !PanelViewController.Place.parked(web, dir: "/").showsFolder)
+}
