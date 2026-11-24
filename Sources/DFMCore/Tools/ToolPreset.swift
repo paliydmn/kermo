@@ -341,6 +341,9 @@ public enum ToolDuration: Sendable, Hashable, Codable {
         }
     }
 
+    /// The longest a tool may say (`for`, a range, `every`): 10 years — any longer is no setting, and no Int holds 1e300.
+    public static let longest: Double = 315_360_000
+
     /// nil: not a duration.
     public var seconds: Double? {
         switch self {

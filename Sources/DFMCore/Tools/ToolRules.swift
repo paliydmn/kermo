@@ -353,6 +353,9 @@ public struct ToolAlertState: Sendable, Equatable {
 public enum ToolAlertChange: Sendable, Equatable {
     case worse(alert: String, key: String, level: ToolLevel, message: String)
     case ok(alert: String, key: String, was: ToolLevel, since: Date)
+    /// Its row is gone from a sample that carries them all (a site removed, a disk unmounted): its standing ends,
+    /// but nothing recovered — never "back to normal".
+    case gone(alert: String, key: String, was: ToolLevel)
 }
 
 /// A tool's alerts on one server, each per series.
@@ -370,6 +373,13 @@ public struct ToolAlerts: Sendable {
         for a in alerts {
             guard let metricID = a.metric, let m = metrics[metricID], let found = values[metricID] else { continue }
             let id = a.id ?? metricID
+            if m.count == nil, let rows = m.rows, let field = m.key, sample.carries(rows) {
+                let there = Set(sample.rows(rows).compactMap { $0[field]?.text })   // a row there without a number stays
+                for (key, s) in states[id] ?? [:] where !there.contains(key) {
+                    states[id]?[key] = nil
+                    if let was = s.level { changes.append(.gone(alert: id, key: key, was: was)) }
+                }
+            }
             for (key, v) in found {
                 var s = states[id]?[key] ?? ToolAlertState()
                 let was = s.level
@@ -401,6 +411,9 @@ public struct ToolAlerts: Sendable {
         }
         return changes
     }
+
+    /// Only the alerts of `ids`: a new version of the tool may have dropped some.
+    public mutating func keep(_ ids: Set<String>) { states = states.filter { ids.contains($0.key) } }
 
     /// A gap (§2): nothing recovers; durations and streaks start over after it — `ids`' only, where one source of
     /// several stopped.

@@ -210,7 +210,9 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
         }
         for page in ToolsWindow.pages where page.window?.isVisible == true {
             let saved = app.savedServers.first { $0.id == page.server.id } ?? page.server   // as saved now: the page may be older
-            guard let tool = page.liveTool, tool.preset.http == nil ? AppDelegate.connected(page.target) : !saved.sites.isEmpty else { continue }
+            // As the library has it now: a reload reconciles before the pages hold its new version.
+            let tool = page.liveTool.map { live in tools.first { $0.preset.id == live.preset.id } ?? live }
+            guard let tool, tool.preset.http == nil ? AppDelegate.connected(page.target) : !saved.sites.isEmpty else { continue }
             add(saved, page.target, tool, watched: false)
         }
         let wereWatched = Set(servers.values.filter(\.watched).map(\.key))
@@ -232,17 +234,24 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
             let s = servers[key] ?? Server(w.0, w.1)
             s.saved = w.0
             servers[key] = s
-            var sources = Set(s.tools.keys)
+            var sources = Set(s.tools.keys), renewed = false
             for (tool, watched) in w.2 {
-                let t = s.tools[tool.preset.id] ?? Tool(tool)
+                var t = s.tools[tool.preset.id] ?? Tool(tool)
+                if t.loaded.hash != tool.hash {   // updated or edited: the new version runs; its series and events go on
+                    let old = t
+                    t = Tool(tool)
+                    (t.history, t.slots, t.events, t.budget, t.alerts, t.open) = (old.history, old.slots, old.events, old.budget, old.alerts, old.open)
+                    t.alerts.keep(Set((tool.preset.alerts ?? []).map { $0.id ?? $0.metric ?? "" }))   // standing as they were, but none the new version lacks
+                    renewed = renewed || channelSources[key]?.contains(tool.preset.id) == true
+                }
                 s.tools[tool.preset.id] = t
                 if watched { t.watched = true } else { t.live = true }
                 sources.insert(tool.preset.id)
             }
             s.pace = slow ? 3 : 1
             if !wereWatched.contains(key), s.watched { note(s, "Watching started · every \(Int(s.every)) s") }
-            // A tool joined, or one left: the channel runs anew with the sources as they are now.
-            if s.channel != nil, Set(s.channelTools.keys) != channelSources[key] { stop(s, why: .reconnecting); s.retryAt = Date() }
+            // A tool joined, one left, or one is a new version: the channel runs anew with the sources as they are now.
+            if s.channel != nil, renewed || Set(s.channelTools.keys) != channelSources[key] { stop(s, why: .reconnecting); s.retryAt = Date() }
             if ready, s.channel == nil, s.retryAt == nil, !s.needsLogin, !s.connecting { start(s) }
         }
         tickIfNeeded()
@@ -301,14 +310,11 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
                 DispatchQueue.main.async { MainActor.assumeIsolated { self?.ended(key, "not connected", cancel: cancel) } }
                 return
             }
-            var reader = ToolRunOutput(nonce: payload.nonce), rest = Data()
+            var reader = ToolRunOutput(nonce: payload.nonce), split = ToolLines()
             let r = Result {
                 try ToolExec.channel(t, cancel: cancel) {
                     try SSHCommand.run(t, command(payload), env: env, cancel: cancel, stdin: stdin, holdStdin: hold) { chunk in
-                        rest += reader.feed(chunk)
-                        guard let last = rest.lastIndex(of: 0x0A) else { return }
-                        let lines = ToolParse.lines(String(decoding: rest[...last], as: UTF8.self)).filter { !$0.isEmpty }
-                        rest = Data(rest[(last + 1)...])
+                        guard let lines = split.feed(reader.feed(chunk)) else { return }
                         let skew = reader.skew ?? 0
                         DispatchQueue.main.async { MainActor.assumeIsolated { self?.got(key, lines, skew: skew, cancel: cancel) } }
                     }
@@ -377,17 +383,23 @@ private let powerSourceChanged = Notification.Name("KermoPowerSourceChanged")
     /// its events — a list's sample raises the events on the list's rows, the others the rest.
     private func take(_ sample: ToolSample, of t: Tool, on s: Server, list: Bool = false) {
         let p = t.preset, now = sample.at
-        let values = t.history.add(sample, metrics: p.metrics ?? [:], now: now, states: p.list?.view.state, list: list)
+        // Its own metrics only: a list's rows and a stream's table rows are both `rows`, and must not end each other's alerts.
+        let own = (p.metrics ?? [:]).filter { ($0.value.rows == "list") == list }
+        let values = t.history.add(sample, metrics: own, now: now, states: p.list?.view.state, list: list)
         if t.watched { record(s, t.slots.add(values, at: now, ends: !list || p.source == nil)) }
         var fresh: [ToolEventRecord] = []
-        for c in t.alerts.judge(values, alerts: alerts(t, on: s), metrics: p.metrics ?? [:], sample: sample, now: now) {
+        func what(_ alert: String) -> String {
+            (p.alerts ?? []).first { ($0.id ?? $0.metric) == alert }.flatMap { a in a.metric.flatMap { p.metrics?[$0]?.title } } ?? alert
+        }
+        for c in t.alerts.judge(values, alerts: alerts(t, on: s), metrics: own, sample: sample, now: now) {
             switch c {
             case .worse(let alert, let key, let level, let message):
                 fresh.append(ToolEventRecord(at: now, id: "alert", level: level.name, message: message))
                 if level == .critical { deliver(s, tool: t, alert: alert, id: "\(s.key) \(p.id) \(alert) \(key)", message) }
             case .ok(let alert, let key, _, let since):
-                let what = (p.alerts ?? []).first { ($0.id ?? $0.metric) == alert }.flatMap { a in a.metric.flatMap { p.metrics?[$0]?.title } } ?? alert
-                fresh.append(ToolEventRecord(at: now, id: "ok", level: "ok", message: "Back to normal: \(what)\(key.isEmpty ? "" : " " + key) · after " + ToolAlerts.minutes(now.timeIntervalSince(since))))
+                fresh.append(ToolEventRecord(at: now, id: "ok", level: "ok", message: "Back to normal: \(what(alert))\(key.isEmpty ? "" : " " + key) · after " + ToolAlerts.minutes(now.timeIntervalSince(since))))
+            case .gone(let alert, let key, let was):
+                fresh.append(ToolEventRecord(at: now, id: "gone", level: "info", message: "No longer reported: \(what(alert)) \(key) · its \(was.name) alert ends"))
             }
         }
         let raised = ToolEvents.raised((p.events ?? []).filter { ($0.rows == "list") == list }, in: sample, previous: t.history.previous,

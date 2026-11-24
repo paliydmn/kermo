@@ -441,6 +441,31 @@ extension ServerLockTests {
         #expect(runs.groups.last?.title == "In the background, when you watch it — may send notifications" && runs.background.first?.text == "  stream: pulse {every} {server}   — every 1 s on each watched server")
     }
 
+    /// A watched tool updated or edited runs as its new version at once — not the old one until a restart: its channel
+    /// starts again, its series go on.
+    @Test func aNewVersionOfAWatchedToolRunsAtOnce() async throws {
+        let (app, _, _, done) = try toolsApp()
+        let bench = try ToolsBench(), quick = Quick(app)
+        defer { quick.done(); bench.done(); done(); app.savedServers = [] }
+        try await watching(app, bench)
+        app.tools.monitor.watch(try toolNamed(app, "pulse"), on: .local(), true)
+        await toolsUntil { app.tools.monitor.tool("pulse", on: .local())?.history.last != nil && alive(pid(bench)) }
+        let old = try #require(app.tools.monitor.tool("pulse", on: .local())).loaded.hash, first = pid(bench)
+        let file = bench.dir + "/own/pulse.json"
+        try (try String(contentsOfFile: file, encoding: .utf8) + "\n").write(toFile: file, atomically: true, encoding: .utf8)
+        // Trusted before the reload, as the editor's Save and the catalog's Update do: the reload's own reconcile renews it.
+        let new = try #require(ToolLibrary.load(own: ToolRunner.own).tools.first { $0.preset.id == "pulse" })
+        #expect(new.hash != old)
+        app.tools.trust.trust(new)
+        try JSONEncoder().encode(app.tools.trust).write(to: try #require(ToolRunner.own).appendingPathComponent("trust.json"))   // now: Config.save writes later
+        _ = app.tools.reload()
+        #expect(app.tools.monitor.tool("pulse", on: .local())?.loaded.hash == new.hash, "renewed by the reload")
+        await toolsUntil { app.tools.monitor.tool("pulse", on: .local())?.loaded.hash == new.hash && pid(bench) != first && alive(pid(bench)) }
+        let t = try #require(app.tools.monitor.tool("pulse", on: .local()))
+        #expect(t.loaded.hash == new.hash && pid(bench) != first && alive(pid(bench)) && !alive(first), "the new version's channel")
+        #expect(t.history.last != nil, "its series go on")
+    }
+
     /// A stream that runs a little slower than `every` (System sleeps after its reads) is no gap: nothing missed, no
     /// mark, the alerts' clocks untouched. Once it really stops, the intervals are missed from half of one on.
     @Test func aSlightlyLateStreamIsNoGap() async throws {

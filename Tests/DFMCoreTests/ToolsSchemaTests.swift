@@ -66,7 +66,7 @@ struct Case: CustomTestStringConvertible, Sendable {
     Case(name: "a key twice on a list and the table of its rows", json: "{ \(head), \"list\": { \"command\": \"x\", \"format\": \"json\", \"rows\": \"t\" }, "
          + "\"actions\": [ { \"id\": \"a\", \"key\": \"f8\", \"command\": \"x\" }, { \"id\": \"b\", \"rows\": \"t\", \"key\": \"f8\", \"command\": \"y\" } ] }",
          says: "“f8” is another action's key"),
-    Case(name: "a list read again too often", json: "{ \(head), \"list\": { \"command\": \"x\", \"every\": 0.5 } }", says: "every: 2 seconds or more"),
+    Case(name: "a list read again too often", json: "{ \(head), \"list\": { \"command\": \"x\", \"every\": 0.5 } }", says: "every: 2 seconds to 10 years"),
     Case(name: "a block's list off a table", json: "{ \(head), \"list\": { \"command\": \"x\" }, \"dashboard\": [ { \"events\": true, \"list\": \"All…\" } ] }",
          says: "only a table opens the tool's list"),
     Case(name: "a table's list with no list", json: "{ \(head), \"dashboard\": [ { \"table\": \"t\", \"columns\": [\"a\"], \"list\": \"All…\" } ] }",
@@ -237,11 +237,18 @@ func everyCheckOfTheProtocol(_ c: Case) {
     #expect(defs["preset"]?["additionalProperties"] as? Bool == false)
 }
 
-/// `watch.every` is a second or more: `sleep 0` would spin on the server, and a tick divides by it.
+/// `watch.every` is a second to 10 years: `sleep 0` would spin on the server, and a tick divides by it; past 10 years
+/// no Int holds it. So is every duration (`for`, a range): 0 to 10 years.
 @Test func watchEveryIsASecondOrMore() {
+    let long = #"{ "schema": 1, "id": "x", "title": "X", "watch": { "every": 1e300 }, "stream": { "command": "cat", "format": "jsonl" } }"#
+    #expect(ToolSchema.validate(Data(long.utf8), file: "x.json").problems.contains { $0.text == "watch.every: a second to 10 years" })
+    let held = #"{ "schema": 1, "id": "x", "title": "X", "watch": { "every": 5 }, "stream": { "command": "cat", "format": "jsonl" }, "metrics": { "cpu": { "path": "cpu" } }, "alerts": [{ "metric": "cpu", "crit": 9, "for": { "crit": "FOR" } }] }"#
+    for (v, ok) in [("1e300s", false), ("-5m", false), ("3650d", true), ("10m", true)] {
+        #expect((ToolSchema.validate(Data(held.replacingOccurrences(of: "FOR", with: v).utf8), file: "x.json").preset != nil) == ok, "\(v)")
+    }
     let json = #"{ "schema": 1, "id": "x", "title": "X", "watch": { "every": 0.5 }, "stream": { "command": "cat", "format": "jsonl" } }"#
     let found = ToolSchema.validate(Data(json.utf8), file: "x.json")
-    #expect(found.preset == nil && found.problems.contains { $0.text == "watch.every: a second or more" }, "\(found.problems)")
+    #expect(found.preset == nil && found.problems.contains { $0.text == "watch.every: a second to 10 years" }, "\(found.problems)")
     #expect(ToolSchema.validate(Data(json.replacingOccurrences(of: "0.5", with: "1").utf8), file: "x.json").preset != nil)
 }
 

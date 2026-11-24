@@ -75,6 +75,11 @@ private func parse(_ format: ToolFormat, _ text: String, _ change: (inout ToolPa
     #expect(backup.rows.last?["message_type"] == "summary")
 }
 
+/// A table whose header is only spaces has no columns: no rows, never a crash.
+@Test func aTableWithABlankHeader() {
+    #expect(parse(.table, "   \n1 2 3\n").rows.isEmpty)
+}
+
 @Test func tablesAndFrames() throws {
     let io = String(decoding: try fixture("iostat.dx.txt"), as: UTF8.self)
     let frames = ToolParse(format: .table, split: "blank").units(io)
