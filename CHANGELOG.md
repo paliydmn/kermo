@@ -28,6 +28,7 @@ Release:
 - Searching from inside an archive leaves the archive for the results: ⌫ and ↩ there no longer act on the archive's entries. → [Find files](docs/search-compare.md#find-files)
 - A watched alert whose row is gone — a disk unmounted, a site removed — ends with **No longer reported** in the tool's events instead of standing until a restart. → [Watching a server](docs/tools.md#watching-a-server)
 - A watched tool updated or edited runs as its new version at once, not the old one until a restart.
+- Compress packs a folder whose name starts with @ (Synology's `@eaDir`) instead of failing on it; `%f` and `%s` put `./` before such a name, as before a leading `-`. → [Archives](docs/files.md#archives), [Placeholders](docs/commands.md#placeholders)
 - A watched server printing a line with no end no longer fills this Mac's memory: past 1 MB the line is dropped.
 - A tool whose `every` or duration is over 10 years is a problem in its file, shown in Problems, instead of closing Kermo when shown.
 - A command run in a server folder that no longer exists (⌘E, F2, ⌘↩) runs none of it: the output window shows `cd`'s error, and ⌘↩'s SSH tab ends with it instead of opening in the home folder. → [Command line](docs/commands.md#command-line)

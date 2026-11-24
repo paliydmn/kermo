@@ -256,9 +256,10 @@ public struct ArchiveIndex: Sendable {
     }
 
     /// bsdtar arguments to create `archive` (format from its extension: .zip .tar.gz .tgz .tar.bz2 .tar.xz .7z)
-    /// from `names` inside `dir`. Run with COPYFILE_DISABLE=1 so no "._*" AppleDouble files get added.
+    /// from `names` inside `dir`. Run with COPYFILE_DISABLE=1 so no "._*" AppleDouble files get added. "./" in front of
+    /// a name tar would read otherwise: "-x" as an option, "@eaDir" (Synology's) as "the entries of archive eaDir".
     public static func createArguments(_ archive: String, names: [String], in dir: String) -> [String] {
-        ["-a", "-c", "-f", archive, "-C", dir] + names.map { $0.hasPrefix("-") ? "./" + $0 : $0 }
+        ["-a", "-c", "-f", archive, "-C", dir] + names.map { ShellContext.startsLikeAnArgument($0) ? "./" + $0 : $0 }
     }
 
     /// A folder as a Tools `folder` input sends it (protocol §7.4): `git archive HEAD` of a repository — what's

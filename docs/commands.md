@@ -52,7 +52,7 @@ In the command line and in the user menu:
 | `%D` | The folder in the other panel |
 | `%%` | A literal `%` (for example `find -printf '%%f'`) |
 
-Every substituted value is escaped for the shell. A command with `%D` doesn't run when the other panel is on another machine (a local panel next to a server panel, or two different servers).
+Every substituted value is escaped for the shell; a name starting with `-` or `@` gets `./` in front, so `rm %s` or `tar -cf x.tar %s` doesn't read it as an option or an archive to include. A command with `%D` doesn't run when the other panel is on another machine (a local panel next to a server panel, or two different servers).
 
 ## User menu
 
