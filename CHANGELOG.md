@@ -28,6 +28,7 @@ Release:
 - Searching from inside an archive leaves the archive for the results: ⌫ and ↩ there no longer act on the archive's entries. → [Find files](docs/search-compare.md#find-files)
 - A watched alert whose row is gone — a disk unmounted, a site removed — ends with **No longer reported** in the tool's events instead of standing until a restart. → [Watching a server](docs/tools.md#watching-a-server)
 - A watched tool updated or edited runs as its new version at once, not the old one until a restart.
+- Compress no longer leaves a cut-off archive that looks complete when it's stopped, an item can't be read or the disk fills up, and never replaces a file that appeared under its name meanwhile; it packs the items from the folder they were in when it asked, even if the panel has moved on since. → [Archives](docs/files.md#archives)
 - Compress packs a folder whose name starts with @ (Synology's `@eaDir`) instead of failing on it; `%f` and `%s` put `./` before such a name, as before a leading `-`. → [Archives](docs/files.md#archives), [Placeholders](docs/commands.md#placeholders)
 - A watched server printing a line with no end no longer fills this Mac's memory: past 1 MB the line is dropped.
 - A tool whose `every` or duration is over 10 years is a problem in its file, shown in Problems, instead of closing Kermo when shown.

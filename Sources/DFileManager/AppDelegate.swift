@@ -2115,6 +2115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// server it's about — production or root says so over the field, as a `Confirm` does; `items`: what it's about.
     func prompt(_ message: String, value: String, ok: String, info: String = "", selectBaseName: Bool = false, select: NSRange? = nil,
                 strip: SFTPTarget? = nil, items: [Confirm.Item] = []) async -> String? {
+        if let answer = Self.prompting { return await answer(message) }
         let alert = NSAlert()
         alert.messageText = message.bidiVisible
         alert.informativeText = info.bidiVisible
@@ -2172,6 +2173,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// Tests: answers `choose` and `confirm` instead of a sheet (the message, the buttons, the one ↩ presses);
     /// `answeredInfo` is what the last one said under its title.
     static var answering: (@MainActor (String, [String], Int?) -> Int)?
+    /// Tests: answers `prompt` instead of a sheet (its message; nil is Cancel).
+    static var prompting: (@MainActor (String) async -> String?)?
     static var answeredInfo = ""
 
     /// `alert` as a sheet on `window`; the button's index.

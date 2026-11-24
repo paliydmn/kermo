@@ -603,10 +603,11 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
 
     /// Temp files of saves a crash left in `dir` (between their making and the rename), once a day old by name and
     /// date: a running save's is newer. One named before names said when (an older version's): its date alone.
-    nonisolated private static func sweepSaves(in dir: String) {
+    /// `prefix` ".dfm-pack-": Compress's (`ArchiveIndex.packingPath`), a quit mid-pack left.
+    nonisolated static func sweepSaves(in dir: String, prefix: String = ".dfm-save-") {
         let cutoff = Date().timeIntervalSince1970 - 86_400
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [] where name.hasPrefix(".dfm-save-") {
-            let made = name.dropFirst(".dfm-save-".count).split(separator: "-", maxSplits: 1).first.flatMap { Double($0) } ?? 0
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [] where name.hasPrefix(prefix) {
+            let made = name.dropFirst(prefix.count).split(separator: "-", maxSplits: 1).first.flatMap { Double($0) } ?? 0
             let path = (dir as NSString).appendingPathComponent(name)
             var st = stat()
             guard made < cutoff, lstat(path, &st) == 0, st.st_mode & S_IFMT == S_IFREG, Double(st.st_mtimespec.tv_sec) < cutoff else { continue }
