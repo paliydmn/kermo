@@ -11,8 +11,8 @@ import Testing
     return dir
 }
 
-/// By the clock: a loaded full run keeps the main actor busy.
-@MainActor private func until(_ done: () -> Bool, seconds: Double = 20) async {
+/// By the clock: a loaded full run keeps the main actor busy (a listing took over 20 s there).
+@MainActor private func until(_ done: () -> Bool, seconds: Double = 60) async {
     let end = Date().addingTimeInterval(seconds)
     while !done(), Date() < end { try? await Task.sleep(for: .milliseconds(10)) }
 }
@@ -26,6 +26,7 @@ import Testing
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
     await until { panel.emptyShown?.title == "Empty folder" }
+    try #require(panel.emptyShown?.title == "Empty folder", "listed: else it goes home, as a tab with nothing shown yet")
     panel.navigate(to: gone)
     await until { panel.statusError }
     #expect(panel.statusText.hasPrefix(gone), "\(panel.statusText)")
@@ -102,16 +103,16 @@ import Testing
     #expect(panel.searchTitle == nil && panel.archive == nil && panel.path == dir)
 }
 
-/// The panel's place is one answer, in the order its header and path have always read the optionals: a list, then
+/// What the panel shows is one answer, in the order its header and path have always read the optionals: a list, then
 /// search results (a server's too), an archive, a server, a parked tab, this Mac's folder.
-@MainActor @Test func thePanelsPlaceGoesByOneOrder() {
+@MainActor @Test func whatThePanelShowsGoesByOneOrder() {
     final class Rows: ListSource {
         let title = "Rows", target = SFTPTarget.local(), columns: [ListColumn] = [], content: ListContent? = nil
         func read(_ cancel: CancelFlag) async throws -> ListContent { ListContent(rows: []) }
     }
     let web = SFTPTarget(host: "web"), list = ListPanel(Rows())
     func at(list: ListPanel? = nil, search: Bool = false, archive: Bool = false, remote: SFTPTarget? = nil, parked: SFTPTarget? = nil) -> String {
-        switch PanelViewController.place(list: list, search: search, archive: archive, remote: remote.map { ($0, "/srv") },
+        switch PanelViewController.showing(list: list, search: search, archive: archive, remote: remote.map { ($0, "/srv") },
                                          parked: parked.map { ($0, "/etc") }, path: "/tmp") {
         case .list: "list"
         case .results(let t): "results \(t?.host ?? "-")"
@@ -128,6 +129,6 @@ import Testing
     #expect(at(remote: web, parked: web) == "server web:/srv")
     #expect(at(parked: web) == "parked web:/etc")
     #expect(at() == "folder /tmp")
-    #expect(PanelViewController.Place.folder("/").showsFolder && PanelViewController.Place.server(web, dir: "/").showsFolder)
-    #expect(!PanelViewController.Place.results(server: nil).showsFolder && !PanelViewController.Place.parked(web, dir: "/").showsFolder)
+    #expect(PanelViewController.Showing.folder("/").isFolderListing && PanelViewController.Showing.server(web, dir: "/").isFolderListing)
+    #expect(!PanelViewController.Showing.results(server: nil).isFolderListing && !PanelViewController.Showing.parked(web, dir: "/").isFolderListing)
 }
