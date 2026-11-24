@@ -2556,7 +2556,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         guard archive == nil else { return }
         sizeQueue += names.filter { !sizeQueue.contains($0) }
         guard sizeWalk == nil else { return }   // the walk running takes them next
-        let flag = CancelFlag(), gen = sizeGen, env = SSHAskpass.env, r = remote, base = path
+        let flag = CancelFlag(), gen = sizeGen, env = SSHAskpass.env, r = remote, base = itemsDir
         let duKey = r?.target
         sizeWalk = flag
         // Sizes reach the main thread in bunches: one hop, one redraw and one status for all that came meanwhile.
@@ -3305,15 +3305,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
                    proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
-        guard archive == nil, parked == nil, let items = Self.dropped(info) else { return [] }
-        let target = dropTarget(row: row, op: op)
+        guard archive == nil, parked == nil, let items = Self.dropped(info), let target = dropTarget(row: row, op: op) else { return [] }
         if target == currentDir { tableView.setDropRow(-1, dropOperation: .on) }
         return Self.dragOperation(info, items: items, to: endpoint, target: target)
     }
 
     func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation op: NSTableView.DropOperation) -> Bool {
-        let target = dropTarget(row: row, op: op)
-        guard let items = Self.dropped(info) else { return false }
+        guard let target = dropTarget(row: row, op: op), let items = Self.dropped(info) else { return false }
         let operation = Self.dragOperation(info, items: items, to: endpoint, target: target)
         guard !operation.isEmpty else { return false }
         onTransfer?(items, endpoint, target, operation == .move)
@@ -3334,9 +3332,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         return items
     }
 
-    private func dropTarget(row: Int, op: NSTableView.DropOperation) -> String {
-        guard op == .on, row >= 0, row < table.numberOfRows, let it = item(at: row), it.kind == .dir else { return currentDir }
-        return (currentDir as NSString).appendingPathComponent(it.name)
+    /// The folder under the mouse, else the one shown. Search results aren't a folder: a drop there goes nowhere, and a
+    /// found folder's name is relative to the search's root (on a server, to its folder).
+    func dropTarget(row: Int, op: NSTableView.DropOperation) -> String? {
+        guard op == .on, row >= 0, row < table.numberOfRows, let it = item(at: row), it.kind == .dir else { return searchTitle == nil ? currentDir : nil }
+        return ((remote?.dir ?? itemsDir) as NSString).appendingPathComponent(it.name)
     }
 
     static func droppedURLs(_ info: NSDraggingInfo) -> [URL] {

@@ -2848,6 +2848,7 @@ extension AppDelegate {
 
     func pasteFiles(move: Bool) {
         guard active.archive == nil else { return readOnly() }
+        guard active.searchTitle == nil else { return active.flash("Search results aren't a folder: paste in one") }   // not into the one behind them
         guard let items = TransferItems(NSPasteboard.general) else { return NSSound.beep() }
         enqueueTransfer(items.paths, from: items.from, to: active.currentDir, on: active.endpoint, name: nil, move: move)
     }

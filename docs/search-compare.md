@@ -32,6 +32,7 @@ Press ⌘F (⌥F7, **Go ▸ Search Files…**) to search below the active panel'
 The results replace the panel's listing as they are found, named by their path below the folder. They behave like a listing: mark hits, then view (F3), edit (F4), preview (⌘Y), copy, move or delete them right there. The quick filter narrows them. The status line shows `searching… 12 found`, then `12 found`, with **⌫ Back** beside it: ⌫ or a click goes back to the folder.
 
 - ↩ on a file opens its folder with the cursor on it. ↩ on a folder enters it.
+- Space on a found folder counts its size; files dropped on it go into it. The results themselves aren't a folder: a drop or ⌘V on them is refused, as F5 or F6 into them is.
 - ⎋ does not stop a running search. ⌫ does, and leaves the results.
 - On a server, the search runs there (`find` and `grep`, GNU `find` required) and the tag and Spotlight options are hidden. See [Files on a server](server-files.md#preview-sizes-and-compare).
 
