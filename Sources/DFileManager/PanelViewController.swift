@@ -1847,6 +1847,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         watcher = nil
         searchTitle = place.map { "\(what) in \($0)" } ?? what
         parked = nil   // its ".." goes to the tab's folder
+        archive = nil   // ⌘F in one searches the folder around it, as the dialog says: ⌫ and ↩ mustn't act on the archive
         leaveList()
         loadError = nil
         searchWhat = what

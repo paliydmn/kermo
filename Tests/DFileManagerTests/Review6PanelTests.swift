@@ -74,3 +74,30 @@ import Testing
     app.pasteFiles(move: false)   // refused before the pasteboard is read: the user's own isn't touched
     #expect(panel.statusText == "Search results aren't a folder: paste in one", "\(panel.statusText)")
 }
+
+/// ⌘F (or a sidebar tag) inside an archive searched the folder around it, as its dialog says, but the archive stayed:
+/// the header said results while ⌫ and ↩ went by the archive — ⌫ showed its entries under the search's title.
+@MainActor @Test func aSearchFromAnArchiveLeavesIt() async throws {
+    let dir = try tempDir()
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    FileManager.default.createFile(atPath: dir + "/a.txt", contents: Data("a".utf8))
+    let zip = Process()
+    zip.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+    zip.arguments = ["-q", "z.zip", "a.txt"]
+    zip.currentDirectoryURL = URL(fileURLWithPath: dir)
+    try zip.run()
+    zip.waitUntilExit()
+    let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
+    panel.loadViewIfNeeded()
+    defer { panel.shutdown() }
+    await until { panel.listedItems.count == 2 }
+    panel.enterArchive(dir + "/z.zip")
+    await until { panel.archive != nil }
+    let flag = panel.beginSearch("*.txt", in: dir, root: dir)
+    panel.addSearchResults([FileItem(name: "a.txt", kind: .file, size: 1, mtime: 0, mode: 0o644, flags: 0)], from: flag)
+    panel.finishSearch(flag)
+    #expect(panel.archive == nil && panel.searchTitle != nil)
+    panel.goUp()   // leaves the results for the folder
+    await until { panel.searchTitle == nil && panel.listedItems.count == 2 }
+    #expect(panel.searchTitle == nil && panel.archive == nil && panel.path == dir)
+}

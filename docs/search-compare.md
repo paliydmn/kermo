@@ -20,7 +20,7 @@ Press / (**View ▸ Quick Filter**) to type a filter under the list: the field s
 
 ## Find files
 
-Press ⌘F (⌥F7, **Go ▸ Search Files…**) to search below the active panel's folder. The dialog remembers your last entries. Everything you fill in must match:
+Press ⌘F (⌥F7, **Go ▸ Search Files…**) to search below the active panel's folder (inside an archive, the folder the archive is in). The dialog remembers your last entries. Everything you fill in must match:
 
 - Name (first field): the quick-filter rules, always ignoring case. Empty matches any name.
 - Text (second field): files whose content holds the text, matched literally as UTF-8. Files saved as UTF-16 or in a legacy code page (cp1251, say) won't match; ignoring case covers Latin, Greek, Cyrillic and Armenian letters. Files not downloaded from iCloud or Dropbox are skipped, and a message says how many.

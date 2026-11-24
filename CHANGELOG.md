@@ -25,6 +25,7 @@ Release:
 - A number a server gives a tool that no integer holds — infinite, not a number, or exabytes from a FUSE disk — shows as it came instead of closing Kermo; a table whose header line is only spaces no longer closes it either.
 - Going to a folder that isn't there from an empty folder (a stale favorite, a mistyped path) stays where you are instead of jumping to the home folder — on a server, instead of leaving it. → [Status line and the panel's middle](docs/window.md#status-line-and-the-panels-middle)
 - In search results, a found folder's size (Space) and a drop onto a found folder go to that folder; a drop or a paste onto the results themselves is refused instead of landing in the folder behind them. → [Find files](docs/search-compare.md#find-files)
+- Searching from inside an archive leaves the archive for the results: ⌫ and ↩ there no longer act on the archive's entries. → [Find files](docs/search-compare.md#find-files)
 - A watched alert whose row is gone — a disk unmounted, a site removed — ends with **No longer reported** in the tool's events instead of standing until a restart. → [Watching a server](docs/tools.md#watching-a-server)
 - A watched tool updated or edited runs as its new version at once, not the old one until a restart.
 - A watched server printing a line with no end no longer fills this Mac's memory: past 1 MB the line is dropped.
