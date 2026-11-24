@@ -2334,25 +2334,40 @@ extension AppDelegate {
         }
     }
 
-    /// ⌥F5: pack the marked items; the format follows the extension (.zip .tar.gz .tar.xz .7z …).
+    /// ⌥F5: pack the marked items; the format follows the extension (.zip .tar.gz .tar.xz .7z …). tar packs into a
+    /// hidden file beside the archive, which becomes it only when tar exits 0 (`ArchiveIndex.publish`).
     func compressDialog() {
-        if active.archive != nil { return readOnly() }
-        let srcs = active.targetURLs
+        // The items, their folder and the panel now: once the questions are answered the panel may be elsewhere.
+        let panel = active
+        if panel.archive != nil { return readOnly() }
+        let srcs = panel.targetURLs, dir = panel.itemsDir, here = panel.path
         guard !srcs.isEmpty else { return NSSound.beep() }
-        let base = srcs.count == 1 ? srcs[0].deletingPathExtension().lastPathComponent : (active.path as NSString).lastPathComponent
+        let base = srcs.count == 1 ? srcs[0].deletingPathExtension().lastPathComponent : (here as NSString).lastPathComponent
         let suggestion = (other.path as NSString).appendingPathComponent((base.isEmpty ? "archive" : base) + ".zip")
         Task {
             guard let input = await prompt("Compress \(srcs.count == 1 ? "“\(srcs[0].lastPathComponent)”" : "\(srcs.count) items") into:",
                                            value: (suggestion as NSString).abbreviatingWithTildeInPath, ok: "Compress",
                                            info: "Format from the extension: .zip .tar.gz .tgz .tar.bz2 .tar.xz .7z")
             else { return }
-            let archive = resolve(input)
-            let taken = await Blocking.run(.userInitiated) { FileManager.default.fileExists(atPath: archive) }   // a share that doesn't answer
+            let archive = resolve(input, from: here), tmp = ArchiveIndex.packingPath(for: archive)
+            let taken = await Blocking.run(.userInitiated) {   // a share that doesn't answer
+                Editor.sweepSaves(in: (archive as NSString).deletingLastPathComponent, prefix: ".dfm-pack-")
+                return FileManager.default.fileExists(atPath: archive)
+            }
             guard !taken else { return showError(JobErrorMessage("“\(input)” already exists.")) }
-            let dir = active.itemsDir
-            let args = ArchiveIndex.createArguments(archive, names: srcs.map { Self.name($0, in: dir) }, in: dir)
-            Shell.run("COPYFILE_DISABLE=1 /usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dir) { _ in self.panels.forEach { $0.reload() } }
-            active.unmarkAll()
+            let args = ArchiveIndex.createArguments(tmp, names: srcs.map { Self.name($0, in: dir) }, in: dir)
+            Shell.run("COPYFILE_DISABLE=1 /usr/bin/tar -v " + args.map(ShellContext.quote).joined(separator: " ") + " 2>&1", in: dir,
+                      title: "Compress into \((archive as NSString).abbreviatingWithTildeInPath)",
+                      failed: "Nothing was kept: “\((archive as NSString).lastPathComponent)” wasn't made.") { status in
+                Task {
+                    let failure = await Blocking.run(.userInitiated) { () -> String? in
+                        do { try ArchiveIndex.publish(tmp, as: archive, exit: status); return nil } catch { return error.localizedDescription }
+                    }
+                    if let failure { self.showError(JobErrorMessage(failure)) }
+                    self.panels.forEach { $0.reload() }
+                }
+            }
+            panel.unmarkAll()
         }
     }
 
@@ -3096,7 +3111,7 @@ extension AppDelegate {
             guard let n = common(f), n != FileItem.unknown else { return "" }
             return r != nil ? String(n) : PanelViewController.idName(n, user: user)
         }
-        let owner = id(\.uid, user: true), group = id(\.gid, user: false)
+        let owner = id(\.uid, user: true), group = id(\.gid, user: false), panel = active
         // The owner keeps its colon ("1000:", ":20"): a number alone is a mode.
         let shown = [common { $0.mode & 0o7777 }.map { String(format: "%03o", $0) } ?? "", owner.isEmpty && group.isEmpty ? "" : owner + ":" + group]
             .filter { !$0.isEmpty }.joined(separator: " ")
@@ -3119,17 +3134,28 @@ extension AppDelegate {
                 (c.note, c.returnCancels) = ("To change the owner instead, keep its colon: “\(text.trimmingCharacters(in: .whitespaces)):”.", true)
                 guard await confirm(c) == 0 else { return }
             }
+            let linksKeep = r == nil ? nil : Self.linksKeepMode(items, mode: mode)
+            if let linksKeep, items.allSatisfy({ $0.kind == .link }), ids.uid == nil, ids.gid == nil { return panel.flash(linksKeep) }
             if let r {
                 let each = items.map { ((r.dir as NSString).appendingPathComponent($0.name), $0) }, root = r.target.sudo || ServerLock.logsInAsRoot(r.target)
-                await remoteOp("Permissions", r.target, paths: each.map(\.0)) { c in
+                let done = await remoteOp("Permissions", r.target, paths: each.map(\.0)) { c in
                     try c.setPermissions(each, mode: mode, uid: ids.uid, gid: ids.gid, root: root)
                 }
+                if done, let linksKeep { panel.flash(linksKeep) }
                 return
             }
             let errors = await Blocking.run { Perms.apply(paths, mode: mode, uid: ids.uid, gid: ids.gid) }
             active.reload()
             if !errors.isEmpty { showError(JobErrorMessage("Permissions and owner:\n" + errors.joined(separator: "\n"))) }
         }
+    }
+
+    /// A mode change on a server leaves its symbolic links as they are (`SFTPClient.setPermissions`): said, not silent.
+    nonisolated static func linksKeepMode(_ items: [FileItem], mode: UInt32?) -> String? {
+        let links = items.filter { $0.kind == .link }
+        guard mode != nil, let first = links.first else { return nil }
+        let which = links.count == 1 ? "“\(first.name)” keeps its mode" : "\(links.count) links keep their mode"
+        return "\(which): a symbolic link on a server has none of its own — change the item it points to."
     }
 
     func renameDialog() {
@@ -3608,10 +3634,10 @@ extension AppDelegate {
         urls.count == 1 ? "“\(urls[0].lastPathComponent)”" : "\(urls.count) items"
     }
 
-    /// Absolute path from user input: expands "~", resolves relative to the active panel.
-    func resolve(_ input: String) -> String {
+    /// Absolute path from user input: expands "~", resolves relative to `dir`, else to the active panel.
+    func resolve(_ input: String, from dir: String? = nil) -> String {
         let p = (input as NSString).expandingTildeInPath
-        let abs = p.hasPrefix("/") ? p : (active.path as NSString).appendingPathComponent(p)
+        let abs = p.hasPrefix("/") ? p : ((dir ?? active.path) as NSString).appendingPathComponent(p)
         return (abs as NSString).standardizingPath
     }
 }

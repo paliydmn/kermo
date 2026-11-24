@@ -603,10 +603,11 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
 
     /// Temp files of saves a crash left in `dir` (between their making and the rename), once a day old by name and
     /// date: a running save's is newer. One named before names said when (an older version's): its date alone.
-    nonisolated private static func sweepSaves(in dir: String) {
+    /// `prefix` ".dfm-pack-": Compress's (`ArchiveIndex.packingPath`), a quit mid-pack left.
+    nonisolated static func sweepSaves(in dir: String, prefix: String = ".dfm-save-") {
         let cutoff = Date().timeIntervalSince1970 - 86_400
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [] where name.hasPrefix(".dfm-save-") {
-            let made = name.dropFirst(".dfm-save-".count).split(separator: "-", maxSplits: 1).first.flatMap { Double($0) } ?? 0
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [] where name.hasPrefix(prefix) {
+            let made = name.dropFirst(prefix.count).split(separator: "-", maxSplits: 1).first.flatMap { Double($0) } ?? 0
             let path = (dir as NSString).appendingPathComponent(name)
             var st = stat()
             guard made < cutoff, lstat(path, &st) == 0, st.st_mode & S_IFMT == S_IFREG, Double(st.st_mtimespec.tv_sec) < cutoff else { continue }
@@ -660,9 +661,11 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
     /// The write behind `save`, off the main thread: checks the file is still the one opened (unless `base` is nil:
     /// Overwrite), writes it, and says what's on disk then. `newMode`: a file that isn't there yet gets it (less the
     /// umask). `inPlace` false (Save As): never written into — the file is either as it was or ours whole.
+    /// `copyAttributes`: the original's onto the new file (tests: one that fails).
     nonisolated static func write(_ data: Data, to path: String, name: String,
                                           unlessChangedFrom base: (stamp: Stamp?, digest: Data?)?, newMode: mode_t = 0o666, inPlace: Bool = true,
-                                          hook: (String) -> Void, writing: (FileHandle, Data) throws -> Void, willRename: (String) -> Void) -> Written {
+                                          hook: (String) -> Void, writing: (FileHandle, Data) throws -> Void, willRename: (String) -> Void,
+                                          copyAttributes: (String, String) -> Int32 = { copyfile($0, $1, nil, copyfile_flags_t(COPYFILE_SECURITY | COPYFILE_XATTR | COPYFILE_STAT)) }) -> Written {
         if let base, let now = changed(path, from: base.stamp, base.digest) { return .changed(now) }
         let fm = FileManager.default
         let dir = (path as NSString).deletingLastPathComponent
@@ -678,8 +681,14 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
                 do { try Self.write(data, to: Darwin.open(tmp, O_WRONLY | O_CREAT | O_EXCL, exists ? 0o600 : newMode), writing: writing) } catch { unlink(tmp); throw error }
                 if exists {
                     // Mode, owner, ACL, xattrs, flags from the original (STAT also copies times, so reset them after),
-                    // then its creation date, which copyfile doesn't carry.
-                    _ = copyfile(path, tmp, nil, copyfile_flags_t(COPYFILE_SECURITY | COPYFILE_XATTR | COPYFILE_STAT))
+                    // then its creation date, which copyfile doesn't carry. Where that fails (an ACL or an xattr this
+                    // disk won't take) its group and mode at least — else the file would stay 0600 — and the save says
+                    // so. No group: no group bits either (the folder's group isn't the one they were for).
+                    if copyAttributes(path, tmp) != 0 {
+                        let why = String(cString: strerror(errno))
+                        chmod(tmp, st.st_mode & (chown(tmp, st.st_uid, st.st_gid) == 0 ? 0o7777 : 0o7707))
+                        note = "Saved with its owner and permissions only: its ACL, extended attributes or flags didn't come along (\(why))"
+                    }
                     utimes(tmp, nil)
                     var crtime = attrlist(bitmapcount: u_short(ATTR_BIT_MAP_COUNT), reserved: 0, commonattr: attrgroup_t(ATTR_CMN_CRTIME),
                                           volattr: 0, dirattr: 0, fileattr: 0, forkattr: 0)
@@ -925,7 +934,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
         case .failed(let why, _):
             alert("Couldn't save “\(name)”", why)
             return false
-        case .written(let stamp, let digest, _):
+        case .written(let stamp, let digest, let note):
             if server != nil { formerCopy = url }
             url = dest
             (remote, onSaved, noticed, givenName) = (nil, nil, nil, nil)
@@ -937,6 +946,7 @@ final class Editor: NSObject, NSTextViewDelegate, NSMenuItemValidation {
                 language = Syntax.language(forFileName: name, firstLine: String(textView.string.prefix(200).split(separator: "\n").first ?? ""))
                 highlight(after: 0)
             }
+            if let note { flash(note) }
             return true
         }
     }

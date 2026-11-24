@@ -472,7 +472,7 @@ final class AISession {
                     Editor.write(Data(text.utf8), to: path, name: name, unlessChangedFrom: seen, hook: { _ in }, writing: { try $0.write(contentsOf: $1) }, willRename: { _ in })
                 }
                 return switch written {
-                case .written: AIResult("Wrote \(path).")
+                case .written(_, _, let note): AIResult("Wrote \(path)." + (note.map { " " + $0 + "." } ?? ""))
                 case .changed: .failure("\(path) changed, or appeared, after Kermo looked. Nothing was written.")
                 case .failed(let why, _): .failure("Not written: \(why)")
                 }

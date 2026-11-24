@@ -379,6 +379,7 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
             // A child that keeps a pipe (`./server &`) would hold the report forever: half a second after the exit it comes anyway.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { MainActor.assumeIsolated { self?.ended(now: true) } }
         }
+        awaitsReport = true
         report = { [weak self] in
             guard let self else { return }
             let secs = String(format: "%.1fs", Date().timeIntervalSince(self.started))
@@ -396,6 +397,8 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
                 }
             }
             onExit(self.status)
+            self.awaitsReport = false
+            Self.stopping.removeAll { $0 === self }   // kept till here when it outlived its SIGKILL's 2 s (`windowWillClose`)
         }
         do { try process.run() } catch { append(Data("\(error.localizedDescription)\n".utf8), true, in: tv) }
     }
@@ -621,6 +624,8 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
     private var ends = 0
     private var status: Int32 = 0
     private var report: () -> Void = {}
+    /// A command's window till its `report` — and `onExit`, which Compress's packing file goes in — has run.
+    private var awaitsReport = false
 
     private func ended(now: Bool = false) {
         ends += 1
@@ -719,7 +724,8 @@ final class OutputWindow: NSWindowController, NSWindowDelegate {
         Self.open.removeAll { $0 === self }
         guard stop() else { return }
         Self.stopping.append(self)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [self] in MainActor.assumeIsolated { forceKill(); Self.stopping.removeAll { $0 === self } } }
+        // A command's window stays till its report has run, though: `onExit` may have cleaning up to do.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [self] in MainActor.assumeIsolated { forceKill(); if !awaitsReport { Self.stopping.removeAll { $0 === self } } } }
     }
 
     /// At quit (no run loop after this: waits here): every window's command, SIGKILL to what's still there after a second.

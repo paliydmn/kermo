@@ -60,8 +60,13 @@ public struct ShellContext: Sendable {
         return bare && !u.isEmpty && u.first != "=" ? s : "'" + u.map { $0 == "'" ? "'\\''" : $0 == "\\" ? "'\\\\'" : String($0) }.joined() + "'"
     }
 
-    /// A bare name: "./" in front of a leading "-", so `rm %s` on a file named "-rf" doesn't read it as options.
-    public static func quoteName(_ name: String) -> String { quote(name.unicodeScalars.first == "-" ? "./" + name : name) }
+    /// A bare name: "./" in front of a leading "-", so `rm %s` on a file named "-rf" doesn't read it as options — and of
+    /// a leading "@", which tar reads as "the entries of that archive" (`tar -cf x.tar %s` on Synology's @eaDir).
+    public static func quoteName(_ name: String) -> String { quote(startsLikeAnArgument(name) ? "./" + name : name) }
+
+    /// A leading "-" or "@", by its first Unicode scalar: a mark joined to it makes a Character that isn't "-", but the
+    /// program reads the byte.
+    public static func startsLikeAnArgument(_ name: String) -> Bool { name.unicodeScalars.first.map { $0 == "-" || $0 == "@" } ?? false }
 }
 
 /// Send / Execute in Terminal's text — an editor's line or selection — as the bytes a line editor gets.

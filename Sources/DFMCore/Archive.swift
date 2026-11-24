@@ -256,9 +256,34 @@ public struct ArchiveIndex: Sendable {
     }
 
     /// bsdtar arguments to create `archive` (format from its extension: .zip .tar.gz .tgz .tar.bz2 .tar.xz .7z)
-    /// from `names` inside `dir`. Run with COPYFILE_DISABLE=1 so no "._*" AppleDouble files get added.
+    /// from `names` inside `dir`. Run with COPYFILE_DISABLE=1 so no "._*" AppleDouble files get added. "./" in front of
+    /// a name tar would read otherwise: "-x" as an option, "@eaDir" (Synology's) as "the entries of archive eaDir".
     public static func createArguments(_ archive: String, names: [String], in dir: String) -> [String] {
-        ["-a", "-c", "-f", archive, "-C", dir] + names.map { $0.hasPrefix("-") ? "./" + $0 : $0 }
+        ["-a", "-c", "-f", archive, "-C", dir] + names.map { ShellContext.startsLikeAnArgument($0) ? "./" + $0 : $0 }
+    }
+
+    /// Where Compress has tar pack `archive` till it's whole: a hidden name in its folder — the same disk, so `publish`
+    /// is a rename — ending in its extension, which `-a` reads the format from: ".tar" and the one after it (.tar.gz),
+    /// else the last (.zip, .tgz). One a quit mid-pack left goes with the next Compress into that folder, a day on
+    /// (`Editor.sweepSaves`).
+    public static func packingPath(for archive: String) -> String {
+        let parts = (archive as NSString).lastPathComponent.split(separator: ".", omittingEmptySubsequences: false)
+        let tar = parts.count > 2 && parts[parts.count - 2].lowercased() == "tar"
+        let ext = parts.count > 1 ? "." + parts.suffix(tar ? 2 : 1).joined(separator: ".") : ""
+        return ((archive as NSString).deletingLastPathComponent as NSString)
+            .appendingPathComponent(".dfm-pack-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(8))\(ext)")
+    }
+
+    /// After tar packed `tmp` (`packingPath`): on exit 0 it becomes `archive` — never over a file that appeared there
+    /// meanwhile (the look before packing is old by now). Else, or when one did, `tmp` goes and nothing else is touched:
+    /// a stopped or failed tar (⎋, a full disk, an item gone) leaves no archive that looks whole.
+    public static func publish(_ tmp: String, as archive: String, exit status: Int32) throws {
+        guard status == 0 else { unlink(tmp); return }   // tar said why, in its window
+        guard FileJob.renameExclusive(tmp, archive) != 0 else { return }
+        let error: Error = errno == EEXIST ? ArchiveError("“\((archive as NSString).lastPathComponent)” appeared there meanwhile — the archive wasn't kept.")
+            : POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        unlink(tmp)
+        throw error
     }
 
     /// A folder as a Tools `folder` input sends it (protocol §7.4): `git archive HEAD` of a repository — what's
