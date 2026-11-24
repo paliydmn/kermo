@@ -182,3 +182,13 @@ private func tar(_ args: [String], in dir: String) throws -> Int32 {
     #expect(env["SSH_ASKPASS"] == nil && env["SSH_ASKPASS_REQUIRE"] == "never", "\(env)")
     #expect(!FileManager.default.fileExists(atPath: root + "/elsewhere/askpass"))
 }
+
+/// A mode change on a server leaves its links as they are: said, by name for one link, counted for more; nothing
+/// to say without a mode or a link.
+@Test func aServerLinkKeepingItsModeIsSaid() {
+    func item(_ n: String, _ k: FileItem.Kind) -> FileItem { FileItem(name: n, kind: k, size: 0, mtime: 0, mode: 0o644, flags: 0) }
+    let f = item("a.txt", .file), l = item("link.txt", .link), m = item("other", .link)
+    #expect(AppDelegate.linksKeepMode([l], mode: 0o600)?.hasPrefix("“link.txt” keeps its mode: a symbolic link on a server") == true)
+    #expect(AppDelegate.linksKeepMode([f, l, m], mode: 0o600)?.hasPrefix("2 links keep their mode") == true)
+    #expect(AppDelegate.linksKeepMode([l], mode: nil) == nil && AppDelegate.linksKeepMode([f], mode: 0o600) == nil)
+}

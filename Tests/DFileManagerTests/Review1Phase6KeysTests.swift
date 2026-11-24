@@ -120,6 +120,41 @@ extension ServerLockTests {
         }
     }
 
+    /// keymap.json changed while the tab is open (no reload since). Broken: Reset All doesn't ask with the old count,
+    /// and a key pressed isn't written over it — both say why. Edited by hand: a key pressed doesn't drop the edit.
+    @Test func aKeymapChangedSinceTheTabReadItIsNotSavedOver() async throws {
+        try await keys { app, pane in
+            let url = URL(fileURLWithPath: AppDelegate.keymapPath)
+            try Data(#"{"go.home": ["ctrl+opt+k"]}"#.utf8).write(to: url)
+            pane.reload()
+            let broken = Data(#"{"go.home": ["ctrl+opt+k"]"#.utf8)
+            try broken.write(to: url)
+            var asked = false
+            AppDelegate.answering = { _, _, _ in asked = true; return 0 }
+            defer { AppDelegate.answering = nil }
+            await pane.resetAll()
+            #expect(!asked && pane.said?.contains("Fix or delete it") == true, "\(pane.said ?? "")")
+            #expect(try Data(contentsOf: url) == broken)
+
+            try Data(#"{"go.home": ["ctrl+opt+k"]}"#.utf8).write(to: url)
+            pane.reload()
+            try broken.write(to: url)
+            pane.record("go.up", replacing: nil)
+            pane.pressed(Shortcut("ctrl+opt+u")!)
+            #expect(try Data(contentsOf: url) == broken && pane.said?.contains("Fix or delete it") == true, "\(pane.said ?? "")")
+
+            try Data(#"{"go.home": ["ctrl+opt+k"]}"#.utf8).write(to: url)
+            pane.reload()
+            try Data(#"{"go.home": ["ctrl+opt+k"], "go.back": ["ctrl+opt+b"]}"#.utf8).write(to: url)   // by hand
+            pane.record("go.up", replacing: nil)
+            pane.pressed(Shortcut("ctrl+opt+u")!)
+            #expect(file() == ["go.home": ["ctrl+opt+k"], "go.back": ["ctrl+opt+b"]] && pane.said?.contains("changed meanwhile") == true, "\(file()) \(pane.said ?? "")")
+            pane.record("go.up", replacing: nil)
+            pane.pressed(Shortcut("ctrl+opt+u")!)   // again, on what's there now
+            #expect(file()["go.back"] == ["ctrl+opt+b"] && file()["go.up"]?.contains("ctrl+opt+u") == true, "\(file())")
+        }
+    }
+
     /// Reset All… asks first, its ↩ on Cancel: it can't be undone.
     @Test func resetAllAsks() async throws {
         try await keys { app, pane in

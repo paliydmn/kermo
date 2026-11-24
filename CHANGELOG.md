@@ -18,7 +18,8 @@ Release:
 - Synchronize with **Include hidden** off leaves an item out on both sides when either side hides it; an item this Mac hides by flag (`~/Library`) no longer shows its server copy as "only on the right", where Mirror would delete it. → [Synchronize folders](docs/search-compare.md#synchronize-folders)
 - Copying from a server to a FAT or exFAT disk no longer fails on every new file.
 - Switching to a server tab shows none of the previous tab's items while the server's list is on its way, so nothing done in that moment can act on them.
-- **Settings › Keys** never saves over a `keymap.json` it can't read: it says why and changes no key until the file is fixed or deleted. → [Keymap](docs/configuration.md#keymap)
+- **Settings › Keys** never saves over a `keymap.json` it can't read, even one broken while the tab is open (Reset All… no longer asks first with the old count): it says why and changes no key until the file is fixed or deleted. A key changed there no longer drops what was written into the file by hand meanwhile. → [Keymap](docs/configuration.md#keymap)
+- **Permissions & Owner** on a server says when its symbolic links keep their mode (a link there has none of its own), instead of changing nothing in silence. → [Tags, Info and permissions](docs/files.md#tags-info-and-permissions)
 - Undo of **Move to Trash** puts back only the item it moved: another item in the Trash under that name now stays. → [Undo and redo](docs/files.md#undo-and-redo)
 - Sizes a server reports as huge no longer overflow the Synchronize summary, the copy progress or the toolbar's ring.
 - A save to a server no longer fails when its panel leaves that server, or when Kermo resets its connections after a wake or a network change; a file written into in place (SELinux, someone else's) could be left part new, part old. On a root panel where sudo wants a password, each save is a sudo of its own. → [Open and edit](docs/server-files.md#open-and-edit)

@@ -3111,7 +3111,7 @@ extension AppDelegate {
             guard let n = common(f), n != FileItem.unknown else { return "" }
             return r != nil ? String(n) : PanelViewController.idName(n, user: user)
         }
-        let owner = id(\.uid, user: true), group = id(\.gid, user: false)
+        let owner = id(\.uid, user: true), group = id(\.gid, user: false), panel = active
         // The owner keeps its colon ("1000:", ":20"): a number alone is a mode.
         let shown = [common { $0.mode & 0o7777 }.map { String(format: "%03o", $0) } ?? "", owner.isEmpty && group.isEmpty ? "" : owner + ":" + group]
             .filter { !$0.isEmpty }.joined(separator: " ")
@@ -3134,17 +3134,28 @@ extension AppDelegate {
                 (c.note, c.returnCancels) = ("To change the owner instead, keep its colon: “\(text.trimmingCharacters(in: .whitespaces)):”.", true)
                 guard await confirm(c) == 0 else { return }
             }
+            let linksKeep = r == nil ? nil : Self.linksKeepMode(items, mode: mode)
+            if let linksKeep, items.allSatisfy({ $0.kind == .link }), ids.uid == nil, ids.gid == nil { return panel.flash(linksKeep) }
             if let r {
                 let each = items.map { ((r.dir as NSString).appendingPathComponent($0.name), $0) }, root = r.target.sudo || ServerLock.logsInAsRoot(r.target)
-                await remoteOp("Permissions", r.target, paths: each.map(\.0)) { c in
+                let done = await remoteOp("Permissions", r.target, paths: each.map(\.0)) { c in
                     try c.setPermissions(each, mode: mode, uid: ids.uid, gid: ids.gid, root: root)
                 }
+                if done, let linksKeep { panel.flash(linksKeep) }
                 return
             }
             let errors = await Blocking.run { Perms.apply(paths, mode: mode, uid: ids.uid, gid: ids.gid) }
             active.reload()
             if !errors.isEmpty { showError(JobErrorMessage("Permissions and owner:\n" + errors.joined(separator: "\n"))) }
         }
+    }
+
+    /// A mode change on a server leaves its symbolic links as they are (`SFTPClient.setPermissions`): said, not silent.
+    nonisolated static func linksKeepMode(_ items: [FileItem], mode: UInt32?) -> String? {
+        let links = items.filter { $0.kind == .link }
+        guard mode != nil, let first = links.first else { return nil }
+        let which = links.count == 1 ? "“\(first.name)” keeps its mode" : "\(links.count) links keep their mode"
+        return "\(which): a symbolic link on a server has none of its own — change the item it points to."
     }
 
     func renameDialog() {

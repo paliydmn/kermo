@@ -184,6 +184,12 @@ final class KeysPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSear
 
     /// The only way this tab saves: never over a keymap.json it couldn't read — the user's other keys are in it.
     private func write(_ f: [String: [String]]) {
+        do {   // changed since the tab read it: by hand into keys `f` would lose, or broken
+            if unread == nil, try AppDelegate.readKeymap() != file {
+                reload()
+                return say("keymap.json changed meanwhile, and its keys are shown now: change the key again.")
+            }
+        } catch { unread = error.localizedDescription }
         guard unread == nil else { return refuse() }
         app.writeKeymap(f)
         reload()
@@ -209,6 +215,7 @@ final class KeysPane: NSView, NSTableViewDataSource, NSTableViewDelegate, NSSear
 
     /// Every entry goes, after a question whose ↩ is Cancel (it can't be undone).
     func resetAll() async {
+        reload()   // the question counts the entries there now, and a file broken since doesn't get one
         guard unread == nil else { return refuse() }   // its entries aren't known: not "every command has Kermo's keys"
         guard !file.isEmpty else { return say("Every command has Kermo's keys already.") }
         if let why = GlobalKey.clash(file.keys.flatMap { defaults[$0] ?? [] }) { return say(why) }
