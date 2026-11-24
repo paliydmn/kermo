@@ -135,3 +135,20 @@ private func tar(_ args: [String], in dir: String) throws -> Int32 {
     #expect(FileManager.default.contents(atPath: path) == Data("new".utf8))
     #expect((try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? Int) == 0o644)
 }
+
+/// В3: the askpass script was written once a launch, in /tmp, which macOS's daily cleanup empties of files untouched
+/// for 3 days: a Kermo running longer asked no password again. Gone, it's written again — its folder too, 0700.
+@Test func theAskpassScriptComesBackAfterTmpsCleanup() throws {
+    let root = try tempDir(), dir = root + "/ssh"
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    let mode = { (p: String) in (try? FileManager.default.attributesOfItem(atPath: p)[.posixPermissions] as? Int) ?? nil }
+    #expect(SSHAskpass.env(in: dir)["SSH_ASKPASS"] == dir + "/askpass")
+    #expect(mode(dir) == 0o700 && mode(dir + "/askpass") == 0o700)
+    unlink(dir + "/askpass")
+    _ = SSHAskpass.env(in: dir)
+    #expect(mode(dir + "/askpass") == 0o700, "written again")
+    try FileManager.default.removeItem(atPath: dir)
+    _ = SSHAskpass.env(in: dir)
+    #expect(mode(dir) == 0o700 && mode(dir + "/askpass") == 0o700, "its folder too")
+    #expect(try String(contentsOfFile: dir + "/askpass", encoding: .utf8) == SSHAskpass.script())
+}

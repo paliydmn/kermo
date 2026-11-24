@@ -95,7 +95,7 @@ public enum SFTP {
     static let control = controlDir(predictable: "/tmp/dfm-ssh-\(getuid())")
 
     /// `random`: the predictable folder wasn't ours, so this one was made for this run alone — nothing finds it again.
-    static func controlDir(predictable dir: String) -> (dir: String, random: Bool) {
+    public static func controlDir(predictable dir: String) -> (dir: String, random: Bool) {
         mkdir(dir, 0o700)
         var s = stat()
         // Sticky /tmp: once it's ours, nobody else can rename or replace it.

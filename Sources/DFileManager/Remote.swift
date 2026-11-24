@@ -643,13 +643,35 @@ enum SSHAskpass {
     /// Kermo's executable — the askpass client (`--askpass`) — when it runs as the app.
     static let app: String? = Bundle.main.bundlePath.hasSuffix(".app") ? Bundle.main.executablePath : nil
 
-    static let env: [String: String] = {
-        let path = SFTP.controlDir + "/askpass"
-        try? script().write(toFile: path, atomically: true, encoding: .utf8)
-        chmod(path, 0o700)
+    /// What ssh is given to ask. The script is looked at on every read: macOS's daily cleanup of /tmp deletes files
+    /// untouched for 3 days, under a Kermo that has run for longer too — and the next password would never be asked.
+    static var env: [String: String] {
+        _ = written
+        return env(in: SFTP.controlDir)
+    }
+    /// This version's script, written at the first read: an older Kermo's may be there.
+    private static let written: Void = write(in: SFTP.controlDir)
+
+    /// `env` with its script in `dir` (tests: a folder of their own), written again if it's gone — and the folder,
+    /// made as at launch: only where it's ours (`SFTP.controlDir(predictable:)`), else no script at all.
+    static func env(in dir: String) -> [String: String] {
+        let path = dir + "/askpass"
+        var d = stat(), f = stat()
+        let ours = lstat(dir, &d) == 0 && d.st_mode & S_IFMT == S_IFDIR && d.st_uid == getuid()
+            && lstat(path, &f) == 0 && f.st_mode & S_IFMT == S_IFREG && f.st_uid == getuid() && f.st_mode & S_IXUSR != 0
+        if !ours {
+            let made = SFTP.controlDir(predictable: dir)
+            if made.dir == dir { write(in: dir) } else if made.random { try? FileManager.default.removeItem(atPath: made.dir) }
+        }
         return ["SSH_ASKPASS": path, "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": ":0"]
             .merging(app.map { ["DFM_ASKPASS_SOCKET": socket, "DFM_ASKPASS_APP": $0] } ?? [:]) { $1 }
-    }()
+    }
+
+    private static func write(in dir: String) {
+        let path = dir + "/askpass"
+        try? script().write(toFile: path, atomically: true, encoding: .utf8)
+        chmod(path, 0o700)
+    }
 
     /// `osascript`: the dialog's program (tests: a stand-in).
     static func script(osascript: String = "/usr/bin/osascript") -> String {
