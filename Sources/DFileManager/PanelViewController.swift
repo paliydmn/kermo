@@ -20,14 +20,18 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// others' path dimmed. Before the path: the place's chip — `Mac`, a server by its name with its chips, an archive,
     /// search results.
     private func styleHeader() {
-        let place = remote ?? parked ?? list.map { ($0.source.target, "") }
-        let chips = searchTitle == nil && archive == nil ? place.map { Chip.of($0.target) } ?? [] : []
-        headerChips = chips
-        if let l = list { pathBar.showPlace(.server, SavedServer.name(for: l.source.target.asUser), chips: chips, scp: nil, copy: false) }
-        else if searchTitle != nil { pathBar.showPlace(.search, "", chips: [], scp: nil) }
-        else if archive != nil { pathBar.showPlace(.archive, "", chips: [], scp: nil) }
-        else if let p = place { pathBar.showPlace(.server, SavedServer.name(for: p.target.asUser), chips: chips, scp: Self.scpPath(p.target, p.dir)) }
-        else { pathBar.showPlace(.mac, "Mac", chips: [], scp: nil) }
+        headerChips = []
+        switch showing {
+        case .list(let l):
+            headerChips = Chip.of(l.source.target)
+            pathBar.showPlace(.server, SavedServer.name(for: l.source.target.asUser), chips: headerChips, scp: nil, copy: false)
+        case .results: pathBar.showPlace(.search, "", chips: [], scp: nil)
+        case .archive: pathBar.showPlace(.archive, "", chips: [], scp: nil)
+        case .server(let t, let dir), .parked(let t, let dir):
+            headerChips = Chip.of(t)
+            pathBar.showPlace(.server, SavedServer.name(for: t.asUser), chips: headerChips, scp: Self.scpPath(t, dir))
+        case .folder: pathBar.showPlace(.mac, "Mac", chips: [], scp: nil)
+        }
         pathBar.style(text: isActive ? theme.text : theme.hidden, dim: theme.hidden, mono: theme.mono)
         pathBar.line = isActive ? placeTint : nil
         targetMark.isHidden = !isTarget || list != nil   // a list takes no F5
@@ -230,7 +234,12 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         parked.map { "Not connected — ↩ Connect to \(SavedServer.name(for: $0.target))".bidiVisible }
     }
     /// The folder it shows on this Mac: nil on a server, in an archive or a list, or parked (an Untitled's save starts here).
-    var localFolder: URL? { remote == nil && archive == nil && parked == nil && list == nil ? URL(fileURLWithPath: path, isDirectory: true) : nil }
+    var localFolder: URL? {
+        switch showing {
+        case .folder, .results(server: nil): URL(fileURLWithPath: path, isDirectory: true)
+        default: nil
+        }
+    }
 
     /// A list in place of the folder (`showList`): a server's services, containers, ports — its rows, its columns, its
     /// keys. Nothing of the folder behind it is on screen, nor acted on.
@@ -300,6 +309,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     // MARK: - Row mapping & targets
 
+    // Per row (`item(at:)`): plain nil checks, not `showing`'s copy of the place.
     private var hasParent: Bool { parked == nil && list == nil && (remote != nil || archive != nil || searchTitle != nil || path != "/") }   // ".." leaves results/archives
     func item(at row: Int) -> FileItem? {     // nil == ".." (and a parked tab's one row; a list's rows aren't files)
         guard parked == nil, list == nil else { return nil }
@@ -324,7 +334,31 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     /// The item under the cursor (nil on "..", and inside archives, where nothing is a real file).
     /// The folder shown, when it's a plain one of this Mac's (not a server's, an archive or search results): only
     /// then is `path` what's on screen.
-    var plainFolder: String? { remote == nil && parked == nil && archive == nil && searchTitle == nil && list == nil ? path : nil }
+    var plainFolder: String? { if case .folder(let p) = showing { p } else { nil } }
+
+    /// What the panel shows, once: what its optionals say, in the order the header and the path read them (only a
+    /// server's search results have two set). Read only — the optionals are what's kept. Not a server's `place`.
+    enum Showing {
+        case list(ListPanel)
+        case results(server: SFTPTarget?)
+        case archive
+        case server(SFTPTarget, dir: String)
+        case parked(SFTPTarget, dir: String)
+        case folder(String)
+
+        /// A folder's own listing, of this Mac or a server: what re-lists, and takes a drop on its crumbs.
+        var isFolderListing: Bool { switch self { case .folder, .server: true; default: false } }
+    }
+    var showing: Showing { Self.showing(list: list, search: searchTitle != nil, archive: archive != nil, remote: remote, parked: parked, path: path) }
+    static func showing(list: ListPanel?, search: Bool, archive: Bool, remote: (target: SFTPTarget, dir: String)?,
+                      parked: (target: SFTPTarget, dir: String)?, path: String) -> Showing {
+        if let list { return .list(list) }
+        if search { return .results(server: remote?.target) }
+        if archive { return .archive }
+        if let r = remote { return .server(r.target, dir: r.dir) }
+        if let p = parked { return .parked(p.target, dir: p.dir) }
+        return .folder(path)
+    }
 
     /// What ⌘I shows: the cursor's file or the folder; inside an archive, the archive itself; nothing on a server.
     var infoURL: URL? {
@@ -483,11 +517,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
             onPlace?(t.asUser, list?.source.trail.first ?? (remote?.dir == "/" ? "/" : nil))
         }
         pathBar.validateDrop = { [unowned self] crumb, info in
-            guard archive == nil, parked == nil, searchTitle == nil, list == nil, let dir = crumb.path, let items = Self.dropped(info) else { return [] }
+            guard showing.isFolderListing, let dir = crumb.path, let items = Self.dropped(info) else { return [] }
             return Self.dragOperation(info, items: items, to: endpoint, target: dir)
         }
         pathBar.acceptDrop = { [unowned self] crumb, info in   // as a drop on a folder's row
-            guard archive == nil, parked == nil, searchTitle == nil, list == nil, let dir = crumb.path, let items = Self.dropped(info) else { return false }
+            guard showing.isFolderListing, let dir = crumb.path, let items = Self.dropped(info) else { return false }
             let operation = Self.dragOperation(info, items: items, to: endpoint, target: dir)
             guard !operation.isEmpty else { return false }
             onTransfer?(items, endpoint, dir, operation == .move)
@@ -727,11 +761,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                 resolveLinks(items, in: newPath, gen: gen)
             case .failure(let error):
                 NSSound.beep()
-                if newPath == path && all.isEmpty && parked == nil { loadError = error.localizedDescription }   // nothing of it shown: the middle says so too
+                if newPath == plainFolder && all.isEmpty { loadError = error.localizedDescription }   // nothing of it shown: the middle says so too
                 statusLabel.stringValue = "\((newPath as NSString).abbreviatingWithTildeInPath): \(error.localizedDescription)"
                 statusError = true
                 if (error as? POSIXError)?.code == .ENOENT { onGone?(newPath) }
-                if newPath == path && hasParent && history == .none && !all.isEmpty && remote == nil, archive == nil, searchTitle == nil {
+                if newPath == plainFolder && hasParent && history == .none && !all.isEmpty {
                     // The folder shown vanished or became unreadable: up to the nearest one still there — its parent
                     // may be gone too (an unplugged disk: /Volumes).
                     let m = moves
@@ -740,8 +774,10 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
                         guard let self, m == moves else { return }
                         navigate(to: up)
                     }
-                } else if all.isEmpty && parked == nil && newPath != NSHomeDirectory() {   // parked: it stays, the error said
-                    navigate(to: NSHomeDirectory(), history: .none)   // e.g. restored path no longer exists
+                } else if all.isEmpty && (history == .none || !listedOnce) && parked == nil && newPath != NSHomeDirectory() {
+                    // Nothing of the tab shown yet (a restored path gone, a tab's folder, a server's left for it): home.
+                    // Gone to from a folder shown — even an empty one — it stays; on a server, the server does. Parked: the error said.
+                    navigate(to: NSHomeDirectory(), history: .none)
                 }
             }
         }
@@ -774,7 +810,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     /// Search results and archives stay as they are: re-listing `path` would replace them with the folder.
     func reload(select: String? = nil) {
-        guard archive == nil, searchTitle == nil, parked == nil, list == nil else { return }   // a list: ⌘R reads it (`readList`)
+        guard showing.isFolderListing else { return }   // a list: ⌘R reads it (`readList`)
         let m = moves
         defer { moves = m }
         if let r = remote { return loadRemote(r.target, dir: r.dir, select: select) }
@@ -890,7 +926,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     func refreshStats() {
-        guard watcher != nil, remote == nil, archive == nil, searchTitle == nil, loadedGen == loadGen,
+        guard watcher != nil, plainFolder != nil, loadedGen == loadGen,
               statting != path, !reloadScheduled, !scroll.isHidden else { return }
         let range = table.rows(in: table.visibleRect)
         let shown = (range.lowerBound..<range.upperBound).compactMap(item(at:)).filter { $0.kind == .file }
@@ -1239,7 +1275,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         gitRuns.request(key: remote.map { "\($0.target.host):\($0.target.port ?? 0):\($0.dir)" } ?? path)
     }
 
-    private var gitApplies: Bool { archive == nil && searchTitle == nil && parked == nil }
+    private var gitApplies: Bool { showing.isFolderListing }
 
     /// One `git status` per panel at a time: reloads in a busy repo would otherwise pile them up.
     /// `git status` at most once a second, or twice its last run's time apart: one taking 4 s in a repo that a build
@@ -1845,6 +1881,8 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         watcher = nil
         searchTitle = place.map { "\(what) in \($0)" } ?? what
         parked = nil   // its ".." goes to the tab's folder
+        let leftArchive = archive != nil
+        archive = nil   // ⌘F in one searches the folder around it, as the dialog says: ⌫ and ↩ mustn't act on the archive
         leaveList()
         loadError = nil
         searchWhat = what
@@ -1856,6 +1894,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         setGit(nil)   // marks are by folder entry, not by result path
         showPath()
         applyView(select: nil)
+        if leftArchive { onPathChange?() }   // the key bar's F5 copies again, no longer extracts
         return flag
     }
 
@@ -2554,7 +2593,7 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         guard archive == nil else { return }
         sizeQueue += names.filter { !sizeQueue.contains($0) }
         guard sizeWalk == nil else { return }   // the walk running takes them next
-        let flag = CancelFlag(), gen = sizeGen, env = SSHAskpass.env, r = remote, base = path
+        let flag = CancelFlag(), gen = sizeGen, env = SSHAskpass.env, r = remote, base = itemsDir
         let duKey = r?.target
         sizeWalk = flag
         // Sizes reach the main thread in bunches: one hop, one redraw and one status for all that came meanwhile.
@@ -3303,15 +3342,13 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
 
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
                    proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
-        guard archive == nil, parked == nil, let items = Self.dropped(info) else { return [] }
-        let target = dropTarget(row: row, op: op)
+        guard archive == nil, parked == nil, let items = Self.dropped(info), let target = dropTarget(row: row, op: op) else { return [] }
         if target == currentDir { tableView.setDropRow(-1, dropOperation: .on) }
         return Self.dragOperation(info, items: items, to: endpoint, target: target)
     }
 
     func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation op: NSTableView.DropOperation) -> Bool {
-        let target = dropTarget(row: row, op: op)
-        guard let items = Self.dropped(info) else { return false }
+        guard let target = dropTarget(row: row, op: op), let items = Self.dropped(info) else { return false }
         let operation = Self.dragOperation(info, items: items, to: endpoint, target: target)
         guard !operation.isEmpty else { return false }
         onTransfer?(items, endpoint, target, operation == .move)
@@ -3332,9 +3369,11 @@ final class PanelViewController: NSViewController, NSTableViewDataSource, NSTabl
         return items
     }
 
-    private func dropTarget(row: Int, op: NSTableView.DropOperation) -> String {
-        guard op == .on, row >= 0, row < table.numberOfRows, let it = item(at: row), it.kind == .dir else { return currentDir }
-        return (currentDir as NSString).appendingPathComponent(it.name)
+    /// The folder under the mouse, else the one shown. Search results aren't a folder: a drop there goes nowhere, and a
+    /// found folder's name is relative to the search's root (on a server, to its folder).
+    func dropTarget(row: Int, op: NSTableView.DropOperation) -> String? {
+        guard op == .on, row >= 0, row < table.numberOfRows, let it = item(at: row), it.kind == .dir else { return searchTitle == nil ? currentDir : nil }
+        return ((remote?.dir ?? itemsDir) as NSString).appendingPathComponent(it.name)
     }
 
     static func droppedURLs(_ info: NSDraggingInfo) -> [URL] {

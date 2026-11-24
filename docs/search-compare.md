@@ -20,7 +20,7 @@ Press / (**View ▸ Quick Filter**) to type a filter under the list: the field s
 
 ## Find files
 
-Press ⌘F (⌥F7, **Go ▸ Search Files…**) to search below the active panel's folder. The dialog remembers your last entries. Everything you fill in must match:
+Press ⌘F (⌥F7, **Go ▸ Search Files…**) to search below the active panel's folder (inside an archive, the folder the archive is in). The dialog remembers your last entries. Everything you fill in must match:
 
 - Name (first field): the quick-filter rules, always ignoring case. Empty matches any name.
 - Text (second field): files whose content holds the text, matched literally as UTF-8. Files saved as UTF-16 or in a legacy code page (cp1251, say) won't match; ignoring case covers Latin, Greek, Cyrillic and Armenian letters. Files not downloaded from iCloud or Dropbox are skipped, and a message says how many.
@@ -32,6 +32,7 @@ Press ⌘F (⌥F7, **Go ▸ Search Files…**) to search below the active panel'
 The results replace the panel's listing as they are found, named by their path below the folder. They behave like a listing: mark hits, then view (F3), edit (F4), preview (⌘Y), copy, move or delete them right there. The quick filter narrows them. The status line shows `searching… 12 found`, then `12 found`, with **⌫ Back** beside it: ⌫ or a click goes back to the folder.
 
 - ↩ on a file opens its folder with the cursor on it. ↩ on a folder enters it.
+- Space on a found folder counts its size; files dropped on it go into it. The results themselves aren't a folder: a drop or ⌘V on them is refused, as F5 or F6 into them is.
 - ⎋ does not stop a running search. ⌫ does, and leaves the results.
 - On a server, the search runs there (`find` and `grep`, GNU `find` required) and the tag and Spotlight options are hidden. See [Files on a server](server-files.md#preview-sizes-and-compare).
 
