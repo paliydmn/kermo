@@ -114,7 +114,7 @@ import Testing
         let out = Pipe()
         p.standardOutput = out
         try p.run()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 5) { p.terminate() }   // the dialog came up instead
+        Timeouts.queue.asyncAfter(deadline: .now() + 5) { p.terminate() }   // the dialog came up instead
         p.waitUntilExit()
         return String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     }

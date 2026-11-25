@@ -55,7 +55,7 @@ private func standInSudo(_ kind: String) throws -> String {
 @Test(arguments: shells) func closingStdinKillsTheRunAndLeavesNothing(_ shell: String) throws {
     let token = "3\(Int.random(in: 100_000...999_999))"   // a sleep no one else runs
     let hold = CancelFlag()
-    DispatchQueue.global().asyncAfter(deadline: .now() + 1) { hold.cancel() }
+    Timeouts.queue.asyncAfter(deadline: .now() + 1) { hold.cancel() }
     let start = Date()
     let r = try run(payload("sleep \(token); echo late", shell: shell), hold: hold)
     #expect(Date().timeIntervalSince(start) < 10, "at once, not the sleep's — a loaded full run once took 6.7 s")

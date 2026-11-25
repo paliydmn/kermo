@@ -25,9 +25,22 @@ jobs:
           persist-credentials: false
       - run: python3 tools/check-docs.py
       - run: swift --version
-      - run: swift build
+      - run: swift build --build-tests   # the tests' 10 minutes below are for tests, not their build
+      # The tests' files in a folder with no link on its path, as test.sh's disks are: /var/folders is /private/var/…
+      # to a shell or git and /var/… to resolvingSymlinksInPath, and tests comparing the two failed.
+      - run: echo "DFM_TEST_TMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      # A run still going after 10 minutes is stuck: the test process's stacks go to the log (they name the test and
+      # the line it waits on), then it's stopped.
       - name: Core tests
-        run: ./test.sh --filter DFMCoreTests
+        timeout-minutes: 15
+        run: |
+          ./test.sh --filter DFMCoreTests & t=$!
+          ( sleep 600; echo "::error::Core tests still running after 10 minutes: stacks below"
+            for p in $(pgrep -f '\.xctest'); do sample "$p" 3 -file "/tmp/stacks-$p.txt" >/dev/null && cat "/tmp/stacks-$p.txt"; done
+            kill $t 2>/dev/null; pkill -f '\.xctest' || true ) & w=$!
+          s=0; wait $t || s=$?
+          kill $w 2>/dev/null || true
+          exit $s
       # The app's tests want a window server, the Keychain and an idle machine: their result is shown, not required.
       - name: App tests
         continue-on-error: true

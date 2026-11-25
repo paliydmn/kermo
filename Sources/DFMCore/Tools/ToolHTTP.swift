@@ -65,16 +65,19 @@ public enum ToolHTTPCheck {
 
     /// The session's delegate: no redirect followed; the leaf certificate's days as the server sent it, then the
     /// system's own judgement of it. The trust question comes to the task's method: `bytes(for:)` asks there.
+    /// Completion handlers, not async methods: those wait for a thread of Swift's pool, and with it busy (the test
+    /// suite on a 3-core runner) the answer came after the timeout.
     private final class Probe: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
         /// Set on the session's queue before the answer comes back, read after it.
         var days: Double?
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                        newRequest request: URLRequest) async -> URLRequest? { nil }
-        func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+                        newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) { completionHandler(nil) }
+        func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
             if let trust = challenge.protectionSpace.serverTrust, let leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first {
                 days = ToolHTTPCheck.days(leaf)
             }
-            return (.performDefaultHandling, nil)
+            completionHandler(.performDefaultHandling, nil)
         }
     }
 }
