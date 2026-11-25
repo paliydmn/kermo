@@ -3,12 +3,6 @@ import Testing
 @testable import DFileManager
 @testable import DFMCore
 
-@MainActor
-private func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
-    for _ in 0..<500 where !cond() { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(cond(), "timed out: \(what)")
-}
-
 /// The viewer's sliding window over a 33 MB log (just over the 32 MB whole-file limit): never shown on screen, but laid out and scrolled for real.
 @MainActor @Test func hugeFileViewerSlidesAndSearches() async throws {
     _ = NSApplication.shared
@@ -29,14 +23,14 @@ private func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
     try data.write(to: url)
 
     let v = Viewer(url)
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     #expect(v.win.lowerBound == 0 && v.win.count <= 256 << 10 && v.win.count % lineLen == 0)
     #expect(v.visibleTop()?.offset == 0)
 
     // Jump to the middle: that line is at the top.
     let mid = 20 << 20, top = mid / lineLen * lineLen
     v.showWindow(around: mid, top: top)
-    try await waitUntil("middle window") { v.win.contains(mid) && !v.sliding }
+    await until("middle window") { v.win.contains(mid) && !v.sliding }
     #expect(v.visibleTop()?.offset == top)
 
     // Scrolling to the window's bottom edge slides it forward; the same line stays at the top.
@@ -45,14 +39,14 @@ private func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
     clip.scroll(to: NSPoint(x: 0, y: clip.documentRect.height - clip.bounds.height))
     v.scroll.reflectScrolledClipView(clip)
     let atBottom = try #require(v.visibleTop())
-    try await waitUntil("slid forward") { v.win != before && !v.sliding }
+    await until("slid forward") { v.win != before && !v.sliding }
     #expect(v.win.lowerBound > before.lowerBound && v.win.contains(atBottom.offset))
     #expect(v.visibleTop()?.offset == atBottom.offset)
 
     // Whole-file search lands on the only "zzz" line, far outside the current window.
     v.findNeedle = "ZZZZ"
     v.find(from: 25 << 20)   // well past the current window (debug builds scan slowly)
-    try await waitUntil("found") { v.lastMatch != nil && !v.sliding && v.win.contains(v.lastMatch!) }
+    await until("found") { v.lastMatch != nil && !v.sliding && v.win.contains(v.lastMatch!) }
     #expect(v.lastMatch == 600_000 * lineLen + 11)
 }
 
@@ -73,9 +67,9 @@ private func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
     try text.write(to: url)
 
     let v = Viewer(url)
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     v.showWindow(around: text.count, top: text.count)   // End
-    try await waitUntil("last window") { v.win.upperBound == text.count && !v.sliding }
+    await until("last window") { v.win.upperBound == text.count && !v.sliding }
     let tv = try #require(v.scroll.documentView as? NSTextView)
     #expect(tv.string.hasSuffix("LIVE 40\nNEEDLE-AT-END ERROR\n"))
     // And it's on screen: the last line's rect lies inside the visible part of the view.

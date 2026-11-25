@@ -53,9 +53,6 @@ private func run(_ stream: AsyncThrowingStream<AIEvent, Error>) async -> (events
 private func done(_ events: [AIEvent]) -> (AIMessage, AIStop, AIUsage)? {
     if case .done(let m, let s, let u)? = events.last { (m, s, u) } else { nil }
 }
-private func until(_ ok: () -> Bool) async {
-    for _ in 0..<300 where !ok() { try? await Task.sleep(for: .milliseconds(10)) }
-}
 
 /// Not shaped like any known secret: only the very string being masked hides it.
 private let key = ["kermo", "test", "Q7f3", "zz91"].joined(separator: "-")

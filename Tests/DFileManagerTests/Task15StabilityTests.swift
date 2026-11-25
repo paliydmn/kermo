@@ -28,11 +28,6 @@ import Testing
     #expect(PanelViewController.bytes(of: [dir], dirSizes: ["d": 5]) == 5)
 }
 
-/// By the clock: the main actor is busy in the full suite.
-@MainActor private func waitUntil(_ seconds: Double = 20, _ done: () -> Bool) async {
-    let end = Date().addingTimeInterval(seconds)
-    while !done(), Date() < end { try? await Task.sleep(for: .milliseconds(10)) }
-}
 private func tempDir() -> String {
     let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-sss6-" + UUID().uuidString
     try! FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
@@ -59,7 +54,7 @@ private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
     panel.loadRemote(.local(server: server), dir: d, select: nil)
-    await waitUntil { panel.remote?.dir == d }
+    await until { panel.remote?.dir == d }
     FileManager.default.createFile(atPath: d + "/hang", contents: nil)
     func pids() -> [pid_t] {
         ((try? String(contentsOfFile: d + "/pids", encoding: .utf8)) ?? "").split(separator: "\n").compactMap { pid_t($0) }
@@ -68,15 +63,15 @@ private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
     let field = NSTextView()
     field.string = "s"
     _ = panel.control(NSTextField(), textView: field, doCommandBy: #selector(NSResponder.insertTab(_:)))
-    await waitUntil { pids().count == 1 }
+    await until { pids().count == 1 }
     _ = panel.control(NSTextField(), textView: field, doCommandBy: #selector(NSResponder.insertTab(_:)))
-    await waitUntil { pids().count == 2 }
+    await until { pids().count == 2 }
     let p = pids()
     try #require(p.count == 2)
-    await waitUntil(3) { !alive(p[0]) }
+    await until(3) { !alive(p[0]) }
     #expect(!alive(p[0]), "the second ⇥ ends the first")
     #expect(alive(p[1]))
-    await waitUntil(10) { !alive(p[1]) }
+    await until(10) { !alive(p[1]) }
     #expect(!alive(p[1]), "and its deadline the second")
     #expect(field.string == "s")
 }
@@ -109,7 +104,7 @@ private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
     defer { w.close() }
     let shell = try #require(w.delegate as? OutputWindow)
     usleep(1_000_000)   // the main thread busy: nothing drains
-    await waitUntil(60) { status != nil }
+    await until { status != nil }
     #expect(shell.inbox.peak <= Inbox.limit, "\(shell.inbox.peak)")
     let text = try #require(w.docFrame?.scroll.documentView as? NSTextView).string
     #expect(status == 0 && text.hasSuffix("xEND\n"), "\(String(describing: status)) \(text.suffix(80).debugDescription)")
@@ -210,7 +205,7 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`
         await app.extract(dir + "/u.zip", nil, to: dest)
         func window() -> NSWindow? { NSApp.windows.last { $0.title.hasPrefix("Extract “u.zip”") } }
         func said() -> String { (window()?.docFrame?.scroll.documentView as? NSTextView)?.string ?? "" }
-        await waitUntil { said().contains("[exit") && (try? FileManager.default.contentsOfDirectory(atPath: dest))?.count == 1 }
+        await until { said().contains("[exit") && (try? FileManager.default.contentsOfDirectory(atPath: dest))?.count == 1 }
         window()?.close()
         #expect(said().contains("[exit"), "tar failed on the bad member: \(said())")
         #expect(FileManager.default.contents(atPath: dest + "/a.txt") == Data("old-a".utf8))

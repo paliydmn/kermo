@@ -2,12 +2,6 @@ import AppKit
 import Testing
 @testable import DFileManager
 
-@MainActor
-private func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
-    for _ in 0..<500 where !cond() { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(cond(), "timed out: \(what)")
-}
-
 private func append(_ path: String, _ s: some Sequence<UInt8>) throws {
     let h = try #require(FileHandle(forWritingAtPath: path))
     defer { try? h.close() }
@@ -30,7 +24,7 @@ private func append(_ path: String, _ s: some Sequence<UInt8>) throws {
     let v = Viewer(URL(fileURLWithPath: path))
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
-    try await waitUntil("loaded") { tv.string == initial }
+    await until("loaded") { tv.string == initial }
     v.setFollow(true)
     let clip = v.scroll.contentView
     func atEnd() -> Bool { clip.bounds.maxY >= tv.frame.height - 20 }
@@ -39,7 +33,7 @@ private func append(_ path: String, _ s: some Sequence<UInt8>) throws {
     try append(path, line[..<3])   // "п" and half of "р"
     try await Task.sleep(for: .milliseconds(700))
     try append(path, line[3...])
-    try await waitUntil("whole line") { tv.string.hasSuffix("\n") && tv.string.count > initial.count }
+    await until("whole line") { tv.string.hasSuffix("\n") && tv.string.count > initial.count }
     #expect(tv.string == initial + "привіт ERROR\n")
     #expect(atEnd())
 
@@ -47,21 +41,21 @@ private func append(_ path: String, _ s: some Sequence<UInt8>) throws {
     clip.scroll(to: .zero)
     v.scroll.reflectScrolledClipView(clip)
     try append(path, "while reading\n".utf8)
-    try await waitUntil("appended") { tv.string.hasSuffix("while reading\n") }
+    await until("appended") { tv.string.hasSuffix("while reading\n") }
     #expect(clip.bounds.minY == 0)
     try append(path, "still reading\n".utf8)
-    try await waitUntil("appended") { tv.string.hasSuffix("still reading\n") }
+    await until("appended") { tv.string.hasSuffix("still reading\n") }
     #expect(clip.bounds.minY == 0)
     tv.scrollToEndOfDocument(nil)   // back at the end: autoscroll again
     try append(path, "at the end\n".utf8)
-    try await waitUntil("appended") { tv.string.hasSuffix("at the end\n") }
+    await until("appended") { tv.string.hasSuffix("at the end\n") }
     #expect(atEnd())
 
     // Rotation: the new file is already longer than the old one was.
     try FileManager.default.moveItem(atPath: path, toPath: path + ".1")
     try append(path + ".1", "last old line\n".utf8)
     try Data((initial + "first new line\n").utf8).write(to: URL(fileURLWithPath: path))
-    try await waitUntil("rotated") { tv.string.hasSuffix("first new line\n") }
+    await until("rotated") { tv.string.hasSuffix("first new line\n") }
     #expect(tv.string.contains("at the end\nlast old line\n\n——— file rotated ———\nline 000"))
     #expect(!tv.string.contains("truncated"))
 
@@ -79,7 +73,7 @@ private func append(_ path: String, _ s: some Sequence<UInt8>) throws {
     #expect(topLine() == "line 200 xxxxxxxxxx\n")
     v.followLimit = ns.length
     try append(path, "over the limit\n".utf8)
-    try await waitUntil("trimmed") { tv.string.hasSuffix("over the limit\n") }
+    await until("trimmed") { tv.string.hasSuffix("over the limit\n") }
     #expect(tv.string.utf16.count <= v.followLimit / 2 + 100 && !tv.string.contains("привіт"))
     #expect(topLine() == "line 200 xxxxxxxxxx\n")
 }
@@ -96,17 +90,17 @@ private func append(_ path: String, _ s: some Sequence<UInt8>) throws {
     let v = Viewer(URL(fileURLWithPath: path))
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
-    try await waitUntil("loaded") { tv.string == "start\n" }
+    await until("loaded") { tv.string == "start\n" }
     v.setFollow(true)
     try append(path, "A\n".utf8)
-    try await waitUntil("A") { tv.string.hasSuffix("A\n") }
+    await until("A") { tv.string.hasSuffix("A\n") }
     v.setFollow(false)
     try append(path, "C\n".utf8)
     try await Task.sleep(for: .milliseconds(700))
     #expect(tv.string == "start\nA\n")
     v.setFollow(true)
     try append(path, "B\n".utf8)
-    try await waitUntil("B") { tv.string.hasSuffix("B\n") }
+    await until("B") { tv.string.hasSuffix("B\n") }
     try await Task.sleep(for: .milliseconds(700))
     #expect(tv.string == "start\nA\nC\nB\n")
 }

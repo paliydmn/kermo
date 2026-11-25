@@ -5,9 +5,6 @@ import Testing
 
 // Task 13 (В6, В7): what a restart brings back, and Touch ID for sudo.
 
-@MainActor private func waitUntil(_ done: () -> Bool) async {
-    for _ in 0..<500 { if done() { return }; try? await Task.sleep(for: .milliseconds(10)) }
-}
 private func tempDir() -> String {
     let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t13s-" + UUID().uuidString
     try! FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
@@ -84,27 +81,27 @@ private func scratchDefaults() -> (UserDefaults, String) {
     #expect(menu.items.map(\.title) == ["Connect"], "the folder's menu would act on the local folder behind it")
 
     panel.switchTab(by: 1)   // a local tab: as before, its cursor back
-    await waitUntil { panel.currentName == "local.txt" }
+    await until { panel.currentName == "local.txt" }
     #expect(panel.parked == nil && panel.currentName == "local.txt")
     panel.switchTab(by: 1)
-    await waitUntil { panel.parked != nil }
+    await until { panel.parked != nil }
     #expect(panel.parked?.target == web && panel.remoteTabs.isEmpty && panel.sessionTabs == saved)
 
     panel.reload()   // ⌘R: still nothing listed
     try? await Task.sleep(for: .milliseconds(300))
     #expect(panel.parked != nil && panel.listedItems.isEmpty && panel.table.numberOfRows == 0)
     panel.navigate(to: d + "/gone")   // a way out that fails: it stays parked, the error said
-    await waitUntil { panel.statusText.contains("gone") }
+    await until { panel.statusText.contains("gone") }
     try? await Task.sleep(for: .milliseconds(300))
     #expect(panel.parked != nil && panel.path == d && panel.statusText.contains("gone"))
     // Off it and straight back, before the local tab's listing is in: each tab keeps its own.
     panel.switchTab(by: 1)
     panel.switchTab(by: 1)
-    await waitUntil { panel.parked != nil }
+    await until { panel.parked != nil }
     try? await Task.sleep(for: .milliseconds(300))
     #expect(panel.parked?.target == web && panel.sessionTabs == saved)
     panel.goUp()   // ⌘↑ (any way out): the tab's own folder
-    await waitUntil { panel.parked == nil && panel.listedItems.count == 1 }
+    await until { panel.parked == nil && panel.listedItems.count == 1 }
     #expect(panel.path == d && panel.remote == nil && panel.listedItems.map(\.name) == ["local.txt"])
 }
 
@@ -143,7 +140,7 @@ private func scratchDefaults() -> (UserDefaults, String) {
     let panel = PanelViewController(session: [Session.Tab(path: d, cursor: "f04321")], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { panel.listedItems.count == PanelViewController.sortOnMain + 1000 && panel.currentName != nil }
+    await until { panel.listedItems.count == PanelViewController.sortOnMain + 1000 && panel.currentName != nil }
     #expect(panel.currentName == "f04321")
     #expect(panel.sessionTabs.first?.cursor == "f04321")
 }
@@ -189,7 +186,7 @@ extension ServerLockTests {
     #expect(asked == 1 && panel.remote == nil && panel.parked != nil)
     answer = true
     panel.openCursor(intoPackage: false)
-    await waitUntil { panel.remote != nil && panel.currentName != nil }
+    await until { panel.remote != nil && panel.currentName != nil }
     #expect(asked == 2 && panel.parked == nil && panel.remote?.dir == d && panel.currentName == "b.conf")
     #expect(panel.remoteTabs.count == 1)
 
@@ -198,7 +195,7 @@ extension ServerLockTests {
     rootPanel.loadViewIfNeeded()
     defer { rootPanel.shutdown() }
     rootPanel.openCursor(intoPackage: false)
-    await waitUntil { rootPanel.remote != nil }
+    await until { rootPanel.remote != nil }
     #expect(rootPanel.remote?.target == root.persisting(60) && rootPanel.remote?.target.sudo == true, "a locked server's linger (D-081)")
 }
 
@@ -230,7 +227,7 @@ extension ServerLockTests {
 
     AppDelegate.answering = { m, b, def in asked.append((m, b, def)); return 1 }   // Cancel
     app.enableSudoTouchID()
-    await waitUntil { asked.count == 1 }
+    await until { asked.count == 1 }
     try? await Task.sleep(for: .milliseconds(100))
     #expect(asked.first?.0 == "Let sudo in Terminal use Touch ID?" && asked.first?.1 == ["Enable", "Cancel"] && asked.first?.2 == nil,
             "↩ is Enable, ⎋ Cancel")
@@ -238,7 +235,7 @@ extension ServerLockTests {
 
     AppDelegate.answering = { m, b, def in asked.append((m, b, def)); return 0 }   // Enable
     app.enableSudoTouchID()
-    await waitUntil { app.panels[0].statusText.contains("Touch ID for sudo is on") }
+    await until { app.panels[0].statusText.contains("Touch ID for sudo is on") }
     #expect(app.panels[0].statusText == "Touch ID for sudo is on — new Terminal windows use it")
     let on = template.replacingOccurrences(of: "\n#auth", with: "\nauth")
     try #require(ran.count == 1)
@@ -247,14 +244,14 @@ extension ServerLockTests {
 
     app.panels[0].flash("")
     app.enableSudoTouchID()
-    await waitUntil { app.panels[0].statusText == "Touch ID for sudo is already on" }
+    await until { app.panels[0].statusText == "Touch ID for sudo is already on" }
     #expect(app.panels[0].statusText == "Touch ID for sudo is already on" && asked.count == 2 && ran.count == 1)
 
     // A symlink (managed by something else): left alone, nothing asked.
     try FileManager.default.removeItem(atPath: d + "/sudo_local")
     try FileManager.default.createSymbolicLink(atPath: d + "/sudo_local", withDestinationPath: d + "/sudo_local.template")
     app.enableSudoTouchID()
-    await waitUntil { app.panels[0].statusText.contains("symlink") }
+    await until { app.panels[0].statusText.contains("symlink") }
     #expect(app.panels[0].statusText.contains("is a symlink") && asked.count == 2 && ran.count == 1)
 }
 

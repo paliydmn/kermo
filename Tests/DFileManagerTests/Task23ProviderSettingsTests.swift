@@ -129,7 +129,3 @@ extension ServerLockTests {
         #expect(AISettings.addressNote(std).contains("the chat sends nothing there"), "\(AISettings.addressNote(std))")
     }
 }
-
-@MainActor private func until(_ ok: () -> Bool) async {
-    for _ in 0..<300 where !ok() { try? await Task.sleep(for: .milliseconds(10)) }
-}

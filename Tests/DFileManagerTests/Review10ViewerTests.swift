@@ -3,12 +3,6 @@ import Testing
 @testable import DFileManager
 @testable import DFMCore
 
-@MainActor
-private func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
-    for _ in 0..<1000 where !cond() { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(cond(), "timed out: \(what)")
-}
-
 private func tempDir() throws -> String {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-r10-viewer-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -61,26 +55,26 @@ private func append(_ path: String, _ s: String) throws {
     let v = Viewer(URL(fileURLWithPath: path))
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
-    try await waitUntil("loaded") { tv.string.hasPrefix("start") }
+    await until("loaded") { tv.string.hasPrefix("start") }
     v.setLineFilter(LineFilter("get"))
-    try await waitUntil("filtered") { tv.string == "GET /a 200\nGET /b 500 error\n" }
+    await until("filtered") { tv.string == "GET /a 200\nGET /b 500 error\n" }
     #expect(v.window?.statusText.contains("lines with “get”") == true)
     v.setLineFilter(LineFilter("!get"))
-    try await waitUntil("excluded") { tv.string == "start\nPOST /c 200\n" }
+    await until("excluded") { tv.string == "start\nPOST /c 200\n" }
 
     v.setLineFilter(LineFilter("error"))
-    try await waitUntil("errors") { tv.string == "GET /b 500 error\n" }
+    await until("errors") { tv.string == "GET /b 500 error\n" }
     v.setFollow(true)
     try append(path, "GET /d 200\nGET /e 502 err")
     try await Task.sleep(for: .milliseconds(700))
     try append(path, "or\nGET /f 200\n")
-    try await waitUntil("followed") { tv.string.hasSuffix("/e 502 error\n") }
+    await until("followed") { tv.string.hasSuffix("/e 502 error\n") }
     try await Task.sleep(for: .milliseconds(700))
     #expect(tv.string == "GET /b 500 error\nGET /e 502 error\n")
 
     v.setFollow(false)
     v.setLineFilter(nil)
-    try await waitUntil("all lines") { tv.string.hasSuffix("GET /f 200\n") && tv.string.hasPrefix("start\n") }
+    await until("all lines") { tv.string.hasSuffix("GET /f 200\n") && tv.string.hasPrefix("start\n") }
 }
 
 /// Over 4 MB (the sliding window): the filter goes over the whole file, not the window on screen.
@@ -101,10 +95,10 @@ private func append(_ path: String, _ s: String) throws {
     let v = Viewer(url)
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     v.setLineFilter(LineFilter("needle"))
-    try await waitUntil("filtered") { tv.string == "line 3 NEEDLE\nlast needle\n" && !v.sliding }
+    await until("filtered") { tv.string == "line 3 NEEDLE\nlast needle\n" && !v.sliding }
     v.setLineFilter(nil)
-    try await waitUntil("window again") { tv.string.hasPrefix("line 0 ") && !v.sliding }
+    await until("window again") { tv.string.hasPrefix("line 0 ") && !v.sliding }
     #expect(v.win.lowerBound == 0 && v.win.count <= 256 << 10)
 }

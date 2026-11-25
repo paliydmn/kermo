@@ -76,12 +76,6 @@ private func waitListed(_ panel: PanelViewController, _ count: Int) async {
     #expect(panel.targetItems.map(\.name) == ["c.log"])
 }
 
-@MainActor
-private func waitUntil(_ done: () -> Bool) async {
-    let end = Date().addingTimeInterval(60)
-    while !done(), Date() < end { try? await Task.sleep(for: .milliseconds(10)) }
-}
-
 /// U5: while a switched-to tab's listing is still loading, its marks don't land on the folder still on screen.
 @MainActor @Test func aTabsMarksWaitForItsOwnListing() async throws {
     let a = try tempDir(["x", "y"]), b = try tempDir(["x", "z"])
@@ -89,16 +83,16 @@ private func waitUntil(_ done: () -> Bool) async {
     let panel = PanelViewController(tabs: [a, b], index: 1, showHidden: false)
     defer { panel.shutdown() }
     panel.loadViewIfNeeded()
-    await waitUntil { panel.currentDir == b && panel.listedItems.count == 2 }
+    await until { panel.currentDir == b && panel.listedItems.count == 2 }
     panel.setMarks(["x"])
 
     panel.switchTab(by: 1)
-    await waitUntil { panel.currentDir == a && panel.listedItems.count == 2 }
+    await until { panel.currentDir == a && panel.listedItems.count == 2 }
     #expect(panel.markedNames.isEmpty)
     panel.switchTab(by: 1)   // B's listing hasn't arrived: A's rows are still shown
     #expect(panel.currentDir == a && panel.markedNames.isEmpty, "B's mark is on A's x")
     #expect(!panel.targetURLs.map(\.path).contains(a + "/x"))
-    await waitUntil { panel.currentDir == b }
+    await until { panel.currentDir == b }
     #expect(panel.targetURLs.map(\.path) == [b + "/x"], "B's mark is back on B's x")
 }
 
@@ -117,14 +111,14 @@ private func waitUntil(_ done: () -> Bool) async {
     panel.loadViewIfNeeded()
     await waitListed(panel, 2)
     panel.enterArchive(a + "/pkg.zip")
-    await waitUntil { panel.listedItems.map(\.name) == ["README.md"] }   // the folder itself lists 2
+    await until { panel.listedItems.map(\.name) == ["README.md"] }   // the folder itself lists 2
     panel.setMarks(["README.md"])
     #expect(panel.markedNames == ["README.md"])
 
     panel.switchTab(by: 1)
-    await waitUntil { panel.currentDir == b }
+    await until { panel.currentDir == b }
     panel.switchTab(by: 1)
-    await waitUntil { panel.currentDir == a && panel.listedItems.count == 2 }
+    await until { panel.currentDir == a && panel.listedItems.count == 2 }
     #expect(panel.markedNames.isEmpty, "the archive's mark is now on \(a)/README.md")
 }
 
@@ -172,11 +166,11 @@ private func waitUntil(_ done: () -> Bool) async {
     await waitListed(panel, 4)
     panel.table.selectRowIndexes([3], byExtendingSelection: false)   // "..", sub, a, b
     panel.navigate(to: sub)
-    await waitUntil { panel.currentDir == sub }
+    await until { panel.currentDir == sub }
     #expect(panel.table.selectedRow == 0 && panel.cursorURL == nil, "the cursor stayed on row \(panel.table.selectedRow)")
     panel.table.selectRowIndexes([3], byExtendingSelection: false)
     panel.goUp()
-    await waitUntil { panel.currentDir == dir }
+    await until { panel.currentDir == dir }
     #expect(panel.cursorURL?.lastPathComponent == "sub")
 }
 
@@ -252,7 +246,7 @@ private func waitUntil(_ done: () -> Bool) async {
     try log.write(contentsOf: Data(repeating: 65, count: 100))
     try log.close()
     panel.refreshStats()   // what the panel's timer does every few seconds while it's on screen
-    await waitUntil { panel.listedItems.first?.size == 100 }
+    await until { panel.listedItems.first?.size == 100 }
     #expect(panel.listedItems.first?.size == 100)
 }
 
@@ -276,7 +270,7 @@ private func waitUntil(_ done: () -> Bool) async {
     try log.write(contentsOf: Data(repeating: 65, count: 100))
     try log.close()
     panel.refreshStats()
-    await waitUntil { panel.listedItems.first { $0.name == "f185" }?.size == 100 }
+    await until { panel.listedItems.first { $0.name == "f185" }?.size == 100 }
     #expect(panel.listedItems.first { $0.name == "f185" }?.size == 100)
     #expect(NSLocationInRange(186, shown()), "scrolled back to rows \(shown())")
     #expect(panel.table.selectedRow == 1)
@@ -321,11 +315,11 @@ private func waitUntil(_ done: () -> Bool) async {
     try await Task.sleep(for: .milliseconds(500))
     #expect(panel.searchTitle != nil && panel.listedItems.map(\.name) == ["a.txt"], "the results were reset to the folder")
     panel.goUp()   // ".." still leaves them
-    await waitUntil { panel.searchTitle == nil }
+    await until { panel.searchTitle == nil }
     #expect(panel.searchTitle == nil)
 
     panel.enterArchive(dir + "/pkg.zip")
-    await waitUntil { panel.archive != nil }
+    await until { panel.archive != nil }
     panel.reload()
     try await Task.sleep(for: .milliseconds(500))
     #expect(panel.archive != nil && panel.listedItems.map(\.name) == ["a.txt"], "the archive was reset to the folder")
@@ -343,10 +337,10 @@ extension ServerLockTests {
         defer { panel.shutdown() }
         panel.loadViewIfNeeded()
         panel.loadRemote(.local(), dir: dir, select: nil)
-        await waitUntil { panel.remote?.dir == dir && panel.listedItems.count == 4 }
+        await until { panel.remote?.dir == dir && panel.listedItems.count == 4 }
         panel.table.selectRowIndexes([3], byExtendingSelection: false)   // "..", sub, a, b
         panel.loadRemote(.local(), dir: sub, select: nil)
-        await waitUntil { panel.remote?.dir == sub }
+        await until { panel.remote?.dir == sub }
         #expect(panel.table.selectedRow == 0 && panel.remoteCursor == nil, "the cursor stayed on row \(panel.table.selectedRow)")
 
         panel.table.selectRowIndexes([1], byExtendingSelection: false)   // w

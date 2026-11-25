@@ -8,7 +8,7 @@ Every user-visible change adds a line under [Unreleased]: Added, Changed, Fixed,
 Release:
 1. Set CFBundleShortVersionString in build.sh to the new version.
 2. Rename [Unreleased] to [X.Y] - YYYY-MM-DD, start a new empty [Unreleased], and add the link at the bottom.
-3. Commit, `git tag vX.Y`, `./package.sh` (it signs with “Kermo Release Signing”, made once by `./cert.sh "Kermo Release Signing"`; keep its backup), `python3 tools/release-notes.py X.Y [lead.md]`, then attach dist/*.dmg, *.pkg, their .sha256, the .zip (Install and Relaunch takes it) and dist/latest.json (the daily check reads it) to the GitHub release with dist/Kermo-X.Y-notes.md as its notes.
+3. Commit, `git tag vX.Y`, `./package.sh` (it refuses uncommitted changes and a HEAD without that tag; it signs with “Kermo Release Signing”, made once by `./cert.sh "Kermo Release Signing"`; keep its backup), `python3 tools/release-notes.py X.Y [lead.md]`, then attach dist/*.dmg, *.pkg, their .sha256, the .zip (Install and Relaunch takes it) and dist/latest.json (the daily check reads it) to the GitHub release with dist/Kermo-X.Y-notes.md as its notes.
 4. `tools/release-stats.sh`: how many checks and installs each release had — and, right after publishing, whether the release's latest.json has its tag and every file it names attached (it says so and exits 1 if not).
 -->
 
@@ -38,6 +38,7 @@ Release:
 - A command run in a server folder that no longer exists (⌘E, F2, ⌘↩) runs none of it: the output window shows `cd`'s error, and ⌘↩'s SSH tab ends with it instead of opening in the home folder. → [Command line](docs/commands.md#command-line)
 
 ### Security
+- **install.sh** installs only a Kermo signed with Kermo's release certificate, as Install and Relaunch does: the checksum beside the download only proved it wasn't damaged. It copies the new Kermo beside the old one and swaps them, so a stop midway no longer leaves Applications without Kermo, and a download cut off midway runs none of the script. → [Install](docs/install.md)
 - Names and folders in the command lines Kermo makes are quoted for every shell, fish included, whatever characters they hold, on a server and on this Mac; a folder the terminal reports (OSC 7) with a control character in it is ignored.
 - A name a server lists that holds a `/` is never copied, whatever characters come with it.
 - The assistant's **Allow Once** shows the command whole, spaces and all; another long value is cut, saying how much more there is. → [What asks every time](docs/ai.md#what-asks-every-time)

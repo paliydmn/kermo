@@ -4,10 +4,6 @@ import Testing
 @testable import DFileManager
 
 @Suite(.serialized) @MainActor struct ServicesAppTests {
-    private func until(_ done: () -> Bool) async {
-        for _ in 0..<250 where !done() { try? await Task.sleep(for: .milliseconds(20)) }
-    }
-
     /// A row says the service, its state ("failed" once, not twice) and its description, cut to fit; ↩ ⌘L ⌘E ⌘R act on
     /// it. One whose name Kermo won't put into a command keeps its row, but each key only says why. Containers alike.
     @Test func rowsSayWhatRunsAndActOnlyOnPlainNames() throws {
@@ -84,10 +80,6 @@ import Testing
 }
 
 extension ServerLockTests {
-private func until(_ done: () -> Bool) async {
-    for _ in 0..<250 where !done() { try? await Task.sleep(for: .milliseconds(20)) }
-}
-
 /// ⌘R on a service restarts it as root, through the server's sudo (`sudo -n`), whatever panel it was looked at from;
 /// the status line says it went.
 @Test func aServiceRestartsAsRoot() async throws {

@@ -10,10 +10,6 @@ private func key(_ code: UInt16, _ chars: String, _ mods: NSEvent.ModifierFlags 
 
 /// Part of ServerLockTests: one picker at a time (`Picker.current`), and localhost locked or production meanwhile.
 extension ServerLockTests {
-private func until(_ done: () -> Bool) async {
-    for _ in 0..<250 where !done() { try? await Task.sleep(for: .milliseconds(20)) }
-}
-
 /// A stand-in systemctl as root, through a stand-in sudo; `slow`: a restart that takes a while.
 private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     try FileManager.default.createDirectory(atPath: dir + "/bin", withIntermediateDirectories: true)
@@ -71,7 +67,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     now = .init(active: "failed", sub: "failed")
     try Data().write(to: URL(fileURLWithPath: dir + "/fail"))
     #expect(cmdR())
-    await until { list.said.hasPrefix("✕") }
+    await until { list.said.hasPrefix("\u{FFFC} web: the restart failed") }
     #expect(list.said.hasPrefix("\u{FFFC} web: the restart failed on localhost at ") && list.said.hasSuffix(": Job for web.service failed. — now failed"), "\(list.said)")
     func buttons(_ v: NSView) -> [NSButton] { v.subviews.flatMap { ($0 as? NSButton).map { [$0] } ?? buttons($0) } }
     let output = try #require(buttons(list.panel.contentView!).first { $0.title == "Output…" && !$0.isHidden })
@@ -244,7 +240,7 @@ private func standIns(_ dir: String, slow: Bool = false) throws -> SFTPTarget {
     #expect(list.said.hasPrefix("\u{FFFC} web stopped on localhost at ") && list.highlighted?.subtitle == "inactive · dead", "\(list.said)")
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "stop -- web.service\n" && waited == [true])
     press("Refresh Status")
-    await until { list.said.hasPrefix("↻") }
+    await until { list.said.hasPrefix("\u{FFFC} web on localhost at ") }
     #expect(list.said.hasPrefix("\u{FFFC} web on localhost at ") && list.said.hasSuffix(" — inactive · dead, enabled at boot") && waited == [true, false])
     #expect((try? String(contentsOfFile: dir + "/systemctl.log", encoding: .utf8)) == "stop -- web.service\n", "nothing ran")
 }

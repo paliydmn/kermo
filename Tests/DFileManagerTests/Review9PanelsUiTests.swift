@@ -12,15 +12,10 @@ private func tempDir(_ files: [String] = []) throws -> String {
 }
 
 @MainActor
-private func waitUntil(_ done: () -> Bool) async {
-    for _ in 0..<2000 where !done() { try? await Task.sleep(for: .milliseconds(10)) }
-}
-
-@MainActor
 private func loaded(_ dir: String, count: Int) async -> PanelViewController {
     let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
-    await waitUntil { panel.listedItems.count == count }
+    await until { panel.listedItems.count == count }
     return panel
 }
 
@@ -61,7 +56,7 @@ private func pathCommand(_ panel: PanelViewController, _ text: String, _ sel: Se
     let panel = await loaded(dir, count: 1)
     defer { panel.shutdown() }
     pathCommand(panel, dir + "/nope", #selector(NSResponder.insertNewline(_:)))
-    await waitUntil { panel.statusText.hasPrefix("No such folder") }   // looked at off the main thread (A4, task 11)
+    await until { panel.statusText.hasPrefix("No such folder") }   // looked at off the main thread (A4, task 11)
     #expect(panel.statusText == "No such folder: \(dir)/nope")
     #expect(panel.path == dir)
 }
@@ -81,7 +76,7 @@ private func pathCommand(_ panel: PanelViewController, _ text: String, _ sel: Se
     pathCommand(panel, dir + "/", #selector(NSResponder.cancelOperation(_:)))
     #expect(panel.headerText == "*.log in \(dir)")
     panel.goUp()   // leaves the results
-    await waitUntil { panel.searchTitle == nil && panel.listedItems.count == 1 }
+    await until { panel.searchTitle == nil && panel.listedItems.count == 1 }
 
     let tar = Process()
     tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
@@ -90,7 +85,7 @@ private func pathCommand(_ panel: PanelViewController, _ text: String, _ sel: Se
     try tar.run()
     tar.waitUntilExit()
     panel.enterArchive(dir + "/a.tar")
-    await waitUntil { panel.archive != nil }
+    await until { panel.archive != nil }
     #expect(panel.headerText == "\(dir)/a.tar")
     panel.beginPathEditing()
     pathCommand(panel, dir + "/", #selector(NSResponder.cancelOperation(_:)))
@@ -166,7 +161,7 @@ private func cell(_ panel: PanelViewController, _ column: String, row: Int) -> N
     window.contentView?.layoutSubtreeIfNeeded()
     func row(_ name: String) -> Int { panel.listedItems.firstIndex { $0.name == name }! + 1 }
     func name(_ n: String) -> NSTableCellView { cell(panel, "name", row: row(n)) }
-    await waitUntil { name("ok").toolTip != nil }
+    await until { name("ok").toolTip != nil }
 
     #expect(name("ok").toolTip == "→ f")
     #expect(name("ok").textField?.attributedStringValue.string == "ok  → f")
@@ -214,7 +209,7 @@ private func liveCell(_ panel: PanelViewController, _ column: String, row: Int) 
     defer { panel.shutdown(); window.close() }
     let row = panel.listedItems.firstIndex { $0.name == "ok" }! + 1
     func live() -> String? { liveCell(panel, "name", row: row)?.textField?.attributedStringValue.string }
-    await waitUntil { live() == "ok  → f" }
+    await until { live() == "ok  → f" }
     #expect(live() == "ok  → f")
     let column = panel.table.tableColumn(withIdentifier: .init("name"))!
     column.width = 60
@@ -234,14 +229,14 @@ private func liveCell(_ panel: PanelViewController, _ column: String, row: Int) 
     defer { stuck.signal() }
     entered.enter()
     let hung = Task { await PanelViewController.linkResolves.run(dir) { entered.leave(); _ = stuck.wait(timeout: .now() + 10); return [:] } }
-    await waitUntil { entered.wait(timeout: .now()) == .success }
+    await until { entered.wait(timeout: .now()) == .success }
     let panel = await loaded(dir, count: 2)
     let window = inWindow(panel)
     defer { panel.shutdown(); window.close() }
     for _ in 0..<20 { panel.reload() }
     FileManager.default.createFile(atPath: dir + "/new", contents: Data())
     panel.reload()
-    await waitUntil { panel.listedItems.count == 3 }
+    await until { panel.listedItems.count == 3 }
     #expect(panel.listedItems.count == 3, "the listing never waits for the links")
     let row = panel.listedItems.firstIndex { $0.name == "dangling" }! + 1
     try await Task.sleep(for: .milliseconds(200))
@@ -250,7 +245,7 @@ private func liveCell(_ panel: PanelViewController, _ column: String, row: Int) 
 
     stuck.signal()
     _ = await hung.value
-    await waitUntil { liveCell(panel, "name", row: row)?.toolTip != nil }
+    await until { liveCell(panel, "name", row: row)?.toolTip != nil }
     #expect(liveCell(panel, "name", row: row)?.toolTip == "→ nowhere (dangling)")
     for column in ["name", "size", "mtime"] { #expect(liveCell(panel, column, row: row)?.textField?.textColor == .systemRed, "\(column)") }
 }

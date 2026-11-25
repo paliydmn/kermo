@@ -13,11 +13,6 @@ private func tempDir() throws -> String {
 private func put(_ s: String, _ path: String) throws { try Data(s.utf8).write(to: URL(fileURLWithPath: path)) }
 private func read(_ path: String) -> String? { FileManager.default.contents(atPath: path).map { String(decoding: $0, as: UTF8.self) } }
 
-@MainActor private func until(_ what: String, _ cond: () -> Bool) async throws {
-    for _ in 0..<250 where !cond() { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(cond(), "\(what)")
-}
-
 /// A fresh editor window with its drafts in `dir`.
 @MainActor private func fresh(_ dir: String, onServer: @escaping EditorHost.OnServer = { _, _, _, _ in ({ _ in }, {}) }) -> EditorHost {
     gone()
@@ -35,7 +30,7 @@ private func read(_ path: String) -> String? { FileManager.default.contents(atPa
 
 @MainActor private func opened(_ path: String) async throws -> Editor {
     Editor.open(URL(fileURLWithPath: path))
-    try await until("opened \(path)") { Editor.document(at: path) != nil }
+    await until("opened \(path)") { Editor.document(at: path) != nil }
     return try #require(Editor.document(at: path))
 }
 
@@ -48,7 +43,7 @@ private func read(_ path: String) -> String? { FileManager.default.contents(atPa
 @MainActor private func c2(_ h: EditorHost) -> Comparison { h.comparison! }
 
 @MainActor private func worked(_ c: Comparison?) async throws {
-    try await until("compared") { c.map { $0.words(for: $0.new.view!) != "Comparing…" } == true }
+    await until("compared") { c.map { $0.words(for: $0.new.view!) != "Comparing…" } == true }
 }
 
 /// A test's app (a window and one panel in `dir`) for what goes through it.
@@ -88,7 +83,7 @@ extension EditorWindowTests {
         let a = try await opened(dir + "/a.conf")
         #expect(a !== snap && a.textView.isEditable, "F4 on its file: the document, not the copy")
         snap.closeAsking()
-        try await until("closed") { !h.docs.contains { $0 === snap } }
+        await until("closed") { !h.docs.contains { $0 === snap } }
         #expect(h.window?.attachedSheet == nil && h.comparison == nil, "nothing asked; the comparison is over")
     }
 
@@ -134,7 +129,7 @@ extension EditorWindowTests {
         // Live: two quick changes, the result of the last.
         doc.textView.insertText("x", replacementRange: NSRange(location: 0, length: 0))
         doc.textView.insertText("y", replacementRange: NSRange(location: doc.storage.length, length: 0))
-        try await until("worked out anew") { c.blocks.count == 3 }
+        await until("worked out anew") { c.blocks.count == 3 }
         #expect(c.blocks.last == TextDiff.Block(old: 4..<5, new: 5..<6), "\(c.blocks)")
         #expect(doc.textView.string == "xzero\none\ntwo\nthree\nfour\ny")
 
@@ -204,7 +199,7 @@ extension EditorWindowTests {
         doc.current.text.insertText("", replacementRange: NSRange(location: 6, length: 6))   // "4\n5\n6\n" gone
         t.regap()
         a.run("term.pane.down")
-        try await until("worked out anew") { t.blocks == [TextDiff.Block(old: 3..<8, new: 3..<3)] }
+        await until("worked out anew") { t.blocks == [TextDiff.Block(old: 3..<8, new: 3..<3)] }
         a.run("editor.compare.stop")
 
         let other = Editor.untitled()
@@ -264,7 +259,7 @@ extension EditorWindowTests {
         #expect(x.textView.undoManager?.undoActionName == "Copy Change")
         x.textView.undoManager?.undo()
         #expect(x.textView.string == oldText, "one Undo: the text as it was")
-        try await until("worked out after the undo") { c.fresh && c.blocks.count == 3 }
+        await until("worked out after the undo") { c.fresh && c.blocks.count == 3 }
         y.current.text.setSelectedRange(NSRange(location: 6, length: 0))   // the line after where "4" is missing
         c.caretMoved(y.current)
         #expect(c.old.current == 1 && ySide.arrow?.gap == true && ySide.arrow?.at == 4, "missing here: under the line before")
@@ -272,12 +267,12 @@ extension EditorWindowTests {
         #expect(y.textView.string == "1\nX\n3\n4\n5\nY\n")
         y.textView.undoManager?.undo()
         #expect(y.textView.string == newText)
-        try await until("worked out") { c.fresh && c.blocks.count == 3 }
+        await until("worked out") { c.fresh && c.blocks.count == 3 }
         y.current.text.setSelectedRange(NSRange(location: 8, length: 0))   // in "Y"
         c.caretMoved(y.current)
         into(x)   // added "Y" at the end
         #expect(x.textView.string == "1\n2\n3\n4\n5\nY\n")
-        try await until("worked out anew, at once") { c.fresh && c.blocks.count == 2 }
+        await until("worked out anew, at once") { c.fresh && c.blocks.count == 2 }
         #expect(read(dir + "/a.txt") == oldText && read(dir + "/b.txt") == newText, "nothing saved")
 
         // Typed and copied at once: the result is of the text before the typing — nothing goes over.
@@ -345,7 +340,7 @@ extension EditorWindowTests {
         // Edit in the copy: x's document in its place, the comparison on.
         let snap = try #require(c.old.view?.doc)
         snap.edit()
-        try await until("edited") { snap.snapshot == nil && snap.cover == nil }
+        await until("edited") { snap.snapshot == nil && snap.cover == nil }
         #expect(snap.url?.path == x.path && snap.textView.isEditable && Editor.document(at: x.path) === snap && h.comparison === c && !c.paused)
 
         // The banner's Compare: the document against the file now; no copy of the draft on disk.
@@ -353,7 +348,7 @@ extension EditorWindowTests {
         doc.textView.insertText("mine\n", replacementRange: NSRange(location: 0, length: 0))
         let temps = Editor.comparisons.count
         doc.compareWithDisk()
-        try await until("compared with the disk") { h.comparison != nil }
+        await until("compared with the disk") { h.comparison != nil }
         let d = try #require(h.comparison)
         #expect(d.new.view?.doc === doc && d.old.view?.doc.name == "y.conf (on disk)" && d.old.view?.doc.snapshot?.source == nil)
         #expect(Editor.comparisons.count == temps, "no file of the draft")
@@ -379,7 +374,7 @@ extension EditorWindowTests {
         let r = try #require(h.comparison)
         copyX.edit()   // right away: the first matching is still running
         #expect(r.old.view?.doc === xdoc)
-        try await until("worked out with the document") { r.words(for: r.new.view!) != "Comparing…" && r.new.view?.text.compared != nil }
+        await until("worked out with the document") { r.words(for: r.new.view!) != "Comparing…" && r.new.view?.text.compared != nil }
         h.stopComparing()
         // A tool's file open in its own editor window is read as a copy, never pulled into the editor window.
         try put("{}\n", dir + "/t.json")
@@ -430,7 +425,7 @@ extension EditorWindowTests {
         try put("v1\n", copyURL.path)
         let (onSaved, onClose) = h.onServer(t, file, state, dir + "/copy")
         Editor.open(copyURL, remote: SavedServer.title(t, file), server: (t, file, state), onSaved: onSaved, onClose: onClose)
-        try await until("open") { Editor.editing(t, file) != nil }
+        await until("open") { Editor.editing(t, file) != nil }
         let e = try #require(Editor.editing(t, file))
         var prod = SavedServer(address: "localhost")!
         prod.prod = true
@@ -441,7 +436,7 @@ extension EditorWindowTests {
         try put("v1\nv2\n", copyURL.path)   // as its ⌘S wrote it here, before the upload asks
         #expect(await a.upload(copyURL, to: file, on: t, state) == false)
         #expect(asked == [["Save", "Show Changes", "Cancel"]] && read(file) == "v1\n" && e.isEdited, "nothing written")
-        try await until("compared") { h.comparison != nil }
+        await until("compared") { h.comparison != nil }
         let c = try #require(h.comparison)
         try await worked(c)
         #expect(c.new.view?.doc === e && c.old.view?.doc.snapshot != nil && c.old.view?.doc.textView.string == "v1\n" && c.blocks.count == 1)
@@ -518,9 +513,9 @@ extension EditorWindowTests {
         // Execute from the editor: the same tab (its own: no cd), ^U … ↩, the caret to the next line with something on it.
         e.current.text.setSelectedRange(NSRange(location: 2, length: 0))
         a.editorToTerminal(run: true)
-        try await until("ran") { typed.count == 2 }
+        await until("ran") { typed.count == 2 }
         #expect(typed[1].tab == shell.id && typed[1].text == "\u{15}" + paste("echo one") + "\r")
-        try await until("stepped") { e.current.text.selectedRange().location == 14 }   // over the empty and the blank line
+        await until("stepped") { e.current.text.selectedRange().location == 14 }   // over the empty and the blank line
 
         // Another document: the current shell at its prompt, but elsewhere — its folder first.
         let b = try await opened(dir + "/two/b.sh")
@@ -546,10 +541,9 @@ extension EditorWindowTests {
         #expect(await send("make\nls", run: true, from: e, in: dir + "/one") != .notSent(""))
         #expect(typed.last?.text == "\u{15}\u{1b}[200~make\nls\u{1b}[201~\r")
 
-
         // A program holds the terminal: a new tab, never into it.
         shell.view.send(txt: " sleep 3\r")   // to the shell itself, not the recorder; a leading space: not in your history (HIST_IGNORE_SPACE)
-        try await until("sleeping") { !shell.isAtPrompt }
+        await until("sleeping") { !shell.isAtPrompt }
         let n = typed.count
         #expect(await send("echo again", run: true, from: e, in: dir + "/one") != .notSent(""))
         #expect(a.terminal.tabs.count == 2 && typed.count == n + 1 && typed.last?.tab != shell.id && typed.last?.tab == a.terminal.current?.id)
@@ -630,15 +624,15 @@ extension EditorWindowTests {
         #expect(a.validateMenuItem(jump) && jump.title == "Quick Open…" && jump.keyEquivalent == "p")
         a.run("go.jump")
         let p = try #require(Picker.current)
-        try await until("the folder came in") { p.groups.count == 3 }
+        await until("the folder came in") { p.groups.count == 3 }
         #expect(p.groups.prefix(2) == ["Tabs", "Recent"] && p.rows.prefix(3).map(\.title) == ["app.ts", "notes.txt", "README.md"], "tabs, then Recent; the open file once")
         #expect(p.groups[2] == "In " + (repo as NSString).abbreviatingWithTildeInPath, "the repository's root, not the file's folder")
         #expect(Set(p.rows.filter { $0.group.hasPrefix("In ") }.map(\.title)) == ["server.ts"], "\(p.rows.map(\.title))")
         func type(_ q: String) { p.field.stringValue = q; p.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification)) }
         type("srvts")
-        try await until("ranked off the main thread") { p.rows.first?.title == "server.ts" }
+        await until("ranked off the main thread") { p.rows.first?.title == "server.ts" }
         type("app")
-        try await until("ranked") { p.rows.first?.title == "app.ts" }
+        await until("ranked") { p.rows.first?.title == "app.ts" }
         let tab = try #require(p.rows.first)
         #expect(tab.group == "Tabs")
         Picker.dismiss()
@@ -652,11 +646,11 @@ extension EditorWindowTests {
         a.editorRecent.visit(RecentFiles.Entry(path: dir + "/served.conf", server: t))
         a.run("go.jump")
         let q = try #require(Picker.current)
-        try await until("listed") { q.rows.contains { $0.title == "served.conf" } }
+        await until("listed") { q.rows.contains { $0.title == "served.conf" } }
         let served = try #require(q.rows.first { $0.title == "served.conf" })
         Picker.dismiss()
         served.run()
-        try await until("downloaded and open") { Editor.editing(t, dir + "/served.conf") != nil }
+        await until("downloaded and open") { Editor.editing(t, dir + "/served.conf") != nil }
         #expect(a.editorRecent.entries.first == RecentFiles.Entry(path: dir + "/served.conf", server: t))
         Config.flush()
         let attrs = try fm.attributesOfItem(atPath: Config.path("editor-recent.json"))
@@ -677,14 +671,14 @@ extension EditorWindowTests {
         AppDelegate.quickOpenLimit = (files: 3, seconds: 5)
         for i in 0..<10 { try put("x\n", repo + "/src/f\(i).txt") }
         a.run("go.jump")
-        try await until("listed") { Picker.current?.groups.isEmpty == false }
+        await until("listed") { Picker.current?.groups.isEmpty == false }
         try await Task.sleep(for: .milliseconds(300))
         #expect(Picker.current?.groups == ["Tabs", "Recent"], "a server's file shown: no folder walked")
         Picker.dismiss()
         h.select(e)
         a.run("go.jump")
         let r = try #require(Picker.current)
-        try await until("the first files") { r.groups.count == 3 }
+        await until("the first files") { r.groups.count == 3 }
         #expect(r.rows.filter { $0.group.hasPrefix("In ") }.count <= 3)
 
         // A damaged list: empty, and the file stays as it was.

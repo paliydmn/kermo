@@ -5,9 +5,6 @@ import Testing
 
 // Task 13: what the main thread no longer does in big folders.
 
-@MainActor private func waitUntil(_ done: () -> Bool) async {
-    for _ in 0..<500 { if done() { return }; try? await Task.sleep(for: .milliseconds(10)) }
-}
 private func tempDir() -> String {
     let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t13ui-" + UUID().uuidString
     try! FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
@@ -31,11 +28,11 @@ private func item(_ name: String, _ kind: FileItem.Kind = .file, size: Int64 = 0
     let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { panel.listedItems.count == 301 }
+    await until { panel.listedItems.count == 301 }
     panel.computeAllDirSizes()   // all 300 asked for; their sizes come in only after this turn, the filter on by then
     panel.applyFilter("dir1")    // dir1, dir10…dir19, dir100…dir199: 111 folders shown
     let shown = Int64((1...300).filter { String($0).hasPrefix("1") }.reduce(0, +))
-    await waitUntil { panel.dirSizes.count == 300 && panel.statusText.contains(PanelViewController.countText(111, "items", shown)) }
+    await until { panel.dirSizes.count == 300 && panel.statusText.contains(PanelViewController.countText(111, "items", shown)) }
     #expect(panel.statusText.contains(PanelViewController.countText(111, "items", shown)), "the hidden folders' sizes aren't in it")
     #expect(panel.dirSizes["dir250"] == 250)
     panel.applyFilter("")
@@ -52,25 +49,25 @@ private func item(_ name: String, _ kind: FileItem.Kind = .file, size: Int64 = 0
     let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { panel.statusText.contains("0 items") }
+    await until { panel.statusText.contains("0 items") }
     let n = PanelViewController.sortOnMain + 1000
     let flag = panel.beginSearch("t13")
     panel.addSearchResults((0..<n).shuffled().map { item(String(format: "f%05d", $0), size: Int64($0)) }, from: flag)
     panel.finishSearch(flag)
     let byName = (0..<n).map { String(format: "f%05d", $0) }
-    await waitUntil { panel.listedItems.map(\.name) == byName }
+    await until { panel.listedItems.map(\.name) == byName }
     #expect(panel.listedItems.map(\.name) == byName)
     panel.moveCursor(toName: "f03000")
     let before = panel.listedItems.map(\.name)
     panel.table.sortDescriptors = [NSSortDescriptor(key: "size", ascending: false)]
     #expect(panel.listedItems.map(\.name) == before)   // not sorted yet: off the main thread
-    await waitUntil { panel.listedItems.first?.name != before.first }
+    await until { panel.listedItems.first?.name != before.first }
     #expect(panel.listedItems.map(\.size) == (0..<n).reversed().map(Int64.init))
     #expect(panel.currentName == "f03000")
     // The cursor moved on the old rows while it sorts stays where it went.
     panel.table.sortDescriptors = [NSSortDescriptor(key: "name", ascending: true)]
     panel.moveCursor(toName: "f00100")
-    await waitUntil { panel.listedItems.first?.name == "f00000" }
+    await until { panel.listedItems.first?.name == "f00000" }
     #expect(panel.currentName == "f00100")
 }
 
@@ -82,7 +79,7 @@ private func item(_ name: String, _ kind: FileItem.Kind = .file, size: Int64 = 0
     let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { panel.statusText.contains("0 items") }
+    await until { panel.statusText.contains("0 items") }
     let flag = panel.beginSearch("t13")
     panel.addSearchResults((0..<6000).map { item(String(format: "x%05d", 5999 - $0)) }, from: flag)
     panel.beginFilter()
@@ -92,7 +89,7 @@ private func item(_ name: String, _ kind: FileItem.Kind = .file, size: Int64 = 0
     panel.addSearchResults([item("x00000b")], from: flag)
     #expect(panel.listedItems.count == 11)
     panel.finishSearch(flag)
-    await waitUntil { panel.listedItems.first?.name == "x00000" }
+    await until { panel.listedItems.first?.name == "x00000" }
     #expect(panel.listedItems.map(\.name) == (0..<10).map { String(format: "x%05d", $0) }.flatMap { $0 == "x00000" ? [$0, "x00000b"] : [$0] })
 }
 
@@ -105,11 +102,11 @@ private func item(_ name: String, _ kind: FileItem.Kind = .file, size: Int64 = 0
     let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { panel.listedItems.count == 1 }
+    await until { panel.listedItems.count == 1 }
     #expect(panel.listedItems.first.map { Array($0.name.utf8) } == Array(nfd.utf8))
     #expect(rename(d + "/" + nfd, d + "/" + nfc) == 0)
     panel.reload()
-    await waitUntil { panel.listedItems.first.map { Array($0.name.utf8) } == Array(nfc.utf8) }
+    await until { panel.listedItems.first.map { Array($0.name.utf8) } == Array(nfc.utf8) }
     #expect(panel.listedItems.first.map { Array($0.name.utf8) } == Array(nfc.utf8))
 }
 
@@ -121,7 +118,7 @@ private func item(_ name: String, _ kind: FileItem.Kind = .file, size: Int64 = 0
     let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { panel.statusText.contains("0 items") }
+    await until { panel.statusText.contains("0 items") }
     let names = (0..<(PanelViewController.sortOnMain + 500)).map { i in
         (i % 3 == 0 ? "Файл-" : i % 3 == 1 ? "file" : "cafe\u{301}") + "\(i).\(["log", "txt"][i % 2])"
     }
@@ -129,7 +126,7 @@ private func item(_ name: String, _ kind: FileItem.Kind = .file, size: Int64 = 0
     panel.addSearchResults(names.map { item($0) }, from: flag)
     panel.finishSearch(flag)
     let sorted = names.map { item($0) }.sortedForPanel(by: .name, ascending: true).map(\.name)
-    await waitUntil { panel.listedItems.map(\.name) == sorted }
+    await until { panel.listedItems.map(\.name) == sorted }
     func shown() -> Set<String> { Set(panel.listedItems.map(\.name)) }
     func expected(_ text: String) -> Set<String> { Set(names.filter { Mask(filter: text)!.matches($0) }) }
     panel.beginFilter()
@@ -137,7 +134,7 @@ private func item(_ name: String, _ kind: FileItem.Kind = .file, size: Int64 = 0
         let want = expected(text)   // once: the wait asks again and again
         panel.filterField.stringValue = text
         panel.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: panel.filterField))
-        await waitUntil { shown() == want }
+        await until { shown() == want }
         #expect(shown() == want, "\(text)")
     }
 }
@@ -151,7 +148,7 @@ private func item(_ name: String, _ kind: FileItem.Kind = .file, size: Int64 = 0
     let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { panel.listedItems.count == 2 }
+    await until { panel.listedItems.count == 2 }
     try await Task.sleep(for: .milliseconds(300))   // the first listing's link resolve and git look are done
     func rowsBuffer() -> UnsafeRawPointer? { panel.listedItems.withUnsafeBufferPointer { UnsafeRawPointer($0.baseAddress) } }
     let before = rowsBuffer()
@@ -160,6 +157,6 @@ private func item(_ name: String, _ kind: FileItem.Kind = .file, size: Int64 = 0
     #expect(rowsBuffer() == before && panel.listedItems.map(\.name) == ["a", "b"])
     FileManager.default.createFile(atPath: d + "/c", contents: Data())
     panel.reload()
-    await waitUntil { panel.listedItems.count == 3 }
+    await until { panel.listedItems.count == 3 }
     #expect(rowsBuffer() != before)
 }

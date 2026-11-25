@@ -10,10 +10,6 @@ private func tempDir() -> String {
     try! FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
     return d
 }
-@MainActor private func waitUntil(timeout: Double = 10, _ done: () -> Bool) async {
-    let end = Date().addingTimeInterval(timeout)
-    while !done() && Date() < end { try? await Task.sleep(nanoseconds: 20_000_000) }
-}
 private func write(_ path: String, _ text: String = "x") {
     try! FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
     try! Data(text.utf8).write(to: URL(fileURLWithPath: path))
@@ -121,12 +117,12 @@ private func write(_ path: String, _ text: String = "x") {
     let ops = OpsController(window: window) { _ in }
     let job = FileJob(.copy, sources: [d + "/bad", d + "/good"], destDir: d + "/out")
     ops.enqueue(job, title: "Copy 2 items → out")
-    await waitUntil { window.attachedSheet != nil }   // the error, while it runs: Skip / Retry / Abort, as before
+    await until { window.attachedSheet != nil }   // the error, while it runs: Skip / Retry / Abort, as before
     let sheet = try #require(window.attachedSheet)
     ops.changed()   // other tests' queues share the Dock: say it again, then look before anything else runs
     #expect(NSApp.dockTile.contentView != nil, "a bar on the Dock icon while it runs")
     window.endSheet(sheet, returnCode: .alertFirstButtonReturn)   // Skip
-    await waitUntil { ops.pending == 0 }
+    await until { ops.pending == 0 }
     try await Task.sleep(nanoseconds: 100_000_000)
     #expect(window.attachedSheet == nil, "no \"Finished with 1 error\" alert after it")
     #expect(ops.history.entries.count == 1 && ops.history.unseen == 1 && ops.history.entries[0].failed.count == 1)
@@ -141,9 +137,9 @@ private func write(_ path: String, _ text: String = "x") {
     let ok = FileJob(.copy, sources: [d + "/good"], destDir: d + "/out2")
     try FileManager.default.createDirectory(atPath: d + "/out2", withIntermediateDirectories: true)
     ops.enqueue(ok, title: "Copy “good” → out2")
-    await waitUntil { ops.pending == 0 }
+    await until { ops.pending == 0 }
     #expect(ops.view.arrangedSubviews.count == 2 && ops.history.entries[0].result == .done)
-    await waitUntil(timeout: 5) { ops.view.arrangedSubviews.count == 1 }
+    await until(5) { ops.view.arrangedSubviews.count == 1 }
     #expect(ops.view.arrangedSubviews.count == 1, "✓ goes after a moment; the one with errors stays")
 }
 
@@ -161,13 +157,13 @@ private func write(_ path: String, _ text: String = "x") {
     var over: [String] = []
     ops.enqueue(FileJob(.copy, sources: [d + "/bad"], destDir: d + "/out"), title: "first") { over.append("first \($0.progress.state)") }
     ops.enqueue(FileJob(.copy, sources: [d + "/good"], destDir: d + "/out"), title: "second") { over.append("second \($0.isCancelled)") }
-    await waitUntil { window.attachedSheet != nil }   // the first waits on its error: the second stays queued behind it
+    await until { window.attachedSheet != nil }   // the first waits on its error: the second stays queued behind it
     let row = try #require(ops.jobRows.last)
     let cancel = try #require(row.view.subviews.compactMap { $0 as? NSStackView }.flatMap(\.arrangedSubviews).compactMap { $0 as? NSButton }.first { $0.toolTip == "Cancel" })
     cancel.sendAction(cancel.action, to: cancel.target)
     #expect(over == ["second true"])
     window.endSheet(try #require(window.attachedSheet), returnCode: .alertFirstButtonReturn)   // Skip
-    await waitUntil { over.count == 2 }
+    await until { over.count == 2 }
     #expect(over == ["second true", "first done"])
 }
 

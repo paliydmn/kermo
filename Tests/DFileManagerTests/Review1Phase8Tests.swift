@@ -6,10 +6,6 @@ import Testing
 // Review 1, phase 8: the palette (⇧⌘P) — a Picker that finds every server and the rows of their places, what's chosen
 // most and lately first, one key per row. Made-up servers: nothing goes to a server.
 
-@MainActor private func until(_ done: () -> Bool) async {
-    for _ in 0..<250 where !done() { try? await Task.sleep(for: .milliseconds(20)) }
-}
-
 @MainActor private func tempDir() throws -> String {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/kermo-p8-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)

@@ -13,11 +13,6 @@ private func tempDir() throws -> String {
 }
 private func put(_ s: String, _ path: String) throws { try Data(s.utf8).write(to: URL(fileURLWithPath: path)) }
 
-@MainActor private func until(_ what: String, _ cond: () -> Bool) async throws {
-    for _ in 0..<250 where !cond() { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(cond(), "\(what)")
-}
-
 @MainActor private func fresh(_ dir: String) -> EditorHost {
     gone()
     UserDefaults.standard.removeObject(forKey: "NSToolbar Configuration Editor")   // the editor window keeps its toolbar: the defaults, not a past run's
@@ -35,7 +30,7 @@ private func put(_ s: String, _ path: String) throws { try Data(s.utf8).write(to
 }
 @MainActor private func opened(_ path: String) async throws -> Editor {
     Editor.open(URL(fileURLWithPath: path))
-    try await until("opened \(path)") { Editor.document(at: path) != nil }
+    await until("opened \(path)") { Editor.document(at: path) != nil }
     return try #require(Editor.document(at: path))
 }
 
@@ -197,9 +192,9 @@ extension EditorWindowTests {
         // A tool's window, as its toolbar isn't kept: the editor window's would be, in the test runner's defaults.
         let bar = try #require(tool.window?.toolbar), at = try #require(bar.items.firstIndex { $0.itemIdentifier.rawValue == "comment" })
         bar.removeItem(at: at)
-        try await until("Comment in More Tools") { toolRow.buttons.contains { $0.tool.id.rawValue == "comment" } }
+        await until("Comment in More Tools") { toolRow.buttons.contains { $0.tool.id.rawValue == "comment" } }
         bar.insertItem(withItemIdentifier: .init("comment"), at: at)
-        try await until("Comment back in the toolbar, out of More Tools") { !toolRow.buttons.contains { $0.tool.id.rawValue == "comment" } }
+        await until("Comment back in the toolbar, out of More Tools") { !toolRow.buttons.contains { $0.tool.id.rawValue == "comment" } }
         h.toggleMoreTools()
         #expect(!MoreTools.shown && row.isHidden && toolRow.isHidden, "closed in every editor window")
     }
@@ -251,7 +246,7 @@ extension EditorWindowTests {
         #expect(!m.items.contains { $0.isSeparatorItem && $0 === m.items.last })
 
         let untitled = Editor.untitled()
-        try await until("an Untitled shown") { h.active === untitled }
+        await until("an Untitled shown") { h.active === untitled }
         #expect(try !menu(untitled).items.contains { $0.title == "Copy Path" }, "no file, no path")
         h.compare(old: e, new: untitled)
         #expect(try menu(untitled).items.contains { $0.title == "Copy Change to Left" })
