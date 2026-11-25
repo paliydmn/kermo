@@ -96,8 +96,6 @@ final class AIAgents {
         return { [weak self] fd in
             // A client that takes nothing for ten seconds is hung up on: the reading below ends.
             let c = MCP.Connection(version: Updates.current, write: { if !MCP.write(fd, $0) { shutdown(fd, SHUT_RDWR) } }) { [weak self] name, args in
-                // Settings › AI's Never Send as it is at this call: an agent connected before it changed keeps to it too.
-                await MainActor.run { session.noProduction = AISettings.neverProd(session.app.defaults) }
                 let result = await session.call(name, args)
                 await self?.changed()   // what it may do, and how much it did
                 return result

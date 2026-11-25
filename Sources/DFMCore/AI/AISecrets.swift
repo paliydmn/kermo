@@ -12,7 +12,8 @@ public enum AISecrets {
     /// - the password of `scheme://user:password@host`;
     /// - the value after a key naming a password, secret, token or key (`DB_PASSWORD=…`, `"api_key": "…"`, `api-key:`,
     ///   `APP_KEY=`, YAML) — a key's name is one of API, APP, AUTH, PRIVATE, ACCESS, ENCRYPTION, SIGNING, MASTER before
-    ///   KEY: not `KEY=` alone, `PUBLIC_KEY`, `SSH_KEY`, `sort_keys` (a public key, a path, a setting);
+    ///   KEY (`privateKeyHex` too): not `KEY=` alone, `PUBLIC_KEY`, `SSH_KEY`, `sort_keys`, `app_keyboard` (a public key, a
+    ///   path, a setting);
     /// - the value after a command line's `--password`, `--passphrase`, `--token`, `--secret`, `--api-key` (and
     ///   `--db-password`…), with `=` or a space — not `-p` (ssh's port), not `--password-file /path` (a path), not a
     ///   next `--flag`;
@@ -43,11 +44,12 @@ public enum AISecrets {
     /// A key's value after `Bearer`: `token: Bearer x` loses `x` and the word before it (counted twice). `keep`: only
     /// group 2 is the secret. Lookbehinds, not `\b`, where a run of name characters comes first: `\b` starts again
     /// inside the run, which is quadratic on a long token.
+    /// A key's name runs at most 64 characters either side of its word, so a long run of such words is linear too.
     private static let patterns: [(NSRegularExpression, keep: Bool)] = [
         (#"-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----|\z)"#, false),
         (#"(?i)(\bBearer\s+|\bAuthorization:\s*Basic\s+)([A-Za-z0-9._~+/=-]{12,})"#, true),
         (#"((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*://[^:/@\s]*:)([^@/\s]+)(?=@)"#, true),
-        (#"(?i)((?<![\w.-])[\w.-]*(?:PASSWORD|PASSWD|PASSPHRASE|SECRET|TOKEN|(?:API|APP|AUTH|PRIVATE|ACCESS|ENCRYPTION|SIGNING|MASTER)[_-]?KEYS?(?![A-Za-z]))[\w.-]*["']?[ \t]*(?:=>|:=|[=:])[ \t]*)("(?:\\.|[^"\\\n])*"?|'[^'\n]*'?|[^\s"'•]\S*)"#, true),
+        (#"(?i)((?<![\w.-])[\w.-]{0,64}(?:PASSWORD|PASSWD|PASSPHRASE|SECRET|TOKEN|(?:API|APP|AUTH|PRIVATE|ACCESS|ENCRYPTION|SIGNING|MASTER)[_-]?KEYS?(?-i:(?![a-z])))[\w.-]{0,64}["']?[ \t]*(?:=>|:=|[=:])[ \t]*)("(?:\\.|[^"\\\n])*"?|'[^'\n]*'?|[^\s"'•]\S*)"#, true),
         (#"(?i)((?<![\w-])--(?!no-)[\w-]*(?:PASSWORD|PASSWD|PASSPHRASE|SECRET|TOKEN|API[_-]?KEY)(?![\w-])(?:=|[ \t]+))("(?:\\.|[^"\\\n])*"?|'[^'\n]*'?|[^\s"'•-]\S*)"#, true),
         (#"\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})"#, false),
         (#"\$(?:1|2[aby]|5|6|y|apr1)\$[./A-Za-z0-9$=,]{20,}"#, false),

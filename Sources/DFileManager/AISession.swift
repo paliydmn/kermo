@@ -45,8 +45,9 @@ final class AISession {
     /// Ask and Edit: nothing that changes goes — whatever an Agent turn of the same chat was allowed — and the most
     /// the user is ever asked to allow is reading. Refused in words, unasked.
     var readOnly = false
-    /// Settings › AI's "Never Send": nothing on a production server is read for the model.
-    var noProduction = false
+    /// Settings › AI's "Never Send": nothing on a production server is read for the model — read at each check, so a
+    /// chat or an agent already going keeps to a change, a question on screen when it changed too.
+    var noProduction: Bool { AISettings.neverProd(app.defaults) }
     /// Where `propose_edit`'s diff is shown (the chat's card); nil — an outside agent's session: it says in words
     /// whether the change fits.
     var proposes: (@MainActor (AIEdit.Proposal, SFTPTarget?, String) -> Void)?
@@ -174,7 +175,8 @@ final class AISession {
         let passed = await app.gate(ends, to: to, question: {
             decision = self.scope.check(call, prod: prod)   // production is known by now
             guard case .ask(let why) = decision, why != .unclear else { return nil }
-            // Which way it goes, by the places the targets resolved to (not the model's words).
+            // Which way it goes, by the places the targets resolved to (not the model's words); a path has no control
+            // character (`AITarget.normal`).
             let between = why == .betweenMachines ? targets.first { !AIScope.changes($0) }.flatMap { from in targets.first(where: AIScope.changes).map { to in
                 (what: String(((from.path ?? "") as NSString).lastPathComponent.prefix(60)).bidiVisible, from: self.name(from.place), to: self.name(to.place))
             } } : nil

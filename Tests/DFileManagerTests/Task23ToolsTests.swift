@@ -240,12 +240,14 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
             #expect(r.isError && r.text.contains("only reads"), "\(name): \(r.text)")
         }
         #expect(asked().isEmpty && s.scope.grants.isEmpty && FileManager.default.fileExists(atPath: dir + "/a.txt"))
-        s.noProduction = true
+        let std = UserDefaults.standard, was = std.object(forKey: "aiProduction")
+        defer { if let was { std.set(was, forKey: "aiProduction") } else { std.removeObject(forKey: "aiProduction") } }
+        std.set("never", forKey: "aiProduction")
         var r = await s.call("read_file", ["server": "box", "path": .string(dir + "/a.txt")])
         #expect(r.isError && r.text.contains("production") && asked().isEmpty && s.journal.last?.decision == "refused: production")
         r = await s.call("request_scope", needs(["box", "view", "", "look"]))   // not even asked
         #expect(r.isError && r.text.contains("production") && asked().isEmpty && s.scope.grants.isEmpty)
-        s.noProduction = false
+        std.removeObject(forKey: "aiProduction")
         answer([0])
         r = await s.call("read_file", ["server": "box", "path": .string(dir + "/a.txt")])
         #expect(!r.isError && r.text.hasPrefix("[Kermo: box is a production server") && r.text.hasSuffix("x\n"), "\(r.text)")

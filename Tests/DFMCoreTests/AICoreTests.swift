@@ -114,7 +114,7 @@ import Testing
     let pw = "pass" + "word", apr = "$apr" + "1$abcdefgh$ABCDEFGHIJKLMNOPQRSTUV"
     let more: [(String, String, Int)] = [
         ("APP_KEY=base64:abcDEF123=", "APP_KEY=•••", 1), ("api-key: abc123", "api-key: •••", 1), ("X-Api-Key: abc123", "X-Api-Key: •••", 1),
-        ("api_keys: abc", "api_keys: •••", 1), ("ENCRYPTION_KEY=abc", "ENCRYPTION_KEY=•••", 1),
+        ("api_keys: abc", "api_keys: •••", 1), ("\"privateKeyHex\": \"0abc\"", "\"privateKeyHex\": •••", 1), ("apiKeyValue: abc", "apiKeyValue: •••", 1), ("ENCRYPTION_KEY=abc", "ENCRYPTION_KEY=•••", 1),
         ("mysql --\(pw) hunter2 --host db", "mysql --\(pw) ••• --host db", 1), ("mysql --\(pw)=hunter2", "mysql --\(pw)=•••", 1),
         ("vault login --token 'a b'", "vault login --token •••", 1), ("x --db-passphrase abc", "x --db-passphrase •••", 1),
         ("curl --api-key abc --api_key def", "curl --api-key ••• --api_key •••", 2), ("admin:\(apr)", "admin:•••", 1),
@@ -135,6 +135,10 @@ import Testing
     #expect(AISecrets.mask("token: Bearer abcdefghijkl123").text == "token: ••• •••", "the token goes, not only the word before it")
     let long = String(repeating: "a.", count: 20_000) + String(repeating: "aB-_9", count: 8_000), start = Date()
     #expect(AISecrets.mask(long).hidden == 0 && Date().timeIntervalSince(start) < 1, "a long token-like run isn't quadratic")
+    for word in ["api_key_", "pass" + "word", "app-key."] {
+        let names = String(repeating: word, count: 5000), began = Date()
+        #expect(AISecrets.mask(names).hidden == 0 && Date().timeIntervalSince(began) < 1, "a long run of key names isn't quadratic: \(word)")
+    }
 }
 
 @Test func aiPathsAreNormalByTheirWordsAlone() {
