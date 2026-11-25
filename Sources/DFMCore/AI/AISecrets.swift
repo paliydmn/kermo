@@ -10,8 +10,13 @@ public enum AISecrets {
     /// - a PEM private key (to its END line, or to the end of the text when it is cut);
     /// - `Bearer …`, `Authorization: Basic …`;
     /// - the password of `scheme://user:password@host`;
-    /// - the value after a key naming a password, secret, token or key (`DB_PASSWORD=…`, `"api_key": "…"`, YAML);
-    /// - tokens known by their shape (`sk-…`, GitHub, AWS key ids, Slack) and crypt hashes (`$6$…`).
+    /// - the value after a key naming a password, secret, token or key (`DB_PASSWORD=…`, `"api_key": "…"`, `api-key:`,
+    ///   `APP_KEY=`, YAML) — a key's name is one of API, APP, AUTH, PRIVATE, ACCESS, ENCRYPTION, SIGNING, MASTER before
+    ///   KEY: not `KEY=` alone, `PUBLIC_KEY`, `SSH_KEY`, `sort_keys` (a public key, a path, a setting);
+    /// - the value after a command line's `--password`, `--passphrase`, `--token`, `--secret`, `--api-key` (and
+    ///   `--db-password`…), with `=` or a space — not `-p` (ssh's port), not `--password-file /path` (a path), not a
+    ///   next `--flag`;
+    /// - tokens known by their shape (`sk-…`, GitHub, AWS key ids, Slack) and crypt hashes (`$6$…`, Apache's `$apr1$…`).
     public static func mask(_ text: String) -> (text: String, hidden: Int) {
         let hidden = ranges(text), out = NSMutableString(string: text)
         for r in hidden.reversed() { out.replaceCharacters(in: r, with: "•••") }
@@ -42,8 +47,9 @@ public enum AISecrets {
         (#"-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY[A-Z ]*-----|\z)"#, false),
         (#"(?i)(\bBearer\s+|\bAuthorization:\s*Basic\s+)([A-Za-z0-9._~+/=-]{12,})"#, true),
         (#"((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*://[^:/@\s]*:)([^@/\s]+)(?=@)"#, true),
-        (#"(?i)((?<![\w.-])[\w.-]*(?:PASSWORD|PASSWD|PASSPHRASE|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY)[\w.-]*["']?[ \t]*(?:=>|:=|[=:])[ \t]*)("(?:\\.|[^"\\\n])*"?|'[^'\n]*'?|[^\s"'•]\S*)"#, true),
+        (#"(?i)((?<![\w.-])[\w.-]*(?:PASSWORD|PASSWD|PASSPHRASE|SECRET|TOKEN|(?:API|APP|AUTH|PRIVATE|ACCESS|ENCRYPTION|SIGNING|MASTER)[_-]?KEYS?(?![A-Za-z]))[\w.-]*["']?[ \t]*(?:=>|:=|[=:])[ \t]*)("(?:\\.|[^"\\\n])*"?|'[^'\n]*'?|[^\s"'•]\S*)"#, true),
+        (#"(?i)((?<![\w-])--(?!no-)[\w-]*(?:PASSWORD|PASSWD|PASSPHRASE|SECRET|TOKEN|API[_-]?KEY)(?![\w-])(?:=|[ \t]+))("(?:\\.|[^"\\\n])*"?|'[^'\n]*'?|[^\s"'•-]\S*)"#, true),
         (#"\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})"#, false),
-        (#"\$(?:1|2[aby]|5|6|y)\$[./A-Za-z0-9$=,]{20,}"#, false),
+        (#"\$(?:1|2[aby]|5|6|y|apr1)\$[./A-Za-z0-9$=,]{20,}"#, false),
     ].map { (try! NSRegularExpression(pattern: $0.0), $0.1) }
 }

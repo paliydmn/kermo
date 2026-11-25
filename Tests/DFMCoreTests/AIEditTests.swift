@@ -52,6 +52,15 @@ private func words(_ r: Result<String, AIEdit.Refused>) -> String { if case .fai
     #expect(p?.proposed == "DB_PASS" + "WORD=\(key)\napi_" + "key=abc123\n" && p?.hiddenNew == [NSRange(location: 12, length: key.count)] && p?.hiddenOld == p?.hiddenNew)
 }
 
+/// Review 6 PR 8: a value the wider patterns hide is kept as any other — a flag's, a dashed key's.
+@Test func aValueHiddenByAFlagIsKeptToo() {
+    let key = "hun" + "ter22", conf = "run=mysql --pass" + "word \(key) --host db\napi-" + "key: \(key)\nport=80\n"
+    #expect(words(edit(conf, [(key, "x")])) == words(edit(conf, [("nothing-like-it", "x")])), "a guess inside it is no match")
+    #expect(words(edit(conf, [("--pass" + "word", "--user")])).contains("right at a value Kermo hid"))
+    #expect(words(edit(conf, [("api-" + "key", "api-id")])).contains("right at a value Kermo hid"))
+    #expect((try? edit(conf, [("\nport=80", "\nport=81")]).get()) == "run=mysql --pass" + "word \(key) --host db\napi-" + "key: \(key)\nport=81\n", "around it is fine")
+}
+
 @Test func whatsKeptIsPutBackAsOneChangeOfWholeLines() {
     let cases: [(String, String)] = [
         ("a\nb\nc\nd\ne\nf\ng\n", "a\nB\nc\nd\ne\nF\nG\nh\n"),
