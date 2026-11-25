@@ -22,11 +22,6 @@ import Testing
 
 private func osc7(_ path: String) -> String { "\u{1b}]7;file://mac\(path)\u{7}" }
 
-@MainActor private func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
-    for _ in 0..<1000 where !cond() { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(cond(), "timed out: \(what)")
-}
-
 /// The shell has drawn its prompt and has the terminal (rc files done).
 @MainActor private func atPrompt(_ tab: EmbeddedTerminal.Tab) async {
     var calm = 0
@@ -117,7 +112,7 @@ private func tempDir(_ name: String) throws -> String {
     var changes = 0
     term.onChange = { changes += 1 }
     #expect(term.cd(other))
-    try await waitUntil("the shell moved") { tab.shellCwd == other }
+    await until("the shell moved") { tab.shellCwd == other }
     await atPrompt(tab)
     #expect(tab.label == "other", "the kernel's word, whatever the shell prints")
     tab.view.feed(text: osc7(other))   // the snippet's precmd
@@ -141,21 +136,21 @@ private func tempDir(_ name: String) throws -> String {
     let ssh = try #require(term.current)
     ssh.exitStatus = nil   // a stand-in ssh: a plain shell that echoes what it gets
     term.launch(ssh, "/bin/sh", ["-i"], cwd: nil)
-    try await waitUntil("its prompt") { ssh.isAtPrompt }
+    await until("its prompt") { ssh.isAtPrompt }
     _ = term.show()
     #expect(!term.insert("'a b' ", on: nil), "a local panel's name into a server's shell: no")
     #expect(!term.insert("'a b' ", on: SFTPTarget(host: "dfm-12-db.invalid")), "another server's: no")
     #expect(!term.insert("a\nb ", on: web), "a control character: no")
     #expect(term.insert("'a b' ", on: web))
-    try await waitUntil("typed") { text(ssh).contains("'a b' ") }
+    await until("typed") { text(ssh).contains("'a b' ") }
     #expect(!text(ssh).contains("a\nb "))
 
     term.newShell(cwd: NSHomeDirectory())   // a local tab for a local panel
     let shell = try #require(term.current)
-    try await waitUntil("its prompt") { shell.isAtPrompt }
+    await until("its prompt") { shell.isAtPrompt }
     #expect(!term.insert("'c d' ", on: web))
     #expect(term.insert("'c d' ", on: nil))
-    try await waitUntil("typed") { text(shell).contains("'c d' ") }
+    await until("typed") { text(shell).contains("'c d' ") }
     #expect(!text(ssh).contains("'c d' "), "only the tab in front")
 }
 
@@ -181,9 +176,9 @@ private func tempDir(_ name: String) throws -> String {
 
     term.newShell(cwd: NSHomeDirectory())
     let shell = try #require(term.current)
-    try await waitUntil("its prompt") { shell.isAtPrompt }
+    await until("its prompt") { shell.isAtPrompt }
     #expect(shell.view.acceptsLocalPaths && shell.view.drop(pasteboard(["/tmp/a b", "/tmp/c"])))
-    try await waitUntil("typed") { text(shell).contains("'/tmp/a b' /tmp/c ") }
+    await until("typed") { text(shell).contains("'/tmp/a b' /tmp/c ") }
     #expect(!shell.view.drop(pasteboard(["/tmp/a\nb"])))
 }
 
@@ -201,24 +196,24 @@ private func tempDir(_ name: String) throws -> String {
     try #require(term.run("touch m1", cwd: dir) != nil)
     let shell = try #require(term.current)
     #expect(term.isShown && term.tabs.count == 1 && shell.kind == .shell)
-    try await waitUntil("m1") { FileManager.default.fileExists(atPath: dir + "/m1") }
+    await until("m1") { FileManager.default.fileExists(atPath: dir + "/m1") }
     await atPrompt(shell)
 
     // The shell is elsewhere: ` cd` first (a leading space: HIST_IGNORE_SPACE keeps it out of the history); a half-typed line goes.
     shell.view.send(txt: "echo hel")
     try #require(term.run("touch m2", cwd: other) != nil)
-    try await waitUntil("m2") { FileManager.default.fileExists(atPath: other + "/m2") }
+    await until("m2") { FileManager.default.fileExists(atPath: other + "/m2") }
     // The echo reaches the buffer after the pty read, off the main thread: wait for it (the folder wraps over the 75-column screen; m2 proves where).
-    try await waitUntil("cd echoed") { text(shell).contains(" cd /") }
+    await until("cd echoed") { text(shell).contains(" cd /") }
     #expect(!text(shell).contains("heltouch"))
     #expect(shell.shellCwd == other && term.tabs.count == 1)
     await atPrompt(shell)
 
     // A program has the terminal: the command goes to a new tab, the program gets nothing.
     shell.view.send(txt: "cat\r")
-    try await waitUntil("cat has the terminal") { !shell.isAtPrompt }
+    await until("cat has the terminal") { !shell.isAtPrompt }
     try #require(term.run("touch m3", cwd: other) != nil)
     #expect(term.tabs.count == 2 && term.current !== shell)
-    try await waitUntil("m3") { FileManager.default.fileExists(atPath: other + "/m3") }
+    await until("m3") { FileManager.default.fileExists(atPath: other + "/m3") }
     #expect(!text(shell).contains("touch m3"))
 }

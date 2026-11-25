@@ -41,12 +41,6 @@ private func tar(_ args: [String], in dir: String) throws -> Int32 {
     #expect(index.list("@eaDir")?.map(\.name) == ["thumb"])
 }
 
-/// By the clock: a loaded full run keeps the main actor busy (a listing took over 20 s there).
-@MainActor private func until(_ done: () -> Bool, seconds: Double = 60) async {
-    let end = Date().addingTimeInterval(seconds)
-    while !done(), Date() < end { try? await Task.sleep(for: .milliseconds(10)) }
-}
-
 /// В1, В21: Compress read the panel's folder after its question — a panel gone elsewhere meanwhile had tar pack that
 /// folder's item of the same name — and tar wrote straight into the archive: ⎋ or a full disk left a cut-off one that
 /// looked whole. Now the folder is the items', and tar packs beside the archive, which it becomes on exit 0.
@@ -82,7 +76,7 @@ private func tar(_ args: [String], in dir: String) throws -> Int32 {
     FileManager.default.createFile(atPath: b + "/g.txt", contents: Data("G".utf8))
     for _ in 0..<60 where panel.cursorURL?.lastPathComponent != "g.txt" {
         panel.reload(select: "g.txt")
-        await until({ panel.cursorURL?.lastPathComponent == "g.txt" }, seconds: 1)
+        await until(1) { panel.cursorURL?.lastPathComponent == "g.txt" }
     }
     try #require(panel.cursorURL?.path == b + "/g.txt")
     AppDelegate.prompting = { _ in try? FileManager.default.removeItem(atPath: b + "/g.txt"); return out + "/g.zip" }

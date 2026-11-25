@@ -24,11 +24,6 @@ private func file(_ name: String) -> FileItem { FileItem(name: name, kind: .file
     #expect(panel.statusText == "*.txt containing “needle”: 3 found" && !panel.backButton.isHidden, "\(panel.statusText)")
 }
 
-/// By the clock: in the full suite the main actor is so busy at first that 500 sleeps of 10 ms took over 10 s.
-@MainActor private func waitUntil(_ done: () -> Bool) async {
-    let end = Date().addingTimeInterval(60)   // utility QoS (a link's target) starves for long in a loaded full run (D-097)
-    while !done(), Date() < end { try? await Task.sleep(for: .milliseconds(10)) }
-}
 private func tempDir() -> String {
     let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-r11-" + UUID().uuidString
     try! FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
@@ -49,32 +44,32 @@ private func tempDir() -> String {
     let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { panel.table.numberOfRows == 3 }
+    await until { panel.table.numberOfRows == 3 }
 
     panel.moveCursor(toName: "link")
     panel.openCursor(intoPackage: false)
     panel.reload()   // a re-list meanwhile doesn't drop the ↩
-    await waitUntil { panel.path == dir + "/link" }
+    await until { panel.path == dir + "/link" }
     #expect(panel.path == dir + "/link")
 
     panel.goUp()
-    await waitUntil { panel.path == dir && panel.table.numberOfRows == 3 }
+    await until { panel.path == dir && panel.table.numberOfRows == 3 }
     panel.moveCursor(toName: "link")
     panel.openCursor(intoPackage: false)
     panel.goUp()   // before the link was looked at: the panel goes up, and stays there
-    await waitUntil { panel.path == parent }
+    await until { panel.path == parent }
     try await Task.sleep(for: .milliseconds(300))
     #expect(panel.path == parent)
 
     let field = NSTextView()
     field.string = dir + "/real/f.txt"
     pathCommand(panel, field, #selector(NSResponder.insertNewline(_:)))
-    await waitUntil { panel.path == dir + "/real" && panel.selectedItems.first?.name == "f.txt" }
+    await until { panel.path == dir + "/real" && panel.selectedItems.first?.name == "f.txt" }
     #expect(panel.path == dir + "/real" && panel.selectedItems.first?.name == "f.txt", "a file: its folder, the cursor on it")
 
     field.string = dir + "/re"
     pathCommand(panel, field, #selector(NSResponder.insertTab(_:)))
-    await waitUntil { field.string != dir + "/re" }
+    await until { field.string != dir + "/re" }
     #expect(field.string == dir + "/real/")
 }
 
@@ -106,7 +101,7 @@ private func tempDir() -> String {
     let panel = PanelViewController(tabs: [plain], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { panel.path == plain && !panel.statusText.isEmpty }
+    await until { panel.path == plain && !panel.statusText.isEmpty }
     var said = false
     for _ in 0..<5 where !said {   // the listing's own git status landing just then redraws the line over the message
         panel.showGitChanges()
@@ -118,10 +113,10 @@ private func tempDir() -> String {
     #expect(said && panel.searchTitle == nil)
 
     panel.navigate(to: repo)
-    await waitUntil { panel.path == repo }
+    await until { panel.path == repo }
     panel.showGitChanges()
     panel.reload()   // the folder changed meanwhile: a re-list, not the user going elsewhere
-    await waitUntil { panel.searchTitle != nil && panel.statusText.hasSuffix(" found") && !panel.statusText.contains("searching") }
+    await until { panel.searchTitle != nil && panel.statusText.hasSuffix(" found") && !panel.statusText.contains("searching") }
     #expect(panel.searchTitle != nil && names(panel) == ["new.txt"], "\(panel.statusText)")
 }
 
@@ -147,7 +142,7 @@ private func tempDir() -> String {
 @MainActor @Test func dragAsksVolumesOncePerDragOffTheMainThread() async {
     let a = Foundation.NSTemporaryDirectory(), b = NSHomeDirectory()   // one volume, wherever $DFM_TEST_TMP is
     #expect(!DragVolumes.same(a, b, drag: 7001), "not known yet: copy")
-    await waitUntil { DragVolumes.same(a, b, drag: 7001) }
+    await until { DragVolumes.same(a, b, drag: 7001) }
     #expect(DragVolumes.same(a, b, drag: 7001))
     #expect(!DragVolumes.same(a, b, drag: 7002), "another drag asks again")
 }
@@ -202,9 +197,9 @@ private func tempDir() -> String {
         done = job
         ops.enqueue(job, title: "Copy")
     }
-    await waitUntil { ops.pending == 0 }
+    await until { ops.pending == 0 }
     #expect(FileManager.default.fileExists(atPath: d + "/out/a"))
-    await waitUntil { done == nil }
+    await until { done == nil }
     #expect(done == nil, "a finished job is let go")
 }
 
@@ -236,7 +231,7 @@ private func tempDir() -> String {
     defer { v.close() }
     for _ in 0..<500 where v.window?.statusText.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(10)) }
     v.setFollow(true)
-    await waitUntil { v.window?.statusText.contains("follow stopped — f resumes") == true }   // ssh can't even resolve it
+    await until { v.window?.statusText.contains("follow stopped — f resumes") == true }   // ssh can't even resolve it
     #expect(v.window?.statusText.contains("follow stopped — f resumes") == true, "\(v.window?.statusText ?? "")")
     #expect(v.window?.statusText.contains("following") == false)
 }
@@ -251,10 +246,10 @@ private func tempDir() -> String {
     let panel = PanelViewController(tabs: [d + "/disk/sub"], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { panel.path == d + "/disk/sub" && panel.table.numberOfRows == 2 }
+    await until { panel.path == d + "/disk/sub" && panel.table.numberOfRows == 2 }
     try FileManager.default.removeItem(atPath: d + "/disk")   // the disk and the folder above with it
     panel.reload()
-    await waitUntil { panel.path == d }
+    await until { panel.path == d }
     #expect(panel.path == d && names(panel).isEmpty, "\(panel.path)")
 }
 
@@ -268,7 +263,7 @@ private func tempDir() -> String {
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
     panel.loadRemote(.local(), dir: d, select: nil)
-    await waitUntil { panel.remote?.dir == d && names(panel).contains("bin") }
+    await until { panel.remote?.dir == d && names(panel).contains("bin") }
     let row = try #require((0..<panel.table.numberOfRows).first { panel.item(at: $0)?.name == "bin" })
     let cell = panel.tableView(panel.table, viewFor: panel.table.tableColumn(withIdentifier: .init("name")), row: row) as? NSTableCellView
     #expect(cell?.toolTip == "→ usr/bin")
@@ -284,17 +279,17 @@ private func tempDir() -> String {
     let panel = PanelViewController(tabs: [mac], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { panel.path == mac }
+    await until { panel.path == mac }
     panel.loadRemote(.local(), dir: server, select: nil)
-    await waitUntil { panel.remote?.dir == server }
+    await until { panel.remote?.dir == server }
     let field = NSTextView()
     field.string = "s"
     pathCommand(panel, field, #selector(NSResponder.insertTab(_:)))
-    await waitUntil { field.string != "s" }
+    await until { field.string != "s" }
     #expect(field.string == "srvonly/")
     field.string = server + "/sr"
     pathCommand(panel, field, #selector(NSResponder.insertTab(_:)))
-    await waitUntil { field.string != server + "/sr" }
+    await until { field.string != server + "/sr" }
     #expect(field.string == server + "/srvonly/")
 }
 
@@ -311,7 +306,7 @@ private func tempDir() -> String {
     for _ in 0..<500 where v.window?.statusText.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(10)) }
     v.setLineFilter(LineFilter("77777"))
     let fmt = ByteCountFormatter.short(10)
-    await waitUntil { v.window?.statusText.contains("lines with “77777”") == true }
+    await until { v.window?.statusText.contains("lines with “77777”") == true }
     #expect(v.window?.statusText.contains("lines with “77777” in the last \(fmt) only") == true, "\(v.window?.statusText ?? "")")
 }
 
@@ -325,7 +320,7 @@ private func tempDir() -> String {
     let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { names(panel) == ["bin", "zdir", "a.txt"] }
+    await until { names(panel) == ["bin", "zdir", "a.txt"] }
     try #require(names(panel) == ["bin", "zdir", "a.txt"])   // else `item(at: 1)` reads past the rows: the whole run would crash
     let link = try #require(panel.item(at: 1))
     #expect(link.linkDir && PanelViewController.sizeText(link, measured: nil) == "")
@@ -342,13 +337,13 @@ private func tempDir() -> String {
     let v = Viewer(copy, remote: (.local(), log, 19))   // .local(): the command runs here, as a server's would
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
-    await waitUntil { tv.string.hasPrefix("late") }
+    await until { tv.string.hasPrefix("late") }
     v.setLineFilter(LineFilter("77777"))
-    await waitUntil { tv.string.hasPrefix("early") }
+    await until { tv.string.hasPrefix("early") }
     #expect(tv.string == "early 77777\nlate 77777\n")
     #expect(v.window?.statusText.contains("lines with “77777” in the whole file (grep on the server)") == true, "\(v.window?.statusText ?? "")")
     v.setLineFilter(LineFilter("!77777"))
-    await waitUntil { tv.string.hasPrefix("middle") }
+    await until { tv.string.hasPrefix("middle") }
     #expect(tv.string == "middle\nend\n")
 }
 
@@ -364,7 +359,7 @@ private func tempDir() -> String {
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
     panel.loadRemote(.local(), dir: d, select: nil)
-    await waitUntil { panel.remote?.dir == d && names(panel).count == 3 }
+    await until { panel.remote?.dir == d && names(panel).count == 3 }
     panel.markAll()
     #expect(panel.statusText.components(separatedBy: "marked").count == 2 && panel.statusText.hasPrefix("3 marked"), "\(panel.statusText)")
 }
@@ -411,7 +406,7 @@ private func tempDir() -> String {
     let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { names(panel).count == 3 }
+    await until { names(panel).count == 3 }
     panel.moveCursor(toName: "bin.usr-is-merged")
     panel.applyTheme()
     #expect(panel.selectedItems.map(\.name) == ["bin.usr-is-merged"])
@@ -461,12 +456,12 @@ private func tempDir() -> String {
     for p in [local, remote] { p.loadViewIfNeeded() }
     defer { local.shutdown(); remote.shutdown() }
     remote.loadRemote(.local(), dir: server, select: nil)
-    await waitUntil { local.path == mac && remote.remote?.dir == server }
+    await until { local.path == mac && remote.remote?.dir == server }
     #expect(local.plainFolder == mac && remote.plainFolder == nil, "⌘⇧D: no same-named file behind a server tab")
     #expect(remote.infoURL == nil && local.infoURL?.path == mac, "a server's file: its listing's Info (Quick View), never the folder behind")
 
     #expect(AppDelegate.swap(local, remote))   // ⌘U: the server folder and the local one change places
-    await waitUntil { local.remote?.dir == server && remote.path == mac && remote.remote == nil }
+    await until { local.remote?.dir == server && remote.path == mac && remote.remote == nil }
     #expect(local.remote?.dir == server && remote.remote == nil && remote.path == mac)
 }
 
@@ -484,10 +479,10 @@ private func tempDir() -> String {
     let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { names(panel).count == 2 }
+    await until { names(panel).count == 2 }
     panel.enterArchive(d + "/a.tar")
     panel.reload()   // the folder changed meanwhile
-    await waitUntil { panel.archive != nil }
+    await until { panel.archive != nil }
     try await Task.sleep(for: .milliseconds(200))
     #expect(panel.archive != nil && names(panel) == ["f"])
 }
@@ -534,11 +529,11 @@ private func tempDir() -> String {
     defer { v.close() }
     for _ in 0..<500 where v.window?.statusText.hasPrefix("Loading") == true { try await Task.sleep(for: .milliseconds(10)) }
     v.setFollow(true)
-    await waitUntil { v.window?.statusText.contains("follow stopped") == true }
+    await until { v.window?.statusText.contains("follow stopped") == true }
     #expect(v.window?.statusText.contains("follow stopped — f resumes") == true && v.window?.statusText.contains("following") == false)
     v.setFollow(true)   // f: on again (and, the server still out of reach, stopped again)
     #expect(v.window?.statusText.contains("following") == true)
-    await waitUntil { v.window?.statusText.contains("follow stopped") == true }
+    await until { v.window?.statusText.contains("follow stopped") == true }
     v.setFollow(false)  // f while on: off, no note
     #expect(v.window?.statusText.contains("follow") == false)
 }

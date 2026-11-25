@@ -12,12 +12,6 @@ import Testing
     return dir
 }
 
-/// By the clock: a loaded full run keeps the main actor busy.
-@MainActor private func until(_ done: () -> Bool) async {
-    let end = Date().addingTimeInterval(20)
-    while !done(), Date() < end { try? await Task.sleep(for: .milliseconds(10)) }
-}
-
 @MainActor private func loaded(_ dir: String, rows: Int) async -> PanelViewController {
     let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
     panel.loadViewIfNeeded()

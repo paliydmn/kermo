@@ -3,6 +3,15 @@
 set -e
 cd "${0:A:h}"
 
+# A release is built from its tag (CHANGELOG.md: commit, tag, then this): nothing uncommitted, HEAD tagged as build.sh's
+# version. DFM_ADHOC=1, a build that isn't a release, skips it.
+if [[ ${DFM_ADHOC:-0} != 1 ]]; then
+  WANT=v$(sed -n 's|.*<key>CFBundleShortVersionString</key><string>\([^<]*\)</string>.*|\1|p' build.sh)
+  git diff --quiet HEAD || { echo "package.sh: uncommitted changes. Commit them, tag $WANT, then package — or, for a build that isn't a release, DFM_ADHOC=1 ./package.sh." >&2; exit 1; }
+  [[ -z $(git ls-files --others --exclude-standard Sources) ]] || { echo "package.sh: files in Sources/ that git doesn't track:" >&2; git ls-files --others --exclude-standard Sources >&2; exit 1; }
+  git tag --points-at HEAD | grep -qxF "$WANT" || { echo "package.sh: HEAD isn't tagged $WANT (build.sh's version). Tag it, then package — or, for a build that isn't a release, DFM_ADHOC=1 ./package.sh." >&2; exit 1; }
+fi
+
 DFM_UNIVERSAL=1 DFM_DISTRIBUTION=1 ./build.sh
 
 APP=build/Kermo.app
@@ -20,7 +29,7 @@ ditto --noextattr --noacl $APP $STAGE/Kermo.app
 # One certificate for every release: macOS keeps Full Disk Access and other grants across updates (ad hoc, each
 # build is a new app to it). Not notarized all the same: the first launch still needs Open Anyway.
 ID="Kermo Release Signing"
-if security find-identity -p codesigning | grep -q "\"$ID\""; then
+if [[ ${DFM_ADHOC:-0} != 1 ]] && security find-identity -p codesigning | grep -q "\"$ID\""; then
   codesign --force --options runtime --sign "$ID" $STAGE/Kermo.app
 elif [[ ${DFM_ADHOC:-0} == 1 ]]; then
   codesign --force --options runtime --sign - $STAGE/Kermo.app

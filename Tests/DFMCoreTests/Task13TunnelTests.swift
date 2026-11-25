@@ -133,12 +133,6 @@ private func receive(_ fd: Int32, count: Int = .max) -> String {
     return String(decoding: out, as: UTF8.self)
 }
 
-private func waitUntil(_ seconds: TimeInterval = 10, _ done: () -> Bool) -> Bool {
-    let end = Date() + seconds
-    while !done() { if Date() > end { return false }; usleep(10_000) }
-    return true
-}
-
 /// A client on [::1]:`port`, or -1.
 private func dialV6(_ port: Int) -> Int32 {
     let s = socket(AF_INET6, SOCK_STREAM, 0)

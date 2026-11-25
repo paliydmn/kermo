@@ -11,11 +11,6 @@ private func tempDir() throws -> String {
     return dir
 }
 
-@MainActor private func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
-    for _ in 0..<250 where !cond() { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(cond(), "\(what)")
-}
-
 /// The finalNewline setting is global: these take turns (with the other tests of the editor window).
 extension EditorWindowTests {
     /// ⌘N makes “Untitled N”, N one past the highest open; UTF-8, LF, the final newline as the setting says (nothing to
@@ -43,7 +38,7 @@ extension EditorWindowTests {
         let buttons = (sheet.contentView.map(Self.buttons) ?? []).map(\.title)
         #expect(buttons.contains("Save…") && buttons.contains("Don't Save"), "\(buttons)")
         b.window?.endSheet(sheet, returnCode: .alertSecondButtonReturn)   // Don't Save
-        try await waitUntil("closed") { closed }
+        await until("closed") { closed }
         #expect(!Editor.unsaved.contains(b.name))
 
         Editor.finalNewlineSetting = { true }

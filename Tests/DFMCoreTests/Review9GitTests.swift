@@ -17,14 +17,6 @@ import Testing
     #expect(GitStatus.gitInstalled(developerDir: dir))
 }
 
-@MainActor private func waitUntil(_ done: () -> Bool) async throws {
-    let end = ContinuousClock.now + .seconds(5)
-    while !done() {
-        try #require(ContinuousClock.now < end)
-        try await Task.sleep(for: .milliseconds(2))
-    }
-}
-
 /// L14: reloads while `git status` runs don't start more of them: one runs, then exactly one more, at least
 /// `interval` after the first ended.
 @MainActor @Test func gitStatusRunsOneAtATime() async throws {
@@ -39,12 +31,12 @@ import Testing
         inFlight -= 1
     }
     for _ in 0..<10 { flight.request(key: "/repo") }
-    try await waitUntil { gate != nil }
+    try #require(await until { gate != nil })
     for _ in 0..<10 { flight.request(key: "/repo") }
     let firstEnded = ContinuousClock.now
     gate?.resume()
     gate = nil
-    try await waitUntil { gate != nil }
+    try #require(await until { gate != nil })
     #expect(starts.count == 2)
     #expect(starts[1] - firstEnded >= .milliseconds(100))
     gate?.resume()
@@ -65,9 +57,9 @@ import Testing
     var runs = 0
     let flight = SingleFlight(interval: .seconds(60)) { runs += 1 }
     flight.request(key: "/repo")
-    try await waitUntil { runs == 1 }
+    try #require(await until { runs == 1 })
     flight.request(key: "/repo/sub")
-    try await waitUntil { runs == 2 }
+    try #require(await until { runs == 2 })
 }
 
 /// L14: a run that never ends (git stuck on a stale mount) doesn't hold up the next folder's status.
@@ -81,9 +73,9 @@ import Testing
         if n == 1 { await withCheckedContinuation { stuck = $0 } }
     }
     flight.request(key: "/stale")
-    try await waitUntil { stuck != nil }
+    try #require(await until { stuck != nil })
     flight.request(key: "/repo")
-    try await waitUntil { started.count == 2 }
+    try #require(await until { started.count == 2 })
     stuck?.resume()
     try await Task.sleep(for: .milliseconds(100))
     #expect(started == [1, 2])   // the stuck run ending late doesn't start the new folder's run again

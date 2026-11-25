@@ -11,12 +11,6 @@ import Testing
     return dir
 }
 
-/// By the clock: a loaded full run keeps the main actor busy (a listing took over 20 s there).
-@MainActor private func until(_ done: () -> Bool, seconds: Double = 60) async {
-    let end = Date().addingTimeInterval(seconds)
-    while !done(), Date() < end { try? await Task.sleep(for: .milliseconds(10)) }
-}
-
 /// В7: an empty folder shown, a go-to that fails (a stale favorite, a mistyped path) jumped home — on a server panel,
 /// out of the server. It stays now; only a tab with nothing of it shown yet goes home, as before.
 @MainActor @Test func aFailedGoToFromAnEmptyFolderStays() async throws {
@@ -30,7 +24,7 @@ import Testing
     panel.navigate(to: gone)
     await until { panel.statusError }
     #expect(panel.statusText.hasPrefix(gone), "\(panel.statusText)")
-    await until({ panel.path != dir }, seconds: 2)   // the home listing, had it gone there
+    await until(2) { panel.path != dir }   // the home listing, had it gone there
     #expect(panel.path == dir && panel.emptyShown?.title == "Empty folder", "\(panel.path)")
 
     let restored = PanelViewController(tabs: [gone], index: 0, showHidden: false)

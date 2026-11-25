@@ -10,19 +10,14 @@ private func tempDir() throws -> String {
     return dir
 }
 
-@MainActor
-private func waitUntil(_ done: () -> Bool) async {
-    for _ in 0..<1000 where !done() { try? await Task.sleep(for: .milliseconds(10)) }
-}
-
 /// A panel on `dir`, its tab then opened "on a server": this Mac's sftp-server at `remoteDir`.
 @MainActor
 private func onServer(_ dir: String, at remoteDir: String) async throws -> PanelViewController {
     let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
-    await waitUntil { panel.path == dir && !panel.statusText.isEmpty }
+    await until { panel.path == dir && !panel.statusText.isEmpty }
     panel.loadRemote(.local(), dir: remoteDir, select: nil)
-    await waitUntil { panel.remote?.dir == remoteDir }
+    await until { panel.remote?.dir == remoteDir }
     try #require(panel.remote?.dir == remoteDir)
     return panel
 }
@@ -35,7 +30,7 @@ private func onServer(_ dir: String, at remoteDir: String) async throws -> Panel
     let panel = try await onServer(dir, at: dir)
     defer { panel.shutdown() }
     panel.navigate(to: dir + "/sub")   // Favorites, ⌘P, Home… all come as a pushed navigation
-    await waitUntil { panel.remote == nil }
+    await until { panel.remote == nil }
     #expect(panel.path == dir + "/sub" && panel.tabPaths.count == 2 && panel.tabIndex == 1)
     let left = try #require(panel.remoteTabs.first)
     #expect(panel.remoteTabs.count == 1 && !left.isCurrent && left.dir == dir, "the server tab stays, behind the new one")
@@ -49,7 +44,7 @@ private func onServer(_ dir: String, at remoteDir: String) async throws -> Panel
     var gone: [String] = []
     panel.onGone = { gone.append($0) }
     panel.navigate(to: dir + "/nope")
-    await waitUntil { panel.statusError }
+    await until { panel.statusError }
     #expect(panel.tabPaths.count == 1 && panel.remote?.dir == dir, "no second copy of the server tab")
     #expect(gone == [dir + "/nope"])
 }
@@ -68,17 +63,17 @@ private func onServer(_ dir: String, at remoteDir: String) async throws -> Panel
     let panel = try await onServer(dir, at: "/usr")
     defer { panel.shutdown() }
     panel.goUp()   // /usr → /: still on the server, nothing asked
-    await waitUntil { panel.remote?.dir == "/" }
+    await until { panel.remote?.dir == "/" }
     #expect(panel.remote?.dir == "/" && asked.isEmpty)
 
     panel.goUp()   // Cancel
-    await waitUntil { !asked.isEmpty }
+    await until { !asked.isEmpty }
     try await Task.sleep(for: .milliseconds(100))
     #expect(asked == ["localhost \(dir)"] && panel.remote?.dir == "/" && panel.tabPaths.count == 1)
 
     answer.value = true
     panel.goUp()   // Disconnect
-    await waitUntil { panel.remote == nil }
+    await until { panel.remote == nil }
     #expect(asked.count == 2 && panel.remote == nil && panel.path == dir && panel.tabPaths.count == 1)
 }
 
@@ -117,9 +112,9 @@ private func onServer(_ dir: String, at remoteDir: String) async throws -> Panel
     let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { panel.listedItems.count == 1 }
+    await until { panel.listedItems.count == 1 }
     panel.navigate(to: dir + "/nope")
-    await waitUntil { panel.statusError }
+    await until { panel.statusError }
     #expect(panel.statusError && panel.statusText == "\(dir)/nope: The operation couldn’t be completed. No such file or directory")
     panel.flash("★ Bookmarked")
     #expect(!panel.statusError)

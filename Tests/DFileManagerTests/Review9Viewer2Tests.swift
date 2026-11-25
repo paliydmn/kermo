@@ -5,12 +5,6 @@ import DFMCore
 
 // Task 9 QA follow-up, group "viewer2" (V4–V7).
 
-@MainActor
-private func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
-    for _ in 0..<500 where !cond() { try await Task.sleep(for: .milliseconds(10)) }
-    #expect(cond(), "timed out: \(what)")
-}
-
 private func tempDir() throws -> String {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-r9v2-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -37,10 +31,10 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
 
 /// Answers the sheet on `w` (Save is the first button) once it is up.
 @MainActor private func answer(_ w: NSWindow?, _ code: NSApplication.ModalResponse) async throws {
-    try await waitUntil("a sheet") { w?.attachedSheet != nil }
+    await until("a sheet") { w?.attachedSheet != nil }
     guard let w, let sheet = w.attachedSheet else { return }
     w.endSheet(sheet, returnCode: code)
-    try await waitUntil("sheet gone") { w.attachedSheet !== sheet }
+    await until("sheet gone") { w.attachedSheet !== sheet }
 }
 
 /// V4: a UTF-8 config with one damaged byte opens as UTF-8 (the byte shows as U+FFFD, the Cyrillic stays readable),
@@ -63,7 +57,7 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     #expect(FileManager.default.contents(atPath: path) == original)
     #expect(await !e.save())   // asks again
     try await answer(e.window, .alertFirstButtonReturn)    // Save
-    try await waitUntil("saved") { FileManager.default.contents(atPath: path) != original && !e.saving }   // written off the main thread
+    await until("saved") { FileManager.default.contents(atPath: path) != original && !e.saving }   // written off the main thread
     #expect(FileManager.default.contents(atPath: path) == Data("# Налаштування\nname = \u{FFFD} сервер\nмітка = так\n".utf8))
     e.textView.string += "ще\n"
     #expect(await e.save())   // asked once
@@ -78,7 +72,7 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     func inode() -> ino_t { var st = stat(); stat(cp, &st); return st.st_ino }
     let before = inode()
     try await answer(e2.window, .alertFirstButtonReturn)
-    try await waitUntil("saved") { inode() != before && !e2.saving }   // the same bytes, written off the main thread
+    await until("saved") { inode() != before && !e2.saving }   // the same bytes, written off the main thread
     #expect(FileManager.default.contents(atPath: cp) == cpData)
     e2.textView.string += "ще = 2\n"
     #expect(await e2.save())   // answered Save once: not asked again
@@ -102,7 +96,7 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     #expect(e.closeAsking() == false)
     try await answer(e.window, .alertFirstButtonReturn)   // Save changes? Save
     try await answer(e.window, .alertFirstButtonReturn)   // Save as Windows-1251? Save
-    try await waitUntil("closed") { closed }
+    await until("closed") { closed }
     #expect(FileManager.default.contents(atPath: cp) == "ключ = 1\n# Коментар\n".data(using: .windowsCP1251)!)
 }
 
@@ -126,11 +120,11 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let v = Viewer(bin)
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
-    try await waitUntil("hex") { tv.string.hasPrefix("00000000  cf fa ed fe") }
+    await until("hex") { tv.string.hasPrefix("00000000  cf fa ed fe") }
     press(tv, "h", 4)
-    try await waitUntil("as text") { tv.string.hasSuffix("hello marker") }
+    await until("as text") { tv.string.hasSuffix("hello marker") }
     press(tv, "h", 4)
-    try await waitUntil("hex again") { tv.string.hasPrefix("00000000  cf fa ed fe") }
+    await until("hex again") { tv.string.hasPrefix("00000000  cf fa ed fe") }
 }
 
 /// V6: a 5 MB log goes the sliding-window way (not whole into the text view): End shows its last line, find in the
@@ -147,26 +141,26 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let v = Viewer(URL(fileURLWithPath: path))
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     #expect(v.win.lowerBound == 0 && v.win.count <= 256 << 10)
 
     press(tv, "", 119)   // End
-    try await waitUntil("last window") { v.big != nil && v.win.upperBound == data.count && !v.sliding }
+    await until("last window") { v.big != nil && v.win.upperBound == data.count && !v.sliding }
     #expect(tv.string.hasSuffix("LAST LINE\n"))
 
     v.findNeedle = "request 000042 "
     v.find(from: 0)
-    try await waitUntil("found") { v.lastMatch != nil && !v.sliding && v.win.contains(v.lastMatch!) }
+    await until("found") { v.lastMatch != nil && !v.sliding && v.win.contains(v.lastMatch!) }
     #expect(v.lastMatch == data.range(of: Data("request 000042 ".utf8))?.lowerBound)
 
     v.setFollow(true)
     defer { v.setFollow(false) }
-    try await waitUntil("at the end") { !v.sliding && tv.string.hasSuffix("LAST LINE\n") }
+    await until("at the end") { !v.sliding && tv.string.hasSuffix("LAST LINE\n") }
     let h = try #require(FileHandle(forWritingAtPath: path))
     try h.seekToEnd()
     try h.write(contentsOf: Data("followed ERROR\n".utf8))
     try h.close()
-    try await waitUntil("followed") { tv.string.hasSuffix("LAST LINE\nfollowed ERROR\n") }
+    await until("followed") { tv.string.hasSuffix("LAST LINE\nfollowed ERROR\n") }
 }
 
 /// V7: a big log truncated while shown: the next move maps it again (no crash on the lost pages), says
@@ -179,20 +173,20 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let data = try bigLog(path, 6 << 20)
     let v = Viewer(URL(fileURLWithPath: path))
     defer { v.close() }
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     v.showWindow(around: 5 << 20, top: BigFile.lineStart(data, at: 5 << 20))
-    try await waitUntil("near the end") { v.win.contains(5 << 20) && !v.sliding }
+    await until("near the end") { v.win.contains(5 << 20) && !v.sliding }
 
     let h = try #require(FileHandle(forWritingAtPath: path))
     try h.truncate(atOffset: 1 << 20)
     try h.close()
     #expect(v.visibleTop() == nil)   // touched nothing past the new end
-    try await waitUntil("remapped") { v.big?.count == 1 << 20 && !v.win.isEmpty && !v.sliding }
+    await until("remapped") { v.big?.count == 1 << 20 && !v.win.isEmpty && !v.sliding }
     #expect(v.win.upperBound <= 1 << 20)
     let subtitle = v.window?.statusText ?? ""
     #expect(subtitle.hasPrefix("file truncated · 1 MB"), "\(subtitle)")
     v.showWindow(around: 0, top: 0)
-    try await waitUntil("start") { v.win.lowerBound == 0 && !v.sliding }
+    await until("start") { v.win.lowerBound == 0 && !v.sliding }
     #expect(v.window?.statusText.contains("truncated") == false)
 }
 
@@ -211,9 +205,9 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let v = Viewer(URL(fileURLWithPath: path))
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     press(tv, "", 119)   // End
-    try await waitUntil("last window") { v.big != nil && v.win.upperBound == v.big!.count && !v.sliding && tv.string.hasSuffix("LAST LINE\n") }
+    await until("last window") { v.big != nil && v.win.upperBound == v.big!.count && !v.sliding && tv.string.hasSuffix("LAST LINE\n") }
 }
 
 /// V5 follow-up: a .plist that doesn't parse and looks binary, switched to text with h, stays text when p falls back
@@ -247,12 +241,12 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     var closed = false
     v.onClose = { closed = true }
     let tv = try #require(v.scroll.documentView as? NSTextView)
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     #expect(v.big == data && v.win.count <= 256 << 10)
     let subtitle = v.window?.statusText ?? ""
     #expect(subtitle.contains("· gzip, ") && subtitle.contains(" unpacked · UTF-8 · showing"), "\(subtitle)")
     press(tv, "", 119)   // End
-    try await waitUntil("last window") { v.win.upperBound == data.count && !v.sliding }
+    await until("last window") { v.win.upperBound == data.count && !v.sliding }
     #expect(tv.string.hasSuffix("LAST LINE\n"))
     let copy = try #require(v.unpackedCopy)
     v.close()
@@ -270,7 +264,7 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let v = Viewer(URL(fileURLWithPath: path))
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     #expect(v.window?.statusText.contains("p readable") == false)
     press(tv, "p", 35)
     try await Task.sleep(for: .milliseconds(200))
@@ -281,7 +275,7 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let s = Viewer(small)
     defer { s.close() }
     let stv = try #require(s.scroll.documentView as? NSTextView)
-    try await waitUntil("formatted") { stv.string.contains("\"a\" : [\n") }
+    await until("formatted") { stv.string.contains("\"a\" : [\n") }
 }
 
 /// V6 follow-up: a 6 MB minified JSON (one line, Cyrillic in it) goes through the window and the window moves
@@ -306,13 +300,13 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
         #expect(data[v.win.lowerBound] & 0xc0 != 0x80 && (v.win.upperBound == data.count || data[v.win.upperBound] & 0xc0 != 0x80), "\(v.win)")
     }
     press(tv, "w", 13)   // wrap on
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     for _ in 0..<2 {
         let before = v.win
         clip.scroll(to: NSPoint(x: 0, y: clip.documentRect.height - clip.bounds.height))
         v.scroll.reflectScrolledClipView(clip)
         let atBottom = try #require(v.visibleTop())
-        try await waitUntil("slid forward") { v.win != before && !v.sliding }
+        await until("slid forward") { v.win != before && !v.sliding }
         #expect(v.win.lowerBound > before.lowerBound && v.win.contains(atBottom.offset))
         let top = try #require(v.visibleTop()).offset   // the same place: the start of its wrapped row
         #expect(top <= atBottom.offset && top > atBottom.offset - 1024, "\(top) vs \(atBottom.offset)")
@@ -321,13 +315,13 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
 
     press(tv, "w", 13)   // wrap off: one long row; its edge is the right one
     settle()
-    try await waitUntil("settled") { !v.sliding }   // the toggle may recentre on the top-left character first
+    await until("settled") { !v.sliding }   // the toggle may recentre on the top-left character first
     settle()
     let before = v.win
     clip.scroll(to: NSPoint(x: clip.documentRect.width - clip.bounds.width, y: 0))
     v.scroll.reflectScrolledClipView(clip)
     let atRight = try #require(v.visibleTop())
-    try await waitUntil("slid right") { v.win != before && !v.sliding }
+    await until("slid right") { v.win != before && !v.sliding }
     #expect(v.win.lowerBound > before.lowerBound && v.win.contains(atRight.offset))
     let left = try #require(v.visibleTop()).offset   // the next page: from (a little before) where the window ended
     #expect(left <= before.upperBound && left > before.upperBound - 1024, "\(left) vs \(before.upperBound)")
@@ -336,14 +330,14 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let needle = "{\"id\":\(i / 2),"
     v.findNeedle = needle
     v.find(from: 0)
-    try await waitUntil("found") { v.lastMatch != nil && !v.sliding && v.win.contains(v.lastMatch!) }
+    await until("found") { v.lastMatch != nil && !v.sliding && v.win.contains(v.lastMatch!) }
     #expect(v.lastMatch == data.range(of: Data(needle.utf8))?.lowerBound)
     let sel = tv.selectedRange()
     #expect((tv.string as NSString).substring(with: sel) == needle)
     #expect(tv.visibleRect.intersects(rect(tv, sel)), "match not on screen")
 
     press(tv, "", 119)   // End
-    try await waitUntil("last window") { v.big != nil && v.win.upperBound == data.count && !v.sliding }
+    await until("last window") { v.big != nil && v.win.upperBound == data.count && !v.sliding }
     #expect(tv.string.hasSuffix("\"КІНЕЦЬ\"}]"))
     let end = (tv.string as NSString).range(of: "КІНЕЦЬ", options: .backwards)
     #expect(tv.visibleRect.intersects(rect(tv, end)), "the end not on screen")
@@ -368,16 +362,16 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let v = Viewer(URL(fileURLWithPath: path))
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     let h = try #require(FileHandle(forWritingAtPath: path))
     try h.truncate(atOffset: 1 << 20)
     try h.close()
     press(tv, "h", 4)
-    try await waitUntil("hex") { tv.string.hasPrefix("00000000  32 30 32 36") }
+    await until("hex") { tv.string.hasPrefix("00000000  32 30 32 36") }
     try await Task.sleep(for: .milliseconds(500))
     #expect(tv.string.hasPrefix("00000000  32 30 32 36"))
     press(tv, "h", 4)
-    try await waitUntil("text") { v.big?.count == 1 << 20 && !v.sliding && tv.string.hasPrefix("2026-10-07") }
+    await until("text") { v.big?.count == 1 << 20 && !v.sliding && tv.string.hasPrefix("2026-10-07") }
 }
 
 /// V5 follow-up: a log fetched from a server (not sparse) with 10 MB of real NULs before its text — a copytruncate
@@ -392,9 +386,9 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let v = Viewer(URL(fileURLWithPath: path))
     defer { v.close() }
     let tv = try #require(v.scroll.documentView as? NSTextView)
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     press(tv, "", 119)   // End
-    try await waitUntil("last window") { v.big != nil && v.win.upperBound == v.big!.count && !v.sliding && tv.string.hasSuffix("LAST LINE\n") }
+    await until("last window") { v.big != nil && v.win.upperBound == v.big!.count && !v.sliding && tv.string.hasSuffix("LAST LINE\n") }
 }
 
 /// The text from the character at the view's top left on, `n` UTF-16 units of it.
@@ -422,27 +416,27 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let tv = try #require(v.scroll.documentView as? NSTextView)
     let clip = v.scroll.contentView
     press(tv, "w", 13)   // wrap on
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     #expect(v.win.count > 128 << 10, "\(v.win)")
     var before = v.win
     clip.scroll(to: NSPoint(x: 0, y: clip.documentRect.height - clip.bounds.height))
     v.scroll.reflectScrolledClipView(clip)
-    try await waitUntil("slid down") { v.win != before && !v.sliding }
+    await until("slid down") { v.win != before && !v.sliding }
     #expect(v.win.lowerBound > before.lowerBound)
 
     v.findNeedle = "function f100("
     v.find(from: 0)
-    try await waitUntil("found") { v.lastMatch != nil && !v.sliding && v.win.contains(v.lastMatch!) }
+    await until("found") { v.lastMatch != nil && !v.sliding && v.win.contains(v.lastMatch!) }
     #expect((tv.string as NSString).substring(with: tv.selectedRange()) == "function f100(")
 
     press(tv, "w", 13)   // wrap off
     tv.layoutManager!.ensureLayout(for: tv.textContainer!)
     tv.sizeToFit()
-    try await waitUntil("settled") { !v.sliding }
+    await until("settled") { !v.sliding }
     before = v.win
     clip.scroll(to: NSPoint(x: clip.documentRect.width - clip.bounds.width, y: 0))
     v.scroll.reflectScrolledClipView(clip)
-    try await waitUntil("slid right") { v.win != before && !v.sliding }
+    await until("slid right") { v.win != before && !v.sliding }
     #expect(v.win.lowerBound > before.lowerBound)
 }
 
@@ -463,12 +457,12 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let v = Viewer(URL(fileURLWithPath: path))
     defer { v.close() }
     let clip = v.scroll.contentView
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     for _ in 0..<3 {
         let before = v.win
         clip.scroll(to: NSPoint(x: clip.documentRect.width - clip.bounds.width, y: 0))
         v.scroll.reflectScrolledClipView(clip)
-        try await waitUntil("slid right") { v.win != before && !v.sliding }
+        await until("slid right") { v.win != before && !v.sliding }
         #expect(v.win.lowerBound > before.lowerBound && v.win.upperBound > before.upperBound, "\(before) → \(v.win)")
     }
 }
@@ -493,13 +487,13 @@ private func bigLog(_ path: String, _ size: Int) throws -> Data {
     let tv = try #require(v.scroll.documentView as? NSTextView)
     let clip = v.scroll.contentView
     press(tv, "w", 13)   // wrap on
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     for _ in 0..<2 {
         let before = v.win
         clip.scroll(to: NSPoint(x: 0, y: clip.documentRect.height - clip.bounds.height))
         v.scroll.reflectScrolledClipView(clip)
         let shown = topLeftText(v, 24)
-        try await waitUntil("slid forward") { v.win != before && !v.sliding }
+        await until("slid forward") { v.win != before && !v.sliding }
         #expect(topLeftText(v, 600).contains(shown), "lost “\(shown)”: now “\(topLeftText(v, 60))”")
     }
 }
@@ -521,7 +515,7 @@ private func oneLineJSON(_ path: String) throws {
     let clip = v.scroll.contentView, before = v.win
     clip.scroll(to: NSPoint(x: clip.documentRect.width - clip.bounds.width, y: 0))
     v.scroll.reflectScrolledClipView(clip)
-    try await waitUntil("paged right") { v.win != before && !v.sliding }
+    await until("paged right") { v.win != before && !v.sliding }
 }
 
 /// V6 follow-up: w on a big file keeps the window and the text at the top left — a wide CSV or a one-line JSON read
@@ -535,7 +529,7 @@ private func oneLineJSON(_ path: String) throws {
         let v = Viewer(URL(fileURLWithPath: dir + "/" + name))
         defer { v.close() }
         let tv = try #require(v.scroll.documentView as? NSTextView)
-        try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+        await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
         for _ in 0..<pages { try await pageRight(v) }
         for _ in 0..<2 {
             let before = v.win, shown = topLeftText(v, 16)
@@ -543,7 +537,7 @@ private func oneLineJSON(_ path: String) throws {
             tv.layoutManager!.ensureLayout(for: tv.textContainer!)
             tv.sizeToFit()
             try await Task.sleep(for: .milliseconds(300))
-            try await waitUntil("still") { !v.sliding }
+            await until("still") { !v.sliding }
             #expect(v.win == before, "\(name): \(before) → \(v.win)")
             #expect(topLeftText(v, 600).contains(shown), "\(name): lost “\(shown)”: now “\(topLeftText(v, 40))”")
         }
@@ -561,7 +555,7 @@ private func oneLineJSON(_ path: String) throws {
     let v = Viewer(URL(fileURLWithPath: dir + "/wide.csv"))
     defer { v.close() }
     let clip = v.scroll.contentView
-    try await waitUntil("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
+    await until("first window") { v.big != nil && !v.win.isEmpty && !v.sliding }
     try await pageRight(v)
     clip.scroll(to: NSPoint(x: 200, y: 0))
     v.scroll.reflectScrolledClipView(clip)
@@ -569,18 +563,18 @@ private func oneLineJSON(_ path: String) throws {
     clip.scroll(to: NSPoint(x: left, y: 0))
     v.scroll.reflectScrolledClipView(clip)
     try await Task.sleep(for: .milliseconds(300))
-    try await waitUntil("still") { !v.sliding }
+    await until("still") { !v.sliding }
     #expect(v.win == before, "\(before) → \(v.win)")
     clip.setBoundsOrigin(NSPoint(x: left - 30, y: 0))   // a trackpad pulling past the edge
-    try await waitUntil("paged back") { v.win.lowerBound < before.lowerBound && !v.sliding }
+    await until("paged back") { v.win.lowerBound < before.lowerBound && !v.sliding }
 
     try oneLineJSON(dir + "/min.json")
     let j = Viewer(URL(fileURLWithPath: dir + "/min.json"))
     defer { j.close() }
-    try await waitUntil("first window") { j.big != nil && !j.win.isEmpty && !j.sliding }
+    await until("first window") { j.big != nil && !j.win.isEmpty && !j.sliding }
     try await pageRight(j)
     let paged = j.win
     j.scroll.contentView.scroll(to: NSPoint(x: -j.scroll.contentView.contentInsets.left, y: 0))
     j.scroll.reflectScrolledClipView(j.scroll.contentView)
-    try await waitUntil("one row: back at its left edge") { j.win.lowerBound < paged.lowerBound && !j.sliding }
+    await until("one row: back at its left edge") { j.win.lowerBound < paged.lowerBound && !j.sliding }
 }

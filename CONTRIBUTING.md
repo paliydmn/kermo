@@ -29,7 +29,7 @@ Use `./test.sh`, not `swift test`: it works around a Command Line Tools bug with
 
 ## Package
 
-`./package.sh` writes a universal `.pkg` and `.dmg` for Apple Silicon and Intel to `dist/`. To hand Kermo to someone, send the `.pkg`: opening it runs the standard macOS installer. It isn't notarized, so the recipient allows it on the first open, as in [Install Kermo](docs/install.md).
+`./package.sh` writes a universal `.pkg` and `.dmg` for Apple Silicon and Intel to `dist/`. To hand Kermo to someone, send the `.pkg`: opening it runs the standard macOS installer. It isn't notarized, so the recipient allows it on the first open, as in [Install Kermo](docs/install.md). Without a release tag on HEAD (and the release certificate) run it as `DFM_ADHOC=1 ./package.sh`: the build is signed ad hoc.
 
 ## Before you open a pull request
 

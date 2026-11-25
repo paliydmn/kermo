@@ -48,10 +48,6 @@ import Testing
     return it
 }
 
-@MainActor private func until(_ done: () -> Bool) async {
-    for _ in 0..<250 where !done() { try? await Task.sleep(for: .milliseconds(20)) }
-}
-
 @MainActor private func tempDir() throws -> String {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/kermo-p7-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)

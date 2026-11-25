@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}   # every master run finishes
+
+jobs:
+  test:
+    # Xcode 27's image: the Swift Kermo is built with (Apple Silicon only).
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      DFM_TEST_SLOW: 3   # a shared runner: the tests' `until` waits last three times longer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 tools/check-docs.py
+      - run: swift --version
+      - run: swift build
+      - name: Core tests
+        run: ./test.sh --filter DFMCoreTests
+      # The app's tests want a window server, the Keychain and an idle machine: their result is shown, not required.
+      - name: App tests
+        continue-on-error: true
+        timeout-minutes: 25
+        run: ./test.sh --filter DFileManagerTests

@@ -28,10 +28,6 @@ import Testing
     func add(_ s: String, _ error: Bool) { lines.append(s); errors.append(error) }
 }
 
-@MainActor private func waitUntil(_ done: () -> Bool) async {
-    for _ in 0..<1000 where !done() { try? await Task.sleep(for: .milliseconds(10)) }
-}
-
 /// A client connected to 127.0.0.1:`port` (-1: refused); reads wait up to 10 s.
 private func dial(_ port: Int) -> Int32 {
     let s = socket(AF_INET, SOCK_STREAM, 0)
@@ -169,17 +165,17 @@ private func freePorts(_ n: Int) throws -> [Int] {
             var b: UInt8 = 0
             _ = read(c, &b, 1)   // the end
             close(c)
-            await waitUntil { tunnels.connections(db.tunnels[0], of: db) == 0 }
+            await until { tunnels.connections(db.tunnels[0], of: db) == 0 }
         }
         for _ in 0..<3 { await connect("no\n") }
-        await waitUntil { said.lines.count == 1 && tunnels.state(db.tunnels[0], of: db)?.error != nil }
+        await until { said.lines.count == 1 && tunnels.state(db.tunnels[0], of: db)?.error != nil }
         #expect(said.lines == ["Postgres: Nothing listens on localhost:5432 (as seen from db1)"] && said.errors == [true])
         reason.value = "db1 forbids port forwarding (AllowTcpForwarding / PermitOpen)"
         await connect("no\n")
-        await waitUntil { said.lines.count == 2 }
+        await until { said.lines.count == 2 }
         #expect(said.lines.last == "Postgres: db1 forbids port forwarding (AllowTcpForwarding / PermitOpen)")
         await connect("ok\n")
-        await waitUntil { tunnels.state(db.tunnels[0], of: db)?.error == nil }
+        await until { tunnels.state(db.tunnels[0], of: db)?.error == nil }
         #expect(tunnels.state(db.tunnels[0], of: db)?.error == nil && tunnels.isListening(db.tunnels[0], of: db))
         #expect(said.lines.count == 2)
         #expect(changes == 2, "the sidebar hears failed, then fine — not each retry")
@@ -196,7 +192,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         tunnels.start(db.tunnels[0], of: db)
         let c = dial(p[0]), d = dial(p[0])
         defer { close(c); close(d) }
-        await waitUntil { tunnels.connections(vault.tunnels[0], of: vault) == 2 }
+        await until { tunnels.connections(vault.tunnels[0], of: vault) == 2 }
         tunnels.relock([vault, db])
         #expect(!tunnels.isListening(vault.tunnels[0], of: vault) && tunnels.isListening(db.tunnels[0], of: db))
         #expect(dial(p[0]) == -1)
@@ -224,7 +220,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(tunnels.quitNote() == nil, "listening alone: nothing to ask")
         let c = dial(p[0])
         defer { close(c) }
-        await waitUntil { tunnels.connections(db.tunnels[0], of: db) == 1 }
+        await until { tunnels.connections(db.tunnels[0], of: db) == 1 }
         #expect(tunnels.quitNote() == "Tunnels: Postgres (1 connection) — they close")
         #expect(tunnels.described(server: ServerRow.key(db.target)) == "Postgres (1 connection), Redis")
 
@@ -238,7 +234,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(tunnels.quitNote() == "Tunnels: Main DB (1 connection) — they close")
         let c2 = dial(p[0])   // on the port listening anew
         defer { close(c2) }
-        await waitUntil { tunnels.connections(db.tunnels[0], of: db) == 1 }
+        await until { tunnels.connections(db.tunnels[0], of: db) == 1 }
         tunnels.moving(db.tunnels[0], of: db)   // the sheet, saving another local port
         db.tunnels[0].localPort = p[2]
         tunnels.sync([db])
@@ -286,7 +282,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         app.tunnels.start(web.tunnels[0], of: web)
         let c = dial(p[0])
         defer { close(c) }
-        await waitUntil { app.tunnels.connections(db.tunnels[0], of: db) == 1 }
+        await until { app.tunnels.connections(db.tunnels[0], of: db) == 1 }
 
         let pg = app.tunnelItem(db.tunnels[0], of: db)
         #expect(pg.title == "PROD Postgres → \(p[0]) · 1" && pg.image?.accessibilityDescription == "listening")
@@ -338,7 +334,6 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(hits.first?.hits.prefix(2).map(\.title).sorted() == ["New Tunnel…", "Tunnels…"])
     }
 
-
     /// Forward Port's tunnels are temporary, on any server — one never saved too: saved servers changing (`sync`) leaves
     /// them be; they keep their server in use, quitting and Disconnect name and end them, the lock turns a locked
     /// address's off. Save makes one the server's own without closing its port — the one it was on, or that server saved
@@ -362,7 +357,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(tunnels.inUse == [ServerRow.key(db.target), ServerRow.key(web.target)])
         let c = dial(p[1])
         defer { close(c) }
-        await waitUntil { tunnels.connections(u, of: web) == 1 }
+        await until { tunnels.connections(u, of: web) == 1 }
         #expect(tunnels.quitNote() == "Tunnels: localhost:80 (1 connection) — they close")
         #expect(tunnels.described(server: ServerRow.key(web.target)) == "localhost:80 (1 connection)")
         tunnels.stopTemporaries(server: ServerRow.key(web.target))   // Disconnect
@@ -377,7 +372,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         _ = "no\n".withCString { write(d, $0, 3) }
         #expect(ends(d))
         close(d)
-        await waitUntil { tunnels.state(saved.tunnels[0], of: saved)?.error != nil }
+        await until { tunnels.state(saved.tunnels[0], of: saved)?.error != nil }
         #expect(said.lines == ["Postgres: refused"], "its word is heard after Save")
 
         let v = Tunnel(localPort: p[1], port: 6379)
@@ -390,7 +385,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         _ = "no\n".withCString { write(e, $0, 3) }
         #expect(ends(e))
         close(e)
-        await waitUntil { tunnels.state(v, of: webSaved)?.error != nil }
+        await until { tunnels.state(v, of: webSaved)?.error != nil }
         #expect(said.lines.last == "Redis: refused")
         tunnels.stop(v, of: webSaved)
 
@@ -425,14 +420,14 @@ private func freePorts(_ n: Int) throws -> [Int] {
         #expect(rows[0].actions.map { "\($0.key.display) \($0.label)" } == ["⌘O Open in Browser", "⌘C Copy Address", "⌘S Save as Tunnel"] && rows[0].verb == "Forward")
 
         rows[0].run()
-        await waitUntil { !app.tunnels.temporaries().isEmpty }   // after the lock's word
+        await until { !app.tunnels.temporaries().isEmpty }   // after the lock's word
         let next = try #require(app.tunnels.temporaries().first?.tunnel)
         #expect(next.localPort > p[0] && next.host == "localhost" && next.port == p[0] && next.title == "nginx")
         #expect(said.lines.last == "nginx: localhost:\(next.localPort) → db1:\(p[0]) (\(p[0]) is taken here) · listening" && said.errors.last == false)
         let c = dial(next.localPort)
         #expect(c != -1)
         defer { close(c) }
-        await waitUntil { app.tunnels.connections(next, of: db) == 1 }
+        await until { app.tunnels.connections(next, of: db) == 1 }
         rows = app.portItems(ports, of: db)
         #expect(rows[0].detail == "→ localhost:\(next.localPort) · temporary")
         rows[0].run()
@@ -446,7 +441,7 @@ private func freePorts(_ n: Int) throws -> [Int] {
         let web = SavedServer(target: SFTPTarget(host: "me@web.invalid", port: 2222))   // not saved
         #expect(web.target == SFTPTarget(host: "me@web.invalid", port: 2222) && web.title == "me@web.invalid")
         app.forward(ListeningPort(port: 8080, addresses: ["192.0.2.10"]), of: web, .none)
-        await waitUntil { !app.tunnels.temporaries(server: ServerRow.key(web.target)).isEmpty }
+        await until { !app.tunnels.temporaries(server: ServerRow.key(web.target)).isEmpty }
         let w = try #require(app.tunnels.temporaries(server: ServerRow.key(web.target)).first?.tunnel, "\(said.lines.last ?? "")")
         #expect(w.host == "192.0.2.10" && said.lines.last == "192.0.2.10:8080: localhost:\(w.localPort) → me@web.invalid → 192.0.2.10:8080"
                 + (w.localPort == 8080 ? "" : " (8080 is taken here)") + " · listening")
@@ -491,12 +486,12 @@ extension ServerLockTests {
         let port = try freePorts(1)[0]
 
         app.forward(ListeningPort(port: port, addresses: ["localhost"]), of: vault, .none)
-        await waitUntil { said.lines.last == "vault stays locked" }
+        await until { said.lines.last == "vault stays locked" }
         #expect(asked == ["open a tunnel to “vault”"] && app.tunnels.temporaries().isEmpty)
 
         answer = true
         app.forward(ListeningPort(port: port, addresses: ["localhost"]), of: vault, .none)
-        await waitUntil { !app.tunnels.temporaries().isEmpty }
+        await until { !app.tunnels.temporaries().isEmpty }
         #expect(asked.count == 2 && app.tunnels.temporaries().first?.tunnel.localPort == port)
     }
 }

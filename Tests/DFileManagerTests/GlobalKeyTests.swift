@@ -46,11 +46,6 @@ private let odd = Shortcut("ctrl+opt+shift+cmd+f11")!, odd2 = Shortcut("ctrl+opt
     e.textView.insertText(s, replacementRange: NSRange(location: (e.textView.string as NSString).length, length: 0))
 }
 
-@MainActor private func until(_ what: String, _ cond: () -> Bool) async throws {
-    for _ in 0..<250 where !cond() { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(cond(), "\(what)")
-}
-
 private func scratch() throws -> String {
     let dir = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/kermo-e5-" + UUID().uuidString
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -251,7 +246,7 @@ extension EditorWindowTests {
         #expect(app.applicationShouldTerminate(NSApp) == .terminateLater)
         app.editorFromOutside(new: true)
         #expect(h.docs.count == 1 && o.activations.isEmpty)
-        try await until("answered") { replies == [true] }
+        await until("answered") { replies == [true] }
         u.close()
     }
 
@@ -311,7 +306,7 @@ extension EditorWindowTests {
         #expect(EditorHost.tabs.docs.count == 1 && o.activations.count == 2)
         app.application(NSApp, open: [URL(fileURLWithPath: dir), URL(string: "kermo://new")!])
         #expect(o.activations.suffix(2).map { $0.1 } == [app.window, EditorHost.tabs.window], "the panels' window, then the editor's")
-        try await until("the panel there") { a.path == dir }
+        await until("the panel there") { a.path == dir }
         EditorHost.tabs.docs.forEach { $0.close() }
         noEditor()
 
@@ -330,7 +325,7 @@ extension EditorWindowTests {
         app.openPending()
         let h = EditorHost.tabs
         #expect(h.docs.map(\.name) == ["Untitled 1", "Untitled 2"] && h.active === h.docs.last)
-        try await until("the draft read") { h.docs.first?.textView.string == "draft" }
+        await until("the draft read") { h.docs.first?.textView.string == "draft" }
         h.docs.forEach { $0.close() }
     }
 
@@ -344,12 +339,12 @@ extension EditorWindowTests {
         AppDelegate.activation = { [weak o] in o?.activations.append(($0, $1)); $1?.orderFront(nil) }   // as it does: the window shows
         #expect(!app.window.isVisible)
         func answered() async throws {
-            try await until("a sheet") { app.window.attachedSheet != nil }
+            await until("a sheet") { app.window.attachedSheet != nil }
             #expect(o.activations.count == 1 && o.activations[0].0 == .regular && app.window.isVisible)
             #expect(NSApp.isActive ? o.activations[0].1 === app.window : o.activations[0].1 == nil, "in front only if Kermo is")
             o.activations = []
             if let s = app.window.attachedSheet { app.window.endSheet(s, returnCode: .alertSecondButtonReturn) }
-            try await until("gone") { app.window.attachedSheet == nil }
+            await until("gone") { app.window.attachedSheet == nil }
             app.window.orderOut(nil)
         }
         Task { _ = await app.choose("Upload?", info: "", ["Upload", "Cancel"]) }

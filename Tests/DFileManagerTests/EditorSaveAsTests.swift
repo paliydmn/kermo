@@ -23,22 +23,17 @@ private func mode(_ path: String) -> mode_t { var st = stat(); stat(path, &st); 
 
 private func umasked(_ m: mode_t) -> mode_t { let u = umask(0); umask(u); return m & ~u }
 
-@MainActor private func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
-    for _ in 0..<250 where !cond() { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(cond(), "\(what)")
-}
-
 /// Answers the sheet on `w` once it is up.
 @MainActor private func answer(_ w: NSWindow?, _ code: NSApplication.ModalResponse) async throws {
-    try await waitUntil("a sheet") { w?.attachedSheet != nil }
+    await until("a sheet") { w?.attachedSheet != nil }
     guard let w, let sheet = w.attachedSheet else { return }
     w.endSheet(sheet, returnCode: code)
-    try await waitUntil("sheet gone") { w.attachedSheet !== sheet }
+    await until("sheet gone") { w.attachedSheet !== sheet }
 }
 
 /// Dismisses the error sheet a failed Save As shows, saying what it said.
 @MainActor private func dismissed(_ w: NSWindow?) async throws -> String {
-    try await waitUntil("an error sheet") { w?.attachedSheet != nil }
+    await until("an error sheet") { w?.attachedSheet != nil }
     let said = (w?.attachedSheet.flatMap { s in s.contentView.map(allText) } ?? []).joined(separator: " ")
     try await answer(w, .alertFirstButtonReturn)
     return said
@@ -54,7 +49,7 @@ private func umasked(_ m: mode_t) -> mode_t { let u = umask(0); umask(u); return
     try put("SECRET=1\n", copy.path, mode: 0o600)
     let state = AppDelegate.RemoteEdit(baseline: SFTPClient.Attrs(kind: .file, size: 9, mtime: 100, mode: mode))
     Editor.open(copy, remote: "web:" + path, server: (t, path, state), onSaved: saved)
-    try await waitUntil("opened") { Editor.editing(t, path) != nil }
+    await until("opened") { Editor.editing(t, path) != nil }
     return (try #require(Editor.editing(t, path)), copy)
 }
 
@@ -115,7 +110,7 @@ private func umasked(_ m: mode_t) -> mode_t { let u = umask(0); umask(u); return
     #expect(!FileManager.default.fileExists(atPath: dest.path) && e.url == URL(fileURLWithPath: cp))
 
     #expect(await !e.saveAs(dest))
-    try await waitUntil("asked") { e.window?.attachedSheet != nil }
+    await until("asked") { e.window?.attachedSheet != nil }
     try put("theirs\n", dest.path)   // while the question is up
     try await answer(e.window, .alertFirstButtonReturn)   // Save
     #expect(try await dismissed(e.window).contains("appeared"))
@@ -184,7 +179,7 @@ extension ServerLockTests {   // swaps `AppDelegate.answering`
         let state = AppDelegate.RemoteEdit(baseline: try #require(try c.stat(file)))
         c.close()
         Editor.open(copy, remote: "local:" + file, server: (.local(), file, state))
-        try await waitUntil("opened") { Editor.editing(.local(), file) != nil }
+        await until("opened") { Editor.editing(.local(), file) != nil }
         let e = try #require(Editor.editing(.local(), file))
         defer { e.close() }
         let mine = URL(fileURLWithPath: dir + "/mine.conf")
@@ -265,7 +260,7 @@ extension EditorWindowTests {   // the editor window: one for the app, its tabs
         stillBound("a file appeared")
 
         #expect(await e.save())
-        try await waitUntil("uploaded") { uploads == 1 }
+        await until("uploaded") { uploads == 1 }
         #expect(read(copy.path) == "SECRET=2\n", "⌘S still saves the server's copy and sends it up")
     }
 
@@ -302,7 +297,7 @@ extension EditorWindowTests {   // the editor window: one for the app, its tabs
         try put("a\n", dir + "/a.txt")
         try put("b\n", dir + "/b.txt")
         Editor.open(URL(fileURLWithPath: dir + "/b.txt"))
-        try await waitUntil("b open") { Editor.window(for: URL(fileURLWithPath: dir + "/b.txt")) != nil }
+        await until("b open") { Editor.window(for: URL(fileURLWithPath: dir + "/b.txt")) != nil }
         let other = try #require(Editor.window(for: URL(fileURLWithPath: dir + "/b.txt")))
         defer { editorDoc(URL(fileURLWithPath: dir + "/b.txt"))?.close() }
         let e = try Editor(URL(fileURLWithPath: dir + "/a.txt"))
@@ -325,7 +320,7 @@ extension EditorWindowTests {   // the editor window: one for the app, its tabs
         func asking(_ dest: String) async throws -> Editor {   // a Windows-1251 file: Save As asks first
             let e = try Editor(URL(fileURLWithPath: cp))
             #expect(await !e.saveAs(URL(fileURLWithPath: dest)))
-            try await waitUntil("asked") { e.window?.attachedSheet != nil }
+            await until("asked") { e.window?.attachedSheet != nil }
             return e
         }
 
@@ -351,7 +346,7 @@ extension EditorWindowTests {   // the editor window: one for the app, its tabs
         defer { c.close() }
         try put("c\n", dir + "/c.conf")
         Editor.open(URL(fileURLWithPath: dir + "/c.conf"))
-        try await waitUntil("c open") { Editor.window(for: URL(fileURLWithPath: dir + "/c.conf")) != nil }
+        await until("c open") { Editor.window(for: URL(fileURLWithPath: dir + "/c.conf")) != nil }
         let other = try #require(Editor.window(for: URL(fileURLWithPath: dir + "/c.conf")))
         defer { editorDoc(URL(fileURLWithPath: dir + "/c.conf"))?.close() }
         try await answer(c.window, .alertFirstButtonReturn)
@@ -368,13 +363,13 @@ extension EditorWindowTests {   // the editor window: one for the app, its tabs
         let url = URL(fileURLWithPath: dir + "/a.conf")
         try put("a\n", url.path)
         Editor.open(url)
-        try await waitUntil("opened") { Editor.window(for: url) != nil }
+        await until("opened") { Editor.window(for: url) != nil }
         let w = try #require(Editor.window(for: url))
         defer { editorDoc(url)?.close() }
         w.miniaturize(nil)
-        try await waitUntil("in the Dock") { w.isMiniaturized }
+        await until("in the Dock") { w.isMiniaturized }
         #expect(Editor.asking(about: url) === w)
-        try await waitUntil("back") { !w.isMiniaturized && w.isVisible }
+        await until("back") { !w.isMiniaturized && w.isVisible }
         w.orderOut(nil)
         _ = Editor.asking(about: url)
         #expect(w.isVisible)
@@ -398,7 +393,7 @@ extension EditorWindowTests {   // the editor window: one for the app, its tabs
 
         let local = URL(fileURLWithPath: dir + "/2/app.conf")
         Editor.open(local)
-        try await waitUntil("opened") { Editor.window(for: local) != nil }
+        await until("opened") { Editor.window(for: local) != nil }
         _ = try #require(Editor.window(for: local))
         defer { editorDoc(local)?.close() }
         Editor.open(URL(fileURLWithPath: dir + "/2/../2/app.conf"))

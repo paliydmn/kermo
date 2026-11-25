@@ -25,11 +25,6 @@ private func put(_ s: String, _ path: String) throws { try Data(s.utf8).write(to
 private func perms(_ path: String) -> Int? { (try? FileManager.default.attributesOfItem(atPath: path))?[.posixPermissions] as? Int }
 private func read(_ path: String) -> String? { FileManager.default.contents(atPath: path).map { String(decoding: $0, as: UTF8.self) } }
 
-@MainActor private func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
-    for _ in 0..<250 where !cond() { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(cond(), "\(what)")
-}
-
 /// A launch with the drafts in `dir`: the editor window as it comes back.
 @MainActor private func launch(_ dir: String, onServer: @escaping EditorHost.OnServer = { _, _, _, _ in ({ _ in }, {}) }) -> EditorHost {
     crash()
@@ -57,12 +52,12 @@ private func manifest(_ dir: String) throws -> EditorSession {
 
 /// Answers the sheet on `w` once it is up; what it said.
 @MainActor @discardableResult private func answer(_ w: NSWindow?, _ code: NSApplication.ModalResponse) async throws -> String {
-    try await waitUntil("a sheet") { w?.attachedSheet != nil }
+    await until("a sheet") { w?.attachedSheet != nil }
     guard let w, let sheet = w.attachedSheet else { return "" }
     func text(_ v: NSView) -> [String] { ((v as? NSTextField).map { [$0.stringValue] } ?? []) + v.subviews.flatMap(text) }
     let said = (sheet.contentView.map(text) ?? []).joined(separator: " ")
     w.endSheet(sheet, returnCode: code)
-    try await waitUntil("sheet gone") { w.attachedSheet !== sheet }
+    await until("sheet gone") { w.attachedSheet !== sheet }
     return said
 }
 
@@ -93,7 +88,7 @@ extension EditorWindowTests {
 
         try put("one\n", dir + "/c.conf")
         Editor.open(URL(fileURLWithPath: dir + "/c.conf"))
-        try await waitUntil("opened") { editorDoc(URL(fileURLWithPath: dir + "/c.conf")) != nil }
+        await until("opened") { editorDoc(URL(fileURLWithPath: dir + "/c.conf")) != nil }
         let c = try #require(editorDoc(URL(fileURLWithPath: dir + "/c.conf")))
         defer { c.close() }
         type(c, "two\n")
@@ -115,15 +110,15 @@ extension EditorWindowTests {
         }
         let x = URL(fileURLWithPath: dir + "/x/app.conf"), y = URL(fileURLWithPath: dir + "/y/app.conf")
         Editor.open(x)
-        try await waitUntil("x") { editorDoc(x) != nil }
+        await until("x") { editorDoc(x) != nil }
         Editor.open(y)
-        try await waitUntil("y") { editorDoc(y) != nil }
+        await until("y") { editorDoc(y) != nil }
         let (ex, ey) = (try #require(editorDoc(x)), try #require(editorDoc(y)))
         defer { ex.close(); ey.close() }
         let h = EditorHost.tabs
         #expect(h.tabTitle(ex) == "app.conf — x" && h.tabTitle(ey) == "app.conf — y" && ex.tip.hasSuffix("/x · app.conf"))
         Editor.open(URL(fileURLWithPath: dir + "/x/../x/app.conf"))
-        try await waitUntil("x chosen") { h.active === ex }
+        await until("x chosen") { h.active === ex }
         #expect(h.docs.filter { $0 === ex || $0 === ey }.count == 2, "no second tab")
         h.moveTab(by: 1)
         #expect(h.docs.firstIndex { $0 === ex }! == h.docs.firstIndex { $0 === ey }! + 1)
@@ -172,11 +167,11 @@ extension EditorWindowTests {
         b.textView.cancelOperation(nil)
         #expect(!b.frame.scroll.isFindBarVisible && h.docs.contains { $0 === b } && w.isVisible, "the find bar only")
         b.textView.cancelOperation(nil)
-        try await waitUntil("hidden") { !w.isVisible }
+        await until("hidden") { !w.isVisible }
         #expect(!h.docs.contains { $0 === b }, "an unchanged tab closes")
         a.revealed()
         a.textView.cancelOperation(nil)
-        try await waitUntil("hidden") { !w.isVisible }
+        await until("hidden") { !w.isVisible }
         #expect(h.docs.contains { $0 === a }, "a changed one stays")
     }
 
@@ -191,7 +186,7 @@ extension EditorWindowTests {
         let u = Editor.untitled()
         type(u, "notes ✓\nline 2")
         Editor.open(URL(fileURLWithPath: dir + "/a.conf"))
-        try await waitUntil("opened") { editorDoc(URL(fileURLWithPath: dir + "/a.conf")) != nil }
+        await until("opened") { editorDoc(URL(fileURLWithPath: dir + "/a.conf")) != nil }
         let a = try #require(editorDoc(URL(fileURLWithPath: dir + "/a.conf")))
         type(a, "mine\n")
         h.select(u)
@@ -204,7 +199,7 @@ extension EditorWindowTests {
                 && perms(dir + "/drafts/session.json") == 0o600, "ours only")
 
         h = launch(dir + "/drafts")
-        try await waitUntil("restored") { h.docs.count == 2 && h.docs.allSatisfy { $0.cover == nil } }
+        await until("restored") { h.docs.count == 2 && h.docs.allSatisfy { $0.cover == nil } }
         let (u2, a2) = (h.docs[0], h.docs[1])
         #expect(u2.name == u.name && u2.textView.string == "notes ✓\nline 2" && u2.isEdited && h.active === u2)
         #expect(u2.frame.text == "UTF-8 · Unsaved changes", "its state from the start, not only its mark")
@@ -255,7 +250,7 @@ extension EditorWindowTests {
         let h = launch(drafts)
         let reading = try #require(h.docs.first { $0.id == same.id })
         #expect(reading.cover == .loading && !reading.textView.isEditable && reading.frame.cover != nil, "nothing typed into a text still being read")
-        try await waitUntil("all read") { h.docs.allSatisfy { $0.cover != .loading } && h.docs.count == 10 }
+        await until("all read") { h.docs.allSatisfy { $0.cover != .loading } && h.docs.count == 10 }
         #expect(reading.textView.isEditable)
         func doc(_ d: EditorSession.Doc) -> Editor? { h.docs.first { $0.id == d.id } }
         #expect(h.docs.map(\.id) == s.docs.filter { $0.id != gone.id }.map(\.id), "in order; the clean file that's gone has no tab")
@@ -311,7 +306,7 @@ extension EditorWindowTests {
 
         chmod(dir + "/drafts", 0o500)
         other.closeAsking()
-        try await waitUntil("said") { other.frame.text.contains("Not closed") }
+        await until("said") { other.frame.text.contains("Not closed") }
         #expect(h.docs.contains { $0 === other }, "not written without it: stays")
         chmod(dir + "/drafts", 0o700)
         chmod(dir + "/drafts/rev", 0o700)
@@ -336,7 +331,7 @@ extension EditorWindowTests {
         #expect(!u.closeAsking())
         let said = try await answer(u.window, .alertSecondButtonReturn)   // Don't Save
         #expect(said.contains("Don't Save discards them, the draft too."), "\(said)")
-        try await waitUntil("closed") { closed }
+        await until("closed") { closed }
         #expect(try manifest(dir + "/drafts").docs.isEmpty && (try FileManager.default.contentsOfDirectory(atPath: dir + "/drafts/rev")).isEmpty)
         h = launch(dir + "/drafts")
         #expect(h.docs.isEmpty)
@@ -355,7 +350,7 @@ extension EditorWindowTests {
         #expect(await h.commit() == nil)
         h.close(u)   // Don't Save's way: its commit is queued
         h.checkpoint()   // and another right behind it
-        try await waitUntil("closed") { !h.docs.contains { $0 === u } }
+        await until("closed") { !h.docs.contains { $0 === u } }
         try await h.drafts!.flush()   // what's on disk now: the overtaking commit's session, before the tab's removal writes another
         let s = try manifest(dir + "/drafts")
         #expect(s.docs.map(\.id) == [keep.id], "\(s.docs.map(\.number))")
@@ -376,11 +371,11 @@ extension EditorWindowTests {
         type(u, "draft")
         chmod(dir + "/drafts", 0o500)
         #expect(!h.windowShouldClose(w))
-        try await waitUntil("said") { u.frame.text.contains("The window stays") }
+        await until("said") { u.frame.text.contains("The window stays") }
         #expect(w.isVisible, "the drafts couldn't be saved: it stays")
         chmod(dir + "/drafts", 0o700)
         h.hide()
-        try await waitUntil("hidden") { !w.isVisible }
+        await until("hidden") { !w.isVisible }
         #expect(h.docs.contains { $0 === u } && closed == 0 && w.attachedSheet == nil)
         let s = try manifest(dir + "/drafts")
         #expect(!s.windowOpen && s.docs.first?.dirty == true)
@@ -407,7 +402,7 @@ extension EditorWindowTests {
         type(u, "typed just now")
         #expect(!Editor.unsaved.contains(u.name), "no question about a draft that's kept")
         #expect(app.applicationShouldTerminate(NSApp) == .terminateLater)
-        try await waitUntil("answered") { replies == [true] }
+        await until("answered") { replies == [true] }
         #expect(try manifest(dir + "/drafts").docs.first?.dirty == true)
 
         chmod(dir + "/drafts/rev", 0o500)
@@ -415,7 +410,7 @@ extension EditorWindowTests {
         var asked: [(String, [String])] = []
         AppDelegate.answering = { m, b, _ in asked.append((m, b)); return 2 }   // Cancel
         #expect(app.applicationShouldTerminate(NSApp) == .terminateLater)
-        try await waitUntil("answered") { replies == [true, false] }
+        await until("answered") { replies == [true, false] }
         #expect(asked.first?.0 == "Quit Kermo?" && asked.first?.1 == ["Quit Anyway", "Show Editor", "Cancel"])
         AppDelegate.answering = { _, _, _ in 1 }   // Show Editor
         #expect(await !app.finishQuit() && h.window?.isVisible == true)
@@ -452,7 +447,7 @@ extension EditorWindowTests {
         let sent = Sent()
         let h = launch(dir + "/drafts") { _, _, _, _ in ({ @MainActor in sent.urls.append($0) }, {}) }
         let e = try #require(h.docs.first)
-        try await waitUntil("locked \(String(describing: e.cover))") { e.cover == .locked }
+        await until("locked \(String(describing: e.cover))") { e.cover == .locked }
         #expect(e.textView.string == "" && e.heading == ("secrets.yml", "localhost") && asked == 0, "nothing of it before Unlock")
         let saveAs = NSMenuItem(title: "Save As…", action: #selector(Editor.saveDocumentAs(_:)), keyEquivalent: "")
         #expect(e.changed && !e.validateMenuItem(saveAs), "its draft is the change, though the text isn't shown; no Save As of nothing")
@@ -460,11 +455,11 @@ extension EditorWindowTests {
         try await answer(e.window, .alertThirdButtonReturn)   // Cancel
         #expect(h.docs.first === e)
         e.connect()
-        try await waitUntil("asked") { asked == 1 }
+        await until("asked") { asked == 1 }
         #expect(e.cover == .locked && e.textView.string == "")
         unlock = true
         e.connect()
-        try await waitUntil("shown") { e.cover == nil }
+        await until("shown") { e.cover == nil }
         #expect(e.textView.string == "token: 42\n" && e.isEdited && e.heading.subtitle.contains("/srv/app"))
 
         let copy = try #require(e.url)
@@ -562,7 +557,7 @@ extension EditorWindowTests {
         let url = URL(fileURLWithPath: dir + "/f.conf")
         try put("a\n", url.path)
         Editor.open(url)
-        try await waitUntil("open") { editorDoc(url) != nil }
+        await until("open") { editorDoc(url) != nil }
         let e = try #require(editorDoc(url))
         defer { e.close() }
         func drawn() -> String {
@@ -575,7 +570,6 @@ extension EditorWindowTests {
         #expect(!drawn().contains("↑") && !drawn().contains("●"), "\(drawn())")
     }
 }
-
 
 // Editor E6 PR 2: the tab strip — rename from the tab, its menu, Close Others, reopen a closed tab, the panels' keys there.
 
@@ -599,7 +593,7 @@ extension EditorWindowTests {
     try FileManager.default.copyItem(atPath: path, toPath: copy.path)
     let (onSaved, onClose) = h.onServer(t, path, state, copy.deletingLastPathComponent().path)
     Editor.open(copy, remote: SavedServer.title(t, path), server: (t, path, state), onSaved: onSaved, onClose: onClose)
-    try await waitUntil("opened") { Editor.editing(t, path) != nil }
+    await until("opened") { Editor.editing(t, path) != nil }
     return try #require(Editor.editing(t, path))
 }
 
@@ -617,9 +611,9 @@ extension EditorWindowTests {
         try put("x\n", dir + "/b.conf")
         let url = URL(fileURLWithPath: dir + "/app.conf"), b = URL(fileURLWithPath: dir + "/b.conf")
         Editor.open(b)
-        try await waitUntil("b") { editorDoc(b) != nil }
+        await until("b") { editorDoc(b) != nil }
         Editor.open(url)
-        try await waitUntil("opened") { editorDoc(url) != nil }
+        await until("opened") { editorDoc(url) != nil }
         let (e, eb) = (try #require(editorDoc(url)), try #require(editorDoc(b)))
         type(e, "more = 2\n")
         await e.rename(to: "app.yaml")
@@ -639,7 +633,7 @@ extension EditorWindowTests {
         eb.willRename = { _ in gate.wait() }
         type(eb, "y\n")
         let saving = Task { await eb.save() }
-        try await waitUntil("saving") { eb.saving }
+        await until("saving") { eb.saving }
         await eb.rename(to: "c.conf")
         #expect(eb.frame.text == "Not renamed: it's being saved")
         gate.signal()
@@ -660,7 +654,7 @@ extension EditorWindowTests {
         #expect(field.stringValue == "notes" && h.renameField != nil)
         field.stringValue = "notes.ini"
         #expect(h.control(field, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:))))
-        try await waitUntil("renamed by ↩") { eb.url?.lastPathComponent == "notes.ini" }
+        await until("renamed by ↩") { eb.url?.lastPathComponent == "notes.ini" }
         #expect(h.renameField == nil && read(dir + "/notes.ini") == "x\ny\n" && eb.language == .ini)
     }
 
@@ -686,7 +680,7 @@ extension EditorWindowTests {
 
         let back = launch(dir + "/drafts")
         let r = try #require(back.docs.first { $0.id == u.id })
-        try await waitUntil("restored") { r.textView.string == "a: 1\n" }
+        await until("restored") { r.textView.string == "a: 1\n" }
         #expect(r.name == "deploy.yaml" && r.language == .yaml && r.isEdited)
 
         var json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any])
@@ -713,11 +707,11 @@ extension EditorWindowTests {
         h.closeRight(of: k)
         #expect(try await answer(h.window, .alertSecondButtonReturn).contains(a.name))   // Don't Save
         #expect(try await answer(h.window, .alertThirdButtonReturn).contains(d.name))   // Cancel: d and z stay
-        try await waitUntil("a and c closed") { h.docs.map(\.id) == [k.id, d.id, z.id] }
+        await until("a and c closed") { h.docs.map(\.id) == [k.id, d.id, z.id] }
         _ = c
         h.closeOthers(than: k)
         #expect(try await answer(h.window, .alertSecondButtonReturn).contains(d.name))
-        try await waitUntil("all but k") { h.docs.map(\.id) == [k.id] && h.active === k }
+        await until("all but k") { h.docs.map(\.id) == [k.id] && h.active === k }
         type(k, "k")
         h.middleClicked(0, in: h.pane)   // the middle button: ⌘W's question
         #expect(try await answer(h.window, .alertThirdButtonReturn).contains(k.name) && h.docs.map(\.id) == [k.id])
@@ -740,43 +734,43 @@ extension EditorWindowTests {
         let f = URL(fileURLWithPath: dir + "/f.conf")
         let u = Editor.untitled()
         Editor.open(f)
-        try await waitUntil("f") { editorDoc(f) != nil }
+        await until("f") { editorDoc(f) != nil }
         let ef = try #require(editorDoc(f))
         let w = Editor.untitled()
         let at = try #require(h.docs.firstIndex { $0 === ef })
         ef.textView.setSelectedRange(NSRange(location: 4, length: 0))
         #expect(ef.closeAsking())
-        try await waitUntil("f closed") { editorDoc(f) == nil }
+        await until("f closed") { editorDoc(f) == nil }
         type(u, "scratch")
         #expect(!u.closeAsking())
         try await answer(h.window, .alertSecondButtonReturn)   // Don't Save
-        try await waitUntil("u closed") { !h.docs.contains { $0 === u } }
+        await until("u closed") { !h.docs.contains { $0 === u } }
         try put("one\ntwo\nthree\n", dir + "/f.conf")
 
         h.reopenClosed()
         let ru = try #require(h.docs.first { $0.id == u.id })
-        try await waitUntil("its text") { ru.textView.string == "scratch" }
+        await until("its text") { ru.textView.string == "scratch" }
         #expect(ru.isEdited && ru.name == u.name && h.docs.firstIndex { $0 === ru } == at - 1)
         _ = await h.commit()
         let back = try #require(try manifest(dir + "/drafts").docs.first { $0.id == u.id })
         #expect(back.dirty && back.revision != nil, "its text is a draft again, not only in memory")
         h.reopenClosed()
         let rf = try #require(editorDoc(f))
-        try await waitUntil("read") { rf.cover == nil }
+        await until("read") { rf.cover == nil }
         #expect(rf.textView.string == "one\ntwo\nthree\n" && !rf.isEdited && h.docs.firstIndex { $0 === rf } == at && rf.textView.selectedRange().location == 4)
         #expect(h.docs.firstIndex { $0 === w } == at + 1)
 
         #expect(rf.closeAsking())
-        try await waitUntil("closed again") { editorDoc(f) == nil }
+        await until("closed again") { editorDoc(f) == nil }
         Editor.open(f)
-        try await waitUntil("open again") { editorDoc(f) != nil }
+        await until("open again") { editorDoc(f) != nil }
         let again = try #require(editorDoc(f))
         h.select(w)
         h.reopenClosed()
         #expect(h.docs.filter { $0.url == f }.count == 1 && h.active === again, "one file, one tab")
 
         for _ in 0..<21 { Editor.untitled().closeAsking() }
-        try await waitUntil("21 closed") { h.docs.count == 3 }
+        await until("21 closed") { h.docs.count == 3 }
         for _ in 0..<21 { h.reopenClosed() }
         #expect(h.docs.count == 23, "twenty kept")
     }
@@ -833,7 +827,7 @@ extension EditorWindowTests {
         e.server?.state.unlockFirst = true
         type(e, "v3\n")
         #expect(await e.save())
-        try await waitUntil("uploading") { (e.server?.state.sending ?? 0) > 0 }
+        await until("uploading") { (e.server?.state.sending ?? 0) > 0 }
         await e.rename(to: "app2.yaml")
         #expect(e.frame.text == "Not renamed: an upload to localhost is still going" && e.server?.path == to)
         hold = false
@@ -841,11 +835,11 @@ extension EditorWindowTests {
         if let sheet = e.window?.attachedSheet { e.window?.endSheet(sheet) }   // "wasn't saved": Touch ID refused
         asks = 0
         h.beginRename(e)
-        try await waitUntil("asked") { asks == 1 }
+        await until("asked") { asks == 1 }
         #expect(h.renameField == nil, "no field without Touch ID")
         unlock = true
         h.beginRename(e)
-        try await waitUntil("the field") { h.renameField != nil }
+        await until("the field") { h.renameField != nil }
         #expect(h.renameField?.stringValue == "app.yaml" && h.renameField?.currentEditor()?.selectedRange == NSRange(location: 0, length: 3))
         h.endRename(nil)   // ⎋
         #expect(h.renameField == nil && e.server?.path == to && e.window?.firstResponder === e.textView)
@@ -917,7 +911,7 @@ extension EditorWindowTests {
         let path = dir + "/a.conf"
         let e = try await openOnServer(path, in: dir, host: h)
         #expect(e.closeAsking())
-        try await waitUntil("closed") { Editor.editing(.local(), path) == nil }
+        await until("closed") { Editor.editing(.local(), path) == nil }
         var locked = SavedServer(address: "localhost")!
         locked.locked = true
         var asks = 0
@@ -926,11 +920,11 @@ extension EditorWindowTests {
         defer { ServerLock.authenticate = { _ in false } }
         h.reopenClosed()
         let r = try #require(Editor.editing(.local(), path))
-        try await waitUntil("parked") { r.cover == .parked }
+        await until("parked") { r.cover == .parked }
         #expect(asks == 0 && r.url.map { FileManager.default.fileExists(atPath: $0.path) } == false && r.heading.title == "a.conf")
 
         #expect(r.closeAsking())
-        try await waitUntil("closed") { Editor.editing(.local(), path) == nil }
+        await until("closed") { Editor.editing(.local(), path) == nil }
         ServerLock.servers = { [] }
         let open = try await openOnServer(path, in: dir, host: h)
         type(open, "secret\n")
@@ -938,14 +932,14 @@ extension EditorWindowTests {
         ServerLock.relock()
         #expect(!open.closeAsking())
         try await answer(h.window, .alertSecondButtonReturn)   // Don't Save
-        try await waitUntil("closed") { Editor.editing(.local(), path) == nil }
+        await until("closed") { Editor.editing(.local(), path) == nil }
         h.reopenClosed()
         let back = try #require(Editor.editing(.local(), path))
-        try await waitUntil("locked") { back.cover == .locked }
+        await until("locked") { back.cover == .locked }
         #expect(back.textView.string == "" && asks == 0 && back.copyablePath == nil && !back.revealable)
         ServerLock.authenticate = { _ in asks += 1; return true }
         back.connect()
-        try await waitUntil("unlocked") { back.cover == nil }
+        await until("unlocked") { back.cover == nil }
         #expect(back.textView.string.hasSuffix("secret\n") && back.isEdited && asks == 1)
     }
 
@@ -978,7 +972,7 @@ extension EditorWindowTests {
         try put("x\n", dir + "/f.conf")
         let f = URL(fileURLWithPath: dir + "/f.conf")
         Editor.open(f)
-        try await waitUntil("f") { editorDoc(f) != nil }
+        await until("f") { editorDoc(f) != nil }
         let e = try #require(editorDoc(f))
         AppDelegate.keyWindow = { h.window }
         app.updateMenuKeys(menu)
@@ -997,7 +991,7 @@ extension EditorWindowTests {
 
         let remote = try #require(app.panels.first)
         remote.loadRemote(.local(), dir: dir, select: nil)
-        try await waitUntil("connected") { remote.remote != nil && remote.connecting == nil }
+        await until("connected") { remote.remote != nil && remote.connecting == nil }
         let parked = PanelViewController(session: [Session.Tab(path: dir, cursor: "x", server: SFTPTarget(host: "me@web1.invalid"), dir: "/etc")], index: 0, showHidden: false)
         parked.loadViewIfNeeded()
         defer { parked.shutdown() }
@@ -1005,7 +999,7 @@ extension EditorWindowTests {
             app.panels = order
             let n = h.docs.count
             #expect(h.active?.closeAsking() == true)
-            try await waitUntil("closed") { h.docs.count == n - 1 }
+            await until("closed") { h.docs.count == n - 1 }
             app.run("go.tree", key: Shortcut("cmd+shift+t"))
             #expect(h.docs.count == n && !app.active.statusText.contains("Not available"), "\(app.active.statusText)")
         }
@@ -1033,7 +1027,7 @@ extension EditorWindowTests {
         try put("one\ntwo\n", dir + "/a.conf")
         let url = URL(fileURLWithPath: dir + "/a.conf")
         Editor.open(url)
-        try await waitUntil("opened") { editorDoc(url) != nil }
+        await until("opened") { editorDoc(url) != nil }
         let e = try #require(editorDoc(url)), w = try #require(h.window)
         h.clone(e)
         #expect(h.panes.count == 2 && h.panes.allSatisfy { $0.docs.contains { $0 === e } } && h.pane === h.panes[1] && h.active === e)
@@ -1114,10 +1108,10 @@ extension EditorWindowTests {
         h.clone(b)
         #expect(ids(1) == [c.id, a.id, b.id])
         h.closeOthers(than: a, in: h.panes[1])
-        try await waitUntil("c and b's clone gone") { ids(1) == [a.id] }
+        await until("c and b's clone gone") { ids(1) == [a.id] }
         #expect(ids(0) == [b.id] && h.window?.attachedSheet == nil && b.isEdited && b.views.count == 1, "nothing asked: b stays in its pane")
         a.closeAsking()
-        try await waitUntil("its pane gone with its last tab") { h.panes.count == 1 }
+        await until("its pane gone with its last tab") { h.panes.count == 1 }
         #expect(ids(0) == [b.id] && h.pane === h.panes[0] && h.active === b)
 
         h.split(vertical: true)
@@ -1129,7 +1123,7 @@ extension EditorWindowTests {
         h.clone(d)
         let f = Editor.untitled()
         f.closeAsking()
-        try await waitUntil("f closed") { !h.docs.contains { $0 === f } }
+        await until("f closed") { !h.docs.contains { $0 === f } }
         h.focusPane(by: -1, vertical: true)
         #expect(h.pane === h.panes[0])
         h.reopenClosed()
@@ -1138,7 +1132,7 @@ extension EditorWindowTests {
         try put("x\n", dir + "/x.conf")
         let x = URL(fileURLWithPath: dir + "/x.conf")
         Editor.open(x)
-        try await waitUntil("x") { editorDoc(x) != nil }
+        await until("x") { editorDoc(x) != nil }
         let ex = try #require(editorDoc(x))
         h.focusPane(by: -1, vertical: true)
         Editor.open(x)
@@ -1167,7 +1161,7 @@ extension EditorWindowTests {
         try put("x\n", dir + "/x.conf")
         let x = URL(fileURLWithPath: dir + "/x.conf")
         Editor.open(x)
-        try await waitUntil("x") { editorDoc(x) != nil }
+        await until("x") { editorDoc(x) != nil }
         let ex = try #require(editorDoc(x)), u = Editor.untitled(), y = Editor.untitled()
         type(u, "u\n")
         h.move(y)
@@ -1183,7 +1177,7 @@ extension EditorWindowTests {
         #expect(h.panes.map { $0.docs.map(\.id) } == [[ex.id, u.id], [u.id, y.id]] && h.panes.map { $0.active?.id } == [u.id, y.id])
         #expect(h.pane === h.panes[1] && h.active?.id == y.id)
         let back = try #require(h.docs.first { $0.id == u.id })
-        try await waitUntil("restored") { h.docs.allSatisfy { $0.cover == nil } && back.textView.string == "u\n" }
+        await until("restored") { h.docs.allSatisfy { $0.cover == nil } && back.textView.string == "u\n" }
         #expect(back.views.count == 1 && back.isEdited, "a view for a tab shown only")
         for e in h.docs { for v in e.views where v.frame.window != nil {
             let clip = v.frame.scroll.contentView
@@ -1202,7 +1196,7 @@ extension EditorWindowTests {
         try JSONSerialization.data(withJSONObject: json).write(to: URL(fileURLWithPath: dir + "/drafts/session.json"))
         h = launch(dir + "/drafts")
         #expect(h.panes.count == 1 && h.docs.map(\.id) == [ex.id, u.id, y.id] && h.active?.id == y.id, "an older Kermo's session: one pane")
-        try await waitUntil("restored") { h.docs.allSatisfy { $0.cover == nil } }
+        await until("restored") { h.docs.allSatisfy { $0.cover == nil } }
     }
 
     /// ⌘\ and ⇧⌘\ are Split Editor Right / Down in the editor window, the terminal's anywhere else; ⌥⌘ and ⌃⌘ arrows

@@ -4,16 +4,11 @@ import Testing
 @testable import DFileManager
 
 @MainActor
-private func waitUntil(_ done: () -> Bool) async {
-    for _ in 0..<1000 where !done() { try? await Task.sleep(for: .milliseconds(10)) }
-}
-
-@MainActor
 private func serverPanel(_ dir: String) async throws -> PanelViewController {
     let panel = PanelViewController(tabs: [dir], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     panel.loadRemote(.local(), dir: dir, select: nil)
-    await waitUntil { panel.remote?.dir == dir }
+    await until { panel.remote?.dir == dir }
     try #require(panel.remote?.dir == dir)
     return panel
 }
@@ -38,19 +33,19 @@ private func tempDir(_ tag: String) throws -> String {
             "what's free there, as on this Mac: \(panel.statusChipWords)")
 
     panel.computeAllDirSizes()
-    await waitUntil { panel.dirSizes.count == 2 }
+    await until { panel.dirSizes.count == 2 }
     #expect(panel.dirSizes == ["one": 3, "two": 5])
 
     panel.loadRemote(.local(), dir: d + "/one", select: nil)
-    await waitUntil { panel.remote?.dir == d + "/one" }
+    await until { panel.remote?.dir == d + "/one" }
     #expect(panel.dirSizes.isEmpty)
     panel.loadRemote(.local(), dir: d, select: nil)
-    await waitUntil { panel.remote?.dir == d }
+    await until { panel.remote?.dir == d }
     panel.moveCursor(toName: "one")
     panel.toggleMark(move: 0)
     panel.moveCursor(toName: "two")
     panel.toggleMark(move: 0)   // while "one" is still being counted
-    await waitUntil { panel.dirSizes.count == 2 }
+    await until { panel.dirSizes.count == 2 }
     #expect(panel.dirSizes == ["one": 3, "two": 5])
 }
 
@@ -80,10 +75,10 @@ private func tempDir(_ tag: String) throws -> String {
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
     panel.loadRemote(t, dir: d, select: nil)
-    await waitUntil { panel.remote?.dir == d }
+    await until { panel.remote?.dir == d }
 
     panel.computeAllDirSizes()
-    await waitUntil { panel.dirSizes.count == 2 }
+    await until { panel.dirSizes.count == 2 }
     #expect(panel.dirSizes == ["one": 4096, "two": 5] && panel.partialSizes == ["one"], "two: walked")
     #expect(asked.names == [["one", "two"]])
     panel.moveCursor(toName: "one")
@@ -93,14 +88,14 @@ private func tempDir(_ tag: String) throws -> String {
 
     asked.answer = nil   // this server's du doesn't count
     panel.loadRemote(t, dir: d + "/one", select: nil)
-    await waitUntil { panel.remote?.dir == d + "/one" }
+    await until { panel.remote?.dir == d + "/one" }
     panel.computeAllDirSizes()
-    await waitUntil { panel.dirSizes.count == 1 }
+    await until { panel.dirSizes.count == 1 }
     #expect(panel.dirSizes == ["deep": 3] && asked.names.count == 2 && PanelViewController.noDu.contains(t))
     panel.loadRemote(t, dir: d, select: nil)
-    await waitUntil { panel.remote?.dir == d }
+    await until { panel.remote?.dir == d }
     panel.computeAllDirSizes()
-    await waitUntil { panel.dirSizes.count == 2 }
+    await until { panel.dirSizes.count == 2 }
     #expect(panel.dirSizes == ["one": 3, "two": 5] && asked.names.count == 2, "not asked again")
     PanelViewController.noDu.remove(t)
 }
@@ -122,7 +117,7 @@ private func tempDir(_ tag: String) throws -> String {
 
     panel.moveCursor(toName: "b")
     #expect(panel.previewURL() == nil)   // on its way
-    await waitUntil { panel.previewURL() != nil }
+    await until { panel.previewURL() != nil }
     let copy = try #require(panel.previewURL())
     #expect(copy.lastPathComponent == "b" && (try? String(contentsOf: copy, encoding: .utf8)) == "hello")
     #expect(panel.quickLookURLs == [copy])
@@ -136,7 +131,7 @@ private func tempDir(_ tag: String) throws -> String {
 
     panel.moveCursor(toName: "big.bin")
     #expect(panel.previewURL() == nil)
-    await waitUntil { panel.statusText.contains("too big") }   // once it rested there: by the clock it's flaky (busy main actor)
+    await until { panel.statusText.contains("too big") }   // once it rested there: by the clock it's flaky (busy main actor)
     #expect(panel.statusText.contains("too big"))
     #expect(panel.previewURL() == nil && panel.quickLookURLs.isEmpty)
 
@@ -144,7 +139,7 @@ private func tempDir(_ tag: String) throws -> String {
     #expect(panel.previewURL() == copy)   // still here: not fetched again
 
     panel.loadRemote(.local(), dir: d, select: nil)
-    await waitUntil { panel.remote?.dir == d }
+    await until { panel.remote?.dir == d }
     #expect(FileManager.default.fileExists(atPath: copy.path))
     panel.moveCursor(toName: "one")
     #expect(panel.previewURL() == nil)
@@ -182,7 +177,7 @@ private func tempDir(_ tag: String) throws -> String {
     ServerCopies.tick()
     #expect(sent == 0)   // still being written, maybe
     ServerCopies.tick()
-    await waitUntil { copy.pending == 0 && server() == "two\n" }
+    await until { copy.pending == 0 && server() == "two\n" }
     #expect(sent == 1 && server() == "two\n" && copy.synced && copy.uploaded)
 
     try Data("two\n".utf8).write(to: local)   // the same bytes saved again
@@ -194,7 +189,7 @@ private func tempDir(_ tag: String) throws -> String {
     try Data("three\n".utf8).write(to: local)
     ServerCopies.tick()
     ServerCopies.tick()
-    await waitUntil { copy.pending == 0 }
+    await until { copy.pending == 0 }
     #expect(ServerCopies.unsynced.map(\.url) == [local] && server() == "two\n")
     ServerCopies.quit()
     #expect(FileManager.default.fileExists(atPath: local.path))   // the only copy of that text
@@ -230,7 +225,7 @@ private func tempDir(_ tag: String) throws -> String {
     defer { panel.shutdown() }
     panel.newTab()
     panel.navigate(to: d + "/one", history: .none)   // a local tab: deep
-    await waitUntil { panel.remote == nil && panel.listedItems.map(\.name) == ["deep"] }
+    await until { panel.remote == nil && panel.listedItems.map(\.name) == ["deep"] }
     panel.moveCursor(toName: "deep")
     panel.toggleMark(move: 0)
 
@@ -238,6 +233,6 @@ private func tempDir(_ tag: String) throws -> String {
     #expect(panel.remote?.dir == d + "/two")
     #expect(panel.listedItems.isEmpty && panel.markedNames.isEmpty, "the local tab's rows are the server's")
     #expect(panel.remoteCursor == nil && panel.remoteSelection == nil && panel.targetItems.isEmpty)
-    await waitUntil { panel.listedItems.map(\.name) == ["b"] }
+    await until { panel.listedItems.map(\.name) == ["b"] }
     #expect(panel.listedItems.map(\.name) == ["b"], "its own listing comes in")
 }

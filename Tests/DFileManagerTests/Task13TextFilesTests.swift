@@ -5,9 +5,6 @@ import Testing
 
 // Text files Quick Look shows as an icon, and the file actions next to them.
 
-@MainActor private func waitUntil(_ done: () -> Bool) async {
-    for _ in 0..<500 { if done() { return }; try? await Task.sleep(for: .milliseconds(10)) }
-}
 private func tempDir() -> String {
     let d = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath + "/dfm-t13text-" + UUID().uuidString
     try! FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
@@ -28,21 +25,21 @@ private func tempDir() -> String {
     defer { panel.shutdown() }
     panel.setQuickView(true)
     panel.preview(URL(fileURLWithPath: d + "/hosts"))
-    await waitUntil { panel.peekedText != nil }
+    await until { panel.peekedText != nil }
     #expect(panel.peekedText == "127.0.0.1 localhost\n")
     panel.preview(URL(fileURLWithPath: d + "/blob"))
-    await waitUntil { panel.peekedText == nil }
+    await until { panel.peekedText == nil }
     #expect(panel.peekedText == nil, "binary: Quick Look's")
     panel.preview(URL(fileURLWithPath: d + "/big.conf"))
-    await waitUntil { panel.peekedText != nil }
+    await until { panel.peekedText != nil }
     #expect(panel.peekedText?.hasSuffix("··· first 256 KB · F3 views it all ···\n") == true)
     #expect(panel.peekedText?.utf16.count == TextPeek.limit + "\n\n··· first 256 KB · F3 views it all ···\n".utf16.count)
     panel.preview(URL(fileURLWithPath: d + "/notes.txt"))
     #expect(panel.peekedText == nil, "Quick Look shows .txt itself, at once")
     panel.preview(URL(fileURLWithPath: d + "/hosts"))
-    await waitUntil { panel.peekedText != nil }
+    await until { panel.peekedText != nil }
     panel.preview(URL(fileURLWithPath: d))   // a folder: Quick Look's, once looked at
-    await waitUntil { panel.peekedText == nil }
+    await until { panel.peekedText == nil }
     #expect(panel.peekedText == nil)
     // No setQuickView(false): QLPreviewView's close asserts outside a window.
 }
@@ -130,7 +127,7 @@ private func tempDir() -> String {
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
     panel.loadRemote(.local(), dir: d, select: nil)
-    await waitUntil { panel.remote?.dir == d }
+    await until { panel.remote?.dir == d }
     let menu = NSMenu()
     panel.fillMenu(menu, row: -1)
     #expect(menu.items.filter { !$0.isSeparatorItem }.map(\.title) == ["New File…", "New Folder…", "Paste", "SSH Here", "Copy Path", "Show Hidden Files",
@@ -138,7 +135,7 @@ private func tempDir() -> String {
     // Copy Path there: the server's paths — the folder's from its menu, the cursor's file's otherwise.
     FileManager.default.createFile(atPath: d + "/site.conf", contents: nil)
     panel.reload(select: "site.conf")
-    await waitUntil { panel.currentName == "site.conf" }
+    await until { panel.currentName == "site.conf" }
     #expect(panel.targetPaths == [d + "/site.conf"])
     var seen: [String] = []
     panel.onCommand = { _ in seen = panel.targetPaths }
@@ -181,7 +178,7 @@ private func tempDir() -> String {
     let panel = PanelViewController(tabs: [d], index: 0, showHidden: false)
     panel.loadViewIfNeeded()
     defer { panel.shutdown() }
-    await waitUntil { panel.listedItems.count == 1 }
+    await until { panel.listedItems.count == 1 }
     panel.moveCursor(toName: "a.conf")
     let sorts = UserDefaults.standard.object(forKey: "folderSort")
     defer { UserDefaults.standard.set(sorts, forKey: "folderSort") }
