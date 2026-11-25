@@ -19,9 +19,6 @@ jobs:
     timeout-minutes: 45
     env:
       DFM_TEST_SLOW: 3   # a shared runner: the tests' `until` waits last three times longer
-      # The tests' files in a folder with no link on its path, as test.sh's disks are: /var/folders is /private/var/…
-      # to a shell or git and /var/… to resolvingSymlinksInPath, and tests comparing the two failed.
-      DFM_TEST_TMP: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,6 +26,9 @@ jobs:
       - run: python3 tools/check-docs.py
       - run: swift --version
       - run: swift build
+      # The tests' files in a folder with no link on its path, as test.sh's disks are: /var/folders is /private/var/…
+      # to a shell or git and /var/… to resolvingSymlinksInPath, and tests comparing the two failed.
+      - run: echo "DFM_TEST_TMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
       # A run still going after 10 minutes is stuck: the test process's stacks go to the log (they name the test and
       # the line it waits on), then it's stopped.
       - name: Core tests
