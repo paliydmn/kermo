@@ -88,7 +88,7 @@ In **Agent** the model does the task: runs commands on servers, copies files and
 
 1. **A plan and one question.** For a task of several steps Kermo has the model first show its plan — a card of steps that tick themselves off (○ to do, ▸ now, ✓ done) — and asks once for everything it needs, up to five lines: a card **Allow the assistant this, until the chat ends?** with a line for each, whole and in Kermo's words ("web-01: run commands", "this Mac: write into /Users/you/Downloads"), and, quoted on a line of its own, what the model says it's for. **Allow for This Task** gives all of it; **Cancel** (↩) gives nothing, and nothing is done. What the chat has already isn't asked again.
 2. **The steps go without a question** — inside what you allowed. What lies outside asks again, with the same card: never a silent no, never a silent yes.
-3. **Asked every time, whatever you allowed:** a command Kermo recognises as deleting, writing over a file that is there, a Tools action that always asks, and any change on a [production server](#production-servers) — each with **Allow Once** ([What asks every time](#what-asks-every-time)).
+3. **Asked every time, whatever you allowed:** a command Kermo recognises as deleting, writing over a file that is there, a copy from one machine to another, a Tools action that always asks, and any change on a [production server](#production-servers) — each with **Allow Once** ([What asks every time](#what-asks-every-time)).
 4. **A file open in the editor** isn't written by the model: it proposes the change as a [diff card](#edit-a-change-as-a-diff), and your ⌘S saves. On a server Kermo knows the tab by its path as you opened it: a tab opened through a link there isn't recognised — writing over that file still asks, and the tab's save checks again.
 
 ![Agent: the plan ticked off, the steps it took on web-01, its answer with Save as Tool…, and the Scope row's web-01: write into /home/deploy, run commands](images/ai-agent.png)
@@ -118,6 +118,7 @@ A chat opened again shows its questions, what was attached (by name) and the ans
 Whatever you allowed — the chat's Agent and an [agent in Kermo's terminal](#agents-in-kermos-terminal) alike —, these ask each time, with **Allow Once** (↩ = **Cancel**):
 
 - a command Kermo recognises as deleting, moving or writing over — not every one, see the warning below (`rm`, `mv`, `dd`, `truncate`, `find … -delete`, `rsync --delete`, `git clean`, `git reset --hard`, `> file`…), and writing or copying over a file that is there;
+- a `copy` from one machine to another — this Mac to a server, a server to this Mac or to another server — whatever each was allowed: the question names the file and both machines. **Allow Once** is for that copy only, the next one asks again. A copy within one machine asks only to write over a file. This is about the `copy` tool: the model can still read a file on one machine and write its text with `write_file` on another, which asks only as writing there does (after a read on a server, with ⚠ — see [Text from a server](#text-from-a-server)), and a command it may run can copy too;
 - a Tools action that always asks from its button (Delete Rule…, Stop…), with the command as it will run and the row;
 - any change on a [production server](#production-servers).
 
@@ -132,7 +133,7 @@ Text from a server or a terminal — a file, a command's output — can try to s
 
 ### Production servers
 
-Something attached from a [production server](safety.md) asks once a chat for each server before it is sent, ↩ = **Cancel**; after **Send** a purple line says it goes. Kermo also tells the model that the server is production and to be careful — in the message and in what a read there returns; **What will be sent** shows it. In **Settings › AI**, **Production servers: Never Send** keeps everything from production servers out of the chat: such a chip isn't attached, a followed selection there doesn't go, and the model's reads there are refused — the terminal's output of a tab that may be a production server's too. Where the panels stand (a server's name and folder) the model may still learn from `focus`.
+Something attached from a [production server](safety.md) asks once a chat for each server before it is sent, ↩ = **Cancel**; after **Send** a purple line says it goes. Kermo also tells the model that the server is production and to be careful — in the message and in what a read there returns; **What will be sent** shows it. In **Settings › AI**, **Production servers: Never Send** keeps everything from production servers out of the chat and away from [agents in Kermo's terminal](#agents-in-kermos-terminal): such a chip isn't attached, a followed selection there doesn't go, and the model's or an agent's reads there are refused — the terminal's output of a tab that may be a production server's too. It holds from the next call for an agent already connected. What a chat or an agent read there before Never Send was turned on can't be taken back: such a chat goes no further (start a New Chat), and such an agent is refused every call (start it again). Where the panels stand (a server's name and folder) the model may still learn from `focus`.
 
 ### What goes to your provider
 
@@ -140,7 +141,7 @@ Something attached from a [production server](safety.md) asks once a chat for ea
 - your messages, with what you attached — and, in a chat opened again, its earlier messages and answers;
 - what the model's reads return.
 
-Passwords, tokens and keys Kermo recognises are replaced with `•••` before anything is sent — in what you type too, and in what an agent in the terminal reads. The patterns are not complete: don't attach files, or point an agent at them, whose content must not leave this Mac. Every earlier message of the chat goes again with each new one, as providers need.
+Passwords, tokens and keys Kermo recognises are replaced with `•••` before anything is sent — in what you type too, and in what an agent in the terminal reads: values after names like `password`, `secret`, `token`, `api-key` or `APP_KEY`, after a command line's `--password` or `--token`, URLs' passwords, private keys, known token shapes and password hashes. It's an extra guard, not a guarantee — the patterns are not complete: don't attach files, or point an agent at them, whose content must not leave this Mac. Every earlier message of the chat goes again with each new one, as providers need.
 
 ## Agents in Kermo's terminal
 
@@ -183,7 +184,7 @@ The agent acts as you: on a server, as the user you log in as. Kermo never opens
 
 A question appears as a sheet on Kermo's window, and Kermo comes to the front; the agent waits for your answer. **Cancel** leaves everything as it was, and the agent is told you didn't allow it.
 
-Its card names exactly what is asked: reading on a server, writing into one folder, running commands — **Allow for This Task**, or **Allow in This Chat** when it's reading alone. It holds until the agent disconnects. A command Kermo recognises as deleting, writing over a file, a Tools action that always asks and any change on a production server ask every time all the same ([What asks every time](#what-asks-every-time)).
+Its card names exactly what is asked: reading on a server, writing into one folder, running commands — **Allow for This Task**, or **Allow in This Chat** when it's reading alone. It holds until the agent disconnects. A command Kermo recognises as deleting, writing over a file, a copy from one machine to another, a Tools action that always asks and any change on a production server ask every time all the same; under **Never Send** nothing on a production server is read for it ([What asks every time](#what-asks-every-time)).
 
 ### See and take back what an agent may do
 

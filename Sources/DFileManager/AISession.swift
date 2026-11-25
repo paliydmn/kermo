@@ -111,6 +111,11 @@ final class AISession {
 
     /// `changes`: set once the targets are known — the call may change something.
     private func pass(_ tool: AITool, _ args: [String: ToolValue], afterRead: Bool, changes: inout Bool, look: Look?, run: Runner?) async -> (String, AIResult) {
+        // Never Send turned on after production text went to the model: it can't be taken back, so nothing more goes
+        // on — any call, as the chat goes no further (an outside agent's session; the chat stops before its turn).
+        if noProduction, readProduction {
+            return ("refused: production read before Never Send", .failure("This session read on a production server before Settings › AI said Never Send, and the model still holds that text: nothing more is done here. Tell the user to restart the agent (or start a New Chat)."))
+        }
         // Each server named, found and learned before it becomes a place: its key is where ssh says the address goes.
         var named: [String: SFTPTarget?] = [:]
         for arg in Set(tool.places.map(\.server)) {

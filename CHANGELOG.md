@@ -45,6 +45,9 @@ Release:
 - Forwarding a locked server's port from Forward Port's list asks for Touch ID first, as turning a tunnel on does. → [Locked servers](docs/tunnels.md#locked-servers)
 - A right-click paste that asked first pastes the text it showed, even if the clipboard changed while it asked. → [Copy and paste with the mouse](docs/terminal.md#copy-and-paste-with-the-mouse)
 - **Use the tool “…”?** and a tool's page show the environment (`env`) its commands run with and the files its list reads; an install script's `env` names are checked as a tool's are. → [Your own tools](docs/tools.md#your-own-tools)
+- A `copy` by the assistant or an agent from one machine to another — this Mac to a server, a server to this Mac or to another server — asks each time with **Allow Once**, naming the file and both machines, whatever each machine was allowed. → [What asks every time](docs/ai.md#what-asks-every-time)
+- **Production servers: Never Send** in **Settings › AI** holds for agents in Kermo's terminal too, from their next call — one already connected included; an agent that read on a production server before it was turned on is refused every call until it is started again. → [Production servers](docs/ai.md#production-servers)
+- More secrets go to the AI as `•••`: values after `api-key`, `APP_KEY` and similar keys, after a command line's `--password`, `--token` or `--secret`, and Apache password hashes. → [What goes to your provider](docs/ai.md#what-goes-to-your-provider)
 - **Permissions & Owner…** on a server changes each item itself where the server can (`lsetstat@openssh.com`) — a link's owner, never what it points to. Where it can't, links are left out, and as root it refuses. → [Tags, Info and permissions](docs/files.md#tags-info-and-permissions)
 
 ## [2.2] - 2026-11-21

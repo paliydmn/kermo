@@ -836,6 +836,42 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(second.gone && agents.all.isEmpty && AIAgents.socket == nil && lstat(path + "/mcp.sock", &st) != 0)
     }
 
+    /// Review 6 PR 8: Never Send holds for an agent as for the chat — read at each call, so one connected before the
+    /// switch changed keeps to it from its next call; one that read on production before is refused whatever it asks.
+    @Test func neverSendHoldsForAnAgentAlreadyConnected() async throws {
+        let (s, dir, _, _) = try await aiAnswering(prod: true)
+        let app = s.app, path = "/tmp/dfm-mcp-" + String(UUID().uuidString.prefix(8)), std = UserDefaults.standard, was = std.object(forKey: "aiProduction")
+        mkdir(path, 0o700)
+        defer {
+            aiTearDown(s, dir)
+            try? FileManager.default.removeItem(atPath: path)
+            AppDelegate.answering = nil
+            if let was { std.set(was, forKey: "aiProduction") } else { std.removeObject(forKey: "aiProduction") }
+        }
+        try "hello\n".write(toFile: dir + "/a.txt", atomically: true, encoding: .utf8)
+        var asked: [String] = []
+        AppDelegate.answering = { title, _, _ in asked.append(title); return 0 }
+        let agents = try #require(AIAgents(app, at: path + "/mcp.sock") { _ in "zsh" })
+        app.agents = agents
+        defer { agents.stop(); app.agents = nil }
+        std.set("never", forKey: "aiProduction")
+        let agent = StubAgent(path + "/mcp.sock")
+        try #require(await agent.admitted)
+        _ = await agent.ask(1, "initialize", ["protocolVersion": "2025-11-25", "clientInfo": ["name": "Stub Code"]])
+        let onBox: [String: ToolValue] = ["server": "box", "path": .string(dir + "/a.txt")]
+        var r = await agent.call(2, "read_file", onBox)
+        #expect(r?.isError == true && r?.text.contains("production server goes to the AI") == true && asked.isEmpty, "a new agent: from its first call — \(r?.text ?? "")")
+        std.removeObject(forKey: "aiProduction")
+        r = await agent.call(3, "read_file", onBox)
+        #expect(r?.isError == false && r?.text.hasSuffix("hello\n") == true && asked.count == 1, "Ask Once: asked, then read — \(r?.text ?? "")")
+        std.set("never", forKey: "aiProduction")   // turned on while it is connected
+        for (id, args): (Int, [String: ToolValue]) in [(4, onBox), (5, ["server": "mac", "path": .string(dir + "/a.txt")])] {
+            r = await agent.call(id, "read_file", args)
+            #expect(r?.isError == true && r?.text.contains("restart the agent") == true && asked.count == 1, "it holds production text: nothing more, here either — \(r?.text ?? "")")
+        }
+        #expect(agents.all.first?.session.journal.last?.decision == "refused: production read before Never Send")
+    }
+
     /// Settings › AI's switch: on — a socket, Window ▸ AI Scope, the variable for new tabs; off — none of them, and
     /// whoever was connected is hung up on. Off is how it starts.
     @Test func theSwitchBringsAgentsAndTakesThemAway() async throws {
