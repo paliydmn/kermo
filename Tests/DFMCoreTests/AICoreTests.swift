@@ -189,7 +189,10 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
     let need = AIScope.Need(place: .mac, level: .work, folder: NSHomeDirectory() + "/Downloads")
     #expect(decide(s, "copy", copy, overwrites: false) == .outside([need]))
     s.grant(need)
-    #expect(decide(s, "copy", copy, overwrites: false) == .allowed && decide(s, "copy", copy) == .ask(.overwrites))
+    #expect(decide(s, "copy", copy, overwrites: false) == .ask(.betweenMachines) && decide(s, "copy", copy) == .ask(.betweenMachines),
+            "from one machine to another: asked each time, in scope too")
+    let here = [AITarget(.mac, "/tmp/a", .read), AITarget(.mac, "~/Downloads", .write)]
+    #expect(decide(s, "copy", here, overwrites: false) == .allowed && decide(s, "copy", here) == .ask(.overwrites), "within one machine: as before")
 
     // All: everything but what is asked always.
     s.grant(web, .all)
@@ -197,11 +200,21 @@ private func decide(_ s: AIScope, _ name: String, _ targets: [AITarget?], overwr
     #expect(decide(s, "write_file", [AITarget(web, "/etc/passwd", .write)]) == .ask(.overwrites) && decide(s, "run_command", run("mv a b")) == .ask(.overwrites))
     #expect(decide(s, "copy", [AITarget(web, "/srv/a", .remove), AITarget(.mac, "~/Downloads", .write)], overwrites: false) == .ask(.removes), "a move, when there is one")
 
+    // All on both ends still asks for a copy between them — server to server, this Mac to a server — and a removal
+    // and production stay the stronger reasons told.
+    s.grant(.mac, .all)
+    let other = AIPlace.server("backup")
+    s.grant(other, .all)
+    #expect(decide(s, "copy", [AITarget(web, "/srv/a", .read), AITarget(other, "/srv", .write)], overwrites: false) == .ask(.betweenMachines))
+    #expect(decide(s, "copy", [AITarget(.mac, "/tmp/a", .read), AITarget(web, "/srv", .write)], overwrites: false) == .ask(.betweenMachines))
+    #expect(decide(s, "copy", [AITarget(web, "/srv/a", .read), AITarget(web, "/srv/b", .write)], overwrites: false) == .allowed)
+    #expect(decide(s, "copy", [AITarget(.mac, "/tmp/a", .read), AITarget(prodDB, "/srv", .write)], overwrites: false) == .outside([.init(place: prodDB, level: .work, folder: "/srv")]))
     // Production: reading is free in scope, every change asks.
     s.grant(prodDB, .all)
     #expect(decide(s, "read_file", [AITarget(prodDB, "/etc/hosts", .read)]) == .allowed && decide(s, "run_command", run("ps aux", on: prodDB)) == .allowed)
     #expect(decide(s, "run_command", run("make", on: prodDB)) == .ask(.production) && decide(s, "run_command", run("rm x", on: prodDB)) == .ask(.production))
     #expect(decide(s, "write_file", [AITarget(prodDB, "/srv/a", .write)], overwrites: false) == .ask(.production))
+    #expect(decide(s, "copy", [AITarget(.mac, "/tmp/a", .read), AITarget(prodDB, "/srv", .write)], overwrites: false) == .ask(.production))
 
     // A call that doesn't fit its tool is asked, never guessed.
     #expect(decide(s, "read_file", []) == .ask(.unclear) && decide(s, "read_file", write, overwrites: false) == .ask(.unclear))

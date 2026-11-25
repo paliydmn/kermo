@@ -635,7 +635,7 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
     }
 
     /// Agent (task 23 PR 8), the user's task whole: run a program on a server, its log to this Mac, an archive of it to
-    /// another server — a plan and one "Allow for This Task", then only writing over the archive asks. What was
+    /// another server — a plan and one "Allow for This Task", then each copy between machines asks (Allow Once). What was
     /// allowed is the scope row's; Ask in the same chat changes nothing; the spending cap stops between rounds and
     /// asks to go on; New Chat starts from nothing; the row gives a place View and sets its level.
     @Test func anAgentDoesATaskOfThreePlacesWithOneAllow() async throws {
@@ -700,7 +700,10 @@ extension ServerLockTests {   // `UserDefaults.standard` and `ServerLock.servers
         await ask("Run report.sh on box, the log to my Downloads, an archive of it to backup")
         let first = try #require(wire.bodies.first)
         #expect(first["system"] as? String == AIChat.agentSystem && (first["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String } == AIChat.agentTools.map(\.name))
-        #expect(asked == ["Allow the assistant this, until the chat ends?", "⚠ Let the assistant write over what is there?"], "\(asked)")   // after box's output (D-234)
+        // One Allow for the scope; each copy from one machine to another asks all the same, the archive's writing over
+        // too — after box's output (D-234).
+        #expect(asked == ["Allow the assistant this, until the chat ends?", "⚠ Let the assistant copy “report.log” from box to this Mac?",
+                          "⚠ Let the assistant copy “report.tgz” from box to backup?"], "\(asked)")
         #expect(wire.bodies.count == 7 && "\(wire.bodies[1]["messages"] ?? "")".contains("Allowed until the chat ends"))
         #expect(fm.contents(atPath: downloads + "/report.log") == Data("1284 orders\n".utf8))
         #expect(fm.contents(atPath: backups + "/report.tgz")?.prefix(2) == Data([0x1f, 0x8b]), "the archive, over the old one")

@@ -221,7 +221,7 @@ final class AIPanel: NSViewController, NSTextViewDelegate {
         let does = switch mode {
         case .ask: "The model only reads: it changes nothing."
         case .edit: "The model reads, and proposes changes to files as a diff you keep or drop: only your ⌘S saves."
-        case .agent: "The model acts within what you allow this chat — the Scope row. Deleting, writing over a file and any change on production ask each time."
+        case .agent: "The model acts within what you allow this chat — the Scope row. Deleting, writing over a file, a copy between machines and any change on production ask each time."
         }
         let text = Self.wrapped(setup
             ? "Kermo sends your questions straight from this Mac to the provider you choose, with your key: Anthropic, or an OpenAI-compatible server — Ollama or LM Studio on your Mac too. No Kermo server, no Kermo account."

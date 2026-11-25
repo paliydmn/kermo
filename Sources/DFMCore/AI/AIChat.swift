@@ -108,7 +108,7 @@ public final class AIChat {
     /// Agent: it acts within the chat's scope. Fixed text — the scope is told by the tools' results, never here: a
     /// changed `system` rebuilds the chat without its thinking.
     nonisolated public static let agentSystem = instructions("""
-        Mode: Agent — you act: read, write files, copy between places, run commands on servers, within what the user allowed this chat (its scope). Kermo asks the user before anything outside the scope, and always before deleting, writing over what exists and any change on a production server.
+        Mode: Agent — you act: read, write files, copy between places, run commands on servers, within what the user allowed this chat (its scope). Kermo asks the user before anything outside the scope, and always before deleting, writing over what exists, a copy from one machine to another and any change on a production server.
         - A task of several steps: first call plan with its steps and request_scope once with all they need (servers, folders to write into, commands) — the least that does it. Then do the steps; send plan again, with the states as they stand, in the same message as the next step's own call.
         - Prefer the typed tools: copy and write_file ask before they write over anything, a command may not. write_file doesn't write a file open in the editor: propose_edit changes that one.
         - On a server, see what tools lists first: a Tools action the user set up there (a firewall rule, a ban, a process stopped) goes before a command of your own — tool_action runs it as its button does.

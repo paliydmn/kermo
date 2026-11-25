@@ -577,8 +577,9 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         #expect(lines.map { $0["action"] as? String } == ["save", "save", "copy"] && lines.allSatisfy { $0["by"] as? String == "ai" && $0["exit"] as? Int == 0 }, "\(lines)")
     }
 
-    /// copy: what isn't there yet is copied without a question; a taken name asks, and only that name is written
-    /// over — inside a merged folder, and for a name taken after the look, what is there stays and is told.
+    /// copy: from one machine to another asks each time (Allow Once, never a grant), naming both; a taken name says
+    /// it writes over, and only that name is written over — for a name taken after the look, what is there stays
+    /// and is told.
     @Test func theAssistantCopies() async throws {
         let (s, dir, asked, answer) = try await aiAnswering()
         defer { aiTearDown(s, dir) }
@@ -590,15 +591,21 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         }
         var r = await copy("one.txt")   // Cancel at "Allow…"
         #expect(r.isError && aiNames(dst).isEmpty && asked().count == 1, "\(r.text)")
-        answer([0])
+        answer([0, 0])   // Allow…, then Allow Once
         r = await copy("one.txt")
-        #expect(!r.isError && r.text.contains("1 of 1 file copied") && aiText(dst + "/one.txt") == "one" && asked().count == 2, "\(r.text)")
+        #expect(!r.isError && r.text.contains("1 of 1 file copied") && aiText(dst + "/one.txt") == "one" && asked().count == 3, "\(r.text)")
+        #expect(asked().last == "Let the assistant copy “one.txt” from this Mac to box?")
         try Data("one, newer".utf8).write(to: URL(fileURLWithPath: src + "/one.txt"))
-        r = await copy("one.txt")   // taken: Cancel
-        #expect(r.isError && aiText(dst + "/one.txt") == "one" && asked().last == "⚠ Let the assistant write over what is there?", "\(r.text)")
+        var notes: [String?] = []
+        let asker = s.asker
+        s.asker = { c, w in notes.append(c.note); return await asker!(c, w) }
+        r = await copy("one.txt")   // asked again — Allow Once wasn't a grant — and says it writes over: Cancel
+        #expect(r.isError && aiText(dst + "/one.txt") == "one" && asked().count == 4 && asked().last == "⚠ Let the assistant copy “one.txt” from this Mac to box?", "\(r.text)")
+        #expect(notes.last??.hasSuffix(" It writes over the file that is there.") == true, "\(notes)")
+        s.asker = asker
         answer([0])
         r = await copy("one.txt")
-        #expect(!r.isError && aiText(dst + "/one.txt") == "one, newer", "\(r.text)")
+        #expect(!r.isError && aiText(dst + "/one.txt") == "one, newer" && asked().count == 5, "\(r.text)")
 
         // A folder of that name there, a link, a folder reached through a link, the item's own folder: not copied.
         try fm.createDirectory(atPath: dst + "/tree", withIntermediateDirectories: true)
@@ -617,12 +624,13 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         try fm.removeItem(atPath: dst + "/way")
 
         try Data("mine".utf8).write(to: URL(fileURLWithPath: src + "/raced"))
+        answer([0])
         r = await aiCall(s, "copy", ["from_server": .string("mac"), "from_path": .string(src + "/raced"), "to_server": .string("box"), "to_folder": .string(dst)]) {
             fm.createFile(atPath: dst + "/raced", contents: Data("theirs".utf8))
         }
         #expect(r.isError && r.text.contains("left as they were") && aiText(dst + "/raced") == "theirs", "\(r.text)")
 
-        answer([0])   // the other way: into a folder of this Mac
+        answer([0, 0])   // the other way: into a folder of this Mac — Allow…, then Allow Once
         try fm.createDirectory(atPath: dir + "/back", withIntermediateDirectories: true)
         r = await copy("tree", from: "box", to: "mac", into: dir + "/back")
         #expect(!r.isError && aiNames(dir + "/back") == ["tree", "tree/a", "tree/b"], "\(r.text)")
@@ -632,6 +640,7 @@ extension ServerLockTests {   // swap `ServerLock.servers` and `authenticate`
         // Stopped on its way: no file cut short stays.
         let big = src + "/big.bin"
         fm.createFile(atPath: big, contents: Data(count: 48 << 20))
+        answer([0])
         let call = Task { await copy("big.bin") }
         try await Task.sleep(for: .milliseconds(60))
         call.cancel()
