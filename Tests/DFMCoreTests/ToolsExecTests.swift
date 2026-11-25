@@ -52,7 +52,7 @@ extension SudoPasswordTests {
         let r = try run("echo started; sleep 20", timeout: 1)
         #expect(r.stopped == "it took over 1 s" && r.text == "started\n" && Date().timeIntervalSince(start) < 5)
         let flag = CancelFlag()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { flag.cancel() }
+        Timeouts.queue.asyncAfter(deadline: .now() + 0.5) { flag.cancel() }
         #expect(throws: CancellationError.self) { try run("sleep 20", cancel: flag) }
     }
 
@@ -82,22 +82,22 @@ extension SudoPasswordTests {
         ToolExec.waiting = { w, on in if w.host == t.host { heard.withLock { $0.append(on) } } }
         defer { ToolExec.waiting = nil }
         let first = DispatchSemaphore(value: 0), holding = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
+        Thread {
             _ = try? ToolExec.channel(t, limit: 1, cancel: CancelFlag()) { holding.signal(); Thread.sleep(forTimeInterval: 0.8) }
             first.signal()
-        }
+        }.start()
         holding.wait()
         let start = Date()
         #expect(try ToolExec.channel(t, limit: 1, cancel: CancelFlag()) { "second" } == "second")
         #expect(Date().timeIntervalSince(start) > 0.4 && heard.withLock { $0 } == [true, false], "it waited for the first")
         first.wait()
-        DispatchQueue.global().async {
+        Thread {
             _ = try? ToolExec.channel(t, limit: 1, cancel: CancelFlag()) { holding.signal(); Thread.sleep(forTimeInterval: 0.8) }
             first.signal()
-        }
+        }.start()
         holding.wait()
         let flag = CancelFlag()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { flag.cancel() }
+        Timeouts.queue.asyncAfter(deadline: .now() + 0.2) { flag.cancel() }
         #expect(throws: CancellationError.self) { try ToolExec.channel(t, limit: 1, cancel: flag) { "never" } }
         first.wait()
     }

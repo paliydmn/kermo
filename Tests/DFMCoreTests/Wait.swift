@@ -14,7 +14,9 @@ func until(_ seconds: Double = 60, isolation: isolated (any Actor)? = #isolation
     return true
 }
 
-/// The same for a test that isn't async: it blocks the thread.
+/// The same for a test that isn't async: it blocks the thread — one of Swift's pool, as many as cores. With them all
+/// blocked (a 3-core CI runner) DispatchQueue.global() got no thread for good: what such a test waits for goes on
+/// `Timeouts.queue` (a quick cancel) or a `Thread` of its own.
 func waitUntil(_ seconds: Double = 60, _ done: () -> Bool) -> Bool {
     let end = ContinuousClock.now + .seconds(seconds * testSlowness)
     while !done() {

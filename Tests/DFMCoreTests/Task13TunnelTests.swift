@@ -434,12 +434,12 @@ extension SudoPasswordTests {
 /// making of a socket never overlap: one waits for the other.
 @Test func aForkAndAHalfMadeSocketNeverOverlap() {
     let forking = DispatchSemaphore(value: 0)
-    DispatchQueue.global().async {
+    Thread {
         TunnelListener.forking {
             forking.signal()
             usleep(300_000)   // the fork, held long
         }
-    }
+    }.start()
     forking.wait()
     let start = Date()
     _ = TunnelListener.isFree(Int.random(in: 41000..<42000))   // makes sockets
